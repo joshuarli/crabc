@@ -156,10 +156,28 @@ not prove the `h_errno` header macro/declaration, its
 alignment/layout requirement, broad TLS or loader behavior, family completion,
 promotion, or public support.
 
-Both runtime attachments run before the one public declaration-envelope replay
+`--native-c-allocator-boundary-report REPORT` is independently optional as
+well. Its owner reader replays the selected static preparation, static product,
+dynamic product, complete ELF facts, fixed-C producer provenance, and the
+bounded wrapper/lifecycle and interposition transcripts. The selector seals
+the report before and after that replay, binds its manifests, libc bytes,
+static and shared provenance, dynamic materialization state, and ELF report to
+the same current transaction, then rechecks them after placement joins. It
+discharges the ordinary-import reason only for the seven unversioned
+`NOTYPE GLOBAL DEFAULT` candidate-static `.symtab` imports in the authenticated
+static Rust-root archive member: `_mi_auto_process_done`,
+`_mi_auto_process_init`, `mi_free`, `mi_malloc_aligned`,
+`mi_realloc_aligned`, `mi_usable_size`, and `mi_zalloc`. The fixed-C producer
+account must also supply the matching selected static and shared provider
+metadata. An import of the same name from another member or artifact remains
+an unresolved ordinary consumer. This does not make the C v3.3.2 backend an
+allocator-family, general allocation semantics, promotion, or public-support
+claim.
+
+These runtime attachments run before the one public declaration-envelope replay
 and are rechecked after their scoped joins. Their source/product/ELF cohort is
 therefore shared with the selection transaction without rereading the header
-receipt or turning either component account into a generic runtime claim.
+receipt or turning a component account into a generic runtime claim.
 
 ## Selection inputs and definition domains
 
@@ -339,9 +357,10 @@ version script. The [visibility component](owned-mimalloc-export-visibility.md)
 requires their absence from dynsym, their LOCAL shared symtab definitions, and
 preserved static providers and public allocation metadata. This fixed-C
 attachment supplies metadata only for that exact list. It neither selects an
-unrelated private owner nor proves the seven retained ordinary Rust-root
-imports, allocator semantics, lifecycle, family completion, promotion, or
-public support.
+unrelated private owner. The separate native C allocator-boundary receipt can
+prove only its seven exact static Rust-root imports; allocator semantics,
+lifecycle beyond that bounded receipt, family completion, promotion, and
+public support remain open.
 
 The private feature witnesses have actual evidence consumers. Crypt helper
 names, private musl alias targets, process/runtime seams, compiler helpers,

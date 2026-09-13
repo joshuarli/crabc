@@ -45,6 +45,7 @@ import loader_runtime_registry_evidence as runtime_registry_evidence
 import owned_pthread_alias_contract_reader as pthread_alias_evidence
 import prepared_worker_tls_evidence as prepared_worker_evidence
 import owned_errno_storage_lifecycle as errno_storage_evidence
+import native_c_allocator_boundary
 
 SCHEMA = 'crabc.x86_64-native-abi-selection-report/v1'
 CONTRACT_SCHEMA = 'crabc.x86_64-native-abi-selection/v1'
@@ -118,6 +119,17 @@ ERRNO_STORAGE_LIFECYCLE_LIMITS = [
     'Only __errno_location, __h_errno_location, h_errno and the private ___errno_location alias receive this storage/lifecycle account.',
     'h_errno declaration and alignment proof, broad TLS/TCB semantics, loader evidence, family completion, promotion and public support remain open.',
 ]
+C_ALLOCATOR_BOUNDARY_LIMITS = [
+    'Only the seven authenticated candidate-static Rust-root imports are joined to the fixed-C mimalloc provider account.',
+    'The C v3.3.2 wrapper/lifecycle receipt does not select other imports or complete allocator behavior, family, promotion or public support.',
+]
+C_ALLOCATOR_BOUNDARY_SOURCE_FILES = (
+    *native_c_allocator_boundary.COMPONENT_SOURCES,
+    *native_c_allocator_boundary.RUNTIME_SOURCES,
+    'compat/x86_64/owned_posix_static_products.py',
+    'compat/x86_64/tests/test_native_c_allocator_boundary.py',
+    'compat/x86_64/tests/test_native_abi_c_allocator_boundary_attachment.py',
+)
 RUNTIME_REGISTRY_REQUIREMENTS = (
     'current signature and exact relocation-admission evidence',
     'graph rollback/reentry/fork and thread-local diagnostic component evidence',
@@ -628,6 +640,7 @@ def load_source_inputs(contract: Mapping[str, Any], contract_path: Path) -> dict
         'compat/x86_64/prepared-worker-tls.md',
         'compat/x86_64/tests/test_prepared_worker_tls_evidence.py',
         *errno_storage_evidence.SOURCE_FILES,
+        *C_ALLOCATOR_BOUNDARY_SOURCE_FILES,
     })
     files.update(pthread_alias_evidence.SOURCE_CONTRACT_PATHS)
     for field in ('owner_groups', 'structural_groups', 'object_contracts', 'private_protocols'):
@@ -2011,6 +2024,20 @@ def _runtime_attachment_identities(paths: Mapping[str, Path]) -> dict[str, dict[
     return current
 
 
+def _c_allocator_boundary_identities(paths: Mapping[str, Path]) -> dict[str, dict[str, Any]]:
+    """Return only the installed files owned by the C allocator receipt.
+
+    The C boundary consumes the static provenance record as well as the
+    installed archive and final DSO.  It does not acquire driver or loader
+    authority merely because other runtime companions use those files.
+    """
+    current = _runtime_attachment_identities(paths)
+    current['static_provenance'] = file_identity(
+        paths['static_product'] / 'share/crabc/libc-static.provenance.json'
+    )
+    return current
+
+
 def _errno_identity_payload(value: object, description: str) -> dict[str, Any]:
     """Normalize the errno reader's path/hash/size identity for a byte join.
 
@@ -2058,7 +2085,8 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
                                     registry: Mapping[str, Any] | None,
                                     pthread: Mapping[str, Any] | None,
                                     prepared_worker: Mapping[str, Any] | None = None,
-                                    errno_storage: Mapping[str, Any] | None = None) -> None:
+                                    errno_storage: Mapping[str, Any] | None = None,
+                                    c_allocator_boundary: Mapping[str, Any] | None = None) -> None:
     """Keep runtime attachments within the same source/product transaction.
 
     Both owning readers validate their receipts before the selector's placement
@@ -2066,7 +2094,8 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
     product or raw report cannot change in the interval before `report.json`
     is sealed.
     """
-    if registry is None and pthread is None and prepared_worker is None and errno_storage is None:
+    if (registry is None and pthread is None and prepared_worker is None
+            and errno_storage is None and c_allocator_boundary is None):
         return
     require(same(source, selection_source()), 'selection source changed during runtime receipt attachment')
     reports = _measurement_report_bindings(measurement, 'runtime receipt')
@@ -2076,6 +2105,10 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
         require(same(reports[name], file_identity(paths[path_key])),
                 f'public ELF replay {name} changed during runtime receipt attachment')
     current = _runtime_attachment_identities(paths)
+    if c_allocator_boundary is not None:
+        current['static_provenance'] = file_identity(
+            paths['static_product'] / 'share/crabc/libc-static.provenance.json'
+        )
     facts_artifacts = facts.get('artifacts')
     require(type(facts_artifacts) is dict, 'public ELF facts artifact roster changed during runtime receipt attachment')
     for current_name, artifact_key in (
@@ -2094,6 +2127,10 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
         }, True),
         ('errno storage lifecycle', errno_storage, {
             'static_manifest', 'static_libc', 'dynamic_manifest', 'dynamic_libc', 'dynamic_shared_provenance',
+        }, True),
+        ('native C allocator boundary', c_allocator_boundary, {
+            'static_manifest', 'static_libc', 'static_provenance', 'dynamic_manifest',
+            'dynamic_state', 'dynamic_libc', 'dynamic_shared_provenance',
         }, True),
     )
     for label, companion, expected_roster, needs_measurement_reports in companion_rosters:
@@ -2779,6 +2816,174 @@ def errno_storage_lifecycle_adapter(report_path: Path | None, *, facts: Mapping[
     }
 
 
+def _c_allocator_boundary_contract() -> tuple[dict[str, Any], list[str]]:
+    """Load the one source-owned seven-import boundary without a name rule.
+
+    The C component's TOML is the authority for this finite list.  This
+    selector deliberately consumes it as an exact contract rather than
+    extending the fixed-C metadata group's 424-name private-provider roster.
+    """
+    try:
+        contract = native_c_allocator_boundary.load_contract(ROOT)
+    except (OSError, ValueError, native_c_allocator_boundary.AllocatorBoundaryError) as error:
+        raise SelectionError(f'native C allocator boundary contract rejected: {error}') from error
+    scope = exact(contract.get('scope'), {
+        'weak_entries', 'global_entries', 'rust_c_imports', 'lifecycle_entries',
+        'interposition_scenarios', 'dynamic_modes', 'dynamic_entries', 'static_modes',
+    }, 'native C allocator boundary scope')
+    imports = scope['rust_c_imports']
+    require(type(imports) is list and all(type(name) is str and name for name in imports)
+            and len(imports) == 7 and len(set(imports)) == len(imports),
+            'native C allocator boundary Rust import roster differs')
+    return contract, list(imports)
+
+
+def native_c_allocator_boundary_adapter(report_path: Path | None, *, facts: Mapping[str, Any],
+                                        measurement: Mapping[str, Any], paths: Mapping[str, Path],
+                                        source: Mapping[str, Any],
+                                        fixed_c_companion: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Replay the finite C wrapper/lifecycle receipt against this ELF cohort.
+
+    The public component reader owns its product validation and runtime
+    transcripts.  This adapter seals the report before and after that replay,
+    joins its exact product identities to the already replayed ELF cohort, and
+    exposes only the seven Rust-root C import claims for later placement
+    accounting.  It does not turn the C backend into allocator-family proof.
+    """
+    if report_path is None:
+        return None
+    require(Path(native_c_allocator_boundary.ROOT) == ROOT
+            and Path(native_c_allocator_boundary.__file__).resolve().parent == MODULE_DIR,
+            'native C allocator boundary reader belongs to a different checkout')
+    report_path = physical_work_path(report_path, directory=False)
+    before = file_identity(report_path)
+    try:
+        report = native_c_allocator_boundary.validate_report(
+            report_path,
+            static_preparation=paths['static_preparation'],
+            static_product=paths['static_product'],
+            dynamic_product=paths['dynamic_product'],
+            elf_facts_report=paths['elf_report'],
+        )
+    except (KeyError, TypeError, ValueError, OSError, native_c_allocator_boundary.AllocatorBoundaryError) as error:
+        raise SelectionError(f'native C allocator boundary component rejected: {error}') from error
+    require(same(before, file_identity(report_path)), 'native C allocator boundary report changed during replay')
+    source = exact(dict(source), {'revision', 'content_sha256', 'clean'}, 'selection source')
+    _measurement_source_matches(source, measurement, 'native C allocator boundary')
+    measurement_reports = _measurement_report_bindings(measurement, 'native C allocator boundary')
+    contract, import_names = _c_allocator_boundary_contract()
+    report = exact(report, {
+        'schema', 'target', 'status', 'collector_source', 'component_sources', 'inputs', 'startup', 'interposition',
+    }, 'native C allocator boundary reader report')
+    require(report['schema'] == native_c_allocator_boundary.SCHEMA
+            and report['target'] == native_c_allocator_boundary.TARGET
+            and same(report['status'], {
+                'family_completion': False, 'promotion': False, 'public_support': False,
+            }), 'native C allocator boundary reader status differs')
+    require(same(report['collector_source'], source),
+            'native C allocator boundary collector source differs from selection')
+    require(same(report['component_sources'], native_c_allocator_boundary.source_records(ROOT)),
+            'native C allocator boundary component source roster differs')
+    inputs = exact(report['inputs'], {
+        'product_source', 'source_resolution', 'static_preparation', 'static', 'dynamic', 'elf_facts',
+        'producer_account', 'wrapper_product_bindings',
+    }, 'native C allocator boundary input account')
+    product_source = exact(inputs['product_source'], {'revision', 'content_sha256'},
+                           'native C allocator boundary product source')
+    require(same(product_source, {
+        'revision': source['revision'], 'content_sha256': source['content_sha256'],
+    }), 'native C allocator boundary product source differs from selection')
+    try:
+        expected_source_resolution = native_c_allocator_boundary.source_resolution(ROOT, source['revision'])
+    except (OSError, ValueError, native_c_allocator_boundary.AllocatorBoundaryError) as error:
+        raise SelectionError(f'native C allocator boundary source resolution rejected: {error}') from error
+    require(same(inputs['source_resolution'], expected_source_resolution),
+            'native C allocator boundary source resolution differs')
+    current = _c_allocator_boundary_identities(paths)
+    _require_same_identity_payload(inputs['static_preparation'], measurement_reports['static_preparation'],
+                                   'native C allocator boundary static preparation')
+    static_product = exact(inputs['static'], {'product', 'manifest', 'libc', 'provenance'},
+                           'native C allocator boundary static product')
+    dynamic_product = exact(inputs['dynamic'], {'product', 'manifest', 'state', 'libc', 'provenance'},
+                            'native C allocator boundary dynamic product')
+    require(static_product['product'] == '/inputs/static-product'
+            and dynamic_product['product'] == '/inputs/dynamic-product',
+            'native C allocator boundary product path roles differ')
+    for receipt, name in (
+        (static_product['manifest'], 'static_manifest'),
+        (static_product['libc'], 'static_libc'),
+        (static_product['provenance'], 'static_provenance'),
+        (dynamic_product['manifest'], 'dynamic_manifest'),
+        (dynamic_product['state'], 'dynamic_state'),
+        (dynamic_product['libc'], 'dynamic_libc'),
+        (dynamic_product['provenance'], 'dynamic_shared_provenance'),
+    ):
+        _require_same_identity_payload(receipt, current[name],
+                                       f'native C allocator boundary {name}')
+    _require_same_identity_payload(inputs['elf_facts'], measurement_reports['elf_report'],
+                                   'native C allocator boundary ELF facts')
+    _runtime_facts_match_selected_products(
+        facts, current, label='native C allocator boundary',
+        artifacts=(('static_libc', 'candidate-static'), ('dynamic_libc', 'candidate-shared')),
+    )
+    fixed_account = fixed_c_companion.get('account') if isinstance(fixed_c_companion, Mapping) else None
+    require(type(fixed_account) is dict and same(inputs['producer_account'], fixed_account),
+            'native C allocator boundary fixed-C producer account differs')
+    producer_account = inputs['producer_account']
+    archive_map = producer_account.get('archive_map') if isinstance(producer_account, dict) else None
+    require(type(archive_map) is dict and type(archive_map.get('static_rust_root_member')) is str
+            and archive_map['static_rust_root_member'],
+            'native C allocator boundary static Rust root differs')
+    claims = producer_account.get('rust_root_c_import_joins') if isinstance(producer_account, dict) else None
+    require(type(claims) is list and [claim.get('name') for claim in claims if isinstance(claim, dict)] == import_names
+            and len(claims) == len(import_names),
+            'native C allocator boundary producer import claims differ')
+    for claim in claims:
+        require(type(claim) is dict and set(claim) == {
+            'name', 'static_rust_import', 'static_c_provider', 'shared_c_final_provider',
+        }, 'native C allocator boundary producer import claim fields differ')
+        static_import = exact(claim['static_rust_import'], {
+            'type', 'binding', 'visibility', 'section_index',
+        }, 'native C allocator boundary static Rust import')
+        require(static_import == {
+            'type': 'NOTYPE', 'binding': 'GLOBAL', 'visibility': 'DEFAULT', 'section_index': 'UND',
+        }, 'native C allocator boundary static Rust import metadata differs')
+    wrappers = exact(inputs['wrapper_product_bindings'], {'static_member', 'static', 'shared'},
+                     'native C allocator boundary wrapper product bindings')
+    roles = native_c_allocator_boundary.wrapper_roles(contract)
+    require(wrappers['static_member'] == archive_map['static_rust_root_member']
+            and type(wrappers['static']) is dict and set(wrappers['static']) == set(roles)
+            and type(wrappers['shared']) is dict and set(wrappers['shared']) == {'.dynsym', '.symtab'}
+            and all(type(rows) is dict and set(rows) == set(roles) for rows in wrappers['shared'].values()),
+            'native C allocator boundary wrapper product binding roster differs')
+    require(type(report['startup']) is dict and set(report['startup']) == {'command', 'work', 'observation'}
+            and type(report['interposition']) is dict and set(report['interposition']) == {'command', 'work', 'observation'},
+            'native C allocator boundary runtime observation shape differs')
+    selected_products = {
+        name: copy.deepcopy(current[name]) for name in (
+            'static_manifest', 'static_libc', 'static_provenance', 'dynamic_manifest',
+            'dynamic_state', 'dynamic_libc', 'dynamic_shared_provenance',
+        )
+    }
+    source_inputs = {name: file_identity(ROOT / name) for name in C_ALLOCATOR_BOUNDARY_SOURCE_FILES}
+    return {
+        'status': 'native-c-allocator-boundary-observed-with-boundaries',
+        'reader': file_identity(Path(native_c_allocator_boundary.__file__)),
+        'contract': file_identity(native_c_allocator_boundary.CONTRACT_PATH),
+        'report': before,
+        'source': copy.deepcopy(source),
+        'source_inputs': source_inputs,
+        'products': selected_products,
+        'measurement_reports': measurement_reports,
+        'account': {
+            'imports': list(import_names),
+            'claims': copy.deepcopy(claims),
+            'static_rust_root_member': archive_map['static_rust_root_member'],
+        },
+        'limits': list(C_ALLOCATOR_BOUNDARY_LIMITS),
+    }
+
+
 def _accounting_indexes(accounting: Mapping[str, Any], *, description: str) -> tuple[dict[tuple[str, str | None, bool], dict[str, Any]],
                                                                                       dict[tuple[tuple[str, str | None, bool], str], dict[str, Any]],
                                                                                       dict[int, dict[str, Any]]]:
@@ -3134,6 +3339,153 @@ def attach_errno_storage_lifecycle(accounting: Mapping[str, Any], companion: Map
     }]
 
 
+def _c_allocator_provider_metadata(value: object, description: str) -> dict[str, Any]:
+    """Keep the producer's observed function row distinct from selection policy.
+
+    The fixed-C metadata attachment has already selected type/binding/
+    visibility.  This helper preserves the C receipt's defining-row facts for
+    its consumer join without turning code size or section index into a new
+    compatibility ratchet.
+    """
+    row = exact(value, {
+        'type', 'binding', 'visibility', 'definition', 'section_index', 'size_bytes',
+    }, description)
+    require(row['type'] == 'FUNC' and row['binding'] in {'GLOBAL', 'LOCAL'}
+            and row['visibility'] == 'DEFAULT' and row['definition'] == 'defined'
+            and type(row['section_index']) is str and row['section_index'].isdigit()
+            and int(row['section_index']) > 0
+            and type(row['size_bytes']) is int and row['size_bytes'] > 0,
+            f'{description} differs')
+    return copy.deepcopy(row)
+
+
+def attach_native_c_allocator_boundary(accounting: Mapping[str, Any],
+                                       companion: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """Discharge only the seven exact static Rust-root C imports.
+
+    A spelling match is deliberately insufficient.  Each import must remain a
+    single unversioned NOTYPE GLOBAL DEFAULT ``.symtab`` undefined row in the
+    one authenticated static Rust root archive member.  An import of the same
+    name from another member or candidate artifact retains the generic reason.
+    """
+    if companion is None:
+        return []
+    companion = exact(companion, {
+        'status', 'reader', 'contract', 'report', 'source', 'source_inputs', 'products',
+        'measurement_reports', 'account', 'limits',
+    }, 'native C allocator boundary companion')
+    require(companion['status'] == 'native-c-allocator-boundary-observed-with-boundaries'
+            and companion['limits'] == C_ALLOCATOR_BOUNDARY_LIMITS,
+            'native C allocator boundary companion scope differs')
+    require(same(companion['source_inputs'], {
+        name: file_identity(ROOT / name) for name in C_ALLOCATOR_BOUNDARY_SOURCE_FILES
+    }), 'native C allocator boundary source inputs changed')
+    _contract, import_names = _c_allocator_boundary_contract()
+    account = exact(companion['account'], {'imports', 'claims', 'static_rust_root_member'},
+                    'native C allocator boundary companion account')
+    require(account['imports'] == import_names
+            and type(account['static_rust_root_member']) is str and account['static_rust_root_member']
+            and type(account['claims']) is list and len(account['claims']) == len(import_names)
+            and [claim.get('name') for claim in account['claims'] if isinstance(claim, dict)] == import_names,
+            'native C allocator boundary companion import roster differs')
+    records, placements, occurrences = _accounting_indexes(
+        accounting, description='native C allocator boundary attachment',
+    )
+    candidate_artifacts = {artifact.key for artifact in elf_facts.ARTIFACTS if artifact.owner != 'reference'}
+    result: list[dict[str, Any]] = []
+    discharged: set[tuple[str, str | None, bool]] = set()
+    for claim in account['claims']:
+        claim = exact(claim, {
+            'name', 'static_rust_import', 'static_c_provider', 'shared_c_final_provider',
+        }, 'native C allocator boundary import claim')
+        name = claim['name']
+        require(type(name) is str and name in import_names, 'native C allocator boundary import name differs')
+        static_import = exact(claim['static_rust_import'], {
+            'type', 'binding', 'visibility', 'section_index',
+        }, f'native C allocator boundary {name} static Rust import')
+        require(static_import == {
+            'type': 'NOTYPE', 'binding': 'GLOBAL', 'visibility': 'DEFAULT', 'section_index': 'UND',
+        }, f'native C allocator boundary {name} static Rust import differs')
+        static_provider = _c_allocator_provider_metadata(
+            claim['static_c_provider'], f'native C allocator boundary {name} static provider',
+        )
+        shared_provider = _c_allocator_provider_metadata(
+            claim['shared_c_final_provider'], f'native C allocator boundary {name} shared provider',
+        )
+        key = (name, None, False)
+        record = records.get(key)
+        require(record is not None and record.get('selection', {}).get('disposition') == 'private-provider'
+                and record['selection'].get('group') == FIXED_C_PRODUCER_GROUP
+                and record['selection'].get('owner') == FIXED_C_PRODUCER_OWNER,
+                f'native C allocator boundary selected owner differs: {name}')
+        static_placement = placements.get((key, 'candidate-static'))
+        shared_placement = placements.get((key, 'candidate-shared'))
+        for placement, provider, label in (
+            (static_placement, static_provider, 'static'),
+            (shared_placement, shared_provider, 'shared'),
+        ):
+            require(placement is not None and placement.get('placement_observed') is True
+                    and placement.get('definition_count') == 1
+                    and _metadata_difference_rows_are_empty(
+                        placement.get('metadata_differences'),
+                        f'native C allocator boundary {name} {label} placement',
+                    )
+                    and same(placement.get('expected_metadata'), {
+                        field: provider[field] for field in ('type', 'binding', 'visibility')
+                    }), f'native C allocator boundary {name} {label} provider placement differs')
+        imports = [
+            occurrence for occurrence in occurrences.values()
+            if occurrence.get('role') == 'import'
+            and occurrence.get('artifact_key') in candidate_artifacts
+            and occurrence.get('row', {}).get('name') == name
+            and occurrence['row'].get('version') is None
+            and occurrence['row'].get('version_default') is False
+        ]
+        covered = len(imports) == 1 and all(
+            occurrence.get('artifact_key') == 'candidate-static'
+            and occurrence.get('table') == '.symtab'
+            and occurrence.get('member_name') == account['static_rust_root_member']
+            and occurrence.get('member_index') is not None
+            and occurrence.get('member_occurrence') == 0
+            and occurrence.get('accounting') == {
+                'disposition': 'private-provider',
+                'owner': FIXED_C_PRODUCER_OWNER,
+                'scope': 'candidate-static',
+            }
+            and occurrence.get('row', {}).get('raw_name') == name
+            and all(occurrence['row'].get(field) == value for field, value in static_import.items())
+            and occurrence['row'].get('size_bytes') == 0
+            and occurrence['row'].get('value') == '0000000000000000'
+            for occurrence in imports
+        )
+        result.append({
+            'identity': copy.deepcopy(record['identity']),
+            'owner': FIXED_C_PRODUCER_OWNER,
+            'artifact_key': 'candidate-static',
+            'static_rust_root_member': account['static_rust_root_member'],
+            'occurrence_indices': [occurrence['index'] for occurrence in imports],
+            'producer_static_metadata': static_provider,
+            'producer_shared_metadata': shared_provider,
+            'ordinary_import_covered': covered,
+            'discharged_reason': ORDINARY_IMPORT_REASON if covered else None,
+        })
+        if covered:
+            require(ORDINARY_IMPORT_REASON in record['unresolved'],
+                    f'native C allocator boundary import reason is absent before attachment: {name}')
+            record['unresolved'].remove(ORDINARY_IMPORT_REASON)
+            discharged.add(key)
+    require([row['identity']['name'] for row in result] == import_names,
+            'native C allocator boundary join cardinality differs')
+    if discharged:
+        accounting['blockers'][:] = [
+            blocker for blocker in accounting['blockers']
+            if not (blocker.get('code') == 'identity-unresolved'
+                    and identity_key(blocker.get('identity', {})) in discharged
+                    and blocker.get('reason') == ORDINARY_IMPORT_REASON)
+        ]
+    return result
+
+
 def _compiler_helper_shared_contract(contract: Mapping[str, Any], inputs: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """Authenticate the finite helper source selection before using its DSO view.
 
@@ -3409,7 +3761,8 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
                   loader_runtime_registry_report: Path | None = None,
                   pthread_alias_contract_report: Path | None = None,
                   prepared_worker_tls_report: Path | None = None,
-                  errno_storage_lifecycle_report: Path | None = None) -> dict[str, Any]:
+                  errno_storage_lifecycle_report: Path | None = None,
+                  native_c_allocator_boundary_report: Path | None = None) -> dict[str, Any]:
     source_before = selection_source()
     contract = load_contract(contract_path)
     inputs = load_source_inputs(contract, contract_path)
@@ -3432,6 +3785,10 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     )
     errno_storage_lifecycle_companion = errno_storage_lifecycle_adapter(
         errno_storage_lifecycle_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
+    )
+    native_c_allocator_boundary_companion = native_c_allocator_boundary_adapter(
+        native_c_allocator_boundary_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
+        fixed_c_companion=fixed_c_producer_metadata_companion,
     )
     declaration = declaration_adapter(
         declaration_report,
@@ -3471,10 +3828,14 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     errno_storage_lifecycle_joins = attach_errno_storage_lifecycle(
         accounting, errno_storage_lifecycle_companion, inputs,
     )
+    native_c_allocator_boundary_joins = attach_native_c_allocator_boundary(
+        accounting, native_c_allocator_boundary_companion,
+    )
     _recheck_runtime_receipt_cohort(
         paths=paths, facts=facts, measurement=measurement, source=source_before,
         registry=loader_runtime_registry_companion, pthread=pthread_alias_contract_companion,
         prepared_worker=prepared_worker_tls_companion, errno_storage=errno_storage_lifecycle_companion,
+        c_allocator_boundary=native_c_allocator_boundary_companion,
     )
     candidate = measurement['candidate_build']
     source_matches = source_before['clean'] is True and source_before['revision'] == candidate['revision'] and source_before['content_sha256'] == candidate['source_content_sha256']
@@ -3502,6 +3863,8 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'prepared_worker_tls_joins': prepared_worker_tls_joins,
             'errno_storage_lifecycle_companion': errno_storage_lifecycle_companion,
             'errno_storage_lifecycle_joins': errno_storage_lifecycle_joins,
+            'native_c_allocator_boundary_companion': native_c_allocator_boundary_companion,
+            'native_c_allocator_boundary_joins': native_c_allocator_boundary_joins,
             **accounting, 'closure': {'complete': not blockers, 'blockers': blockers}, 'status': dict(STATUS),
             'limits': ['selection audit is not qualification', 'complete raw ELF observations stay with the publicly replayed supplement',
                        'no allocator metadata or unwinder investigation', 'no imported AArch64 execution proof',
@@ -3516,6 +3879,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                  pthread_alias_contract_report: Path | None = None,
                  prepared_worker_tls_report: Path | None = None,
                  errno_storage_lifecycle_report: Path | None = None,
+                 native_c_allocator_boundary_report: Path | None = None,
                  **measurement_inputs: Path) -> dict[str, Any]:
     output = physical_work_path(output, directory=True, own=True, fresh=True)
     paths = validate_measurement_paths(**measurement_inputs)
@@ -3528,7 +3892,8 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                            loader_runtime_registry_report=loader_runtime_registry_report,
                            pthread_alias_contract_report=pthread_alias_contract_report,
                            prepared_worker_tls_report=prepared_worker_tls_report,
-                           errno_storage_lifecycle_report=errno_storage_lifecycle_report)
+                           errno_storage_lifecycle_report=errno_storage_lifecycle_report,
+                           native_c_allocator_boundary_report=native_c_allocator_boundary_report)
     output.mkdir()
     (output / 'report.json').write_bytes(inventory._stable_json(report))
     return report
@@ -3542,6 +3907,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                     pthread_alias_contract_report: Path | None = None,
                     prepared_worker_tls_report: Path | None = None,
                     errno_storage_lifecycle_report: Path | None = None,
+                    native_c_allocator_boundary_report: Path | None = None,
                     **measurement_inputs: Path) -> dict[str, Any]:
     report_path = physical_work_path(report_path, directory=False, own=True)
     require(report_path.name == 'report.json', 'selection report has the wrong name')
@@ -3556,7 +3922,8 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                              loader_runtime_registry_report=loader_runtime_registry_report,
                              pthread_alias_contract_report=pthread_alias_contract_report,
                              prepared_worker_tls_report=prepared_worker_tls_report,
-                             errno_storage_lifecycle_report=errno_storage_lifecycle_report)
+                             errno_storage_lifecycle_report=errno_storage_lifecycle_report,
+                             native_c_allocator_boundary_report=native_c_allocator_boundary_report)
     require(same(report, expected), 'selection report does not reconstruct exactly from source inputs and public measurement replay')
     return report
 
@@ -3578,6 +3945,7 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument('--pthread-alias-contract-report', type=Path)
     parser.add_argument('--prepared-worker-tls-report', type=Path)
     parser.add_argument('--errno-storage-lifecycle-report', type=Path)
+    parser.add_argument('--native-c-allocator-boundary-report', type=Path)
     options = [arg.split('=', 1)[0] for arg in argv if arg.startswith('--')]
     if len(options) != len(set(options)):
         parser.error('duplicate options are not accepted')
@@ -3591,7 +3959,7 @@ def main(argv: Sequence[str]) -> int:
                                                 'loader_debug_abi_report', 'compiler_helper_aggregate_report',
                                                 'ordinary_declaration_abi_report', 'loader_runtime_registry_report',
                                                 'pthread_alias_contract_report', 'prepared_worker_tls_report',
-                                                'errno_storage_lifecycle_report')}
+                                                'errno_storage_lifecycle_report', 'native_c_allocator_boundary_report')}
     kwargs['ordinary_link_report'] = kwargs.pop('public_data_ordinary_link_report')
     kwargs['loader_debug_report'] = kwargs.pop('loader_debug_abi_report')
     kwargs.update(contract_path=args.contract, elf_report=args.elf_facts)
