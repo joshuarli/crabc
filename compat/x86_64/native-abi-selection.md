@@ -289,7 +289,9 @@ The v3 receipt additionally requires the canonical owner's finite descriptor
 admission controls for kernel and direct entry. The selector checks that exact
 contract in `_crt_startup_identity_names` and accepts the publicly replayed
 `descriptor_admission` observation in `native_crt_startup_adapter`. These
-controls do not add a selector discharge: malformed-record rejection and the
+checks include the DSO source object's weak `REX_GOTPCRELX` relocation before
+its shared-object link; the owner separately reconstructs both fixture links.
+The controls do not add a selector discharge: malformed-record rejection and the
 other outstanding descriptor protocol requirements remain explicit obligations.
 
 ## Selection inputs and definition domains

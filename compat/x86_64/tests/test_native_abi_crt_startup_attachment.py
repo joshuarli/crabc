@@ -63,7 +63,8 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
     def test_owner_rejects_weakened_descriptor_admission_contract(self) -> None:
         reader = selection._crt_startup_reader()
         contract = reader.contract(ROOT)
-        for change in ('omit-admission', 'omit-direct', 'allow-success', 'omit-dso'):
+        for change in ('omit-admission', 'omit-direct', 'allow-success', 'omit-dso',
+                       'omit-source-object', 'wrong-source-relocation'):
             with self.subTest(change=change):
                 altered = copy.deepcopy(contract)
                 handoff = altered['descriptor_handoff']
@@ -73,8 +74,12 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
                     handoff['admission']['entry_modes'] = ['kernel']
                 elif change == 'allow-success':
                     handoff['admission']['rejection']['status'] = 0
-                else:
+                elif change == 'omit-dso':
                     del handoff['admission']['dso']
+                elif change == 'omit-source-object':
+                    del handoff['admission']['source_object']
+                else:
+                    handoff['admission']['source_object']['relocation']['kind'] = 6
                 with mock.patch.object(reader, 'contract', return_value=altered):
                     with self.assertRaisesRegex(selection.SelectionError, 'owner contract differs'):
                         selection._crt_startup_identity_names(reader)

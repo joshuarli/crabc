@@ -3569,6 +3569,10 @@ def _crt_startup_identity_names(reader: Any) -> tuple[str, ...]:
                         'shared_object': 'descriptor-rogue-dso.so',
                         'endpoint': 'descriptor-dso-endpoint',
                     },
+                    'source_object': {'relocation': {
+                        'kind': 42, 'addend': -4, 'symbol_type': '0', 'binding': 'WEAK',
+                        'visibility': 'DEFAULT', 'symbol_section': 0, 'symbol_value': 0,
+                    }},
                     'rejection': {'status': 127, 'stdout': '', 'stderr': 'reloc\n'},
                 },
             },
