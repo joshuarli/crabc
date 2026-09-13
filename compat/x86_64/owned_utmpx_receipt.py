@@ -28,6 +28,11 @@ from typing import Any, Mapping
 # receipt source: that would turn a tampered source snapshot into host code.
 import owned_posix_product_evidence as retained_link_reader
 from loader_debug_abi_evidence import Elf
+from owned_static_link_authority import (
+    StaticFunctionContract,
+    StaticLinkAuthorityError,
+    require_static_functions,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = "crabc.x86_64-owned-utmpx-receipt/v1"
@@ -71,11 +76,17 @@ ALIASES = (
 )
 STRONG = ("endutxent", "setutxent", "getutxent", "getutxid", "getutxline", "pututxline", "updwtmpx")
 WEAK = ("endutent", "setutent", "getutent", "getutid", "getutline", "pututline", "updwtmp", "utmpname", "utmpxname")
+# The generic selected-input-to-final-static-function relation is copied
+# byte-for-byte from this reviewed extraction.  This component supplies its
+# own finite function roster and exact trace/member admission below.
+STATIC_LINK_AUTHORITY_COMMIT = "4847fff0284b515baac336f572edd1b1e1bf544d"
+STATIC_LINK_AUTHORITY_SHA256 = "bbb8e460abfd44a50850f2fe4f5e7395db1a7ee8391f5be5f18d26a36a21d475"
 TRUSTED_READER_SOURCES = (
     "compat/x86_64/owned_utmpx_receipt.py",
     "compat/x86_64/owned_posix_product_evidence.py",
     "compat/x86_64/owned_dynamic_receipt.py",
     "compat/x86_64/loader_debug_abi_evidence.py",
+    "compat/x86_64/owned_static_link_authority.py",
 )
 SOURCES = (
     "libc/src/c_abi/x86_64/owned_utmpx.rs",
@@ -90,6 +101,7 @@ SOURCES = (
     "compat/x86_64/owned_posix_product_evidence.py",
     "compat/x86_64/owned_dynamic_receipt.py",
     "compat/x86_64/loader_debug_abi_evidence.py",
+    "compat/x86_64/owned_static_link_authority.py",
     "compat/x86_64/owned_utmpx_image_inputs.json",
     "docs/evidence/x86-owned-utmpx.md",
     "compat/upstreams.toml",
@@ -483,6 +495,10 @@ def validate_selected_source(workspace: Path, sources: Mapping[str, Any], source
         require(digest(trusted) == digest(workspace / name)
                 and stat.S_IMODE(trusted.stat().st_mode) == stat.S_IMODE((workspace / name).stat().st_mode),
                 "trusted local source differs from the retained source: " + name)
+    shared = "compat/x86_64/owned_static_link_authority.py"
+    require(digest(ROOT / shared) == STATIC_LINK_AUTHORITY_SHA256
+            and digest(workspace / shared) == STATIC_LINK_AUTHORITY_SHA256,
+            "shared static function authority differs from reviewed commit " + STATIC_LINK_AUTHORITY_COMMIT)
     owned = (workspace / "libc/src/c_abi/x86_64/owned_utmpx.rs").read_text(encoding="utf-8")
     selector = (workspace / "libc/src/c_abi/x86_64/static_c_abi.rs").read_text(encoding="utf-8")
     require("mod owned_utmpx;" in selector, "static runtime no longer selects owned utmpx")
@@ -1137,6 +1153,118 @@ def project_link_product(linkage: str, product: Path, rebuilt: Mapping[str, Any]
     return projected
 
 
+def retained_static_admitted_inputs(workspace: Path, product: Path, raw: Path,
+                                   linkage: str) -> tuple[dict[str, Path | bytes], str, str, str]:
+    """Rebuild the exact static map-owner domain from sealed trace inputs.
+
+    The common function authority only accepts explicitly admitted objects.  A
+    trace string therefore cannot nominate arbitrary bytes: every direct object
+    is a physical copied product/workload file and every parenthesized archive
+    member is re-decoded from the sealed retained archive itself.
+    """
+    crt_by_linkage = {"static": "crt1.o", "static-pie": "rcrt1.o"}
+    require(linkage in crt_by_linkage, "static function authority linkage differs")
+    static_root = SOURCE_MOUNT + "/.work/utmpx-receipt/inputs/static"
+    logical_workload = SOURCE_MOUNT + "/.work/utmpx-receipt/owned-utmpx-receipt/workload.o"
+    library = product / "usr/lib"
+    logical_crt = static_root + "/usr/lib/" + crt_by_linkage[linkage]
+    direct = {
+        logical_crt: library / crt_by_linkage[linkage],
+        static_root + "/usr/lib/crti.o": library / "crti.o",
+        logical_workload: raw / "workload.o",
+        static_root + "/usr/lib/crtn.o": library / "crtn.o",
+    }
+    logical_archives = {
+        static_root + "/usr/lib/libc.a": library / "libc.a",
+        static_root + "/usr/lib/libcrabc-builtins.a": library / "libcrabc-builtins.a",
+    }
+    for name, artifact in {**direct, **logical_archives}.items():
+        regular(no_links(workspace, artifact, "static function input " + name),
+                "static function input " + name)
+
+    members: dict[str, dict[str, bytes]] = {}
+    for archive, artifact in logical_archives.items():
+        decoded: dict[str, bytes] = {}
+        for name, body in archive_members(artifact.read_bytes()):
+            require(name not in decoded, "retained static archive has duplicate member")
+            decoded[name] = body
+        require(decoded, "retained static archive has no members")
+        members[archive] = decoded
+
+    trace = raw / ("static-" + linkage + ".receipt.trace")
+    regular(no_links(workspace, trace, "static function trace"), "static function trace")
+    try:
+        lines = trace.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError) as error:
+        raise ReceiptError("static function trace is unreadable") from error
+    require(lines and len(lines) == len(set(lines)), "static function trace is empty or repeated")
+    admitted: dict[str, Path | bytes] = dict(direct)
+    seen: set[str] = set()
+    for line in lines:
+        if line in direct:
+            seen.add(line)
+            continue
+        if line in logical_archives:
+            seen.add(line)
+            continue
+        matches = [(archive, line[len(archive) + 1:-1]) for archive in logical_archives
+                   if line.startswith(archive + "(") and line.endswith(")")]
+        require(len(matches) == 1 and matches[0][1] in members[matches[0][0]],
+                "static function trace names an unowned archive member")
+        archive, member = matches[0]
+        seen.add(archive)
+        admitted[line] = members[archive][member]
+    require(seen == set(direct) | set(logical_archives),
+            "static function trace omits a selected input")
+    return admitted, logical_workload, logical_crt, static_root + "/usr/lib/libc.a"
+
+
+def static_archive_function_owners(admitted: Mapping[str, Path | bytes], archive: str) -> dict[str, str]:
+    """Find each finite utmpx definition in authenticated selected libc bytes."""
+    wanted = {*STRONG, *WEAK}
+    owners: dict[str, str] = {}
+    for owner, value in admitted.items():
+        if not owner.startswith(archive + "("):
+            continue
+        try:
+            source = elf_from_bytes(value if isinstance(value, bytes) else regular(value, "static archive member").read_bytes())
+            for index, table in enumerate(source.sections):
+                if table[1] != 2:
+                    continue
+                require(table[9] == 24 and table[5] % 24 == 0,
+                        "static archive member symbol table differs")
+                for number in range(table[5] // 24):
+                    row = source.symbol_row(index, number)
+                    name = row["name"]
+                    if name in wanted and row["section"]:
+                        require(name not in owners, "selected static archive duplicates utmpx definition")
+                        owners[name] = owner
+        except (IndexError, UnicodeDecodeError, ValueError) as error:
+            raise ReceiptError("static archive member symbol table differs") from error
+    require(set(owners) == wanted, "selected static archive omits utmpx definition")
+    return owners
+
+
+def validate_static_function_authority(workspace: Path, product: Path, raw: Path, linkage: str) -> None:
+    """Bind main, CRT entry, and all finite utmpx providers to final bytes."""
+    admitted, workload, crt, libc_archive = retained_static_admitted_inputs(workspace, product, raw, linkage)
+    providers = static_archive_function_owners(admitted, libc_archive)
+    contracts = [
+        StaticFunctionContract("main", workload, "GLOBAL", "DEFAULT", "GLOBAL", "DEFAULT"),
+        StaticFunctionContract("_start", crt, "GLOBAL", "DEFAULT", "GLOBAL", "DEFAULT"),
+        *(StaticFunctionContract(name, providers[name], "GLOBAL", "DEFAULT", "GLOBAL", "DEFAULT")
+          for name in STRONG),
+        *(StaticFunctionContract(name, providers[name], "WEAK", "DEFAULT", "WEAK", "DEFAULT")
+          for name in WEAK),
+    ]
+    executable = raw / ("static-" + linkage)
+    link_map = raw / ("static-" + linkage + ".receipt.map")
+    try:
+        require_static_functions(link_map, executable, admitted, contracts)
+    except StaticLinkAuthorityError as error:
+        raise ReceiptError(f"{linkage} static function authority differs") from error
+
+
 def rebuild_links(workspace: Path, products: Mapping[str, Path], tools: Mapping[str, Any]) -> dict[str, Any]:
     """Use the existing bounded retained-link parser on each copied receipt."""
     evidence = retained_link_reader
@@ -1157,6 +1285,8 @@ def rebuild_links(workspace: Path, products: Mapping[str, Path], tools: Mapping[
                 workspace, SOURCE_MOUNT, product, workload, executable, receipt, linkage,
                 {"path": native, "sha256": linker["retained"]["sha256"]},
             )
+            if linkage.startswith("static"):
+                validate_static_function_authority(workspace, product, raw, linkage)
             rebuilt[linkage] = project_link_product(linkage, product, local)
         except Exception as error:
             raise ReceiptError(f"{linkage} sealed link cannot be reconstructed") from error

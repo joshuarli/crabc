@@ -159,8 +159,16 @@ rehashes product trees, manifests, materialization state, object/dependency
 records, and raw streams; reconstructs every retained
 archive/shared/final `readelf` symbol row from the actual ELF or ar bytes;
 cross-checks every selected archive/static-final `nm` provider address,
-binding, and archive-member domain against those reconstructed rows;
-uses the existing bounded retained-link parser on all four copied links; and
+binding, and archive-member domain against those reconstructed rows; uses the
+existing bounded retained-link parser on all four copied links; and for the
+two static links re-derives every traced object/member from copied product
+bytes before joining `main`, `_start`, seven global providers, and nine weak
+providers to their fully relocated final ELF bytes. That last finite map and
+relocation proof is the byte-identical reviewed
+`compat/x86_64/owned_static_link_authority.py` extraction from commit
+`4847fff0284b515baac336f572edd1b1e1bf544d` (SHA-256
+`bbb8e460abfd44a50850f2fe4f5e7395db1a7ee8391f5be5f18d26a36a21d475`);
+the utmpx reader admits its exact source byte in the collector roster. It then
 derives the eight-alias component projection itself.
 The projection explicitly remains component complete only; family completion,
 runtime qualification, and public support remain false.

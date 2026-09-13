@@ -81,10 +81,60 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
                 for symbol in (*receipt.STRONG, *receipt.WEAK)
             ).encode())
 
+    @staticmethod
+    def archive(members: dict[str, bytes]) -> bytes:
+        value = bytearray(b"!<arch>\n")
+        for name, body in members.items():
+            header = f"{name + '/':<16}{0:<12}{0:<6}{0:<6}{0:<8}{len(body):<10}`\n".encode("ascii")
+            assert len(header) == 60
+            value.extend(header)
+            value.extend(body)
+            if len(body) % 2:
+                value.extend(b"\n")
+        return bytes(value)
+
+    def static_trace_fixture(self) -> tuple[Path, Path]:
+        product = self.workspace / ".work/utmpx-receipt/inputs/static"
+        library = product / "usr/lib"
+        raw = self.workspace / ".work/utmpx-receipt/owned-utmpx-receipt"
+        for name in ("crt1.o", "crti.o", "crtn.o"):
+            self.write(library / name, b"retained " + name.encode("ascii"))
+        self.write(library / "libc.a", self.archive({"owned.o": b"selected libc member"}))
+        self.write(library / "libcrabc-builtins.a", self.archive({"builtins.o": b"selected builtins member"}))
+        self.write(raw / "workload.o", b"retained workload")
+        static = receipt.SOURCE_MOUNT + "/.work/utmpx-receipt/inputs/static/usr/lib"
+        workload = receipt.SOURCE_MOUNT + "/.work/utmpx-receipt/owned-utmpx-receipt/workload.o"
+        trace = raw / "static-static.receipt.trace"
+        trace.write_text("\n".join((
+            static + "/crt1.o", static + "/crti.o", workload,
+            static + "/libc.a(owned.o)", static + "/libcrabc-builtins.a(builtins.o)",
+            static + "/crtn.o",
+        )) + "\n", encoding="utf-8")
+        return product, raw
+
     def test_static_symbol_receipt_names_follow_the_existing_runner_modes(self) -> None:
         self.assertEqual(receipt.STATIC_EXECUTABLE_SYMBOLS, (
             ("static", "static-symbols.txt"), ("static-pie", "static-pie-symbols.txt"),
         ))
+
+    def test_static_trace_members_are_rederived_from_retained_archives(self) -> None:
+        product, raw = self.static_trace_fixture()
+        admitted, workload, crt, archive = receipt.retained_static_admitted_inputs(
+            self.workspace, product, raw, "static"
+        )
+        self.assertEqual(admitted[archive + "(owned.o)"], b"selected libc member")
+        self.assertEqual(admitted[workload], raw / "workload.o")
+        self.assertEqual(crt, receipt.SOURCE_MOUNT + "/.work/utmpx-receipt/inputs/static/usr/lib/crt1.o")
+        trace = raw / "static-static.receipt.trace"
+        trace.write_text(trace.read_text(encoding="utf-8").replace("libc.a(owned.o)", "libc.a/owned.o"),
+                         encoding="utf-8")
+        with self.assertRaisesRegex(receipt.ReceiptError, "unowned archive member"):
+            receipt.retained_static_admitted_inputs(self.workspace, product, raw, "static")
+
+    def test_shared_static_authority_is_the_reviewed_extraction(self) -> None:
+        self.assertEqual(receipt.STATIC_LINK_AUTHORITY_COMMIT, "4847fff0284b515baac336f572edd1b1e1bf544d")
+        self.assertEqual(receipt.digest(ROOT / "compat/x86_64/owned_static_link_authority.py"),
+                         receipt.STATIC_LINK_AUTHORITY_SHA256)
 
     def test_retained_runtime_files_follow_the_runner_scenario_rows(self) -> None:
         self.assertEqual(receipt.RUNNER_STREAM_FILES, (
