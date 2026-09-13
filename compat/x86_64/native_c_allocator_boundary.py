@@ -572,38 +572,49 @@ def _replay_link(work: Path, output: Path, product: Path, workload: Path, execut
     return item
 
 
+def _startup_workload(work: Path) -> Path:
+    return physical_file(work / "workload.o", "startup same-object workload")
+
+
 def _startup_observations(work: Path, output: Path, static_product: Path, dynamic_product: Path,
                           *, validate_links: bool = True) -> dict[str, object]:
     captures = {stem: _stream(work, output, stem) for stem in ("oracle-dynamic", "oracle-static", *[f"static-{mode}" for mode in STATIC_MODES], *[f"dynamic-{mode}-{entry}" for mode in DYNAMIC_MODES for entry in ENTRIES])}
     for stem in captures:
         require((work / f"{stem}.stdout").read_bytes() == b"" and (work / f"{stem}.stderr").read_bytes() == b"",
                 f"startup runner {stem} emitted a diagnostic")
+    oracle_artifacts = {name: identity(work / filename, logical_path=(work / filename).relative_to(output).as_posix())
+                       for name, filename in (("dynamic", "oracle-dynamic"), ("static", "oracle-static"))}
+    workload = _startup_workload(work)
+    workload_artifacts = {name: identity(work / filename, logical_path=(work / filename).relative_to(output).as_posix())
+                          for name, filename in (("object", "workload.o"), ("header", "workload.header"),
+                                                 ("relocations", "workload.relocations"))}
     links: dict[str, object] = {}
     if validate_links:
-        probe = ROOT / "compat/x86_64/owned_mimalloc_startup_errno_probe.c"
-        links = {mode: _link(work, output, static_product, probe, f"static-{mode}", f"static-{mode}.crabc-link.json", mode) for mode in STATIC_MODES}
-        links.update({"dynamic-" + mode: _link(work, output, dynamic_product, probe, f"dynamic-{mode}", f"dynamic-{mode}.crabc-link.json", mode) for mode in DYNAMIC_MODES})
+        links = {mode: _link(work, output, static_product, workload, f"static-{mode}", f"static-{mode}.crabc-link.json", mode) for mode in STATIC_MODES}
+        links.update({"dynamic-" + mode: _link(work, output, dynamic_product, workload, f"dynamic-{mode}", f"dynamic-{mode}.crabc-link.json", mode) for mode in DYNAMIC_MODES})
     symbols = physical_file(work / "dynamic-symbols.txt", "startup lifecycle symbols").read_text(encoding="utf-8")
     for name in ("__crabc_x86_owned_mimalloc_process_initializer", "__crabc_x86_owned_mimalloc_process_finalizer"):
         require(len(re.findall(rf"^\S+\s+d\s+{re.escape(name)}$", symbols, re.MULTILINE)) == 1,
                 f"startup lifecycle symbol {name} is not one local-data entry")
     require("mi_process_attach" not in symbols and "mi_process_detach" not in symbols,
             "shared C backend retained implicit lifecycle hooks")
-    return {"captures": captures, "links": links, "symbols": identity(work / "dynamic-symbols.txt", logical_path=(work / "dynamic-symbols.txt").relative_to(output).as_posix())}
+    return {"captures": captures, "oracle": oracle_artifacts, "workload": workload_artifacts, "links": links,
+            "symbols": identity(work / "dynamic-symbols.txt", logical_path=(work / "dynamic-symbols.txt").relative_to(output).as_posix())}
 
 
 def _replay_startup_observations(work: Path, output: Path, static_product: Path, dynamic_product: Path,
                                  observed: object) -> dict[str, object]:
     current = _startup_observations(work, output, static_product, dynamic_product, validate_links=False)
-    record = exact(observed, {"captures", "links", "symbols"}, "startup observation")
-    require(same(record["captures"], current["captures"]) and same(record["symbols"], current["symbols"]),
-            "startup raw observations drifted")
-    probe = ROOT / "compat/x86_64/owned_mimalloc_startup_errno_probe.c"
+    record = exact(observed, {"captures", "oracle", "workload", "links", "symbols"}, "startup observation")
+    require(same(record["captures"], current["captures"]) and same(record["oracle"], current["oracle"])
+            and same(record["workload"], current["workload"])
+            and same(record["symbols"], current["symbols"]), "startup raw observations drifted")
+    workload = _startup_workload(work)
     links = exact(record["links"], {*STATIC_MODES, *(f"dynamic-{mode}" for mode in DYNAMIC_MODES)}, "startup link roster")
     for mode in STATIC_MODES:
-        _replay_link(work, output, static_product, probe, f"static-{mode}", f"static-{mode}.crabc-link.json", mode, links[mode])
+        _replay_link(work, output, static_product, workload, f"static-{mode}", f"static-{mode}.crabc-link.json", mode, links[mode])
     for mode in DYNAMIC_MODES:
-        _replay_link(work, output, dynamic_product, probe, f"dynamic-{mode}", f"dynamic-{mode}.crabc-link.json", mode, links[f"dynamic-{mode}"])
+        _replay_link(work, output, dynamic_product, workload, f"dynamic-{mode}", f"dynamic-{mode}.crabc-link.json", mode, links[f"dynamic-{mode}"])
     return record
 
 

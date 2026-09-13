@@ -31,6 +31,15 @@ class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
             self.assertIn(f'"$work/candidate-$mode.crabc-link.json"', runner)
         self.assertIn('"$installed/bin/crabc-cc-dynamic" "$candidate_mode" --link-receipt', runner)
 
+    def test_startup_observation_binds_the_runner_owned_same_object(self) -> None:
+        scratch = ROOT / ".work/x86_64/native-c-allocator-boundary-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work = Path(temporary)
+            workload = work / "workload.o"
+            workload.write_bytes(b"ELF fixture")
+            self.assertEqual(BOUNDARY._startup_workload(work), workload)
+
     def test_link_receipt_reader_keeps_the_real_workload_separate_from_its_output(self) -> None:
         scratch = ROOT / ".work/x86_64/native-c-allocator-boundary-tests"
         scratch.mkdir(parents=True, exist_ok=True)

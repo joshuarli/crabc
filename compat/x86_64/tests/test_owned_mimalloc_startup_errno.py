@@ -29,6 +29,8 @@ class OwnedMimallocStartupErrnoTests(unittest.TestCase):
         self.assertIn('"$provided_dynamic/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin', runner)
         self.assertIn('"$work/workload.o" -o "$candidate"', runner)
         self.assertNotIn('"$PROBE" -o "$candidate"', runner)
+        self.assertIn('readelf -hW "$work/workload.o" >"$work/workload.header"', runner)
+        self.assertIn('readelf -rW "$work/workload.o" >"$work/workload.relocations"', runner)
 
 
 if __name__ == "__main__":

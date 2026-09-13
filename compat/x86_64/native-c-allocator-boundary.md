@@ -36,7 +36,14 @@ The collector runs only two existing installed-product workloads:
 - `run_owned_mimalloc_startup_errno.sh --static-sysroot STATIC DYNAMIC` keeps
   static ET_EXEC/static PIE and dynamic PIE/non-PIE kernel/direct entries. The
   retained link receipts prove the exact product and CRT inputs; the probe
-  checks preinit, user constructor, main allocation and final errno.
+  checks preinit, user constructor, main allocation and final errno. Its one
+  installed-header `workload.o` is the exact link input for every candidate
+  static/static-PIE and dynamic mode. The two musl startup executables retain
+  their own identities: their source intentionally defines
+  `CRABC_MIMALLOC_STARTUP_ERRNO_ORACLE` so pinned musl explicitly invokes the
+  callbacks it does not dispatch from this fixture's preinit array. This is a
+  behavioral oracle comparison, not a false same-object claim for that
+  macro-specific oracle path.
 - `run_owned_c_allocation_interposition.sh DYNAMIC` reuses one installed-header
   object against musl and candidate PIE/non-PIE kernel/direct roots. It checks
   `asprintf`, passwd cleanup, and AIO list state against executable

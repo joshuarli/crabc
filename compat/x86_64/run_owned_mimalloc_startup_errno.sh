@@ -142,6 +142,8 @@ fi
 # that same object across both static and dynamic lifecycle link modes.
 "$provided_dynamic/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
     -c "$PROBE" -o "$work/workload.o"
+readelf -hW "$work/workload.o" >"$work/workload.header"
+readelf -rW "$work/workload.o" >"$work/workload.relocations"
 
 if [ -n "$provided_static" ]; then
     for mode in static static-pie; do
