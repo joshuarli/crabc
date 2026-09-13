@@ -2785,6 +2785,25 @@ impl MainStaticProcessPageSession {
     #[inline]
     pub(crate) const fn thread_sequence(&self) -> usize { 0 }
 
+    /// Copies the ticket-zero TLD NUMA value that source
+    /// `mi_arenas_page_alloc_fresh_area` passes into its arena search.
+    ///
+    /// This must read the stored TLD field rather than re-run the process
+    /// policy's topology helper: the source search is tied to the already
+    /// initialized requesting Theap. A missing current TLD is terminal for
+    /// this permanent session, not permission to substitute an ambient node.
+    pub(crate) fn current_tld_numa_node(&self) -> Option<i32> {
+        if !self.is_current() {
+            self.latch();
+            return None;
+        }
+        let node = self.theap().tld_numa_node();
+        if node.is_none() {
+            self.latch();
+        }
+        node
+    }
+
     /// Returns a permanently valid shared-main Heap lease.
     ///
     /// The session's irreversible storage claim makes this lifetime honest:

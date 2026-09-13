@@ -1933,6 +1933,33 @@ exact client free. It does not compare a raw host-node identity, qualify
 hardware multi-node placement or huge pages, or expand the first-arena route
 into general lifecycle parity.
 
+The separate source-start regular-arena differential is available through:
+
+```sh
+./compat/allocator/run-x86_64.sh allocator-startup-regular-arena
+```
+
+It direct-includes pinned release `src/init.c` and links the ordinary
+`src/arena.c` first-allocation route against one ordinary Rust runtime
+dependency. Four fresh process images compare 28 scalar values: a published
+64-MiB regular parent is reused before any lazy mapping; a rejected 1-KiB
+startup option and an absent option use the prior 128-MiB lazy fallback; and
+`disallow_arena_alloc=1` retains a published parent while taking direct OS
+allocation. The receipt records the complete C source roster, the full Rust
+allocator input tree, the exact locked integration invocation, and matching
+before/after candidate snapshots. Its reader contract can be checked without
+running a native oracle:
+
+```sh
+./compat/allocator/run-x86_64.sh allocator-startup-regular-arena --reader-tests
+```
+
+This is only one initial, sole, committed regular-parent capability. It does
+not admit a huge or multi-arena source image, metadata backing/publication,
+arena destruction, dynamic/later-TLD routing, general arena search, physical
+NUMA placement, hardware huge-page success, public `mi_*` behavior, or x86
+runtime qualification.
+
 Each newly produced focused receipt seals the candidate source before and
 after the C/Rust run: clean Git revision/root-tree state, the complete
 `crabc-mimalloc` tree object, and SHA-256 plus Git-blob identities for the

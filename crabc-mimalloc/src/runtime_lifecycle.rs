@@ -4242,6 +4242,11 @@ pub struct NativeRuntimeLifecycleAudit {
     pub page_owner_ready: usize,
     pub process_backing_first_arena_begin_count: usize,
     pub process_backing_vm_reservation_count: usize,
+    /// Source-start `mimalloc_reserve_os_memory` result retained before the
+    /// first ticket-zero request: zero means absent, one means published, and
+    /// two means the source attempted the reservation but continued after its
+    /// ignored failure. This default-off scalar never exposes its mapping.
+    pub startup_regular_reservation_outcome: usize,
     pub vm_policy_arena_reserve_bytes: usize,
     pub vm_policy_arena_eager_commit: i64,
     pub vm_policy_allow_large_os_pages: usize,
@@ -5082,8 +5087,35 @@ pub fn native_runtime_lifecycle_test_audit() -> Option<NativeRuntimeLifecycleAud
     // separate global state.
     let process_backing = ready.process_backing().ok()?;
     let vm_policy = process_backing.process().policy();
-    let arena = ProcessSharedArenaStorage::global().ready_lease().ok()?;
-    let process_arena = arena.arena().ok()?;
+    let startup_regular_reservation_outcome = match ready.startup_reservation_outcomes().ok()?.regular {
+        None => 0,
+        Some(Ok(())) => 1,
+        Some(Err(_)) => 2,
+    };
+    // The historical lazy sidecar remains the audit source only when it was
+    // actually selected.  A successful source-start regular reservation is
+    // owned by `ProcessArenaBacking` instead and must not be hidden merely
+    // because this older sidecar remains cold.
+    let (process_arena, arena_registry_count) = match ProcessSharedArenaStorage::global()
+        .ready_lease()
+    {
+        Ok(arena) => (arena.arena().ok()?, arena.test_registry_count().ok()?),
+        Err(_) => match process_backing.startup_regular_arena_selection() {
+            crate::process_init::ProcessStartupRegularArenaSelection::Eligible(lease) => {
+                let arena = lease.arena()?;
+                let count = process_backing
+                    .process()
+                    .subprocess()
+                    .arena_backing()
+                    .registry()
+                    .count();
+                (arena, count)
+            }
+            crate::process_init::ProcessStartupRegularArenaSelection::Absent
+            | crate::process_init::ProcessStartupRegularArenaSelection::ExistingOutsideFirstRegularCapability
+            | crate::process_init::ProcessStartupRegularArenaSelection::Retained => return None,
+        },
+    };
     let subprocess = ready.subprocess().ok()?;
     // SAFETY: see the owner access above. The copied lease permits one short
     // serialized read-only Heap projection and carries no allocator authority.
@@ -5107,6 +5139,7 @@ pub fn native_runtime_lifecycle_test_audit() -> Option<NativeRuntimeLifecycleAud
         )),
         process_backing_first_arena_begin_count,
         process_backing_vm_reservation_count,
+        startup_regular_reservation_outcome,
         vm_policy_arena_reserve_bytes: vm_policy.arena_reserve_bytes(),
         vm_policy_arena_eager_commit: vm_policy.arena_eager_commit(),
         vm_policy_allow_large_os_pages: usize::from(vm_policy.allow_large_os_pages()),
@@ -5127,7 +5160,7 @@ pub fn native_runtime_lifecycle_test_audit() -> Option<NativeRuntimeLifecycleAud
         page_map_registered_entry_count: page_map.test_registered_entry_count().ok()?,
         page_map_published_submap_count: page_map.test_published_submap_count().ok()?,
         page_map_lazy_submap_allocation_count: page_map.test_lazy_submap_allocation_count(),
-        arena_registry_count: arena.test_registry_count().ok()?,
+        arena_registry_count,
         live_thread_count: subprocess.live_thread_count(),
         metadata_live_capability_count: metadata.live_capability_count,
         metadata_high_water_capability_count: metadata.high_water_capability_count,
@@ -5195,6 +5228,49 @@ pub unsafe fn native_runtime_live_client_page_test_audit(
         arena_slice_count,
         registered_slice_count: registered_size / ARENA_SLICE_SIZE,
     })
+}
+
+/// Reports whether one exact live native client belongs to the source-start
+/// regular parent retained by the current process binding.
+///
+/// This default-off diagnostic returns only a boolean. It exposes neither an
+/// arena address nor a reusable allocation/map capability, and it does not
+/// search, claim, or alter the source registry.
+///
+/// # Safety
+///
+/// `client` must name one current native allocation for the whole call. No
+/// participating thread may mutate its PageMap entry, ordinary page fields,
+/// arena membership, or allocator ownership while this audit reads them. The
+/// caller must therefore sample at the same quiescent live-client boundary as
+/// [`native_runtime_live_client_page_test_audit`], with no concurrent free,
+/// reassociation, collection, or arena release.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub unsafe fn native_runtime_live_client_uses_startup_regular_arena_test_audit(
+    client: core::ptr::NonNull<u8>,
+) -> Option<bool> {
+    // SAFETY: the caller supplies the same exact-live-client and quiescent
+    // PageMap facts documented above; the owner access only copies immutable
+    // process-ready witnesses.
+    let owner = unsafe { RUNTIME_PROCESS.active_owner() }?;
+    let ready = owner.ready().ok()?;
+    let binding = ready.process_backing().ok()?;
+    let lease = match binding.startup_regular_arena_selection() {
+        crate::process_init::ProcessStartupRegularArenaSelection::Eligible(lease) => lease,
+        crate::process_init::ProcessStartupRegularArenaSelection::Absent
+        | crate::process_init::ProcessStartupRegularArenaSelection::ExistingOutsideFirstRegularCapability
+        | crate::process_init::ProcessStartupRegularArenaSelection::Retained => return None,
+    };
+    let startup_arena = lease.arena()?;
+    let page_map = RUNTIME_PROCESS.page_map_for_live_native_allocation()?;
+    // SAFETY: the caller's exact-live allocation proof keeps the selected
+    // PageMap entry and page metadata live while this immutable identity is
+    // copied; no pointer is returned from this diagnostic.
+    let page = unsafe { page_map.lookup_page_for_live_client(client) }.ok()??;
+    // SAFETY: the same client lifetime keeps its arena provenance immutable.
+    let memory = unsafe { page.as_ref() }.memid().arena_memory()?;
+    Some(memory.arena == core::ptr::from_ref(startup_arena.arena()).cast_mut())
 }
 
 /// Counts the current PageMap entries in one previously captured source span.

@@ -5686,6 +5686,17 @@ impl Theap {
         self.matches_owner(TheapOwner::Live(thread_id))
     }
 
+    /// Copies the NUMA node already stored in this initialized Theap's exact
+    /// source TLD.  This is an observation only: it does not re-run the OS
+    /// NUMA policy or expose the TLD pointer to a caller.
+    #[inline]
+    pub(crate) fn tld_numa_node(&self) -> Option<i32> {
+        // SAFETY: every initialized Theap constructor retains its matched
+        // ThreadLocalData for the Theap lifetime; callers separately prove
+        // the current static-owner relation before observing this field.
+        Some(unsafe { self.tld.as_ref()? }.numa_node())
+    }
+
     #[inline]
     fn matches_owner(&self, owner: TheapOwner) -> bool {
         // The only constructors use `DETACHED_THREAD_LOCAL` or a pinned

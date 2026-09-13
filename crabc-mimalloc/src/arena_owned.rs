@@ -45,6 +45,26 @@ pub(crate) enum ArenaPageCommitError {
     Mapping(Errno),
 }
 
+/// Admission result for the one supported source-start regular arena bridge.
+///
+/// Pinned `mi_reserve_os_memory` can publish several arena forms before the
+/// first ordinary allocation.  The ticket-zero bridge deliberately admits
+/// only one committed, non-pinned regular parent as the sole registry member.
+/// A nonempty source registry outside that finite shape must not be mistaken
+/// for an absent option and silently redirected to the older one-arena
+/// sidecar; later multi-arena/huge ownership remains a separate boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum FirstRegularStartupArenaSelection {
+    /// Source startup published no arena, so ordinary first-page fallback may
+    /// take its existing source-shaped fresh reservation route.
+    Absent,
+    /// The sole source-published regular parent is eligible for ticket zero.
+    Eligible(ArenaId),
+    /// Source already published an arena outside this bridge's finite regular
+    /// capability.  Callers must retain/refuse rather than fabricate fallback.
+    ExistingOutsideFirstRegularCapability,
+}
+
 struct ArenaAllocationSlot {
     state: AtomicU8,
     value: UnsafeCell<MaybeUninit<OwnedArenaAllocation>>,
@@ -486,6 +506,88 @@ impl ProcessArenaBacking {
     ) -> Result<bool, Errno> {
         let _guard = self.reserve_lock.lock()?;
         Ok(self.binding_matches_locked(process, config))
+    }
+
+    /// Validates the exact source-start regular parent retained by process
+    /// initialization before a ticket-zero page owner may search it.
+    ///
+    /// This does not search or claim a slice.  It establishes only the finite
+    /// bridge shape: the `mimalloc_reserve_os_memory` success ID names the
+    /// one registry-published, committed, ordinary OS parent bound to this
+    /// process/configuration.  The later [`Self::try_find_free`] call still
+    /// performs the pinned source NUMA/suitability/bitmap search and owns
+    /// commitment accounting for its actual claim.
+    pub(crate) fn first_regular_startup_arena_selection(
+        &self,
+        process: VmProcess<'static>,
+        config: MemoryConfig,
+        startup_arena: Option<ArenaId>,
+    ) -> FirstRegularStartupArenaSelection {
+        let Ok(_guard) = self.reserve_lock.lock() else {
+            return FirstRegularStartupArenaSelection::ExistingOutsideFirstRegularCapability;
+        };
+        if !self.binding_matches_locked(process, config) {
+            return FirstRegularStartupArenaSelection::ExistingOutsideFirstRegularCapability;
+        }
+        let count = self.registry.count();
+        let Some(startup_arena) = startup_arena else {
+            return if count == 0 {
+                FirstRegularStartupArenaSelection::Absent
+            } else {
+                FirstRegularStartupArenaSelection::ExistingOutsideFirstRegularCapability
+            };
+        };
+        if count != 1 || !self.registry.is_bound_to_subprocess(process.subprocess().as_ptr()) {
+            return FirstRegularStartupArenaSelection::ExistingOutsideFirstRegularCapability;
+        }
+        // SAFETY: the reserve lock excludes an initializing publisher while
+        // the one source registry slot is inspected; published arena storage
+        // remains process-lived by this backing contract.
+        let Some(arena) = (unsafe { self.registry.arena_at(0) }) else {
+            return FirstRegularStartupArenaSelection::ExistingOutsideFirstRegularCapability;
+        };
+        if !core::ptr::eq(core::ptr::from_ref(arena).cast_mut(), startup_arena.as_ptr())
+            || !arena.parent.is_null()
+            || arena.memid.kind() != MemoryKind::Os
+            || arena.memid.is_pinned()
+            || !arena.memid.initially_committed()
+        {
+            return FirstRegularStartupArenaSelection::ExistingOutsideFirstRegularCapability;
+        }
+        let Some(memory) = arena.memid.os_memory() else {
+            return FirstRegularStartupArenaSelection::ExistingOutsideFirstRegularCapability;
+        };
+        let Some(owner) = self.published_allocation(memory.base, memory.size) else {
+            return FirstRegularStartupArenaSelection::ExistingOutsideFirstRegularCapability;
+        };
+        if !matches!(owner.allocation, ArenaBacking::Regular(_))
+            || !core::ptr::eq(owner.process.policy(), process.policy())
+            || !core::ptr::eq(owner.process.subprocess(), process.subprocess())
+            || owner.config != config
+        {
+            return FirstRegularStartupArenaSelection::ExistingOutsideFirstRegularCapability;
+        }
+        FirstRegularStartupArenaSelection::Eligible(startup_arena)
+    }
+
+    /// Reforms a view only after [`Self::first_regular_startup_arena_selection`]
+    /// has repeated its stable process/registry/owner admission checks.
+    pub(crate) fn first_regular_startup_arena_view(
+        &self,
+        process: VmProcess<'static>,
+        config: MemoryConfig,
+        startup_arena: ArenaId,
+    ) -> Option<super::ArenaView<'static>> {
+        match self.first_regular_startup_arena_selection(process, config, Some(startup_arena)) {
+            FirstRegularStartupArenaSelection::Eligible(arena) if arena == startup_arena => {
+                // SAFETY: the preceding locked admission proves this exact
+                // registry-published parent and its process-lifetime owner.
+                unsafe { super::ArenaView::from_ptr(arena.as_ptr()) }
+            }
+            FirstRegularStartupArenaSelection::Absent
+            | FirstRegularStartupArenaSelection::Eligible(_)
+            | FirstRegularStartupArenaSelection::ExistingOutsideFirstRegularCapability => None,
+        }
     }
 
     /// Checks every stable owner while reserve_lock excludes mutation.
