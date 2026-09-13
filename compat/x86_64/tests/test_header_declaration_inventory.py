@@ -333,8 +333,24 @@ class HeaderDeclarationInventoryTests(unittest.TestCase):
         fake_tool.write_text("fixture compiler bytes\n", encoding="utf-8")
         marker_musl = staging / "musl-marker"
         marker_uapi = staging / "uapi-marker"
-        marker_musl.write_text("musl pin\n", encoding="utf-8")
-        marker_uapi.write_text("uapi pin\n", encoding="utf-8")
+        marker_musl.write_text(
+            "format=crabc-pinned-musl-oracle-v1\n"
+            "version=1.2.6\n"
+            "source_sha256=d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a\n"
+            "fallback_revision=9fa28ece75d8a2191de7c5bb53bed224c5947417\n"
+            "architecture=x86_64\n",
+            encoding="utf-8",
+        )
+        marker_uapi.write_text(
+            "format=crabc-linux-uapi-v1\n"
+            "version=5.10\n"
+            "source_sha256=dcdf99e43e98330d925016985bfbc7b83c66d367b714b2de0cbbfcbf83d8ca43\n"
+            "architecture=x86_64\n"
+            "install_arch=x86\n"
+            "header_count=935\n"
+            "header_manifest_sha256=00cdc98ceb35926f68dc57dc0d84a989a6df4f60f84b1ae5981b54bb1088eb0e\n",
+            encoding="utf-8",
+        )
         def snapshot(source: Path, relative: str, original: str):
             return INVENTORY.snapshot_regular_file(output, source, relative, original)
         def text_artifact(relative: str, value: str):
@@ -701,6 +717,82 @@ class HeaderDeclarationInventoryTests(unittest.TestCase):
         with patch.object(INVENTORY.subprocess, "run", side_effect=AssertionError("host replay ran compiler")), patch.object(
             INVENTORY, "selection_source_snapshot", return_value=(selection, object(), ["demo.h"], ["demo.h"])
         ), self.assertRaisesRegex(INVENTORY.HeaderDeclarationInventoryError, "exactly one retained probe"):
+            INVENTORY.validate_report(report_path)
+
+    def test_host_replay_rejects_self_consistent_fabricated_oracle_markers(self) -> None:
+        """Hashes alone cannot promote arbitrary retained markers into either frozen pin."""
+        for label, expected in (
+            ("pinned-musl", "pinned musl provenance marker"),
+            ("linux-uapi", "Linux UAPI provenance marker"),
+        ):
+            with self.subTest(label=label):
+                output, selection = self._host_replay_fixture()
+                report_path = output / "report.json"
+                report = INVENTORY.load_json_object(report_path, "fixture report")
+                marker = report["inputs"]["oracle_markers"][label]
+                retained_path = output / marker["retained"]["path"]
+                retained_path.write_text("format=fabricated-marker-v1\n", encoding="utf-8")
+                digest = INVENTORY.sha256_file(retained_path)
+                size = retained_path.stat().st_size
+                for identity_name in ("before", "after"):
+                    marker[identity_name]["sha256"] = digest
+                    marker[identity_name]["size"] = size
+                marker["retained"]["sha256"] = digest
+                marker["retained"]["size"] = size
+                INVENTORY.write_json(report_path, report)
+                with patch.object(INVENTORY.subprocess, "run", side_effect=AssertionError("host replay ran compiler")), patch.object(
+                    INVENTORY, "selection_source_snapshot", return_value=(selection, object(), ["demo.h"], ["demo.h"])
+                ), self.assertRaisesRegex(INVENTORY.HeaderDeclarationInventoryError, expected):
+                    INVENTORY.validate_report(report_path)
+
+    def test_host_replay_rejects_self_consistent_duplicate_or_nonfinite_raw_ast_json(self) -> None:
+        """Raw compiler JSON must retain object and numeric syntax, not Python's lossy parse."""
+        for mutation, expected in (
+            (
+                lambda text: '{"kind":"fabricated",' + text.lstrip()[1:],
+                "duplicate JSON key",
+            ),
+            (
+                lambda text: text.rstrip()[:-1] + ',"fabricated_nonfinite":NaN}\n',
+                "nonfinite JSON constant",
+            ),
+            (
+                lambda text: text.rstrip()[:-1] + ',"fabricated_overflow":1e9999}\n',
+                "nonfinite JSON number",
+            ),
+            (
+                lambda text: text.rstrip()[:-1] + ',"fabricated_overflow":-1e9999}\n',
+                "nonfinite JSON number",
+            ),
+        ):
+            with self.subTest(expected=expected):
+                output, selection = self._host_replay_fixture()
+                report_path = output / "report.json"
+                report = INVENTORY.load_json_object(report_path, "fixture report")
+                descriptor = report["jobs"][0]["artifacts"]["ast_stdout"]
+                raw_path = output / descriptor["path"]
+                raw_path.write_text(mutation(raw_path.read_text(encoding="utf-8")), encoding="utf-8")
+                descriptor["sha256"] = INVENTORY.sha256_file(raw_path)
+                descriptor["size"] = raw_path.stat().st_size
+                INVENTORY.write_json(report_path, report)
+                with patch.object(INVENTORY.subprocess, "run", side_effect=AssertionError("host replay ran compiler")), patch.object(
+                    INVENTORY, "selection_source_snapshot", return_value=(selection, object(), ["demo.h"], ["demo.h"])
+                ), self.assertRaisesRegex(INVENTORY.HeaderDeclarationInventoryError, expected):
+                    INVENTORY.validate_report(report_path)
+
+    def test_host_replay_rejects_duplicate_report_json_keys(self) -> None:
+        """A repeated envelope key cannot be accepted just because its final value is valid."""
+        output, selection = self._host_replay_fixture()
+        report_path = output / "report.json"
+        report_text = report_path.read_text(encoding="utf-8")
+        self.assertTrue(report_text.startswith("{\n"))
+        report_path.write_text(
+            '{\n  "schema": "fabricated",\n' + report_text[2:],
+            encoding="utf-8",
+        )
+        with patch.object(INVENTORY.subprocess, "run", side_effect=AssertionError("host replay ran compiler")), patch.object(
+            INVENTORY, "selection_source_snapshot", return_value=(selection, object(), ["demo.h"], ["demo.h"])
+        ), self.assertRaisesRegex(INVENTORY.HeaderDeclarationInventoryError, "duplicate JSON key"):
             INVENTORY.validate_report(report_path)
 
     def test_validate_report_cli_emits_historical_source_status_and_rejects_collect_options(self) -> None:

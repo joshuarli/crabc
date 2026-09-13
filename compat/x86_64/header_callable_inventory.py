@@ -58,6 +58,22 @@ MUSL_SOURCE_SHA256 = "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f824
 LINUX_UAPI_VERSION = "5.10"
 LINUX_UAPI_SOURCE_SHA256 = "dcdf99e43e98330d925016985bfbc7b83c66d367b714b2de0cbbfcbf83d8ca43"
 LINUX_UAPI_HEADER_MANIFEST_SHA256 = "00cdc98ceb35926f68dc57dc0d84a989a6df4f60f84b1ae5981b54bb1088eb0e"
+MUSL_ORACLE_MARKER = {
+    "format": "crabc-pinned-musl-oracle-v1",
+    "version": MUSL_VERSION,
+    "source_sha256": MUSL_SOURCE_SHA256,
+    "fallback_revision": "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+    "architecture": "x86_64",
+}
+LINUX_UAPI_MARKER = {
+    "format": "crabc-linux-uapi-v1",
+    "version": LINUX_UAPI_VERSION,
+    "source_sha256": LINUX_UAPI_SOURCE_SHA256,
+    "architecture": "x86_64",
+    "install_arch": "x86",
+    "header_count": "935",
+    "header_manifest_sha256": LINUX_UAPI_HEADER_MANIFEST_SHA256,
+}
 
 
 class InventoryError(ValueError):
@@ -280,44 +296,50 @@ def load_static_exports(path: Path) -> list[str]:
     return sorted(exports)
 
 
+def require_provenance_marker_text(
+    text: str,
+    *,
+    expected: Mapping[str, str],
+    label: str,
+) -> None:
+    """Validate an exact frozen marker schema without opening an include root."""
+    observed: dict[str, str] = {}
+    for line in text.splitlines():
+        key, separator, value = line.partition("=")
+        require(separator and key and value, f"{label} provenance marker is malformed")
+        require(key not in observed, f"{label} provenance marker repeats {key}")
+        observed[key] = value
+    require(observed == dict(expected), f"{label} provenance marker does not match the frozen x86 input")
+
+
+def require_pinned_musl_marker_text(text: str) -> None:
+    require_provenance_marker_text(
+        text,
+        expected=MUSL_ORACLE_MARKER,
+        label="pinned musl",
+    )
+
+
+def require_pinned_linux_uapi_marker_text(text: str) -> None:
+    require_provenance_marker_text(
+        text,
+        expected=LINUX_UAPI_MARKER,
+        label="Linux UAPI",
+    )
+
+
 def require_pinned_musl_include(path: Path) -> None:
     require(path.is_dir() and not path.is_symlink(), f"pinned musl include root is unsafe: {path}")
     marker = path.parent / ".crabc-oracle"
     require(marker.is_file() and not marker.is_symlink(), f"pinned musl provenance marker is missing: {marker}")
-    expected = {
-        "format": "crabc-pinned-musl-oracle-v1",
-        "version": MUSL_VERSION,
-        "source_sha256": MUSL_SOURCE_SHA256,
-        "fallback_revision": "9fa28ece75d8a2191de7c5bb53bed224c5947417",
-        "architecture": "x86_64",
-    }
-    observed: dict[str, str] = {}
-    for line in marker.read_text(encoding="utf-8").splitlines():
-        key, separator, value = line.partition("=")
-        require(separator and key and value, "pinned musl provenance marker is malformed")
-        observed[key] = value
-    require(observed == expected, "pinned musl provenance marker does not match the frozen x86 input")
+    require_pinned_musl_marker_text(marker.read_text(encoding="utf-8"))
 
 
 def require_pinned_linux_uapi_include(path: Path) -> None:
     require(path.is_dir() and not path.is_symlink(), f"Linux UAPI include root is unsafe: {path}")
     marker = path.parent / ".crabc-linux-uapi"
     require(marker.is_file() and not marker.is_symlink(), f"Linux UAPI provenance marker is missing: {marker}")
-    expected = {
-        "format": "crabc-linux-uapi-v1",
-        "version": LINUX_UAPI_VERSION,
-        "source_sha256": LINUX_UAPI_SOURCE_SHA256,
-        "architecture": "x86_64",
-        "install_arch": "x86",
-        "header_count": "935",
-        "header_manifest_sha256": LINUX_UAPI_HEADER_MANIFEST_SHA256,
-    }
-    observed: dict[str, str] = {}
-    for line in marker.read_text(encoding="utf-8").splitlines():
-        key, separator, value = line.partition("=")
-        require(separator and key and value, "Linux UAPI provenance marker is malformed")
-        observed[key] = value
-    require(observed == expected, "Linux UAPI provenance marker does not match the frozen x86 input")
+    require_pinned_linux_uapi_marker_text(marker.read_text(encoding="utf-8"))
     for required in ("linux/kd.h", "linux/soundcard.h", "linux/vt.h"):
         require((path / required).is_file(), f"pinned Linux UAPI export lacks {required}")
 

@@ -145,11 +145,50 @@ def write_json(path: Path, value: object) -> None:
     path.write_text(canonical_json(value), encoding="utf-8")
 
 
+def strict_json_loads(text: str, location: str) -> object:
+    """Parse retained JSON without erasing duplicate keys or non-JSON numbers.
+
+    The raw compiler and receipt files are evidence, so Python's permissive
+    ``json.loads`` defaults cannot turn two source keys into one final mapping
+    or silently admit ``NaN``/``Infinity`` or an overflowed finite-grammar
+    literal as an ordinary floating-point value.
+    """
+    def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate JSON key: {key}")
+            result[key] = value
+        return result
+
+    def reject_nonfinite_constant(value: str) -> object:
+        raise ValueError(f"nonfinite JSON constant: {value}")
+
+    def reject_nonfinite_float(value: str) -> float:
+        parsed = float(value)
+        if not math.isfinite(parsed):
+            raise ValueError(f"nonfinite JSON number: {value}")
+        return parsed
+
+    try:
+        return json.loads(
+            text,
+            object_pairs_hook=reject_duplicate_keys,
+            parse_constant=reject_nonfinite_constant,
+            parse_float=reject_nonfinite_float,
+        )
+    except (json.JSONDecodeError, ValueError) as error:
+        raise HeaderDeclarationInventoryError(
+            f"cannot parse {location} as strict JSON: {error}"
+        ) from error
+
+
 def load_json_object(path: Path, location: str) -> dict[str, Any]:
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
+        text = path.read_text(encoding="utf-8")
+    except OSError as error:
         raise HeaderDeclarationInventoryError(f"cannot read {location}: {error}") from error
+    raw = strict_json_loads(text, location)
     require(isinstance(raw, dict), f"{location} must be a JSON object")
     return raw
 
@@ -1365,12 +1404,10 @@ def collect_one_job(
         "summary": derived_summary([], [], []),
     }
     if result.status == "ok":
-        try:
-            ast = json.loads(result.ast_stdout)
-        except json.JSONDecodeError as error:
-            raise HeaderDeclarationInventoryError(
-                f"raw AST is invalid for {tree}:{header}:{profile.identifier}: {error}"
-            ) from error
+        ast = strict_json_loads(
+            result.ast_stdout,
+            f"raw AST for {tree}:{header}:{profile.identifier}",
+        )
         ast = validate_clang_translation_unit(
             ast, f"raw AST for {tree}:{header}:{profile.identifier}"
         )
@@ -1563,9 +1600,10 @@ def descriptor_path(output: Path, descriptor: Mapping[str, Any], location: str) 
 def read_artifact_json(output: Path, descriptor: Mapping[str, Any], location: str) -> object:
     path = descriptor_path(output, descriptor, location)
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
+        text = path.read_text(encoding="utf-8")
+    except OSError as error:
         raise HeaderDeclarationInventoryError(f"cannot read {location}: {error}") from error
+    return strict_json_loads(text, location)
 
 
 def read_artifact_text(output: Path, descriptor: Mapping[str, Any], location: str) -> str:
@@ -1994,6 +2032,25 @@ def retained_resource_include_from_query(
     )
 
 
+def validate_retained_oracle_marker(
+    output: Path,
+    *,
+    label: str,
+    descriptor: Mapping[str, Any],
+) -> None:
+    """Interpret the retained pin marker without reopening its original `/opt` path."""
+    text = read_artifact_text(output, descriptor, f"retained oracle marker {label}")
+    try:
+        if label == "pinned-musl":
+            callable_inventory.require_pinned_musl_marker_text(text)
+        elif label == "linux-uapi":
+            callable_inventory.require_pinned_linux_uapi_marker_text(text)
+        else:
+            raise HeaderDeclarationInventoryError(f"retained oracle marker label is invalid: {label}")
+    except callable_inventory.InventoryError as error:
+        raise HeaderDeclarationInventoryError(str(error)) from error
+
+
 def validate_retained_inputs(output: Path, inputs: Mapping[str, Any]) -> dict[str, Any]:
     expected = {
         "collector",
@@ -2143,6 +2200,7 @@ def validate_retained_inputs(output: Path, inputs: Mapping[str, Any]) -> dict[st
             paths,
             expected_relative=f"inputs/oracle-markers/{label}",
         )
+        validate_retained_oracle_marker(output, label=label, descriptor=retained)
 
     dependencies = inputs["dependency_snapshots"]
     require(isinstance(dependencies, list), "retained dependency snapshots are invalid")
