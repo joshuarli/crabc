@@ -132,3 +132,8 @@ private/import/data/TLS/COMMON rows, unusual GNU display fields, duplicate
 members and sections, and malformed or incomplete joins. Native fixture
 inspection builds only small ELF/archive test inputs; it does not rebuild or
 qualify runtime products, select exports, or change any promotion flag.
+
+The separate [ELF fact supplement](native-abi-elf-facts.md) now binds these
+complete projections to the finite libc/loader/CRT/builtins placement roster.
+It requires a fresh same-current-collector v1 inventory and preserves this v1
+report and its measurement/ratchet meaning.

@@ -201,6 +201,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   perf-native-test  run focused native Rust-facade performance runner tests
   native-abi-inventory {collect|validate-report} ...  collect or replay the native x86 musl/owned ABI measurement inventory
   native-abi-inventory-test  run focused native ABI-inventory parser, replay, and dispatcher tests
+  native-abi-elf-facts {collect|validate-report} ...  inspect or replay complete ELF facts supplementing a current v1 inventory
   native-abi-ratchet {check|validate-report} ...  check or replay the reviewed native x86 public-dynamic ABI floor
   native-abi-ratchet-test  run focused native ABI-ratchet policy and dispatcher tests
   musl-oracle  verify the pinned musl-1.2.6 x86 C/POSIX oracle toolchain
@@ -2975,6 +2976,32 @@ except (OSError, RuntimeError, ValueError) as error:
 PY_NATIVE_ABI_INPUT
 }
 
+prepare_native_abi_elf_facts_arguments() {
+    local base_inventory=''
+    local -a inventory_arguments=()
+    while [ "$#" -gt 0 ]; do
+        if [ "$1" = --base-inventory ]; then
+            [ -z "$base_inventory" ] && [ "$#" -ge 2 ] && [ -n "$2" ] && [[ "$2" != -* ]] || \
+                fail "ELF facts require --base-inventory exactly once with a report path"
+            base_inventory="$2"
+            shift 2
+        else
+            inventory_arguments+=("$1")
+            shift
+        fi
+    done
+    [ -n "$base_inventory" ] || fail "ELF facts require --base-inventory"
+    base_inventory="$(native_abi_inventory_input_path base-inventory "$base_inventory" file)" || exit 2
+    [[ "$base_inventory" != *:* ]] || fail "ELF fact Docker input paths must not contain ':'"
+    [ "${base_inventory##*/}" = report.json ] || fail "ELF fact base inventory must be named report.json"
+    NATIVE_ABI_ELF_FACTS_BASE_ROOT="${base_inventory%/*}"
+    prepare_native_abi_inventory_arguments "${inventory_arguments[@]}"
+    if [ "$NATIVE_ABI_INVENTORY_MODE" = collect ]; then
+        base_inventory=/inputs/base-inventory/report.json
+    fi
+    NATIVE_ABI_ELF_FACTS_ARGUMENTS=("${NATIVE_ABI_INVENTORY_ARGUMENTS[@]}" --base-inventory "$base_inventory")
+}
+
 prepare_native_abi_inventory_arguments() {
     [ "$#" -ge 1 ] || fail "usage: ./scripts/dev-x86_64.sh native-abi-inventory {collect|validate-report} ..."
     local mode="$1"
@@ -3418,6 +3445,28 @@ run_in_native_facade_performance_container() {
         --volume "$NATIVE_FACADE_RUSTYBENCH_SOURCE:/inputs/rustybench:ro" \
         --volume "$NATIVE_FACADE_RUSTIX_SOURCE:/inputs/rustix:ro" \
         "$IMAGE" "$@"
+}
+
+run_in_native_abi_elf_facts_container() {
+    prepare_work_dir
+    local image_id
+    image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+    [ -n "$image_id" ] || fail "cannot resolve native ABI ELF fact image identity"
+    docker run --rm --init \
+        --user "$(id -u):$(id -g)" \
+        "${GIT_METADATA_MOUNT[@]}" \
+        --platform "$PLATFORM" --network none --workdir /workspace \
+        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
+        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env PYTHONDONTWRITEBYTECODE=1 --env GIT_OPTIONAL_LOCKS=0 \
+        --env CRABC_X86_ABI_IMAGE_ID="crabc-core-evidence@$image_id" \
+        --volume "$ROOT_DIR:/workspace" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
+        --volume "$NATIVE_ABI_STATIC_PRODUCT:/inputs/static-product:ro" \
+        --volume "$NATIVE_ABI_DYNAMIC_PRODUCT:/inputs/dynamic-product:ro" \
+        --volume "$NATIVE_ABI_STATIC_PREPARATION:/inputs/static-preparation.json:ro" \
+        --volume "$NATIVE_ABI_ELF_FACTS_BASE_ROOT:/inputs/base-inventory:ro" \
+        "$image_id" "$@"
 }
 
 run_in_native_abi_inventory_container() {
@@ -6434,6 +6483,9 @@ case "$command" in
     native-abi-inventory)
         [ "$#" -ge 1 ] || fail "native-abi-inventory requires collect or validate-report"
         ;;
+    native-abi-elf-facts)
+        [ "$#" -ge 1 ] || fail "native-abi-elf-facts requires collect or validate-report"
+        ;;
     native-abi-inventory-test)
         [ "$#" -eq 0 ] || fail "native-abi-inventory-test takes no arguments"
         ;;
@@ -6708,6 +6760,10 @@ case "$command" in
         prepare_native_abi_inventory_arguments "$@"
         set -- "${NATIVE_ABI_INVENTORY_ARGUMENTS[@]}"
         ;;
+    native-abi-elf-facts)
+        prepare_native_abi_elf_facts_arguments "$@"
+        set -- "${NATIVE_ABI_ELF_FACTS_ARGUMENTS[@]}"
+        ;;
     native-abi-ratchet)
         prepare_native_abi_ratchet_arguments "$@"
         set -- "${NATIVE_ABI_RATCHET_ARGUMENTS[@]}"
@@ -6777,6 +6833,14 @@ case "$command" in
         run_in_network_none_container python3 -B -m unittest \
             compat/x86_64/tests/test_native_abi_inventory.py \
             compat/x86_64/tests/test_native_abi_inventory_dispatcher.py
+        ;;
+    native-abi-elf-facts)
+        if [ "$NATIVE_ABI_INVENTORY_MODE" = validate-report ]; then
+            python3 -B "$ROOT_DIR/compat/x86_64/native_abi_elf_facts.py" "$@"
+        else
+            ensure_image
+            run_in_native_abi_elf_facts_container python3 -B /workspace/compat/x86_64/native_abi_elf_facts.py "$@"
+        fi
         ;;
     native-abi-ratchet)
         # The ratchet first invokes the inventory's public retained-evidence
