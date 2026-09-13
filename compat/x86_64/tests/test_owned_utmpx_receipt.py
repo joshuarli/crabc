@@ -149,6 +149,12 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(receipt.ReceiptError, "escapes copied owned products"):
             receipt.collected_program_source("/workspace/compat/x86_64/run_owned_utmpx.sh", self.workspace)
 
+    def test_final_elf_receipt_labels_follow_the_runner_command_roles(self) -> None:
+        self.assertEqual(receipt.FINAL_ELF_LABELS, {
+            "static": "static-static", "static-pie": "static-static-pie",
+            "pie": "dynamic-pie", "non-pie": "dynamic-non-pie",
+        })
+
     def test_contract_has_exact_eight_selected_aliases(self) -> None:
         self.assertEqual(receipt.ALIASES, (
             ("endutent", "endutxent"), ("setutent", "setutxent"), ("getutent", "getutxent"),
