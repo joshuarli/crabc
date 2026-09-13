@@ -36,6 +36,13 @@ class OwnedStdioAliasContractReaderTests(unittest.TestCase):
 
 
 class SuppliedStdioReceiptTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # Fresh checkouts have no ignored development state. Each test still
+        # receives its own temporary child under this checkout-owned parent.
+        cls.temporary_root = SOURCE_DIR.parents[1] / '.work/x86_64/stdio-alias-development'
+        cls.temporary_root.mkdir(parents=True, exist_ok=True)
+
     def test_real_archive_member_occurrence_and_executable_section_are_required(self):
         import owned_stdio_alias_contract_reader as reader
         left = {'member_index': 1, 'table_section_index': 9, 'row': {'section_index': '3', 'value': '0', 'type': 'FUNC'}, 'section': {'index': 3, 'type': 'PROGBITS', 'flags': 'AX'}}
@@ -59,7 +66,7 @@ class SuppliedStdioReceiptTests(unittest.TestCase):
     def test_output_cannot_be_created_inside_supplied_product_or_cohort(self):
         import tempfile
         import owned_stdio_alias_contract_reader as reader
-        with tempfile.TemporaryDirectory(dir=SOURCE_DIR.parents[1] / '.work/x86_64/stdio-alias-development') as temporary:
+        with tempfile.TemporaryDirectory(dir=self.temporary_root) as temporary:
             root = Path(temporary); (root / '.work/inputs/product').mkdir(parents=True)
             inputs = root / '.work/inputs'
             with self.assertRaises(reader.StdioAliasEvidenceError):
@@ -164,7 +171,7 @@ class SuppliedStdioReceiptTests(unittest.TestCase):
         import tempfile,json
         from unittest.mock import patch,Mock
         import owned_stdio_alias_contract_reader as reader
-        with tempfile.TemporaryDirectory(dir=SOURCE_DIR.parents[1] / '.work/x86_64/stdio-alias-development') as temporary:
+        with tempfile.TemporaryDirectory(dir=self.temporary_root) as temporary:
             root=Path(temporary); work=root/'.work/receipt'; work.mkdir(parents=True)
             runner=reader.ordinary.Collector(root,work,root,root,root)
             process=Mock(); process.wait.return_value=0
@@ -182,7 +189,7 @@ class SuppliedStdioReceiptTests(unittest.TestCase):
     def test_execution_root_preparation_is_independent_of_retention_umask(self):
         import tempfile,os
         import owned_stdio_alias_contract_reader as reader
-        with tempfile.TemporaryDirectory(dir=SOURCE_DIR.parents[1] / '.work/x86_64/stdio-alias-development') as temporary:
+        with tempfile.TemporaryDirectory(dir=self.temporary_root) as temporary:
             root=Path(temporary);work=root/'.work/receipt'; work.mkdir(parents=True)
             dynamic=root/'.work/product'; dynamic.mkdir()
             (work/'qualification-oracle').mkdir();(work/'qualification-oracle/runtime').write_bytes(b'runtime')
