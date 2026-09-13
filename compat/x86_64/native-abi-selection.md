@@ -189,7 +189,7 @@ dynamic products, complete ELF facts, ordinary candidate links, and its
 contained FILE runtime controls. The selector seals that report before and
 after the replay, then binds all four retained `.symtab` views to the same
 complete ELF transaction. It discharges the finite feature-receipt requirement
-for the fifteen named weak FILE aliases only when each has its named target in
+for the 39 pending weak FILE aliases only when each has its named target in
 the same archive-member/section or shared definition domain. It also selects
 only `__fdopen`, `__fseeko`, and `__ftello` as the private
 `x86-owned-stdio-private-bodies`: static `FUNC GLOBAL HIDDEN`, shared
@@ -200,6 +200,15 @@ scope. Missing or invalid FILE evidence leaves the three named private bodies'
 explicit receipt requirements open. The attachment does not establish general
 stdio semantics, declarations/profiles, runtime qualification, family
 completion, promotion, or public support.
+
+The expanded FILE receipt observes 42 aliases across its five exact source
+owners. `attach_native_stdio_alias` binds the 39 aliases with outstanding
+feature-receipt obligations: four narrow scan aliases belong to
+`x86-stdio-permanent-format-scan`; the other 35 belong to
+`x86-owned-static-runtime`. `__getdelim`, `__isoc99_sscanf`, and
+`__isoc99_vsscanf` remain observed in the owning receipt but acquire no
+invented selector obligation or discharge. The three hidden bodies and two
+protected controls retain their existing boundaries.
 
 These runtime attachments run before the one public declaration-envelope replay
 and are rechecked after their scoped joins. Their source/product/ELF cohort is
@@ -284,15 +293,6 @@ absent native getter is not a current unresolved link. Full native facade
 parity still requires explicit native consumer/protocol selection and evidence;
 the existing private loader TLS descriptor does not automatically satisfy that
 future facade contract.
-
-The expanded FILE receipt observes 42 aliases across its five exact source
-owners. `attach_native_stdio_alias` binds the 39 aliases with outstanding
-feature-receipt obligations: four narrow scan aliases belong to
-`x86-stdio-permanent-format-scan`; the other 35 belong to
-`x86-owned-static-runtime`. `__getdelim`, `__isoc99_sscanf`, and
-`__isoc99_vsscanf` remain observed in the owning receipt but acquire no
-invented selector obligation or discharge. The three hidden bodies and two
-protected controls retain their existing boundaries.
 
 ## Runtime component attachments
 
