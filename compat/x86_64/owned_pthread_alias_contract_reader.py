@@ -707,9 +707,22 @@ def _symbol_rows(path: Path, wanted_tables: set[str]) -> list[SymbolRow]:
 def _defined_by_name(path: Path, wanted_tables: set[str]) -> dict[str, list[SymbolRow]]:
     result: dict[str, list[SymbolRow]] = defaultdict(list)
     for row in _symbol_rows(path, wanted_tables):
-        if row.section != "UND":
+        if _is_real_defining_section(row.section):
             result[row.name].append(row)
     return result
+
+
+def _is_real_defining_section(section: str) -> bool:
+    """Accept only a positive ELF section index as a retained definition.
+
+    ``readelf`` prints the special ``UND``, ``ABS``, and ``COM`` forms in the
+    same column as a section index.  None designates a function body in an ELF
+    section.  The exact alias proof needs a real, nonzero section identity so
+    that equal member/value/type rows cannot turn an absolute or common symbol
+    into a fabricated same-definition alias.
+    """
+
+    return re.fullmatch(r"[1-9][0-9]*", section) is not None
 
 
 def _one(table: Mapping[str, list[SymbolRow]], name: str, path: Path) -> SymbolRow:
@@ -785,7 +798,7 @@ def _static_symbols(path: Path) -> tuple[dict[str, list[SymbolRow]], dict[str, d
 
 def _mq_notify_member(path: Path) -> tuple[list[SymbolRow], str]:
     table = _symbol_rows(path, {".symtab"})
-    definitions = [row for row in table if row.name == "mq_notify" and row.section != "UND"]
+    definitions = [row for row in table if row.name == "mq_notify" and _is_real_defining_section(row.section)]
     require(len(definitions) == 1, f"{path}: expected one mq_notify archive definition")
     return table, definitions[0].member
 

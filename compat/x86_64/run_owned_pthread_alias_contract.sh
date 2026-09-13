@@ -133,10 +133,25 @@ for path, label in ((static / "bin/crabc-cc", "static compiler"),
                     (dynamic / "lib/ld-crabc-x86_64.so.1", "dynamic loader")):
     if not path.is_file() or path.is_symlink():
         raise SystemExit(f"owned pthread alias contract missing physical {label}: {path}")
+
+
+def overlaps(left: Path, right: Path) -> bool:
+    return left == right or left.is_relative_to(right) or right.is_relative_to(left)
+
+
+# The runner writes its evidence under either TMPDIR or --receipt-dir. Check
+# both physical work roots before mkdir, source capture, or any command can
+# write into a caller-supplied selected product.
+for product, label in ((static, "static product"), (dynamic, "dynamic product")):
+    if overlaps(temporary, product):
+        raise SystemExit(f"owned pthread alias contract TMPDIR overlaps {label}")
 if receipt:
-    receipt_path = Path(receipt)
+    receipt_path = Path(receipt).resolve(strict=False)
     if receipt_path.exists() or receipt_path.is_symlink() or not receipt_path.is_relative_to(root / ".work"):
         raise SystemExit("owned pthread alias contract receipt directory is unsafe")
+    for product, label in ((static, "static product"), (dynamic, "dynamic product")):
+        if overlaps(receipt_path, product):
+            raise SystemExit(f"owned pthread alias contract receipt directory overlaps {label}")
     for path, label in ((Path(product_report), "product anchor"), (Path(historical), "historical input identities")):
         if not path.is_file() or path.is_symlink():
             raise SystemExit(f"owned pthread alias contract missing physical {label}: {path}")

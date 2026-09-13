@@ -211,6 +211,12 @@ recomputes the same-definition aliases and `mq_notify` public-detach source
 policy, and verifies the runtime transcripts and executable modes.  It runs no
 compiler, linker, or ELF tool.
 
+Before it creates any evidence, the runner resolves `TMPDIR`, an optional
+receipt directory, and both supplied product roots physically and rejects any
+overlap. Alias and provider rows must also name a positive ELF section index;
+`UND`, `ABS`, `COM`, and section zero cannot establish a function body or a
+same-definition alias.
+
 The receipt covers only the 17 aliases in the table above, their listed source
 providers, the `mq_notify` public `pthread_detach` relocation, and the one
 strong-override/internal-`pthread_join` behavior.  It does not turn historical

@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -13,6 +15,7 @@ SOURCE_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SOURCE_DIR))
 
 from owned_pthread_alias_contract_reader import (
+    ALIASES,
     DYNAMIC_STATE_CONTRACTS,
     DYNAMIC_STATE_MODES,
     DYNAMIC_STATE_PROFILE,
@@ -22,6 +25,7 @@ from owned_pthread_alias_contract_reader import (
     ReceiptError,
     SymbolRow,
     _load_inputs,
+    _shared_symbols,
     _validate_dynamic_link_receipt,
     _validate_dynamic_materialization_state,
     artifact_record,
@@ -239,6 +243,114 @@ class OwnedPthreadAliasContractReaderTests(unittest.TestCase):
         )
 
         self.assertFalse(same_definition(alias, forwarding_body))
+
+    def _shared_symbol_stream(self, section: str) -> Path:
+        """Build the complete finite shared alias roster with one Ndx spelling."""
+
+        providers = tuple(dict.fromkeys(provider for _, provider in ALIASES))
+        values = {
+            provider: f"{index:016x}"
+            for index, provider in enumerate(providers, start=1)
+        }
+        lines = [
+            f"Symbol table '.symtab' contains {len(ALIASES) + len(providers)} entries:",
+            "   Num:    Value          Size Type    Bind   Vis      Ndx Name",
+        ]
+        index = 1
+        for name, provider in ALIASES:
+            lines.append(
+                f"{index:6}: {values[provider]}     1 FUNC    WEAK   DEFAULT {section:>4} {name}"
+            )
+            index += 1
+        for provider in providers:
+            lines.append(
+                f"{index:6}: {values[provider]}     1 FUNC    LOCAL  DEFAULT {section:>4} {provider}"
+            )
+            index += 1
+        path = self.root / f"shared-{section}.txt"
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return path
+
+    def test_shared_aliases_require_positive_defining_section_indices(self) -> None:
+        """Reserved Ndx spellings cannot turn 17 aliases into fabricated bodies."""
+
+        _, definitions = _shared_symbols(self._shared_symbol_stream("9"))
+        self.assertEqual(tuple(definitions), tuple(name for name, _ in ALIASES))
+
+        for section in ("UND", "ABS", "COM", "0"):
+            with self.subTest(section=section):
+                with self.assertRaisesRegex(ReceiptError, "expected one defined"):
+                    _shared_symbols(self._shared_symbol_stream(section))
+
+    @unittest.skipUnless(
+        Path("/usr/local/bin/crabc-x86_64-musl-gcc").is_file(),
+        "requires the pinned native x86-64 image",
+    )
+    def test_runner_rejects_product_overlapping_output_before_writing(self) -> None:
+        """Invalid fixtures cannot make runner evidence directories inside products."""
+
+        runner = SOURCE_DIR / "run_owned_pthread_alias_contract.sh"
+        static = self.root / "static-product"
+        dynamic = self.root / "dynamic-product"
+        for product, names in (
+            (static, ("bin/crabc-cc", "usr/lib/libc.a")),
+            (dynamic, (
+                "bin/crabc-cc-dynamic", "usr/lib/libc.so",
+                "lib/ld-crabc-x86_64.so.1",
+            )),
+        ):
+            for name in names:
+                path = product / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"invalid isolated product fixture\n")
+        anchor = self.root / "product-anchor.json"
+        historical = self.root / "historical-inputs.json"
+        anchor.write_text("{}\n", encoding="utf-8")
+        historical.write_text("{}\n", encoding="utf-8")
+        ordinary_tmp = self.root / "ordinary-tmp"
+        ordinary_tmp.mkdir()
+        environment = dict(os.environ)
+        environment.pop("CRABC_RETAINED_640C0939_ROOT", None)
+
+        def run(*arguments: str, temporary: Path) -> subprocess.CompletedProcess[str]:
+            environment["TMPDIR"] = str(temporary)
+            return subprocess.run(
+                ["bash", str(runner), *arguments],
+                cwd=SOURCE_DIR.parents[1],
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+
+        for label, product in (("static", static), ("dynamic", dynamic)):
+            with self.subTest(receipt_product=label):
+                receipt = product / "new-receipt"
+                before = sorted(path.relative_to(product).as_posix() for path in product.rglob("*"))
+                result = run(
+                    "--receipt-dir", str(receipt),
+                    "--product-report", str(anchor),
+                    "--historical-inputs", str(historical),
+                    "--historical-source-commit", "0" * 40,
+                    str(static), str(dynamic),
+                    temporary=ordinary_tmp,
+                )
+                after = sorted(path.relative_to(product).as_posix() for path in product.rglob("*"))
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(f"receipt directory overlaps {label} product", result.stderr)
+                self.assertEqual(before, after)
+
+        for label, product in (("static", static), ("dynamic", dynamic)):
+            with self.subTest(temporary_product=label):
+                temporary = product / "ordinary-tmp"
+                temporary.mkdir()
+                before = sorted(path.relative_to(product).as_posix() for path in product.rglob("*"))
+                result = run(str(static), str(dynamic), temporary=temporary)
+                after = sorted(path.relative_to(product).as_posix() for path in product.rglob("*"))
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(f"TMPDIR overlaps {label} product", result.stderr)
+                self.assertEqual(before, after)
 
 
 if __name__ == "__main__":
