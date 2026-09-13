@@ -108,6 +108,14 @@ COMMAND_ROLES = frozenset({
     "runtime-dynamic-non-pie-kernel-ordinary", "runtime-dynamic-non-pie-direct-ordinary",
     "link-identities",
 })
+# The established static runner loops over ``static`` and ``static-pie`` and
+# writes ``$mode-symbols.txt``.  Command role labels include the product family
+# to make their link authority unambiguous, but the retained filenames retain
+# the runner's original spelling.
+STATIC_EXECUTABLE_SYMBOLS = (
+    ("static", "static-symbols.txt"),
+    ("static-pie", "static-pie-symbols.txt"),
+)
 RUNTIME_ROWS = (
     ("oracle", "oracle-ordinary"),
     ("static", "static-static-ordinary"),
@@ -609,7 +617,7 @@ def validate_symbol_bytes(workspace: Path, products: Mapping[str, Path] | None =
     for alias, target in ALIASES:
         require(shared[alias][0] == shared[target][0], f"shared alias address differs: {alias}")
     executables: dict[str, Any] = {}
-    for label, name in (("static", "static-static-symbols.txt"), ("static-pie", "static-static-pie-symbols.txt")):
+    for label, name in STATIC_EXECUTABLE_SYMBOLS:
         symbols = _nm_symbols(regular(raw / name, label + " executable symbols"), label + " executable symbols")
         require(set(symbols) == {*STRONG, *WEAK} and all(binding in {"T", "W"} for _, binding in symbols.values()),
                 label + " executable provider roster differs")
@@ -1200,8 +1208,8 @@ def collect(static_preparation: Path, static_product: Path, dynamic_product: Pat
             "header-input.sha256", "oracle-header.trace", "project-header.trace", "oracle-header-c.o", "oracle-header-cxx.o",
             "project-header-c.o", "project-header-cxx.o",
             "oracle", "oracle-ordinary.stdout", "oracle-ordinary.stderr", "oracle-ordinary.status",
-            "static-static", "static-static.receipt.json", "static-static.receipt.map", "static-static.receipt.trace", "static-static-symbols.txt", "static-static-symbol-bytes.txt",
-            "static-static-pie", "static-static-pie.receipt.json", "static-static-pie.receipt.map", "static-static-pie.receipt.trace", "static-static-pie-symbols.txt", "static-static-pie-symbol-bytes.txt",
+            "static-static", "static-static.receipt.json", "static-static.receipt.map", "static-static.receipt.trace", "static-symbols.txt", "static-static-symbol-bytes.txt",
+            "static-static-pie", "static-static-pie.receipt.json", "static-static-pie.receipt.map", "static-static-pie.receipt.trace", "static-pie-symbols.txt", "static-static-pie-symbol-bytes.txt",
             "dynamic-pie", "dynamic-pie.crabc-link.json", "dynamic-pie-symbol-bytes.txt",
             "dynamic-non-pie", "dynamic-non-pie.crabc-link.json", "dynamic-non-pie-symbol-bytes.txt",
         ]
