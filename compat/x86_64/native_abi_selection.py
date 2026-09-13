@@ -134,6 +134,8 @@ C_ALLOCATOR_BOUNDARY_SOURCE_FILES = (
 STDIO_ALIAS_PRIVATE_GROUP = 'component-owned-stdio-private-bodies'
 STDIO_ALIAS_PRIVATE_OWNER = 'x86-owned-stdio-private-bodies'
 STDIO_ALIAS_RECEIPT_REQUIREMENT = 'current source-bound FILE alias/private-body receipt'
+SYSCALL_ALIAS_PRIVATE_GROUP = 'component-owned-syscall-private-bodies'
+SYSCALL_ALIAS_PRIVATE_OWNER = 'x86-owned-syscall-private-bodies'
 STDIO_ALIAS_LIMITS = [
     'The receipt observes 42 named FILE weak aliases; selection joins 39 pending aliases, three private bodies and two protected controls. The three already-accounted aliases acquire no receipt obligation or discharge.',
     'The receipt does not close general stdio behavior, declaration/profile agreement, runtime qualification, family completion, promotion or public support.',
@@ -143,6 +145,11 @@ CRT_STARTUP_LIMITS = [
     'Only the twelve owner-declared CRT startup identities and their retained exact occurrences are joined.',
     'The 32-byte owned handoff and 88-byte conventional snapshot stay distinct from the prepared-worker 72-byte descriptor.',
     'This receipt does not qualify first-bootstrap failures, descriptor lifetime, general CRT lifecycle, runtime qualification, family completion, promotion or public support.',
+]
+SYSCALL_ALIAS_RECEIPT_REQUIREMENT = 'current source-bound syscall alias/private-body receipt'
+SYSCALL_ALIAS_LIMITS = [
+    'Only the fourteen named public aliases, thirteen explicitly selected private global-hidden bodies, and two local statfs bodies are attached to complete candidate ELF observations.',
+    'The receipt discharges only the thirteen private-body receipt requirements. Public alias import reasons, unowned observations, local bodies, syscall behavior generally, family completion, promotion and public support remain separate.',
 ]
 
 
@@ -194,6 +201,29 @@ def _crt_startup_source_files() -> tuple[str, ...]:
         'compat/x86_64/installed-crt-startup.md',
         'compat/x86_64/tests/test_installed_crt_startup_evidence.py',
         'compat/x86_64/tests/test_native_abi_crt_startup_attachment.py',
+    )
+
+
+def _syscall_alias_reader():
+    """Load the finite syscall alias receipt reader after selector startup.
+
+    The reader imports product evidence that may in turn inspect the selector.
+    Keep this owner import lazy, as with FILE and CRT, so direct replay cannot
+    observe a partially initialized selection module.
+    """
+    try:
+        return importlib.import_module('owned_syscall_alias_contract_reader')
+    except (ImportError, OSError, ValueError) as error:
+        raise SelectionError(f'cannot load syscall alias reader: {error}') from error
+
+
+def _syscall_alias_source_files() -> tuple[str, ...]:
+    reader = _syscall_alias_reader()
+    return (
+        *reader.COLLECTOR_SOURCES,
+        *reader.RUNTIME_SOURCES,
+        'compat/x86_64/tests/test_native_abi_syscall_alias_attachment.py',
+        'compat/x86_64/native-abi-selection.md',
     )
 RUNTIME_REGISTRY_REQUIREMENTS = (
     'current signature and exact relocation-admission evidence',
@@ -721,6 +751,7 @@ def load_source_inputs(contract: Mapping[str, Any], contract_path: Path) -> dict
         *C_ALLOCATOR_BOUNDARY_SOURCE_FILES,
         *_stdio_alias_source_files(),
         *_crt_startup_source_files(),
+        *_syscall_alias_source_files(),
     })
     files.update(pthread_alias_evidence.SOURCE_CONTRACT_PATHS)
     for field in ('owner_groups', 'structural_groups', 'object_contracts', 'private_protocols'):
@@ -804,6 +835,11 @@ def expand_obligations(contract: Mapping[str, Any], inputs: Mapping[str, Any]) -
                 # require the finite owner receipt below; metadata alone is
                 # never a replacement for those runtime and ELF observations.
                 record['unresolved'].append(STDIO_ALIAS_RECEIPT_REQUIREMENT)
+            if group['id'] == SYSCALL_ALIAS_PRIVATE_GROUP:
+                # This bounded private-provider route needs its own retained
+                # source, alias, override and interposition evidence. Metadata
+                # alone cannot make the 13 syscall bodies an owner discharge.
+                record['unresolved'].append(SYSCALL_ALIAS_RECEIPT_REQUIREMENT)
     for name, owner in inputs['deferred'].items():
         record = obtain(name)
         require(record['selection'] is None, f'deferred/provider overlap: {name}')
@@ -2174,7 +2210,8 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
                                     errno_storage: Mapping[str, Any] | None = None,
                                     c_allocator_boundary: Mapping[str, Any] | None = None,
                                     stdio_alias_contract: Mapping[str, Any] | None = None,
-                                    crt_startup: Mapping[str, Any] | None = None) -> None:
+                                    crt_startup: Mapping[str, Any] | None = None,
+                                    syscall_alias: Mapping[str, Any] | None = None) -> None:
     """Keep runtime attachments within the same source/product transaction.
 
     Both owning readers validate their receipts before the selector's placement
@@ -2184,7 +2221,7 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
     """
     if (registry is None and pthread is None and prepared_worker is None
             and errno_storage is None and c_allocator_boundary is None
-            and stdio_alias_contract is None and crt_startup is None):
+            and stdio_alias_contract is None and crt_startup is None and syscall_alias is None):
         return
     require(same(source, selection_source()), 'selection source changed during runtime receipt attachment')
     reports = _measurement_report_bindings(measurement, 'runtime receipt')
@@ -2280,6 +2317,23 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
         for name in cohort_inputs:
             _require_same_identity_payload(retained_inputs[name], cohort_inputs[name],
                                            f'CRT startup {name} changed during attachment')
+    if syscall_alias is not None:
+        expected_products = _syscall_alias_product_identities(paths)
+        records = syscall_alias.get('products')
+        require(type(records) is dict and set(records) == set(expected_products),
+                'syscall alias product roster differs during attachment')
+        for name in expected_products:
+            _require_same_identity_payload(records[name], expected_products[name],
+                                           f'syscall alias {name} changed during attachment')
+        require(same(syscall_alias.get('measurement_reports'), reports),
+                'syscall alias public replay binding changed during attachment')
+        report = syscall_alias.get('report')
+        require(type(report) is dict and type(report.get('path')) is str,
+                'syscall alias report identity differs during attachment')
+        report_path = Path(report['path'])
+        require(report_path.is_file() and report_path.resolve() == report_path
+                and same(report, file_identity(report_path)),
+                'syscall alias report changed during attachment')
 
 
 def loader_runtime_registry_adapter(report_path: Path | None, *, facts: Mapping[str, Any],
@@ -3696,6 +3750,155 @@ def native_crt_startup_adapter(report_path: Path | None, *, facts: Mapping[str, 
     }
 
 
+def _syscall_receipt_input(value: object, description: str) -> dict[str, Any]:
+    """Read one v2 receipt input without accepting its container path as ours."""
+    record = exact(value, {'original', 'retained'}, description)
+    original = _identity_payload(record['original'], description + ' original')
+    retained = _identity_payload(record['retained'], description + ' retained')
+    require(original == retained, f'{description} retained bytes differ from original')
+    return original
+
+
+def _require_syscall_receipt_input(value: object, current: object, description: str) -> None:
+    require(_syscall_receipt_input(value, description) == _identity_payload(current, description + ' selected'),
+            f'{description} differs from selected cohort')
+
+
+def _syscall_source_snapshot(value: object, names: Sequence[str], description: str) -> dict[str, dict[str, Any]]:
+    require(type(value) is dict and set(value) == set(names), f'{description} source roster differs')
+    result: dict[str, dict[str, Any]] = {}
+    for name in names:
+        observed = _syscall_receipt_input(value[name], f'{description} {name}')
+        current = _identity_payload(file_identity(ROOT / name), f'{description} current {name}')
+        require(observed == current, f'{description} source differs: {name}')
+        result[name] = observed
+    return result
+
+
+def _syscall_alias_projection(reader: Any) -> dict[str, Any]:
+    projection = reader.component_projection()
+    require(type(projection) is dict and set(projection) == {
+        'aliases', 'alias_global_hidden', 'global_hidden', 'source_local', 'raw_private_body',
+        'component_complete', 'family_completion', 'public_support',
+    }, 'syscall alias selection projection fields differ')
+    require(projection['aliases'] == [[name, body] for name, body in reader.ALIASES]
+            and projection['alias_global_hidden'] == list(reader.ALIAS_GLOBAL_HIDDEN)
+            and projection['global_hidden'] == list(reader.GLOBAL_HIDDEN)
+            and projection['source_local'] == list(reader.LOCAL_BODIES)
+            and projection['raw_private_body'] == '__libc_sigaction'
+            and projection['component_complete'] is True
+            and projection['family_completion'] is False
+            and projection['public_support'] is False,
+            'syscall alias selection projection differs')
+    require(len(projection['aliases']) == 14 and len(projection['global_hidden']) == 13
+            and len(projection['source_local']) == 2,
+            'syscall alias finite projection cardinality differs')
+    return copy.deepcopy(projection)
+
+
+def _syscall_alias_product_identities(paths: Mapping[str, Path]) -> dict[str, dict[str, Any]]:
+    """Return the selected files that the finite alias runner actually consumes."""
+    return {
+        **_runtime_attachment_identities(paths),
+        'dynamic_producer_tools': file_identity(paths['dynamic_product'] / 'share/crabc/producer-tools.json'),
+        'selected_dynamic_list': file_identity(ROOT / 'libc/src/c_abi/x86_64/owned_dynamic.list'),
+    }
+
+
+def native_syscall_alias_adapter(report_path: Path | None, *, facts: Mapping[str, Any],
+                                 measurement: Mapping[str, Any], paths: Mapping[str, Path],
+                                 source: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Replay and bind the finite v2 syscall alias receipt to one selected cohort.
+
+    This attachment has no provider-selection authority.  The owning reader
+    proves the alias and runtime boundary; the selector only binds that proof
+    to its current product, source, and complete public ELF observations.
+    """
+    if report_path is None:
+        return None
+    reader = _syscall_alias_reader()
+    require(Path(reader.ROOT) == ROOT and Path(reader.__file__).resolve().parent == MODULE_DIR,
+            'syscall alias reader belongs to a different checkout')
+    require(reader.SCHEMA == 'crabc.x86_64-owned-syscall-alias-contract/v2',
+            'syscall alias reader is not the current v2 boundary')
+    report_path = physical_work_path(report_path, directory=False)
+    before = file_identity(report_path)
+    try:
+        report = reader.validate_report(report_path)
+    except (KeyError, TypeError, ValueError, OSError, reader.ReceiptError) as error:
+        raise SelectionError(f'syscall alias component rejected: {error}') from error
+    require(same(before, file_identity(report_path)), 'syscall alias report changed during replay')
+    source = exact(dict(source), {'revision', 'content_sha256', 'clean'}, 'selection source')
+    require(source['clean'] is True, 'syscall alias selection source is not clean')
+    _measurement_source_matches(source, measurement, 'syscall alias')
+    measurement_reports = _measurement_report_bindings(measurement, 'syscall alias')
+    report = exact(report, {
+        'schema', 'status', 'image', 'musl_source_commit', 'collector_source', 'selected_product_source',
+        'image_inputs', 'inputs', 'products', 'source', 'tools', 'runner', 'historical_epochs',
+        'selection_projection',
+    }, 'syscall alias reader report')
+    projection = _syscall_alias_projection(reader)
+    require(report['schema'] == reader.SCHEMA and same(report['status'], reader.STATUS)
+            and report['image'] == reader.IMAGE and report['musl_source_commit'] == reader.MUSL_SOURCE_COMMIT
+            and same(report['selection_projection'], projection),
+            'syscall alias reader status, image, source commit or projection differs')
+    source_pair = {'revision': source['revision'], 'content_sha256': source['content_sha256']}
+    collector = exact(report['collector_source'], {'before', 'after'}, 'syscall alias collector source')
+    require(same(collector['before'], source_pair) and same(collector['after'], source_pair)
+            and same(report['selected_product_source'], source_pair),
+            'syscall alias collector or selected product source differs from selection')
+    source_records = exact(report['source'], {'collector', 'selected_runtime'}, 'syscall alias source records')
+    _syscall_source_snapshot(source_records['collector'], reader.COLLECTOR_SOURCES, 'syscall alias collector')
+    _syscall_source_snapshot(source_records['selected_runtime'], reader.RUNTIME_SOURCES, 'syscall alias selected runtime')
+    inputs = report['inputs']
+    expected_inputs = {
+        'static_preparation', 'elf_facts', 'base_inventory', 'selected_dynamic_list',
+        'static_libc', 'static_driver', 'static_manifest', 'dynamic_libc', 'dynamic_driver',
+        'dynamic_loader', 'dynamic_manifest', 'dynamic_producer_tools', 'dynamic_shared_provenance',
+        'dynamic_linker', 'oracle_compiler', 'oracle_shared', 'oracle_archive',
+    }
+    require(type(inputs) is dict and set(inputs) == expected_inputs, 'syscall alias input roster differs')
+    for name in sorted(expected_inputs):
+        _syscall_receipt_input(inputs[name], f'syscall alias retained {name}')
+    _require_syscall_receipt_input(inputs['static_preparation'], measurement_reports['static_preparation'],
+                                   'syscall alias static preparation')
+    _require_syscall_receipt_input(inputs['elf_facts'], measurement_reports['elf_report'],
+                                   'syscall alias complete ELF facts')
+    _require_syscall_receipt_input(inputs['base_inventory'], measurement_reports['base_inventory'],
+                                   'syscall alias base inventory')
+    products = _syscall_alias_product_identities(paths)
+    for name in ('selected_dynamic_list', 'static_libc', 'static_driver', 'static_manifest',
+                 'dynamic_libc', 'dynamic_driver', 'dynamic_loader', 'dynamic_manifest',
+                 'dynamic_producer_tools', 'dynamic_shared_provenance'):
+        _require_syscall_receipt_input(inputs[name], products[name], f'syscall alias {name}')
+    roots = report['products']
+    require(type(roots) is dict and set(roots) == {'static', 'dynamic'}
+            and all(type(roots[name]) is dict and set(roots[name]) == {'original', 'retained'}
+                    and type(roots[name]['original']) is str and Path(roots[name]['original']).is_absolute()
+                    and roots[name]['retained'] == 'products/' + name for name in roots),
+            'syscall alias retained product roots differ')
+    facts_artifacts = facts.get('artifacts')
+    require(type(facts_artifacts) is dict, 'syscall alias public ELF artifact roster differs')
+    for artifact_key, name in (('candidate-static', 'static_libc'), ('candidate-shared', 'dynamic_libc'),
+                               ('candidate-loader', 'dynamic_loader')):
+        artifact = facts_artifacts.get(artifact_key)
+        require(type(artifact) is dict and 'identity' in artifact, f'syscall alias ELF artifact differs: {artifact_key}')
+        _require_same_identity_payload(artifact['identity'], products[name],
+                                       f'syscall alias ELF artifact {artifact_key}')
+    source_inputs = {name: file_identity(ROOT / name) for name in _syscall_alias_source_files()}
+    return {
+        'status': 'syscall-alias-observed-with-boundaries',
+        'reader': file_identity(Path(reader.__file__)),
+        'report': before,
+        'source': copy.deepcopy(source),
+        'source_inputs': source_inputs,
+        'products': {name: copy.deepcopy(products[name]) for name in sorted(products)},
+        'measurement_reports': measurement_reports,
+        'projection': projection,
+        'limits': list(SYSCALL_ALIAS_LIMITS),
+    }
+
+
 def _crt_startup_accounting_occurrence(occurrences: Mapping[int, Mapping[str, Any]],
                                        observed: Mapping[str, Any]) -> dict[str, Any]:
     """Join one owner-retained physical row to one public full-facts row."""
@@ -4722,6 +4925,175 @@ def attach_native_stdio_alias(accounting: Mapping[str, Any], companion: Mapping[
     return [{'aliases': alias_joins, 'private_bodies': private_joins, 'protected_controls': protected_joins}]
 
 
+def _syscall_named_rows(occurrences: Mapping[int, Mapping[str, Any]], name: str) -> list[dict[str, Any]]:
+    """Filter the already-accounted roster before converting a named identity.
+
+    ``account_placements`` retains unnamed rows as physical observations.  This
+    finite component must never feed those rows into identity conversion or
+    reduce the overall occurrence roster while looking up its named scope.
+    """
+    return [dict(occurrence) for occurrence in occurrences.values()
+            if type(occurrence.get('row')) is dict and occurrence['row'].get('name') == name]
+
+
+def _syscall_one_row(rows: Sequence[Mapping[str, Any]], *, artifact_key: str, table: str,
+                     role: str, metadata: Mapping[str, str], description: str) -> dict[str, Any]:
+    matches = [row for row in rows
+               if row.get('artifact_key') == artifact_key and row.get('table') == table
+               and row.get('role') == role
+               and all(row.get('row', {}).get(field) == value for field, value in metadata.items())]
+    require(len(matches) == 1, f'{description} exact candidate occurrence differs')
+    return dict(matches[0])
+
+
+def attach_native_syscall_alias(accounting: Mapping[str, Any],
+                                companion: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """Attach the finite alias/body observations without selecting new owners.
+
+    Public aliases and private bodies remain distinct identities.  The receipt
+    authenticates their shape and same-definition domains, but no unresolved
+    owner or unrelated physical occurrence is removed from selection.
+    """
+    if companion is None:
+        return []
+    companion = exact(companion, {
+        'status', 'reader', 'report', 'source', 'source_inputs', 'products', 'measurement_reports',
+        'projection', 'limits',
+    }, 'syscall alias companion')
+    require(companion['status'] == 'syscall-alias-observed-with-boundaries'
+            and companion['limits'] == SYSCALL_ALIAS_LIMITS,
+            'syscall alias companion boundary differs')
+    reader = _syscall_alias_reader()
+    projection = _syscall_alias_projection(reader)
+    require(same(companion['projection'], projection)
+            and same(companion['source_inputs'], {
+                name: file_identity(ROOT / name) for name in _syscall_alias_source_files()
+            }), 'syscall alias companion source differs')
+    records, placements, occurrences = _accounting_indexes(
+        accounting, description='syscall alias attachment',
+    )
+    occurrence_count = len(occurrences)
+    aliases = tuple((str(name), str(body)) for name, body in projection['aliases'])
+    global_hidden = tuple(str(name) for name in projection['global_hidden'])
+    local_bodies = tuple(str(name) for name in projection['source_local'])
+    known_names = {name for name, _body in aliases} | set(global_hidden) | set(local_bodies)
+    joins: list[dict[str, Any]] = []
+    expected_indices: set[int] = set()
+    public_metadata = {'type': 'FUNC', 'binding': 'WEAK', 'visibility': 'DEFAULT'}
+    for public, body in aliases:
+        alias_rows = _syscall_named_rows(occurrences, public)
+        target_rows = _syscall_named_rows(occurrences, body)
+        static_alias = _syscall_one_row(alias_rows, artifact_key='candidate-static', table='.symtab',
+                                        role='definition', metadata=public_metadata,
+                                        description=f'syscall alias {public} static')
+        shared_dyn = _syscall_one_row(alias_rows, artifact_key='candidate-shared', table='.dynsym',
+                                      role='definition', metadata=public_metadata,
+                                      description=f'syscall alias {public} shared dynsym')
+        shared_alias = _syscall_one_row(alias_rows, artifact_key='candidate-shared', table='.symtab',
+                                        role='definition', metadata=public_metadata,
+                                        description=f'syscall alias {public} shared symtab')
+        target_metadata = ({'type': 'FUNC', 'binding': 'LOCAL', 'visibility': 'DEFAULT'}
+                           if body in local_bodies else {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'HIDDEN'})
+        static_role = 'local-definition' if body in local_bodies else 'definition'
+        static_target = _syscall_one_row(target_rows, artifact_key='candidate-static', table='.symtab',
+                                         role=static_role, metadata=target_metadata,
+                                         description=f'syscall body {body} static')
+        shared_target = _syscall_one_row(target_rows, artifact_key='candidate-shared', table='.symtab',
+                                         role='local-definition', metadata={'type': 'FUNC', 'binding': 'LOCAL'},
+                                         description=f'syscall body {body} shared')
+        require(shared_target['row'].get('visibility') in {'DEFAULT', 'HIDDEN'},
+                f'syscall body {body} shared visibility differs')
+        require(not [row for row in target_rows if row.get('artifact_key') == 'candidate-shared'
+                     and row.get('table') == '.dynsym' and row.get('role') in {'definition', 'local-definition'}],
+                f'syscall private body leaked to candidate dynsym: {body}')
+        require(same_definition_domain(static_alias, static_target)
+                and same_definition_domain(shared_alias, shared_target),
+                f'syscall alias/body definition domain differs: {public}')
+        indices = {row['index'] for row in (static_alias, shared_dyn, shared_alias, static_target, shared_target)}
+        expected_indices.update(indices)
+        joins.append({
+            'public_alias': public,
+            'private_body': body,
+            'static_alias_occurrence_index': static_alias['index'],
+            'shared_dynsym_alias_occurrence_index': shared_dyn['index'],
+            'shared_symtab_alias_occurrence_index': shared_alias['index'],
+            'static_body_occurrence_index': static_target['index'],
+            'shared_body_occurrence_index': shared_target['index'],
+            'requirements_discharged': [],
+        })
+    private_joins: list[dict[str, Any]] = []
+    for body in global_hidden:
+        key = (body, None, False)
+        record = records.get(key)
+        require(record is not None and record.get('selection', {}).get('disposition') == 'private-provider'
+                and record['selection'].get('owner') == SYSCALL_ALIAS_PRIVATE_OWNER
+                and record['selection'].get('group') == SYSCALL_ALIAS_PRIVATE_GROUP,
+                f'syscall private body selection differs: {body}')
+        rows = _syscall_named_rows(occurrences, body)
+        static_body = _syscall_one_row(rows, artifact_key='candidate-static', table='.symtab', role='definition',
+                                       metadata={'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'HIDDEN'},
+                                       description=f'syscall private body {body} static')
+        shared_body = _syscall_one_row(rows, artifact_key='candidate-shared', table='.symtab', role='local-definition',
+                                       metadata={'type': 'FUNC', 'binding': 'LOCAL', 'visibility': 'HIDDEN'},
+                                       description=f'syscall private body {body} shared')
+        static_placement, static_selected = _selected_placement(
+            placements, occurrences, name=body, artifact_key='candidate-static', table='.symtab', role='definition',
+            metadata={'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'HIDDEN'},
+            description=f'syscall private body {body} selected static',
+        )
+        shared_placement, shared_selected = _selected_placement(
+            placements, occurrences, name=body, artifact_key='candidate-shared', table='.symtab', role='local-definition',
+            metadata={'type': 'FUNC', 'binding': 'LOCAL', 'visibility': 'HIDDEN'},
+            description=f'syscall private body {body} selected shared',
+        )
+        require(static_selected['index'] == static_body['index']
+                and shared_selected['index'] == shared_body['index'],
+                f'syscall private body selected occurrence differs: {body}')
+        require(not [row for row in rows if row.get('artifact_key') == 'candidate-shared'
+                     and row.get('table') == '.dynsym' and row.get('role') in {'definition', 'local-definition'}],
+                f'syscall private body leaked to candidate dynsym: {body}')
+        _remove_identity_requirements(
+            accounting, record, (SYSCALL_ALIAS_RECEIPT_REQUIREMENT,),
+            description=f'syscall private body {body}',
+        )
+        expected_indices.update({static_body['index'], shared_body['index']})
+        private_joins.append({
+            'identity': copy.deepcopy(record['identity']), 'body': body, 'scope': 'global-hidden',
+            'static_occurrence_index': static_body['index'],
+            'shared_occurrence_index': shared_body['index'],
+            'static_metadata': copy.deepcopy(static_placement['expected_metadata']),
+            'shared_metadata': copy.deepcopy(shared_placement['expected_metadata']),
+            'candidate_dynsym_definition_absent': True,
+            'requirements_discharged': [SYSCALL_ALIAS_RECEIPT_REQUIREMENT],
+        })
+    for body in local_bodies:
+        rows = _syscall_named_rows(occurrences, body)
+        static_body = _syscall_one_row(rows, artifact_key='candidate-static', table='.symtab', role='local-definition',
+                                       metadata={'type': 'FUNC', 'binding': 'LOCAL', 'visibility': 'DEFAULT'},
+                                       description=f'syscall local body {body} static')
+        shared_body = _syscall_one_row(rows, artifact_key='candidate-shared', table='.symtab', role='local-definition',
+                                       metadata={'type': 'FUNC', 'binding': 'LOCAL'},
+                                       description=f'syscall local body {body} shared')
+        require(shared_body['row'].get('visibility') in {'DEFAULT', 'HIDDEN'},
+                f'syscall local body {body} shared visibility differs')
+        expected_indices.update({static_body['index'], shared_body['index']})
+        private_joins.append({'body': body, 'scope': 'source-local',
+                              'static_occurrence_index': static_body['index'],
+                              'shared_occurrence_index': shared_body['index'],
+                              'requirements_discharged': []})
+    actual_indices = {row['index'] for row in occurrences.values()
+                      if row.get('artifact_key') in {'candidate-static', 'candidate-shared'}
+                      and type(row.get('row')) is dict and row['row'].get('name') in known_names}
+    require(actual_indices == expected_indices, 'syscall alias candidate occurrence roster differs')
+    require(len(occurrences) == occurrence_count, 'syscall alias attachment changed complete ELF occurrence roster')
+    require(len(joins) == 14 and len(private_joins) == 15
+            and [row['body'] for row in private_joins] == [*global_hidden, *local_bodies],
+            'syscall alias finite attachment cardinality differs')
+    return [{'aliases': joins, 'private_bodies': private_joins,
+             'requirements_discharged': [SYSCALL_ALIAS_RECEIPT_REQUIREMENT],
+             'complete_elf_occurrence_count': occurrence_count}]
+
+
 def _compiler_helper_shared_contract(contract: Mapping[str, Any], inputs: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """Authenticate the finite helper source selection before using its DSO view.
 
@@ -5000,7 +5372,8 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
                   errno_storage_lifecycle_report: Path | None = None,
                   native_c_allocator_boundary_report: Path | None = None,
                   stdio_alias_contract_report: Path | None = None,
-                  crt_startup_report: Path | None = None) -> dict[str, Any]:
+                  crt_startup_report: Path | None = None,
+                  syscall_alias_contract_report: Path | None = None) -> dict[str, Any]:
     source_before = selection_source()
     contract = load_contract(contract_path)
     inputs = load_source_inputs(contract, contract_path)
@@ -5033,6 +5406,9 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     )
     crt_startup_companion = native_crt_startup_adapter(
         crt_startup_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
+    )
+    syscall_alias_contract_companion = native_syscall_alias_adapter(
+        syscall_alias_contract_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
     )
     declaration = declaration_adapter(
         declaration_report,
@@ -5080,13 +5456,14 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     )
     crt_startup_joins = attach_native_crt_startup(accounting, crt_startup_companion)
     crt_descriptor_handoff_joins = attach_native_crt_descriptor_handoff(accounting, crt_startup_companion)
+    syscall_alias_contract_joins = attach_native_syscall_alias(accounting, syscall_alias_contract_companion)
     _recheck_runtime_receipt_cohort(
         paths=paths, facts=facts, measurement=measurement, source=source_before,
         registry=loader_runtime_registry_companion, pthread=pthread_alias_contract_companion,
         prepared_worker=prepared_worker_tls_companion, errno_storage=errno_storage_lifecycle_companion,
         c_allocator_boundary=native_c_allocator_boundary_companion,
         stdio_alias_contract=stdio_alias_contract_companion,
-        crt_startup=crt_startup_companion,
+        crt_startup=crt_startup_companion, syscall_alias=syscall_alias_contract_companion,
     )
     candidate = measurement['candidate_build']
     source_matches = source_before['clean'] is True and source_before['revision'] == candidate['revision'] and source_before['content_sha256'] == candidate['source_content_sha256']
@@ -5121,6 +5498,8 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'crt_startup_companion': crt_startup_companion,
             'crt_startup_joins': crt_startup_joins,
             'crt_descriptor_handoff_joins': crt_descriptor_handoff_joins,
+            'syscall_alias_contract_companion': syscall_alias_contract_companion,
+            'syscall_alias_contract_joins': syscall_alias_contract_joins,
             **accounting, 'closure': {'complete': not blockers, 'blockers': blockers}, 'status': dict(STATUS),
             'limits': ['selection audit is not qualification', 'complete raw ELF observations stay with the publicly replayed supplement',
                        'no allocator metadata or unwinder investigation', 'no imported AArch64 execution proof',
@@ -5138,6 +5517,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                  native_c_allocator_boundary_report: Path | None = None,
                  stdio_alias_contract_report: Path | None = None,
                  crt_startup_report: Path | None = None,
+                 syscall_alias_contract_report: Path | None = None,
                  **measurement_inputs: Path) -> dict[str, Any]:
     output = physical_work_path(output, directory=True, own=True, fresh=True)
     paths = validate_measurement_paths(**measurement_inputs)
@@ -5153,7 +5533,8 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                            errno_storage_lifecycle_report=errno_storage_lifecycle_report,
                            native_c_allocator_boundary_report=native_c_allocator_boundary_report,
                            stdio_alias_contract_report=stdio_alias_contract_report,
-                           crt_startup_report=crt_startup_report)
+                           crt_startup_report=crt_startup_report,
+                           syscall_alias_contract_report=syscall_alias_contract_report)
     output.mkdir()
     (output / 'report.json').write_bytes(inventory._stable_json(report))
     return report
@@ -5170,6 +5551,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                     native_c_allocator_boundary_report: Path | None = None,
                     stdio_alias_contract_report: Path | None = None,
                     crt_startup_report: Path | None = None,
+                    syscall_alias_contract_report: Path | None = None,
                     **measurement_inputs: Path) -> dict[str, Any]:
     report_path = physical_work_path(report_path, directory=False, own=True)
     require(report_path.name == 'report.json', 'selection report has the wrong name')
@@ -5187,7 +5569,8 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                              errno_storage_lifecycle_report=errno_storage_lifecycle_report,
                              native_c_allocator_boundary_report=native_c_allocator_boundary_report,
                              stdio_alias_contract_report=stdio_alias_contract_report,
-                             crt_startup_report=crt_startup_report)
+                             crt_startup_report=crt_startup_report,
+                             syscall_alias_contract_report=syscall_alias_contract_report)
     require(same(report, expected), 'selection report does not reconstruct exactly from source inputs and public measurement replay')
     return report
 
@@ -5212,6 +5595,7 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument('--native-c-allocator-boundary-report', type=Path)
     parser.add_argument('--stdio-alias-contract-report', type=Path)
     parser.add_argument('--crt-startup-report', type=Path)
+    parser.add_argument('--syscall-alias-contract-report', type=Path)
     options = [arg.split('=', 1)[0] for arg in argv if arg.startswith('--')]
     if len(options) != len(set(options)):
         parser.error('duplicate options are not accepted')
@@ -5226,7 +5610,8 @@ def main(argv: Sequence[str]) -> int:
                                                 'ordinary_declaration_abi_report', 'loader_runtime_registry_report',
                                                 'pthread_alias_contract_report', 'prepared_worker_tls_report',
                                                 'errno_storage_lifecycle_report', 'native_c_allocator_boundary_report',
-                                                'stdio_alias_contract_report', 'crt_startup_report')}
+                                                'stdio_alias_contract_report', 'crt_startup_report',
+                                                'syscall_alias_contract_report')}
     kwargs['ordinary_link_report'] = kwargs.pop('public_data_ordinary_link_report')
     kwargs['loader_debug_report'] = kwargs.pop('loader_debug_abi_report')
     kwargs.update(contract_path=args.contract, elf_report=args.elf_facts)

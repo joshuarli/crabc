@@ -221,6 +221,33 @@ feature-receipt obligations: four narrow scan aliases belong to
 invented selector obligation or discharge. The three hidden bodies and two
 protected controls retain their existing boundaries.
 
+`--syscall-alias-contract-report REPORT` is independently optional. Its v2
+owner reader is the only process-free host replay of the retained native
+receipt. The selector seals the report before and after that replay and binds
+its current collector and selected product source, static preparation, complete
+ELF facts/base inventory, selected static archive and driver, shared libc,
+loader, manifest, driver, producer-tools and shared-provenance bytes, selected
+dynamic list, and retained source snapshots to the same selection transaction.
+The reader retains its pinned image, musl oracle tools, exact 47 command
+envelopes, and native semantic/override/interposition controls; the selector
+does not replace those retained executions with ambient host tools.
+
+The finite source-owner group `component-owned-syscall-private-bodies` selects
+only the thirteen named `FUNC GLOBAL HIDDEN` static bodies
+`__clock_gettime`, `__clock_nanosleep`, `__dup3`, `__fstat`, `__fstatat`,
+`__lseek`, `__madvise`, `__mmap`, `__mprotect`, `__munmap`, `__lsysinfo`,
+`__sigaction`, and `__libc_sigaction`. The receipt joins their matching shared
+`.symtab` `FUNC LOCAL HIDDEN` bodies, requires no same-named shared `.dynsym`
+definition, and joins the fourteen public `WEAK DEFAULT` aliases to their
+same-definition domains. It discharges only those thirteen bodies' explicit
+receipt requirements. `__statfs` and `__fstatfs` are source-local observations,
+not selected providers. The six public ordinary-import reasons for
+`clock_gettime`, `madvise`, `mmap`, `mprotect`, `munmap`, and `sysinfo` remain
+open because this attachment has no selected installed-caller relocation
+receipt. All unowned and unnamed physical rows remain in the complete ELF
+accounting. No syscall family, qualification, promotion, or public-support
+claim follows.
+
 These runtime attachments run before the one public declaration-envelope replay
 and are rechecked after their scoped joins. Their source/product/ELF cohort is
 therefore shared with the selection transaction without rereading the header

@@ -204,6 +204,22 @@ reason = "Three FILE alias targets are private implementation bodies: each named
 static_metadata_rule = "explicit"
 
 [[owner_groups]]
+id = "component-owned-syscall-private-bodies"
+selector = "explicit"
+disposition = "private-provider"
+owner = "x86-owned-syscall-private-bodies"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/clock_gettime.rs", "libc/src/c_abi/x86_64/clock_nanosleep.rs", "libc/src/c_abi/x86_64/descriptor_io.rs", "libc/src/c_abi/x86_64/stat_compat.rs", "libc/src/c_abi/x86_64/memory_mapping.rs", "libc/src/c_abi/x86_64/system_observation.rs", "libc/src/c_abi/x86_64/signal_control.rs", "compat/x86_64/owned-syscall-alias-contract.md"]
+members = ["__clock_gettime", "__clock_nanosleep", "__dup3", "__fstat", "__fstatat", "__lseek", "__madvise", "__mmap", "__mprotect", "__munmap", "__lsysinfo", "__sigaction", "__libc_sigaction"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"candidate-static" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "HIDDEN"}, "candidate-shared" = {"type" = "FUNC", "binding" = "LOCAL", "visibility" = "HIDDEN"}}
+reason = "The exact thirteen non-local syscall alias bodies are private implementation providers. The current syscall receipt proves their paired weak aliases, private source bodies, selected dynamic-list boundary, override routes, and source call ownership; no other syscall spelling inherits this owner."
+static_metadata_rule = "explicit"
+
+[[owner_groups]]
 id = "source-owned-ctype-locator-bodies"
 selector = "explicit"
 disposition = "public-provider"
