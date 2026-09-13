@@ -1,18 +1,30 @@
 # Installed FILE alias receipt
 
 `owned_stdio_alias_contract_reader.py` owns a finite supplied-product observation:
-15 named weak aliases, their targets (28 identities), and two protected FILE
-boundary controls. `owned-stdio-alias-receipt.toml` fixes this roster. The existing
-byte/wide stream source owns the runtime; this component adds no implementation
-or public export.
+42 named weak aliases, their targets (78 identities), three hidden FILE bodies,
+and two protected FILE boundary controls. `owned-stdio-alias-receipt.toml` fixes
+this roster and its five source-owner groups. The existing byte/wide stream source
+owns the runtime; this component adds no implementation or public export.
 
 `fdopen`, `fseeko`, and `ftello` share their named hidden internal bodies. Strong
 application definitions remain independent of `fopen`, `fseek`, and `ftell`.
-Single-character unlocked operations use their unlocked bodies; block and wide
-string aliases retain musl's locking behavior. Cookie callbacks synchronously
-join a contender to observe the enclosing FILE lock. The protected-symbol probe
-checks collisions, libc-handle lookup and real body callability. It does not
-exercise a defining-libc internal call under an application override.
+No added alias gains an override rule: the existing three hidden bodies are the
+only strong-override control, and `__uflow`/`__overflow` remain the only
+protected controls.
+
+The five finite source groups are `owned_static_stdio` (the accepted byte aliases
+plus `__getdelim`), `owned_wide_stdio` (the accepted wide aliases),
+`owned_stdio_extensions` (eight unlocked and six `_IO_*` aliases, with one
+`fpurge` spelling), `stdio_format_scan` (six byte `__isoc99_*` scan aliases), and
+`owned_wide_format` (six wide `__isoc99_*` scan aliases). Every group requires
+the exact source-local `.weak`/`.set` declaration before its retained selected
+source bytes are accepted. Single-character unlocked operations use their
+unlocked bodies; block and wide string aliases retain musl's locking behavior.
+Cookie callbacks synchronously join a contender to observe the enclosing FILE
+lock. The contract probe also calls bounded FILE aliases, `__getdelim`, and byte
+and wide ISO-C99 string scans. The protected-symbol probe checks collisions,
+libc-handle lookup and real body callability. It does not exercise a
+defining-libc internal call under an application override.
 
 The three fixed C sources each produce one retained ordinary object. The same
 object feeds every relevant musl/candidate link: two probes through musl static
