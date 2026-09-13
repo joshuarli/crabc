@@ -22,7 +22,13 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Mapping
 
 
-SCHEMA = "crabc.x86_64-owned-errno-storage-lifecycle/v1"
+MODULE_DIR = Path(__file__).resolve().parent
+if str(MODULE_DIR) not in sys.path:
+    sys.path.insert(0, str(MODULE_DIR))
+import native_abi_inventory as inventory
+
+
+SCHEMA = "crabc.x86_64-owned-errno-storage-lifecycle/v2"
 SNAPSHOT_SCHEMA = "crabc.x86_64-owned-errno-storage-lifecycle-source/v1"
 TARGET = "x86_64-unknown-linux-musl"
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -50,6 +56,7 @@ SOURCE_FILES = (
     "compat/x86_64/run_owned_errno_storage_lifecycle.sh",
     "compat/x86_64/owned-errno-storage-lifecycle.md",
     "compat/x86_64/tests/test_owned_errno_storage_lifecycle.py",
+    "compat/x86_64/native_abi_inventory.py",
     "scripts/build_x86_64_owned_dynamic_sysroot.py",
 )
 
@@ -82,6 +89,27 @@ SYMBOL_INPUTS = (
     "candidate-shared-symbols.txt",
     "candidate-dynamic-symbols.txt",
 )
+LAYOUT_INPUTS = (
+    "oracle-static-members.txt",
+    "oracle-static-header.txt",
+    "oracle-static-sections.txt",
+    "oracle-shared-header.txt",
+    "oracle-shared-sections.txt",
+    "candidate-static-members.txt",
+    "candidate-static-header.txt",
+    "candidate-static-sections.txt",
+    "candidate-shared-header.txt",
+    "candidate-shared-sections.txt",
+)
+ORACLE_STATIC_ARCHIVE = "/opt/musl-1.2.6/lib/libc.a"
+ORACLE_SHARED_LIBRARY = "/opt/musl-1.2.6/lib/libc.so"
+H_ERRNO_METADATA = {
+    "type": "OBJECT",
+    "binding": "GLOBAL",
+    "visibility": "DEFAULT",
+    "size_bytes": 4,
+    "alignment_bytes": 4,
+}
 OBJECTS = ("core-static.o", "core-dynamic.o", "plugin.o")
 WORKLOAD_SYMBOL_INPUTS = (
     "core-static-symbols.txt",
@@ -172,6 +200,18 @@ def require_exact_mapping(value: object, keys: set[str], description: str) -> di
     if not isinstance(value, dict) or set(value) != keys:
         fail(f"{description} fields drifted")
     return value
+
+
+def exact_same(left: object, right: object) -> bool:
+    """Compare retained JSON values without Python's bool/int equivalence."""
+
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(exact_same(value, right[key]) for key, value in left.items())
+    if isinstance(left, list):
+        return len(left) == len(right) and all(exact_same(a, b) for a, b in zip(left, right))
+    return left == right
 
 
 def validate_identity(value: object, description: str, *, within: Path | None = None) -> Path:
@@ -328,6 +368,8 @@ def rebase_report_checkout_paths(value: object, root: Path) -> dict[str, Any]:
     if not isinstance(source, dict):
         fail("errno storage report source is malformed")
     recorded_root = _recorded_checkout_root(source.get("root"))
+    if value.get("collection_checkout_root") != str(recorded_root):
+        fail("errno storage report collection checkout root drifted")
     root = physical_directory(root, "source root")
     rebased_work = _rebase_report_work(value.get("work"), recorded_root, root)
 
@@ -481,6 +523,181 @@ def validate_shared_symbols(symtab_payload: str, dynsym_payload: str, descriptio
     }
 
 
+def _inventory_facts(description: str, operation: Any) -> Any:
+    """Translate the retained complete-ELF reader's closed errors here."""
+
+    try:
+        return operation()
+    except inventory.InventoryError as error:
+        fail(f"{description} complete ELF facts are malformed: {error}")
+
+
+def _fact_symbol_matches(
+    facts: Mapping[str, Any], table_name: str, name: str, description: str, *, allow_absent_table: bool = False,
+) -> list[Mapping[str, Any]]:
+    tables = facts.get("symbol_tables")
+    if not isinstance(tables, list):
+        fail(f"{description} lacks complete ELF symbol tables")
+    tables_named = [table for table in tables if isinstance(table, Mapping) and table.get("name") == table_name]
+    if allow_absent_table and not tables_named:
+        return []
+    if len(tables_named) != 1:
+        fail(f"{description} has {len(tables_named)} {table_name} tables")
+    rows = tables_named[0].get("rows")
+    if not isinstance(rows, list):
+        fail(f"{description} {table_name} rows are malformed")
+    return [row for row in rows if isinstance(row, Mapping) and row.get("name") == name]
+
+
+def _one_fact_symbol(
+    facts: Mapping[str, Any], table_name: str, name: str, description: str,
+) -> Mapping[str, Any]:
+    matches = _fact_symbol_matches(facts, table_name, name, description)
+    if len(matches) != 1:
+        fail(f"{description} has {len(matches)} {name} rows in {table_name}")
+    return matches[0]
+
+
+def _h_errno_row(row: Mapping[str, Any], description: str) -> None:
+    """Require the source-selected legacy main fallback's ELF definition."""
+
+    expected = H_ERRNO_METADATA
+    if (
+        row.get("type") != expected["type"]
+        or row.get("binding") != expected["binding"]
+        or row.get("visibility") != expected["visibility"]
+        or row.get("size_bytes") != expected["size_bytes"]
+    ):
+        fail(f"{description} h_errno metadata differs")
+    section_index = row.get("section_index")
+    if not isinstance(section_index, str) or re.fullmatch(r"[1-9][0-9]*", section_index) is None:
+        fail(f"{description} h_errno lacks a positive numeric defining section")
+
+
+def _hex_integer(value: object, description: str) -> int:
+    if not isinstance(value, str) or re.fullmatch(r"[0-9a-fA-F]+", value) is None:
+        fail(f"{description} is not a retained hexadecimal ELF value")
+    return int(value, 16)
+
+
+def _h_errno_layout_record(
+    facts: Mapping[str, Any], row: Mapping[str, Any], description: str, *, archive_member: Mapping[str, Any] | None,
+) -> dict[str, object]:
+    _h_errno_row(row, description)
+    section_index = int(str(row["section_index"]))
+    sections = facts.get("sections")
+    if not isinstance(sections, list):
+        fail(f"{description} has no complete defining-section roster")
+    sections_matching = [
+        section
+        for section in sections
+        if isinstance(section, Mapping) and section.get("index") == section_index
+    ]
+    if len(sections_matching) != 1:
+        fail(f"{description} h_errno defining section is absent or duplicated")
+    section = sections_matching[0]
+    alignment = section.get("alignment")
+    required = H_ERRNO_METADATA["alignment_bytes"]
+    if (
+        type(alignment) is not int
+        or alignment < required
+        or alignment % required != 0
+    ):
+        fail(f"{description} h_errno defining section alignment is below int alignment")
+    symbol_value = _hex_integer(row.get("value"), f"{description} h_errno symbol value")
+    section_address = _hex_integer(section.get("address"), f"{description} h_errno section address")
+    if section_address % required:
+        fail(f"{description} h_errno defining section address differs from int alignment")
+    if symbol_value < section_address:
+        fail(f"{description} h_errno symbol precedes its defining section")
+    offset = symbol_value - section_address
+    if offset % required:
+        fail(f"{description} h_errno offset alignment differs from int alignment")
+    section_size = _hex_integer(section.get("size"), f"{description} h_errno defining section size")
+    if offset + H_ERRNO_METADATA["size_bytes"] > section_size:
+        fail(f"{description} h_errno exceeds its defining section")
+    result: dict[str, object] = {
+        "symbol_value_hex": str(row["value"]),
+        "object_size_bytes": H_ERRNO_METADATA["size_bytes"],
+        "required_alignment_bytes": required,
+        "defining_section_index": section_index,
+        "defining_section_name": section.get("name"),
+        "defining_section_address_hex": section.get("address"),
+        "defining_section_size_bytes": section_size,
+        "defining_section_alignment_bytes": alignment,
+        "offset_bytes": offset,
+        "offset_modulo_required_alignment": offset % required,
+    }
+    if archive_member is not None:
+        result["archive_member"] = dict(archive_member)
+    return result
+
+
+def validate_static_h_errno_layout(
+    header_payload: str,
+    sections_payload: str,
+    symbols_payload: str,
+    members_payload: str,
+    archive_path: str,
+    description: str,
+) -> dict[str, object]:
+    """Join static archive h_errno to its exact member section and offset."""
+
+    members = _inventory_facts(description, lambda: inventory.parse_archive_members(members_payload))
+    facts = _inventory_facts(
+        description,
+        lambda: inventory.parse_archive_elf_facts(
+            header_payload, sections_payload, symbols_payload, members, expected_archive=archive_path
+        ),
+    )
+    matches: list[tuple[Mapping[str, Any], Mapping[str, Any]]] = []
+    for member in facts:
+        # A complete archive may contain legitimate symbol-free members. They
+        # cannot define h_errno, but their absence of a .symtab must not erase
+        # the exact selected member that does.
+        rows = _fact_symbol_matches(member, ".symtab", "h_errno", description, allow_absent_table=True)
+        if len(rows) > 1:
+            fail(f"{description} has duplicate static archive h_errno definitions in one member")
+        if rows:
+            matches.append((member, rows[0]))
+    if len(matches) != 1:
+        fail(f"{description} has {len(matches)} static archive h_errno definitions")
+    member, row = matches[0]
+    archive_member = {
+        "name": member.get("member"),
+        "index": member.get("member_index"),
+        "occurrence": member.get("member_occurrence"),
+    }
+    if (
+        not isinstance(archive_member["name"], str)
+        or type(archive_member["index"]) is not int
+        or type(archive_member["occurrence"]) is not int
+    ):
+        fail(f"{description} h_errno archive-member identity is malformed")
+    return _h_errno_layout_record(member, row, description, archive_member=archive_member)
+
+
+def validate_shared_h_errno_layout(
+    header_payload: str, sections_payload: str, symbols_payload: str, description: str,
+) -> dict[str, object]:
+    """Join shared h_errno's public dynsym row to its local defining section."""
+
+    facts = _inventory_facts(
+        description,
+        lambda: inventory.parse_elf_facts(
+            header_payload, sections_payload, symbols_payload, expected_type="DYN"
+        ),
+    )
+    symtab = _one_fact_symbol(facts, ".symtab", "h_errno", description)
+    dynsym = _one_fact_symbol(facts, ".dynsym", "h_errno", description)
+    _h_errno_row(symtab, description)
+    _h_errno_row(dynsym, f"{description} dynsym")
+    for field in ("value", "section_index", "type", "binding", "visibility", "size_bytes"):
+        if symtab.get(field) != dynsym.get(field):
+            fail(f"{description} h_errno dynsym does not identify its defining symbol")
+    return _h_errno_layout_record(facts, symtab, description, archive_member=None)
+
+
 def read_digest_file(path: Path, description: str) -> str:
     text = read_text(path, description)
     match = re.fullmatch(r"([0-9a-f]{64})\s+.+\n", text)
@@ -535,20 +752,129 @@ def validate_object_integrity(value: object, work: Path) -> dict[str, Any]:
     return result
 
 
-def symbol_artifacts(work: Path) -> dict[str, dict[str, object]]:
-    return {name: identity(work / name, f"symbol artifact {name}") for name in SYMBOL_INPUTS}
+def observation_artifact(work: Path, output_name: str, description: str) -> dict[str, dict[str, object]]:
+    """Bind one retained `observe` output to its argv/status/diagnostic files."""
+
+    stem = output_name.removesuffix(".txt")
+    return {
+        "output": identity(work / output_name, f"{description} output"),
+        "argv": identity(work / f"{stem}.argv.json", f"{description} argv"),
+        "status": identity(work / f"{stem}.status", f"{description} status"),
+        "stderr": identity(work / f"{stem}.stderr", f"{description} stderr"),
+    }
+
+
+def symbol_artifacts(work: Path) -> dict[str, dict[str, dict[str, object]]]:
+    return {name: observation_artifact(work, name, f"symbol artifact {name}") for name in SYMBOL_INPUTS}
+
+
+def layout_artifacts(work: Path) -> dict[str, dict[str, dict[str, object]]]:
+    """Retain complete defining-section streams beside the existing symbols."""
+
+    return {name: observation_artifact(work, name, f"layout artifact {name}") for name in LAYOUT_INPUTS}
 
 
 def workload_symbol_artifacts(work: Path) -> dict[str, dict[str, object]]:
     return {name: identity(work / name, f"workload symbol artifact {name}") for name in WORKLOAD_SYMBOL_INPUTS}
 
 
-def validate_symbol_artifacts(value: object, work: Path) -> dict[str, Any]:
+def validate_observation_artifact(
+    value: object,
+    *,
+    output_name: str,
+    expected_argv: list[str],
+    work: Path,
+    description: str,
+) -> Path:
+    record = require_exact_mapping(value, {"output", "argv", "status", "stderr"}, description)
+    stem = output_name.removesuffix(".txt")
+    output = validate_identity(record["output"], f"{description} output", within=work)
+    argv_path = validate_identity(record["argv"], f"{description} argv", within=work)
+    status_path = validate_identity(record["status"], f"{description} status", within=work)
+    stderr_path = validate_identity(record["stderr"], f"{description} stderr", within=work)
+    if (
+        output != work / output_name
+        or argv_path != work / f"{stem}.argv.json"
+        or status_path != work / f"{stem}.status"
+        or stderr_path != work / f"{stem}.stderr"
+    ):
+        fail(f"{description} artifact paths drifted")
+    argv = read_json_object(argv_path, f"{description} argv")
+    if argv != {"argv": expected_argv}:
+        fail(f"{description} argv drifted")
+    if read_text(status_path, f"{description} status") != "0\n":
+        fail(f"{description} status drifted")
+    if stderr_path.read_bytes() != b"":
+        fail(f"{description} emitted diagnostics")
+    return output
+
+
+def _recorded_command_path(path: Path, root: Path, recorded_root: PurePosixPath) -> str:
+    """Use the collection mount spelling for a replayed checkout descendant."""
+
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return str(path)
+    return str(recorded_root.joinpath(*relative.parts))
+
+
+def _product_libraries(products: Mapping[str, Any]) -> tuple[Path, Path]:
+    static = products.get("static")
+    dynamic = products.get("dynamic")
+    if not isinstance(static, Mapping) or not isinstance(dynamic, Mapping):
+        fail("errno storage products are malformed")
+    return (
+        validate_identity(static.get("libc"), "candidate static libc"),
+        validate_identity(dynamic.get("libc"), "candidate shared libc"),
+    )
+
+
+def _symbol_observations(
+    products: Mapping[str, Any], root: Path, recorded_root: PurePosixPath,
+) -> dict[str, list[str]]:
+    candidate_static, candidate_shared = _product_libraries(products)
+    return {
+        "oracle-static-symbols.txt": ["readelf", "-Ws", ORACLE_STATIC_ARCHIVE],
+        "oracle-shared-symbols.txt": ["readelf", "-Ws", ORACLE_SHARED_LIBRARY],
+        "oracle-dynamic-symbols.txt": ["readelf", "--dyn-syms", "-W", ORACLE_SHARED_LIBRARY],
+        "candidate-static-symbols.txt": ["readelf", "-Ws", _recorded_command_path(candidate_static, root, recorded_root)],
+        "candidate-shared-symbols.txt": ["readelf", "-Ws", _recorded_command_path(candidate_shared, root, recorded_root)],
+        "candidate-dynamic-symbols.txt": ["readelf", "--dyn-syms", "-W", _recorded_command_path(candidate_shared, root, recorded_root)],
+    }
+
+
+def _layout_observations(
+    products: Mapping[str, Any], root: Path, recorded_root: PurePosixPath,
+) -> dict[str, list[str]]:
+    candidate_static, candidate_shared = _product_libraries(products)
+    return {
+        "oracle-static-members.txt": ["ar", "t", ORACLE_STATIC_ARCHIVE],
+        "oracle-static-header.txt": ["readelf", "-hW", ORACLE_STATIC_ARCHIVE],
+        "oracle-static-sections.txt": ["readelf", "-SW", ORACLE_STATIC_ARCHIVE],
+        "oracle-shared-header.txt": ["readelf", "-hW", ORACLE_SHARED_LIBRARY],
+        "oracle-shared-sections.txt": ["readelf", "-SW", ORACLE_SHARED_LIBRARY],
+        "candidate-static-members.txt": ["ar", "t", _recorded_command_path(candidate_static, root, recorded_root)],
+        "candidate-static-header.txt": ["readelf", "-hW", _recorded_command_path(candidate_static, root, recorded_root)],
+        "candidate-static-sections.txt": ["readelf", "-SW", _recorded_command_path(candidate_static, root, recorded_root)],
+        "candidate-shared-header.txt": ["readelf", "-hW", _recorded_command_path(candidate_shared, root, recorded_root)],
+        "candidate-shared-sections.txt": ["readelf", "-SW", _recorded_command_path(candidate_shared, root, recorded_root)],
+    }
+
+
+def validate_symbol_artifacts(
+    value: object, work: Path, products: Mapping[str, Any], root: Path, recorded_root: PurePosixPath,
+) -> dict[str, Path]:
     if not isinstance(value, dict) or set(value) != set(SYMBOL_INPUTS):
         fail("symbol artifact roster drifted")
-    paths: dict[str, Path] = {}
-    for name in SYMBOL_INPUTS:
-        paths[name] = validate_identity(value[name], f"symbol artifact {name}", within=work)
+    observations = _symbol_observations(products, root, recorded_root)
+    paths = {
+        name: validate_observation_artifact(
+            value[name], output_name=name, expected_argv=observations[name], work=work,
+            description=f"symbol artifact {name}",
+        )
+        for name in SYMBOL_INPUTS
+    }
     # ELF values and section-number spellings belong to each independently
     # linked archive/DSO.  The contract is same-address identity *within* an
     # artifact; comparing a crabc value to musl's unrelated link layout would
@@ -565,7 +891,86 @@ def validate_symbol_artifacts(value: object, work: Path) -> dict[str, Any]:
         read_text(paths["candidate-dynamic-symbols.txt"], "candidate dynamic symbols"),
         "candidate shared library",
     )
-    return value
+    return paths
+
+
+def validate_h_errno_layout_artifacts(
+    value: object,
+    symbols: Mapping[str, Path],
+    products: Mapping[str, Any],
+    work: Path,
+    root: Path,
+    recorded_root: PurePosixPath,
+) -> dict[str, Any]:
+    """Prove h_errno's source-required object alignment in both placements.
+
+    A shared provider may deliberately place this four-byte object in a more
+    broadly aligned section.  The retained defining section still has to meet
+    the source minimum, and the symbol's section-relative offset has to meet
+    it independently.  Static archives retain the selected member identity so
+    a repeated section number or zero relocatable st_value cannot impersonate
+    another definition.
+    """
+
+    if not isinstance(value, dict) or set(value) != set(LAYOUT_INPUTS):
+        fail("h_errno layout artifact roster drifted")
+    if set(symbols) != set(SYMBOL_INPUTS):
+        fail("h_errno layout symbol artifact roster drifted")
+    observations = _layout_observations(products, root, recorded_root)
+    paths = {
+        name: validate_observation_artifact(
+            value[name], output_name=name, expected_argv=observations[name], work=work,
+            description=f"h_errno layout artifact {name}",
+        )
+        for name in LAYOUT_INPUTS
+    }
+    candidate_static_archive, _ = _product_libraries(products)
+    # The complete archive stream records the collection container spelling.
+    # Host replay rebases the product identity to the physical checkout, but
+    # must pass the original spelling back to the raw archive parser.
+    candidate_static_archive_recorded = _recorded_command_path(candidate_static_archive, root, recorded_root)
+
+    def layout_text(name: str) -> str:
+        return read_text(paths[name], f"h_errno layout artifact {name}")
+
+    def symbol_text(name: str) -> str:
+        return read_text(symbols[name], f"h_errno layout symbol artifact {name}")
+
+    static = {
+        "metadata": dict(H_ERRNO_METADATA),
+        "oracle": validate_static_h_errno_layout(
+            layout_text("oracle-static-header.txt"),
+            layout_text("oracle-static-sections.txt"),
+            symbol_text("oracle-static-symbols.txt"),
+            layout_text("oracle-static-members.txt"),
+            ORACLE_STATIC_ARCHIVE,
+            "pinned musl static h_errno",
+        ),
+        "candidate": validate_static_h_errno_layout(
+            layout_text("candidate-static-header.txt"),
+            layout_text("candidate-static-sections.txt"),
+            symbol_text("candidate-static-symbols.txt"),
+            layout_text("candidate-static-members.txt"),
+            candidate_static_archive_recorded,
+            "candidate static h_errno",
+        ),
+    }
+    shared = {
+        "metadata": dict(H_ERRNO_METADATA),
+        "oracle": validate_shared_h_errno_layout(
+            layout_text("oracle-shared-header.txt"),
+            layout_text("oracle-shared-sections.txt"),
+            symbol_text("oracle-shared-symbols.txt"),
+            "pinned musl shared h_errno",
+        ),
+        "candidate": validate_shared_h_errno_layout(
+            layout_text("candidate-shared-header.txt"),
+            layout_text("candidate-shared-sections.txt"),
+            symbol_text("candidate-shared-symbols.txt"),
+            "candidate shared h_errno",
+        ),
+    }
+    return {"static": static, "shared": shared}
 
 
 def validate_workload_symbols(value: object, work: Path) -> dict[str, Any]:
@@ -736,10 +1141,15 @@ def collect(root: Path, work: Path, static_product: Path, dynamic_product: Path)
     if before != after:
         fail("source changed while errno storage evidence ran")
     source = validate_source_snapshot(before, root, "source evidence snapshot")
+    collection_checkout_root = _recorded_checkout_root(source["root"])
     products = product_record(static_product, dynamic_product)
     shared_alias_link_policy = validate_shared_alias_product_provenance(products)
     symbols = symbol_artifacts(work)
-    validate_symbol_artifacts(symbols, work)
+    symbol_paths = validate_symbol_artifacts(symbols, work, products, root, collection_checkout_root)
+    layouts = layout_artifacts(work)
+    h_errno_layout = validate_h_errno_layout_artifacts(
+        layouts, symbol_paths, products, work, root, collection_checkout_root
+    )
     workload_symbols = workload_symbol_artifacts(work)
     validate_workload_symbols(workload_symbols, work)
     objects: dict[str, Any] = {}
@@ -758,9 +1168,12 @@ def collect(root: Path, work: Path, static_product: Path, dynamic_product: Path)
         "target": TARGET,
         "work": str(work),
         "source": source,
+        "collection_checkout_root": str(collection_checkout_root),
         "products": products,
         "shared_alias_link_policy": shared_alias_link_policy,
         "symbols": symbols,
+        "layout_artifacts": layouts,
+        "h_errno_layout": h_errno_layout,
         "workload_symbols": workload_symbols,
         "objects": objects,
         "execution": execution,
@@ -768,8 +1181,9 @@ def collect(root: Path, work: Path, static_product: Path, dynamic_product: Path)
         "summary": {
             "errno_public_accessor": "GLOBAL DEFAULT FUNC",
             "errno_allocator_alias": "static WEAK HIDDEN same-address; shared LOCAL DEFAULT absent-dynsym",
-            "h_errno": "GLOBAL DEFAULT OBJECT size=4 with GLOBAL DEFAULT accessor",
-            "execution": "main/live-worker isolation, stable live locations, selected pthread EBUSY preserves errno, and loaded DSO access",
+            "h_errno": "GLOBAL DEFAULT OBJECT size=4, source-required alignment=4, and GLOBAL DEFAULT accessor",
+            "h_errno_layout": "static/shared defining section and section-relative offset retain alignment=4; shared section over-alignment is observed separately",
+            "execution": "main/live-worker isolation, aligned live accessor locations, stable live locations, selected pthread EBUSY preserves errno, and loaded DSO access",
             "worker_pointer_lifetime": "never dereferenced after join",
         },
     }
@@ -784,9 +1198,12 @@ def validate_report(root: Path, report_path: Path) -> dict[str, Any]:
         "target",
         "work",
         "source",
+        "collection_checkout_root",
         "products",
         "shared_alias_link_policy",
         "symbols",
+        "layout_artifacts",
+        "h_errno_layout",
         "workload_symbols",
         "objects",
         "execution",
@@ -796,6 +1213,7 @@ def validate_report(root: Path, report_path: Path) -> dict[str, Any]:
     require_exact_mapping(report, expected, "errno storage report")
     if report["schema"] != SCHEMA or report["target"] != TARGET or not isinstance(report["work"], str):
         fail("errno storage report identity drifted")
+    collection_checkout_root = _recorded_checkout_root(report["collection_checkout_root"])
     work = physical_directory(Path(report["work"]), "report evidence root")
     evidence_root = physical_directory(root / ".work", "checkout evidence root")
     if not work.is_relative_to(evidence_root):
@@ -806,7 +1224,14 @@ def validate_report(root: Path, report_path: Path) -> dict[str, Any]:
     validate_products(report["products"])
     if report["shared_alias_link_policy"] != validate_shared_alias_product_provenance(report["products"]):
         fail("report shared errno alias link policy drifted")
-    validate_symbol_artifacts(report["symbols"], work)
+    symbol_paths = validate_symbol_artifacts(
+        report["symbols"], work, report["products"], root, collection_checkout_root
+    )
+    derived_h_errno_layout = validate_h_errno_layout_artifacts(
+        report["layout_artifacts"], symbol_paths, report["products"], work, root, collection_checkout_root
+    )
+    if not exact_same(report["h_errno_layout"], derived_h_errno_layout):
+        fail("report h_errno layout differs from retained complete ELF facts")
     validate_workload_symbols(report["workload_symbols"], work)
     validate_object_integrity(report["objects"], work)
     validate_execution(report["execution"], work)
@@ -817,6 +1242,7 @@ def validate_report(root: Path, report_path: Path) -> dict[str, Any]:
             "errno_public_accessor",
             "errno_allocator_alias",
             "h_errno",
+            "h_errno_layout",
             "execution",
             "worker_pointer_lifetime",
         },
@@ -825,8 +1251,9 @@ def validate_report(root: Path, report_path: Path) -> dict[str, Any]:
     if summary != {
         "errno_public_accessor": "GLOBAL DEFAULT FUNC",
         "errno_allocator_alias": "static WEAK HIDDEN same-address; shared LOCAL DEFAULT absent-dynsym",
-        "h_errno": "GLOBAL DEFAULT OBJECT size=4 with GLOBAL DEFAULT accessor",
-        "execution": "main/live-worker isolation, stable live locations, selected pthread EBUSY preserves errno, and loaded DSO access",
+        "h_errno": "GLOBAL DEFAULT OBJECT size=4, source-required alignment=4, and GLOBAL DEFAULT accessor",
+        "h_errno_layout": "static/shared defining section and section-relative offset retain alignment=4; shared section over-alignment is observed separately",
+        "execution": "main/live-worker isolation, aligned live accessor locations, stable live locations, selected pthread EBUSY preserves errno, and loaded DSO access",
         "worker_pointer_lifetime": "never dereferenced after join",
     }:
         fail("report summary drifted")

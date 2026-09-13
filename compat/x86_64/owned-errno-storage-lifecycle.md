@@ -21,8 +21,18 @@ The component checks four narrow facts.
   that localizes it as `LOCAL DEFAULT` out of `.dynsym`. It remains separate
   from musl's public `owned_dynamic.list` interposition exceptions and the
   fixed-C mimalloc localization list.
-- `h_errno` remains the link-visible four-byte main fallback object and
-  `__h_errno_location` selects independent live-worker storage. The selected
+- Pinned musl's `src/network/h_errno.c` spells `int h_errno`; the selected
+  `h_errno.rs` main fallback is the corresponding four-byte, four-byte-aligned
+  `c_int`. Complete retained ELF header/section/symbol streams join the exact
+  static archive member and shared definition to their defining sections. The
+  reader requires each section to meet the four-byte source minimum and each
+  section-relative `h_errno` offset to be divisible by four. Shared `.bss`
+  section alignment is retained as an observed producer placement and may be
+  broader than the object's C alignment; it is never substituted for that
+  four-byte requirement.
+- `__h_errno_location` selects independent live-worker storage. The workload
+  checks that both main and live-worker `errno`/`h_errno` accessor pointers
+  meet the installed x86 `int` alignment before using them. The selected
   implementation intentionally does not claim musl's complete TCB layout or
   foreign-thread/dynamic-TLS parity.
 - Repeated accessors return stable locations while the owning thread is live;
@@ -39,11 +49,14 @@ binary faults before `main` in the native evidence image. Candidate static-PIE
 execution remains covered. This is a toolchain observation, not a claim about
 errno storage.
 
-The runner leaves its command, object seals, ELF symbols, link receipts, roots,
-and transcripts below `.work/x86_64`. `owned_errno_storage_lifecycle.py`
-collects and replays the closed receipt. It proves alias section/value identity
-inside each independently linked artifact; musl and candidate addresses are
-not compared across separate link layouts.
+The runner leaves its command, object seals, complete ELF headers/sections,
+archive-member rosters, symbols, link receipts, roots, and transcripts below
+`.work/x86_64`. `owned_errno_storage_lifecycle.py` collects and replays the
+closed receipt. `h_errno_layout.static` and `h_errno_layout.shared` each retain
+the fixed selected metadata plus oracle and candidate defining-section/offset
+facts for a selector that has already authenticated this receipt. It proves
+alias section/value identity inside each independently linked artifact; musl
+and candidate addresses are not compared across separate link layouts.
 
 Native collection records the container checkout spelling (`/workspace`) as a
 provenance observation. A host replay admits only lexical descendants of that
