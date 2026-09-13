@@ -184,9 +184,23 @@ types and interposition scope.
 `owned_syscall_alias_authority.py` binds observations to bytes outside the JSON
 claims. Every symbol row (including archive member, table, index, section and
 size) and every RELA row is compared with the retained ELF/archive bytes using
-`loader_debug_abi_evidence.Elf`. The retained installed-driver final-link
-receipts bind the selected LLD, full command, product inputs, probe objects,
-output bytes and link trace. The exact chroot roots contain the selected product
+`loader_debug_abi_evidence.Elf`. Every candidate endpoint has an installed-driver link receipt. All four
+static/static-PIE contract/override links request `--link-receipt` and retain
+its JSON, LLD map and trace. Replay uses `crabc_cc_static`'s exact owned plan,
+mode and six-input roster to bind the selected LLD, CRT, `libc.a`, builtins,
+correct previously compiled probe object, and exact output bytes. The static
+product owner's offline ELF parser requires the selected ET_EXEC/ET_DYN mode,
+no interpreter, no `DT_NEEDED`, and no text relocations; a static PIE may have
+`PT_DYNAMIC`. Each traced archive member must exist in the retained selected
+archive. The map joins `_start`, `main` and every public alias to its actual
+CRT/object/archive source, ELF address, size and binding. Mapped function bytes
+must match their input bytes outside explicit x86 relocation fields and the
+bounded GOT/TLS instruction relaxations emitted by the pinned linkers. Thus
+substituting an oracle or dynamic output and resealing its receipt hash cannot
+stand in for an owned static link.
+
+The four dynamic final-link receipts bind the selected LLD, full command,
+product inputs, correct probe objects, output bytes and link trace. The exact chroot roots contain the selected product
 or musl runtime plus the corresponding linked probes and regular input. Host
 replay does not execute a compiler, linker, ELF reader, Git, or any other command.
 
@@ -232,6 +246,9 @@ commands. Set `CRABC_SYSCALL_ALIAS_TEST_RECEIPT` to a freshly collected v2
 receipt mutations, including source/tool resealing, substituted ELF streams,
 forged chroot routes, environments, stdin, link receipts, runtime inputs,
 coordinated probe/copy mode changes, and a self-consistent invented Git commit.
+The static endpoint regressions cover all four provider substitutions, output
+hash resealing, changed probe inputs, invented archive members, forged linker
+identity, and modified function code with a resealed output hash.
 The test copies each receipt under checkout `.work`; it never changes the
 original control. These tests explicitly report a skip when no native receipt
 has been supplied.

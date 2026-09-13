@@ -313,5 +313,99 @@ class OwnedSyscallAliasRetainedAuthorityTests(unittest.TestCase):
             validate_report(self.path)
 
 
+    def test_static_endpoints_reject_same_type_provider_substitution(self) -> None:
+        for target, replacement in (
+            ("static-contract", "oracle-contract"),
+            ("static-override", "oracle-override"),
+            ("static-pie-contract", "dynamic-pie-contract"),
+            ("static-pie-override", "dynamic-pie-override"),
+        ):
+            with self.subTest(target=target, replacement=replacement):
+                path = self.runner / target
+                original = path.read_bytes()
+                try:
+                    path.write_bytes((self.runner / replacement).read_bytes())
+                    with self.assertRaises(ReceiptError):
+                        validate_report(self.path)
+                finally:
+                    path.write_bytes(original)
+
+
+    def test_static_provider_swaps_cannot_be_resealed_with_new_output_hashes(self) -> None:
+        for target, replacement in (
+            ("static-contract", "oracle-contract"),
+            ("static-override", "oracle-override"),
+            ("static-pie-contract", "dynamic-pie-contract"),
+            ("static-pie-override", "dynamic-pie-override"),
+        ):
+            with self.subTest(target=target, replacement=replacement):
+                path = self.runner / target
+                sidecar = self.runner / (target + ".link.json")
+                original, original_receipt = path.read_bytes(), sidecar.read_bytes()
+                try:
+                    path.write_bytes((self.runner / replacement).read_bytes())
+                    record = json.loads(original_receipt)
+                    record["output"]["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+                    sidecar.write_text(json.dumps(record))
+                    with self.assertRaises(ReceiptError):
+                        validate_report(self.path)
+                finally:
+                    path.write_bytes(original)
+                    sidecar.write_bytes(original_receipt)
+
+    def test_static_selected_probe_object_cannot_be_replaced_in_the_link_receipt(self) -> None:
+        for mode in ("static", "static-pie"):
+            for probe, other in (("contract", "override"), ("override", "contract")):
+                with self.subTest(mode=mode, probe=probe):
+                    path = self.runner / f"{mode}-{probe}.link.json"
+                    original = path.read_bytes()
+                    try:
+                        record = json.loads(original)
+                        record["input_receipts"][-1] = {
+                            "role": "application", "path": self.report["runner"]["original"] + "/" + other + ".o",
+                            "sha256": hashlib.sha256((self.runner / (other + ".o")).read_bytes()).hexdigest(),
+                        }
+                        path.write_text(json.dumps(record))
+                        with self.assertRaises(ReceiptError):
+                            validate_report(self.path)
+                    finally:
+                        path.write_bytes(original)
+
+    def test_static_trace_cannot_invent_a_selected_archive_member(self) -> None:
+        path = self.runner / "static-contract.link.trace"
+        with path.open("a") as stream:
+            stream.write(self.report["products"]["static"]["original"] + "/usr/lib/libc.a(invented.o)\n")
+        sidecar = self.runner / "static-contract.link.json"
+        record = json.loads(sidecar.read_text())
+        record["trace"]["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+        sidecar.write_text(json.dumps(record))
+        with self.assertRaises(ReceiptError):
+            validate_report(self.path)
+
+    def test_static_function_code_cannot_be_resealed_with_an_output_hash(self) -> None:
+        path = self.runner / "static-contract"
+        elf = authority.Elf(path)
+        main = elf.symbol("main", dynamic=False)
+        section = elf.sections[main["section"]]
+        offset = section[4] + main["value"] - section[3]
+        data = bytearray(path.read_bytes())
+        data[offset] ^= 1
+        path.write_bytes(data)
+        sidecar = self.runner / "static-contract.link.json"
+        record = json.loads(sidecar.read_text())
+        record["output"]["sha256"] = hashlib.sha256(data).hexdigest()
+        sidecar.write_text(json.dumps(record))
+        with self.assertRaises(ReceiptError):
+            validate_report(self.path)
+
+    def test_static_linker_cannot_be_changed_within_an_otherwise_valid_receipt(self) -> None:
+        path = self.runner / "static-pie-override.link.json"
+        record = json.loads(path.read_text())
+        record["resolved_linker"]["sha256"] = "c" * 64
+        path.write_text(json.dumps(record))
+        with self.assertRaises(ReceiptError):
+            validate_report(self.path)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -23,6 +23,7 @@ from typing import Any, NamedTuple
 MODULE_DIR = Path(__file__).resolve().parent
 if str(MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(MODULE_DIR))
+import crabc_cc_static as static_driver_contract
 import owned_dynamic_receipt
 import owned_syscall_alias_authority as authority
 import owned_posix_product_evidence as product_evidence
@@ -73,6 +74,8 @@ COLLECTOR_SOURCES = (
     "compat/x86_64/run_owned_syscall_alias_contract.sh",
     "compat/x86_64/owned_syscall_alias_contract_reader.py",
     "compat/x86_64/owned_syscall_alias_authority.py",
+    "compat/x86_64/crabc_cc_static.py",
+    "compat/x86_64/owned_posix_product_evidence.py",
     "compat/x86_64/owned-syscall-alias-image-inputs.json",
     "compat/x86_64/owned_syscall_alias_contract_probe.c",
     "compat/x86_64/owned_syscall_alias_override_probe.c",
@@ -314,7 +317,7 @@ def expected_commands(work: Path, inputs: Mapping[str, object], root: Path) -> d
         commands[stem] = [path(stem), path("regular")]
         for mode in ("static", "static-pie"):
             stem = mode + "-" + probe
-            commands[stem + "-link"] = [original("static_driver"), "-" + mode, obj, "-o", path(stem)]
+            commands[stem + "-link"] = [original("static_driver"), "-" + mode, obj, "--link-receipt", str((work / (stem + ".link.json")).relative_to(root)), "-o", path(stem)]
             commands[stem] = [path(stem), path("regular")]
         for lane in ("oracle-dynamic", "dynamic"):
             for mode in ("pie", "non-pie"):
@@ -334,6 +337,7 @@ def expected_commands(work: Path, inputs: Mapping[str, object], root: Path) -> d
 def _validate_command_argv(stem, argv, command_runner, inputs, root=None):
     if root is None:
         root = Path(inputs["selected_dynamic_list"]["original"]["path"]).parents[4]
+    require(command_runner.is_relative_to(root) and ".." not in command_runner.parts, f"exact command argv root differs: {stem}")
     require(same(argv, expected_commands(command_runner, inputs, root).get(stem)),
             f"exact command argv differs: {stem}")
 
@@ -395,6 +399,73 @@ def _require_symbol_observations(runner: Path) -> None:
     for _caller, public in PUBLIC_ALIAS_SOURCE_CALLERS:
         require(re.search(r"\b" + re.escape(public) + r"(?:@[^\s]+)?\b", relocations) is None, f"candidate shared retains public relocation {public}")
 
+def validate_static_link_receipts(output, runner, inputs, command_runner):
+    """Bind all four static outputs to the installed driver's sealed link plan.
+
+    The static product owner supplies the modes, exact plan and input roster;
+    its offline ELF audit permits static PIE's PT_DYNAMIC but rejects an
+    interpreter, DT_NEEDED or text relocations in either static mode.
+    """
+    original_product = Path(inputs["static_driver"]["original"]["path"]).parents[1]
+    retained_product = output / "products/static"
+    original_root = Path(inputs["selected_dynamic_list"]["original"]["path"]).parents[4]
+    linker = {key: inputs["dynamic_linker"]["original"][key] for key in ("path", "sha256")}
+    for linkage in ("static", "static-pie"):
+        mode = static_driver_contract.static_mode(product_evidence.LINKAGES[linkage]["receipt_mode"])
+        for probe in ("contract", "override"):
+            stem = f"{linkage}-{probe}"
+            receipt = read_json(runner / (stem + ".link.json"), "static link receipt")
+            expected_inputs = static_driver_contract.receipt_input_records(retained_product, mode, [runner / (probe + ".o")])
+            expected_inputs[-1]["path"] = str(command_runner / (probe + ".o"))
+            expected = {
+                "schema": static_driver_contract.LINK_RECEIPT_SCHEMA,
+                "format": static_driver_contract.DRIVER_FORMAT,
+                "target": static_driver_contract.TARGET,
+                "mode": {"id": mode.identifier, "elf_type": mode.elf_type, "crt_object": mode.crt_object, "interpreter": "absent"},
+                "resolved_linker": linker,
+                "owned_link_contract": static_driver_contract.owned_link_plan(original_product, mode),
+                "input_receipts": expected_inputs,
+                "output": {"path": str(command_runner / stem), "sha256": digest(runner / stem)},
+                **{kind: {"path": str((command_runner / f"{stem}.link.{kind}").relative_to(original_root)),
+                           "sha256": digest(runner / f"{stem}.link.{kind}")} for kind in ("map", "trace")},
+            }
+            require(same(receipt, expected), f"static sealed link receipt differs: {stem}")
+            try:
+                product_evidence._audit_retained_elf(runner / stem, linkage)
+            except product_evidence.ProductEvidenceError as error:
+                raise ReceiptError(f"{stem}: {error}") from error
+            direct = {str(original_product / "usr/lib" / name): retained_product / "usr/lib" / name
+                      for name in (mode.crt_object, "crti.o", "crtn.o")}
+            direct[str(command_runner / (probe + ".o"))] = runner / (probe + ".o")
+            archives = {str(original_product / "usr/lib" / name): retained_product / "usr/lib" / name
+                        for name in ("libc.a", "libcrabc-builtins.a")}
+            # Validate each actual member against its retained archive, rather
+            # than accepting an arbitrary parenthesized archive suffix.
+            members = {path: dict(authority.archive_members(artifact.read_bytes())) for path, artifact in archives.items()}
+            trace = (runner / (stem + ".link.trace")).read_text().splitlines()
+            require(trace and len(trace) == len(set(trace)), f"static trace is empty or repeated: {stem}")
+            seen = set()
+            admitted = dict(direct)
+            for line in trace:
+                if line in direct:
+                    seen.add(line)
+                    continue
+                if line in archives:
+                    seen.add(line)
+                    continue
+                matches = [(path, line[len(path) + 1:-1]) for path in archives
+                           if line.startswith(path + "(") and line.endswith(")")]
+                require(len(matches) == 1 and matches[0][1] in members[matches[0][0]], f"static trace contains unowned archive member: {stem}")
+                archive, member = matches[0]
+                seen.add(archive)
+                admitted[line] = members[archive][member]
+            require(seen == set(direct) | set(archives), f"static trace omits a selected input: {stem}")
+            authority.require_static_function_map(
+                runner / (stem + ".link.map"), runner / stem, admitted,
+                str(command_runner / (probe + ".o")), str(original_product / "usr/lib" / mode.crt_object),
+                str(original_product / "usr/lib/libc.a"), [public for public, _body in ALIASES], probe == "override")
+
+
 def validate_dynamic_link_receipts(output, runner, inputs, command_runner):
     """Replay the installed driver's actual four final-link input receipts."""
     product = Path(inputs["dynamic_driver"]["original"]["path"]).parents[1]
@@ -440,6 +511,7 @@ def validate_dynamic_link_receipts(output, runner, inputs, command_runner):
 def validate_artifact_observations(output, runner, inputs, command_runner):
     """The report cannot substitute an oracle stream for a candidate artifact."""
     def retained(name): return output / inputs[name]["retained"]["path"]
+    validate_static_link_receipts(output, runner, inputs, command_runner)
     validate_dynamic_link_receipts(output, runner, inputs, command_runner)
     for stem, name, tables in (
         ("musl-static", "oracle_archive", {".symtab"}),
@@ -522,6 +594,8 @@ def validate_runner_placements(runner):
         *(f"dynamic-{mode}-override.symbols.txt" for mode in ("pie", "non-pie")),
         *(f"dynamic-{mode}-{probe}.crabc-link.json" for mode in ("pie", "non-pie") for probe in ("contract", "override")),
     }
+    raw |= {f"{mode}-{probe}.link.{suffix}" for mode in ("static", "static-pie")
+            for probe in ("contract", "override") for suffix in ("json", "map", "trace")}
     roots = {f"{lane}-{mode}-root" for lane in ("oracle-dynamic", "dynamic") for mode in ("pie", "non-pie")}
     require({node.name for node in runner.iterdir()} == programs | raw | roots, "runner retained node roster differs")
     for name in programs | raw:

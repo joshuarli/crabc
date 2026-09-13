@@ -299,12 +299,14 @@ run oracle-override "$WORK/oracle-override" "$WORK/regular"
 
 for mode in static static-pie; do
     run "$mode-contract-link" "$STATIC_PRODUCT/bin/crabc-cc" "-$mode" \
-        "$WORK/contract.o" -o "$WORK/$mode-contract"
+        "$WORK/contract.o" --link-receipt "${WORK#"$ROOT/"}/$mode-contract.link.json" \
+        -o "$WORK/$mode-contract"
     run "$mode-contract" "$WORK/$mode-contract" "$WORK/regular"
     same_transcript oracle-contract "$mode-contract"
 
     run "$mode-override-link" "$STATIC_PRODUCT/bin/crabc-cc" "-$mode" \
-        "$WORK/override.o" -o "$WORK/$mode-override"
+        "$WORK/override.o" --link-receipt "${WORK#"$ROOT/"}/$mode-override.link.json" \
+        -o "$WORK/$mode-override"
     run "$mode-override" "$WORK/$mode-override" "$WORK/regular"
     same_transcript oracle-override "$mode-override"
 done

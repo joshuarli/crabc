@@ -272,3 +272,120 @@ def image_input_manifest():
 if __name__ == '__main__':
     import json
     print(json.dumps(image_input_manifest(), indent=2, sort_keys=True))
+
+
+def require_static_function_map(map_path, executable, admitted, probe_path, crt_path, archive_path, aliases, override):
+    """Join ordinary static extraction to the final syscall/probe definitions.
+
+    LLD's map must name an actually traced input member, and each finite
+    function keeps its source section, size and bytes outside relocation
+    fields. This also rejects an output whose receipt hash was merely resealed.
+    """
+    images = {name: elf_bytes(value) if isinstance(value, bytes) else Elf(value)
+              for name, value in admitted.items()}
+    final = Elf(executable)
+    wanted = set(aliases) | {'main', '_start'}
+    mapped = {}
+    owner = None
+    contribution = None
+    lines = physical(map_path).read_text().splitlines()
+    require(lines and lines[0].split() == ['VMA', 'LMA', 'Size', 'Align', 'Out', 'In', 'Symbol'],
+            'static link map header differs')
+    for line in lines[1:]:
+        match = re.fullmatch(r'\s*([0-9a-f]+)\s+([0-9a-f]+)\s+([0-9a-f]+)\s+(\d+)\s+(.*)', line)
+        require(match is not None, 'malformed static link map row')
+        address, load, size, _alignment, name = match.groups()
+        address, load, size = int(address, 16), int(load, 16), int(size, 16)
+        if ':(' in name and name.endswith(')'):
+            owner, section = name.rsplit(':(', 1)
+            section = section[:-1]
+            require(owner == '<internal>' or owner in images, 'static map names an untraced input')
+            contribution = (address, size, section)
+        elif name.startswith('.'):
+            owner, contribution = None, None
+        elif name in wanted:
+            require(name not in mapped and owner in images and contribution is not None,
+                    'static map duplicates or lacks a function input')
+            require(address == load, 'static function load address differs')
+            mapped[name] = (owner, contribution, address, size)
+    require(set(mapped) == wanted, 'static link map omits a syscall or probe function')
+    def selected_symbols(elf):
+        # Look up the finite names first; Elf.symbol_row then checks their full
+        # records and versions. This avoids rescanning every large archive
+        # symbol table once per alias during each receipt replay.
+        found = {}
+        for index, table in enumerate(elf.sections):
+            if table[1] != 2:
+                continue
+            require(table[9] == 24 and table[5] % 24 == 0, 'invalid static symbol table')
+            strings = elf.sections[table[6]]
+            require(strings[1] == 3 and strings[4] + strings[5] <= len(elf.data), 'invalid static symbol strings')
+            for number in range(table[5] // 24):
+                offset = elf.unpack('<I', table[4] + number * 24)[0]
+                require(offset < strings[5], 'invalid static symbol name offset')
+                start = strings[4] + offset
+                end = elf.data.find(b'\0', start, strings[4] + strings[5])
+                require(end >= 0, 'unterminated static symbol name')
+                name = elf.data[start:end].decode()
+                if name not in wanted:
+                    continue
+                row = elf.symbol_row(index, number)
+                if row['section']:
+                    require(name not in found, 'duplicate mapped static function')
+                    found[name] = row
+        return found
+
+    final_symbols = selected_symbols(final)
+    source_symbols = {owner: selected_symbols(images[owner]) for owner in {row[0] for row in mapped.values()}}
+    for name, (owner, contribution, address, size) in mapped.items():
+        expected_owner = probe_path if name == 'main' or override and name in aliases else crt_path if name == '_start' else None
+        require(owner == expected_owner if expected_owner else owner.startswith(archive_path + '('),
+                'static function came from the wrong selected object/archive')
+        source = images[owner]
+        require(name in source_symbols[owner] and name in final_symbols, 'mapped static function lacks ELF definition')
+        before = source_symbols[owner][name]
+        after = final_symbols[name]
+        expected_binding = 'WEAK' if name in aliases and not override else 'GLOBAL'
+        require(before['type'] == after['type'] == 'FUNC' and before['binding'] == after['binding'] == expected_binding
+                and before['visibility'] == after['visibility'] == 'DEFAULT'
+                and 0 < before['section'] < len(source.sections) and 0 < after['section'] < len(final.sections),
+                'static function definition/binding differs')
+        base, extent, section = contribution
+        source_section = source.sections[before['section']]
+        require(section == section_name(source, source_section)
+                and address == base + before['value'] and size == before['size'] == after['size']
+                and size > 0 and address == after['value'] and before['value'] + size <= extent,
+                'static map/source/final function location differs')
+        source_offset = source_section[4] + before['value']
+        output_section = final.sections[after['section']]
+        output_offset = output_section[4] + after['value'] - output_section[3]
+        original = bytearray(source.data[source_offset:source_offset + size])
+        linked = bytearray(final.data[output_offset:output_offset + size])
+        require(len(original) == len(linked) == size, 'truncated mapped static function')
+        for relocations in source.sections:
+            if relocations[1] != 4 or relocations[7] != before['section']:
+                continue
+            require(relocations[9] == 24 and relocations[5] % 24 == 0, 'malformed static input relocations')
+            for offset in range(0, relocations[5], 24):
+                position, info, _addend = source.unpack('<QQq', relocations[4] + offset)
+                if not before['value'] <= position < before['value'] + size:
+                    continue
+                kind = info & 0xffffffff
+                require(kind in (1, 2, 4, 9, 10, 11, 22, 23, 24, 41, 42), f'unclassified mapped static relocation {kind} in {name}')
+                width = 8 if kind in (1, 24) else 4
+                position -= before['value']
+                require(position + width <= size, 'static relocation crosses a function boundary')
+                if kind in (22, 41, 42):
+                    # Established GOTPCRELX/GOTTPOFF relaxation can turn a RIP-relative
+                    # load into LEA or a register-immediate MOV. Only those exact
+                    # instruction rewrites are admitted; this is not a blanket
+                    # mask over preceding instruction bytes.
+                    require(position >= 2, 'truncated GOTPCRELX instruction')
+                    old, new = bytes(original[position - 2:position]), bytes(linked[position - 2:position])
+                    allowed = {old}
+                    if old[0] == 0x8b and old[1] & 0xc7 == 5:
+                        allowed |= {bytes([0x8d, old[1]]), bytes([0xc7, 0xc0 | (old[1] >> 3 & 7)])}
+                    require(new in allowed, 'unexpected static GOTPCRELX instruction relaxation')
+                    original[position - 2:position] = linked[position - 2:position]
+                original[position:position + width] = linked[position:position + width]
+        require(original == linked, f'linked static function bytes differ from selected input: {name}')
