@@ -57,6 +57,7 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
     def test_workload_environment_retains_the_existing_chroot_and_rust_paths(self):
         self.assertIn("/usr/sbin", EVIDENCE.WORKLOAD_ENVIRONMENT["PATH"].split(":"))
         self.assertIn("/opt/cargo/bin", EVIDENCE.WORKLOAD_ENVIRONMENT["PATH"].split(":"))
+        self.assertEqual(EVIDENCE.WORKLOAD_ENVIRONMENT["RUSTUP_HOME"], "/opt/rustup")
 
     def test_bounded_dlfcn_capture_explicitly_excludes_the_separate_proc_mount_search_leaf(self):
         self.assertEqual(EVIDENCE.DLFCN_SKIP_SEARCH_ENV, "CRABC_GENERAL_DYNAMIC_DLOPEN_SKIP_SEARCH")

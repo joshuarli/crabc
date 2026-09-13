@@ -78,10 +78,14 @@ EXPECTED_GROWTH = b"runtime TLS: old/new workers, 41 modules, retained addresses
 EXPECTED_DLOPEN = b"nested-dlopen=42\n"
 EXPECTED_TBSS = b"initial-tbss=8192,worker=isolated\n"
 # The retained runners invoke the image's existing `chroot` command and the
-# timer reset source test invokes the pinned image's `rustc` wrapper.  Keep
-# those exact locations available while excluding inherited host
+# timer reset source test invokes the pinned image's `rustc` wrapper through
+# its pinned Rustup state.  Keep those exact locations and state available
+# while excluding inherited host
 # configuration, then seal this exact environment in every outer transcript.
-WORKLOAD_ENVIRONMENT = {"PATH": "/opt/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
+WORKLOAD_ENVIRONMENT = {
+    "PATH": "/opt/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "RUSTUP_HOME": "/opt/rustup",
+}
 DLFCN_SKIP_SEARCH_ENV = "CRABC_GENERAL_DYNAMIC_DLOPEN_SKIP_SEARCH"
 
 
