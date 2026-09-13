@@ -43,6 +43,8 @@ use core::mem::MaybeUninit;
 use core::pin::Pin;
 #[cfg(test)]
 use core::sync::atomic::AtomicPtr;
+#[cfg(feature = "native-runtime-test-audit")]
+use core::sync::atomic::AtomicI32;
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
 use crate::compiler_tls::current_thread_identity;
@@ -123,6 +125,12 @@ const PROCESS_COLD: u8 = 0;
 const PROCESS_INITIALIZING: u8 = 1;
 const PROCESS_ACTIVE: u8 = 2;
 const PROCESS_RETAINED: u8 = 3;
+/// Test-audit sentinel for a process that did not expose its initialized TLD.
+///
+/// A live source ticket-zero TLD has a nonnegative NUMA node, so this cannot
+/// be mistaken for a selected source value.
+#[cfg(feature = "native-runtime-test-audit")]
+const INITIAL_TLD_NUMA_NODE_UNAVAILABLE: i32 = i32::MIN;
 
 // A separate process-long owner state keeps the original no-page lifecycle
 // intact until an internal ticket-zero request needs the first native page.
@@ -2345,6 +2353,11 @@ struct RuntimeProcessStorage {
     /// image; a foreign caller has no authority to treat the static TLD as
     /// its current-thread owner.
     initial_thread_identity: AtomicUsize,
+    /// The actual `mi_tld_init` NUMA field copied while the initializing
+    /// owner is still uniquely held. This default-off scalar records neither
+    /// a TLD pointer nor an ownership capability.
+    #[cfg(feature = "native-runtime-test-audit")]
+    initial_tld_numa_node: AtomicI32,
     owner: UnsafeCell<MaybeUninit<ProcessMainThread>>,
     main_heap: UnsafeCell<MaybeUninit<MainStaticHeapLease<'static>>>,
     /// The ticket-zero staging owner is absent until the private native seam
@@ -3070,6 +3083,8 @@ impl RuntimeProcessStorage {
         Self {
             state: AtomicU8::new(PROCESS_COLD),
             initial_thread_identity: AtomicUsize::new(0),
+            #[cfg(feature = "native-runtime-test-audit")]
+            initial_tld_numa_node: AtomicI32::new(INITIAL_TLD_NUMA_NODE_UNAVAILABLE),
             owner: UnsafeCell::new(MaybeUninit::uninit()),
             main_heap: UnsafeCell::new(MaybeUninit::uninit()),
             page_owner_state: AtomicUsize::new(PAGE_OWNER_COLD),
@@ -3765,10 +3780,18 @@ impl RuntimeProcessStorage {
         let owner = unsafe {
             ProcessMainInitializationStorage::global().initialize_with_vm_options(config, options)
         };
-        let Ok(owner) = owner else {
+        let Ok(mut owner) = owner else {
             self.retain();
             return false;
         };
+
+        #[cfg(feature = "native-runtime-test-audit")]
+        let initial_tld_numa_node = owner
+            .attachment_mut()
+            .ok()
+            .and_then(|attachment| attachment.tld().ok())
+            .map(|tld| tld.numa_node())
+            .unwrap_or(INITIAL_TLD_NUMA_NODE_UNAVAILABLE);
 
         // SAFETY: this successful COLD -> INITIALIZING winner is the sole
         // writer, and `owner` is moved into its final static process slot
@@ -3796,6 +3819,9 @@ impl RuntimeProcessStorage {
         // distinct image and cannot pass the fork-preservation check.
         self.initial_thread_identity
             .store(initial_thread.get(), Ordering::Release);
+        #[cfg(feature = "native-runtime-test-audit")]
+        self.initial_tld_numa_node
+            .store(initial_tld_numa_node, Ordering::Release);
         self.state.store(PROCESS_ACTIVE, Ordering::Release);
         true
     }
@@ -4220,6 +4246,13 @@ pub struct NativeRuntimeLifecycleAudit {
     pub vm_policy_arena_eager_commit: i64,
     pub vm_policy_allow_large_os_pages: usize,
     pub vm_policy_allow_thp: usize,
+    /// Raw selected `mi_option_use_numa_nodes` value retained for this process.
+    pub vm_policy_use_numa_nodes: i64,
+    /// Policy cache value after the actual ticket-zero TLD initialization.
+    /// Zero means that source operation did not consume the policy cache.
+    pub vm_policy_numa_node_count_cache: usize,
+    /// Actual NUMA node written into the ticket-zero TLD before publication.
+    pub ticket_zero_tld_numa_node: i32,
     pub process_arena_size: usize,
     pub process_arena_initially_committed: usize,
     pub page_map_registered_entry_count: usize,
@@ -5075,6 +5108,9 @@ pub fn native_runtime_lifecycle_test_audit() -> Option<NativeRuntimeLifecycleAud
         vm_policy_allow_thp: usize::from(
             vm_policy.options().value(VmOption::AllowThp)? != 0,
         ),
+        vm_policy_use_numa_nodes: vm_policy.options().value(VmOption::UseNumaNodes)?,
+        vm_policy_numa_node_count_cache: vm_policy.native_runtime_test_numa_node_count_cache(),
+        ticket_zero_tld_numa_node: RUNTIME_PROCESS.initial_tld_numa_node.load(Ordering::Acquire),
         process_arena_size: process_arena.size()?,
         process_arena_initially_committed: usize::from(
             process_arena.arena().memid.initially_committed(),

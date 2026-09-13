@@ -77,9 +77,19 @@ class CargoCommandTests(unittest.TestCase):
                 )
                 self.assertIn("-p", command)
                 self.assertEqual(command[command.index("-p") + 1], "crabc-mimalloc")
-                self.assertIn("--lib", command)
+                if lane.kind == "native-integration":
+                    self.assertEqual(
+                        command[command.index("--test") + 1],
+                        "native_runtime_first_arena_policy",
+                    )
+                else:
+                    self.assertIn("--lib", command)
                 delimiter = command.index("--")
                 self.assertEqual(command[delimiter + 1], "--test-threads=1")
+                self.assertEqual(
+                    "--nocapture" in command,
+                    lane.identifier == "runtime-process-policy-first-arena",
+                )
                 self.assertEqual(command[-1] == "--exact", lane.exact_filter)
 
     def test_finite_loom_is_explicit_and_the_other_lanes_are_exact(self) -> None:
@@ -93,12 +103,13 @@ class CargoCommandTests(unittest.TestCase):
             all(lane.exact_filter for lane in EVIDENCE.TEST_LANES if lane is not loom)
         )
 
-    def test_fixed_selection_has_the_bounded_thirteen_test_total(self) -> None:
-        self.assertEqual(len(EVIDENCE.TEST_LANES), 9)
-        self.assertEqual(sum(lane.expected_pass_count for lane in EVIDENCE.TEST_LANES), 13)
+    def test_fixed_selection_has_the_bounded_fourteen_test_total(self) -> None:
+        self.assertEqual(len(EVIDENCE.TEST_LANES), 10)
+        self.assertEqual(sum(lane.expected_pass_count for lane in EVIDENCE.TEST_LANES), 14)
         self.assertEqual(
             [lane.identifier for lane in EVIDENCE.TEST_LANES],
             [
+                "runtime-process-policy-first-arena",
                 "compiler-tls-fresh-native-thread",
                 "compiler-tls-explicit-reset",
                 "compiler-tls-overlapping-native-threads",
@@ -135,6 +146,12 @@ class ReportTests(unittest.TestCase):
                     "bounded_behavior": list(lane.bounded_behavior),
                 }
             )
+            if lane.identifier == "runtime-process-policy-first-arena":
+                lanes[-1]["initial_tld_numa_trace"] = {
+                    "vm_policy_use_numa_nodes": 3,
+                    "vm_policy_numa_node_count_cache": 3,
+                    "ticket_zero_tld_numa_node": 0,
+                }
         return lanes
 
     def complete_report(self) -> dict[str, object]:
@@ -154,9 +171,9 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(report["status"], "passed")
         self.assertFalse(report["scope"]["public_runtime_support"])
         self.assertEqual(report["summary"], {
-            "expected_pass_count": 13,
-            "observed_pass_count": 13,
-            "lane_count": 9,
+            "expected_pass_count": 14,
+            "observed_pass_count": 14,
+            "lane_count": 10,
         })
         self.assertTrue(report["cargo"]["locked"])
         self.assertEqual(
@@ -205,6 +222,7 @@ class ReportTests(unittest.TestCase):
             self.assertTrue(serialized.endswith("\n"))
             self.assertIn('"status": "passed"', serialized)
             self.assertEqual(json.loads(serialized), report)
+            self.assertEqual(output.stat().st_mode & 0o777, 0o644)
 
 
 class ResultParserTests(unittest.TestCase):
@@ -238,6 +256,74 @@ class ResultParserTests(unittest.TestCase):
                     ]
                 ),
                 lane,
+            )
+
+    def test_initial_tld_numa_c_and_runtime_traces_bind_the_option_policy(self) -> None:
+        c_trace = {
+            "source_option_applied": 1,
+            "configured_numa_node_count": 3,
+            "resolved_numa_node_count": 3,
+            "ticket_zero_tld": 1,
+            "default_theap_uses_ticket_zero_tld": 1,
+            "ticket_zero_tld_numa_node": 2,
+            "ticket_zero_tld_numa_in_range": 1,
+        }
+        c_output = "\n".join(
+            [
+                EVIDENCE.INITIAL_TLD_NUMA_TRACE_BEGIN,
+                *(f"{key}={value}" for key, value in c_trace.items()),
+                EVIDENCE.INITIAL_TLD_NUMA_TRACE_END,
+            ]
+        )
+        self.assertEqual(
+            EVIDENCE.parse_scalar_trace(
+                c_output,
+                begin=EVIDENCE.INITIAL_TLD_NUMA_TRACE_BEGIN,
+                end=EVIDENCE.INITIAL_TLD_NUMA_TRACE_END,
+                keys=EVIDENCE.INITIAL_TLD_NUMA_C_TRACE_KEYS,
+                source="test C oracle",
+            ),
+            c_trace,
+        )
+        EVIDENCE.validate_initial_tld_numa_c_trace(c_trace)
+
+        runtime_output = "\n".join(
+            [
+                EVIDENCE.RUNTIME_INITIAL_TLD_NUMA_TRACE_BEGIN,
+                "vm_policy_use_numa_nodes=3",
+                "vm_policy_numa_node_count_cache=3",
+                "ticket_zero_tld_numa_node=1",
+                EVIDENCE.RUNTIME_INITIAL_TLD_NUMA_TRACE_END,
+            ]
+        )
+        runtime_trace = EVIDENCE.parse_runtime_initial_tld_numa_trace(runtime_output)
+        self.assertEqual(runtime_trace["vm_policy_numa_node_count_cache"], 3)
+        self.assertEqual(runtime_trace["ticket_zero_tld_numa_node"], 1)
+
+    def test_initial_tld_numa_trace_rejects_a_fixed_cache_or_out_of_range_node(self) -> None:
+        with self.assertRaisesRegex(EVIDENCE.EvidenceError, "policy count"):
+            EVIDENCE.parse_runtime_initial_tld_numa_trace(
+                "\n".join(
+                    [
+                        EVIDENCE.RUNTIME_INITIAL_TLD_NUMA_TRACE_BEGIN,
+                        "vm_policy_use_numa_nodes=3",
+                        "vm_policy_numa_node_count_cache=0",
+                        "ticket_zero_tld_numa_node=0",
+                        EVIDENCE.RUNTIME_INITIAL_TLD_NUMA_TRACE_END,
+                    ]
+                )
+            )
+        with self.assertRaisesRegex(EVIDENCE.EvidenceError, "normalized"):
+            EVIDENCE.validate_initial_tld_numa_c_trace(
+                {
+                    "source_option_applied": 1,
+                    "configured_numa_node_count": 3,
+                    "resolved_numa_node_count": 3,
+                    "ticket_zero_tld": 1,
+                    "default_theap_uses_ticket_zero_tld": 1,
+                    "ticket_zero_tld_numa_node": 3,
+                    "ticket_zero_tld_numa_in_range": 1,
+                }
             )
 
 

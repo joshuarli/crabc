@@ -588,7 +588,23 @@ impl ProcessMainInitializationStorage {
         // exact selected PageMap has
         // been initialized before compiler-TLS root publication.
         let mut attachment = match unsafe {
-            MainStaticTheapAttachment::begin_after_heap_foundation(foundation, selection)
+            match vm_process {
+                // This is the source `mi_tld_init` NUMA observation after
+                // `_mi_os_init` has resolved and retained this process's
+                // option image. Do not collapse it into the global wrapper:
+                // the retained policy owns `mimalloc_use_numa_nodes`'s cache.
+                Some(process) => {
+                    MainStaticTheapAttachment::begin_after_heap_foundation_with_vm_process(
+                        foundation,
+                        selection,
+                        process,
+                    )
+                }
+                // The preserved explicit-config route has no source option
+                // image and therefore retains the historical fixed-wrapper
+                // observation.
+                None => MainStaticTheapAttachment::begin_after_heap_foundation(foundation, selection),
+            }
         } {
             Ok(attachment) => attachment,
             Err(error) => {

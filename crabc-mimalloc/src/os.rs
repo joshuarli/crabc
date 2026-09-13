@@ -1300,6 +1300,18 @@ impl VmPolicy {
     pub(crate) fn current_numa_node(&self) -> usize {
         self.current_numa_node_with_raw(numa_node_count, numa_node)
     }
+
+    /// Copies the policy-local NUMA-count cache without resolving it.
+    ///
+    /// This default-off native runtime audit distinguishes a count resolved by
+    /// the actual ticket-zero TLD initialization from a later diagnostic
+    /// observation. It neither queries the raw topology primitives nor changes
+    /// the selected source policy.
+    #[cfg(feature = "native-runtime-test-audit")]
+    #[inline]
+    pub(crate) fn native_runtime_test_numa_node_count_cache(&self) -> usize {
+        self.numa_node_count.load(Ordering::Acquire)
+    }
 }
 
 fn detected_physical_memory_in_kib() -> Option<usize> {

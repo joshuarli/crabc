@@ -53,7 +53,7 @@ use crate::subproc::{
     MainStaticThreadLocalData, MainSubprocess, ThreadRegistrationLease,
 };
 use crate::lock::{PrivateLock, PrivateLockGuard};
-use crate::os::MemoryConfig;
+use crate::os::{MemoryConfig, VmProcess};
 use crate::os_page::OsAlignedPageOwner;
 use crate::process_arena::ProcessPageArenaLease;
 use crate::random::TheapRandomImage;
@@ -794,6 +794,49 @@ impl MainStaticTheapAttachment {
                     // every multi-node result is reduced below its accepted
                     // `INT_MAX` count. Preserve that source invariant rather
                     // than introducing a post-ticket fallible Rust path.
+                    debug_assert!(numa_node < i32::MAX as usize);
+                    numa_node as i32
+                },
+            )
+        }
+    }
+
+    /// Attaches the ticket-zero TLD through the resolved process VM policy.
+    ///
+    /// Pinned `src/init.c:236-250` assigns `_mi_os_numa_node()` while it
+    /// initializes the ordinary initial TLD.  In the policy-bound Rust
+    /// startup route, that observation must use the same retained
+    /// `VmProcess` that supplied the preceding process-memory policy:
+    /// `VmProcess::current_numa_node` preserves `src/os.c:860-898`'s
+    /// `mimalloc_use_numa_nodes` count cache and normalization.  The legacy
+    /// explicit-config route intentionally remains on the fixed global
+    /// wrapper above because it owns no source option image.
+    ///
+    /// # Safety
+    ///
+    /// The caller must meet [`Self::begin_after_heap_foundation`]'s exact
+    /// lifecycle and ownership obligations, and `process` must be the
+    /// retained process pair for this same selected `foundation`.  This call
+    /// borrows it only synchronously at the source-position NUMA write; the
+    /// returned attachment never retains a policy alias.
+    pub(crate) unsafe fn begin_after_heap_foundation_with_vm_process(
+        foundation: MainStaticHeapFoundation,
+        selection: MainStaticBootstrapSelection,
+        process: VmProcess<'_>,
+    ) -> Result<Self, MainStaticTheapError> {
+        // SAFETY: this forwards the unchanged caller-owned source foundation
+        // and ticket-zero selector to the shared attachment transition. The
+        // copied borrowed process pair remains valid for this synchronous
+        // NUMA observation under the caller's process-startup ownership.
+        unsafe {
+            Self::begin_after_heap_foundation_with_numa_source(
+                foundation,
+                selection,
+                move |_| {
+                    let numa_node = process.current_numa_node();
+                    // `VmPolicy::current_numa_node` retains the fixed
+                    // `_mi_os_numa_node` range invariant: normalization is
+                    // strictly below the accepted `INT_MAX` count.
                     debug_assert!(numa_node < i32::MAX as usize);
                     numa_node as i32
                 },

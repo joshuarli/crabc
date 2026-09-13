@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import platform
@@ -40,6 +41,58 @@ RUNTIME_FIRST_ARENA_REPORT = (
     ROOT / "compat/reports/allocator/x86_64/lifecycle-runtime-process-policy-first-arena.json"
 )
 LOCKFILE = ROOT / "Cargo.lock"
+INITIAL_TLD_NUMA_FIXTURE = ROOT / "compat/allocator/x86_64_initial_tld_numa_oracle.c"
+INITIAL_TLD_NUMA_TRACE_BEGIN = "CRABC_MI_INITIAL_TLD_NUMA_TRACE_BEGIN"
+INITIAL_TLD_NUMA_TRACE_END = "CRABC_MI_INITIAL_TLD_NUMA_TRACE_END"
+RUNTIME_INITIAL_TLD_NUMA_TRACE_BEGIN = "CRABC_MI_RUNTIME_INITIAL_TLD_NUMA_TRACE_BEGIN"
+RUNTIME_INITIAL_TLD_NUMA_TRACE_END = "CRABC_MI_RUNTIME_INITIAL_TLD_NUMA_TRACE_END"
+
+# `src/init.c` is included into the fixture to retain source-private access to
+# `mi_process_tld_main`; each remaining normal-release object stays linked
+# once. This is intentionally separate from the wider M2 VM fixture because
+# the focused lifecycle lane has one option-aware initial-TLD transition only.
+INITIAL_TLD_NUMA_C_ORACLE_LINK_SOURCES = (
+    "src/alloc.c",
+    "src/alloc-aligned.c",
+    "src/alloc-posix.c",
+    "src/arena.c",
+    "src/bitmap.c",
+    "src/heap.c",
+    "src/libc.c",
+    "src/options.c",
+    "src/os.c",
+    "src/page-map.c",
+    "src/page.c",
+    "src/random.c",
+    "src/stats.c",
+    "src/subproc.c",
+    "src/theap.c",
+    "src/threadlocal.c",
+    "src/prim/prim.c",
+    "src/prim/prim-tls.c",
+)
+INITIAL_TLD_NUMA_C_ORACLE_SOURCE_FILES = (
+    "include/mimalloc.h",
+    "include/mimalloc/internal.h",
+    "include/mimalloc/prim.h",
+    "src/init.c",
+    *INITIAL_TLD_NUMA_C_ORACLE_LINK_SOURCES,
+    "src/prim/unix/prim.c",
+)
+INITIAL_TLD_NUMA_C_TRACE_KEYS = (
+    "source_option_applied",
+    "configured_numa_node_count",
+    "resolved_numa_node_count",
+    "ticket_zero_tld",
+    "default_theap_uses_ticket_zero_tld",
+    "ticket_zero_tld_numa_node",
+    "ticket_zero_tld_numa_in_range",
+)
+RUNTIME_INITIAL_TLD_NUMA_TRACE_KEYS = (
+    "vm_policy_use_numa_nodes",
+    "vm_policy_numa_node_count_cache",
+    "ticket_zero_tld_numa_node",
+)
 
 TEST_RESULT = re.compile(
     r"test result: (?P<status>ok|FAILED)\. "
@@ -84,6 +137,7 @@ TEST_LANES = (
         ),
         bounded_behavior=(
             "one fresh native process reads a non-default raw source environment and initializes RuntimeProcessStorage through its retained policy/PageMap binding",
+            "the actual ticket-zero TLD consumes mimalloc_use_numa_nodes=3 through that retained policy and stores one normalized node before the first client allocation",
             "the original ticket-zero allocation reaches begin_for_process, maps one committed 128-MiB arena, then frees its exact client and removes its PageMap registration",
         ),
     ),
@@ -238,6 +292,14 @@ EXCLUSIONS = (
     "No C-oracle differential, fault injection, fork, interposition, sanitizer, performance, or API-surface conclusion follows from these Rust tests.",
 )
 
+RUNTIME_FIRST_ARENA_EXCLUSIONS = (
+    "No public mi_*, malloc-family, crabc-libc, dynamic-linker, or crabc-rs x86-64 runtime support is exercised or claimed.",
+    "No complete process or pthread/TLS callback lifecycle is exercised or claimed.",
+    "No general allocation/free routing, cross-thread client API, owner-exit traversal, adoption, or whole-allocator stress regime is exercised or claimed.",
+    "The direct C oracle covers only pinned init.c/os.c's configured initial-TLD NUMA count and normalized node relation; it does not qualify host multi-node placement, huge-page behavior, or general allocator lifecycle parity.",
+    "No fault injection, interposition, sanitizer, performance, or API-surface conclusion follows from this focused C/Rust policy witness.",
+)
+
 
 def relative(path: Path) -> str:
     """Return a durable repository-relative path when possible."""
@@ -256,6 +318,194 @@ def sha256_file(path: Path) -> str:
         for block in iter(lambda: source.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+_ALLOCATOR_HARNESS: Any | None = None
+
+
+def allocator_harness() -> Any:
+    """Load the existing pinned-source owner without duplicating its contract."""
+
+    global _ALLOCATOR_HARNESS
+    if _ALLOCATOR_HARNESS is not None:
+        return _ALLOCATOR_HARNESS
+    path = ROOT / "compat/allocator/run.py"
+    spec = importlib.util.spec_from_file_location("crabc_lifecycle_allocator_harness", path)
+    if spec is None or spec.loader is None:
+        raise EvidenceError("pinned allocator source harness is unavailable")
+    harness = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = harness
+    try:
+        spec.loader.exec_module(harness)
+    except Exception as error:
+        raise EvidenceError("pinned allocator source harness could not load") from error
+    _ALLOCATOR_HARNESS = harness
+    return harness
+
+
+def pinned_mimalloc_pin() -> dict[str, str]:
+    """Read the fixed source identity through its existing oracle owner."""
+
+    harness = allocator_harness()
+    try:
+        return harness.load_pin()
+    except harness.HarnessError as error:
+        raise EvidenceError(f"invalid pinned mimalloc source declaration: {error}") from error
+
+
+def parse_scalar_trace(output: str, *, begin: str, end: str, keys: Sequence[str], source: str) -> dict[str, int]:
+    """Parse one exact, unsigned scalar trace without accepting extra rows."""
+
+    lines = output.splitlines()
+    begin_indexes = [index for index, line in enumerate(lines) if line == begin]
+    end_indexes = [index for index, line in enumerate(lines) if line == end]
+    if len(begin_indexes) != 1 or len(end_indexes) != 1 or begin_indexes[0] >= end_indexes[0]:
+        raise EvidenceError(f"{source} did not emit one ordered scalar trace")
+    values: dict[str, int] = {}
+    for line in lines[begin_indexes[0] + 1 : end_indexes[0]]:
+        name, separator, raw_value = line.partition("=")
+        if not separator or not name or not raw_value.isdecimal() or name in values:
+            raise EvidenceError(f"{source} emitted an invalid scalar trace row: {line!r}")
+        values[name] = int(raw_value)
+    expected = set(keys)
+    if set(values) != expected:
+        raise EvidenceError(
+            f"{source} scalar trace keys drifted: missing {sorted(expected - set(values))}; "
+            f"unexpected {sorted(set(values) - expected)}"
+        )
+    return values
+
+
+def normalize_c_oracle_command(command: Sequence[str], source: Path, binary: Path) -> list[str]:
+    """Retain an exact replay shape without persisting a temporary extraction path."""
+
+    normalized: list[str] = []
+    for argument in command:
+        if argument == str(binary):
+            normalized.append("<initial-tld-numa-oracle-binary>")
+        elif argument.startswith(f"{source}/"):
+            normalized.append(f"<pinned-mimalloc-source>/{Path(argument).relative_to(source).as_posix()}")
+        else:
+            normalized.append(argument)
+    return normalized
+
+
+def text_sha256(value: str) -> str:
+    """Hash raw command text without normalizing its evidence bytes."""
+
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def validate_initial_tld_numa_c_trace(trace: Mapping[str, int]) -> None:
+    """Require the pinned C initial-TLD route to consume its configured policy."""
+
+    if set(trace) != set(INITIAL_TLD_NUMA_C_TRACE_KEYS):
+        raise EvidenceError("pinned C initial-TLD NUMA trace schema drifted")
+    for key in (
+        "source_option_applied",
+        "ticket_zero_tld",
+        "default_theap_uses_ticket_zero_tld",
+        "ticket_zero_tld_numa_in_range",
+    ):
+        if trace[key] != 1:
+            raise EvidenceError(f"pinned C initial-TLD NUMA relation failed: {key}")
+    if trace["configured_numa_node_count"] != 3 or trace["resolved_numa_node_count"] != 3:
+        raise EvidenceError("pinned C initial-TLD NUMA count did not retain use_numa_nodes=3")
+    if trace["ticket_zero_tld_numa_node"] >= trace["resolved_numa_node_count"]:
+        raise EvidenceError("pinned C initial-TLD NUMA node was not normalized below its policy count")
+
+
+def run_initial_tld_numa_c_oracle() -> dict[str, Any]:
+    """Build and run the exact direct-include source oracle in one child image."""
+
+    # `run.py` owns the cache, tag attestation, extraction validation, release
+    # flags, and command records for every pinned-C oracle.  This focused lane
+    # deliberately reuses that owner instead of accepting a second cache or
+    # duplicate source-extraction policy.
+    harness = allocator_harness()
+    pin = pinned_mimalloc_pin()
+    try:
+        archive = harness.fetch_archive(pin, offline=True)
+        compiler = harness.require_tool("musl-gcc")
+        artifacts = harness.ARTIFACT_ROOT / "x86_64/initial-tld-numa"
+        artifacts.mkdir(parents=True, exist_ok=True)
+        binary = artifacts / "initial-tld-numa-oracle"
+
+        with harness.temporary_directory(
+            prefix="crabc-mimalloc-x86_64-initial-tld-numa-source-"
+        ) as temporary:
+            source = harness.safe_extract(archive, Path(temporary), pin["archive_root"])
+            command = [
+                compiler,
+                "-std=c11",
+                "-fPIC",
+                "-ftls-model=initial-exec",
+                "-DMI_SHARED_LIB",
+                "-DMI_SHARED_LIB_EXPORT",
+                "-DMI_LIBC_MUSL=1",
+                "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
+                "-I",
+                str(source / "include"),
+                "-I",
+                str(source / "src"),
+                *harness.CONFIGURATION_PROFILES["release"],
+                str(INITIAL_TLD_NUMA_FIXTURE),
+                *(str(source / name) for name in INITIAL_TLD_NUMA_C_ORACLE_LINK_SOURCES),
+                "-pthread",
+                "-o",
+                str(binary),
+            ]
+            build = harness.command_record(command, cwd=source, timeout_seconds=300)
+            harness.require_success(build, "pinned C initial-TLD NUMA oracle build")
+            run_record = harness.command_record(
+                [str(binary)], cwd=source, timeout_seconds=120, env={}
+            )
+            harness.require_success(run_record, "pinned C initial-TLD NUMA oracle")
+            trace = parse_scalar_trace(
+                str(run_record["stdout"]),
+                begin=INITIAL_TLD_NUMA_TRACE_BEGIN,
+                end=INITIAL_TLD_NUMA_TRACE_END,
+                keys=INITIAL_TLD_NUMA_C_TRACE_KEYS,
+                source="pinned C initial-TLD NUMA oracle",
+            )
+            validate_initial_tld_numa_c_trace(trace)
+            source_files = harness.source_file_records(
+                source, INITIAL_TLD_NUMA_C_ORACLE_SOURCE_FILES
+            )
+            normalized_compile_command = normalize_c_oracle_command(command, source, binary)
+    except harness.HarnessError as error:
+        raise EvidenceError(f"pinned C initial-TLD NUMA oracle failed: {error}") from error
+
+    if not binary.is_file():
+        raise EvidenceError("pinned C initial-TLD NUMA oracle binary was not retained")
+    trace_payload = json.dumps(trace, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return {
+        "binary": harness.artifact_record(binary),
+        "build": {
+            "command": normalized_compile_command,
+            "status": build["status"],
+            "stderr_sha256": text_sha256(str(build["stderr"])),
+            "stdout_sha256": text_sha256(str(build["stdout"])),
+        },
+        "fixture": {
+            "bytes": INITIAL_TLD_NUMA_FIXTURE.stat().st_size,
+            "path": relative(INITIAL_TLD_NUMA_FIXTURE),
+            "sha256": sha256_file(INITIAL_TLD_NUMA_FIXTURE),
+        },
+        "run": {
+            "command": ["<initial-tld-numa-oracle-binary>"],
+            "status": run_record["status"],
+            "stderr_sha256": text_sha256(str(run_record["stderr"])),
+            "stdout_sha256": text_sha256(str(run_record["stdout"])),
+        },
+        "source_files": source_files,
+        "trace": trace,
+        "trace_sha256": hashlib.sha256(trace_payload).hexdigest(),
+        "upstream": {
+            "archive_sha256": pin["sha256"],
+            "revision": pin["revision"],
+        },
+    }
 
 
 def require_tool(name: str) -> str:
@@ -347,6 +597,11 @@ def cargo_test_command(cargo: str, lane: TestLane, target_dir: Path) -> list[str
         command.extend(("--features", ",".join(lane.features)))
     command.append(lane.test_filter)
     command.extend(("--", "--test-threads=1"))
+    if lane.identifier == "runtime-process-policy-first-arena":
+        # The nested clean-environment child forwards only its scalar
+        # initial-TLD trace; retaining it binds the policy assertion to the
+        # actual ordinary runtime execution rather than a helper invocation.
+        command.append("--nocapture")
     if lane.exact_filter:
         command.append("--exact")
     return command
@@ -385,10 +640,30 @@ def parse_test_result(output: str, lane: TestLane) -> dict[str, int]:
     return result
 
 
+def parse_runtime_initial_tld_numa_trace(output: str) -> dict[str, int]:
+    """Read the one normal-runtime scalar trace forwarded by the outer test."""
+
+    trace = parse_scalar_trace(
+        output,
+        begin=RUNTIME_INITIAL_TLD_NUMA_TRACE_BEGIN,
+        end=RUNTIME_INITIAL_TLD_NUMA_TRACE_END,
+        keys=RUNTIME_INITIAL_TLD_NUMA_TRACE_KEYS,
+        source="Rust runtime initial-TLD NUMA witness",
+    )
+    if trace["vm_policy_use_numa_nodes"] != 3:
+        raise EvidenceError("Rust runtime did not retain mimalloc_use_numa_nodes=3")
+    if trace["vm_policy_numa_node_count_cache"] != 3:
+        raise EvidenceError("Rust initial TLD did not resolve its retained NUMA policy count")
+    if trace["ticket_zero_tld_numa_node"] >= trace["vm_policy_numa_node_count_cache"]:
+        raise EvidenceError("Rust initial TLD NUMA node was not normalized below its policy count")
+    return trace
+
+
 def run_lane(cargo: str, lane: TestLane, target_dir: Path) -> dict[str, Any]:
     command = cargo_test_command(cargo, lane, target_dir)
-    result = parse_test_result(run(command), lane)
-    return {
+    output = run(command)
+    result = parse_test_result(output, lane)
+    record: dict[str, Any] = {
         "id": lane.identifier,
         "kind": lane.kind,
         "cargo_command": normalized_command(command, target_dir),
@@ -397,6 +672,9 @@ def run_lane(cargo: str, lane: TestLane, target_dir: Path) -> dict[str, Any]:
         "source_tests": list(lane.source_tests),
         "bounded_behavior": list(lane.bounded_behavior),
     }
+    if lane.identifier == "runtime-process-policy-first-arena":
+        record["initial_tld_numa_trace"] = parse_runtime_initial_tld_numa_trace(output)
+    return record
 
 
 def report_from_results(
@@ -533,6 +811,19 @@ def validate_report(report: Mapping[str, Any]) -> None:
             raise EvidenceError(f"{configured.identifier} does not record a clean test result")
         if result.get("passed") != configured.expected_pass_count:
             raise EvidenceError(f"{configured.identifier} observed count drifted")
+        if configured.identifier == "runtime-process-policy-first-arena":
+            runtime_trace = observed.get("initial_tld_numa_trace")
+            if not isinstance(runtime_trace, Mapping):
+                raise EvidenceError("runtime first-arena lane lacks its initial-TLD NUMA trace")
+            if (
+                set(runtime_trace) != set(RUNTIME_INITIAL_TLD_NUMA_TRACE_KEYS)
+                or runtime_trace.get("vm_policy_use_numa_nodes") != 3
+                or runtime_trace.get("vm_policy_numa_node_count_cache") != 3
+                or not isinstance(runtime_trace.get("ticket_zero_tld_numa_node"), int)
+                or runtime_trace["ticket_zero_tld_numa_node"] < 0
+                or runtime_trace["ticket_zero_tld_numa_node"] >= 3
+            ):
+                raise EvidenceError("runtime first-arena lane initial-TLD NUMA trace drifted")
         expected_total += configured.expected_pass_count
         observed_total += int(result["passed"])
 
@@ -560,6 +851,11 @@ def atomic_write_json(path: Path, value: Mapping[str, Any]) -> None:
             output.flush()
             os.fsync(output.fileno())
         os.replace(temporary, path)
+        # Docker runs the native producer as root while the retained evidence
+        # is reviewed from the ordinary checkout owner. Keep the atomically
+        # published report readable without changing its content or directory
+        # ownership policy.
+        path.chmod(0o644)
         temporary = None
     finally:
         if temporary is not None:
@@ -608,6 +904,140 @@ def runtime_first_arena_lane() -> TestLane:
     raise EvidenceError("runtime first-arena lifecycle lane is not configured")
 
 
+def compare_initial_tld_numa_observations(
+    c_oracle: Mapping[str, Any], rust_lane: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Compare only source-normalized policy facts, never host node identity."""
+
+    c_trace = c_oracle.get("trace")
+    rust_trace = rust_lane.get("initial_tld_numa_trace")
+    if not isinstance(c_trace, Mapping) or not isinstance(rust_trace, Mapping):
+        raise EvidenceError("initial-TLD NUMA comparison is missing one raw observation")
+    validate_initial_tld_numa_c_trace(c_trace)
+    try:
+        rust_option = int(rust_trace["vm_policy_use_numa_nodes"])
+        rust_count = int(rust_trace["vm_policy_numa_node_count_cache"])
+        rust_node = int(rust_trace["ticket_zero_tld_numa_node"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise EvidenceError("Rust initial-TLD NUMA observation is malformed") from error
+    if rust_option != c_trace["configured_numa_node_count"]:
+        raise EvidenceError("C/Rust initial-TLD NUMA configured option values differ")
+    if rust_count != c_trace["resolved_numa_node_count"]:
+        raise EvidenceError("C/Rust initial-TLD NUMA policy counts differ")
+    if rust_node < 0 or rust_node >= rust_count:
+        raise EvidenceError("Rust initial-TLD NUMA node lies outside its policy count")
+    return {
+        "compared_value_count": 2,
+        "configured_numa_node_count": rust_option,
+        "policy_numa_node_count": rust_count,
+        "c_ticket_zero_tld_numa_in_range": True,
+        "rust_ticket_zero_tld_numa_in_range": True,
+        "status": "matched-normalized-policy-relations",
+    }
+
+
+def validate_runtime_first_arena_policy_report(report: Mapping[str, Any]) -> None:
+    """Fail closed on the focused direct-C plus normal-Rust witness shape."""
+
+    required = {
+        "c_oracle",
+        "cargo",
+        "comparison",
+        "exclusions",
+        "format",
+        "kind",
+        "lane",
+        "native_execution_provenance",
+        "profile",
+        "scope",
+        "status",
+        "target",
+        "toolchain",
+    }
+    if set(report) != required:
+        raise EvidenceError("runtime first-arena report schema drifted")
+    if report.get("format") != 2 or report.get("status") != "passed":
+        raise EvidenceError("runtime first-arena report must record a passed format-2 result")
+    if report.get("kind") != "mimalloc-x86_64-runtime-first-arena-policy-evidence":
+        raise EvidenceError("runtime first-arena report kind drifted")
+    if report.get("profile") != "linux-x86_64-private-engine-runtime-first-arena-policy-witness":
+        raise EvidenceError("runtime first-arena report profile drifted")
+    if report.get("target") != {
+        "architecture": "x86_64",
+        "endianness": "little",
+        "rust_target": TARGET,
+        "system": "linux",
+    }:
+        raise EvidenceError("runtime first-arena report target drifted")
+    if report.get("native_execution_provenance") not in (
+        {"execution_mode": "native", "host_architecture": "x86_64"},
+        {"execution_mode": "native", "host_architecture": "amd64"},
+    ):
+        raise EvidenceError("runtime first-arena report lacks canonical native provenance")
+    if tuple(report.get("exclusions", ())) != RUNTIME_FIRST_ARENA_EXCLUSIONS:
+        raise EvidenceError("runtime first-arena exclusions drifted")
+    scope = report.get("scope")
+    if not isinstance(scope, Mapping) or scope != {
+        "boundary": "one child-isolated pinned-C and one process-isolated private Rust first-arena policy witness only",
+        "public_runtime_support": False,
+        "claim": "focused initial-TLD NUMA option-policy witness",
+    }:
+        raise EvidenceError("runtime first-arena scope drifted")
+
+    cargo = report.get("cargo")
+    if not isinstance(cargo, Mapping) or cargo.get("locked") is not True:
+        raise EvidenceError("runtime first-arena report must retain Cargo --locked evidence")
+    if cargo.get("target_dir") != {
+        "isolated": True,
+        "retained": False,
+        "value": "<isolated-temporary-target-dir>",
+    }:
+        raise EvidenceError("runtime first-arena Cargo target isolation drifted")
+
+    lane = report.get("lane")
+    configured = runtime_first_arena_lane()
+    if not isinstance(lane, Mapping) or lane.get("id") != configured.identifier:
+        raise EvidenceError("runtime first-arena report lane drifted")
+    if lane.get("observed", {}).get("passed") != configured.expected_pass_count:
+        raise EvidenceError("runtime first-arena report pass count drifted")
+    rust_trace = lane.get("initial_tld_numa_trace")
+    if not isinstance(rust_trace, Mapping):
+        raise EvidenceError("runtime first-arena report lacks its raw initial-TLD NUMA observation")
+    # Reuse the exact parser-level relation checks without accepting a trace
+    # that merely happens to have the right outer Cargo summary.
+    if set(rust_trace) != set(RUNTIME_INITIAL_TLD_NUMA_TRACE_KEYS):
+        raise EvidenceError("runtime first-arena Rust NUMA trace schema drifted")
+    if (
+        rust_trace.get("vm_policy_use_numa_nodes") != 3
+        or rust_trace.get("vm_policy_numa_node_count_cache") != 3
+        or not isinstance(rust_trace.get("ticket_zero_tld_numa_node"), int)
+        or rust_trace["ticket_zero_tld_numa_node"] < 0
+        or rust_trace["ticket_zero_tld_numa_node"] >= 3
+    ):
+        raise EvidenceError("runtime first-arena Rust NUMA trace relation drifted")
+
+    c_oracle = report.get("c_oracle")
+    if not isinstance(c_oracle, Mapping):
+        raise EvidenceError("runtime first-arena report lacks its pinned C oracle")
+    c_trace = c_oracle.get("trace")
+    if not isinstance(c_trace, Mapping):
+        raise EvidenceError("runtime first-arena C oracle trace is malformed")
+    validate_initial_tld_numa_c_trace(c_trace)
+    upstream = c_oracle.get("upstream")
+    pin = pinned_mimalloc_pin()
+    if upstream != {"archive_sha256": pin["sha256"], "revision": pin["revision"]}:
+        raise EvidenceError("runtime first-arena C oracle pin drifted")
+    fixture = c_oracle.get("fixture")
+    if not isinstance(fixture, Mapping) or fixture.get("path") != relative(INITIAL_TLD_NUMA_FIXTURE):
+        raise EvidenceError("runtime first-arena C fixture identity drifted")
+    source_files = c_oracle.get("source_files")
+    if not isinstance(source_files, list) or [record.get("path") for record in source_files if isinstance(record, Mapping)] != sorted(set(INITIAL_TLD_NUMA_C_ORACLE_SOURCE_FILES)):
+        raise EvidenceError("runtime first-arena C source roster drifted")
+    comparison = compare_initial_tld_numa_observations(c_oracle, lane)
+    if report.get("comparison") != comparison:
+        raise EvidenceError("runtime first-arena C/Rust normalized comparison drifted")
+
+
 def run_runtime_first_arena_policy_evidence(report_path: Path) -> dict[str, Any]:
     """Publish the one policy-bound runtime witness without a campaign claim."""
 
@@ -618,6 +1048,7 @@ def run_runtime_first_arena_policy_evidence(report_path: Path) -> dict[str, Any]
     before_lockfile = sha256_file(LOCKFILE)
     lane = runtime_first_arena_lane()
 
+    c_oracle = run_initial_tld_numa_c_oracle()
     with tempfile.TemporaryDirectory(prefix="crabc-mimalloc-x86_64-runtime-first-arena-") as temporary:
         target_dir = Path(temporary) / "target"
         result = run_lane(cargo, lane, target_dir)
@@ -627,7 +1058,7 @@ def run_runtime_first_arena_policy_evidence(report_path: Path) -> dict[str, Any]
         raise EvidenceError("Cargo.lock changed despite the required --locked command")
 
     report: dict[str, Any] = {
-        "format": 1,
+        "format": 2,
         "kind": "mimalloc-x86_64-runtime-first-arena-policy-evidence",
         "profile": "linux-x86_64-private-engine-runtime-first-arena-policy-witness",
         "status": "passed",
@@ -648,33 +1079,17 @@ def run_runtime_first_arena_policy_evidence(report_path: Path) -> dict[str, Any]
                 "value": "<isolated-temporary-target-dir>",
             },
         },
+        "c_oracle": c_oracle,
+        "comparison": compare_initial_tld_numa_observations(c_oracle, result),
         "lane": result,
         "scope": {
-            "boundary": "one process-isolated private first-arena runtime witness only",
+            "boundary": "one child-isolated pinned-C and one process-isolated private Rust first-arena policy witness only",
             "public_runtime_support": False,
-            "claim": "focused runtime first-arena policy witness",
+            "claim": "focused initial-TLD NUMA option-policy witness",
         },
-        "exclusions": list(EXCLUSIONS),
+        "exclusions": list(RUNTIME_FIRST_ARENA_EXCLUSIONS),
     }
-    required = {
-        "cargo",
-        "exclusions",
-        "format",
-        "kind",
-        "lane",
-        "native_execution_provenance",
-        "profile",
-        "scope",
-        "status",
-        "target",
-        "toolchain",
-    }
-    if set(report) != required:
-        raise EvidenceError("runtime first-arena report schema drifted")
-    if report["lane"] != result or result["id"] != lane.identifier:
-        raise EvidenceError("runtime first-arena report lane drifted")
-    if result["observed"]["passed"] != lane.expected_pass_count:
-        raise EvidenceError("runtime first-arena report pass count drifted")
+    validate_runtime_first_arena_policy_report(report)
     atomic_write_json(report_path, report)
     return report
 
