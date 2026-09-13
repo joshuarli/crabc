@@ -260,6 +260,78 @@ class CandidateSourceReceiptTests(unittest.TestCase):
             ],
         }
 
+    def complete_runtime_first_arena_report(self) -> dict[str, object]:
+        """Build the smallest structurally complete receipt for reader mutations."""
+
+        c_trace = {
+            "source_option_applied": 1,
+            "configured_numa_node_count": 3,
+            "resolved_numa_node_count": 3,
+            "ticket_zero_tld": 1,
+            "default_theap_uses_ticket_zero_tld": 1,
+            "ticket_zero_tld_numa_node": 0,
+            "ticket_zero_tld_numa_in_range": 1,
+        }
+        lane = {
+            "id": "runtime-process-policy-first-arena",
+            "observed": {"passed": 1},
+            "initial_tld_numa_trace": {
+                "vm_policy_use_numa_nodes": 3,
+                "vm_policy_numa_node_count_cache": 3,
+                "ticket_zero_tld_numa_node": 0,
+            },
+        }
+        c_oracle = {
+            "trace": c_trace,
+            "upstream": {
+                "archive_sha256": "f" * 64,
+                "revision": "a" * 40,
+            },
+            "fixture": {"path": EVIDENCE.relative(EVIDENCE.INITIAL_TLD_NUMA_FIXTURE)},
+            "source_files": [
+                {"path": path}
+                for path in sorted(set(EVIDENCE.INITIAL_TLD_NUMA_C_ORACLE_SOURCE_FILES))
+            ],
+        }
+        candidate_source = EVIDENCE.candidate_source_attestation(
+            self.clean_snapshot(), self.clean_snapshot()
+        )
+        return {
+            "format": 3,
+            "kind": "mimalloc-x86_64-runtime-first-arena-policy-evidence",
+            "profile": "linux-x86_64-private-engine-runtime-first-arena-policy-witness",
+            "status": "passed",
+            "target": {
+                "architecture": "x86_64",
+                "endianness": "little",
+                "rust_target": EVIDENCE.TARGET,
+                "system": "linux",
+            },
+            "native_execution_provenance": {
+                "execution_mode": "native",
+                "host_architecture": "x86_64",
+            },
+            "toolchain": {},
+            "cargo": {
+                "locked": True,
+                "target_dir": {
+                    "isolated": True,
+                    "retained": False,
+                    "value": "<isolated-temporary-target-dir>",
+                },
+            },
+            "candidate_source": candidate_source,
+            "c_oracle": c_oracle,
+            "comparison": EVIDENCE.compare_initial_tld_numa_observations(c_oracle, lane),
+            "lane": lane,
+            "scope": {
+                "boundary": "one child-isolated pinned-C and one process-isolated private Rust first-arena policy witness only",
+                "public_runtime_support": False,
+                "claim": "focused initial-TLD NUMA option-policy witness",
+            },
+            "exclusions": list(EVIDENCE.RUNTIME_FIRST_ARENA_EXCLUSIONS),
+        }
+
     def test_candidate_receipt_requires_identical_clean_before_and_after_sources(self) -> None:
         before = self.clean_snapshot()
         self.assertEqual(
@@ -283,6 +355,36 @@ class CandidateSourceReceiptTests(unittest.TestCase):
         dirty["git"]["worktree_status"] = self.bytes_record(b" M crabc-mimalloc/src/os.rs\0")
         with self.assertRaisesRegex(EVIDENCE.EvidenceError, "clean Git source"):
             EVIDENCE.candidate_source_attestation(dirty, dirty)
+
+    @mock.patch.object(
+        EVIDENCE,
+        "pinned_mimalloc_pin",
+        return_value={"sha256": "f" * 64, "revision": "a" * 40},
+    )
+    def test_report_reader_rejects_noncanonical_candidate_source_scalars(
+        self, _pinned_mimalloc_pin: mock.Mock
+    ) -> None:
+        report = self.complete_runtime_first_arena_report()
+        EVIDENCE.validate_runtime_first_arena_policy_report(report)
+
+        for malformed_format in (True, 1.0):
+            with self.subTest(candidate_format=malformed_format):
+                malformed = copy.deepcopy(report)
+                malformed["candidate_source"]["before"]["format"] = malformed_format
+                with self.assertRaisesRegex(EVIDENCE.EvidenceError, "snapshot format"):
+                    EVIDENCE.validate_runtime_first_arena_policy_report(malformed)
+
+        with self.subTest(unchanged_during_execution=1):
+            malformed = copy.deepcopy(report)
+            malformed["candidate_source"]["unchanged_during_execution"] = 1
+            with self.assertRaisesRegex(EVIDENCE.EvidenceError, "unchanged"):
+                EVIDENCE.validate_runtime_first_arena_policy_report(malformed)
+
+        with self.subTest(report_format=3.0):
+            malformed = copy.deepcopy(report)
+            malformed["format"] = 3.0
+            with self.assertRaisesRegex(EVIDENCE.EvidenceError, "format-3"):
+                EVIDENCE.validate_runtime_first_arena_policy_report(malformed)
 
 
 class ResultParserTests(unittest.TestCase):

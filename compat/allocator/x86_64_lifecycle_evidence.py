@@ -505,7 +505,7 @@ def validate_candidate_source_snapshot(value: object, subject: str) -> dict[str,
         "rust_allocator_tree",
     }:
         raise EvidenceError(f"{subject} snapshot schema drifted")
-    if value.get("format") != 1:
+    if type(value.get("format")) is not int or value["format"] != 1:
         raise EvidenceError(f"{subject} snapshot format drifted")
     git = value.get("git")
     if not isinstance(git, Mapping) or set(git) != {
@@ -1246,7 +1246,7 @@ def compare_initial_tld_numa_observations(
 
 
 def validate_runtime_first_arena_policy_report(report: Mapping[str, Any]) -> None:
-    """Fail closed on the focused direct-C plus normal-Rust witness shape."""
+    """Validate receipt structure and self-consistency, not live candidate-source identity."""
 
     required = {
         "candidate_source",
@@ -1266,7 +1266,11 @@ def validate_runtime_first_arena_policy_report(report: Mapping[str, Any]) -> Non
     }
     if set(report) != required:
         raise EvidenceError("runtime first-arena report schema drifted")
-    if report.get("format") != 3 or report.get("status") != "passed":
+    if (
+        type(report.get("format")) is not int
+        or report["format"] != 3
+        or report.get("status") != "passed"
+    ):
         raise EvidenceError("runtime first-arena report must record a passed format-3 result")
     if report.get("kind") != "mimalloc-x86_64-runtime-first-arena-policy-evidence":
         raise EvidenceError("runtime first-arena report kind drifted")
@@ -1292,6 +1296,11 @@ def validate_runtime_first_arena_policy_report(report: Mapping[str, Any]) -> Non
         "unchanged_during_execution",
     }:
         raise EvidenceError("runtime first-arena report candidate source seal is invalid")
+    if (
+        type(candidate_source.get("unchanged_during_execution")) is not bool
+        or candidate_source["unchanged_during_execution"] is not True
+    ):
+        raise EvidenceError("runtime first-arena report candidate source must be unchanged")
     expected_candidate_source = candidate_source_attestation(
         candidate_source.get("before"), candidate_source.get("after")
     )

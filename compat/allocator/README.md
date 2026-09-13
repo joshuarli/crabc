@@ -1936,6 +1936,12 @@ named Rust runtime/test, Cargo/toolchain, launcher, C fixture, and collector
 inputs. Older format-2 receipts remain historical measurements; they do not
 acquire this candidate-source attribution retroactively.
 
+The receipt reader validates the serialized schema and its before/after
+self-consistency only. It does not query Git or recompute live source bytes,
+so a retained format-3 receipt alone does not authenticate some later
+checkout. The producer's clean-source capture and an explicit current-source
+comparison establish that attribution.
+
 One lane is a Rust-only bounded dynamic post-exit route: a source worker
 tears down dynamic TLS, cached-root, Theap/TLD, and key state before returning
 `DynamicThreadExitArenaSingletonPostExitRoute`; after join, its receiver
