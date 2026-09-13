@@ -925,6 +925,10 @@ def validate_h_errno_layout_artifacts(
         for name in LAYOUT_INPUTS
     }
     candidate_static_archive, _ = _product_libraries(products)
+    # The complete archive stream records the collection container spelling.
+    # Host replay rebases the product identity to the physical checkout, but
+    # must pass the original spelling back to the raw archive parser.
+    candidate_static_archive_recorded = _recorded_command_path(candidate_static_archive, root, recorded_root)
 
     def layout_text(name: str) -> str:
         return read_text(paths[name], f"h_errno layout artifact {name}")
@@ -947,7 +951,7 @@ def validate_h_errno_layout_artifacts(
             layout_text("candidate-static-sections.txt"),
             symbol_text("candidate-static-symbols.txt"),
             layout_text("candidate-static-members.txt"),
-            str(candidate_static_archive),
+            candidate_static_archive_recorded,
             "candidate static h_errno",
         ),
     }

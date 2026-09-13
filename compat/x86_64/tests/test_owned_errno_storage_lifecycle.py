@@ -3,7 +3,7 @@
 
 from importlib.util import module_from_spec, spec_from_file_location
 import hashlib
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import tempfile
 import unittest
 
@@ -371,6 +371,14 @@ class ErrnoStorageLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(rebased["external"]["path"], "/opt/musl-1.2.6/lib/libc.so")
         self.assertEqual(rebased["source_policy"]["path"], recorded["source_policy"]["path"])
+        self.assertEqual(
+            reader._recorded_command_path(
+                ROOT / ".work" / "x86_64" / "receipt" / "static" / "usr/lib/libc.a",
+                ROOT,
+                PurePosixPath("/workspace"),
+            ),
+            "/workspace/.work/x86_64/receipt/static/usr/lib/libc.a",
+        )
 
         with self.assertRaisesRegex(reader.ErrnoStorageEvidenceError, "collection checkout root"):
             reader.rebase_report_checkout_paths(
