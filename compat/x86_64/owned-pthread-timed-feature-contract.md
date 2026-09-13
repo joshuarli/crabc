@@ -77,6 +77,10 @@ contract executable at `0755`. Before each chroot run, the runner materializes
 the root and every directory at `0755`; dynamic payload files are `0644` apart
 from its driver, loader, and `libc.so`, which are `0755`. The retained tree
 record replays those root, directory, file-byte, and file-mode facts.
+Replay also calls that owner's retained ELF audit for each owned final output:
+static outputs have no interpreter, `DT_NEEDED`, or `DT_TEXTREL`; dynamic
+outputs have the owned interpreter, exactly `libc.so`, `/usr/lib` RUNPATH, no
+RPATH, and no `DT_TEXTREL`.
 
 The installed-header probe checks only these ordinary outcomes:
 

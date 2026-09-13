@@ -1648,6 +1648,15 @@ def _static_product_root(products: Mapping[str, object]) -> str:
     return str(Path(paths["driver"]).parent.parent)
 
 
+def _audit_owned_final_elf(path: Path, linkage: str) -> None:
+    """Replay the product owner's retained dynamic-tag policy for one output."""
+
+    try:
+        product_evidence._audit_retained_elf(path, linkage)
+    except product_evidence.ProductEvidenceError as error:
+        raise ReceiptError(f"{path.name} retained ELF policy differs: {error}") from error
+
+
 def _validate_dynamic_link_receipt(
     path: Path, work: str, binary: str, artifacts: Mapping[str, object], products: Mapping[str, object],
     image_manifest: Mapping[str, object],
@@ -1749,6 +1758,7 @@ def _validate_dynamic_link_receipt(
     ]
     require(receipt["link_command"] == expected_link,
             f"{binary} dynamic linker command changed")
+    _audit_owned_final_elf(path.parent / binary, "pie" if expected_mode == "pie" else "non-pie")
 
 
 def _static_admitted_inputs(
@@ -1909,6 +1919,7 @@ def _validate_static_link_receipt(
         )
     except StaticLinkAuthorityError as error:
         raise ReceiptError(f"{binary} selected static function authority differs: {error}") from error
+    _audit_owned_final_elf(work / binary, "static" if binary == "static-contract" else "static-pie")
 
 
 def _coverage() -> dict[str, object]:
