@@ -1,4 +1,4 @@
-schema = "crabc.x86_64-installed-crt-startup/v2"
+schema = "crabc.x86_64-installed-crt-startup/v3"
 identities = ["_GLOBAL_OFFSET_TABLE_", "__crabc_x86_64_loader_conventional_startup_v1", "__crabc_x86_64_owned_crt_handoff", "__crabc_x86_loader_tls_runtime_v1_attach", "__crabc_x86_loader_tls_runtime_v1_record", "__crabc_x86_static_tls_bootstrap", "__preinit_array_start", "__preinit_array_end", "__init_array_start", "__init_array_end", "__fini_array_start", "__fini_array_end"]
 modes = ["static", "static-pie", "owned-pie", "owned-non-pie", "conventional-pie", "conventional-non-pie", "default-pie", "oracle-static", "oracle-static-pie", "oracle-pie", "oracle-non-pie"]
 variants = ["normal", "empty"]
@@ -48,3 +48,23 @@ process_mode = 2
 owner = 1
 ready_state = 2
 generation = 1
+
+[descriptor_handoff.admission]
+main_case = "owned-pie-normal"
+entry_modes = ["kernel", "direct"]
+
+[descriptor_handoff.admission.mutations]
+"wrong-symbol-type" = {field = "symbol-info", value = 33}
+"wrong-binding" = {field = "symbol-info", value = 16}
+"wrong-relocation-kind" = {field = "relocation-kind", value = 7}
+"wrong-addend" = {field = "addend", value = 1}
+
+[descriptor_handoff.admission.dso]
+source = "compat/x86_64/installed_crt_startup_descriptor_dso.c"
+shared_object = "descriptor-rogue-dso.so"
+endpoint = "descriptor-dso-endpoint"
+
+[descriptor_handoff.admission.rejection]
+status = 127
+stdout = ""
+stderr = "reloc\n"

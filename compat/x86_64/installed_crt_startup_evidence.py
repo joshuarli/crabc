@@ -22,13 +22,21 @@ import owned_posix_static_products as static_products
 import owned_dynamic_qualification as qualification
 from loader_debug_abi_evidence import Elf
 ROOT=Path(__file__).resolve().parents[2]
-SCHEMA='crabc.x86_64-installed-crt-startup/v2'
+SCHEMA='crabc.x86_64-installed-crt-startup/v3'
 CONVENTIONAL='__crabc_x86_64_loader_conventional_startup_v1'
 HANDOFF='__crabc_x86_64_owned_crt_handoff'
 ATTACH='__crabc_x86_loader_tls_runtime_v1_attach'
 RECORD='__crabc_x86_loader_tls_runtime_v1_record'
 BOOTSTRAP='__crabc_x86_static_tls_bootstrap'
 DESCRIPTOR='__crabc_x86_64_loader_tls_runtime_v1'
+DESCRIPTOR_DSO='descriptor-rogue-dso.so'
+DESCRIPTOR_ENDPOINT='descriptor-dso-endpoint'
+DESCRIPTOR_MUTATIONS={
+    'wrong-symbol-type':('symbol-info',0x21),
+    'wrong-binding':('symbol-info',0x10),
+    'wrong-relocation-kind':('relocation-kind',7),
+    'wrong-addend':('addend',1),
+}
 ARRAYS=tuple('__'+a+'_array_'+b for a in ('preinit','init','fini') for b in ('start','end'))
 NAMES=('_GLOBAL_OFFSET_TABLE_',CONVENTIONAL,HANDOFF,ATTACH,RECORD,BOOTSTRAP,*ARRAYS)
 MODES=('static','static-pie','owned-pie','owned-non-pie','conventional-pie','conventional-non-pie','default-pie','oracle-static','oracle-static-pie','oracle-pie','oracle-non-pie')
@@ -62,6 +70,22 @@ def expected_contract():
                 'geometry':{'size_bytes':72,'alignment_bytes':8,
                             'magic':'43524142435f5451','version':1,'process_mode':2,
                             'owner':1,'ready_state':2,'generation':1},
+                # Mutation files are derived from the linked owned main, then
+                # run through the selected product loader in `candidate-root`.
+                # They are not a second interpreter/product authority.
+                'admission':{
+                    'main_case':'owned-pie-normal',
+                    'mutations':{
+                        'wrong-symbol-type':{'field':'symbol-info','value':0x21},
+                        'wrong-binding':{'field':'symbol-info','value':0x10},
+                        'wrong-relocation-kind':{'field':'relocation-kind','value':7},
+                        'wrong-addend':{'field':'addend','value':1},
+                    },
+                    'dso':{'source':'compat/x86_64/installed_crt_startup_descriptor_dso.c',
+                            'shared_object':DESCRIPTOR_DSO,'endpoint':DESCRIPTOR_ENDPOINT},
+                    'entry_modes':['kernel','direct'],
+                    'rejection':{'status':127,'stdout':'','stderr':'reloc\n'},
+                },
             },
             'descriptor_import_required':False,'family_completion':False,'public_support':False}
 
@@ -114,6 +138,12 @@ def runtime_cells():
     return [{**case,'entry':entry,'label':case['name']+'-'+entry} for case in cases()
             for entry in (('process',) if 'static' in case['mode'] else ('kernel','direct'))]
 
+def descriptor_admission_cells():
+    policy=expected_contract()['descriptor_handoff']['admission']
+    binaries=['descriptor-'+label for label in policy['mutations']]+[policy['dso']['endpoint']]
+    return [{'binary':binary,'entry':entry,'label':binary+'-'+entry}
+            for binary in binaries for entry in policy['entry_modes']]
+
 def expected_stdout(cell):
     mode=cell['mode']; owned=mode in MODES[:4]; empty=cell['variant']=='empty'
     prefix=('P' if owned and not empty else '')+'I'+('' if empty else 'C')
@@ -137,7 +167,8 @@ RUNTIME_SOURCES=('crt/src/x86_64_startup.rs','crt/src/x86_64_dynamic_startup.rs'
     'ldso/src/x86_64_conventional_startup_v1.rs','compat/x86_64/loader-libc-tls-runtime-v1.toml')
 COLLECTOR_SOURCES=tuple(dict.fromkeys((*substrate.COLLECTOR_SOURCES,*RUNTIME_SOURCES,
     'compat/x86_64/installed_crt_startup_evidence.py','compat/x86_64/installed-crt-startup.toml',
-    'compat/x86_64/installed_crt_startup_probe.c','compat/x86_64/prepared_worker_tls_evidence.py')))
+    'compat/x86_64/installed_crt_startup_probe.c','compat/x86_64/installed_crt_startup_descriptor_dso.c',
+    'compat/x86_64/prepared_worker_tls_evidence.py')))
 ORACLE_CRT=('crt1.o','Scrt1.o','rcrt1.o','crti.o','crtn.o')
 EXTRA_TOOLS=substrate.EXTRA_TOOLS
 
@@ -177,7 +208,8 @@ def mode_owner(mode):
 def plan(root,work,inputs,tools):
     m=lambda path:ordinary.mounted(root,path);p=lambda name:m(work/name)
     tool=lambda name:tools[name]['original']['path']; specs=[]
-    def add(label,argv,cwd='/workspace'):specs.append({'label':label.replace('.','-').lower(),'argv':argv,'cwd':cwd})
+    def add(label,argv,cwd='/workspace',**expected):
+        specs.append({'label':label.replace('.','-').lower(),'argv':argv,'cwd':cwd,**expected})
     library=root/inputs['dynamic_product']['path']/'usr/lib';static=root/inputs['static_preparation']['primary']['path']/'usr/lib'
     for variant in ('normal','empty'):
         add(variant+'-compile',[tool('dynamic_driver'),'--dynamic-shared-object','-std=c11',
@@ -202,6 +234,11 @@ def plan(root,work,inputs,tools):
                   m(crt),p('inputs/oracle-crt/crti.o'),obj,
                   *([m(runtime)] if is_static or mode.startswith('conventional') else ['-L',p('oracle-link'),'-l:libc.so']),p('inputs/oracle-crt/crtn.o'),'-Map='+p(name+'.map'),'-o',p(name)]
             add(name+'-link',argv)
+    admission=expected_contract()['descriptor_handoff']['admission'];dso=admission['dso']
+    add('descriptor-dso-compile',[tool('dynamic_driver'),'--dynamic-shared-object','-std=c11',
+        p('installed_crt_startup_descriptor_dso.c'),'-o',p(dso['shared_object'])])
+    add('descriptor-dso-link',[tool('dynamic_driver'),'--dynamic-pie','--application-dso',
+        p(dso['shared_object']),p('normal.o'),'-o',p(dso['endpoint'])])
     paths={**product_paths(root,inputs),**{case['name']:work/case['name'] for case in cases()},
            **{variant+'-object':work/(variant+'.o') for variant in ('normal','empty')}}
     for key,path in paths.items():
@@ -218,6 +255,14 @@ def plan(root,work,inputs,tools):
             argv.append('/'+cell['name'])
         argv.append('static' if 'static' in mode else 'owned' if mode.startswith('owned') else 'conventional' if mode.startswith('conventional') else 'default' if mode=='default-pie' else 'oracle')
         add(cell['label'],argv)
+    for cell in descriptor_admission_cells():
+        argv=[tool('env'),'-i','CRABC_STARTUP=yes',
+              ordinary.validate_chroot_invocation(tools['chroot']['invocation'],tools['chroot']['original']),p('candidate-root')]
+        if cell['entry']=='direct':argv.append('/lib/ld-crabc-x86_64.so.1')
+        argv.extend(['/{}'.format(cell['binary']),'owned'])
+        add(cell['label'],argv,expected_status=admission['rejection']['status'],
+            expected_stdout=admission['rejection']['stdout'].encode('ascii'),
+            expected_stderr=admission['rejection']['stderr'].encode('ascii'))
     return specs
 
 def validate_commands(root,work,inputs,tools,commands):
@@ -225,13 +270,19 @@ def validate_commands(root,work,inputs,tools,commands):
     require(type(commands) is list and len(commands)==len(expected),'startup command roster differs')
     for row,spec in zip(commands,expected):
         require(set(row)=={'label','argv','cwd','outcome','command','stdout','stderr','status'}
-                and same({k:row[k] for k in spec},spec) and row['outcome']=='ok','startup command differs')
+                and same({k:row[k] for k in ('label','argv','cwd')},
+                         {k:spec[k] for k in ('label','argv','cwd')})
+                and row['outcome']=='ok','startup command differs')
         for field,suffix in (('command','command.json'),('stdout','stdout'),('stderr','stderr'),('status','status')):
             path=ordinary.resolve_work_identity(root,row[field],'startup '+field)
             require(path==ordinary.raw_path(work,spec['label'],suffix),'startup raw path differs')
         require(same(ordinary.read_json(ordinary.raw_path(work,spec['label'],'command.json'),'startup argv',list),spec['argv']), 'startup retained argv differs')
-        require(ordinary.raw_path(work,spec['label'],'status').read_bytes()==b'0\n'
-                and ordinary.raw_path(work,spec['label'],'stderr').read_bytes()==b'','startup status or diagnostic differs')
+        require(ordinary.raw_path(work,spec['label'],'status').read_bytes()==str(spec.get('expected_status',0)).encode('ascii')+b'\n'
+                and ordinary.raw_path(work,spec['label'],'stderr').read_bytes()==spec.get('expected_stderr',b''),
+                'startup status or diagnostic differs')
+        if 'expected_stdout' in spec:
+            require(ordinary.raw_path(work,spec['label'],'stdout').read_bytes()==spec['expected_stdout'],
+                    'startup descriptor admission stdout differs')
 
 def projection(root,work,inputs):
     paths={**product_paths(root,inputs),**{case['name']:work/case['name'] for case in cases()},
@@ -392,6 +443,96 @@ def descriptor_handoff(product_relocations,executables):
             'probe_owned_modes':list(policy['owned_modes']),
             'static_slot_absent':True}
 
+def descriptor_slot(data):
+    """Locate the one canonical dynamic descriptor request in one ELF image.
+
+    This parser exists only to derive finite byte mutations from the canonical
+    linked main and to check the DSO fixture.  It does not select a provider
+    and it cannot create an interpreter: `prepare_roots` executes every copy
+    using the selected product loader already sealed by `admit` and `roots`.
+    """
+    require(type(data) in (bytes,bytearray) and len(data)>=64 and data[:7]==b'\x7fELF\x02\x01\x01',
+            'descriptor admission input is not ELF64 little-endian')
+    header=struct.unpack_from('<16sHHIQQQIHHHHHH',data,0)
+    shoff,shentsize,shnum=header[6],header[11],header[12]
+    require(shentsize==64 and shoff+shentsize*shnum<=len(data),'descriptor admission section table differs')
+    sections=[struct.unpack_from('<IIQQQQIIQQ',data,shoff+index*shentsize) for index in range(shnum)]
+    names=[]
+    for section_index,section in enumerate(sections):
+        if section[1]!=11:continue
+        offset,size,entry,strings=section[4],section[5],section[9],section[6]
+        require(entry==24 and size%entry==0 and offset+size<=len(data) and strings<len(sections),
+                'descriptor admission dynsym layout differs')
+        string=sections[strings]
+        require(string[4]+string[5]<=len(data),'descriptor admission dynstr layout differs')
+        for record in range(offset,offset+size,entry):
+            name_offset=struct.unpack_from('<I',data,record)[0]
+            require(name_offset<string[5],'descriptor admission name leaves dynstr')
+            begin=string[4]+name_offset;end=data.find(b'\0',begin,string[4]+string[5])
+            require(end>=0,'descriptor admission name is unterminated')
+            if bytes(data[begin:end])==DESCRIPTOR.encode():
+                names.append((section_index,record,(record-offset)//entry))
+    require(len(names)==1,'descriptor admission dynsym roster differs')
+    section_index,symbol,symbol_index=names[0];relocations=[]
+    for section in sections:
+        if section[1]!=4 or section[6]!=section_index:continue
+        offset,size,entry=section[4],section[5],section[9]
+        require(entry==24 and size%entry==0 and offset+size<=len(data),'descriptor admission RELA layout differs')
+        for record in range(offset,offset+size,entry):
+            info=struct.unpack_from('<Q',data,record+8)[0]
+            if info>>32==symbol_index:relocations.append((record,info))
+    require(len(relocations)==1,'descriptor admission relocation roster differs')
+    relocation,info=relocations[0]
+    require(data[symbol+4]==0x20 and data[symbol+5]&3==0
+            and struct.unpack_from('<H',data,symbol+6)[0]==0
+            and info&0xffffffff==6 and struct.unpack_from('<q',data,relocation+16)[0]==0,
+            'descriptor admission positive wire differs')
+    return symbol,relocation,info
+
+def mutate_descriptor_main(source,destination,label):
+    policy=expected_contract()['descriptor_handoff']['admission']
+    mutations=policy['mutations']
+    require(label in mutations and label in DESCRIPTOR_MUTATIONS,'descriptor admission mutation label differs')
+    field,value=DESCRIPTOR_MUTATIONS[label]
+    require(mutations[label]=={'field':field,'value':value},'descriptor admission mutation policy differs')
+    before=source.read_bytes();data=bytearray(before);symbol,relocation,info=descriptor_slot(data)
+    if field=='symbol-info':data[symbol+4]=value
+    elif field=='relocation-kind':struct.pack_into('<Q',data,relocation+8,(info&~0xffffffff)|value)
+    else:struct.pack_into('<q',data,relocation+16,value)
+    require(not destination.exists() and not destination.is_symlink(),'descriptor admission mutation output exists')
+    destination.write_bytes(data);destination.chmod(source.stat().st_mode&0o777)
+    return {'symbol_file_offset':symbol,'rela_file_offset':relocation,'field':field,'value':value}
+
+def prepare_descriptor_admission(work):
+    policy=expected_contract()['descriptor_handoff']['admission'];source=work/policy['main_case']
+    require(source.is_file() and not source.is_symlink(),'descriptor admission main is absent')
+    descriptor_slot(source.read_bytes())
+    for label in policy['mutations']:
+        mutate_descriptor_main(source,work/('descriptor-'+label),label)
+    dso=work/policy['dso']['shared_object'];endpoint=work/policy['dso']['endpoint']
+    require(dso.is_file() and endpoint.is_file() and not dso.is_symlink() and not endpoint.is_symlink(),
+            'descriptor admission DSO fixture is absent')
+    descriptor_slot(dso.read_bytes());descriptor_slot(endpoint.read_bytes())
+
+def descriptor_admission_observations(root,work):
+    policy=expected_contract()['descriptor_handoff']['admission'];source=work/policy['main_case']
+    before=source.read_bytes();symbol,relocation,info=descriptor_slot(before);mutations={}
+    for label,entry in policy['mutations'].items():
+        path=work/('descriptor-'+label);actual=path.read_bytes();expected=bytearray(before)
+        if entry['field']=='symbol-info':expected[symbol+4]=entry['value']
+        elif entry['field']=='relocation-kind':struct.pack_into('<Q',expected,relocation+8,(info&~0xffffffff)|entry['value'])
+        else:struct.pack_into('<q',expected,relocation+16,entry['value'])
+        require(actual==expected,'descriptor admission mutation bytes differ: '+label)
+        mutations[label]={'identity':ident(root,path),'field':entry['field'],'value':entry['value']}
+    dso=work/policy['dso']['shared_object'];endpoint=work/policy['dso']['endpoint']
+    dso_symbol,dso_relocation,_=descriptor_slot(dso.read_bytes())
+    endpoint_symbol,endpoint_relocation,_=descriptor_slot(endpoint.read_bytes())
+    return {'main':ident(root,source),'symbol_file_offset':symbol,'rela_file_offset':relocation,
+            'mutations':mutations,
+            'dso':{'identity':ident(root,dso),'symbol_file_offset':dso_symbol,'rela_file_offset':dso_relocation},
+            'endpoint':{'identity':ident(root,endpoint),'symbol_file_offset':endpoint_symbol,'rela_file_offset':endpoint_relocation},
+            'entry_modes':list(policy['entry_modes']),'rejection':copy.deepcopy(policy['rejection'])}
+
 def needed_libraries(path):
     elf=Elf(path);result=[]
     for section in elf.sections:
@@ -473,6 +614,7 @@ def executable_observations(root,work,inputs,tools,facts):
     return result
 
 def prepare_roots(root,work,inputs):
+    prepare_descriptor_admission(work)
     shutil.copytree(root/inputs['dynamic_product']['path'],work/'candidate-root',symlinks=True)
     (work/'oracle-root/lib').mkdir(parents=True);(work/'oracle-root/lib').chmod(0o755)
     shutil.copy2(work/'qualification-oracle/runtime',work/'oracle-root/lib/ld-musl-x86_64.so.1')
@@ -480,6 +622,11 @@ def prepare_roots(root,work,inputs):
     (work/'oracle-root/lib/libc.so').symlink_to('ld-musl-x86_64.so.1')
     for case in cases():
         if 'static' not in case['mode']:shutil.copy2(work/case['name'],work/(mode_owner(case['mode'])+'-root')/case['name'])
+    policy=expected_contract()['descriptor_handoff']['admission'];dso=policy['dso']
+    for label in policy['mutations']:
+        shutil.copy2(work/('descriptor-'+label),work/'candidate-root'/('descriptor-'+label))
+    shutil.copy2(work/dso['endpoint'],work/'candidate-root'/dso['endpoint'])
+    shutil.copy2(work/dso['shared_object'],work/'candidate-root'/'usr/lib'/dso['shared_object'])
 
 def roots(root,work,inputs):
     result={}
@@ -490,6 +637,14 @@ def roots(root,work,inputs):
         for case in cases():
             if 'static' not in case['mode'] and mode_owner(case['mode'])==owner:
                 path=work/case['name'];expected[case['name']]={'kind':'file','mode':0o755,'size':path.stat().st_size,'sha256':ordinary.digest(path)}
+        if owner=='candidate':
+            policy=expected_contract()['descriptor_handoff']['admission'];dso=policy['dso']
+            for label in policy['mutations']:
+                path=work/('descriptor-'+label)
+                expected['descriptor-'+label]={'kind':'file','mode':0o755,'size':path.stat().st_size,'sha256':ordinary.digest(path)}
+            endpoint=work/dso['endpoint'];shared=work/dso['shared_object']
+            expected[dso['endpoint']]={'kind':'file','mode':0o755,'size':endpoint.stat().st_size,'sha256':ordinary.digest(endpoint)}
+            expected['usr/lib/'+dso['shared_object']]={'kind':'file','mode':0o755,'size':shared.stat().st_size,'sha256':ordinary.digest(shared)}
         observed=ordinary.execution_tree(root,work/(owner+'-root'),'startup execution root')
         require(same(observed,expected),'startup execution root bytes/modes/roster differs')
         result[owner]=observed
@@ -508,6 +663,7 @@ def observations(root,work,inputs,tools):
     return {'complete_elf_facts':facts,'product_placements':products_account,'product_relocations':relocations_account,
             'executables':executables_account,
             'descriptor_handoff':descriptor_handoff(relocations_account,executables_account),'roots':roots(root,work,inputs),
+            'descriptor_admission':descriptor_admission_observations(root,work),
             'runtime_labels':[cell['label'] for cell in runtime_cells()],
             'limits':{'descriptor_worker_lifecycle':'not requalified by startup receipt',
                       'failed_first_bootstrap':'source contract retained; dedicated runtime rejection receipt not supplied',
@@ -553,11 +709,14 @@ def collect(root,output,preparation,static,dynamic,historical):
         tools=ordinary.capture_tool_roster(root,output,static,dynamic)
         for role,path in EXTRA_TOOLS.items():tools[role]=ordinary.retain_tool_snapshot(output,role,ordinary.fixed_image_tool_identity(Path(path),role))
         shutil.copy2(root/'compat/x86_64/installed_crt_startup_probe.c',output/'installed_crt_startup_probe.c')
+        shutil.copy2(root/'compat/x86_64/installed_crt_startup_descriptor_dso.c',output/'installed_crt_startup_descriptor_dso.c')
         (output/'oracle-link').mkdir();shutil.copyfile(output/'qualification-oracle/runtime',output/'oracle-link/libc.so')
         runner=ordinary.Collector(root,output,preparation,static,dynamic)
         for spec in plan(root,output,before,tools):
             if spec['label']==runtime_cells()[0]['label']:prepare_roots(root,output,before);roots(root,output,before)
-            runner.run(spec['label'],spec['argv'],cwd=root if spec['cwd']=='/workspace' else output,timeout_seconds=45)
+            runner.run(spec['label'],spec['argv'],cwd=root if spec['cwd']=='/workspace' else output,timeout_seconds=45,
+                       expected_status=spec.get('expected_status',0),stdout=spec.get('expected_stdout'),
+                       stderr=spec.get('expected_stderr'))
         after=admit(root,preparation,static,dynamic,historical);require(same(before,after),'startup products changed during collection')
         require(same(source,static_products.source_identity(root)),'startup collector changed')
         ordinary.require_live_tool_roster({k:v for k,v in tools.items() if k not in EXTRA_TOOLS})

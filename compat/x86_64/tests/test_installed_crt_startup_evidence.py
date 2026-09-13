@@ -18,7 +18,7 @@ class InstalledCrtStartupTests(unittest.TestCase):
     )
 
     def test_retained_main_image_descriptor_transport_has_exact_owned_boundary(self):
-        """Project actual v1 facts only; it is never a v2 admission waiver."""
+        """Project actual v1 facts only; it is never a v3 admission waiver."""
         if not self._FROZEN_0E_REPORT.is_file():
             self.skipTest('requires retained 0e startup receipt')
         self.assertEqual(hashlib.sha256(self._FROZEN_0E_REPORT.read_bytes()).hexdigest(),
@@ -203,6 +203,100 @@ int main(void) {
                 with self.assertRaisesRegex(reader.StartupEvidenceError,'duplicate startup option'):
                     reader.main(['validate-report',*options])
 
+    def test_descriptor_command_replay_rejects_a_self_sealed_true_command(self):
+        """The canonical plan, rather than its retained command JSON, owns argv."""
+        parent=reader.ROOT/'.work/x86_64/crt-startup-development';parent.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as directory:
+            root=Path(directory);work=root/'.work/receipt';raw=work/'raw';raw.mkdir(parents=True)
+            label='descriptor-wrong-addend-kernel'
+            spec={'label':label,'argv':['/usr/bin/env','-i','CRABC_STARTUP=yes','/usr/sbin/chroot',
+                                         '/workspace/.work/receipt/candidate-root','/descriptor-wrong-addend','owned'],
+                  'cwd':'/workspace','expected_status':127,'expected_stdout':b'','expected_stderr':b'reloc\n'}
+            paths={suffix:reader.ordinary.raw_path(work,label,suffix) for suffix in ('command.json','stdout','stderr','status')}
+            paths['command.json'].write_text(json.dumps(spec['argv'])+'\n')
+            paths['stdout'].write_bytes(b'');paths['stderr'].write_bytes(b'reloc\n');paths['status'].write_bytes(b'127\n')
+            row={'label':label,'argv':list(spec['argv']),'cwd':'/workspace','outcome':'ok',
+                 'command':reader.ordinary.work_file_identity(root,paths['command.json'],'command'),
+                 'stdout':reader.ordinary.work_file_identity(root,paths['stdout'],'stdout'),
+                 'stderr':reader.ordinary.work_file_identity(root,paths['stderr'],'stderr'),
+                 'status':reader.ordinary.work_file_identity(root,paths['status'],'status')}
+            with mock.patch.object(reader,'plan',return_value=[spec]):
+                reader.validate_commands(root,work,{}, {},[row])
+                row['argv']=['/bin/true','--not-the-retained-chroot-command']
+                paths['command.json'].write_text(json.dumps(row['argv'])+'\n')
+                row['command']=reader.ordinary.work_file_identity(root,paths['command.json'],'forged command')
+                with self.assertRaises(reader.StartupEvidenceError):
+                    reader.validate_commands(root,work,{}, {},[row])
+
+    def test_collector_stdout_default_still_rejects_unexpected_stderr(self):
+        """Descriptor rejection support must not relax every existing stdout control."""
+        parent=reader.ROOT/'.work/x86_64/crt-startup-development';parent.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as directory:
+            root=Path(directory);work=root/'.work/collector';work.mkdir(parents=True)
+            collector=reader.ordinary.Collector(root,work,Path('preparation'),Path('static'),Path('dynamic'))
+            with self.assertRaises(reader.ordinary.PublicDataEvidenceError):
+                collector.run('stdout-default',['/bin/sh','-c','printf expected; printf unexpected >&2'],
+                              stdout=b'expected')
+
+    def test_collector_accepts_the_explicit_descriptor_rejection_stream(self):
+        """The new finite rejection cells may seal their nonzero status and stderr."""
+        parent=reader.ROOT/'.work/x86_64/crt-startup-development';parent.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as directory:
+            root=Path(directory);work=root/'.work/collector';work.mkdir(parents=True)
+            collector=reader.ordinary.Collector(root,work,Path('preparation'),Path('static'),Path('dynamic'))
+            row=collector.run('descriptor-rejection',['/bin/sh','-c','printf reloc >&2; exit 127'],
+                              stdout=b'',stderr=b'reloc',expected_status=127)
+            self.assertEqual(row['outcome'],'ok')
+            self.assertEqual((work/'raw/descriptor-rejection.status').read_bytes(),b'127\n')
+
+    def test_retained_fed_main_supplies_the_exact_four_canonical_mutations(self):
+        """This observes fed placement only; it deliberately does not admit its old loader."""
+        main=reader.ROOT.parent/'native_crt_main_anchor_integration/.work/x86_64/crt-startup-evidence/clean-fed397b0/owned-pie-normal'
+        if not main.is_file():self.skipTest('requires retained fed owned PIE main')
+        self.assertEqual(hashlib.sha256(main.read_bytes()).hexdigest(),'5cdfa442f1d96018a797f18c24e38862f229425fed093469f95822df273d4b97')
+        parent=reader.ROOT/'.work/x86_64/crt-startup-development';parent.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as directory:
+            work=Path(directory);before=main.read_bytes();symbol,relocation,info=reader.descriptor_slot(before)
+            for label,(field,value) in reader.DESCRIPTOR_MUTATIONS.items():
+                output=work/label;mutation=reader.mutate_descriptor_main(main,output,label)
+                self.assertEqual((mutation['symbol_file_offset'],mutation['rela_file_offset'],mutation['field'],mutation['value']),
+                                 (symbol,relocation,field,value))
+                changed=output.read_bytes()
+                if field=='symbol-info':self.assertEqual(changed[symbol+4],value)
+                elif field=='relocation-kind':self.assertEqual(changed[relocation+8:relocation+16],((info&~0xffffffff)|value).to_bytes(8,'little'))
+                else:self.assertEqual(changed[relocation+16:relocation+24],value.to_bytes(8,'little',signed=True))
+            self.assertEqual(main.read_bytes(),before)
+
+    def test_candidate_root_rejects_self_sealed_loader_and_control_substitution(self):
+        """The selected product tree and linked control determine execution bytes."""
+        parent=reader.ROOT/'.work/x86_64/crt-startup-development';parent.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as directory:
+            work=Path(directory);policy=reader.expected_contract()['descriptor_handoff']['admission']
+            main=work/'owned-pie-normal';main.write_bytes(b'linked control');main.chmod(0o755)
+            for label in policy['mutations']:
+                path=work/('descriptor-'+label);path.write_bytes(label.encode());path.chmod(0o755)
+            for name in (policy['dso']['endpoint'],policy['dso']['shared_object']):
+                path=work/name;path.write_bytes(name.encode());path.chmod(0o755)
+            runtime=work/'qualification-oracle/runtime';runtime.parent.mkdir();runtime.write_bytes(b'oracle');runtime.chmod(0o755)
+            selected={'lib':{'kind':'directory','mode':0o755},
+                      'lib/ld-crabc-x86_64.so.1':{'kind':'file','mode':0o755,'size':8,'sha256':'selected'},
+                      'usr':{'kind':'directory','mode':0o755},'usr/lib':{'kind':'directory','mode':0o755}}
+            candidate=copy.deepcopy(selected)
+            def record(path):return {'kind':'file','mode':0o755,'size':path.stat().st_size,'sha256':reader.ordinary.digest(path)}
+            candidate['owned-pie-normal']=record(main)
+            for label in policy['mutations']:candidate['descriptor-'+label]=record(work/('descriptor-'+label))
+            candidate[policy['dso']['endpoint']]=record(work/policy['dso']['endpoint'])
+            candidate['usr/lib/'+policy['dso']['shared_object']]=record(work/policy['dso']['shared_object'])
+            oracle={'lib':{'kind':'directory','mode':0o755},
+                    'lib/libc.so':{'kind':'symlink','mode':0o777,'target':'ld-musl-x86_64.so.1'},
+                    'lib/ld-musl-x86_64.so.1':record(runtime)}
+            case=[{'mode':'owned-pie','variant':'normal','name':'owned-pie-normal'}]
+            for key in ('lib/ld-crabc-x86_64.so.1','owned-pie-normal'):
+                forged=copy.deepcopy(candidate);forged[key]['sha256']='self-sealed-replacement'
+                with self.subTest(replacement=key),mock.patch.object(reader,'cases',return_value=case), \
+                        mock.patch.object(reader.ordinary,'execution_tree',side_effect=[forged,oracle]):
+                    with self.assertRaises(reader.StartupEvidenceError):reader.roots(reader.ROOT,work,{'dynamic_tree':selected})
+
     def test_crt_caller_relocations_are_required_per_object(self):
         # Exact raw rows from pinned b525 product bytes, retained by the e434
         # startup receipt. Calling artifact_relocations keeps this regression
@@ -243,6 +337,9 @@ int main(void) {
     def test_contract_is_closed_and_flags_are_booleans(self):
         contract=reader.expected_contract()
         self.assertEqual(len(contract['identities']),12)
+        admission=contract['descriptor_handoff']['admission']
+        self.assertEqual(set(admission['mutations']),set(reader.DESCRIPTOR_MUTATIONS))
+        self.assertEqual(admission['rejection'],{'status':127,'stdout':'','stderr':'reloc\n'})
         reader.validate_contract(contract)
         for bad in ({**contract,'public_support':0},{**contract,'identities':contract['identities'][:-1]},
                     {**contract,'extra':True}):

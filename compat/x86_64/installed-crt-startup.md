@@ -46,7 +46,7 @@ GLOB_DAT slots: owned handoff non-null/conventional slot null, conventional
 snapshot non-null/no owned handoff, default CRT weak-null, oracle neither.
 The borrowed record is read but private callbacks are not called by the probe.
 The 32-byte owned carrier and separate 88-byte conventional snapshot preserve
-source-defined roles. Schema v2 adds a separate private descriptor-handoff
+source-defined roles. Schema v3 adds a separate private descriptor-handoff
 account: `dynamic-crabc-dynamic-attach.o` has exactly one weak, undefined
 `NOTYPE` GOTPCREL descriptor reference, and each owned PIE/non-PIE normal and
 empty final main image has exactly one weak undefined `GLOB_DAT` slot. Static,
@@ -69,22 +69,36 @@ fail reconstruction; merely listing a symbol does not prove its caller uses it.
 The six address-returning assembly bridges are distinct from their linker
 boundary names. Function code size is not selected metadata.
 
-The separate `installed_crt_descriptor_admission.py` companion records one
-development-only installed-loader negative boundary. It rebuilds the current
-interpreter, copies one supplied owned dynamic product, mutates the one
-authenticated final-main descriptor slot in four byte-for-byte ways (symbol
-type, binding, relocation kind, and addend), and links a source-shaped weak
-descriptor request from a DSO. Kernel and direct entry both retain the exact
-commands, raw status/stdout/stderr, source and supplied-product identities,
-mutation bytes, and private execution-tree identity. The unchanged supplied
-main is the positive control. Each malformed endpoint must fail in the loader
-before the companion application's `application-main` witness; this report is
-development evidence for the current interpreter source, never a qualification
-transfer from its supplied product or a selector input.
+Schema v3 makes the finite descriptor-admission control part of the same
+`installed_crt_startup_evidence.py` transaction. After it links the normal
+owned PIE probe, the collector derives four single-field ELF copies from that
+one authenticated final main: `OBJECT` instead of `NOTYPE`, global instead of
+weak binding, `JUMP_SLOT` instead of `GLOB_DAT`, and addend one instead of
+zero. It also compiles `installed_crt_startup_descriptor_dso.c` through the
+selected dynamic driver and links the ordinary normal probe against that weak
+DSO request. The ordinary positive matrix remains unchanged. The collector
+copies each finite input into its existing `candidate-root`, whose loader and
+manifest are exact sealed dynamic-product inputs; it never builds, substitutes,
+or self-authenticates an interpreter.
+
+For both kernel and direct entry, the five malformed inputs must exit 127,
+write no stdout, and write only `reloc` to stderr before probe `main` can
+produce its normal transcript. Replay rebuilds the command plan from the
+current source, retained tools, selected product cohort, and source-generated
+mutation policy; it independently rechecks the copied candidate-root tree,
+mutation bytes, DSO and endpoint wire shape, raw commands, statuses, and
+streams. A previous source/product cohort that admits a malformed wire cannot
+produce a schema-v3 receipt. It remains an observed development failure, not
+a waiver or a qualified green result.
+
+The earlier rebuilt-interpreter twelve-cell development matrix and its source
+tests remain author evidence under ignored `.work/x86_64` only. This reader
+does not consume or reseal that matrix: a component receipt can use only its
+selected installed dynamic product, finite linked inputs, and canonical plan.
 
 The component does not requalify prepared-worker/72-byte descriptor lifetime,
 release-READY publication ordering, first-bootstrap failure transitions, or
-the full process-exit family. The companion does not establish release order,
+the full process-exit family. The admission account does not establish release order,
 pointer lifetime, generation transitions, or fork ownership. Those limits
 remain explicit in both reports. Existing source contracts in `static_tls.rs`, `x86_64_general_relocation.rs`,
 `conventional_startup_v1.rs` and their owner tests remain authoritative; a
