@@ -503,8 +503,8 @@ def build_staged_payload(output: Path, stage: Path) -> None:
     )
     run(libc_shared_link_command)
     # The sealed dynamic product gives its one shared-library link role an
-    # executable installed mode.  Objects and archives use copy_artifact's
-    # non-executable normalization below; keep this distinction explicit.
+    # executable installed mode.  Every other finite link role is materialized
+    # as a non-executable regular file below.
     (library / "libc.so").chmod(0o755)
     undefined = run([nm, "--undefined-only", str(library / "libc.so")]).decode().splitlines()
     allowed = {"__crabc_x86_64_initial_tls_allocate", "__crabc_x86_64_initial_tls_release",
@@ -531,6 +531,7 @@ def build_staged_payload(output: Path, stage: Path) -> None:
          "--remap-path-prefix", f"{ROOT}=/crabc",
          str(ROOT / "libc/src/c_abi/x86_64/owned_dynamic_attachment.rs"),
          "-o", str(library / "crabc-dynamic-attach.o")])
+    (library / "crabc-dynamic-attach.o").chmod(0o644)
     common.copy_artifact(builtins, library / builtins.name)
     loader_env = common.deterministic_environment()
     loader_env["RUSTFLAGS"] = "-C link-dead-code -C target-feature=-crt-static -C relocation-model=pic"
