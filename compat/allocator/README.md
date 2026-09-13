@@ -1929,6 +1929,13 @@ the ticket-zero TLD's normalized node relation. It does not compare a raw
 host-node identity, qualify hardware multi-node placement or huge pages, or
 expand the first-arena route into general lifecycle parity.
 
+Each newly produced focused receipt seals the candidate source before and
+after the C/Rust run: clean Git revision/root-tree state, the complete
+`crabc-mimalloc` tree object, and SHA-256 plus Git-blob identities for the
+named Rust runtime/test, Cargo/toolchain, launcher, C fixture, and collector
+inputs. Older format-2 receipts remain historical measurements; they do not
+acquire this candidate-source attribution retroactively.
+
 One lane is a Rust-only bounded dynamic post-exit route: a source worker
 tears down dynamic TLS, cached-root, Theap/TLD, and key state before returning
 `DynamicThreadExitArenaSingletonPostExitRoute`; after join, its receiver

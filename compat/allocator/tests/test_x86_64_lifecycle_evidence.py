@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import copy
+import hashlib
 import importlib.util
 import json
 import os
@@ -223,6 +225,64 @@ class ReportTests(unittest.TestCase):
             self.assertIn('"status": "passed"', serialized)
             self.assertEqual(json.loads(serialized), report)
             self.assertEqual(output.stat().st_mode & 0o777, 0o644)
+
+
+class CandidateSourceReceiptTests(unittest.TestCase):
+    @staticmethod
+    def bytes_record(payload: bytes) -> dict[str, object]:
+        return {
+            "bytes": len(payload),
+            "hex": payload.hex(),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+
+    def clean_snapshot(self) -> dict[str, object]:
+        return {
+            "format": 1,
+            "git": {
+                "revision": "a" * 40,
+                "tree": "b" * 40,
+                "worktree_clean": True,
+                "worktree_status": self.bytes_record(b""),
+            },
+            "rust_allocator_tree": {
+                "object_id": "c" * 40,
+                "path": "crabc-mimalloc",
+            },
+            "inputs": [
+                {
+                    "bytes": 1,
+                    "git_blob": "d" * 40,
+                    "path": path,
+                    "sha256": "e" * 64,
+                }
+                for path in EVIDENCE.CANDIDATE_SOURCE_INPUTS
+            ],
+        }
+
+    def test_candidate_receipt_requires_identical_clean_before_and_after_sources(self) -> None:
+        before = self.clean_snapshot()
+        self.assertEqual(
+            EVIDENCE.candidate_source_attestation(before, before),
+            {
+                "after": before,
+                "before": before,
+                "git_read_environment": {"GIT_OPTIONAL_LOCKS": "0"},
+                "unchanged_during_execution": True,
+            },
+        )
+
+        after = copy.deepcopy(before)
+        after["inputs"][0]["sha256"] = "f" * 64
+        with self.assertRaisesRegex(EVIDENCE.EvidenceError, "source changed during execution"):
+            EVIDENCE.candidate_source_attestation(before, after)
+
+    def test_candidate_receipt_rejects_a_dirty_source_snapshot(self) -> None:
+        dirty = self.clean_snapshot()
+        dirty["git"]["worktree_clean"] = False
+        dirty["git"]["worktree_status"] = self.bytes_record(b" M crabc-mimalloc/src/os.rs\0")
+        with self.assertRaisesRegex(EVIDENCE.EvidenceError, "clean Git source"):
+            EVIDENCE.candidate_source_attestation(dirty, dirty)
 
 
 class ResultParserTests(unittest.TestCase):

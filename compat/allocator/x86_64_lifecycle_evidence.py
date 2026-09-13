@@ -94,6 +94,29 @@ RUNTIME_INITIAL_TLD_NUMA_TRACE_KEYS = (
     "ticket_zero_tld_numa_node",
 )
 
+# The focused receipt names every local input whose current bytes participate
+# in its C build, Rust product, or evidence collection.  The clean Git root
+# tree binds the rest of the workspace; the focused crate tree gives a direct
+# observable identity for the complete Rust allocator candidate rather than
+# treating only this test's source file as the runtime product.
+CANDIDATE_SOURCE_INPUTS = (
+    "Cargo.lock",
+    "Cargo.toml",
+    "rust-toolchain.toml",
+    "crabc-mimalloc/Cargo.toml",
+    "crabc-mimalloc/src/lib.rs",
+    "crabc-mimalloc/src/main_theap.rs",
+    "crabc-mimalloc/src/os.rs",
+    "crabc-mimalloc/src/process_init.rs",
+    "crabc-mimalloc/src/runtime_lifecycle.rs",
+    "crabc-mimalloc/tests/native_runtime_first_arena_policy.rs",
+    "compat/allocator/run-x86_64.sh",
+    "compat/allocator/run.py",
+    "compat/allocator/x86_64_initial_tld_numa_oracle.c",
+    "compat/allocator/x86_64_lifecycle_evidence.py",
+)
+CANDIDATE_SOURCE_GIT_READ_ENVIRONMENT = {"GIT_OPTIONAL_LOCKS": "0"}
+
 TEST_RESULT = re.compile(
     r"test result: (?P<status>ok|FAILED)\. "
     r"(?P<passed>\d+) passed; (?P<failed>\d+) failed; "
@@ -318,6 +341,292 @@ def sha256_file(path: Path) -> str:
         for block in iter(lambda: source.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def source_bytes_record(payload: bytes) -> dict[str, Any]:
+    """Retain raw Git output with an independently checkable byte identity."""
+
+    return {
+        "bytes": len(payload),
+        "hex": payload.hex(),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+    }
+
+
+def validate_source_bytes_record(value: object, subject: str) -> bytes:
+    """Decode one bounded raw source-state record only after self-validation."""
+
+    if not isinstance(value, Mapping) or set(value) != {"bytes", "hex", "sha256"}:
+        raise EvidenceError(f"{subject} byte record is invalid")
+    if (
+        type(value.get("bytes")) is not int
+        or value["bytes"] < 0
+        or not isinstance(value.get("hex"), str)
+        or not isinstance(value.get("sha256"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", value["sha256"]) is None
+    ):
+        raise EvidenceError(f"{subject} byte record is invalid")
+    try:
+        payload = bytes.fromhex(value["hex"])
+    except ValueError as error:
+        raise EvidenceError(f"{subject} byte record has invalid hexadecimal") from error
+    if len(payload) != value["bytes"] or hashlib.sha256(payload).hexdigest() != value["sha256"]:
+        raise EvidenceError(f"{subject} byte record drifted")
+    return payload
+
+
+def candidate_source_git_output(arguments: Sequence[str], subject: str) -> bytes:
+    """Run one read-only Git query without allowing an index refresh."""
+
+    git = shutil.which("git")
+    if git is None:
+        raise EvidenceError("candidate source receipt requires Git")
+    environment = dict(os.environ)
+    environment.update(CANDIDATE_SOURCE_GIT_READ_ENVIRONMENT)
+    try:
+        completed = subprocess.run(
+            [git, *arguments],
+            cwd=ROOT,
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise EvidenceError(f"candidate source receipt cannot read {subject}") from error
+    if completed.returncode != 0:
+        detail = completed.stderr.decode("utf-8", errors="replace").strip()
+        raise EvidenceError(f"candidate source receipt cannot read {subject}: {detail}")
+    return completed.stdout
+
+
+def candidate_source_git_identifier(payload: bytes, subject: str) -> str:
+    """Parse exactly one SHA-1 object identifier emitted by Git."""
+
+    try:
+        text = payload.decode("ascii", errors="strict")
+    except UnicodeDecodeError as error:
+        raise EvidenceError(f"candidate source {subject} is not ASCII") from error
+    identifier = text.removesuffix("\n")
+    if text != f"{identifier}\n" or re.fullmatch(r"[0-9a-f]{40}", identifier) is None:
+        raise EvidenceError(f"candidate source {subject} is not one Git object identifier")
+    return identifier
+
+
+def candidate_source_input_path(name: str) -> Path:
+    """Resolve one fixed tracked input without accepting links or escapes."""
+
+    relative_path = Path(name)
+    if relative_path.is_absolute() or not relative_path.parts or any(
+        part in {"", ".", ".."} for part in relative_path.parts
+    ):
+        raise EvidenceError(f"candidate source input path is invalid: {name!r}")
+    root = ROOT.resolve()
+    path = ROOT
+    for part in relative_path.parts:
+        path /= part
+        if path.is_symlink():
+            raise EvidenceError(f"candidate source input is a symlink: {name}")
+    try:
+        path.resolve().relative_to(root)
+    except ValueError as error:
+        raise EvidenceError(f"candidate source input escapes the checkout: {name}") from error
+    if not path.is_file():
+        raise EvidenceError(f"candidate source input is absent: {name}")
+    return path
+
+
+def candidate_source_head_blob(revision: str, name: str) -> str:
+    """Return one fixed revision's blob for a candidate input."""
+
+    record = candidate_source_git_output(("ls-tree", "-z", revision, "--", name), name)
+    if not record.endswith(b"\0") or record.count(b"\0") != 1:
+        raise EvidenceError(f"candidate source HEAD entry is invalid: {name}")
+    metadata, separator, recorded_name = record[:-1].partition(b"\t")
+    fields = metadata.split(b" ")
+    if (
+        not separator
+        or recorded_name != name.encode("ascii")
+        or len(fields) != 3
+        or fields[0] not in {b"100644", b"100755"}
+        or fields[1] != b"blob"
+    ):
+        raise EvidenceError(f"candidate source HEAD entry is invalid: {name}")
+    try:
+        blob = fields[2].decode("ascii", errors="strict")
+    except UnicodeDecodeError as error:
+        raise EvidenceError(f"candidate source HEAD entry is invalid: {name}") from error
+    if re.fullmatch(r"[0-9a-f]{40}", blob) is None:
+        raise EvidenceError(f"candidate source HEAD entry is invalid: {name}")
+    return blob
+
+
+def candidate_source_input_record(revision: str, name: str) -> dict[str, Any]:
+    """Hash one live candidate input and bind it to the captured HEAD blob."""
+
+    path = candidate_source_input_path(name)
+    try:
+        before = path.stat()
+        payload = path.read_bytes()
+        after = path.stat()
+    except OSError as error:
+        raise EvidenceError(f"candidate source input cannot be read: {name}") from error
+    if (
+        before.st_dev != after.st_dev
+        or before.st_ino != after.st_ino
+        or before.st_mtime_ns != after.st_mtime_ns
+        or before.st_size != len(payload)
+        or after.st_size != len(payload)
+    ):
+        raise EvidenceError(f"candidate source input changed while being read: {name}")
+    head_blob = candidate_source_head_blob(revision, name)
+    working_blob = candidate_source_git_identifier(
+        candidate_source_git_output(("hash-object", "--no-filters", name), name),
+        f"working input {name}",
+    )
+    if working_blob != head_blob:
+        raise EvidenceError(f"candidate source input differs from HEAD: {name}")
+    return {
+        "bytes": len(payload),
+        "git_blob": head_blob,
+        "path": name,
+        "sha256": hashlib.sha256(payload).hexdigest(),
+    }
+
+
+def validate_candidate_source_snapshot(value: object, subject: str) -> dict[str, Any]:
+    """Require one clean exact candidate source snapshot before trusting it."""
+
+    if not isinstance(value, Mapping) or set(value) != {
+        "format",
+        "git",
+        "inputs",
+        "rust_allocator_tree",
+    }:
+        raise EvidenceError(f"{subject} snapshot schema drifted")
+    if value.get("format") != 1:
+        raise EvidenceError(f"{subject} snapshot format drifted")
+    git = value.get("git")
+    if not isinstance(git, Mapping) or set(git) != {
+        "revision",
+        "tree",
+        "worktree_clean",
+        "worktree_status",
+    }:
+        raise EvidenceError(f"{subject} Git state is invalid")
+    for key in ("revision", "tree"):
+        if not isinstance(git.get(key), str) or re.fullmatch(r"[0-9a-f]{40}", git[key]) is None:
+            raise EvidenceError(f"{subject} Git {key} is invalid")
+    status = validate_source_bytes_record(git.get("worktree_status"), f"{subject} worktree status")
+    if type(git.get("worktree_clean")) is not bool or git["worktree_clean"] != (status == b""):
+        raise EvidenceError(f"{subject} Git cleanliness is contradictory")
+    if not git["worktree_clean"]:
+        raise EvidenceError(f"{subject} requires a clean Git source")
+
+    allocator_tree = value.get("rust_allocator_tree")
+    if (
+        not isinstance(allocator_tree, Mapping)
+        or set(allocator_tree) != {"object_id", "path"}
+        or allocator_tree.get("path") != "crabc-mimalloc"
+        or not isinstance(allocator_tree.get("object_id"), str)
+    ):
+        raise EvidenceError(f"{subject} Rust allocator tree is invalid")
+    if re.fullmatch(r"[0-9a-f]{40}", allocator_tree["object_id"]) is None:
+        raise EvidenceError(f"{subject} Rust allocator tree is invalid")
+
+    inputs = value.get("inputs")
+    if not isinstance(inputs, list) or [record.get("path") for record in inputs if isinstance(record, Mapping)] != list(CANDIDATE_SOURCE_INPUTS):
+        raise EvidenceError(f"{subject} candidate input roster drifted")
+    if len(inputs) != len(CANDIDATE_SOURCE_INPUTS):
+        raise EvidenceError(f"{subject} candidate input roster drifted")
+    for record in inputs:
+        if not isinstance(record, Mapping) or set(record) != {"bytes", "git_blob", "path", "sha256"}:
+            raise EvidenceError(f"{subject} candidate input record is invalid")
+        if (
+            type(record.get("bytes")) is not int
+            or record["bytes"] < 0
+            or not isinstance(record.get("sha256"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", record["sha256"]) is None
+            or not isinstance(record.get("git_blob"), str)
+            or re.fullmatch(r"[0-9a-f]{40}", record["git_blob"]) is None
+        ):
+            raise EvidenceError(f"{subject} candidate input record is invalid")
+    return {
+        "format": value["format"],
+        "git": dict(git),
+        "inputs": [dict(record) for record in inputs],
+        "rust_allocator_tree": dict(allocator_tree),
+    }
+
+
+def candidate_source_git_state() -> tuple[str, str, bytes]:
+    """Read one current revision/tree/status tuple without refreshing Git's index."""
+
+    revision = candidate_source_git_identifier(
+        candidate_source_git_output(("rev-parse", "--verify", "HEAD"), "HEAD"), "HEAD"
+    )
+    tree = candidate_source_git_identifier(
+        candidate_source_git_output(
+            ("rev-parse", "--verify", f"{revision}^{{tree}}"), "HEAD tree"
+        ),
+        "HEAD tree",
+    )
+    status = candidate_source_git_output(
+        ("status", "--porcelain=v1", "--untracked-files=all", "-z"), "worktree status"
+    )
+    return revision, tree, status
+
+
+def capture_candidate_source_snapshot() -> dict[str, Any]:
+    """Capture the exact clean workspace that will build and run the witness."""
+
+    revision, tree, status = candidate_source_git_state()
+    if status != b"":
+        raise EvidenceError("candidate source requires a clean Git source")
+    allocator_tree = candidate_source_git_identifier(
+        candidate_source_git_output(
+            ("rev-parse", "--verify", f"{revision}:crabc-mimalloc"), "Rust allocator tree"
+        ),
+        "Rust allocator tree",
+    )
+    if candidate_source_git_output(
+        ("cat-file", "-t", f"{revision}:crabc-mimalloc"), "Rust allocator tree type"
+    ) != b"tree\n":
+        raise EvidenceError("candidate source Rust allocator entry is not a tree")
+    inputs = [candidate_source_input_record(revision, name) for name in CANDIDATE_SOURCE_INPUTS]
+    if candidate_source_git_state() != (revision, tree, status):
+        raise EvidenceError("candidate source changed while being sealed")
+    snapshot = {
+        "format": 1,
+        "git": {
+            "revision": revision,
+            "tree": tree,
+            "worktree_clean": status == b"",
+            "worktree_status": source_bytes_record(status),
+        },
+        "rust_allocator_tree": {
+            "object_id": allocator_tree,
+            "path": "crabc-mimalloc",
+        },
+        "inputs": inputs,
+    }
+    return validate_candidate_source_snapshot(snapshot, "candidate source")
+
+
+def candidate_source_attestation(before: object, after: object) -> dict[str, Any]:
+    """Bind the focused receipt to one unchanged clean candidate workspace."""
+
+    source_before = validate_candidate_source_snapshot(before, "candidate source before")
+    source_after = validate_candidate_source_snapshot(after, "candidate source after")
+    if source_before != source_after:
+        raise EvidenceError("candidate source changed during execution")
+    return {
+        "after": source_after,
+        "before": source_before,
+        "git_read_environment": dict(CANDIDATE_SOURCE_GIT_READ_ENVIRONMENT),
+        "unchanged_during_execution": True,
+    }
 
 
 _ALLOCATOR_HARNESS: Any | None = None
@@ -940,6 +1249,7 @@ def validate_runtime_first_arena_policy_report(report: Mapping[str, Any]) -> Non
     """Fail closed on the focused direct-C plus normal-Rust witness shape."""
 
     required = {
+        "candidate_source",
         "c_oracle",
         "cargo",
         "comparison",
@@ -956,8 +1266,8 @@ def validate_runtime_first_arena_policy_report(report: Mapping[str, Any]) -> Non
     }
     if set(report) != required:
         raise EvidenceError("runtime first-arena report schema drifted")
-    if report.get("format") != 2 or report.get("status") != "passed":
-        raise EvidenceError("runtime first-arena report must record a passed format-2 result")
+    if report.get("format") != 3 or report.get("status") != "passed":
+        raise EvidenceError("runtime first-arena report must record a passed format-3 result")
     if report.get("kind") != "mimalloc-x86_64-runtime-first-arena-policy-evidence":
         raise EvidenceError("runtime first-arena report kind drifted")
     if report.get("profile") != "linux-x86_64-private-engine-runtime-first-arena-policy-witness":
@@ -974,6 +1284,19 @@ def validate_runtime_first_arena_policy_report(report: Mapping[str, Any]) -> Non
         {"execution_mode": "native", "host_architecture": "amd64"},
     ):
         raise EvidenceError("runtime first-arena report lacks canonical native provenance")
+    candidate_source = report.get("candidate_source")
+    if not isinstance(candidate_source, Mapping) or set(candidate_source) != {
+        "after",
+        "before",
+        "git_read_environment",
+        "unchanged_during_execution",
+    }:
+        raise EvidenceError("runtime first-arena report candidate source seal is invalid")
+    expected_candidate_source = candidate_source_attestation(
+        candidate_source.get("before"), candidate_source.get("after")
+    )
+    if candidate_source != expected_candidate_source:
+        raise EvidenceError("runtime first-arena report candidate source seal drifted")
     if tuple(report.get("exclusions", ())) != RUNTIME_FIRST_ARENA_EXCLUSIONS:
         raise EvidenceError("runtime first-arena exclusions drifted")
     scope = report.get("scope")
@@ -1041,6 +1364,7 @@ def validate_runtime_first_arena_policy_report(report: Mapping[str, Any]) -> Non
 def run_runtime_first_arena_policy_evidence(report_path: Path) -> dict[str, Any]:
     """Publish the one policy-bound runtime witness without a campaign claim."""
 
+    candidate_source_before = capture_candidate_source_snapshot()
     provenance = require_native_x86_64()
     cargo = require_tool("cargo")
     rustc = require_tool("rustc")
@@ -1056,9 +1380,12 @@ def run_runtime_first_arena_policy_evidence(report_path: Path) -> dict[str, Any]
     after_lockfile = sha256_file(LOCKFILE)
     if after_lockfile != before_lockfile:
         raise EvidenceError("Cargo.lock changed despite the required --locked command")
+    candidate_source = candidate_source_attestation(
+        candidate_source_before, capture_candidate_source_snapshot()
+    )
 
     report: dict[str, Any] = {
-        "format": 2,
+        "format": 3,
         "kind": "mimalloc-x86_64-runtime-first-arena-policy-evidence",
         "profile": "linux-x86_64-private-engine-runtime-first-arena-policy-witness",
         "status": "passed",
@@ -1079,6 +1406,7 @@ def run_runtime_first_arena_policy_evidence(report_path: Path) -> dict[str, Any]
                 "value": "<isolated-temporary-target-dir>",
             },
         },
+        "candidate_source": candidate_source,
         "c_oracle": c_oracle,
         "comparison": compare_initial_tld_numa_observations(c_oracle, result),
         "lane": result,
