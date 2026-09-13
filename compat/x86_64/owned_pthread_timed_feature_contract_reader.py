@@ -1935,6 +1935,10 @@ def _collector_copy_path(name: str) -> str:
         "syscall_authority": "retained/collector/owned-syscall-alias-authority.py",
         "static_authority": "retained/collector/owned-static-link-authority.py",
         "elf_authority": "retained/collector/loader-debug-abi-evidence.py",
+        "static_preparation_owner": "retained/collector/owned-posix-static-products.py",
+        "static_package_owner": "retained/collector/owned-static-sysroot-package.py",
+        "product_validator": "retained/collector/owned-posix-product-evidence.py",
+        "dynamic_probe_authority": "retained/collector/owned-pthread-timed-dynamic-authority.py",
         "image_manifest": "retained/collector/image-inputs.json",
     }
     require(name in paths, f"unknown collector authority source: {name}")

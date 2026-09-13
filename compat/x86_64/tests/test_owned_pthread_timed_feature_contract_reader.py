@@ -122,6 +122,19 @@ class TimedFeatureReceiptBoundaryTests(unittest.TestCase):
             finally:
                 reader.IMAGE_MANIFEST_PATH = old_path
 
+    def test_every_collector_dependency_has_one_retained_authority_path(self) -> None:
+        reader = importlib.import_module("owned_pthread_timed_feature_contract_reader")
+        retained = [reader._collector_copy_path(name) for name in reader.COLLECTOR_PATHS]
+        self.assertEqual(len(retained), len(set(retained)))
+        self.assertEqual(
+            set(reader.COLLECTOR_PATHS),
+            {
+                "probe", "reader", "runner", "syscall_authority", "static_authority",
+                "elf_authority", "static_preparation_owner", "static_package_owner",
+                "product_validator", "dynamic_probe_authority", "image_manifest",
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
