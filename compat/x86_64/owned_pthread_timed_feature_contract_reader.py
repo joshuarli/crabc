@@ -2345,6 +2345,45 @@ def _validate_selected_products(
     ):
         require(manifest_files.get(expected_name) == artifacts[relative]["sha256"],
                 f"retained manifest does not seal {expected_name}")
+
+    # A report exposes only two static and three dynamic product paths for the
+    # selector adapter.  The finite reader nevertheless used every captured
+    # CRT, attach, and builtins input to make its four links, so replay must
+    # rejoin each retained input to that same selected product root and
+    # manifest.  Otherwise a resealed retained copy could diverge from a link
+    # input that native collection had authenticated.
+    static_root = Path(str(inputs["static_driver"]["path"])).parent.parent
+    dynamic_root = Path(str(inputs["dynamic_driver"]["path"])).parent.parent
+    for input_name, relative in (
+        ("static_driver", "bin/crabc-cc"),
+        ("static_crt1", "usr/lib/crt1.o"),
+        ("static_rcrt1", "usr/lib/rcrt1.o"),
+        ("static_crti", "usr/lib/crti.o"),
+        ("static_crtn", "usr/lib/crtn.o"),
+        ("static_builtins", "usr/lib/libcrabc-builtins.a"),
+        ("static_libc", "usr/lib/libc.a"),
+    ):
+        retained = _input_copy_path(input_name)
+        require(Path(str(inputs[input_name]["path"])) == static_root / relative,
+                f"retained {input_name} original path is outside the selected static root")
+        require(static_files.get(relative) == artifacts[retained]["sha256"],
+                f"retained static manifest does not seal {relative}")
+    for input_name, relative in (
+        ("dynamic_driver", "bin/crabc-cc-dynamic"),
+        ("dynamic_crt1", "usr/lib/crt1.o"),
+        ("dynamic_scrt1", "usr/lib/Scrt1.o"),
+        ("dynamic_crti", "usr/lib/crti.o"),
+        ("dynamic_crtn", "usr/lib/crtn.o"),
+        ("dynamic_attach", "usr/lib/crabc-dynamic-attach.o"),
+        ("dynamic_builtins", "usr/lib/libcrabc-builtins.a"),
+        ("dynamic_libc", "usr/lib/libc.so"),
+        ("dynamic_loader", "lib/ld-crabc-x86_64.so.1"),
+    ):
+        retained = _input_copy_path(input_name)
+        require(Path(str(inputs[input_name]["path"])) == dynamic_root / relative,
+                f"retained {input_name} original path is outside the selected dynamic root")
+        require(dynamic_files.get(relative) == artifacts[retained]["sha256"],
+                f"retained dynamic manifest does not seal {relative}")
     for anchor_name, relative in (
         ("static-manifest", static["manifest"]),
         ("dynamic-manifest", dynamic["manifest"]),

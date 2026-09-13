@@ -65,6 +65,12 @@ inputs that the component then links. The nested feature argument remains a
 source-derived builder contract rather than an independently recorded nested
 argv; this receipt does not broaden that distinction.
 
+Public replay repeats the complete selected-product join: every captured static
+CRT/builtins/archive input and every captured dynamic CRT, attach, builtins,
+driver, loader, and shared-lib input must retain its exact original path below
+the selected product root and the digest named by that root's manifest. The
+compact selector-facing product paths do not reduce that reader obligation.
+
 The current native collection invokes
 `owned_posix_product_evidence.validate_link` for the two static and two
 dynamic output receipts. Its source-owned link-input mode projection fixes all
