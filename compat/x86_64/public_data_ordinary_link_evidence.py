@@ -81,6 +81,8 @@ COMMAND_TIMEOUT_SECONDS = 60
 TERMINATION_GRACE_SECONDS = 3
 CHROOT_INVOCATION = Path("/usr/sbin/chroot")
 CHROOT_PHYSICAL = Path("/bin/coreutils")
+ORACLE_EXECUTION_INTERPRETER = "lib/ld-musl-x86_64.so.1"
+ORACLE_EXECUTION_INTERPRETER_MODE = 0o755
 
 
 class PublicDataEvidenceError(ValueError):
@@ -618,6 +620,39 @@ def execution_copy(root: Path, source: Path, copied: Path, description: str) -> 
     return {"source": source_identity, "copy": copy_identity}
 
 
+def prepare_oracle_execution_root(root: Path, work: Path, oracle_root: Path) -> None:
+    """Copy the archived oracle runtime into an executable chroot interpreter.
+
+    The oracle capture is archival evidence and intentionally remains `0644`.
+    The kernel needs an executable PT_INTERP file in the private root, so this
+    separate copy has the fixed `0755` execution mode.  The later root seal
+    binds both the unchanged archive bytes and the execution-copy mode.
+    """
+    work = physical_work_path(root, work, "ordinary-link work")
+    oracle_root = physical_work_path(root, oracle_root, "oracle execution root", exists=False)
+    require(not oracle_root.exists() and not oracle_root.is_symlink(),
+            "ordinary-link oracle execution root already exists")
+    runtime = work / "qualification-oracle/runtime"
+    target = oracle_root / ORACLE_EXECUTION_INTERPRETER
+    try:
+        target.parent.mkdir(parents=True)
+        shutil.copy2(runtime, target)
+        target.chmod(ORACLE_EXECUTION_INTERPRETER_MODE)
+        (oracle_root / "lib/libc.so").symlink_to("ld-musl-x86_64.so.1")
+    except OSError as error:
+        raise PublicDataEvidenceError(f"cannot prepare oracle execution root: {error}") from error
+    require(digest(runtime) == digest(target) and stat.S_IMODE(target.stat().st_mode) == ORACLE_EXECUTION_INTERPRETER_MODE,
+            "ordinary-link oracle execution interpreter copy differs")
+
+
+def validate_oracle_execution_interpreter(tree: Mapping[str, Mapping[str, Any]], runtime: Path) -> None:
+    interpreter = tree.get(ORACLE_EXECUTION_INTERPRETER)
+    require(type(interpreter) is dict and interpreter.get("kind") == "file"
+            and interpreter.get("mode") == ORACLE_EXECUTION_INTERPRETER_MODE
+            and interpreter.get("sha256") == digest(runtime),
+            "oracle execution interpreter mode or bytes differ")
+
+
 def executable_observations(root: Path, work: Path) -> dict[str, Any]:
     """Reopen all seven retained executables and parse their recorded ELF views."""
     work = physical_work_path(root, work, "ordinary-link work")
@@ -667,6 +702,8 @@ def capture_execution_roots(root: Path, work: Path, dynamic_product: Path) -> di
     static_products.make_retained_evidence_readable(oracle_root)
     candidate_tree = execution_tree(root, candidate_root, "candidate execution root")
     oracle_tree = execution_tree(root, oracle_root, "oracle execution root")
+    runtime = work_file_identity(root, work / "qualification-oracle/runtime", "retained oracle runtime")
+    validate_oracle_execution_interpreter(oracle_tree, work / "qualification-oracle/runtime")
     candidate_consumers = {
         mode: execution_copy(root, work / ("dynamic-" + mode), candidate_root / ("consumer-" + mode),
                              "candidate " + mode + " consumer")
@@ -683,9 +720,7 @@ def capture_execution_roots(root: Path, work: Path, dynamic_product: Path) -> di
             "consumers": candidate_consumers,
         },
         "oracle": {
-            "root": "oracle-root", "runtime": work_file_identity(
-                root, work / "qualification-oracle/runtime", "retained oracle runtime"
-            ), "tree": oracle_tree, "consumers": oracle_consumers,
+            "root": "oracle-root", "runtime": runtime, "tree": oracle_tree, "consumers": oracle_consumers,
         },
     }
 
@@ -725,12 +760,10 @@ def validate_execution_roots(root: Path, work: Path, dynamic_product: Path, reco
     runtime = resolve_work_identity(root, oracle["runtime"], "retained oracle runtime")
     require(runtime == work / "qualification-oracle/runtime", "oracle runtime path differs")
     oracle_tree = execution_tree(root, work / oracle["root"], "oracle execution root")
+    validate_oracle_execution_interpreter(oracle_tree, runtime)
     require(same_json(oracle["tree"], oracle_tree), "oracle execution root bytes or roster differ")
     expected_oracle_entries = {"lib", "lib/ld-musl-x86_64.so.1", "lib/libc.so", "consumer-pie", "consumer-non-pie"}
     require(set(oracle_tree) == expected_oracle_entries, "oracle execution root contains undeclared payload")
-    interpreter = oracle_tree["lib/ld-musl-x86_64.so.1"]
-    require(interpreter["kind"] == "file" and interpreter["sha256"] == digest(runtime),
-            "oracle execution interpreter differs from retained runtime")
     require(oracle_tree["lib/libc.so"] == {"kind": "symlink", "mode": oracle_tree["lib/libc.so"]["mode"],
                                              "target": "ld-musl-x86_64.so.1"},
             "oracle execution libc alias differs")
@@ -875,9 +908,7 @@ class Collector:
         for name in ("oracle-static", "static", "static-pie"):
             self.run(name + "-run", [tools["env"]["original"]["path"], "-i", str(self.output / name)], stdout=EXPECTED_STDOUT)
         oracle_root = self.output / "oracle-root"
-        (oracle_root / "lib").mkdir(parents=True)
-        shutil.copy2(self.output / "qualification-oracle/runtime", oracle_root / "lib/ld-musl-x86_64.so.1")
-        (oracle_root / "lib/libc.so").symlink_to("ld-musl-x86_64.so.1")
+        prepare_oracle_execution_root(self.root, self.output, oracle_root)
         candidate_root = self.output / "candidate-root"
         shutil.copytree(self.dynamic_product, candidate_root, symlinks=True)
         for owner, execution_root, interpreter in (

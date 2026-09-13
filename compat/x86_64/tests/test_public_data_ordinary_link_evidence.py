@@ -10,6 +10,7 @@ import io
 import json
 import os
 from pathlib import Path
+import stat
 import sys
 import tempfile
 import time
@@ -328,9 +329,17 @@ class PublicDataOrdinaryLinkEvidenceTests(unittest.TestCase):
         for mode in ("pie", "non-pie"):
             shutil.copy2(work / ("dynamic-" + mode), work / "candidate-root" / ("consumer-" + mode))
             shutil.copy2(work / ("oracle-dynamic-" + mode), oracle_root / ("consumer-" + mode))
+        self.assertEqual(stat.S_IMODE((oracle_root / "lib/ld-musl-x86_64.so.1").stat().st_mode), 0o644)
+        with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "oracle execution interpreter mode"):
+            evidence.capture_execution_roots(self.root, work, dynamic)
+        (oracle_root / "lib/ld-musl-x86_64.so.1").chmod(0o755)
         roots = evidence.capture_execution_roots(self.root, work, dynamic)
         evidence.static_products.make_retained_evidence_readable(work)
         evidence.validate_execution_roots(self.root, work, dynamic, roots)
+        (oracle_root / "lib/ld-musl-x86_64.so.1").chmod(0o644)
+        with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "oracle execution interpreter mode"):
+            evidence.validate_execution_roots(self.root, work, dynamic, roots)
+        (oracle_root / "lib/ld-musl-x86_64.so.1").chmod(0o755)
         (work / "candidate-root/lib/ld-crabc-x86_64.so.1").write_bytes(b"changed interpreter")
         with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "execution root"):
             evidence.validate_execution_roots(self.root, work, dynamic, roots)
@@ -338,6 +347,20 @@ class PublicDataOrdinaryLinkEvidenceTests(unittest.TestCase):
         (work / "candidate-root/consumer-pie").write_bytes(b"changed consumer")
         with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "consumer|execution root"):
             evidence.validate_execution_roots(self.root, work, dynamic, roots)
+
+    def test_oracle_execution_root_copy_keeps_archive_mode_and_sets_interpreter_mode(self) -> None:
+        work = self.root / ".work/oracle-execution-copy"
+        (work / "qualification-oracle").mkdir(parents=True)
+        runtime = work / "qualification-oracle/runtime"
+        runtime.write_bytes(b"oracle runtime")
+        runtime.chmod(0o644)
+        oracle_root = work / "oracle-root"
+        evidence.prepare_oracle_execution_root(self.root, work, oracle_root)
+        interpreter = oracle_root / "lib/ld-musl-x86_64.so.1"
+        self.assertEqual(stat.S_IMODE(runtime.stat().st_mode), 0o644)
+        self.assertEqual(stat.S_IMODE(interpreter.stat().st_mode), 0o755)
+        self.assertEqual(interpreter.read_bytes(), runtime.read_bytes())
+        self.assertEqual(os.readlink(oracle_root / "lib/libc.so"), "ld-musl-x86_64.so.1")
 
     def test_oracle_static_inputs_are_retained_without_live_opt_replay(self) -> None:
         work = self.root / ".work/oracle-static"

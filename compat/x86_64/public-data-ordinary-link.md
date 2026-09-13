@@ -108,11 +108,14 @@ It also reopens all seven retained oracle/candidate executable files and
 checks their recorded ELF64 little-endian x86-64 type and interpreter mode.
 The two execution roots have exact non-following tree seals. Candidate root
 entries must match the supplied dynamic product plus the two copied consumers;
-the oracle root must contain only its retained runtime, libc alias, and copied
-consumers. Replay therefore rejects an altered interpreter or consumer even if
-the command transcript remains unchanged. Tool and oracle-static snapshots are
-made readable before the report is written, so the final retention permission
-step cannot invalidate their recorded modes.
+the oracle root must contain only its retained runtime copy, libc alias, and
+copied consumers. The archival oracle runtime remains at its captured mode;
+the private interpreter copy alone is explicitly `0755` before either chroot
+entry runs, and replay requires that mode with identical runtime bytes. Replay
+therefore rejects an altered interpreter, interpreter mode, or consumer even
+if the command transcript remains unchanged. Tool and oracle-static snapshots
+are made readable before the report is written, so the final retention
+permission step cannot invalidate their recorded modes.
 
 This component does not prove object initialization or lifecycle state,
 strong-definition override behavior, DSO interposition, COPY relocations, or
