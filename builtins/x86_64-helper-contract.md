@@ -93,6 +93,12 @@ driver. A strong exported `__popcountdi2` in a separate executable cannot
 preempt libc's direct allocator bitmap-helper transfer. This is focused product
 evidence only; it is not a dynamic qualification or a complete helper family.
 
+To reuse the selected dynamic product of a larger collection, pass its absolute
+checkout-local path as the runner's sole argument. The owning product reader
+admits it before and after execution, and fixtures still run in a separate
+copy. That path omits only `product-build`; it retains every placement,
+ordinary-consumer, interposition, source-seal, and product-invariance check.
+
 At that supplied-product boundary, an aggregate receipt is optional but
 meaningful only when present: the reader first replays it, then requires its
 full clean product-source identity and retained archive SHA-256/size to match

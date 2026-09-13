@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Bounded installed shared-libc placement proof for the owned helper archive.
 #
-# It builds one materialized dynamic product, never a qualification cohort. The
+# It accepts a supplied materialized dynamic product or builds one. The
 # installed archive remains an ordinary GLOBAL DEFAULT provider for executable
 # and application-DSO consumers; only the exact copy pulled into libc.so is
 # local. The raw commands, source seal and installed artifacts remain below the
@@ -22,6 +22,11 @@ readonly INTERPOSE="$ROOT_DIR/builtins/fixtures/x86_64_compiler_helper_shared_in
 fail() { printf 'ERROR: native compiler-helper shared placement: %s\n' "$*" >&2; exit 1; }
 require_tool() { command -v "$1" >/dev/null 2>&1 || fail "requires $1"; }
 
+[ "$#" -le 1 ] || fail "usage: $0 [ABSOLUTE_DYNAMIC_PRODUCT]"
+readonly SUPPLIED_PRODUCT="${1:-}"
+if [ -n "$SUPPLIED_PRODUCT" ]; then
+    [[ "$SUPPLIED_PRODUCT" = /* ]] || fail "supplied dynamic product must use an absolute path"
+fi
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "refuses emulation on $(uname -m)";; esac
 [[ "$IMAGE_ID" =~ ^crabc-core-evidence@sha256:[0-9a-f]{64}$ ]] || fail "missing pinned image identity"
@@ -49,9 +54,13 @@ record() {
 }
 
 python3 -B "$READER" capture-source --output "$WORK_DIR/source-before.json" >/dev/null
-record product-build python3 -B "$BUILDER" --output "$WORK_DIR/product"
+if [ -n "$SUPPLIED_PRODUCT" ]; then
+    readonly PRODUCT="$SUPPLIED_PRODUCT"
+else
+    record product-build python3 -B "$BUILDER" --output "$WORK_DIR/product"
+    readonly PRODUCT="$WORK_DIR/product"
+fi
 
-readonly PRODUCT="$WORK_DIR/product"
 readonly LIBRARY="$PRODUCT/usr/lib"
 readonly LIBC="$LIBRARY/libc.so"
 readonly ARCHIVE="$LIBRARY/libcrabc-builtins.a"
