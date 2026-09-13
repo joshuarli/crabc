@@ -14,8 +14,6 @@ ROOT = Path(__file__).resolve().parents[2]
 CONTRACT = ROOT / "libc/src/c_abi/x86_64/owned_mimalloc_hidden.list"
 CONTRACT_SHA256 = "cd537f6579018bbba79d831ee148a7b07f51a0f3bda538a27970724751d78873"
 CONTRACT_COUNT = 424
-BASELINE_EXTRA_COUNT = 475
-REMAINING_EXTRA_COUNT = 51
 PUBLIC_ALLOCATORS = {
     "malloc": "WEAK",
     "calloc": "GLOBAL",
@@ -209,28 +207,98 @@ def static_allocator_provider(
     }
 
 
+def symbol_identity(row: object, description: str) -> tuple[str, str | None, bool]:
+    require(isinstance(row, dict), f"{description} has a malformed symbol row")
+    name = row.get("name")
+    version = row.get("version")
+    version_default = row.get("version_default")
+    require(isinstance(name, str) and name, f"{description} symbol name is malformed")
+    require(version is None or isinstance(version, str), f"{description} symbol version is malformed")
+    require(isinstance(version_default, bool), f"{description} symbol defaultness is malformed")
+    return name, version, version_default
+
+
+def symbol_identities(rows: object, description: str) -> set[tuple[str, str | None, bool]]:
+    require(isinstance(rows, list), f"{description} is malformed")
+    identities = {symbol_identity(row, description) for row in rows}
+    require(len(identities) == len(rows), f"{description} repeats a symbol identity")
+    return identities
+
+
+def derived_baseline_extra_names(
+    reference_rows: object, candidate_rows: object, triage_rows: object,
+) -> set[str]:
+    """Derive the retained pair's extras; do not make its count policy."""
+
+    reference = symbol_identities(reference_rows, "historical reference dynsym")
+    candidate = symbol_identities(candidate_rows, "historical candidate dynsym")
+    triage = symbol_identities(triage_rows, "historical raw triage extra roster")
+    derived = candidate - reference
+    require(triage == derived,
+            "historical raw triage extra roster disagrees with reference/candidate symbol identities")
+    names = {identity[0] for identity in derived}
+    require(len(names) == len(derived),
+            "historical extra roster repeats a name across symbol versions")
+    return names
+
+
+def symbol_map(rows: object, description: str) -> dict[str, dict[str, object]]:
+    require(isinstance(rows, list), f"{description} is malformed")
+    result: dict[str, dict[str, object]] = {}
+    for row in rows:
+        name, _, _ = symbol_identity(row, description)
+        require(isinstance(row, dict), f"{description} has a malformed symbol row")
+        require(name not in result, f"{description} repeats a public name")
+        result[name] = row
+    return result
+
+
 def baseline_symbols(report_path: Path) -> tuple[dict[str, dict[str, object]], set[str], dict[str, object]]:
     report_identity = identity(report_path, "historical pre-change ABI report")
     try:
         report = json.loads(report_path.read_text(encoding="utf-8"))
-        rows = report["inventories"]["candidate"]["shared"]["dynamic_symbols"]
+        reference_rows = report["inventories"]["reference"]["shared"]["dynamic_symbols"]
+        candidate_rows = report["inventories"]["candidate"]["shared"]["dynamic_symbols"]
         extras = report["triage"]["shared_dynamic"]["extra"]
         candidate_build = report["product_provenance"]["candidate_build"]
     except (KeyError, TypeError, json.JSONDecodeError) as error:
         raise EvidenceError("historical pre-change ABI report has an unexpected schema") from error
-    require(isinstance(rows, list) and isinstance(extras, list) and isinstance(candidate_build, dict),
+    require(isinstance(reference_rows, list) and isinstance(candidate_rows, list)
+            and isinstance(extras, list) and isinstance(candidate_build, dict),
             "historical pre-change ABI report has malformed symbol evidence")
-    symbols = {str(row["name"]): row for row in rows if isinstance(row, dict) and "name" in row}
-    require(len(symbols) == len(rows), "historical pre-change dynsym duplicates a public name")
-    extra_names = {str(row["name"]) for row in extras if isinstance(row, dict) and "name" in row}
-    require(len(extra_names) == BASELINE_EXTRA_COUNT,
-            f"historical pre-change ABI report must retain {BASELINE_EXTRA_COUNT} extra libc symbols")
-    return symbols, extra_names, {"identity": report_identity, "candidate_build": candidate_build}
+    symbols = symbol_map(candidate_rows, "historical candidate dynsym")
+    extra_names = derived_baseline_extra_names(reference_rows, candidate_rows, extras)
+    return symbols, extra_names, {
+        "identity": report_identity,
+        "candidate_build": candidate_build,
+        "extra_roster": {
+            "method": "candidate-minus-reference-dynamic-symbol-identities",
+            "name_count": len(extra_names),
+            "names": sorted(extra_names),
+        },
+    }
 
 
 def metadata_signature(row: dict[str, object]) -> tuple[object, ...]:
     signature = tuple(row[key] for key in ("type", "binding", "visibility", "version", "version_default"))
     return signature + ((row["size"],) if row["type"] in {"OBJECT", "TLS"} else (None,))
+
+
+def validate_dynsym_delta(
+    baseline: dict[str, dict[str, object]], current: dict[str, dict[str, object]], hidden: set[str],
+) -> list[str]:
+    """Allow only the exact visibility roster to disappear from public dynsym."""
+
+    expected_names = set(baseline) - hidden
+    require(set(current) == expected_names,
+            "shared dynsym changed by names beyond the exact 424-name mimalloc local contract")
+    metadata_drift = sorted(
+        name for name in expected_names if metadata_signature(current[name]) != metadata_signature(baseline[name])
+    )
+    require(not metadata_drift,
+            f"shared dynsym metadata changed outside the exact mimalloc local contract: {metadata_drift}")
+    require(not (hidden & set(current)), "shared libc still exports a mimalloc local-contract name")
+    return sorted(hidden)
 
 
 def collector_source_identity() -> dict[str, object]:
@@ -272,19 +340,9 @@ def validate(args: argparse.Namespace) -> dict[str, object]:
     baseline_tables, baseline_tables_record = complete_shared_symbol_tables(args.readelf, args.baseline_shared)
     current_tables, current_tables_record = complete_shared_symbol_tables(args.readelf, args.dynamic_shared)
     current, current_record = dynamic_symbols(args.readelf, args.dynamic_shared)
-    expected_names = set(baseline) - hidden
-    require(set(current) == expected_names,
-            "shared dynsym changed by names beyond the exact 424-name mimalloc local contract")
-    metadata_drift = sorted(
-        name for name in expected_names if metadata_signature(current[name]) != metadata_signature(baseline[name])
-    )
-    require(not metadata_drift,
-            f"shared dynsym metadata changed outside the exact mimalloc local contract: {metadata_drift}")
-    require(not (hidden & set(current)), "shared libc still exports a mimalloc local-contract name")
+    removed = validate_dynsym_delta(baseline, current, hidden)
 
     remaining_extra = baseline_extra - hidden
-    require(len(remaining_extra) == REMAINING_EXTRA_COUNT,
-            f"expected exactly {REMAINING_EXTRA_COUNT} non-mimalloc extra exports after subtraction")
     require(remaining_extra <= set(current), "one of the retained non-mimalloc exports disappeared")
     for name, binding in PUBLIC_ALLOCATORS.items():
         require(name in current and name in baseline, f"public allocator entry {name} disappeared")
@@ -340,7 +398,9 @@ def validate(args: argparse.Namespace) -> dict[str, object]:
         "fresh_products": {"shared": current_record, "symbol_tables": current_tables_record,
                            "static": static, "dynamic_product_source": product_source,
                            "shared_visibility_provenance": visibility},
-        "dynsym_delta": {"removed": hidden_members, "remaining_extra_exports": sorted(remaining_extra),
+        "dynsym_delta": {"removed": removed, "baseline_extra_exports": sorted(baseline_extra),
+                         "baseline_extra_count": len(baseline_extra),
+                         "remaining_extra_exports": sorted(remaining_extra),
                          "remaining_extra_count": len(remaining_extra)},
         "symtab_local_contract": {"members": localized, "member_count": len(localized)},
         "limits": [
