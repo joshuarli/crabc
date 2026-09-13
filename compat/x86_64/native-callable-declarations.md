@@ -9,16 +9,22 @@ The selection reader first validates the existing checked
 `header_abi_matrix` report and the checked callable-disposition partition.  It
 then passes a compact matrix projection, the exact selected provider names,
 the exact deferred records, and feature ABI-only records to this adapter.  The
-adapter does not invoke a compiler, reread retained compiler artifacts, parse
+adapter first reuses the existing complete-envelope derivation: a selected-row
+projection with empty collection, job, summary, or status facts is rejected.
+It then does not invoke a compiler, reread retained compiler artifacts, parse
 header text, select a provider, or infer a language-linkage result.
 
 For every selected raw `FunctionDecl`, the account retains its original
 occurrence index, input header and profile, physical declaration source,
 compiler `qual_type`, optional desugared-type observation, mangled-name
 observation, storage/definition/TLS observations, and unresolved linkage state.
-Comparable rows require an exact multiplicity-preserving multiset of
-`qual_type|mangled=<spelling>` under the same `(input_header, profile, name)`.
-This compares spelling; it does not use an unmangled name as a C-linkage proof.
+Every retained selected or deferred `FunctionDecl` must also name the exact
+`(tree, input_header, profile)` job, that job's retained `ast_stdout` path, and
+the physical `include_root/declaring_header` dependency.  Comparable rows
+require an exact multiplicity-preserving multiset of the structured
+`(qual_type, mangled-name-observation)` pair under the same
+`(input_header, profile, name)`.  This compares spelling without concatenation
+ambiguity; it does not use an unmangled name as a C-linkage proof.
 
 The one native extension is the existing exact `tgkill` contract.  It retains
 all four visible profiles through each of its seven direct include roots, has
@@ -34,6 +40,16 @@ particular, macro evidence cannot make `alloca` a callable provider, and the
 consumer-supplied `seqbuf_dump` remains explicitly raw-declaration-unavailable.
 Feature ABI-only names are retained as separate feature accounting and are not
 made header requirements by this adapter.
+
+`account_declarations` is a composition helper, not an alternate source of
+selection policy.  Its selected provider/deferred/ABI-only partition and
+checked matrix projection must come from
+`native_abi_selection.load_source_inputs`.  The enclosing selection receipt
+retains the exact partition source bindings in `source_inputs.bindings`; this
+account retains the checked matrix report/reader/contract/extension identities
+in `matrix_provenance`.  Passing an arbitrary direct subset or alternate
+projection is outside that caller-authenticated boundary and cannot establish
+selection closure.
 
 Successful declaration accounting leaves provider selection, archive
 extraction, complete language linkage, runtime semantics, family completion,

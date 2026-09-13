@@ -120,13 +120,14 @@ class NativeCallableDeclarationsTests(unittest.TestCase):
                     qual_type=extension.signature,
                     mangled=extension.c_linkage_symbol,
                 )
+        jobs = self.jobs(occurrences)
         return {
             "current_selecting_source": {"matches_retained": True, "differences": []},
             "report": {
                 "collection": {},
                 "final_active_macros": [{"name": "alloca", "tree": "candidate", "form": "function-like"}],
                 "inputs": {},
-                "jobs": [],
+                "jobs": jobs,
                 "macro_events": [{"name": "alloca", "tree": "candidate", "event": "define"}],
                 "occurrences": occurrences,
                 "oracle": ADAPTER.ORACLE,
@@ -138,6 +139,60 @@ class NativeCallableDeclarationsTests(unittest.TestCase):
                 "target": ADAPTER.TARGET,
             },
         }
+
+    def jobs(self, occurrences: list[dict]) -> list[dict]:
+        """Give the compact authenticated-envelope seam realistic raw jobs.
+
+        The public inventory reader owns full artifact replay.  This fixture
+        retains the exact job fields consumed by the callable adapter so its
+        local FunctionDecl-to-job and physical-dependency joins remain
+        observable without embedding a full compiler receipt in this unit
+        test.
+        """
+        grouped: dict[tuple[str, str, str], list[dict]] = {}
+        for occurrence in occurrences:
+            key = (occurrence["tree"], occurrence["input_header"], occurrence["profile"])
+            grouped.setdefault(key, []).append(occurrence)
+        jobs = []
+        for ordinal, ((tree, header, profile), rows) in enumerate(sorted(grouped.items())):
+            root = "candidate-header-root" if tree == "candidate" else "pinned-musl-header-root"
+            base = f"raw/{tree}/{header}/{profile}"
+            language = ADAPTER.PROFILE_LANGUAGES[profile]
+            dependencies = {f"{root}/{header}"}
+            dependencies.update(f"{root}/{row['source']['declaring_header']}" for row in rows)
+            artifacts = {
+                "ast_command": {"path": f"{base}/ast.command.json", "sha256": "a" * 64, "size": 1},
+                "ast_stderr": {"path": f"{base}/ast.stderr.txt", "sha256": "b" * 64, "size": 0},
+                "ast_stdout": {"path": f"{base}/ast.json", "sha256": "c" * 64, "size": 1},
+                "preprocessor_command": {"path": f"{base}/preprocessor.command.json", "sha256": "d" * 64, "size": 1},
+                "preprocessor_stderr": {"path": f"{base}/preprocessor.stderr.txt", "sha256": "e" * 64, "size": 0},
+                "preprocessor_stdout": {"path": f"{base}/preprocessor.txt", "sha256": "f" * 64, "size": 1},
+                "source": {"path": f"{base}/{'probe.cpp' if language == 'cxx' else 'probe.c'}", "sha256": "1" * 64, "size": 1},
+                "status": {"path": f"{base}/status.json", "sha256": "2" * 64, "size": 1},
+            }
+            jobs.append(
+                {
+                    "artifacts": artifacts,
+                    "dependencies": sorted(dependencies),
+                    "detail": "fixture raw declaration records",
+                    "header": header,
+                    "ordinal": ordinal,
+                    "probe_original_path_observation": f"/fixture/{base}/probe.c",
+                    "profile": profile,
+                    "status": "ok",
+                    "tree": tree,
+                }
+            )
+        return jobs
+
+    def authenticated_envelope(self, envelope: dict):
+        """Seam returned by the independently tested public inventory reader."""
+        report = envelope["report"]
+        identities = {
+            (job["tree"], job["header"], job["profile"])
+            for job in report["jobs"]
+        }
+        return envelope["current_selecting_source"], report, identities
 
     def matrix_projection(self) -> dict:
         rows = [
@@ -187,14 +242,26 @@ class NativeCallableDeclarationsTests(unittest.TestCase):
             "abi_only_callables": [{"name": "_fini", "owner": "fixture-feature", "state": "declared", "runner": "fixture"}],
         }
 
-    def account(self, envelope=None, matrix_projection=None, **overrides):
+    def account(self, envelope=None, matrix_projection=None, *, authenticated=True, **overrides):
         partition = self.partition()
         partition.update(overrides)
-        return ADAPTER.account_declarations(
-            self.envelope() if envelope is None else envelope,
-            matrix_projection=self.matrix_projection() if matrix_projection is None else matrix_projection,
+        arguments = {
+            "matrix_projection": self.matrix_projection() if matrix_projection is None else matrix_projection,
             **partition,
-        )
+        }
+        selected_envelope = self.envelope() if envelope is None else envelope
+        # The public inventory reader is independently exercised by its own
+        # suite.  Use this compact authenticated seam for local callable
+        # joins; tests that pass ``authenticated=False`` exercise the real
+        # full-envelope admission below.
+        if authenticated:
+            with mock.patch.object(
+                ADAPTER.data_declarations,
+                "_report_envelope",
+                side_effect=self.authenticated_envelope,
+            ):
+                return ADAPTER.account_declarations(selected_envelope, **arguments)
+        return ADAPTER.account_declarations(selected_envelope, **arguments)
 
     def candidate(self, envelope, *, name: str, profile: str | None = None):
         for row in envelope["report"]["occurrences"]:
@@ -216,7 +283,10 @@ class NativeCallableDeclarationsTests(unittest.TestCase):
         self.assertEqual(account["scope"]["semantic_language_linkage"], "not-proved-by-clang-json")
         self.assertEqual(account["scope"]["desugared_qual_type"], "retained-not-normalized-or-compared")
         foo = next(item for item in account["groups"] if item["name"] == "foo" and item["profile"] == "c11-gnu")
-        self.assertEqual(foo["candidate_signature_multiset"], [{"signature": "int (int)|mangled=foo", "count": 2}])
+        self.assertEqual(
+            foo["candidate_signature_multiset"],
+            [{"qual_type": "int (int)", "mangled_name_observation": "foo", "count": 2}],
+        )
         self.assertEqual(len(foo["candidate_observations"]), 2)
         transitive = next(item for item in account["groups"] if item["name"] == "transitive_fn")
         self.assertEqual(transitive["input_header"], "outer.h")
@@ -243,6 +313,50 @@ class NativeCallableDeclarationsTests(unittest.TestCase):
                 with self.assertRaisesRegex(ADAPTER.NativeCallableDeclarationsError, expected):
                     self.account(envelope=envelope)
 
+    def test_selected_raw_function_must_stay_bound_to_its_job_ast_and_physical_dependency(self):
+        swapped_job = self.envelope()
+        for row in swapped_job["report"]["occurrences"]:
+            if row["name"] == "transitive_fn":
+                row["input_header"] = "demo.h"
+        with self.assertRaisesRegex(ADAPTER.NativeCallableDeclarationsError, "raw AST artifact"):
+            self.account(envelope=swapped_job)
+
+        forged_source = self.envelope()
+        for row in forged_source["report"]["occurrences"]:
+            if row["name"] == "transitive_fn":
+                row["source"]["declaring_header"] = "forged/inner.h"
+        with self.assertRaisesRegex(ADAPTER.NativeCallableDeclarationsError, "physical source has no raw job dependency"):
+            self.account(envelope=forged_source)
+
+    def test_signature_pair_encoding_cannot_collide(self):
+        envelope = self.envelope()
+        candidate_seen = False
+        reference_seen = False
+        for row in envelope["report"]["occurrences"]:
+            if row["name"] != "foo" or row["profile"] != "c11-gnu":
+                continue
+            if row["tree"] == "candidate" and not candidate_seen:
+                row["mangled_name_observation"] = "foo|mangled=bar"
+                candidate_seen = True
+            elif row["tree"] == "reference" and not reference_seen:
+                row["type"]["qual_type"] = "int (int)|mangled=foo"
+                row["mangled_name_observation"] = "bar"
+                reference_seen = True
+        self.assertTrue(candidate_seen and reference_seen)
+        with self.assertRaisesRegex(ADAPTER.NativeCallableDeclarationsError, "signature multiset"):
+            self.account(envelope=envelope)
+
+    def test_full_authenticated_envelope_and_source_difference_invariant_are_required(self):
+        with self.assertRaisesRegex(ADAPTER.NativeCallableDeclarationsError, "declaration inventory scope"):
+            self.account(authenticated=False)
+        historical_without_difference = self.envelope()
+        historical_without_difference["current_selecting_source"] = {
+            "matches_retained": False,
+            "differences": [],
+        }
+        with self.assertRaisesRegex(ADAPTER.NativeCallableDeclarationsError, "current source match differs"):
+            self.account(envelope=historical_without_difference, authenticated=False)
+
     def test_reviewed_tgkill_requires_exact_visible_roster_and_c_linker_spelling(self):
         wrong_spelling = self.envelope()
         self.candidate(wrong_spelling, name="tgkill", profile="cxx17-gnu")["mangled_name_observation"] = "_Z6tgkilliii"
@@ -255,11 +369,32 @@ class NativeCallableDeclarationsTests(unittest.TestCase):
             self.account(envelope=missing)
 
         hidden = self.envelope()
-        row = self.candidate(hidden, name="tgkill", profile="c11-gnu")
+        row = next(
+            item for item in hidden["report"]["occurrences"]
+            if item["tree"] == "candidate" and item["name"] == "tgkill"
+            and item["profile"] == "c11-gnu" and item["input_header"] == "signal.h"
+        )
         row["profile"] = "c11-strict"
         row["source_language"] = "c"
+        row["raw_ast_path"] = row["raw_ast_path"].replace("/c11-gnu/", "/c11-strict/")
+        for job in hidden["report"]["jobs"]:
+            if job["tree"] == "candidate" and job["header"] == row["input_header"] and job["profile"] == "c11-gnu":
+                job["profile"] = "c11-strict"
+                job["artifacts"]["ast_stdout"]["path"] = row["raw_ast_path"]
+                break
+        else:
+            self.fail("fixture tgkill job is absent")
+        projection = self.matrix_projection()
+        projection["rows"].append(
+            {
+                "header": "signal.h",
+                "profile": "c11-strict",
+                "comparison": "matched",
+                "reference_status": "ok",
+            }
+        )
         with self.assertRaisesRegex(ADAPTER.NativeCallableDeclarationsError, "visible raw roster"):
-            self.account(envelope=hidden)
+            self.account(envelope=hidden, matrix_projection=projection)
 
     def test_adapter_never_replays_the_header_reader_or_uses_macro_as_a_function(self):
         with mock.patch.object(ADAPTER.declaration_inventory, "validate_report") as replay:

@@ -904,6 +904,11 @@ class SelectedCallableDeclarationIntegrationTests(unittest.TestCase):
                  data_declarations,
                  'account_declarations',
                  return_value={'selected_data_declaration_status': 'fixture-not-exercised-here'},
+             ), \
+             mock.patch.object(
+                 selection.callable_declarations.data_declarations,
+                 '_report_envelope',
+                 side_effect=self.fixture.authenticated_envelope,
              ):
             result = selection.declaration_adapter(
                 self.report,
@@ -925,7 +930,29 @@ class SelectedCallableDeclarationIntegrationTests(unittest.TestCase):
             callable_account['contract'],
             selection.file_identity(ROOT / 'compat/x86_64/native_callable_declarations.toml'),
         )
+        self.assertEqual(
+            callable_account['account']['caller_authenticated_inputs']['selected_partition'],
+            'native_abi_selection.load_source_inputs',
+        )
         self.assertFalse(result['complete'])
+
+    def test_public_composition_rejects_a_selected_projection_without_full_header_envelope(self):
+        envelope = self.fixture.envelope()
+        partition = self.fixture.partition()
+        with mock.patch.object(selection, '_common_checkout', return_value=ROOT), \
+             mock.patch.object(selection.declaration_inventory, 'validate_report', return_value=envelope), \
+             mock.patch.object(
+                 data_declarations,
+                 'account_declarations',
+                 return_value={'selected_data_declaration_status': 'fixture-not-exercised-here'},
+             ):
+            with self.assertRaisesRegex(selection.SelectionError, 'selected callable declarations rejected'):
+                selection.declaration_adapter(
+                    self.report,
+                    selected_objects=self.objects,
+                    callable_matrix_projection=self.fixture.matrix_projection(),
+                    **partition,
+                )
 
     def test_source_inputs_bind_the_existing_checked_matrix_before_projection(self):
         contract = selection.load_contract()
@@ -935,6 +962,7 @@ class SelectedCallableDeclarationIntegrationTests(unittest.TestCase):
         self.assertEqual(len(projection['rows']), 1337)
         self.assertEqual(projection['provenance']['report']['path'], 'compat/x86_64/generated/header_abi_matrix/report.json')
         self.assertIn('tgkill', inputs['provider_names'])
+        self.assertIn('compat/x86_64/native_data_declarations.py', inputs['bindings'])
 
     def test_checked_matrix_failure_cannot_be_projected_as_callable_evidence(self):
         contract = selection.load_contract()

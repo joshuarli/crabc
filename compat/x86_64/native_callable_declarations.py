@@ -4,8 +4,11 @@
 This adapter consumes the one envelope already returned by
 ``header_declaration_inventory.validate_report`` and a matrix projection that
 ``native_abi_selection`` derived after validating the checked header ABI
-matrix.  It never runs a compiler, replays raw compiler evidence, parses a
-header, infers language linkage, or chooses an archive/shared provider.
+matrix.  It reuses the existing complete-envelope derivation before joining
+selected raw FunctionDecls to their retained compiler-job AST paths and
+physical header dependencies.  It never runs a compiler, replays raw compiler
+evidence, parses a header, infers language linkage, or chooses an
+archive/shared provider.
 
 The selected-name partition remains owned by ``header_callable_disposition``.
 This module deliberately records raw physical FunctionDecl observations and
@@ -28,6 +31,7 @@ if str(MODULE_DIRECTORY) not in sys.path:
 
 import header_callable_extension_contract as callable_extension_contract
 import header_declaration_inventory as declaration_inventory
+import native_data_declarations as data_declarations
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -73,21 +77,6 @@ DEFERRED_RESOLUTIONS = {
     "policy-decision-required",
 }
 SYMBOL = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-HEADER_REPORT_KEYS = {
-    "collection",
-    "final_active_macros",
-    "inputs",
-    "jobs",
-    "macro_events",
-    "occurrences",
-    "oracle",
-    "platform",
-    "schema",
-    "scope",
-    "status",
-    "summary",
-    "target",
-}
 RAW_FUNCTION_KEYS = {
     "ast_node_ordinal",
     "definition_observation",
@@ -119,6 +108,28 @@ RAW_SOURCE_KEYS = {
     "origin_resolution",
     "token_length",
 }
+RAW_JOB_KEYS = {
+    "artifacts",
+    "dependencies",
+    "detail",
+    "header",
+    "ordinal",
+    "probe_original_path_observation",
+    "profile",
+    "status",
+    "tree",
+}
+RAW_OK_JOB_ARTIFACTS = {
+    "ast_command",
+    "ast_stderr",
+    "ast_stdout",
+    "preprocessor_command",
+    "preprocessor_stderr",
+    "preprocessor_stdout",
+    "source",
+    "status",
+}
+RAW_ARTIFACT_DESCRIPTOR_KEYS = {"path", "sha256", "size"}
 
 
 class NativeCallableDeclarationsError(ValueError):
@@ -380,26 +391,84 @@ def _validate_partition(
     return providers, deferred_rows, sorted(abi_only, key=lambda item: item["name"])
 
 
-def _header_envelope(value: Mapping[str, Any]) -> tuple[dict[str, Any], Mapping[str, Any]]:
-    raw = exact_keys(value, {"current_selecting_source", "report"}, "header declaration reader envelope")
-    current = exact_keys(raw["current_selecting_source"], {"matches_retained", "differences"}, "header declaration current source")
-    require(type(current["matches_retained"]) is bool and isinstance(current["differences"], list), "header declaration current source types differ")
-    require(not current["matches_retained"] or not current["differences"], "current source match differs from differences")
-    report = raw["report"]
-    require(isinstance(report, Mapping) and set(report) == HEADER_REPORT_KEYS, "header declaration report keys changed")
-    require(report.get("schema") == HEADER_REPORT_SCHEMA and report.get("target") == TARGET, "header declaration report identity differs")
-    require(isinstance(report.get("occurrences"), list), "header declaration report occurrences are invalid")
-    # The public reader authenticated and reconstructed all macro and raw
-    # artifacts before this adapter receives the envelope.  Preserve their
-    # schema presence, but never treat them as callable declarations.
-    require(isinstance(report.get("macro_events"), list) and isinstance(report.get("final_active_macros"), list), "header declaration macro records are invalid")
-    return {
+def _raw_artifact_path(value: object, description: str) -> str:
+    descriptor = exact_keys(value, RAW_ARTIFACT_DESCRIPTOR_KEYS, description)
+    path = safe_relative(descriptor["path"], f"{description}.path")
+    digest = string(descriptor["sha256"], f"{description}.sha256")
+    require(re.fullmatch(r"[0-9a-f]{64}", digest) is not None, f"{description}.sha256 is invalid")
+    positive_integer(descriptor["size"], f"{description}.size", zero=True)
+    return path
+
+
+def _raw_job_bindings(
+    report: Mapping[str, Any],
+    expected_identities: set[tuple[str, str, str]],
+) -> dict[tuple[str, str, str], dict[str, Any]]:
+    """Join the selected raw FunctionDecl fields to authenticated job facts.
+
+    ``native_data_declarations._report_envelope`` already verifies the full
+    report's finite job/collection/summary/status derivation.  This local
+    join deliberately consumes only the raw job fields needed to prove that a
+    selected callable still names the AST artifact and physical include
+    dependency that produced it.  It does not replay a raw compiler artifact.
+    """
+    jobs = report.get("jobs")
+    require(isinstance(jobs, list), "replayed header declaration jobs are invalid")
+    bindings: dict[tuple[str, str, str], dict[str, Any]] = {}
+    seen: set[tuple[str, str, str]] = set()
+    for index, raw in enumerate(jobs):
+        job = exact_keys(raw, RAW_JOB_KEYS, f"replayed header declaration job {index}")
+        tree = job["tree"]
+        require(tree in {"candidate", "reference"}, f"replayed header declaration job {index}.tree differs")
+        header = safe_relative(job["header"], f"replayed header declaration job {index}.header")
+        profile = string(job["profile"], f"replayed header declaration job {index}.profile")
+        require(profile in PROFILE_LANGUAGES, f"replayed header declaration job {index}.profile is unknown")
+        key = (tree, header, profile)
+        require(key in expected_identities and key not in seen, f"replayed header declaration job {index} identity differs")
+        seen.add(key)
+        require(type(job["ordinal"]) is int and job["ordinal"] == index, f"replayed header declaration job {index}.ordinal differs")
+        status = string(job["status"], f"replayed header declaration job {index}.status")
+        require(status in {"ok", "oracle-not-applicable"}, f"replayed header declaration job {index}.status is invalid")
+        if status != "ok":
+            continue
+        artifacts = exact_keys(job["artifacts"], RAW_OK_JOB_ARTIFACTS, f"replayed header declaration job {index}.artifacts")
+        ast_path = _raw_artifact_path(artifacts["ast_stdout"], f"replayed header declaration job {index}.artifacts.ast_stdout")
+        expected_ast_path = f"raw/{tree}/{header}/{profile}/ast.json"
+        require(ast_path == expected_ast_path, f"replayed header declaration job {index} AST artifact path differs")
+        dependencies = job["dependencies"]
+        require(
+            isinstance(dependencies, list)
+            and dependencies == sorted(set(dependencies))
+            and all(isinstance(item, str) and safe_relative(item, f"replayed header declaration job {index}.dependency") for item in dependencies),
+            f"replayed header declaration job {index}.dependencies differ",
+        )
+        bindings[key] = {"raw_ast_path": ast_path, "dependencies": list(dependencies)}
+    require(seen == expected_identities, "replayed header declaration job roster differs")
+    return bindings
+
+
+def _header_envelope(
+    value: Mapping[str, Any],
+) -> tuple[dict[str, Any], Mapping[str, Any], dict[tuple[str, str, str], dict[str, Any]]]:
+    """Require the existing complete public envelope before callable joins."""
+    try:
+        current, report, identities = data_declarations._report_envelope(value)
+    except data_declarations.NativeDataDeclarationsError as error:
+        raise NativeCallableDeclarationsError(str(error)) from error
+    require(isinstance(current, Mapping) and isinstance(report, Mapping), "replayed header declaration envelope is invalid")
+    normalized_current = {
         "matches_retained": current["matches_retained"],
         "differences": copy.deepcopy(current["differences"]),
-    }, report
+    }
+    return normalized_current, report, _raw_job_bindings(report, identities)
 
 
-def _raw_function(raw: Mapping[str, Any], index: int, tree: str) -> dict[str, Any]:
+def _raw_function(
+    raw: Mapping[str, Any],
+    index: int,
+    tree: str,
+    job_bindings: Mapping[tuple[str, str, str], Mapping[str, Any]],
+) -> dict[str, Any]:
     record = exact_keys(raw, RAW_FUNCTION_KEYS, f"raw callable occurrence {index}")
     require(record["kind"] == "function" and record["tree"] == tree, f"raw callable occurrence {index} kind/tree differs")
     name = symbol(record["name"], f"raw callable occurrence {index}.name")
@@ -420,6 +489,12 @@ def _raw_function(raw: Mapping[str, Any], index: int, tree: str) -> dict[str, An
         "origin_resolution": "physical",
         "token_length": positive_integer(source["token_length"], f"raw callable occurrence {index}.source.token_length"),
     }
+    job = job_bindings.get((tree, header, profile))
+    require(job is not None, f"raw callable occurrence {index} input-header job is absent")
+    raw_ast_path = safe_relative(record["raw_ast_path"], f"raw callable occurrence {index}.raw AST path")
+    require(raw_ast_path == job["raw_ast_path"], f"raw callable occurrence {index} raw AST artifact differs from its job")
+    dependency = f"{root}/{checked_source['declaring_header']}"
+    require(dependency in job["dependencies"], f"raw callable occurrence {index} physical source has no raw job dependency")
     type_record = exact_keys(record["type"], {"qual_type", "desugared_qual_type"}, f"raw callable occurrence {index}.type")
     qual_type = string(type_record["qual_type"], f"raw callable occurrence {index}.type.qual_type")
     desugared = type_record["desugared_qual_type"]
@@ -447,7 +522,7 @@ def _raw_function(raw: Mapping[str, Any], index: int, tree: str) -> dict[str, An
         "definition_observation": string(record["definition_observation"], f"raw callable occurrence {index}.definition observation"),
         "tls_observation": record["tls_observation"],
         "previous_declaration": copy.deepcopy(dict(record["previous_declaration"])),
-        "raw_ast_path": safe_relative(record["raw_ast_path"], f"raw callable occurrence {index}.raw AST path"),
+        "raw_ast_path": raw_ast_path,
         "raw_node_id_observation": string(record["raw_node_id_observation"], f"raw callable occurrence {index}.raw node id"),
         "unmodeled_node_keys": list(record["unmodeled_node_keys"]),
     }
@@ -455,9 +530,17 @@ def _raw_function(raw: Mapping[str, Any], index: int, tree: str) -> dict[str, An
 
 def _signature_multiset(observations: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     values = Counter(
-        f"{item['type']['qual_type']}|mangled={item['mangled_name_observation']}" for item in observations
+        (item["type"]["qual_type"], item["mangled_name_observation"])
+        for item in observations
     )
-    return [{"signature": signature, "count": values[signature]} for signature in sorted(values)]
+    return [
+        {
+            "qual_type": qual_type,
+            "mangled_name_observation": mangled,
+            "count": values[(qual_type, mangled)],
+        }
+        for qual_type, mangled in sorted(values)
+    ]
 
 
 def _status_counts(observations: Sequence[Mapping[str, Any]]) -> dict[str, int]:
@@ -544,6 +627,7 @@ def _reviewed_extension_groups(
 def _deferred_account(
     occurrences: Sequence[Any],
     deferred: Sequence[Mapping[str, Any]],
+    job_bindings: Mapping[tuple[str, str, str], Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
     names = {item["name"] for item in deferred}
     by_name: dict[str, dict[str, list[dict[str, Any]]]] = {
@@ -554,7 +638,7 @@ def _deferred_account(
             continue
         tree = raw.get("tree")
         require(tree in {"candidate", "reference"}, f"deferred callable raw occurrence {index} tree differs")
-        by_name[str(raw["name"])][tree].append(_raw_function(raw, index, tree))
+        by_name[str(raw["name"])][tree].append(_raw_function(raw, index, tree, job_bindings))
     records: list[dict[str, Any]] = []
     for item in deferred:
         observations = by_name[item["name"]]
@@ -585,13 +669,15 @@ def account_declarations(
 ) -> dict[str, Any]:
     """Account declaration forms using one already replayed header envelope.
 
-    The caller owns authenticating that envelope and validating the full matrix
-    before projecting it.  This function reuses those facts without a second
-    reader/compiler invocation, preserves selected raw occurrence multiplicity,
-    and deliberately leaves provider/linkage/runtime/family claims open.
+    The caller owns authenticating the raw evidence and validating the full
+    matrix before projecting it.  This function reuses those facts without a
+    second raw-evidence replay or compiler invocation, verifies the complete
+    report derivation and selected FunctionDecl job/dependency joins, preserves
+    raw occurrence multiplicity, and deliberately leaves
+    provider/linkage/runtime/family claims open.
     """
     _reviewed_contract(contract)
-    current_source, report = _header_envelope(header_report_envelope)
+    current_source, report, job_bindings = _header_envelope(header_report_envelope)
     providers, deferred_rows, abi_only = _validate_partition(provider_names, deferred, abi_only_callables)
     matrix, matrix_provenance = _validate_matrix_projection(matrix_projection)
     provider_set = set(providers)
@@ -602,7 +688,7 @@ def account_declarations(
             continue
         tree = raw.get("tree")
         require(tree in {"candidate", "reference"}, f"selected callable raw occurrence {index} tree differs")
-        observation = _raw_function(raw, index, tree)
+        observation = _raw_function(raw, index, tree, job_bindings)
         key = (observation["input_header"], observation["profile"], observation["name"])
         require((key[0], key[1]) in matrix, f"selected callable raw occurrence has no checked matrix row: {key[0]}:{key[1]}")
         (candidate_groups if tree == "candidate" else reference_groups)[key].append(observation)
@@ -666,6 +752,11 @@ def account_declarations(
         "header_declaration_report_schema": HEADER_REPORT_SCHEMA,
         "header_abi_matrix_report_schema": HEADER_MATRIX_REPORT_SCHEMA,
         "matrix_provenance": matrix_provenance,
+        "caller_authenticated_inputs": {
+            "selected_partition": "native_abi_selection.load_source_inputs",
+            "checked_matrix_projection": "native_abi_selection.load_source_inputs",
+            "selection_report_identity_location": "source_inputs.bindings",
+        },
         "source_receipt": {
             "current_selecting_source_matches_retained": source_match,
             "current_selecting_source_differences": current_source["differences"],
@@ -687,7 +778,7 @@ def account_declarations(
             "public_support": "not-claimed",
         },
         "groups": records,
-        "deferred": _deferred_account(report["occurrences"], deferred_rows),
+        "deferred": _deferred_account(report["occurrences"], deferred_rows, job_bindings),
         "abi_only_callables": [
             {
                 **item,
