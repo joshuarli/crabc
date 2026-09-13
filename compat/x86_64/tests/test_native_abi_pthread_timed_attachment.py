@@ -284,8 +284,10 @@ class NativePthreadTimedAttachmentTests(unittest.TestCase):
             'public_support': False, 'family_complete': False, 'promotion_ready': False,
             'selected_source': {'revision': self.source['revision'], 'source_sha256': self.source['content_sha256'],
                                 'files': selected_files},
-            'collector': {'source_before': {'revision': self.source['revision'], 'content_sha256': self.source['content_sha256']},
-                          'source_after': {'revision': self.source['revision'], 'content_sha256': self.source['content_sha256']},
+            'collector': {'source_before': {'revision': self.source['revision'], 'tree': 'c' * 40,
+                                             'source_sha256': self.source['content_sha256']},
+                          'source_after': {'revision': self.source['revision'], 'tree': 'c' * 40,
+                                           'source_sha256': self.source['content_sha256']},
                           'files': collector_files},
             'inputs': inputs, 'artifacts': artifacts,
             'selected_products': {
@@ -377,6 +379,31 @@ class NativePthreadTimedAttachmentTests(unittest.TestCase):
             None, facts=self.facts, measurement=self.measurement, paths=self.paths, source=self.source,
             product_anchor=None,
         ))
+
+    def test_actual_collector_source_identity_shape_is_accepted(self) -> None:
+        receipt = self._receipt()
+        for phase in ('source_before', 'source_after'):
+            self.assertEqual(set(receipt['collector'][phase]), {'revision', 'tree', 'source_sha256'})
+            receipt['collector'][phase] = {
+                'revision': self.source['revision'],
+                'tree': 'c' * 40,
+                'source_sha256': self.source['content_sha256'],
+            }
+        self.assertIsNotNone(self._adapter(receipt))
+
+    def test_actual_collector_source_identity_rejects_each_wrong_digest(self) -> None:
+        for phase in ('source_before', 'source_after'):
+            with self.subTest(phase=phase):
+                receipt = self._receipt()
+                for current in ('source_before', 'source_after'):
+                    receipt['collector'][current] = {
+                        'revision': self.source['revision'],
+                        'tree': 'c' * 40,
+                        'source_sha256': self.source['content_sha256'],
+                    }
+                receipt['collector'][phase]['source_sha256'] = '0' * 64
+                with self.assertRaises(selection.SelectionError):
+                    self._adapter(receipt)
 
     def test_valid_receipt_discharges_only_the_four_existing_reasons(self) -> None:
         companion = self._adapter()

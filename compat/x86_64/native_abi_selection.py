@@ -4412,7 +4412,7 @@ def native_pthread_timed_feature_adapter(report_path: Path | None, *, facts: Map
             and type(collector.get('source_after')) is dict, 'pthread timed collector source differs')
     for phase in ('source_before', 'source_after'):
         row = collector[phase]
-        require(row.get('revision') == source['revision'] and row.get('content_sha256') == source['content_sha256'],
+        require(row.get('revision') == source['revision'] and row.get('source_sha256') == source['content_sha256'],
                 f'pthread timed collector {phase} differs from selection')
     artifacts = report.get('artifacts')
     files = selected.get('files') if type(selected) is dict else None
