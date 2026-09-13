@@ -116,6 +116,14 @@ STATIC_EXECUTABLE_SYMBOLS = (
     ("static", "static-symbols.txt"),
     ("static-pie", "static-pie-symbols.txt"),
 )
+# Final-object filenames and raw ``readelf`` renderings use the command-role
+# label, whereas the retained-link reader uses the shorter linkage label.
+FINAL_ELF_LABELS = {
+    "static": "static-static",
+    "static-pie": "static-static-pie",
+    "pie": "dynamic-pie",
+    "non-pie": "dynamic-non-pie",
+}
 RUNTIME_ROWS = (
     ("oracle", "oracle-ordinary"),
     ("static", "static-static-ordinary"),
@@ -645,9 +653,9 @@ def validate_symbol_bytes(workspace: Path, products: Mapping[str, Path] | None =
                 label + " executable provider roster differs")
         for alias, target in ALIASES:
             require(symbols[alias][0] == symbols[target][0], label + " executable alias address differs: " + alias)
-        executable = raw / ("static-" + label)
+        executable = raw / FINAL_ELF_LABELS[label]
         if products is not None:
-            validate_symbol_byte_stream(raw / (label + "-symbol-bytes.txt"), executable,
+            validate_symbol_byte_stream(raw / (FINAL_ELF_LABELS[label] + "-symbol-bytes.txt"), executable,
                                         SOURCE_MOUNT + "/.work/utmpx-receipt/owned-utmpx-receipt/" + executable.name,
                                         frozenset({".dynsym", ".symtab"}))
         if links is not None:
@@ -657,8 +665,8 @@ def validate_symbol_bytes(workspace: Path, products: Mapping[str, Path] | None =
     imports: dict[str, Any] = {}
     if products is not None:
         for label in ("pie", "non-pie"):
-            executable = raw / ("dynamic-" + label)
-            validate_symbol_byte_stream(raw / (label + "-symbol-bytes.txt"), executable,
+            executable = raw / FINAL_ELF_LABELS[label]
+            validate_symbol_byte_stream(raw / (FINAL_ELF_LABELS[label] + "-symbol-bytes.txt"), executable,
                                         SOURCE_MOUNT + "/.work/utmpx-receipt/owned-utmpx-receipt/" + executable.name,
                                         frozenset({".dynsym", ".symtab"}))
             rows = expected_symbol_rows(executable, SOURCE_MOUNT + "/.work/utmpx-receipt/owned-utmpx-receipt/" + executable.name,
