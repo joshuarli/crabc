@@ -185,3 +185,11 @@ bodies plus private `__libc_sigaction` (thirteen global-hidden bodies total),
 and two source-local statfs bodies. This remains a
 component input for later selector discharge, never provider selection, family
 qualification, or support.
+
+A later selector may retain this report's path and SHA-256 with an exact
+`selection_projection` match after running `validate-report`. Its only
+component discharge is the named fourteen-alias/private-body projection above;
+the selector must keep full ELF facts as physical observations and join only
+its explicit named artifact roles. This receipt neither constructs identities
+from unnamed facts nor discharges the remaining private-body ownership
+blockers.

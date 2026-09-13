@@ -20,6 +20,7 @@ from owned_syscall_alias_contract_reader import (
     PUBLIC_ALIAS_SOURCE_CALLERS,
     ReceiptError,
     SymbolRow,
+    _validate_command_argv,
     component_projection,
     main,
     require_same_probe_object,
@@ -100,6 +101,19 @@ class OwnedSyscallAliasContractReaderTests(unittest.TestCase):
         self.assertEqual(len(set(CURRENT_COMMAND_STEMS)), 47)
         self.assertIn("probe-object-link-proof", CURRENT_COMMAND_STEMS)
         self.assertIn("dynamic-non-pie-override-direct", CURRENT_COMMAND_STEMS)
+
+    def test_host_replay_keeps_the_original_container_probe_object_path(self) -> None:
+        inputs = {
+            "static_driver": {"original": {"path": "/workspace/product/bin/crabc-cc"}},
+            "dynamic_driver": {"original": {"path": "/workspace/product/bin/crabc-cc-dynamic"}},
+        }
+        command = ["/workspace/product/bin/crabc-cc-dynamic", "--dynamic-pie",
+                   "/workspace/.work/receipt/runner/contract.o", "-o", "/workspace/out"]
+        _validate_command_argv("dynamic-pie-contract-link", command,
+                               Path("/workspace/.work/receipt/runner"), inputs)
+        with self.assertRaisesRegex(ReceiptError, "retained probe object"):
+            _validate_command_argv("dynamic-pie-contract-link", command,
+                                   Path("/host/receipt/runner"), inputs)
 
     def test_review_forged_receipt_is_rejected_after_json_normalization(self) -> None:
         report = SOURCE_DIR.parents[1] / ".work/x86_64/receipt-review/forged-receipt-5ci97ja5/report.json"
