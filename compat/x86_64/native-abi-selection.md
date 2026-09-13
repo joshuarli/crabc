@@ -226,8 +226,11 @@ owner reader is the only process-free host replay of the retained native
 receipt. The selector seals the report before and after that replay and binds
 its current collector and selected product source, static preparation, complete
 ELF facts/base inventory, selected static archive and driver, shared libc,
-loader, manifest, driver, producer-tools and shared-provenance bytes, selected
-dynamic list, and retained source snapshots to the same selection transaction.
+loader, manifest, dynamic materialization state, driver, producer-tools and
+shared-provenance bytes, selected dynamic list, and retained source snapshots
+to the same selection transaction. The state record must match the
+reader-validated retained dynamic tree and its manifest before it can enter the
+selector's post-attachment recheck.
 The reader retains its pinned image, musl oracle tools, exact 47 command
 envelopes, and native semantic/override/interposition controls; the selector
 does not replace those retained executions with ambient host tools.

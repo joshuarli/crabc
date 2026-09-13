@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -153,6 +155,11 @@ class NativeSyscallAliasAttachmentTests(unittest.TestCase):
         ):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(payload)
+        state_path = self.dynamic / 'share/crabc/dynamic-product-state.json'
+        manifest_path = self.dynamic / 'share/crabc/manifest.json'
+        manifest_path.write_text(json.dumps({
+            'files': {'share/crabc/dynamic-product-state.json': hashlib.sha256(state_path.read_bytes()).hexdigest()},
+        }, sort_keys=True))
         self.base = self._write('base-inventory.json', b'base\n')
         self.elf = self._write('elf-facts.json', b'elf\n')
         self.preparation = self._write('preparation.json', b'preparation\n')
@@ -216,6 +223,13 @@ class NativeSyscallAliasAttachmentTests(unittest.TestCase):
             'dynamic_loader', 'dynamic_manifest', 'dynamic_producer_tools', 'dynamic_shared_provenance',
             'dynamic_linker', 'oracle_compiler', 'oracle_shared', 'oracle_archive',
         })
+        retained_dynamic = self.work / 'products/dynamic'
+        for relative in ('share/crabc/manifest.json', 'share/crabc/dynamic-product-state.json'):
+            source = self.dynamic / relative
+            retained = retained_dynamic / relative
+            retained.parent.mkdir(parents=True, exist_ok=True)
+            retained.write_bytes(source.read_bytes())
+
         reader = FakeSyscallReader({})
         return {
             'schema': reader.SCHEMA, 'status': copy.deepcopy(reader.STATUS),
@@ -393,6 +407,51 @@ class NativeSyscallAliasAttachmentTests(unittest.TestCase):
         wrong_projection['selection_projection']['aliases'].pop()
         with mock.patch.object(selection, '_syscall_alias_reader', return_value=FakeSyscallReader(wrong_projection)), \
              self.assertRaisesRegex(selection.SelectionError, 'status, image, source commit or projection differs'):
+            selection.native_syscall_alias_adapter(
+                self.report_path, facts=self.facts, measurement=self.measurement,
+                paths=self.paths, source=self.source,
+            )
+
+    def test_adapter_rejects_a_current_dynamic_state_not_sealed_by_the_retained_dynamic_tree(self) -> None:
+        receipt = self._receipt()
+        current_state = self.dynamic / 'share/crabc/dynamic-product-state.json'
+        original_state = current_state.read_bytes()
+        current_state.write_bytes(b'changed dynamic materialization state\n')
+        with mock.patch.object(selection, '_syscall_alias_reader', return_value=FakeSyscallReader(receipt)), \
+             self.assertRaisesRegex(selection.SelectionError, 'dynamic state'):
+            selection.native_syscall_alias_adapter(
+                self.report_path, facts=self.facts, measurement=self.measurement,
+                paths=self.paths, source=self.source,
+            )
+        current_state.write_bytes(original_state)
+        original_mode = current_state.stat().st_mode & 0o7777
+        current_state.chmod(0o777)
+        with mock.patch.object(selection, '_syscall_alias_reader', return_value=FakeSyscallReader(receipt)), \
+             self.assertRaisesRegex(selection.SelectionError, 'dynamic state'):
+            selection.native_syscall_alias_adapter(
+                self.report_path, facts=self.facts, measurement=self.measurement,
+                paths=self.paths, source=self.source,
+            )
+        current_state.chmod(original_mode)
+
+        receipt = self._receipt()
+        retained_state = self.work / 'products/dynamic/share/crabc/dynamic-product-state.json'
+        changed_state = b'changed dynamic materialization state\n'
+        current_state.write_bytes(changed_state)
+        retained_state.write_bytes(changed_state)
+        with mock.patch.object(selection, '_syscall_alias_reader', return_value=FakeSyscallReader(receipt)), \
+             self.assertRaisesRegex(selection.SelectionError, 'retained dynamic state is not sealed by its manifest'):
+            selection.native_syscall_alias_adapter(
+                self.report_path, facts=self.facts, measurement=self.measurement,
+                paths=self.paths, source=self.source,
+            )
+        current_state.write_bytes(original_state)
+
+        receipt = self._receipt()
+        current_manifest = self.dynamic / 'share/crabc/manifest.json'
+        current_manifest.write_bytes(b'changed dynamic manifest\n')
+        with mock.patch.object(selection, '_syscall_alias_reader', return_value=FakeSyscallReader(receipt)), \
+             self.assertRaisesRegex(selection.SelectionError, 'dynamic_manifest differs'):
             selection.native_syscall_alias_adapter(
                 self.report_path, facts=self.facts, measurement=self.measurement,
                 paths=self.paths, source=self.source,

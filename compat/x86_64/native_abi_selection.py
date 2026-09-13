@@ -3805,6 +3805,42 @@ def _syscall_alias_product_identities(paths: Mapping[str, Path]) -> dict[str, di
     }
 
 
+def _syscall_retained_dynamic_state(report_path: Path, roots: Mapping[str, Any],
+                                    inputs: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the state byte record from the reader-validated dynamic tree.
+
+    The owning v2 reader authenticates this retained tree through its dynamic
+    manifest and materialization-state contract. The selector must nevertheless
+    bind the selected current state to that retained byte record before adding
+    it to the companion/recheck cohort; a current-only state identity would
+    otherwise have no receipt authority.
+    """
+    dynamic = exact(roots.get('dynamic'), {'original', 'retained'}, 'syscall alias dynamic retained product')
+    require(dynamic['retained'] == 'products/dynamic', 'syscall alias dynamic retained tree path differs')
+    retained_root = physical_work_path(report_path.parent / dynamic['retained'], directory=True)
+    def retained_file(relative: str, description: str) -> dict[str, Any]:
+        value = retained_root / relative
+        require(value.is_file() and not value.is_symlink() and value.resolve() == value,
+                f'{description} is not a physical retained product file')
+        return file_identity(value)
+    retained_manifest = retained_file('share/crabc/manifest.json', 'syscall alias retained dynamic manifest')
+    require(_syscall_receipt_input(inputs['dynamic_manifest'], 'syscall alias dynamic manifest')
+            == _identity_payload(retained_manifest, 'syscall alias retained dynamic manifest'),
+            'syscall alias retained dynamic manifest differs from its receipt input')
+    state_path = retained_root / 'share/crabc/dynamic-product-state.json'
+    manifest_path = retained_root / 'share/crabc/manifest.json'
+    retained_state = retained_file('share/crabc/dynamic-product-state.json', 'syscall alias retained dynamic state')
+    manifest = read_json(manifest_path)
+    files = manifest.get('files') if type(manifest) is dict else None
+    require(type(files) is dict
+            and files.get('share/crabc/dynamic-product-state.json') == retained_state['sha256'],
+            'syscall alias retained dynamic state is not sealed by its manifest')
+    require(same(retained_manifest, file_identity(manifest_path))
+            and same(retained_state, file_identity(state_path)),
+            'syscall alias retained dynamic tree changed during selector binding')
+    return retained_state
+
+
 def native_syscall_alias_adapter(report_path: Path | None, *, facts: Mapping[str, Any],
                                  measurement: Mapping[str, Any], paths: Mapping[str, Path],
                                  source: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -3877,6 +3913,9 @@ def native_syscall_alias_adapter(report_path: Path | None, *, facts: Mapping[str
                     and type(roots[name]['original']) is str and Path(roots[name]['original']).is_absolute()
                     and roots[name]['retained'] == 'products/' + name for name in roots),
             'syscall alias retained product roots differ')
+    retained_dynamic_state = _syscall_retained_dynamic_state(report_path, roots, inputs)
+    _require_same_identity_payload(retained_dynamic_state, products['dynamic_state'],
+                                   'syscall alias dynamic state')
     facts_artifacts = facts.get('artifacts')
     require(type(facts_artifacts) is dict, 'syscall alias public ELF artifact roster differs')
     for artifact_key, name in (('candidate-static', 'static_libc'), ('candidate-shared', 'dynamic_libc'),
