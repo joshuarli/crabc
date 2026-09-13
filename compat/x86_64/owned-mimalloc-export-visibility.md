@@ -20,9 +20,14 @@ No prefix/glob visibility policy or archive-wide exclusion is permitted.
 `run_libc_mimalloc_export_visibility.sh PRECHANGE_ABI_REPORT PRECHANGE_LIBC_SO`
 builds fresh static and dynamic products, checks their source-bound metadata,
 and compares their dynsym against the retained pre-change product. The only
-allowed shared dynsym removal is the exact contract list: the original 475
-extra exports become the reviewed 51 atomic/runtime/compiler entries. The
-runner also reads complete `--syms --wide` tables. It rejects a dynsym row for
+allowed shared dynsym removal is the exact contract list. It derives the
+baseline's extras from the retained reference/candidate symbol identities and
+requires that calculation to agree with the report's raw triage roster; any
+independent extra present on both sides remains present. The ae0fcc22 pair
+measured 475 extras before and 51 after this change, but those counts are a
+historical measurement rather than the 424-name visibility policy. The runner
+records the actual before/after counts for its supplied matched pair. It also
+reads complete `--syms --wide` tables. It rejects a dynsym row for
 any contract name, requires its one shared definition to be `LOCAL`, and
 matches its raw spelling, version, kind, and object/TLS size to the sole
 selected static allocator member. The complete shared table may localize only

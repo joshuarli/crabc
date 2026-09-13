@@ -104,6 +104,34 @@ class OwnedMimallocExportVisibilityTests(unittest.TestCase):
         with self.assertRaisesRegex(evidence.EvidenceError, "data size changed"):
             evidence.validate_visible_symtab_delta(baseline, current, set(members))
 
+    def test_exact_dynsym_delta_retains_a_matched_independent_extra(self) -> None:
+        def row(name: str) -> dict[str, object]:
+            return {
+                "name": name, "type": "FUNC", "binding": "GLOBAL", "visibility": "DEFAULT",
+                "version": None, "version_default": False, "size": "1",
+            }
+
+        reference = [row("portable_api")]
+        candidate = [row("portable_api"), row("mimalloc_hidden"), row("tgkill")]
+        triage = [row("mimalloc_hidden"), row("tgkill")]
+        extras = evidence.derived_baseline_extra_names(reference, candidate, triage)
+        self.assertEqual(extras, {"mimalloc_hidden", "tgkill"})
+        with self.assertRaisesRegex(evidence.EvidenceError, "raw triage extra roster disagrees"):
+            evidence.derived_baseline_extra_names(reference, candidate, [row("mimalloc_hidden")])
+
+        baseline = {item["name"]: item for item in candidate}
+        current = {item["name"]: item for item in (row("portable_api"), row("tgkill"))}
+        self.assertEqual(
+            evidence.validate_dynsym_delta(baseline, current, {"mimalloc_hidden"}),
+            ["mimalloc_hidden"],
+        )
+        with self.assertRaisesRegex(evidence.EvidenceError, "changed by names beyond"):
+            evidence.validate_dynsym_delta(
+                baseline,
+                {**current, "only_after_visibility": row("only_after_visibility")},
+                {"mimalloc_hidden"},
+            )
+
     def test_runner_compares_the_prechange_product_and_reuses_behavioral_components(self) -> None:
         runner = RUNNER.read_text(encoding="utf-8")
         evidence = EVIDENCE.read_text(encoding="utf-8")
@@ -117,8 +145,9 @@ class OwnedMimallocExportVisibilityTests(unittest.TestCase):
         ):
             self.assertIn(required, runner)
         for required in (
-            "BASELINE_EXTRA_COUNT = 475",
-            "REMAINING_EXTRA_COUNT = 51",
+            "derived_baseline_extra_names",
+            "candidate-minus-reference-dynamic-symbol-identities",
+            "validate_dynsym_delta",
             "shared dynsym changed by names beyond the exact 424-name mimalloc local contract",
             "static allocator provider lost hidden shared-only names",
             "fresh shared link selected allocator member differs from the static provider",
