@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import contextlib
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -18,6 +19,15 @@ import native_abi_selection as selection
 
 
 class RuntimeReceiptAttachmentTests(unittest.TestCase):
+    _FROZEN_0E_ROOT = ROOT.parent / 'native_abi_protocol_integration'
+    _FROZEN_0E_PREPARED_RECEIPT = (
+        _FROZEN_0E_ROOT / '.work/x86_64/prepared-worker-tls/clean-0e7af481/report.json'
+    )
+    _FROZEN_0E_PREPARED_ACCOUNTING = (
+        _FROZEN_0E_ROOT /
+        '.work/x86_64/native-abi-selection/diagnostic-no-crt-prepared-0e7af481/report.json'
+    )
+
     def setUp(self):
         # The canonical Docker dispatcher mounts a linked worktree at
         # /workspace while preserving its host common Git directory. The
@@ -202,24 +212,7 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
 
     @staticmethod
     def _prepared_source_account():
-        return {
-            'source_files': {},
-            'operations': copy.deepcopy(selection.prepared_worker_evidence.OPERATIONS),
-            'source_signatures': {},
-            'legacy_replacement': copy.deepcopy(selection.prepared_worker_evidence.expected_contract()['legacy_replacement']),
-            'worker_token': {
-                'producer_fields': list(selection.prepared_worker_evidence.TOKEN_FIELDS),
-                'consumer_fields': list(selection.prepared_worker_evidence.TOKEN_FIELDS),
-                'size_bytes': 32, 'alignment_bytes': 8,
-            },
-            'ordering': {},
-            'descriptor': {
-                'size_bytes': 72, 'alignment_bytes': 8,
-                'role': 'private-process-lifetime-initial-tls-provenance',
-            },
-            'descriptor_source_fields': [],
-            'scope': 'Source selection and lexical ordering; native execution/compiled unit receipts remain separate.',
-        }
+        return copy.deepcopy(selection.prepared_worker_evidence.account_source(ROOT))
 
     def prepared_worker_report(self, elf_account, source_account, relocations):
         # The prepared-worker owner records supplied .work inputs with its
@@ -448,40 +441,16 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
             },
             'unresolved': descriptor_requirements,
         })
-        provider_index = len(occurrences)
-        provider_row = {
-            'name': descriptor_name, 'version': None, 'version_default': False, 'row_index': provider_index,
-            'type': 'OBJECT', 'binding': 'GLOBAL', 'visibility': 'DEFAULT', 'section_index': '3',
-            'size_bytes': 72, 'value': '0000000000000040',
-        }
-        occurrences.append({
-            'index': provider_index, 'artifact_key': 'candidate-loader', 'table': '.symtab', 'role': 'definition',
-            'row': provider_row,
-        })
-        consumer_indices = []
-        for table in ('.dynsym', '.symtab'):
-            index = len(occurrences)
-            consumer_indices.append(index)
-            row = {'name': descriptor_name, 'version': None, 'version_default': False, 'row_index': index,
-                   **self._runtime_row()}
-            occurrences.append({
-                'index': index, 'artifact_key': 'candidate-shared', 'table': table, 'role': 'import', 'row': row,
-            })
-        elf_account['descriptor_named_elf_observations'] = [
-            {'artifact': 'candidate-loader', 'table': '.symtab', 'row': copy.deepcopy(provider_row)},
-            *[{'artifact': 'candidate-shared', 'table': occurrences[index]['table'],
-               'row': copy.deepcopy(occurrences[index]['row'])} for index in consumer_indices],
-        ]
         protocol_joins.extend([
             {
                 'identity': descriptor_identity, 'artifact_key': 'candidate-loader',
-                'role': 'private-descriptor-definition', 'occurrence_indices': [provider_index],
-                'metadata_differences': [{'occurrence_index': provider_index, 'fields': []}],
+                'role': 'private-descriptor-definition', 'occurrence_indices': [],
+                'metadata_differences': [],
                 'binding_and_visibility_selection_complete': False,
             },
             {
                 'identity': descriptor_identity, 'artifact_key': 'candidate-shared', 'role': 'consumer-import',
-                'occurrence_indices': consumer_indices, 'endpoint_kind': 'descriptor',
+                'occurrence_indices': [], 'endpoint_kind': 'descriptor',
                 'signature_status': descriptor_protocol['signature_status'], 'relocation_lifecycle_proven': False,
             },
         ])
@@ -789,6 +758,107 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
                 registry=None, pthread=None, prepared_worker=companion,
             )
 
+    def test_frozen_0e_prepared_worker_public_replay_attaches_only_observed_joins(self):
+        """A real owner replay leaves the uninstalled descriptor protocol open."""
+        if not (self._FROZEN_0E_PREPARED_RECEIPT.is_file()
+                and self._FROZEN_0E_PREPARED_ACCOUNTING.is_file()):
+            self.skipTest('requires frozen 0e prepared-worker receipt and selector accounting')
+        self.assertEqual(
+            hashlib.sha256(self._FROZEN_0E_PREPARED_RECEIPT.read_bytes()).hexdigest(),
+            'cbf6ae5c7e5e9c3caa8e23b4d1ca422ddf055fe83973c926d679b7d0a3fd430e',
+        )
+        self.assertEqual(
+            hashlib.sha256(self._FROZEN_0E_PREPARED_ACCOUNTING.read_bytes()).hexdigest(),
+            'ff3a3a58e58f52cc2a43ec65dbf8a2bb450c6ba7d4ccef0d6b58fa728e8f5299',
+        )
+        report = json.loads(self._FROZEN_0E_PREPARED_RECEIPT.read_text())
+        inputs = report['inputs_before']
+        products = inputs['products']
+        paths = {
+            'measurement_checkout': self._FROZEN_0E_ROOT,
+            'base_inventory': self._FROZEN_0E_ROOT / inputs['reports']['base_inventory']['path'],
+            'elf_report': self._FROZEN_0E_ROOT / inputs['reports']['elf_report']['path'],
+            'static_preparation': self._FROZEN_0E_ROOT / products['static_preparation']['receipt']['path'],
+            'static_product': self._FROZEN_0E_ROOT / products['static_preparation']['primary']['path'],
+            'dynamic_product': self._FROZEN_0E_ROOT / products['dynamic_product']['path'],
+        }
+        self.assertTrue(all(path.is_file() or path.is_dir() for path in paths.values()))
+        facts = json.loads(paths['elf_report'].read_text())
+        source = copy.deepcopy(report['source_before'])
+        measurement = {
+            'candidate_build': {
+                'revision': source['revision'], 'source_content_sha256': source['content_sha256'],
+            },
+            'reports': {
+                name: selection.file_identity(paths[key])
+                for name, key in (
+                    ('elf_report', 'elf_report'), ('base_inventory', 'base_inventory'),
+                    ('static_preparation', 'static_preparation'),
+                )
+            },
+        }
+        diagnostic = json.loads(self._FROZEN_0E_PREPARED_ACCOUNTING.read_text())
+        operations = set(selection.prepared_worker_evidence.OPERATIONS)
+        descriptor_name = '__crabc_x86_64_loader_tls_runtime_v1'
+        names = operations | set(selection.prepared_worker_evidence.LEGACY) | {descriptor_name}
+        accounting = {
+            'identities': [copy.deepcopy(row) for row in diagnostic['identities']
+                           if row['identity']['name'] in names],
+            'occurrences': [copy.deepcopy(row) for row in diagnostic['occurrences']
+                            if row['row']['name'] in operations | {descriptor_name}],
+            'placement_joins': [],
+            'private_protocol_joins': [copy.deepcopy(row) for row in diagnostic['private_protocol_joins']
+                                       if row['identity']['name'] in operations | {descriptor_name}],
+            'blockers': [copy.deepcopy(row) for row in diagnostic['closure']['blockers']
+                         if row.get('identity', {}).get('name') in names],
+        }
+        descriptor_before = next(row for row in accounting['identities']
+                                 if row['identity']['name'] == descriptor_name)
+        descriptor_requirements = copy.deepcopy(descriptor_before['unresolved'])
+        # The frozen report lives below an immutable sibling checkout.  These
+        # root redirects model its read-only mount while the owner replay and
+        # product/ELF joins remain real.
+        reader = selection.prepared_worker_evidence
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(selection, 'ROOT', self._FROZEN_0E_ROOT))
+            stack.enter_context(mock.patch.object(
+                selection, '_common_checkout', return_value=self._FROZEN_0E_ROOT,
+            ))
+            stack.enter_context(mock.patch.object(reader, 'ROOT', self._FROZEN_0E_ROOT))
+            stack.enter_context(mock.patch.object(reader.inventory, 'ROOT', self._FROZEN_0E_ROOT))
+            stack.enter_context(mock.patch.object(
+                reader, 'CONTRACT', self._FROZEN_0E_ROOT / 'compat/x86_64/prepared-worker-tls.toml',
+            ))
+            stack.enter_context(mock.patch.object(reader.ordinary.qualification, 'ROOT', self._FROZEN_0E_ROOT))
+            companion = selection.prepared_worker_tls_adapter(
+                self._FROZEN_0E_PREPARED_RECEIPT, facts=facts, measurement=measurement,
+                paths=paths, source=source,
+            )
+            joins = selection.attach_prepared_worker_tls(accounting, companion)
+        self.assertEqual(len(joins), 1)
+        self.assertEqual(len(joins[0]['operations']), 3)
+        self.assertEqual(len(joins[0]['legacy_replacements']), 7)
+        self.assertEqual(joins[0]['descriptor']['unproved_occurrence_indices'], [30634])
+        self.assertEqual(joins[0]['descriptor']['provider_occurrence_indices'], [])
+        self.assertEqual(joins[0]['descriptor']['consumer_occurrence_indices'], [])
+        self.assertEqual(joins[0]['descriptor']['requirements_discharged'], [])
+        self.assertEqual(joins[0]['descriptor']['requirements_remaining'], descriptor_requirements)
+        descriptor_after = next(row for row in accounting['identities']
+                                if row['identity']['name'] == descriptor_name)
+        self.assertEqual(descriptor_after['unresolved'], descriptor_requirements)
+        descriptor_joins = [row for row in accounting['private_protocol_joins']
+                            if row['identity']['name'] == descriptor_name]
+        self.assertEqual(
+            [(row['artifact_key'], row['role'], row['occurrence_indices']) for row in descriptor_joins],
+            [('candidate-shared', 'consumer-import', []),
+             ('candidate-loader', 'private-descriptor-definition', [])],
+        )
+        self.assertFalse(descriptor_joins[0]['relocation_lifecycle_proven'])
+        self.assertFalse(descriptor_joins[1]['binding_and_visibility_selection_complete'])
+        descriptor_blockers = [row for row in accounting['blockers']
+                               if row.get('identity', {}).get('name') == descriptor_name]
+        self.assertEqual([row['reason'] for row in descriptor_blockers], descriptor_requirements)
+
     def test_errno_adapter_replays_the_owner_and_rejects_a_cross_cohort_library(self):
         report = self.errno_storage_report()
         with mock.patch.object(selection.errno_storage_evidence, 'validate_report', return_value=report) as replay:
@@ -826,7 +896,7 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
                 paths=self.paths, source=self.source,
             )
 
-    def test_prepared_worker_join_discharges_only_exact_tls_operations_legacy_names_and_descriptor(self):
+    def test_prepared_worker_join_discharges_only_exact_tls_operations_and_legacy_names(self):
         elf_account = {
             'operations': {name: {'.dynsym': {}, '.symtab': {}}
                            for name in selection.prepared_worker_evidence.OPERATIONS},
@@ -854,7 +924,22 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
         self.assertEqual(len(joins), 1)
         self.assertEqual(len(joins[0]['operations']), 3)
         self.assertEqual(len(joins[0]['legacy_replacements']), 7)
-        self.assertFalse(accounting['blockers'])
+        descriptor = joins[0]['descriptor']
+        self.assertEqual(descriptor['unproved_occurrence_indices'], [])
+        self.assertEqual(descriptor['provider_occurrence_indices'], [])
+        self.assertEqual(descriptor['consumer_occurrence_indices'], [])
+        self.assertEqual(descriptor['requirements_discharged'], [])
+        descriptor_record = next(row for row in accounting['identities']
+                                 if row['identity']['name'] == '__crabc_x86_64_loader_tls_runtime_v1')
+        self.assertEqual(descriptor['requirements_remaining'], descriptor_record['unresolved'])
+        self.assertEqual(len(accounting['blockers']), len(descriptor_record['unresolved']))
+        descriptor_joins = [row for row in accounting['private_protocol_joins']
+                            if row['identity']['name'] == '__crabc_x86_64_loader_tls_runtime_v1']
+        self.assertTrue(all(row['occurrence_indices'] == [] for row in descriptor_joins))
+        consumer = next(row for row in descriptor_joins if row['role'] == 'consumer-import')
+        provider = next(row for row in descriptor_joins if row['role'] == 'private-descriptor-definition')
+        self.assertFalse(consumer['relocation_lifecycle_proven'])
+        self.assertFalse(provider['binding_and_visibility_selection_complete'])
         self.assertTrue(all(
             occurrence.get('accounting', {}).get('resolution_proven') is True
             for occurrence in accounting['occurrences']

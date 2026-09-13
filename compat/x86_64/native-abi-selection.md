@@ -134,9 +134,14 @@ completion, family, promotion, or public-support flags.
 reader authenticates the same selected static preparation, dynamic product,
 complete ELF facts, and current source transaction before the selector joins
 three private shared-libc source-dispatch imports, the seven retired prepared
-worker-token names, and the 72-byte initial TLS descriptor. The join records
-the exact `.dynsym`/`.symtab` imports, the loader definition, and the
-descriptor consumer separately. The owner records its supplied preparation,
+worker-token names. It separately authenticates the source contract for the
+72-byte initial TLS descriptor, including its exact field roster and owned
+runtime provenance. The current receipt requires no installed descriptor
+import and contains neither the selected shared-libc consumer import nor the
+loader definition, so the selector preserves every descriptor requirement and
+protocol join as open. A weak undefined row in the dynamic CRT attachment
+object remains an unproved occurrence; it is not recast as a shared-libc
+consumer import. The owner records its supplied preparation,
 public reports, product roots, manifests, and dynamic state as exact
 checkout-relative path/hash/size identities; the selector joins each to the
 same supplied path and content, then retains its mode-bearing product cohort
@@ -221,7 +226,10 @@ projection. The selector requires the owner’s current collector and selected
 runtime source identities, its static/dynamic product roots, their three
 mode-bearing manifest/state inputs, the public ELF facts, and all nine owned
 installed CRT/runtime artifacts to match the same selection transaction. It
-then joins every retained named row to exactly one
+requires relocation observations for the eight non-archive artifacts; the
+selected static archive remains in the separate complete named-row placement
+proof because it has no one relocation table of its own. The selector then
+joins every retained named row to exactly one
 complete-ELF occurrence and rejects an added, omitted, duplicated, or
 substituted occurrence. `_GLOBAL_OFFSET_TABLE_` remains the one exact
 link-time boundary: the attachment requires its archive undefined row and the
