@@ -192,7 +192,7 @@ python3 -B "$READER" snapshot --root "$ROOT" --output "$work/source-before.json"
 # the exact supplied installed tree with the pinned compiler, then compile all
 # workload objects only through that installed driver.
 action installed-header-preprocess /usr/bin/clang --target=x86_64-linux-musl -std=c11 -nostdinc \
-    -isystem "$dynamic_product/usr/include" -D_GNU_SOURCE -H -E "$PROBE"
+    -isystem "$dynamic_product/usr/include" -D_GNU_SOURCE -DCRABC_ERRNO_STORAGE_DYNAMIC_DSO -H -E "$PROBE"
 for header in errno.h netdb.h pthread.h dlfcn.h; do
     grep -Fq "$dynamic_product/usr/include/$header" "$work/installed-header-preprocess.stderr" ||
         fail "workload did not include supplied installed $header"
