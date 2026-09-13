@@ -4478,21 +4478,55 @@ def _pthread_timed_one_row(rows: Sequence[Mapping[str, Any]], *, artifact: str, 
     return dict(matches[0])
 
 
-def _pthread_timed_feature_contract(value: object, *, alias: str, provider: str) -> dict[str, Any]:
-    """Keep the receipt tied to the existing selected feature route."""
-    require(type(value) is dict, f'pthread timed feature contract differs: {alias}')
-    require(value.get('name') == alias and value.get('target') == provider
-            and value.get('binding') == 'weak-same-address'
-            and value.get('owner') == 'x86-owned-static-runtime'
-            and value.get('state') == 'planned'
-            and value.get('evidence_record') is None
-            and value.get('runner') == 'compat/x86_64/run_owned_static_sysroot.sh'
-            and value.get('feature_selection_source') == 'scripts/build_x86_64_owned_sysroot.py'
-            and value.get('enabled_features') == ['x86-owned-static-runtime']
-            and value.get('sources') == ['compat/x86_64/feature_archive_roster.py', 'compat/x86_64/parity.toml'],
+def _pthread_timed_source_feature_requirements(
+        aliases: Sequence[tuple[str, str]]) -> dict[str, dict[str, Any]]:
+    """Reconstruct all four enriched requirements from the selected source.
+
+    The function-alias rows retain feature state, baseline, enabled feature,
+    source, runner, evidence, and builder-route fields.  A reduced fixture
+    could self-consistently satisfy the named alias relation while admitting a
+    different selected archive route, so the attachment compares the complete
+    source-expanded record instead of projecting four convenient fields.
+    """
+    contract = load_contract(CONTRACT_PATH)
+    inputs = load_source_inputs(contract, CONTRACT_PATH)
+    expanded = expand_obligations(contract, inputs)
+    records = {identity_key(record['identity']): record for record in expanded}
+    require(len(records) == len(expanded), 'pthread timed source feature identities duplicate')
+    fields = {
+        'name', 'target', 'binding', 'owner', 'state', 'evidence_record', 'runner',
+        'feature_selection_source', 'sources', 'baseline_features', 'enabled_features',
+    }
+    requirements: dict[str, dict[str, Any]] = {}
+    for public, provider in aliases:
+        record = records.get((public, None, False))
+        require(record is not None and type(record.get('function_alias_requirements')) is list
+                and len(record['function_alias_requirements']) == 1,
+                f'pthread timed source feature requirement differs: {public}')
+        feature = exact(record['function_alias_requirements'][0], fields,
+                        f'pthread timed source feature requirement {public}')
+        require(feature['name'] == public and feature['target'] == provider
+                and feature['binding'] == 'weak-same-address'
+                and feature['owner'] == 'x86-owned-static-runtime'
+                and feature['state'] == 'planned'
+                and feature['evidence_record'] is None
+                and feature['runner'] == 'compat/x86_64/run_owned_static_sysroot.sh'
+                and feature['feature_selection_source'] == 'scripts/build_x86_64_owned_sysroot.py'
+                and feature['enabled_features'] == ['x86-owned-static-runtime']
+                and feature['sources'] == ['compat/x86_64/feature_archive_roster.py', 'compat/x86_64/parity.toml']
+                and type(feature['baseline_features']) is list and feature['baseline_features'],
+                f'pthread timed source feature requirement differs: {public}')
+        requirements[public] = copy.deepcopy(feature)
+    require(set(requirements) == {public for public, _provider in aliases},
+            'pthread timed source feature requirement roster differs')
+    return requirements
+
+
+def _pthread_timed_feature_contract(value: object, *, alias: str,
+                                    expected: Mapping[str, Any]) -> dict[str, Any]:
+    """Require the accounting row to retain its full source-owned route."""
+    require(type(value) is dict and same(value, expected),
             f'pthread timed feature contract differs: {alias}')
-    require(type(value.get('baseline_features')) is list and value['baseline_features'],
-            f'pthread timed feature baseline differs: {alias}')
     return copy.deepcopy(value)
 
 
@@ -4523,6 +4557,7 @@ def attach_native_pthread_timed_feature(accounting: Mapping[str, Any],
             'pthread timed finite alias/provider cardinality differs')
     require(companion['aliases'] == [{'public': public, 'provider': provider} for public, provider in aliases],
             'pthread timed companion alias roster differs')
+    source_feature_requirements = _pthread_timed_source_feature_requirements(aliases)
     observations = exact(companion['observations'], {
         'aliases', 'archive_hidden_providers', 'archive_local_providers', 'alias_shapes', 'same_definition',
     }, 'pthread timed companion observations')
@@ -4583,7 +4618,9 @@ def attach_native_pthread_timed_feature(accounting: Mapping[str, Any],
         feature = record.get('function_alias_requirements')
         require(type(feature) is list and len(feature) == 1,
                 f'pthread timed feature alias requirement differs: {public}')
-        feature_contract = _pthread_timed_feature_contract(feature[0], alias=public, provider=provider)
+        feature_contract = _pthread_timed_feature_contract(
+            feature[0], alias=public, expected=source_feature_requirements[public],
+        )
         function_observations = accounting.get('function_alias_observations')
         require(type(function_observations) is list, 'pthread timed feature archive observations differ')
         matching = [row for row in function_observations

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import functools
 import hashlib
 import json
 from pathlib import Path
@@ -308,14 +309,28 @@ class NativePthreadTimedAttachmentTests(unittest.TestCase):
             )
 
     def _feature(self, public: str, provider: str) -> dict[str, object]:
-        return {
-            'name': public, 'target': provider, 'binding': 'weak-same-address',
-            'owner': 'x86-owned-static-runtime', 'state': 'planned', 'evidence_record': None,
-            'runner': 'compat/x86_64/run_owned_static_sysroot.sh',
-            'feature_selection_source': 'scripts/build_x86_64_owned_sysroot.py',
-            'enabled_features': ['x86-owned-static-runtime'], 'baseline_features': ['x86-ualarm'],
-            'sources': ['compat/x86_64/feature_archive_roster.py', 'compat/x86_64/parity.toml'],
-        }
+        actual = self._actual_feature(public)
+        if actual.get('target') != provider:
+            raise AssertionError(f'feature target differs: {public}')
+        return copy.deepcopy(actual)
+
+    @staticmethod
+    @functools.lru_cache(maxsize=None)
+    def _actual_feature(public: str) -> dict[str, object]:
+        contract_path = ROOT / 'compat/x86_64/native-abi-selection.toml'
+        contract = selection.load_contract(contract_path)
+        inputs = selection.load_source_inputs(contract, contract_path)
+        records = selection.expand_obligations(contract, inputs)
+        record = next(record for record in records if record['identity']['name'] == public)
+        requirements = record.get('function_alias_requirements')
+        if type(requirements) is not list or len(requirements) != 1:
+            raise AssertionError(f'missing exact feature requirement: {public}')
+        return copy.deepcopy(requirements[0])
+
+    def test_feature_fixture_uses_the_complete_current_source_record(self) -> None:
+        for public, provider in ALIASES:
+            with self.subTest(public=public):
+                self.assertEqual(self._feature(public, provider), self._actual_feature(public))
 
     def _accounting(self, extra_named: bool = False) -> dict[str, object]:
         occurrences, index = [], 0
@@ -376,6 +391,16 @@ class NativePthreadTimedAttachmentTests(unittest.TestCase):
         self.assertEqual(accounting['identities'][-1]['unresolved'], [selection.ORDINARY_IMPORT_REASON])
         self.assertTrue(any(row['row']['name'] == '' for row in accounting['occurrences']))
         self.assertTrue(any(row['row']['name'] == 'unowned_pthread_fact' for row in accounting['occurrences']))
+
+    def test_feature_requirement_metadata_must_match_the_current_source_record(self) -> None:
+        companion = self._adapter()
+        accounting = self._accounting()
+        forged = copy.deepcopy(accounting['identities'][0]['function_alias_requirements'][0])
+        forged['baseline_features'] = ['forged-feature-baseline']
+        accounting['identities'][0]['function_alias_requirements'] = [forged]
+        accounting['function_alias_observations'][0]['feature_contract'] = copy.deepcopy(forged)
+        with self.assertRaises(selection.SelectionError):
+            selection.attach_native_pthread_timed_feature(accounting, companion)
 
     def test_wrong_selected_source_is_rejected(self) -> None:
         receipt = self._receipt()

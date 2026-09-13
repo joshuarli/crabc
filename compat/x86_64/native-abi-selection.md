@@ -315,6 +315,9 @@ receipt` reasons. It requires each public alias as a candidate static
 `FUNC WEAK DEFAULT` definition plus shared `.dynsym` and `.symtab` forms, and
 each private spelling as the receipt's candidate static `FUNC GLOBAL HIDDEN`
 and shared local `.symtab` definition in the same definition domains. The
+four accounting requirements must exactly match the source-expanded feature
+records, including their state, baseline and enabled features, evidence,
+runner, source provenance, and feature-selection route. The
 private spellings are finite physical observations; this creates no hidden
 owner group or private-body receipt reason. The older 17-alias pthread receipt,
 other imports, all unowned rows, and all unnamed rows remain unchanged. This
