@@ -31,11 +31,13 @@ if str(MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(MODULE_DIR))
 import native_abi_inventory as inventory
 import native_abi_elf_facts as elf_facts
+import header_abi_matrix as header_matrix
 import header_callable_disposition as callable_disposition
 import feature_archive_roster as feature_roster
 import header_declaration_inventory as declaration_inventory
 import loader_debug_abi_evidence as loader_debug_evidence
 import public_data_ordinary_link_evidence as ordinary_link_evidence
+import native_callable_declarations as callable_declarations
 
 SCHEMA = 'crabc.x86_64-native-abi-selection-report/v1'
 CONTRACT_SCHEMA = 'crabc.x86_64-native-abi-selection/v1'
@@ -48,6 +50,7 @@ INPUT_PATHS = {
     'frozen_static': 'compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv',
     'callable_inventory': 'compat/x86_64/header_callable_inventory.json',
     'callable_disposition': 'compat/x86_64/header_callable_disposition.json',
+    'header_abi_matrix': 'compat/x86_64/generated/header_abi_matrix/report.json',
     'parity': 'compat/x86_64/parity.toml',
 }
 STATUS = {'family_completion': False, 'promotion_ready': False, 'public_support': False}
@@ -386,6 +389,15 @@ def file_identity(path: Path) -> dict[str, Any]:
     return inventory.file_record(path, logical_path=str(path))
 
 
+def selecting_source_file_identity(path: Path) -> dict[str, Any]:
+    """Record a current selecting-source file under its canonical repo path."""
+    supplied = Path(path)
+    require(supplied.is_file() and not supplied.is_symlink(), 'selecting source identity is not a physical checkout file')
+    physical = supplied.resolve()
+    require(physical.is_relative_to(ROOT), 'selecting source identity escapes the checkout')
+    return inventory.file_record(physical, logical_path=str(physical.relative_to(ROOT)))
+
+
 def _git(root: Path, *args: str) -> bytes:
     try:
         return subprocess.check_output(['git', '-c', f'safe.directory={root}', *args], cwd=root, stderr=subprocess.PIPE)
@@ -426,6 +438,21 @@ def load_source_inputs(contract: Mapping[str, Any], contract_path: Path) -> dict
     disposition_contract = callable_disposition.load_contract()
     expected_disposition = callable_disposition.build_report(disposition_contract)
     require(same(disposition, expected_disposition), 'current callable/provider disposition does not reconstruct')
+    try:
+        matrix_contract = header_matrix.load_contract()
+        matrix_report = read_json(paths['header_abi_matrix'])
+        header_matrix.validate_checked_report(matrix_report, matrix_contract)
+        callable_matrix = callable_declarations.matrix_projection_from_checked_report(
+            matrix_report,
+            provenance={
+                'report': selecting_source_file_identity(paths['header_abi_matrix']),
+                'reader': selecting_source_file_identity(Path(header_matrix.__file__)),
+                'contract': selecting_source_file_identity(header_matrix.CONTRACT_PATH),
+                'extension_contract': selecting_source_file_identity(header_matrix.callable_extension_contract.CONTRACT_PATH),
+            },
+        )
+    except (ValueError, OSError) as error:
+        raise SelectionError(f'checked callable declaration matrix rejected: {error}') from error
     feature_rows = feature_roster.load_feature_archive_roster()
     capabilities = []
     owners = {}
@@ -474,6 +501,9 @@ def load_source_inputs(contract: Mapping[str, Any], contract_path: Path) -> dict
         'compat/x86_64/header_callable_linkage_audit.py', 'compat/x86_64/header_callable_inventory.py',
         'compat/x86_64/feature_archive_roster.py', 'compat/x86_64/static_c_abi_exports.txt',
         'compat/x86_64/header_callable_extension_contract.py', 'compat/x86_64/header_callable_extension_contract.toml',
+        'compat/x86_64/header_abi_matrix.py', 'compat/x86_64/header_abi_matrix.toml',
+        'compat/x86_64/native_callable_declarations.py', 'compat/x86_64/native_callable_declarations.toml',
+        'compat/x86_64/tests/test_native_callable_declarations.py', 'compat/x86_64/native-callable-declarations.md',
         'libc/Cargo.toml', 'compat/x86_64/native-abi-selection.md',
     }
     for field in ('owner_groups', 'structural_groups', 'object_contracts', 'private_protocols'):
@@ -489,6 +519,7 @@ def load_source_inputs(contract: Mapping[str, Any], contract_path: Path) -> dict
             'frozen_dynamic': dynamic, 'frozen_static': static, 'capabilities': capabilities,
             'header_occurrences': rows, 'header_profiles': header['profiles'], 'provider_names': sorted(provider_names),
             'deferred': deferred, 'provider_disposition': primary, 'abi_only_callables': abi_only,
+            'callable_declaration_matrix': callable_matrix,
             'feature_aliases': feature_aliases,
             'families': [{'id': r['id'], 'status': r['status']} for r in parity['family']]}
 
@@ -896,7 +927,10 @@ def account_object_declarations(report: Mapping[str, Any], selected_objects: Seq
             'complete': not unresolved and not any(row['remaining'] for row in requirements)}
 
 
-def declaration_adapter(report_path: Path | None, *, selected_objects: Sequence[Mapping[str, Any]]) -> dict[str, Any] | None:
+def declaration_adapter(report_path: Path | None, *, selected_objects: Sequence[Mapping[str, Any]],
+                        provider_names: Sequence[str], deferred: Mapping[str, Any],
+                        abi_only_callables: Sequence[Mapping[str, Any]],
+                        callable_matrix_projection: Mapping[str, Any]) -> dict[str, Any] | None:
     if report_path is None:
         return None
     module_path = Path(declaration_inventory.__file__)
@@ -929,6 +963,22 @@ def declaration_adapter(report_path: Path | None, *, selected_objects: Sequence[
         'contract': file_identity(data_declarations.CONTRACT_PATH),
         'account': typed_data,
     }
+    try:
+        typed_callables = callable_declarations.account_declarations(
+            envelope,
+            provider_names=provider_names,
+            deferred=deferred,
+            abi_only_callables=abi_only_callables,
+            matrix_projection=callable_matrix_projection,
+        )
+    except (ValueError, OSError) as error:
+        raise SelectionError(f'selected callable declarations rejected: {error}') from error
+    account['selected_callable_declarations'] = {
+        'adapter': file_identity(Path(callable_declarations.__file__)),
+        'contract': file_identity(callable_declarations.CONTRACT_PATH),
+        'account': typed_callables,
+    }
+    account['complete'] = False
     return {'report': file_identity(report_path), 'reader': file_identity(module_path),
             'current_selecting_source': source, 'physical_status': report['status'], **account}
 
@@ -1153,7 +1203,14 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     contract = load_contract(contract_path)
     inputs = load_source_inputs(contract, contract_path)
     facts, measurement = replay_measurement(paths)
-    declaration = declaration_adapter(declaration_report, selected_objects=contract['object_contracts'])
+    declaration = declaration_adapter(
+        declaration_report,
+        selected_objects=contract['object_contracts'],
+        provider_names=inputs['provider_names'],
+        deferred=inputs['deferred'],
+        abi_only_callables=inputs['abi_only_callables'],
+        callable_matrix_projection=inputs['callable_declaration_matrix'],
+    )
     public_data_linkage_companion = public_data_linkage_adapter(
         ordinary_link_report, loader_debug_report, contract=contract,
         selected_objects=contract['object_contracts'], source=source_before, paths=paths,

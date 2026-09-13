@@ -1,0 +1,29 @@
+schema = "crabc.x86_64-native-callable-declarations/v1"
+target = "x86_64-unknown-linux-musl"
+oracle = "Pinned musl 1.2.6"
+header_declaration_report_schema = "crabc.x86_64-header-declaration-inventory/v1"
+header_abi_matrix_report_schema = "crabc.x86_64-header-abi-matrix-report/v2"
+matrix_projection_schema = "crabc.x86_64-native-callable-matrix-projection/v1"
+
+# These are observations from the one shared compiler receipt.  In particular,
+# cxx17-strict is still a C++ AST profile even where the pinned Clang process
+# exposes GNU declarations through its predefined feature macros.
+[profile_languages]
+c11-gnu = "c"
+cxx17-gnu = "cxx"
+c11-strict = "c"
+c11-posix-2008 = "c"
+c11-xopen-700 = "c"
+c11-bsd = "c"
+cxx17-strict = "cxx"
+
+[policy]
+exact_qual_type_and_linker_spelling_multisets = true
+physical_raw_function_provenance = true
+provider_selection = false
+raw_occurrence_multiplicity_preserved = true
+replay_or_compiler_execution = false
+semantic_language_linkage = false
+synthetic_macro_or_gcc_fallback_declarations = false
+family_completion = false
+public_support = false

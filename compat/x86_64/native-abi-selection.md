@@ -90,6 +90,16 @@ ordinary link/addressability evidence without claiming object lifecycle,
 strong override, interposition, COPY relocation, header feature-profile, or
 runtime mutation semantics.
 
+The same replay also feeds
+[`native_callable_declarations.py`](native-callable-declarations.md).  That
+adapter consumes the already checked header-matrix projection and existing
+provider/deferred/ABI-only partitions.  It preserves every selected raw
+`FunctionDecl` occurrence and requires exact multiplicity-preserving compiler
+type/linker-spelling agreement where a pinned declaration is comparable.  Its
+sole candidate-only native extension is the existing exact `tgkill` record.
+It does not infer language linkage, select a provider, use macro or GCC
+fallback records as declarations, prove runtime behavior, or close any family.
+
 ## Selection inputs and definition domains
 
 Keep the frozen AArch64 capability, header, and ABI inputs unchanged. Correlate

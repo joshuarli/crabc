@@ -9,6 +9,7 @@ frozen_dynamic = "compat/abi/musl-1.2.6/aarch64/libc.so.dynamic.tsv"
 frozen_static = "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv"
 callable_inventory = "compat/x86_64/header_callable_inventory.json"
 callable_disposition = "compat/x86_64/header_callable_disposition.json"
+header_abi_matrix = "compat/x86_64/generated/header_abi_matrix/report.json"
 parity = "compat/x86_64/parity.toml"
 
 [[profiles]]

@@ -142,6 +142,12 @@ public-data declaration checks over that replayed receipt: 19 installed
 variables, the `h_errno` accessor macro, and 13 ABI-only names. Provider layout
 and runtime behavior require their own evidence.
 
+[native-callable-declarations.md](native-callable-declarations.md) defines the
+selected callable declaration-form account over that same single replayed
+receipt. It retains physical raw FunctionDecl multiplicity and exact compiler
+type/linker-spelling agreement without selecting providers, inferring linkage,
+or treating macros as callable declarations.
+
 [public-data-ordinary-link.md](public-data-ordinary-link.md) describes the
 ordinary-link matrix for the 32 data objects shared by the static and dynamic
 products. It consumes prepared products, links one workload object in seven

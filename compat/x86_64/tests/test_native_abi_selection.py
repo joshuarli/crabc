@@ -19,6 +19,9 @@ assert SPEC is not None and SPEC.loader is not None
 selection = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = selection
 SPEC.loader.exec_module(selection)
+if str(ROOT / 'compat/x86_64') not in sys.path:
+    sys.path.insert(0, str(ROOT / 'compat/x86_64'))
+import native_data_declarations as data_declarations
 
 
 def identity(name, version=None, default=False):
@@ -464,6 +467,7 @@ class SelectedDataDeclarationIntegrationTests(unittest.TestCase):
         spec.loader.exec_module(module)
         cls.fixture = module.NativeDataDeclarationsTests()
         cls.objects = selection.load_contract()['object_contracts']
+        cls.inputs = selection.load_source_inputs(selection.load_contract(), selection.CONTRACT_PATH)
 
     def setUp(self):
         work = ROOT / '.work/x86_64/native-abi-selection-tests'
@@ -481,8 +485,20 @@ class SelectedDataDeclarationIntegrationTests(unittest.TestCase):
         # worktree metadata names the host. Path admission has separate tests;
         # make this fixture's checkout its local evidence boundary.
         with mock.patch.object(selection, '_common_checkout', return_value=ROOT), \
-             mock.patch.object(selection.declaration_inventory, 'validate_report', return_value=envelope) as replay:
-            result = selection.declaration_adapter(self.report, selected_objects=self.objects)
+             mock.patch.object(selection.declaration_inventory, 'validate_report', return_value=envelope) as replay, \
+             mock.patch.object(
+                 selection.callable_declarations,
+                 'account_declarations',
+                 return_value={'selected_callable_declaration_status': 'fixture-not-exercised-here'},
+             ):
+            result = selection.declaration_adapter(
+                self.report,
+                selected_objects=self.objects,
+                provider_names=self.inputs['provider_names'],
+                deferred=self.inputs['deferred'],
+                abi_only_callables=self.inputs['abi_only_callables'],
+                callable_matrix_projection=self.inputs['callable_declaration_matrix'],
+            )
         replay.assert_called_once_with(self.report, project_include=ROOT / 'include')
         return result
 
@@ -858,6 +874,73 @@ class PublicDataLinkageAdapterTests(unittest.TestCase):
         self.assertEqual(accounting['blockers'], [
             {'code': 'identity-unresolved', 'identity': identity('environ'), 'reason': ordinary_reason},
         ])
+
+
+class SelectedCallableDeclarationIntegrationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        path = ROOT / 'compat/x86_64/tests/test_native_callable_declarations.py'
+        spec = importlib.util.spec_from_file_location('selection_callable_declaration_fixture', path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        cls.fixture = module.NativeCallableDeclarationsTests()
+        cls.objects = selection.load_contract()['object_contracts']
+
+    def setUp(self):
+        work = ROOT / '.work/x86_64/native-abi-selection-tests'
+        work.mkdir(parents=True, exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(dir=work)
+        self.addCleanup(temporary.cleanup)
+        self.report = Path(temporary.name) / 'report.json'
+        self.report.write_text('{}\n')
+
+    def test_one_public_replay_feeds_data_and_callable_adapters(self):
+        envelope = self.fixture.envelope()
+        partition = self.fixture.partition()
+        with mock.patch.object(selection, '_common_checkout', return_value=ROOT), \
+             mock.patch.object(selection.declaration_inventory, 'validate_report', return_value=envelope) as replay, \
+             mock.patch.object(
+                 data_declarations,
+                 'account_declarations',
+                 return_value={'selected_data_declaration_status': 'fixture-not-exercised-here'},
+             ):
+            result = selection.declaration_adapter(
+                self.report,
+                selected_objects=self.objects,
+                callable_matrix_projection=self.fixture.matrix_projection(),
+                **partition,
+            )
+        replay.assert_called_once_with(self.report, project_include=ROOT / 'include')
+        callable_account = result['selected_callable_declarations']
+        self.assertEqual(
+            callable_account['account']['selected_callable_declaration_status'],
+            'proved-with-explicit-boundaries',
+        )
+        self.assertEqual(
+            callable_account['adapter'],
+            selection.file_identity(ROOT / 'compat/x86_64/native_callable_declarations.py'),
+        )
+        self.assertEqual(
+            callable_account['contract'],
+            selection.file_identity(ROOT / 'compat/x86_64/native_callable_declarations.toml'),
+        )
+        self.assertFalse(result['complete'])
+
+    def test_source_inputs_bind_the_existing_checked_matrix_before_projection(self):
+        contract = selection.load_contract()
+        inputs = selection.load_source_inputs(contract, selection.CONTRACT_PATH)
+        projection = inputs['callable_declaration_matrix']
+        self.assertEqual(projection['schema'], selection.callable_declarations.MATRIX_PROJECTION_SCHEMA)
+        self.assertEqual(len(projection['rows']), 1337)
+        self.assertEqual(projection['provenance']['report']['path'], 'compat/x86_64/generated/header_abi_matrix/report.json')
+        self.assertIn('tgkill', inputs['provider_names'])
+
+    def test_checked_matrix_failure_cannot_be_projected_as_callable_evidence(self):
+        contract = selection.load_contract()
+        with mock.patch.object(selection.header_matrix, 'validate_checked_report', side_effect=ValueError('forged checked matrix')):
+            with self.assertRaisesRegex(selection.SelectionError, 'checked callable declaration matrix rejected'):
+                selection.load_source_inputs(contract, selection.CONTRACT_PATH)
 
 
 def empty_facts():
