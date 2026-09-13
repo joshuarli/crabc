@@ -119,6 +119,12 @@ It keeps historical missing, unexpected, and metadata differences visible and
 does not turn the floor into ABI compatibility, family completion, promotion,
 or public support.
 
+[native-thread-signal-abi.md](native-thread-signal-abi.md) records the native
+GNU/BSD `tgkill(int,int,int)` crabc extension, its frozen C source
+origin, separate musl syscall adapter, and installed-product static/dynamic
+proof. It is private component evidence and does not select musl `tgkill`
+equivalence, complete `process.thread-kill`, or promote native x86.
+
 [locale-alias-contract.md](locale-alias-contract.md) records the pinned-musl
 weak public/strong internal locale and time alias mechanism, including the
 installed-product interposition proof. It remains a private component result

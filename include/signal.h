@@ -268,6 +268,11 @@ typedef void (*sig_t)(int);
 
 #define SYS_SECCOMP 1
 #define SYS_USER_DISPATCH 2
+
+/* Native crabc extension preserving the frozen C ABI spelling.
+ * Pinned musl has no public tgkill export; Linux validates the
+ * caller-selected thread-group/task identifiers and signal. */
+int tgkill(int, int, int);
 #endif
 
 #ifdef _GNU_SOURCE
