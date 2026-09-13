@@ -17,7 +17,7 @@ import stat
 import subprocess
 import sys
 import tomllib
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 MODULE_DIR = Path(__file__).resolve().parent
 if str(MODULE_DIR) not in sys.path:
@@ -39,6 +39,7 @@ RAW = "raw"
 SOURCE_FILES = (
     "compat/x86_64/loader_runtime_registry_evidence.py",
     "compat/x86_64/loader-runtime-registry-private-resolution.toml",
+    "compat/x86_64/crabc_cc_owned_dynamic.py",
     "compat/x86_64/run_general_dynamic_dlopen.sh",
     "compat/x86_64/run_general_dynamic_fork.sh",
     "compat/x86_64/run_owned_posix_timers.sh",
@@ -93,6 +94,7 @@ WORKLOAD_ENVIRONMENT = {
     "RUSTUP_HOME": "/opt/rustup",
 }
 DLFCN_SKIP_SEARCH_ENV = "CRABC_GENERAL_DYNAMIC_DLOPEN_SKIP_SEARCH"
+DYNAMIC_LINK_EVIDENCE_ENV = "CRABC_X86_64_RETAIN_LINK_EVIDENCE"
 
 
 class RuntimeRegistryEvidenceError(RuntimeError):
@@ -167,7 +169,7 @@ def runner_contract(output: Path, product: Path, label: str) -> tuple[list[str],
     environment = {**WORKLOAD_ENVIRONMENT, "TMPDIR": retained_checkout_path(ROOT, output)}
     if label.startswith("dlfcn-"):
         environment.update({"CRABC_GENERAL_DYNAMIC_ENTRY_MODE": "--dynamic-" + label.removeprefix("dlfcn-"),
-                            DLFCN_SKIP_SEARCH_ENV: "1"})
+                            DLFCN_SKIP_SEARCH_ENV: "1", DYNAMIC_LINK_EVIDENCE_ENV: "1"})
     return command, environment
 
 
@@ -453,6 +455,34 @@ def _retained_link_input(replay: fork_evidence.RetainedRuntimeInputs, value: obj
     require(record["sha256"] == hashlib.sha256(expected.read_bytes()).hexdigest(), f"{description} hash drifted")
 
 
+def _dlfcn_workload_object(work: Path, value: object, stem: str, resolve: Callable[[str], Path]) -> Path:
+    """Open the one direct-driver source object at its receipt-recorded path."""
+
+    record = exact(value, {"path", "sha256"}, f"{stem} dlfcn workload input")
+    object_path = resolve(record["path"])
+    try:
+        relative_object = object_path.relative_to(work)
+    except ValueError:
+        fail(f"{stem} dlfcn workload object escapes its retained work")
+    require(len(relative_object.parts) == 2 and relative_object.parts[0].startswith("crabc-dynamic-link.")
+            and relative_object.name == "source-0.o", f"{stem} dlfcn workload object path drifted")
+    require(record["sha256"] == hashlib.sha256(object_path.read_bytes()).hexdigest(),
+            f"{stem} dlfcn workload object hash drifted")
+    return object_path
+
+
+def _native_dlfcn_checkout_input(value: str) -> Path:
+    """Open one recorded native `/workspace` input through this checkout only."""
+
+    require(type(value) is str, "dlfcn workload object path is invalid")
+    recorded = Path(value)
+    require(".." not in recorded.parts and recorded.is_relative_to("/workspace"),
+            "dlfcn workload object path escapes the native checkout mount")
+    path = physical_regular(ROOT / recorded.relative_to("/workspace"), "dlfcn workload object")
+    require(retained_checkout_path(ROOT, path) == value, "dlfcn workload object checkout spelling drifted")
+    return path
+
+
 def _retained_dlfcn_link_record(product: Path, work: Path, output: Path, stem: str, mode: str,
                                  receipt: dict[str, Any], executable: Path, receipt_path: Path,
                                  replay: fork_evidence.RetainedRuntimeInputs) -> dict[str, object]:
@@ -487,13 +517,7 @@ def _retained_dlfcn_link_record(product: Path, work: Path, output: Path, stem: s
         _retained_link_input(replay, value, expected, f"{stem} retained runtime input")
     _retained_link_input(replay, inputs[-1], archive, f"{stem} retained builtins input")
 
-    object_record = exact(inputs[len(runtime)], {"path", "sha256"}, f"{stem} retained workload input")
-    object_path = replay.resolve(object_record["path"])
-    relative_object = object_path.relative_to(work)
-    require(len(relative_object.parts) == 2 and relative_object.parts[0].startswith("crabc-dynamic-link.")
-            and relative_object.name == "source-0.o", f"{stem} retained workload object path drifted")
-    require(object_record["sha256"] == hashlib.sha256(object_path.read_bytes()).hexdigest(),
-            f"{stem} retained workload object hash drifted")
+    object_path = _dlfcn_workload_object(work, inputs[len(runtime)], stem, replay.resolve)
 
     application_paths: list[Path] = []
     seen_applications: set[str] = set()
@@ -577,6 +601,7 @@ def _link_record(product: Path, work: Path, output: Path, stem: str, mode: str,
         raise
     if replay is not None:
         return _retained_dlfcn_link_record(product, work, output, stem, mode, receipt, executable, receipt_path, replay)
+    require(receipt.get("schema") == 2, f"{stem} dlfcn receipt is not the direct-driver schema")
     require(receipt.get("mode") == mode and receipt.get("output_sha256") == hashlib.sha256(executable.read_bytes()).hexdigest(),
             f"{stem} owned driver receipt does not bind the executable")
     manifest = identity(product / "share/crabc/manifest.json")
@@ -603,6 +628,9 @@ def _link_record(product: Path, work: Path, output: Path, stem: str, mode: str,
                    and Path(str(item.get("path", ""))).as_posix().endswith("/" + relative)
                    and item.get("sha256") == hashlib.sha256(supplied.read_bytes()).hexdigest()]
         require(len(matches) == 1, f"{stem} supplied runtime input {relative} is not bound by its receipt")
+    runtime_count = 3 if mode == "shared" else 5
+    require(len(inputs) == runtime_count + 2 + len(applications), f"{stem} dlfcn input roster drifted")
+    _dlfcn_workload_object(work, inputs[runtime_count], stem, _native_dlfcn_checkout_input)
     return {"executable": identity(executable, logical_path=(work / stem).relative_to(output).as_posix()),
             "receipt": identity(receipt_path, logical_path=(work / f"{stem}.crabc-link.json").relative_to(output).as_posix()),
             "mode": mode}
@@ -757,6 +785,9 @@ def collect(*, base_inventory: Path, elf_report: Path, static_preparation: Path,
         work = _new_work(output, "general-dynamic-dlopen", before)
         make_retained_readable(work)
         observation = dlfcn_observations(Path(dynamic_product), output, work)
+        replayed = dlfcn_observations(Path(dynamic_product), output, work,
+                                      replay=fork_evidence.RetainedRuntimeInputs(ROOT, output, tools))
+        require(same(observation, replayed), "general dlfcn retained inputs do not reconstruct before sealing")
         require(observation["driver_mode"] == DLOPEN_DRIVER_MODES[mode],
                 "general dlfcn driver receipt mode differs from requested mode")
         observation["entry_mode"] = mode

@@ -71,6 +71,18 @@ import the installed compiler helper or invoke GCC, LLD, the pinned musl
 compiler, or a host ELF inspector. Link, dependency, raw-stream, product-byte,
 and source joins remain exact.
 
+The dlfcn command alone seals
+`CRABC_X86_64_RETAIN_LINK_EVIDENCE=1`. The installed
+`crabc-cc-dynamic` accepts only that exact value: it leaves each original
+`crabc-dynamic-link.*` directory under the runner's owned work directory, so
+the compiler-created `source-0.o` bytes remain at the exact path and hash
+already recorded by the direct-driver receipt. With the variable unset the
+driver keeps its ordinary cleanup behavior; any other supplied value fails
+before compilation. Native collection reopens every receipt input, including
+that source object, and runs retained dlfcn reconstruction before sealing the
+report. This bounded retention applies only to the registry dlfcn runner; it
+does not alter general driver cleanup or create a generic artifact store.
+
 Version 1 reports have no `replay_inputs` field and are deliberately rejected
 by this reader.  They remain historical observations; a later host replay
 requires a fresh version 2 collection and may not patch a prior receipt.

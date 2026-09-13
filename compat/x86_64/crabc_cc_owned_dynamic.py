@@ -37,6 +37,7 @@ APPLICATION_DSO_BASENAME = re.compile(r"[^/\x00]+\.so(?:\.[0-9]+)*\Z")
 RECEIPT_V1_FIELDS = receipt_contract.V1_FIELDS
 RECEIPT_V2_FIELDS = receipt_contract.V2_FIELDS
 RECEIPT_V3_FIELDS = receipt_contract.V3_FIELDS
+RETAIN_LINK_EVIDENCE_ENV = "CRABC_X86_64_RETAIN_LINK_EVIDENCE"
 
 
 def application_dso_basename(path: Path) -> str:
@@ -89,6 +90,35 @@ def reserve_receipt(path: Path):
                         path.unlink()
                 except FileNotFoundError:
                     pass
+
+
+def retain_link_evidence() -> bool:
+    """Return the one explicit retention mode accepted by this installed driver.
+
+    Normal callers keep the historical temporary-directory cleanup. The
+    registry collector uses the exact opt-in only for its dlfcn receipts,
+    whose source objects are replay inputs with their original paths.
+    """
+
+    value = os.environ.get(RETAIN_LINK_EVIDENCE_ENV)
+    if value is None:
+        return False
+    if value != "1":
+        raise shared.DriverError(f"{RETAIN_LINK_EVIDENCE_ENV} must be exactly '1' to retain link evidence")
+    return True
+
+
+@contextmanager
+def link_evidence_workspace(parent: Path, *, retain: bool):
+    """Create the private per-link workspace, retaining it only on explicit opt-in."""
+
+    if retain:
+        # Preserve the compiler's original path and bytes beneath the caller's
+        # own work root. No receipt path is rewritten or copied elsewhere.
+        yield Path(tempfile.mkdtemp(prefix="crabc-dynamic-link.", dir=parent))
+        return
+    with tempfile.TemporaryDirectory(prefix="crabc-dynamic-link.", dir=parent) as temporary:
+        yield Path(temporary)
 
 
 def validate(root: Path) -> dict:
@@ -445,6 +475,7 @@ def application_quote_include_dir(root: Path, path: Path) -> Path:
 
 def execute(root: Path, arguments: list[str]) -> None:
     validate(root)
+    retain_evidence = retain_link_evidence()
     mode = None
     binding = None
     application_runpath = None
@@ -594,8 +625,8 @@ def execute(root: Path, arguments: list[str]) -> None:
         + tuple(transitive_dsos) + (output,)
     )
     output.parent.mkdir(parents=True, exist_ok=True)
-    with (nullcontext(None) if invocation.compile_only else reserve_receipt(receipt)) as receipt_stream, tempfile.TemporaryDirectory(prefix="crabc-dynamic-link.", dir=output.parent) as temporary_name:
-        temporary = Path(temporary_name)
+    with (nullcontext(None) if invocation.compile_only else reserve_receipt(receipt)) as receipt_stream, \
+         link_evidence_workspace(output.parent, retain=retain_evidence) as temporary:
         objects = [shared.require_x86_64_relocatable_object(root, path) for path in invocation.objects]
         for index, source in enumerate(invocation.sources):
             source = shared.require_application_file(root, source, "source")

@@ -293,6 +293,64 @@ class InstalledDynamicDriverTests(unittest.TestCase):
             driver.execute(self.root, ["--dynamic-pie", *search_arguments, str(workload), "-o", str(output)])
         return workload, output, Path(str(output) + ".crabc-link.json")
 
+    def test_link_evidence_retention_is_opt_in_and_rejects_ambiguous_values_before_tools(self):
+        """Only the registry's exact opt-in retains compiler-created inputs."""
+
+        source = Path(self.temporary.name) / "retained-source.c"
+        source.write_text("int main(void) { return 0; }\n")
+
+        for value in ("", "0", "true", "retain"):
+            with self.subTest(value=value), patch.dict(os.environ, {driver.RETAIN_LINK_EVIDENCE_ENV: value}), \
+                 patch.object(driver, "run") as run:
+                with self.assertRaisesRegex(driver.shared.DriverError, "retain link evidence"):
+                    driver.execute(self.root, ["--dynamic-pie", str(source), "-o", str(Path(self.temporary.name) / "invalid")])
+                run.assert_not_called()
+
+        def link_with(retain: bool) -> tuple[Path, Path]:
+            output = Path(self.temporary.name) / ("retained" if retain else "ordinary")
+            linker = Path(self.temporary.name) / "ld.lld"
+            linker.write_bytes(b"owned linker")
+            linker.chmod(0o755)
+            objects: list[Path] = []
+
+            def run(command, temporary):
+                if command[0] == "/owned/gcc":
+                    compiled = Path(command[command.index("-o") + 1])
+                    compiled.write_bytes(b"compiler-created object")
+                    objects.append(compiled)
+                    return ""
+                linked = Path(command[command.index("-o") + 1])
+                linked.write_bytes(b"owned dynamic executable")
+                library = self.root / "usr/lib"
+                return "\n".join(str(path) for path in (
+                    library / "crti.o", library / "libc.so", library / "crtn.o",
+                    library / "Scrt1.o", library / "crabc-dynamic-attach.o", objects[0],
+                    library / "libcrabc-builtins.a",
+                ))
+
+            environment = {driver.RETAIN_LINK_EVIDENCE_ENV: "1"} if retain else {}
+            with patch.dict(os.environ, environment, clear=not retain), \
+                 patch.object(driver.shared, "linker", return_value=str(linker)), \
+                 patch.object(driver.shared, "compiler", return_value="/owned/gcc"), \
+                 patch.object(driver, "dynamic_symbols", return_value=(set(), set())), \
+                 patch.object(driver, "run", side_effect=run):
+                driver.execute(self.root, ["--dynamic-pie", str(source), "-o", str(output)])
+            self.assertEqual(len(objects), 1)
+            return output, objects[0]
+
+        ordinary_output, ordinary = link_with(False)
+        self.assertFalse(ordinary.exists())
+        ordinary_receipt = json.loads(Path(str(ordinary_output) + ".crabc-link.json").read_text())
+        self.assertEqual(ordinary_receipt["input_receipts"][5]["path"], str(ordinary))
+        retained_output, retained = link_with(True)
+        self.assertTrue(retained.is_file())
+        self.assertTrue(retained.parent.name.startswith("crabc-dynamic-link."))
+        self.assertEqual(retained.read_bytes(), b"compiler-created object")
+        retained_receipt = json.loads(Path(str(retained_output) + ".crabc-link.json").read_text())
+        self.assertEqual(retained_receipt["input_receipts"][5], {
+            "path": str(retained), "sha256": hashlib.sha256(retained.read_bytes()).hexdigest(),
+        })
+
     def test_current_driver_receipt_is_schema_two_and_current_posix_reader_accepts_default(self):
         workload, output, receipt_path = self._dynamic_receipt()
         receipt = json.loads(receipt_path.read_text())

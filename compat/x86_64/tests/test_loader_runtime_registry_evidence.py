@@ -64,9 +64,17 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
             receipt_path = work / 'consumer.crabc-link.json'; receipt_path.write_text(json.dumps(receipt), encoding='utf-8')
             facts = {'type': 3, 'machine': 62, 'interpreters': [EVIDENCE.fork_evidence.INTERPRETER], 'dynamic': True, 'needed': ['libc.so'],
                      'runpaths': ['/usr/lib'], 'rpaths': [], 'sonames': [], 'textrel': False}
-            with mock.patch.object(EVIDENCE.product_evidence, 'retained_elf_facts', return_value=facts):
+            with mock.patch.object(EVIDENCE.product_evidence, 'retained_elf_facts', return_value=facts), \
+                 mock.patch.object(EVIDENCE.subprocess, 'run', side_effect=AssertionError('host dlfcn replay invoked a command')):
                 observed = EVIDENCE._link_record(product, work, output, 'consumer', 'pie', replay=replay)
             self.assertEqual(observed['mode'], 'pie')
+            # Native collection must reopen the same compiler-created input
+            # that host replay will need before it seals this receipt.
+            object_path.unlink()
+            with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, 'dlfcn workload object'):
+                with mock.patch.object(EVIDENCE, 'ROOT', root):
+                    EVIDENCE._link_record(product, work, output, 'consumer', 'pie')
+            object_path.write_bytes(b'object')
             with mock.patch.object(EVIDENCE.product_evidence, 'retained_elf_facts', return_value={**facts, 'textrel': True}):
                 with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, 'ELF shape'):
                     EVIDENCE._link_record(product, work, output, 'consumer', 'pie', replay=replay)
@@ -101,13 +109,18 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             root=Path(temporary);script=root/'compat/x86_64/run_general_dynamic_dlopen.sh'
             script.parent.mkdir(parents=True);script.write_bytes(b'fixture')
+            (script.parent/'run_general_dynamic_fork.sh').write_bytes(b'fixture')
             product=root/'.work/product';output=root/'.work/receipt'
             product.mkdir(parents=True);output.mkdir()
             with mock.patch.object(EVIDENCE,'ROOT',root):
                 command,environment=EVIDENCE.runner_contract(output,product,'dlfcn-pie')
             self.assertEqual(command,['bash','/workspace/compat/x86_64/run_general_dynamic_dlopen.sh','/workspace/.work/product'])
             self.assertEqual(environment,{**EVIDENCE.WORKLOAD_ENVIRONMENT,'TMPDIR':'/workspace/.work/receipt',
-                'CRABC_GENERAL_DYNAMIC_ENTRY_MODE':'--dynamic-pie',EVIDENCE.DLFCN_SKIP_SEARCH_ENV:'1'})
+                'CRABC_GENERAL_DYNAMIC_ENTRY_MODE':'--dynamic-pie',EVIDENCE.DLFCN_SKIP_SEARCH_ENV:'1',
+                EVIDENCE.DYNAMIC_LINK_EVIDENCE_ENV:'1'})
+            with mock.patch.object(EVIDENCE,'ROOT',root):
+                _command, ordinary=EVIDENCE.runner_contract(output,product,'fork')
+            self.assertNotIn(EVIDENCE.DYNAMIC_LINK_EVIDENCE_ENV,ordinary)
 
     def test_replay_files_retain_every_fork_and_timer_preprocessing_input(self):
         scratch = ROOT / '.work/x86_64/loader-runtime-registry-tests'; scratch.mkdir(parents=True, exist_ok=True)
