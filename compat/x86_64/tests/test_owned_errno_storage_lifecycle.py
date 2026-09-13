@@ -178,6 +178,20 @@ class ErrnoStorageLifecycleTests(unittest.TestCase):
                 {"source": {"root": "/workspace"}, "work": "/workspace/compat/evidence"}, ROOT
             )
 
+    def test_replay_work_rejects_an_intermediate_symlink_escape(self) -> None:
+        TEST_WORK_ROOT.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=TEST_WORK_ROOT) as temporary:
+            temporary_path = Path(temporary)
+            escape = temporary_path / "escape"
+            escape.symlink_to(ROOT / "compat", target_is_directory=True)
+            recorded_work = "/workspace/" + (
+                temporary_path.relative_to(ROOT) / "escape" / "x86_64"
+            ).as_posix()
+            with self.assertRaisesRegex(reader.ErrnoStorageEvidenceError, "resolves outside checkout .work"):
+                reader.rebase_report_checkout_paths(
+                    {"source": {"root": "/workspace"}, "work": recorded_work}, ROOT
+                )
+
     def test_independent_link_layouts_do_not_compare_raw_addresses(self) -> None:
         # Alias identity is a relation inside an ELF file.  Pinned-musl and
         # candidate links may legitimately assign unrelated section/value pairs.

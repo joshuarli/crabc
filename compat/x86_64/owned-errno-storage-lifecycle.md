@@ -49,6 +49,6 @@ Native collection records the container checkout spelling (`/workspace`) as a
 provenance observation. A host replay admits only lexical descendants of that
 recorded root, maps them to the supplied physical checkout, and then verifies
 their identities and current source snapshot. The receipt's top-level work
-directory must map below that checkout's `.work`; oracle paths outside the
-checkout are not remapped, and the report must remain in its mapped evidence
-directory.
+directory must resolve below that checkout's physical `.work`; oracle paths
+outside the checkout are not remapped, and the report must remain in its mapped
+evidence directory.

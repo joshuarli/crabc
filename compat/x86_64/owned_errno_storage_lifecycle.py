@@ -300,6 +300,13 @@ def _rebase_report_work(value: object, recorded_root: PurePosixPath, root: Path)
     mapped = root.joinpath(*path.relative_to(recorded_root).parts)
     if not mapped.is_relative_to(root / ".work"):
         fail("report work is not below checkout .work")
+    evidence_root = physical_directory(root / ".work", "checkout evidence root")
+    try:
+        resolved = mapped.resolve(strict=False)
+    except OSError as error:
+        raise ErrnoStorageEvidenceError("report work cannot resolve") from error
+    if not resolved.is_relative_to(evidence_root):
+        fail("report work resolves outside checkout .work")
     return str(mapped)
 
 
@@ -790,6 +797,9 @@ def validate_report(root: Path, report_path: Path) -> dict[str, Any]:
     if report["schema"] != SCHEMA or report["target"] != TARGET or not isinstance(report["work"], str):
         fail("errno storage report identity drifted")
     work = physical_directory(Path(report["work"]), "report evidence root")
+    evidence_root = physical_directory(root / ".work", "checkout evidence root")
+    if not work.is_relative_to(evidence_root):
+        fail("report evidence root resolves outside checkout .work")
     if report_path.parent != work:
         fail("report evidence root differs from the report directory")
     validate_source_snapshot(report["source"], root, "report source snapshot")
