@@ -5485,6 +5485,25 @@ def _syscall_one_row(rows: Sequence[Mapping[str, Any]], *, artifact_key: str, ta
     return dict(matches[0])
 
 
+def _syscall_owned_definition_indices(occurrences: Mapping[int, Mapping[str, Any]],
+                                      known_names: set[str]) -> set[int]:
+    """Keep the finite owner roster to definitions while retaining ordinary imports.
+
+    A selected public alias spelling may also occur as an ``UND`` archive
+    import in an unrelated member.  It remains a complete physical
+    observation and its ordinary-import requirement stays outside this
+    receipt.  Every non-``UND`` candidate row for an owner spelling remains in
+    the compared roster, including malformed or duplicate definitions, so the
+    exact selected rows below still reject it.
+    """
+    return {
+        row['index'] for row in occurrences.values()
+        if row.get('artifact_key') in {'candidate-static', 'candidate-shared'}
+        and type(row.get('row')) is dict and row['row'].get('name') in known_names
+        and row['row'].get('section_index') != 'UND'
+    }
+
+
 def attach_native_syscall_alias(accounting: Mapping[str, Any],
                                 companion: Mapping[str, Any] | None) -> list[dict[str, Any]]:
     """Attach the finite alias/body observations without selecting new owners.
@@ -5620,9 +5639,7 @@ def attach_native_syscall_alias(accounting: Mapping[str, Any],
                               'static_occurrence_index': static_body['index'],
                               'shared_occurrence_index': shared_body['index'],
                               'requirements_discharged': []})
-    actual_indices = {row['index'] for row in occurrences.values()
-                      if row.get('artifact_key') in {'candidate-static', 'candidate-shared'}
-                      and type(row.get('row')) is dict and row['row'].get('name') in known_names}
+    actual_indices = _syscall_owned_definition_indices(occurrences, known_names)
     require(actual_indices == expected_indices, 'syscall alias candidate occurrence roster differs')
     require(len(occurrences) == occurrence_count, 'syscall alias attachment changed complete ELF occurrence roster')
     require(len(joins) == 14 and len(private_joins) == 15
