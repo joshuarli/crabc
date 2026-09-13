@@ -73,9 +73,11 @@ entry in their contained roots. Every native command starts in an owned process
 group; a timeout retains `timed-out:<status>` and terminates that group before
 the collector returns. The component seals the installed static/dynamic
 drivers, their resolved source compiler and linker, the oracle wrapper,
-`/usr/bin/env`, `/usr/bin/readelf`, and the resolved `chroot` executable. It
-uses absolute sealed `chroot` argv rather than depending on `PATH` under
-`env -i`.
+`/usr/bin/env`, `/usr/bin/readelf`, and both parts of Alpine's `chroot`
+multicall contract: the absolute `/usr/sbin/chroot` applet invocation and its
+sealed physical `/bin/coreutils` bytes. It uses the applet spelling in every
+absolute `chroot` argv rather than depending on `PATH` under `env -i`; calling
+the sealed multicall binary directly would lose its argv[0]-selected command.
 
 The static musl link also retains the exact wrapper-selected musl `libc.a`,
 `Scrt1.o`, `crti.o`, and `crtn.o` inputs. Its pinned wrapper/specification may

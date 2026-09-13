@@ -36,7 +36,7 @@ import owned_posix_static_products as static_products
 import owned_static_consumer_matrix as consumer_matrix
 import owned_wordexp_evidence as wordexp
 
-SCHEMA = "crabc.x86_64-public-data-ordinary-link/v2"
+SCHEMA = "crabc.x86_64-public-data-ordinary-link/v3"
 IMAGE_ENV = "CRABC_X86_PUBLIC_DATA_IMAGE_ID"
 IMAGE_PATTERN = re.compile(r"crabc-core-evidence@sha256:[0-9a-f]{64}")
 SOURCE_MOUNT = "/workspace"
@@ -79,6 +79,8 @@ ABI_ONLY_NAMES = frozenset((
 EXPECTED_STDOUT = b"public-data-ordinary-link-ok\n"
 COMMAND_TIMEOUT_SECONDS = 60
 TERMINATION_GRACE_SECONDS = 3
+CHROOT_INVOCATION = Path("/usr/sbin/chroot")
+CHROOT_PHYSICAL = Path("/bin/coreutils")
 
 
 class PublicDataEvidenceError(ValueError):
@@ -383,6 +385,36 @@ def fixed_image_tool_identity(path: Path, description: str) -> dict[str, Any]:
     return {key: record[key] for key in ("path", "sha256", "mode")}
 
 
+def capture_chroot_invocation(source: Mapping[str, Any]) -> dict[str, str]:
+    """Bind the chroot applet spelling to its sealed multicall executable.
+
+    Alpine packages `chroot` as an argv[0]-selected coreutils applet.  Its
+    physical bytes cannot replace `/usr/sbin/chroot` in an execution argv:
+    invoking `/bin/coreutils` loses the selected applet under `env -i`.
+    """
+    require(type(source) is dict and set(source) == {"path", "sha256", "mode"},
+            "ordinary-link chroot physical identity differs")
+    try:
+        require(CHROOT_INVOCATION.is_symlink(), "ordinary-link chroot invocation is not a multicall alias")
+        resolved = inventory.physical_executable(Path(os.path.realpath(CHROOT_INVOCATION)),
+                                                 "ordinary-link chroot physical executable")
+    except inventory.InventoryError as error:
+        raise PublicDataEvidenceError(f"cannot identify ordinary-link chroot invocation: {error}") from error
+    require(resolved == CHROOT_PHYSICAL and source["path"] == str(resolved),
+            "ordinary-link chroot invocation no longer resolves to sealed coreutils")
+    return {"path": str(CHROOT_INVOCATION), "physical_path": str(resolved)}
+
+
+def validate_chroot_invocation(value: object, original: Mapping[str, Any]) -> str:
+    require(type(value) is dict and set(value) == {"path", "physical_path"},
+            "ordinary-link chroot invocation fields differ")
+    require(value == {"path": str(CHROOT_INVOCATION), "physical_path": str(CHROOT_PHYSICAL)},
+            "ordinary-link chroot invocation differs")
+    require(original.get("path") == value["physical_path"],
+            "ordinary-link chroot invocation physical bytes differ")
+    return value["path"]
+
+
 def retain_tool_snapshot(work: Path, role: str, source: Mapping[str, Any]) -> dict[str, Any]:
     """Retain one existing path/hash/mode tool identity with its physical size."""
     require(type(source) is dict and set(source) == {"path", "sha256", "mode"},
@@ -430,6 +462,8 @@ def capture_tool_roster(root: Path, output: Path, static_product: Path, dynamic_
         for role in TOOL_ROLES:
             source = sources[role]
             result[role] = retain_tool_snapshot(output, role, source)
+            if role == "chroot":
+                result[role]["invocation"] = capture_chroot_invocation(source)
         return result
     except (wordexp.EvidenceError, inventory.InventoryError, OSError, ValueError) as error:
         raise PublicDataEvidenceError(f"cannot seal ordinary-link native tools: {error}") from error
@@ -491,18 +525,24 @@ def validate_tool_roster(root: Path, work: Path, inputs: Mapping[str, Any], tool
         "oracle_wrapper": "/usr/local/bin/crabc-x86_64-musl-gcc",
         "env": "/usr/bin/env",
         "readelf": str(inventory.TOOL_PATHS["readelf"]),
+        "chroot": str(CHROOT_PHYSICAL),
     }
     result = {}
     try:
         for role in TOOL_ROLES:
             record = tools[role]
+            expected_fields = {"original", "retained", "invocation"} if role == "chroot" else {"original", "retained"}
+            require(type(record) is dict and set(record) == expected_fields,
+                    f"ordinary-link {role} tool fields differ")
             inventory._validate_snapshot(
                 work,
-                record,
+                {key: record[key] for key in ("original", "retained")},
                 "ordinary-link " + role + " tool",
                 expected_original_path=expected_original.get(role),
                 expected_retained_path=f"inputs/tools/{role}",
             )
+            if role == "chroot":
+                validate_chroot_invocation(record["invocation"], record["original"])
             result[role] = record
     except inventory.InventoryError as error:
         raise PublicDataEvidenceError(f"ordinary-link native tool replay failed: {error}") from error
@@ -524,6 +564,9 @@ def require_live_tool_roster(tools: Mapping[str, Any]) -> None:
         except inventory.InventoryError as error:
             raise PublicDataEvidenceError(f"ordinary-link {role} tool disappeared during collection") from error
         require(current == original, f"ordinary-link {role} tool changed during collection")
+        if role == "chroot":
+            require(same_json(record.get("invocation"), capture_chroot_invocation(original)),
+                    "ordinary-link chroot invocation changed during collection")
 
 
 def execution_tree(root: Path, directory: Path, description: str) -> dict[str, dict[str, Any]]:
@@ -844,7 +887,8 @@ class Collector:
                 shutil.copy2(binary, consumer)
                 for entry in ("kernel", "direct"):
                     command = [tools["env"]["original"]["path"], "-i",
-                               tools["chroot"]["original"]["path"], str(execution_root)]
+                               validate_chroot_invocation(tools["chroot"].get("invocation"),
+                                                          tools["chroot"]["original"]), str(execution_root)]
                     if entry == "direct":
                         command.append(interpreter)
                     command.append("/consumer-" + mode)
@@ -1003,6 +1047,8 @@ def expected_commands(root: Path, work: Path, inputs: Mapping[str, Any],
         path = record["original"].get("path")
         require(type(path) is str and Path(path).is_absolute() and ".." not in Path(path).parts,
                 f"ordinary-link {name} tool path differs")
+        if name == "chroot":
+            return validate_chroot_invocation(record.get("invocation"), record["original"])
         return path
     static_driver = tool_path("static_driver")
     dynamic_driver = tool_path("dynamic_driver")

@@ -170,13 +170,17 @@ class PublicDataOrdinaryLinkEvidenceTests(unittest.TestCase):
         tools = {
             name: {"original": {"path": "/sealed/" + name}}
             for name in ("static_driver", "dynamic_driver", "oracle_wrapper", "compiler", "linker",
-                         "env", "readelf", "chroot")
+                         "env", "readelf")
+        }
+        tools["chroot"] = {
+            "original": {"path": "/bin/coreutils"},
+            "invocation": {"path": "/usr/sbin/chroot", "physical_path": "/bin/coreutils"},
         }
         expected = evidence.expected_commands(self.root, work, inputs, tools)
         self.assertEqual(tuple(expected), evidence.expected_command_labels())
         self.assertEqual(
             expected["dynamic-pie-kernel"]["argv"],
-            ["/sealed/env", "-i", "/sealed/chroot", evidence.mounted(self.root, work / "candidate-root"),
+            ["/sealed/env", "-i", "/usr/sbin/chroot", evidence.mounted(self.root, work / "candidate-root"),
              "/consumer-pie"],
         )
         self.assertNotIn("candidate-dynamic-pie-kernel", expected)
@@ -209,6 +213,25 @@ class PublicDataOrdinaryLinkEvidenceTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "raw path"):
             evidence.validate_command_records(self.root, work, inputs, tools, substituted)
+
+    def test_chroot_commands_keep_the_sealed_multicall_invocation_spelling(self) -> None:
+        inputs = self.admit()
+        work = self.root / ".work/chroot-command"
+        work.mkdir()
+        tools = {
+            name: {"original": {"path": "/sealed/" + name}}
+            for name in ("static_driver", "dynamic_driver", "oracle_wrapper", "compiler", "linker",
+                         "env", "readelf")
+        }
+        tools["chroot"] = {
+            "original": {"path": "/bin/coreutils"},
+            "invocation": {"path": "/usr/sbin/chroot", "physical_path": "/bin/coreutils"},
+        }
+        commands = evidence.expected_commands(self.root, work, inputs, tools)
+        self.assertEqual(
+            commands["oracle-dynamic-pie-kernel"]["argv"][:3],
+            ["/sealed/env", "-i", "/usr/sbin/chroot"],
+        )
 
     def test_collector_raw_writer_round_trips_to_symbol_and_elf_projections(self) -> None:
         output = self.root / ".work/collector-raw-round-trip"
@@ -403,15 +426,25 @@ class PublicDataOrdinaryLinkEvidenceTests(unittest.TestCase):
                 original_path = "/usr/bin/env"
             elif role == "readelf":
                 original_path = str(evidence.inventory.TOOL_PATHS["readelf"])
+            elif role == "chroot":
+                original_path = "/bin/coreutils"
             else:
                 original_path = "/sealed/" + role
             original = dict(retained_identity)
             original["path"] = original_path
             original["mode"] = 0o755
             tools[role] = {"original": original, "retained": retained_identity}
+            if role == "chroot":
+                tools[role]["invocation"] = {
+                    "path": "/usr/sbin/chroot", "physical_path": "/bin/coreutils",
+                }
         evidence.write_new_json(work / "tools.json", tools)
         replayed = evidence.read_json(work / "tools.json", "tool roster", dict)
         evidence.validate_tool_roster(self.root, work, inputs, replayed)
+        wrong_invocation = copy.deepcopy(replayed)
+        wrong_invocation["chroot"]["invocation"]["path"] = "/bin/coreutils"
+        with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "chroot invocation"):
+            evidence.validate_tool_roster(self.root, work, inputs, wrong_invocation)
         (work / "inputs/tools/linker").write_bytes(b"different linker")
         with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "tool replay"):
             evidence.validate_tool_roster(self.root, work, inputs, tools)
