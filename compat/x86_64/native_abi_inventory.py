@@ -572,7 +572,7 @@ def _archive_fact_blocks(raw: str, members: Sequence[str], expected_archive: str
     return ["\n".join(lines) for lines in blocks]
 
 
-def _archive_fact_header(raw: str, description: str) -> dict[str, Any]:
+def parse_elf_header(raw: str, *, expected_type: str, description: str = "ELF facts") -> dict[str, Any]:
     """Retain all header rows, including readelf's two distinct Version fields."""
 
     fields: list[dict[str, str]] = []
@@ -596,8 +596,44 @@ def _archive_fact_header(raw: str, description: str) -> dict[str, Any]:
     require(tuple(field["name"] for field in fields) == _PINNED_ELF_HEADER_FIELDS,
             f"{description} has incomplete or changed pinned readelf ELF header fields")
     identity = _readelf_header(raw, description)
-    require(identity["Type"] == "REL (Relocatable file)", "archive fact member is not relocatable ELF")
+    require(expected_type in {"REL", "DYN"}, "unsupported ELF fact type contract")
+    expected = {"REL": "REL (Relocatable file)", "DYN": "DYN (Shared object file)"}[expected_type]
+    require(identity["Type"] == expected, f"{description} is not {expected_type} ELF")
     return {"identity": identity, "fields": fields}
+
+
+def parse_elf_facts(
+    headers_raw: str, sections_raw: str, symbols_raw: str, *, expected_type: str,
+) -> dict[str, Any]:
+    """Join complete native ELF header, section and all symbol-table displays.
+
+    The independent section roster establishes every symbol-table occurrence,
+    including legitimate symbol-free CRT objects. This does not validate all
+    ELF semantics or infer public ABI selection from any row.
+    """
+
+    header = parse_elf_header(headers_raw, expected_type=expected_type)
+    section_facts = parse_elf_sections(sections_raw)
+    section_rows = section_facts["sections"]
+    section_count = next(field["value"] for field in header["fields"]
+                         if field["name"] == "Number of section headers")
+    require(section_count == str(len(section_rows)),
+            "ELF header section count differs from section rows")
+    table_sections = [row for row in section_rows if row["type"] in {"SYMTAB", "DYNSYM"}]
+    tables = parse_elf_symbol_tables(symbols_raw) if symbols_raw.strip() else []
+    require(len(tables) == len(table_sections), "ELF symbol/section table counts differ")
+    for table, section in zip(tables, table_sections):
+        require(table["name"] == section["name"], "ELF symbol table order/name differs from sections")
+        require(int(section["entry_size"], 16) == 24, "native ELF64 symbol entry size is not 24")
+        require(int(section["size"], 16) == table["row_count"] * 24, "ELF symbol table row count differs from section size")
+        require(section["link"] < len(section_rows) and section_rows[section["link"]]["type"] == "STRTAB",
+                "ELF symbol table lacks its string table section")
+        table["section_index"] = section["index"]
+        for row in table["rows"]:
+            ndx = row["section_index"]
+            if ndx.isdecimal():
+                require(int(ndx) < len(section_rows), "ELF symbol section index is absent")
+    return {"header": header, "header_raw": headers_raw, **section_facts, "symbol_tables": tables}
 
 
 def parse_archive_elf_facts(
@@ -627,35 +663,10 @@ def parse_archive_elf_facts(
     occurrences: Counter[str] = Counter()
     facts: list[dict[str, Any]] = []
     for index, member in enumerate(members):
-        header = _archive_fact_header(headers[index], f"archive member {index}:{member}")
-        section_facts = parse_elf_sections(sections[index])
-        section_rows = section_facts["sections"]
-        # The complete header occurrence contract establishes exactly one count;
-        # an identity-only prefix must never make this cross-check optional.
-        section_count = next(field["value"] for field in header["fields"]
-                             if field["name"] == "Number of section headers")
-        require(section_count == str(len(section_rows)),
-                "archive ELF header section count differs from section rows")
-        table_sections = [row for row in section_rows if row["type"] in {"SYMTAB", "DYNSYM"}]
-        # readelf legitimately emits no text for an ELF member with no symbol
-        # table. Only the independent complete section table can establish that.
-        tables = parse_elf_symbol_tables(symbols[index]) if symbols[index].strip() else []
-        require(len(tables) == len(table_sections), "archive symbol/section table counts differ")
-        for table, section in zip(tables, table_sections):
-            require(table["name"] == section["name"], "archive symbol table order/name differs from sections")
-            require(int(section["entry_size"], 16) == 24, "native ELF64 symbol entry size is not 24")
-            require(int(section["size"], 16) == table["row_count"] * 24, "archive symbol table row count differs from section size")
-            require(section["link"] < len(section_rows) and section_rows[section["link"]]["type"] == "STRTAB",
-                    "archive symbol table lacks its string table section")
-            table["section_index"] = section["index"]
-            for row in table["rows"]:
-                ndx = row["section_index"]
-                if ndx.isdecimal():
-                    require(int(ndx) < len(section_rows), "archive symbol section index is absent")
+        elf = parse_elf_facts(headers[index], sections[index], symbols[index], expected_type="REL")
         facts.append({
             "archive": expected_archive, "member": member, "member_index": index,
-            "member_occurrence": occurrences[member], "header": header,
-            "header_raw": headers[index], **section_facts, "symbol_tables": tables,
+            "member_occurrence": occurrences[member], **elf,
         })
         occurrences[member] += 1
     return facts
@@ -2895,7 +2906,12 @@ def validate_report(
             "family_completion": False,
             "promotion_ready": False,
             "public_support": False,
-        },
+        }
+        # JSON numbers are not measurement-status booleans, even though
+        # Python considers 0 == False. Preserve the exact v1 field types.
+        and all(report["status"][field] is False for field in (
+            "family_completion", "promotion_ready", "public_support",
+        )),
         "native ABI inventory status drifted",
     )
 

@@ -258,6 +258,24 @@ class NativeAbiInventoryRetainedInputTests(unittest.TestCase):
         self.output_root = Path(self.temporary.name) / "report"
         self.output_root.mkdir()
 
+    def test_public_replay_requires_false_booleans_for_measurement_status(self) -> None:
+        report = dict.fromkeys((
+            'collector_execution_source', 'collector_sources', 'header_closure', 'product_provenance',
+            'inputs', 'tools', 'commands', 'inventories', 'triage'), {})
+        report.update(schema=inventory.SCHEMA, target=inventory.TARGET,
+                      image='crabc-core-evidence@sha256:' + 'a' * 64)
+        path = self.output_root / inventory.REPORT_NAME
+        for field in ('family_completion', 'promotion_ready', 'public_support'):
+            for value in (0, 0.0, 1, True, 'false', None):
+                report['status'] = {'classification': 'measurement-only-not-compatibility-or-promotion',
+                                   'family_completion': False, 'promotion_ready': False, 'public_support': False}
+                report['status'][field] = value
+                path.write_text(json.dumps(report))
+                with self.subTest(field=field, value=value), mock.patch.object(inventory, '_validate_collector_source_seal'):
+                    with self.assertRaisesRegex(inventory.InventoryError, 'inventory status drifted'):
+                        inventory.validate_report(path, static_product=self.output_root,
+                                                  dynamic_product=self.output_root, static_preparation=path)
+
     def snapshot(self, relative: str, original: str, data: bytes) -> dict[str, object]:
         retained = self.output_root / relative
         retained.parent.mkdir(parents=True, exist_ok=True)
