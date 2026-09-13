@@ -27,6 +27,7 @@ if str(MODULE_DIR) not in sys.path:
 import native_abi_inventory as inventory
 import owned_mimalloc_producer_metadata as producer
 import owned_posix_product_evidence as product_evidence
+import owned_posix_static_products as static_products
 
 ROOT = inventory.ROOT
 CONTRACT_PATH = ROOT / "compat/x86_64/native_c_allocator_boundary.toml"
@@ -122,6 +123,16 @@ def fresh_output(path: Path, *, static_preparation: Path, static_product: Path, 
     path = Path(os.path.abspath(path))
     if path.exists() or path.is_symlink() or not path.parent.is_dir() or path.parent.is_symlink():
         fail("output is not a fresh physical child")
+    # `Path.is_relative_to` is lexical. Check every existing component before
+    # mkdir so a nested symlink cannot redirect a fresh receipt.
+    current = Path(path.anchor)
+    try:
+        for component in path.parts[1:-1]:
+            current /= component
+            if stat.S_ISLNK(current.lstat().st_mode):
+                fail(f"output traverses a symlink: {path}")
+    except OSError as error:
+        raise AllocatorBoundaryError(f"output ancestry is unreadable: {path}") from error
     for supplied, description in ((static_preparation.parent, "static preparation cohort"),
                                   (static_product, "static product"), (dynamic_product, "dynamic product")):
         supplied = Path(os.path.abspath(supplied))
@@ -130,6 +141,30 @@ def fresh_output(path: Path, *, static_preparation: Path, static_product: Path, 
     if not path.is_relative_to(ROOT / ".work/x86_64"):
         fail("output escapes checkout .work/x86_64")
     return path
+
+
+def mounted_path(path: Path) -> str:
+    """Translate one checkout-local path to the collector's fixed mount."""
+    path = Path(os.path.abspath(path))
+    try:
+        relative = path.relative_to(ROOT)
+    except ValueError as error:
+        raise AllocatorBoundaryError(f"retained command path escapes checkout: {path}") from error
+    return "/workspace/" + relative.as_posix()
+
+
+def workload_environment(output: Path) -> dict[str, str]:
+    return {
+        "PATH": "/opt/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "TMPDIR": mounted_path(output),
+    }
+
+
+def admitted_supplied_path(path: Path, description: str) -> str:
+    """Keep every supplied byte below the fixed readonly x86 work mount."""
+    path = Path(os.path.abspath(path))
+    require(path.is_relative_to(ROOT / ".work/x86_64"), f"{description} escapes checkout .work/x86_64")
+    return mounted_path(path)
 
 
 def source_file(root: Path, relative: str) -> Path:
@@ -161,9 +196,9 @@ def validate_contract(value: object) -> None:
         TARGET, "implemented-unqualified"), "allocator boundary contract identity drifted")
     require(record["backend"] == {"crate": "libmimalloc-sys", "version": "0.1.49", "mimalloc_version": "3.3.2"},
             "allocator backend contract drifted")
-    scope = exact(record["scope"], {"weak_entries", "strong_entries", "rust_c_imports", "lifecycle_entries", "interposition_scenarios", "dynamic_modes", "dynamic_entries", "static_modes"}, "allocator boundary scope")
-    require(scope["weak_entries"] == ["malloc", "calloc", "realloc", "reallocarray", "free", "aligned_alloc", "posix_memalign", "memalign", "valloc"], "weak allocator entry roster drifted")
-    require(scope["strong_entries"] == ["malloc_usable_size"], "strong allocator entry roster drifted")
+    scope = exact(record["scope"], {"weak_entries", "global_entries", "rust_c_imports", "lifecycle_entries", "interposition_scenarios", "dynamic_modes", "dynamic_entries", "static_modes"}, "allocator boundary scope")
+    require(scope["weak_entries"] == ["malloc"], "weak allocator entry roster drifted")
+    require(scope["global_entries"] == ["calloc", "realloc", "reallocarray", "free", "aligned_alloc", "posix_memalign", "memalign", "valloc", "malloc_usable_size"], "global allocator entry roster drifted")
     require(scope["rust_c_imports"] == ["_mi_auto_process_done", "_mi_auto_process_init", "mi_free", "mi_malloc_aligned", "mi_realloc_aligned", "mi_usable_size", "mi_zalloc"], "Rust C import roster drifted")
     require(scope["lifecycle_entries"] == ["__crabc_x86_owned_mimalloc_process_initializer", "__crabc_x86_owned_mimalloc_process_finalizer"], "allocator lifecycle roster drifted")
     require(scope["interposition_scenarios"] == list(SCENARIOS) and scope["dynamic_modes"] == list(DYNAMIC_MODES)
@@ -173,20 +208,64 @@ def validate_contract(value: object) -> None:
     require(all(item is False for item in limits.values()), "allocator limits became promoting")
 
 
+WRAPPER_C_ABI = {
+    "malloc": ("WEAK", "pub unsafe extern \"C\" fn malloc(size: SizeT) -> *mut c_void", "mi_malloc_aligned"),
+    "calloc": ("GLOBAL", "pub unsafe extern \"C\" fn calloc(count: SizeT, size: SizeT) -> *mut c_void", "mi_zalloc"),
+    "realloc": ("GLOBAL", "pub unsafe extern \"C\" fn realloc(ptr: *mut c_void, new_size: SizeT) -> *mut c_void", "mi_realloc_aligned"),
+    "reallocarray": ("GLOBAL", "pub unsafe extern \"C\" fn reallocarray(ptr: *mut c_void, count: SizeT, size: SizeT) -> *mut c_void", "realloc(ptr, total)"),
+    "free": ("GLOBAL", "pub unsafe extern \"C\" fn free(ptr: *mut c_void)", "mi_free"),
+    "aligned_alloc": ("GLOBAL", "pub unsafe extern \"C\" fn aligned_alloc(alignment: SizeT, size: SizeT) -> *mut c_void", "mi_malloc_aligned"),
+    "posix_memalign": ("GLOBAL", "pub unsafe extern \"C\" fn posix_memalign(result: *mut *mut c_void, alignment: SizeT, size: SizeT) -> c_int", "aligned_alloc(alignment, size)"),
+    "memalign": ("GLOBAL", "pub unsafe extern \"C\" fn memalign(alignment: SizeT, size: SizeT) -> *mut c_void", "aligned_alloc(alignment, size)"),
+    "valloc": ("GLOBAL", "pub unsafe extern \"C\" fn valloc(size: SizeT) -> *mut c_void", "memalign(4096, size)"),
+}
+USABLE_SIZE_C_ABI = "pub unsafe extern \"C\" fn malloc_usable_size(ptr: *mut c_void) -> usize"
+
+
+def _normalize_rust_head(value: str) -> str:
+    normalized = re.sub(r"\s+", " ", value).strip()
+    return re.sub(r",\s*\)", ")", re.sub(r"\(\s+", "(", normalized))
+
+
+def _c_abi_bindings(wrapper: str, observation: str) -> dict[str, dict[str, str]]:
+    """Authenticate the finite Rust C declarations before checking their bodies."""
+    result: dict[str, dict[str, str]] = {}
+    for name, (binding, signature, callee) in WRAPPER_C_ABI.items():
+        matched = re.search(
+            rf'(?s)(?P<attributes>(?:#\[[^\n]+\]\s*)*)'
+            rf'(?P<head>pub\s+unsafe\s+extern\s+"C"\s+fn\s+{re.escape(name)}\b.*?)(?P<body>\{{.*?)(?=\n#\[no_mangle\]|\Z)',
+            wrapper,
+        )
+        require(matched is not None, f"allocator wrapper has no C ABI body for {name}")
+        attributes, head, body = matched.group("attributes"), matched.group("head"), matched.group("body")
+        require(_normalize_rust_head(head.rstrip()) == signature, f"allocator C ABI signature differs for {name}")
+        require("#[no_mangle]" in attributes and callee in body, f"allocator wrapper body differs for {name}")
+        require(("#[linkage = \"weak\"]" in attributes) == (binding == "WEAK"),
+                f"allocator wrapper binding differs for {name}")
+        result[name] = {"binding": binding, "signature": signature, "callee": callee}
+    observed = re.search(
+        r'(?s)(?P<attributes>(?:#\[[^\n]+\]\s*)*)'
+        r'(?P<head>pub\s+unsafe\s+extern\s+"C"\s+fn\s+malloc_usable_size\b.*?)(?P<body>\{.*)\Z',
+        observation,
+    )
+    require(observed is not None, "usable-size wrapper has no C ABI body")
+    require(_normalize_rust_head(observed.group("head").rstrip()) == USABLE_SIZE_C_ABI,
+            "usable-size C ABI signature differs")
+    require("#[no_mangle]" in observed.group("attributes")
+            and "#[linkage = \"weak\"]" not in observed.group("attributes")
+            and "libmimalloc_sys::mi_usable_size(ptr)" in observed.group("body"),
+            "usable-size C ABI wrapper source drifted")
+    result["malloc_usable_size"] = {
+        "binding": "GLOBAL", "signature": USABLE_SIZE_C_ABI, "callee": "mi_usable_size",
+    }
+    return result
+
+
 def source_resolution(root: Path, product_revision: str) -> dict[str, object]:
     """Check C call sites and prove their blobs still equal the product epoch."""
     require(REVISION.fullmatch(product_revision) is not None, "product source revision is invalid")
     texts = {relative: source_file(root, relative).read_text(encoding="utf-8") for relative in RUNTIME_SOURCES}
-    wrapper = texts["libc/src/allocator_mimalloc.rs"]
-    for declaration, backend in (("fn malloc", "mi_malloc_aligned"), ("fn calloc", "mi_zalloc"),
-                                 ("fn realloc", "mi_realloc_aligned"), ("fn free", "mi_free"),
-                                 ("fn aligned_alloc", "mi_malloc_aligned"), ("fn reallocarray", "checked_mul"),
-                                 ("fn posix_memalign", "aligned_alloc"), ("fn memalign", "aligned_alloc"),
-                                 ("fn valloc", "aligned_alloc")):
-        require(declaration in wrapper and backend in wrapper, f"allocator wrapper omits {declaration} / {backend}")
-    observation = texts["libc/src/allocator_observability_mimalloc.rs"]
-    require("fn malloc_usable_size" in observation and "libmimalloc_sys::mi_usable_size(ptr)" in observation,
-            "usable-size wrapper source drifted")
+    c_abi_bindings = _c_abi_bindings(texts["libc/src/allocator_mimalloc.rs"], texts["libc/src/allocator_observability_mimalloc.rs"])
     lifecycle = texts["libc/src/c_abi/x86_64/allocator_mimalloc_lifecycle.rs"]
     for name in ("_mi_auto_process_init", "_mi_auto_process_done", ".init_array", ".fini_array", "errno::get_errno", "errno::set_errno"):
         require(name in lifecycle, f"allocator lifecycle source omits {name}")
@@ -210,19 +289,66 @@ def source_resolution(root: Path, product_revision: str) -> dict[str, object]:
         require(completed.returncode == 0 and current == completed.stdout,
                 f"product source differs for {relative}")
         blobs[relative] = hashlib.sha256(current).hexdigest()
-    return {"product_revision": product_revision, "runtime_source_sha256": blobs}
-
+    return {"product_revision": product_revision, "runtime_source_sha256": blobs, "c_abi_bindings": c_abi_bindings}
 
 def _product_source(preparation: Mapping[str, Any]) -> dict[str, object]:
-    source = exact(preparation.get("source"), {"revision", "content_sha256"}, "static preparation source")
+    exact(preparation, {"schema", "status", "work", "source", "source_seals", "pins", "products", "archives", "steps"},
+          "static preparation")
+    require(preparation["schema"] == static_products.SCHEMA and preparation["status"] == "prepared-unqualified",
+            "static preparation identity drifted")
+    source = exact(preparation["source"], {"revision", "content_sha256"}, "static preparation source")
     require(type(source["revision"]) is str and REVISION.fullmatch(source["revision"]) is not None and
             type(source["content_sha256"]) is str and SHA256.fullmatch(source["content_sha256"]) is not None,
             "static preparation source identity drifted")
     return source
 
 
-def _manifest_identity(product: Path, manifest: Path) -> dict[str, object]:
-    return identity(manifest, logical_path=str(product / "share/crabc/manifest.json"))
+def _require_identity_pair(value: object, actual: Mapping[str, object], description: str) -> None:
+    record = exact(value, {"path", "sha256", "size"}, description)
+    require(type(record["path"]) is str and type(record["sha256"]) is str and SHA256.fullmatch(record["sha256"]) is not None
+            and type(record["size"]) is int and record["size"] >= 0,
+            f"{description} scalar types drifted")
+    require(record["sha256"] == actual["sha256"] and record["size"] == actual["size"],
+            f"{description} bytes differ")
+
+
+def _static_preparation_tree(preparation: Mapping[str, Any], static_product: Path,
+                             static_manifest: Path) -> None:
+    """Join the supplied static tree to the receipt's independently extracted primary tree."""
+    products = exact(preparation["products"], {"primary", "reproduction", "extracted"}, "static preparation products")
+    primary = exact(products["primary"], {"path", "manifest", "tree", "producer_tools", "toolchain"},
+                    "static preparation primary product")
+    require(isinstance(primary["tree"], dict) and primary["tree"], "static preparation primary tree is absent")
+    try:
+        current_tree = static_products.tree_identity(static_product)
+    except (static_products.PreparationError, OSError, ValueError) as error:
+        raise AllocatorBoundaryError(f"static preparation primary tree is invalid: {error}") from error
+    require(same(primary["tree"], current_tree), "supplied static product differs from preparation primary tree")
+    _require_identity_pair(primary["manifest"], identity(static_manifest, logical_path="/inputs/static-product/share/crabc/manifest.json"),
+                           "static preparation primary manifest")
+
+
+def _epoch_source(preparation: Mapping[str, Any], report: Mapping[str, Any], dynamic_state: Mapping[str, Any]) -> dict[str, object]:
+    """Require the static preparation, ELF facts, and dynamic state to name one product epoch."""
+    source = _product_source(preparation)
+    facts_source = exact(report.get("collector_execution_source"), {"revision", "content_sha256", "clean"},
+                         "ELF facts collector source")
+    require(type(facts_source["revision"]) is str and REVISION.fullmatch(facts_source["revision"]) is not None
+            and type(facts_source["content_sha256"]) is str and SHA256.fullmatch(facts_source["content_sha256"]) is not None
+            and facts_source["clean"] is True, "ELF facts collector source scalar types drifted")
+    require(facts_source["revision"] == source["revision"]
+            and facts_source["content_sha256"] == source["content_sha256"],
+            "ELF facts source differs from static preparation")
+    require(dynamic_state.get("schema") == "crabc.x86_64-owned-dynamic-materialization/v1"
+            and type(dynamic_state.get("source_sha256")) is str
+            and SHA256.fullmatch(dynamic_state["source_sha256"]) is not None,
+            "dynamic materialization source identity drifted")
+    require(dynamic_state["source_sha256"] == source["content_sha256"],
+            "dynamic product source differs from static preparation")
+    return {"revision": source["revision"], "content_sha256": source["content_sha256"]}
+
+def _manifest_identity(product: Path, manifest: Path, input_root: str) -> dict[str, object]:
+    return identity(manifest, logical_path=f"{input_root}/share/crabc/manifest.json")
 
 
 def _report_artifact(report: Mapping[str, Any], name: str, product: Path, relative: str) -> dict[str, object]:
@@ -243,17 +369,20 @@ def validate_supplied_products(*, root: Path, static_preparation: Path, static_p
     static_product = physical_directory(static_product, "static product")
     dynamic_product = physical_directory(dynamic_product, "dynamic product")
     static_preparation = physical_file(static_preparation, "static preparation")
+    elf_facts_report = physical_file(elf_facts_report, "ELF facts report")
     try:
         static_manifest, _ = product_evidence._validate_static_product(static_product)
         dynamic_manifest, _ = product_evidence._validate_dynamic_product(dynamic_product)
     except product_evidence.ProductEvidenceError as error:
         raise AllocatorBoundaryError(str(error)) from error
     preparation = json_object(static_preparation, "static preparation")
-    product_source = _product_source(preparation)
-    source = source_resolution(root, product_source["revision"])
+    _static_preparation_tree(preparation, static_product, static_manifest)
     report = json_object(elf_facts_report, "ELF facts report")
     require(report.get("target") == TARGET and report.get("schema") == "crabc.x86_64-native-abi-elf-facts/v1",
             "ELF facts identity drifted")
+    dynamic_state = json_object(dynamic_product / "share/crabc/dynamic-product-state.json", "dynamic materialization state")
+    product_source = _epoch_source(preparation, report, dynamic_state)
+    source = source_resolution(root, product_source["revision"])
     static_libc = _report_artifact(report, "candidate-static", static_product, "usr/lib/libc.a")
     dynamic_libc = _report_artifact(report, "candidate-shared", dynamic_product, "usr/lib/libc.so")
     static_provenance = physical_file(static_product / "share/crabc/libc-static.provenance.json", "static allocator provenance")
@@ -271,14 +400,15 @@ def validate_supplied_products(*, root: Path, static_preparation: Path, static_p
     return {
         "product_source": product_source,
         "source_resolution": source,
-        "static": {"product": str(static_product), "manifest": _manifest_identity(static_product, static_manifest),
-                   "libc": static_libc, "provenance": identity(static_provenance)},
-        "dynamic": {"product": str(dynamic_product), "manifest": _manifest_identity(dynamic_product, dynamic_manifest),
-                    "libc": dynamic_libc, "provenance": identity(shared_provenance)},
-        "elf_facts": identity(elf_facts_report),
+        "static_preparation": identity(static_preparation, logical_path="/inputs/static-preparation.json"),
+        "static": {"product": "/inputs/static-product", "manifest": _manifest_identity(static_product, static_manifest, "/inputs/static-product"),
+                   "libc": static_libc, "provenance": identity(static_provenance, logical_path="/inputs/static-product/share/crabc/libc-static.provenance.json")},
+        "dynamic": {"product": "/inputs/dynamic-product", "manifest": _manifest_identity(dynamic_product, dynamic_manifest, "/inputs/dynamic-product"),
+                    "state": identity(dynamic_product / "share/crabc/dynamic-product-state.json", logical_path="/inputs/dynamic-product/share/crabc/dynamic-product-state.json"),
+                    "libc": dynamic_libc, "provenance": identity(shared_provenance, logical_path="/inputs/dynamic-product/share/crabc/libc-shared.provenance.json")},
+        "elf_facts": identity(elf_facts_report, logical_path="/inputs/elf-facts-report.json"),
         "producer_account": account,
     }
-
 
 def _capture(output: Path, label: str, argv: list[str], environment: Mapping[str, str]) -> dict[str, object]:
     raw = output / RAW
@@ -438,22 +568,26 @@ def _replay_interposition_observations(work: Path, output: Path, dynamic_product
 def collect(*, static_preparation: Path, static_product: Path, dynamic_product: Path,
             elf_facts_report: Path, output: Path) -> dict[str, object]:
     output = fresh_output(output, static_preparation=static_preparation, static_product=static_product, dynamic_product=dynamic_product)
+    static_mount = admitted_supplied_path(static_product, "static product")
+    dynamic_mount = admitted_supplied_path(dynamic_product, "dynamic product")
+    admitted_supplied_path(static_preparation, "static preparation")
+    admitted_supplied_path(elf_facts_report, "ELF facts report")
     inputs = validate_supplied_products(root=ROOT, static_preparation=static_preparation, static_product=static_product,
                                        dynamic_product=dynamic_product, elf_facts_report=elf_facts_report)
     output.mkdir(mode=0o700)
-    environment = {"PATH": "/opt/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "TMPDIR": str(output)}
+    environment = workload_environment(output)
     startup_before = set(output.glob("owned-mimalloc-startup-errno.*"))
-    startup_command = _capture(output, "startup", ["bash", str(ROOT / "compat/x86_64/run_owned_mimalloc_startup_errno.sh"), "--static-sysroot", str(Path(static_product).absolute()), str(Path(dynamic_product).absolute())], environment)
+    startup_command = _capture(output, "startup", ["bash", mounted_path(ROOT / "compat/x86_64/run_owned_mimalloc_startup_errno.sh"), "--static-sysroot", static_mount, dynamic_mount], environment)
     startup_work = _new_work(output, "owned-mimalloc-startup-errno", startup_before)
     startup = _startup_observations(startup_work, output, Path(static_product), Path(dynamic_product))
     interposition_before = set(output.glob("owned-c-allocation-interposition.*"))
-    interposition_command = _capture(output, "interposition", ["bash", str(ROOT / "compat/x86_64/run_owned_c_allocation_interposition.sh"), str(Path(dynamic_product).absolute())], environment)
+    interposition_command = _capture(output, "interposition", ["bash", mounted_path(ROOT / "compat/x86_64/run_owned_c_allocation_interposition.sh"), dynamic_mount], environment)
     interposition_work = _new_work(output, "owned-c-allocation-interposition", interposition_before)
     interposition = _interposition_observations(interposition_work, output, Path(dynamic_product))
-    before = {key: value for key, value in inputs.items() if key in {"static", "dynamic", "elf_facts"}}
+    before = {key: value for key, value in inputs.items() if key in {"product_source", "static_preparation", "static", "dynamic", "elf_facts"}}
     after_inputs = validate_supplied_products(root=ROOT, static_preparation=static_preparation, static_product=static_product,
                                               dynamic_product=dynamic_product, elf_facts_report=elf_facts_report)
-    after = {key: value for key, value in after_inputs.items() if key in {"static", "dynamic", "elf_facts"}}
+    after = {key: value for key, value in after_inputs.items() if key in {"product_source", "static_preparation", "static", "dynamic", "elf_facts"}}
     require(same(before, after), "supplied product inputs changed during collection")
     source = inventory.collector_source_seal()
     report = {"schema": SCHEMA, "target": TARGET, "status": {"family_completion": False, "promotion": False, "public_support": False},
@@ -467,7 +601,7 @@ def collect(*, static_preparation: Path, static_product: Path, dynamic_product: 
 
 def _validate_capture(output: Path, record: object, label: str, argv: list[str]) -> None:
     value = exact(record, {"argv", "environment", "stdout", "stderr", "status"}, f"{label} command")
-    require(value["argv"] == argv and value["environment"] == {"PATH": "/opt/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "TMPDIR": str(output)},
+    require(value["argv"] == argv and value["environment"] == workload_environment(output),
             f"{label} command invocation drifted")
     for suffix in ("stdout", "stderr", "status"):
         path = output / RAW / f"{label}.{suffix}"
@@ -484,16 +618,20 @@ def validate_report(report_path: Path, *, static_preparation: Path, static_produ
             "allocator boundary report identity drifted")
     require(same(report["collector_source"], inventory.collector_source_seal()), "collector source changed")
     validate_source_records(ROOT, report["component_sources"])
+    static_mount = admitted_supplied_path(static_product, "static product")
+    dynamic_mount = admitted_supplied_path(dynamic_product, "dynamic product")
+    admitted_supplied_path(static_preparation, "static preparation")
+    admitted_supplied_path(elf_facts_report, "ELF facts report")
     inputs = validate_supplied_products(root=ROOT, static_preparation=static_preparation, static_product=static_product,
                                        dynamic_product=dynamic_product, elf_facts_report=elf_facts_report)
     require(same(report["inputs"], inputs), "supplied product account changed")
     startup = exact(report["startup"], {"command", "work", "observation"}, "startup report")
     startup_work = physical_directory(output / startup["work"], "startup retained work")
-    _validate_capture(output, startup["command"], "startup", ["bash", str(ROOT / "compat/x86_64/run_owned_mimalloc_startup_errno.sh"), "--static-sysroot", str(Path(static_product).absolute()), str(Path(dynamic_product).absolute())])
+    _validate_capture(output, startup["command"], "startup", ["bash", mounted_path(ROOT / "compat/x86_64/run_owned_mimalloc_startup_errno.sh"), "--static-sysroot", static_mount, dynamic_mount])
     _replay_startup_observations(startup_work, output, Path(static_product), Path(dynamic_product), startup["observation"])
     interposition = exact(report["interposition"], {"command", "work", "observation"}, "interposition report")
     interposition_work = physical_directory(output / interposition["work"], "interposition retained work")
-    _validate_capture(output, interposition["command"], "interposition", ["bash", str(ROOT / "compat/x86_64/run_owned_c_allocation_interposition.sh"), str(Path(dynamic_product).absolute())])
+    _validate_capture(output, interposition["command"], "interposition", ["bash", mounted_path(ROOT / "compat/x86_64/run_owned_c_allocation_interposition.sh"), dynamic_mount])
     _replay_interposition_observations(interposition_work, output, Path(dynamic_product), interposition["observation"])
     return report
 

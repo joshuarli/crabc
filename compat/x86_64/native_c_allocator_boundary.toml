@@ -9,8 +9,8 @@ version = "0.1.49"
 mimalloc_version = "3.3.2"
 
 [scope]
-weak_entries = ["malloc", "calloc", "realloc", "reallocarray", "free", "aligned_alloc", "posix_memalign", "memalign", "valloc"]
-strong_entries = ["malloc_usable_size"]
+weak_entries = ["malloc"]
+global_entries = ["calloc", "realloc", "reallocarray", "free", "aligned_alloc", "posix_memalign", "memalign", "valloc", "malloc_usable_size"]
 rust_c_imports = ["_mi_auto_process_done", "_mi_auto_process_init", "mi_free", "mi_malloc_aligned", "mi_realloc_aligned", "mi_usable_size", "mi_zalloc"]
 lifecycle_entries = ["__crabc_x86_owned_mimalloc_process_initializer", "__crabc_x86_owned_mimalloc_process_finalizer"]
 interposition_scenarios = ["asprintf", "passwd", "lio"]

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import importlib.util
 import sys
 import tempfile
@@ -51,9 +52,38 @@ class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
                 BOUNDARY._link(work, output, Path("/fixture/product"), workload, "candidate-pie", "candidate-pie.crabc-link.json", "pie")
             self.assertEqual(validate.call_args.args[:4], (Path("/fixture/product"), workload, executable, receipt))
 
-    def test_static_preparation_uses_its_actual_two_field_product_source_shape(self) -> None:
+    def test_product_epoch_rejects_mixed_static_dynamic_and_facts_sources(self) -> None:
         source = {"revision": "a" * 40, "content_sha256": "b" * 64}
-        self.assertEqual(BOUNDARY._product_source({"source": source}), source)
+        preparation = {
+            "schema": BOUNDARY.static_products.SCHEMA,
+            "status": "prepared-unqualified",
+            "work": ".work/x86_64/preparation",
+            "source": source,
+            "source_seals": {},
+            "pins": {},
+            "products": {},
+            "archives": {},
+            "steps": {},
+        }
+        facts = {"collector_execution_source": {**source, "clean": True}}
+        state = {"schema": "crabc.x86_64-owned-dynamic-materialization/v1", "source_sha256": source["content_sha256"]}
+        self.assertEqual(BOUNDARY._epoch_source(preparation, facts, state), source)
+        mismatched_facts = deepcopy(facts)
+        mismatched_facts["collector_execution_source"]["content_sha256"] = "0" * 64
+        with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "ELF facts source"):
+            BOUNDARY._epoch_source(preparation, mismatched_facts, state)
+        mismatched_state = deepcopy(state)
+        mismatched_state["source_sha256"] = "0" * 64
+        with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "dynamic product source"):
+            BOUNDARY._epoch_source(preparation, facts, mismatched_state)
+        with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "static preparation fields"):
+            BOUNDARY._epoch_source({"source": source}, facts, state)
+
+    def test_source_binding_rejects_an_abi_parameter_type_drift(self) -> None:
+        wrapper = (ROOT / "libc/src/allocator_mimalloc.rs").read_text(encoding="utf-8")
+        observation = (ROOT / "libc/src/allocator_observability_mimalloc.rs").read_text(encoding="utf-8")
+        with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "signature differs for malloc"):
+            BOUNDARY._c_abi_bindings(wrapper.replace("size: SizeT", "size: u32", 1), observation)
 
     def test_current_wrapper_and_lifecycle_sources_match_the_supplied_b525_epoch(self) -> None:
         resolution = BOUNDARY.source_resolution(ROOT, "b52538c57e07958a1d31ef5321dd5c6e2dedc258")
@@ -79,6 +109,73 @@ class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
                 BOUNDARY._replay_link(work, output, Path("/fixture/product"), work / "workload.o", "candidate-pie", "candidate-pie.crabc-link.json", "pie", link)
             self.assertEqual(validate.call_args.args[:3], (ROOT, "/workspace", Path("/fixture/product")))
             self.assertEqual(validate.call_args.args[-1], link["linker"])
+
+    def test_fresh_output_rejects_a_symlinked_existing_ancestor_before_creation(self) -> None:
+        scratch = ROOT / ".work/x86_64/native-c-allocator-boundary-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            root = Path(temporary)
+            work = root / ".work/x86_64"
+            work.mkdir(parents=True)
+            outside = root / "outside"
+            (outside / "nested").mkdir(parents=True)
+            (work / "alias").symlink_to(outside, target_is_directory=True)
+            with mock.patch.object(BOUNDARY, "ROOT", root):
+                with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "symlink"):
+                    BOUNDARY.fresh_output(work / "alias/nested/output", static_preparation=root / "preparation.json",
+                                          static_product=root / "static", dynamic_product=root / "dynamic")
+            self.assertFalse((outside / "nested/output").exists())
+
+    def test_collect_rejects_a_supplied_product_outside_the_workspace_before_writing_output(self) -> None:
+        scratch = ROOT / ".work/x86_64/native-c-allocator-boundary-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            root = Path(temporary)
+            work = root / ".work/x86_64"
+            work.mkdir(parents=True)
+            inputs = work / "inputs"
+            inputs.mkdir()
+            output = work / "output"
+            with mock.patch.object(BOUNDARY, "ROOT", root):
+                with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "static product escapes"):
+                    BOUNDARY.collect(
+                        static_preparation=inputs / "preparation.json",
+                        static_product=root / "outside-static-product",
+                        dynamic_product=inputs / "dynamic-product",
+                        elf_facts_report=inputs / "facts.json",
+                        output=output,
+                    )
+            self.assertFalse(output.exists())
+
+    def test_contract_and_source_resolution_keep_weak_and_global_allocator_entries_distinct(self) -> None:
+        contract = BOUNDARY.load_contract(ROOT)
+        self.assertEqual(contract["scope"]["weak_entries"], ["malloc"])
+        self.assertEqual(contract["scope"]["global_entries"], [
+            "calloc", "realloc", "reallocarray", "free", "aligned_alloc", "posix_memalign", "memalign", "valloc", "malloc_usable_size",
+        ])
+        resolution = BOUNDARY.source_resolution(ROOT, "b52538c57e07958a1d31ef5321dd5c6e2dedc258")
+        self.assertEqual(resolution["c_abi_bindings"]["malloc"], {
+            "binding": "WEAK", "signature": "pub unsafe extern \"C\" fn malloc(size: SizeT) -> *mut c_void",
+            "callee": "mi_malloc_aligned",
+        })
+        self.assertEqual(resolution["c_abi_bindings"]["malloc_usable_size"], {
+            "binding": "GLOBAL", "signature": "pub unsafe extern \"C\" fn malloc_usable_size(ptr: *mut c_void) -> usize",
+            "callee": "mi_usable_size",
+        })
+
+    def test_retained_command_identity_uses_workspace_paths_on_host_replay(self) -> None:
+        scratch = ROOT / ".work/x86_64/native-c-allocator-boundary-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            root = Path(temporary)
+            work = root / ".work/x86_64"
+            work.mkdir(parents=True)
+            source = root / "compat/x86_64/runner.sh"
+            source.parent.mkdir(parents=True)
+            source.write_text("#!/bin/sh\n", encoding="utf-8")
+            with mock.patch.object(BOUNDARY, "ROOT", root):
+                self.assertEqual(BOUNDARY.mounted_path(source), "/workspace/compat/x86_64/runner.sh")
+                self.assertEqual(BOUNDARY.workload_environment(work / "receipt")["TMPDIR"], "/workspace/.work/x86_64/receipt")
 
 
 if __name__ == "__main__":

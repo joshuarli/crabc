@@ -15,6 +15,12 @@ check binds the C ABI wrappers for `malloc`, `calloc`, `realloc`,
 `valloc`, and `malloc_usable_size`, and binds the process initializer/finalizer
 to the selected x86 root.
 
+`malloc` is the only weak wrapper. `calloc`, `realloc`, `reallocarray`,
+`free`, `aligned_alloc`, `posix_memalign`, `memalign`, `valloc`, and
+`malloc_usable_size` are exact global definitions. The reader checks each
+Rust `extern "C"` declaration head, its no-mangle/weak state, and its selected
+backend or wrapper call; a name match alone cannot admit a different C ABI.
+
 The collector runs only two existing installed-product workloads:
 
 - `run_owned_mimalloc_startup_errno.sh --static-sysroot STATIC DYNAMIC` keeps
@@ -30,7 +36,12 @@ Both runner work directories, their terminal streams, selected executable
 roots, and owned link receipts are sealed before and after replay. The product
 source epoch is retained separately from the collector source: a later reader
 requires the wrapper/lifecycle source blobs to equal that product revision,
-but does not call a historical collector result a current-source proof.
+the static preparation source to equal the ELF-facts collector source, and the
+dynamic materialization source hash to equal the same content hash. It also
+compares the supplied static tree with the preparation receipt's primary tree.
+This permits an immutable prior product epoch while rejecting a mixed static,
+dynamic, or facts epoch; it does not call a historical collector result a
+current-source proof.
 
 This is a bounded C-wrapper/lifecycle receipt. It does not prove allocator
 family completion, Rust-port promotion, broad allocation behavior, or public
