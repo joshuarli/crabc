@@ -136,9 +136,13 @@ complete ELF facts, and current source transaction before the selector joins
 three private shared-libc source-dispatch imports, the seven retired prepared
 worker-token names, and the 72-byte initial TLS descriptor. The join records
 the exact `.dynsym`/`.symtab` imports, the loader definition, and the
-descriptor consumer separately. It does not attach the distinct owned CRT
-handoff carrier, fabricate a main-thread descriptor import, or claim RuntimeV1
-facade parity, general pthread semantics, family completion, promotion, or
+descriptor consumer separately. The owner records its supplied preparation,
+public reports, product roots, manifests, and dynamic state as exact
+checkout-relative path/hash/size identities; the selector joins each to the
+same supplied path and content, then retains its mode-bearing product cohort
+for the post-attachment transaction recheck. It does not attach the distinct
+owned CRT handoff carrier, fabricate a main-thread descriptor import, or
+claim RuntimeV1 facade parity, general pthread semantics, family completion, promotion, or
 public support.
 
 `--errno-storage-lifecycle-report REPORT` is also independently optional. Its
