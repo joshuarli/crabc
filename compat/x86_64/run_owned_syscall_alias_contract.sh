@@ -2,6 +2,7 @@
 # Focused native proof for musl-shaped syscall aliases and interposition.
 set -euo pipefail
 ulimit -c 0
+umask 022
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
@@ -71,18 +72,29 @@ printf 'owned syscall alias contract evidence: %s\n' "$WORK"
 run() {
     local stem="$1"
     shift
+    # Retain the exact Python program fed on stdin, then replay those bytes
+    # below; other finite commands have an empty stdin boundary.
+    if [ "$1" = python3 ] && [ "${2:-}" = -B ] && [ "${3:-}" = - ]; then
+        cat >"$WORK/$stem.stdin"
+    else
+        : >"$WORK/$stem.stdin"
+    fi
     python3 -B - "$WORK/$stem.argv.json" "$@" <<'PY'
 import json
+import os
 from pathlib import Path
 import sys
 Path(sys.argv[1]).write_text(json.dumps({
     'argv': sys.argv[2:],
     'timeout_seconds': 45,
+    'execution_argv': ['timeout', '45', *sys.argv[2:]],
+    'environment': {key: value for key, value in os.environ.items() if key not in {'PWD', 'SHLVL', '_'}},
+    'cwd': os.getcwd(),
 }, separators=(',', ':')) + '\n', encoding='utf-8')
 PY
     local status
     set +e
-    timeout 45 "$@" >"$WORK/$stem.stdout" 2>"$WORK/$stem.stderr"
+    timeout 45 "$@" <"$WORK/$stem.stdin" >"$WORK/$stem.stdout" 2>"$WORK/$stem.stderr"
     status=$?
     set -e
     printf '%s\n' "$status" >"$WORK/$stem.status"
@@ -287,12 +299,14 @@ run oracle-override "$WORK/oracle-override" "$WORK/regular"
 
 for mode in static static-pie; do
     run "$mode-contract-link" "$STATIC_PRODUCT/bin/crabc-cc" "-$mode" \
-        "$WORK/contract.o" -o "$WORK/$mode-contract"
+        "$WORK/contract.o" --link-receipt "${WORK#"$ROOT/"}/$mode-contract.link.json" \
+        -o "$WORK/$mode-contract"
     run "$mode-contract" "$WORK/$mode-contract" "$WORK/regular"
     same_transcript oracle-contract "$mode-contract"
 
     run "$mode-override-link" "$STATIC_PRODUCT/bin/crabc-cc" "-$mode" \
-        "$WORK/override.o" -o "$WORK/$mode-override"
+        "$WORK/override.o" --link-receipt "${WORK#"$ROOT/"}/$mode-override.link.json" \
+        -o "$WORK/$mode-override"
     run "$mode-override" "$WORK/$mode-override" "$WORK/regular"
     same_transcript oracle-override "$mode-override"
 done
