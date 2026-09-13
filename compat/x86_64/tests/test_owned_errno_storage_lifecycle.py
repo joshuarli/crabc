@@ -305,6 +305,84 @@ class ErrnoStorageLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(layout["archive_member"], {"name": "provider.o", "index": 1, "occurrence": 0})
 
+    def test_h_errno_layout_replay_uses_recorded_archive_spelling_for_host_products(self) -> None:
+        """Complete archive facts retain /workspace while replay sees host paths."""
+
+        TEST_WORK_ROOT.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=TEST_WORK_ROOT) as temporary:
+            work = Path(temporary)
+            static_archive = work / "products" / "static" / "usr/lib" / "libc.a"
+            dynamic_library = work / "products" / "dynamic" / "usr/lib" / "libc.so"
+            static_archive.parent.mkdir(parents=True)
+            dynamic_library.parent.mkdir(parents=True)
+            static_archive.write_bytes(b"fixture static archive\n")
+            dynamic_library.write_bytes(b"fixture shared library\n")
+            products = {
+                "static": {"libc": reader.identity(static_archive, "fixture static libc")},
+                "dynamic": {"libc": reader.identity(dynamic_library, "fixture shared libc")},
+            }
+            recorded_root = PurePosixPath("/workspace")
+            observations = reader._layout_observations(products, ROOT, recorded_root)
+            candidate_static_archive = observations["candidate-static-header.txt"][-1]
+
+            def archive_payload(archive: str, member: str, payload: str) -> str:
+                return f"\nFile: {archive}({member})\n{payload}"
+
+            payloads = {
+                "oracle-static-members.txt": "provider.o\n",
+                "oracle-static-header.txt": archive_payload(
+                    reader.ORACLE_STATIC_ARCHIVE, "provider.o", STATIC_LAYOUT_HEADER
+                ),
+                "oracle-static-sections.txt": archive_payload(
+                    reader.ORACLE_STATIC_ARCHIVE, "provider.o", STATIC_LAYOUT_SECTIONS
+                ),
+                "oracle-shared-header.txt": SHARED_LAYOUT_HEADER,
+                "oracle-shared-sections.txt": SHARED_LAYOUT_SECTIONS,
+                "candidate-static-members.txt": "provider.o\n",
+                "candidate-static-header.txt": archive_payload(
+                    candidate_static_archive, "provider.o", STATIC_LAYOUT_HEADER
+                ),
+                "candidate-static-sections.txt": archive_payload(
+                    candidate_static_archive, "provider.o", STATIC_LAYOUT_SECTIONS
+                ),
+                "candidate-shared-header.txt": SHARED_LAYOUT_HEADER,
+                "candidate-shared-sections.txt": SHARED_LAYOUT_SECTIONS,
+            }
+            artifacts = {}
+            for name in reader.LAYOUT_INPUTS:
+                output = work / name
+                output.write_text(payloads[name], encoding="utf-8")
+                stem = name.removesuffix(".txt")
+                reader.write_json(work / f"{stem}.argv.json", {"argv": observations[name]})
+                (work / f"{stem}.status").write_text("0\n", encoding="utf-8")
+                (work / f"{stem}.stderr").write_bytes(b"")
+                artifacts[name] = reader.observation_artifact(work, name, "fixture layout")
+
+            symbol_payloads = {
+                "oracle-static-symbols.txt": archive_payload(
+                    reader.ORACLE_STATIC_ARCHIVE, "provider.o", STATIC_LAYOUT_SYMBOLS
+                ),
+                "candidate-static-symbols.txt": archive_payload(
+                    candidate_static_archive, "provider.o", STATIC_LAYOUT_SYMBOLS
+                ),
+                "oracle-shared-symbols.txt": SHARED_LAYOUT_SYMBOLS,
+                "candidate-shared-symbols.txt": SHARED_LAYOUT_SYMBOLS,
+                "oracle-dynamic-symbols.txt": SHARED_LAYOUT_SYMBOLS,
+                "candidate-dynamic-symbols.txt": SHARED_LAYOUT_SYMBOLS,
+            }
+            symbols = {}
+            for name in reader.SYMBOL_INPUTS:
+                path = work / name
+                path.write_text(symbol_payloads[name], encoding="utf-8")
+                symbols[name] = path
+
+            layout = reader.validate_h_errno_layout_artifacts(
+                artifacts, symbols, products, work, ROOT, recorded_root
+            )
+            self.assertEqual(candidate_static_archive, "/workspace/" + static_archive.relative_to(ROOT).as_posix())
+            self.assertEqual(layout["static"]["candidate"]["archive_member"]["name"], "provider.o")
+            self.assertEqual(layout["shared"]["candidate"]["required_alignment_bytes"], 4)
+
     def test_shared_alias_requires_its_exact_local_link_policy(self) -> None:
         self.assertEqual(PRIVATE_ALIAS_LIST.read_text(encoding="utf-8"), "___errno_location\n")
         provenance = {
