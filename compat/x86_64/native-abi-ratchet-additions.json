@@ -1,0 +1,26 @@
+{
+  "additions": [
+    {
+      "abi": {
+        "binding": "GLOBAL",
+        "data_size": null,
+        "type": "FUNC",
+        "visibility": "DEFAULT"
+      },
+      "identity": {
+        "name": "tgkill",
+        "version": null,
+        "version_default": false
+      },
+      "selection": {
+        "component_contract": "compat/x86_64/native-thread-signal-abi.md",
+        "frozen_c_contracts": [
+          "3e100d45c5a0798c2d3862d5e2eef584c610ccf9:libc/src/c_abi.rs::tgkill",
+          "3e100d45c5a0798c2d3862d5e2eef584c610ccf9:include/signal.h"
+        ]
+      }
+    }
+  ],
+  "schema": "crabc.x86_64-native-abi-dynamic-ratchet-additions/v1",
+  "target": "x86_64-unknown-linux-musl"
+}

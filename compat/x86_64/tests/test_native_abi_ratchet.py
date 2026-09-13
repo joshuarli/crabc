@@ -114,6 +114,33 @@ def baseline(
     )
 
 
+def reviewed_additions(
+    entries: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    if entries is None:
+        entries = [{
+            "identity": identity("tgkill"),
+            "abi": {
+                "type": "FUNC",
+                "binding": "GLOBAL",
+                "visibility": "DEFAULT",
+                "data_size": None,
+            },
+            "selection": {
+                "frozen_c_contracts": [
+                    "3e100d45c5a0798c2d3862d5e2eef584c610ccf9:libc/src/c_abi.rs::tgkill",
+                    "3e100d45c5a0798c2d3862d5e2eef584c610ccf9:include/signal.h",
+                ],
+                "component_contract": "compat/x86_64/native-thread-signal-abi.md",
+            },
+        }]
+    return {
+        "schema": "crabc.x86_64-native-abi-dynamic-ratchet-additions/v1",
+        "target": ratchet.TARGET,
+        "additions": entries,
+    }
+
+
 class NativeAbiRatchetTests(unittest.TestCase):
     def test_newly_present_missing_symbol_requires_all_expected_abi_fields(self) -> None:
         reference = [symbol("missing")]
@@ -248,6 +275,109 @@ class NativeAbiRatchetTests(unittest.TestCase):
         result = ratchet.evaluate(policy, source([symbol("expected"), symbol("new_extra")]))
         self.assertEqual(result["violations"]["new_unexpected"], [identity("new_extra")])
 
+    def test_reviewed_tgkill_extension_still_has_a_raw_musl_extra_but_no_new_extra_violation(self) -> None:
+        policy = baseline([symbol("expected")], [symbol("expected")])
+        current = source([symbol("expected"), symbol("tgkill")])
+
+        # This is the historical ratchet behavior: a selected tgkill provider
+        # is still absent from musl and therefore first appears as a new extra.
+        historical = ratchet.evaluate(policy, current)
+        self.assertEqual(historical["current"]["unexpected"], [identity("tgkill")])
+        self.assertEqual(historical["violations"]["new_unexpected"], [identity("tgkill")])
+        self.assertEqual(set(historical["violations"]), {
+            "new_missing",
+            "new_unexpected",
+            "newly_present_not_correct",
+            "regressed_matches",
+            "field_transitions",
+        })
+
+        reviewed = ratchet.evaluate(policy, current, additions=reviewed_additions())
+        self.assertEqual(reviewed["current"]["unexpected"], [identity("tgkill")])
+        self.assertEqual(reviewed["violations"]["new_unexpected"], [])
+        self.assertEqual(reviewed["violations"]["missing_additions"], [])
+        self.assertEqual(reviewed["violations"]["mismatched_additions"], [])
+
+    def test_reviewed_addition_is_required_and_its_metadata_is_exact(self) -> None:
+        policy = baseline([symbol("expected")], [symbol("expected")])
+
+        missing = ratchet.evaluate(policy, source([symbol("expected")]), additions=reviewed_additions())
+        self.assertEqual(missing["violations"]["new_unexpected"], [])
+        self.assertEqual(missing["violations"]["missing_additions"], [identity("tgkill")])
+        self.assertEqual(missing["violations"]["mismatched_additions"], [])
+
+        wrong_metadata = ratchet.evaluate(
+            policy,
+            source([symbol("expected"), symbol("tgkill", binding="WEAK")]),
+            additions=reviewed_additions(),
+        )
+        self.assertEqual(wrong_metadata["current"]["unexpected"], [identity("tgkill")])
+        self.assertEqual(wrong_metadata["violations"]["new_unexpected"], [])
+        self.assertEqual(wrong_metadata["violations"]["missing_additions"], [])
+        self.assertEqual(wrong_metadata["violations"]["mismatched_additions"], [{
+            "identity": identity("tgkill"),
+            "expected": {
+                "type": "FUNC",
+                "binding": "GLOBAL",
+                "visibility": "DEFAULT",
+                "data_size": None,
+            },
+            "candidate": {
+                "type": "FUNC",
+                "binding": "WEAK",
+                "visibility": "DEFAULT",
+                "data_size": None,
+            },
+            "incorrect_fields": ["binding"],
+        }])
+
+    def test_reviewed_addition_does_not_allow_an_unlisted_new_export(self) -> None:
+        policy = baseline([symbol("expected")], [symbol("expected")])
+        result = ratchet.evaluate(
+            policy,
+            source([symbol("expected"), symbol("tgkill"), symbol("unlisted")]),
+            additions=reviewed_additions(),
+        )
+        self.assertEqual(result["violations"]["new_unexpected"], [identity("unlisted")])
+
+    def test_additions_policy_requires_exact_nonoverlapping_identities_and_attribution(self) -> None:
+        policy = baseline([symbol("historical")], [symbol("historical")])
+
+        with self.assertRaisesRegex(ratchet.RatchetError, "is empty"):
+            ratchet.validate_additions_policy(reviewed_additions([]), policy)
+
+        unknown_field = reviewed_additions()
+        unknown_field["unexpected"] = True
+        with self.assertRaisesRegex(ratchet.RatchetError, "fields drifted"):
+            ratchet.validate_additions_policy(unknown_field, policy)
+
+        unknown_selection_field = reviewed_additions()
+        unknown_selection_field["additions"][0]["selection"]["wildcard"] = "*"
+        with self.assertRaisesRegex(ratchet.RatchetError, "fields drifted"):
+            ratchet.validate_additions_policy(unknown_selection_field, policy)
+
+        wildcard_identity = reviewed_additions()
+        wildcard_identity["additions"][0]["identity"] = identity("tg*")
+        with self.assertRaisesRegex(ratchet.RatchetError, "not exact"):
+            ratchet.validate_additions_policy(wildcard_identity, policy)
+
+        wildcard_attribution = reviewed_additions()
+        wildcard_attribution["additions"][0]["selection"]["frozen_c_contracts"][0] = "3e100d45c5a0798c2d3862d5e2eef584c610ccf9:libc/*"
+        with self.assertRaisesRegex(ratchet.RatchetError, "not exact"):
+            ratchet.validate_additions_policy(wildcard_attribution, policy)
+
+        overlap = reviewed_additions()
+        overlap["additions"][0]["identity"] = identity("historical")
+        with self.assertRaisesRegex(ratchet.RatchetError, "redefines a baseline or musl oracle"):
+            ratchet.validate_additions_policy(overlap, policy)
+
+        version_shift = reviewed_additions()
+        shifted = json.loads(json.dumps(version_shift["additions"][0]))
+        shifted["identity"] = identity("tgkill", "TGKILL_1", True)
+        version_shift["additions"].append(shifted)
+        with self.assertRaisesRegex(ratchet.RatchetError, "repeats or version-shifts"):
+            ratchet.validate_additions_policy(version_shift, policy)
+
     def test_unknown_public_binding_is_rejected_not_dropped(self) -> None:
         with self.assertRaisesRegex(ratchet.RatchetError, "binding"):
             source([symbol("opaque", binding="LOCAL")])
@@ -299,6 +429,20 @@ class NativeAbiRatchetTests(unittest.TestCase):
             {key: len(value) for key, value in policy["baseline_state"].items()},
             {"missing": 72, "unexpected": 475, "matched": 1477, "mismatched": 101},
         )
+
+    def test_checked_additions_policy_retains_the_exact_tgkill_extension(self) -> None:
+        policy, _ = ratchet._baseline()
+        additions, identity_record = ratchet._additions(policy)
+        self.assertEqual(identity_record["sha256"], "bd80f655151fff341eabd83f2f90b102dd82c8ee2fee9e4b5dee94124ee68174")
+        self.assertEqual(identity_record["size"], 691)
+        self.assertEqual(additions, reviewed_additions())
+        self.assertEqual(additions["additions"][0]["selection"], {
+            "frozen_c_contracts": [
+                "3e100d45c5a0798c2d3862d5e2eef584c610ccf9:libc/src/c_abi.rs::tgkill",
+                "3e100d45c5a0798c2d3862d5e2eef584c610ccf9:include/signal.h",
+            ],
+            "component_contract": "compat/x86_64/native-thread-signal-abi.md",
+        })
 
     def test_pinned_oracle_identity_cannot_drift(self) -> None:
         reference = [symbol("expected")]
@@ -378,6 +522,103 @@ class NativeAbiRatchetTests(unittest.TestCase):
                 ])
             self.assertEqual(result, 1)
             self.assertEqual(json.loads((output / "ratchet.json").read_text(encoding="utf-8")), {"passed": False})
+
+    def test_check_payload_binds_the_fixed_additions_policy_in_the_v2_receipt(self) -> None:
+        policy = baseline([symbol("expected")], [symbol("expected")])
+        baseline_identity = {
+            "path": "/reviewed/x86_64-dynamic.json",
+            "sha256": "5" * 64,
+            "size": 1,
+            "mode": 0o644,
+        }
+        current_origin = {
+            "inventory_report": {"kind": "synthetic"},
+            "oracle": {"kind": "synthetic"},
+            "candidate": {"kind": "synthetic"},
+        }
+        source_seal = {
+            "revision": "6" * 40,
+            "content_sha256": "7" * 64,
+            "clean": True,
+        }
+        candidate = source([symbol("expected"), symbol("tgkill")])["symbols"]
+        with (
+            mock.patch.object(ratchet, "_baseline", return_value=(policy, baseline_identity)),
+            mock.patch.object(
+                ratchet,
+                "_validate_fresh_inventory",
+                return_value=({}, current_origin, source([symbol("expected")])["symbols"], candidate),
+            ),
+            mock.patch.object(ratchet, "_verify_oracle_floor"),
+            mock.patch.object(ratchet.inventory, "collector_source_seal", return_value=source_seal),
+        ):
+            payload = ratchet._check_payload(
+                Path("/unused/inventory/report.json"),
+                static_product=Path("/unused/static"),
+                dynamic_product=Path("/unused/dynamic"),
+                static_preparation=Path("/unused/preparation.json"),
+            )
+        additions, additions_identity = ratchet._additions(policy)
+        self.assertEqual(payload["schema"], ratchet.CHECK_SCHEMA)
+        self.assertEqual(payload["additions_policy"], {
+            "path": "compat/x86_64/native-abi-ratchet-additions.json",
+            "identity": additions_identity,
+            "content": additions,
+        })
+        self.assertTrue(payload["passed"])
+
+    def test_retained_check_rejects_additions_policy_hash_and_content_mutations(self) -> None:
+        policy, _ = ratchet._baseline()
+        additions, additions_identity = ratchet._additions(policy)
+        expected = {
+            "schema": ratchet.CHECK_SCHEMA,
+            "additions_policy": {
+                "path": "compat/x86_64/native-abi-ratchet-additions.json",
+                "identity": additions_identity,
+                "content": additions,
+            },
+            "passed": True,
+        }
+        work = ROOT / ".work/x86_64/native-abi-ratchet-tests"
+        work.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=work) as temporary:
+            report = Path(temporary) / "ratchet.json"
+            report.write_text(json.dumps(expected), encoding="utf-8")
+            with mock.patch.object(ratchet, "_check_payload", return_value=expected):
+                self.assertEqual(
+                    ratchet.validate_check_report(
+                        report,
+                        inventory_report=Path("/unused/inventory/report.json"),
+                        static_product=Path("/unused/static"),
+                        dynamic_product=Path("/unused/dynamic"),
+                        static_preparation=Path("/unused/preparation.json"),
+                    ),
+                    expected,
+                )
+
+                hash_mutation = json.loads(json.dumps(expected))
+                hash_mutation["additions_policy"]["identity"]["sha256"] = "0" * 64
+                report.write_text(json.dumps(hash_mutation), encoding="utf-8")
+                with self.assertRaisesRegex(ratchet.RatchetError, "does not reconstruct"):
+                    ratchet.validate_check_report(
+                        report,
+                        inventory_report=Path("/unused/inventory/report.json"),
+                        static_product=Path("/unused/static"),
+                        dynamic_product=Path("/unused/dynamic"),
+                        static_preparation=Path("/unused/preparation.json"),
+                    )
+
+                content_mutation = json.loads(json.dumps(expected))
+                content_mutation["additions_policy"]["content"]["additions"][0]["abi"]["binding"] = "WEAK"
+                report.write_text(json.dumps(content_mutation), encoding="utf-8")
+                with self.assertRaisesRegex(ratchet.RatchetError, "does not reconstruct"):
+                    ratchet.validate_check_report(
+                        report,
+                        inventory_report=Path("/unused/inventory/report.json"),
+                        static_product=Path("/unused/static"),
+                        dynamic_product=Path("/unused/dynamic"),
+                        static_preparation=Path("/unused/preparation.json"),
+                    )
 
     def test_retained_result_rejects_numeric_boolean_substitution(self) -> None:
         work = ROOT / ".work/x86_64/native-abi-ratchet-tests"

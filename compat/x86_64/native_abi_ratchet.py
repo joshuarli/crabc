@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Check the reviewed x86 public-dynamic ABI regression floor.
 
-This component consumes a fresh, publicly replayed native ABI inventory.  It
-does not decide compatibility, complete a family, or promote a product.  The
-tracked baseline is deliberately read-only reviewed policy; this tool has no
-baseline-update command.
+This component consumes a fresh, publicly replayed native ABI inventory. It
+does not decide compatibility, complete a family, or promote a product. The
+tracked historical baseline and separately tracked exact additions policy are
+read-only reviewed inputs; this tool has no policy-update command.
 """
 
 from __future__ import annotations
@@ -27,10 +27,12 @@ import native_abi_inventory as inventory
 
 
 BASELINE_SCHEMA = "crabc.x86_64-native-abi-dynamic-ratchet/v1"
-CHECK_SCHEMA = "crabc.x86_64-native-abi-dynamic-ratchet-check/v1"
+ADDITIONS_SCHEMA = "crabc.x86_64-native-abi-dynamic-ratchet-additions/v1"
+CHECK_SCHEMA = "crabc.x86_64-native-abi-dynamic-ratchet-check/v2"
 INVENTORY_SCHEMA = inventory.SCHEMA
 TARGET = inventory.TARGET
 BASELINE_PATH = ROOT / "compat/ratchet/x86_64-dynamic.json"
+ADDITIONS_PATH = ROOT / "compat/x86_64/native-abi-ratchet-additions.json"
 CHECK_REPORT_NAME = "ratchet.json"
 ALLOWED_BINDINGS = frozenset({"GLOBAL", "WEAK", "UNIQUE"})
 ALLOWED_VISIBILITIES = frozenset({"DEFAULT", "PROTECTED"})
@@ -39,6 +41,9 @@ DATA_TYPES = frozenset({"OBJECT", "TLS"})
 SYMBOL_RECORD_KEYS = frozenset(inventory.DYNAMIC_COLUMNS)
 IDENTITY_KEYS = frozenset({"name", "version", "version_default"})
 ABI_KEYS = frozenset({"type", "binding", "visibility", "data_size"})
+ADDITIONS_POLICY_KEYS = frozenset({"schema", "target", "additions"})
+ADDITION_KEYS = frozenset({"identity", "abi", "selection"})
+ADDITION_SELECTION_KEYS = frozenset({"frozen_c_contracts", "component_contract"})
 POLICY_STATUS = {
     "classification": "monotonic-regression-floor-not-compatibility-or-promotion",
     "family_completion": False,
@@ -463,7 +468,119 @@ def _baseline(path: Path | None = None) -> tuple[dict[str, object], dict[str, ob
     return validate_baseline(_read_json(path, "native x86 dynamic ABI baseline")), _file_identity(path, "native x86 dynamic ABI baseline")
 
 
-def evaluate(baseline: Mapping[str, object], current: Mapping[str, object]) -> dict[str, object]:
+def _contract_reference(value: object, description: str) -> str:
+    require(isinstance(value, str) and value and value == value.strip(), f"{description} is malformed")
+    require(
+        not any(character.isspace() or character in "*?[]" for character in value),
+        f"{description} is not exact",
+    )
+    return value
+
+
+def _validate_addition_selection(value: object, description: str) -> dict[str, object]:
+    selection = _exact_mapping(value, ADDITION_SELECTION_KEYS, description)
+    frozen_contracts = selection["frozen_c_contracts"]
+    require(isinstance(frozen_contracts, list) and frozen_contracts, f"{description} frozen C contracts are malformed")
+    normalized_contracts: list[str] = []
+    seen_contracts: set[str] = set()
+    for index, contract in enumerate(frozen_contracts):
+        contract = _contract_reference(contract, f"{description} frozen C contract {index}")
+        revision, separator, locator = contract.partition(":")
+        require(separator == ":" and _REVISION.fullmatch(revision) is not None, f"{description} frozen C revision is malformed")
+        require(locator and not locator.startswith("/") and ".." not in locator.split("/"), f"{description} frozen C locator is malformed")
+        require(contract not in seen_contracts, f"{description} repeats a frozen C contract")
+        seen_contracts.add(contract)
+        normalized_contracts.append(contract)
+    component_contract = _contract_reference(selection["component_contract"], f"{description} component contract")
+    require(
+        component_contract.startswith("compat/x86_64/")
+        and component_contract.endswith(".md")
+        and ".." not in component_contract.split("/"),
+        f"{description} component contract is malformed",
+    )
+    return {
+        "frozen_c_contracts": normalized_contracts,
+        "component_contract": component_contract,
+    }
+
+
+def validate_additions_policy(value: object, baseline: Mapping[str, object]) -> dict[str, object]:
+    """Validate exact reviewed extensions without changing the historical floor."""
+
+    policy = _exact_mapping(value, ADDITIONS_POLICY_KEYS, "native x86 dynamic ABI additions policy")
+    require(policy["schema"] == ADDITIONS_SCHEMA, "native x86 dynamic ABI additions policy schema drifted")
+    require(policy["target"] == TARGET, "native x86 dynamic ABI additions policy target drifted")
+    baseline = validate_baseline(baseline)
+    raw_additions = policy["additions"]
+    require(isinstance(raw_additions, list) and raw_additions, "native x86 dynamic ABI additions policy is empty")
+
+    historical_entries = [
+        *baseline["oracle_symbols"],
+        *baseline["baseline_candidate_symbols"],
+    ]
+    historical_names = {
+        str(entry["identity"]["name"])
+        for entry in historical_entries
+    }
+    normalized: list[dict[str, object]] = []
+    seen_identities: set[tuple[str, str | None, bool]] = set()
+    seen_names: set[str] = set()
+    for index, raw_addition in enumerate(raw_additions):
+        addition = _exact_mapping(raw_addition, ADDITION_KEYS, f"native x86 dynamic ABI addition {index}")
+        symbol_entry = _validated_symbol_entries([{
+            "identity": addition["identity"],
+            "abi": addition["abi"],
+        }], f"native x86 dynamic ABI addition {index}")[0]
+        identity = symbol_entry["identity"]
+        require(isinstance(identity, dict), "validated native x86 dynamic ABI addition identity drifted")
+        name = str(identity["name"])
+        version = identity["version"]
+        version_default = bool(identity["version_default"])
+        require(
+            not any(character in name or (isinstance(version, str) and character in version) for character in "*?[]"),
+            "native x86 dynamic ABI addition identity is not exact",
+        )
+        require(version is not None or version_default is False, "unversioned native x86 dynamic ABI addition has default version")
+        key = (name, version, version_default)
+        require(key not in seen_identities, "native x86 dynamic ABI additions policy repeats an identity")
+        require(name not in seen_names, "native x86 dynamic ABI additions policy repeats or version-shifts a symbol name")
+        require(name not in historical_names, "native x86 dynamic ABI addition redefines a baseline or musl oracle symbol name")
+        seen_identities.add(key)
+        seen_names.add(name)
+        normalized.append({
+            "identity": symbol_entry["identity"],
+            "abi": symbol_entry["abi"],
+            "selection": _validate_addition_selection(addition["selection"], f"native x86 dynamic ABI addition {index} selection"),
+        })
+    return {
+        "schema": ADDITIONS_SCHEMA,
+        "target": TARGET,
+        "additions": sorted(normalized, key=lambda addition: _identity_sort_key(addition["identity"])),
+    }
+
+
+def _additions(
+    baseline: Mapping[str, object],
+    path: Path | None = None,
+) -> tuple[dict[str, object], dict[str, object]]:
+    if path is None:
+        path = ADDITIONS_PATH
+    try:
+        path = inventory.physical_regular(path, "native x86 dynamic ABI additions policy")
+    except inventory.InventoryError as error:
+        raise RatchetError(f"native x86 dynamic ABI additions policy is invalid: {error}") from error
+    return (
+        validate_additions_policy(_read_json(path, "native x86 dynamic ABI additions policy"), baseline),
+        _file_identity(path, "native x86 dynamic ABI additions policy"),
+    )
+
+
+def evaluate(
+    baseline: Mapping[str, object],
+    current: Mapping[str, object],
+    *,
+    additions: Mapping[str, object] | None = None,
+) -> dict[str, object]:
     """Apply the fieldwise monotonic policy to one fresh candidate surface."""
 
     baseline = validate_baseline(baseline)
@@ -471,12 +588,21 @@ def evaluate(baseline: Mapping[str, object], current: Mapping[str, object]) -> d
     expected_entries = baseline["oracle_symbols"]
     baseline_entries = baseline["baseline_candidate_symbols"]
     require(isinstance(expected_entries, list) and isinstance(baseline_entries, list), "validated baseline symbol state drifted")
+    has_additions = additions is not None
+    if not has_additions:
+        addition_entries: list[dict[str, object]] = []
+    else:
+        additions = validate_additions_policy(additions, baseline)
+        addition_entries = additions["additions"]
+        require(isinstance(addition_entries, list), "validated native x86 dynamic ABI additions drifted")
     expected = _entry_map(expected_entries)
     old = _entry_map(baseline_entries)
     now = _entry_map(current_entries)
+    required_additions = _entry_map(addition_entries)
     expected_keys = set(expected)
     old_keys = set(old)
     now_keys = set(now)
+    required_addition_keys = set(required_additions)
     baseline_missing = expected_keys - old_keys
     current_missing = expected_keys - now_keys
     baseline_extras = old_keys - expected_keys
@@ -522,15 +648,31 @@ def evaluate(baseline: Mapping[str, object], current: Mapping[str, object]) -> d
         if improved:
             corrected_fields.append({"symbol": dict(expected[key]["identity"]), "fields": improved})
 
+    mismatched_additions: list[dict[str, object]] = []
+    for key in sorted(required_addition_keys & now_keys, key=lambda item: (item[0], "" if item[1] is None else item[1], item[2])):
+        incorrect = _incorrect_fields(required_additions[key]["abi"], now[key]["abi"])
+        if incorrect:
+            mismatched_additions.append({
+                "identity": dict(required_additions[key]["identity"]),
+                "expected": dict(required_additions[key]["abi"]),
+                "candidate": dict(now[key]["abi"]),
+                "incorrect_fields": incorrect,
+            })
+
+    violations: dict[str, object] = {
+        "new_missing": _identities(list(current_missing - baseline_missing)),
+        "new_unexpected": _identities(list(current_extras - baseline_extras - required_addition_keys)),
+        "newly_present_not_correct": _identities(newly_present_not_correct),
+        "regressed_matches": _identities(regressed_matches),
+        "field_transitions": field_transitions,
+    }
+    if has_additions:
+        violations["missing_additions"] = _identities(list(required_addition_keys - now_keys))
+        violations["mismatched_additions"] = mismatched_additions
+
     return {
         "current": comparison_state(expected_entries, current_entries),
-        "violations": {
-            "new_missing": _identities(list(current_missing - baseline_missing)),
-            "new_unexpected": _identities(list(current_extras - baseline_extras)),
-            "newly_present_not_correct": _identities(newly_present_not_correct),
-            "regressed_matches": _identities(regressed_matches),
-            "field_transitions": field_transitions,
-        },
+        "violations": violations,
         "improvements": {
             "resolved_missing": _identities(resolved_missing),
             "removed_unexpected": _identities(list(baseline_extras - current_extras)),
@@ -625,6 +767,7 @@ def _check_payload(
     static_preparation: Path,
 ) -> dict[str, object]:
     baseline, baseline_identity = _baseline()
+    additions, additions_identity = _additions(baseline)
     report, current_origin, reference, candidate = _validate_fresh_inventory(
         inventory_report,
         static_product=static_product,
@@ -632,7 +775,7 @@ def _check_payload(
         static_preparation=static_preparation,
     )
     _verify_oracle_floor(baseline, current_origin, reference)
-    result = evaluate(baseline, {"symbols": candidate})
+    result = evaluate(baseline, {"symbols": candidate}, additions=additions)
     violations = result["violations"]
     require(isinstance(violations, dict), "ratchet violation state is malformed")
     return {
@@ -641,6 +784,11 @@ def _check_payload(
         "baseline": {
             "path": str(BASELINE_PATH.relative_to(ROOT)),
             "identity": baseline_identity,
+        },
+        "additions_policy": {
+            "path": str(ADDITIONS_PATH.relative_to(ROOT)),
+            "identity": additions_identity,
+            "content": additions,
         },
         "ratchet_execution_source": inventory.collector_source_seal(),
         "inventory_report": current_origin["inventory_report"],
