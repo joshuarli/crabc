@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Focused native proof for musl-shaped stdio aliases and interposition.
 set -euo pipefail
+
+# Explicit sealed receipt mode; the two-positional historical runner remains below.
+if [ "${1:-}" = collect ] || [ "${1:-}" = validate-report ]; then
+    exec python3 -B "$(dirname "${BASH_SOURCE[0]}")/owned_stdio_alias_contract_reader.py" "$@"
+fi
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
