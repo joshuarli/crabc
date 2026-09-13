@@ -132,6 +132,99 @@ class SelectionContractTests(unittest.TestCase):
             selection.validate_contract(contract)
 
 
+SOURCE_OWNER_NAMES = frozenset('''
+_IO_feof_unlocked _IO_ferror_unlocked _IO_getc _IO_getc_unlocked _IO_putc _IO_putc_unlocked
+__crypt_blowfish __crypt_md5 __crypt_r __crypt_sha256 __crypt_sha512
+__ctype_b_loc __ctype_tolower_loc __ctype_toupper_loc
+__cxa_atexit __cxa_finalize __fork_handler __funcs_on_exit
+__isalnum_l __isalpha_l __isblank_l __iscntrl_l __isdigit_l __isgraph_l __islower_l __isprint_l __ispunct_l __isspace_l __isupper_l __isxdigit_l __tolower_l __toupper_l __strcasecmp_l __strncasecmp_l __strcoll_l __strxfrm_l
+__duplocale __freelocale __newlocale __nl_langinfo __nl_langinfo_l __uselocale __iswalnum_l __iswalpha_l __iswblank_l __iswcntrl_l __iswctype_l __iswdigit_l __iswgraph_l __iswlower_l __iswprint_l __iswpunct_l __iswspace_l __iswupper_l __iswxdigit_l __towctrans_l __towlower_l __towupper_l __wcscoll_l __wcsxfrm_l __wctrans_l __wctype_l
+__strerror_l __wcsftime_l __strtod_l __strtof_l __strtold_l
+__strtoimax_internal __strtol_internal __strtoll_internal __strtoul_internal __strtoull_internal __strtoumax_internal
+__isoc99_fscanf __isoc99_fwscanf __isoc99_scanf __isoc99_sscanf __isoc99_swscanf __isoc99_vfscanf __isoc99_vfwscanf __isoc99_vscanf __isoc99_vsscanf __isoc99_vswscanf __isoc99_vwscanf __isoc99_wscanf
+__fgetwc_unlocked __fputwc_unlocked __getdelim __overflow __uflow fpurge
+__fxstat __fxstatat __lxstat __xstat __getauxval __libc_start_main __tls_get_addr __setjmp __sigsetjmp __stack_chk_fail __qsort_r __lgammal_r __sysv_signal __xpg_basename __xpg_strerror_r __posix_getopt pivot_root
+'''.split())
+
+CRT_OWNER_NAMES = frozenset('''
+__crabc_preinit_array_start_address __crabc_preinit_array_end_address
+__crabc_init_array_start_address __crabc_init_array_end_address
+__crabc_fini_array_start_address __crabc_fini_array_end_address
+__crabc_x86_64_dynamic_executable_fini __crabc_x86_64_dynamic_executable_init __crabc_x86_64_dynamic_start
+__crabc_x86_64_executable_fini __crabc_x86_64_executable_init
+__crabc_x86_64_owned_crt_handoff_value __crabc_x86_64_static_pie_start _start
+'''.split())
+
+
+class SourceOwnerPolicyTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.contract = selection.load_contract()
+        cls.inputs = selection.load_source_inputs(cls.contract, selection.CONTRACT_PATH)
+        cls.records = {record['identity']['name']: record
+                       for record in selection.expand_obligations(cls.contract, cls.inputs)}
+        cls.groups = {group['id']: group for group in cls.contract['owner_groups']}
+
+    def test_exact_frozen_source_set_is_finite_and_keeps_explicit_exclusions_unselected(self):
+        source_groups = [group for group in self.groups.values()
+                         if group['id'].startswith('source-owned-')]
+        selected = {name for group in source_groups for name in group['members']}
+        self.assertEqual(selected, SOURCE_OWNER_NAMES)
+        self.assertEqual(len(selected), 108)
+        for name in ('__crabc_runtime_v1', 'initstate', 'random', 'setstate', 'srandom', 'rust_eh_personality'):
+            self.assertNotIn(name, selected)
+            self.assertFalse(self.records[name]['selection'].get('group', '').startswith('source-owned-'))
+
+    def test_source_selected_public_static_functions_use_oracle_metadata_only_after_selection(self):
+        for group in self.groups.values():
+            if not group['id'].startswith('source-owned-') or group['disposition'] != 'public-provider':
+                continue
+            if 'candidate-static' in group['artifacts'] and group['id'] != 'source-owned-stdio-protected-boundaries':
+                self.assertEqual(group['static_metadata_rule'], 'selected-native-oracle-function')
+        protected = self.groups['source-owned-stdio-protected-boundaries']
+        self.assertEqual(protected['static_metadata_rule'], 'explicit')
+        self.assertEqual(protected['placement_metadata']['candidate-static'],
+                         {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'PROTECTED'})
+        for name in ('__uflow', '__overflow'):
+            record = self.records[name]
+            self.assertEqual(record['selection']['group'], protected['id'])
+            self.assertEqual(record['expected_placements'], [
+                {'artifact_key': 'candidate-static', 'metadata': {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'PROTECTED'}, 'metadata_rule': 'explicit'},
+                {'artifact_key': 'candidate-shared', 'metadata': {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'PROTECTED'}, 'metadata_rule': 'explicit'},
+            ])
+
+    def test_crypt_direct_bodies_and_tls_startup_boundaries_do_not_collapse(self):
+        crypt = self.groups['source-owned-crypt-private-helper-bodies']
+        self.assertEqual(crypt['members'], ['__crypt_blowfish', '__crypt_md5', '__crypt_r', '__crypt_sha256', '__crypt_sha512'])
+        self.assertEqual(crypt['disposition'], 'private-provider')
+        self.assertNotIn('crypt_r', crypt['members'])
+        self.assertEqual(self.records['__crypt_r']['selection']['group'], crypt['id'])
+        tls = self.records['__tls_get_addr']
+        self.assertEqual(tls['selection']['group'], 'source-owned-loader-libc-tls-boundary')
+        self.assertEqual([row['artifact_key'] for row in tls['expected_placements']], ['candidate-shared', 'candidate-loader'])
+        self.assertNotIn('candidate-static', [row['artifact_key'] for row in tls['expected_placements']])
+        startup = self.records['__libc_start_main']
+        self.assertEqual(startup['selection']['group'], 'source-owned-crt-libc-startup-boundary')
+        self.assertEqual([row['artifact_key'] for row in startup['expected_placements']], ['candidate-static', 'candidate-shared'])
+
+    def test_crt_definition_placements_keep_entry_bridges_and_handoff_distinct(self):
+        source_groups = [group for group in self.groups.values() if group['id'].startswith('source-crt-')]
+        self.assertEqual({name for group in source_groups for name in group['members']}, CRT_OWNER_NAMES)
+        self.assertEqual(len(CRT_OWNER_NAMES), 14)
+        all_crt = ['static-crt1.o', 'static-Scrt1.o', 'static-rcrt1.o', 'dynamic-crt1.o', 'dynamic-Scrt1.o']
+        bridges = self.groups['source-crt-linker-array-address-bridges']
+        self.assertEqual(bridges['artifacts'], all_crt)
+        self.assertTrue(all(value == {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'HIDDEN'}
+                            for value in bridges['placement_metadata'].values()))
+        entry = self.records['_start']
+        self.assertEqual(entry['selection']['disposition'], 'private-provider')
+        self.assertEqual([row['artifact_key'] for row in entry['expected_placements']], all_crt)
+        self.assertIn('not a C-callable provider', entry['selection']['reason'])
+        handoff = self.records['__crabc_x86_64_owned_crt_handoff_value']
+        self.assertEqual([row['artifact_key'] for row in handoff['expected_placements']], ['static-Scrt1.o', 'dynamic-crt1.o', 'dynamic-Scrt1.o'])
+        self.assertNotIn('__crabc_x86_64_owned_crt_handoff', CRT_OWNER_NAMES)
+
+
 class PhysicalAccountingTests(unittest.TestCase):
     def test_hidden_static_definition_is_bindable_and_named_weak_und_is_an_import(self):
         rows = [symbol('__asctime_r', visibility='HIDDEN'),

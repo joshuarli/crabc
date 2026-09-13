@@ -144,6 +144,51 @@ parity still requires explicit native consumer/protocol selection and evidence;
 the existing private loader TLS descriptor does not automatically satisfy that
 future facade contract.
 
+## Source-owned callable and CRT placements
+
+The policy also selects a finite source-backed set of 108 frozen-project
+callable identities. The exact names, artifacts, and metadata live in
+`native-abi-selection.toml` under `source-owned-*`; this section records the
+owner boundary that makes those finite lists meaningful. The retained source
+ownership audit was navigation evidence only and is not an input to the
+selection reader. Selection comes from the named current source roots. It does
+not promote another spelling with a common prefix or an equal ELF value.
+
+| Source-owner groups | Native root and selected placement |
+| --- | --- |
+| `source-owned-stdio-io-aliases`, `source-owned-stdio-aliases`, `source-owned-stdio-protected-boundaries`, `source-owned-wide-stdio-same-definition-aliases` (12) | `owned_stdio_extensions.rs`, `owned_static_stdio.rs`, and `owned_wide_stdio.rs` select static/shared providers. The existing `owned-stdio-alias-contract.md` remains the alias, override, and internal-call judge. `__uflow` and `__overflow` are direct `GLOBAL PROTECTED` bodies in both placements, so internal FILE operations do not preempt to an application definition. |
+| `source-owned-locale-*`, `source-owned-ctype-locator-bodies`, `source-owned-float-locale-same-definition-aliases` (52) | The named locale leaves select static/shared providers. `owned-locale-alias-contract.md` remains the same-definition alias contract; source selects each listed alias before static oracle metadata is consulted. |
+| `source-owned-integer-parse-*`, `source-owned-isoc99-scan-*`, `source-owned-stat-version-wrappers`, `source-owned-setjmp-*`, `source-owned-qsort-*`, `source-owned-long-double-*`, `source-owned-sysv-*`, `source-owned-xpg-*`, `source-owned-getopt-*` (30) | Their named parser, stdio, callback, math, signal, error, basename, and getopt roots select static/shared callable providers. Their C signatures and behavioral receipts remain component requirements. |
+| `source-owned-exit-and-atfork-runtime`, `source-owned-auxv-observation-alias`, `source-owned-stack-check-fail`, `source-owned-pivot-root-syscall` (7) | Process lifecycle, auxv, compiler-failure, and kernel-admin roots select static/shared providers. `pivot_root` stays in its existing kernel-admin feature and capability/error contract. |
+| `source-owned-crypt-private-helper-bodies` (5) | `crypt.rs` selects five direct private static/shared bodies. They are not aliases merely because some values coincide. `crypt_r` is a distinct weak wrapper of `__crypt_r`, outside this five-member group. |
+| `source-owned-crt-libc-startup-boundary`, `source-owned-loader-libc-tls-boundary` (2) | `__libc_start_main` has distinct static and shared libc bodies; the five CRT undefined edges retain their independent startup proof. `__tls_get_addr` has distinct shared-libc and loader bodies and deliberately has no static-libc placement. |
+
+For public source-selected functions with a static placement, the policy may use
+`selected-native-oracle-function` only to obtain the static `FUNC` binding and
+visibility after the source group has selected the exact name. Shared metadata
+is the inherited frozen dynamic requirement unless source gives a narrower
+placement such as the two protected stdio bodies. Candidate ELF never creates a
+selection or determines a new normative alias relation. Private crypt bodies
+and all CRT placements state their metadata explicitly.
+
+The six audit exclusions `__crabc_runtime_v1`, `initstate`, `random`,
+`setstate`, `srandom`, and `rust_eh_personality` are not in these source-owner
+groups. This section also does not add the BSD random quartet, allocator
+metadata, or Rust unwinder identities.
+
+### Native CRT definition placements
+
+The CRT groups select only definitions in the five real ET_REL artifacts; an
+undefined edge is not converted into a definition obligation.
+
+| Policy group | Exact placement and contract |
+| --- | --- |
+| `source-crt-linker-array-address-bridges` | Six `__crabc_{preinit,init,fini}_array_{start,end}_address` names are `FUNC GLOBAL HIDDEN` in `static-crt1.o`, `static-Scrt1.o`, `static-rcrt1.o`, `dynamic-crt1.o`, and `dynamic-Scrt1.o`. They bridge bounded linker-array addresses and are not installed C callables. |
+| `source-crt-static-lifecycle-bodies` | `__crabc_x86_64_static_pie_start`, `__crabc_x86_64_executable_init`, and `__crabc_x86_64_executable_fini` are `FUNC GLOBAL DEFAULT` in `static-crt1.o` and `static-rcrt1.o`; the static CRT contract retains the ET_EXEC/ET_DYN startup split. |
+| `source-crt-dynamic-lifecycle-bodies` | `__crabc_x86_64_dynamic_start`, `__crabc_x86_64_dynamic_executable_init`, and `__crabc_x86_64_dynamic_executable_fini` are `FUNC GLOBAL DEFAULT` in `static-Scrt1.o`, `dynamic-crt1.o`, and `dynamic-Scrt1.o`. |
+| `source-crt-owned-handoff-accessor` | `__crabc_x86_64_owned_crt_handoff_value` is an exported `FUNC GLOBAL DEFAULT` in those same three dynamic-mode objects. It is distinct from the weak undefined `__crabc_x86_64_owned_crt_handoff` `OBJECT` transport edge. |
+| `source-crt-raw-entry-symbol` | `_start` is `FUNC GLOBAL DEFAULT` in all five objects. It is the raw kernel/interpreter entry point, never a C-callable provider. |
+
 ## Project extensions and implementation visibility
 
 The six installed addressable C11 atomic functions remain project extensions:

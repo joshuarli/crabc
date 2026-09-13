@@ -138,6 +138,502 @@ placement_metadata = {"candidate-static" = {"type" = "FUNC", "binding" = "GLOBAL
 static_metadata_rule = "explicit"
 reason = "Six addressable atomic functions and tgkill have explicit native source contracts independent of oracle presence."
 
+[[owner_groups]]
+id = "source-owned-stdio-io-aliases"
+selector = "explicit"
+disposition = "public-provider"
+owner = "x86-owned-stdio-aliases"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/owned_stdio_extensions.rs", "libc/src/c_abi/x86_64/static_c_abi.rs"]
+members = ["_IO_feof_unlocked", "_IO_ferror_unlocked", "_IO_getc", "_IO_getc_unlocked", "_IO_putc", "_IO_putc_unlocked"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {}
+reason = "Explicit WEAK same-definition stdio aliases; the owned stdio alias contract retains exposure, same-definition identity, and override behavior."
+static_metadata_rule = "selected-native-oracle-function"
+
+[[owner_groups]]
+id = "source-owned-crypt-private-helper-bodies"
+selector = "explicit"
+disposition = "private-provider"
+owner = "x86-crypt-private-helpers"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/crypt.rs", "libc/src/c_abi/x86_64/static_c_abi.rs"]
+members = ["__crypt_blowfish", "__crypt_md5", "__crypt_r", "__crypt_sha256", "__crypt_sha512"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"candidate-static" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}, "candidate-shared" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}}
+reason = "Five direct private C ABI bodies selected by x86-crypt. They are not same-definition aliases; public crypt_r is the separate weak wrapper of __crypt_r."
+static_metadata_rule = "explicit"
+
+[[owner_groups]]
+id = "source-owned-ctype-locator-bodies"
+selector = "explicit"
+disposition = "public-provider"
+owner = "x86-locale-ctype"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/locale_ctype.rs", "libc/src/c_abi/x86_64/static_c_abi.rs"]
+members = ["__ctype_b_loc", "__ctype_tolower_loc", "__ctype_toupper_loc"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {}
+reason = "Direct locale table accessor bodies; source selects these callable names without an alias inference."
+static_metadata_rule = "selected-native-oracle-function"
+
+[[owner_groups]]
+id = "source-owned-exit-and-atfork-runtime"
+selector = "explicit"
+disposition = "public-provider"
+owner = "x86-process-exit-atfork"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/process_exit.rs", "libc/src/c_abi/x86_64/pthread_atfork.rs", "libc/src/c_abi/x86_64/static_c_abi.rs"]
+members = ["__cxa_atexit", "__cxa_finalize", "__fork_handler", "__funcs_on_exit"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {}
+reason = "Selected exit and atfork bodies retain their separate lifecycle component contracts."
+static_metadata_rule = "selected-native-oracle-function"
+
+[[owner_groups]]
+id = "source-owned-locale-narrow-same-definition-aliases"
+selector = "explicit"
+disposition = "public-provider"
+owner = "x86-locale-narrow-aliases"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/locale_narrow.rs", "libc/src/c_abi/x86_64/static_c_abi.rs"]
+members = ["__isalnum_l", "__isalpha_l", "__isblank_l", "__iscntrl_l", "__isdigit_l", "__isgraph_l", "__islower_l", "__isprint_l", "__ispunct_l", "__isspace_l", "__isupper_l", "__isxdigit_l", "__tolower_l", "__toupper_l", "__strcasecmp_l", "__strncasecmp_l", "__strcoll_l", "__strxfrm_l"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {}
+reason = "Exact source-local narrow locale aliases; the owned locale alias contract authorizes these named exposures."
+static_metadata_rule = "selected-native-oracle-function"
+
+[[owner_groups]]
+id = "source-owned-locale-object-and-wide-same-definition-aliases"
+selector = "explicit"
+disposition = "public-provider"
+owner = "x86-locale-object-wide-aliases"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/locale_objects.rs", "libc/src/c_abi/x86_64/static_c_abi.rs"]
+members = ["__duplocale", "__freelocale", "__newlocale", "__nl_langinfo", "__nl_langinfo_l", "__uselocale", "__iswalnum_l", "__iswalpha_l", "__iswblank_l", "__iswcntrl_l", "__iswctype_l", "__iswdigit_l", "__iswgraph_l", "__iswlower_l", "__iswprint_l", "__iswpunct_l", "__iswspace_l", "__iswupper_l", "__iswxdigit_l", "__towctrans_l", "__towlower_l", "__towupper_l", "__wcscoll_l", "__wcsxfrm_l", "__wctrans_l", "__wctype_l"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {}
+reason = "Exact source-local object and wide locale aliases; the owned locale alias contract authorizes these named exposures."
+static_metadata_rule = "selected-native-oracle-function"
+
+[[owner_groups]]
+id = "source-owned-locale-error-same-definition-alias"
+selector = "explicit"
+disposition = "public-provider"
+owner = "x86-locale-error-alias"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/locale_error_strings.rs", "libc/src/c_abi/x86_64/static_c_abi.rs"]
+members = ["__strerror_l"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {}
+reason = "Source-local locale error alias selected with its existing locale alias contract."
+static_metadata_rule = "selected-native-oracle-function"
+
+[[owner_groups]]
+id = "source-owned-wide-time-same-definition-alias"
+selector = "explicit"
+disposition = "public-provider"
+owner = "x86-wide-time-alias"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/owned_wcsftime.rs"]
+members = ["__wcsftime_l"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {}
+reason = "Source-local wide-time alias selected with its existing locale alias contract."
+static_metadata_rule = "selected-native-oracle-function"
+
+[[owner_groups]]
+id = "source-owned-float-locale-same-definition-aliases"
+selector = "explicit"
+disposition = "public-provider"
+owner = "x86-float-locale-aliases"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/float_parse_locale_aliases_x86_64.S", "libc/src/c_abi/x86_64/float_parse_locale.rs"]
+members = ["__strtod_l", "__strtof_l", "__strtold_l"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {}
+reason = "Exact locale parse aliases; source assembly spelling, not equal ELF values, establishes the relation."
+static_metadata_rule = "selected-native-oracle-function"
+
+[[owner_groups]]
+id = "source-owned-integer-parse-internal-same-definition-aliases"
+selector = "explicit"
+disposition = "public-provider"
+owner = "x86-integer-parse-aliases"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/integer_parse.rs", "libc/src/c_abi/x86_64/static_c_abi.rs"]
+members = ["__strtoimax_internal", "__strtol_internal", "__strtoll_internal", "__strtoul_internal", "__strtoull_internal", "__strtoumax_internal"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {}
+reason = "Exact internal integer parser aliases selected from their source-local definitions."
+static_metadata_rule = "selected-native-oracle-function"
+
+[[owner_groups]]
+id = "source-owned-isoc99-scan-same-definition-aliases"
+selector = "explicit"
+disposition = "public-provider"
+owner = "x86-isoc99-scan-aliases"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/stdio_format_scan.rs", "libc/src/c_abi/x86_64/owned_wide_format.rs"]
+members = ["__isoc99_fscanf", "__isoc99_fwscanf", "__isoc99_scanf", "__isoc99_sscanf", "__isoc99_swscanf", "__isoc99_vfscanf", "__isoc99_vfwscanf", "__isoc99_vscanf", "__isoc99_vsscanf", "__isoc99_vswscanf", "__isoc99_vwscanf", "__isoc99_wscanf"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {}
+reason = "Exact ISO C99 scan aliases retain the selected narrow and wide format providers."
+static_metadata_rule = "selected-native-oracle-function"
+
+[[owner_groups]]
+id = "source-owned-wide-stdio-same-definition-aliases"
+selector = "explicit"
+disposition = "public-provider"
+owner = "x86-wide-stdio-aliases"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/owned_wide_stdio.rs"]
+members = ["__fgetwc_unlocked", "__fputwc_unlocked"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {}
+reason = "Exact wide stdio same-definition aliases."
+static_metadata_rule = "selected-native-oracle-function"
+
+[[owner_groups]]
+id = "source-owned-stdio-aliases"
+selector = "explicit"
+disposition = "public-provider"
+owner = "x86-owned-stdio-boundaries"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/owned_static_stdio.rs", "libc/src/c_abi/x86_64/owned_stdio_extensions.rs"]
+members = ["__getdelim", "fpurge"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {}
+reason = "Explicit WEAK same-definition aliases of getdelim and __fpurge; the owned stdio alias contract retains their behavior."
+static_metadata_rule = "selected-native-oracle-function"
+
+[[owner_groups]]
+id = "source-owned-stdio-protected-boundaries"
+selector = "explicit"
+disposition = "public-provider"
+owner = "x86-owned-stdio-boundaries"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/owned_static_stdio.rs", "libc/src/c_abi/x86_64/owned_stdio_extensions.rs"]
+members = ["__overflow", "__uflow"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"candidate-static" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "PROTECTED"}, "candidate-shared" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "PROTECTED"}}
+reason = "Direct FILE boundary bodies are GLOBAL PROTECTED so libc internal calls bind their definitions under application overrides."
+static_metadata_rule = "explicit"
+
+[[owner_groups]]
+id = "source-owned-stat-version-wrappers"
+selector = "explicit"
+disposition = "public-provider"
+owner = "x86-stat-version-wrappers"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/stat_compat.rs", "libc/src/c_abi/x86_64/static_c_abi.rs"]
+members = ["__fxstat", "__fxstatat", "__lxstat", "__xstat"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {}
+reason = "Exact version-wrapper bodies retain their source ABI rather than an inferred forwarding relation."
+static_metadata_rule = "selected-native-oracle-function"
+
+[[owner_groups]]
+id = "source-owned-auxv-observation-alias"
+selector = "explicit"
+disposition = "public-provider"
+owner = "x86-auxv-observation"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/auxv_observation.rs", "libc/src/c_abi/x86_64/static_c_abi.rs"]
+members = ["__getauxval"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {}
+reason = "Exact source-defined getauxval compatibility alias."
+static_metadata_rule = "selected-native-oracle-function"
+
+[[owner_groups]]
+id = "source-owned-crt-libc-startup-boundary"
+selector = "explicit"
+disposition = "public-provider"
+owner = "x86-libc-startup"
+family = "crt.dynamic-startup"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/static_startup.rs", "libc/src/c_abi/x86_64/dynamic_main_thread_runtime_v1_lifecycle.rs", "crt/src/x86_64_startup.rs", "crt/src/x86_64_dynamic_startup.rs"]
+members = ["__libc_start_main"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {}
+reason = "Static and shared libc define distinct startup bodies. Five CRT imports remain mode-specific consumer obligations, not aliases."
+static_metadata_rule = "selected-native-oracle-function"
+
+[[owner_groups]]
+id = "source-owned-loader-libc-tls-boundary"
+selector = "explicit"
+disposition = "public-provider"
+owner = "x86-loader-libc-tls"
+family = "ldso.dynamic-runtime"
+artifacts = ["candidate-shared", "candidate-loader"]
+sources = ["libc/src/c_abi/x86_64/dynamic_tls.rs", "ldso/src/x86_64_initial_graph.rs", "ldso/src/x86_64_general_initial_graph.rs", "docs/evidence/x86-loader-libc-tls-runtime-v1.md"]
+members = ["__tls_get_addr"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"candidate-shared" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}, "candidate-loader" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}}
+reason = "Shared libc wrapper and loader define distinct bodies. No static placement is selected; loader and libc relocation/caller proof stays separate."
+static_metadata_rule = "explicit"
+
+[[owner_groups]]
+id = "source-owned-setjmp-same-code-labels"
+selector = "explicit"
+disposition = "public-provider"
+owner = "x86-setjmp-labels"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/setjmp.rs"]
+members = ["__setjmp", "__sigsetjmp"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {}
+reason = "Source-defined setjmp labels retain the saved-mask/control-transfer contract."
+static_metadata_rule = "selected-native-oracle-function"
+
+[[owner_groups]]
+id = "source-owned-stack-check-fail-compiler-seam"
+selector = "explicit"
+disposition = "public-provider"
+owner = "x86-stack-check-fail"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/stack_chk_fail.rs"]
+members = ["__stack_chk_fail"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {}
+reason = "Direct compiler failure seam; callers retain the fail-stop behavior contract."
+static_metadata_rule = "selected-native-oracle-function"
+
+[[owner_groups]]
+id = "source-owned-qsort-context-alias"
+selector = "explicit"
+disposition = "public-provider"
+owner = "x86-qsort-context-alias"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/callback_algorithms.rs"]
+members = ["__qsort_r"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {}
+reason = "Source-defined qsort context ABI alias."
+static_metadata_rule = "selected-native-oracle-function"
+
+[[owner_groups]]
+id = "source-owned-long-double-gamma-helper"
+selector = "explicit"
+disposition = "public-provider"
+owner = "x86-long-double-gamma"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/math_special_musl_x86_64.S"]
+members = ["__lgammal_r"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {}
+reason = "Pinned long-double assembly helper selected as its direct source body."
+static_metadata_rule = "selected-native-oracle-function"
+
+[[owner_groups]]
+id = "source-owned-sysv-signal-alias"
+selector = "explicit"
+disposition = "public-provider"
+owner = "x86-sysv-signal-alias"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/signal_control.rs"]
+members = ["__sysv_signal"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {}
+reason = "Exact source-defined System V signal alias."
+static_metadata_rule = "selected-native-oracle-function"
+
+[[owner_groups]]
+id = "source-owned-xpg-compat-aliases"
+selector = "explicit"
+disposition = "public-provider"
+owner = "x86-xpg-compat-aliases"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/basename.rs", "libc/src/c_abi/x86_64/error_strings.rs"]
+members = ["__xpg_basename", "__xpg_strerror_r"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {}
+reason = "Exact XPG compatibility aliases selected from their defining source leaves."
+static_metadata_rule = "selected-native-oracle-function"
+
+[[owner_groups]]
+id = "source-owned-getopt-posix-alias"
+selector = "explicit"
+disposition = "public-provider"
+owner = "x86-posix-getopt-alias"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/process_globals.rs", "libc/src/getopt_exports.rs"]
+members = ["__posix_getopt"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {}
+reason = "Exact POSIX getopt alias selected with the process-global parser owner."
+static_metadata_rule = "selected-native-oracle-function"
+
+[[owner_groups]]
+id = "source-owned-pivot-root-direct-syscall"
+selector = "explicit"
+disposition = "public-provider"
+owner = "x86-kernel-admin"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/owned_linux_control.rs", "libc/src/c_abi/x86_64/static_c_abi.rs"]
+members = ["pivot_root"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {}
+reason = "Direct Linux pivot_root syscall wrapper selected by the kernel-admin feature root; capability/error behavior remains component-scoped."
+static_metadata_rule = "selected-native-oracle-function"
+
+[[owner_groups]]
+id = "source-crt-linker-array-address-bridges"
+selector = "explicit"
+disposition = "private-provider"
+owner = "x86-crt-linker-array-bridges"
+family = "crt.dynamic-startup"
+artifacts = ["static-crt1.o", "static-Scrt1.o", "static-rcrt1.o", "dynamic-crt1.o", "dynamic-Scrt1.o"]
+sources = ["crt/src/x86_64_array_boundaries.rs", "crt/src/x86_64_crt1.rs", "crt/src/x86_64_rcrt1.rs", "crt/src/x86_64_Scrt1.rs", "crt/src/x86_64_dynamic_startup.rs", "crt/x86_64-static-pie.md", "crt/x86_64-dynamic-startup.md"]
+members = ["__crabc_preinit_array_start_address", "__crabc_preinit_array_end_address", "__crabc_init_array_start_address", "__crabc_init_array_end_address", "__crabc_fini_array_start_address", "__crabc_fini_array_end_address"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"static-crt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "HIDDEN"}, "static-Scrt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "HIDDEN"}, "static-rcrt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "HIDDEN"}, "dynamic-crt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "HIDDEN"}, "dynamic-Scrt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "HIDDEN"}}
+reason = "Six GLOBAL HIDDEN FUNC bridges return exact linker-array addresses in every native CRT mode. They are not installed C callables."
+static_metadata_rule = "explicit"
+
+[[owner_groups]]
+id = "source-crt-static-lifecycle-bodies"
+selector = "explicit"
+disposition = "private-provider"
+owner = "x86-static-crt-lifecycle"
+family = "crt.static-pie"
+artifacts = ["static-crt1.o", "static-rcrt1.o"]
+sources = ["crt/src/x86_64_startup.rs", "crt/src/x86_64_crt1.rs", "crt/src/x86_64_rcrt1.rs", "crt/x86_64-static-pie.md"]
+members = ["__crabc_x86_64_executable_fini", "__crabc_x86_64_executable_init", "__crabc_x86_64_static_pie_start"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"static-crt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}, "static-rcrt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}}
+reason = "Static crt1 and rcrt1 define these lifecycle/start helpers. Their ET_EXEC/ET_DYN mode use remains in the static CRT contract."
+static_metadata_rule = "explicit"
+
+[[owner_groups]]
+id = "source-crt-dynamic-lifecycle-bodies"
+selector = "explicit"
+disposition = "private-provider"
+owner = "x86-dynamic-crt-lifecycle"
+family = "crt.dynamic-startup"
+artifacts = ["static-Scrt1.o", "dynamic-crt1.o", "dynamic-Scrt1.o"]
+sources = ["crt/src/x86_64_dynamic_startup.rs", "crt/src/x86_64_Scrt1.rs", "crt/x86_64-dynamic-startup.md"]
+members = ["__crabc_x86_64_dynamic_executable_fini", "__crabc_x86_64_dynamic_executable_init", "__crabc_x86_64_dynamic_start"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"static-Scrt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}, "dynamic-crt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}, "dynamic-Scrt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}}
+reason = "Static Scrt1 and dynamic crt1/Scrt1 define the distinct dynamic startup/lifecycle helpers."
+static_metadata_rule = "explicit"
+
+[[owner_groups]]
+id = "source-crt-owned-handoff-accessor"
+selector = "explicit"
+disposition = "private-provider"
+owner = "x86-dynamic-crt-handoff"
+family = "crt.dynamic-startup"
+artifacts = ["static-Scrt1.o", "dynamic-crt1.o", "dynamic-Scrt1.o"]
+sources = ["crt/src/x86_64_dynamic_startup.rs", "crt/src/x86_64_Scrt1.rs", "crt/x86_64-dynamic-startup.md"]
+members = ["__crabc_x86_64_owned_crt_handoff_value"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"static-Scrt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}, "dynamic-crt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}, "dynamic-Scrt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}}
+reason = "Exported accessor FUNC for the owned handoff record, distinct from weak undefined __crabc_x86_64_owned_crt_handoff OBJECT transport."
+static_metadata_rule = "explicit"
+
+[[owner_groups]]
+id = "source-crt-raw-entry-symbol"
+selector = "explicit"
+disposition = "private-provider"
+owner = "x86-crt-entry"
+family = "crt.static-pie"
+artifacts = ["static-crt1.o", "static-Scrt1.o", "static-rcrt1.o", "dynamic-crt1.o", "dynamic-Scrt1.o"]
+sources = ["crt/src/x86_64_crt1.rs", "crt/src/x86_64_rcrt1.rs", "crt/src/x86_64_Scrt1.rs", "crt/x86_64-static-pie.md", "crt/x86_64-dynamic-startup.md"]
+members = ["_start"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"static-crt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}, "static-Scrt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}, "static-rcrt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}, "dynamic-crt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}, "dynamic-Scrt1.o" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}}
+reason = "Raw kernel/interpreter entry in all five ET_REL CRT objects. It is a process entrypoint, not a C-callable provider."
+static_metadata_rule = "explicit"
+
 [[structural_groups]]
 id = "loader-entry-stages"
 members = ["__dls2b", "__dls3", "_dlstart"]
