@@ -517,6 +517,12 @@ class SelectedDataDeclarationIntegrationTests(unittest.TestCase):
 
 class PublicDataLinkageAdapterTests(unittest.TestCase):
     def setUp(self):
+        # Pinned fixtures use /workspace while Git's shared worktree metadata
+        # retains the host checkout path. Keep this composition fixture inside
+        # its mounted checkout; production path admission has separate tests.
+        common_checkout = mock.patch.object(selection, '_common_checkout', return_value=ROOT)
+        common_checkout.start()
+        self.addCleanup(common_checkout.stop)
         scratch = ROOT / '.work/x86_64/native-abi-selection-linkage-tests'
         scratch.mkdir(parents=True, exist_ok=True)
         self.temporary = tempfile.TemporaryDirectory(dir=scratch)
