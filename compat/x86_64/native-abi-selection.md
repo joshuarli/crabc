@@ -288,11 +288,11 @@ source-owned record: alias and target, binding and owner, state, evidence
 record, runner, baseline and enabled feature closures, selection source, and
 source provenance. It requires candidate static and shared alias/target
 definition domains and preserves the complete named and unnamed ELF occurrence
-roster. The remaining provider spelling `utmpname` is retained as a reader
-observation; this adapter creates no private-provider scope or new receipt
-requirement for it. It does not change public imports, establish utmp
-semantics, complete a family, qualify runtime support, or promote public
-support.
+roster. The remaining provider spelling `utmpname` is an unchanged
+checked-header public provider with no selected feature-alias requirement; this
+adapter creates no private-provider scope or new receipt requirement for it.
+It does not change public imports, establish utmp semantics, complete a family,
+qualify runtime support, or promote public support.
 
 `--pthread-timed-feature-report REPORT` is independently optional, but it
 requires the current `--loader-debug-abi-report REPORT` product anchor. Its

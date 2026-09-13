@@ -29,6 +29,10 @@ DYNAMIC_LINK_INPUTS = {
     'dynamic_libc': 'usr/lib/libc.so', 'dynamic_builtins': 'usr/lib/libcrabc-builtins.a',
     'dynamic_attach': 'usr/lib/crabc-dynamic-attach.o',
 }
+FEATURE_REQUIREMENT_KEYS = {
+    'baseline_features', 'binding', 'enabled_features', 'evidence_record', 'feature_selection_source',
+    'name', 'owner', 'runner', 'sources', 'state', 'target',
+}
 
 
 class FakeUtmpxReader:
@@ -91,10 +95,19 @@ class NativeUtmpxAttachmentTests(unittest.TestCase):
             if not isinstance(feature, list) or len(feature) != 1:
                 raise AssertionError(f'missing canonical source feature requirement: {alias}')
             requirement = feature[0]
-            if not isinstance(requirement, dict) or requirement.get('target') != target:
+            if (not isinstance(requirement, dict) or set(requirement) != FEATURE_REQUIREMENT_KEYS
+                    or requirement.get('target') != target):
                 raise AssertionError(f'canonical source feature target differs: {alias}')
             requirements[alias] = copy.deepcopy(requirement)
         cls.source_feature_requirements = requirements
+        provider = records['utmpname']
+        source_selection = provider.get('selection')
+        if (not isinstance(source_selection, dict)
+                or source_selection.get('disposition') != 'public-provider'
+                or provider.get('function_alias_requirements') is not None
+                or provider.get('unresolved') != []):
+            raise AssertionError('canonical utmpname provider boundary differs')
+        cls.source_utmpname_selection = copy.deepcopy(source_selection)
 
     def setUp(self) -> None:
         checkout = mock.patch.object(selection, '_common_checkout', return_value=ROOT)
@@ -263,10 +276,8 @@ class NativeUtmpxAttachmentTests(unittest.TestCase):
                              'feature_contract': feature, 'feature_archive_receipt_proven': False,
                              'runtime_semantics_proven': False})
         provider_identity = {'name': 'utmpname', 'version': None, 'version_default': False}
-        identities.append({'identity': provider_identity, 'selection': {'disposition': 'public-provider'},
-                           'unresolved': [selection.ORDINARY_IMPORT_REASON]})
-        blockers.append({'code': 'identity-unresolved', 'identity': copy.deepcopy(provider_identity),
-                         'reason': selection.ORDINARY_IMPORT_REASON})
+        identities.append({'identity': provider_identity,
+                           'selection': copy.deepcopy(self.source_utmpname_selection), 'unresolved': []})
         return {'identities': identities, 'placement_joins': [], 'occurrences': occurrences,
                 'function_alias_observations': function, 'blockers': blockers}
 
@@ -356,19 +367,27 @@ class NativeUtmpxAttachmentTests(unittest.TestCase):
 
     def test_attachment_discharges_only_eight_existing_alias_requirements(self) -> None:
         accounting = self._accounting(); companion = self._companion()
+        provider_before = copy.deepcopy(next(
+            row for row in accounting['identities'] if row['identity']['name'] == 'utmpname'
+        ))
         with mock.patch.object(selection, '_utmpx_reader', return_value=FakeUtmpxReader({})):
             joins = selection.attach_native_utmpx(accounting, companion)
         self.assertEqual(len(joins), 1); self.assertEqual(len(joins[0]['aliases']), 8)
-        alias_records = [row for row in accounting['identities'] if row['identity']['name'] != 'utmpname']
+        alias_records = [row for row in accounting['identities'] if row['identity']['name'] in dict(ALIASES)]
         self.assertTrue(all(not row['unresolved'] for row in alias_records))
         retained_provider = next(row for row in accounting['identities'] if row['identity']['name'] == 'utmpname')
-        self.assertEqual(retained_provider['unresolved'], [selection.ORDINARY_IMPORT_REASON])
-        self.assertTrue(any(row['reason'] == selection.ORDINARY_IMPORT_REASON for row in accounting['blockers']))
+        self.assertEqual(retained_provider, provider_before)
+        self.assertNotIn('function_alias_requirements', retained_provider)
+        self.assertFalse(accounting['blockers'])
         self.assertEqual({row['target'] for row in joins[0]['aliases']}, {target for _, target in ALIASES})
         self.assertNotIn('utmpname', {row['alias'] for row in joins[0]['aliases']})
 
     def test_attachment_rejects_changed_source_feature_metadata(self) -> None:
-        for field, value in (('state', 'verified'), ('baseline_features', []), ('runner', 'forged-runner')):
+        for field, value in (
+            ('state', 'verified'), ('baseline_features', []), ('enabled_features', []),
+            ('evidence_record', 'forged-evidence'), ('feature_selection_source', 'forged-source'),
+            ('runner', 'forged-runner'), ('sources', []),
+        ):
             with self.subTest(field=field):
                 accounting = self._accounting()
                 record = next(row for row in accounting['identities'] if row['identity']['name'] == 'endutent')
