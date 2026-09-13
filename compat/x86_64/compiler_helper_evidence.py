@@ -241,6 +241,59 @@ def archive_placements_from_elf_facts(facts_report: Mapping[str, Any], contract:
     return result
 
 
+def _installed_archive_identities(facts_report: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """Read both installed archive identities authenticated by complete facts."""
+
+    artifacts = facts_report.get("artifacts") if isinstance(facts_report, Mapping) else None
+    require(type(artifacts) is dict and set(ARCHIVE_PLACEMENTS) <= set(artifacts),
+            "complete ELF archive placement identities are absent")
+    result: dict[str, dict[str, Any]] = {}
+    for placement in ARCHIVE_PLACEMENTS:
+        record = artifacts[placement]
+        require(type(record) is dict and type(record.get("identity")) is dict,
+                f"complete ELF {placement} artifact identity differs")
+        identity = record["identity"]
+        require(type(identity.get("path")) is str and identity["path"]
+                and type(identity.get("sha256")) is str
+                and re.fullmatch(r"[0-9a-f]{64}", identity["sha256"]) is not None
+                and type(identity.get("size")) is int and identity["size"] > 0,
+                f"complete ELF {placement} archive identity differs")
+        result[placement] = {"path": identity["path"], "sha256": identity["sha256"], "size": identity["size"]}
+    require(result["static-builtins"]["path"] != result["dynamic-builtins"]["path"],
+            "complete ELF archive placements do not retain distinct physical paths")
+    return result
+
+
+def _aggregate_archive_join(root: Path, aggregate_report: Path, *, supplied_source: Mapping[str, Any],
+                            installed_archives: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+    """Attach C ABI proof only when both installed archives have its exact bytes."""
+
+    aggregate_report = _physical_file(aggregate_report, "compiler-helper aggregate report")
+    require(aggregate_report.is_relative_to(Path(root).absolute() / ".work"),
+            "compiler-helper aggregate report is outside checkout work")
+    aggregate = validate_aggregate_report(aggregate_report, root=Path(root).absolute())
+    expected_source = aggregate.get("product_source_after")
+    require(same(aggregate.get("product_source_before"), supplied_source)
+            and same(expected_source, supplied_source),
+            "compiler-helper aggregate and supplied products use different source identities")
+    archive = aggregate.get("artifacts", {}).get("libcrabc-builtins.a") if type(aggregate.get("artifacts")) is dict else None
+    require(type(archive) is dict and type(archive.get("sha256")) is str
+            and re.fullmatch(r"[0-9a-f]{64}", archive["sha256"]) is not None
+            and type(archive.get("size")) is int and archive["size"] > 0,
+            "compiler-helper aggregate archive identity differs")
+    for placement in ARCHIVE_PLACEMENTS:
+        installed = installed_archives.get(placement)
+        require(type(installed) is dict and installed.get("sha256") == archive["sha256"]
+                and installed.get("size") == archive["size"],
+                f"compiler-helper aggregate archive differs from installed {placement}")
+    return {"aggregate_report": {
+        "path": aggregate_report.relative_to(root).as_posix(), "sha256": digest(aggregate_report),
+        "size": aggregate_report.stat().st_size, "mode": aggregate_report.stat().st_mode & 0o777,
+    }, "source": dict(supplied_source), "archive": {"sha256": archive["sha256"], "size": archive["size"]},
+        "installed_archives": {placement: dict(installed_archives[placement]) for placement in ARCHIVE_PLACEMENTS},
+        "c_abi_proof": "aggregate-direct-c-consumer"}
+
+
 def account_compiler_helpers(validated_receipt: Mapping[str, Any], selected_owner_group: Mapping[str, Any],
                              complete_occurrences: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     """Return only source-selected archive placement accounting.
@@ -422,7 +475,8 @@ def _ordinary_popcount_maps(root: Path, ordinary_report: Path, expected_inputs: 
 
 def validate_supplied_product_evidence(*, root: Path, base_inventory: Path, elf_report: Path,
                                        static_preparation: Path, static_product: Path, dynamic_product: Path,
-                                       ordinary_link_report: Path | None) -> dict[str, Any]:
+                                       ordinary_link_report: Path | None,
+                                       aggregate_report: Path | None) -> dict[str, Any]:
     """Replay fresh supplied products without creating a second product builder.
 
     The complete-ELF reader authenticates the inventory, preparation, and both
@@ -442,11 +496,26 @@ def validate_supplied_product_evidence(*, root: Path, base_inventory: Path, elf_
                                           static_product=Path(static_product), dynamic_product=Path(dynamic_product),
                                           static_preparation=Path(static_preparation))
         placements = archive_placements_from_elf_facts(facts, contract)
+        installed_archives = _installed_archive_identities(facts)
     except CompilerHelperEvidenceError:
         raise
     except (elf_facts.inventory.InventoryError, OSError, ValueError) as error:
         raise CompilerHelperEvidenceError("supplied complete ELF/product evidence is not current and valid") from error
+    aggregate_join: dict[str, Any]
+    if aggregate_report is None:
+        aggregate_join = {"status": "not-supplied-partial",
+                          "reason": "No source-matched aggregate C ABI receipt was supplied for both installed archives."}
+    else:
+        try:
+            aggregate_join = {"status": "joined", **_aggregate_archive_join(
+                root, Path(aggregate_report), supplied_source=ordinary_inputs["source"],
+                installed_archives=installed_archives)}
+        except CompilerHelperEvidenceError:
+            raise
+        except (OSError, ValueError) as error:
+            raise CompilerHelperEvidenceError("supplied compiler-helper aggregate evidence is not current and valid") from error
     result = {"source": current_source, "archive_placements": placements,
+              "installed_archive_identities": installed_archives, "aggregate_c_abi": aggregate_join,
               "shared_placement_selected": False, "family_completion": False,
               "public_support": False}
     if ordinary_link_report is not None:
@@ -625,13 +694,37 @@ def _checkout_identity(root: Path) -> dict[str, Any]:
     return {"revision": revision, "clean": True}
 
 
+def _product_source_identity(root: Path) -> dict[str, Any]:
+    """Use the prepared-product source digest shape for an aggregate join."""
+
+    module_dir = Path(__file__).resolve().parent
+    if str(module_dir) not in sys.path:
+        sys.path.insert(0, str(module_dir))
+    import owned_posix_static_products as static_products
+    try:
+        value = static_products.source_identity(Path(root).absolute())
+    except (static_products.PreparationError, OSError, subprocess.CalledProcessError) as error:
+        raise CompilerHelperEvidenceError("compiler-helper aggregate product source identity is unavailable") from error
+    require(type(value) is dict and set(value) == {"revision", "content_sha256"}
+            and type(value["revision"]) is str and re.fullmatch(r"[0-9a-f]{40}", value["revision"]) is not None
+            and type(value["content_sha256"]) is str
+            and re.fullmatch(r"[0-9a-f]{64}", value["content_sha256"]) is not None,
+            "compiler-helper aggregate product source identity differs")
+    return value
+
+
 def capture_source(output: Path, *, root: Path = ROOT) -> dict[str, Any]:
     """Seal current producer and harness sources before a native runner starts."""
 
     output = Path(output).absolute()
     require(not output.exists() and not output.is_symlink(), "compiler-helper source seal output already exists")
     require(output.parent.is_dir() and not output.parent.is_symlink(), "compiler-helper source seal parent is unsafe")
-    record = {"schema": SOURCE_SEAL_SCHEMA, "source": source_binding(root), "checkout": _checkout_identity(root)}
+    checkout = _checkout_identity(root)
+    product_source = _product_source_identity(root)
+    require(product_source["revision"] == checkout["revision"],
+            "compiler-helper aggregate product source revision differs")
+    record = {"schema": SOURCE_SEAL_SCHEMA, "source": source_binding(root), "checkout": checkout,
+              "product_source": product_source}
     output.write_text(canonical_json(record), encoding="utf-8")
     return record
 
@@ -639,9 +732,10 @@ def capture_source(output: Path, *, root: Path = ROOT) -> dict[str, Any]:
 def _source_seal(path: Path, *, root: Path) -> dict[str, Any]:
     path = _physical_file(path, "compiler-helper source seal")
     record = _read_json(path, "compiler-helper source seal")
-    require(type(record) is dict and set(record) == {"schema", "source", "checkout"}
+    require(type(record) is dict and set(record) == {"schema", "source", "checkout", "product_source"}
             and record["schema"] == SOURCE_SEAL_SCHEMA, "compiler-helper source seal fields differ")
-    require(same(record["source"], source_binding(root)) and same(record["checkout"], _checkout_identity(root)),
+    require(same(record["source"], source_binding(root)) and same(record["checkout"], _checkout_identity(root))
+            and same(record["product_source"], _product_source_identity(root)),
             "compiler-helper source changed")
     return record
 
@@ -927,7 +1021,9 @@ def _aggregate_record(work: Path, source_before: Path, events_path: Path, *, ima
     before = _source_seal(source_before, root=root)
     current = source_binding(root, contract)
     current_checkout = _checkout_identity(root)
-    require(same(before["source"], current) and same(before["checkout"], current_checkout),
+    current_product_source = _product_source_identity(root)
+    require(same(before["source"], current) and same(before["checkout"], current_checkout)
+            and same(before["product_source"], current_product_source),
             "compiler-helper source changed during aggregate execution")
     require(source_mount == SOURCE_MOUNT, "compiler-helper source mount differs")
     events = _command_events(work, events_path, root=root, source_mount=source_mount)
@@ -948,6 +1044,8 @@ def _aggregate_record(work: Path, source_before: Path, events_path: Path, *, ima
         "source_after": current,
         "checkout_before": before["checkout"],
         "checkout_after": current_checkout,
+        "product_source_before": before["product_source"],
+        "product_source_after": current_product_source,
         "contract": contract,
         "artifacts": artifacts,
         "provenance": _work_identity(work, work / "libcrabc-builtins.a.provenance.json", "aggregate provenance"),
@@ -1032,6 +1130,7 @@ def main(argv: list[str] | None = None) -> int:
     products.add_argument("--static-product", required=True, type=Path)
     products.add_argument("--dynamic-product", required=True, type=Path)
     products.add_argument("--ordinary-link-report", type=Path)
+    products.add_argument("--aggregate-report", type=Path)
     args = parser.parse_args(argv)
     try:
         if args.command == "capture-source":
@@ -1062,6 +1161,7 @@ def main(argv: list[str] | None = None) -> int:
                 root=ROOT, base_inventory=args.base_inventory, elf_report=args.elf_report,
                 static_preparation=args.static_preparation, static_product=args.static_product,
                 dynamic_product=args.dynamic_product, ordinary_link_report=args.ordinary_link_report,
+                aggregate_report=args.aggregate_report,
             )
             print("compiler-helper supplied product evidence valid; shared placement remains unselected"
                   f"; ordinary-popcount={'present' if value['ordinary_popcount_import'] else 'absent'}")

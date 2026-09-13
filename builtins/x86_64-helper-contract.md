@@ -48,3 +48,10 @@ support. The single observed static ordinary `__popcountdi2` import is attached
 only when fresh same-source static/dynamic products, complete ELF facts, and
 the existing public-data ordinary-link receipt are supplied. Historical `3e`
 products remain historical and must not be relabeled by this contract.
+
+At that supplied-product boundary, an aggregate receipt is optional but
+meaningful only when present: the reader first replays it, then requires its
+full clean product-source identity and retained archive SHA-256/size to match
+both distinct installed archive paths. Without that join, placement extraction
+is explicitly partial and makes no aggregate C-ABI claim for either installed
+role.

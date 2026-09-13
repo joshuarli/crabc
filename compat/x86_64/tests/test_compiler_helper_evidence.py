@@ -200,6 +200,42 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
             with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "provenance roster"):
                 EVIDENCE._provenance(path, contract, archive_identity)
 
+    def test_aggregate_join_binds_source_and_both_installed_archive_roles(self) -> None:
+        test_root = ROOT / ".work/x86_64/compiler-helper-evidence-tests"
+        test_root.mkdir(parents=True, exist_ok=True)
+        supplied_source = {"revision": "a" * 40, "content_sha256": "b" * 64}
+        aggregate = {"product_source_before": supplied_source, "product_source_after": supplied_source,
+                     "artifacts": {"libcrabc-builtins.a": {"sha256": "c" * 64, "size": 101}}}
+        installed = {
+            "static-builtins": {"path": "/products/static/usr/lib/libcrabc-builtins.a", "sha256": "c" * 64, "size": 101},
+            "dynamic-builtins": {"path": "/products/dynamic/usr/lib/libcrabc-builtins.a", "sha256": "c" * 64, "size": 101},
+        }
+        original_validate = EVIDENCE.validate_aggregate_report
+        try:
+            EVIDENCE.validate_aggregate_report = lambda _report, *, root: aggregate
+            with tempfile.TemporaryDirectory(dir=test_root) as temporary:
+                report = Path(temporary) / "report.json"
+                report.write_text("{}\n", encoding="utf-8")
+                joined = EVIDENCE._aggregate_archive_join(ROOT, report, supplied_source=supplied_source,
+                                                          installed_archives=installed)
+                self.assertEqual(joined["c_abi_proof"], "aggregate-direct-c-consumer")
+                wrong = copy.deepcopy(installed)
+                wrong["static-builtins"]["sha256"] = "d" * 64
+                with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "static-builtins"):
+                    EVIDENCE._aggregate_archive_join(ROOT, report, supplied_source=supplied_source,
+                                                     installed_archives=wrong)
+                wrong = copy.deepcopy(installed)
+                wrong["dynamic-builtins"]["size"] = 102
+                with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "dynamic-builtins"):
+                    EVIDENCE._aggregate_archive_join(ROOT, report, supplied_source=supplied_source,
+                                                     installed_archives=wrong)
+                aggregate["product_source_after"] = {"revision": "e" * 40, "content_sha256": "f" * 64}
+                with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "source identities"):
+                    EVIDENCE._aggregate_archive_join(ROOT, report, supplied_source=supplied_source,
+                                                     installed_archives=installed)
+        finally:
+            EVIDENCE.validate_aggregate_report = original_validate
+
     def test_ordinary_popcount_attachment_rejects_different_cohort_and_toctou(self) -> None:
         test_root = ROOT / ".work/x86_64/compiler-helper-evidence-tests"
         test_root.mkdir(parents=True, exist_ok=True)
