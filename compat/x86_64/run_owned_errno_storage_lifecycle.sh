@@ -15,9 +15,11 @@ readonly PROBE="$ROOT/compat/x86_64/owned_errno_storage_lifecycle_probe.c"
 readonly DSO="$ROOT/compat/x86_64/owned_errno_storage_lifecycle_dso.c"
 readonly DOC="$ROOT/compat/x86_64/owned-errno-storage-lifecycle.md"
 readonly ERRNO_SOURCE="$ROOT/libc/src/c_abi/x86_64/errno.rs"
+readonly ERRNO_PRIVATE_ALIASES="$ROOT/libc/src/c_abi/x86_64/owned_errno_private_aliases.list"
 readonly H_ERRNO_SOURCE="$ROOT/libc/src/c_abi/x86_64/h_errno.rs"
 readonly PTHREAD_SOURCE="$ROOT/libc/src/c_abi/x86_64/pthread_create_join.rs"
 readonly PRODUCT_VALIDATOR="$ROOT/compat/x86_64/owned_posix_product_evidence.py"
+readonly DYNAMIC_BUILDER="$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly MUSL_ROOT=/opt/musl-1.2.6
 readonly MUSL_ARCHIVE="$MUSL_ROOT/lib/libc.a"
@@ -67,8 +69,8 @@ for tool in chroot cmp cp env git grep mkdir mktemp python3 readelf realpath sha
 done
 [ -x "$ORACLE_CC" ] || fail 'missing pinned musl compiler'
 [ -f "$MUSL_ARCHIVE" ] && [ -f "$MUSL_LIBRARY" ] || fail 'missing pinned musl archive/shared library'
-for path in "$READER" "$PROBE" "$DSO" "$DOC" "$ERRNO_SOURCE" "$H_ERRNO_SOURCE" \
-            "$PTHREAD_SOURCE" "$PRODUCT_VALIDATOR"; do
+for path in "$READER" "$PROBE" "$DSO" "$DOC" "$ERRNO_SOURCE" "$ERRNO_PRIVATE_ALIASES" \
+            "$H_ERRNO_SOURCE" "$PTHREAD_SOURCE" "$PRODUCT_VALIDATOR" "$DYNAMIC_BUILDER"; do
     [ -f "$path" ] || fail "missing errno storage input: $path"
 done
 

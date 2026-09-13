@@ -34,6 +34,7 @@ SYMBOL_TABLE = re.compile(r"^Symbol table '([^']+)' contains \d+ entries:")
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE_FILES = (
     "libc/src/c_abi/x86_64/errno.rs",
+    "libc/src/c_abi/x86_64/owned_errno_private_aliases.list",
     "libc/src/c_abi/x86_64/h_errno.rs",
     "libc/src/c_abi/x86_64/pthread_create_join.rs",
     "libc/src/c_abi/x86_64/static_tls.rs",
@@ -49,10 +50,15 @@ SOURCE_FILES = (
     "compat/x86_64/run_owned_errno_storage_lifecycle.sh",
     "compat/x86_64/owned-errno-storage-lifecycle.md",
     "compat/x86_64/tests/test_owned_errno_storage_lifecycle.py",
+    "scripts/build_x86_64_owned_dynamic_sysroot.py",
 )
 
 PUBLIC_SYMBOLS = ("__errno_location", "__h_errno_location", "h_errno")
 ALIAS = "___errno_location"
+SHARED_ALIAS_LIST = "libc/src/c_abi/x86_64/owned_errno_private_aliases.list"
+SHARED_ALIAS_LIST_SHA256 = "2e69ec5346002fa183b51dbbbef2f24744bd89093b5cfac6329337c1b3d240dd"
+SHARED_ALIAS_MEMBERS = (ALIAS,)
+SHARED_ALIAS_LINKER_SCRIPT = "--version-script=$BUILD/libc-errno-private.exports"
 EXPECTED_TRANSCRIPT = b"errno-storage-lifecycle: PASS\n"
 RUN_LABELS = (
     "oracle-static-exec",
@@ -470,6 +476,40 @@ def validate_workload_symbols(value: object, work: Path) -> dict[str, Any]:
     return value
 
 
+def validate_shared_alias_link_policy(value: object, description: str) -> dict[str, Any]:
+    """Bind LLD's one private alias script to its reviewed source roster."""
+
+    if not isinstance(value, dict):
+        fail(f"{description} provenance is malformed")
+    aliases = require_exact_mapping(
+        value.get("shared_errno_private_aliases"),
+        {"source", "member_count", "members", "linker_policy", "linker_script_sha256"},
+        f"{description} errno private aliases",
+    )
+    source = require_exact_mapping(
+        aliases["source"], {"path", "sha256", "mode"}, f"{description} errno private alias source"
+    )
+    if source != {"path": SHARED_ALIAS_LIST, "sha256": SHARED_ALIAS_LIST_SHA256, "mode": 0o644}:
+        fail(f"{description} errno private alias source drifted")
+    if (
+        type(aliases["member_count"]) is not int
+        or aliases["member_count"] != len(SHARED_ALIAS_MEMBERS)
+        or aliases["members"] != list(SHARED_ALIAS_MEMBERS)
+    ):
+        fail(f"{description} errno private alias roster drifted")
+    if aliases["linker_policy"] != "exact-local-symbols":
+        fail(f"{description} errno private alias linker policy drifted")
+    script_sha256 = aliases["linker_script_sha256"]
+    if not isinstance(script_sha256, str) or SHA256.fullmatch(script_sha256) is None:
+        fail(f"{description} errno private alias script identity is malformed")
+    command = value.get("libc_shared_link_command")
+    if not isinstance(command, list) or not all(isinstance(argument, str) for argument in command):
+        fail(f"{description} shared libc link command is malformed")
+    if command.count(SHARED_ALIAS_LINKER_SCRIPT) != 1:
+        fail(f"{description} shared libc link lacks the exact errno private-alias version script")
+    return aliases
+
+
 def product_record(static_product: Path, dynamic_product: Path) -> dict[str, Any]:
     static = physical_directory(static_product, "static product")
     dynamic = physical_directory(dynamic_product, "dynamic product")
@@ -483,6 +523,9 @@ def product_record(static_product: Path, dynamic_product: Path) -> dict[str, Any
             "root": str(dynamic),
             "manifest": identity(dynamic / "share/crabc/manifest.json", "dynamic product manifest"),
             "libc": identity(dynamic / "usr/lib/libc.so", "dynamic product libc shared object"),
+            "libc_shared_provenance": identity(
+                dynamic / "share/crabc/libc-shared.provenance.json", "dynamic product libc shared provenance"
+            ),
         },
     }
 
@@ -490,7 +533,10 @@ def product_record(static_product: Path, dynamic_product: Path) -> dict[str, Any
 def validate_products(value: object) -> dict[str, Any]:
     record = require_exact_mapping(value, {"static", "dynamic"}, "product record")
     for kind, library in (("static", "libc.a"), ("dynamic", "libc.so")):
-        item = require_exact_mapping(record[kind], {"root", "manifest", "libc"}, f"{kind} product record")
+        expected = {"root", "manifest", "libc"}
+        if kind == "dynamic":
+            expected.add("libc_shared_provenance")
+        item = require_exact_mapping(record[kind], expected, f"{kind} product record")
         if not isinstance(item["root"], str):
             fail(f"{kind} product root is malformed")
         root = physical_directory(Path(item["root"]), f"{kind} product root")
@@ -498,7 +544,23 @@ def validate_products(value: object) -> dict[str, Any]:
         libc = validate_identity(item["libc"], f"{kind} product libc")
         if libc != root / "usr/lib" / library:
             fail(f"{kind} product library path drifted")
+        if kind == "dynamic":
+            provenance = validate_identity(item["libc_shared_provenance"], "dynamic product libc shared provenance")
+            if provenance != root / "share/crabc/libc-shared.provenance.json":
+                fail("dynamic product shared provenance path drifted")
     return record
+
+
+def validate_shared_alias_product_provenance(products: Mapping[str, Any]) -> dict[str, Any]:
+    dynamic = products.get("dynamic")
+    if not isinstance(dynamic, Mapping):
+        fail("dynamic product record is unavailable for errno private alias provenance")
+    provenance_identity = dynamic.get("libc_shared_provenance")
+    provenance_path = validate_identity(
+        provenance_identity, "dynamic product libc shared provenance"
+    )
+    provenance = read_json_object(provenance_path, "dynamic product libc shared provenance")
+    return validate_shared_alias_link_policy(provenance, "dynamic product")
 
 
 def dynamic_link_receipts(work: Path) -> dict[str, Any]:
@@ -555,6 +617,7 @@ def collect(root: Path, work: Path, static_product: Path, dynamic_product: Path)
         fail("source changed while errno storage evidence ran")
     source = validate_source_snapshot(before, root, "source evidence snapshot")
     products = product_record(static_product, dynamic_product)
+    shared_alias_link_policy = validate_shared_alias_product_provenance(products)
     symbols = symbol_artifacts(work)
     validate_symbol_artifacts(symbols, work)
     workload_symbols = workload_symbol_artifacts(work)
@@ -576,6 +639,7 @@ def collect(root: Path, work: Path, static_product: Path, dynamic_product: Path)
         "work": str(work),
         "source": source,
         "products": products,
+        "shared_alias_link_policy": shared_alias_link_policy,
         "symbols": symbols,
         "workload_symbols": workload_symbols,
         "objects": objects,
@@ -600,6 +664,7 @@ def validate_report(root: Path, report_path: Path) -> dict[str, Any]:
         "work",
         "source",
         "products",
+        "shared_alias_link_policy",
         "symbols",
         "workload_symbols",
         "objects",
@@ -613,6 +678,8 @@ def validate_report(root: Path, report_path: Path) -> dict[str, Any]:
     work = physical_directory(Path(report["work"]), "report evidence root")
     validate_source_snapshot(report["source"], root, "report source snapshot")
     validate_products(report["products"])
+    if report["shared_alias_link_policy"] != validate_shared_alias_product_provenance(report["products"]):
+        fail("report shared errno alias link policy drifted")
     validate_symbol_artifacts(report["symbols"], work)
     validate_workload_symbols(report["workload_symbols"], work)
     validate_object_integrity(report["objects"], work)

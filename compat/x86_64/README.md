@@ -218,6 +218,12 @@ musl-shaped shared-libc dynamic-list policy for ordinary local calls plus data
 and allocator interposition exceptions; it is private component evidence, not
 product qualification or public support.
 
+[owned-errno-storage-lifecycle.md](owned-errno-storage-lifecycle.md) records
+the supplied-product `errno`/`h_errno` storage lifecycle evidence: main and
+live-worker independence, loaded-DSO public accessor use, exact weak alias
+placement, and the selected positive pthread error boundary. It remains a
+private component result and does not claim general dynamic-TLS or TCB parity.
+
 `./scripts/dev-x86_64.sh owned-c-allocation-interposition` is the focused
 dynamic allocation-boundary check for caller-owned `asprintf` bytes, passwd
 temporary `getline` cleanup, and AIO list-state ownership. Its [component record](owned-c-allocation-interposition.md)

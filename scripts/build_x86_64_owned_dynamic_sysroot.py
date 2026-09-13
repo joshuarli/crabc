@@ -32,12 +32,21 @@ LOADER_DEPENDENCY_ARTIFACT = "libldso.so"
 # public versus hidden internal calls, and it must never be applied to the
 # loader, application DSOs, or static archives.
 SHARED_LIBC_DYNAMIC_LIST = ROOT / "libc/src/c_abi/x86_64/owned_dynamic.list"
+# Musl's internal `src/include/errno.h` declares `___errno_location` hidden
+# before `src/errno/__errno_location.c` forms its weak alias. GNU ld reduces
+# that alias to LOCAL DEFAULT in musl's shared symbol table. The selected LLD
+# retains HIDDEN instead, so this exact shared-link-only input localizes the
+# one Rust/C allocator seam after objects have resolved it. It is distinct
+# from musl's public dynamic-list and from the fixed C mimalloc list below.
+SHARED_LIBC_ERRNO_PRIVATE_ALIASES = ROOT / "libc/src/c_abi/x86_64/owned_errno_private_aliases.list"
 # This is an exact, reviewed local-symbol contract for the one bundled C
 # allocator member selected by `libmimalloc-sys` 0.1.49. It names its 172
 # upstream `mimalloc.h` declarations and 252 non-header implementation names;
 # it is not a prefix rule and does not select a different object or backend.
 SHARED_LIBC_MIMALLOC_HIDDEN_LIST = ROOT / "libc/src/c_abi/x86_64/owned_mimalloc_hidden.list"
 MUSL_1_2_6_DYNAMIC_LIST_SHA256 = "264ae3bf630a7f6d894a51f91f9acae45b89a5f639537353d03af1a04e9da0f9"
+ERRNO_PRIVATE_ALIAS_LIST_SHA256 = "2e69ec5346002fa183b51dbbbef2f24744bd89093b5cfac6329337c1b3d240dd"
+ERRNO_PRIVATE_ALIAS_MEMBERS = ("___errno_location",)
 MIMALLOC_V3_HIDDEN_LIST_SHA256 = "cd537f6579018bbba79d831ee148a7b07f51a0f3bda538a27970724751d78873"
 MIMALLOC_V3_HIDDEN_LIST_COUNT = 424
 MUSL_1_2_6_DYNAMIC_LIST_MEMBERS = (
@@ -176,10 +185,45 @@ def shared_libc_mimalloc_hidden_exports(stage: Path) -> dict[str, object]:
     }
 
 
+def shared_libc_errno_private_aliases(stage: Path) -> dict[str, object]:
+    """Materialize the exact LLD localization input for the errno weak alias.
+
+    The archive keeps musl's weak hidden alias so the C allocator object can
+    resolve it. The shared link must first resolve that same object edge, then
+    reduce only this alias to LOCAL DEFAULT. Do not put it in musl's public
+    dynamic-list or the mimalloc version script: those lists have separate
+    provenance and interposition contracts.
+    """
+
+    identity = _source_file_identity(
+        SHARED_LIBC_ERRNO_PRIVATE_ALIASES, "native libc errno private-alias list"
+    )
+    if identity["sha256"] != ERRNO_PRIVATE_ALIAS_LIST_SHA256:
+        raise common.BuildError("native libc errno private-alias list differs from its reviewed contract")
+    try:
+        members = tuple(SHARED_LIBC_ERRNO_PRIVATE_ALIASES.read_text(encoding="utf-8").splitlines())
+    except OSError as error:
+        raise common.BuildError("native libc errno private-alias list cannot be read") from error
+    if members != ERRNO_PRIVATE_ALIAS_MEMBERS:
+        raise common.BuildError("native libc errno private-alias roster differs")
+    script = stage / "libc-errno-private.exports"
+    script.write_text("{\n  local:\n" + "".join(f"    {member};\n" for member in members) + "};\n",
+                      encoding="utf-8")
+    script.chmod(0o600)
+    return {
+        "source": identity,
+        "member_count": len(members),
+        "members": list(members),
+        "linker_script_sha256": common.sha256_file(script),
+        "linker_policy": "exact-local-symbols",
+    }
+
+
 def shared_libc_link_command(
     lld: Path,
     dynamic_list: Path,
     mimalloc_hidden_exports: Path,
+    errno_private_aliases: Path,
     objects: Path,
     selected: tuple[str, ...],
     builtins: Path,
@@ -190,6 +234,7 @@ def shared_libc_link_command(
     return [
         str(lld), "-shared", "--hash-style=sysv", "-soname", "libc.so",
         f"--dynamic-list={dynamic_list}", f"--version-script={mimalloc_hidden_exports}",
+        f"--version-script={errno_private_aliases}",
         "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
         *(str(objects / item) for item in selected), str(builtins), "-o", str(library / "libc.so"),
     ]
@@ -349,6 +394,7 @@ def build_staged_payload(output: Path, stage: Path) -> None:
     lld = rust_sysroot / "lib/rustlib" / common.TARGET / "bin/gcc-ld/ld.lld"
     shared_dynamic_list = shared_libc_dynamic_list()
     shared_mimalloc_hidden_exports = shared_libc_mimalloc_hidden_exports(stage)
+    shared_errno_private_aliases = shared_libc_errno_private_aliases(stage)
     run = common.run
     dependency_file = stage / "allocator.d"
     c_flags = ["-nostdinc", "-isystem", str(ROOT / "include"), "-fPIC",
@@ -398,10 +444,14 @@ def build_staged_payload(output: Path, stage: Path) -> None:
     library.mkdir(parents=True)
     common.copy_regular_tree(ROOT / "include", output / "usr/include")
     # Musl's configure applies its dynamic list to libc.so only. It binds
-    # ordinary internal libc calls locally without changing public weak alias
-    # metadata, while retaining its data and allocation interposition scope.
+    # ordinary internal libc calls locally while retaining its data and
+    # allocation interposition scope. The two exact version scripts remain
+    # separate: mimalloc names are fixed-C private metadata, while errno's
+    # one weak alias needs LLD localization after its allocator object edge
+    # has resolved.
     libc_shared_link_command = shared_libc_link_command(
-        lld, SHARED_LIBC_DYNAMIC_LIST, stage / "libc-mimalloc-hidden.exports", objects, selected, builtins, library
+        lld, SHARED_LIBC_DYNAMIC_LIST, stage / "libc-mimalloc-hidden.exports",
+        stage / "libc-errno-private.exports", objects, selected, builtins, library
     )
     run(libc_shared_link_command)
     undefined = run([nm, "--undefined-only", str(library / "libc.so")]).decode().splitlines()
@@ -470,6 +520,7 @@ def build_staged_payload(output: Path, stage: Path) -> None:
                   "libc_shared_link_command": [_normalized_loader_argument(arg, stage) for arg in libc_shared_link_command],
                   "shared_dynamic_list": shared_dynamic_list,
                   "shared_mimalloc_hidden_exports": shared_mimalloc_hidden_exports,
+                  "shared_errno_private_aliases": shared_errno_private_aliases,
                   "loader_imports": sorted(allowed)}
     common.write_json(metadata / "libc-shared.provenance.json", provenance)
     payload_files = {path.relative_to(output).as_posix(): common.sha256_file(path)

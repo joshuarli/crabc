@@ -14,6 +14,7 @@ PROBE = ROOT / "compat" / "x86_64" / "owned_errno_storage_lifecycle_probe.c"
 DSO = ROOT / "compat" / "x86_64" / "owned_errno_storage_lifecycle_dso.c"
 RUNNER = ROOT / "compat" / "x86_64" / "run_owned_errno_storage_lifecycle.sh"
 READER_PATH = ROOT / "compat" / "x86_64" / "owned_errno_storage_lifecycle.py"
+PRIVATE_ALIAS_LIST = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "owned_errno_private_aliases.list"
 
 spec = spec_from_file_location("owned_errno_storage_lifecycle", READER_PATH)
 assert spec is not None and spec.loader is not None
@@ -83,6 +84,40 @@ class ErrnoStorageLifecycleTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(reader.ErrnoStorageEvidenceError, "dynsym"):
             reader.validate_shared_symbols(symtab, exposed, "exposed shared")
+
+    def test_shared_alias_requires_its_exact_local_link_policy(self) -> None:
+        self.assertEqual(PRIVATE_ALIAS_LIST.read_text(encoding="utf-8"), "___errno_location\n")
+        provenance = {
+            "shared_errno_private_aliases": {
+                "source": {
+                    "path": "libc/src/c_abi/x86_64/owned_errno_private_aliases.list",
+                    "sha256": "2e69ec5346002fa183b51dbbbef2f24744bd89093b5cfac6329337c1b3d240dd",
+                    "mode": 0o644,
+                },
+                "member_count": 1,
+                "members": ["___errno_location"],
+                "linker_policy": "exact-local-symbols",
+                "linker_script_sha256": "a" * 64,
+            },
+            "libc_shared_link_command": [
+                "/pinned/ld.lld",
+                "--version-script=$BUILD/libc-errno-private.exports",
+            ],
+        }
+        reader.validate_shared_alias_link_policy(provenance, "fixture shared policy")
+
+        wrong_members = {
+            **provenance,
+            "shared_errno_private_aliases": {
+                **provenance["shared_errno_private_aliases"],
+                "members": ["forged_alias"],
+            },
+        }
+        with self.assertRaisesRegex(reader.ErrnoStorageEvidenceError, "alias roster"):
+            reader.validate_shared_alias_link_policy(wrong_members, "forged shared policy")
+        missing_link = {**provenance, "libc_shared_link_command": ["/pinned/ld.lld"]}
+        with self.assertRaisesRegex(reader.ErrnoStorageEvidenceError, "version script"):
+            reader.validate_shared_alias_link_policy(missing_link, "missing shared policy")
 
     def test_independent_link_layouts_do_not_compare_raw_addresses(self) -> None:
         # Alias identity is a relation inside an ELF file.  Pinned-musl and

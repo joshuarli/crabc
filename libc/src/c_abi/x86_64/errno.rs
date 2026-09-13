@@ -37,11 +37,11 @@ pub unsafe extern "C" fn __errno_location() -> *mut c_int {
 // Musl 1.2.6 `src/errno/__errno_location.c` publishes this allocator-facing
 // spelling with `weak_alias(__errno_location, ___errno_location)`.  The
 // archive spelling is hidden/weak at the same address.  The selected shared
-// link's musl-shaped dynamic-list policy then localizes its ordinary weak
-// alias out of `.dynsym` with DEFAULT visibility.  A separate Rust forwarding
-// body would instead make it a preemptible public export.  The allocator can
-// therefore keep its internal reference without creating a second errno
-// owner, while ordinary C callers continue to use only `__errno_location`.
+// link's exact private-alias script then localizes its ordinary weak alias out
+// of `.dynsym` with DEFAULT visibility. A separate Rust forwarding body would
+// instead make it a preemptible public export. The allocator can therefore
+// keep its internal reference without creating a second errno owner, while
+// ordinary C callers continue to use only `__errno_location`.
 #[cfg(all(feature = "x86-allocator-runtime", not(feature = "x86-owned-dynamic-runtime")))]
 core::arch::global_asm!(
     ".hidden ___errno_location",
@@ -50,8 +50,9 @@ core::arch::global_asm!(
 );
 
 // Do not carry the archive's HIDDEN directive into the shared product: the
-// selected dynamic-list link owns LOCAL DEFAULT localization, matching musl's
-// shared symbol table while retaining the alias out of `.dynsym`.
+// selected shared private-alias script owns LOCAL DEFAULT localization,
+// matching musl's shared symbol table while retaining the alias out of
+// `.dynsym`.
 #[cfg(all(feature = "x86-allocator-runtime", feature = "x86-owned-dynamic-runtime"))]
 core::arch::global_asm!(
     ".weak ___errno_location",
