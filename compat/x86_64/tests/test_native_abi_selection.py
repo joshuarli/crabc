@@ -767,6 +767,12 @@ class PublicDataLinkageAdapterTests(unittest.TestCase):
             with self.subTest(kwargs=kwargs), self.assertRaisesRegex(selection.SelectionError, message):
                 self.linkage_companion(**kwargs)
 
+    def test_linkage_rejects_loader_pointer_float_size(self):
+        with self.assertRaisesRegex(selection.SelectionError, 'pointer metadata'):
+            self.linkage_companion(loader_metadata={
+                'type': 'OBJECT', 'binding': 'GLOBAL', 'visibility': 'DEFAULT', 'size': 8.0,
+            })
+
     def test_linkage_rejects_an_omitted_object_or_changed_alias_projection(self):
         objects, aliases = selection.ordinary_link_evidence.selected_objects(self.contract)
         altered_aliases = copy.deepcopy(aliases)

@@ -1052,7 +1052,8 @@ def public_data_linkage_adapter(ordinary_report_path: Path | None, loader_report
     metadata = loader_replay.get('public_metadata', {}).get('_dl_debug_addr')
     require(type(metadata) is dict
             and metadata.get('type') == 'OBJECT' and metadata.get('binding') == 'GLOBAL'
-            and metadata.get('visibility') == 'DEFAULT' and metadata.get('size') == 8,
+            and metadata.get('visibility') == 'DEFAULT' and type(metadata.get('size')) is int
+            and metadata['size'] == 8,
             'loader-debug receipt pointer metadata differs')
     require(file_identity(ordinary_report_path) == ordinary_before and file_identity(loader_report_path) == loader_before,
             'public-data linkage report changed during companion replay')
