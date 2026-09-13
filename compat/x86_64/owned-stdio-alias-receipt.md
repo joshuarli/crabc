@@ -58,7 +58,7 @@ part of every alias domain; equal values alone do not prove aliases. Local,
 hidden, undefined and unsupported raw facts remain in the complete projection.
 Each public shared `.dynsym` row must itself define an executable section and
 match its `.symtab` body in section, value, type and size. The CLI requires exact
-option spellings.
+option spellings and one occurrence per option, including `--option=value` forms.
 
 The selected FILE/header source must match its historical source revision, and
 collector source, actual tools, probe objects, commands, driver receipts,

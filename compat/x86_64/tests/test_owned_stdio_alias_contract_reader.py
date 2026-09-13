@@ -224,5 +224,19 @@ class SuppliedStdioReceiptTests(unittest.TestCase):
             self.assertEqual(error.exception.code,2)
             replay.assert_not_called()
 
+    def test_cli_rejects_duplicate_report_with_equals_before_public_replay(self):
+        from unittest.mock import patch
+        import owned_stdio_alias_contract_reader as reader
+        for options in (
+            ['--report=one.json', '--report=two.json'],
+            ['--report=one.json', '--report', 'two.json'],
+            ['--report', 'one.json', '--report', 'two.json'],
+        ):
+            with self.subTest(options=options):
+                with patch.object(reader, 'validate_report', side_effect=AssertionError('duplicate reached replay')) as replay:
+                    with self.assertRaisesRegex(reader.StdioAliasEvidenceError, 'duplicate FILE option'):
+                        reader.main(['validate-report', *options])
+                    replay.assert_not_called()
+
 if __name__ == '__main__':
     unittest.main()
