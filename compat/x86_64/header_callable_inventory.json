@@ -417716,7 +417716,7 @@
     "linux_uapi_version": "5.10",
     "musl_source_sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
     "musl_version": "1.2.6",
-    "parity_ledger_sha256": "49b587d3034960539cdd82255616679661b1585fded57967a7a6fb425257d911",
+    "parity_ledger_sha256": "f55a3cc382074412b04f314b6991d36ac2c32f2c4345e22b323514f1dcf01ee6",
     "static_c_abi_exports_sha256": "d40b6ecc65ca473360c5b5edd746795d252c04a801d38ecd3798ea76b29c48e9"
   },
   "oracle": "Pinned musl 1.2.6",

@@ -202,6 +202,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   native-abi-inventory {collect|validate-report} ...  collect or replay the native x86 musl/owned ABI measurement inventory
   native-abi-inventory-test  run focused native ABI-inventory parser, replay, and dispatcher tests
   native-abi-elf-facts {collect|validate-report} ...  inspect or replay complete ELF facts supplementing a current v1 inventory
+  native-abi-selection {build-report|validate-report|require-closure} ...  account native ABI selection and replay its retained evidence
+  header-declaration-inventory {collect|validate-report} ...  retain or replay compiler declaration and macro occurrences
   native-abi-ratchet {check|validate-report} ...  check or replay the reviewed native x86 public-dynamic ABI floor
   native-abi-ratchet-test  run focused native ABI-ratchet policy and dispatcher tests
   musl-oracle  verify the pinned musl-1.2.6 x86 C/POSIX oracle toolchain
@@ -2977,6 +2979,48 @@ except (OSError, RuntimeError, ValueError) as error:
 PY_NATIVE_ABI_INPUT
 }
 
+prepare_header_declaration_inventory_arguments() {
+    local mode="$1"
+    shift
+    local output='' workers='' timeout_seconds='' report=''
+    HEADER_DECLARATION_MODE="$mode"
+    if [ "$mode" = validate-report ]; then
+        [ "$#" -eq 1 ] || fail "header-declaration-inventory validate-report requires REPORT"
+        report="$(native_abi_inventory_input_path declaration-report "$1" file)" || exit 2
+        HEADER_DECLARATION_ARGUMENTS=(--validate-report "$report")
+        return
+    fi
+    while [ "$#" -gt 0 ]; do
+        [ "$#" -ge 2 ] && [ -n "$2" ] && [[ "$2" != -* ]] || \
+            fail "header declaration collection arguments require a value"
+        case "$1" in
+            --output)
+                [ -z "$output" ] || fail "--output may appear once"
+                output="$2"
+                ;;
+            --workers)
+                [ -z "$workers" ] || fail "--workers may appear once"
+                workers="$2"
+                ;;
+            --timeout-seconds)
+                [ -z "$timeout_seconds" ] || fail "--timeout-seconds may appear once"
+                timeout_seconds="$2"
+                ;;
+            *) fail "unknown header declaration collection argument: $1" ;;
+        esac
+        shift 2
+    done
+    [ -n "$output" ] || fail "header-declaration-inventory collect requires --output"
+    output="$(translate_owned_posix_product "$output" fresh-output)" || exit 2
+    case "$output" in
+        /workspace/.work/x86_64/header-declaration-inventory/*) ;;
+        *) fail "declaration output must be below this checkout's .work/x86_64/header-declaration-inventory" ;;
+    esac
+    HEADER_DECLARATION_ARGUMENTS=(--collect --output "$output" --compiler clang)
+    [ -z "$workers" ] || HEADER_DECLARATION_ARGUMENTS+=(--workers "$workers")
+    [ -z "$timeout_seconds" ] || HEADER_DECLARATION_ARGUMENTS+=(--timeout-seconds "$timeout_seconds")
+}
+
 prepare_native_abi_elf_facts_arguments() {
     local base_inventory=''
     local -a inventory_arguments=()
@@ -3467,6 +3511,26 @@ run_in_native_abi_elf_facts_container() {
         --volume "$NATIVE_ABI_DYNAMIC_PRODUCT:/inputs/dynamic-product:ro" \
         --volume "$NATIVE_ABI_STATIC_PREPARATION:/inputs/static-preparation.json:ro" \
         --volume "$NATIVE_ABI_ELF_FACTS_BASE_ROOT:/inputs/base-inventory:ro" \
+        "$image_id" "$@"
+}
+
+run_in_header_declaration_inventory_container() {
+    prepare_work_dir
+    local image_id
+    image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+    [ -n "$image_id" ] || fail "cannot resolve header declaration image identity"
+    docker run --rm --init \
+        --user "$(id -u):$(id -g)" \
+        "${GIT_METADATA_MOUNT[@]}" \
+        --platform "$PLATFORM" --network none --workdir /workspace \
+        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
+        --env PYTHONDONTWRITEBYTECODE=1 --env GIT_OPTIONAL_LOCKS=0 \
+        --env GIT_CONFIG_COUNT=1 --env GIT_CONFIG_KEY_0=safe.directory \
+        --env GIT_CONFIG_VALUE_0=/workspace \
+        --env CRABC_X86_HEADER_DECLARATION_IMAGE_ID="crabc-core-evidence@$image_id" \
+        --volume "$ROOT_DIR:/workspace:ro" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
         "$image_id" "$@"
 }
 
@@ -6487,6 +6551,20 @@ case "$command" in
     native-abi-elf-facts)
         [ "$#" -ge 1 ] || fail "native-abi-elf-facts requires collect or validate-report"
         ;;
+    native-abi-selection)
+        [ "$#" -ge 1 ] || fail "native-abi-selection requires build-report, validate-report, or require-closure"
+        case "$1" in
+            build-report|validate-report|require-closure) ;;
+            *) fail "native-abi-selection requires build-report, validate-report, or require-closure" ;;
+        esac
+        ;;
+    header-declaration-inventory)
+        [ "$#" -ge 1 ] || fail "header-declaration-inventory requires collect or validate-report"
+        case "$1" in
+            collect|validate-report) ;;
+            *) fail "header-declaration-inventory requires collect or validate-report" ;;
+        esac
+        ;;
     native-abi-inventory-test)
         [ "$#" -eq 0 ] || fail "native-abi-inventory-test takes no arguments"
         ;;
@@ -6754,6 +6832,10 @@ esac
 require_native_linux_x86_64_host
 
 case "$command" in
+    header-declaration-inventory)
+        prepare_header_declaration_inventory_arguments "$@"
+        set -- "${HEADER_DECLARATION_ARGUMENTS[@]}"
+        ;;
     perf-native)
         prepare_native_facade_performance_arguments "$@"
         set -- "${NATIVE_FACADE_PERFORMANCE_ARGUMENTS[@]}"
@@ -6855,6 +6937,21 @@ case "$command" in
         # reader.  This host-only path deliberately executes no ELF tool or
         # compiler; native collection remains native-abi-inventory collect.
         python3 -B "$ROOT_DIR/compat/x86_64/native_abi_ratchet.py" "$@"
+        ;;
+    native-abi-selection)
+        # Selection consumes retained compiler/product facts on the host. Its
+        # reader owns argument admission and source/product binding, including
+        # the explicit measurement checkout for historical observations.
+        python3 -B "$ROOT_DIR/compat/x86_64/native_abi_selection.py" "$@"
+        ;;
+    header-declaration-inventory)
+        if [ "$HEADER_DECLARATION_MODE" = validate-report ]; then
+            python3 -B "$ROOT_DIR/compat/x86_64/header_declaration_inventory.py" "$@"
+        else
+            ensure_image
+            run_in_header_declaration_inventory_container \
+                python3 -B /workspace/compat/x86_64/header_declaration_inventory.py "$@"
+        fi
         ;;
     native-abi-ratchet-test)
         ensure_image

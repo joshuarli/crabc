@@ -119,11 +119,23 @@ It keeps historical missing, unexpected, and metadata differences visible and
 does not turn the floor into ABI compatibility, family completion, promotion,
 or public support.
 
-[native-abi-selection.md](native-abi-selection.md) defines the distinct
-callable/data selection and provider-placement contract, including exact
-structural native owners, project extensions, and unresolved visibility and
-static-object boundaries. Its complete executable manifest and provider proof
-remain required independently of the inventory and ratchet.
+[native-abi-elf-facts.md](native-abi-elf-facts.md) retains every physical symbol
+occurrence across the selected libc, loader, CRT and builtins artifacts,
+including undefined and non-public records. Its public reader reconstructs
+those observations from retained tool output.
+
+[native-abi-selection.md](native-abi-selection.md) defines the executable
+callable/data selection and provider-placement policy. Its report expands exact
+frozen and header origins, records native owners and project extensions, and
+joins every physical occurrence without treating an observation as permission
+to expose it. Host replay can validate an incomplete audit; `require-closure`
+separately refuses unresolved metadata, source, component or family evidence.
+
+[header-declaration-inventory.md](header-declaration-inventory.md) describes
+the companion compiler receipt for declaration occurrences and ordered macro
+events across the existing finite header/profile roster. It retains the raw
+compiler inputs and outputs needed for host replay, while keeping unknown
+declaration semantics separate from physical collection completeness.
 
 [native-thread-signal-abi.md](native-thread-signal-abi.md) records the native
 GNU/BSD `tgkill(int,int,int)` crabc extension, its frozen C source

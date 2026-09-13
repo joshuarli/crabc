@@ -896,8 +896,8 @@ class HeaderCallableInventoryTests(unittest.TestCase):
             INVENTORY.refresh_provider_accounting(source, INVENTORY.load_contract())
 
     def test_provider_accounting_refresh_never_calls_the_compiler_collector(self) -> None:
-        state_root = ROOT / ".work"
-        state_root.mkdir(exist_ok=True)
+        state_root = ROOT / ".work" / "x86_64" / "header-callable-inventory-tests"
+        state_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=state_root) as temporary:
             output = Path(temporary) / "refreshed.json"
             with patch.object(INVENTORY, "build_report", side_effect=AssertionError("collector called")):

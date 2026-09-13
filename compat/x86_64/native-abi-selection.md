@@ -5,8 +5,65 @@ ELF inventory records what an artifact contains; the dynamic ratchet prevents
 regression against a reviewed observation. Neither chooses the supported ABI.
 This contract supplies the ownership rules for the complete callable/data
 manifest required by `x86-64.md`, under `libc.c-abi-compat` and
-`compat.abi-differential`. The complete executable selection manifest and its
-provider proof remain required; this document does not establish their closure.
+`compat.abi-differential`. The executable accounting below retains unresolved
+selection and evidence requirements; complete provider proof remains required.
+
+## Executable accounting
+
+The reviewed selection policy is `native-abi-selection.toml`.
+`native_abi_selection.py` expands its finite owner groups together with the
+frozen capability requirements and current header/provider contracts. It joins
+those logical obligations to the complete ELF observations, preserving each
+artifact, archive-member occurrence, symbol-table row, and defining section.
+Unresolved selections and unowned observations remain enumerable report records.
+They cannot disappear through a symbol-name prefix, visibility filter, or an
+expected-count adjustment.
+
+Use the native dispatcher to build or replay an audit from retained evidence:
+
+```bash
+./scripts/dev-x86_64.sh native-abi-selection build-report \
+  --measurement-checkout .work/worktrees/measurement-source \
+  --elf-facts .work/x86_64/elf-facts/report.json \
+  --base-inventory .work/x86_64/abi-inventory/report.json \
+  --static-product .work/x86_64/static/products/primary \
+  --dynamic-product .work/x86_64/dynamic-product \
+  --static-preparation .work/x86_64/static/preparation.json \
+  --output .work/x86_64/abi-selection
+```
+
+The output directory must be fresh and remain under the selecting checkout's
+`.work/x86_64/`. Inputs may refer to preserved physical worktrees and evidence
+under the canonical checkout's `.work/`. These operations run the retained-fact
+readers on the host. They do not compile or rebuild a runtime product.
+`validate-report REPORT` takes the same explicit measurement and product inputs
+and recomputes the audit; it does not accept the report's claimed sets or flags
+as evidence. `require-closure REPORT` performs that replay and then requires the
+complete selected contract. Neither replay command takes `--output`.
+
+The measurement checkout identifies the unchanged collector that owns the
+supplied ELF receipts. The selecting checkout identifies the policy and source
+being assessed. Both identities remain in the result. Historical products can
+support an incomplete audit, but cannot establish current selection closure.
+The existing inventory and ELF readers keep their same-collector validation;
+selecting a historical measurement checkout does not relax that contract.
+
+Supply `--declaration-report REPORT` when the enumerable compiler declaration
+receipt from [the declaration collector](header-declaration-inventory.md) is
+available. Missing declarations, unresolved linkage or layout,
+unproved extraction/alias/protocol behavior, and incomplete owning family
+evidence remain closure blockers even when the physical symbol metadata
+matches. Successful audit generation means the inputs were accounted for; only
+`require-closure` establishes that none of those obligations remains open.
+The full report and retained physical evidence belong under ignored `.work/`,
+while the reviewed policy stays in source control. No selection operation
+changes family, qualification, or public-platform promotion state.
+
+The current reader accounts for physical placements and source-selected
+metadata. Its declaration adapter retains selected object occurrences but does
+not yet establish complete declaration/type agreement. Typed component and
+family receipt adapters remain to be integrated, so current reports retain
+those blockers and `require-closure` refuses them.
 
 ## Selection inputs and definition domains
 

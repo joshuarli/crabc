@@ -5,8 +5,10 @@ is present in the ordinary owned static and dynamic products. It uses the
 existing `libc_crypt_probe.c` fixture without changing its cryptographic
 implementation or dependency graph. The fixture enters its candidate path, so
 it executes public `crypt`, weak `crypt_r`, and each existing private
-`__crypt_*` alias. It checks the canonical SHA-256-crypt (`$5$`) and
-SHA-512-crypt (`$6$`) vectors, the dependency's default-round spelling,
+`__crypt_*` ABI entry. `crypt.rs` defines separate helper bodies; `crypt_r`
+is a weak wrapper around `__crypt_r`. Equal linked addresses do not establish
+a source alias between these entries. It checks the canonical SHA-256-crypt
+(`$5$`) and SHA-512-crypt (`$6$`) vectors, the dependency's default-round spelling,
 null behavior, caller-buffer and trailing-guard ownership, and accepted input
 that overlaps the output/shared result. It also verifies the frozen rejection
 of MD5-crypt, bcrypt, malformed settings, overlong bounded inputs, and invalid
@@ -23,7 +25,7 @@ pinned-musl link and each product link. That candidate object has no absolute
 and dynamic non-PIE. The pinned-musl oracle separately translates the same
 unchanged fixture with the candidate macro disabled, then compares only the
 raw observations shared by the two fixture paths. Static and shared provider
-audits require one owner for all aliases and retain `crypt_r` as a weak
+audits require one provider for each named entry and retain `crypt_r` as a weak
 binding. Every sealed product link is independently checked by
 `owned_posix_product_evidence.validate_link`; dynamic consumers run through
 both the kernel interpreter path and direct owned-loader entry. Before the
