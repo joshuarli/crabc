@@ -10,11 +10,31 @@ readonly MUSL_ARCHIVE=/opt/musl-1.2.6/lib/libc.a
 readonly CONTRACT_SOURCE="$ROOT/compat/x86_64/owned_pthread_timed_feature_contract_probe.c"
 readonly READER="$ROOT/compat/x86_64/owned_pthread_timed_feature_contract_reader.py"
 readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
+readonly EXECUTION_PATH=/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+readonly EXECUTION_TMPDIR="$ROOT/.work/x86_64/tmp"
+
+# The finite runner has no ambient configuration or standard-input contract.
+# Every compiler, linker, oracle, Git query, and launched probe receives this
+# exact environment; individual commands also read EOF from /dev/null.
+unset BASH_ENV CDPATH ENV LD_AUDIT LD_LIBRARY_PATH LD_PRELOAD \
+    PYTHONHOME PYTHONINSPECT PYTHONPATH PYTHONSTARTUP TMP TEMP
+export PATH="$EXECUTION_PATH"
+export HOME=/nonexistent
+export LC_ALL=C
+export LANG=C
+export TZ=UTC
+export PYTHONDONTWRITEBYTECODE=1
+export PYTHONHASHSEED=0
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_NOSYSTEM=1
+export GIT_OPTIONAL_LOCKS=0
+export TMPDIR="$EXECUTION_TMPDIR"
 
 # The sealed static driver admits its own relative receipt/map/trace trio.
 # Run from the checkout so that path cannot silently escape the supplied
 # sysroot or become a host linker flag.
 cd "$ROOT"
+mkdir -p "$TMPDIR"
 
 usage() {
     printf 'usage: %s [--receipt-dir DIR --product-report REPORT --static-preparation PREPARATION --historical-inputs INPUTS --historical-source-commit COMMIT] STATIC_SYSROOT DYNAMIC_SYSROOT\n' "$0" >&2
@@ -70,7 +90,10 @@ else
 fi
 [ "$(uname -s)" = Linux ] || fail 'requires native Linux'
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "refuses emulation on $(uname -m)" ;; esac
-[ -n "${TMPDIR:-}" ] || fail 'requires checkout-local TMPDIR'
+case "$TMPDIR" in
+    "$ROOT"/.work/*) ;;
+    *) fail 'internal TMPDIR escaped checkout .work' ;;
+esac
 for tool in chroot cmp python3 readelf realpath sha256sum timeout; do
     command -v "$tool" >/dev/null || fail "missing $tool"
 done
@@ -141,6 +164,12 @@ for path, label in ((static / "bin/crabc-cc", "static compiler"),
                     (static / "usr/lib/crtn.o", "static epilogue object"),
                     (static / "usr/lib/libcrabc-builtins.a", "static builtins archive"),
                     (dynamic / "bin/crabc-cc-dynamic", "dynamic compiler"),
+                    (dynamic / "usr/lib/crt1.o", "dynamic entry object"),
+                    (dynamic / "usr/lib/Scrt1.o", "dynamic PIE entry object"),
+                    (dynamic / "usr/lib/crti.o", "dynamic prologue object"),
+                    (dynamic / "usr/lib/crtn.o", "dynamic epilogue object"),
+                    (dynamic / "usr/lib/crabc-dynamic-attach.o", "dynamic CRT attach object"),
+                    (dynamic / "usr/lib/libcrabc-builtins.a", "dynamic builtins archive"),
                     (dynamic / "usr/lib/libc.so", "dynamic libc"),
                     (dynamic / "lib/ld-crabc-x86_64.so.1", "dynamic loader")):
     if not path.is_file() or path.is_symlink():
@@ -185,6 +214,34 @@ esac
 printf 'owned pthread timed feature contract evidence: %s\n' "$WORK"
 
 if [ -n "$RECEIPT_DIR" ]; then
+    python3 -B - "$WORK/execution-environment.json" <<'PY'
+import json
+import os
+from pathlib import Path
+import sys
+
+expected = {
+    "GIT_CONFIG_GLOBAL": "/dev/null",
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_OPTIONAL_LOCKS": "0",
+    "HOME": "/nonexistent",
+    "LANG": "C",
+    "LC_ALL": "C",
+    "PATH": "/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "PYTHONHASHSEED": "0",
+    "TZ": "UTC",
+}
+assert {name: os.environ.get(name) for name in expected} == expected
+Path(sys.argv[1]).write_text(json.dumps({
+    "environment": expected,
+    "schema": "crabc.x86_64-owned-pthread-timed-feature-execution/v1",
+    "stdin": "/dev/null",
+}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+fi
+
+if [ -n "$RECEIPT_DIR" ]; then
     python3 -B "$READER" --capture-source --root "$ROOT" --output "$WORK/source-before.json"
 fi
 
@@ -195,6 +252,9 @@ python3 -B - "$WORK/input-identities.json" "$CONTRACT_SOURCE" "$READER" "$0" \
     "$STATIC_PRODUCT/usr/lib/rcrt1.o" "$STATIC_PRODUCT/usr/lib/crti.o" \
     "$STATIC_PRODUCT/usr/lib/crtn.o" "$STATIC_PRODUCT/usr/lib/libcrabc-builtins.a" \
     "$DYNAMIC_PRODUCT/bin/crabc-cc-dynamic" \
+    "$DYNAMIC_PRODUCT/usr/lib/crt1.o" "$DYNAMIC_PRODUCT/usr/lib/Scrt1.o" \
+    "$DYNAMIC_PRODUCT/usr/lib/crti.o" "$DYNAMIC_PRODUCT/usr/lib/crtn.o" \
+    "$DYNAMIC_PRODUCT/usr/lib/crabc-dynamic-attach.o" "$DYNAMIC_PRODUCT/usr/lib/libcrabc-builtins.a" \
     "$DYNAMIC_PRODUCT/usr/lib/libc.so" "$DYNAMIC_PRODUCT/lib/ld-crabc-x86_64.so.1" \
     "$PRODUCT_REPORT" "$STATIC_PREPARATION" <<'PY'
 import hashlib
@@ -205,7 +265,8 @@ import sys
 output = Path(sys.argv[1])
 names = ("probe", "reader", "runner", "oracle_compiler", "musl_shared", "musl_archive",
          "static_driver", "static_libc", "static_crt1", "static_rcrt1", "static_crti", "static_crtn", "static_builtins",
-         "dynamic_driver", "dynamic_libc", "dynamic_loader",
+         "dynamic_driver", "dynamic_crt1", "dynamic_scrt1", "dynamic_crti", "dynamic_crtn",
+         "dynamic_attach", "dynamic_builtins", "dynamic_libc", "dynamic_loader",
          "product_report", "static_preparation")
 paths = [Path(value).resolve(strict=True) for value in sys.argv[2:]]
 output.write_text(json.dumps({
@@ -252,7 +313,7 @@ Path(sys.argv[1]).write_text(json.dumps(sys.argv[2:], separators=(',', ':')) + '
 PY
     local status
     set +e
-    timeout 45 "$@" >"$WORK/$stem.stdout" 2>"$WORK/$stem.stderr"
+    timeout 45 "$@" </dev/null >"$WORK/$stem.stdout" 2>"$WORK/$stem.stderr"
     status=$?
     set -e
     printf '%s\n' "$status" >"$WORK/$stem.status"

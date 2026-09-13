@@ -23,6 +23,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 import tomllib
 from typing import Any, NamedTuple
 
@@ -30,6 +31,8 @@ from owned_syscall_alias_authority import (RELOCATION_NAMES, archive_members, ca
                                            require_symbol_stream, section_name, source_tree)
 from owned_static_link_authority import (StaticFunctionContract, StaticLinkAuthorityError,
                                          require_static_functions)
+import owned_posix_static_products as static_products
+import owned_posix_product_evidence as product_evidence
 from loader_debug_abi_evidence import Elf
 
 
@@ -64,6 +67,20 @@ IMAGE_FIXED_PATHS = (
     "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld",
 )
 IMAGE_MANIFEST_SOURCE = "compat/x86_64/owned_pthread_timed_feature_image_inputs.json"
+PREPARATION_RETAINED_ROOT = "retained/products/static-preparation"
+EXECUTION_ENVIRONMENT = {
+    "GIT_CONFIG_GLOBAL": "/dev/null",
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_OPTIONAL_LOCKS": "0",
+    "HOME": "/nonexistent",
+    "LANG": "C",
+    "LC_ALL": "C",
+    "PATH": IMAGE_PATH,
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "PYTHONHASHSEED": "0",
+    "TZ": "UTC",
+}
+EXECUTION_SCHEMA = "crabc.x86_64-owned-pthread-timed-feature-execution/v1"
 
 # This is the entire source-shaped public alias roster.  The report has no
 # extension hook: a later alias needs a separately reviewed component change.
@@ -131,6 +148,9 @@ COLLECTOR_PATHS = {
     "syscall_authority": "compat/x86_64/owned_syscall_alias_authority.py",
     "static_authority": "compat/x86_64/owned_static_link_authority.py",
     "elf_authority": "compat/x86_64/loader_debug_abi_evidence.py",
+    "static_preparation_owner": "compat/x86_64/owned_posix_static_products.py",
+    "static_package_owner": "compat/x86_64/owned_static_sysroot_package.py",
+    "product_validator": "compat/x86_64/owned_posix_product_evidence.py",
     "image_manifest": IMAGE_MANIFEST_SOURCE,
 }
 COLLECTOR_INPUTS = ("probe", "reader", "runner")
@@ -149,6 +169,12 @@ INPUT_NAMES = (
     "static_crtn",
     "static_builtins",
     "dynamic_driver",
+    "dynamic_crt1",
+    "dynamic_scrt1",
+    "dynamic_crti",
+    "dynamic_crtn",
+    "dynamic_attach",
+    "dynamic_builtins",
     "dynamic_libc",
     "dynamic_loader",
     "product_report",
@@ -417,6 +443,58 @@ def _copy_regular(source: Path, destination: Path, label: str) -> None:
             f"retained {label} copy changed identity")
 
 
+def _copy_tree(source: Path, destination: Path, label: str) -> None:
+    """Copy one finite regular-file tree without relaxing its physical shape."""
+
+    require(source.is_dir() and not source.is_symlink(), f"unsafe {label} root")
+    require(not destination.exists() and not destination.is_symlink(),
+            f"retained {label} root already exists")
+    destination.mkdir(parents=True)
+    os.chmod(destination, stat.S_IMODE(source.stat().st_mode))
+    for item in sorted(source.rglob("*")):
+        relative = item.relative_to(source)
+        target = destination / relative
+        mode = item.lstat().st_mode
+        require(not stat.S_ISLNK(mode), f"unsafe {label} symlink: {relative}")
+        if stat.S_ISDIR(mode):
+            target.mkdir()
+            os.chmod(target, stat.S_IMODE(mode))
+        else:
+            require(stat.S_ISREG(mode), f"unsafe {label} node: {relative}")
+            _copy_regular(item, target, f"{label} {relative}")
+
+
+def _preparation_retained_paths(work: Path) -> set[str]:
+    """Return the full copied preparation cohort, rejecting an open file shape."""
+
+    root = work / PREPARATION_RETAINED_ROOT
+    require(root.is_dir() and not root.is_symlink(), "retained static preparation root is unsafe")
+    paths: set[str] = set()
+    for item in root.rglob("*"):
+        mode = item.lstat().st_mode
+        relative = item.relative_to(work).as_posix()
+        require(not stat.S_ISLNK(mode), f"retained static preparation has symlink: {relative}")
+        if stat.S_ISDIR(mode):
+            continue
+        require(stat.S_ISREG(mode), f"retained static preparation has non-regular node: {relative}")
+        paths.add(relative)
+    require(paths, "retained static preparation is empty")
+    return paths
+
+
+def _copy_static_preparation_cohort(work: Path, inputs: Mapping[str, Mapping[str, object]]) -> None:
+    """Retain the complete selected preparation, not only its summary receipt."""
+
+    preparation = Path(str(inputs["static_preparation"]["path"]))
+    require(preparation.name == "preparation.json", "static preparation filename changed")
+    _require_external_identity(preparation, inputs["static_preparation"], "static preparation")
+    _copy_tree(preparation.parent, work / PREPARATION_RETAINED_ROOT, "static preparation")
+    retained = work / PREPARATION_RETAINED_ROOT / "preparation.json"
+    require(retained.read_bytes() == preparation.read_bytes()
+            and stat.S_IMODE(retained.stat().st_mode) == stat.S_IMODE(preparation.stat().st_mode),
+            "retained static preparation record changed")
+
+
 def _git(root: Path, *arguments: str) -> bytes:
     try:
         return subprocess.check_output(
@@ -561,6 +639,12 @@ def _input_copy_path(name: str) -> str:
         "static_crtn": "retained/products/static-crtn.o",
         "static_builtins": "retained/products/static-builtins.a",
         "dynamic_driver": "retained/products/dynamic-driver",
+        "dynamic_crt1": "retained/products/dynamic-crt1.o",
+        "dynamic_scrt1": "retained/products/dynamic-Scrt1.o",
+        "dynamic_crti": "retained/products/dynamic-crti.o",
+        "dynamic_crtn": "retained/products/dynamic-crtn.o",
+        "dynamic_attach": "retained/products/dynamic-attach.o",
+        "dynamic_builtins": "retained/products/dynamic-builtins.a",
         "dynamic_libc": "retained/products/dynamic-libc.so",
         "dynamic_loader": "retained/products/dynamic-loader",
         "product_report": "retained/products/anchor-report.json",
@@ -800,6 +884,61 @@ def _validate_dynamic_materialization_state(
             f"{label} runtime boundary changed")
 
 
+def _validate_link_input_modes(inputs: Mapping[str, Mapping[str, object]]) -> None:
+    """Bind retained role modes to the collector Git-owned product policy."""
+
+    static_inputs = {
+        "usr/lib/crt1.o": "static_crt1",
+        "usr/lib/rcrt1.o": "static_rcrt1",
+        "usr/lib/crti.o": "static_crti",
+        "usr/lib/crtn.o": "static_crtn",
+        "usr/lib/libc.a": "static_libc",
+        "usr/lib/libcrabc-builtins.a": "static_builtins",
+    }
+    dynamic_inputs = {
+        "usr/lib/crt1.o": "dynamic_crt1",
+        "usr/lib/Scrt1.o": "dynamic_scrt1",
+        "usr/lib/crti.o": "dynamic_crti",
+        "usr/lib/crtn.o": "dynamic_crtn",
+        "usr/lib/crabc-dynamic-attach.o": "dynamic_attach",
+        "usr/lib/libcrabc-builtins.a": "dynamic_builtins",
+        "usr/lib/libc.so": "dynamic_libc",
+    }
+    for contract, captured, label in (
+        (product_evidence.STATIC_LINK_INPUT_MODES, static_inputs, "static"),
+        (product_evidence.DYNAMIC_LINK_INPUT_MODES, dynamic_inputs, "dynamic"),
+    ):
+        require(set(contract) == set(captured), f"{label} product mode contract changed")
+        for relative, expected_mode in contract.items():
+            value = inputs[captured[relative]]
+            require(value["mode"] == expected_mode,
+                    f"{label} selected product link input mode differs: {relative}")
+
+
+def _validate_current_product_links(
+    work: Path, inputs: Mapping[str, Mapping[str, object]],
+) -> None:
+    """Run the existing physical product validators before retention."""
+
+    static_root = Path(str(inputs["static_driver"]["path"])).parent.parent
+    dynamic_root = Path(str(inputs["dynamic_driver"]["path"])).parent.parent
+    rows = (
+        (static_root, "static-contract", "static"),
+        (static_root, "static-pie-contract", "static-pie"),
+        (dynamic_root, "dynamic-pie-contract", "pie"),
+        (dynamic_root, "dynamic-non-pie-contract", "non-pie"),
+    )
+    try:
+        for product, binary, linkage in rows:
+            suffix = ".link.json" if linkage.startswith("static") else ".crabc-link.json"
+            product_evidence.validate_link(
+                product, work / "contract.o", work / binary, work / f"{binary}{suffix}", linkage,
+                export_dynamic=linkage in {"pie", "non-pie"},
+            )
+    except product_evidence.ProductEvidenceError as error:
+        raise ReceiptError(f"selected product physical link validation failed: {error}") from error
+
+
 def _validate_product_anchor(
     anchor_path: Path,
     inputs: Mapping[str, Mapping[str, object]],
@@ -868,6 +1007,12 @@ def _validate_product_anchor(
         ("bin/crabc-cc", "static_driver", static_files, static_root, "static driver"),
         ("usr/lib/libc.a", "static_libc", static_files, static_root, "static libc"),
         ("bin/crabc-cc-dynamic", "dynamic_driver", dynamic_files, dynamic_root, "dynamic driver"),
+        ("usr/lib/crt1.o", "dynamic_crt1", dynamic_files, dynamic_root, "dynamic CRT entry"),
+        ("usr/lib/Scrt1.o", "dynamic_scrt1", dynamic_files, dynamic_root, "dynamic PIE CRT entry"),
+        ("usr/lib/crti.o", "dynamic_crti", dynamic_files, dynamic_root, "dynamic CRT prologue"),
+        ("usr/lib/crtn.o", "dynamic_crtn", dynamic_files, dynamic_root, "dynamic CRT epilogue"),
+        ("usr/lib/crabc-dynamic-attach.o", "dynamic_attach", dynamic_files, dynamic_root, "dynamic CRT attach"),
+        ("usr/lib/libcrabc-builtins.a", "dynamic_builtins", dynamic_files, dynamic_root, "dynamic builtins"),
         ("usr/lib/libc.so", "dynamic_libc", dynamic_files, dynamic_root, "dynamic libc"),
         ("lib/ld-crabc-x86_64.so.1", "dynamic_loader", dynamic_files, dynamic_root, "dynamic loader"),
     ):
@@ -884,21 +1029,8 @@ def _validate_product_anchor(
         require(_same_external_record(_anchor_artifact(anchor, anchor_name, label), _record_external(path, label)),
                 f"selected product anchor does not bind {label}")
 
-    preparation = load_json_object(Path(str(inputs["static_preparation"]["path"])), "static preparation")
-    require(preparation.get("schema") == "crabc.x86_64-owned-posix-static-preparation/v1"
-            and preparation.get("status") == "prepared-unqualified", "static preparation boundary changed")
-    prepared_source = preparation.get("source")
-    require(isinstance(prepared_source, dict)
-            and prepared_source.get("revision") == anchor["source_commit"]
-            and prepared_source.get("content_sha256") == anchor["source_sha256"],
-            "static preparation source differs from selected products")
-    primary_build = preparation.get("steps", {}).get("primary-build", {})
-    require(primary_build.get("exit_status") == 0
-            and primary_build.get("command") == ["python3", "-B", "scripts/build_x86_64_owned_sysroot.py", "--output", ".work/x86_64/public-data-products/static-fed397b0/products/primary"],
-            "static preparation primary outer build differs")
-    primary = preparation.get("products", {}).get("primary", {})
-    require(isinstance(primary, dict) and primary.get("tree", {}).get("usr/lib/libc.a", {}).get("sha256") == inputs["static_libc"]["sha256"],
-            "static preparation primary tree does not bind selected libc archive")
+    # The complete preparation is retained and replayed after Git source
+    # authority is captured. Do not accept a summary-field substitute here.
 
     oracle = anchor.get("oracle")
     require(isinstance(oracle, dict)
@@ -1271,7 +1403,10 @@ def _argv(path: Path, label: str) -> list[str]:
 
 
 def _direct_work_files() -> set[str]:
-    files = {"input-identities.json", "source-before.json", "contract.o", "contract.o.file-header.txt"}
+    files = {
+        "execution-environment.json", "input-identities.json", "source-before.json",
+        "contract.o", "contract.o.file-header.txt",
+    }
     for command in COMMANDS:
         files.update({f"{command}.argv.json", f"{command}.status", f"{command}.stdout", f"{command}.stderr"})
     for binary in ELF_TYPES:
@@ -1698,7 +1833,7 @@ def _coverage() -> dict[str, object]:
     }
 
 
-def _expected_retained_paths() -> set[str]:
+def _expected_retained_paths(work: Path) -> set[str]:
     paths = {
         "retained/oracle/compiler-wrapper",
         "retained/oracle/libc.so",
@@ -1720,6 +1855,7 @@ def _expected_retained_paths() -> set[str]:
     paths.update(_image_copy_path(invocation) for invocation in trusted_image_manifest()["files"])
     paths.update(f"retained/source/{relative}" for relative in SOURCE_CONTRACT_PATHS)
     paths.update(f"retained/runtime-roots/{root}.json" for root in ROOT_TREES)
+    paths.update(_preparation_retained_paths(work))
     return paths
 
 
@@ -1737,7 +1873,7 @@ def _artifact_map(work: Path) -> dict[str, dict[str, object]]:
         for path in retained_root.rglob("*")
         if path.is_file() and not path.is_symlink()
     }
-    expected_retained = _expected_retained_paths()
+    expected_retained = _expected_retained_paths(work)
     git_objects = {name for name in observed_retained if name.startswith("retained/source/git-objects/")}
     require(git_objects and observed_retained == expected_retained | git_objects,
             f"retained pthread receipt file roster changed: missing={sorted(expected_retained - observed_retained)} extra={sorted(observed_retained - expected_retained - git_objects)}")
@@ -1825,6 +1961,93 @@ def _selected_source_identity(root: Path, anchor: Mapping[str, object]) -> dict[
         raise ReceiptError("selected product source revision is unavailable in this checkout") from None
     require(re.fullmatch(r"[0-9a-f]{40}", tree) is not None, "selected source tree is invalid")
     return {"revision": revision, "tree": tree, "source_sha256": source_sha256}
+
+
+def _materialize_selected_source(
+    destination: Path, files: Mapping[str, tuple[int, bytes, bool]],
+) -> None:
+    """Write the sealed selected tree for the existing preparation owner.
+
+    The owner needs a physical checkout-shaped root to replay its package
+    checks. Every source node still comes from source_tree's retained
+    commit/tree/blob authority; this never reads a current checkout file.
+    """
+
+    require(not destination.exists() and not destination.is_symlink(),
+            "selected source materialization destination already exists")
+    destination.mkdir()
+    for relative, (mode, data, symlink) in sorted(files.items()):
+        target = destination / _safe_relative(relative, "selected source materialization")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        require(not target.exists() and not target.is_symlink(),
+                f"duplicate selected source materialization path: {relative}")
+        if symlink:
+            target.symlink_to(os.fsdecode(data))
+        else:
+            target.write_bytes(data)
+            os.chmod(target, mode)
+    for relative, (mode, data, symlink) in files.items():
+        target = destination / relative
+        if symlink:
+            require(target.is_symlink() and os.fsencode(os.readlink(target)) == data,
+                    f"selected source symlink changed: {relative}")
+        else:
+            require_regular(target, f"selected source materialization {relative}")
+            require(target.read_bytes() == data and stat.S_IMODE(target.stat().st_mode) == mode,
+                    f"selected source materialization changed: {relative}")
+
+
+def _canonical_static_preparation(
+    work: Path, source: Mapping[str, object], inputs: Mapping[str, Mapping[str, object]],
+) -> dict[str, object]:
+    """Replay the selected full preparation with its established owner.
+
+    The preparation owner retains all primary/reproduction/extracted products,
+    package archives, source seals, and each command sidecar. Its source
+    callback is replaced only with the same full selected Git-tree identity
+    used by this receipt; invoking the callback never grants the collector
+    source authority over selected-product source.
+    """
+
+    work = work.resolve(strict=True)
+    revision = source["revision"]
+    require(isinstance(revision, str), "selected source revision is invalid")
+    derived, files = source_tree(work / "retained", revision)
+    expected_source = {
+        "revision": source["revision"],
+        "content_sha256": source["source_sha256"],
+    }
+    require(derived == expected_source, "selected Git tree differs before preparation replay")
+    retained = work / PREPARATION_RETAINED_ROOT / "preparation.json"
+    input_copy = work / _input_copy_path("static_preparation")
+    require(retained.read_bytes() == input_copy.read_bytes()
+            and stat.S_IMODE(retained.stat().st_mode) == stat.S_IMODE(input_copy.stat().st_mode),
+            "full retained preparation does not match captured preparation input")
+    record = load_json_object(retained, "retained static preparation")
+    relative_work = _safe_relative(record.get("work"), "retained static preparation work")
+    require(relative_work.parts[:2] == (".work", "x86_64"),
+            "retained static preparation work path changed")
+    with tempfile.TemporaryDirectory(prefix=".pthread-preparation-replay.", dir=work.parent) as temporary:
+        root = Path(temporary) / "selected-source"
+        _materialize_selected_source(root, files)
+        preparation = root / relative_work
+        _copy_tree(work / PREPARATION_RETAINED_ROOT, preparation, "replayed static preparation")
+        original_source_identity = static_products.source_identity
+        def sealed_source_identity(candidate: Path) -> dict[str, object]:
+            require(candidate == root, "static preparation owner escaped selected source root")
+            return dict(derived)
+        try:
+            static_products.source_identity = sealed_source_identity
+            observed = static_products.validate_receipt(root, preparation / "preparation.json")
+        finally:
+            static_products.source_identity = original_source_identity
+    require(isinstance(observed, dict), "static preparation owner produced no record")
+    primary = observed.get("products", {}).get("primary")
+    require(isinstance(primary, dict)
+            and primary.get("tree", {}).get("usr/lib/libc.a", {}).get("sha256")
+            == inputs["static_libc"]["sha256"],
+            "canonical static preparation primary does not bind selected archive")
+    return observed
 
 
 def _copy_product_sidecars(work: Path, product: Mapping[str, object], inputs: Mapping[str, Mapping[str, object]]) -> None:
@@ -2095,6 +2318,9 @@ def _validate_commands(work: Path, commands: Mapping[str, object], artifacts: Ma
         if name in RUNTIME_COMMANDS:
             require(stdout.read_bytes() == SUCCESS_TRANSCRIPT and stderr.read_bytes() == b"",
                     f"{name} runtime transcript changed")
+        else:
+            require(stdout.read_bytes() == b"" and stderr.read_bytes() == b"",
+                    f"{name} diagnostic stream changed")
         if name in LINK_MAPS:
             map_path = work / LINK_MAPS[name]
             validate_retained_artifact(work, artifacts[map_path.name], f"{name} link map")
@@ -2113,8 +2339,8 @@ def validate_report(report_path: Path) -> dict[str, object]:
     report = load_json_object(report_path, "pthread timed feature receipt")
     expected_keys = {
         "schema", "status", "component", "public_support", "family_complete", "promotion_ready",
-        "collection", "selected_source", "collector", "inputs", "selected_products", "oracle",
-        "historical_evidence", "coverage", "feature_source", "artifacts", "commands", "elf_headers",
+        "collection", "execution", "selected_source", "collector", "inputs", "selected_products", "static_preparation", "oracle",
+        "historical_evidence", "coverage", "feature_source", "product_input_modes", "artifacts", "commands", "elf_headers",
         "alias_observations", "final_extraction", "runtime_roots", "image_inputs",
     }
     require(set(report) == expected_keys, "pthread alias receipt fields changed")
@@ -2124,22 +2350,37 @@ def validate_report(report_path: Path) -> dict[str, object]:
             and report["promotion_ready"] is False, "pthread alias receipt crossed its component boundary")
     artifacts = report["artifacts"]
     require(isinstance(artifacts, dict), "pthread alias artifacts are invalid")
+    execution = report["execution"]
+    require(execution == {
+        "record": "execution-environment.json",
+        "schema": EXECUTION_SCHEMA,
+        "stdin": "/dev/null",
+    }, "pthread execution boundary changed")
     git_objects = {
         relative for relative in artifacts
         if relative.startswith("retained/source/git-objects/")
     }
     require(git_objects and all(re.fullmatch(r"retained/source/git-objects/[0-9a-f]{40}", relative)
                                 is not None for relative in git_objects)
-            and set(artifacts) == _direct_work_files() | _expected_retained_paths() | git_objects,
+            and set(artifacts) == _direct_work_files() | _expected_retained_paths(work) | git_objects,
             "pthread alias artifact roster changed")
     for relative, record in artifacts.items():
         require(relative == record.get("path") if isinstance(record, dict) else False,
                 f"artifact key/path mismatch: {relative}")
         validate_retained_artifact(work, record, f"artifact {relative}")
+    execution_record = load_json_object(work / "execution-environment.json", "pthread execution record")
+    require(execution_record == {
+        "environment": EXECUTION_ENVIRONMENT,
+        "schema": EXECUTION_SCHEMA,
+        "stdin": "/dev/null",
+    }, "retained pthread execution environment changed")
     source = report["selected_source"]
     require(isinstance(source, dict), "selected product source is invalid")
     _validate_selected_source(work, source, artifacts)
     inputs = _validate_inputs(work, report["inputs"], artifacts)
+    require(report["product_input_modes"] == product_evidence.link_input_mode_projection(),
+            "retained selected product mode projection changed")
+    _validate_link_input_modes(inputs)
     collector = report["collector"]
     require(isinstance(collector, dict), "collector is invalid")
     _validate_collector(work, collector, artifacts, inputs)
@@ -2172,6 +2413,13 @@ def validate_report(report_path: Path) -> dict[str, object]:
     selected = report["selected_products"]
     require(isinstance(selected, dict), "selected products are invalid")
     _validate_selected_products(work, selected, artifacts, source, inputs)
+    preparation = report["static_preparation"]
+    require(preparation == {
+        "retained_root": PREPARATION_RETAINED_ROOT,
+        "record": f"{PREPARATION_RETAINED_ROOT}/preparation.json",
+        "owner": "compat/x86_64/owned_posix_static_products.py",
+    }, "static preparation replay boundary changed")
+    _canonical_static_preparation(work, source, inputs)
     oracle = report["oracle"]
     require(isinstance(oracle, dict), "oracle is invalid")
     _validate_oracle(work, oracle, artifacts, selected)
@@ -2225,6 +2473,8 @@ def collect_report(
     require(Path(str(inputs["product_report"]["path"])).resolve(strict=True) == product_report.resolve(strict=True),
             "collector product anchor path differs from captured input")
     product = _validate_product_anchor(product_report, inputs)
+    _validate_link_input_modes(inputs)
+    _validate_current_product_links(work, inputs)
     selected_source = _selected_source_identity(root, product["anchor"])
     trusted_image = trusted_image_manifest()
     require(live_image_manifest() == trusted_image, "live image inputs differ from trusted pthread image manifest")
@@ -2232,10 +2482,12 @@ def collect_report(
     _, selected_git_files = source_tree(work / "retained", str(selected_source["revision"]))
     _, collector_git_files = source_tree(work / "retained", str(current["revision"]))
     _copy_input_set(work, inputs)
+    _copy_static_preparation_cohort(work, inputs)
     _copy_collector_authority(work, collector_git_files)
     _copy_image_inputs(work, trusted_image)
     _copy_source_contract(work, root, str(selected_source["revision"]), selected_git_files)
     _copy_product_sidecars(work, product, inputs)
+    _canonical_static_preparation(work, selected_source, inputs)
     _copy_historical(work, historical_inputs.resolve(strict=True))
     require(re.fullmatch(r"[0-9a-f]{40}", historical_source_commit) is not None,
             "historical source commit is invalid")
@@ -2257,6 +2509,11 @@ def collect_report(
         "family_complete": False,
         "promotion_ready": False,
         "collection": {"work_path": str(work), "timeout_seconds": TIMEOUT_SECONDS},
+        "execution": {
+            "record": "execution-environment.json",
+            "schema": EXECUTION_SCHEMA,
+            "stdin": "/dev/null",
+        },
         "selected_source": {**selected_source, **source_records},
         "collector": {
             "source_before": before,
@@ -2300,6 +2557,12 @@ def collect_report(
                 },
             },
         },
+        "static_preparation": {
+            "retained_root": PREPARATION_RETAINED_ROOT,
+            "record": f"{PREPARATION_RETAINED_ROOT}/preparation.json",
+            "owner": "compat/x86_64/owned_posix_static_products.py",
+        },
+        "product_input_modes": product_evidence.link_input_mode_projection(),
         "oracle": {
             "release": MUSL_RELEASE,
             "source_commit": MUSL_SOURCE_COMMIT,
