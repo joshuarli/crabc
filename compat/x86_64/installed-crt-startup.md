@@ -75,8 +75,14 @@ owned PIE probe, the collector derives four single-field ELF copies from that
 one authenticated final main: `OBJECT` instead of `NOTYPE`, global instead of
 weak binding, `JUMP_SLOT` instead of `GLOB_DAT`, and addend one instead of
 zero. It also compiles `installed_crt_startup_descriptor_dso.c` through the
-selected dynamic driver and links the ordinary normal probe against that weak
-DSO request. The ordinary positive matrix remains unchanged. The collector
+selected dynamic driver to one retained PIC object. That object has exactly
+one weak undefined `NOTYPE` `R_X86_64_REX_GOTPCRELX` request with addend
+minus four. A separate selected-driver shared link consumes that object and
+seals the DSO's no-interpreter/`SONAME`/`DT_NEEDED libc.so` role. A second
+selected-driver PIE link consumes the unchanged normal probe object and that
+exact DSO, sealing its owned interpreter and exact
+`DT_NEEDED descriptor-rogue-dso.so, libc.so` order. The ordinary positive
+matrix remains unchanged. The collector
 copies each finite input into its existing `candidate-root`, whose loader and
 manifest are exact sealed dynamic-product inputs; it never builds, substitutes,
 or self-authenticates an interpreter.
@@ -87,7 +93,11 @@ produce its normal transcript. Replay rebuilds the command plan from the
 current source, retained tools, selected product cohort, and source-generated
 mutation policy; it independently rechecks the copied candidate-root tree,
 mutation bytes, DSO and endpoint wire shape, raw commands, statuses, and
-streams. A previous source/product cohort that admits a malformed wire cannot
+streams. It also reconstructs the two finite schema-2 link receipts: source
+object, selected runtime and linker identities, direct DSO input, exact command
+and trace, output, and manifest. The general ordinary-link reader intentionally
+does not admit application DSOs; this component owns only this one named direct
+DSO relation. A previous source/product cohort that admits a malformed wire cannot
 produce a schema-v3 receipt. It remains an observed development failure, not
 a waiver or a qualified green result.
 

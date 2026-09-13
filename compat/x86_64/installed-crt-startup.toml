@@ -64,6 +64,15 @@ source = "compat/x86_64/installed_crt_startup_descriptor_dso.c"
 shared_object = "descriptor-rogue-dso.so"
 endpoint = "descriptor-dso-endpoint"
 
+[descriptor_handoff.admission.source_object.relocation]
+kind = 42
+addend = -4
+symbol_type = "0"
+binding = "WEAK"
+visibility = "DEFAULT"
+symbol_section = 0
+symbol_value = 0
+
 [descriptor_handoff.admission.rejection]
 status = 127
 stdout = ""
