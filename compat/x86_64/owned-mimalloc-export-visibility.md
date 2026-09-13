@@ -22,9 +22,16 @@ builds fresh static and dynamic products, checks their source-bound metadata,
 and compares their dynsym against the retained pre-change product. The only
 allowed shared dynsym removal is the exact contract list: the original 475
 extra exports become the reviewed 51 atomic/runtime/compiler entries. The
-runner also proves that all 424 definitions remain in the sole selected static
-allocator member, then reuses the owned C allocation-interposition and mimalloc
-startup/errno lifecycle components with the fresh dynamic product.
+runner also reads complete `--syms --wide` tables. It rejects a dynsym row for
+any contract name, requires its one shared definition to be `LOCAL`, and
+matches its raw spelling, version, kind, and object/TLS size to the sole
+selected static allocator member. The complete shared table may localize only
+the exact roster; surviving visible entries retain their ELF metadata and
+OBJECT/TLS size. The evidence records the collector source identity and the
+dynamic product's source state separately, so a historical product cannot be
+misrepresented as a fresh source match. It then reuses the owned C
+allocation-interposition and mimalloc startup/errno lifecycle components with
+the fresh dynamic product.
 
 This is component evidence only. It does not qualify the native runtime,
 allocator, product campaign, or public x86 support.

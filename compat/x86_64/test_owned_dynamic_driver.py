@@ -835,12 +835,16 @@ class InstalledDynamicDriverTests(unittest.TestCase):
 
         command = producer.shared_libc_link_command(
             Path("/pinned/ld.lld"), producer.SHARED_LIBC_DYNAMIC_LIST,
-            Path("/private/objects"), ("one.o", "two.o"), Path("/private/builtins.a"),
-            Path("/private/usr/lib"),
+            Path("/private/mimalloc-hidden.exports"), Path("/private/objects"),
+            ("one.o", "two.o"), Path("/private/builtins.a"), Path("/private/usr/lib"),
         )
-        self.assertEqual(command[:6], [
+        self.assertEqual(command, [
             "/pinned/ld.lld", "-shared", "--hash-style=sysv", "-soname", "libc.so",
             "--dynamic-list=" + str(producer.SHARED_LIBC_DYNAMIC_LIST),
+            "--version-script=/private/mimalloc-hidden.exports",
+            "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
+            "/private/objects/one.o", "/private/objects/two.o", "/private/builtins.a",
+            "-o", "/private/usr/lib/libc.so",
         ])
         self.assertNotIn("-Bsymbolic", command)
         self.assertNotIn("-Bsymbolic-functions", command)
