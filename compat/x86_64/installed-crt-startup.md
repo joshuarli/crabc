@@ -87,6 +87,14 @@ copies each finite input into its existing `candidate-root`, whose loader and
 manifest are exact sealed dynamic-product inputs; it never builds, substitutes,
 or self-authenticates an interpreter.
 
+The DSO and endpoint role reader takes `DT_NEEDED` and `DT_SONAME` only from
+the one `PT_DYNAMIC` virtual range mapped by one `PT_LOAD`; SHT_DYNAMIC cannot
+replace loader-visible facts. Its retained SHT_DYNAMIC, SHT_DYNSYM, and
+SHT_RELA offsets must also agree with `PT_DYNAMIC`, `DT_STRTAB`, `DT_SYMTAB`,
+and `DT_RELA` respectively. This preserves byte offsets for the four finite
+main mutations without allowing stale section headers to describe a different
+loader request.
+
 For both kernel and direct entry, the five malformed inputs must exit 127,
 write no stdout, and write only `reloc` to stderr before probe `main` can
 produce its normal transcript. Replay rebuilds the command plan from the

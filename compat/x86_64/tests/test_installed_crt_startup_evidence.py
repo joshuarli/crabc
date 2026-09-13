@@ -3,6 +3,7 @@ import copy
 import hashlib
 import json
 import shutil
+import struct
 import subprocess
 from unittest import mock
 from pathlib import Path
@@ -289,6 +290,53 @@ int main(void) {
                 with self.subTest(replacement=name),self.assertRaises(reader.StartupEvidenceError):
                     reader.descriptor_admission_elf_roles(reader.ROOT,work)
                 path.write_bytes(before)
+
+    def test_actual_descriptor_roles_reject_stale_section_dynamic_facts(self):
+        """Loader-visible ``PT_DYNAMIC`` bytes, never SHT_DYNAMIC, own DSO role facts."""
+        control=reader.ROOT/'.work/x86_64/crt-admission-independent-5c896535/pt_dynamic_vaddr_control.py'
+        if not control.is_file():
+            self.skipTest('requires retained copied PT_DYNAMIC disagreement control')
+        completed=subprocess.run([sys.executable,str(control)],cwd=reader.ROOT,
+                                 capture_output=True,text=True)
+        self.assertEqual(completed.returncode,0,completed.stdout+completed.stderr)
+        report=reader.ROOT/'.work/x86_64/crt-admission-independent-5c896535/pt-dynamic-vaddr-control.json'
+        observed=json.loads(report.read_text())
+        self.assertEqual(observed['source_dso_sha256'],
+                         '1fecb9c16eed7505d9125bbee7b500cc3c36a0e8a03dfcd2a2c6d3860ff5b423')
+        self.assertEqual(observed['result'],'rejected')
+
+    def test_actual_descriptor_slot_rejects_stale_dynsym_or_rela_sections(self):
+        """The descriptor wire sections must agree with loader dynamic-tag addresses."""
+        source=reader.ROOT/'.work/x86_64/descriptor-link-replay-control-v1'
+        if not all((source/name).is_file() for name in (reader.DESCRIPTOR_DSO,reader.DESCRIPTOR_ENDPOINT)):
+            self.skipTest('requires retained descriptor DSO link control')
+        parent=reader.ROOT/'.work/x86_64/crt-startup-development';parent.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as directory:
+            work=Path(directory)
+            for name in (reader.DESCRIPTOR_DSO,reader.DESCRIPTOR_ENDPOINT):
+                shutil.copy2(source/name,work/name)
+            reader.descriptor_admission_elf_roles(reader.ROOT,work)
+            def replace_dynamic_address(path,tag):
+                data=bytearray(path.read_bytes())
+                header=struct.unpack_from('<16sHHIQQQIHHHHHH',data,0)
+                phoff,phentsize,phnum=header[5],header[9],header[10]
+                dynamic=next(struct.unpack_from('<IIQQQQQQ',data,phoff+index*phentsize)
+                             for index in range(phnum)
+                             if struct.unpack_from('<I',data,phoff+index*phentsize)[0]==2)
+                for offset in range(dynamic[2],dynamic[2]+dynamic[5],16):
+                    if struct.unpack_from('<q',data,offset)[0]==tag:
+                        value=struct.unpack_from('<Q',data,offset+8)[0]
+                        struct.pack_into('<Q',data,offset+8,value+8)
+                        path.write_bytes(data)
+                        return
+                self.fail('retained DSO has no requested dynamic tag')
+            for tag in (6,7):  # DT_SYMTAB, DT_RELA
+                with self.subTest(tag=tag):
+                    path=work/reader.DESCRIPTOR_DSO;before=path.read_bytes()
+                    replace_dynamic_address(path,tag)
+                    with self.assertRaises(reader.StartupEvidenceError):
+                        reader.descriptor_admission_elf_roles(reader.ROOT,work)
+                    path.write_bytes(before)
 
     def test_actual_descriptor_admission_rejects_invalid_dso_link_sidecars(self):
         """The finite DSO and endpoint links cannot be replaced by unreadable receipts."""
