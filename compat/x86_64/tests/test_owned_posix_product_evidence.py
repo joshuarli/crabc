@@ -205,7 +205,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
             str(library / "crtn.o"), "-o", "<output>",
         ]
 
-    def dynamic_receipt(self, linkage: str = "pie") -> Path:
+    def dynamic_receipt(self, linkage: str = "pie", *, export_dynamic: bool = False) -> Path:
         mode, entry = {"pie": ("pie", "Scrt1.o"), "non-pie": ("exec", "crt1.o")}[linkage]
         receipt = self.root / f"{linkage}.crabc-link.json"
         runtime = self.dynamic / "usr/lib"
@@ -218,6 +218,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
             str(self.linker), *( ["-pie"] if linkage == "pie" else []), "--hash-style=sysv",
             "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
             "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib",
+            *(["--export-dynamic"] if export_dynamic else []),
             "--dynamic-linker", "/lib/ld-crabc-x86_64.so.1", str(runtime / entry),
             str(runtime / "crabc-dynamic-attach.o"), str(runtime / "crti.o"), str(self.workload),
             str(runtime / "libc.so"), str(runtime / "libcrabc-builtins.a"), str(runtime / "crtn.o"),
@@ -262,10 +263,11 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         with mock.patch.object(evidence, "_readelf", return_value=self.readelf(linkage)):
             return evidence.validate_link(product, self.workload, self.executable, receipt, linkage)
 
-    def retained_receipt(self, linkage: str) -> tuple[Path, dict[str, str]]:
+    def retained_receipt(self, linkage: str, *, export_dynamic: bool = False) -> tuple[Path, dict[str, str]]:
         """Rewrite a native `/workspace` receipt without materializing its linker."""
 
-        receipt = self.static_receipt(linkage) if linkage in {"static", "static-pie"} else self.dynamic_receipt(linkage)
+        receipt = (self.static_receipt(linkage) if linkage in {"static", "static-pie"}
+                   else self.dynamic_receipt(linkage, export_dynamic=export_dynamic))
         record = json.loads(receipt.read_text(encoding="utf-8"))
         host = str(self.root)
 
@@ -316,6 +318,33 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
                     self.root, "/workspace", self.dynamic, self.workload, self.executable,
                     receipt, "pie", {"path": "/opt/native-tools/other-ld.lld", "sha256": linker["sha256"]},
                 )
+
+    def test_export_dynamic_requires_the_explicit_dynamic_link_contract(self) -> None:
+        receipt = self.dynamic_receipt(export_dynamic=True)
+        with mock.patch.object(evidence, "_readelf", return_value=self.readelf("pie")):
+            with self.assertRaisesRegex(evidence.ProductEvidenceError, "link command"):
+                evidence.validate_link(self.dynamic, self.workload, self.executable, receipt, "pie")
+            with self.assertRaisesRegex(evidence.ProductEvidenceError, "export-dynamic"):
+                evidence.validate_link(
+                    self.dynamic, self.workload, self.executable, receipt, "pie", export_dynamic=1
+                )
+            identity = evidence.validate_link(
+                self.dynamic, self.workload, self.executable, receipt, "pie", export_dynamic=True
+            )
+        self.assertEqual(identity["linkage"], "pie")
+
+        retained, linker = self.retained_receipt("pie", export_dynamic=True)
+        with mock.patch.object(evidence, "_readelf", return_value=self.readelf("pie")):
+            with self.assertRaisesRegex(evidence.ProductEvidenceError, "link command"):
+                evidence.validate_retained_link(
+                    self.root, "/workspace", self.dynamic, self.workload, self.executable,
+                    retained, "pie", linker,
+                )
+            identity = evidence.validate_retained_link(
+                self.root, "/workspace", self.dynamic, self.workload, self.executable,
+                retained, "pie", linker, export_dynamic=True,
+            )
+        self.assertEqual(identity["linkage"], "pie")
 
     def test_accepts_each_sealed_linkage_and_returns_bound_identity(self) -> None:
         for linkage in ("static", "static-pie", "pie", "non-pie"):
