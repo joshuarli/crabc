@@ -2403,9 +2403,32 @@ def attach_loader_runtime_registry(accounting: Mapping[str, Any], companion: Map
 
 
 def _pthread_receipt_artifact(report: Mapping[str, Any], relative: str, description: str) -> dict[str, Any]:
+    """Read the pthread reader's retained-copy identity without inventing a mode.
+
+    The owner records the copied artifact path, bytes, and size.  Its receipt
+    intentionally does not represent the source file mode, so selection binds
+    those two immutable byte fields to the selected installed product while
+    the public ELF/product transaction continues to seal the actual mode.
+    """
     artifacts = report.get('artifacts')
     require(type(artifacts) is dict, 'pthread alias receipt artifact roster differs')
-    return exact(artifacts.get(relative), {'path', 'sha256', 'size', 'mode'}, description)
+    require(type(relative) is str and relative and not Path(relative).is_absolute()
+            and '..' not in Path(relative).parts,
+            f'{description} retained path differs')
+    row = exact(artifacts.get(relative), {'path', 'sha256', 'size'}, description)
+    require(row['path'] == relative
+            and type(row['sha256']) is str and re.fullmatch(r'[0-9a-f]{64}', row['sha256']) is not None
+            and type(row['size']) is int and not isinstance(row['size'], bool) and row['size'] >= 0,
+            f'{description} identity differs')
+    return row
+
+
+def _require_same_pthread_receipt_identity(value: object, current: object, description: str) -> None:
+    """Compare a pthread retained copy to the selected file's byte identity."""
+    observed = exact(value, {'path', 'sha256', 'size'}, description + ' receipt')
+    selected = _identity_payload(current, description + ' selected')
+    require(observed['sha256'] == selected['sha256'] and observed['size'] == selected['size'],
+            f'{description} bytes differ')
 
 
 def pthread_alias_contract_adapter(report_path: Path | None, *, facts: Mapping[str, Any],
@@ -2451,8 +2474,10 @@ def pthread_alias_contract_adapter(report_path: Path | None, *, facts: Mapping[s
         (dynamic['manifest'], 'dynamic_manifest'), (dynamic['state'], 'dynamic_state'),
         (dynamic['driver'], 'dynamic_driver'), (dynamic['libc'], 'dynamic_libc'), (dynamic['loader'], 'dynamic_loader'),
     ):
-        _require_same_identity_payload(_pthread_receipt_artifact(report, retained, f'pthread alias {current_name} receipt'),
-                                       current[current_name], f'pthread alias {current_name}')
+        _require_same_pthread_receipt_identity(
+            _pthread_receipt_artifact(report, retained, f'pthread alias {current_name} receipt'),
+            current[current_name], f'pthread alias {current_name}',
+        )
     facts_artifacts = facts.get('artifacts')
     require(type(facts_artifacts) is dict, 'public ELF facts artifact roster differs for pthread aliases')
     for current_name, artifact_key in (
@@ -3601,14 +3626,19 @@ def attach_errno_storage_lifecycle(accounting: Mapping[str, Any], companion: Map
     _errno_provider_partition(inputs)
     records, placements, occurrences = _accounting_indexes(accounting, description='errno storage lifecycle attachment')
     public_rows = []
-    for name, owner, static_metadata, shared_metadata in (
+    # ``__h_errno_location`` is routed through the checked installed-header
+    # provider group in the assembled selection.  The separate exact
+    # ``x86-h-errno`` feature roster remains an authenticated prerequisite for
+    # this lifecycle receipt; it does not rewrite the selected owner field.
+    for name, owner, feature_owner, static_metadata, shared_metadata in (
         ('__errno_location', 'checked-header-provider-routing',
+         None,
          {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT'},
          {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT'}),
-        ('__h_errno_location', 'x86-h-errno',
+        ('__h_errno_location', 'checked-header-provider-routing', 'x86-h-errno',
          {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT'},
          {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT'}),
-        ('h_errno', 'object:h_errno', h_errno_layout['static'], h_errno_layout['shared']),
+        ('h_errno', 'object:h_errno', None, h_errno_layout['static'], h_errno_layout['shared']),
     ):
         record = records.get((name, None, False))
         require(record is not None and record.get('selection', {}).get('disposition') == 'public-provider'
@@ -3624,6 +3654,7 @@ def attach_errno_storage_lifecycle(accounting: Mapping[str, Any], companion: Map
         )
         public_rows.append({
             'identity': copy.deepcopy(record['identity']), 'owner': owner,
+            'feature_owner': feature_owner,
             'static_occurrence_index': static_occurrence['index'], 'shared_occurrence_index': shared_occurrence['index'],
             'static_placement_observed': static_join['placement_observed'],
             'shared_placement_observed': shared_join['placement_observed'],

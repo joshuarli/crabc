@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import contextlib
 import io
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -134,7 +135,17 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
             'dynamic_libc': 'retained/dynamic-libc',
             'dynamic_loader': 'retained/dynamic-loader',
         }
-        artifacts = {retained[name]: copy.deepcopy(self.current[name]) for name in retained}
+        # The public pthread reader preserves its own retained-copy records.
+        # They deliberately have path/hash/size, not the selected product
+        # file's mode-bearing host identity.
+        artifacts = {
+            retained[name]: {
+                'path': retained[name],
+                'sha256': self.current[name]['sha256'],
+                'size': self.current[name]['size'],
+            }
+            for name in retained
+        }
         aliases = [{'public': public, 'provider': provider}
                    for public, provider in selection.pthread_alias_evidence.ALIASES]
         shapes = {
@@ -541,7 +552,8 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
         shared_accessor['row'].update({'row_index': shared_accessor_index, 'binding': 'GLOBAL',
                                        'visibility': 'DEFAULT', 'value': '0000000000000020'})
         occurrences.append(shared_accessor)
-        add('__h_errno_location', 'x86-h-errno', {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT'})
+        add('__h_errno_location', 'checked-header-provider-routing',
+            {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT'})
         add('h_errno', 'object:h_errno', {
             'type': 'OBJECT', 'binding': 'GLOBAL', 'visibility': 'DEFAULT', 'size_bytes': 4, 'alignment_bytes': 4,
         })
@@ -717,6 +729,11 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
         self.assertEqual(len(joins), 1)
         self.assertEqual([row['identity']['name'] for row in joins[0]['public_identities']],
                          ['__errno_location', '__h_errno_location', 'h_errno'])
+        self.assertEqual(
+            next(row for row in joins[0]['public_identities']
+                 if row['identity']['name'] == '__h_errno_location')['feature_owner'],
+            'x86-h-errno',
+        )
         self.assertTrue(joins[0]['private_alias']['shared_dynsym_absent'])
         self.assertEqual(joins[0]['private_alias']['identity']['name'], '___errno_location')
         self.assertFalse(accounting['blockers'])
@@ -733,6 +750,58 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
         leaked['occurrences'].append(dynsym)
         with self.assertRaisesRegex(selection.SelectionError, 'leaked into shared dynsym'):
             selection.attach_errno_storage_lifecycle(leaked, companion, inputs)
+
+    def test_errno_join_uses_the_actual_633_header_provider_selection(self):
+        """The feature roster informs the receipt without changing the real selected owner."""
+        lifecycle = ROOT.parent / 'native_abi_lifecycle_integration'
+        selection_report_path = lifecycle / '.work/x86_64/native-abi-selection/clean-633bd57f/report.json'
+        receipt_path = lifecycle / (
+            '.work/x86_64/errno-storage-lifecycle-recipes/633bd57f/tmp/'
+            'owned-errno-storage-lifecycle.Yh56V7/report.json'
+        )
+        if not selection_report_path.is_file() or not receipt_path.is_file():
+            self.skipTest('retained 633 errno/cohort control is unavailable')
+        selected = json.loads(selection_report_path.read_text())
+        receipt = json.loads(receipt_path.read_text())
+        inputs = selected['source_inputs']
+        accounting = {
+            'identities': copy.deepcopy(selected['identities']),
+            'occurrences': copy.deepcopy(selected['occurrences']),
+            'placement_joins': copy.deepcopy(selected['placement_joins']),
+            'private_protocol_joins': copy.deepcopy(selected['private_protocol_joins']),
+            'blockers': [],
+        }
+        companion = {
+            'status': 'errno-storage-lifecycle-observed-with-boundaries',
+            'reader': {}, 'report': {}, 'source': {}, 'products': {}, 'measurement_reports': {},
+            'account': {
+                'public_symbols': list(selection.errno_storage_evidence.PUBLIC_SYMBOLS),
+                'private_alias': selection.errno_storage_evidence.ALIAS,
+                'shared_alias_policy': receipt['shared_alias_link_policy'],
+                'h_errno_layout': selection._errno_h_errno_layout(receipt['h_errno_layout']),
+                'summary': receipt['summary'],
+                'execution_labels': list(selection.errno_storage_evidence.RUN_LABELS),
+            },
+            'limits': list(selection.ERRNO_STORAGE_LIFECYCLE_LIMITS),
+        }
+        joins = selection.attach_errno_storage_lifecycle(accounting, companion, inputs)
+        rows = {row['identity']['name']: row for row in joins[0]['public_identities']}
+        self.assertEqual(rows['__h_errno_location']['owner'], 'checked-header-provider-routing')
+        self.assertEqual(rows['__h_errno_location']['feature_owner'], 'x86-h-errno')
+        missing_feature = copy.deepcopy(inputs)
+        missing_feature['provider_disposition']['verified_feature_archives'] = [
+            row for row in missing_feature['provider_disposition']['verified_feature_archives']
+            if row.get('id') != 'x86-h-errno'
+        ]
+        fresh_accounting = {
+            'identities': copy.deepcopy(selected['identities']),
+            'occurrences': copy.deepcopy(selected['occurrences']),
+            'placement_joins': copy.deepcopy(selected['placement_joins']),
+            'private_protocol_joins': copy.deepcopy(selected['private_protocol_joins']),
+            'blockers': [],
+        }
+        with self.assertRaisesRegex(selection.SelectionError, 'h_errno accessor feature provider partition differs'):
+            selection.attach_errno_storage_lifecycle(fresh_accounting, companion, missing_feature)
 
     def test_registry_adapter_rejects_a_substituted_selected_product(self):
         report = self.registry_report()
@@ -822,16 +891,96 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
         self.assertEqual(result['status'], 'pthread-alias-contract-observed-with-boundaries')
         self.assertEqual(len(result['coverage']['aliases']), 17)
 
+    def test_pthread_adapter_accepts_the_reader_path_hash_size_artifact_shape(self):
+        """The public reader retains copies without inventing their source modes."""
+        report = self.pthread_report()
+        self.assertTrue(all(set(artifact) == {'path', 'sha256', 'size'}
+                            for artifact in report['artifacts'].values()))
+        with mock.patch.object(selection.pthread_alias_evidence, 'validate_report', return_value=report):
+            result = selection.pthread_alias_contract_adapter(
+                self.pthread_report_path, facts=self.facts, measurement=self.measurement,
+                paths=self.paths, source=self.source,
+            )
+        self.assertEqual(result['status'], 'pthread-alias-contract-observed-with-boundaries')
+
+    def test_pthread_adapter_rejects_an_unowned_artifact_mode(self):
+        report = self.pthread_report()
+        retained = report['selected_products']['static']['manifest']
+        report['artifacts'][retained]['mode'] = 0o644
+        with mock.patch.object(selection.pthread_alias_evidence, 'validate_report', return_value=report), \
+             self.assertRaisesRegex(selection.SelectionError, 'static_manifest receipt fields differ'):
+            selection.pthread_alias_contract_adapter(
+                self.pthread_report_path, facts=self.facts, measurement=self.measurement,
+                paths=self.paths, source=self.source,
+            )
+
     def test_pthread_adapter_rejects_a_replaced_dynamic_loader(self):
         report = self.pthread_report()
         retained = report['selected_products']['dynamic']['loader']
         report['artifacts'][retained]['sha256'] = '0' * 64
         with mock.patch.object(selection.pthread_alias_evidence, 'validate_report', return_value=report), \
-             self.assertRaisesRegex(selection.SelectionError, 'dynamic_loader bytes or mode differ'):
+             self.assertRaisesRegex(selection.SelectionError, 'dynamic_loader bytes differ'):
             selection.pthread_alias_contract_adapter(
                 self.pthread_report_path, facts=self.facts, measurement=self.measurement,
                 paths=self.paths, source=self.source,
             )
+
+    def test_pthread_adapter_binds_the_actual_633_receipt_to_selected_accounting(self):
+        """The fresh retained receipt uses path/hash/size copies and real rows."""
+        lifecycle = ROOT.parent / 'native_abi_lifecycle_integration'
+        facts_path = lifecycle / '.work/x86_64/native-abi-elf-facts/clean-633bd57f/report.json'
+        selection_report_path = lifecycle / '.work/x86_64/native-abi-selection/clean-633bd57f/report.json'
+        pthread_report_path = lifecycle / '.work/x86_64/pthread-alias-contract/clean-633bd57f/report.json'
+        static_preparation = lifecycle / '.work/x86_64/public-data-products/static-633bd57f/preparation.json'
+        static_product = lifecycle / '.work/x86_64/public-data-products/static-633bd57f/products/primary'
+        dynamic_product = lifecycle / '.work/x86_64/loader-debug-abi/clean-633bd57f/component/dynamic-product'
+        base_inventory = lifecycle / '.work/x86_64/native-abi-inventory/clean-633bd57f/report.json'
+        required = (facts_path, selection_report_path, pthread_report_path, static_preparation,
+                    static_product, dynamic_product, base_inventory)
+        if not all(path.exists() for path in required):
+            self.skipTest('retained 633 pthread/cohort control is unavailable')
+        facts = json.loads(facts_path.read_text())
+        selected = json.loads(selection_report_path.read_text())
+        paths = {
+            'measurement_checkout': lifecycle,
+            'elf_report': facts_path,
+            'base_inventory': base_inventory,
+            'static_preparation': static_preparation,
+            'static_product': static_product,
+            'dynamic_product': dynamic_product,
+        }
+        measurement = {
+            'candidate_build': facts['base_inventory']['candidate_build'],
+            'reports': {name: selection.file_identity(paths[name])
+                        for name in ('elf_report', 'base_inventory', 'static_preparation')},
+        }
+        source = {
+            'revision': facts['base_inventory']['candidate_build']['revision'],
+            'content_sha256': facts['base_inventory']['candidate_build']['source_content_sha256'],
+            'clean': True,
+        }
+        # This retained receipt belongs to the sibling lifecycle worktree in
+        # the same physical common checkout; do not weaken production work
+        # admission just because the normal fixture uses an isolated root.
+        with mock.patch.object(selection, '_common_checkout', return_value=ROOT.parents[2]):
+            companion = selection.pthread_alias_contract_adapter(
+                pthread_report_path, facts=facts, measurement=measurement, paths=paths, source=source,
+            )
+        accounting = {
+            'identities': copy.deepcopy(selected['identities']),
+            'occurrences': copy.deepcopy(selected['occurrences']),
+            'placement_joins': copy.deepcopy(selected['placement_joins']),
+            'private_protocol_joins': copy.deepcopy(selected['private_protocol_joins']),
+            'blockers': [],
+        }
+        joins = selection.attach_pthread_alias_contract(accounting, companion)
+        self.assertEqual(len(joins[0]['aliases']), len(selection.pthread_alias_evidence.ALIASES))
+        # The selected archive has both bodies in its monolithic Rust member,
+        # so this fresh receipt records no separate UND import to discharge.
+        # Preserve that actual limitation rather than manufacturing an
+        # ordinary-link success from the component's runtime evidence.
+        self.assertFalse(joins[0]['mq_notify_public_detach']['public_detach_relocation_proven'])
+        self.assertIsNone(joins[0]['mq_notify_public_detach']['discharged_reason'])
 
     def pthread_accounting(self):
         report = self.pthread_report()

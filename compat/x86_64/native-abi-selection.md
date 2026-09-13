@@ -150,9 +150,12 @@ private `___errno_location` same-definition alias. The alias remains a static
 `WEAK HIDDEN` provider and a shared local `.symtab` definition with no shared
 dynamic export; it is never selected as a public callable. The runtime receipt
 proves main/live-worker accessor behavior and pointer lifetime within its own
-contract. Without that receipt, the private alias retains its own unresolved
-component requirement even when its static and shared metadata match. It does
-also retains the source-required four-byte `h_errno` alignment in each static
+contract. `__h_errno_location` keeps the assembled
+`checked-header-provider-routing` owner while the exact `x86-h-errno` feature
+roster remains a required receipt precondition; the feature membership does not
+rewrite that selected provider route. Without that receipt, the private alias retains its own unresolved
+component requirement even when its static and shared metadata match. It also
+retains the source-required four-byte `h_errno` alignment in each static
 and shared defining section, without promoting incidental shared-section
 over-alignment into a generic ABI rule. It does not prove the `h_errno` header
 macro/declaration or accessor-to-storage relation, broad TLS or loader behavior,
@@ -290,9 +293,13 @@ without replaying the header declaration envelope.
   These remain private loader operations, never installed libc providers.
 - `owned_pthread_alias_contract_reader.py` is the sole reader for its fixed 17
   public weak aliases, 15 internal providers, and the static `mq_notify`
-  public `pthread_detach` relocation. The attachment binds retained product
-  bytes to the selected ELF cohort. It does not select the private provider
-  spellings or close the general pthread family.
+  public `pthread_detach` relocation. Its retained copied-artifact records
+  carry path, hash, and size; selected product modes remain sealed by the
+  public ELF/product cohort rather than being invented by that reader. The
+  attachment binds those byte identities to the selected cohort and discharges
+  an ordinary import only if the exact selected static undefined row exists.
+  It does not select the private provider spellings or close the general
+  pthread family.
 
 Each receipt must name the current selected source and product cohort. Their
 status flags remain false; header, semantic, family, and public-support gates
