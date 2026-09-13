@@ -77,10 +77,11 @@ TIMER_MODES = ("pie", "non-pie")
 EXPECTED_GROWTH = b"runtime TLS: old/new workers, 41 modules, retained addresses, recursive/concurrent constructors\n"
 EXPECTED_DLOPEN = b"nested-dlopen=42\n"
 EXPECTED_TBSS = b"initial-tbss=8192,worker=isolated\n"
-# The retained runners invoke the image's existing `chroot` command.  Keep
-# its canonical system location available while excluding inherited host
+# The retained runners invoke the image's existing `chroot` command and the
+# timer reset source test invokes the pinned image's `rustc` wrapper.  Keep
+# those exact locations available while excluding inherited host
 # configuration, then seal this exact environment in every outer transcript.
-WORKLOAD_ENVIRONMENT = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
+WORKLOAD_ENVIRONMENT = {"PATH": "/opt/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
 DLFCN_SKIP_SEARCH_ENV = "CRABC_GENERAL_DYNAMIC_DLOPEN_SKIP_SEARCH"
 
 
