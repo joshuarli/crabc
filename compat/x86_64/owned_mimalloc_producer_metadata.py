@@ -540,7 +540,10 @@ def selected_metadata() -> dict[str, dict[str, dict[str, object]]]:
         if layout is not None:
             static.update({
                 "size_bytes": layout["size_bytes"],
-                "alignment_bytes": layout["producer"]["static_section_alignment"],
+                # Generic consumers compare both a defining section and
+                # st_value.  Use the C source minimum in both roles; the
+                # account keeps exact static section over-alignment separate.
+                "alignment_bytes": layout["source"]["source_required_alignment"],
             })
             shared.update({
                 "size_bytes": layout["size_bytes"],
@@ -789,7 +792,8 @@ def _validate_shared_product_manifest(
     not parse a whole sysroot: it validates only the stable manifest envelope
     and its authoritative ``usr/lib/libc.so`` digest.
     """
-    manifest = mapping(value, "shared product manifest", {"files", "format", "schema", "symlinks", "target"})
+    manifest = mapping(value, "shared product manifest")
+    require_keys(manifest, {"files", "format", "schema", "target"}, "shared product manifest")
     require(type(manifest["schema"]) is int and manifest["schema"] == DYNAMIC_PRODUCT_MANIFEST_SCHEMA,
             "shared product manifest schema differs")
     require(manifest["format"] == DYNAMIC_PRODUCT_MANIFEST_FORMAT,
@@ -797,11 +801,6 @@ def _validate_shared_product_manifest(
     require(manifest["target"] == TARGET, "shared product manifest target differs")
     files = mapping(manifest["files"], "shared product manifest files")
     manifest_libc_sha256 = sha256(files.get(DYNAMIC_PRODUCT_LIBC_PATH), "shared product manifest libc.so SHA-256")
-    symlinks = mapping(manifest["symlinks"], "shared product manifest symlinks")
-    require(
-        symlinks.get("lib/ld-musl-x86_64.so.1") == "ld-crabc-x86_64.so.1",
-        "shared product manifest loader symlink differs",
-    )
     require(manifest_libc_sha256 == shared_identity["sha256"],
             "shared artifact identity differs from shared product manifest libc.so")
     return {

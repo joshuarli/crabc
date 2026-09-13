@@ -34,9 +34,10 @@ builder or generic receipt system.
 `selected_metadata()` exposes the validated finite policy as an exact
 424-name mapping to static/shared type, binding, and visibility expectations.
 Its four data/TLS rows also carry source-selected `size_bytes` and
-`alignment_bytes`: static uses the producer section contract, while shared
-uses the C source minimum. It does not expose observed ELF values or turn
-these private names into public exports.
+`alignment_bytes`: both roles use the C source minimum, because generic
+consumers compare it to both a symbol value and defining section. Exact static
+producer section placement remains in this component's account. It does not
+expose observed ELF values or turn these private names into public exports.
 
 The reader requires these finite producer facts:
 

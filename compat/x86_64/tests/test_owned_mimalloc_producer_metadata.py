@@ -332,7 +332,7 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
         self.assertEqual(projection["_mi_stats_main"], {
             "static": {
                 "type": "OBJECT", "binding": "GLOBAL", "visibility": "DEFAULT",
-                "size_bytes": 4368, "alignment_bytes": 32,
+                "size_bytes": 4368, "alignment_bytes": 8,
             },
             "shared": {
                 "type": "OBJECT", "binding": "LOCAL", "visibility": "DEFAULT",
@@ -340,6 +340,23 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
             },
         })
         self.assertEqual(set(projection["mi_thread_locals"]), {"static", "shared"})
+
+    def test_static_stats_value_uses_source_alignment_not_section_overalignment(self) -> None:
+        """A source-valid symbol offset must not inherit static section 32-byte placement."""
+        facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
+        static_rows = facts["facts"]["candidate-static"][1]["symbol_tables"][0]["rows"]
+        stats = next(row for row in static_rows if row["name"] == "_mi_stats_main")
+        stats["value"] = "0000000000000008"
+        account = producer.account_producer_metadata(facts, static_provenance, shared_provenance, shared_manifest)
+        layout = next(
+            record["layout"]
+            for record in account["metadata_buckets"]["data-objects"]["members"]
+            if record["name"] == "_mi_stats_main"
+        )
+        self.assertEqual(layout["producer"]["static_section_alignment"], 32)
+        self.assertEqual(layout["static_symbol_value"]["source_required_alignment"], 8)
+        self.assertEqual(layout["static_symbol_value"]["integer"], 8)
+        self.assertEqual(producer.selected_metadata()["_mi_stats_main"]["static"]["alignment_bytes"], 8)
 
     def test_rejects_omitted_or_extra_identity_from_exact_roster(self) -> None:
         facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
