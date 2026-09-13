@@ -26,6 +26,9 @@ class OwnedMimallocStartupErrnoTests(unittest.TestCase):
         self.assertIn('"$work/dynamic-$mode.crabc-link.json"', runner)
         self.assertIn('for mode in static static-pie; do', runner)
         self.assertIn('for mode in pie non-pie; do', runner)
+        self.assertIn('"$provided_dynamic/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin', runner)
+        self.assertIn('"$work/workload.o" -o "$candidate"', runner)
+        self.assertNotIn('"$PROBE" -o "$candidate"', runner)
 
 
 if __name__ == "__main__":

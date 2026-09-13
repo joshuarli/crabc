@@ -97,7 +97,7 @@ run_static_mode() {
     local product="$1" mode="$2" candidate="$work/static-$mode" root="$work/static-$mode-root"
 
     "$product/bin/crabc-cc" "-$mode" --link-receipt "$work/static-$mode.crabc-link.json" \
-        "$PROBE" -o "$candidate"
+        "$work/workload.o" -o "$candidate"
     mkdir -p "$root/work"
     cp "$candidate" "$root/work/probe"
     run_in_root "$root" "static-$mode" /work/probe
@@ -107,7 +107,7 @@ run_dynamic_mode() {
     local product="$1" mode="$2" candidate="$work/dynamic-$mode" entry root
 
     "$product/bin/crabc-cc-dynamic" "--dynamic-$mode" \
-        --link-receipt "$work/dynamic-$mode.crabc-link.json" "$PROBE" -o "$candidate"
+        --link-receipt "$work/dynamic-$mode.crabc-link.json" "$work/workload.o" -o "$candidate"
     for entry in kernel direct; do
         root="$work/dynamic-$mode-$entry-root"
         mkdir -p "$root/lib" "$root/usr/lib" "$root/work"
@@ -136,6 +136,12 @@ if [ -z "$provided_dynamic" ]; then
         --output "$work/static-product" >"$work/static-build.json"
     provided_static="$work/static-product"
 fi
+
+# The sealed product drivers link caller-owned ELF objects. Compile one
+# installed-header object through the supplied dynamic driver, then retain
+# that same object across both static and dynamic lifecycle link modes.
+"$provided_dynamic/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
+    -c "$PROBE" -o "$work/workload.o"
 
 if [ -n "$provided_static" ]; then
     for mode in static static-pie; do
