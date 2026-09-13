@@ -149,6 +149,8 @@ class SuppliedStdioReceiptTests(unittest.TestCase):
         for spec in links:
             if spec['label'].startswith('candidate-'):
                 self.assertNotIn('-Wl,--export-dynamic',spec['argv'])
+                self.assertNotIn('-ldl',spec['argv'])
+                self.assertEqual('-rdynamic' in spec['argv'], spec['label'].startswith('candidate-dynamic-') and spec['label'].endswith(('-override-link','-protected-link')))
             probe=spec['label'].removesuffix('-link').rsplit('-',1)[1]
             self.assertEqual(sum(x==str(work/(probe+'.o')) for x in spec['argv']),1)
             if spec['label'].startswith('candidate-static'):

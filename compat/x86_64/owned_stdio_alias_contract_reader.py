@@ -264,7 +264,7 @@ def plan(root,work,inputs,tools):
         elif mode in ('static','static-pie'):
             add(name+'-link',[tool('static_driver'),'-'+mode,'--link-receipt',name+'.link.json',obj,'-o',path(name)],mount(work))
         else:
-            add(name+'-link',[tool('dynamic_driver'),'--'+mode,obj,'-pthread','-ldl','-o',path(name)])
+            add(name+'-link',[tool('dynamic_driver'),'--'+mode,*(['-pthread'] if probe=='contract' else ['-rdynamic']),obj,'-o',path(name)])
         for flag,suffix in (('-hW','header'),('-lW','program'),('-sW','symbols')):
             add(name+'-'+suffix,[tool('readelf'),flag,path(name)])
     for key,p in elf_paths(root,work,inputs).items():
@@ -366,7 +366,8 @@ def product_links(root,work,inputs,tools):
         product=root/(inputs['static_preparation']['primary']['path'] if static else inputs['dynamic_product']['path'])
         receipt=work/(name+('.link.json' if static else '.crabc-link.json'))
         value=products.validate_retained_link(root,'/workspace',product,work/(probe+'.o'),work/name,receipt,
-                                             mode if static else mode.removeprefix('dynamic-'),linker)
+                                             mode if static else mode.removeprefix('dynamic-'),linker,
+                                             export_dynamic=not static and probe in ('override','protected'))
         result[name]={'receipt':ident(root,receipt),'workload':ident(root,work/(probe+'.o')),
                       'executable':ident(root,work/name),'validated':{k:v for k,v in value.items() if k!='product'}}
     return result
