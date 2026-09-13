@@ -403,17 +403,22 @@ def _validate_static_receipt(
     return _sha256(receipt)
 
 
-def _dynamic_link_command(root: Path, workload: Path, executable: Path, linkage: str, linker: str) -> list[str]:
+def _dynamic_link_command(root: Path, workload: Path, executable: Path, linkage: str, linker: str,
+                          *, export_dynamic: bool = False) -> list[str]:
     library = root / "usr/lib"
     entry = str(LINKAGES[linkage]["crt"])
-    return [
+    command = [
         linker, *(["-pie"] if linkage == "pie" else []), "--hash-style=sysv", "-z", "relro",
         "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
-        "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib", "--dynamic-linker",
+        "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib",
+    ]
+    if export_dynamic:
+        command.append("--export-dynamic")
+    command.extend(("--dynamic-linker",
         INTERPRETER, str(library / entry), str(library / "crabc-dynamic-attach.o"),
         str(library / "crti.o"), str(workload), str(library / "libc.so"),
-        str(library / "libcrabc-builtins.a"), str(library / "crtn.o"), "-o", str(executable),
-    ]
+        str(library / "libcrabc-builtins.a"), str(library / "crtn.o"), "-o", str(executable)))
+    return command
 
 
 def _validate_dynamic_trace(value: object, root: Path, workload: Path, linkage: str) -> None:
@@ -439,7 +444,8 @@ def _validate_dynamic_trace(value: object, root: Path, workload: Path, linkage: 
 
 
 def _validate_dynamic_receipt(
-    root: Path, workload: Path, executable: Path, receipt: Path, linkage: str, manifest: Path
+    root: Path, workload: Path, executable: Path, receipt: Path, linkage: str, manifest: Path,
+    *, export_dynamic: bool = False,
 ) -> str:
     record = _json_object(receipt, "dynamic link receipt")
     search = receipt_contract.validate(
@@ -481,7 +487,8 @@ def _validate_dynamic_receipt(
             _fail("dynamic link receipt input path differs from this evidence invocation")
         _require_digest(item["sha256"], _sha256(expected), f"dynamic {role} input")
     linker = _check_linker(record["resolved_linker"], receipt)
-    if record["link_command"] != _dynamic_link_command(root, workload, executable, linkage, linker):
+    if record["link_command"] != _dynamic_link_command(
+            root, workload, executable, linkage, linker, export_dynamic=export_dynamic):
         _fail("dynamic link command differs from the sealed product contract")
     _validate_dynamic_trace(record["link_trace"], root, workload, linkage)
     return _sha256(receipt)
@@ -683,19 +690,24 @@ def _validate_retained_static_receipt(root: Path, source_mount: str, product: Pa
 
 
 def _retained_dynamic_command(root: Path, source_mount: str, product: Path, workload: Path,
-                              executable: Path, linkage: str, linker: str) -> list[str]:
+                              executable: Path, linkage: str, linker: str,
+                              *, export_dynamic: bool = False) -> list[str]:
     library = product / "usr/lib"
     entry = str(LINKAGES[linkage]["crt"])
     recorded = lambda path, description: _retained_recorded(root, source_mount, path, description)
-    return [
+    command = [
         linker, *(["-pie"] if linkage == "pie" else []), "--hash-style=sysv", "-z", "relro", "-z", "now",
         "-z", "noexecstack", "-z", "text", "--no-undefined", "--allow-shlib-undefined", "--enable-new-dtags",
-        "-rpath", "/usr/lib", "--dynamic-linker", INTERPRETER,
+        "-rpath", "/usr/lib",
+    ]
+    if export_dynamic:
+        command.append("--export-dynamic")
+    command.extend(("--dynamic-linker", INTERPRETER,
         *(recorded(path, "dynamic link input") for path in (
             library / entry, library / "crabc-dynamic-attach.o", library / "crti.o", workload,
             library / "libc.so", library / "libcrabc-builtins.a", library / "crtn.o",
-        )), "-o", recorded(executable, "dynamic output"),
-    ]
+        )), "-o", recorded(executable, "dynamic output")))
+    return command
 
 
 def _validate_retained_dynamic_trace(value: object, root: Path, source_mount: str, product: Path,
@@ -718,7 +730,7 @@ def _validate_retained_dynamic_trace(value: object, root: Path, source_mount: st
 
 def _validate_retained_dynamic_receipt(root: Path, source_mount: str, product: Path, workload: Path,
                                        executable: Path, receipt: Path, linkage: str, manifest: Path,
-                                       linker: object) -> str:
+                                       linker: object, *, export_dynamic: bool = False) -> str:
     record = _json_object(receipt, "retained dynamic link receipt")
     search = receipt_contract.validate(
         record, format=DYNAMIC_PRODUCT_FORMAT, label="retained dynamic link receipt", fail=_fail
@@ -754,14 +766,16 @@ def _validate_retained_dynamic_receipt(root: Path, source_mount: str, product: P
         _require_digest(item["sha256"], _sha256(expected), f"retained dynamic {role} input")
     retained_linker = _retained_linker(record["resolved_linker"], linker)
     if record["link_command"] != _retained_dynamic_command(
-            root, source_mount, product, workload, executable, linkage, retained_linker):
+            root, source_mount, product, workload, executable, linkage, retained_linker,
+            export_dynamic=export_dynamic):
         _fail("retained dynamic link command differs")
     _validate_retained_dynamic_trace(record["link_trace"], root, source_mount, product, workload, linkage)
     return _sha256(receipt)
 
 
 def validate_retained_link(root: Path, source_mount: str, product: Path, workload: Path,
-                           executable: Path, receipt: Path, linkage: str, linker: object) -> dict[str, str]:
+                           executable: Path, receipt: Path, linkage: str, linker: object,
+                           *, export_dynamic: bool = False) -> dict[str, str]:
     """Read one native `/workspace` link receipt after its container has gone away.
 
     Unlike :func:`validate_link`, this reader never probes the recorded native
@@ -775,6 +789,8 @@ def validate_retained_link(root: Path, source_mount: str, product: Path, workloa
         _fail("retained link source mount must be /workspace")
     if linkage not in LINKAGES:
         _fail("retained linkage must be static, static-pie, pie, or non-pie")
+    if type(export_dynamic) is not bool or (export_dynamic and linkage in {"static", "static-pie"}):
+        _fail("retained export-dynamic contract differs from linkage")
     checkout = _physical_directory(root, "retained checkout root")
     product_path = _physical_directory(product, "retained owned product")
     workload_path = _physical_regular(workload, "retained workload object")
@@ -791,7 +807,8 @@ def validate_retained_link(root: Path, source_mount: str, product: Path, workloa
     else:
         manifest, _ = _validate_dynamic_product(product_path)
         receipt_hash = _validate_retained_dynamic_receipt(
-            checkout, source_mount, product_path, workload_path, executable_path, receipt_path, linkage, manifest, linker
+            checkout, source_mount, product_path, workload_path, executable_path, receipt_path, linkage, manifest,
+            linker, export_dynamic=export_dynamic,
         )
         product_format = DYNAMIC_PRODUCT_FORMAT
     _audit_elf(executable_path, linkage)
@@ -807,7 +824,7 @@ def validate_retained_link(root: Path, source_mount: str, product: Path, workloa
 
 
 def validate_link(
-    product: Path, workload: Path, executable: Path, receipt: Path, linkage: str
+    product: Path, workload: Path, executable: Path, receipt: Path, linkage: str, *, export_dynamic: bool = False,
 ) -> dict[str, str]:
     """Return an identity only when one receipt proves one current owned link.
 
@@ -818,6 +835,8 @@ def validate_link(
 
     if linkage not in LINKAGES:
         _fail("linkage must be static, static-pie, pie, or non-pie")
+    if type(export_dynamic) is not bool or (export_dynamic and linkage in {"static", "static-pie"}):
+        _fail("export-dynamic contract differs from linkage")
     root = _physical_directory(product, "owned product")
     workload_path = _physical_regular(workload, "workload object")
     executable_path = _physical_regular(executable, "linked executable")
@@ -830,7 +849,10 @@ def validate_link(
         product_format = STATIC_PRODUCT_FORMAT
     else:
         manifest, _ = _validate_dynamic_product(root)
-        receipt_hash = _validate_dynamic_receipt(root, workload_path, executable_path, receipt_path, linkage, manifest)
+        receipt_hash = _validate_dynamic_receipt(
+            root, workload_path, executable_path, receipt_path, linkage, manifest,
+            export_dynamic=export_dynamic,
+        )
         product_format = DYNAMIC_PRODUCT_FORMAT
     _audit_elf(executable_path, linkage)
     return {
