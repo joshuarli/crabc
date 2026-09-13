@@ -50,6 +50,8 @@ _Static_assert(TYPE_IS(__typeof__(&errno), int *),
     "installed errno macro expression");
 _Static_assert(TYPE_IS(__typeof__(&h_errno), int *),
     "installed h_errno macro expression");
+_Static_assert(_Alignof(int) == 4,
+    "native x86 h_errno source alignment");
 
 struct errno_storage_snapshot {
     int *errno_location;
@@ -87,6 +89,12 @@ static int snapshot_matches(const struct errno_storage_snapshot *snapshot,
         snapshot->h_errno_value == h_errno_value;
 }
 
+static int locations_are_int_aligned(const int *errno_location, const int *h_errno_location)
+{
+    return (uintptr_t)errno_location % _Alignof(int) == 0 &&
+        (uintptr_t)h_errno_location % _Alignof(int) == 0;
+}
+
 static void *storage_worker(void *opaque)
 {
     struct worker_state *state = opaque;
@@ -95,6 +103,7 @@ static void *storage_worker(void *opaque)
     state->errno_location = __errno_location();
     state->h_errno_location = __h_errno_location();
     if (!state->errno_location || !state->h_errno_location ||
+        !locations_are_int_aligned(state->errno_location, state->h_errno_location) ||
         __errno_location() != state->errno_location ||
         __h_errno_location() != state->h_errno_location) {
         state->failure = 1;
@@ -149,7 +158,9 @@ static int run_storage_lifecycle(errno_storage_snapshot_fn dso_snapshot)
     int *main_errno = __errno_location();
     int *main_h_errno = __h_errno_location();
 
-    if (!main_errno || !main_h_errno || main_h_errno != &crabc_link_visible_h_errno ||
+    if (!main_errno || !main_h_errno ||
+        !locations_are_int_aligned(main_errno, main_h_errno) ||
+        main_h_errno != &crabc_link_visible_h_errno ||
         __errno_location() != main_errno || __h_errno_location() != main_h_errno)
         return 10;
 #ifdef CRABC_ERRNO_STORAGE_STATIC_ALIAS
@@ -190,6 +201,7 @@ static int run_storage_lifecycle(errno_storage_snapshot_fn dso_snapshot)
     /* The worker's TLS mapping can now be released.  Do not read or
      * dereference state.errno_location/state.h_errno_location after this join. */
     if (*main_errno != MAIN_ERRNO || *main_h_errno != MAIN_H_ERRNO ||
+        !locations_are_int_aligned(main_errno, main_h_errno) ||
         __errno_location() != main_errno || __h_errno_location() != main_h_errno)
         return 18;
     if (dso_snapshot &&

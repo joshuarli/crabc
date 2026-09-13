@@ -64,7 +64,7 @@ case "$(uname -m)" in
     *) fail "refuses emulation on $(uname -m)" ;;
 esac
 [ -n "${TMPDIR:-}" ] || fail 'requires explicit checkout-local TMPDIR'
-for tool in chroot cmp cp env git grep mkdir mktemp python3 readelf realpath sha256sum timeout; do
+for tool in ar chroot cmp cp env git grep mkdir mktemp python3 readelf realpath sha256sum timeout; do
     command -v "$tool" >/dev/null 2>&1 || fail "missing tool: $tool"
 done
 [ -x "$ORACLE_CC" ] || fail 'missing pinned musl compiler'
@@ -282,6 +282,21 @@ observe oracle-dynamic-symbols "$work/oracle-dynamic-symbols.txt" readelf --dyn-
 observe candidate-static-symbols "$work/candidate-static-symbols.txt" readelf -Ws "$static_product/usr/lib/libc.a"
 observe candidate-shared-symbols "$work/candidate-shared-symbols.txt" readelf -Ws "$dynamic_product/usr/lib/libc.so"
 observe candidate-dynamic-symbols "$work/candidate-dynamic-symbols.txt" readelf --dyn-syms -W "$dynamic_product/usr/lib/libc.so"
+
+# Complete archive/DSO facts bind h_errno's selected main fallback to the
+# physical defining section.  A shared .bss can be over-aligned; the reader
+# separately proves the symbol's section-relative offset satisfies int's
+# source-required four-byte alignment.
+observe oracle-static-members "$work/oracle-static-members.txt" ar t "$MUSL_ARCHIVE"
+observe oracle-static-header "$work/oracle-static-header.txt" readelf -hW "$MUSL_ARCHIVE"
+observe oracle-static-sections "$work/oracle-static-sections.txt" readelf -SW "$MUSL_ARCHIVE"
+observe oracle-shared-header "$work/oracle-shared-header.txt" readelf -hW "$MUSL_LIBRARY"
+observe oracle-shared-sections "$work/oracle-shared-sections.txt" readelf -SW "$MUSL_LIBRARY"
+observe candidate-static-members "$work/candidate-static-members.txt" ar t "$static_product/usr/lib/libc.a"
+observe candidate-static-header "$work/candidate-static-header.txt" readelf -hW "$static_product/usr/lib/libc.a"
+observe candidate-static-sections "$work/candidate-static-sections.txt" readelf -SW "$static_product/usr/lib/libc.a"
+observe candidate-shared-header "$work/candidate-shared-header.txt" readelf -hW "$dynamic_product/usr/lib/libc.so"
+observe candidate-shared-sections "$work/candidate-shared-sections.txt" readelf -SW "$dynamic_product/usr/lib/libc.so"
 
 python3 -B "$READER" snapshot --root "$ROOT" --output "$work/source-after.json"
 action collect-receipt python3 -B "$READER" collect --root "$ROOT" --work "$work" \
