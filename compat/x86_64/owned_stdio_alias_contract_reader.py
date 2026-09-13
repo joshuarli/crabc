@@ -372,6 +372,18 @@ def product_links(root,work,inputs,tools):
                       'executable':ident(root,work/name),'validated':{k:v for k,v in value.items() if k!='product'}}
     return result
 
+def prepare_execution_roots(work,dynamic):
+    shutil.copytree(dynamic,work/'candidate-root',symlinks=True)
+    (work/'oracle-root/lib').mkdir(parents=True)
+    # The raw-input retention helper may select a restrictive umask. Execution
+    # directory access is an explicit root layout contract, not ambient state.
+    (work/'oracle-root/lib').chmod(0o755)
+    shutil.copy2(work/'qualification-oracle/runtime',work/'oracle-root/lib/ld-musl-x86_64.so.1')
+    (work/'oracle-root/lib/ld-musl-x86_64.so.1').chmod(0o755)
+    (work/'oracle-root/lib/libc.so').symlink_to('ld-musl-x86_64.so.1')
+    for name in binaries():
+        if '-dynamic-' in name:shutil.copy2(work/name,work/(name.split('-',1)[0]+'-root')/name)
+
 def execution_roots(root,work,inputs):
     result={}
     for owner in ('candidate','oracle'):
@@ -448,13 +460,7 @@ def collect(root,output,preparation,static,dynamic,historical):
         specs=plan(root,output,before,tools)
         for spec in specs:
             if spec['label']==runtime_cells()[0]['label']:
-                shutil.copytree(dynamic,output/'candidate-root',symlinks=True)
-                (output/'oracle-root/lib').mkdir(parents=True)
-                shutil.copy2(output/'qualification-oracle/runtime',output/'oracle-root/lib/ld-musl-x86_64.so.1')
-                (output/'oracle-root/lib/ld-musl-x86_64.so.1').chmod(0o755)
-                (output/'oracle-root/lib/libc.so').symlink_to('ld-musl-x86_64.so.1')
-                for name in binaries():
-                    if '-dynamic-' in name:shutil.copy2(output/name,output/(name.split('-',1)[0]+'-root')/name)
+                prepare_execution_roots(output,dynamic)
                 execution_roots(root,output,before)
             runner.run(spec['label'],spec['argv'],cwd=root if spec['cwd']=='/workspace' else output,timeout_seconds=45)
         after=admitted(root,preparation,static,dynamic,historical)

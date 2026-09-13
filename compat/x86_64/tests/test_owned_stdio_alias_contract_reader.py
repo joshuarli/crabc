@@ -178,5 +178,21 @@ class SuppliedStdioReceiptTests(unittest.TestCase):
                 with self.assertRaises(reader.ordinary.PublicDataEvidenceError):
                     reader.validate_commands(root,work,{}, {},commands)
 
+
+    def test_execution_root_preparation_is_independent_of_retention_umask(self):
+        import tempfile,os
+        import owned_stdio_alias_contract_reader as reader
+        with tempfile.TemporaryDirectory(dir=SOURCE_DIR.parents[1] / '.work/x86_64/stdio-alias-development') as temporary:
+            root=Path(temporary);work=root/'.work/receipt'; work.mkdir(parents=True)
+            dynamic=root/'.work/product'; dynamic.mkdir()
+            (work/'qualification-oracle').mkdir();(work/'qualification-oracle/runtime').write_bytes(b'runtime')
+            for name in reader.binaries():(work/name).write_bytes(b'executable')
+            old=os.umask(0o077)
+            try:reader.prepare_execution_roots(work,dynamic)
+            finally:os.umask(old)
+            self.assertEqual((work/'oracle-root/lib').stat().st_mode&0o777,0o755)
+            self.assertEqual((work/'oracle-root/lib/ld-musl-x86_64.so.1').stat().st_mode&0o777,0o755)
+            self.assertEqual((work/'qualification-oracle/runtime').read_bytes(),b'runtime')
+
 if __name__ == '__main__':
     unittest.main()
