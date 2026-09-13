@@ -148,6 +148,59 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(receipt.ReceiptError, "alias address"):
             receipt.validate_symbol_bytes(self.workspace)
 
+    def test_source_bytes_and_modes_cannot_be_reauthorized_by_report_rows(self) -> None:
+        for name in receipt.SOURCES:
+            receipt.copy_regular(ROOT / name, self.workspace / name)
+        records = {name: receipt.identity(self.workspace, self.workspace / name) for name in receipt.SOURCES}
+        tree = {"revision": receipt.local_git_head(ROOT), "entries": {
+            name: {"git_mode": f"100{(ROOT / name).stat().st_mode & 0o777:03o}",
+                   "git_blob": receipt.git_blob_id(self.workspace / name)} for name in receipt.SOURCES
+        }}
+        receipt.validate_selected_source(self.workspace, records, tree)
+        owned = self.workspace / "libc/src/c_abi/x86_64/owned_utmpx.rs"
+        owned.write_bytes(owned.read_bytes() + b"// forged source change\n")
+        records["libc/src/c_abi/x86_64/owned_utmpx.rs"] = receipt.identity(self.workspace, owned)
+        tree["entries"]["libc/src/c_abi/x86_64/owned_utmpx.rs"]["git_blob"] = receipt.git_blob_id(owned)
+        with self.assertRaisesRegex(receipt.ReceiptError, "trusted local source"):
+            receipt.validate_selected_source(self.workspace, records, tree)
+        owned.unlink()
+        receipt.copy_regular(ROOT / "libc/src/c_abi/x86_64/owned_utmpx.rs", owned)
+        owned.chmod(0o755)
+        records["libc/src/c_abi/x86_64/owned_utmpx.rs"] = receipt.identity(self.workspace, owned)
+        tree["entries"]["libc/src/c_abi/x86_64/owned_utmpx.rs"].update(git_mode="100755", git_blob=receipt.git_blob_id(owned))
+        with self.assertRaisesRegex(receipt.ReceiptError, "trusted local source"):
+            receipt.validate_selected_source(self.workspace, records, tree)
+
+    def test_pinned_image_manifest_is_positive_and_forged_tool_bytes_do_not_reauthorize(self) -> None:
+        manifest_path = self.workspace / receipt.IMAGE_MANIFEST
+        receipt.copy_regular(ROOT / receipt.IMAGE_MANIFEST, manifest_path)
+        manifest_record = receipt.identity(self.workspace, manifest_path)
+        manifest = receipt.validate_retained_image_manifest(self.workspace, manifest_record)
+        program = "/usr/bin/python3"
+        self.assertIn(program, manifest["files"])
+        forged = self.workspace / "tools/forged-python3"
+        self.write(forged, b"forged native tool bytes\n")
+        # Re-seal every report-side field for the foreign bytes.  The trusted
+        # immutable-image manifest, rather than this repaired self-seal,
+        # must still reject the tool.
+        with self.assertRaisesRegex(receipt.ReceiptError, "trusted manifest"):
+            receipt.validate_image_tool(program, receipt.identity(self.workspace, forged),
+                                        self.workspace, {}, manifest)
+
+    def test_mixed_static_dynamic_source_cohorts_are_rejected(self) -> None:
+        source = {"revision": "a" * 40, "content_sha256": "b" * 64}
+        state = {
+            "schema": receipt.DYNAMIC_STATE_SCHEMA, "status": "materialized-unqualified",
+            "source_sha256": source["content_sha256"], "contracts": {}, "payload_files": {},
+            "runtime_v1_published": False, "campaign_complete": False, "public_support": False,
+            "modes": ["dynamic-pie", "dynamic-non-pie", "dynamic-shared-object"],
+            "runtime_profile": "fixture", "qualification": "fixture",
+        }
+        receipt._validate_dynamic_source_epoch(state, source)
+        state["source_sha256"] = "c" * 64
+        with self.assertRaisesRegex(receipt.ReceiptError, "source cohort"):
+            receipt._validate_dynamic_source_epoch(state, source)
+
     def test_raw_elf_symbol_stream_cannot_be_substituted_from_another_binary(self) -> None:
         candidate, foreign = Path("/bin/bash"), Path("/usr/bin/readelf")
         stream = self.root / "candidate-symbols.txt"

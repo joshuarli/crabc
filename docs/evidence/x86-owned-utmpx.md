@@ -96,39 +96,51 @@ interface:
 
 ```text
 python3 -B compat/x86_64/owned_utmpx_receipt.py collect \
+  --static-preparation /workspace/.work/.../static/preparation.json \
   --static-product /workspace/.work/.../static \
   --dynamic-product /workspace/.work/.../dynamic \
-  --output /workspace/.work/.../owned-utmpx-receipt \
-  --image-id crabc-core-evidence@sha256:<pinned-image-digest>
+  --output /workspace/.work/.../owned-utmpx-receipt
 ```
 
-It is invoked only from the pinned native `/workspace` mount after its caller
-has bound the image digest. It refuses a dirty source revision, same or
-symlinked product inputs, a pre-existing private evidence leaf, non-digest
-image spelling, or a runner that does not execute the full supplied
-static/static-PIE and dynamic PIE/non-PIE matrix. The ordinary
+It is invoked only from the pinned native `/workspace` mount. The image is the
+fixed `crabc-core-evidence@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d`.
+`owned_utmpx_image_inputs.json` is a finite generated manifest of that image's
+runner commands, compiler support programs, musl oracle inputs, Rust compiler,
+and LLD. Collection regenerates the manifest inside that exact image before
+and after the runner; the collector refuses a mismatch. It also refuses a
+dirty source revision, same or symlinked product inputs, a static preparation
+outside the physical checkout work tree, a pre-existing private evidence leaf,
+or a runner that does not execute the full supplied static/static-PIE and
+dynamic PIE/non-PIE matrix. The ordinary
 `run_owned_utmpx.sh` lifecycle remains unchanged. Collection sets its private
 `CRABC_X86_64_RETAIN_UTMPX_COMMANDS=1` switch, which rejects every other value
 before evidence creation and uses a fixed private receipt leaf only for this
 mode.
 
-The receipt copies the exact selected source and runner inputs, both complete
-product trees (including modes and declared symlink), command programs and
-linker, installed-driver object/dependency record, sealed-link receipts and
-sidecars, raw archive/shared/final-executable symbol streams, and every raw
-oracle/candidate process stream. Command roles are a closed roster, with
-reconstructed installed-driver, musl link, owned static/static-PIE, dynamic
-PIE/non-PIE, symbol, sealed-link, and runtime envelopes. A report's status,
-counts, product digests, or projection cannot substitute for those bytes.
+The receipt copies the exact selected source and runner inputs; the static
+preparation plus its before/after whole-source seals; both complete product
+trees, manifests, and the dynamic materialization state; command programs and
+linker; installed-driver object/dependency record; sealed-link receipts and
+sidecars; raw archive/shared/final-executable symbol streams; and every raw
+oracle/candidate process stream. The preparation primary tree must equal the
+copied static tree and its full source digest must equal the materialized
+dynamic state digest, so static and dynamic products form one exact current
+source cohort. Command roles are a closed roster, with reconstructed
+installed-driver, musl link, owned static/static-PIE, dynamic PIE/non-PIE,
+symbol, sealed-link, and runtime envelopes. A report's status, counts, product
+digests, or projection cannot substitute for those bytes.
 
 `validate-report RECEIPT/report.json` is public host replay. It executes no
 command. It admits only the exact committed collector/source epoch: it reads
 the trusted local checkout HEAD without invoking Git, verifies each retained
-source blob and mode against the captured clean Git tree, and requires the
-local reader and retained-link parser bytes to match. It then rehashes tools,
-product trees, object/dependency records, and raw streams; reconstructs every
-retained archive/shared/final `readelf` symbol row from the actual ELF or ar
-bytes; uses the existing bounded retained-link parser on all four copied
-links; and derives the eight-alias component projection itself.
+source blob and mode against both the captured tree and the trusted local
+checkout, and requires the static-preparation source revision to equal that
+same HEAD. It admits a command program only when its retained bytes equal the
+trusted immutable-image manifest or its copied owned product bytes. It then
+rehashes product trees, manifests, materialization state, object/dependency
+records, and raw streams; reconstructs every retained
+archive/shared/final `readelf` symbol row from the actual ELF or ar bytes;
+uses the existing bounded retained-link parser on all four copied links; and
+derives the eight-alias component projection itself.
 The projection explicitly remains component complete only; family completion,
 runtime qualification, and public support remain false.

@@ -33,8 +33,22 @@ ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = "crabc.x86_64-owned-utmpx-receipt/v1"
 COMMAND_SCHEMA = "crabc.x86_64-owned-utmpx-command/v1"
 SOURCE_MOUNT = "/workspace"
-IMAGE_RE = re.compile(r"crabc-core-evidence@sha256:[0-9a-f]{64}\Z")
+PINNED_IMAGE_ID = "sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d"
+PINNED_IMAGE = "crabc-core-evidence@" + PINNED_IMAGE_ID
+IMAGE_MANIFEST = "compat/x86_64/owned_utmpx_image_inputs.json"
 SHA_RE = re.compile(r"[0-9a-f]{64}\Z")
+IMAGE_PATH = "/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# Every external command directly used by the opted-in runner, plus the
+# compiler/oracle executables it invokes.  The committed manifest maps these
+# command names through ``IMAGE_PATH`` to their physical immutable-image bytes.
+IMAGE_COMMANDS = ("bash", "basename", "chmod", "chroot", "cmp", "cp", "dirname", "env", "grep", "mkdir", "mktemp",
+                  "mknod", "nm", "python3", "readelf", "realpath", "sha256sum", "timeout", "gcc", "as", "ld", "rustup")
+IMAGE_FIXED_PATHS = (
+    "/usr/local/bin/crabc-x86_64-musl-gcc", "/opt/musl-1.2.6/lib/libc.so", "/opt/musl-1.2.6/lib/libc.a",
+    "/opt/musl-1.2.6/lib/musl-gcc.specs",
+    "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/bin/rustc",
+    "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld",
+)
 
 # These are the eight current source-selected legacy aliases.  ``utmpname`` is
 # the weak name-provider body; it is checked in raw symbol evidence but is not
@@ -70,6 +84,7 @@ SOURCES = (
     "compat/x86_64/owned_posix_product_evidence.py",
     "compat/x86_64/owned_dynamic_receipt.py",
     "compat/x86_64/loader_debug_abi_evidence.py",
+    "compat/x86_64/owned_utmpx_image_inputs.json",
     "docs/evidence/x86-owned-utmpx.md",
     "compat/upstreams.toml",
     "docker/x86_64-musl-oracle-gcc",
@@ -235,6 +250,69 @@ def source_records(root: Path) -> dict[str, Any]:
     return {name: identity(root, root / name) for name in SOURCES}
 
 
+def image_file_record(invocation: str) -> dict[str, Any]:
+    path = Path(invocation).resolve(strict=True)
+    regular(path, "pinned image input")
+    return {"path": str(path), "sha256": digest(path), "size": path.stat().st_size,
+            "mode": stat.S_IMODE(path.stat().st_mode)}
+
+
+def live_image_manifest() -> dict[str, Any]:
+    """Regenerate the finite image tool/oracle identity inside the pinned image."""
+    paths = [shutil.which(name, path=IMAGE_PATH) for name in IMAGE_COMMANDS]
+    require(all(paths), "pinned image omits a required utmpx command")
+    paths.extend(IMAGE_FIXED_PATHS)
+    try:
+        for name in ("cc1", "collect2", "liblto_plugin.so"):
+            paths.append(subprocess.check_output(["/usr/bin/gcc", "-print-prog-name=" + name], text=True).strip())
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise ReceiptError("pinned image GCC support identity is unavailable") from error
+    require(all(type(path) is str and path.startswith("/") for path in paths), "pinned image command identity differs")
+    return {"schema": "crabc.x86_64-owned-utmpx-image-inputs/v1", "image": PINNED_IMAGE_ID,
+            "path": IMAGE_PATH, "files": {path: image_file_record(path) for path in sorted(set(paths))}}
+
+
+def trusted_image_manifest() -> dict[str, Any]:
+    value = read_json(ROOT / IMAGE_MANIFEST, "trusted utmpx image manifest")
+    require(type(value) is dict and set(value) == {"schema", "image", "path", "files"}
+            and value["schema"] == "crabc.x86_64-owned-utmpx-image-inputs/v1"
+            and value["image"] == PINNED_IMAGE_ID and value["path"] == IMAGE_PATH
+            and type(value["files"]) is dict and value["files"], "trusted utmpx image manifest differs")
+    for invocation, record in value["files"].items():
+        require(type(invocation) is str and invocation.startswith("/") and type(record) is dict
+                and set(record) == {"path", "sha256", "size", "mode"} and type(record["path"]) is str
+                and record["path"].startswith("/") and type(record["sha256"]) is str
+                and SHA_RE.fullmatch(record["sha256"]) is not None and type(record["size"]) is int and record["size"] >= 0
+                and type(record["mode"]) is int and 0 <= record["mode"] <= 0o777,
+                "trusted utmpx image manifest file identity differs")
+    return value
+
+
+def validate_retained_image_manifest(workspace: Path, value: Any) -> dict[str, Any]:
+    """Bind a copied manifest to the trusted immutable-image input roster."""
+    retained = check_identity(workspace, value, "retained image manifest")
+    require(value["path"] == IMAGE_MANIFEST, "retained image manifest path differs")
+    manifest = read_json(retained, "retained image manifest")
+    same(manifest, trusted_image_manifest(), "retained image manifest differs from trusted immutable image inputs")
+    return manifest
+
+
+def validate_image_tool(program: str, retained: Any, workspace: Path, products: Mapping[str, Path], manifest: Mapping[str, Any]) -> None:
+    """Admit a tool only as an exact image input or a copied owned product file."""
+    check_identity(workspace, retained, "retained native tool")
+    if program.startswith(SOURCE_MOUNT + "/"):
+        source = workspace / program[len(SOURCE_MOUNT) + 1:]
+        no_links(workspace, source, "retained owned tool")
+        require(any(source.is_relative_to(product) for product in products.values()), "retained tool escapes copied owned products")
+        require(digest(source) == retained["sha256"] and stat.S_IMODE(source.stat().st_mode) == retained["mode"],
+                "retained owned tool differs from its copied product")
+        return
+    expected = manifest["files"].get(program)
+    require(type(expected) is dict, "retained tool is not an allowed pinned-image input")
+    require({key: retained[key] for key in ("sha256", "size", "mode")} ==
+            {key: expected[key] for key in ("sha256", "size", "mode")},
+            "retained image tool bytes differ from trusted manifest")
+
 def local_git_head(root: Path) -> str:
     """Read the trusted checkout's current Git epoch without spawning Git."""
     marker = root / ".git"
@@ -330,9 +408,20 @@ def validate_selected_source(workspace: Path, sources: Mapping[str, Any], source
                 and type(git_entry["git_blob"]) is str and re.fullmatch(r"[0-9a-f]{40}", git_entry["git_blob"]) is not None
                 and git_blob_id(path) == git_entry["git_blob"] and record["mode"] == (int(git_entry["git_mode"], 8) & 0o777),
                 f"source Git identity differs: {name}")
-    for name in TRUSTED_READER_SOURCES:
-        require(digest(ROOT / name) == digest(workspace / name),
-                "host reader source differs from the retained source: " + name)
+    # The report and its Git rows are evidence, never an admission authority.
+    # Replay compares every finite copied source byte and mode to the trusted
+    # local checkout at the exact recorded HEAD; coordinated edits to a report,
+    # blob row, source digest, or source mode cannot re-authorize themselves.
+    for name in SOURCES:
+        trusted = ROOT / name
+        git_entry = source_tree["entries"][name]
+        regular(trusted, "trusted local source")
+        require(git_blob_id(trusted) == git_entry["git_blob"]
+                and stat.S_IMODE(trusted.stat().st_mode) == (int(git_entry["git_mode"], 8) & 0o777),
+                "trusted local source differs from the recorded Git tree: " + name)
+        require(digest(trusted) == digest(workspace / name)
+                and stat.S_IMODE(trusted.stat().st_mode) == stat.S_IMODE((workspace / name).stat().st_mode),
+                "trusted local source differs from the retained source: " + name)
     owned = (workspace / "libc/src/c_abi/x86_64/owned_utmpx.rs").read_text(encoding="utf-8")
     selector = (workspace / "libc/src/c_abi/x86_64/static_c_abi.rs").read_text(encoding="utf-8")
     require("mod owned_utmpx;" in selector, "static runtime no longer selects owned utmpx")
@@ -689,15 +778,134 @@ def validate_compile_bytes(workspace: Path, dynamic_product: Path, tools: Mappin
             "installed-driver dependency roster omits source")
     return record
 
-def _product(root: Path, workspace: Path, value: Any, family: str) -> Path:
-    require(type(value) is dict and set(value) == {"workspace_path", "original_tree", "retained_tree"},
+STATIC_PREPARATION_SCHEMA = "crabc.x86_64-owned-posix-static-preparation/v1"
+DYNAMIC_STATE_PATH = "share/crabc/dynamic-product-state.json"
+DYNAMIC_STATE_SCHEMA = "crabc.x86_64-owned-dynamic-materialization/v1"
+PREPARATION_PATH = ".work/utmpx-receipt/inputs/static-preparation/preparation.json"
+PREPARATION_SOURCE_SEALS = ("source-before.json", "source-after.json")
+
+
+def _source_epoch(value: Any, label: str) -> dict[str, str]:
+    require(type(value) is dict and set(value) == {"revision", "content_sha256"}
+            and type(value["revision"]) is str and re.fullmatch(r"[0-9a-f]{40}", value["revision"]) is not None
+            and type(value["content_sha256"]) is str and SHA_RE.fullmatch(value["content_sha256"]) is not None,
+            label + " source epoch differs")
+    return {"revision": value["revision"], "content_sha256": value["content_sha256"]}
+
+
+def _preparation_tree_identity(root: Path, product: Path) -> dict[str, Any]:
+    """Match the static preparer's normalized package tree without running it."""
+    observed = tree_identity(root, product)
+    normalized: dict[str, Any] = {}
+    for name, entry in observed.items():
+        require(entry["kind"] != "symlink", "static preparation product has a symlink")
+        if entry["kind"] == "directory":
+            normalized[name] = {"kind": "directory", "mode": 0o755}
+        else:
+            normalized[name] = {"kind": "file", "mode": 0o755 if entry["mode"] & 0o111 else 0o644,
+                                "sha256": entry["sha256"], "size": entry["size"]}
+    return normalized
+
+
+def _validate_static_preparation(preparation: Mapping[str, Any], workspace: Path, static: Path) -> dict[str, str]:
+    """Join the copied static product to its own source-bound preparation."""
+    require(set(preparation) == {"schema", "status", "work", "source", "source_seals", "pins", "products", "archives", "steps"}
+            and preparation["schema"] == STATIC_PREPARATION_SCHEMA and preparation["status"] == "prepared-unqualified"
+            and type(preparation["work"]) is str and preparation["work"].startswith(".work/")
+            and ".." not in Path(preparation["work"]).parts,
+            "static preparation contract differs")
+    source = _source_epoch(preparation["source"], "static preparation")
+    require(source["revision"] == local_git_head(ROOT), "static preparation is not from the trusted current source epoch")
+    seals = preparation["source_seals"]
+    require(type(seals) is dict and set(seals) == set(PREPARATION_SOURCE_SEALS), "static preparation source seals differ")
+    for name in PREPARATION_SOURCE_SEALS:
+        recorded = seals[name]
+        retained = workspace / ".work/utmpx-receipt/inputs/static-preparation" / name
+        actual = identity(workspace, retained)
+        require(type(recorded) is dict and set(recorded) == {"path", "sha256", "size"}
+                and recorded["path"] == preparation["work"] + "/" + name
+                and recorded["sha256"] == actual["sha256"] and recorded["size"] == actual["size"],
+                "static preparation source seal differs: " + name)
+        same(read_json(retained, "retained static preparation " + name), source,
+             "static preparation source seal content differs: " + name)
+    products = preparation["products"]
+    require(type(products) is dict and set(products) == {"primary", "reproduction", "extracted"},
+            "static preparation product roster differs")
+    primary = products["primary"]
+    require(type(primary) is dict and set(primary) == {"path", "manifest", "tree", "producer_tools", "toolchain"}
+            and primary["path"] == preparation["work"] + "/products/primary"
+            and type(primary["tree"]) is dict and primary["tree"],
+            "static preparation primary product differs")
+    actual_manifest = identity(workspace, static / "share/crabc/manifest.json")
+    manifest = primary["manifest"]
+    require(type(manifest) is dict and set(manifest) == {"path", "sha256", "size"}
+            and manifest["path"] == primary["path"] + "/share/crabc/manifest.json"
+            and manifest["sha256"] == actual_manifest["sha256"] and manifest["size"] == actual_manifest["size"],
+            "static preparation primary manifest differs")
+    same(primary["tree"], _preparation_tree_identity(workspace, static),
+         "static preparation primary tree differs from the copied static product")
+    return source
+
+
+def _validate_dynamic_source_epoch(state: Mapping[str, Any], source: Mapping[str, str]) -> None:
+    """Reject a dynamic materialization whose whole-source hash names another cohort."""
+    required = {"schema", "status", "source_sha256", "contracts", "payload_files", "runtime_v1_published",
+                "campaign_complete", "public_support", "modes", "runtime_profile", "qualification"}
+    require(set(state) == required and state["schema"] == DYNAMIC_STATE_SCHEMA
+            and state["status"] == "materialized-unqualified"
+            and state["source_sha256"] == source["content_sha256"]
+            and state["runtime_v1_published"] is False and state["campaign_complete"] is False
+            and state["public_support"] is False
+            and state["modes"] == ["dynamic-pie", "dynamic-non-pie", "dynamic-shared-object"]
+            and type(state["contracts"]) is dict and type(state["runtime_profile"]) is str
+            and type(state["qualification"]) is str,
+            "dynamic product source cohort differs from static preparation")
+
+
+def _validate_dynamic_state(workspace: Path, dynamic: Path, source: Mapping[str, str]) -> dict[str, Any]:
+    """Bind the materialized dynamic tree and full source digest to the static epoch."""
+    state_path = dynamic / DYNAMIC_STATE_PATH
+    state = read_json(state_path, "retained dynamic product state")
+    _validate_dynamic_source_epoch(state, source)
+    try:
+        _manifest, files = retained_link_reader._validate_dynamic_product(dynamic)
+    except Exception as error:
+        raise ReceiptError("copied dynamic product manifest differs") from error
+    require(state["payload_files"] == {name: value for name, value in files.items() if name != DYNAMIC_STATE_PATH},
+            "dynamic product state payload binding differs")
+    return state
+
+
+def product_cohort(workspace: Path, products: Mapping[str, Path]) -> dict[str, Any]:
+    """Derive the selected static/dynamic source cohort from retained product bytes."""
+    preparation_path = workspace / PREPARATION_PATH
+    preparation = read_json(preparation_path, "retained static preparation")
+    static = products["static"]
+    dynamic = products["dynamic"]
+    try:
+        retained_link_reader._validate_static_product(static)
+    except Exception as error:
+        raise ReceiptError("copied static product manifest differs") from error
+    source = _validate_static_preparation(preparation, workspace, static)
+    _validate_dynamic_state(workspace, dynamic, source)
+    return {
+        "source": source,
+        "static_preparation": identity(workspace, preparation_path),
+        "static_source_before": identity(workspace, workspace / ".work/utmpx-receipt/inputs/static-preparation/source-before.json"),
+        "static_source_after": identity(workspace, workspace / ".work/utmpx-receipt/inputs/static-preparation/source-after.json"),
+        "static_manifest": identity(workspace, static / "share/crabc/manifest.json"),
+        "dynamic_manifest": identity(workspace, dynamic / "share/crabc/manifest.json"),
+        "dynamic_state": identity(workspace, dynamic / DYNAMIC_STATE_PATH),
+    }
+
+
+def _product(workspace: Path, value: Any, family: str) -> Path:
+    require(type(value) is dict and set(value) == {"workspace_path", "retained_tree"},
             f"{family} product record differs")
     expected = f".work/utmpx-receipt/inputs/{family}"
     require(value["workspace_path"] == expected, f"{family} product path differs")
     path = workspace / expected
-    observed = tree_identity(workspace, path)
-    same(observed, value["retained_tree"], f"{family} retained product bytes differ")
-    same(value["original_tree"], value["retained_tree"], f"{family} copied product differs from original")
+    same(tree_identity(workspace, path), value["retained_tree"], f"{family} retained product bytes differ")
     return path
 
 
@@ -744,19 +952,19 @@ def validate_report(path: Path) -> dict[str, Any]:
     except OSError as error:
         raise ReceiptError("receipt report parent is unreadable") from error
     value = read_json(path, "utmpx receipt report")
-    expected = {"schema", "image", "source_tree", "sources", "products", "tools", "commands", "symbols", "runtime", "links", "projection"}
+    expected = {"schema", "image", "source_tree", "sources", "products", "product_cohort", "tools", "commands", "symbols", "runtime", "links", "projection"}
     require(set(value) == expected and value["schema"] == SCHEMA, "utmpx receipt schema differs")
-    require(type(value["image"]) is dict and set(value["image"]) == {"id", "definition"}, "receipt image record differs")
-    require(type(value["image"]["id"]) is str and IMAGE_RE.fullmatch(value["image"]["id"]) is not None,
-            "receipt image identity differs")
+    require(type(value["image"]) is dict and set(value["image"]) == {"id", "manifest"}
+            and value["image"]["id"] == PINNED_IMAGE, "receipt image record differs")
     workspace = root / "workspace"
     no_links(root, workspace, "receipt workspace")
     require(workspace.is_dir(), "receipt workspace is missing")
-    check_identity(workspace, value["image"]["definition"], "image definition")
-    require(value["image"]["definition"]["path"] == "docker/x86_64-musl-oracle-gcc", "image definition source differs")
+    validate_retained_image_manifest(workspace, value["image"]["manifest"])
     validate_selected_source(workspace, value["sources"], value["source_tree"])
     require(type(value["products"]) is dict and set(value["products"]) == {"static", "dynamic"}, "product families differ")
-    products = {family: _product(root, workspace, value["products"][family], family) for family in ("static", "dynamic")}
+    products = {family: _product(workspace, value["products"][family], family) for family in ("static", "dynamic")}
+    same(value["product_cohort"], product_cohort(workspace, products),
+         "reported selected product cohort is not reconstructed from retained products")
     commands = command_records(workspace)
     same(value["commands"], {role: identity(workspace, workspace / ".work/utmpx-receipt/owned-utmpx-receipt/commands" / (role + ".json"))
                              for role in sorted(COMMAND_ROLES)}, "reported command identities differ")
@@ -771,7 +979,7 @@ def validate_report(path: Path) -> dict[str, Any]:
     for program, record in value["tools"]["programs"].items():
         require(type(program) is str and type(record) is dict and set(record) == {"native_path", "retained"} and record["native_path"] == program,
                 "retained program record differs")
-        check_identity(workspace, record["retained"], "retained command program")
+        validate_image_tool(program, record["retained"], workspace, products, trusted_image_manifest())
     compile = validate_compile_bytes(workspace, products["dynamic"], value["tools"])
     require(compile["dependency_audit_command"][0] in value["tools"]["programs"], "dependency compiler tool seal differs")
     require(type(value["links"]) is dict and set(value["links"]) == {"static", "static-pie", "pie", "non-pie"}, "link roster differs")
@@ -810,13 +1018,24 @@ def clean_source_revision() -> str:
     return revision
 
 
-def collect(static_product: Path, dynamic_product: Path, output: Path, image_id: str) -> dict[str, Any]:
+def collect(static_preparation: Path, static_product: Path, dynamic_product: Path, output: Path) -> dict[str, Any]:
     """Run the native runner once and retain the closed full static/dynamic matrix."""
-    require(IMAGE_RE.fullmatch(image_id) is not None, "collection requires a pinned crabc-core-evidence digest")
+    expected_image = trusted_image_manifest()
+    same(live_image_manifest(), expected_image, "live native image differs from its immutable utmpx manifest")
     require(ROOT == Path(SOURCE_MOUNT), "native collection requires the pinned /workspace mount")
     output = Path(output).absolute()
     require(output.is_relative_to(ROOT / ".work") and output != ROOT / ".work", "receipt output must be a checkout .work child")
     require(not output.exists() and not output.is_symlink(), "receipt output already exists")
+    static_preparation = Path(static_preparation).absolute()
+    no_links(ROOT, static_preparation, "static preparation input")
+    require(static_preparation.is_relative_to(ROOT / ".work") and static_preparation.name == "preparation.json",
+            "static preparation must be a physical checkout .work preparation.json")
+    preparation_files = {"preparation.json": static_preparation,
+                         **{name: static_preparation.parent / name for name in PREPARATION_SOURCE_SEALS}}
+    for name, input_path in preparation_files.items():
+        no_links(ROOT, input_path, "static preparation " + name)
+        regular(input_path, "static preparation " + name)
+    before_preparation = {name: identity(ROOT, input_path) for name, input_path in preparation_files.items()}
     for product, family in ((static_product, "static"), (dynamic_product, "dynamic")):
         product = Path(product).absolute()
         no_links(ROOT, product, family + " input product")
@@ -851,6 +1070,8 @@ def collect(static_product: Path, dynamic_product: Path, output: Path, image_id:
                 "native runner evidence path differs from retained contract")
         for name in SOURCES:
             copy_regular(ROOT / name, workspace / name)
+        for name, input_path in preparation_files.items():
+            copy_regular(input_path, workspace / ".work/utmpx-receipt/inputs/static-preparation" / name)
         copy_product(stage / "inputs/static", workspace / ".work/utmpx-receipt/inputs/static")
         copy_product(stage / "inputs/dynamic", workspace / ".work/utmpx-receipt/inputs/dynamic")
         needed = [
@@ -867,10 +1088,13 @@ def collect(static_product: Path, dynamic_product: Path, output: Path, image_id:
             _copy_native_file(workspace, native, native / name)
         for record in sorted((native / "commands").glob("*.json")):
             _copy_native_file(workspace, native, record)
-        require(clean_source_revision() == revision and source_records(ROOT) == before_sources,
-                "source changed during native utmpx receipt collection")
+        require(clean_source_revision() == revision and source_records(ROOT) == before_sources
+                and live_image_manifest() == expected_image,
+                "source or pinned image changed during native utmpx receipt collection")
         require(tree_identity(ROOT, Path(static_product).absolute()) == before_trees["static"], "static product changed during collection")
         require(tree_identity(ROOT, Path(dynamic_product).absolute()) == before_trees["dynamic"], "dynamic product changed during collection")
+        require({name: identity(ROOT, input_path) for name, input_path in preparation_files.items()} == before_preparation,
+                "static preparation changed during collection")
         shutil.rmtree(stage)
         commands = command_records(workspace)
         tools: dict[str, Any] = {"programs": {}}
@@ -909,15 +1133,15 @@ def collect(static_product: Path, dynamic_product: Path, output: Path, image_id:
         require(tools["linker"]["retained"]["sha256"] == receipt_linkers[0]["sha256"],
                 "sealed linker bytes differ from receipt")
         products = {family: {"workspace_path": f".work/utmpx-receipt/inputs/{family}",
-                             "original_tree": before_trees[family],
                              "retained_tree": tree_identity(workspace, workspace / f".work/utmpx-receipt/inputs/{family}")}
                     for family in ("static", "dynamic")}
-        report = {"schema": SCHEMA, "image": {"id": image_id, "definition": identity(workspace, workspace / "docker/x86_64-musl-oracle-gcc")},
+        product_paths = {key: workspace / value["workspace_path"] for key, value in products.items()}
+        cohort = product_cohort(workspace, product_paths)
+        report = {"schema": SCHEMA, "image": {"id": PINNED_IMAGE, "manifest": identity(workspace, workspace / IMAGE_MANIFEST)},
                   "source_tree": source_tree, "sources": {name: identity(workspace, workspace / name) for name in SOURCES}, "products": products,
-                  "tools": tools,
+                  "product_cohort": cohort, "tools": tools,
                   "commands": {role: identity(workspace, workspace / ".work/utmpx-receipt/owned-utmpx-receipt/commands" / (role + ".json")) for role in sorted(COMMAND_ROLES)},
                   "symbols": {}, "runtime": validate_runtime_bytes(workspace), "links": {}, "projection": {}}
-        product_paths = {key: workspace / value["workspace_path"] for key, value in products.items()}
         report["links"] = rebuild_links(workspace, product_paths, tools)
         report["symbols"] = validate_symbol_bytes(workspace, product_paths, report["links"])
         report["projection"] = {
@@ -939,17 +1163,26 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     subcommands = parser.add_subparsers(dest="action", required=True)
     collect_parser = subcommands.add_parser("collect")
+    collect_parser.add_argument("--static-preparation", type=Path, required=True)
     collect_parser.add_argument("--static-product", type=Path, required=True)
     collect_parser.add_argument("--dynamic-product", type=Path, required=True)
     collect_parser.add_argument("--output", type=Path, required=True)
-    collect_parser.add_argument("--image-id", required=True)
+    image_parser = subcommands.add_parser("image-input-manifest")
+    image_parser.add_argument("--output", type=Path)
     validate_parser = subcommands.add_parser("validate-report")
     validate_parser.add_argument("report", type=Path)
     arguments = parser.parse_args()
     try:
         if arguments.action == "collect":
-            result = collect(arguments.static_product, arguments.dynamic_product, arguments.output, arguments.image_id)
+            result = collect(arguments.static_preparation, arguments.static_product, arguments.dynamic_product, arguments.output)
             print(json.dumps(result, indent=2, sort_keys=True))
+        elif arguments.action == "image-input-manifest":
+            result = live_image_manifest()
+            if arguments.output is None:
+                print(json.dumps(result, indent=2, sort_keys=True))
+            else:
+                require(not arguments.output.exists() and not arguments.output.is_symlink(), "image manifest output already exists")
+                arguments.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         else:
             print(json.dumps(validate_report(arguments.report), indent=2, sort_keys=True))
     except ReceiptError as error:
