@@ -92,6 +92,51 @@ class HeaderAbiMatrixTests(unittest.TestCase):
         )
         self.assertEqual(comparison["incompatible_count"], 1)
 
+    def test_reviewed_native_callable_extension_requires_exact_c_linkage(self) -> None:
+        """The shared header exception remains a raw source-form difference."""
+
+        contract = MATRIX.load_contract()
+        difference = {
+            "candidate_only": [
+                {
+                    "kind": "function",
+                    "name": "tgkill",
+                    "signature": "int (int, int, int)|mangled=tgkill",
+                }
+            ],
+            "candidate_only_count": 1,
+            "incompatible": [],
+            "incompatible_count": 0,
+            "matched_count": 0,
+            "reference_only": [],
+            "reference_only_count": 0,
+        }
+
+        extension = MATRIX.reviewed_declaration_difference(
+            contract,
+            header="signal.h",
+            profile="cxx17-gnu",
+            difference=difference,
+        )
+        self.assertIsNotNone(extension)
+        self.assertEqual(extension.name, "tgkill")
+
+        bad_linkage = dict(difference)
+        bad_linkage["candidate_only"] = [
+            {
+                "kind": "function",
+                "name": "tgkill",
+                "signature": "int (int, int, int)|mangled=_Z6tgkilliii",
+            }
+        ]
+        with self.assertRaisesRegex(MATRIX.HeaderAbiMatrixError, "signature"):
+            MATRIX.reviewed_declaration_difference(
+                contract,
+                header="signal.h",
+                profile="cxx17-gnu",
+                difference=bad_linkage,
+            )
+
     def test_ast_discovery_uses_only_header_owned_named_abi_facts(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -997,6 +1042,22 @@ class HeaderAbiMatrixTests(unittest.TestCase):
         self.assertEqual(checked["schema"], MATRIX.SCHEMA)
         self.assertFalse(checked["summary"]["complete"])
         self.assertEqual(checked["summary"]["row_count"], 1337)
+        self.assertEqual(
+            checked["summary"]["comparison_counts"],
+            {
+                "candidate-only-reviewed-native-callable-extension": 28,
+                "candidate-only-reviewed-project-c-abi-extension": 56,
+                "matched": 1252,
+                "oracle-not-applicable": 1,
+            },
+        )
+        self.assertEqual(
+            checked["summary"]["reviewed_native_callable_extension_fact_count"], 28
+        )
+        self.assertEqual(
+            checked["summary"]["reviewed_native_callable_extension_row_count"], 28
+        )
+        self.assertTrue(checked["scope"]["reviewed_native_callable_extensions"])
         self.assertEqual(checked["scope"]["archive_linkage"], False)
         self.assertEqual(checked["scope"]["runtime"], False)
         self.assertEqual(checked["work_package"]["target_family"], "libc.headers-layouts")

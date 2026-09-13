@@ -1,0 +1,64 @@
+# Exact reviewed native C callable extensions inside headers also shipped by
+# pinned musl. Unlike a project-only header, these records retain raw
+# candidate-only compiler facts and permit no wildcard name, profile, or
+# declaration-form exception.
+schema = "crabc.x86_64-header-callable-extension-contract/v1"
+target = "x86_64-unknown-linux-musl"
+platform = "Linux/x86-64 little-endian"
+oracle = "Pinned musl 1.2.6"
+profiles = [
+  "c11-gnu",
+  "cxx17-gnu",
+  "c11-strict",
+  "c11-posix-2008",
+  "c11-xopen-700",
+  "c11-bsd",
+  "cxx17-strict",
+]
+
+[policy]
+candidate_declaration_must_be_physical = true
+direct_include_roots_exact = true
+exact_name_header_signature = true
+family_promotion = false
+hidden_profiles_absent = true
+provider_route_checked_separately = true
+public_support = false
+raw_candidate_only_differences_retained = true
+reference_declaration_absent = true
+visible_profiles_exact = true
+
+[[reviewed_callable_extension]]
+# Clang's existing cxx17-strict profile predefines _GNU_SOURCE even under
+# -std=c++17, so its ordinary compiler-derived row is intentionally visible.
+# The native-thread-signal runner separately undefines the feature macros to
+# witness genuine strict C++ absence without redefining this shared profile.
+header = "signal.h"
+name = "tgkill"
+declaration_kind = "function"
+classification = "external"
+signature = "int (int, int, int)"
+c_linkage_symbol = "tgkill"
+visible_profiles = ["c11-gnu", "cxx17-gnu", "c11-bsd", "cxx17-strict"]
+hidden_profiles = ["c11-strict", "c11-posix-2008", "c11-xopen-700"]
+visible_from_headers = [
+  "aio.h",
+  "signal.h",
+  "sys/signal.h",
+  "sys/ucontext.h",
+  "sys/wait.h",
+  "ucontext.h",
+  "wait.h",
+]
+provider_route = "default-static"
+disposition = "retained-reviewed-native-c-abi-callable-extension"
+component_contract = "compat/x86_64/native_thread_signal_abi.json"
+# This exact ordered mapping uses canonical repository-relative identifiers.
+# This generic policy owns its spelling and source mapping; the
+# native-thread-signal component owns referenced source/header content and
+# source-sealed evidence validation.
+evidence = [
+  "include/signal.h",
+  "libc/src/c_abi/x86_64/thread_signal.rs",
+  "compat/x86_64/native-thread-signal-abi.md",
+]

@@ -42,8 +42,8 @@ CONTROL_ID = "x86-headers-layouts-accounting-control"
 TARGET = "x86_64-unknown-linux-musl"
 PLATFORM = "Linux/x86-64 little-endian"
 ORACLE = "Pinned musl 1.2.6"
-REPORT_SCHEMA = "crabc.x86_64-headers-layouts-aggregate-report/v2"
-FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v18"
+REPORT_SCHEMA = "crabc.x86_64-headers-layouts-aggregate-report/v3"
+FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v19"
 DIRECT_SCHEMA = "crabc.x86_64-headers-layouts/v1"
 FAMILY = "libc.headers-layouts"
 DISPATCHER = "./scripts/dev-x86_64.sh"
@@ -99,19 +99,19 @@ GENERIC_REPORTS = (
     (
         "declaration-macro-visibility",
         "feature_visibility_matrix",
-        "crabc.x86_64-header-declaration-macro-feature-visibility-matrix-report/v1",
+        "crabc.x86_64-header-declaration-macro-feature-visibility-matrix-report/v2",
         "generated_report",
     ),
     (
         "callable-visibility",
         "callable_feature_visibility_matrix",
-        "crabc.x86_64-header-callable-feature-visibility-matrix-report/v1",
+        "crabc.x86_64-header-callable-feature-visibility-matrix-report/v2",
         "generated_report",
     ),
     (
         "prototype-layout",
         "prototype_layout_matrix",
-        "crabc.x86_64-header-abi-matrix-report/v1",
+        "crabc.x86_64-header-abi-matrix-report/v2",
         "generated_report",
     ),
     (
@@ -123,7 +123,7 @@ GENERIC_REPORTS = (
     (
         "callable-disposition",
         "callable_disposition",
-        "crabc.x86_64-header-callable-disposition-report/v1",
+        "crabc.x86_64-header-callable-disposition-report/v2",
         "report",
     ),
 )
@@ -136,6 +136,8 @@ TRACKED_INPUTS = (
     "compat/x86_64/header_callable_inventory.json",
     "compat/x86_64/header_callable_disposition.toml",
     "compat/x86_64/header_callable_disposition.py",
+    "compat/x86_64/header_callable_extension_contract.toml",
+    "compat/x86_64/header_callable_extension_contract.py",
     "compat/x86_64/header_callable_linkage_audit.py",
     "compat/x86_64/header_callable_visibility_matrix.toml",
     "compat/x86_64/header_abi_matrix.toml",
@@ -623,8 +625,12 @@ def generic_reports(foundation: Mapping[str, Any]) -> list[dict[str, Any]]:
         require(isinstance(summary, Mapping), f"generic report {identifier} summary is invalid")
         if identifier == "callable-disposition":
             require(
-                summary.get("candidate_external_callable_count") == 1525,
+                summary.get("candidate_external_callable_count") == 1526,
                 "generic report callable-disposition candidate count drifted",
+            )
+            require(
+                summary.get("reviewed_native_callable_extension_provider_route_count") == 1,
+                "generic report callable-disposition reviewed extension route drifted",
             )
         else:
             require(summary.get("profile_count") == 7, f"generic report {identifier} profile count drifted")
