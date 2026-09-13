@@ -133,8 +133,16 @@ copied static tree and its full source digest must equal the materialized
 dynamic state digest, so static and dynamic products form one exact current
 source cohort. Command roles are a closed roster, with reconstructed
 installed-driver, musl link, owned static/static-PIE, dynamic PIE/non-PIE,
-symbol, sealed-link, and runtime envelopes. A report's status, counts, product
-digests, or projection cannot substitute for those bytes.
+symbol, sealed-link, and runtime envelopes. In retained mode collection starts
+the runner with only its fixed image `PATH`, private `TMPDIR`, and retention
+switch; each command child then receives exactly the sealed `PATH`, `TMPDIR`,
+switch, `SHLVL=0`, and Bash-resolved program `_` entry. The command/v2 record
+contains that full environment, its complete argv, cwd, and resolved program.
+The twelve inline Python judges retain their stdin source as physical 0644
+files. Host replay admits those bytes only when they match the reader's fixed
+per-role digest and size, so repairing a receipt-side stdin identity cannot
+authorize a different judge. A report's status, counts, product digests, or
+projection cannot substitute for those bytes.
 
 `validate-report RECEIPT/report.json` is public host replay. It executes no
 command. It admits only the exact committed collector/source epoch: it reads

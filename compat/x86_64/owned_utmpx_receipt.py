@@ -31,13 +31,19 @@ from loader_debug_abi_evidence import Elf
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = "crabc.x86_64-owned-utmpx-receipt/v1"
-COMMAND_SCHEMA = "crabc.x86_64-owned-utmpx-command/v1"
+COMMAND_SCHEMA = "crabc.x86_64-owned-utmpx-command/v2"
 SOURCE_MOUNT = "/workspace"
 PINNED_IMAGE_ID = "sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d"
 PINNED_IMAGE = "crabc-core-evidence@" + PINNED_IMAGE_ID
 IMAGE_MANIFEST = "compat/x86_64/owned_utmpx_image_inputs.json"
 SHA_RE = re.compile(r"[0-9a-f]{64}\Z")
 IMAGE_PATH = "/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+COMMAND_ENV = {
+    "PATH": IMAGE_PATH,
+    "TMPDIR": SOURCE_MOUNT + "/.work/utmpx-receipt",
+    "CRABC_X86_64_RETAIN_UTMPX_COMMANDS": "1",
+    "SHLVL": "0",
+}
 # Every external command directly used by the opted-in runner, plus the
 # compiler/oracle executables it invokes.  The committed manifest maps these
 # command names through ``IMAGE_PATH`` to their physical immutable-image bytes.
@@ -108,6 +114,24 @@ COMMAND_ROLES = frozenset({
     "runtime-dynamic-non-pie-kernel-ordinary", "runtime-dynamic-non-pie-direct-ordinary",
     "link-identities",
 })
+# Inline Python judges are commands in their own right.  Their retained stdin
+# is fixed source authority, not a report-owned digest: the trusted reader
+# reconstructs the precise bytes it permits for every role.  The runner gives
+# each file mode 0644 before the command receives it as stdin.
+INLINE_STDIN = {
+    "header-oracle-undefined-judge": ("17044b1c9d9ba8db6576c36250f3bf0dd2bde124ebcd3116bc5ad41262fba824", 597),
+    "header-project-undefined-judge": ("17044b1c9d9ba8db6576c36250f3bf0dd2bde124ebcd3116bc5ad41262fba824", 597),
+    "archive-symbol-judge": ("adabc529f7e06a1e10454d4dcec9bbdbc9e0222b4872833f76470710613b7674", 1272),
+    "shared-symbol-judge": ("4f9061172203c41820cb71ca78d4dfe3868de47f182090f6908a1a90acccea11", 1395),
+    "executable-symbol-judge-static-static": ("0aa7d54377a0342b0a3a08d2d7b921731c7d7d20f757022fda2a3c4ba8d25105", 632),
+    "executable-symbol-judge-static-static-pie": ("0aa7d54377a0342b0a3a08d2d7b921731c7d7d20f757022fda2a3c4ba8d25105", 632),
+    "sealed-link-static": ("b08d052e5837a11b54f3347c61a58d263750a90c84276c206ef55e2d94a08d16", 574),
+    "sealed-link-static-pie": ("b08d052e5837a11b54f3347c61a58d263750a90c84276c206ef55e2d94a08d16", 574),
+    "sealed-link-pie": ("b08d052e5837a11b54f3347c61a58d263750a90c84276c206ef55e2d94a08d16", 574),
+    "sealed-link-non-pie": ("b08d052e5837a11b54f3347c61a58d263750a90c84276c206ef55e2d94a08d16", 574),
+    "link-identities": ("6b291da4a1ed17cb9465db0c9bef3120963279a5bb459fcce6746794b1b82d37", 1566),
+    "dependency-audit": ("2266a49263f0c111b9d8093af245241c4bf550d2581c92ed6bcb06d4ef46b366", 2427),
+}
 # The established static runner loops over ``static`` and ``static-pie`` and
 # writes ``$mode-symbols.txt``.  Command role labels include the product family
 # to make their link authority unambiguous, but the retained filenames retain
@@ -754,16 +778,84 @@ def expected_command_program(argv0: str) -> str:
     return matches[0]
 
 
+def expected_command_environment(argv0: str) -> dict[str, str]:
+    """Reconstruct the fully scrubbed environment of one retained command."""
+    return {**COMMAND_ENV, "_": expected_command_program(argv0)}
+
+
+def command_plan() -> dict[str, tuple[str, list[str]]]:
+    """Reconstruct every retained runner command, including its complete argv."""
+    raw = SOURCE_MOUNT + "/.work/utmpx-receipt/owned-utmpx-receipt"
+    static = SOURCE_MOUNT + "/.work/utmpx-receipt/inputs/static"
+    dynamic = SOURCE_MOUNT + "/.work/utmpx-receipt/inputs/dynamic"
+    plan: dict[str, tuple[str, list[str]]] = {
+        "archive-symbols": (SOURCE_MOUNT, ["nm", "-g", "--defined-only", static + "/usr/lib/libc.a"]),
+        "archive-symbol-bytes": (SOURCE_MOUNT, ["readelf", "--symbols", "--wide", static + "/usr/lib/libc.a"]),
+        "archive-symbol-judge": (SOURCE_MOUNT, ["python3", "-B", "-", raw + "/archive-symbols.txt"]),
+        "shared-symbols": (SOURCE_MOUNT, ["readelf", "--dyn-syms", "--wide", dynamic + "/usr/lib/libc.so"]),
+        "shared-symbol-judge": (SOURCE_MOUNT, ["python3", "-B", "-", raw + "/dynamic-symbols.txt"]),
+        "dynamic-driver-compile": (SOURCE_MOUNT, [dynamic + "/bin/crabc-cc-dynamic", "--dynamic-pie", "-std=c11", "-fno-builtin", "-c",
+                                                    SOURCE_MOUNT + "/compat/x86_64/owned_utmpx_probe.c", "-o", raw + "/workload.o"]),
+        "dependency-audit": (SOURCE_MOUNT, ["python3", "-B", "-", dynamic, raw, SOURCE_MOUNT + "/compat/x86_64/owned_utmpx_probe.c"]),
+        "oracle-link": (SOURCE_MOUNT, ["/usr/local/bin/crabc-x86_64-musl-gcc", "-static", "-fno-pie", "-no-pie", "-pthread",
+                                          raw + "/workload.o", "-o", raw + "/oracle"]),
+        "link-identities": (SOURCE_MOUNT, ["python3", "-B", "-", raw + "/link-identities.json", "static", "static-pie", "pie", "non-pie", "--",
+                                               "static:" + raw + "/static.link-identity.json",
+                                               "static-pie:" + raw + "/static-pie.link-identity.json",
+                                               "pie:" + raw + "/pie.link-identity.json", "non-pie:" + raw + "/non-pie.link-identity.json"]),
+    }
+    for tree in ("oracle", "project"):
+        include = [] if tree == "oracle" else ["-I", SOURCE_MOUNT + "/include"]
+        c_object, cxx_object = raw + "/" + tree + "-header-c.o", raw + "/" + tree + "-header-cxx.o"
+        plan["header-" + tree + "-c"] = (SOURCE_MOUNT, ["/usr/local/bin/crabc-x86_64-musl-gcc", "-std=c11", "-D_GNU_SOURCE", "-fno-builtin",
+                                                            *include, "-H", "-c", SOURCE_MOUNT + "/compat/x86_64/owned_utmpx_header_abi_probe.c", "-o", c_object])
+        plan["header-" + tree + "-cxx"] = (SOURCE_MOUNT, ["/usr/local/bin/crabc-x86_64-musl-gcc", "-x", "c++", "-std=c++17", "-D_GNU_SOURCE",
+                                                              "-fno-builtin", "-nostdinc++", *include, "-c",
+                                                              SOURCE_MOUNT + "/compat/x86_64/owned_utmpx_header_abi_probe.cpp", "-o", cxx_object])
+        plan["header-" + tree + "-undefined-judge"] = (SOURCE_MOUNT, ["python3", "-B", "-", c_object, cxx_object])
+    for linkage in ("static", "static-pie"):
+        executable = raw + "/static-" + linkage
+        receipt = executable + ".receipt.json"
+        plan["static-link-" + linkage] = (raw, [static + "/bin/crabc-cc", "-" + linkage, "--link-receipt",
+                                                 receipt.rsplit("/", 1)[1], raw + "/workload.o", "-o", executable])
+        plan["sealed-link-" + linkage] = (SOURCE_MOUNT, ["python3", "-B", "-", SOURCE_MOUNT, static, raw + "/workload.o",
+                                                            executable, receipt, linkage])
+        role_label = "static-" + linkage
+        plan["executable-symbols-" + role_label] = (SOURCE_MOUNT, ["nm", "-g", "--defined-only", executable])
+        plan["executable-symbol-bytes-" + role_label] = (SOURCE_MOUNT, ["readelf", "--symbols", "--wide", executable])
+        plan["executable-symbol-judge-" + role_label] = (SOURCE_MOUNT, ["python3", "-B", "-", raw + "/" + linkage + "-symbols.txt"])
+    for linkage in ("pie", "non-pie"):
+        executable = raw + "/dynamic-" + linkage
+        receipt = executable + ".crabc-link.json"
+        plan["dynamic-link-" + linkage] = (SOURCE_MOUNT, [dynamic + "/bin/crabc-cc-dynamic", "--dynamic-" + linkage,
+                                                           raw + "/workload.o", "-o", executable])
+        plan["sealed-link-" + linkage] = (SOURCE_MOUNT, ["python3", "-B", "-", SOURCE_MOUNT, dynamic, raw + "/workload.o",
+                                                            executable, receipt, linkage])
+        plan["executable-symbol-bytes-dynamic-" + linkage] = (SOURCE_MOUNT, ["readelf", "--symbols", "--wide", executable])
+    runtime_roots = {
+        "runtime-oracle-ordinary": "oracle-root", "runtime-static-static-ordinary": "static-static-root",
+        "runtime-static-static-pie-ordinary": "static-static-pie-root", "runtime-dynamic-pie-kernel-ordinary": "dynamic-pie-root",
+        "runtime-dynamic-pie-direct-ordinary": "dynamic-pie-root", "runtime-dynamic-non-pie-kernel-ordinary": "dynamic-non-pie-root",
+        "runtime-dynamic-non-pie-direct-ordinary": "dynamic-non-pie-root",
+    }
+    for role, root in runtime_roots.items():
+        suffix = (["/lib/ld-crabc-x86_64.so.1"] if "-direct-" in role else []) + ["/consumer", "ordinary"]
+        plan[role] = (SOURCE_MOUNT, ["timeout", "20", "env", "-i", "PATH=" + IMAGE_PATH, "chroot", raw + "/" + root, *suffix])
+    require(set(plan) == COMMAND_ROLES, "utmpx command plan differs from retained role roster")
+    return plan
+
+
 def command_records(workspace: Path) -> dict[str, Any]:
     directory = workspace / ".work/utmpx-receipt/owned-utmpx-receipt/commands"
     require(directory.is_dir() and not directory.is_symlink(), "command roster directory is missing")
     names = {entry.name for entry in directory.iterdir()}
-    expected = {role + ".json" for role in COMMAND_ROLES}
+    expected = {role + ".json" for role in COMMAND_ROLES} | {role + ".stdin" for role in INLINE_STDIN}
     require(names == expected, "command roster differs")
     records: dict[str, Any] = {}
     for role in COMMAND_ROLES:
         value = read_json(directory / (role + ".json"), f"command {role}")
-        require(set(value) == {"schema", "role", "cwd", "status", "program", "argv"}, f"command {role} fields differ")
+        require(set(value) == {"schema", "role", "cwd", "status", "program", "argv", "env", "stdin"},
+                f"command {role} fields differ")
         require(value["schema"] == COMMAND_SCHEMA and value["role"] == role and value["status"] == 0,
                 f"command {role} status or role differs")
         require(type(value["cwd"]) is str and value["cwd"].startswith(SOURCE_MOUNT) and ".." not in Path(value["cwd"]).parts,
@@ -774,82 +866,19 @@ def command_records(workspace: Path) -> dict[str, Any]:
                 f"command {role} argv differs")
         require(value["program"] == expected_command_program(value["argv"][0]),
                 f"command {role} program does not match its executable")
+        same(value["env"], expected_command_environment(value["argv"][0]), f"command {role} environment differs")
+        expected_stdin = INLINE_STDIN.get(role)
+        if expected_stdin is None:
+            require(value["stdin"] is None, f"command {role} unexpected stdin authority")
+        else:
+            stdin = check_identity(workspace, value["stdin"], f"command {role} stdin")
+            require(value["stdin"]["path"] == ".work/utmpx-receipt/owned-utmpx-receipt/commands/" + role + ".stdin",
+                    f"command {role} stdin path differs")
+            require(value["stdin"]["sha256"] == expected_stdin[0] and value["stdin"]["size"] == expected_stdin[1]
+                    and value["stdin"]["mode"] == 0o644, f"command {role} stdin differs")
         records[role] = value
-    raw = SOURCE_MOUNT + "/.work/utmpx-receipt/owned-utmpx-receipt"
-    require(records["archive-symbols"]["cwd"] == SOURCE_MOUNT and records["archive-symbols"]["argv"] ==
-            ["nm", "-g", "--defined-only", SOURCE_MOUNT + "/.work/utmpx-receipt/inputs/static/usr/lib/libc.a"],
-            "archive symbol command differs")
-    require(records["archive-symbol-bytes"]["cwd"] == SOURCE_MOUNT and records["archive-symbol-bytes"]["argv"] ==
-            ["readelf", "--symbols", "--wide", SOURCE_MOUNT + "/.work/utmpx-receipt/inputs/static/usr/lib/libc.a"],
-            "archive byte-symbol command differs")
-    require(records["shared-symbols"]["cwd"] == SOURCE_MOUNT and records["shared-symbols"]["argv"] ==
-            ["readelf", "--dyn-syms", "--wide", SOURCE_MOUNT + "/.work/utmpx-receipt/inputs/dynamic/usr/lib/libc.so"],
-            "shared symbol command differs")
-    for linkage, executable in (("static-static", "static-static"), ("static-static-pie", "static-static-pie")):
-        role = "executable-symbols-" + linkage
-        require(records[role]["cwd"] == SOURCE_MOUNT and records[role]["argv"] ==
-                ["nm", "-g", "--defined-only", raw + "/" + executable], role + " command differs")
-    for linkage, executable in (("static-static", "static-static"), ("static-static-pie", "static-static-pie"),
-                                ("dynamic-pie", "dynamic-pie"), ("dynamic-non-pie", "dynamic-non-pie")):
-        byte_role = "executable-symbol-bytes-" + linkage
-        require(records[byte_role]["cwd"] == SOURCE_MOUNT and records[byte_role]["argv"] ==
-                ["readelf", "--symbols", "--wide", raw + "/" + executable], byte_role + " command differs")
-    for tree in ("oracle", "project"):
-        include = [] if tree == "oracle" else ["-I", SOURCE_MOUNT + "/include"]
-        c_object = raw + "/" + tree + "-header-c.o"
-        cxx_object = raw + "/" + tree + "-header-cxx.o"
-        c_role = "header-" + tree + "-c"
-        cxx_role = "header-" + tree + "-cxx"
-        judge_role = "header-" + tree + "-undefined-judge"
-        require(records[c_role]["cwd"] == SOURCE_MOUNT and records[c_role]["argv"] ==
-                ["/usr/local/bin/crabc-x86_64-musl-gcc", "-std=c11", "-D_GNU_SOURCE", "-fno-builtin",
-                 *include, "-H", "-c", SOURCE_MOUNT + "/compat/x86_64/owned_utmpx_header_abi_probe.c", "-o", c_object],
-                c_role + " command differs")
-        require(records[cxx_role]["cwd"] == SOURCE_MOUNT and records[cxx_role]["argv"] ==
-                ["/usr/local/bin/crabc-x86_64-musl-gcc", "-x", "c++", "-std=c++17", "-D_GNU_SOURCE",
-                 "-fno-builtin", "-nostdinc++", *include, "-c",
-                 SOURCE_MOUNT + "/compat/x86_64/owned_utmpx_header_abi_probe.cpp", "-o", cxx_object],
-                cxx_role + " command differs")
-        require(records[judge_role]["cwd"] == SOURCE_MOUNT and records[judge_role]["argv"] ==
-                ["python3", "-B", "-", c_object, cxx_object], judge_role + " command differs")
-    for linkage in ("static", "static-pie", "pie", "non-pie"):
-        role = "sealed-link-" + linkage
-        product = SOURCE_MOUNT + "/.work/utmpx-receipt/inputs/" + ("static" if linkage.startswith("static") else "dynamic")
-        executable = raw + "/" + ("static-" + linkage if linkage.startswith("static") else "dynamic-" + linkage)
-        receipt = executable + (".receipt.json" if linkage.startswith("static") else ".crabc-link.json")
-        require(records[role]["cwd"] == SOURCE_MOUNT and records[role]["argv"] ==
-                ["python3", "-B", "-", SOURCE_MOUNT, product, raw + "/workload.o", executable, receipt, linkage],
-                role + " command differs")
-    # Status and a role count are never enough. The expected operation and
-    # exact core argv shape are reconstructed from the role's retained bytes.
-    require(records["dynamic-driver-compile"]["argv"][1:] == ["--dynamic-pie", "-std=c11", "-fno-builtin", "-c",
-            SOURCE_MOUNT + "/compat/x86_64/owned_utmpx_probe.c", "-o", SOURCE_MOUNT + "/.work/utmpx-receipt/owned-utmpx-receipt/workload.o"],
-            "installed dynamic compile command differs")
-    require(records["oracle-link"]["argv"][1:4] == ["-static", "-fno-pie", "-no-pie"], "oracle link command differs")
-    for linkage, role in (("static", "static-link-static"), ("static-pie", "static-link-static-pie")):
-        argv = records[role]["argv"]
-        require(records[role]["cwd"] == raw and argv[1] == "-" + linkage and "--link-receipt" in argv
-                and argv[-2:] == ["-o", raw + "/static-" + linkage], f"{linkage} driver command differs")
-    for linkage, role in (("pie", "dynamic-link-pie"), ("non-pie", "dynamic-link-non-pie")):
-        argv = records[role]["argv"]
-        require(records[role]["cwd"] == SOURCE_MOUNT and argv[1:] == ["--dynamic-" + linkage, raw + "/workload.o", "-o",
-                              raw + "/dynamic-" + linkage], f"{linkage} driver command differs")
-    runtime_roots = {
-        "runtime-oracle-ordinary": raw + "/oracle-root",
-        "runtime-static-static-ordinary": raw + "/static-static-root",
-        "runtime-static-static-pie-ordinary": raw + "/static-static-pie-root",
-        "runtime-dynamic-pie-kernel-ordinary": raw + "/dynamic-pie-root",
-        "runtime-dynamic-pie-direct-ordinary": raw + "/dynamic-pie-root",
-        "runtime-dynamic-non-pie-kernel-ordinary": raw + "/dynamic-non-pie-root",
-        "runtime-dynamic-non-pie-direct-ordinary": raw + "/dynamic-non-pie-root",
-    }
-    for role, root in runtime_roots.items():
-        argv = records[role]["argv"]
-        suffix = (["/lib/ld-crabc-x86_64.so.1"] if "-direct-" in role else []) + ["/consumer", "ordinary"]
-        require(records[role]["cwd"] == SOURCE_MOUNT and argv[:4] == ["timeout", "20", "env", "-i"]
-                and len(argv) == 7 + len(suffix) and argv[4].startswith("PATH=")
-                and argv[5:7] == ["chroot", root] and argv[7:] == suffix,
-                f"{role} runtime command envelope differs")
+    for role, (cwd, argv) in command_plan().items():
+        require(records[role]["cwd"] == cwd and records[role]["argv"] == argv, role + " command differs")
     return records
 
 
@@ -1280,7 +1309,7 @@ def collect(static_preparation: Path, static_product: Path, dynamic_product: Pat
         copy_product(Path(dynamic_product).absolute(), stage / "inputs/dynamic")
         command = [str(ROOT / "compat/x86_64/run_owned_utmpx.sh"), "--static-sysroot",
                    str(stage / "inputs/static"), str(stage / "inputs/dynamic")]
-        environment = {**os.environ, "TMPDIR": str(stage), "CRABC_X86_64_RETAIN_UTMPX_COMMANDS": "1"}
+        environment = {"PATH": IMAGE_PATH, "TMPDIR": str(stage), "CRABC_X86_64_RETAIN_UTMPX_COMMANDS": "1"}
         completed = subprocess.run(command, cwd=ROOT, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
         if completed.returncode != 0:
             retain_native_runner_failure(output, completed.stdout, completed.stderr, completed.returncode)
@@ -1310,7 +1339,7 @@ def collect(static_preparation: Path, static_product: Path, dynamic_product: Pat
         needed.extend(RUNNER_STREAM_FILES)
         for name in needed:
             _copy_native_file(workspace, native, native / name)
-        for record in sorted((native / "commands").glob("*.json")):
+        for record in sorted((native / "commands").iterdir()):
             _copy_native_file(workspace, native, record)
         require(clean_source_revision() == revision and source_records(ROOT) == before_sources
                 and live_image_manifest() == expected_image,

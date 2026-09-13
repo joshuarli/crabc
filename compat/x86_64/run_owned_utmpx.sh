@@ -24,9 +24,37 @@ case "$retain_commands" in
     ''|1) ;;
     *) printf 'owned utmpx: CRABC_X86_64_RETAIN_UTMPX_COMMANDS must be unset or 1\n' >&2; exit 2 ;;
 esac
+if [ "$retain_commands" = 1 ]; then
+    # Collection fixes this three-entry execution environment before the
+    # trusted runner starts.  The record below captures the command child
+    # environment after removing every inherited variable, including a
+    # caller-supplied PATH that could otherwise redirect a bare utility.
+    readonly retained_command_path='/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+    readonly retained_command_tmpdir="$ROOT/.work/utmpx-receipt"
+    if [ "${PATH:-}" != "$retained_command_path" ] || [ "${TMPDIR:-}" != "$retained_command_tmpdir" ]; then
+        printf 'owned utmpx: retained command collection requires the fixed native environment\n' >&2
+        exit 2
+    fi
+fi
+
+run_retained_command() (
+    # An exported shell function, locale variable, loader path, or tool
+    # override must not reach a command just because it reached collection.
+    # Bash creates the final ``_`` entry from the resolved program; the record
+    # seals that deterministic entry along with this explicit environment.
+    local name
+    for name in $(compgen -e); do
+        unset "$name" 2>/dev/null || :
+    done
+    export PATH="$retained_command_path"
+    export TMPDIR="$retained_command_tmpdir"
+    export CRABC_X86_64_RETAIN_UTMPX_COMMANDS=1
+    export SHLVL=0
+    "$@"
+)
 
 record_command() {
-    local role="$1" status program record
+    local role="$1" status program record stdin
     shift
     if [ "$retain_commands" != 1 ]; then
         "$@"
@@ -37,24 +65,65 @@ record_command() {
     [ ! -e "$record" ] && [ ! -L "$record" ] || fail "duplicate retained command role: $role"
     program="$(type -P -- "$1" || true)"
     [ -n "$program" ] || fail "retained command has no external program: $1"
-    if "$@"; then status=0; else status=$?; fi
-    python3 -B - "$record" "$role" "$PWD" "$status" "$program" "$@" <<'PYCMD'
+    if run_retained_command "$@"; then status=0; else status=$?; fi
+    stdin="$work/commands/$role.stdin"
+    python3 -B - "$record" "$ROOT" "$role" "$PWD" "$status" "$program" "$retained_command_path" "$retained_command_tmpdir" "$stdin" "$@" <<'PYCMD'
+import hashlib
 import json
 from pathlib import Path
+import stat
 import sys
 
-record, role, cwd, status, program, *argv = sys.argv[1:]
+record, root, role, cwd, status, program, command_path, command_tmpdir, stdin, *argv = sys.argv[1:]
+root_path = Path(root)
+stdin_path = Path(stdin)
+if stdin_path.exists():
+    state = stdin_path.lstat()
+    if not stat.S_ISREG(state.st_mode):
+        raise SystemExit(f'owned-utmpx retained stdin is not a regular file: {stdin}')
+    stdin_identity = {
+        'path': stdin_path.relative_to(root_path).as_posix(),
+        'sha256': hashlib.sha256(stdin_path.read_bytes()).hexdigest(),
+        'size': state.st_size,
+        'mode': stat.S_IMODE(state.st_mode),
+    }
+else:
+    stdin_identity = None
 Path(record).parent.mkdir(mode=0o755, exist_ok=True)
 Path(record).write_text(json.dumps({
-    'schema': 'crabc.x86_64-owned-utmpx-command/v1',
+    'schema': 'crabc.x86_64-owned-utmpx-command/v2',
     'role': role,
     'cwd': cwd,
     'status': int(status),
     'program': program,
     'argv': argv,
+    'env': {
+        'PATH': command_path,
+        'TMPDIR': command_tmpdir,
+        'CRABC_X86_64_RETAIN_UTMPX_COMMANDS': '1',
+        'SHLVL': '0',
+        '_': program,
+    },
+    'stdin': stdin_identity,
 }, indent=2, sort_keys=True) + '\n', encoding='utf-8')
 PYCMD
     return "$status"
+}
+
+record_stdin_command() {
+    local role="$1" stdin
+    shift
+    if [ "$retain_commands" != 1 ]; then
+        record_command "$role" "$@"
+        return
+    fi
+    stdin="$work/commands/$role.stdin"
+    [ -d "$work/commands" ] || fail "retained command directory is missing: $role"
+    [ ! -e "$stdin" ] && [ ! -L "$stdin" ] || fail "duplicate retained command stdin: $role"
+    local -a lines=()
+    mapfile -t lines
+    ( umask 022; printf '%s\n' "${lines[@]}" >"$stdin" )
+    record_command "$role" "$@" <"$stdin"
 }
 
 usage() {
@@ -210,7 +279,7 @@ compile_header_witnesses() {
     fi
     record_command "header-$tree-cxx" "$oracle_cc" -x c++ -std=c++17 -D_GNU_SOURCE -fno-builtin -nostdinc++ \
         "${include_args[@]}" -c "$header_cxx" -o "$cxx_object"
-    record_command "header-$tree-undefined-judge" python3 -B - "$c_object" "$cxx_object" <<'PY'
+    record_stdin_command "header-$tree-undefined-judge" python3 -B - "$c_object" "$cxx_object" <<'PY'
 from pathlib import Path
 import subprocess
 import sys
@@ -277,7 +346,7 @@ assert_archive_symbols() {
     if [ "$retain_commands" = 1 ]; then
         record_command archive-symbol-bytes readelf --symbols --wide "$archive" >"$work/archive-symbol-bytes.txt"
     fi
-    record_command archive-symbol-judge python3 -B - "$symbols" <<'PY'
+    record_stdin_command archive-symbol-judge python3 -B - "$symbols" <<'PY'
 from collections import Counter
 from pathlib import Path
 import sys
@@ -321,7 +390,7 @@ PY
 assert_shared_symbols() {
     local library="$1" symbols="$2"
     record_command shared-symbols readelf --dyn-syms --wide "$library" >"$symbols"
-    record_command shared-symbol-judge python3 -B - "$symbols" <<'PY'
+    record_stdin_command shared-symbol-judge python3 -B - "$symbols" <<'PY'
 from collections import Counter
 from pathlib import Path
 import sys
@@ -375,7 +444,7 @@ assert_executable_symbols() {
     local label="$1" executable="$2" symbols="$3"
     record_command "executable-symbols-$label" nm -g --defined-only "$executable" >"$symbols"
     retain_executable_symbol_bytes "$label" "$executable"
-    record_command "executable-symbol-judge-$label" python3 -B - "$symbols" <<'PY'
+    record_stdin_command "executable-symbol-judge-$label" python3 -B - "$symbols" <<'PY'
 from collections import Counter
 from pathlib import Path
 import sys
@@ -403,7 +472,7 @@ validate_sealed_link() {
     local product="$1" workload="$2" executable="$3" receipt="$4" linkage="$5"
     local identity="$work/$linkage.link-identity.json"
 
-    record_command "sealed-link-$linkage" python3 -B - "$ROOT" "$product" "$workload" "$executable" "$receipt" \
+    record_stdin_command "sealed-link-$linkage" python3 -B - "$ROOT" "$product" "$workload" "$executable" "$receipt" \
         "$linkage" >"$identity" <<'PY'
 import json
 from pathlib import Path
@@ -427,7 +496,7 @@ PY
 }
 
 retain_link_identities() {
-    record_command link-identities python3 -B - "$work/link-identities.json" "$@" -- "${link_identity_records[@]}" <<'PY'
+    record_stdin_command link-identities python3 -B - "$work/link-identities.json" "$@" -- "${link_identity_records[@]}" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -484,7 +553,7 @@ validate_product_payload "$installed" dynamic
 
 record_command dynamic-driver-compile "$installed/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
     -c "$probe" -o "$work/workload.o"
-record_command dependency-audit python3 -B - "$installed" "$work" "$probe" <<'PY'
+record_stdin_command dependency-audit python3 -B - "$installed" "$work" "$probe" <<'PY'
 import hashlib
 import json
 from pathlib import Path
