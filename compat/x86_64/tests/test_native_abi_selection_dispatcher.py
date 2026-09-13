@@ -75,6 +75,8 @@ class NativeAbiSelectionDispatcherTests(unittest.TestCase):
             "--static-preparation", ".work/x86_64/static/preparation.json",
             "--contract", "compat/x86_64/native-abi-selection.toml",
             "--declaration-report", ".work/x86_64/declarations/report.json",
+            "--public-data-ordinary-link-report", ".work/x86_64/public-data/ordinary/report.json",
+            "--loader-debug-abi-report", ".work/x86_64/public-data/loader/report.json",
         ]
         for mode in ("build-report", "validate-report", "require-closure"):
             with self.subTest(mode=mode):

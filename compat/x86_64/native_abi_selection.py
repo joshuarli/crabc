@@ -34,6 +34,8 @@ import native_abi_elf_facts as elf_facts
 import header_callable_disposition as callable_disposition
 import feature_archive_roster as feature_roster
 import header_declaration_inventory as declaration_inventory
+import loader_debug_abi_evidence as loader_debug_evidence
+import public_data_ordinary_link_evidence as ordinary_link_evidence
 
 SCHEMA = 'crabc.x86_64-native-abi-selection-report/v1'
 CONTRACT_SCHEMA = 'crabc.x86_64-native-abi-selection/v1'
@@ -54,6 +56,12 @@ DISPOSITIONS = {'public-provider', 'private-provider', 'unresolved'}
 SUPPORTED_TYPES = {'NOTYPE', 'OBJECT', 'FUNC', 'SECTION', 'FILE', 'COMMON', 'TLS', 'IFUNC'}
 SUPPORTED_BINDINGS = {'LOCAL', 'GLOBAL', 'WEAK', 'UNIQUE'}
 SUPPORTED_VISIBILITIES = {'DEFAULT', 'INTERNAL', 'HIDDEN', 'PROTECTED'}
+ORDINARY_IMPORT_REASON = 'exact ordinary import/provider or optional weak/null resolution proof is missing'
+PUBLIC_DATA_LINKAGE_LIMITS = [
+    'No lifecycle, strong-override, interposition, COPY-relocation, or header-feature-profile proof.',
+    'Shared-only _dl_debug_addr remains owned by the loader debugger component.',
+    'Linkage evidence is not runtime qualification, family completion, or public support.',
+]
 
 
 class SelectionError(ValueError):
@@ -925,14 +933,181 @@ def declaration_adapter(report_path: Path | None, *, selected_objects: Sequence[
             'current_selecting_source': source, 'physical_status': report['status'], **account}
 
 
-def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration_report: Path | None) -> dict[str, Any]:
+def public_data_linkage_adapter(ordinary_report_path: Path | None, loader_report_path: Path | None, *,
+                                contract: Mapping[str, Any], selected_objects: Sequence[Mapping[str, Any]], source: Mapping[str, Any],
+                                paths: Mapping[str, Path]) -> dict[str, Any] | None:
+    """Replay the two fixed public-data linkage receipts, if both are supplied.
+
+    This is deliberately a finite attachment for the selected data objects. It
+    does not turn receipt presence into the repository-wide semantic-receipt
+    gate, and it does not claim each object's lifecycle semantics.
+    """
+    if ordinary_report_path is None and loader_report_path is None:
+        return None
+    require(ordinary_report_path is not None and loader_report_path is not None,
+            'public-data ordinary-link and loader-debug reports must be supplied together')
+    source = exact(dict(source), {'revision', 'content_sha256', 'clean'}, 'selection source')
+    require(source['clean'] is True and type(source['revision']) is str and type(source['content_sha256']) is str,
+            'public-data linkage requires a clean selected source')
+    require(Path(ordinary_link_evidence.ROOT) == ROOT and Path(loader_debug_evidence.ROOT) == ROOT,
+            'public-data linkage readers belong to a different checkout')
+    ordinary_report_path = physical_work_path(ordinary_report_path, directory=False)
+    loader_report_path = physical_work_path(loader_report_path, directory=False)
+    require(ordinary_report_path.is_relative_to(ROOT / '.work') and loader_report_path.is_relative_to(ROOT / '.work'),
+            'public-data linkage reports must belong to the selecting checkout')
+    ordinary_before = file_identity(ordinary_report_path)
+    loader_before = file_identity(loader_report_path)
+    try:
+        ordinary_replay = ordinary_link_evidence.validate_report(ROOT, ordinary_report_path)
+        loader_replay = loader_debug_evidence.validate_report(loader_report_path)
+    except (ValueError, OSError) as error:
+        raise SelectionError(f'public-data linkage companion rejected: {error}') from error
+    require(file_identity(ordinary_report_path) == ordinary_before and file_identity(loader_report_path) == loader_before,
+            'public-data linkage report changed during replay')
+    require(type(ordinary_replay) is dict and set(ordinary_replay) == {'report', 'links'},
+            'ordinary-link reader envelope differs')
+    require(type(loader_replay) is dict, 'loader-debug reader envelope differs')
+
+    ordinary_report = read_json(ordinary_report_path)
+    expected_inputs = ordinary_link_evidence.admit_inputs(
+        ROOT, paths['static_preparation'], paths['static_product'], paths['dynamic_product'],
+    )
+    require(ordinary_report.get('source_before') == expected_inputs
+            and ordinary_report.get('source_after') == expected_inputs,
+            'ordinary-link receipt does not use the selected static/dynamic products')
+    require(expected_inputs['source'] == source, 'ordinary-link receipt source differs from selection')
+
+    common = [dict(row) for row in selected_objects
+              if set(row.get('artifacts', ())) == {'candidate-static', 'candidate-shared'}]
+    loader_objects = [dict(row) for row in selected_objects if row.get('name') == '_dl_debug_addr']
+    try:
+        ordinary_objects, aliases = ordinary_link_evidence.selected_objects(contract)
+    except (ValueError, OSError) as error:
+        raise SelectionError(f'public-data linkage selected-object contract rejected: {error}') from error
+    require(common == ordinary_objects, 'ordinary-link object roster differs from selected object contracts')
+    expected_aliases = [
+        {'name': row['name'], 'target': row['alias_target']}
+        for row in common if row['alias_target']
+    ]
+    require(aliases == expected_aliases, 'ordinary-link alias roster differs from selected object contracts')
+    require(len(loader_objects) == 1 and loader_objects[0]['id'] == 'object:_dl_debug_addr'
+            and loader_objects[0]['artifacts'] == ['candidate-shared'] and not loader_objects[0]['alias_target'],
+            'loader debugger pointer selection differs')
+    loader_object = loader_objects[0]
+    require({key: loader_object[key] for key in ('type', 'binding', 'visibility', 'size_bytes', 'alignment_bytes')}
+            == {'type': 'OBJECT', 'binding': 'GLOBAL', 'visibility': 'DEFAULT', 'size_bytes': 8, 'alignment_bytes': 8},
+            'loader debugger pointer contract differs')
+    require(loader_replay.get('source_commit') == source['revision']
+            and loader_replay.get('source_sha256') == source['content_sha256'],
+            'loader-debug receipt source differs from selection')
+    metadata = loader_replay.get('public_metadata', {}).get('_dl_debug_addr')
+    require(type(metadata) is dict
+            and metadata.get('type') == 'OBJECT' and metadata.get('binding') == 'GLOBAL'
+            and metadata.get('visibility') == 'DEFAULT' and metadata.get('size') == 8,
+            'loader-debug receipt pointer metadata differs')
+    return {
+        'status': 'linkage-addressability-proved-with-boundaries',
+        'selection_source': copy.deepcopy(source),
+        'ordinary_link': {
+            'reader': file_identity(Path(ordinary_link_evidence.__file__)),
+            'report': ordinary_before,
+            'source_and_products': expected_inputs,
+            'objects': [{'id': row['id'], 'identity': identity(row['name']), 'artifacts': row['artifacts']} for row in common],
+            'aliases': [{'identity': identity(row['name']), 'target': identity(row['target'])} for row in aliases],
+        },
+        'loader_debug_addr': {
+            'reader': file_identity(Path(loader_debug_evidence.__file__)),
+            'report': loader_before,
+            'id': loader_object['id'], 'identity': identity(loader_object['name']),
+            'artifacts': copy.deepcopy(loader_object['artifacts']),
+            'metadata': {'type': metadata['type'], 'binding': metadata['binding'],
+                         'visibility': metadata['visibility'], 'size_bytes': metadata['size']},
+        },
+        'limits': list(PUBLIC_DATA_LINKAGE_LIMITS),
+    }
+
+
+def attach_public_data_linkage(accounting: Mapping[str, Any], companion: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """Attach ordinary-addressability evidence to the exact imported objects.
+
+    The ordinary-link receipt covers the supplied static product, not every
+    future candidate artifact that may happen to import a selected spelling.
+    An uncovered feature/private import therefore keeps the original generic
+    import reason instead of being cleared by an object-name match.
+    """
+    if companion is None:
+        return []
+    require(type(companion) is dict and type(companion.get('ordinary_link')) is dict,
+            'public-data linkage companion differs')
+    raw_objects = companion['ordinary_link'].get('objects')
+    require(type(raw_objects) is list, 'public-data linkage object roster differs')
+    objects: dict[str, Mapping[str, Any]] = {}
+    for raw in raw_objects:
+        require(type(raw) is dict and set(raw) == {'id', 'identity', 'artifacts'},
+                'public-data linkage object fields differ')
+        name = identity_key(raw['identity'])[0]
+        require(type(raw['id']) is str and raw['id'] == 'object:' + name
+                and raw['artifacts'] == ['candidate-static', 'candidate-shared'],
+                'public-data linkage object placement differs')
+        require(name not in objects, 'public-data linkage object is duplicated')
+        objects[name] = raw
+    candidate_artifacts = {artifact.key for artifact in elf_facts.ARTIFACTS if artifact.owner != 'reference'}
+    joins: list[dict[str, Any]] = []
+    discharged: set[tuple[str, str | None, bool]] = set()
+    for record in accounting['identities']:
+        if ORDINARY_IMPORT_REASON not in record['unresolved']:
+            continue
+        name, version, default = identity_key(record['identity'])
+        object_record = objects.get(name)
+        if object_record is None:
+            continue
+        require(version is None and default is False and record['selection'].get('owner') == object_record['id'],
+                'public-data linkage identity ownership differs')
+        imports = [occurrence for occurrence in accounting['occurrences']
+                   if occurrence['role'] == 'import' and occurrence['row']['name'] == name
+                   and occurrence['artifact_key'] in candidate_artifacts]
+        covered = bool(imports) and all(
+            occurrence['artifact_key'] == 'candidate-static'
+            and occurrence['accounting'] == {
+                'disposition': 'public-provider', 'owner': object_record['id'], 'scope': 'candidate-static',
+            }
+            for occurrence in imports
+        )
+        joins.append({
+            'identity': copy.deepcopy(record['identity']),
+            'owner': object_record['id'],
+            'artifact_keys': sorted({occurrence['artifact_key'] for occurrence in imports}),
+            'occurrence_indices': [occurrence['index'] for occurrence in imports],
+            'ordinary_link_covered': covered,
+            'discharged_reason': ORDINARY_IMPORT_REASON if covered else None,
+        })
+        if covered:
+            record['unresolved'].remove(ORDINARY_IMPORT_REASON)
+            discharged.add((name, version, default))
+    if discharged:
+        accounting['blockers'][:] = [
+            blocker for blocker in accounting['blockers']
+            if not (blocker['code'] == 'identity-unresolved'
+                    and identity_key(blocker['identity']) in discharged
+                    and blocker['reason'] == ORDINARY_IMPORT_REASON)
+        ]
+    return joins
+
+
+def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration_report: Path | None,
+                  ordinary_link_report: Path | None = None, loader_debug_report: Path | None = None) -> dict[str, Any]:
     source_before = selection_source()
     contract = load_contract(contract_path)
     inputs = load_source_inputs(contract, contract_path)
     facts, measurement = replay_measurement(paths)
     declaration = declaration_adapter(declaration_report, selected_objects=contract['object_contracts'])
+    public_data_linkage_companion = public_data_linkage_adapter(
+        ordinary_link_report, loader_debug_report, contract=contract,
+        selected_objects=contract['object_contracts'], source=source_before, paths=paths,
+    )
     expanded = expand_obligations(contract, inputs)
     accounting = account_placements(expanded, facts)
+    public_data_linkage_joins = attach_public_data_linkage(accounting, public_data_linkage_companion)
     candidate = measurement['candidate_build']
     source_matches = source_before['clean'] is True and source_before['revision'] == candidate['revision'] and source_before['content_sha256'] == candidate['source_content_sha256']
     blockers = accounting.pop('blockers')
@@ -944,25 +1119,30 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     blockers = sorted(blockers, key=lambda item: json.dumps(item, sort_keys=True))
     return {'schema': SCHEMA, 'target': TARGET, 'selection_source': source_before, 'source_inputs': inputs,
             'contract': contract, 'measurement': measurement, 'declaration_companion': declaration,
+            'public_data_linkage_companion': public_data_linkage_companion,
+            'public_data_linkage_joins': public_data_linkage_joins,
             **accounting, 'closure': {'complete': not blockers, 'blockers': blockers}, 'status': dict(STATUS),
             'limits': ['selection audit is not qualification', 'complete raw ELF observations stay with the publicly replayed supplement',
                        'no allocator metadata or unwinder investigation', 'no imported AArch64 execution proof',
-                       'semantic and family receipt adapters remain unavailable; policy/source observations cannot satisfy them']}
+                       'public-data linkage is scoped evidence; aggregate semantic and family receipt adapters remain unavailable']}
 
 
 def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declaration_report: Path | None = None,
+                 ordinary_link_report: Path | None = None, loader_debug_report: Path | None = None,
                  **measurement_inputs: Path) -> dict[str, Any]:
     output = physical_work_path(output, directory=True, own=True, fresh=True)
     paths = validate_measurement_paths(**measurement_inputs)
     contract_path = Path(os.path.abspath(contract_path))
     require(contract_path.is_relative_to(ROOT) and contract_path.resolve() == contract_path and contract_path.is_file(), 'contract must be a physical read-only checkout source')
-    report = _build_report(contract_path=contract_path, paths=paths, declaration_report=declaration_report)
+    report = _build_report(contract_path=contract_path, paths=paths, declaration_report=declaration_report,
+                           ordinary_link_report=ordinary_link_report, loader_debug_report=loader_debug_report)
     output.mkdir()
     (output / 'report.json').write_bytes(inventory._stable_json(report))
     return report
 
 
 def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, declaration_report: Path | None = None,
+                    ordinary_link_report: Path | None = None, loader_debug_report: Path | None = None,
                     **measurement_inputs: Path) -> dict[str, Any]:
     report_path = physical_work_path(report_path, directory=False, own=True)
     require(report_path.name == 'report.json', 'selection report has the wrong name')
@@ -970,7 +1150,8 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
     report = read_json(report_path)
     contract_path = Path(os.path.abspath(contract_path))
     require(contract_path.is_relative_to(ROOT) and contract_path.resolve() == contract_path and contract_path.is_file(), 'contract must be a physical read-only checkout source')
-    expected = _build_report(contract_path=contract_path, paths=paths, declaration_report=declaration_report)
+    expected = _build_report(contract_path=contract_path, paths=paths, declaration_report=declaration_report,
+                             ordinary_link_report=ordinary_link_report, loader_debug_report=loader_debug_report)
     require(same(report, expected), 'selection report does not reconstruct exactly from source inputs and public measurement replay')
     return report
 
@@ -984,12 +1165,19 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument('--output', type=Path)
     parser.add_argument('--contract', type=Path, default=CONTRACT_PATH)
     parser.add_argument('--declaration-report', type=Path)
+    parser.add_argument('--public-data-ordinary-link-report', type=Path)
+    parser.add_argument('--loader-debug-abi-report', type=Path)
     options = [arg.split('=', 1)[0] for arg in argv if arg.startswith('--')]
     if len(options) != len(set(options)):
         parser.error('duplicate options are not accepted')
     args = parser.parse_args(argv)
+    if (args.public_data_ordinary_link_report is None) != (args.loader_debug_abi_report is None):
+        parser.error('--public-data-ordinary-link-report and --loader-debug-abi-report must be supplied together')
     kwargs = {key: getattr(args, key) for key in ('measurement_checkout', 'base_inventory', 'static_product', 'dynamic_product',
-                                                'static_preparation', 'declaration_report')}
+                                                'static_preparation', 'declaration_report', 'public_data_ordinary_link_report',
+                                                'loader_debug_abi_report')}
+    kwargs['ordinary_link_report'] = kwargs.pop('public_data_ordinary_link_report')
+    kwargs['loader_debug_report'] = kwargs.pop('loader_debug_abi_report')
     kwargs.update(contract_path=args.contract, elf_report=args.elf_facts)
     try:
         if args.mode == 'build-report':

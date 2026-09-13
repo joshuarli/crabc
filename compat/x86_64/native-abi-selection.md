@@ -59,6 +59,20 @@ The full report and retained physical evidence belong under ignored `.work/`,
 while the reviewed policy stays in source control. No selection operation
 changes family, qualification, or public-platform promotion state.
 
+When both current owner receipts are available, supply
+`--public-data-ordinary-link-report REPORT` and
+`--loader-debug-abi-report REPORT`. They are an optional pair: one without the
+other, or either repeated, is rejected. The first reader authenticates ordinary
+addressability for the exact 32 static/shared data objects and ten declared
+aliases against the same supplied static preparation and dynamic product. The
+second reader authenticates the shared-only eight-byte `_dl_debug_addr` loader
+pointer from its own same-source product cohort. The selection report records a
+`public_data_linkage_companion` and scoped physical import joins. It discharges
+only a selected object import when every candidate import for that exact object
+is in the static product covered by the ordinary-link receipt. It does not set
+the aggregate semantic-receipt gate, `runtime_semantics_proven`, family
+completion, qualification, or public support.
+
 The current reader accounts for physical placements and source-selected
 metadata. After the single public declaration replay, it applies
 [`native_data_declarations.py`](native-data-declarations.md) to the 19 installed
@@ -67,7 +81,11 @@ retains its adapter and policy identities, qualified types, direct and transitiv
 observations, and current-source comparison. This selected data agreement leaves
 callable declarations, object layout and accessor-to-storage behavior open.
 Component and family receipt adapters remain to be integrated, so current
-reports retain those blockers and `require-closure` refuses them.
+reports retain those blockers and `require-closure` refuses them. The optional
+public-data linkage companion is a narrow exception to that absence: it records
+ordinary link/addressability evidence without claiming object lifecycle,
+strong override, interposition, COPY relocation, header feature-profile, or
+runtime mutation semantics.
 
 ## Selection inputs and definition domains
 

@@ -429,6 +429,28 @@ class PathAndCommandTests(unittest.TestCase):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as result:
                 selection.main(variant)
             self.assertEqual(result.exception.code, 2)
+        for variant in (
+            base + ['--output', 'first', '--public-data-ordinary-link-report', '.work/ordinary/report.json'],
+            base + ['--output', 'first', '--loader-debug-abi-report', '.work/loader/report.json'],
+        ):
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as result:
+                selection.main(variant)
+            self.assertEqual(result.exception.code, 2)
+
+    def test_cli_accepts_only_the_complete_linkage_report_pair(self):
+        arguments = ['build-report']
+        for flag in ('measurement-checkout', 'elf-facts', 'base-inventory', 'static-product', 'dynamic-product', 'static-preparation'):
+            arguments += ['--' + flag, '.work/not-present']
+        arguments += [
+            '--output', '.work/output',
+            '--public-data-ordinary-link-report', '.work/ordinary/report.json',
+            '--loader-debug-abi-report', '.work/loader/report.json',
+        ]
+        report = {'identities': [], 'occurrences': [], 'closure': {'complete': False, 'blockers': []}}
+        with mock.patch.object(selection, 'build_report', return_value=report) as build:
+            self.assertEqual(selection.main(arguments), 0)
+        self.assertEqual(build.call_args.kwargs['ordinary_link_report'], Path('.work/ordinary/report.json'))
+        self.assertEqual(build.call_args.kwargs['loader_debug_report'], Path('.work/loader/report.json'))
 
 
 
@@ -491,6 +513,194 @@ class SelectedDataDeclarationIntegrationTests(unittest.TestCase):
         typed = result['selected_data_declarations']['account']
         self.assertEqual(typed['selected_data_declaration_status'], 'historical-source-drift-with-explicit-boundaries')
         self.assertFalse(result['complete'])
+
+
+class PublicDataLinkageAdapterTests(unittest.TestCase):
+    def setUp(self):
+        scratch = ROOT / '.work/x86_64/native-abi-selection-linkage-tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        self.temporary = tempfile.TemporaryDirectory(dir=scratch)
+        self.work = Path(self.temporary.name)
+        self.addCleanup(self.temporary.cleanup)
+        self.contract = selection.load_contract()
+        self.source = {'revision': 'a' * 40, 'content_sha256': 'b' * 64, 'clean': True}
+        self.paths = {
+            'static_preparation': self.work / 'static-preparation.json',
+            'static_product': self.work / 'static-product',
+            'dynamic_product': self.work / 'dynamic-product',
+        }
+        self.paths['static_preparation'].write_text('{}\n')
+        self.paths['static_product'].mkdir()
+        self.paths['dynamic_product'].mkdir()
+        self.ordinary_report = self.work / 'ordinary-report.json'
+        self.loader_report = self.work / 'loader-report.json'
+
+    def linkage_companion(self, *, report_inputs=None, admitted_inputs=None, loader_metadata=None, loader_source=None,
+                          ordinary_selection=None):
+        admitted_inputs = {
+            'source': dict(self.source),
+            'static_preparation': {'receipt': 'exact static receipt'},
+            'dynamic_product': {'path': 'exact dynamic product'},
+        } if admitted_inputs is None else admitted_inputs
+        report_inputs = admitted_inputs if report_inputs is None else report_inputs
+        loader_metadata = {
+            'type': 'OBJECT', 'binding': 'GLOBAL', 'visibility': 'DEFAULT', 'size': 8,
+        } if loader_metadata is None else loader_metadata
+        self.ordinary_report.write_text(json.dumps({
+            'source_before': report_inputs, 'source_after': report_inputs,
+        }) + '\n')
+        loader_source = self.source if loader_source is None else loader_source
+        loader = {
+            'source_commit': loader_source['revision'], 'source_sha256': loader_source['content_sha256'],
+            'public_metadata': {'_dl_debug_addr': loader_metadata},
+        }
+        self.loader_report.write_text(json.dumps(loader) + '\n')
+        ordinary_replay = {'report': {'path': 'ordinary-report.json'}, 'links': {}}
+        selection_replay = (
+            contextlib.nullcontext()
+            if ordinary_selection is None
+            else mock.patch.object(selection.ordinary_link_evidence, 'selected_objects', return_value=ordinary_selection)
+        )
+        with (
+            mock.patch.object(selection.ordinary_link_evidence, 'validate_report', return_value=ordinary_replay) as ordinary_validate,
+            mock.patch.object(selection.ordinary_link_evidence, 'admit_inputs', return_value=admitted_inputs) as ordinary_inputs_replay,
+            mock.patch.object(selection.loader_debug_evidence, 'validate_report', return_value=loader) as loader_validate,
+            selection_replay,
+        ):
+            result = selection.public_data_linkage_adapter(
+                self.ordinary_report, self.loader_report, contract=self.contract,
+                selected_objects=self.contract['object_contracts'], source=self.source, paths=self.paths,
+            )
+        ordinary_validate.assert_called_once_with(ROOT, self.ordinary_report)
+        ordinary_inputs_replay.assert_called_once_with(
+            ROOT, self.paths['static_preparation'], self.paths['static_product'], self.paths['dynamic_product'],
+        )
+        loader_validate.assert_called_once_with(self.loader_report)
+        return result
+
+    def test_linkage_reports_are_an_optional_pair(self):
+        self.assertIsNone(selection.public_data_linkage_adapter(
+            None, None, contract=self.contract, selected_objects=self.contract['object_contracts'],
+            source=self.source, paths={},
+        ))
+        with self.assertRaisesRegex(selection.SelectionError, 'together'):
+            selection.public_data_linkage_adapter(
+                ROOT / '.work/x86_64/ordinary/report.json',
+                None,
+                contract=self.contract,
+                selected_objects=self.contract['object_contracts'],
+                source={'revision': 'a' * 40, 'content_sha256': 'b' * 64, 'clean': True},
+                paths={},
+            )
+
+    def test_linkage_replays_both_owners_and_keeps_the_32_10_one_boundary(self):
+        result = self.linkage_companion()
+        self.assertEqual(result['status'], 'linkage-addressability-proved-with-boundaries')
+        self.assertEqual(len(result['ordinary_link']['objects']), 32)
+        self.assertEqual(len(result['ordinary_link']['aliases']), 10)
+        self.assertEqual(result['loader_debug_addr']['id'], 'object:_dl_debug_addr')
+        self.assertEqual(result['loader_debug_addr']['artifacts'], ['candidate-shared'])
+        self.assertEqual(result['loader_debug_addr']['metadata']['size_bytes'], 8)
+
+    def test_linkage_rejects_a_report_with_other_supplied_products(self):
+        admitted = {
+            'source': dict(self.source),
+            'static_preparation': {'receipt': 'selected static receipt'},
+            'dynamic_product': {'path': 'selected dynamic product'},
+        }
+        report = copy.deepcopy(admitted)
+        report['dynamic_product']['path'] = 'substituted dynamic product'
+        with self.assertRaisesRegex(selection.SelectionError, 'selected static/dynamic products'):
+            self.linkage_companion(report_inputs=report, admitted_inputs=admitted)
+
+    def test_linkage_rejects_loader_pointer_or_source_substitution(self):
+        for kwargs, message in (
+            ({'loader_metadata': {'type': 'OBJECT', 'binding': 'GLOBAL', 'visibility': 'DEFAULT', 'size': 40}},
+             'pointer metadata'),
+            ({'loader_source': {**self.source, 'content_sha256': 'c' * 64}}, 'source differs'),
+        ):
+            with self.subTest(kwargs=kwargs), self.assertRaisesRegex(selection.SelectionError, message):
+                self.linkage_companion(**kwargs)
+
+    def test_linkage_rejects_an_omitted_object_or_changed_alias_projection(self):
+        objects, aliases = selection.ordinary_link_evidence.selected_objects(self.contract)
+        altered_aliases = copy.deepcopy(aliases)
+        altered_aliases[0]['target'] = '__progname'
+        for projection in ((objects[:-1], aliases), (objects, altered_aliases)):
+            with self.subTest(projection=projection), self.assertRaisesRegex(selection.SelectionError, 'roster'):
+                self.linkage_companion(ordinary_selection=projection)
+
+    def test_linkage_clears_only_the_covered_static_object_import(self):
+        ordinary_reason = selection.ORDINARY_IMPORT_REASON
+        accounting = {
+            'identities': [
+                {'identity': identity('environ'), 'selection': {'owner': 'object:environ'},
+                 'unresolved': [ordinary_reason, 'separate lifecycle receipt remains required']},
+                {'identity': identity('stderr'), 'selection': {'owner': 'object:stderr'},
+                 'unresolved': [ordinary_reason]},
+            ],
+            'occurrences': [
+                {'index': 7, 'artifact_key': 'candidate-static', 'role': 'import',
+                 'row': {'name': 'environ'}, 'accounting': {'disposition': 'public-provider', 'owner': 'object:environ', 'scope': 'candidate-static'}},
+                {'index': 8, 'artifact_key': 'candidate-static', 'role': 'import',
+                 'row': {'name': 'stderr'}, 'accounting': {'disposition': 'public-provider', 'owner': 'object:stderr', 'scope': 'candidate-static'}},
+            ],
+            'blockers': [
+                {'code': 'identity-unresolved', 'identity': identity('environ'), 'reason': ordinary_reason},
+                {'code': 'identity-unresolved', 'identity': identity('environ'), 'reason': 'separate lifecycle receipt remains required'},
+                {'code': 'identity-unresolved', 'identity': identity('stderr'), 'reason': ordinary_reason},
+            ],
+            'data_alias_observations': [
+                {'identity': identity('environ'), 'runtime_semantics_proven': False},
+            ],
+        }
+        companion = {
+            'ordinary_link': {
+                'objects': [
+                    {'id': 'object:environ', 'identity': identity('environ'),
+                     'artifacts': ['candidate-static', 'candidate-shared']},
+                    {'id': 'object:stderr', 'identity': identity('stderr'),
+                     'artifacts': ['candidate-static', 'candidate-shared']},
+                ],
+            },
+        }
+        joins = selection.attach_public_data_linkage(accounting, companion)
+        self.assertEqual([join['occurrence_indices'] for join in joins], [[7], [8]])
+        self.assertEqual(accounting['identities'][0]['unresolved'], ['separate lifecycle receipt remains required'])
+        self.assertEqual(accounting['identities'][1]['unresolved'], [])
+        self.assertEqual(
+            accounting['blockers'],
+            [{'code': 'identity-unresolved', 'identity': identity('environ'),
+              'reason': 'separate lifecycle receipt remains required'}],
+        )
+        self.assertFalse(accounting['data_alias_observations'][0]['runtime_semantics_proven'])
+
+    def test_linkage_keeps_a_generic_import_blocker_when_another_artifact_imports_it(self):
+        ordinary_reason = selection.ORDINARY_IMPORT_REASON
+        accounting = {
+            'identities': [
+                {'identity': identity('environ'), 'selection': {'owner': 'object:environ'},
+                 'unresolved': [ordinary_reason]},
+            ],
+            'occurrences': [
+                {'index': 7, 'artifact_key': 'candidate-static', 'role': 'import', 'row': {'name': 'environ'},
+                 'accounting': {'disposition': 'public-provider', 'owner': 'object:environ', 'scope': 'candidate-static'}},
+                {'index': 8, 'artifact_key': 'candidate-loader', 'role': 'import', 'row': {'name': 'environ'},
+                 'accounting': {'disposition': 'public-provider', 'owner': 'object:environ', 'scope': 'candidate-loader'}},
+            ],
+            'blockers': [{'code': 'identity-unresolved', 'identity': identity('environ'), 'reason': ordinary_reason}],
+        }
+        companion = {'ordinary_link': {'objects': [
+            {'id': 'object:environ', 'identity': identity('environ'),
+             'artifacts': ['candidate-static', 'candidate-shared']},
+        ]}}
+        joins = selection.attach_public_data_linkage(accounting, companion)
+        self.assertFalse(joins[0]['ordinary_link_covered'])
+        self.assertEqual(joins[0]['artifact_keys'], ['candidate-loader', 'candidate-static'])
+        self.assertEqual(accounting['identities'][0]['unresolved'], [ordinary_reason])
+        self.assertEqual(accounting['blockers'], [
+            {'code': 'identity-unresolved', 'identity': identity('environ'), 'reason': ordinary_reason},
+        ])
 
 
 def empty_facts():
