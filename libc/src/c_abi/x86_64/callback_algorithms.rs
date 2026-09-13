@@ -26,7 +26,8 @@ use core::ffi::{c_void};
 
 use super::qsort::{qsort_with_context, QsortContextCmp};
 
-// Musl's installed stdlib header marks the direct __qsort_r helper hidden,
+// Musl's internal src/include/stdlib.h header marks the direct __qsort_r
+// helper hidden,
 // while weak_alias(__qsort_r, qsort_r) keeps the GNU/BSD alias DEFAULT and at
 // the same address. The default native static archive uses that private helper
 // contract. The selected owned-dynamic runtime retains its independently
