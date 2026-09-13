@@ -90,6 +90,61 @@ int main(void) {
                            cwd=reader.ROOT,check=True,capture_output=True,text=True)
             subprocess.run([str(binary)],cwd=reader.ROOT,check=True,capture_output=True,text=True)
 
+    def test_probe_keeps_conventional_shared_slot_outside_main_descriptor_scope(self):
+        """The descriptor transport is main-only; the legacy snapshot remains graph-wide."""
+        parent=reader.ROOT/'.work/x86_64/crt-startup-development';parent.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as directory:
+            work=Path(directory);source=work/'wire-scopes.c';binary=work/'wire-scopes'
+            source.write_text(r'''
+#define CRABC_STARTUP_PROBE_WIRE_HARNESS 1
+#define EMPTY_ARRAYS 1
+#define main installed_crt_startup_probe_main
+#include "compat/x86_64/installed_crt_startup_probe.c"
+#undef main
+uintptr_t __stack_chk_guard;
+static const char strings[]="\0__crabc_x86_64_owned_crt_handoff\0__crabc_x86_64_loader_tls_runtime_v1\0__crabc_x86_64_loader_conventional_startup_v1";
+static void import(Elf64_Sym *symbol,size_t offset,int type) {
+    *symbol=(Elf64_Sym){.st_name=offset,.st_info=ELF64_ST_INFO(STB_WEAK,type),
+                         .st_other=STV_DEFAULT,.st_shndx=SHN_UNDEF};
+}
+static struct dl_phdr_info image(const char *name,Elf64_Phdr *program,Elf64_Dyn *dynamic) {
+    *program=(Elf64_Phdr){.p_type=PT_DYNAMIC,.p_vaddr=(Elf64_Addr)(uintptr_t)dynamic};
+    return (struct dl_phdr_info){.dlpi_phdr=program,.dlpi_phnum=1,.dlpi_name=name};
+}
+int main(void) {
+    enum { H=1, D=1+sizeof "__crabc_x86_64_owned_crt_handoff",
+           C=1+sizeof "__crabc_x86_64_owned_crt_handoff"+sizeof "__crabc_x86_64_loader_tls_runtime_v1" };
+    Elf64_Sym main_symbols[3]={0},shared_symbols[4]={0};
+    Elf64_Rela main_relocations[2]={0},shared_relocations[3]={0};
+    Elf64_Dyn main_dynamic[5]={0},shared_dynamic[5]={0}; Elf64_Phdr main_program,shared_program;
+    uintptr_t handoff=0x100,descriptor=0x200,snapshot=0,rogue_handoff=0x300,rogue_descriptor=0x400;
+    import(&main_symbols[1],H,STT_OBJECT); import(&main_symbols[2],D,STT_NOTYPE);
+    import(&shared_symbols[1],C,STT_OBJECT); import(&shared_symbols[2],H,STT_OBJECT); import(&shared_symbols[3],D,STT_NOTYPE);
+    main_relocations[0]=(Elf64_Rela){.r_offset=(Elf64_Addr)(uintptr_t)&handoff,.r_info=ELF64_R_INFO(1,R_X86_64_GLOB_DAT)};
+    main_relocations[1]=(Elf64_Rela){.r_offset=(Elf64_Addr)(uintptr_t)&descriptor,.r_info=ELF64_R_INFO(2,R_X86_64_GLOB_DAT)};
+    shared_relocations[0]=(Elf64_Rela){.r_offset=(Elf64_Addr)(uintptr_t)&snapshot,.r_info=ELF64_R_INFO(1,R_X86_64_GLOB_DAT)};
+    shared_relocations[1]=(Elf64_Rela){.r_offset=(Elf64_Addr)(uintptr_t)&rogue_handoff,.r_info=ELF64_R_INFO(2,R_X86_64_GLOB_DAT)};
+    shared_relocations[2]=(Elf64_Rela){.r_offset=(Elf64_Addr)(uintptr_t)&rogue_descriptor,.r_info=ELF64_R_INFO(3,R_X86_64_GLOB_DAT)};
+    main_dynamic[0]=(Elf64_Dyn){.d_tag=DT_SYMTAB,.d_un.d_ptr=(Elf64_Addr)(uintptr_t)main_symbols};
+    main_dynamic[1]=(Elf64_Dyn){.d_tag=DT_STRTAB,.d_un.d_ptr=(Elf64_Addr)(uintptr_t)strings};
+    main_dynamic[2]=(Elf64_Dyn){.d_tag=DT_RELA,.d_un.d_ptr=(Elf64_Addr)(uintptr_t)main_relocations};
+    main_dynamic[3]=(Elf64_Dyn){.d_tag=DT_RELASZ,.d_un.d_val=sizeof main_relocations};
+    shared_dynamic[0]=(Elf64_Dyn){.d_tag=DT_SYMTAB,.d_un.d_ptr=(Elf64_Addr)(uintptr_t)shared_symbols};
+    shared_dynamic[1]=(Elf64_Dyn){.d_tag=DT_STRTAB,.d_un.d_ptr=(Elf64_Addr)(uintptr_t)strings};
+    shared_dynamic[2]=(Elf64_Dyn){.d_tag=DT_RELA,.d_un.d_ptr=(Elf64_Addr)(uintptr_t)shared_relocations};
+    shared_dynamic[3]=(Elf64_Dyn){.d_tag=DT_RELASZ,.d_un.d_val=sizeof shared_relocations};
+    struct dl_phdr_info shared=image("/usr/lib/libc.so",&shared_program,shared_dynamic);
+    struct dl_phdr_info main=image("",&main_program,main_dynamic); struct wire_state state={0};
+    wires(&shared,0,&state); wires(&main,0,&state);
+    return state.main_images!=1 || state.handoffs!=1 || state.handoff!=handoff
+        || state.descriptors!=1 || state.descriptor!=descriptor
+        || state.conventional!=1 || state.snapshot!=snapshot;
+}
+''',encoding='utf-8')
+            subprocess.run(['cc','-std=c11','-I',str(reader.ROOT),str(source),'-o',str(binary)],
+                           cwd=reader.ROOT,check=True,capture_output=True,text=True)
+            subprocess.run([str(binary)],cwd=reader.ROOT,check=True,capture_output=True,text=True)
+
     def test_duplicate_report_spellings_reject_before_replay(self):
         for options in (['--report=one','--report=two'],['--report','one','--report=two']):
             with self.subTest(options=options), mock.patch.object(reader,'validate_report',

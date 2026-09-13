@@ -79,10 +79,12 @@ struct wire_state {
 static int wires(struct dl_phdr_info *info,size_t size,void *opaque) {
     (void)size;
     struct wire_state *s=opaque;
-    /* The private resolver writes this exact weak slot only in the main
-     * image. A DSO with a same-spelled relocation cannot become evidence. */
-    if (info->dlpi_name && info->dlpi_name[0]) return 0;
-    if (++s->main_images!=1) _Exit(99);
+    /* The private resolver writes the handoff and descriptor slots only in
+     * the main image. The conventional snapshot remains the pre-existing
+     * graph-wide observation: it is a libc relocation whose zero value proves
+     * that owned startup did not select that conventional path. */
+    int main_image=!(info->dlpi_name && info->dlpi_name[0]);
+    if (main_image && ++s->main_images!=1) _Exit(99);
     const Elf64_Dyn *dyn=0;
     for (unsigned i=0;i<info->dlpi_phnum;i++) if (info->dlpi_phdr[i].p_type==PT_DYNAMIC)
         dyn=(const Elf64_Dyn *)(info->dlpi_addr+info->dlpi_phdr[i].p_vaddr);
@@ -101,9 +103,9 @@ static int wires(struct dl_phdr_info *info,size_t size,void *opaque) {
         unsigned si=ELF64_R_SYM(rela[n].r_info);
         if (!si) continue;
         const char *name=strings+syms[si].st_name;
-        int h=!strcmp(name,"__crabc_x86_64_owned_crt_handoff");
+        int h=main_image && !strcmp(name,"__crabc_x86_64_owned_crt_handoff");
         int c=!strcmp(name,"__crabc_x86_64_loader_conventional_startup_v1");
-        int d=!strcmp(name,"__crabc_x86_64_loader_tls_runtime_v1");
+        int d=main_image && !strcmp(name,"__crabc_x86_64_loader_tls_runtime_v1");
         if (!h && !c && !d) continue;
         if (ELF64_R_TYPE(rela[n].r_info)!=R_X86_64_GLOB_DAT || rela[n].r_addend
             || syms[si].st_shndx!=SHN_UNDEF) _Exit(101);
