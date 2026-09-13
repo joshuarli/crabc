@@ -534,9 +534,13 @@ def _stream(work: Path, output: Path, stem: str) -> dict[str, dict[str, object]]
     return result
 
 
-def _link(work: Path, output: Path, product: Path, workload: Path, executable: str, receipt: str, linkage: str) -> dict[str, object]:
+def _link(work: Path, output: Path, product: Path, workload: Path, executable: str, receipt: str,
+          linkage: str, *, export_dynamic: bool = False) -> dict[str, object]:
+    require(type(export_dynamic) is bool, "owned link export-dynamic contract is not boolean")
     try:
-        result = product_evidence.validate_link(product, workload, work / executable, work / receipt, linkage)
+        result = product_evidence.validate_link(
+            product, workload, work / executable, work / receipt, linkage, export_dynamic=export_dynamic
+        )
     except product_evidence.ProductEvidenceError as error:
         raise AllocatorBoundaryError(str(error)) from error
     receipt_record = json_object(work / receipt, "owned link receipt")
@@ -550,21 +554,23 @@ def _link(work: Path, output: Path, product: Path, workload: Path, executable: s
     require(inventory.sha256(actual_linker) == linker["sha256"], "owned link receipt linker bytes drifted")
     return {"validated": result, "executable": identity(work / executable, logical_path=(work / executable).relative_to(output).as_posix()),
             "receipt": identity(work / receipt, logical_path=(work / receipt).relative_to(output).as_posix()),
-            "linker": dict(linker)}
+            "linker": dict(linker), "export_dynamic": export_dynamic}
 
 
 def _replay_link(work: Path, output: Path, product: Path, workload: Path, executable: str,
                  receipt: str, linkage: str, record: object) -> dict[str, object]:
-    item = exact(record, {"validated", "executable", "receipt", "linker"}, "owned link record")
+    item = exact(record, {"validated", "executable", "receipt", "linker", "export_dynamic"}, "owned link record")
     executable_path, receipt_path = work / executable, work / receipt
     require(same(item["executable"], identity(executable_path, logical_path=executable_path.relative_to(output).as_posix())),
             "owned link executable identity drifted")
     require(same(item["receipt"], identity(receipt_path, logical_path=receipt_path.relative_to(output).as_posix())),
             "owned link receipt identity drifted")
     linker = exact(item["linker"], {"path", "sha256"}, "sealed owned linker")
+    require(type(item["export_dynamic"]) is bool, "sealed owned export-dynamic contract is not boolean")
     try:
         result = product_evidence.validate_retained_link(
-            ROOT, "/workspace", product, workload, executable_path, receipt_path, linkage, linker
+            ROOT, "/workspace", product, workload, executable_path, receipt_path, linkage, linker,
+            export_dynamic=item["export_dynamic"],
         )
     except product_evidence.ProductEvidenceError as error:
         raise AllocatorBoundaryError(str(error)) from error
@@ -633,7 +639,9 @@ def _interposition_observations(work: Path, output: Path, dynamic_product: Path,
     links: dict[str, object] = {}
     if validate_links:
         workload = work / "workload.o"
-        links = {mode: _link(work, output, dynamic_product, workload, f"candidate-{mode}", f"candidate-{mode}.crabc-link.json", mode) for mode in DYNAMIC_MODES}
+        links = {mode: _link(work, output, dynamic_product, workload, f"candidate-{mode}",
+                             f"candidate-{mode}.crabc-link.json", mode, export_dynamic=True)
+                 for mode in DYNAMIC_MODES}
     for required in ("provider.relocations", "provider.symbols", "provider.disassembly", "workload.header", "workload.relocations"):
         physical_file(work / required, f"interposition {required}")
     reloc = (work / "provider.relocations").read_text(encoding="utf-8")

@@ -62,8 +62,13 @@ class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
                 mock.patch.object(BOUNDARY, "physical_file", return_value=Path("/fixture/ld.lld")),
                 mock.patch.object(BOUNDARY.inventory, "sha256", return_value="a" * 64),
             ):
-                BOUNDARY._link(work, output, Path("/fixture/product"), workload, "candidate-pie", "candidate-pie.crabc-link.json", "pie")
+                record = BOUNDARY._link(
+                    work, output, Path("/fixture/product"), workload, "candidate-pie",
+                    "candidate-pie.crabc-link.json", "pie", export_dynamic=True,
+                )
             self.assertEqual(validate.call_args.args[:4], (Path("/fixture/product"), workload, executable, receipt))
+            self.assertEqual(validate.call_args.kwargs, {"export_dynamic": True})
+            self.assertIs(record["export_dynamic"], True)
 
     def test_product_epoch_rejects_mixed_static_dynamic_and_facts_sources(self) -> None:
         source = {"revision": "a" * 40, "content_sha256": "b" * 64}
@@ -147,6 +152,7 @@ class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
             link = {
                 "validated": {"linkage": "pie"},
                 "linker": {"path": "/opt/ld.lld", "sha256": "a" * 64},
+                "export_dynamic": False,
                 "executable": BOUNDARY.identity(work / "candidate-pie", logical_path="work/candidate-pie"),
                 "receipt": BOUNDARY.identity(work / "candidate-pie.crabc-link.json", logical_path="work/candidate-pie.crabc-link.json"),
             }
@@ -154,6 +160,7 @@ class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
                 BOUNDARY._replay_link(work, output, Path("/fixture/product"), work / "workload.o", "candidate-pie", "candidate-pie.crabc-link.json", "pie", link)
             self.assertEqual(validate.call_args.args[:3], (ROOT, "/workspace", Path("/fixture/product")))
             self.assertEqual(validate.call_args.args[-1], link["linker"])
+            self.assertEqual(validate.call_args.kwargs, {"export_dynamic": False})
 
     def test_fresh_output_rejects_a_symlinked_existing_ancestor_before_creation(self) -> None:
         scratch = ROOT / ".work/x86_64/native-c-allocator-boundary-tests"

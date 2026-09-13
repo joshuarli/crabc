@@ -47,7 +47,10 @@ The collector runs only two existing installed-product workloads:
 - `run_owned_c_allocation_interposition.sh DYNAMIC` reuses one installed-header
   object against musl and candidate PIE/non-PIE kernel/direct roots. It checks
   `asprintf`, passwd cleanup, and AIO list state against executable
-  `malloc`/`realloc`/`free` interposition.
+  `malloc`/`realloc`/`free` interposition. These candidate links deliberately
+  request `-rdynamic`; their sealed linker commands must contain exactly the
+  resulting `--export-dynamic` flag. Ordinary candidate links retain the
+  no-export command contract.
 
 Both runner work directories, their terminal streams, selected executable
 roots, and owned link receipts are sealed before and after replay. The product
