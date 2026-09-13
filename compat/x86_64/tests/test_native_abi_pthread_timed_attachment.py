@@ -120,7 +120,11 @@ def _occurrence(index: int, name: str, artifact: str, table: str, binding: str,
         'index': index, 'artifact_key': artifact, 'member_name': None,
         'member_index': None, 'member_occurrence': None, 'table': table,
         'table_section_index': 1, 'definition_section': {'name': '.text'},
-        'role': 'definition', 'row': _symbol(name, binding, visibility, value),
+        # `account_placements` classifies the retained shared private bodies
+        # as local definitions.  Keep the attachment fixture on the same
+        # physical-role boundary as the complete e7 facts.
+        'role': 'local-definition' if binding == 'LOCAL' else 'definition',
+        'row': _symbol(name, binding, visibility, value),
     }
 
 
@@ -418,6 +422,40 @@ class NativePthreadTimedAttachmentTests(unittest.TestCase):
         self.assertEqual(accounting['identities'][-1]['unresolved'], [selection.ORDINARY_IMPORT_REASON])
         self.assertTrue(any(row['row']['name'] == '' for row in accounting['occurrences']))
         self.assertTrue(any(row['row']['name'] == 'unowned_pthread_fact' for row in accounting['occurrences']))
+
+    def test_shared_private_provider_requires_local_definition_and_exact_finite_rows(self) -> None:
+        companion = self._adapter()
+        accounting = self._accounting()
+        shared = next(
+            row for row in accounting['occurrences']
+            if row['artifact_key'] == 'candidate-shared'
+            and row['row']['name'] == ALIASES[0][1]
+        )
+        shared['role'] = 'definition'
+        with self.assertRaises(selection.SelectionError):
+            selection.attach_native_pthread_timed_feature(accounting, companion)
+
+        accounting = self._accounting()
+        shared = next(
+            row for row in accounting['occurrences']
+            if row['artifact_key'] == 'candidate-shared'
+            and row['row']['name'] == ALIASES[0][1]
+        )
+        shared['row']['visibility'] = 'DEFAULT'
+        with self.assertRaises(selection.SelectionError):
+            selection.attach_native_pthread_timed_feature(accounting, companion)
+
+        accounting = self._accounting()
+        shared = next(
+            row for row in accounting['occurrences']
+            if row['artifact_key'] == 'candidate-shared'
+            and row['row']['name'] == ALIASES[0][1]
+        )
+        duplicate = copy.deepcopy(shared)
+        duplicate['index'] = max(row['index'] for row in accounting['occurrences']) + 1
+        accounting['occurrences'].append(duplicate)
+        with self.assertRaises(selection.SelectionError):
+            selection.attach_native_pthread_timed_feature(accounting, companion)
 
     def test_feature_requirement_metadata_must_match_the_current_source_record(self) -> None:
         companion = self._adapter()

@@ -4498,9 +4498,10 @@ def _pthread_timed_named_rows(occurrences: Mapping[int, Mapping[str, Any]], name
 
 
 def _pthread_timed_one_row(rows: Sequence[Mapping[str, Any]], *, artifact: str, table: str,
-                           binding: str, visibility: str | None, description: str) -> dict[str, Any]:
+                           role: str, binding: str, visibility: str | None,
+                           description: str) -> dict[str, Any]:
     matches = [row for row in rows if row.get('artifact_key') == artifact and row.get('table') == table
-               and row.get('role') == 'definition' and row.get('row', {}).get('type') == 'FUNC'
+               and row.get('role') == role and row.get('row', {}).get('type') == 'FUNC'
                and row['row'].get('binding') == binding
                and (visibility is None or row['row'].get('visibility') == visibility)]
     require(len(matches) == 1, f'{description} exact candidate occurrence differs')
@@ -4617,23 +4618,26 @@ def attach_native_pthread_timed_feature(accounting: Mapping[str, Any],
         public_rows = _pthread_timed_named_rows(occurrences, public)
         provider_rows = _pthread_timed_named_rows(occurrences, provider)
         static_alias = _pthread_timed_one_row(
-            public_rows, artifact='candidate-static', table='.symtab', binding='WEAK', visibility='DEFAULT',
+            public_rows, artifact='candidate-static', table='.symtab', role='definition', binding='WEAK', visibility='DEFAULT',
             description=f'pthread timed alias {public} static',
         )
         shared_dyn_alias = _pthread_timed_one_row(
-            public_rows, artifact='candidate-shared', table='.dynsym', binding='WEAK', visibility='DEFAULT',
+            public_rows, artifact='candidate-shared', table='.dynsym', role='definition', binding='WEAK', visibility='DEFAULT',
             description=f'pthread timed alias {public} shared dynsym',
         )
         shared_alias = _pthread_timed_one_row(
-            public_rows, artifact='candidate-shared', table='.symtab', binding='WEAK', visibility='DEFAULT',
+            public_rows, artifact='candidate-shared', table='.symtab', role='definition', binding='WEAK', visibility='DEFAULT',
             description=f'pthread timed alias {public} shared symtab',
         )
         static_provider = _pthread_timed_one_row(
-            provider_rows, artifact='candidate-static', table='.symtab', binding='GLOBAL', visibility='HIDDEN',
+            provider_rows, artifact='candidate-static', table='.symtab', role='definition', binding='GLOBAL', visibility='HIDDEN',
             description=f'pthread timed provider {provider} static',
         )
+        # The receipt proves the selected public alias through its shared
+        # definition domain, while its provider remains a local hidden body.
+        # That physical role is an observation, never a private-owner selection.
         shared_provider = _pthread_timed_one_row(
-            provider_rows, artifact='candidate-shared', table='.symtab', binding='LOCAL', visibility=None,
+            provider_rows, artifact='candidate-shared', table='.symtab', role='local-definition', binding='LOCAL', visibility='HIDDEN',
             description=f'pthread timed provider {provider} shared symtab',
         )
         expected_indices.update((static_alias['index'], shared_dyn_alias['index'], shared_alias['index'],
