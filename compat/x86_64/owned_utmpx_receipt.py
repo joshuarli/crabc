@@ -328,6 +328,20 @@ def validate_image_tool(program: str, retained: Any, workspace: Path, products: 
             {key: expected[key] for key in ("sha256", "size", "mode")},
             "retained image tool bytes differ from trusted manifest")
 
+
+def collected_program_source(program: str, workspace: Path) -> Path:
+    """Map a native source-mounted command path to its copied product bytes."""
+    require(type(program) is str and program.startswith(SOURCE_MOUNT + "/"),
+            "collected command program is not source mounted")
+    source = workspace / program[len(SOURCE_MOUNT) + 1:]
+    products = (workspace / ".work/utmpx-receipt/inputs/static",
+                workspace / ".work/utmpx-receipt/inputs/dynamic")
+    require(any(source.is_relative_to(product) for product in products),
+            "collected command program escapes copied owned products")
+    no_links(workspace, source, "collected owned command program")
+    return regular(source, "collected owned command program")
+
+
 def local_git_head(root: Path) -> str:
     """Read the trusted checkout's current Git epoch without spawning Git."""
     marker = root / ".git"
@@ -1241,7 +1255,8 @@ def collect(static_preparation: Path, static_product: Path, dynamic_product: Pat
         require(type(nested_compiler) is str and Path(nested_compiler).is_absolute(),
                 "collected dependency compiler is invalid")
         for program in sorted({record["program"] for record in commands.values()} | {nested_compiler}):
-            target = Path(program).resolve(strict=True)
+            target = (collected_program_source(program, workspace)
+                      if program.startswith(SOURCE_MOUNT + "/") else Path(program).resolve(strict=True))
             require(target.is_file() and not target.is_symlink(), "native command program is not physical")
             retained = workspace / "tools" / hashlib.sha256(program.encode()).hexdigest()
             copy_regular(target, retained)
@@ -1262,7 +1277,8 @@ def collect(static_preparation: Path, static_product: Path, dynamic_product: Pat
                 "collected link receipts disagree about linker identity")
         linker_path = receipt_linkers[0]["path"]
         if linker_path not in tools["programs"]:
-            target = Path(linker_path).resolve(strict=True)
+            target = (collected_program_source(linker_path, workspace)
+                      if linker_path.startswith(SOURCE_MOUNT + "/") else Path(linker_path).resolve(strict=True))
             require(target.is_file() and not target.is_symlink(), "sealed linker is not physical")
             retained = workspace / "tools" / hashlib.sha256(linker_path.encode()).hexdigest()
             copy_regular(target, retained)
