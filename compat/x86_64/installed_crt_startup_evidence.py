@@ -144,7 +144,7 @@ def plan(root,work,inputs,tools):
     def add(label,argv,cwd='/workspace'):specs.append({'label':label,'argv':argv,'cwd':cwd})
     library=root/inputs['dynamic_product']['path']/'usr/lib';static=root/inputs['static_preparation']['primary']['path']/'usr/lib'
     for variant in ('normal','empty'):
-        add(variant+'-compile',[tool('dynamic_driver'),'--dynamic-shared-object','-std=c11','-ftls-model=initial-exec','-fno-stack-protector',
+        add(variant+'-compile',[tool('dynamic_driver'),'--dynamic-shared-object','-std=c11','-fno-stack-protector',
             *(['-DEMPTY_ARRAYS'] if variant=='empty' else []),'-c',p('installed_crt_startup_probe.c'),'-o',p(variant+'.o')])
     for case in cases():
         mode,variant,name=(case[k] for k in ('mode','variant','name'));obj=p(variant+'.o')

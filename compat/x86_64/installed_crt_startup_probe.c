@@ -10,8 +10,8 @@
 
 /* The same installed-header object is linked in every mode. Musl's omission
  * of main preinit is observed separately; it is not normalized away. */
-static __thread int initial = 17;
-static __thread int zero;
+static __thread int initial __attribute__((tls_model("initial-exec"))) = 17;
+static __thread int zero __attribute__((tls_model("initial-exec")));
 static int phase, preinitialized;
 static void emit(char c) { if (write(1,&c,1)!=1) _Exit(90); }
 static void state(void) {

@@ -97,6 +97,7 @@ class InstalledCrtStartupTests(unittest.TestCase):
             plan=reader.plan(root,work,inputs,tools)
         for compilation in [x for x in plan if x['label'].endswith('-compile')]:
             self.assertNotIn('-fPIC',compilation['argv'])
+            self.assertNotIn('-ftls-model=initial-exec',compilation['argv'])
             self.assertEqual(compilation['argv'][1],'--dynamic-shared-object')
         links=[x for x in plan if x['label'].endswith('-link')]
         for case in reader.cases():
