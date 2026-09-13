@@ -13,6 +13,12 @@ readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly MUSL_ARCHIVE=/opt/musl-1.2.6/lib/libc.a
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
+# The selected Rust archive deliberately keeps its complete provider surface,
+# so extracting the __qsort_r member can also bring unrelated errno/TSD input
+# sections to this freestanding leaf link. The links request section GC to retain
+# only fixture-reachable sections; archive contents and normal runtime linkage
+# stay unchanged.
+readonly FREESTANDING_SECTION_GC="-Wl,--gc-sections"
 
 fail() { printf 'ERROR: x86 static libc callback algorithms: %s\n' "$*" >&2; exit 1; }
 require_tool() { command -v "$1" >/dev/null 2>&1 || fail "requires $1"; }
@@ -139,6 +145,7 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_CALLBACK_ALGORITHMS_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    "$FREESTANDING_SECTION_GC" \
     compat/x86_64/libc_callback_algorithms_probe.c \
     compat/x86_64/libc_callback_algorithms_start.S "$archive" -o "$candidate"
 assert_static_closure "$candidate" candidate
@@ -163,6 +170,7 @@ fi
     -DCRABC_CALLBACK_ALGORITHMS_OVERRIDE_QSORT_R -I"$ROOT_DIR/include" \
     -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin \
     -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    "$FREESTANDING_SECTION_GC" \
     compat/x86_64/libc_callback_algorithms_probe.c \
     compat/x86_64/libc_callback_algorithms_start.S "$archive" -o "$candidate_override"
 assert_static_closure "$candidate_override" candidate-override

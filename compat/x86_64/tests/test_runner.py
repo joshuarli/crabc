@@ -25812,6 +25812,9 @@ esac
             "same-address",
             "unexpectedly selects TLS",
             "Rust panic machinery",
+            "FREESTANDING_SECTION_GC",
+            "-Wl,--gc-sections",
+            "section GC",
         ):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
