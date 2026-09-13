@@ -317,7 +317,7 @@ because the outer report JSON remained unchanged.
 receipt` reasons. It requires each public alias as a candidate static
 `FUNC WEAK DEFAULT` definition plus shared `.dynsym` and `.symtab` forms, and
 each private spelling as the receipt's candidate static `FUNC GLOBAL HIDDEN`
-and shared local `.symtab` definition in the same definition domains. The
+and shared `.symtab` `FUNC LOCAL HIDDEN` definition in the same definition domains. The
 four accounting requirements must exactly match the source-expanded feature
 records, including their state, baseline and enabled features, evidence,
 runner, source provenance, and feature-selection route. The
