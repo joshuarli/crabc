@@ -26,9 +26,21 @@ use core::ffi::{c_void};
 
 use super::qsort::{qsort_with_context, QsortContextCmp};
 
-// Musl weak_alias(__qsort_r, qsort_r) makes both ELF names identify the same
-// implementation. A Rust weak wrapper would have a different address and
-// would silently widen the translated source contract.
+// Musl's installed stdlib header marks the direct __qsort_r helper hidden,
+// while weak_alias(__qsort_r, qsort_r) keeps the GNU/BSD alias DEFAULT and at
+// the same address. The default native static archive uses that private helper
+// contract. The selected owned-dynamic runtime retains its independently
+// frozen shared DEFAULT __qsort_r exposure, so its DSO link mode must not
+// inherit this static-only visibility directive. A Rust weak wrapper would
+// have a different address and silently widen the translated source contract.
+#[cfg(not(feature = "x86-owned-dynamic-runtime"))]
+core::arch::global_asm!(
+    ".hidden __qsort_r",
+    ".weak qsort_r",
+    ".set qsort_r, __qsort_r",
+);
+
+#[cfg(feature = "x86-owned-dynamic-runtime")]
 core::arch::global_asm!(
     ".weak qsort_r",
     ".set qsort_r, __qsort_r",

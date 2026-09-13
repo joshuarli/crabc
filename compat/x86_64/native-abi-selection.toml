@@ -459,10 +459,10 @@ reason = "Direct compiler failure seam; callers retain the fail-stop behavior co
 static_metadata_rule = "selected-native-oracle-function"
 
 [[owner_groups]]
-id = "source-owned-qsort-context-alias"
+id = "source-owned-qsort-context-body"
 selector = "explicit"
 disposition = "public-provider"
-owner = "x86-qsort-context-alias"
+owner = "x86-qsort-context-body"
 family = "libc.c-abi-compat"
 artifacts = ["candidate-static", "candidate-shared"]
 sources = ["libc/src/c_abi/x86_64/callback_algorithms.rs"]
@@ -471,7 +471,7 @@ members_file = ""
 expected_type = "FUNC"
 delegated_members = []
 placement_metadata = {}
-reason = "Source-defined qsort context ABI alias."
+reason = "Direct __qsort_r context ABI body; qsort_r is its separate WEAK same-definition alias."
 static_metadata_rule = "selected-native-oracle-function"
 
 [[owner_groups]]

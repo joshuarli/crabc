@@ -11,6 +11,7 @@ set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+readonly MUSL_ARCHIVE=/opt/musl-1.2.6/lib/libc.a
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 
 fail() { printf 'ERROR: x86 static libc callback algorithms: %s\n' "$*" >&2; exit 1; }
@@ -71,10 +72,13 @@ assert_musl_weak_alias() {
     local symbols_path="$1" label="$2"
     local alias_value helper_value
 
-    alias_value="$(awk '$8 == "qsort_r" && $5 == "WEAK" && $7 != "UND" { print $2; exit }' "$symbols_path")"
-    helper_value="$(awk '$8 == "__qsort_r" && $5 == "GLOBAL" && $7 != "UND" { print $2; exit }' "$symbols_path")"
-    [ -n "$alias_value" ] || fail "${label} lacks a weak qsort_r symbol"
-    [ -n "$helper_value" ] || fail "${label} lacks a strong __qsort_r symbol"
+    alias_value="$(awk '$8 == "qsort_r" && $4 == "FUNC" && $5 == "WEAK" && $6 == "DEFAULT" && $7 != "UND" { print $2; exit }' "$symbols_path")"
+    helper_value="$(awk '$8 == "__qsort_r" && $4 == "FUNC" && $5 == "GLOBAL" && $6 == "HIDDEN" && $7 != "UND" { print $2; exit }' "$symbols_path")"
+    [ -n "$alias_value" ] || fail "${label} lacks a weak DEFAULT qsort_r symbol"
+    [ -n "$helper_value" ] || fail "${label} lacks a GLOBAL HIDDEN __qsort_r helper"
+    if awk '$8 == "__qsort_r" && $7 != "UND" && ($4 != "FUNC" || $5 != "GLOBAL" || $6 != "HIDDEN") { bad = 1 } END { exit bad ? 0 : 1 }' "$symbols_path"; then
+        fail "${label} has a non-hidden __qsort_r definition"
+    fi
     [ "$alias_value" = "$helper_value" ] \
         || fail "${label} qsort_r is not the musl same-address weak alias"
 }
@@ -83,6 +87,7 @@ assert_musl_weak_alias() {
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
 for tool in ar cargo cmp diff grep nm objdump readelf rustup sort; do require_tool "$tool"; done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
+[ -f "$MUSL_ARCHIVE" ] || fail "missing pinned musl static archive"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
 work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-callback-algorithms.XXXXXX)"
@@ -92,6 +97,8 @@ reference="$work_dir/musl-callback-algorithms-reference"
 candidate="$work_dir/crabc-static-callback-algorithms-candidate"
 candidate_override="$work_dir/crabc-static-callback-algorithms-override-candidate"
 trace="$work_dir/header-trace"; archive_symbols="$work_dir/archive-symbols"
+reference_static_symbols="$work_dir/musl-static-callback-algorithms-symbols"
+candidate_archive_symbols="$work_dir/crabc-static-callback-algorithms-archive-symbols"
 selected_symbols="$work_dir/selected-c-abi-symbols"; expected_symbols="$work_dir/expected-c-abi-symbols"
 cd "$ROOT_DIR"
 
@@ -104,11 +111,15 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_callback_algorithms_probe.c -o "$reference"
 "$reference" || fail "pinned-musl callback-algorithms fixture failed"
+readelf --symbols --wide "$MUSL_ARCHIVE" >"$reference_static_symbols"
+assert_musl_weak_alias "$reference_static_symbols" "pinned-musl static archive"
 
 CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
     --target x86_64-unknown-linux-musl -- -C relocation-model=static -C code-model=small -C panic=abort
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
 nm -A --defined-only "$archive" >"$archive_symbols"
+readelf --symbols --wide "$archive" >"$candidate_archive_symbols"
+assert_musl_weak_alias "$candidate_archive_symbols" "candidate static archive"
 assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"
 for symbol in bsearch __qsort_r qsort; do
     grep -Eq "[[:space:]]T[[:space:]]${symbol}$" "$archive_symbols" \

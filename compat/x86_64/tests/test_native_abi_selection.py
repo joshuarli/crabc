@@ -203,6 +203,10 @@ class SourceOwnerPolicyTests(unittest.TestCase):
         self.assertEqual(tls['selection']['group'], 'source-owned-loader-libc-tls-boundary')
         self.assertEqual([row['artifact_key'] for row in tls['expected_placements']], ['candidate-shared', 'candidate-loader'])
         self.assertNotIn('candidate-static', [row['artifact_key'] for row in tls['expected_placements']])
+        qsort = self.records['__qsort_r']
+        self.assertEqual(qsort['selection']['group'], 'source-owned-qsort-context-body')
+        self.assertIn('Direct __qsort_r context ABI body', qsort['selection']['reason'])
+        self.assertNotIn('qsort_r', self.groups['source-owned-qsort-context-body']['members'])
         startup = self.records['__libc_start_main']
         self.assertEqual(startup['selection']['group'], 'source-owned-crt-libc-startup-boundary')
         self.assertEqual([row['artifact_key'] for row in startup['expected_placements']], ['candidate-static', 'candidate-shared'])
