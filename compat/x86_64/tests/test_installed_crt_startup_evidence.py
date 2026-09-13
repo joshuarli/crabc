@@ -99,6 +99,8 @@ class InstalledCrtStartupTests(unittest.TestCase):
             self.assertNotIn('-fPIC',compilation['argv'])
             self.assertNotIn('-ftls-model=initial-exec',compilation['argv'])
             self.assertEqual(compilation['argv'][1],'--dynamic-shared-object')
+        for spec in plan:
+            reader.ordinary.raw_path(work,spec['label'],'stdout')
         links=[x for x in plan if x['label'].endswith('-link')]
         for case in reader.cases():
             row=next(x for x in links if x['label']==case['name']+'-link')

@@ -39,7 +39,7 @@ def require(condition,message):
 from prepared_worker_tls_evidence import same
 ident=substrate.ident
 read=substrate.read
-raw=substrate.raw
+def raw(work,label):return substrate.raw(work,label.replace('.','-'))
 
 def expected_contract():
     return {'schema':SCHEMA,'identities':list(NAMES),'modes':list(MODES),'variants':['normal','empty'],
@@ -141,7 +141,7 @@ def mode_owner(mode):
 def plan(root,work,inputs,tools):
     m=lambda path:ordinary.mounted(root,path);p=lambda name:m(work/name)
     tool=lambda name:tools[name]['original']['path']; specs=[]
-    def add(label,argv,cwd='/workspace'):specs.append({'label':label,'argv':argv,'cwd':cwd})
+    def add(label,argv,cwd='/workspace'):specs.append({'label':label.replace('.','-'),'argv':argv,'cwd':cwd})
     library=root/inputs['dynamic_product']['path']/'usr/lib';static=root/inputs['static_preparation']['primary']['path']/'usr/lib'
     for variant in ('normal','empty'):
         add(variant+'-compile',[tool('dynamic_driver'),'--dynamic-shared-object','-std=c11','-fno-stack-protector',
