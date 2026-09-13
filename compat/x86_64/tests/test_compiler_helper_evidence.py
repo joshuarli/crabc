@@ -176,6 +176,12 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
             with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "candidate-header input relationship"):
                 EVIDENCE._command_events(work, events, root=ROOT, source_mount=EVIDENCE.SOURCE_MOUNT)
 
+    def test_ambient_link_trace_rejects_crt_objects_without_posix_regex_syntax(self) -> None:
+        self.assertTrue(EVIDENCE._ambient_link_input("/tmp/crta.o\n"))
+        self.assertTrue(EVIDENCE._ambient_link_input("/opt/toolchain/crt1.o\n"))
+        self.assertTrue(EVIDENCE._ambient_link_input("libgcc.a\n"))
+        self.assertFalse(EVIDENCE._ambient_link_input("/tmp/crt file.o\n"))
+
     def test_provenance_binds_the_retained_archive_sha256(self) -> None:
         contract = EVIDENCE.load_contract(ROOT)
         test_root = ROOT / ".work/x86_64/compiler-helper-evidence-tests"

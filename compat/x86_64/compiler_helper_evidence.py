@@ -879,6 +879,12 @@ def _event_bytes(work: Path, events: Sequence[Mapping[str, Any]], label: str, st
     return path.read_bytes()
 
 
+def _ambient_link_input(trace: str) -> bool:
+    """Reject a CRT/compiler-runtime input named by the retained link trace."""
+
+    return re.search(r"libgcc|compiler-rt|libc\.a|/crt[^\s]*\.o", trace) is not None
+
+
 def _validate_aggregate_observations(work: Path, contract: Mapping[str, Any], events: Sequence[Mapping[str, Any]],
                                      artifacts: Mapping[str, Any]) -> dict[str, Any]:
     names = set(helper_names(contract))
@@ -893,7 +899,7 @@ def _validate_aggregate_observations(work: Path, contract: Mapping[str, Any], ev
     archive_free = _event_text(work, events, "archive-free-link", "stderr")
     require(all(name in archive_free for name in names), "archive-free link did not name every direct helper")
     candidate_link = _event_text(work, events, "candidate-link", "stdout")
-    require(not re.search(r"libgcc|compiler-rt|libc\.a|/crt[^[:space:]]*\.o", candidate_link),
+    require(not _ambient_link_input(candidate_link),
             "aggregate candidate link admitted an ambient CRT or compiler runtime")
     header = _event_text(work, events, "candidate-header", "stdout")
     require("Type:                              EXEC (Executable file)" in header
