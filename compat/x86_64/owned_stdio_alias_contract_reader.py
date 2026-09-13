@@ -264,7 +264,7 @@ def plan(root,work,inputs,tools):
         elif mode in ('static','static-pie'):
             add(name+'-link',[tool('static_driver'),'-'+mode,'--link-receipt',name+'.link.json',obj,'-o',path(name)],mount(work))
         else:
-            add(name+'-link',[tool('dynamic_driver'),'--'+mode,'-Wl,--export-dynamic',obj,'-pthread','-ldl','-o',path(name)])
+            add(name+'-link',[tool('dynamic_driver'),'--'+mode,obj,'-pthread','-ldl','-o',path(name)])
         for flag,suffix in (('-hW','header'),('-lW','program'),('-sW','symbols')):
             add(name+'-'+suffix,[tool('readelf'),flag,path(name)])
     for key,p in elf_paths(root,work,inputs).items():

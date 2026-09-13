@@ -147,6 +147,8 @@ class SuppliedStdioReceiptTests(unittest.TestCase):
         links=[x for x in specs if x['label'].endswith('-link')]
         self.assertEqual(len(links),13)
         for spec in links:
+            if spec['label'].startswith('candidate-'):
+                self.assertNotIn('-Wl,--export-dynamic',spec['argv'])
             probe=spec['label'].removesuffix('-link').rsplit('-',1)[1]
             self.assertEqual(sum(x==str(work/(probe+'.o')) for x in spec['argv']),1)
             if spec['label'].startswith('candidate-static'):
