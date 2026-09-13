@@ -53,7 +53,8 @@ class NativeThreadSignalAbiTests(unittest.TestCase):
         if candidate:
             binding = "WEAK" if broken == "weak" else "GLOBAL"
             visibility = "HIDDEN" if broken == "hidden" else "DEFAULT"
-            entries.append((1, 0x1230, 36, "FUNC", binding, visibility, "10", "tgkill"))
+            name = "tgkill@@CRABC_1" if broken == "versioned" else "tgkill"
+            entries.append((1, 0x1230, 36, "FUNC", binding, visibility, "10", name))
         if broken == "truncated":
             declared = len(entries) + 1
         else:
@@ -117,6 +118,9 @@ class NativeThreadSignalAbiTests(unittest.TestCase):
         self.assertEqual(result["schema"], "crabc.x86_64-native-thread-signal-abi/v1")
         self.assertFalse(result["oracle"]["dynamic"]["public_tgkill_export"])
         self.assertEqual(result["candidate"]["shared_symtab"]["binding"], "GLOBAL")
+        self.assertEqual(result["candidate"]["dynamic"]["raw_name"], "tgkill")
+        self.assertIsNone(result["candidate"]["dynamic"]["version"])
+        self.assertIs(result["candidate"]["dynamic"]["version_default"], False)
 
     def test_weak_hidden_oracle_and_truncated_symbol_evidence_reject(self) -> None:
         for broken, expression in (
@@ -130,6 +134,36 @@ class NativeThreadSignalAbiTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             with self.assertRaisesRegex(symbols.NativeThreadSignalSymbolError, "absent public tgkill ABI"):
                 symbols.validate(CONTRACT, *self._inputs(Path(temporary), oracle_broken="defined"))
+
+    def test_versioned_candidate_dynamic_or_full_shared_symbol_rejects(self) -> None:
+        for name, index, table in (
+            ("candidate-dynamic", 4, ".dynsym"),
+            ("candidate-shared", 5, ".symtab"),
+        ):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as temporary:
+                paths = self._inputs(Path(temporary))
+                path = paths[index]
+                path.write_text(
+                    self._table(table, archive=False, candidate=True, broken="versioned"),
+                    encoding="utf-8",
+                )
+                with self.assertRaisesRegex(symbols.NativeThreadSignalSymbolError, "unversioned raw spelling"):
+                    symbols.validate(CONTRACT, *paths)
+
+    def test_symbol_parser_retains_raw_spelling_and_version_defaultness(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "versioned-dynsym"
+            path.write_text(
+                "Symbol table '.dynsym' contains 2 entries:\n"
+                + self._row(0, 0, 0, "NOTYPE", "LOCAL", "DEFAULT", "UND", "")
+                + self._row(1, 0x1230, 36, "FUNC", "GLOBAL", "DEFAULT", "10", "tgkill@@CRABC_1 (2)"),
+                encoding="utf-8",
+            )
+            row = symbols.parse_symbols(path, archive=False, table=".dynsym")[1]
+        self.assertEqual(row["raw_name"], "tgkill@@CRABC_1 (2)")
+        self.assertEqual(row["name"], "tgkill")
+        self.assertEqual(row["version"], "CRABC_1")
+        self.assertIs(row["version_default"], True)
 
     def test_numeric_non_promoting_contract_flag_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

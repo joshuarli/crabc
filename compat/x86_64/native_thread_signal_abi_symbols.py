@@ -37,7 +37,15 @@ _MUSL = {
     "public_tgkill_export": False,
     "adapter": "compat/x86_64/native_thread_signal_oracle_adapter.c",
 }
-_CANDIDATE = {"name": "tgkill", "type": "FUNC", "binding": "GLOBAL", "visibility": "DEFAULT"}
+_CANDIDATE = {
+    "name": "tgkill",
+    "raw_name": "tgkill",
+    "version": None,
+    "version_default": False,
+    "type": "FUNC",
+    "binding": "GLOBAL",
+    "visibility": "DEFAULT",
+}
 _HEADER_VISIBILITY = {
     "gnu_cpp17": {
         "source": "compat/x86_64/native_thread_signal_header_gnu.cc",
@@ -78,7 +86,29 @@ def _load_contract(path: Path) -> dict[str, Any]:
     return value
 
 
-def parse_symbols(path: Path, *, archive: bool, table: str) -> list[dict[str, str]]:
+def _split_symbol_name(raw_name: str) -> tuple[str, str | None, bool]:
+    """Keep readelf's spelling while separating the ELF version identity."""
+
+    if not raw_name:
+        return "", None, False
+    spelling = raw_name.split(" ", 1)[0]
+    suffix = raw_name[len(spelling):]
+    if suffix and not re.fullmatch(r" \([1-9][0-9]*\)", suffix):
+        _fail(f"invalid retained symbol name spelling: {raw_name}")
+    if "@@" in spelling:
+        name, version = spelling.split("@@", 1)
+        if not name or not version or "@" in version:
+            _fail(f"invalid default symbol version spelling: {raw_name}")
+        return name, version, True
+    if "@" in spelling:
+        name, version = spelling.split("@", 1)
+        if not name or not version or "@" in version:
+            _fail(f"invalid symbol version spelling: {raw_name}")
+        return name, version, False
+    return spelling, None, False
+
+
+def parse_symbols(path: Path, *, archive: bool, table: str) -> list[dict[str, object]]:
     """Parse complete selected `readelf -W` tables; never hide a truncated row."""
 
     if table not in {".dynsym", ".symtab"}:
@@ -88,7 +118,7 @@ def parse_symbols(path: Path, *, archive: bool, table: str) -> list[dict[str, st
     except (OSError, UnicodeDecodeError) as error:
         _fail(f"cannot read retained symbol text {path}: {error}")
 
-    records: list[dict[str, str]] = []
+    records: list[dict[str, object]] = []
     current_file = ""
     current_table: str | None = None
     expected_count: int | None = None
@@ -135,6 +165,8 @@ def parse_symbols(path: Path, *, archive: bool, table: str) -> list[dict[str, st
         if archive and not current_file:
             _fail(f"archive symbol row in {path} lacks a File attribution")
         indexes.add(index)
+        raw_name = name or ""
+        symbol_name, version, version_default = _split_symbol_name(raw_name)
         records.append({
             "file": current_file,
             "index": index_text,
@@ -144,7 +176,10 @@ def parse_symbols(path: Path, *, archive: bool, table: str) -> list[dict[str, st
             "binding": binding,
             "visibility": visibility,
             "section": section,
-            "name": (name or "").split("@", 1)[0],
+            "raw_name": raw_name,
+            "name": symbol_name,
+            "version": version,
+            "version_default": version_default,
         })
     finish_table()
     if selected_tables == 0:
@@ -152,18 +187,18 @@ def parse_symbols(path: Path, *, archive: bool, table: str) -> list[dict[str, st
     return records
 
 
-def _defined(records: list[dict[str, str]]) -> list[dict[str, str]]:
+def _defined(records: list[dict[str, object]]) -> list[dict[str, object]]:
     return [record for record in records if record["name"] == "tgkill" and record["section"] != "UND"]
 
 
-def _require_absent(records: list[dict[str, str]], role: str) -> dict[str, object]:
+def _require_absent(records: list[dict[str, object]], role: str) -> dict[str, object]:
     definitions = _defined(records)
     if definitions:
         _fail(f"{role} must retain musl's absent public tgkill ABI, found {len(definitions)} definitions")
     return {"public_tgkill_export": False}
 
 
-def _require_candidate(records: list[dict[str, str]], role: str) -> dict[str, str]:
+def _require_candidate(records: list[dict[str, object]], role: str) -> dict[str, object]:
     definitions = _defined(records)
     if len(definitions) != 1:
         _fail(f"{role} requires exactly one defined tgkill, found {len(definitions)}")
@@ -172,6 +207,17 @@ def _require_candidate(records: list[dict[str, str]], role: str) -> dict[str, st
     expected = (_CANDIDATE["type"], _CANDIDATE["binding"], _CANDIDATE["visibility"])
     if metadata != expected:
         _fail(f"{role} tgkill must be {' '.join(expected)}, got {' '.join(metadata)}")
+    identity = (row["raw_name"], row["version"], row["version_default"])
+    expected_identity = (
+        _CANDIDATE["raw_name"],
+        _CANDIDATE["version"],
+        _CANDIDATE["version_default"],
+    )
+    if identity != expected_identity:
+        _fail(
+            f"{role} tgkill must retain unversioned raw spelling "
+            f"{_CANDIDATE['raw_name']!r} with null version and false defaultness, got {identity!r}"
+        )
     return row
 
 

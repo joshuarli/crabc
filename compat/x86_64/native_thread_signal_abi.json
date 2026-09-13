@@ -18,6 +18,9 @@
   },
   "candidate_symbol": {
     "name": "tgkill",
+    "raw_name": "tgkill",
+    "version": null,
+    "version_default": false,
     "type": "FUNC",
     "binding": "GLOBAL",
     "visibility": "DEFAULT"

@@ -73,7 +73,10 @@ pinned-musl/Linux observation.
 `readelf` tables. It requires one `FUNC GLOBAL DEFAULT` candidate definition in
 the static archive, shared `.dynsym`, and full shared `.symtab`; it separately
 requires that musl's archive and shared tables retain no public `tgkill`
-definition. The runner also retains the candidate disassembly and requires the
+definition. Each candidate row must retain the exact unversioned raw spelling
+`tgkill`, a null ELF version, and false version-defaultness; a versioned spelling
+such as `tgkill@@CRABC_1` is a different ABI identity and fails replay. The
+runner also retains the candidate disassembly and requires the
 `SYS_TGKILL=234` immediate plus `syscall` instruction.
 
 This is private component evidence. It does not complete
