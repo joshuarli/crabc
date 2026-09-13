@@ -407,6 +407,15 @@ def validate_growth_output(candidate: bytes, oracle: bytes) -> None:
     require(candidate == oracle, "general dlfcn 41-module differential drifted")
 
 
+def single_driver_mode(modes: set[object]) -> str:
+    """Return one receipt mode from the driver's own closed spelling."""
+    require(len(modes) == 1 and modes <= set(DLOPEN_DRIVER_MODES.values()),
+            "general dlfcn executable mode roster drifted")
+    mode = next(iter(modes))
+    assert isinstance(mode, str)
+    return mode
+
+
 def dlfcn_observations(product: Path, output: Path, work: Path) -> dict[str, object]:
     """Read the existing 41-module workload without treating its PASS as proof."""
     product = physical_directory(product, "dynamic product")
@@ -435,8 +444,7 @@ def dlfcn_observations(product: Path, output: Path, work: Path) -> dict[str, obj
     # than relying on a runner label.
     modes = {read_json(work / f"{stem}.crabc-link.json", f"{stem} receipt").get("mode")
              for stem in ("consumer", "tbss-consumer", "growth", "failure", "scope")}
-    require(len(modes) == 1 and modes <= {"pie", "non-pie"}, "general dlfcn executable mode roster drifted")
-    mode = next(iter(modes))
+    mode = single_driver_mode(modes)
     # Reread with the actual mode (the first lookup above catches wrong shape
     # and keeps only a bounded artifact path surface).
     entries = {key: _link_record(product, work, output, stem, mode) for key, stem in

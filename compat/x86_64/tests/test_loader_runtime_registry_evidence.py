@@ -50,6 +50,9 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
 
     def test_non_pie_workload_label_requires_the_owned_driver_exec_receipt(self):
         self.assertEqual(EVIDENCE.DLOPEN_DRIVER_MODES, {"pie": "pie", "non-pie": "exec"})
+        self.assertEqual(EVIDENCE.single_driver_mode({"exec"}), "exec")
+        with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "mode roster"):
+            EVIDENCE.single_driver_mode({"pie", "exec"})
 
     def test_workload_environment_retains_the_existing_chroot_search_path(self):
         self.assertIn("/usr/sbin", EVIDENCE.WORKLOAD_ENVIRONMENT["PATH"].split(":"))
