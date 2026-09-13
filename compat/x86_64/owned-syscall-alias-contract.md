@@ -195,6 +195,9 @@ loose Git commit/tree/blob objects under `source/git-objects/` authenticate both
 complete source trees, including modes, and independently derive the source
 content digest used by `owned_posix_static_products.source_identity`. Retained
 source leaves must match those trees in bytes, logical placement and mode.
+Collector leaves must additionally equal the validator's source-owned collector
+files: a newly fabricated but internally consistent Git commit cannot replace
+the harness authority. A changed collector requires a fresh component receipt.
 Collection checks its clean source before and after execution; selected runtime
 leaves must also match the supplied product revision. This allows a repaired
 collector to inspect an older supplied product without calling that product
@@ -227,7 +230,8 @@ attestation or an independent proof of historical process scheduling.
 commands. Set `CRABC_SYSCALL_ALIAS_TEST_RECEIPT` to a freshly collected v2
 `report.json` to run the isolated real-artifact round trip and adversarial
 receipt mutations, including source/tool resealing, substituted ELF streams,
-forged chroot routes, environments, stdin, link receipts and runtime inputs.
+forged chroot routes, environments, stdin, link receipts, runtime inputs,
+coordinated probe/copy mode changes, and a self-consistent invented Git commit.
 The test copies each receipt under checkout `.work`; it never changes the
 original control. These tests explicitly report a skip when no native receipt
 has been supplied.

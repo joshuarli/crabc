@@ -221,6 +221,7 @@ def _copy_tree(output: Path, source: Path, name: str) -> dict[str, object]:
 def _validate_retained_cohort(output: Path, inputs: Mapping[str, object], products: Mapping[str, object]) -> None:
     """Reconstruct the selected product/provenance cohort from retained bytes."""
     require(set(products) == {"static", "dynamic"}, "retained product roster differs")
+    require(all(products[name].get("retained") == "products/" + name for name in products), "retained product placement differs")
     static_root = physical(output / products["static"]["retained"], "retained static product", True)
     dynamic_root = physical(output / products["dynamic"]["retained"], "retained dynamic product", True)
     try:
@@ -503,6 +504,37 @@ def validate_artifact_observations(output, runner, inputs, command_runner):
                         {p.relative_to(dynamic_root).as_posix() for p in dynamic_root.rglob('*')} | set(additions) | {"scratch"}, "candidate runtime roster differs")
 
 
+def validate_runner_placements(runner):
+    """Apply the runner's fixed umask and output roster independently of seals."""
+    programs = {stem.removesuffix("-link") for stem in CURRENT_COMMAND_STEMS
+                if stem.endswith("-link") and not stem.startswith("shared-dynamic-list-")}
+    programs |= {"shared-dynamic-list-no-policy.so", "shared-dynamic-list-selected.so"}
+    raw = {stem + "." + suffix for stem in CURRENT_COMMAND_STEMS
+           for suffix in ("argv.json", "stdin", "stdout", "stderr", "status")}
+    raw |= {
+        "regular", "contract.o", "override.o", "probe-object-seal.json", "probe-object-link-proof.json",
+        "shared-dynamic-list-provider.o", "shared-dynamic-list-caller.o",
+        "shared-dynamic-list-source.json", "shared-dynamic-list-product-provenance.json", "shared-dynamic-list-linker.txt",
+        "shared-dynamic-list-no-policy.relocations.txt", "shared-dynamic-list-selected.relocations.txt", "shared-dynamic-list-selected.dynsym.txt",
+        "musl-dynamic-symbols.txt", "musl-shared-symbols.txt", "musl-static-symbols.txt",
+        "candidate-dynamic-symbols.txt", "candidate-shared-symbols.txt", "candidate-static-symbols.txt",
+        "candidate-shared-relocations.txt", "source-public-callers.json",
+        *(f"dynamic-{mode}-override.symbols.txt" for mode in ("pie", "non-pie")),
+        *(f"dynamic-{mode}-{probe}.crabc-link.json" for mode in ("pie", "non-pie") for probe in ("contract", "override")),
+    }
+    roots = {f"{lane}-{mode}-root" for lane in ("oracle-dynamic", "dynamic") for mode in ("pie", "non-pie")}
+    require({node.name for node in runner.iterdir()} == programs | raw | roots, "runner retained node roster differs")
+    for name in programs | raw:
+        path = physical(runner / name, "runner output")
+        require(stat.S_IMODE(path.stat().st_mode) == (0o755 if name in programs else 0o644),
+                f"runner output mode differs: {name}")
+    # An enclosing workspace may contribute its setgid directory bit. The
+    # runtime roots still have the runner's 0755 access permissions.
+    for name in roots | {"."}:
+        path = physical(runner / name, "runner root", True)
+        require(stat.S_IMODE(path.stat().st_mode) & ~0o2000 == 0o755, "runner root mode differs")
+
+
 def validate_runner_work(
     output: Path,
     runner: Path,
@@ -511,6 +543,7 @@ def validate_runner_work(
     command_runner: Path | None = None,
 ) -> dict[str, object]:
     runner = physical(runner, "runner evidence", directory=True)
+    validate_runner_placements(runner)
     for node in runner.rglob('*'):
         if node.is_symlink():
             relative = node.relative_to(runner).as_posix()
@@ -671,6 +704,10 @@ def _validate_report(report_path: Path) -> dict[str, object]:
             require(original["path"] == str(original_root / name), f"source logical placement differs: {name}")
             mode, data, symlink = source_trees[category][name]
             require(not symlink and same(original["mode"], mode) and (output / retained["path"]).read_bytes() == data, f"retained {category} source bytes/mode do not match Git tree: {name}")
+            if category == "collector":
+                trusted = physical(ROOT / name, "validator collector source")
+                require(trusted.read_bytes() == data and stat.S_IMODE(trusted.stat().st_mode) == mode,
+                        f"collector source does not match validator authority: {name}")
     manifest_name = "compat/x86_64/owned-syscall-alias-image-inputs.json"
     require(source_trees["collector"][manifest_name][1] == IMAGE_MANIFEST.read_bytes(), "retained image manifest does not match validator's image authority")
     image_manifest = read_json(IMAGE_MANIFEST, "trusted image input manifest")

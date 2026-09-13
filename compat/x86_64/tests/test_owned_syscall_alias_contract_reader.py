@@ -11,11 +11,13 @@ import shutil
 import tempfile
 from unittest import mock
 import hashlib
+import zlib
 from pathlib import Path
 
 
 SOURCE_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SOURCE_DIR))
+import owned_syscall_alias_authority as authority
 
 from owned_syscall_alias_contract_reader import (
     ALIASES,
@@ -260,6 +262,53 @@ class OwnedSyscallAliasRetainedAuthorityTests(unittest.TestCase):
         path.unlink()
         (self.output / "outside-symbols.txt").write_bytes(data)
         path.symlink_to(self.output / "outside-symbols.txt")
+        with self.assertRaises(ReceiptError):
+            validate_report(self.path)
+
+
+    def test_probe_and_staged_copy_modes_cannot_be_resealed_together(self) -> None:
+        (self.runner / "dynamic-pie-contract").chmod(0o777)
+        (self.runner / "dynamic-pie-root/contract").chmod(0o777)
+        with self.assertRaises(ReceiptError):
+            validate_report(self.path)
+
+
+    def test_self_consistent_git_commit_cannot_replace_collector_authority(self) -> None:
+        objects = self.output / "source/git-objects"
+        def read(oid): return zlib.decompress((objects / oid).read_bytes()).split(b"\0", 1)[1]
+        def write(kind, data):
+            raw = kind + b" " + str(len(data)).encode() + b"\0" + data
+            oid = hashlib.sha1(raw).hexdigest()
+            (objects / oid).write_bytes(zlib.compress(raw))
+            return oid
+        name = "compat/x86_64/owned-syscall-alias-contract.md"
+        binding = self.report["source"]["collector"][name]
+        retained = self.output / binding["retained"]["path"]
+        data = retained.read_bytes() + b"\nforged collector contract\n"
+        retained.write_bytes(data)
+        for kind in ("retained", "original"):
+            binding[kind]["sha256"] = hashlib.sha256(data).hexdigest()
+            binding[kind]["size"] = len(data)
+        def rewrite_tree(oid, parts):
+            tree = read(oid)
+            cursor = 0
+            while cursor < len(tree):
+                end = tree.index(b"\0", cursor)
+                filename = tree[cursor:end].split(b" ", 1)[1]
+                if filename == parts[0].encode():
+                    old = tree[end + 1:end + 21].hex()
+                    new = rewrite_tree(old, parts[1:]) if len(parts) > 1 else write(b"blob", data)
+                    return write(b"tree", tree[:end + 1] + bytes.fromhex(new) + tree[end + 21:])
+                cursor = end + 21
+            self.fail("missing test source tree member")
+        old_revision = self.report["collector_source"]["before"]["revision"]
+        commit = read(old_revision)
+        old_tree = commit.split(b"\n", 1)[0][5:].decode()
+        tree = rewrite_tree(old_tree, name.split("/"))
+        revision = write(b"commit", commit.replace(old_tree.encode(), tree.encode(), 1))
+        seal, _files = authority.source_tree(self.output, revision)
+        self.report["collector_source"] = {"before": seal, "after": seal}
+        self.path.write_text(json.dumps(self.report))
         with self.assertRaises(ReceiptError):
             validate_report(self.path)
 
