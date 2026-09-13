@@ -181,13 +181,12 @@ class PublicDataOrdinaryLinkEvidenceTests(unittest.TestCase):
         )
         self.assertNotIn("candidate-dynamic-pie-kernel", expected)
         records = []
-        raw = work / "raw"
-        raw.mkdir()
+        (work / "raw").mkdir()
         for label, item in expected.items():
-            command = raw / (label + ".command.json")
-            stdout = raw / (label + ".stdout")
-            stderr = raw / (label + ".stderr")
-            status = raw / (label + ".status")
+            command = evidence.raw_path(work, label, "command.json")
+            stdout = evidence.raw_path(work, label, "stdout")
+            stderr = evidence.raw_path(work, label, "stderr")
+            status = evidence.raw_path(work, label, "status")
             command.write_text(json.dumps(item["argv"]) + "\n", encoding="utf-8")
             stdout.write_bytes(evidence.EXPECTED_STDOUT if label in evidence.EXECUTION_LABELS else b"")
             stderr.write_bytes(b"")
@@ -199,7 +198,60 @@ class PublicDataOrdinaryLinkEvidenceTests(unittest.TestCase):
                 "stderr": evidence.work_file_identity(self.root, stderr, "stderr"),
                 "status": evidence.work_file_identity(self.root, status, "status"),
             })
-        evidence.validate_command_records(self.root, work, inputs, tools, records)
+        evidence.write_new_json(work / "commands.json", records)
+        replayed = evidence.read_json(work / "commands.json", "commands", list)
+        evidence.validate_command_records(self.root, work, inputs, tools, replayed)
+        substituted = copy.deepcopy(replayed)
+        unrelated = work / "unrelated.stdout"
+        unrelated.write_bytes(b"")
+        next(item for item in substituted if item["label"] == "object-symbols")["stdout"] = evidence.work_file_identity(
+            self.root, unrelated, "substituted stdout"
+        )
+        with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "raw path"):
+            evidence.validate_command_records(self.root, work, inputs, tools, substituted)
+
+    def test_collector_raw_writer_round_trips_to_symbol_and_elf_projections(self) -> None:
+        output = self.root / ".work/collector-raw-round-trip"
+        output.mkdir()
+        collector = evidence.Collector(self.root, output, self.preparation, self.static, self.dynamic)
+
+        def capture(label: str, payload: bytes) -> None:
+            collector.run(label, [sys.executable, "-c", "import sys; sys.stdout.buffer.write(" + repr(payload) + ")"])
+
+        symbols = b"""Symbol table '.symtab' contains 1 entry:
+   Num:    Value          Size Type    Bind   Vis      Ndx Name
+     0: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT  UND probe
+"""
+        capture("object-symbols", symbols)
+        for name, expected in evidence.EXECUTABLE_ELF_MODES.items():
+            (output / name).write_bytes((name + " executable").encode("ascii"))
+            header = (
+                "  Class:                             ELF64\n"
+                "  Data:                              2's complement, little endian\n"
+                "  Machine:                           Advanced Micro Devices X86-64\n"
+                f"  Type:                              {expected['type']} (test)\n"
+            ).encode("ascii")
+            capture(name + "-header", header)
+            program = b""
+            if expected["interpreter"] is not None:
+                program = (
+                    b"  INTERP         0x000000 0x0000000000000000 0x0000000000000000\n"
+                    + f"      [Requesting program interpreter: {expected['interpreter']}]\n".encode("ascii")
+                )
+            capture(name + "-program", program)
+        evidence.write_new_json(output / "commands.json", collector.commands)
+        commands = evidence.read_json(output / "commands.json", "collector commands", list)
+        object_command = next(record for record in commands if record["label"] == "object-symbols")
+        self.assertEqual(
+            evidence.resolve_work_identity(self.root, object_command["stdout"], "collector symbols stdout"),
+            evidence.raw_path(output, "object-symbols", "stdout"),
+        )
+        self.assertEqual(evidence.rows_for(output, "object-symbols")[0]["name"], "probe")
+        observed = evidence.executable_observations(self.root, output)
+        evidence.write_new_json(output / "executables.json", observed)
+        evidence.validate_executable_observations(
+            self.root, output, evidence.read_json(output / "executables.json", "collector executables", dict),
+        )
 
     def test_timeout_retains_terminal_outcome_and_kills_owned_descendants(self) -> None:
         output = self.root / ".work/timeout"
@@ -298,13 +350,28 @@ class PublicDataOrdinaryLinkEvidenceTests(unittest.TestCase):
             )
             program = ""
             if expected["interpreter"] is not None:
-                program = f"      [Requesting program interpreter: {expected['interpreter']}]\n"
+                program = (
+                    "  INTERP         0x000000 0x0000000000000000 0x0000000000000000\n"
+                    f"      [Requesting program interpreter: {expected['interpreter']}]\n"
+                )
             evidence.raw_path(work, name + "-header", "stdout").write_text(header, encoding="utf-8")
             evidence.raw_path(work, name + "-program", "stdout").write_text(program, encoding="utf-8")
         observed = evidence.executable_observations(self.root, work)
         evidence.write_new_json(work / "executables.json", observed)
         replayed = evidence.read_json(work / "executables.json", "executables", dict)
         evidence.validate_executable_observations(self.root, work, replayed)
+        expected_interpreter = evidence.EXECUTABLE_ELF_MODES["dynamic-pie"]["interpreter"]
+        evidence.raw_path(work, "dynamic-pie-program", "stdout").write_text(
+            f"      [Requesting program interpreter: {expected_interpreter}-incorrect]\n", encoding="utf-8"
+        )
+        with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "interpreter"):
+            evidence.validate_executable_observations(self.root, work, observed)
+        evidence.raw_path(work, "dynamic-pie-program", "stdout").write_text(
+            f"      [Requesting program interpreter: {expected_interpreter}]\n"
+            f"      [Requesting program interpreter: {expected_interpreter}]\n", encoding="utf-8"
+        )
+        with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "interpreter"):
+            evidence.validate_executable_observations(self.root, work, observed)
         evidence.raw_path(work, "oracle-static-header", "stdout").write_text(
             "Class: ELF64\nData: 2's complement, little endian\n"
             "Machine: Advanced Micro Devices X86-64\nType: DYN (test)\n", encoding="utf-8"

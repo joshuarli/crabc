@@ -594,7 +594,9 @@ def executable_observations(root: Path, work: Path) -> dict[str, Any]:
             require("Requesting program interpreter:" not in program and re.search(r"^\s*INTERP\b", program, re.MULTILINE) is None,
                     name + " ELF unexpectedly has an interpreter")
         else:
-            require(program.count("Requesting program interpreter: " + interpreter) == 1,
+            fields = re.findall(r"^\s*\[Requesting program interpreter: ([^\]\r\n]+)\]\s*$", program, re.MULTILINE)
+            segments = re.findall(r"^\s*INTERP(?:\s|$)", program, re.MULTILINE)
+            require(len(fields) == 1 and fields[0] == interpreter and len(segments) == 1,
                     name + " ELF interpreter differs")
         result[name] = {"executable": executable, "elf": dict(expected)}
     return result
@@ -1071,18 +1073,20 @@ def validate_command_records(root: Path, work: Path, inputs: Mapping[str, Any], 
                 "ordinary-link command argv differs")
         require(same_json({"cwd": record["cwd"], "argv": record["argv"]}, expected[record["label"]]),
                 "ordinary-link command differs")
-        command_path = resolve_work_identity(root, record["command"], record["label"] + " command")
-        require(read_json(command_path, record["label"] + " command", list) == record["argv"],
-                "ordinary-link retained command differs")
-        for field in ("stdout", "stderr", "status"):
+        paths: dict[str, Path] = {}
+        for field, suffix in (("command", "command.json"), ("stdout", "stdout"),
+                              ("stderr", "stderr"), ("status", "status")):
             path = resolve_work_identity(root, record[field], record["label"] + " " + field)
+            require(path == raw_path(work, record["label"], suffix),
+                    "ordinary-link command raw path differs")
+            paths[field] = path
             if field == "status":
                 require(record["outcome"] == "ok" and path.read_bytes() == b"0\n",
                         "ordinary-link command status differs")
+        require(read_json(paths["command"], record["label"] + " command", list) == record["argv"],
+                "ordinary-link retained command differs")
         if record["label"] in EXECUTION_LABELS:
-            stdout = resolve_work_identity(root, record["stdout"], record["label"] + " stdout")
-            stderr = resolve_work_identity(root, record["stderr"], record["label"] + " stderr")
-            require(stdout.read_bytes() == EXPECTED_STDOUT and stderr.read_bytes() == b"",
+            require(paths["stdout"].read_bytes() == EXPECTED_STDOUT and paths["stderr"].read_bytes() == b"",
                     "ordinary-link execution output differs")
 
 
