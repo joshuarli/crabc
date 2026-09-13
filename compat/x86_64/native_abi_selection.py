@@ -3985,18 +3985,31 @@ def attach_prepared_worker_tls(accounting: Mapping[str, Any], companion: Mapping
         row for row in occurrences.values()
         if same(row_identity(row.get('row')), identity(descriptor_name))
     ]
-    require(all(
-        row.get('artifact_key') not in {'candidate-shared', 'candidate-loader'}
-        and row.get('role') == 'import' and row.get('table') == '.symtab'
-        and row.get('row', {}).get('type') == 'NOTYPE'
-        and row['row'].get('binding') == 'WEAK'
-        and row['row'].get('visibility') == 'DEFAULT'
-        and row['row'].get('section_index') == 'UND'
-        and row['row'].get('size_bytes') == 0
-        and row.get('accounting', {}).get('disposition') == 'private-resolution-operation'
-        and row['accounting'].get('owner') == 'loader-libc-tls-descriptor-v1'
-        for row in descriptor_occurrences
-    ), 'prepared worker TLS uninstalled descriptor occurrence differs')
+    require(len(descriptor_occurrences) == 1, 'prepared worker TLS uninstalled descriptor occurrence differs')
+    descriptor_occurrence = descriptor_occurrences[0]
+    require(
+        descriptor_occurrence.get('artifact_key') == 'dynamic-crabc-dynamic-attach.o'
+        and descriptor_occurrence.get('member_name') is None
+        and descriptor_occurrence.get('member_index') is None
+        and descriptor_occurrence.get('member_occurrence') is None
+        and descriptor_occurrence.get('table') == '.symtab'
+        and descriptor_occurrence.get('role') == 'import'
+        and descriptor_occurrence.get('definition_section') is None
+        and same({
+            field: descriptor_occurrence.get('row', {}).get(field)
+            for field in (
+                'type', 'binding', 'visibility', 'section_index', 'size_bytes', 'value',
+                'version', 'version_default',
+            )
+        }, {
+            'type': 'NOTYPE', 'binding': 'WEAK', 'visibility': 'DEFAULT', 'section_index': 'UND',
+            'size_bytes': 0, 'value': '0000000000000000', 'version': None, 'version_default': False,
+        })
+        and descriptor_occurrence.get('accounting', {}).get('disposition') == 'private-resolution-operation'
+        and descriptor_occurrence['accounting'].get('owner') == 'loader-libc-tls-descriptor-v1'
+        and descriptor_occurrence['accounting'].get('scope') == 'dynamic-crabc-dynamic-attach.o',
+        'prepared worker TLS uninstalled descriptor occurrence differs',
+    )
     provider_join = next((row for row in protocol_joins
                           if row.get('identity') == descriptor['identity'] and row.get('artifact_key') == 'candidate-loader'
                           and row.get('role') == 'private-descriptor-definition'), None)
