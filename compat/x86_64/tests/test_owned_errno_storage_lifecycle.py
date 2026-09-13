@@ -11,6 +11,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 TEST_WORK_ROOT = ROOT / ".work" / "x86_64" / "errno-storage-lifecycle" / "tests"
 ERRNO = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "errno.rs"
+H_ERRNO = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "h_errno.rs"
 PROBE = ROOT / "compat" / "x86_64" / "owned_errno_storage_lifecycle_probe.c"
 DSO = ROOT / "compat" / "x86_64" / "owned_errno_storage_lifecycle_dso.c"
 RUNNER = ROOT / "compat" / "x86_64" / "run_owned_errno_storage_lifecycle.sh"
@@ -50,7 +51,116 @@ SHARED_GOOD = (
 )
 
 
+def complete_header(elf_type: str, section_count: int) -> str:
+    return f"""\
+ELF Header:
+  Magic:   7f 45 4c 46 02 01 01 03 00 00 00 00 00 00 00 00
+  Class:                             ELF64
+  Data:                              2's complement, little endian
+  Version:                           1 (current)
+  OS/ABI:                            UNIX - GNU
+  ABI Version:                       0
+  Type:                              {elf_type}
+  Machine:                           Advanced Micro Devices X86-64
+  Version:                           0x1
+  Entry point address:               0x0
+  Start of program headers:          0 (bytes into file)
+  Start of section headers:          256 (bytes into file)
+  Flags:                             0x0
+  Size of this header:               64 (bytes)
+  Size of program headers:           0 (bytes)
+  Number of program headers:         0
+  Size of section headers:           64 (bytes)
+  Number of section headers:         {section_count}
+  Section header string table index: 4
+"""
+
+
+SECTION_LEGEND = """\
+Key to Flags:
+  W (write), A (alloc), X (execute), M (merge), S (strings), I (info),
+  L (link order), O (extra OS processing required), G (group), T (TLS),
+  C (compressed), x (unknown), o (OS specific), E (exclude),
+  D (mbind), l (large), p (processor specific)
+"""
+
+
+def complete_sections(rows: str, count: int) -> str:
+    return f"""\
+There are {count} section headers, starting at offset 0x100:
+
+Section Headers:
+  [Nr] Name              Type            Address          Off    Size   ES Flg Lk Inf Al
+{rows}
+{SECTION_LEGEND}"""
+
+
+def complete_symbols(table: str, value: str) -> str:
+    return f"""\
+Symbol table '{table}' contains 7 entries:
+   Num:    Value          Size Type    Bind   Vis      Ndx Name
+     0: 0000000000000000     0 NOTYPE  LOCAL  DEFAULT  UND
+     1: {value}     4 OBJECT  GLOBAL DEFAULT    1 h_errno
+     2: 0000000000000000     0 NOTYPE  LOCAL  DEFAULT  UND
+     3: 0000000000000000     0 NOTYPE  LOCAL  DEFAULT  UND
+     4: 0000000000000000     0 NOTYPE  LOCAL  DEFAULT  UND
+     5: 0000000000000000     0 NOTYPE  LOCAL  DEFAULT  UND
+     6: 0000000000000000     0 NOTYPE  LOCAL  DEFAULT  UND
+"""
+
+
+STATIC_LAYOUT_HEADER = complete_header("REL (Relocatable file)", 5)
+STATIC_LAYOUT_SECTIONS = complete_sections(
+    """\
+  [ 0]                   NULL            0000000000000000 000000 000000 00      0   0  0
+  [ 1] .bss.h_errno      NOBITS          0000000000000000 000040 000004 00  WA  0   0  4
+  [ 2] .text             PROGBITS        0000000000000000 000040 000004 00  AX  0   0 16
+  [ 3] .symtab           SYMTAB          0000000000000000 000050 0000a8 18      4   3  8
+  [ 4] .strtab           STRTAB          0000000000000000 0000f8 000008 00      0   0  1""",
+    5,
+)
+STATIC_LAYOUT_SYMBOLS = complete_symbols(".symtab", "0000000000000000")
+
+SHARED_LAYOUT_HEADER = complete_header("DYN (Shared object file)", 6)
+SHARED_LAYOUT_SECTIONS = complete_sections(
+    """\
+  [ 0]                   NULL            0000000000000000 000000 000000 00      0   0  0
+  [ 1] .bss              NOBITS          0000000000001000 000040 000080 00  WA  0   0 32
+  [ 2] .text             PROGBITS        0000000000002000 000040 000004 00  AX  0   0 16
+  [ 3] .dynsym           DYNSYM          0000000000000000 000050 0000a8 18      4   3  8
+  [ 4] .dynstr           STRTAB          0000000000000000 0000f8 000008 00      0   0  1
+  [ 5] .symtab           SYMTAB          0000000000000000 000100 0000a8 18      4   3  8""",
+    6,
+)
+SHARED_LAYOUT_SYMBOLS = (
+    complete_symbols(".dynsym", "0000000000001020")
+    + complete_symbols(".symtab", "0000000000001020")
+)
+
+
+def archive_block(payload: str) -> str:
+    return f"\nFile: /fixture/static.a(provider.o)\n{payload}"
+
+
 class ErrnoStorageLifecycleTests(unittest.TestCase):
+    def test_h_errno_source_and_installed_c_boundary_require_an_x86_int_object(self) -> None:
+        source = H_ERRNO.read_text(encoding="utf-8")
+        probe = PROBE.read_text(encoding="utf-8")
+
+        self.assertIn("use core::ffi::c_int;", source)
+        self.assertIn("pub static mut h_errno: c_int = 0;", source)
+        self.assertEqual(
+            reader.H_ERRNO_METADATA,
+            {
+                "type": "OBJECT",
+                "binding": "GLOBAL",
+                "visibility": "DEFAULT",
+                "size_bytes": 4,
+                "alignment_bytes": 4,
+            },
+        )
+        self.assertIn("_Static_assert(_Alignof(int) == 4", probe)
+
     def test_allocator_errno_alias_uses_static_hidden_and_shared_link_localization(self) -> None:
         source = ERRNO.read_text(encoding="utf-8")
 
@@ -96,6 +206,77 @@ class ErrnoStorageLifecycleTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(reader.ErrnoStorageEvidenceError, "dynsym"):
             reader.validate_shared_symbols(symtab, exposed, "exposed shared")
+
+    def test_h_errno_layout_requires_its_defining_section_and_offset_to_meet_int_alignment(self) -> None:
+        static = reader.validate_static_h_errno_layout(
+            archive_block(STATIC_LAYOUT_HEADER),
+            archive_block(STATIC_LAYOUT_SECTIONS),
+            archive_block(STATIC_LAYOUT_SYMBOLS),
+            "provider.o\n",
+            "/fixture/static.a",
+            "fixture static layout",
+        )
+        shared = reader.validate_shared_h_errno_layout(
+            SHARED_LAYOUT_HEADER,
+            SHARED_LAYOUT_SECTIONS,
+            SHARED_LAYOUT_SYMBOLS,
+            "fixture shared layout",
+        )
+        self.assertEqual(static["required_alignment_bytes"], 4)
+        self.assertEqual(static["defining_section_alignment_bytes"], 4)
+        self.assertEqual(static["defining_section_size_bytes"], 4)
+        self.assertEqual(static["offset_bytes"], 0)
+        self.assertEqual(shared["required_alignment_bytes"], 4)
+        self.assertEqual(shared["defining_section_alignment_bytes"], 32)
+        self.assertEqual(shared["defining_section_size_bytes"], 0x80)
+        self.assertEqual(shared["offset_bytes"], 0x20)
+
+        with self.assertRaisesRegex(reader.ErrnoStorageEvidenceError, "section alignment"):
+            reader.validate_static_h_errno_layout(
+                archive_block(STATIC_LAYOUT_HEADER),
+                archive_block(STATIC_LAYOUT_SECTIONS.replace("0   0  4", "0   0  2")),
+                archive_block(STATIC_LAYOUT_SYMBOLS),
+                "provider.o\n",
+                "/fixture/static.a",
+                "under-aligned static layout",
+            )
+        with self.assertRaisesRegex(reader.ErrnoStorageEvidenceError, "offset alignment"):
+            reader.validate_static_h_errno_layout(
+                archive_block(STATIC_LAYOUT_HEADER),
+                archive_block(STATIC_LAYOUT_SECTIONS),
+                archive_block(STATIC_LAYOUT_SYMBOLS.replace("0000000000000000     4 OBJECT", "0000000000000002     4 OBJECT")),
+                "provider.o\n",
+                "/fixture/static.a",
+                "misaligned static offset",
+            )
+        with self.assertRaisesRegex(reader.ErrnoStorageEvidenceError, "offset alignment"):
+            reader.validate_shared_h_errno_layout(
+                SHARED_LAYOUT_HEADER,
+                SHARED_LAYOUT_SECTIONS,
+                SHARED_LAYOUT_SYMBOLS.replace("0000000000001020", "0000000000001022"),
+                "misaligned shared offset",
+            )
+        with self.assertRaisesRegex(reader.ErrnoStorageEvidenceError, "section address"):
+            reader.validate_shared_h_errno_layout(
+                SHARED_LAYOUT_HEADER,
+                SHARED_LAYOUT_SECTIONS.replace("0000000000001000", "0000000000001001"),
+                SHARED_LAYOUT_SYMBOLS.replace("0000000000001020", "0000000000001021"),
+                "misaligned shared section address",
+            )
+        with self.assertRaisesRegex(reader.ErrnoStorageEvidenceError, "section alignment"):
+            reader.validate_shared_h_errno_layout(
+                SHARED_LAYOUT_HEADER,
+                SHARED_LAYOUT_SECTIONS.replace("  0 32\n  [ 2]", "  0  5\n  [ 2]"),
+                SHARED_LAYOUT_SYMBOLS,
+                "nonmultiple shared section alignment",
+            )
+        with self.assertRaisesRegex(reader.ErrnoStorageEvidenceError, "exceeds its defining section"):
+            reader.validate_shared_h_errno_layout(
+                SHARED_LAYOUT_HEADER,
+                SHARED_LAYOUT_SECTIONS,
+                SHARED_LAYOUT_SYMBOLS.replace("0000000000001020", "0000000000001080"),
+                "out-of-range shared h_errno",
+            )
 
     def test_shared_alias_requires_its_exact_local_link_policy(self) -> None:
         self.assertEqual(PRIVATE_ALIAS_LIST.read_text(encoding="utf-8"), "___errno_location\n")
@@ -145,6 +326,7 @@ class ErrnoStorageLifecycleTests(unittest.TestCase):
     def test_replay_rebases_only_authenticated_container_checkout_paths(self) -> None:
         recorded = {
             "source": {"root": "/workspace"},
+            "collection_checkout_root": "/workspace",
             "work": "/workspace/.work/x86_64/errno-storage-lifecycle/receipt",
             "artifact": {"path": "/workspace/.work/x86_64/errno-storage-lifecycle/receipt/raw.txt"},
             "external": {"path": "/opt/musl-1.2.6/lib/libc.so"},
@@ -163,19 +345,38 @@ class ErrnoStorageLifecycleTests(unittest.TestCase):
         self.assertEqual(rebased["external"]["path"], "/opt/musl-1.2.6/lib/libc.so")
         self.assertEqual(rebased["source_policy"]["path"], recorded["source_policy"]["path"])
 
+        with self.assertRaisesRegex(reader.ErrnoStorageEvidenceError, "collection checkout root"):
+            reader.rebase_report_checkout_paths(
+                {**recorded, "collection_checkout_root": "/forged-workspace"}, ROOT
+            )
         with self.assertRaisesRegex(reader.ErrnoStorageEvidenceError, "unsafe"):
             reader.rebase_report_checkout_paths(
-                {"source": {"root": "/workspace"}, "work": "/workspace/../outside"}, ROOT
+                {
+                    "source": {"root": "/workspace"},
+                    "collection_checkout_root": "/workspace",
+                    "work": "/workspace/../outside",
+                },
+                ROOT,
             )
 
     def test_replay_work_must_stay_in_the_recorded_checkout_evidence_root(self) -> None:
         with self.assertRaisesRegex(reader.ErrnoStorageEvidenceError, "escapes recorded checkout"):
             reader.rebase_report_checkout_paths(
-                {"source": {"root": "/workspace"}, "work": "/opt/evidence"}, ROOT
+                {
+                    "source": {"root": "/workspace"},
+                    "collection_checkout_root": "/workspace",
+                    "work": "/opt/evidence",
+                },
+                ROOT,
             )
         with self.assertRaisesRegex(reader.ErrnoStorageEvidenceError, "below checkout .work"):
             reader.rebase_report_checkout_paths(
-                {"source": {"root": "/workspace"}, "work": "/workspace/compat/evidence"}, ROOT
+                {
+                    "source": {"root": "/workspace"},
+                    "collection_checkout_root": "/workspace",
+                    "work": "/workspace/compat/evidence",
+                },
+                ROOT,
             )
 
     def test_replay_work_rejects_an_intermediate_symlink_escape(self) -> None:
@@ -189,7 +390,12 @@ class ErrnoStorageLifecycleTests(unittest.TestCase):
             ).as_posix()
             with self.assertRaisesRegex(reader.ErrnoStorageEvidenceError, "resolves outside checkout .work"):
                 reader.rebase_report_checkout_paths(
-                    {"source": {"root": "/workspace"}, "work": recorded_work}, ROOT
+                    {
+                        "source": {"root": "/workspace"},
+                        "collection_checkout_root": "/workspace",
+                        "work": recorded_work,
+                    },
+                    ROOT,
                 )
 
     def test_independent_link_layouts_do_not_compare_raw_addresses(self) -> None:
@@ -216,6 +422,18 @@ class ErrnoStorageLifecycleTests(unittest.TestCase):
         self.assertIn("chroot", runner)
         self.assertIn("oracle-static-exec", reader.RUN_LABELS)
         self.assertNotIn("oracle-static-pie", reader.RUN_LABELS)
+
+    def test_live_main_and_worker_accessors_check_int_pointer_alignment(self) -> None:
+        probe = PROBE.read_text(encoding="utf-8")
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn("_Static_assert(_Alignof(int) == 4", probe)
+        self.assertIn("locations_are_int_aligned", probe)
+        self.assertIn("!locations_are_int_aligned(state->errno_location, state->h_errno_location)", probe)
+        self.assertIn("!locations_are_int_aligned(main_errno, main_h_errno)", probe)
+        self.assertIn('readelf -hW "$MUSL_ARCHIVE"', runner)
+        self.assertIn('readelf -SW "$MUSL_ARCHIVE"', runner)
+        self.assertIn('ar t "$MUSL_ARCHIVE"', runner)
 
     def test_workload_symbol_guard_rejects_archive_alias_in_dynamic_object(self) -> None:
         dynamic = symbols(
