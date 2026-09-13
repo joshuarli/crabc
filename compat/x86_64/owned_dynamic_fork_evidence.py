@@ -25,6 +25,7 @@ from typing import Any
 
 import owned_dynamic_receipt as receipt_contract
 import native_abi_inventory as inventory
+import owned_posix_product_evidence as product_evidence
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -413,6 +414,57 @@ def readelf(path: Path, option: str) -> str:
     return completed.stdout
 
 
+def _audit_linked_elf(output: Path, mode: str, expected_needed: tuple[str, ...], *, replay: RetainedRuntimeInputs | None = None) -> None:
+    """Check the linked shape through native readelf or retained ELF bytes."""
+    expected_type = "DYN" if mode in {"shared", "pie"} else "EXEC"
+    if replay is None:
+        header, programs, dynamic = readelf(output, "-hW"), readelf(output, "-lW"), readelf(output, "-dW")
+        if re.search(rf"^\s*Type:\s+{expected_type}(?:\s|\()", header, re.MULTILINE) is None:
+            fail("linked output ELF type drifted")
+        if re.search(r"^\s*Machine:\s+Advanced Micro Devices X86-64\s*$", header, re.MULTILINE) is None:
+            fail("linked output is not x86-64")
+        if "TEXTREL" in dynamic or re.search(r"\(RPATH\)", dynamic):
+            fail("linked output has forbidden text relocation or RPATH")
+        runpaths = re.findall(r"\(RUNPATH\).*?\[([^\]]*)\]", dynamic)
+        if runpaths != ["/usr/lib"]:
+            fail("linked output RUNPATH drifted")
+        needed = tuple(re.findall(r"\(NEEDED\).*?\[([^\]]+)\]", dynamic))
+        if needed != expected_needed:
+            fail(f"linked output DT_NEEDED topology drifted: {needed}")
+        if mode == "shared":
+            if re.search(r"^\s*INTERP\b", programs, re.MULTILINE):
+                fail("shared DSO has PT_INTERP")
+            sonames = re.findall(r"\(SONAME\).*?\[([^\]]+)\]", dynamic)
+            if sonames != [output.name]:
+                fail("shared DSO SONAME drifted")
+        else:
+            requested = re.findall(r"Requesting program interpreter:\s*([^\]\n]+)", programs)
+            if requested != [INTERPRETER]:
+                fail("dynamic consumer interpreter drifted")
+        return
+
+    facts = product_evidence.retained_elf_facts(output)
+    expected_kind = 3 if expected_type == "DYN" else 2
+    if facts["machine"] != 62 or facts["type"] != expected_kind:
+        fail("retained linked output ELF type drifted")
+    if not facts["dynamic"]:
+        fail("retained linked output has no PT_DYNAMIC segment")
+    if facts["textrel"] or facts["rpaths"]:
+        fail("retained linked output has forbidden text relocation or RPATH")
+    if facts["runpaths"] != ["/usr/lib"]:
+        fail("retained linked output RUNPATH drifted")
+    needed = tuple(facts["needed"])
+    if needed != expected_needed:
+        fail(f"retained linked output DT_NEEDED topology drifted: {needed}")
+    if mode == "shared":
+        if facts["interpreters"]:
+            fail("retained shared DSO has PT_INTERP")
+        if facts["sonames"] != [output.name]:
+            fail("retained shared DSO SONAME drifted")
+    elif facts["interpreters"] != [INTERPRETER]:
+        fail("retained dynamic consumer interpreter drifted")
+
+
 def receipt_record(path: Path) -> dict[str, Any]:
     record = json_object(path, "dynamic link receipt")
     receipt_contract.validate(record, format=PRODUCT_FORMAT, label="dynamic link receipt", fail=fail)
@@ -487,30 +539,7 @@ def audit_receipt(product: Path, manifest: Path, output: Path, object_path: Path
             fail(f"dynamic producer receipt link_trace admits {line}")
     if seen != direct:
         fail("dynamic producer receipt link_trace omits an explicit input")
-    header, programs, dynamic = readelf(output, "-hW"), readelf(output, "-lW"), readelf(output, "-dW")
-    expected_type = "DYN" if mode in {"shared", "pie"} else "EXEC"
-    if re.search(rf"^\s*Type:\s+{expected_type}(?:\s|\()", header, re.MULTILINE) is None:
-        fail("linked output ELF type drifted")
-    if re.search(r"^\s*Machine:\s+Advanced Micro Devices X86-64\s*$", header, re.MULTILINE) is None:
-        fail("linked output is not x86-64")
-    if "TEXTREL" in dynamic or re.search(r"\(RPATH\)", dynamic):
-        fail("linked output has forbidden text relocation or RPATH")
-    runpaths = re.findall(r"\(RUNPATH\).*?\[([^\]]*)\]", dynamic)
-    if runpaths != ["/usr/lib"]:
-        fail("linked output RUNPATH drifted")
-    needed = tuple(re.findall(r"\(NEEDED\).*?\[([^\]]+)\]", dynamic))
-    if needed != expected_needed:
-        fail(f"linked output DT_NEEDED topology drifted: {needed}")
-    if mode == "shared":
-        if re.search(r"^\s*INTERP\b", programs, re.MULTILINE):
-            fail("shared DSO has PT_INTERP")
-        sonames = re.findall(r"\(SONAME\).*?\[([^\]]+)\]", dynamic)
-        if sonames != [output.name]:
-            fail("shared DSO SONAME drifted")
-    else:
-        requested = re.findall(r"Requesting program interpreter:\s*([^\]\n]+)", programs)
-        if requested != [INTERPRETER]:
-            fail("dynamic consumer interpreter drifted")
+    _audit_linked_elf(output, mode, expected_needed, replay=replay)
 
 
 def audit_compile(product: Path, work: Path, manifest: Path, *, replay: RetainedRuntimeInputs | None = None) -> None:
