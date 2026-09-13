@@ -46,7 +46,15 @@ GLOB_DAT slots: owned handoff non-null/conventional slot null, conventional
 snapshot non-null/no owned handoff, default CRT weak-null, oracle neither.
 The borrowed record is read but private callbacks are not called by the probe.
 The 32-byte owned carrier and separate 88-byte conventional snapshot preserve
-source-defined roles; no alias or public descriptor is inferred from a name.
+source-defined roles. Schema v2 adds a separate private descriptor-handoff
+account: `dynamic-crabc-dynamic-attach.o` has exactly one weak, undefined
+`NOTYPE` GOTPCREL descriptor reference, and each owned PIE/non-PIE normal and
+empty final main image has exactly one weak undefined `GLOB_DAT` slot. Static,
+conventional, default, and oracle final images have no such slot. In owned
+mode the probe reads that one main-image slot and verifies 72-byte/8-aligned
+geometry, magic/version, dynamic mode, loader owner, acquire-READY,
+generation, and FS TP/DTV coordinates. This is private main-image transport,
+not a shared-libc consumer or a loader ELF provider definition.
 
 The reader retains complete tables, local/hidden/undefined records and archive
 member occurrences. It joins the actual bootstrap and GOT-containing member
@@ -62,9 +70,11 @@ The six address-returning assembly bridges are distinct from their linker
 boundary names. Function code size is not selected metadata.
 
 The component does not requalify prepared-worker/72-byte descriptor lifetime,
-first-bootstrap failure transitions, malformed loader admission, or the full
-process-exit family. Those limits remain explicit in the report. Existing
-source contracts in `static_tls.rs`, `x86_64_general_relocation.rs`,
+release-READY publication ordering, malformed loader admission, first-bootstrap
+failure transitions, or the full process-exit family. Source fixtures for
+ordering and rejection remain source evidence; they do not qualify installed
+products. Those limits remain explicit in the report. Existing source
+contracts in `static_tls.rs`, `x86_64_general_relocation.rs`,
 `conventional_startup_v1.rs` and their owner tests remain authoritative; a
 successful ordinary consumer is not a replacement for their negative proofs.
 No current-source receipt is transferred to a later product or collector.

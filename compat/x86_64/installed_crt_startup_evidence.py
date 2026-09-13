@@ -22,12 +22,13 @@ import owned_posix_static_products as static_products
 import owned_dynamic_qualification as qualification
 from loader_debug_abi_evidence import Elf
 ROOT=Path(__file__).resolve().parents[2]
-SCHEMA='crabc.x86_64-installed-crt-startup/v1'
+SCHEMA='crabc.x86_64-installed-crt-startup/v2'
 CONVENTIONAL='__crabc_x86_64_loader_conventional_startup_v1'
 HANDOFF='__crabc_x86_64_owned_crt_handoff'
 ATTACH='__crabc_x86_loader_tls_runtime_v1_attach'
 RECORD='__crabc_x86_loader_tls_runtime_v1_record'
 BOOTSTRAP='__crabc_x86_static_tls_bootstrap'
+DESCRIPTOR='__crabc_x86_64_loader_tls_runtime_v1'
 ARRAYS=tuple('__'+a+'_array_'+b for a in ('preinit','init','fini') for b in ('start','end'))
 NAMES=('_GLOBAL_OFFSET_TABLE_',CONVENTIONAL,HANDOFF,ATTACH,RECORD,BOOTSTRAP,*ARRAYS)
 MODES=('static','static-pie','owned-pie','owned-non-pie','conventional-pie','conventional-non-pie','default-pie','oracle-static','oracle-static-pie','oracle-pie','oracle-non-pie')
@@ -47,6 +48,21 @@ def expected_contract():
             'roles':{'linker_boundaries':['_GLOBAL_OFFSET_TABLE_',*ARRAYS],
                      'private_static_bootstrap':BOOTSTRAP,'main_attachment':[ATTACH,RECORD],
                      'private_loader_handoffs':[HANDOFF,CONVENTIONAL]},
+            # The descriptor is a private loader-to-main-image weak-GOT wire.
+            # It is deliberately separate from the twelve CRT identity rows:
+            # those rows prove CRT callers, while this account proves the
+            # final main-image transport they use.
+            'descriptor_handoff':{
+                'name':DESCRIPTOR,'source_artifact':'dynamic-crabc-dynamic-attach.o',
+                'source_relocation':{'kind':9,'addend':-4,'symbol_type':'0','binding':'WEAK',
+                                     'visibility':'DEFAULT','symbol_section':0,'symbol_value':0},
+                'main_slot_relocation':{'kind':6,'addend':0,'symbol_type':'0','binding':'WEAK',
+                                        'visibility':'DEFAULT','symbol_section':0,'symbol_value':0},
+                'owned_modes':['owned-pie','owned-non-pie'],
+                'geometry':{'size_bytes':72,'alignment_bytes':8,
+                            'magic':'43524142435f5451','version':1,'process_mode':2,
+                            'owner':1,'ready_state':2,'generation':1},
+            },
             'descriptor_import_required':False,'family_completion':False,'public_support':False}
 
 def validate_contract(value):require(same(value,expected_contract()),'startup contract differs')
@@ -115,7 +131,10 @@ RUNTIME_SOURCES=('crt/src/x86_64_startup.rs','crt/src/x86_64_dynamic_startup.rs'
     'libc/src/c_abi/x86_64/owned_dynamic_attachment.rs','libc/src/c_abi/x86_64/loader_tls_runtime_v1.rs',
     'libc/src/c_abi/x86_64/allocator_mimalloc_lifecycle.rs',
     'ldso/src/x86_64_initial_graph.rs','ldso/src/x86_64_general_relocation.rs','ldso/src/x86_64_general_initial_graph.rs',
-    'ldso/src/x86_64_general_initial_lifecycle.rs','ldso/src/x86_64_conventional_startup_v1.rs')
+    'ldso/src/x86_64_general_initial_lifecycle.rs','ldso/src/x86_64_general_initial_tls_state.rs',
+    'ldso/src/x86_64_dynamic_main_thread_runtime_v1_source_root.rs',
+    'libc/src/c_abi/x86_64/dynamic_main_thread_runtime_v1_source_root.rs',
+    'ldso/src/x86_64_conventional_startup_v1.rs','compat/x86_64/loader-libc-tls-runtime-v1.toml')
 COLLECTOR_SOURCES=tuple(dict.fromkeys((*substrate.COLLECTOR_SOURCES,*RUNTIME_SOURCES,
     'compat/x86_64/installed_crt_startup_evidence.py','compat/x86_64/installed-crt-startup.toml',
     'compat/x86_64/installed_crt_startup_probe.c','compat/x86_64/prepared_worker_tls_evidence.py')))
@@ -321,6 +340,58 @@ def artifact_relocations(root,work,inputs):
     require_crt_caller_relocations(result)
     return result
 
+def require_descriptor_relocation(row,expected,description):
+    """Require one raw weak relocation without assigning a loader provider.
+
+    The x86 object uses a GOTPCREL reference and the four final owned main
+    images retain its resolved GLOB_DAT slot. The owner of the record is
+    selected source, so neither spelling is an installed shared/loader
+    definition claim.
+    """
+    require(same({key:row.get(key) for key in ('name',*expected)},
+                 {'name':DESCRIPTOR,**expected}),description+' differs')
+
+def descriptor_handoff(product_relocations,executables):
+    """Account for the one private descriptor input and final main slots.
+
+    This is a finite placement/control account, not a historical-product
+    admission path. It accepts only the source object's one weak GOTPCREL
+    record, exactly one weak GLOB_DAT slot in each owned final main image, and
+    no descriptor relocation in every static, conventional, default, or
+    oracle case.
+    """
+    policy=expected_contract()['descriptor_handoff']
+    require(type(product_relocations) is dict
+            and type(product_relocations.get(policy['source_artifact'])) is list,
+            'descriptor source relocation artifact differs')
+    source=[row for row in product_relocations[policy['source_artifact']]
+            if row.get('name')==DESCRIPTOR]
+    require(len(source)==1,'descriptor source relocation count differs')
+    require_descriptor_relocation(source[0],policy['source_relocation'],'descriptor source relocation')
+    expected_cases={case['name']:case for case in cases()}
+    require(type(executables) is dict and set(executables)==set(expected_cases),
+            'descriptor final executable roster differs')
+    account={}
+    for name,case in expected_cases.items():
+        executable=executables[name]
+        require(type(executable) is dict and type(executable.get('relocations')) is list,
+                'descriptor final relocation account differs: '+name)
+        slots=[row for row in executable['relocations'] if row.get('name')==DESCRIPTOR]
+        owned=case['mode'] in policy['owned_modes']
+        require(len(slots)==(1 if owned else 0),
+                'descriptor main-image slot roster differs: '+name)
+        if slots:
+            require_descriptor_relocation(slots[0],policy['main_slot_relocation'],
+                                          'descriptor main-image slot '+name)
+        account[name]={'mode':case['mode'],'variant':case['variant'],'slot':copy.deepcopy(slots)}
+    return {'source_artifact':policy['source_artifact'],'source_relocation':copy.deepcopy(source[0]),
+            'executables':account,
+            # Runtime process labels are separately sealed by `validate_streams`.
+            # A successful owned probe has checked the record's 72/8 geometry,
+            # magic/version/mode/owner, acquire READY and TP/DTV coordinates.
+            'probe_owned_modes':list(policy['owned_modes']),
+            'static_slot_absent':True}
+
 def needed_libraries(path):
     elf=Elf(path);result=[]
     for section in elf.sections:
@@ -432,8 +503,11 @@ def observations(root,work,inputs,tools):
         require_import(failure['row'],'NOTYPE','GLOBAL','DEFAULT')
     streams={cell['label']:ordinary.raw_path(work,cell['label'],'stdout').read_bytes() for cell in runtime_cells()}
     validate_streams(streams)
-    return {'complete_elf_facts':facts,'product_placements':products_account,'product_relocations':artifact_relocations(root,work,inputs),
-            'executables':executable_observations(root,work,inputs,tools,facts),'roots':roots(root,work,inputs),
+    relocations_account=artifact_relocations(root,work,inputs)
+    executables_account=executable_observations(root,work,inputs,tools,facts)
+    return {'complete_elf_facts':facts,'product_placements':products_account,'product_relocations':relocations_account,
+            'executables':executables_account,
+            'descriptor_handoff':descriptor_handoff(relocations_account,executables_account),'roots':roots(root,work,inputs),
             'runtime_labels':[cell['label'] for cell in runtime_cells()],
             'limits':{'descriptor_worker_lifecycle':'not requalified by startup receipt',
                       'failed_first_bootstrap':'source contract retained; dedicated runtime rejection receipt not supplied',

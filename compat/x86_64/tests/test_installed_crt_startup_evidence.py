@@ -1,5 +1,6 @@
 """Exact installed CRT ownership and finite startup receipt regressions."""
 import copy
+import hashlib
 import json
 from unittest import mock
 from pathlib import Path
@@ -10,6 +11,46 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import installed_crt_startup_evidence as reader
 
 class InstalledCrtStartupTests(unittest.TestCase):
+    _FROZEN_0E_REPORT = (
+        Path(__file__).resolve().parents[4] / 'native_abi_protocol_integration/.work/x86_64/'
+        'crt-startup-evidence/clean-0e7af481/report.json'
+    )
+
+    def test_retained_main_image_descriptor_transport_has_exact_owned_boundary(self):
+        """Project actual v1 facts only; it is never a v2 admission waiver."""
+        if not self._FROZEN_0E_REPORT.is_file():
+            self.skipTest('requires retained 0e startup receipt')
+        self.assertEqual(hashlib.sha256(self._FROZEN_0E_REPORT.read_bytes()).hexdigest(),
+                         'e53fe18993303b6ea290773298fcc66ee198477431aaf57da39deb0358195bd6')
+        report=json.loads(self._FROZEN_0E_REPORT.read_text())
+        handoff=reader.descriptor_handoff(
+            report['observations']['product_relocations'], report['observations']['executables'])
+        self.assertEqual(handoff['source_artifact'],'dynamic-crabc-dynamic-attach.o')
+        slots=handoff['executables']
+        self.assertEqual({name for name,row in slots.items() if row['slot']},
+                         {'owned-pie-normal','owned-pie-empty',
+                          'owned-non-pie-normal','owned-non-pie-empty'})
+        self.assertTrue(all(not row['slot'] for name,row in slots.items()
+                            if not name.startswith(('owned-pie-','owned-non-pie-'))))
+        def without_source(value):
+            rows=value['observations']['product_relocations']['dynamic-crabc-dynamic-attach.o']
+            rows[:]=[row for row in rows if row['name']!=reader.DESCRIPTOR]
+        def static_slot(value):
+            source=next(row for row in value['observations']['executables']['owned-pie-normal']['relocations']
+                        if row['name']==reader.DESCRIPTOR)
+            value['observations']['executables']['static-normal']['relocations'].append(copy.deepcopy(source))
+        def wrong_owned_kind(value):
+            slot=next(row for row in value['observations']['executables']['owned-pie-normal']['relocations']
+                      if row['name']==reader.DESCRIPTOR)
+            slot['kind']=7
+        for mutate in (without_source,static_slot,wrong_owned_kind):
+            with self.subTest(mutate=mutate):
+                changed=copy.deepcopy(report)
+                mutate(changed)
+                with self.assertRaises(reader.StartupEvidenceError):
+                    reader.descriptor_handoff(changed['observations']['product_relocations'],
+                                              changed['observations']['executables'])
+
     def test_duplicate_report_spellings_reject_before_replay(self):
         for options in (['--report=one','--report=two'],['--report','one','--report=two']):
             with self.subTest(options=options), mock.patch.object(reader,'validate_report',

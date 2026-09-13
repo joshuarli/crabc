@@ -430,9 +430,7 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
             })
         descriptor_name = '__crabc_x86_64_loader_tls_runtime_v1'
         descriptor_identity = selection.identity(descriptor_name)
-        descriptor_requirements = list(selection.PREPARED_WORKER_TLS_DESCRIPTOR_REQUIREMENTS) + [
-            'private descriptor exact binding/visibility selection and lifecycle proof remain required',
-        ]
+        descriptor_requirements = list(selection.PREPARED_WORKER_TLS_DESCRIPTOR_REQUIREMENTS)
         identities.append({
             'identity': descriptor_identity,
             'selection': {
@@ -457,19 +455,12 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
                 'scope': 'dynamic-crabc-dynamic-attach.o',
             },
         })
-        protocol_joins.extend([
-            {
-                'identity': descriptor_identity, 'artifact_key': 'candidate-loader',
-                'role': 'private-descriptor-definition', 'occurrence_indices': [],
-                'metadata_differences': [],
-                'binding_and_visibility_selection_complete': False,
-            },
-            {
-                'identity': descriptor_identity, 'artifact_key': 'candidate-shared', 'role': 'consumer-import',
-                'occurrence_indices': [], 'endpoint_kind': 'descriptor',
-                'signature_status': descriptor_protocol['signature_status'], 'relocation_lifecycle_proven': False,
-            },
-        ])
+        protocol_joins.append({
+            'identity': descriptor_identity, 'artifact_key': 'dynamic-crabc-dynamic-attach.o',
+            'role': 'consumer-import', 'occurrence_indices': [descriptor_index],
+            'endpoint_kind': 'main-image-weak-got-transport',
+            'signature_status': descriptor_protocol['signature_status'], 'relocation_lifecycle_proven': False,
+        })
         blockers.extend({
             'code': 'identity-unresolved', 'identity': descriptor_identity, 'reason': requirement,
         } for requirement in descriptor_requirements)
@@ -827,6 +818,35 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
             'blockers': [copy.deepcopy(row) for row in diagnostic['closure']['blockers']
                          if row.get('identity', {}).get('name') in names],
         }
+        # The retained report is replayed for its actual raw occurrence and
+        # worker account. Its old selector protocol is deliberately replaced
+        # by the current source contract: v2 has no shared consumer or loader
+        # provider, only this one dynamic attachment import and the CRT-owned
+        # main-image-slot receipt.
+        descriptor_protocol = next(row for row in selection.load_contract()['private_protocols']
+                                   if row['id'] == 'loader-libc-tls-descriptor-v1')
+        descriptor_index = next(row['index'] for row in accounting['occurrences']
+                                if row['row']['name'] == descriptor_name)
+        descriptor_record = next(row for row in accounting['identities']
+                                 if row['identity']['name'] == descriptor_name)
+        descriptor_record['selection']['protocol'] = copy.deepcopy(descriptor_protocol)
+        descriptor_record['unresolved'] = list(selection.PREPARED_WORKER_TLS_DESCRIPTOR_REQUIREMENTS)
+        accounting['private_protocol_joins'] = [
+            row for row in accounting['private_protocol_joins']
+            if row['identity']['name'] != descriptor_name
+        ]
+        accounting['private_protocol_joins'].append({
+            'identity': copy.deepcopy(descriptor_record['identity']),
+            'artifact_key': 'dynamic-crabc-dynamic-attach.o', 'role': 'consumer-import',
+            'occurrence_indices': [descriptor_index], 'endpoint_kind': 'main-image-weak-got-transport',
+            'signature_status': descriptor_protocol['signature_status'], 'relocation_lifecycle_proven': False,
+        })
+        accounting['blockers'] = [row for row in accounting['blockers']
+                                  if row.get('identity', {}).get('name') != descriptor_name]
+        accounting['blockers'].extend({
+            'code': 'identity-unresolved', 'identity': copy.deepcopy(descriptor_record['identity']),
+            'reason': requirement,
+        } for requirement in descriptor_record['unresolved'])
         descriptor_before = next(row for row in accounting['identities']
                                  if row['identity']['name'] == descriptor_name)
         descriptor_requirements = copy.deepcopy(descriptor_before['unresolved'])
@@ -856,9 +876,9 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
         self.assertEqual(len(joins[0]['legacy_replacements']), 7)
         descriptor_indices = [row['index'] for row in accounting['occurrences']
                               if row['row']['name'] == descriptor_name]
-        self.assertEqual(joins[0]['descriptor']['unproved_occurrence_indices'], descriptor_indices)
+        self.assertEqual(joins[0]['descriptor']['transport_occurrence_indices'], descriptor_indices)
         self.assertEqual(joins[0]['descriptor']['provider_occurrence_indices'], [])
-        self.assertEqual(joins[0]['descriptor']['consumer_occurrence_indices'], [])
+        self.assertEqual(joins[0]['descriptor']['consumer_occurrence_indices'], descriptor_indices)
         self.assertEqual(joins[0]['descriptor']['requirements_discharged'], [])
         self.assertEqual(joins[0]['descriptor']['requirements_remaining'], descriptor_requirements)
         descriptor_after = next(row for row in accounting['identities']
@@ -868,11 +888,9 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
                             if row['identity']['name'] == descriptor_name]
         self.assertEqual(
             [(row['artifact_key'], row['role'], row['occurrence_indices']) for row in descriptor_joins],
-            [('candidate-shared', 'consumer-import', []),
-             ('candidate-loader', 'private-descriptor-definition', [])],
+            [('dynamic-crabc-dynamic-attach.o', 'consumer-import', descriptor_indices)],
         )
         self.assertFalse(descriptor_joins[0]['relocation_lifecycle_proven'])
-        self.assertFalse(descriptor_joins[1]['binding_and_visibility_selection_complete'])
         descriptor_blockers = [row for row in accounting['blockers']
                                if row.get('identity', {}).get('name') == descriptor_name]
         self.assertEqual([row['reason'] for row in descriptor_blockers], descriptor_requirements)
@@ -954,9 +972,9 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
         self.assertEqual(len(joins[0]['operations']), 3)
         self.assertEqual(len(joins[0]['legacy_replacements']), 7)
         descriptor = joins[0]['descriptor']
-        self.assertEqual(descriptor['unproved_occurrence_indices'], [6])
+        self.assertEqual(descriptor['transport_occurrence_indices'], [6])
         self.assertEqual(descriptor['provider_occurrence_indices'], [])
-        self.assertEqual(descriptor['consumer_occurrence_indices'], [])
+        self.assertEqual(descriptor['consumer_occurrence_indices'], [6])
         self.assertEqual(descriptor['requirements_discharged'], [])
         descriptor_record = next(row for row in accounting['identities']
                                  if row['identity']['name'] == '__crabc_x86_64_loader_tls_runtime_v1')
@@ -964,11 +982,9 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
         self.assertEqual(len(accounting['blockers']), len(descriptor_record['unresolved']))
         descriptor_joins = [row for row in accounting['private_protocol_joins']
                             if row['identity']['name'] == '__crabc_x86_64_loader_tls_runtime_v1']
-        self.assertTrue(all(row['occurrence_indices'] == [] for row in descriptor_joins))
+        self.assertEqual([row['occurrence_indices'] for row in descriptor_joins], [[6]])
         consumer = next(row for row in descriptor_joins if row['role'] == 'consumer-import')
-        provider = next(row for row in descriptor_joins if row['role'] == 'private-descriptor-definition')
         self.assertFalse(consumer['relocation_lifecycle_proven'])
-        self.assertFalse(provider['binding_and_visibility_selection_complete'])
         self.assertTrue(all(
             occurrence.get('accounting', {}).get('resolution_proven') is True
             for occurrence in accounting['occurrences']
@@ -1012,7 +1028,7 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
                 else:
                     occurrence['row']['value'] = '0000000000000001'
                 with self.assertRaisesRegex(selection.SelectionError,
-                                            'uninstalled descriptor occurrence differs'):
+                                            'descriptor.*occurrence differs'):
                     selection.attach_prepared_worker_tls(malformed, companion)
 
     def test_errno_join_binds_three_public_rows_and_one_private_same_definition_alias(self):

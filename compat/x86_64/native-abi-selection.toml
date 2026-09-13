@@ -1415,15 +1415,15 @@ consumer = {"source" = "libc/src/c_abi/x86_64/dynamic_tls.rs", "function" = "__c
 [[private_protocols]]
 id = "loader-libc-tls-descriptor-v1"
 members = ["__crabc_x86_64_loader_tls_runtime_v1"]
-sources = ["ldso/src/x86_64_initial_graph.rs", "libc/src/c_abi/x86_64/loader_tls_runtime_v1.rs"]
-consumer_artifacts = ["candidate-shared"]
-endpoint_kind = "descriptor"
-endpoint = "LoaderLibcTlsRuntimeV1 selected weak descriptor wire"
-signature = "16-byte header and72-byte record; exact magic/version/size/mode/owner/generation contract."
-requirements = ["exact descriptor admission/layout and release READY publication before TCB/DTV read", "static mode no-loader-import boundary", "pointer lifetime, worker mapping generation and fork ownership evidence"]
-reason = "Specific TLS descriptor; it does not replace full RuntimeV1 facade consumer parity."
-provider_artifacts = ["candidate-loader"]
-provider_metadata = {"type" = "OBJECT", "size_bytes" = 72, "alignment_bytes" = 8}
+sources = ["compat/x86_64/installed-crt-startup.toml", "compat/x86_64/installed-crt-startup.md", "compat/x86_64/loader-libc-tls-runtime-v1.toml", "crt/src/x86_64_dynamic_startup.rs", "ldso/src/x86_64_general_initial_tls_state.rs", "ldso/src/x86_64_initial_graph.rs", "libc/src/c_abi/x86_64/loader_tls_runtime_v1.rs"]
+consumer_artifacts = ["dynamic-crabc-dynamic-attach.o"]
+endpoint_kind = "main-image-weak-got-transport"
+endpoint = "dynamic attach GOTPCREL reference resolved by the private loader into exactly one weak GLOB_DAT slot in each owned final main image"
+signature = "72-byte, 8-aligned loader-owned record: magic/version/size/mode/owner/acquire-READY, then the initial TP and DTV coordinates."
+requirements = ["exact main-image weak-GOT transport and static no-slot receipt", "current owned main descriptor geometry and acquire READY/TP-DTV receipt", "release READY ordering and malformed descriptor rejection receipt", "pointer lifetime, worker mapping generation and fork ownership evidence"]
+reason = "The private loader resolves the weak descriptor only through the main image's GOT. There is no selected shared-libc consumer or loader ELF provider definition."
+provider_artifacts = []
+provider_metadata = {}
 signature_status = "source-mapped-unverified"
 operations = []
 

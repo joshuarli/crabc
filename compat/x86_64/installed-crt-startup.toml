@@ -1,4 +1,4 @@
-schema = "crabc.x86_64-installed-crt-startup/v1"
+schema = "crabc.x86_64-installed-crt-startup/v2"
 identities = ["_GLOBAL_OFFSET_TABLE_", "__crabc_x86_64_loader_conventional_startup_v1", "__crabc_x86_64_owned_crt_handoff", "__crabc_x86_loader_tls_runtime_v1_attach", "__crabc_x86_loader_tls_runtime_v1_record", "__crabc_x86_static_tls_bootstrap", "__preinit_array_start", "__preinit_array_end", "__init_array_start", "__init_array_end", "__fini_array_start", "__fini_array_end"]
 modes = ["static", "static-pie", "owned-pie", "owned-non-pie", "conventional-pie", "conventional-non-pie", "default-pie", "oracle-static", "oracle-static-pie", "oracle-pie", "oracle-non-pie"]
 variants = ["normal", "empty"]
@@ -15,3 +15,36 @@ linker_boundaries = ["_GLOBAL_OFFSET_TABLE_", "__preinit_array_start", "__preini
 private_static_bootstrap = "__crabc_x86_static_tls_bootstrap"
 main_attachment = ["__crabc_x86_loader_tls_runtime_v1_attach", "__crabc_x86_loader_tls_runtime_v1_record"]
 private_loader_handoffs = ["__crabc_x86_64_owned_crt_handoff", "__crabc_x86_64_loader_conventional_startup_v1"]
+
+[descriptor_handoff]
+name = "__crabc_x86_64_loader_tls_runtime_v1"
+source_artifact = "dynamic-crabc-dynamic-attach.o"
+owned_modes = ["owned-pie", "owned-non-pie"]
+
+[descriptor_handoff.source_relocation]
+kind = 9
+addend = -4
+symbol_type = "0"
+binding = "WEAK"
+visibility = "DEFAULT"
+symbol_section = 0
+symbol_value = 0
+
+[descriptor_handoff.main_slot_relocation]
+kind = 6
+addend = 0
+symbol_type = "0"
+binding = "WEAK"
+visibility = "DEFAULT"
+symbol_section = 0
+symbol_value = 0
+
+[descriptor_handoff.geometry]
+size_bytes = 72
+alignment_bytes = 8
+magic = "43524142435f5451"
+version = 1
+process_mode = 2
+owner = 1
+ready_state = 2
+generation = 1

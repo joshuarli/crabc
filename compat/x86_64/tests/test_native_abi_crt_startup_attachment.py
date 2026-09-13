@@ -130,7 +130,8 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
             'source': {}, 'source_inputs': {}, 'products': {'candidate-static': {}, 'candidate-shared': {}},
             'cohort_inputs': self._projection_cohort_inputs(),
             'measurement_reports': {},
-            'account': {'identity_names': list(names), 'occurrences': observed, 'runtime_labels': []},
+            'account': {'identity_names': list(names), 'occurrences': observed, 'runtime_labels': [],
+                        'descriptor_handoff': {}},
             'limits': list(selection.CRT_STARTUP_LIMITS),
         }
         accounting = {'identities': identities, 'placement_joins': [], 'occurrences': occurrences, 'blockers': blockers}
@@ -199,6 +200,7 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
             'account': {
                 'identity_names': list(names), 'occurrences': observed,
                 'runtime_labels': receipt['observations']['runtime_labels'],
+                'descriptor_handoff': {},
             },
             'limits': list(selection.CRT_STARTUP_LIMITS),
         }
@@ -223,8 +225,74 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
                     f'candidate definition placement is not selected: {artifact_key}', record['unresolved'],
                 )
 
-    def test_frozen_0e_public_owner_replay_reaches_actual_adapter_admission(self) -> None:
-        """Replay the frozen owner under its physical root, then admit its real shape."""
+    def test_actual_0e_projection_binds_only_the_measured_descriptor_transport(self) -> None:
+        """Use frozen rows as a shape control, never as a current v2 receipt."""
+        if not self._FROZEN_0E_RECEIPT.is_file():
+            self.skipTest('requires frozen 0e CRT startup receipt')
+        self.assertEqual(hashlib.sha256(self._FROZEN_0E_RECEIPT.read_bytes()).hexdigest(),
+                         'e53fe18993303b6ea290773298fcc66ee198477431aaf57da39deb0358195bd6')
+        report = json.loads(self._FROZEN_0E_RECEIPT.read_text())
+        reader = selection._crt_startup_reader()
+        handoff = reader.descriptor_handoff(
+            report['observations']['product_relocations'], report['observations']['executables'])
+        protocol = next(row for row in selection.load_contract()['private_protocols']
+                        if row['id'] == 'loader-libc-tls-descriptor-v1')
+        descriptor = selection.identity(reader.DESCRIPTOR)
+        row = self._row(reader.DESCRIPTOR, binding='WEAK')
+        occurrence = {
+            'index': 0, 'artifact_key': 'dynamic-crabc-dynamic-attach.o', 'member_name': None,
+            'member_index': None, 'member_occurrence': None, 'table': '.symtab',
+            'table_section_index': 4, 'definition_section': None, 'role': 'import', 'row': row,
+        }
+        requirements = list(selection.PREPARED_WORKER_TLS_DESCRIPTOR_REQUIREMENTS)
+        accounting = {
+            'identities': [{
+                'identity': descriptor,
+                'selection': {'disposition': 'private-resolution-operation',
+                              'owner': 'loader-libc-tls-descriptor-v1', 'protocol': copy.deepcopy(protocol)},
+                'unresolved': requirements[:],
+            }],
+            'placement_joins': [], 'occurrences': [occurrence],
+            'private_protocol_joins': [{
+                'identity': copy.deepcopy(descriptor), 'artifact_key': 'dynamic-crabc-dynamic-attach.o',
+                'role': 'consumer-import', 'occurrence_indices': [0],
+                'endpoint_kind': 'main-image-weak-got-transport',
+                'signature_status': 'source-mapped-unverified', 'relocation_lifecycle_proven': False,
+            }],
+            'blockers': [{
+                'code': 'identity-unresolved', 'identity': copy.deepcopy(descriptor), 'reason': requirement,
+            } for requirement in requirements],
+        }
+        companion = {
+            'status': 'crt-startup-observed-with-boundaries', 'reader': {}, 'contract': {}, 'report': {},
+            'source': {}, 'source_inputs': {}, 'products': {}, 'cohort_inputs': {}, 'measurement_reports': {},
+            'account': {'identity_names': list(reader.NAMES), 'occurrences': [], 'runtime_labels': [],
+                        'descriptor_handoff': handoff},
+            'limits': list(selection.CRT_STARTUP_LIMITS),
+        }
+        joins = selection.attach_native_crt_descriptor_handoff(accounting, companion)
+        self.assertEqual(joins[0]['owned_main_slots'], {
+            'owned-pie-normal': 1, 'owned-pie-empty': 1,
+            'owned-non-pie-normal': 1, 'owned-non-pie-empty': 1,
+        })
+        self.assertEqual(joins[0]['requirements_discharged'],
+                         list(selection.PREPARED_WORKER_TLS_DESCRIPTOR_MEASURED_REQUIREMENTS))
+        self.assertEqual(joins[0]['requirements_remaining'], requirements[2:])
+        self.assertEqual(accounting['identities'][0]['unresolved'], requirements[2:])
+
+        for mutate in (
+            lambda value: value['executables']['static-normal']['slot'].append(
+                copy.deepcopy(value['executables']['owned-pie-normal']['slot'][0])),
+            lambda value: value['source_relocation'].update({'kind': 7}),
+        ):
+            with self.subTest(mutate=mutate):
+                malformed = copy.deepcopy(companion)
+                mutate(malformed['account']['descriptor_handoff'])
+                with self.assertRaises(selection.SelectionError):
+                    selection.attach_native_crt_descriptor_handoff(copy.deepcopy(accounting), malformed)
+
+    def test_frozen_0e_v1_owner_is_projection_only_after_the_v2_contract_change(self) -> None:
+        """The retained shape informs regressions but cannot admit v2 products."""
         if not self._FROZEN_0E_RECEIPT.is_file():
             self.skipTest('requires frozen 0e CRT startup receipt')
         self.assertEqual(
@@ -262,14 +330,12 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
         # read-only mount analogue; the owner replay itself remains real.
         with mock.patch.object(selection, 'ROOT', self._FROZEN_0E_ROOT), \
              mock.patch.object(reader, 'ROOT', self._FROZEN_0E_ROOT), \
-             mock.patch.object(reader.qualification, 'ROOT', self._FROZEN_0E_ROOT):
-            companion = selection.native_crt_startup_adapter(
+             mock.patch.object(reader.qualification, 'ROOT', self._FROZEN_0E_ROOT), \
+             self.assertRaises(reader.StartupEvidenceError):
+            selection.native_crt_startup_adapter(
                 self._FROZEN_0E_RECEIPT, facts=facts, measurement=measurement,
                 paths=paths, source=source,
             )
-        self.assertEqual(companion['status'], 'crt-startup-observed-with-boundaries')
-        self.assertEqual(set(companion['products']), set(inputs['startup_artifacts']))
-        self.assertEqual(len(companion['account']['occurrences']), 44)
 
     def test_adapter_rejects_a_historical_collector_before_any_occurrence_join(self) -> None:
         reader = selection._crt_startup_reader()

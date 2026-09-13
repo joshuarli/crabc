@@ -2,6 +2,7 @@
 #include <elf.h>
 #include <errno.h>
 #include <link.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -53,10 +54,30 @@ static void handler(void) { if (phase!=3) _Exit(98); phase=4; emit('A'); }
  * It does not publish a loader pointer or call private loader callbacks. The
  * retained executable/relocation reader independently authenticates these
  * names, table shapes, and object identities. */
-struct wire_state { unsigned handoffs, conventional; uintptr_t handoff, snapshot; };
+struct loader_tls_descriptor {
+    uint64_t magic;
+    uint32_t version, abi_size, process_mode, owner;
+    _Atomic unsigned char state;
+    unsigned char reserved[7];
+    const unsigned char *thread_pointer;
+    const uintptr_t *dtv;
+    size_t dtv_words, module_count;
+    uint64_t generation;
+};
+_Static_assert(sizeof(struct loader_tls_descriptor)==72,"descriptor size");
+_Static_assert(_Alignof(struct loader_tls_descriptor)==8,"descriptor alignment");
+
+struct wire_state {
+    unsigned main_images, handoffs, conventional, descriptors;
+    uintptr_t handoff, snapshot, descriptor;
+};
 static int wires(struct dl_phdr_info *info,size_t size,void *opaque) {
     (void)size;
     struct wire_state *s=opaque;
+    /* The private resolver writes this exact weak slot only in the main
+     * image. A DSO with a same-spelled relocation cannot become evidence. */
+    if (info->dlpi_name && info->dlpi_name[0]) return 0;
+    if (++s->main_images!=1) _Exit(99);
     const Elf64_Dyn *dyn=0;
     for (unsigned i=0;i<info->dlpi_phnum;i++) if (info->dlpi_phdr[i].p_type==PT_DYNAMIC)
         dyn=(const Elf64_Dyn *)(info->dlpi_addr+info->dlpi_phdr[i].p_vaddr);
@@ -70,44 +91,66 @@ static int wires(struct dl_phdr_info *info,size_t size,void *opaque) {
         if (dyn[n].d_tag==DT_RELASZ) count=dyn[n].d_un.d_val/sizeof *rela;
     }
     if (!syms || !strings || !rela) return 0;
-    if (count>32768) _Exit(99);
+    if (count>32768) _Exit(100);
     for (size_t n=0;n<count;n++) {
         unsigned si=ELF64_R_SYM(rela[n].r_info);
         if (!si) continue;
         const char *name=strings+syms[si].st_name;
         int h=!strcmp(name,"__crabc_x86_64_owned_crt_handoff");
         int c=!strcmp(name,"__crabc_x86_64_loader_conventional_startup_v1");
-        if (!h && !c) continue;
+        int d=!strcmp(name,"__crabc_x86_64_loader_tls_runtime_v1");
+        if (!h && !c && !d) continue;
         if (ELF64_R_TYPE(rela[n].r_info)!=R_X86_64_GLOB_DAT || rela[n].r_addend
-            || syms[si].st_info!=ELF64_ST_INFO(STB_WEAK,STT_OBJECT) || syms[si].st_shndx!=SHN_UNDEF) _Exit(100);
+            || syms[si].st_shndx!=SHN_UNDEF) _Exit(101);
         uintptr_t value=*(const uintptr_t *)(info->dlpi_addr+rela[n].r_offset);
         if (h) { s->handoffs++; s->handoff=value; }
-        else { s->conventional++; s->snapshot=value; }
+        else if (c) {
+            if (syms[si].st_info!=ELF64_ST_INFO(STB_WEAK,STT_OBJECT)) _Exit(102);
+            s->conventional++; s->snapshot=value;
+        } else {
+            if (syms[si].st_info!=ELF64_ST_INFO(STB_WEAK,STT_NOTYPE)
+                || ELF64_ST_VISIBILITY(syms[si].st_other)!=STV_DEFAULT) _Exit(103);
+            s->descriptors++; s->descriptor=value;
+        }
     }
     return 0;
 }
 static void observe(const char *mode) {
     struct wire_state s={0};
-    if (dl_iterate_phdr(wires,&s)) _Exit(101);
+    if (dl_iterate_phdr(wires,&s) || s.main_images!=1) _Exit(104);
     if (!strcmp(mode,"owned")) {
-        if (s.handoffs!=1 || !s.handoff || s.conventional!=1 || s.snapshot) _Exit(102);
+        if (s.handoffs!=1 || !s.handoff || s.conventional!=1 || s.snapshot
+            || s.descriptors!=1 || !s.descriptor) _Exit(105);
         const uint64_t *q=(const uint64_t *)s.handoff;
         if (q[0]!=UINT64_C(0x43524142435f4831) || ((const uint32_t *)q)[2]!=1
-            || ((const uint32_t *)q)[3]!=32 || !q[2] || !q[3]) _Exit(103);
+            || ((const uint32_t *)q)[3]!=32 || !q[2] || !q[3]) _Exit(106);
+        const struct loader_tls_descriptor *d=(const struct loader_tls_descriptor *)s.descriptor;
+        uintptr_t tp,dtv;
+        __asm__ volatile("mov %%fs:0,%0":"=r"(tp));
+        __asm__ volatile("mov %%fs:8,%0":"=r"(dtv));
+        if ((uintptr_t)d%_Alignof(struct loader_tls_descriptor)
+            || d->magic!=UINT64_C(0x43524142435f5451) || d->version!=1 || d->abi_size!=72
+            || d->process_mode!=2 || d->owner!=1 || atomic_load_explicit(&d->state,memory_order_acquire)!=2
+            || memcmp(d->reserved,(unsigned char[7]){0},7) || d->generation!=1
+            || !d->thread_pointer || !d->dtv || (uintptr_t)d->thread_pointer%sizeof(uintptr_t)
+            || (uintptr_t)d->dtv%sizeof(uintptr_t) || !d->module_count
+            || d->module_count==SIZE_MAX || d->dtv_words<d->module_count+1
+            || (uintptr_t)d->thread_pointer!=tp || (uintptr_t)d->dtv!=dtv
+            || d->dtv[0]!=d->module_count) _Exit(107);
         emit('O');
     } else if (!strcmp(mode,"conventional")) {
-        if (s.handoffs || s.conventional!=1 || !s.snapshot) _Exit(104);
+        if (s.handoffs || s.conventional!=1 || !s.snapshot || s.descriptors) _Exit(108);
         const uint64_t *q=(const uint64_t *)s.snapshot; uintptr_t tp;
         __asm__ volatile("mov %%fs:0,%0":"=r"(tp));
         if (q[0]!=UINT64_C(0x43524142435f4331) || ((const uint32_t *)q)[2]!=1
             || ((const uint32_t *)q)[3]!=88 || ((const uint32_t *)q)[4]!=2
             || ((const uint32_t *)q)[5]!=1 || ((const unsigned char *)q)[24]!=2
-            || q[4]!=tp || q[8]!=1 || !q[9] || !q[10]) _Exit(105);
+            || q[4]!=tp || q[8]!=1 || !q[9] || !q[10]) _Exit(109);
         emit('V');
     } else if (!strcmp(mode,"default")) {
-        if (s.handoffs!=1 || s.handoff || s.conventional) _Exit(106);
+        if (s.handoffs!=1 || s.handoff || s.conventional || s.descriptors) _Exit(110);
         emit('N');
-    } else { if (s.handoffs || s.conventional) _Exit(107); emit('R'); }
+    } else { if (s.handoffs || s.conventional || s.descriptors) _Exit(111); emit('R'); }
 }
 int main(int argc,char **argv) {
     state();

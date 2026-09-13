@@ -136,21 +136,25 @@ complete ELF facts, and current source transaction before the selector joins
 three private shared-libc source-dispatch imports, the seven retired prepared
 worker-token names. It separately authenticates the source contract for the
 72-byte initial TLS descriptor, including its exact field roster and owned
-runtime provenance. The current receipt requires no installed descriptor
-import and contains neither the selected shared-libc consumer import nor the
-loader definition, so the selector preserves every descriptor requirement and
-protocol join as open. A weak undefined row in the dynamic CRT attachment
-object remains one exact unproved occurrence: its `.symtab` row is unversioned
-`WEAK DEFAULT NOTYPE UND`, has value and size zero, and belongs only to
-`dynamic-crabc-dynamic-attach.o`. It is not recast as a shared-libc consumer
-import. The owner records its supplied preparation,
+runtime provenance. The descriptor has no selected shared-libc consumer and
+no loader ELF provider definition. Instead, its only selected source endpoint
+is the weak unversioned `WEAK DEFAULT NOTYPE UND` `.symtab` row in
+`dynamic-crabc-dynamic-attach.o`, with zero value and size; the CRT receipt
+then binds its GOTPCREL reference to one weak `GLOB_DAT` slot in each owned
+normal/empty PIE and non-PIE main image, and proves no slot in static,
+conventional, default, or oracle images. The owned probe checks 72-byte/8-byte
+geometry, magic/version/mode/owner, acquire-READY, and FS TP/DTV coordinates.
+Those measured transport and geometry requirements discharge only through the
+current CRT receipt. Release-READY ordering, malformed-record rejection,
+worker lifetime/mapping generation, and fork ownership remain open; source
+fixtures do not qualify installed products. The owner records its supplied preparation,
 public reports, product roots, manifests, and dynamic state as exact
 checkout-relative path/hash/size identities; the selector joins each to the
 same supplied path and content, then retains its mode-bearing product cohort
 for the post-attachment transaction recheck. It does not attach the distinct
-owned CRT handoff carrier, fabricate a main-thread descriptor import, or
-claim RuntimeV1 facade parity, general pthread semantics, family completion, promotion, or
-public support.
+owned CRT handoff carrier, fabricate a loader provider or shared consumer, or
+claim RuntimeV1 facade parity, general pthread semantics, family completion,
+promotion, or public support.
 
 `--errno-storage-lifecycle-report REPORT` is also independently optional. Its
 owner reader and the selector bind the current static/dynamic manifests,
@@ -238,9 +242,13 @@ link-time boundary: the attachment requires its archive undefined row and the
 shared local `.got.plt` definition with their distinct metadata; it never
 turns that spelling into a provider rule. The 32-byte owned handoff and the
 88-byte conventional snapshot remain separate from the prepared-worker
-72-byte descriptor. This attachment leaves first-bootstrap failures, descriptor
-lifetime, general CRT lifecycle, runtime qualification, family completion,
-promotion, and public support open.
+72-byte descriptor. Schema-v2 owner evidence adds a separate finite main-image
+descriptor-handoff account: the dynamic attachment object's weak GOTPCREL
+input, four exact owned final-main weak `GLOB_DAT` slots, every non-owned/static
+no-slot control, and the owned probe's geometry and TP/DTV observations. It
+does not supply release-READY ordering, malformed rejection, worker lifetime,
+mapping-generation, fork, general CRT lifecycle, runtime qualification, family
+completion, promotion, or public support.
 
 ## Selection inputs and definition domains
 
