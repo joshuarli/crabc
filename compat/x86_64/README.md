@@ -380,6 +380,15 @@ exited 0; the added initial-target route closes that live case. It is focused
 private evidence and does not complete the pthread family or qualify a public
 platform.
 
+## Native pthread alias binding
+
+The [pthread alias contract](owned-pthread-alias-contract.md) retains the
+fixed native weak-alias roster and the `mq_notify` public
+`pthread_detach` relocation. `native_abi_selection.py` can attach its replay
+only with the same selected static/dynamic products and public ELF cohort; it
+does not turn the private implementation spellings into new installed ABI
+providers or close pthread lifecycle, family, or public-support evidence.
+
 ## Installed descriptor control
 
 `./scripts/dev-x86_64.sh owned-message-queues` checks installed POSIX queue

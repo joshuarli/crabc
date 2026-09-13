@@ -955,6 +955,25 @@ class SelectedCallableDeclarationIntegrationTests(unittest.TestCase):
         )
         self.assertFalse(result['complete'])
 
+    def test_declaration_adapter_rejects_a_header_report_replaced_after_its_public_replay(self):
+        """A reused envelope must retain the exact report bytes it parsed."""
+        envelope = self.fixture.envelope()
+        partition = self.fixture.partition()
+
+        def replay_then_replace(*_args, **_kwargs):
+            self.report.write_text('{"replacement":true}\n')
+            return envelope
+
+        with mock.patch.object(selection, '_common_checkout', return_value=ROOT), \
+             mock.patch.object(selection.declaration_inventory, 'validate_report', side_effect=replay_then_replace), \
+             self.assertRaisesRegex(selection.SelectionError, 'public declaration report changed during replay'):
+            selection.declaration_adapter(
+                self.report,
+                selected_objects=self.objects,
+                callable_matrix_projection=self.fixture.matrix_projection(),
+                **partition,
+            )
+
     def test_public_composition_rejects_a_selected_projection_without_full_header_envelope(self):
         envelope = self.fixture.envelope()
         partition = self.fixture.partition()
@@ -985,6 +1004,9 @@ class SelectedCallableDeclarationIntegrationTests(unittest.TestCase):
         self.assertIn('compat/x86_64/native_declaration_abi.py', inputs['bindings'])
         self.assertIn('compat/x86_64/native_declaration_abi.toml', inputs['bindings'])
         self.assertIn('compat/x86_64/native-declaration-abi.md', inputs['bindings'])
+        self.assertIn('compat/x86_64/loader_runtime_registry_evidence.py', inputs['bindings'])
+        self.assertIn('compat/x86_64/owned_pthread_alias_contract_reader.py', inputs['bindings'])
+        self.assertIn('compat/x86_64/owned-pthread-alias-contract.md', inputs['bindings'])
 
     def test_checked_matrix_failure_cannot_be_projected_as_callable_evidence(self):
         contract = selection.load_contract()

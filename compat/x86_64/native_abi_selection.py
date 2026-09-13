@@ -41,6 +41,8 @@ import native_callable_declarations as callable_declarations
 import native_declaration_abi as declaration_abi
 import compiler_helper_evidence as compiler_helpers
 import owned_mimalloc_producer_metadata as producer_metadata
+import loader_runtime_registry_evidence as runtime_registry_evidence
+import owned_pthread_alias_contract_reader as pthread_alias_evidence
 
 SCHEMA = 'crabc.x86_64-native-abi-selection-report/v1'
 CONTRACT_SCHEMA = 'crabc.x86_64-native-abi-selection/v1'
@@ -98,6 +100,18 @@ DECLARATION_ABI_LIMITS = [
     'Only _ns_flagdata element and in6_addr record facts are projected; FILE, table extent and h_errno storage semantics remain open.',
     'Runtime semantics, family completion, promotion and public support remain false.',
 ]
+RUNTIME_REGISTRY_LIMITS = [
+    'Only the selected nine shared-libc source-dispatch imports are attached; no loader symbol is selected as an installed provider.',
+    'RuntimeV1 worker protocol, CRT structure, general loader qualification, family completion and promotion remain open.',
+]
+PTHREAD_ALIAS_LIMITS = [
+    'The receipt binds named public weak aliases and the mq_notify public pthread_detach relocation; it does not select private provider spellings as new ABI identities.',
+    'No general pthread family, cancellation, scheduling, lifecycle, promotion or public-support closure follows from this component receipt.',
+]
+RUNTIME_REGISTRY_REQUIREMENTS = (
+    'current signature and exact relocation-admission evidence',
+    'graph rollback/reentry/fork and thread-local diagnostic component evidence',
+)
 
 
 class SelectionError(ValueError):
@@ -581,7 +595,17 @@ def load_source_inputs(contract: Mapping[str, Any], contract_path: Path) -> dict
     files.update({
         'compat/x86_64/native-declaration-abi.md',
         'compat/x86_64/tests/test_native_declaration_abi.py',
+        *runtime_registry_evidence.SOURCE_FILES,
+        'compat/x86_64/loader-runtime-registry-private-resolution.md',
+        'compat/x86_64/tests/test_loader_runtime_registry_evidence.py',
+        'compat/x86_64/tests/test_native_abi_runtime_receipts.py',
+        'compat/x86_64/owned_pthread_alias_contract_reader.py',
+        'compat/x86_64/owned_pthread_alias_contract_probe.c',
+        'compat/x86_64/run_owned_pthread_alias_contract.sh',
+        'compat/x86_64/tests/test_owned_pthread_alias_contract_reader.py',
+        'compat/x86_64/owned-pthread-alias-contract.md',
     })
+    files.update(pthread_alias_evidence.SOURCE_CONTRACT_PATHS)
     for field in ('owner_groups', 'structural_groups', 'object_contracts', 'private_protocols'):
         for row in contract[field]:
             files.update(row['sources'])
@@ -1587,10 +1611,18 @@ def declaration_adapter(report_path: Path | None, *, selected_objects: Sequence[
         return None
     module_path = Path(declaration_inventory.__file__)
     report_path = physical_work_path(report_path, directory=False)
+    # The public header reader returns a parsed envelope.  Bind the physical
+    # report before invoking it, then prove the same bytes remain present
+    # through every downstream attachment that reuses that envelope.  Without
+    # this interval, a replacement after the reader returns could inherit the
+    # old authenticated data while the selection record named new bytes.
+    report_before = file_identity(report_path)
     try:
         envelope = declaration_inventory.validate_report(report_path, project_include=ROOT / 'include')
     except (ValueError, OSError) as error:
         raise SelectionError(f'declaration companion rejected: {error}') from error
+    require(same(report_before, file_identity(report_path)),
+            'public declaration report changed during replay')
     exact(envelope, {'report', 'current_selecting_source'}, 'declaration reader envelope')
     source = exact(envelope['current_selecting_source'], {'matches_retained', 'differences'}, 'declaration source comparison')
     require(type(source['matches_retained']) is bool and type(source['differences']) is list, 'declaration source comparison types differ')
@@ -1641,7 +1673,9 @@ def declaration_adapter(report_path: Path | None, *, selected_objects: Sequence[
         selected_objects=selected_objects,
     )
     account['complete'] = False
-    return {'report': file_identity(report_path), 'reader': file_identity(module_path),
+    require(same(report_before, file_identity(report_path)),
+            'public declaration report changed during companion attachment')
+    return {'report': report_before, 'reader': file_identity(module_path),
             'current_selecting_source': source, 'physical_status': report['status'], **account}
 
 
@@ -1888,6 +1922,521 @@ def compiler_helper_adapter(report_path: Path | None, *, ordinary_report_path: P
     require(all(account.get(key) is False for key in ('shared_placement_selected', 'family_completion', 'public_support')),
             'compiler-helper component exceeds archive evidence scope')
     return {'report': before, 'reader': file_identity(Path(compiler_helpers.__file__)), 'account': account}
+
+
+def _identity_payload(record: object, description: str) -> dict[str, Any]:
+    """Return a physical-file identity without treating its logical path as portable.
+
+    Component receipts commonly retain their own `/workspace` or copied-input
+    paths.  The selector's product cohort has distinct host paths.  The path
+    remains in each receipt for that reader to validate, while this join binds
+    the immutable bytes, mode, and size to the already selected product.
+    """
+    row = exact(record, {'path', 'sha256', 'size', 'mode'}, description)
+    require(type(row['path']) is str and row['path']
+            and type(row['sha256']) is str and re.fullmatch(r'[0-9a-f]{64}', row['sha256']) is not None
+            and type(row['size']) is int and row['size'] >= 0
+            and type(row['mode']) is int and not isinstance(row['mode'], bool) and row['mode'] >= 0,
+            f'{description} identity values differ')
+    return {key: row[key] for key in ('sha256', 'size', 'mode')}
+
+
+def _require_same_identity_payload(left: object, right: object, description: str) -> None:
+    require(same(_identity_payload(left, description + ' left'), _identity_payload(right, description + ' right')),
+            f'{description} bytes or mode differ')
+
+
+def _current_product_identities(paths: Mapping[str, Path]) -> dict[str, dict[str, Any]]:
+    """Name the finite selected-product files shared by runtime attachments."""
+    records = {
+        'static_manifest': paths['static_product'] / 'share/crabc/manifest.json',
+        'static_driver': paths['static_product'] / 'bin/crabc-cc',
+        'static_libc': paths['static_product'] / 'usr/lib/libc.a',
+        'dynamic_manifest': paths['dynamic_product'] / 'share/crabc/manifest.json',
+        'dynamic_state': paths['dynamic_product'] / inventory.DYNAMIC_STATE_RELATIVE,
+        'dynamic_driver': paths['dynamic_product'] / 'bin/crabc-cc-dynamic',
+        'dynamic_libc': paths['dynamic_product'] / 'usr/lib/libc.so',
+        'dynamic_loader': paths['dynamic_product'] / 'lib/ld-crabc-x86_64.so.1',
+    }
+    return {name: file_identity(path) for name, path in records.items()}
+
+
+def _measurement_source_matches(source: Mapping[str, Any], measurement: Mapping[str, Any], description: str) -> None:
+    candidate = measurement.get('candidate_build')
+    require(type(candidate) is dict
+            and type(candidate.get('revision')) is str and type(candidate.get('source_content_sha256')) is str,
+            f'{description} public ELF candidate-build binding differs')
+    require(source.get('clean') is True
+            and source.get('revision') == candidate['revision']
+            and source.get('content_sha256') == candidate['source_content_sha256'],
+            f'{description} source differs from the selected product cohort')
+
+
+def _measurement_report_bindings(measurement: Mapping[str, Any], description: str) -> dict[str, dict[str, Any]]:
+    reports = exact(measurement.get('reports'), {'elf_report', 'base_inventory', 'static_preparation'},
+                    f'{description} public ELF replay report identities')
+    for name, row in reports.items():
+        _identity_payload(row, f'{description} public ELF replay {name}')
+    return copy.deepcopy(reports)
+
+
+def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping[str, Any],
+                                    measurement: Mapping[str, Any], source: Mapping[str, Any],
+                                    registry: Mapping[str, Any] | None,
+                                    pthread: Mapping[str, Any] | None) -> None:
+    """Keep runtime attachments within the same source/product transaction.
+
+    Both owning readers validate their receipts before the selector's placement
+    joins.  Recheck the exact supplied files after those joins so a mutable
+    product or raw report cannot change in the interval before `report.json`
+    is sealed.
+    """
+    if registry is None and pthread is None:
+        return
+    require(same(source, selection_source()), 'selection source changed during runtime receipt attachment')
+    reports = _measurement_report_bindings(measurement, 'runtime receipt')
+    for name, path_key in (
+        ('elf_report', 'elf_report'), ('base_inventory', 'base_inventory'), ('static_preparation', 'static_preparation'),
+    ):
+        require(same(reports[name], file_identity(paths[path_key])),
+                f'public ELF replay {name} changed during runtime receipt attachment')
+    current = _current_product_identities(paths)
+    facts_artifacts = facts.get('artifacts')
+    require(type(facts_artifacts) is dict, 'public ELF facts artifact roster changed during runtime receipt attachment')
+    for current_name, artifact_key in (
+        ('static_libc', 'candidate-static'), ('dynamic_libc', 'candidate-shared'), ('dynamic_loader', 'candidate-loader'),
+    ):
+        artifact = facts_artifacts.get(artifact_key)
+        require(type(artifact) is dict and 'identity' in artifact,
+                f'public ELF facts omit {artifact_key} during runtime receipt attachment')
+        _require_same_identity_payload(artifact['identity'], current[current_name],
+                                       f'public ELF {artifact_key} during runtime receipt attachment')
+    for label, companion in (('runtime registry', registry), ('pthread alias', pthread)):
+        if companion is None:
+            continue
+        records = companion.get('products')
+        require(type(records) is dict and set(records) == set(current),
+                f'{label} product roster differs during attachment')
+        for name in current:
+            _require_same_identity_payload(records[name], current[name],
+                                           f'{label} {name} changed during attachment')
+        if label == 'runtime registry':
+            require(same(companion.get('measurement_reports'), reports),
+                    'runtime registry public replay binding changed during attachment')
+        report = companion.get('report')
+        require(type(report) is dict and type(report.get('path')) is str,
+                f'{label} report identity differs during attachment')
+        report_path = Path(report['path'])
+        require(report_path.is_file() and report_path.resolve() == report_path,
+                f'{label} report disappeared during attachment')
+        require(same(report, file_identity(report_path)),
+                f'{label} report changed during attachment')
+
+
+def loader_runtime_registry_adapter(report_path: Path | None, *, facts: Mapping[str, Any],
+                                    measurement: Mapping[str, Any], paths: Mapping[str, Path],
+                                    source: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Replay the finite loader registry receipt against this selected cohort.
+
+    The owning reader keeps its standalone public reconstruction: it replays
+    the retained runtime commands and supplied-product admission.  This
+    selector attachment then cross-binds its exact input identities to the
+    public ELF product cohort before it can discharge only the matching
+    private-operation requirements below.
+    """
+    if report_path is None:
+        return None
+    require(Path(runtime_registry_evidence.ROOT) == ROOT,
+            'runtime registry reader belongs to a different checkout')
+    report_path = physical_work_path(report_path, directory=False)
+    before = file_identity(report_path)
+    try:
+        report = runtime_registry_evidence.validate_report(
+            report_path,
+            **{key: paths[key] for key in
+               ('base_inventory', 'elf_report', 'static_preparation', 'static_product', 'dynamic_product')},
+        )
+    except (KeyError, TypeError, ValueError, OSError, runtime_registry_evidence.RuntimeRegistryEvidenceError) as error:
+        raise SelectionError(f'loader runtime registry component rejected: {error}') from error
+    require(same(before, file_identity(report_path)), 'runtime registry report changed during replay')
+    source = exact(dict(source), {'revision', 'content_sha256', 'clean'}, 'selection source')
+    _measurement_source_matches(source, measurement, 'runtime registry')
+    measurement_reports = _measurement_report_bindings(measurement, 'runtime registry')
+    report = exact(report, {'schema', 'target', 'status', 'source', 'source_files', 'inputs', 'dlfcn', 'fork', 'timer_reset'},
+                   'runtime registry reader report')
+    require(report['schema'] == runtime_registry_evidence.SCHEMA and report['target'] == runtime_registry_evidence.TARGET,
+            'runtime registry reader report identity differs')
+    require(same(report['source'], source), 'runtime registry report source differs from selection')
+    inputs = exact(report['inputs'], {
+        'contract', 'source', 'source_resolution', 'source_files', 'elf_report', 'imports', 'loader', 'products',
+    }, 'runtime registry supplied-product account')
+    require(same(inputs['source'], source), 'runtime registry supplied-product source differs from selection')
+    require(same(inputs['elf_report'], measurement_reports['elf_report']),
+            'runtime registry ELF report differs from public replay input')
+    current = _current_product_identities(paths)
+    products = exact(inputs['products'], {'static', 'dynamic_libc', 'dynamic_loader'},
+                     'runtime registry product identity roster')
+    _require_same_identity_payload(products['static'], current['static_libc'], 'runtime registry static libc')
+    _require_same_identity_payload(products['dynamic_libc'], current['dynamic_libc'], 'runtime registry dynamic libc')
+    _require_same_identity_payload(products['dynamic_loader'], current['dynamic_loader'], 'runtime registry dynamic loader')
+    loader = exact(inputs['loader'], {'loader', 'feature', 'provenance'}, 'runtime registry loader account')
+    require(loader['feature'] == runtime_registry_evidence.FEATURE,
+            'runtime registry loader feature differs')
+    _require_same_identity_payload(loader['loader'], current['dynamic_loader'], 'runtime registry loader provenance')
+    _require_same_identity_payload(loader['provenance'], file_identity(
+        paths['dynamic_product'] / 'share/crabc/loader.provenance.json'
+    ), 'runtime registry loader provenance file')
+    facts_artifacts = facts.get('artifacts')
+    require(type(facts_artifacts) is dict, 'public ELF facts artifact roster differs for runtime registry')
+    for current_name, artifact_key in (
+        ('static_libc', 'candidate-static'), ('dynamic_libc', 'candidate-shared'), ('dynamic_loader', 'candidate-loader'),
+    ):
+        artifact = facts_artifacts.get(artifact_key)
+        require(type(artifact) is dict and 'identity' in artifact,
+                f'public ELF facts omit runtime registry {artifact_key}')
+        _require_same_identity_payload(artifact['identity'], current[current_name],
+                                       f'public ELF/runtime registry {artifact_key}')
+    imports = inputs['imports']
+    require(type(imports) is dict and set(imports) == set(runtime_registry_evidence.RESOLVERS),
+            'runtime registry import roster differs')
+    for name in runtime_registry_evidence.RESOLVERS:
+        tables = exact(imports[name], set(runtime_registry_evidence.SYMBOL_TABLES),
+                       f'runtime registry import {name}')
+        for table in runtime_registry_evidence.SYMBOL_TABLES:
+            exact(tables[table], {
+                'type', 'binding', 'visibility', 'section_index', 'size_bytes', 'value', 'version', 'version_default',
+            }, f'runtime registry import {name} {table}')
+    return {
+        'status': 'private-runtime-registry-observed-with-boundaries',
+        'reader': file_identity(Path(runtime_registry_evidence.__file__)),
+        'contract': file_identity(runtime_registry_evidence.CONTRACT_PATH),
+        'report': before,
+        'source': copy.deepcopy(source),
+        'products': {name: copy.deepcopy(current[name]) for name in sorted(current)},
+        'measurement_reports': measurement_reports,
+        'inputs': copy.deepcopy(inputs),
+        'limits': list(RUNTIME_REGISTRY_LIMITS),
+    }
+
+
+def _runtime_registry_row_projection(occurrence: Mapping[str, Any]) -> dict[str, Any]:
+    row = occurrence.get('row')
+    require(type(row) is dict, 'runtime registry occurrence row differs')
+    return {key: row.get(key) for key in (
+        'type', 'binding', 'visibility', 'section_index', 'size_bytes', 'value', 'version', 'version_default',
+    )}
+
+
+def attach_loader_runtime_registry(accounting: Mapping[str, Any], companion: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """Discharge only the exact selected loader registry import requirements."""
+    if companion is None:
+        return []
+    companion = exact(companion, {'status', 'reader', 'contract', 'report', 'source', 'products', 'measurement_reports', 'inputs', 'limits'},
+                      'runtime registry companion')
+    require(companion['status'] == 'private-runtime-registry-observed-with-boundaries'
+            and companion['limits'] == RUNTIME_REGISTRY_LIMITS,
+            'runtime registry companion boundary differs')
+    inputs = exact(companion['inputs'], {
+        'contract', 'source', 'source_resolution', 'source_files', 'elf_report', 'imports', 'loader', 'products',
+    }, 'runtime registry companion inputs')
+    imports = inputs['imports']
+    require(type(imports) is dict and set(imports) == set(runtime_registry_evidence.RESOLVERS),
+            'runtime registry companion import roster differs')
+    records = {identity_key(record['identity']): record for record in accounting['identities']}
+    require(len(records) == len(accounting['identities']), 'duplicate identities before runtime registry attachment')
+    protocol_joins = accounting['private_protocol_joins']
+    require(type(protocol_joins) is list, 'runtime registry private protocol joins differ')
+    discharged: set[tuple[str, str | None, bool]] = set()
+    result: list[dict[str, Any]] = []
+    for name, resolver in sorted(runtime_registry_evidence.RESOLVERS.items()):
+        key = (name, None, False)
+        record = records.get(key)
+        require(record is not None, f'runtime registry selected identity is absent: {name}')
+        selection_record = record.get('selection')
+        require(type(selection_record) is dict
+                and selection_record.get('disposition') == 'private-resolution-operation'
+                and selection_record.get('owner') == 'loader-runtime-operations',
+                f'runtime registry selected owner differs: {name}')
+        protocol = selection_record.get('protocol')
+        require(type(protocol) is dict and protocol.get('id') == 'loader-runtime-operations'
+                and type(protocol.get('members')) is list
+                and len(protocol['members']) == len(runtime_registry_evidence.RESOLVERS)
+                and set(protocol['members']) == set(runtime_registry_evidence.RESOLVERS)
+                and protocol.get('consumer_artifacts') == ['candidate-shared']
+                and protocol.get('endpoint_kind') == 'source-dispatch-operation'
+                and protocol.get('provider_artifacts') == [],
+                f'runtime registry protocol scope differs: {name}')
+        operations = protocol.get('operations')
+        require(type(operations) is list and len(operations) == len(runtime_registry_evidence.RESOLVERS)
+                and next((row for row in operations if isinstance(row, dict) and row.get('name') == name), None) is not None,
+                f'runtime registry protocol operation differs: {name}')
+        expected_tables = exact(imports[name], set(runtime_registry_evidence.SYMBOL_TABLES),
+                                f'runtime registry attachment import {name}')
+        occurrences = [row for row in accounting['occurrences']
+                       if identity_key(row_identity(row['row'])) == key
+                       and row['artifact_key'] == 'candidate-shared' and row['role'] == 'import']
+        by_table = {row['table']: row for row in occurrences}
+        require(len(by_table) == len(occurrences) == len(runtime_registry_evidence.SYMBOL_TABLES)
+                and set(by_table) == set(runtime_registry_evidence.SYMBOL_TABLES),
+                f'runtime registry selected occurrences differ: {name}')
+        indices: list[int] = []
+        for table in runtime_registry_evidence.SYMBOL_TABLES:
+            occurrence = by_table[table]
+            require(same(_runtime_registry_row_projection(occurrence), expected_tables[table]),
+                    f'runtime registry selected metadata differs: {name} {table}')
+            observed_account = occurrence.get('accounting')
+            require(type(observed_account) is dict
+                    and observed_account.get('disposition') == 'private-resolution-operation'
+                    and observed_account.get('owner') == 'loader-runtime-operations'
+                    and observed_account.get('scope') == 'candidate-shared',
+                    f'runtime registry selected occurrence ownership differs: {name} {table}')
+            resolution = observed_account.get('resolution')
+            require(type(resolution) is dict
+                    and resolution.get('kind') == 'source-dispatch-operation'
+                    and type(resolution.get('operation')) is dict
+                    and resolution['operation'].get('name') == name
+                    and observed_account.get('resolution_proven') is False,
+                    f'runtime registry selected occurrence resolution differs: {name} {table}')
+            observed_account['resolution_proven'] = True
+            indices.append(occurrence['index'])
+        join = next((row for row in protocol_joins
+                     if row.get('identity') == record['identity'] and row.get('artifact_key') == 'candidate-shared'
+                     and row.get('role') == 'consumer-import'), None)
+        require(join is not None and join.get('occurrence_indices') == indices
+                and join.get('endpoint_kind') == 'source-dispatch-operation'
+                and join.get('relocation_lifecycle_proven') is False,
+                f'runtime registry private protocol join differs: {name}')
+        join['relocation_lifecycle_proven'] = True
+        require(all(reason in record['unresolved'] for reason in RUNTIME_REGISTRY_REQUIREMENTS),
+                f'runtime registry requirements are absent before attachment: {name}')
+        record['unresolved'] = [reason for reason in record['unresolved'] if reason not in RUNTIME_REGISTRY_REQUIREMENTS]
+        discharged.add(key)
+        result.append({
+            'identity': copy.deepcopy(record['identity']), 'resolver': resolver,
+            'artifact_key': 'candidate-shared', 'occurrence_indices': indices,
+            'requirements_discharged': list(RUNTIME_REGISTRY_REQUIREMENTS),
+            'source_dispatch_proven': True,
+        })
+    accounting['blockers'][:] = [
+        blocker for blocker in accounting['blockers']
+        if not (blocker.get('code') == 'identity-unresolved'
+                and identity_key(blocker.get('identity', {})) in discharged
+                and blocker.get('reason') in RUNTIME_REGISTRY_REQUIREMENTS)
+    ]
+    require(len(result) == len(runtime_registry_evidence.RESOLVERS),
+            'runtime registry attachment count differs')
+    return result
+
+
+def _pthread_receipt_artifact(report: Mapping[str, Any], relative: str, description: str) -> dict[str, Any]:
+    artifacts = report.get('artifacts')
+    require(type(artifacts) is dict, 'pthread alias receipt artifact roster differs')
+    return exact(artifacts.get(relative), {'path', 'sha256', 'size', 'mode'}, description)
+
+
+def pthread_alias_contract_adapter(report_path: Path | None, *, facts: Mapping[str, Any],
+                                  measurement: Mapping[str, Any], paths: Mapping[str, Path],
+                                  source: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Replay and bind the fixed pthread alias receipt to this product cohort."""
+    if report_path is None:
+        return None
+    require(Path(pthread_alias_evidence.__file__).resolve().parent == MODULE_DIR,
+            'pthread alias reader belongs to a different checkout')
+    report_path = physical_work_path(report_path, directory=False)
+    before = file_identity(report_path)
+    try:
+        report = pthread_alias_evidence.validate_report(report_path)
+    except (KeyError, TypeError, ValueError, OSError, pthread_alias_evidence.ReceiptError) as error:
+        raise SelectionError(f'pthread alias component rejected: {error}') from error
+    require(same(before, file_identity(report_path)), 'pthread alias report changed during replay')
+    source = exact(dict(source), {'revision', 'content_sha256', 'clean'}, 'selection source')
+    _measurement_source_matches(source, measurement, 'pthread alias')
+    measurement_reports = _measurement_report_bindings(measurement, 'pthread alias')
+    report = exact(report, {
+        'schema', 'status', 'component', 'public_support', 'family_complete', 'promotion_ready',
+        'collection', 'selected_source', 'collector', 'inputs', 'selected_products', 'oracle',
+        'historical_evidence', 'coverage', 'artifacts', 'commands', 'elf_headers', 'alias_observations', 'runtime_roots',
+    }, 'pthread alias reader report')
+    require(report['schema'] == pthread_alias_evidence.SCHEMA
+            and report['status'] == pthread_alias_evidence.STATUS
+            and report['component'] == pthread_alias_evidence.COMPONENT
+            and report['public_support'] is False and report['family_complete'] is False and report['promotion_ready'] is False,
+            'pthread alias reader report identity or boundary differs')
+    selected_source = exact(report['selected_source'], {'revision', 'tree', 'source_sha256', 'component_sha256', 'files'},
+                            'pthread alias selected source')
+    require(selected_source['revision'] == source['revision']
+            and selected_source['source_sha256'] == source['content_sha256'],
+            'pthread alias selected source differs from selection')
+    current = _current_product_identities(paths)
+    selected = exact(report['selected_products'], {'anchor', 'static', 'dynamic'}, 'pthread alias selected products')
+    static = exact(selected['static'], {'manifest', 'driver', 'libc', 'original_paths'}, 'pthread alias static product')
+    dynamic = exact(selected['dynamic'], {'manifest', 'state', 'driver', 'libc', 'loader', 'original_paths'},
+                    'pthread alias dynamic product')
+    for retained, current_name in (
+        (static['manifest'], 'static_manifest'), (static['driver'], 'static_driver'), (static['libc'], 'static_libc'),
+        (dynamic['manifest'], 'dynamic_manifest'), (dynamic['state'], 'dynamic_state'),
+        (dynamic['driver'], 'dynamic_driver'), (dynamic['libc'], 'dynamic_libc'), (dynamic['loader'], 'dynamic_loader'),
+    ):
+        _require_same_identity_payload(_pthread_receipt_artifact(report, retained, f'pthread alias {current_name} receipt'),
+                                       current[current_name], f'pthread alias {current_name}')
+    facts_artifacts = facts.get('artifacts')
+    require(type(facts_artifacts) is dict, 'public ELF facts artifact roster differs for pthread aliases')
+    for current_name, artifact_key in (
+        ('static_libc', 'candidate-static'), ('dynamic_libc', 'candidate-shared'), ('dynamic_loader', 'candidate-loader'),
+    ):
+        artifact = facts_artifacts.get(artifact_key)
+        require(type(artifact) is dict and 'identity' in artifact,
+                f'public ELF facts omit pthread alias {artifact_key}')
+        _require_same_identity_payload(artifact['identity'], current[current_name],
+                                       f'public ELF/pthread alias {artifact_key}')
+    require(same(report['coverage'], pthread_alias_evidence._coverage()), 'pthread alias coverage differs')
+    alias_observations = report['alias_observations']
+    require(type(alias_observations) is dict and alias_observations.get('aliases') == [
+        {'public': public, 'provider': provider} for public, provider in pthread_alias_evidence.ALIASES
+    ], 'pthread alias observation roster differs')
+    return {
+        'status': 'pthread-alias-contract-observed-with-boundaries',
+        'reader': file_identity(Path(pthread_alias_evidence.__file__)),
+        'report': before,
+        'source': copy.deepcopy(selected_source),
+        'products': {name: copy.deepcopy(current[name]) for name in sorted(current)},
+        'measurement_reports': measurement_reports,
+        'coverage': copy.deepcopy(report['coverage']),
+        'alias_observations': copy.deepcopy(alias_observations),
+        'limits': list(PTHREAD_ALIAS_LIMITS),
+    }
+
+
+def _pthread_alias_shape(value: object, placement: str, name: str) -> None:
+    require(value == ['FUNC', 'WEAK', 'DEFAULT'],
+            f'pthread alias {name} {placement} shape differs')
+
+
+def _archive_member_from_reader(value: object) -> str:
+    require(type(value) is str and value.endswith(')') and '(' in value,
+            'pthread alias mq_notify archive member differs')
+    member = value.rsplit('(', 1)[1][:-1]
+    require(member and '/' not in member and '\\' not in member and '\x00' not in member,
+            'pthread alias mq_notify archive member is unsafe')
+    return member
+
+
+def attach_pthread_alias_contract(accounting: Mapping[str, Any], companion: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """Attach public pthread alias facts without selecting private spellings."""
+    if companion is None:
+        return []
+    companion = exact(companion, {'status', 'reader', 'report', 'source', 'products', 'measurement_reports', 'coverage', 'alias_observations', 'limits'},
+                      'pthread alias companion')
+    require(companion['status'] == 'pthread-alias-contract-observed-with-boundaries'
+            and companion['limits'] == PTHREAD_ALIAS_LIMITS,
+            'pthread alias companion boundary differs')
+    coverage = exact(companion['coverage'], {'aliases', 'mq_notify_source_policy', 'behavior'},
+                     'pthread alias companion coverage')
+    require(coverage == pthread_alias_evidence._coverage(), 'pthread alias companion coverage differs')
+    observations = companion['alias_observations']
+    require(type(observations) is dict, 'pthread alias companion observations differ')
+    aliases = observations.get('aliases')
+    expected_aliases = [{'public': public, 'provider': provider} for public, provider in pthread_alias_evidence.ALIASES]
+    require(aliases == expected_aliases, 'pthread alias companion alias roster differs')
+    shapes = observations.get('alias_shapes')
+    same_definitions = observations.get('same_definition')
+    require(type(shapes) is dict and set(shapes) == {'dynamic', 'shared', 'static'}
+            and type(same_definitions) is dict and set(same_definitions) == {'musl_shared', 'musl_static', 'shared', 'static'},
+            'pthread alias companion definition observations differ')
+    records = {identity_key(record['identity']): record for record in accounting['identities']}
+    require(len(records) == len(accounting['identities']), 'duplicate identities before pthread alias attachment')
+    joins_by_key = {(identity_key(row['identity']), row['artifact_key']): row for row in accounting['placement_joins']}
+    require(len(joins_by_key) == len(accounting['placement_joins']), 'duplicate placement joins before pthread alias attachment')
+    occurrences = {row['index']: row for row in accounting['occurrences']}
+    require(len(occurrences) == len(accounting['occurrences']), 'duplicate occurrences before pthread alias attachment')
+    alias_joins: list[dict[str, Any]] = []
+    for public, provider in pthread_alias_evidence.ALIASES:
+        key = (public, None, False)
+        record = records.get(key)
+        require(record is not None and record.get('selection', {}).get('disposition') == 'public-provider',
+                f'pthread alias selected public identity differs: {public}')
+        for placement in ('dynamic', 'shared', 'static'):
+            _pthread_alias_shape(shapes[placement].get(public), placement, public)
+        for placement in ('shared', 'static'):
+            definition = same_definitions[placement].get(public)
+            require(type(definition) is dict and set(definition) == {'alias', 'provider'}
+                    and definition['alias'].get('name') == public and definition['provider'].get('name') == provider,
+                    f'pthread alias same-definition evidence differs: {public} {placement}')
+        placement_rows: dict[str, dict[str, Any]] = {}
+        for artifact_key, placement in (('candidate-static', 'static'), ('candidate-shared', 'shared')):
+            expected_table = '.symtab' if artifact_key == 'candidate-static' else '.dynsym'
+            join = joins_by_key.get((key, artifact_key))
+            require(join is not None and join.get('placement_observed') is True
+                    and join.get('definition_count') == 1 and len(join.get('occurrence_indices', [])) == 1
+                    and _metadata_difference_rows_are_empty(join.get('metadata_differences'),
+                                                             f'pthread alias {public} {artifact_key}'),
+                    f'pthread alias selected placement differs: {public} {artifact_key}')
+            occurrence = occurrences.get(join['occurrence_indices'][0])
+            require(occurrence is not None and occurrence.get('artifact_key') == artifact_key
+                    and occurrence.get('role') == 'definition' and occurrence.get('table') == expected_table
+                    and same(row_identity(occurrence['row']), record['identity'])
+                    and occurrence['row'].get('type') == 'FUNC'
+                    and occurrence['row'].get('binding') == 'WEAK'
+                    and occurrence['row'].get('visibility') == 'DEFAULT',
+                    f'pthread alias selected occurrence differs: {public} {artifact_key}')
+            placement_rows[placement] = {'artifact_key': artifact_key, 'occurrence_index': occurrence['index']}
+        shared_symtab = [row for row in occurrences.values()
+                         if row.get('artifact_key') == 'candidate-shared' and row.get('table') == '.symtab'
+                         and row.get('role') == 'definition' and same(row_identity(row['row']), record['identity'])]
+        require(len(shared_symtab) == 1
+                and shared_symtab[0]['row'].get('type') == 'FUNC'
+                and shared_symtab[0]['row'].get('binding') == 'WEAK'
+                and shared_symtab[0]['row'].get('visibility') == 'DEFAULT',
+                f'pthread alias shared symtab occurrence differs: {public}')
+        alias_joins.append({
+            'identity': copy.deepcopy(record['identity']), 'provider': provider,
+            'placements': placement_rows, 'shared_symtab_occurrence_index': shared_symtab[0]['index'],
+            'same_definition_observed': True,
+        })
+    require(len(alias_joins) == len(pthread_alias_evidence.ALIASES)
+            and len({row['provider'] for row in alias_joins}) == 15,
+            'pthread alias/provider cardinality differs')
+    mq = observations.get('mq_notify_public_detach')
+    require(type(mq) is dict and set(mq) == {'musl', 'candidate'}
+            and type(mq['candidate']) is dict and set(mq['candidate']) == {'member', 'relocation_section'},
+            'pthread alias mq_notify evidence differs')
+    member = _archive_member_from_reader(mq['candidate']['member'])
+    require(type(mq['candidate']['relocation_section']) is str and mq['candidate']['relocation_section'].startswith('.rela'),
+            'pthread alias mq_notify relocation section differs')
+    detach_key = ('pthread_detach', None, False)
+    detach = records.get(detach_key)
+    require(detach is not None and detach.get('selection', {}).get('disposition') == 'public-provider',
+            'pthread alias public pthread_detach selection differs')
+    imports = [row for row in occurrences.values()
+               if row.get('artifact_key') == 'candidate-static' and row.get('role') == 'import'
+               and same(row_identity(row['row']), detach['identity'])]
+    matched = [row for row in imports
+               if row.get('table') == '.symtab' and row.get('member_name') == member
+               and row['row'].get('type') == 'NOTYPE' and row['row'].get('binding') == 'GLOBAL'
+               and row['row'].get('visibility') == 'DEFAULT']
+    covered = len(imports) == len(matched) == 1
+    if covered:
+        require(ORDINARY_IMPORT_REASON in detach['unresolved'],
+                'pthread alias mq_notify import reason is absent before attachment')
+        detach['unresolved'].remove(ORDINARY_IMPORT_REASON)
+        accounting['blockers'][:] = [
+            blocker for blocker in accounting['blockers']
+            if not (blocker.get('code') == 'identity-unresolved'
+                    and identity_key(blocker.get('identity', {})) == detach_key
+                    and blocker.get('reason') == ORDINARY_IMPORT_REASON)
+        ]
+    mq_join = {
+        'identity': copy.deepcopy(detach['identity']), 'artifact_key': 'candidate-static',
+        'member_name': member, 'occurrence_indices': [row['index'] for row in matched],
+        'relocation_section': mq['candidate']['relocation_section'],
+        'public_detach_relocation_proven': covered,
+        'discharged_reason': ORDINARY_IMPORT_REASON if covered else None,
+    }
+    return [{
+        'aliases': alias_joins,
+        'mq_notify_public_detach': mq_join,
+        'application_public_override': copy.deepcopy(observations.get('application_public_override')),
+    }]
 
 
 def _compiler_helper_shared_contract(contract: Mapping[str, Any], inputs: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
@@ -2153,13 +2702,25 @@ def attach_compiler_helper_import(accounting: Mapping[str, Any], companion: Mapp
 def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration_report: Path | None,
                   ordinary_declaration_abi_report: Path | None = None,
                   ordinary_link_report: Path | None = None, loader_debug_report: Path | None = None,
-                  compiler_helper_aggregate_report: Path | None = None) -> dict[str, Any]:
+                  compiler_helper_aggregate_report: Path | None = None,
+                  loader_runtime_registry_report: Path | None = None,
+                  pthread_alias_contract_report: Path | None = None) -> dict[str, Any]:
     source_before = selection_source()
     contract = load_contract(contract_path)
     inputs = load_source_inputs(contract, contract_path)
     facts, measurement = replay_measurement(paths)
     fixed_c_producer_metadata_companion = fixed_c_producer_metadata_adapter(
         facts, measurement, paths, contract, inputs,
+    )
+    # These finite supplied-product readers do not consume header facts. Admit
+    # them before the expensive declaration envelope so malformed runtime
+    # evidence fails without paying for a second long compiler-report replay.
+    # They are still attached only after the common placement accounting below.
+    loader_runtime_registry_companion = loader_runtime_registry_adapter(
+        loader_runtime_registry_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
+    )
+    pthread_alias_contract_companion = pthread_alias_contract_adapter(
+        pthread_alias_contract_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
     )
     declaration = declaration_adapter(
         declaration_report,
@@ -2193,6 +2754,12 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     )
     public_data_linkage_joins = attach_public_data_linkage(accounting, public_data_linkage_companion)
     compiler_helper_import_joins = attach_compiler_helper_import(accounting, compiler_helper_companion)
+    loader_runtime_registry_joins = attach_loader_runtime_registry(accounting, loader_runtime_registry_companion)
+    pthread_alias_contract_joins = attach_pthread_alias_contract(accounting, pthread_alias_contract_companion)
+    _recheck_runtime_receipt_cohort(
+        paths=paths, facts=facts, measurement=measurement, source=source_before,
+        registry=loader_runtime_registry_companion, pthread=pthread_alias_contract_companion,
+    )
     candidate = measurement['candidate_build']
     source_matches = source_before['clean'] is True and source_before['revision'] == candidate['revision'] and source_before['content_sha256'] == candidate['source_content_sha256']
     blockers = accounting.pop('blockers')
@@ -2211,6 +2778,10 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'compiler_helper_companion': compiler_helper_companion,
             'compiler_helper_shared_placement_joins': compiler_helper_shared_placement_joins,
             'compiler_helper_import_joins': compiler_helper_import_joins,
+            'loader_runtime_registry_companion': loader_runtime_registry_companion,
+            'loader_runtime_registry_joins': loader_runtime_registry_joins,
+            'pthread_alias_contract_companion': pthread_alias_contract_companion,
+            'pthread_alias_contract_joins': pthread_alias_contract_joins,
             **accounting, 'closure': {'complete': not blockers, 'blockers': blockers}, 'status': dict(STATUS),
             'limits': ['selection audit is not qualification', 'complete raw ELF observations stay with the publicly replayed supplement',
                        'no allocator metadata or unwinder investigation', 'no imported AArch64 execution proof',
@@ -2221,6 +2792,8 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                  ordinary_declaration_abi_report: Path | None = None,
                  ordinary_link_report: Path | None = None, loader_debug_report: Path | None = None,
                  compiler_helper_aggregate_report: Path | None = None,
+                 loader_runtime_registry_report: Path | None = None,
+                 pthread_alias_contract_report: Path | None = None,
                  **measurement_inputs: Path) -> dict[str, Any]:
     output = physical_work_path(output, directory=True, own=True, fresh=True)
     paths = validate_measurement_paths(**measurement_inputs)
@@ -2229,7 +2802,9 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
     report = _build_report(contract_path=contract_path, paths=paths, declaration_report=declaration_report,
                            ordinary_declaration_abi_report=ordinary_declaration_abi_report,
                            ordinary_link_report=ordinary_link_report, loader_debug_report=loader_debug_report,
-                           compiler_helper_aggregate_report=compiler_helper_aggregate_report)
+                           compiler_helper_aggregate_report=compiler_helper_aggregate_report,
+                           loader_runtime_registry_report=loader_runtime_registry_report,
+                           pthread_alias_contract_report=pthread_alias_contract_report)
     output.mkdir()
     (output / 'report.json').write_bytes(inventory._stable_json(report))
     return report
@@ -2239,6 +2814,8 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                     ordinary_declaration_abi_report: Path | None = None,
                     ordinary_link_report: Path | None = None, loader_debug_report: Path | None = None,
                     compiler_helper_aggregate_report: Path | None = None,
+                    loader_runtime_registry_report: Path | None = None,
+                    pthread_alias_contract_report: Path | None = None,
                     **measurement_inputs: Path) -> dict[str, Any]:
     report_path = physical_work_path(report_path, directory=False, own=True)
     require(report_path.name == 'report.json', 'selection report has the wrong name')
@@ -2249,7 +2826,9 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
     expected = _build_report(contract_path=contract_path, paths=paths, declaration_report=declaration_report,
                              ordinary_declaration_abi_report=ordinary_declaration_abi_report,
                              ordinary_link_report=ordinary_link_report, loader_debug_report=loader_debug_report,
-                             compiler_helper_aggregate_report=compiler_helper_aggregate_report)
+                             compiler_helper_aggregate_report=compiler_helper_aggregate_report,
+                             loader_runtime_registry_report=loader_runtime_registry_report,
+                             pthread_alias_contract_report=pthread_alias_contract_report)
     require(same(report, expected), 'selection report does not reconstruct exactly from source inputs and public measurement replay')
     return report
 
@@ -2267,6 +2846,8 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument('--public-data-ordinary-link-report', type=Path)
     parser.add_argument('--loader-debug-abi-report', type=Path)
     parser.add_argument('--compiler-helper-aggregate-report', type=Path)
+    parser.add_argument('--loader-runtime-registry-report', type=Path)
+    parser.add_argument('--pthread-alias-contract-report', type=Path)
     options = [arg.split('=', 1)[0] for arg in argv if arg.startswith('--')]
     if len(options) != len(set(options)):
         parser.error('duplicate options are not accepted')
@@ -2278,7 +2859,8 @@ def main(argv: Sequence[str]) -> int:
     kwargs = {key: getattr(args, key) for key in ('measurement_checkout', 'base_inventory', 'static_product', 'dynamic_product',
                                                 'static_preparation', 'declaration_report', 'public_data_ordinary_link_report',
                                                 'loader_debug_abi_report', 'compiler_helper_aggregate_report',
-                                                'ordinary_declaration_abi_report')}
+                                                'ordinary_declaration_abi_report', 'loader_runtime_registry_report',
+                                                'pthread_alias_contract_report')}
     kwargs['ordinary_link_report'] = kwargs.pop('public_data_ordinary_link_report')
     kwargs['loader_debug_report'] = kwargs.pop('loader_debug_abi_report')
     kwargs.update(contract_path=args.contract, elf_report=args.elf_facts)

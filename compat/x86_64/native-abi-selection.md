@@ -209,6 +209,26 @@ parity still requires explicit native consumer/protocol selection and evidence;
 the existing private loader TLS descriptor does not automatically satisfy that
 future facade contract.
 
+## Runtime component attachments
+
+The selection reader can independently attach either current-product receipt
+without replaying the header declaration envelope.
+
+- `loader_runtime_registry_evidence.py` is the sole reader for the nine
+  `loader-runtime-operations` imports. The attachment binds its exact shared
+  libc occurrences and selected loader provenance, then discharges only the
+  protocol’s source-dispatch admission and finite runtime-behavior reasons.
+  These remain private loader operations, never installed libc providers.
+- `owned_pthread_alias_contract_reader.py` is the sole reader for its fixed 17
+  public weak aliases, 15 internal providers, and the static `mq_notify`
+  public `pthread_detach` relocation. The attachment binds retained product
+  bytes to the selected ELF cohort. It does not select the private provider
+  spellings or close the general pthread family.
+
+Each receipt must name the current selected source and product cohort. Their
+status flags remain false; header, semantic, family, and public-support gates
+are unchanged.
+
 ## Source-owned callable and CRT placements
 
 The policy also selects a finite source-backed set of 108 frozen-project

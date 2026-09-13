@@ -358,6 +358,83 @@ class NativeAbiProducerMetadataTests(unittest.TestCase):
                 self.assertEqual(row['projection']['row_index'], index)
                 self.assertEqual(row['projection']['section'], '.text.' + row['identity']['name'])
 
+    @staticmethod
+    def _facts_with_one_definition(*, artifact_key, row, section):
+        """Minimal complete physical roster for the generic placement join."""
+        facts = {'artifacts': {}, 'facts': {}}
+        for artifact in selection.elf_facts.ARTIFACTS:
+            facts['artifacts'][artifact.key] = {'identity': {'sha256': 'a' * 64}}
+            member = {
+                'sections': [{'index': 1, 'name': '.text', 'alignment': 8}],
+                'symbol_tables': [{
+                    'name': '.dynsym' if artifact.elf_type == 'DYN' else '.symtab',
+                    'section_index': 2, 'rows': [],
+                }],
+            }
+            if artifact.kind == 'archive':
+                member.update(member_index=0, member_occurrence=0, member='fixture.o')
+                facts['facts'][artifact.key] = [member]
+            else:
+                facts['facts'][artifact.key] = member
+        target = facts['facts'][artifact_key]
+        member = target[0] if isinstance(target, list) else target
+        member['sections'] = [section]
+        if artifact_key == 'candidate-shared' and row['binding'] == 'LOCAL':
+            member['symbol_tables'][0]['name'] = '.symtab'
+        member['symbol_tables'][0]['rows'] = [row]
+        return facts
+
+    def test_generic_accounting_empty_difference_rows_reach_both_producer_binders(self):
+        """Exercise the real producer -> placement-account -> binder route.
+
+        The original regression was not a hand-authored join shape: generic
+        accounting deliberately emits one difference row with an empty field
+        list for a matching physical definition.
+        """
+        fixed = next(row for row in self.pending if row['artifact_key'] == 'candidate-static')
+        fixed_metadata = fixed['metadata']
+        fixed_row = {
+            'name': fixed['identity']['name'], 'raw_name': fixed['identity']['name'],
+            'version': None, 'version_default': False, 'binding': fixed_metadata['binding'],
+            'visibility': fixed_metadata['visibility'], 'section_index': '1', 'type': fixed_metadata['type'],
+            'value': '0000000000000000', 'size_bytes': 0, 'size': '0', 'row_index': 0,
+            'raw': 'fixture fixed producer', 'other': None, 'version_index': None, 'common_alignment': None,
+        }
+        fixed_facts = self._facts_with_one_definition(
+            artifact_key='candidate-static', row=fixed_row,
+            section={'index': 1, 'name': '.text', 'alignment': 8},
+        )
+        fixed_accounting = selection.account_placements([copy.deepcopy(self.records[fixed['identity']['name']])], fixed_facts)
+        fixed_join = next(row for row in fixed_accounting['placement_joins']
+                          if row['artifact_key'] == 'candidate-static')
+        self.assertEqual(fixed_join['metadata_differences'][0]['fields'], [])
+        self.assertEqual(
+            selection.bind_fixed_c_producer_metadata_joins(fixed_accounting, [copy.deepcopy(fixed)])[0]['occurrence_indices'],
+            fixed_join['occurrence_indices'],
+        )
+
+        helper = self.helper_pending[0]
+        projection = helper['projection']
+        helper_row = {
+            'name': helper['identity']['name'], 'raw_name': helper['identity']['name'],
+            'version': None, 'version_default': False, 'binding': 'LOCAL', 'visibility': 'DEFAULT',
+            'section_index': str(projection['section_index']), 'type': 'FUNC', 'value': '0000000000000000',
+            'size_bytes': 0, 'size': '0', 'row_index': projection['row_index'],
+            'raw': 'fixture helper producer', 'other': None, 'version_index': None, 'common_alignment': None,
+        }
+        helper_facts = self._facts_with_one_definition(
+            artifact_key='candidate-shared', row=helper_row,
+            section={'index': projection['section_index'], 'name': projection['section'], 'alignment': 8},
+        )
+        helper_accounting = selection.account_placements([copy.deepcopy(self.records[helper['identity']['name']])], helper_facts)
+        helper_join = next(row for row in helper_accounting['placement_joins']
+                           if row['artifact_key'] == 'candidate-shared')
+        self.assertEqual(helper_join['metadata_differences'][0]['fields'], [])
+        self.assertEqual(
+            selection.bind_compiler_helper_shared_placement_joins(helper_accounting, [copy.deepcopy(helper)])[0]['occurrence_indices'],
+            helper_join['occurrence_indices'],
+        )
+
     def test_metadata_binders_keep_the_generic_empty_field_differences(self):
         """Generic placement accounting records one empty row per exact match.
 
