@@ -165,6 +165,24 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(receipt.ReceiptError, "physical product path"):
             receipt.project_link_product("pie", product, {**rebuilt, "product": "/workspace/forged"})
 
+    def test_nm_provider_rows_cannot_rewrite_an_alias_and_target_together(self) -> None:
+        rows = self.root / "archive-symbols.txt"
+        rows.write_text(
+            "owned.o:\n0000000000000000 W endutent\n0000000000000000 T endutxent\n",
+            encoding="utf-8",
+        )
+        expected = {
+            "endutent": (0, "W", "owned.o"),
+            "endutxent": (0, "T", "owned.o"),
+        }
+        receipt.require_nm_provider_rows(rows, expected, "archive")
+        rows.write_text(
+            "owned.o:\n0000000000000001 W endutent\n0000000000000001 T endutxent\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(receipt.ReceiptError, "provider address differs"):
+            receipt.require_nm_provider_rows(rows, expected, "archive")
+
     def test_contract_has_exact_eight_selected_aliases(self) -> None:
         self.assertEqual(receipt.ALIASES, (
             ("endutent", "endutxent"), ("setutent", "setutxent"), ("getutent", "getutxent"),
