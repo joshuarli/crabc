@@ -18,6 +18,10 @@ import native_abi_selection as selection
 
 
 class NativeCrtStartupAttachmentTests(unittest.TestCase):
+    _FROZEN_0E_ROOT = ROOT.parent / 'native_abi_protocol_integration'
+    _FROZEN_0E_RECEIPT = (
+        _FROZEN_0E_ROOT / '.work/x86_64/crt-startup-evidence/clean-0e7af481/report.json'
+    )
     _E8_RECEIPT = (
         ROOT.parent / 'crt_startup_relocation_contract/.work/x86_64/crt-startup-evidence/'
         'clean-e8b8f385/report.json'
@@ -218,6 +222,54 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
                 self.assertNotIn(
                     f'candidate definition placement is not selected: {artifact_key}', record['unresolved'],
                 )
+
+    def test_frozen_0e_public_owner_replay_reaches_actual_adapter_admission(self) -> None:
+        """Replay the frozen owner under its physical root, then admit its real shape."""
+        if not self._FROZEN_0E_RECEIPT.is_file():
+            self.skipTest('requires frozen 0e CRT startup receipt')
+        self.assertEqual(
+            hashlib.sha256(self._FROZEN_0E_RECEIPT.read_bytes()).hexdigest(),
+            'e53fe18993303b6ea290773298fcc66ee198477431aaf57da39deb0358195bd6',
+        )
+        report = json.loads(self._FROZEN_0E_RECEIPT.read_text())
+        inputs = report['inputs_before']
+        paths = {
+            'measurement_checkout': self._FROZEN_0E_ROOT,
+            'elf_report': self._FROZEN_0E_ROOT / inputs['historical_facts']['path'],
+            'base_inventory': self._FROZEN_0E_ROOT / '.work/x86_64/native-abi-inventory/clean-0e7af481/report.json',
+            'static_preparation': self._FROZEN_0E_ROOT / inputs['preparation']['path'],
+            'static_product': self._FROZEN_0E_ROOT / inputs['static_preparation']['primary']['path'],
+            'dynamic_product': self._FROZEN_0E_ROOT / inputs['dynamic_product']['path'],
+        }
+        self.assertTrue(all(path.is_file() or path.is_dir() for path in paths.values()))
+        facts = json.loads(paths['elf_report'].read_text())
+        source = {**report['collector_source'], 'clean': True}
+        measurement = {
+            'candidate_build': {
+                'revision': source['revision'], 'source_content_sha256': source['content_sha256'],
+            },
+            'reports': {
+                name: selection.file_identity(paths[key])
+                for name, key in (
+                    ('elf_report', 'elf_report'), ('base_inventory', 'base_inventory'),
+                    ('static_preparation', 'static_preparation'),
+                )
+            },
+        }
+        reader = selection._crt_startup_reader()
+        # The receipt retains paths below the immutable integration worktree.
+        # Redirecting the reader and selector roots is the test fixture's
+        # read-only mount analogue; the owner replay itself remains real.
+        with mock.patch.object(selection, 'ROOT', self._FROZEN_0E_ROOT), \
+             mock.patch.object(reader, 'ROOT', self._FROZEN_0E_ROOT), \
+             mock.patch.object(reader.qualification, 'ROOT', self._FROZEN_0E_ROOT):
+            companion = selection.native_crt_startup_adapter(
+                self._FROZEN_0E_RECEIPT, facts=facts, measurement=measurement,
+                paths=paths, source=source,
+            )
+        self.assertEqual(companion['status'], 'crt-startup-observed-with-boundaries')
+        self.assertEqual(set(companion['products']), set(inputs['startup_artifacts']))
+        self.assertEqual(len(companion['account']['occurrences']), 44)
 
     def test_adapter_rejects_a_historical_collector_before_any_occurrence_join(self) -> None:
         reader = selection._crt_startup_reader()

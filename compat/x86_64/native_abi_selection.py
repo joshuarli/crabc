@@ -113,8 +113,8 @@ PTHREAD_ALIAS_LIMITS = [
     'No general pthread family, cancellation, scheduling, lifecycle, promotion or public-support closure follows from this component receipt.',
 ]
 PREPARED_WORKER_TLS_LIMITS = [
-    'Only three private shared-libc TLS dispatch imports, seven retired prepared-token replacements, and one 72-byte loader descriptor are attached.',
-    'The owned CRT handoff carrier, a main-thread descriptor import, RuntimeV1 facade parity, general pthread qualification, family completion, promotion and public support remain open.',
+    'Only three private shared-libc TLS dispatch imports and seven retired prepared-token replacements are attached. The 72-byte loader descriptor source contract is authenticated without discharging its unobserved protocol obligations.',
+    'The owned CRT handoff carrier, a main-thread descriptor import, descriptor provider/import/lifecycle proof, RuntimeV1 facade parity, general pthread qualification, family completion, promotion and public support remain open.',
 ]
 ERRNO_STORAGE_LIFECYCLE_LIMITS = [
     'Only __errno_location, __h_errno_location, h_errno and the private ___errno_location alias receive this storage/lifecycle account.',
@@ -206,6 +206,11 @@ PREPARED_WORKER_TLS_DESCRIPTOR_REQUIREMENTS = (
     'exact descriptor admission/layout and release READY publication before TCB/DTV read',
     'static mode no-loader-import boundary',
     'pointer lifetime, worker mapping generation and fork ownership evidence',
+)
+PREPARED_WORKER_TLS_DESCRIPTOR_SOURCE_FIELDS = (
+    'magic:u64', 'version:u32', 'abi_size:u32', 'process_mode:u32', 'owner:u32', 'state:AtomicU8',
+    'reserved:[u8; 7]', 'thread_pointer:*const u8', 'dtv:*const usize', 'dtv_words:usize',
+    'module_count:usize', 'generation:u64',
 )
 ERRNO_PRIVATE_ALIAS_GROUP = 'component-owned-errno-private-alias'
 ERRNO_STORAGE_LIFECYCLE_REQUIREMENT = 'current source-bound errno storage/lifecycle and private alias receipt'
@@ -3483,6 +3488,21 @@ def _crt_startup_product_identities(paths: Mapping[str, Path]) -> dict[str, dict
     return {name: file_identity(path) for name, path in records.items()}
 
 
+def _crt_startup_relocation_artifacts(products: Mapping[str, Any]) -> set[str]:
+    """Keep the owner's executable/DSO/object relocation boundary finite.
+
+    The startup owner parses relocation tables for each exact startup product
+    except the selected static archive. Its archive members remain in the
+    complete placement and named-row proof, where their member locations are
+    meaningful, but an archive itself has no single relocation table.
+    """
+    artifact_kinds = {artifact.key: artifact.kind for artifact in elf_facts.ARTIFACTS}
+    require(set(products) <= set(artifact_kinds)
+            and {key for key in products if artifact_kinds[key] == 'archive'} == {'candidate-static'},
+            'CRT startup product archive boundary differs')
+    return {key for key in products if artifact_kinds[key] != 'archive'}
+
+
 def _crt_startup_cohort_inputs(paths: Mapping[str, Path]) -> dict[str, dict[str, Any]]:
     """Retain the three mode-bearing metadata inputs beside CRT ELF ownership.
 
@@ -3628,8 +3648,10 @@ def native_crt_startup_adapter(report_path: Path | None, *, facts: Mapping[str, 
     require(type(placements) is dict and 'all_named_rows' in placements,
             'CRT startup named placement observations differ')
     observed_rows = _crt_startup_observed_rows(placements['all_named_rows'], names, products)
-    require(type(observations['product_relocations']) is dict
-            and set(observations['product_relocations']) == set(products),
+    relocations = observations['product_relocations']
+    require(type(relocations) is dict
+            and set(relocations) == _crt_startup_relocation_artifacts(products)
+            and all(type(rows) is list for rows in relocations.values()),
             'CRT startup relocation observation roster differs')
     source_inputs = {name: file_identity(ROOT / name) for name in _crt_startup_source_files()}
     return {
@@ -3814,7 +3836,7 @@ def _prepared_observation_occurrence(occurrences: Mapping[int, Mapping[str, Any]
 
 
 def attach_prepared_worker_tls(accounting: Mapping[str, Any], companion: Mapping[str, Any] | None) -> list[dict[str, Any]]:
-    """Attach only the worker TLS source-dispatch and descriptor evidence."""
+    """Attach worker dispatch and retired-token evidence without inventing descriptor proof."""
     if companion is None:
         return []
     companion = exact(companion, {
@@ -3935,66 +3957,78 @@ def attach_prepared_worker_tls(accounting: Mapping[str, Any], companion: Mapping
             and descriptor_protocol.get('provider_metadata') == {'type': 'OBJECT', 'size_bytes': 72, 'alignment_bytes': 8}
             and descriptor_protocol.get('requirements') == list(PREPARED_WORKER_TLS_DESCRIPTOR_REQUIREMENTS),
             'prepared worker TLS descriptor protocol differs')
+    descriptor_contract = exact(prepared_worker_evidence.expected_contract()['descriptor'], {
+        'owner', 'size_bytes', 'alignment_bytes', 'initial_generation', 'role', 'current_view',
+        'current_view_tcb_offset', 'require_installed_import',
+    }, 'prepared worker TLS descriptor source contract')
+    require(descriptor_contract == {
+        'owner': 'ldso/src/x86_64_general_initial_tls_state.rs:GeneralLoaderLibcTlsRuntimeV1',
+        'size_bytes': 72, 'alignment_bytes': 8, 'initial_generation': 1,
+        'role': 'private-process-lifetime-initial-tls-provenance',
+        'current_view': 'ldso/src/x86_64_runtime_tls_view.rs:RuntimeTlsView',
+        'current_view_tcb_offset': 24, 'require_installed_import': False,
+    }, 'prepared worker TLS descriptor source contract differs')
     source_descriptor = source_account['descriptor']
-    require(type(source_descriptor) is dict and source_descriptor.get('size_bytes') == 72
-            and source_descriptor.get('alignment_bytes') == 8
-            and source_descriptor.get('role') == 'private-process-lifetime-initial-tls-provenance',
-            'prepared worker TLS descriptor source account differs')
+    current_source_account = prepared_worker_evidence.account_source(ROOT)
+    require(same(source_descriptor, current_source_account['descriptor'])
+            and source_account['descriptor_source_fields'] == list(PREPARED_WORKER_TLS_DESCRIPTOR_SOURCE_FIELDS)
+            and same(source_account['descriptor_source_fields'], current_source_account['descriptor_source_fields']),
+            'prepared worker TLS descriptor source provenance differs')
     observed_descriptor = elf_account['descriptor_named_elf_observations']
-    require(type(observed_descriptor) is list, 'prepared worker TLS descriptor ELF observations differ')
-    descriptor_occurrences = []
-    for observation in observed_descriptor:
-        observation = exact(observation, {'artifact', 'table', 'row'}, 'prepared worker TLS descriptor observation')
-        require(observation['artifact'] in {'candidate-shared', 'candidate-loader'}
-                and observation['table'] in {'.dynsym', '.symtab'} and type(observation['row']) is dict,
-                'prepared worker TLS descriptor observation shape differs')
-        matches = [row for row in occurrences.values()
-                   if row.get('artifact_key') == observation['artifact'] and row.get('table') == observation['table']
-                   and same(row.get('row'), observation['row'])]
-        require(len(matches) == 1 and same(row_identity(matches[0]['row']), identity(descriptor_name)),
-                'prepared worker TLS descriptor observation does not bind selected ELF facts')
-        descriptor_occurrences.append(matches[0])
+    require(observed_descriptor == [], 'prepared worker TLS installed descriptor observation differs')
+    # The complete current facts retain one weak undefined reference in the
+    # dynamic CRT attachment object.  It is neither the selected shared-libc
+    # consumer import nor a loader definition.  Preserve it as an unproved
+    # occurrence so this narrow receipt cannot reclassify it as protocol
+    # evidence or erase its remaining closure blockers.
+    descriptor_occurrences = [
+        row for row in occurrences.values()
+        if same(row_identity(row.get('row')), identity(descriptor_name))
+    ]
+    require(all(
+        row.get('artifact_key') not in {'candidate-shared', 'candidate-loader'}
+        and row.get('role') == 'import' and row.get('table') == '.symtab'
+        and row.get('row', {}).get('type') == 'NOTYPE'
+        and row['row'].get('binding') == 'WEAK'
+        and row['row'].get('visibility') == 'DEFAULT'
+        and row['row'].get('section_index') == 'UND'
+        and row['row'].get('size_bytes') == 0
+        and row.get('accounting', {}).get('disposition') == 'private-resolution-operation'
+        and row['accounting'].get('owner') == 'loader-libc-tls-descriptor-v1'
+        for row in descriptor_occurrences
+    ), 'prepared worker TLS uninstalled descriptor occurrence differs')
     provider_join = next((row for row in protocol_joins
                           if row.get('identity') == descriptor['identity'] and row.get('artifact_key') == 'candidate-loader'
                           and row.get('role') == 'private-descriptor-definition'), None)
     require(provider_join is not None and provider_join.get('binding_and_visibility_selection_complete') is False
             and _metadata_difference_rows_are_empty(provider_join.get('metadata_differences'),
                                                      'prepared worker TLS descriptor provider')
-            and len(provider_join.get('occurrence_indices', [])) == 1,
+            and provider_join.get('occurrence_indices') == [],
             'prepared worker TLS descriptor provider placement differs')
-    provider_occurrence = occurrences.get(provider_join['occurrence_indices'][0])
-    require(provider_occurrence is not None and provider_occurrence in descriptor_occurrences
-            and provider_occurrence.get('artifact_key') == 'candidate-loader'
-            and provider_occurrence.get('role') == 'definition'
-            and provider_occurrence['row'].get('type') == 'OBJECT'
-            and provider_occurrence['row'].get('size_bytes') == 72,
-            'prepared worker TLS descriptor provider occurrence differs')
     consumer_join = next((row for row in protocol_joins
                           if row.get('identity') == descriptor['identity'] and row.get('artifact_key') == 'candidate-shared'
                           and row.get('role') == 'consumer-import'), None)
     require(consumer_join is not None and consumer_join.get('endpoint_kind') == 'descriptor'
-            and consumer_join.get('relocation_lifecycle_proven') is False,
+            and consumer_join.get('relocation_lifecycle_proven') is False
+            and consumer_join.get('occurrence_indices') == [],
             'prepared worker TLS descriptor consumer join differs')
-    consumer_occurrences = [occurrences[index] for index in consumer_join.get('occurrence_indices', []) if index in occurrences]
-    require(len(consumer_occurrences) == len(consumer_join.get('occurrence_indices', []) )
-            and all(row in descriptor_occurrences and row.get('role') == 'import' for row in consumer_occurrences),
-            'prepared worker TLS descriptor consumer occurrence differs')
-    provider_join['binding_and_visibility_selection_complete'] = True
-    consumer_join['relocation_lifecycle_proven'] = True
-    descriptor_requirements = (*PREPARED_WORKER_TLS_DESCRIPTOR_REQUIREMENTS,
-                               'private descriptor exact binding/visibility selection and lifecycle proof remain required')
-    _remove_identity_requirements(accounting, descriptor, descriptor_requirements,
-                                  description='prepared worker TLS descriptor')
     return [{
         'operations': operation_joins,
         'legacy_replacements': legacy_joins,
         'descriptor': {
             'identity': copy.deepcopy(descriptor['identity']),
-            'provider_occurrence_indices': list(provider_join['occurrence_indices']),
-            'consumer_occurrence_indices': list(consumer_join['occurrence_indices']),
-            'static_installed_import_required': False,
-            'owned_crt_handoff_carrier_attached': False,
-            'requirements_discharged': list(descriptor_requirements),
+            'contract_geometry': {
+                'size_bytes': descriptor_contract['size_bytes'],
+                'alignment_bytes': descriptor_contract['alignment_bytes'],
+                'role': descriptor_contract['role'],
+            },
+            'source_provenance_verified': True,
+            'installed_import_required': descriptor_contract['require_installed_import'],
+            'unproved_occurrence_indices': [row['index'] for row in descriptor_occurrences],
+            'provider_occurrence_indices': [],
+            'consumer_occurrence_indices': [],
+            'requirements_discharged': [],
+            'requirements_remaining': copy.deepcopy(descriptor['unresolved']),
         },
     }]
 
