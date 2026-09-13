@@ -127,6 +127,16 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
             ("static", "static-symbols.txt"), ("static-pie", "static-pie-symbols.txt"),
         ))
 
+    def test_retained_runtime_files_follow_the_runner_scenario_rows(self) -> None:
+        self.assertEqual(receipt.RUNNER_STREAM_FILES, (
+            "static-static-ordinary.stdout", "static-static-ordinary.stderr", "static-static-ordinary.status",
+            "static-static-pie-ordinary.stdout", "static-static-pie-ordinary.stderr", "static-static-pie-ordinary.status",
+            "dynamic-pie-kernel-ordinary.stdout", "dynamic-pie-kernel-ordinary.stderr", "dynamic-pie-kernel-ordinary.status",
+            "dynamic-pie-direct-ordinary.stdout", "dynamic-pie-direct-ordinary.stderr", "dynamic-pie-direct-ordinary.status",
+            "dynamic-non-pie-kernel-ordinary.stdout", "dynamic-non-pie-kernel-ordinary.stderr", "dynamic-non-pie-kernel-ordinary.status",
+            "dynamic-non-pie-direct-ordinary.stdout", "dynamic-non-pie-direct-ordinary.stderr", "dynamic-non-pie-direct-ordinary.status",
+        ))
+
     def test_contract_has_exact_eight_selected_aliases(self) -> None:
         self.assertEqual(receipt.ALIASES, (
             ("endutent", "endutxent"), ("setutent", "setutxent"), ("getutent", "getutxent"),
