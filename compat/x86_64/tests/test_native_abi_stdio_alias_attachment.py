@@ -20,13 +20,13 @@ import owned_stdio_alias_contract_reader as stdio_alias_evidence
 class NativeStdioAliasAttachmentContractTests(unittest.TestCase):
     """The FILE receipt is a finite private/provider attachment, not a rule."""
 
-    _F168_RECEIPT = (
-        ROOT.parent / 'native_stdio_alias_receipt_repair/.work/x86_64/stdio-alias-evidence/'
-        'clean-f16806d1/report.json'
+    _E4_RECEIPT = (
+        ROOT.parent / 'native_file_scanf_alias_contract/.work/x86_64/stdio-alias-evidence/'
+        'clean-e4d44390/report.json'
     )
-    _B525_FACTS = (
-        ROOT.parent / 'native_stdio_alias_receipt_repair/.work/x86_64/stdio-alias-inputs-b52538c5/'
-        'historical-facts/report.json'
+    _633_FACTS = (
+        ROOT.parent / 'native_abi_lifecycle_integration/.work/x86_64/native-abi-elf-facts/'
+        'clean-633bd57f/report.json'
     )
 
     def setUp(self) -> None:
@@ -247,15 +247,19 @@ class NativeStdioAliasAttachmentContractTests(unittest.TestCase):
                 paths=self.paths, source=self.source,
             )
 
-    def _actual_f168_accounting_and_companion(self):
-        if not self._F168_RECEIPT.is_file() or not self._B525_FACTS.is_file():
-            self.skipTest('requires the retained f168 FILE receipt and b525 complete ELF facts')
+    def _actual_e4_accounting_and_companion(self):
+        if not self._E4_RECEIPT.is_file() or not self._633_FACTS.is_file():
+            self.skipTest('requires the retained e4 FILE receipt and 633 complete ELF facts')
         self.assertEqual(
-            hashlib.sha256(self._F168_RECEIPT.read_bytes()).hexdigest(),
-            '82b02f29c1715d4896ce8e04d0576b8d6ebbfdfb7f3205c01fd704ded264b48b',
+            hashlib.sha256(self._E4_RECEIPT.read_bytes()).hexdigest(),
+            '2b53180ec1ad4fca57d08437e191cf89a9c9649fd5049c5ad3b413523a49f415',
         )
-        receipt = json.loads(self._F168_RECEIPT.read_text())
-        facts = json.loads(self._B525_FACTS.read_text())
+        receipt = json.loads(self._E4_RECEIPT.read_text())
+        self.assertEqual(
+            hashlib.sha256(self._633_FACTS.read_bytes()).hexdigest(),
+            'abdc94c1ffbd836364d1674484c68792d4dc2a33f36e8b44ae07f08791b7f1eb',
+        )
+        facts = json.loads(self._633_FACTS.read_text())
         contract = selection.load_contract(selection.CONTRACT_PATH)
         inputs = selection.load_source_inputs(contract, selection.CONTRACT_PATH)
         accounting = selection.account_placements(selection.expand_obligations(contract, inputs), facts)
@@ -278,11 +282,15 @@ class NativeStdioAliasAttachmentContractTests(unittest.TestCase):
         }
         return accounting, companion
 
-    def test_retained_f168_projection_joins_all_aliases_private_bodies_and_controls(self) -> None:
-        accounting, companion = self._actual_f168_accounting_and_companion()
+    def test_retained_e4_projection_joins_all_aliases_private_bodies_and_controls(self) -> None:
+        accounting, companion = self._actual_e4_accounting_and_companion()
         joins = selection.attach_native_stdio_alias(accounting, companion)
         self.assertEqual(len(joins), 1)
-        self.assertEqual(len(joins[0]['aliases']), len(stdio_alias_evidence.ALIASES))
+        self.assertEqual(len(joins[0]['aliases']), 39)
+        self.assertEqual(len(companion['account']['aliases']['candidate-static']['aliases']), 42)
+        self.assertFalse({'__getdelim', '__isoc99_sscanf', '__isoc99_vsscanf'} & {
+            row['identity']['name'] for row in joins[0]['aliases']
+        })
         self.assertEqual(len(joins[0]['private_bodies']), len(stdio_alias_evidence.HIDDEN))
         self.assertEqual(len(joins[0]['protected_controls']), len(stdio_alias_evidence.PROTECTED))
         records = {row['identity']['name']: row for row in accounting['identities']}
@@ -294,8 +302,24 @@ class NativeStdioAliasAttachmentContractTests(unittest.TestCase):
         for name in stdio_alias_evidence.HIDDEN:
             self.assertNotIn(selection.STDIO_ALIAS_RECEIPT_REQUIREMENT, records[name]['unresolved'])
 
-    def test_retained_f168_projection_rejects_changed_named_alias_target(self) -> None:
-        accounting, companion = self._actual_f168_accounting_and_companion()
+    def test_retained_e4_projection_rejects_changed_scan_feature_ownership(self) -> None:
+        accounting, companion = self._actual_e4_accounting_and_companion()
+        records = {row['identity']['name']: row for row in accounting['identities']}
+        records['__isoc99_fscanf']['function_alias_requirements'][0]['owner'] = 'x86-owned-static-runtime'
+        with self.assertRaisesRegex(selection.SelectionError, 'FILE feature alias contract differs: __isoc99_fscanf'):
+            selection.attach_native_stdio_alias(accounting, companion)
+
+    def test_retained_e4_projection_does_not_invent_an_already_accounted_alias_discharge(self) -> None:
+        accounting, companion = self._actual_e4_accounting_and_companion()
+        records = {row['identity']['name']: row for row in accounting['identities']}
+        records['__getdelim']['unresolved'].append(
+            'source-selected alias requires exact feature archive selection and component receipt'
+        )
+        with self.assertRaisesRegex(selection.SelectionError, 'already-accounted alias acquired a receipt obligation: __getdelim'):
+            selection.attach_native_stdio_alias(accounting, companion)
+
+    def test_retained_e4_projection_rejects_changed_named_alias_target(self) -> None:
+        accounting, companion = self._actual_e4_accounting_and_companion()
         companion = copy.deepcopy(companion)
         companion['account']['aliases']['candidate-static']['aliases']['fdopen']['target'] = 'fseeko'
         with self.assertRaisesRegex(selection.SelectionError, 'alias target differs: fdopen'):

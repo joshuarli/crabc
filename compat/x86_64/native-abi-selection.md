@@ -285,6 +285,15 @@ parity still requires explicit native consumer/protocol selection and evidence;
 the existing private loader TLS descriptor does not automatically satisfy that
 future facade contract.
 
+The expanded FILE receipt observes 42 aliases across its five exact source
+owners. `attach_native_stdio_alias` binds the 39 aliases with outstanding
+feature-receipt obligations: four narrow scan aliases belong to
+`x86-stdio-permanent-format-scan`; the other 35 belong to
+`x86-owned-static-runtime`. `__getdelim`, `__isoc99_sscanf`, and
+`__isoc99_vsscanf` remain observed in the owning receipt but acquire no
+invented selector obligation or discharge. The three hidden bodies and two
+protected controls retain their existing boundaries.
+
 ## Runtime component attachments
 
 The selection reader can independently attach either current-product receipt

@@ -3947,6 +3947,38 @@ def _stdio_selected_alias_placement(placements: Mapping[tuple[tuple[str, str | N
     return static, shared
 
 
+# These three members complete the owner's source groups but have no pending
+# feature-alias receipt obligation. Keep them observed without inventing a
+# requirement to discharge. The other 39 aliases retain their exact feature
+# ownership, including the separately selected narrow scanning feature.
+STDIO_ALREADY_ACCOUNTED_ALIASES = {
+    '__getdelim': 'getdelim', '__isoc99_sscanf': 'sscanf', '__isoc99_vsscanf': 'vsscanf',
+}
+
+
+def _stdio_alias_feature_owners() -> dict[str, str]:
+    reader = _stdio_alias_reader()
+    source_owners = {
+        'owned_static_stdio': 'x86-owned-static-runtime',
+        'owned_wide_stdio': 'x86-owned-static-runtime',
+        'owned_stdio_extensions': 'x86-owned-static-runtime',
+        'stdio_format_scan': 'x86-stdio-permanent-format-scan',
+        'owned_wide_format': 'x86-owned-static-runtime',
+    }
+    require({owner for owner, _source, _pairs in reader.ALIAS_GROUPS} == set(source_owners)
+            and len(reader.ALIASES) == 42
+            and all(reader.ALIASES.get(name) == target
+                    for name, target in STDIO_ALREADY_ACCOUNTED_ALIASES.items()),
+            'FILE source alias group contract differs')
+    result = {
+        alias: source_owners[owner]
+        for owner, _source, pairs in reader.ALIAS_GROUPS for alias, _target in pairs
+        if alias not in STDIO_ALREADY_ACCOUNTED_ALIASES
+    }
+    require(len(result) == 39, 'FILE feature alias roster differs')
+    return result
+
+
 def attach_native_stdio_alias(accounting: Mapping[str, Any], companion: Mapping[str, Any] | None) -> list[dict[str, Any]]:
     """Attach only the finite FILE alias/body and protected-boundary receipt.
 
@@ -3983,7 +4015,16 @@ def attach_native_stdio_alias(accounting: Mapping[str, Any], companion: Mapping[
     require(type(function_observations) is list, 'FILE function alias observation roster differs')
     alias_joins: list[dict[str, Any]] = []
     private_pairs: dict[str, dict[str, Any]] = {}
-    for alias_name, target_name in stdio_alias_evidence.ALIASES.items():
+    feature_owners = _stdio_alias_feature_owners()
+    for name in STDIO_ALREADY_ACCOUNTED_ALIASES:
+        record = records.get((name, None, False))
+        require(record is not None and record.get('selection', {}).get('disposition') == 'public-provider'
+                and not record.get('function_alias_requirements')
+                and 'source-selected alias requires exact feature archive selection and component receipt'
+                    not in record['unresolved'],
+                f'FILE already-accounted alias acquired a receipt obligation: {name}')
+    for alias_name, expected_feature_owner in feature_owners.items():
+        target_name = stdio_alias_evidence.ALIASES[alias_name]
         key = (alias_name, None, False)
         record = records.get(key)
         require(record is not None and record.get('selection', {}).get('disposition') == 'public-provider',
@@ -3992,7 +4033,7 @@ def attach_native_stdio_alias(accounting: Mapping[str, Any], companion: Mapping[
         require(type(feature) is list and len(feature) == 1
                 and feature[0].get('name') == alias_name and feature[0].get('target') == target_name
                 and feature[0].get('binding') == 'weak-same-address'
-                and feature[0].get('owner') == 'x86-owned-static-runtime',
+                and feature[0].get('owner') == expected_feature_owner,
                 f'FILE feature alias contract differs: {alias_name}')
         matching_observations = [row for row in function_observations
                                  if type(row) is dict and same(row.get('identity'), identity(alias_name))
@@ -4056,7 +4097,7 @@ def attach_native_stdio_alias(accounting: Mapping[str, Any], companion: Mapping[
         })
         if target_name in stdio_alias_evidence.HIDDEN:
             private_pairs[target_name] = artifact_pairs
-    require([row['identity']['name'] for row in alias_joins] == list(stdio_alias_evidence.ALIASES),
+    require([row['identity']['name'] for row in alias_joins] == list(feature_owners),
             'FILE alias join cardinality differs')
 
     private_joins: list[dict[str, Any]] = []
