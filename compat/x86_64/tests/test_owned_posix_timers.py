@@ -25,6 +25,18 @@ from owned_posix_product_evidence import DYNAMIC_PRODUCT_FORMAT
 
 
 class OwnedPosixTimersTests(unittest.TestCase):
+    def test_replay_tls_elf_uses_in_process_bytes_without_host_readelf(self):
+        facts = {
+            "type": 3, "machine": 62, "interpreters": [], "needed": ["libc.so"],
+            "runpaths": ["/usr/lib"], "rpaths": [], "sonames": ["libtimer-tls.so"], "textrel": False,
+        }
+        with patch.object(timer_evidence.product_evidence, "retained_elf_facts", return_value=facts), \
+             patch.object(timer_evidence, "_readelf", side_effect=AssertionError("host replay executed readelf")):
+            self.assertEqual(
+                timer_evidence._validate_tls_elf(Path("libtimer-tls.so"), replay=object()),
+                ("libtimer-tls.so", ["libc.so"]),
+            )
+
     def test_replay_compile_audit_uses_retained_compiler_and_never_imports_the_helper(self):
         scratch_root = ROOT / ".work/x86_64/tmp"
         scratch_root.mkdir(parents=True, exist_ok=True)

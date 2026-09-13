@@ -44,6 +44,7 @@ SOURCE_FILES = (
     "compat/x86_64/run_owned_posix_timers.sh",
     "compat/x86_64/owned_dynamic_fork_evidence.py",
     "compat/x86_64/owned_posix_timers_evidence.py",
+    "compat/x86_64/owned_posix_product_evidence.py",
     "compat/x86_64/general_dynamic_tls_consumer.c",
     "compat/x86_64/general_dynamic_fork_library.c",
     "compat/x86_64/general_dynamic_fork_consumer.c",
@@ -446,7 +447,126 @@ def _read_stream(output: Path, record: object, logical: str) -> bytes:
     return path.read_bytes()
 
 
-def _link_record(product: Path, work: Path, output: Path, stem: str, mode: str) -> dict[str, object]:
+def _retained_link_input(replay: fork_evidence.RetainedRuntimeInputs, value: object, expected: Path, description: str) -> None:
+    record = exact(value, {"path", "sha256"}, description)
+    require(record["path"] == replay.recorded(expected), f"{description} path drifted")
+    require(record["sha256"] == hashlib.sha256(expected.read_bytes()).hexdigest(), f"{description} hash drifted")
+
+
+def _retained_dlfcn_link_record(product: Path, work: Path, output: Path, stem: str, mode: str,
+                                 receipt: dict[str, Any], executable: Path, receipt_path: Path,
+                                 replay: fork_evidence.RetainedRuntimeInputs) -> dict[str, object]:
+    """Replay one finite dlfcn driver receipt without native tools or path aliases."""
+    require(receipt.get("schema") == 2, f"{stem} dlfcn receipt is not the direct-driver schema")
+    search = dynamic_receipt.validate(receipt, format=product_evidence.DYNAMIC_PRODUCT_FORMAT,
+                                      label=stem, fail=fail, allow_application_dso_closure=False)
+    dynamic_receipt.require_runpath(search, "/usr/lib", label=stem, fail=fail)
+    require(receipt.get("mode") == mode and receipt.get("output_path") == replay.recorded(executable)
+            and receipt.get("output_sha256") == hashlib.sha256(executable.read_bytes()).hexdigest(),
+            f"{stem} retained driver receipt does not bind the executable")
+    manifest = product / "share/crabc/manifest.json"
+    require(receipt.get("manifest_sha256") == hashlib.sha256(manifest.read_bytes()).hexdigest(),
+            f"{stem} retained driver receipt uses another product")
+    replay.require_tool("linker", receipt.get("resolved_linker"))
+
+    library = product / "usr/lib"
+    runtime = [library / "crti.o", library / "libc.so", library / "crtn.o"]
+    entry: Path | None = None
+    if mode != "shared":
+        entry = library / ("Scrt1.o" if mode == "pie" else "crt1.o")
+        runtime += [entry, library / "crabc-dynamic-attach.o"]
+    archive = library / "libcrabc-builtins.a"
+    require(receipt.get("owned_runtime_inputs") == sorted(path.relative_to(product).as_posix() for path in [*runtime, archive]),
+            f"{stem} retained runtime input roster drifted")
+    inputs = receipt.get("input_receipts")
+    applications = receipt.get("application_dsos")
+    require(type(inputs) is list and type(applications) is dict and all(type(name) is str and type(value) is str
+            for name, value in applications.items()), f"{stem} retained application DSO receipt drifted")
+    require(len(inputs) == len(runtime) + 2 + len(applications), f"{stem} retained input roster drifted")
+    for value, expected in zip(inputs, runtime):
+        _retained_link_input(replay, value, expected, f"{stem} retained runtime input")
+    _retained_link_input(replay, inputs[-1], archive, f"{stem} retained builtins input")
+
+    object_record = exact(inputs[len(runtime)], {"path", "sha256"}, f"{stem} retained workload input")
+    object_path = replay.resolve(object_record["path"])
+    relative_object = object_path.relative_to(work)
+    require(len(relative_object.parts) == 2 and relative_object.parts[0].startswith("crabc-dynamic-link.")
+            and relative_object.name == "source-0.o", f"{stem} retained workload object path drifted")
+    require(object_record["sha256"] == hashlib.sha256(object_path.read_bytes()).hexdigest(),
+            f"{stem} retained workload object hash drifted")
+
+    application_paths: list[Path] = []
+    seen_applications: set[str] = set()
+    for value in inputs[len(runtime) + 1:-1]:
+        record = exact(value, {"path", "sha256"}, f"{stem} retained application DSO input")
+        path = replay.resolve(record["path"])
+        name = path.name
+        require(path == work / name and name in applications and name not in seen_applications,
+                f"{stem} retained application DSO path drifted")
+        require(record["sha256"] == applications[name] == hashlib.sha256(path.read_bytes()).hexdigest(),
+                f"{stem} retained application DSO hash drifted")
+        seen_applications.add(name)
+        application_paths.append(path)
+    require(seen_applications == set(applications), f"{stem} retained application DSO roster drifted")
+
+    linker = str(replay.tool_path("linker"))
+    command = [linker]
+    if mode == "shared":
+        command.append("-shared")
+    elif mode == "pie":
+        command.append("-pie")
+    elif mode != "exec":
+        fail(f"{stem} retained link mode is unsupported")
+    command += ["--hash-style=sysv", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
+                "--no-undefined", "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib"]
+    if mode == "shared":
+        command += ["-soname", executable.name]
+    else:
+        assert entry is not None
+        command += ["--dynamic-linker", fork_evidence.INTERPRETER, replay.recorded(entry),
+                    replay.recorded(library / "crabc-dynamic-attach.o")]
+    command += [replay.recorded(library / "crti.o"), replay.recorded(object_path),
+                *(replay.recorded(path) for path in application_paths), replay.recorded(library / "libc.so"),
+                replay.recorded(archive), replay.recorded(library / "crtn.o"), "-o", replay.recorded(executable)]
+    require(receipt.get("link_command") == command, f"{stem} retained link command drifted")
+    direct = {replay.recorded(library / "crti.o"), replay.recorded(object_path),
+              *(replay.recorded(path) for path in application_paths), replay.recorded(library / "libc.so"),
+              replay.recorded(library / "crtn.o")}
+    if mode != "shared":
+        assert entry is not None
+        direct.update((replay.recorded(entry), replay.recorded(library / "crabc-dynamic-attach.o")))
+    trace = receipt.get("link_trace")
+    require(type(trace) is list and all(type(item) is str for item in trace), f"{stem} retained link trace is invalid")
+    archive_recorded = replay.recorded(archive)
+    seen: set[str] = set()
+    for line in trace:
+        if line in direct:
+            seen.add(line)
+        elif line == archive_recorded or (line.startswith(archive_recorded + "(") and line.endswith(")")):
+            continue
+        else:
+            fail(f"{stem} retained link trace admits an unowned input")
+    require(seen == direct, f"{stem} retained link trace omits an explicit input")
+
+    facts = product_evidence.retained_elf_facts(executable)
+    expected_type = 3 if mode in {"shared", "pie"} else 2
+    expected_needed = [*(path.name for path in application_paths), "libc.so"]
+    require(facts["machine"] == 62 and facts["type"] == expected_type and not facts["textrel"]
+            and facts["rpaths"] == [] and facts["runpaths"] == ["/usr/lib"] and facts["needed"] == expected_needed,
+            f"{stem} retained linked ELF shape drifted")
+    if mode == "shared":
+        require(facts["interpreters"] == [] and facts["sonames"] == [executable.name],
+                f"{stem} retained shared ELF identity drifted")
+    else:
+        require(facts["interpreters"] == [fork_evidence.INTERPRETER],
+                f"{stem} retained executable interpreter drifted")
+    return {"executable": identity(executable, logical_path=(work / stem).relative_to(output).as_posix()),
+            "receipt": identity(receipt_path, logical_path=(work / f"{stem}.crabc-link.json").relative_to(output).as_posix()),
+            "mode": mode}
+
+
+def _link_record(product: Path, work: Path, output: Path, stem: str, mode: str,
+                 *, replay: fork_evidence.RetainedRuntimeInputs | None = None) -> dict[str, object]:
     executable = physical_regular(work / stem, f"{stem} executable")
     receipt_path = physical_regular(work / f"{stem}.crabc-link.json", f"{stem} owned driver receipt")
     receipt = read_json(receipt_path, f"{stem} owned driver receipt")
@@ -455,6 +575,8 @@ def _link_record(product: Path, work: Path, output: Path, stem: str, mode: str) 
                                  label=stem, fail=fail, allow_application_dso_closure=True)
     except (RuntimeRegistryEvidenceError, KeyError, TypeError, ValueError):
         raise
+    if replay is not None:
+        return _retained_dlfcn_link_record(product, work, output, stem, mode, receipt, executable, receipt_path, replay)
     require(receipt.get("mode") == mode and receipt.get("output_sha256") == hashlib.sha256(executable.read_bytes()).hexdigest(),
             f"{stem} owned driver receipt does not bind the executable")
     manifest = identity(product / "share/crabc/manifest.json")
@@ -527,7 +649,7 @@ def single_driver_mode(modes: set[object]) -> str:
     return mode
 
 
-def dlfcn_observations(product: Path, output: Path, work: Path) -> dict[str, object]:
+def dlfcn_observations(product: Path, output: Path, work: Path, *, replay: fork_evidence.RetainedRuntimeInputs | None = None) -> dict[str, object]:
     """Read the existing 41-module workload without treating its PASS as proof."""
     product = physical_directory(product, "dynamic product")
     output = physical_directory(output, "component evidence output")
@@ -544,7 +666,7 @@ def dlfcn_observations(product: Path, output: Path, work: Path) -> dict[str, obj
     for stem in (*expected, *(f"libgrowth{generation}.so" for generation in range(41))):
         # The driver chooses `shared` for DSOs; executables are recorded below.
         if stem.endswith(".so"):
-            dso_links[stem] = _link_record(product, work, output, stem, "shared")
+            dso_links[stem] = _link_record(product, work, output, stem, "shared", replay=replay)
     # The caller records one actual selected entry mode.  Infer it from the
     # executable receipts only after every DSO receipt has been bound.
     # `crabc-cc-dynamic` stores `pie`/`non-pie` as its receipt mode only if the
@@ -555,7 +677,7 @@ def dlfcn_observations(product: Path, output: Path, work: Path) -> dict[str, obj
     mode = single_driver_mode(modes)
     # Reread with the actual mode (the first lookup above catches wrong shape
     # and keeps only a bounded artifact path surface).
-    entries = {key: _link_record(product, work, output, stem, mode) for key, stem in
+    entries = {key: _link_record(product, work, output, stem, mode, replay=replay) for key, stem in
                {"consumer": "consumer", "tbss": "tbss-consumer", "growth": "growth", "failure": "failure", "scope": "scope"}.items()}
     return {"driver_mode": mode, "work": str(work.relative_to(output)), "dso_links": dso_links, "links": entries, "streams": streams,
             "growth_modules": 41, "operations": list(DLFCN_NAMES), "scenario": "runtime-tls-41-modules"}
@@ -771,7 +893,7 @@ def validate_report(report_path: Path, *, base_inventory: Path, elf_report: Path
                 and observation.get("driver_mode") == DLOPEN_DRIVER_MODES[mode],
                 f"general dlfcn {mode} receipt mode drifted")
         work = physical_directory(output / observation["work"], f"general dlfcn {mode} work")
-        current = dlfcn_observations(Path(dynamic_product), output, work)
+        current = dlfcn_observations(Path(dynamic_product), output, work, replay=replay)
         current["entry_mode"] = mode
         require(same(observation, current), f"general dlfcn {mode} retained artifacts do not reconstruct")
         reconstructed[mode] = current

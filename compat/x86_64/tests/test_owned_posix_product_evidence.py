@@ -7,6 +7,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import struct
 import sys
 import tempfile
 import unittest
@@ -15,6 +16,8 @@ from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[3]
+if str(ROOT / "compat" / "x86_64") not in sys.path:
+    sys.path.insert(0, str(ROOT / "compat" / "x86_64"))
 MODULE_PATH = ROOT / "compat" / "x86_64" / "owned_posix_product_evidence.py"
 SPEC = importlib.util.spec_from_file_location("owned_posix_product_evidence_test", MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None
@@ -25,6 +28,46 @@ SPEC.loader.exec_module(evidence)
 
 def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def sealed_elf(linkage: str) -> bytes:
+    """Minimal ELF64 byte fixture for the replay reader, never executable."""
+    dynamic = linkage in {"pie", "non-pie"}
+    elf_type = 3 if linkage in {"static-pie", "pie"} else 2
+    interpreter = b"/lib/ld-crabc-x86_64.so.1\0" if dynamic else b""
+    strings = b"\0libc.so\0/usr/lib\0" if dynamic else b""
+    dynamic_entries = (
+        struct.pack("<qQ", 1, 1)
+        + struct.pack("<qQ", 29, len(b"\0libc.so\0"))
+        + struct.pack("<qQ", 0, 0)
+        if dynamic else b""
+    )
+    data = bytearray(512)
+    data[:16] = b"\x7fELF\x02\x01\x01" + b"\0" * 9
+    data[16:64] = struct.pack(
+        "<HHIQQQIHHHHHH", elf_type, 62, 1, 0, 64 if dynamic else 0,
+        320 if dynamic else 0, 0, 64, 56, 1 if dynamic else 0, 64, 2 if dynamic else 0, 0,
+    )
+    if dynamic:
+        data[64:120] = struct.pack("<IIQQQQQQ", 3, 4, 128, 0, 0, len(interpreter), len(interpreter), 1)
+        data[128:128 + len(interpreter)] = interpreter
+        data[160:160 + len(strings)] = strings
+        data[192:192 + len(dynamic_entries)] = dynamic_entries
+        data[320:384] = struct.pack("<IIQQQQIIQQ", 0, 3, 0, 0, 160, len(strings), 0, 0, 1, 0)
+        data[384:448] = struct.pack("<IIQQQQIIQQ", 0, 6, 0, 0, 192, len(dynamic_entries), 0, 0, 8, 16)
+    return bytes(data)
+
+
+def sealed_shared_elf(soname: str) -> bytes:
+    """Add a real DT_SONAME to the bounded dynamic ELF byte fixture."""
+    data = bytearray(sealed_elf("pie"))
+    strings = b"\0libc.so\0/usr/lib\0" + soname.encode("ascii") + b"\0"
+    data[160:160 + len(strings)] = strings
+    struct.pack_into("<Q", data, 320 + 32, len(strings))
+    struct.pack_into("<qQ", data, 224, 14, len(b"\0libc.so\0/usr/lib\0"))
+    struct.pack_into("<qQ", data, 240, 0, 0)
+    struct.pack_into("<Q", data, 384 + 32, 64)
+    return bytes(data)
 
 
 class OwnedPosixProductEvidenceTests(unittest.TestCase):
@@ -39,11 +82,22 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.workload = self.put("workload.o", b"one owned workload object\n")
-        self.executable = self.put("consumer", b"owned executable bytes\n")
+        self.executable = self.put("consumer", sealed_elf("pie"))
         self.linker = self.put("tools/ld.lld", b"sealed linker bytes\n")
         os.chmod(self.linker, 0o755)
         self.static = self.install_static()
         self.dynamic = self.install_dynamic()
+
+    def test_retained_elf_reader_parses_rehashed_dynamic_metadata_without_a_host_tool(self) -> None:
+        path = self.put("shared", sealed_shared_elf("libfixture.so"))
+        with mock.patch.object(evidence.subprocess, "run", side_effect=AssertionError("host ELF tool ran")):
+            facts = evidence.retained_elf_facts(path)
+        self.assertEqual(
+            facts,
+            {"type": 3, "machine": 62, "interpreters": ["/lib/ld-crabc-x86_64.so.1"],
+             "needed": ["libc.so"], "runpaths": ["/usr/lib"], "rpaths": [],
+             "sonames": ["libfixture.so"], "textrel": False},
+        )
 
     def put(self, relative: str, payload: bytes) -> Path:
         path = self.root / relative
@@ -148,6 +202,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         self.write_json(manifest_path, manifest)
 
     def static_receipt(self, linkage: str = "static") -> Path:
+        self.executable.write_bytes(sealed_elf(linkage))
         mode = {
             "static": ("static-et-exec", "ET_EXEC", "crt1.o"),
             "static-pie": ("static-pie", "ET_DYN", "rcrt1.o"),
@@ -206,6 +261,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         ]
 
     def dynamic_receipt(self, linkage: str = "pie", *, export_dynamic: bool = False) -> Path:
+        self.executable.write_bytes(sealed_elf(linkage))
         mode, entry = {"pie": ("pie", "Scrt1.o"), "non-pie": ("exec", "crt1.o")}[linkage]
         receipt = self.root / f"{linkage}.crabc-link.json"
         runtime = self.dynamic / "usr/lib"
@@ -298,7 +354,9 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
             with self.subTest(linkage=linkage):
                 receipt, linker = self.retained_receipt(linkage)
                 product = self.static if linkage in {"static", "static-pie"} else self.dynamic
-                with mock.patch.object(evidence, "_readelf", return_value=self.readelf(linkage)):
+                with mock.patch.object(
+                    evidence.subprocess, "run", side_effect=AssertionError("host replay executed a tool")
+                ):
                     identity = evidence.validate_retained_link(
                         self.root, "/workspace", product, self.workload, self.executable,
                         receipt, linkage, linker,

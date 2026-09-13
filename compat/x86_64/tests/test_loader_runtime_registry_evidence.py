@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -20,6 +21,64 @@ SPEC.loader.exec_module(EVIDENCE)
 
 
 class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
+    def test_replay_dlfcn_link_binds_the_retained_linker_and_exact_command(self):
+        scratch = ROOT / '.work/x86_64/loader-runtime-registry-tests'; scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            root = Path(temporary)
+            output, work, product = root / '.work/report', root / '.work/report/work', root / '.work/product'
+            work.mkdir(parents=True); (product / 'usr/lib').mkdir(parents=True)
+            manifest = product / 'share/crabc/manifest.json'; manifest.parent.mkdir(parents=True); manifest.write_text('{}\n', encoding='utf-8')
+            runtime = product / 'usr/lib'
+            for name in ('Scrt1.o', 'crabc-dynamic-attach.o', 'crti.o', 'libc.so', 'libcrabc-builtins.a', 'crtn.o'):
+                (runtime / name).write_bytes(name.encode())
+            executable = work / 'consumer'; executable.write_bytes(b'linked executable')
+            object_path = work / 'crabc-dynamic-link.fixture/source-0.o'; object_path.parent.mkdir(); object_path.write_bytes(b'object')
+            tools = {}
+            for role, native in EVIDENCE.fork_evidence.REPLAY_TOOL_PATHS.items():
+                source = root / (role + '-source'); source.write_bytes(role.encode()); source.chmod(0o755)
+                tools[role] = EVIDENCE.inventory._snapshot_regular(output, source, 'inputs/tools/' + role, native)
+            replay = EVIDENCE.fork_evidence.RetainedRuntimeInputs(root, output, tools)
+            digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+            inputs = [runtime / name for name in ('crti.o', 'libc.so', 'crtn.o', 'Scrt1.o', 'crabc-dynamic-attach.o')]
+            inputs += [object_path, runtime / 'libcrabc-builtins.a']
+            command = [str(replay.tool_path('linker')), '-pie', '--hash-style=sysv', '-z', 'relro', '-z', 'now',
+                       '-z', 'noexecstack', '-z', 'text', '--no-undefined', '--allow-shlib-undefined', '--enable-new-dtags',
+                       '-rpath', '/usr/lib', '--dynamic-linker', EVIDENCE.fork_evidence.INTERPRETER,
+                       replay.recorded(runtime / 'Scrt1.o'), replay.recorded(runtime / 'crabc-dynamic-attach.o'),
+                       replay.recorded(runtime / 'crti.o'), replay.recorded(object_path), replay.recorded(runtime / 'libc.so'),
+                       replay.recorded(runtime / 'libcrabc-builtins.a'), replay.recorded(runtime / 'crtn.o'), '-o', replay.recorded(executable)]
+            expected_command = list(command)
+            receipt = {
+                'schema': 2, 'format': EVIDENCE.product_evidence.DYNAMIC_PRODUCT_FORMAT, 'mode': 'pie', 'binding': 'now',
+                'runtime_imports': [], 'application_runpath': '/usr/lib', 'application_rpath': None,
+                'application_search_kind': 'runpath', 'application_hash_style': 'sysv', 'output_path': replay.recorded(executable),
+                'output_sha256': digest(executable), 'manifest_sha256': digest(manifest), 'application_dsos': {},
+                'owned_runtime_inputs': sorted(path.relative_to(product).as_posix() for path in [*inputs[:5], inputs[-1]]),
+                'input_receipts': [{'path': replay.recorded(path), 'sha256': digest(path)} for path in inputs],
+                'resolved_linker': {key: tools['linker']['original'][key] for key in ('path', 'sha256')},
+                'link_command': command,
+                'link_trace': [replay.recorded(path) for path in (runtime / 'Scrt1.o', runtime / 'crabc-dynamic-attach.o',
+                                                                    runtime / 'crti.o', object_path, runtime / 'libc.so', runtime / 'crtn.o')],
+                'campaign_complete': False,
+            }
+            receipt_path = work / 'consumer.crabc-link.json'; receipt_path.write_text(json.dumps(receipt), encoding='utf-8')
+            facts = {'type': 3, 'machine': 62, 'interpreters': [EVIDENCE.fork_evidence.INTERPRETER], 'needed': ['libc.so'],
+                     'runpaths': ['/usr/lib'], 'rpaths': [], 'sonames': [], 'textrel': False}
+            with mock.patch.object(EVIDENCE.product_evidence, 'retained_elf_facts', return_value=facts):
+                observed = EVIDENCE._link_record(product, work, output, 'consumer', 'pie', replay=replay)
+            self.assertEqual(observed['mode'], 'pie')
+            receipt['link_command'][-1] = '/workspace/changed-output'
+            receipt_path.write_text(json.dumps(receipt), encoding='utf-8')
+            with mock.patch.object(EVIDENCE.product_evidence, 'retained_elf_facts', return_value=facts):
+                with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, 'link command'):
+                    EVIDENCE._link_record(product, work, output, 'consumer', 'pie', replay=replay)
+            receipt['link_command'] = expected_command
+            receipt['resolved_linker'] = {'path': '/foreign/ld.lld', 'sha256': tools['linker']['original']['sha256']}
+            receipt_path.write_text(json.dumps(receipt), encoding='utf-8')
+            with mock.patch.object(EVIDENCE.product_evidence, 'retained_elf_facts', return_value=facts):
+                with self.assertRaisesRegex(EVIDENCE.fork_evidence.EvidenceError, 'retained tool identity'):
+                    EVIDENCE._link_record(product, work, output, 'consumer', 'pie', replay=replay)
+
     def test_supplied_identity_projects_only_the_exact_physical_checkout_mount(self):
         scratch=ROOT/'.work/x86_64/loader-runtime-registry-tests';scratch.mkdir(parents=True,exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
@@ -50,7 +109,9 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
     def test_replay_files_retain_every_fork_and_timer_preprocessing_input(self):
         scratch = ROOT / '.work/x86_64/loader-runtime-registry-tests'; scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
-            output = Path(temporary)
+            root = Path(temporary)
+            output = root / 'report'
+            output.mkdir()
             fork, timer = output / 'fork', output / 'timer'
             for directory in (fork / 'dependencies', fork / 'preprocessed', timer):
                 directory.mkdir(parents=True, exist_ok=True)
@@ -71,7 +132,7 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
             (timer / 'tls.compile-audit.exit-status').write_bytes(b'1\n')
             with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, 'preprocessing status'):
                 EVIDENCE.replay_files(output, fork, timer)
-            outside = output.parent / 'outside-replay-work'; outside.mkdir()
+            outside = root / 'outside-replay-work'; outside.mkdir()
             with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, 'escapes report root'):
                 EVIDENCE.replay_files(output, outside, timer)
 

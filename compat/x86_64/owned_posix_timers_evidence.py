@@ -25,6 +25,7 @@ from typing import Any, Sequence
 
 import owned_dynamic_receipt as receipt_contract
 from owned_dynamic_fork_evidence import RetainedRuntimeInputs, recorded
+import owned_posix_product_evidence as product_evidence
 from owned_posix_product_evidence import (
     DYNAMIC_PRODUCT_FORMAT,
     ProductEvidenceError,
@@ -434,7 +435,18 @@ def _validate_shared_receipt(
     return _sha256(receipt)
 
 
-def _validate_tls_elf(output: Path) -> tuple[str, list[str]]:
+def _validate_tls_elf(output: Path, *, replay: RetainedRuntimeInputs | None = None) -> tuple[str, list[str]]:
+    if replay is not None:
+        facts = product_evidence.retained_elf_facts(output)
+        if facts["machine"] != 62 or facts["type"] != 3:
+            _fail("retained timer TLS DSO is not an x86-64 ET_DYN ELF")
+        if facts["interpreters"]:
+            _fail("retained timer TLS DSO has an interpreter")
+        if facts["textrel"] or facts["rpaths"]:
+            _fail("retained timer TLS DSO has a forbidden text relocation or RPATH")
+        if facts["sonames"] != [output.name] or facts["needed"] != ["libc.so"] or facts["runpaths"] != ["/usr/lib"]:
+            _fail("retained timer TLS DSO SONAME, NEEDED, or RUNPATH differs from the callback contract")
+        return facts["sonames"][0], facts["needed"]
     header, program, dynamic = (_readelf(output, option) for option in ("-hW", "-lW", "-dW"))
     if re.search(r"^\s*Machine:\s+Advanced Micro Devices X86-64\s*$", header, re.MULTILINE) is None:
         _fail("timer TLS DSO is not an x86-64 ELF")
@@ -488,7 +500,7 @@ def validate_timer_tls_dso(
     object_path = _physical(object_path, "timer TLS object")
     output = _physical(output, "timer TLS DSO")
     receipt_hash = _validate_shared_receipt(root, manifest, object_path, output, receipt, replay=replay)
-    soname, needed = _validate_tls_elf(output)
+    soname, needed = _validate_tls_elf(output, replay=replay)
     return {
         "schema": TIMER_TLS_AUDIT_SCHEMA,
         "product": recorded(root, replay),

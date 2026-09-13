@@ -52,16 +52,18 @@ the five fork dependency/preprocessed pairs and both timer dependency, header
 trace, and zero-status triples.  Collection compares each original tool again
 after the workloads finish; replay verifies the copied bytes, original paths,
 and the complete finite preprocessing roster before opening a workload
-receipt.
+receipt. It parses rehashed retained ELF64 little-endian bytes for replayed
+fork, timer, and dlfcn links instead of executing a host `readelf`.
 
 The saved runner argv and `TMPDIR` keep their native `/workspace` spelling.
 On a host, the reader maps only that spelling through its one physical
 checkout, while it opens retained sidecars through their physical evidence
-paths.  Fork and timer replay reread the retained preprocessing bytes and use
+paths. Fork and timer replay reread the retained preprocessing bytes and use
 the sealed original compiler/linker identities to reconstruct exact commands;
-they do not import the installed compiler helper or invoke GCC, LLD, or the
-pinned musl compiler.  Link, dependency, raw-stream, product-byte, and source
-joins remain exact.
+the dlfcn reader does the same for every direct-driver receipt. They do not
+import the installed compiler helper or invoke GCC, LLD, the pinned musl
+compiler, or a host ELF inspector. Link, dependency, raw-stream, product-byte,
+and source joins remain exact.
 
 Version 1 reports have no `replay_inputs` field and are deliberately rejected
 by this reader.  They remain historical observations; a later host replay

@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import struct
 import subprocess
 from typing import Any, Mapping
 
@@ -131,6 +132,97 @@ def _sha256(path: Path) -> str:
     except OSError as error:
         raise ProductEvidenceError(f"cannot hash artifact: {path}") from error
     return digest.hexdigest()
+
+
+def retained_elf_facts(path: Path) -> dict[str, object]:
+    """Read the bounded ELF facts needed by command-free host replay.
+
+    Native collection keeps its established ``readelf`` checks. A host cannot
+    re-authorize a receipt by executing an ambient inspector, so retained-link
+    replay parses the rehashed physical ELF bytes directly instead.
+    """
+    path = _physical_regular(path, "retained ELF artifact")
+    try:
+        data = path.read_bytes()
+    except OSError as error:
+        raise ProductEvidenceError(f"retained ELF artifact is unreadable: {path}") from error
+
+    def part(offset: int, size: int) -> bytes:
+        if type(offset) is not int or type(size) is not int or not (0 <= offset <= len(data) and 0 <= size <= len(data) - offset):
+            _fail("retained ELF table escapes physical bytes")
+        return data[offset:offset + size]
+
+    def unpack(shape: str, offset: int) -> tuple[object, ...]:
+        return struct.unpack(shape, part(offset, struct.calcsize(shape)))
+
+    if part(0, 7) != b"\x7fELF\x02\x01\x01":
+        _fail("retained ELF is not ELF64 little-endian")
+    kind, machine, version, _entry, phoff, shoff, _flags, ehsize, phsize, phnum, shsize, shnum, _shstrndx = unpack(
+        "<HHIQQQIHHHHHH", 16
+    )
+    if machine != 62 or version != 1 or ehsize != 64 or (phnum and phsize != 56) or (shnum and shsize != 64):
+        _fail("retained ELF architecture or header contract differs")
+    if kind not in (2, 3) or phnum >= 65536 or shnum >= 65536:
+        _fail("retained ELF type or table count differs")
+
+    def cstring(blob: bytes, offset: int) -> str:
+        if not 0 <= offset < len(blob) or b"\0" not in blob[offset:]:
+            _fail("retained ELF string lacks a terminator")
+        try:
+            return blob[offset:blob.index(b"\0", offset)].decode("ascii")
+        except UnicodeDecodeError as error:
+            raise ProductEvidenceError("retained ELF string is not ASCII") from error
+
+    interpreters: list[str] = []
+    for index in range(phnum):
+        program = unpack("<IIQQQQQQ", phoff + index * phsize)
+        ptype, _program_flags, offset, _vaddr, _paddr, size, _memsize, _align = program
+        if ptype == 3:
+            value = part(offset, size)
+            if not value.endswith(b"\0") or value.count(b"\0") != 1:
+                _fail("retained ELF interpreter is malformed")
+            try:
+                interpreters.append(value[:-1].decode("ascii"))
+            except UnicodeDecodeError as error:
+                raise ProductEvidenceError("retained ELF interpreter is not ASCII") from error
+
+    sections = [unpack("<IIQQQQIIQQ", shoff + index * shsize) for index in range(shnum)]
+    needed: list[str] = []
+    runpaths: list[str] = []
+    rpaths: list[str] = []
+    sonames: list[str] = []
+    textrel = False
+    for section in sections:
+        _name, section_type, _section_flags, _address, offset, size, link, _info, _alignment, entry = section
+        if section_type != 6:
+            continue
+        if link >= len(sections) or sections[link][1] != 3 or entry != 16 or size % entry:
+            _fail("retained ELF dynamic table differs")
+        string_offset, string_size = sections[link][4], sections[link][5]
+        strings = part(string_offset, string_size)
+        saw_null = False
+        for position in range(offset, offset + size, entry):
+            tag, value = unpack("<qQ", position)
+            if tag == 0:
+                saw_null = True
+                continue
+            if tag == 22:
+                textrel = True
+            elif tag in (1, 14, 15, 29):
+                name = cstring(strings, value)
+                {1: needed, 14: sonames, 15: rpaths, 29: runpaths}[tag].append(name)
+        if not saw_null:
+            _fail("retained ELF dynamic table has no terminator")
+    return {
+        "type": kind,
+        "machine": machine,
+        "interpreters": interpreters,
+        "needed": needed,
+        "runpaths": runpaths,
+        "rpaths": rpaths,
+        "sonames": sonames,
+        "textrel": textrel,
+    }
 
 
 def _no_duplicate_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -543,6 +635,29 @@ def _audit_elf(executable: Path, linkage: str) -> None:
         _fail("dynamic linked executable search path differs from the owned runtime")
 
 
+def _audit_retained_elf(executable: Path, linkage: str) -> None:
+    """Validate replayed link output without invoking a host ELF tool."""
+    facts = retained_elf_facts(executable)
+    mode = LINKAGES[linkage]
+    expected_type = 3 if mode["readelf_type"] == "DYN" else 2
+    if facts["machine"] != 62 or facts["type"] != expected_type:
+        _fail("retained linked executable ELF type differs from requested linkage")
+    if facts["textrel"]:
+        _fail("retained linked executable has DT_TEXTREL")
+    if linkage in {"static", "static-pie"}:
+        if facts["interpreters"] or facts["needed"]:
+            _fail("retained static linked executable has dynamic runtime state")
+        return
+    if facts["interpreters"] != [INTERPRETER]:
+        _fail("retained dynamic linked executable interpreter differs from the owned loader")
+    if facts["needed"] != ["libc.so"]:
+        _fail("retained dynamic linked executable has foreign DT_NEEDED entries")
+    if facts["rpaths"]:
+        _fail("retained dynamic linked executable has DT_RPATH")
+    if facts["runpaths"] != ["/usr/lib"]:
+        _fail("retained dynamic linked executable search path differs from the owned runtime")
+
+
 def _retained_source_path(root: Path, source_mount: str, value: object, receipt: Path,
                           description: str) -> Path:
     """Translate one recorded native path to the physical host checkout.
@@ -811,7 +926,7 @@ def validate_retained_link(root: Path, source_mount: str, product: Path, workloa
             linker, export_dynamic=export_dynamic,
         )
         product_format = DYNAMIC_PRODUCT_FORMAT
-    _audit_elf(executable_path, linkage)
+    _audit_retained_elf(executable_path, linkage)
     return {
         "linkage": linkage,
         "product": str(product_path),
