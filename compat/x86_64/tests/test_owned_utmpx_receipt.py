@@ -222,6 +222,30 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(receipt.ReceiptError, "program does not match"):
             receipt.command_records(self.workspace)
 
+    def test_oracle_and_runtime_command_tails_cwd_and_path_are_closed(self) -> None:
+        self.command_fixture()
+        raw = "/workspace/.work/utmpx-receipt/owned-utmpx-receipt"
+        oracle = self.commands / "oracle-link.json"
+        record = json.loads(oracle.read_text(encoding="utf-8"))
+        record["argv"] += ["-pthread", raw + "/workload.o", "-o", raw + "/oracle"]
+        self.write(oracle, record)
+        receipt.command_records(self.workspace)
+
+        record["cwd"] = "/workspace/forged-oracle-cwd"
+        record["argv"][-3] = "/workspace/forged-workload.o"
+        record["argv"][-1] = "/workspace/forged-oracle"
+        self.write(oracle, record)
+        with self.assertRaisesRegex(receipt.ReceiptError, "oracle link command"):
+            receipt.command_records(self.workspace)
+
+        self.command_fixture()
+        runtime = self.commands / "runtime-dynamic-pie-direct-ordinary.json"
+        record = json.loads(runtime.read_text(encoding="utf-8"))
+        record["argv"][4] = "PATH=/workspace/forged-bin"
+        self.write(runtime, record)
+        with self.assertRaisesRegex(receipt.ReceiptError, "runtime command"):
+            receipt.command_records(self.workspace)
+
     def test_tampered_alias_address_in_raw_symbol_stream_is_rejected(self) -> None:
         self.symbol_fixture()
         receipt.validate_symbol_bytes(self.workspace)
