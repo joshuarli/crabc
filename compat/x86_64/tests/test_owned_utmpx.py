@@ -113,6 +113,16 @@ class OwnedUtmpxTests(unittest.TestCase):
             self.assertIn("CRABC_X86_64_RETAIN_UTMPX_COMMANDS must be unset or 1", result.stderr)
             self.assertEqual(list(Path(temporary).iterdir()), [])
 
+    def test_dynamic_consumers_do_not_claim_to_define_libc_providers(self) -> None:
+        """Keep the established static-provider and dynamic-import boundaries."""
+        source = RUNNER.read_text(encoding="utf-8")
+        matrix = source.index("# A supplied static product")
+        static = source[source.index('if [ -n "$static_product" ]', matrix):source.index("assert_shared_symbols", matrix)]
+        dynamic_start = source.index("for mode in pie non-pie; do", matrix)
+        dynamic = source[dynamic_start:source.index("if [ -n \"$static_product\" ]", dynamic_start)]
+        self.assertIn('assert_executable_symbols "static-$mode"', static)
+        self.assertNotIn("assert_executable_symbols", dynamic)
+
     def test_archive_symbol_judge_rejects_duplicate_wrong_binding(self) -> None:
         source = RUNNER.read_text(encoding="utf-8")
         function_start = source.index("assert_archive_symbols()")
