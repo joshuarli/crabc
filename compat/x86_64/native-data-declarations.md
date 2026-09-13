@@ -40,10 +40,11 @@ Clang `qual_type`, the pinned compiler observation that no separate desugared
 type was emitted, external declaration/storage/TLS observations, unmangled
 linker spelling, and C++ `extern "C"` context.  Candidate and pinned-reference
 rows must each meet these source-derived rules.  Every selected physical
-occurrence is checked against its owning site, including transitive includes;
-the direct owner-header roster remains separately required and cannot be
-replaced by a transitive row.  The output retains direct, selected-physical,
-and selected-transitive counts rather than silently treating the latter as
+occurrence is checked against its owning site, including transitive includes,
+and its `(tree, input_header, profile)` must name an actual inventory job.  The
+direct owner-header roster remains separately required and cannot be replaced
+by a transitive row.  The output retains direct, selected-physical, and
+selected-transitive counts rather than silently treating the latter as
 unexamined coverage.
 
 The three stream objects illustrate why type spelling is retained exactly:
@@ -85,7 +86,7 @@ Development checked the retained full declaration receipt at
 `native_abi_selection_manifest/.work/x86_64/header-declaration-inventory/full-d8e03de0/report.json`
 (SHA-256 `dac12db499d4938aa12cc3ece02e0aa42c46aa25e17604ca01af74064fb8f1ab`)
 with one post-repair account pass, recorded under this worktree's
-`.work/x86_64/native-public-data-declarations/repair-0f605b56/full-receipt-account-r4/`.
+`.work/x86_64/native-public-data-declarations/repair-0f605b56/full-receipt-account-r6/`.
 That receipt binds the report hash and the adapter, reviewed TOML, selected
 object-contract, and source revision identities before and after accounting.
 The source-oracle excerpts under `source-contract/` compare the relevant installed

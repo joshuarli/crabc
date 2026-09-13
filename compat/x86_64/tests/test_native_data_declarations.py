@@ -377,6 +377,21 @@ class NativeDataDeclarationsTests(unittest.TestCase):
         with self.assertRaisesRegex(ADAPTER.NativeDataDeclarationsError, "in6addr_any selected physical declaration linker name differs"):
             self.account(envelope=envelope)
 
+    def test_transitive_selected_declaration_requires_an_inventory_job(self) -> None:
+        envelope = self.report_envelope()
+        for item in envelope["report"]["occurrences"]:
+            if (
+                item["kind"] == "variable"
+                and item["name"] == "in6addr_any"
+                and item["tree"] == "candidate"
+                and item["input_header"] != item["source"]["declaring_header"]
+            ):
+                item["input_header"] = "forged/transitive.h"
+                break
+        self.refresh_report(envelope)
+        with self.assertRaisesRegex(ADAPTER.NativeDataDeclarationsError, "in6addr_any selected physical declaration input-header job is absent"):
+            self.account(envelope=envelope)
+
     def test_h_errno_macro_profile_and_expansion_changes_reject(self) -> None:
         profile_changed = self.report_envelope()
         for item in profile_changed["report"]["final_active_macros"]:

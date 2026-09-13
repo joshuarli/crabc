@@ -353,7 +353,7 @@ def validate_selected_object_contracts(
         normalized.append(copy.deepcopy(reviewed))
     return normalized
 
-def _report_envelope(envelope: Mapping[str, Any]) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
+def _report_envelope(envelope: Mapping[str, Any]) -> tuple[Mapping[str, Any], Mapping[str, Any], set[tuple[str, str, str]]]:
     """Require a complete, internally consistent replay envelope.
 
     The declaration-inventory reader remains responsible for authenticating raw
@@ -428,7 +428,7 @@ def _report_envelope(envelope: Mapping[str, Any]) -> tuple[Mapping[str, Any], Ma
         declaration_inventory.strict_equal(report["status"], reproduced["status"]),
         "replayed header declaration status differs from raw facts",
     )
-    return current, report
+    return current, report, set(expected_jobs)
 
 def _source(record: Mapping[str, Any], description: str) -> Mapping[str, Any]:
     source = record.get("source")
@@ -504,6 +504,7 @@ def _selected_variable_records(
     item: Mapping[str, Any],
     *,
     tree: str,
+    job_identities: set[tuple[str, str, str]],
 ) -> tuple[list[Mapping[str, Any]], list[Mapping[str, Any]]]:
     """Validate every selected physical occurrence before keeping its direct subset."""
     root = "candidate-header-root" if tree == "candidate" else "pinned-musl-header-root"
@@ -521,6 +522,10 @@ def _selected_variable_records(
         profile = string(raw.get("profile"), f"{item['name']} selected physical declaration profile")
         require(profile in site["profiles"], f"{item['name']} selected physical declaration profile differs")
         input_header = string(raw.get("input_header"), f"{item['name']} selected physical declaration input header")
+        require(
+            (tree, input_header, profile) in job_identities,
+            f"{item['name']} selected physical declaration input-header job is absent",
+        )
         is_direct = input_header == header
         description = f"{item['name']} direct declaration" if is_direct else f"{item['name']} selected physical declaration"
         _source_matches(
@@ -553,7 +558,11 @@ def _selected_variable_records(
     return selected, direct
 
 
-def _validate_variable_object(occurrences: Sequence[Any], item: Mapping[str, Any]) -> dict[str, Any]:
+def _validate_variable_object(
+    occurrences: Sequence[Any],
+    item: Mapping[str, Any],
+    job_identities: set[tuple[str, str, str]],
+) -> dict[str, Any]:
     expected: dict[tuple[str, str], Mapping[str, Any]] = {}
     for site in item["sites"]:
         for profile in site["profiles"]:
@@ -564,7 +573,9 @@ def _validate_variable_object(occurrences: Sequence[Any], item: Mapping[str, Any
     selected_counts: dict[str, int] = {}
     transitive_counts: dict[str, int] = {}
     for tree in ("candidate", "reference"):
-        selected, direct = _selected_variable_records(occurrences, item, tree=tree)
+        selected, direct = _selected_variable_records(
+            occurrences, item, tree=tree, job_identities=job_identities
+        )
         seen: dict[tuple[str, str], Mapping[str, Any]] = {}
         for record in direct:
             header = record.get("input_header")
@@ -635,6 +646,7 @@ def _selected_macro_records(
     tree: str,
     line_key: str,
     description: str,
+    job_identities: set[tuple[str, str, str]],
 ) -> tuple[list[Mapping[str, Any]], list[Mapping[str, Any]]]:
     root = "candidate-header-root" if tree == "candidate" else "pinned-musl-header-root"
     selected: list[Mapping[str, Any]] = []
@@ -648,6 +660,10 @@ def _selected_macro_records(
         profile = string(raw.get("profile"), f"{description} profile")
         require(profile in PROFILE_LANGUAGES, f"{description} profile is unknown")
         input_header = string(raw.get("input_header"), f"{description} input header")
+        require(
+            (tree, input_header, profile) in job_identities,
+            f"{description} input-header job is absent",
+        )
         is_direct = input_header == item["macro_header"]
         record_description = description if is_direct else f"{item['name']} selected physical {description}"
         _macro_source_matches(
@@ -683,7 +699,13 @@ def _direct_by_profile(
     return by_profile
 
 
-def _validate_h_errno(occurrences: Sequence[Any], macro_events: Sequence[Any], active: Sequence[Any], item: Mapping[str, Any]) -> dict[str, Any]:
+def _validate_h_errno(
+    occurrences: Sequence[Any],
+    macro_events: Sequence[Any],
+    active: Sequence[Any],
+    item: Mapping[str, Any],
+    job_identities: set[tuple[str, str, str]],
+) -> dict[str, Any]:
     for tree in ("candidate", "reference"):
         for raw in occurrences:
             if isinstance(raw, Mapping) and raw.get("tree") == tree and raw.get("name") == item["name"]:
@@ -700,6 +722,7 @@ def _validate_h_errno(occurrences: Sequence[Any], macro_events: Sequence[Any], a
                 tree=tree,
                 line_key="macro_candidate_line" if tree == "candidate" else "macro_reference_line",
                 description=f"{item['name']} {field}",
+                job_identities=job_identities,
             )
             by_profile = _direct_by_profile(direct, item=item, description=field)
             for profile, record in by_profile.items():
@@ -732,6 +755,10 @@ def _validate_h_errno(occurrences: Sequence[Any], macro_events: Sequence[Any], a
             profile = string(raw.get("profile"), f"{item['name']} accessor profile")
             require(profile in expected_profiles, f"{item['name']} accessor profile differs")
             input_header = string(raw.get("input_header"), f"{item['name']} accessor input header")
+            require(
+                (tree, input_header, profile) in job_identities,
+                f"{item['name']} accessor input-header job is absent",
+            )
             is_direct = input_header == item["accessor_header"]
             description = f"{item['name']} accessor" if is_direct else f"{item['name']} selected physical accessor"
             _source_matches(
@@ -838,16 +865,16 @@ def account_declarations(
     A valid result is deliberately scoped to public-data header declarations.
     """
     reviewed = validate_selected_object_contracts(selected_objects, contract)
-    current, report = _report_envelope(header_report_envelope)
+    current, report, job_identities = _report_envelope(header_report_envelope)
     occurrences = report["occurrences"]
     macro_events = report["macro_events"]
     active = report["final_active_macros"]
     objects: list[dict[str, Any]] = []
     for item in reviewed:
         if item["declaration_kind"] == "installed-variable":
-            objects.append(_validate_variable_object(occurrences, item))
+            objects.append(_validate_variable_object(occurrences, item, job_identities))
         elif item["declaration_kind"] == "accessor-macro":
-            objects.append(_validate_h_errno(occurrences, macro_events, active, item))
+            objects.append(_validate_h_errno(occurrences, macro_events, active, item, job_identities))
         else:
             objects.append(_validate_abi_only(occurrences, macro_events, active, item))
     source_match = current["matches_retained"]
