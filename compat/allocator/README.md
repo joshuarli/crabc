@@ -1922,12 +1922,16 @@ campaign claim:
 ```
 
 That writes `lifecycle-runtime-process-policy-first-arena.json` beside the
-full report. It pairs a child-isolated direct pinned-C `src/init.c` probe with
-the ordinary Rust first-arena child: both retain
-`mimalloc_use_numa_nodes=3`, then record configured/resolved count three and
-the ticket-zero TLD's normalized node relation. It does not compare a raw
-host-node identity, qualify hardware multi-node placement or huge pages, or
-expand the first-arena route into general lifecycle parity.
+full report. It pairs a child-isolated direct pinned-C `src/init.c` probe plus
+the ordinary linked `src/arena.c` first-allocation route with the ordinary Rust
+first-arena child. Both retain `mimalloc_use_numa_nodes=3` and
+`mimalloc_arena_is_numa_local=1`, record configured/resolved count three, and
+check normalized TLD and regular-first-arena node relations. The direct C
+probe frees its one client and verifies the selected regular arena remains
+registered; the Rust child proves the same retained arena relation after its
+exact client free. It does not compare a raw host-node identity, qualify
+hardware multi-node placement or huge pages, or expand the first-arena route
+into general lifecycle parity.
 
 Each newly produced focused receipt seals the candidate source before and
 after the C/Rust run: clean Git revision/root-tree state, the complete

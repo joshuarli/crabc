@@ -1301,6 +1301,18 @@ impl VmPolicy {
         self.current_numa_node_with_raw(numa_node_count, numa_node)
     }
 
+    /// Copies this policy's NUMA-count cache without resolving topology.
+    ///
+    /// This test-only observation distinguishes a source arena initialization
+    /// that reached `src/arena.c:1735-1740` from a failed map or metadata
+    /// commit that must leave the retained policy untouched. It does not read
+    /// the raw Linux topology primitives or mutate the policy.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_numa_node_count_cache(&self) -> usize {
+        self.numa_node_count.load(Ordering::Acquire)
+    }
+
     /// Copies the policy-local NUMA-count cache without resolving it.
     ///
     /// This default-off native runtime audit distinguishes a count resolved by

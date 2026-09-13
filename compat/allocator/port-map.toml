@@ -1756,6 +1756,21 @@ stress_verified = false
 performance_qualified = false
 
 [[item]]
+upstream = "src/arena.c and src/os.c"
+name = "mi-arena-initialize-process-first-regular-numa-policy"
+source_region = "src/arena.c:1676-1740 metadata preparation and arena_is_numa_local node write after mi_reserve_os_memory_ex2's -1 sentinel; src/arena.c:1885-1902 regular first-arena map/manage call; src/os.c:860-898 option-aware NUMA count/current normalization"
+rust_module = "crabc_mimalloc::process_arena, crabc_mimalloc::arena, and crabc_mimalloc::os"
+rust_item = "ProcessSharedArenaStorage::reserve_default_os_arena_for_process, process_regular_arena_numa_node, arena::manage_os_in_place_with_numa_source, and VmProcess::current_numa_node"
+intentional_difference = "The static process-bound ticket-zero regular owner retains VmProcess through regular mapping and keeps the source -1 request deferred in the in-place manager. The manager resolves that request through its source node closure only after the mapping-owned metadata prefix commits and zeroes, so a map or metadata-commit rejection preserves the existing fallback/accounting path and leaves the policy cache cold. Enabled use_numa_nodes=3 plus arena_is_numa_local=1 stores a normalized node; disabled policy and the legacy no-policy caller retain -1. The direct C/Rust witness compares those finite source-policy relations and retained first-arena mapping after one client free, never a raw host node identity. It does not implement or qualify mbind/hardware placement, huge pages, option diagnostics/fill races, dynamic/later-TLD routes, multiple/count-scaled arenas, metadata backing/publication, arena destruction, or general routing."
+tests = ["crabc-mimalloc/src/process_arena.rs", "crabc-mimalloc/src/arena.rs", "crabc-mimalloc/src/os.rs", "crabc-mimalloc/src/runtime_lifecycle.rs", "crabc-mimalloc/tests/native_runtime_first_arena_policy.rs", "compat/allocator/x86_64_initial_tld_numa_oracle.c", "compat/allocator/x86_64_lifecycle_evidence.py"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
+stress_verified = false
+performance_qualified = false
+
+[[item]]
 upstream = "src/arena.c"
 name = "mi-arena-reserve-first-default-one-arena"
 source_region = "src/arena.c:341-406 mi_arena_reserve default 64-bit reserve calculation, Linux eager-commit decision, and smaller-reservation retry; src/arena.c:525-569 one-at-a-time fresh-arena call site"

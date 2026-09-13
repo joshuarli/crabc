@@ -68,7 +68,8 @@ use crabc_core::Errno;
 
 use crate::arena::{
     ArenaRegistry, ArenaView, CommitHook, ExternalArenaPlan, ManageArenaError,
-    ManagedExternalRegion, manage_external_in_place, manage_os_in_place,
+    ManagedExternalRegion, manage_external_in_place,
+    manage_os_in_place_with_numa_source,
 };
 use crate::config::{
     ARENA_ALIGNMENT, ARENA_MAX_CHUNK_OBJ_SIZE, ARENA_MAX_SIZE, ARENA_MIN_SIZE,
@@ -230,7 +231,7 @@ impl ProcessSharedArenaStorage {
                 // observable while `manage_external_in_place` invokes the
                 // callback synchronously under this same lock.
                 self.state.store(INITIALIZING, Ordering::Release);
-                self.install_cold(candidate, mapping, ManagedArenaBacking::External)
+                self.install_cold(candidate, mapping, ManagedArenaBacking::External, || -1)
             }
             READY => ProcessSharedArenaInstallAttempt::Returned {
                 error: if self.pair_matches(candidate.pair) {
@@ -569,7 +570,12 @@ impl ProcessSharedArenaStorage {
         };
         let (mapping, memory) = base_owner.into_mapping_and_memory();
 
-        match self.install_cold(candidate, mapping, ManagedArenaBacking::RegularOs(memory)) {
+        match self.install_cold(
+            candidate,
+            mapping,
+            ManagedArenaBacking::RegularOs(memory),
+            || -1,
+        ) {
             ProcessSharedArenaInstallAttempt::Ready(lease) => {
                 ProcessSharedArenaReservationAttempt::Ready(lease)
             }
@@ -648,7 +654,18 @@ impl ProcessSharedArenaStorage {
         };
         let (mapping, memory) = base_owner.into_mapping_and_memory();
 
-        match self.install_cold(candidate, mapping, ManagedArenaBacking::RegularOs(memory)) {
+        // `mi_reserve_os_memory_ex2` passes -1 into `mi_manage_os_memory_ex2`.
+        // The pinned `mi_arena_initialize` resolves that sentinel only after
+        // metadata commit/zero when `arena_is_numa_local` is enabled. Keep the
+        // process policy as the deferred source, rather than resolving it at
+        // map selection where a failed mapping could warm its local cache.
+        let process = backed.process;
+        match self.install_cold(
+            candidate,
+            mapping,
+            ManagedArenaBacking::RegularOs(memory),
+            move || process_regular_arena_numa_node(process, -1),
+        ) {
             ProcessSharedArenaInstallAttempt::Ready(lease) => {
                 ProcessSharedArenaReservationAttempt::Ready(lease)
             }
@@ -822,12 +839,16 @@ impl ProcessSharedArenaStorage {
         }
     }
 
-    fn install_cold(
+    fn install_cold<N>(
         &'static self,
         candidate: ProcessArenaCandidate,
         mapping: Mapping,
         backing: ManagedArenaBacking,
-    ) -> ProcessSharedArenaInstallAttempt {
+        numa_node_source: N,
+    ) -> ProcessSharedArenaInstallAttempt
+    where
+        N: FnMut() -> i32,
+    {
         if let Err(error) = self.bind_or_match_pair(candidate) {
             // A foreign candidate has not changed this process sidecar and
             // must not consume the valid selected pair's future retry. A
@@ -879,13 +900,13 @@ impl ProcessSharedArenaStorage {
                     false,
                     Some(commit_hook),
                 ),
-                ManagedArenaBacking::RegularOs(memory) => manage_os_in_place(
+                ManagedArenaBacking::RegularOs(memory) => manage_os_in_place_with_numa_source(
                     &self.registry,
                     candidate.base,
                     candidate.length,
                     candidate.pair.config.page_size(),
                     memory,
-                    -1,
+                    numa_node_source,
                     false,
                     Some(commit_hook),
                 ),
@@ -1628,6 +1649,24 @@ impl ProcessBackedArenaPair {
     }
 }
 
+/// Selects the stored node for the ordinary first regular arena.
+///
+/// Pinned `src/arena.c:1735-1740` receives the regular reservation's `-1`
+/// sentinel and resolves the process-local node only when
+/// `arena_is_numa_local` is enabled. The caller invokes this only from the
+/// arena manager after its metadata commit/zero prefix has succeeded; keeping
+/// the source decision here prevents a rejected mapping from mutating the
+/// retained policy cache.
+#[inline]
+fn process_regular_arena_numa_node(process: VmProcess<'_>, requested: i32) -> i32 {
+    if requested < 0 && process.policy().arena_is_numa_local() {
+        i32::try_from(process.current_numa_node())
+            .expect("the source NUMA policy bounds its normalized node below INT_MAX")
+    } else {
+        requested
+    }
+}
+
 impl ProcessArenaPair {
     fn from_page_map(page_map: ProcessPageMapLease) -> Result<Self, ProcessPageMapError> {
         Ok(Self {
@@ -1983,6 +2022,38 @@ mod tests {
         .expect("the fixture publishes a canonical policy/PageMap binding")
     }
 
+    fn process_backing_with_numa_local_regular_arena(
+        config: MemoryConfig,
+        arena_is_numa_local: i64,
+    ) -> ProcessMainBackingBinding {
+        let mut options = VmOptions::uninitialized();
+        options.initialize_all(|_| VmOptionEnvironment::Absent);
+        options.set(
+            VmOption::ArenaReserve,
+            i64::try_from((4 * ARENA_MIN_SIZE) / 1024)
+                .expect("the one-arena source policy fits its signed KiB image"),
+        );
+        options.set(VmOption::ArenaEagerCommit, 0);
+        options.set(VmOption::AllowLargeOsPages, 0);
+        options.set(VmOption::AllowThp, 0);
+        options.set(VmOption::UseNumaNodes, 3);
+        options.set(VmOption::ArenaIsNumaLocal, arena_is_numa_local);
+        let process = ProcessMainInitializationStorage::test_static_owner();
+        let subprocess = MainSubprocess::test_static_owner();
+        let page_map = ProcessPageMapStorage::test_static_owner();
+        // SAFETY: this fixture leaks one isolated coordinator, option image,
+        // subprocess, and PageMap for the exact policy-bound reservation.
+        unsafe {
+            process.test_prepare_vm_process_backing_binding(
+                config,
+                options,
+                subprocess,
+                page_map,
+            )
+        }
+        .expect("the fixture publishes a canonical NUMA-policy/PageMap binding")
+    }
+
     fn initialized_random() -> TheapRandomImage {
         let mut random = TheapRandomImage::empty_weak();
         random.initialize_weak();
@@ -2087,6 +2158,7 @@ mod tests {
             candidate,
             mapping,
             ManagedArenaBacking::RegularOs(handed_memory),
+            || -1,
         ) {
             ProcessSharedArenaInstallAttempt::Ready(lease) => lease,
             ProcessSharedArenaInstallAttempt::Returned { .. }
@@ -2252,6 +2324,167 @@ mod tests {
         assert!(
             fault.observed() >= 2,
             "the primary's direct and overmap failures precede its source fallback"
+        );
+    }
+
+    #[test]
+    fn process_bound_regular_first_arena_uses_its_enabled_local_numa_policy() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let config = memory_config();
+        let binding = process_backing_with_numa_local_regular_arena(config, 1);
+        let policy = binding.process().policy();
+        assert_eq!(
+            policy.test_numa_node_count_cache(),
+            0,
+            "no map or manager step has resolved the retained NUMA policy yet"
+        );
+        let storage = ProcessSharedArenaStorage::test_static_owner();
+        let mut random = initialized_random();
+
+        let lease = match storage.reserve_default_os_arena_for_process(
+            binding,
+            ARENA_SLICE_SIZE,
+            &mut random,
+        ) {
+            Ok(lease) => lease,
+            Err(_) => panic!("the real process-bound first regular arena publishes"),
+        };
+        let arena = lease.arena().expect("the published process arena remains observable");
+
+        assert!(
+            (0..3).contains(&arena.arena().numa_node),
+            "the source local-arena option writes the retained policy-normalized node"
+        );
+        assert_eq!(
+            policy.test_numa_node_count_cache(),
+            3,
+            "only successful arena initialization resolves the retained configured count"
+        );
+    }
+
+    #[test]
+    fn process_bound_regular_first_arena_leaves_disabled_local_numa_policy_unresolved() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let config = memory_config();
+        let binding = process_backing_with_numa_local_regular_arena(config, 0);
+        let policy = binding.process().policy();
+        let storage = ProcessSharedArenaStorage::test_static_owner();
+        let mut random = initialized_random();
+
+        let lease = match storage.reserve_default_os_arena_for_process(
+            binding,
+            ARENA_SLICE_SIZE,
+            &mut random,
+        ) {
+            Ok(lease) => lease,
+            Err(_) => panic!("the disabled-policy first regular arena still publishes"),
+        };
+        let arena = lease.arena().expect("the disabled-policy arena remains observable");
+
+        assert_eq!(
+            arena.arena().numa_node,
+            -1,
+            "the source sentinel remains stored when arena_is_numa_local is disabled"
+        );
+        assert_eq!(
+            policy.test_numa_node_count_cache(),
+            0,
+            "the disabled source branch does not resolve the retained NUMA policy"
+        );
+    }
+
+    #[test]
+    fn legacy_regular_first_arena_keeps_the_no_policy_numa_sentinel() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let config = memory_config();
+        let subprocess = MainSubprocess::test_static_owner();
+        let page_map = initialized_map(config, subprocess);
+        let storage = ProcessSharedArenaStorage::test_static_owner();
+
+        let lease = match storage.reserve_default_os_arena(page_map, ARENA_SLICE_SIZE) {
+            Ok(lease) => lease,
+            Err(_) => panic!("the legacy no-policy first regular arena publishes"),
+        };
+        assert_eq!(
+            lease.arena().expect("the legacy arena remains observable").arena().numa_node,
+            -1,
+            "the preserved no-policy caller supplies the source sentinel"
+        );
+    }
+
+    #[test]
+    fn process_regular_first_arena_commit_failure_does_not_warm_local_numa_policy() {
+        let config = memory_config();
+        let binding = process_backing_with_numa_local_regular_arena(config, 1);
+        let policy = binding.process().policy();
+        let storage = ProcessSharedArenaStorage::test_static_owner();
+        let mut random = initialized_random();
+        let fault = fault::install(fault::Plan::at(
+            fault::Point::Commit,
+            1,
+            Errno::NOMEM,
+        ));
+
+        match storage.reserve_default_os_arena_for_process(binding, ARENA_SLICE_SIZE, &mut random)
+        {
+            Err(ProcessSharedArenaReserveFailure::Rejected { error }) => assert!(matches!(
+                error,
+                ProcessSharedArenaReserveError::Manage(ProcessSharedArenaError::Arena(
+                    ManageArenaError::CommitFailed
+                )),
+            )),
+            Err(ProcessSharedArenaReserveFailure::Retained { error }) => {
+                panic!("a clean metadata commit failure must return its mapping: {error:?}")
+            }
+            Ok(_) => panic!("the injected metadata commit failure cannot publish an arena"),
+        }
+        assert_eq!(fault.observed(), 1, "the selected metadata commit reaches one fault");
+        assert_eq!(storage.test_state(), COLD);
+        assert_eq!(storage.registry.count(), 0);
+        assert_eq!(
+            policy.test_numa_node_count_cache(),
+            0,
+            "the deferred source node query stays after the rejected metadata commit"
+        );
+    }
+
+    #[test]
+    fn process_regular_first_arena_map_failure_does_not_warm_local_numa_policy() {
+        let config = memory_config();
+        let binding = process_backing_with_numa_local_regular_arena(config, 1);
+        let policy = binding.process().policy();
+        let storage = ProcessSharedArenaStorage::test_static_owner();
+        let mut random = initialized_random();
+        // The explicit 128-MiB policy has no smaller first-arena fallback.
+        // Fail both source aligned-map attempts so this real process route
+        // returns before metadata preparation can invoke the deferred node.
+        let fault = fault::install(fault::Plan::at_pair(
+            fault::Point::Map,
+            1,
+            fault::Point::Map,
+            1,
+            Errno::NOMEM,
+        ));
+
+        match storage.reserve_default_os_arena_for_process(binding, ARENA_SLICE_SIZE, &mut random)
+        {
+            Err(ProcessSharedArenaReserveFailure::Rejected { error }) => assert_eq!(
+                error,
+                ProcessSharedArenaReserveError::Mapping(Errno::NOMEM),
+            ),
+            Err(ProcessSharedArenaReserveFailure::Retained { error }) => {
+                panic!("a clean aligned-map failure must not retain an arena mapping: {error:?}")
+            }
+            Ok(_) => panic!("the injected aligned-map failures cannot publish an arena"),
+        }
+        assert!(fault.observed() >= 1);
+        assert!(fault.secondary_observed() >= 1);
+        assert_eq!(storage.test_state(), COLD);
+        assert_eq!(storage.registry.count(), 0);
+        assert_eq!(
+            policy.test_numa_node_count_cache(),
+            0,
+            "the policy node source remains after the rejected map route"
         );
     }
 

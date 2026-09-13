@@ -150,9 +150,11 @@ class ReportTests(unittest.TestCase):
             )
             if lane.identifier == "runtime-process-policy-first-arena":
                 lanes[-1]["initial_tld_numa_trace"] = {
+                    "vm_policy_arena_is_numa_local": 1,
                     "vm_policy_use_numa_nodes": 3,
                     "vm_policy_numa_node_count_cache": 3,
                     "ticket_zero_tld_numa_node": 0,
+                    "process_arena_numa_node": 0,
                 }
         return lanes
 
@@ -265,20 +267,27 @@ class CandidateSourceReceiptTests(unittest.TestCase):
 
         c_trace = {
             "source_option_applied": 1,
+            "arena_is_numa_local_option_applied": 1,
             "configured_numa_node_count": 3,
             "resolved_numa_node_count": 3,
             "ticket_zero_tld": 1,
             "default_theap_uses_ticket_zero_tld": 1,
             "ticket_zero_tld_numa_node": 0,
             "ticket_zero_tld_numa_in_range": 1,
+            "regular_first_arena_is_os": 1,
+            "regular_first_arena_numa_node": 1,
+            "regular_first_arena_numa_in_range": 1,
+            "regular_first_arena_retained_after_free": 1,
         }
         lane = {
             "id": "runtime-process-policy-first-arena",
             "observed": {"passed": 1},
             "initial_tld_numa_trace": {
+                "vm_policy_arena_is_numa_local": 1,
                 "vm_policy_use_numa_nodes": 3,
                 "vm_policy_numa_node_count_cache": 3,
                 "ticket_zero_tld_numa_node": 0,
+                "process_arena_numa_node": 1,
             },
         }
         c_oracle = {
@@ -325,9 +334,9 @@ class CandidateSourceReceiptTests(unittest.TestCase):
             "comparison": EVIDENCE.compare_initial_tld_numa_observations(c_oracle, lane),
             "lane": lane,
             "scope": {
-                "boundary": "one child-isolated pinned-C and one process-isolated private Rust first-arena policy witness only",
+                "boundary": "one child-isolated pinned-C and one process-isolated private Rust TLD/regular-first-arena policy witness only",
                 "public_runtime_support": False,
-                "claim": "focused initial-TLD NUMA option-policy witness",
+                "claim": "focused initial-TLD and regular-first-arena NUMA option-policy witness",
             },
             "exclusions": list(EVIDENCE.RUNTIME_FIRST_ARENA_EXCLUSIONS),
         }
@@ -386,6 +395,18 @@ class CandidateSourceReceiptTests(unittest.TestCase):
             with self.assertRaisesRegex(EVIDENCE.EvidenceError, "format-3"):
                 EVIDENCE.validate_runtime_first_arena_policy_report(malformed)
 
+        with self.subTest(runtime_regular_arena_node=True):
+            malformed = copy.deepcopy(report)
+            malformed["lane"]["initial_tld_numa_trace"]["process_arena_numa_node"] = True
+            with self.assertRaisesRegex(EVIDENCE.EvidenceError, "Rust NUMA trace relation"):
+                EVIDENCE.validate_runtime_first_arena_policy_report(malformed)
+
+        with self.subTest(c_regular_arena_relation=True):
+            malformed = copy.deepcopy(report)
+            malformed["c_oracle"]["trace"]["regular_first_arena_retained_after_free"] = True
+            with self.assertRaisesRegex(EVIDENCE.EvidenceError, "exact integer"):
+                EVIDENCE.validate_runtime_first_arena_policy_report(malformed)
+
 
 class ResultParserTests(unittest.TestCase):
     def test_parser_requires_one_clean_exact_summary(self) -> None:
@@ -423,12 +444,17 @@ class ResultParserTests(unittest.TestCase):
     def test_initial_tld_numa_c_and_runtime_traces_bind_the_option_policy(self) -> None:
         c_trace = {
             "source_option_applied": 1,
+            "arena_is_numa_local_option_applied": 1,
             "configured_numa_node_count": 3,
             "resolved_numa_node_count": 3,
             "ticket_zero_tld": 1,
             "default_theap_uses_ticket_zero_tld": 1,
             "ticket_zero_tld_numa_node": 2,
             "ticket_zero_tld_numa_in_range": 1,
+            "regular_first_arena_is_os": 1,
+            "regular_first_arena_numa_node": 1,
+            "regular_first_arena_numa_in_range": 1,
+            "regular_first_arena_retained_after_free": 1,
         }
         c_output = "\n".join(
             [
@@ -452,9 +478,11 @@ class ResultParserTests(unittest.TestCase):
         runtime_output = "\n".join(
             [
                 EVIDENCE.RUNTIME_INITIAL_TLD_NUMA_TRACE_BEGIN,
+                "vm_policy_arena_is_numa_local=1",
                 "vm_policy_use_numa_nodes=3",
                 "vm_policy_numa_node_count_cache=3",
                 "ticket_zero_tld_numa_node=1",
+                "process_arena_numa_node=2",
                 EVIDENCE.RUNTIME_INITIAL_TLD_NUMA_TRACE_END,
             ]
         )
@@ -468,9 +496,11 @@ class ResultParserTests(unittest.TestCase):
                 "\n".join(
                     [
                         EVIDENCE.RUNTIME_INITIAL_TLD_NUMA_TRACE_BEGIN,
+                        "vm_policy_arena_is_numa_local=1",
                         "vm_policy_use_numa_nodes=3",
                         "vm_policy_numa_node_count_cache=0",
                         "ticket_zero_tld_numa_node=0",
+                        "process_arena_numa_node=0",
                         EVIDENCE.RUNTIME_INITIAL_TLD_NUMA_TRACE_END,
                     ]
                 )
@@ -479,12 +509,48 @@ class ResultParserTests(unittest.TestCase):
             EVIDENCE.validate_initial_tld_numa_c_trace(
                 {
                     "source_option_applied": 1,
+                    "arena_is_numa_local_option_applied": 1,
                     "configured_numa_node_count": 3,
                     "resolved_numa_node_count": 3,
                     "ticket_zero_tld": 1,
                     "default_theap_uses_ticket_zero_tld": 1,
                     "ticket_zero_tld_numa_node": 3,
                     "ticket_zero_tld_numa_in_range": 1,
+                    "regular_first_arena_is_os": 1,
+                    "regular_first_arena_numa_node": 0,
+                    "regular_first_arena_numa_in_range": 1,
+                    "regular_first_arena_retained_after_free": 1,
+                }
+            )
+        with self.assertRaisesRegex(EVIDENCE.EvidenceError, "first regular arena"):
+            EVIDENCE.parse_runtime_initial_tld_numa_trace(
+                "\n".join(
+                    [
+                        EVIDENCE.RUNTIME_INITIAL_TLD_NUMA_TRACE_BEGIN,
+                        "vm_policy_arena_is_numa_local=1",
+                        "vm_policy_use_numa_nodes=3",
+                        "vm_policy_numa_node_count_cache=3",
+                        "ticket_zero_tld_numa_node=0",
+                        "process_arena_numa_node=3",
+                        EVIDENCE.RUNTIME_INITIAL_TLD_NUMA_TRACE_END,
+                    ]
+                )
+            )
+        with self.assertRaisesRegex(EVIDENCE.EvidenceError, "regular_first_arena_retained_after_free"):
+            EVIDENCE.validate_initial_tld_numa_c_trace(
+                {
+                    "source_option_applied": 1,
+                    "arena_is_numa_local_option_applied": 1,
+                    "configured_numa_node_count": 3,
+                    "resolved_numa_node_count": 3,
+                    "ticket_zero_tld": 1,
+                    "default_theap_uses_ticket_zero_tld": 1,
+                    "ticket_zero_tld_numa_node": 0,
+                    "ticket_zero_tld_numa_in_range": 1,
+                    "regular_first_arena_is_os": 1,
+                    "regular_first_arena_numa_node": 0,
+                    "regular_first_arena_numa_in_range": 1,
+                    "regular_first_arena_retained_after_free": 0,
                 }
             )
 

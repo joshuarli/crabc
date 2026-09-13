@@ -1159,6 +1159,48 @@ pub(crate) unsafe fn manage_os_in_place(
     exclusive: bool,
     commit_hook: Option<CommitHook>,
 ) -> Result<ManagedExternalRegion, ManageArenaError> {
+    unsafe {
+        manage_os_in_place_with_numa_source(
+            registry,
+            start,
+            size,
+            page_size,
+            memory,
+            || numa_node,
+            exclusive,
+            commit_hook,
+        )
+    }
+}
+
+/// Registers one regular OS mapping while deferring its source NUMA choice
+/// until each arena has passed metadata preparation.
+///
+/// Pinned `src/arena.c:1676-1740` validates the region, commits and zeroes its
+/// metadata prefix, and only then selects the stored `arena->numa_node`.
+/// This private companion preserves that ordering for the policy-bound first
+/// regular arena without giving a failed map or metadata commit a topology
+/// observation side effect.
+///
+/// # Safety
+///
+/// The caller must uphold [`manage_os_in_place`]'s complete mapping and
+/// callback contract. `numa_node_source` must be synchronous, must not retain
+/// an arena pointer or mapping capability, and must return a source-valid node
+/// for every arena the bounded manager initializes.
+pub(crate) unsafe fn manage_os_in_place_with_numa_source<N>(
+    registry: &ArenaRegistry,
+    start: *mut u8,
+    size: usize,
+    page_size: PageSize,
+    memory: MemoryId,
+    numa_node_source: N,
+    exclusive: bool,
+    commit_hook: Option<CommitHook>,
+) -> Result<ManagedExternalRegion, ManageArenaError>
+where
+    N: FnMut() -> i32,
+{
     let Some(os_memory) = memory.os_memory() else {
         return Err(ManageArenaError::InvalidRegion);
     };
@@ -1171,16 +1213,23 @@ pub(crate) unsafe fn manage_os_in_place(
     }
     let initially_committed = memory.initially_committed();
     unsafe {
-        manage_in_place(
+        manage_in_place_with_publisher_and_numa_source(
             registry,
             start,
             size,
             page_size,
             initially_committed,
-            numa_node,
+            numa_node_source,
             exclusive,
             commit_hook,
             memory,
+            |arena| {
+                if registry.insert(arena) {
+                    Ok(())
+                } else {
+                    Err(ManageArenaError::RegistryFull)
+                }
+            },
         )
     }
 }
@@ -1205,13 +1254,13 @@ unsafe fn manage_in_place(
     memory: MemoryId,
 ) -> Result<ManagedExternalRegion, ManageArenaError> {
     unsafe {
-        manage_in_place_with_publisher(
+        manage_in_place_with_publisher_and_numa_source(
             registry,
             start,
             size,
             page_size,
             initially_committed,
-            numa_node,
+            || numa_node,
             exclusive,
             commit_hook,
             memory,
@@ -1248,11 +1297,49 @@ pub(super) unsafe fn manage_in_place_with_publisher<F>(
     numa_node: i32,
     exclusive: bool,
     commit_hook: Option<CommitHook>,
+    memory: MemoryId,
+    publish: F,
+) -> Result<ManagedExternalRegion, ManageArenaError>
+where
+    F: FnMut(*mut Arena) -> Result<(), ManageArenaError>,
+{
+    unsafe {
+        manage_in_place_with_publisher_and_numa_source(
+            registry,
+            start,
+            size,
+            page_size,
+            initially_committed,
+            || numa_node,
+            exclusive,
+            commit_hook,
+            memory,
+            publish,
+        )
+    }
+}
+
+/// Common source management loop with a node source that runs only at the
+/// `mi_arena_initialize` field-write position.
+///
+/// This stays private to arena owners whose retained policy can supply a node
+/// only after the preceding metadata preparation has succeeded.
+#[allow(clippy::too_many_arguments)]
+unsafe fn manage_in_place_with_publisher_and_numa_source<F, N>(
+    registry: &ArenaRegistry,
+    start: *mut u8,
+    size: usize,
+    page_size: PageSize,
+    initially_committed: bool,
+    mut numa_node_source: N,
+    exclusive: bool,
+    commit_hook: Option<CommitHook>,
     mut memory: MemoryId,
     mut publish: F,
 ) -> Result<ManagedExternalRegion, ManageArenaError>
 where
     F: FnMut(*mut Arena) -> Result<(), ManageArenaError>,
+    N: FnMut() -> i32,
 {
     let plan = ExternalArenaPlan::from_address(start as usize, size)
         .ok_or(ManageArenaError::InvalidRegion)?;
@@ -1276,7 +1363,7 @@ where
                 parent,
                 split.total_size(),
                 page_size.bytes(),
-                numa_node,
+                &mut numa_node_source,
                 exclusive,
                 memory,
                 initially_committed,
@@ -1788,7 +1875,7 @@ fn arena_slice_range_is_usable(arena: &Arena, slice_index: usize, slice_count: u
 }
 
 #[allow(clippy::too_many_arguments)]
-unsafe fn prepare_arena_in_place(
+unsafe fn prepare_arena_in_place<N>(
     registry: &ArenaRegistry,
     start: *mut u8,
     region_size: usize,
@@ -1796,12 +1883,15 @@ unsafe fn prepare_arena_in_place(
     parent: *mut Arena,
     total_size: usize,
     page_size: usize,
-    numa_node: i32,
+    numa_node_source: &mut N,
     exclusive: bool,
     memory: MemoryId,
     metadata_already_accessible: bool,
     commit_hook: Option<CommitHook>,
-) -> Result<*mut Arena, ManageArenaError> {
+) -> Result<*mut Arena, ManageArenaError>
+where
+    N: FnMut() -> i32,
+{
     if start.is_null()
         || (start as usize) % ARENA_ALIGNMENT != 0
         || slice_count == 0
@@ -1831,6 +1921,11 @@ unsafe fn prepare_arena_in_place(
     if !memory.initially_zero() {
         unsafe { core::ptr::write_bytes(start, 0, layout.info_size()) };
     }
+
+    // Pinned `mi_arena_initialize` invokes `_mi_os_numa_node()` only after
+    // this exact metadata commit/zero preparation succeeds. A failed source
+    // map or commit therefore leaves its policy-local count cache untouched.
+    let numa_node = numa_node_source();
 
     let arena = unsafe { start.add(layout.arena_offset()).cast::<Arena>() };
     let ordinary_size = layout.ordinary_bitmap().byte_size();

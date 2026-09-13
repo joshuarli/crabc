@@ -49,8 +49,10 @@ RUNTIME_INITIAL_TLD_NUMA_TRACE_END = "CRABC_MI_RUNTIME_INITIAL_TLD_NUMA_TRACE_EN
 
 # `src/init.c` is included into the fixture to retain source-private access to
 # `mi_process_tld_main`; each remaining normal-release object stays linked
-# once. This is intentionally separate from the wider M2 VM fixture because
-# the focused lifecycle lane has one option-aware initial-TLD transition only.
+# once. `src/arena.c` remains an ordinary linked source object, so the direct
+# fixture's one `mi_malloc` reaches the real regular first-arena initializer.
+# This is intentionally separate from the wider M2 VM fixture because this
+# lifecycle lane records one option-aware TLD/regular-first-arena transition.
 INITIAL_TLD_NUMA_C_ORACLE_LINK_SOURCES = (
     "src/alloc.c",
     "src/alloc-aligned.c",
@@ -81,17 +83,24 @@ INITIAL_TLD_NUMA_C_ORACLE_SOURCE_FILES = (
 )
 INITIAL_TLD_NUMA_C_TRACE_KEYS = (
     "source_option_applied",
+    "arena_is_numa_local_option_applied",
     "configured_numa_node_count",
     "resolved_numa_node_count",
     "ticket_zero_tld",
     "default_theap_uses_ticket_zero_tld",
     "ticket_zero_tld_numa_node",
     "ticket_zero_tld_numa_in_range",
+    "regular_first_arena_is_os",
+    "regular_first_arena_numa_node",
+    "regular_first_arena_numa_in_range",
+    "regular_first_arena_retained_after_free",
 )
 RUNTIME_INITIAL_TLD_NUMA_TRACE_KEYS = (
+    "vm_policy_arena_is_numa_local",
     "vm_policy_use_numa_nodes",
     "vm_policy_numa_node_count_cache",
     "ticket_zero_tld_numa_node",
+    "process_arena_numa_node",
 )
 
 # The focused receipt names every local input whose current bytes participate
@@ -105,8 +114,10 @@ CANDIDATE_SOURCE_INPUTS = (
     "rust-toolchain.toml",
     "crabc-mimalloc/Cargo.toml",
     "crabc-mimalloc/src/lib.rs",
+    "crabc-mimalloc/src/arena.rs",
     "crabc-mimalloc/src/main_theap.rs",
     "crabc-mimalloc/src/os.rs",
+    "crabc-mimalloc/src/process_arena.rs",
     "crabc-mimalloc/src/process_init.rs",
     "crabc-mimalloc/src/runtime_lifecycle.rs",
     "crabc-mimalloc/tests/native_runtime_first_arena_policy.rs",
@@ -161,7 +172,8 @@ TEST_LANES = (
         bounded_behavior=(
             "one fresh native process reads a non-default raw source environment and initializes RuntimeProcessStorage through its retained policy/PageMap binding",
             "the actual ticket-zero TLD consumes mimalloc_use_numa_nodes=3 through that retained policy and stores one normalized node before the first client allocation",
-            "the original ticket-zero allocation reaches begin_for_process, maps one committed 128-MiB arena, then frees its exact client and removes its PageMap registration",
+            "the original ticket-zero allocation reaches begin_for_process, maps one committed 128-MiB regular arena, then the source arena initializer resolves arena_is_numa_local through that same policy after metadata preparation",
+            "the exact client free removes its PageMap registration while the selected regular arena mapping and normalized stored node remain retained",
         ),
     ),
     TestLane(
@@ -319,7 +331,7 @@ RUNTIME_FIRST_ARENA_EXCLUSIONS = (
     "No public mi_*, malloc-family, crabc-libc, dynamic-linker, or crabc-rs x86-64 runtime support is exercised or claimed.",
     "No complete process or pthread/TLS callback lifecycle is exercised or claimed.",
     "No general allocation/free routing, cross-thread client API, owner-exit traversal, adoption, or whole-allocator stress regime is exercised or claimed.",
-    "The direct C oracle covers only pinned init.c/os.c's configured initial-TLD NUMA count and normalized node relation; it does not qualify host multi-node placement, huge-page behavior, or general allocator lifecycle parity.",
+    "The direct C oracle covers only pinned init.c/arena.c/os.c's configured ticket-zero TLD and one ordinary regular first-arena NUMA relations, including retained arena identity after its one client free; it does not qualify host multi-node placement, huge-page behavior, or general allocator lifecycle parity.",
     "No fault injection, interposition, sanitizer, performance, or API-surface conclusion follows from this focused C/Rust policy witness.",
 )
 
@@ -706,15 +718,21 @@ def text_sha256(value: str) -> str:
 
 
 def validate_initial_tld_numa_c_trace(trace: Mapping[str, int]) -> None:
-    """Require the pinned C initial-TLD route to consume its configured policy."""
+    """Require the pinned C TLD and first regular arena to consume one policy."""
 
     if set(trace) != set(INITIAL_TLD_NUMA_C_TRACE_KEYS):
         raise EvidenceError("pinned C initial-TLD NUMA trace schema drifted")
+    if any(type(trace.get(key)) is not int for key in INITIAL_TLD_NUMA_C_TRACE_KEYS):
+        raise EvidenceError("pinned C initial-TLD NUMA trace requires exact integer scalars")
     for key in (
         "source_option_applied",
+        "arena_is_numa_local_option_applied",
         "ticket_zero_tld",
         "default_theap_uses_ticket_zero_tld",
         "ticket_zero_tld_numa_in_range",
+        "regular_first_arena_is_os",
+        "regular_first_arena_numa_in_range",
+        "regular_first_arena_retained_after_free",
     ):
         if trace[key] != 1:
             raise EvidenceError(f"pinned C initial-TLD NUMA relation failed: {key}")
@@ -722,6 +740,8 @@ def validate_initial_tld_numa_c_trace(trace: Mapping[str, int]) -> None:
         raise EvidenceError("pinned C initial-TLD NUMA count did not retain use_numa_nodes=3")
     if trace["ticket_zero_tld_numa_node"] >= trace["resolved_numa_node_count"]:
         raise EvidenceError("pinned C initial-TLD NUMA node was not normalized below its policy count")
+    if trace["regular_first_arena_numa_node"] >= trace["resolved_numa_node_count"]:
+        raise EvidenceError("pinned C first regular arena NUMA node was not normalized below its policy count")
 
 
 def run_initial_tld_numa_c_oracle() -> dict[str, Any]:
@@ -950,7 +970,7 @@ def parse_test_result(output: str, lane: TestLane) -> dict[str, int]:
 
 
 def parse_runtime_initial_tld_numa_trace(output: str) -> dict[str, int]:
-    """Read the one normal-runtime scalar trace forwarded by the outer test."""
+    """Read the normal-runtime TLD and first-regular-arena scalar trace."""
 
     trace = parse_scalar_trace(
         output,
@@ -959,12 +979,16 @@ def parse_runtime_initial_tld_numa_trace(output: str) -> dict[str, int]:
         keys=RUNTIME_INITIAL_TLD_NUMA_TRACE_KEYS,
         source="Rust runtime initial-TLD NUMA witness",
     )
+    if trace["vm_policy_arena_is_numa_local"] != 1:
+        raise EvidenceError("Rust runtime did not retain mimalloc_arena_is_numa_local=1")
     if trace["vm_policy_use_numa_nodes"] != 3:
         raise EvidenceError("Rust runtime did not retain mimalloc_use_numa_nodes=3")
     if trace["vm_policy_numa_node_count_cache"] != 3:
         raise EvidenceError("Rust initial TLD did not resolve its retained NUMA policy count")
     if trace["ticket_zero_tld_numa_node"] >= trace["vm_policy_numa_node_count_cache"]:
         raise EvidenceError("Rust initial TLD NUMA node was not normalized below its policy count")
+    if trace["process_arena_numa_node"] >= trace["vm_policy_numa_node_count_cache"]:
+        raise EvidenceError("Rust first regular arena NUMA node was not normalized below its policy count")
     return trace
 
 
@@ -1126,13 +1150,20 @@ def validate_report(report: Mapping[str, Any]) -> None:
                 raise EvidenceError("runtime first-arena lane lacks its initial-TLD NUMA trace")
             if (
                 set(runtime_trace) != set(RUNTIME_INITIAL_TLD_NUMA_TRACE_KEYS)
+                or type(runtime_trace.get("vm_policy_arena_is_numa_local")) is not int
+                or type(runtime_trace.get("vm_policy_use_numa_nodes")) is not int
+                or type(runtime_trace.get("vm_policy_numa_node_count_cache")) is not int
+                or type(runtime_trace.get("ticket_zero_tld_numa_node")) is not int
+                or type(runtime_trace.get("process_arena_numa_node")) is not int
+                or runtime_trace.get("vm_policy_arena_is_numa_local") != 1
                 or runtime_trace.get("vm_policy_use_numa_nodes") != 3
                 or runtime_trace.get("vm_policy_numa_node_count_cache") != 3
-                or not isinstance(runtime_trace.get("ticket_zero_tld_numa_node"), int)
                 or runtime_trace["ticket_zero_tld_numa_node"] < 0
                 or runtime_trace["ticket_zero_tld_numa_node"] >= 3
+                or runtime_trace["process_arena_numa_node"] < 0
+                or runtime_trace["process_arena_numa_node"] >= 3
             ):
-                raise EvidenceError("runtime first-arena lane initial-TLD NUMA trace drifted")
+                raise EvidenceError("runtime first-arena lane NUMA trace drifted")
         expected_total += configured.expected_pass_count
         observed_total += int(result["passed"])
 
@@ -1216,7 +1247,7 @@ def runtime_first_arena_lane() -> TestLane:
 def compare_initial_tld_numa_observations(
     c_oracle: Mapping[str, Any], rust_lane: Mapping[str, Any]
 ) -> dict[str, Any]:
-    """Compare only source-normalized policy facts, never host node identity."""
+    """Compare policy facts and node relations, never host node identity."""
 
     c_trace = c_oracle.get("trace")
     rust_trace = rust_lane.get("initial_tld_numa_trace")
@@ -1224,23 +1255,33 @@ def compare_initial_tld_numa_observations(
         raise EvidenceError("initial-TLD NUMA comparison is missing one raw observation")
     validate_initial_tld_numa_c_trace(c_trace)
     try:
+        rust_arena_is_numa_local = int(rust_trace["vm_policy_arena_is_numa_local"])
         rust_option = int(rust_trace["vm_policy_use_numa_nodes"])
         rust_count = int(rust_trace["vm_policy_numa_node_count_cache"])
         rust_node = int(rust_trace["ticket_zero_tld_numa_node"])
+        rust_arena_node = int(rust_trace["process_arena_numa_node"])
     except (KeyError, TypeError, ValueError) as error:
         raise EvidenceError("Rust initial-TLD NUMA observation is malformed") from error
+    if rust_arena_is_numa_local != c_trace["arena_is_numa_local_option_applied"]:
+        raise EvidenceError("C/Rust first-arena local-NUMA option values differ")
     if rust_option != c_trace["configured_numa_node_count"]:
         raise EvidenceError("C/Rust initial-TLD NUMA configured option values differ")
     if rust_count != c_trace["resolved_numa_node_count"]:
         raise EvidenceError("C/Rust initial-TLD NUMA policy counts differ")
     if rust_node < 0 or rust_node >= rust_count:
         raise EvidenceError("Rust initial-TLD NUMA node lies outside its policy count")
+    if rust_arena_node < 0 or rust_arena_node >= rust_count:
+        raise EvidenceError("Rust first regular arena NUMA node lies outside its policy count")
     return {
-        "compared_value_count": 2,
+        "compared_value_count": 3,
+        "arena_is_numa_local": rust_arena_is_numa_local,
         "configured_numa_node_count": rust_option,
         "policy_numa_node_count": rust_count,
         "c_ticket_zero_tld_numa_in_range": True,
         "rust_ticket_zero_tld_numa_in_range": True,
+        "c_regular_first_arena_numa_in_range": True,
+        "rust_regular_first_arena_numa_in_range": True,
+        "c_regular_first_arena_retained_after_free": True,
         "status": "matched-normalized-policy-relations",
     }
 
@@ -1310,9 +1351,9 @@ def validate_runtime_first_arena_policy_report(report: Mapping[str, Any]) -> Non
         raise EvidenceError("runtime first-arena exclusions drifted")
     scope = report.get("scope")
     if not isinstance(scope, Mapping) or scope != {
-        "boundary": "one child-isolated pinned-C and one process-isolated private Rust first-arena policy witness only",
+        "boundary": "one child-isolated pinned-C and one process-isolated private Rust TLD/regular-first-arena policy witness only",
         "public_runtime_support": False,
-        "claim": "focused initial-TLD NUMA option-policy witness",
+        "claim": "focused initial-TLD and regular-first-arena NUMA option-policy witness",
     }:
         raise EvidenceError("runtime first-arena scope drifted")
 
@@ -1340,11 +1381,18 @@ def validate_runtime_first_arena_policy_report(report: Mapping[str, Any]) -> Non
     if set(rust_trace) != set(RUNTIME_INITIAL_TLD_NUMA_TRACE_KEYS):
         raise EvidenceError("runtime first-arena Rust NUMA trace schema drifted")
     if (
-        rust_trace.get("vm_policy_use_numa_nodes") != 3
+        type(rust_trace.get("vm_policy_arena_is_numa_local")) is not int
+        or type(rust_trace.get("vm_policy_use_numa_nodes")) is not int
+        or type(rust_trace.get("vm_policy_numa_node_count_cache")) is not int
+        or type(rust_trace.get("ticket_zero_tld_numa_node")) is not int
+        or type(rust_trace.get("process_arena_numa_node")) is not int
+        or rust_trace.get("vm_policy_arena_is_numa_local") != 1
+        or rust_trace.get("vm_policy_use_numa_nodes") != 3
         or rust_trace.get("vm_policy_numa_node_count_cache") != 3
-        or not isinstance(rust_trace.get("ticket_zero_tld_numa_node"), int)
         or rust_trace["ticket_zero_tld_numa_node"] < 0
         or rust_trace["ticket_zero_tld_numa_node"] >= 3
+        or rust_trace["process_arena_numa_node"] < 0
+        or rust_trace["process_arena_numa_node"] >= 3
     ):
         raise EvidenceError("runtime first-arena Rust NUMA trace relation drifted")
 
@@ -1420,9 +1468,9 @@ def run_runtime_first_arena_policy_evidence(report_path: Path) -> dict[str, Any]
         "comparison": compare_initial_tld_numa_observations(c_oracle, result),
         "lane": result,
         "scope": {
-            "boundary": "one child-isolated pinned-C and one process-isolated private Rust first-arena policy witness only",
+            "boundary": "one child-isolated pinned-C and one process-isolated private Rust TLD/regular-first-arena policy witness only",
             "public_runtime_support": False,
-            "claim": "focused initial-TLD NUMA option-policy witness",
+            "claim": "focused initial-TLD and regular-first-arena NUMA option-policy witness",
         },
         "exclusions": list(RUNTIME_FIRST_ARENA_EXCLUSIONS),
     }

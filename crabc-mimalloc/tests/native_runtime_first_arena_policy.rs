@@ -84,6 +84,7 @@ fn run_in_clean_source_environment() {
     .env("mimalloc_allow_large_os_pages", "0")
     .env("mimalloc_allow_thp", "0")
     .env("mimalloc_use_numa_nodes", "3")
+    .env("mimalloc_arena_is_numa_local", "1")
     .env(CHILD_TRACE_PATH, trace_file.path())
     .output()
     .expect("the source-policy child starts");
@@ -176,6 +177,7 @@ fn runtime_process_uses_source_vm_policy_for_ticket_zero_first_arena_and_client_
     assert_eq!(live.vm_policy_arena_eager_commit, 2);
     assert_eq!(live.vm_policy_allow_large_os_pages, 0);
     assert_eq!(live.vm_policy_allow_thp, 0);
+    assert_eq!(live.vm_policy_arena_is_numa_local, 1);
     assert_eq!(live.vm_policy_use_numa_nodes, 3);
     assert_eq!(
         live.vm_policy_numa_node_count_cache, 3,
@@ -185,15 +187,21 @@ fn runtime_process_uses_source_vm_policy_for_ticket_zero_first_arena_and_client_
         (0..3).contains(&live.ticket_zero_tld_numa_node),
         "the actual ticket-zero TLD stores the source-normalized node from that policy"
     );
+    assert!(
+        (0..3).contains(&live.process_arena_numa_node),
+        "the real policy-bound first regular arena stores its source-normalized node"
+    );
     let trace_path = std::env::var_os(CHILD_TRACE_PATH)
         .expect("the source-policy child receives its parent-owned scalar trace path");
     fs::write(
         trace_path,
         format!(
-            "{INITIAL_TLD_NUMA_TRACE_BEGIN}\nvm_policy_use_numa_nodes={}\nvm_policy_numa_node_count_cache={}\nticket_zero_tld_numa_node={}\n{INITIAL_TLD_NUMA_TRACE_END}\n",
+            "{INITIAL_TLD_NUMA_TRACE_BEGIN}\nvm_policy_arena_is_numa_local={}\nvm_policy_use_numa_nodes={}\nvm_policy_numa_node_count_cache={}\nticket_zero_tld_numa_node={}\nprocess_arena_numa_node={}\n{INITIAL_TLD_NUMA_TRACE_END}\n",
+            live.vm_policy_arena_is_numa_local,
             live.vm_policy_use_numa_nodes,
             live.vm_policy_numa_node_count_cache,
             live.ticket_zero_tld_numa_node,
+            live.process_arena_numa_node,
         ),
     )
     .expect("the source-policy child writes its scalar initial-TLD NUMA trace");
@@ -214,8 +222,13 @@ fn runtime_process_uses_source_vm_policy_for_ticket_zero_first_arena_and_client_
     assert_eq!(after.process_backing_first_arena_begin_count, 1);
     assert_eq!(after.process_backing_vm_reservation_count, 1);
     assert_eq!(after.vm_policy_arena_reserve_bytes, ARENA_RESERVE_BYTES);
+    assert_eq!(after.vm_policy_arena_is_numa_local, 1);
     assert_eq!(after.process_arena_size, ARENA_RESERVE_BYTES);
     assert_eq!(after.process_arena_initially_committed, 1);
+    assert!(
+        (0..3).contains(&after.process_arena_numa_node),
+        "the retained process arena keeps its source-selected NUMA relation after client free"
+    );
     assert_eq!(after.arena_registry_count, 1);
     assert_eq!(
         after.page_map_registered_entry_count, 0,

@@ -4246,6 +4246,9 @@ pub struct NativeRuntimeLifecycleAudit {
     pub vm_policy_arena_eager_commit: i64,
     pub vm_policy_allow_large_os_pages: usize,
     pub vm_policy_allow_thp: usize,
+    /// Raw selected `mi_option_arena_is_numa_local` value for the first
+    /// regular arena initialization.
+    pub vm_policy_arena_is_numa_local: i64,
     /// Raw selected `mi_option_use_numa_nodes` value retained for this process.
     pub vm_policy_use_numa_nodes: i64,
     /// Policy cache value after the actual ticket-zero TLD initialization.
@@ -4253,6 +4256,8 @@ pub struct NativeRuntimeLifecycleAudit {
     pub vm_policy_numa_node_count_cache: usize,
     /// Actual NUMA node written into the ticket-zero TLD before publication.
     pub ticket_zero_tld_numa_node: i32,
+    /// Actual stored node of the process-bound ticket-zero regular arena.
+    pub process_arena_numa_node: i32,
     pub process_arena_size: usize,
     pub process_arena_initially_committed: usize,
     pub page_map_registered_entry_count: usize,
@@ -5108,9 +5113,13 @@ pub fn native_runtime_lifecycle_test_audit() -> Option<NativeRuntimeLifecycleAud
         vm_policy_allow_thp: usize::from(
             vm_policy.options().value(VmOption::AllowThp)? != 0,
         ),
+        vm_policy_arena_is_numa_local: vm_policy
+            .options()
+            .value(VmOption::ArenaIsNumaLocal)?,
         vm_policy_use_numa_nodes: vm_policy.options().value(VmOption::UseNumaNodes)?,
         vm_policy_numa_node_count_cache: vm_policy.native_runtime_test_numa_node_count_cache(),
         ticket_zero_tld_numa_node: RUNTIME_PROCESS.initial_tld_numa_node.load(Ordering::Acquire),
+        process_arena_numa_node: process_arena.arena().numa_node,
         process_arena_size: process_arena.size()?,
         process_arena_initially_committed: usize::from(
             process_arena.arena().memid.initially_committed(),
