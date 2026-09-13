@@ -3,14 +3,15 @@
 set -euo pipefail
 
 # Re-enter through Bash with a finite environment before resolving even a
-# single tool.  Exported functions and toolchain routing variables influence
+# single tool. Exported functions and toolchain routing variables influence
 # the C compiler and linker as readily as PATH does, so a denylist cannot make
-# this receipt replayable.  The clean shell sources this script with the
-# original positional arguments; the sentinel is itself part of the sealed
-# execution record below.
-if [ "${CRABC_PTHREAD_TIMED_FEATURE_CLOSED_ENV:-}" != 1 ]; then
+# this receipt replayable. An environment variable cannot satisfy the marker:
+# Bash marks imported variables exported, while the clean launcher sets its
+# marker without export before it sources this script with the original argv.
+if [ "${CRABC_PTHREAD_TIMED_FEATURE_CLOSED_ENV:-}" != 1 ] \
+    || [[ "$(declare -p CRABC_PTHREAD_TIMED_FEATURE_CLOSED_ENV 2>/dev/null || true)" != 'declare --'* ]]; then
     exec -c /bin/bash -c '
-        export CRABC_PTHREAD_TIMED_FEATURE_CLOSED_ENV=1
+        CRABC_PTHREAD_TIMED_FEATURE_CLOSED_ENV=1
         export PATH=/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
         export HOME=/nonexistent
         export LC_ALL=C
@@ -21,6 +22,9 @@ if [ "${CRABC_PTHREAD_TIMED_FEATURE_CLOSED_ENV:-}" != 1 ]; then
         export GIT_CONFIG_GLOBAL=/dev/null
         export GIT_CONFIG_NOSYSTEM=1
         export GIT_OPTIONAL_LOCKS=0
+        export GIT_CONFIG_COUNT=1
+        export GIT_CONFIG_KEY_0=safe.directory
+        export GIT_CONFIG_VALUE_0=/workspace
         source "$0"
     ' "$0" "$@"
 fi
@@ -41,9 +45,10 @@ readonly EXECUTION_TMPDIR="$ROOT/.work/x86_64/tmp"
 # read EOF from /dev/null.
 export TMPDIR="$EXECUTION_TMPDIR"
 
-# The sealed static driver admits its own relative receipt/map/trace trio.
-# Run from the checkout so that path cannot silently escape the supplied
-# sysroot or become a host linker flag.
+# The sealed static driver admits only a relative receipt/map/trace trio.  Run
+# that link from the evidence directory so the receipt records sidecar names
+# relative to its own physical parent; the reusable product validator rejects
+# the formerly nested checkout-relative spelling.
 cd "$ROOT"
 mkdir -p "$TMPDIR"
 
@@ -232,8 +237,10 @@ from pathlib import Path
 import sys
 
 expected = {
-    "CRABC_PTHREAD_TIMED_FEATURE_CLOSED_ENV": "1",
     "GIT_CONFIG_GLOBAL": "/dev/null",
+    "GIT_CONFIG_COUNT": "1",
+    "GIT_CONFIG_KEY_0": "safe.directory",
+    "GIT_CONFIG_VALUE_0": "/workspace",
     "GIT_CONFIG_NOSYSTEM": "1",
     "GIT_OPTIONAL_LOCKS": "0",
     "HOME": "/nonexistent",
@@ -384,9 +391,12 @@ assert_elf_type oracle-contract "$WORK/oracle-contract" exec
 
 for mode in static static-pie; do
     if [ -n "$RECEIPT_DIR" ]; then
-        run "$mode-link" "$STATIC_PRODUCT/bin/crabc-cc" "-$mode" -pthread \
-            "$WORK/contract.o" --link-receipt "$WORK_RELATIVE/$mode-contract.link.json" \
-            -o "$WORK/$mode-contract"
+        (
+            cd "$WORK"
+            run "$mode-link" "$STATIC_PRODUCT/bin/crabc-cc" "-$mode" -pthread \
+                "$WORK/contract.o" --link-receipt "$mode-contract.link.json" \
+                -o "$WORK/$mode-contract"
+        )
     else
         run "$mode-link" "$STATIC_PRODUCT/bin/crabc-cc" "-$mode" -pthread \
             "$WORK/contract.o" -o "$WORK/$mode-contract"

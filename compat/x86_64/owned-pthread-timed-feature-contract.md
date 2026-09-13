@@ -34,10 +34,19 @@ the eleven function bodies, local data and constant geometry, and their
 admitted PC-relative and PLT/GOT relocation forms.
 
 The shell runner starts through `exec -c` and a fixed Bash invocation before
-it resolves a tool. Its sealed record includes those fixed variables and the
-four Bash-created values (`PWD`, `OLDPWD`, `SHLVL`, and `_` for the pinned
-Python interpreter). Toolchain routing variables and exported shell functions
-from a caller therefore cannot affect the collection.
+it resolves a tool. Its non-exported shell marker cannot be supplied by a
+caller's environment, whose variables arrive exported. Its sealed record
+includes the fixed variables, including the sole Git `safe.directory`
+configuration for `/workspace`, and the four Bash-created values (`PWD`,
+`OLDPWD`, `SHLVL`, and `_` for the pinned Python interpreter). Toolchain
+routing variables and exported shell functions from a caller therefore cannot
+affect the collection.
+
+The static driver permits only relative receipt names. The runner changes into
+the receipt work directory only for that driver invocation, so each receipt
+records its map and trace as a sibling basename. The product validator resolves
+those names from the receipt's physical parent and rejects a checkout-relative
+path nested below that parent.
 
 `owned_pthread_timed_feature_contract_reader.py` also checks the source feature
 route: the `x86-owned-static-runtime` parity entry, `libc/Cargo.toml`, the
@@ -49,9 +58,11 @@ archives. `owned_posix_static_products.validate_receipt` replays that cohort
 against a physical selected source tree materialized solely from retained
 selected Git commit/tree/blob objects. This binds the selected archive to the
 actual successful `primary-build` outer invocation and source identity. The
-nested feature argument remains a source-derived builder contract rather than
-an independently recorded nested argv; this receipt does not broaden that
-distinction.
+replayed primary tree's static manifest, driver, two entry objects, prologue,
+epilogue, builtins archive, and `libc.a` must exactly match the supplied static
+inputs that the component then links. The nested feature argument remains a
+source-derived builder contract rather than an independently recorded nested
+argv; this receipt does not broaden that distinction.
 
 The current native collection invokes
 `owned_posix_product_evidence.validate_link` for the two static and two

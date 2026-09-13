@@ -72,8 +72,10 @@ IMAGE_FIXED_PATHS = (
 IMAGE_MANIFEST_SOURCE = "compat/x86_64/owned_pthread_timed_feature_image_inputs.json"
 PREPARATION_RETAINED_ROOT = "retained/products/static-preparation"
 EXECUTION_ENVIRONMENT = {
-    "CRABC_PTHREAD_TIMED_FEATURE_CLOSED_ENV": "1",
     "GIT_CONFIG_GLOBAL": "/dev/null",
+    "GIT_CONFIG_COUNT": "1",
+    "GIT_CONFIG_KEY_0": "safe.directory",
+    "GIT_CONFIG_VALUE_0": "/workspace",
     "GIT_CONFIG_NOSYSTEM": "1",
     "GIT_OPTIONAL_LOCKS": "0",
     "HOME": "/nonexistent",
@@ -1030,6 +1032,11 @@ def _validate_product_anchor(
 
     for relative, input_name, files, root, label in (
         ("bin/crabc-cc", "static_driver", static_files, static_root, "static driver"),
+        ("usr/lib/crt1.o", "static_crt1", static_files, static_root, "static CRT entry"),
+        ("usr/lib/rcrt1.o", "static_rcrt1", static_files, static_root, "static PIE CRT entry"),
+        ("usr/lib/crti.o", "static_crti", static_files, static_root, "static CRT prologue"),
+        ("usr/lib/crtn.o", "static_crtn", static_files, static_root, "static CRT epilogue"),
+        ("usr/lib/libcrabc-builtins.a", "static_builtins", static_files, static_root, "static builtins"),
         ("usr/lib/libc.a", "static_libc", static_files, static_root, "static libc"),
         ("bin/crabc-cc-dynamic", "dynamic_driver", dynamic_files, dynamic_root, "dynamic driver"),
         ("usr/lib/crt1.o", "dynamic_crt1", dynamic_files, dynamic_root, "dynamic CRT entry"),
@@ -1366,9 +1373,8 @@ def _expected_command_argv(name: str, work: str, inputs: Mapping[str, str]) -> l
         mode = "static" if name == "static-link" else "static-pie"
         binary = "static-contract" if mode == "static" else "static-pie-contract"
         require(work.startswith("/workspace/"), "static receipt work path must be mounted at /workspace")
-        relative_work = work.removeprefix("/workspace/")
         return [inputs["static_driver"], f"-{mode}", "-pthread", contract,
-                "--link-receipt", f"{relative_work}/{binary}.link.json", "-o", f"{work}/{binary}"]
+                "--link-receipt", f"{binary}.link.json", "-o", f"{work}/{binary}"]
     if name in {"musl-dynamic-pie-link", "musl-dynamic-non-pie-link"}:
         mode = "pie" if name.startswith("musl-dynamic-pie-") else "non-pie"
         binary = f"musl-dynamic-{mode}-contract"
@@ -1411,8 +1417,7 @@ def validate_command_argv(
     if name in LINK_OUTPUTS and f"{work}/contract.o" not in argv:
         raise ReceiptError(f"{name}: link must consume the one compiled contract object")
     if name in {"static-link", "static-pie-link"}:
-        relative_work = work.removeprefix("/workspace/")
-        expected_receipt = f"{relative_work}/{LINK_OUTPUTS[name]}.link.json"
+        expected_receipt = f"{LINK_OUTPUTS[name]}.link.json"
         if "--link-receipt" not in argv or expected_receipt not in argv:
             raise ReceiptError(f"{name}: link must retain its exact retained link map")
     elif name in LINK_MAPS and f"-Wl,-Map,{work}/{LINK_MAPS[name]}" not in argv:
@@ -1762,7 +1767,7 @@ def _validate_static_link_receipt(
     for kind in ("map", "trace"):
         item = receipt[kind]
         expected_name = f"{binary}.link.{kind}" if kind == "trace" else f"{binary}.link.map"
-        expected_path = work_path.removeprefix("/workspace/") + "/" + expected_name
+        expected_path = expected_name
         require(isinstance(item, dict) and set(item) == {"path", "sha256"}
                 and item["path"] == expected_path
                 and item["sha256"] == artifacts[expected_name]["sha256"],
@@ -2072,10 +2077,31 @@ def _canonical_static_preparation(
             static_products.source_identity = original_source_identity
     require(isinstance(observed, dict), "static preparation owner produced no record")
     primary = observed.get("products", {}).get("primary")
-    require(isinstance(primary, dict)
-            and primary.get("tree", {}).get("usr/lib/libc.a", {}).get("sha256")
-            == inputs["static_libc"]["sha256"],
-            "canonical static preparation primary does not bind selected archive")
+    require(isinstance(primary, dict) and isinstance(primary.get("tree"), dict),
+            "canonical static preparation has no primary product tree")
+    primary_tree = primary["tree"]
+    for relative, input_name in (
+        ("bin/crabc-cc", "static_driver"),
+        ("usr/lib/crt1.o", "static_crt1"),
+        ("usr/lib/rcrt1.o", "static_rcrt1"),
+        ("usr/lib/crti.o", "static_crti"),
+        ("usr/lib/crtn.o", "static_crtn"),
+        ("usr/lib/libcrabc-builtins.a", "static_builtins"),
+        ("usr/lib/libc.a", "static_libc"),
+    ):
+        tree_record = primary_tree.get(relative)
+        input_record = inputs[input_name]
+        require(isinstance(tree_record, dict) and tree_record == {
+            "kind": "file", "mode": input_record["mode"], "sha256": input_record["sha256"],
+            "size": input_record["size"],
+        }, f"canonical static preparation primary does not bind selected {relative}")
+    manifest = work / "retained/products/static-manifest.json"
+    require_regular(manifest, "retained selected static manifest")
+    manifest_record = primary_tree.get("share/crabc/manifest.json")
+    require(isinstance(manifest_record, dict) and manifest_record == {
+        "kind": "file", "mode": stat.S_IMODE(manifest.stat().st_mode), "sha256": sha256(manifest),
+        "size": manifest.stat().st_size,
+    }, "canonical static preparation primary does not bind selected static manifest")
     return observed
 
 
