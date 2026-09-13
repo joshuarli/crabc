@@ -2,6 +2,7 @@
 """Focused contract checks for installed x86 errno/h_errno lifecycle evidence."""
 
 from importlib.util import module_from_spec, spec_from_file_location
+import hashlib
 from pathlib import Path
 import tempfile
 import unittest
@@ -75,6 +76,17 @@ class ErrnoStorageLifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(reader.ErrnoStorageEvidenceError, "same definition"):
             reader.validate_static_symbols(forwarded, "forwarded static")
 
+    def test_selected_symbol_definitions_require_positive_numeric_sections(self) -> None:
+        for section in ("ABS", "COM", "0"):
+            reserved = (
+                STATIC_GOOD.replace("DEFAULT    1 __errno_location", f"DEFAULT  {section} __errno_location")
+                .replace("HIDDEN     1 ___errno_location", f"HIDDEN   {section} ___errno_location")
+                .replace("DEFAULT    2 h_errno", f"DEFAULT  {section} h_errno")
+                .replace("DEFAULT    1 __h_errno_location", f"DEFAULT  {section} __h_errno_location")
+            )
+            with self.assertRaisesRegex(reader.ErrnoStorageEvidenceError, "positive numeric section"):
+                reader.validate_static_symbols(reserved, f"reserved-section static {section}")
+
     def test_shared_alias_is_local_and_not_in_dynsym(self) -> None:
         symtab, dynsym = SHARED_GOOD
         reader.validate_shared_symbols(symtab, dynsym, "fixture shared")
@@ -97,7 +109,9 @@ class ErrnoStorageLifecycleTests(unittest.TestCase):
                 "member_count": 1,
                 "members": ["___errno_location"],
                 "linker_policy": "exact-local-symbols",
-                "linker_script_sha256": "a" * 64,
+                "linker_script_sha256": hashlib.sha256(
+                    b"{\n  local:\n    ___errno_location;\n};\n"
+                ).hexdigest(),
             },
             "libc_shared_link_command": [
                 "/pinned/ld.lld",
@@ -118,6 +132,15 @@ class ErrnoStorageLifecycleTests(unittest.TestCase):
         missing_link = {**provenance, "libc_shared_link_command": ["/pinned/ld.lld"]}
         with self.assertRaisesRegex(reader.ErrnoStorageEvidenceError, "version script"):
             reader.validate_shared_alias_link_policy(missing_link, "missing shared policy")
+        arbitrary_digest = {
+            **provenance,
+            "shared_errno_private_aliases": {
+                **provenance["shared_errno_private_aliases"],
+                "linker_script_sha256": "a" * 64,
+            },
+        }
+        with self.assertRaisesRegex(reader.ErrnoStorageEvidenceError, "script digest"):
+            reader.validate_shared_alias_link_policy(arbitrary_digest, "forged shared policy digest")
 
     def test_replay_rebases_only_authenticated_container_checkout_paths(self) -> None:
         recorded = {
@@ -143,6 +166,16 @@ class ErrnoStorageLifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(reader.ErrnoStorageEvidenceError, "unsafe"):
             reader.rebase_report_checkout_paths(
                 {"source": {"root": "/workspace"}, "work": "/workspace/../outside"}, ROOT
+            )
+
+    def test_replay_work_must_stay_in_the_recorded_checkout_evidence_root(self) -> None:
+        with self.assertRaisesRegex(reader.ErrnoStorageEvidenceError, "escapes recorded checkout"):
+            reader.rebase_report_checkout_paths(
+                {"source": {"root": "/workspace"}, "work": "/opt/evidence"}, ROOT
+            )
+        with self.assertRaisesRegex(reader.ErrnoStorageEvidenceError, "below checkout .work"):
+            reader.rebase_report_checkout_paths(
+                {"source": {"root": "/workspace"}, "work": "/workspace/compat/evidence"}, ROOT
             )
 
     def test_independent_link_layouts_do_not_compare_raw_addresses(self) -> None:

@@ -59,6 +59,7 @@ SHARED_ALIAS_LIST = "libc/src/c_abi/x86_64/owned_errno_private_aliases.list"
 SHARED_ALIAS_LIST_SHA256 = "2e69ec5346002fa183b51dbbbef2f24744bd89093b5cfac6329337c1b3d240dd"
 SHARED_ALIAS_MEMBERS = (ALIAS,)
 SHARED_ALIAS_LINKER_SCRIPT = "--version-script=$BUILD/libc-errno-private.exports"
+SHARED_ALIAS_LINKER_SCRIPT_SHA256 = "22232976d1493ccc5b951b51fbfe912b781c2348e6a8b57360605f46424b7302"
 EXPECTED_TRANSCRIPT = b"errno-storage-lifecycle: PASS\n"
 RUN_LABELS = (
     "oracle-static-exec",
@@ -284,14 +285,34 @@ def _rebase_checkout_path(value: str, recorded_root: PurePosixPath, root: Path, 
     return str(root.joinpath(*relative.parts))
 
 
+def _rebase_report_work(value: object, recorded_root: PurePosixPath, root: Path) -> str:
+    """Bind a receipt's top-level work root to its recorded checkout mount."""
+
+    if not isinstance(value, str):
+        fail("report work path is malformed")
+    path = PurePosixPath(value)
+    if not path.is_absolute():
+        fail("report work path is not absolute")
+    if str(path) != value or any(part in {"", ".", ".."} for part in path.parts):
+        fail("report work has an unsafe absolute path")
+    if not path.is_relative_to(recorded_root):
+        fail("report work escapes recorded checkout")
+    mapped = root.joinpath(*path.relative_to(recorded_root).parts)
+    if not mapped.is_relative_to(root / ".work"):
+        fail("report work is not below checkout .work")
+    return str(mapped)
+
+
 def rebase_report_checkout_paths(value: object, root: Path) -> dict[str, Any]:
     """Rebase retained checkout paths to a physical host checkout for replay.
 
-    Only JSON fields which carry filesystem paths are considered.  Every
-    absolute descendant of ``source.root`` is mapped to ``root``; outside
-    oracle/tool paths and relative source-policy paths remain observations.
-    The caller still validates all resulting physical identities and source
-    bytes, so this is path admission rather than a provenance fallback.
+    Only JSON fields which carry filesystem paths are considered.  The
+    top-level evidence root must be a descendant of ``source.root`` and map
+    below ``root/.work``. Other checkout descendants are mapped to ``root``;
+    outside oracle/tool paths and relative source-policy paths remain
+    observations. The caller still validates all resulting physical identities
+    and source bytes, so this is path admission rather than a provenance
+    fallback.
     """
 
     if not isinstance(value, dict):
@@ -301,6 +322,7 @@ def rebase_report_checkout_paths(value: object, root: Path) -> dict[str, Any]:
         fail("errno storage report source is malformed")
     recorded_root = _recorded_checkout_root(source.get("root"))
     root = physical_directory(root, "source root")
+    rebased_work = _rebase_report_work(value.get("work"), recorded_root, root)
 
     def visit(item: object, field: str | None = None) -> object:
         if isinstance(item, dict):
@@ -316,6 +338,7 @@ def rebase_report_checkout_paths(value: object, root: Path) -> dict[str, Any]:
     rebased = visit(value)
     if not isinstance(rebased, dict):  # Kept explicit as this is a public reader boundary.
         fail("rebased errno storage report is malformed")
+    rebased["work"] = rebased_work
     return rebased
 
 
@@ -365,7 +388,15 @@ def one_defined(
     ]
     if len(matches) != 1:
         fail(f"{description} has {len(matches)} defined {name} records")
-    return matches[0]
+    record = matches[0]
+    section = record["section"]
+    if (
+        not isinstance(section, str)
+        or re.fullmatch(r"[0-9]+", section) is None
+        or int(section) == 0
+    ):
+        fail(f"{description} has no positive numeric section for defined {name}")
+    return record
 
 
 def one_undefined(
@@ -576,9 +607,14 @@ def validate_shared_alias_link_policy(value: object, description: str) -> dict[s
         fail(f"{description} errno private alias roster drifted")
     if aliases["linker_policy"] != "exact-local-symbols":
         fail(f"{description} errno private alias linker policy drifted")
-    script_sha256 = aliases["linker_script_sha256"]
-    if not isinstance(script_sha256, str) or SHA256.fullmatch(script_sha256) is None:
-        fail(f"{description} errno private alias script identity is malformed")
+    expected_script = (
+        "{\n  local:\n" + "".join(f"    {member};\n" for member in SHARED_ALIAS_MEMBERS) + "};\n"
+    ).encode("utf-8")
+    derived_script_sha256 = hashlib.sha256(expected_script).hexdigest()
+    if derived_script_sha256 != SHARED_ALIAS_LINKER_SCRIPT_SHA256:
+        fail("reader errno private alias script template differs from its reviewed digest")
+    if aliases["linker_script_sha256"] != derived_script_sha256:
+        fail(f"{description} errno private alias script digest drifted")
     command = value.get("libc_shared_link_command")
     if not isinstance(command, list) or not all(isinstance(argument, str) for argument in command):
         fail(f"{description} shared libc link command is malformed")
