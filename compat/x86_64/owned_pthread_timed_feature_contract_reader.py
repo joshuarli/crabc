@@ -33,6 +33,9 @@ from owned_static_link_authority import (StaticFunctionContract, StaticLinkAutho
                                          require_static_functions)
 import owned_posix_static_products as static_products
 import owned_posix_product_evidence as product_evidence
+from owned_pthread_timed_dynamic_authority import (
+    PthreadTimedDynamicAuthorityError, require_pthread_timed_probe_functions,
+)
 from loader_debug_abi_evidence import Elf
 
 
@@ -166,6 +169,7 @@ COLLECTOR_PATHS = {
     "static_preparation_owner": "compat/x86_64/owned_posix_static_products.py",
     "static_package_owner": "compat/x86_64/owned_static_sysroot_package.py",
     "product_validator": "compat/x86_64/owned_posix_product_evidence.py",
+    "dynamic_probe_authority": "compat/x86_64/owned_pthread_timed_dynamic_authority.py",
     "image_manifest": IMAGE_MANIFEST_SOURCE,
 }
 COLLECTOR_INPUTS = ("probe", "reader", "runner")
@@ -2466,6 +2470,10 @@ def validate_report(report_path: Path) -> dict[str, object]:
             work / f"{binary}.crabc-link.json", str(collection["work_path"]), binary, artifacts, selected,
             image_manifest,
         )
+        try:
+            require_pthread_timed_probe_functions(work / "contract.o", work / binary)
+        except PthreadTimedDynamicAuthorityError as error:
+            raise ReceiptError(f"{binary} pthread probe function authority differs: {error}") from error
     for binary in ("static-contract", "static-pie-contract"):
         _validate_static_link_receipt(
             work, str(collection["work_path"]), binary, artifacts, selected, inputs, image_manifest,

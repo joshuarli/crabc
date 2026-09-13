@@ -28,7 +28,10 @@ contract, CRT, archive-member, and builtins inputs; the four public providers
 keep their `WEAK DEFAULT` forms and the four owned providers must change from
 `GLOBAL HIDDEN` inputs to `LOCAL HIDDEN` final definitions. Final dynamic
 outputs must import each public `FUNC GLOBAL DEFAULT` name and must not expose
-the private provider.
+the private provider. `owned_pthread_timed_dynamic_authority.py` additionally
+binds the complete finite contract probe implementation in each dynamic output:
+the eleven function bodies, local data and constant geometry, and their
+admitted PC-relative and PLT/GOT relocation forms.
 
 `owned_pthread_timed_feature_contract_reader.py` also checks the source feature
 route: the `x86-owned-static-runtime` parity entry, `libc/Cargo.toml`, the
