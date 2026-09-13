@@ -52,6 +52,30 @@ DYNAMIC_REQUIRED = (
     "usr/lib/libc.so",
     "usr/lib/libcrabc-builtins.a",
 )
+# These are the only installed files consumed by the finite syscall link
+# receipts.  The static producer's ``copy_artifact`` normalization materializes
+# every listed role as a non-executable regular file.  The dynamic producer
+# uses that same normalization for objects and archives, then deliberately
+# marks its final shared libc output executable.  Keep this source policy
+# separate from both payload hashes and current/retained identity comparison:
+# those detect mutation, while these exact values establish the allowed modes.
+STATIC_LINK_INPUT_MODES = {
+    "usr/lib/crt1.o": 0o644,
+    "usr/lib/rcrt1.o": 0o644,
+    "usr/lib/crti.o": 0o644,
+    "usr/lib/crtn.o": 0o644,
+    "usr/lib/libc.a": 0o644,
+    "usr/lib/libcrabc-builtins.a": 0o644,
+}
+DYNAMIC_LINK_INPUT_MODES = {
+    "usr/lib/crt1.o": 0o644,
+    "usr/lib/Scrt1.o": 0o644,
+    "usr/lib/crti.o": 0o644,
+    "usr/lib/crtn.o": 0o644,
+    "usr/lib/libc.so": 0o755,
+    "usr/lib/libcrabc-builtins.a": 0o644,
+    "usr/lib/crabc-dynamic-attach.o": 0o644,
+}
 LINKAGES = {
     "static": {"receipt_mode": "static-et-exec", "elf_type": "ET_EXEC", "readelf_type": "EXEC", "crt": "crt1.o"},
     "static-pie": {"receipt_mode": "static-pie", "elf_type": "ET_DYN", "readelf_type": "DYN", "crt": "rcrt1.o"},
@@ -368,6 +392,31 @@ def _validate_payload_tree(root: Path, files: Mapping[str, str], *, aliases: Map
         _require_digest(expected, _sha256(artifact), f"product payload {relative}")
 
 
+def _validate_link_input_modes(root: Path, expected: Mapping[str, int], label: str) -> None:
+    """Require the finite link-input mode policy from this owner source.
+
+    Product manifests bind payload bytes but intentionally do not define an
+    executable permission policy.  The receipt must therefore not treat a
+    retained copy, or a manifest resealed around that copy, as the origin of
+    truth for these installed roles.
+    """
+
+    for relative, expected_mode in expected.items():
+        artifact = _physical_regular(root / relative, f"{label} {relative}")
+        observed_mode = stat.S_IMODE(artifact.stat().st_mode)
+        if observed_mode != expected_mode:
+            _fail(
+                f"{label} source-bound mode differs: {relative} "
+                f"({observed_mode:04o} != {expected_mode:04o})"
+            )
+
+
+def link_input_mode_projection() -> dict[str, dict[str, int]]:
+    """Return the JSON-safe finite source-mode contract for receipt consumers."""
+
+    return {"static": dict(STATIC_LINK_INPUT_MODES), "dynamic": dict(DYNAMIC_LINK_INPUT_MODES)}
+
+
 def _validate_static_product(root: Path) -> tuple[Path, dict[str, str]]:
     manifest_path = _physical_regular(root / "share/crabc/manifest.json", "static product manifest")
     manifest = _json_object(manifest_path, "static product manifest")
@@ -402,6 +451,7 @@ def _validate_static_product(root: Path) -> tuple[Path, dict[str, str]]:
     _physical_executable(root / "bin/crabc-cc", "static product sealed driver")
     _physical_directory(root / "usr/include", "static product headers")
     _validate_payload_tree(root, files, aliases={})
+    _validate_link_input_modes(root, STATIC_LINK_INPUT_MODES, "static link input")
     return manifest_path, files
 
 
@@ -423,6 +473,7 @@ def _validate_dynamic_product(root: Path) -> tuple[Path, dict[str, str]]:
     )
     _physical_directory(root / "usr/include", "dynamic product headers")
     _validate_payload_tree(root, files, aliases=aliases)
+    _validate_link_input_modes(root, DYNAMIC_LINK_INPUT_MODES, "dynamic link input")
     return manifest_path, files
 
 

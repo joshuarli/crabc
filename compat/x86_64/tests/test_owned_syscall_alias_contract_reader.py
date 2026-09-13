@@ -25,6 +25,7 @@ from owned_syscall_alias_contract_reader import (
     ALIASES,
     CURRENT_COMMAND_STEMS,
     GLOBAL_HIDDEN,
+    LINK_INPUT_MODES,
     LOCAL_BODIES,
     PUBLIC_ALIAS_SOURCE_CALLERS,
     ReceiptError,
@@ -300,6 +301,27 @@ class OwnedSyscallAliasRetainedAuthorityTests(unittest.TestCase):
     def test_probe_and_staged_copy_modes_cannot_be_resealed_together(self) -> None:
         (self.runner / "dynamic-pie-contract").chmod(0o777)
         (self.runner / "dynamic-pie-root/contract").chmod(0o777)
+        with self.assertRaises(ReceiptError):
+            validate_report(self.path)
+
+    def test_installed_link_input_modes_cannot_be_resealed_as_retained_copies(self) -> None:
+        """The selected installed roles need source authority beyond their hashes."""
+        for product, roles in LINK_INPUT_MODES.items():
+            for relative, expected_mode in roles.items():
+                with self.subTest(product=product, relative=relative):
+                    self.assertNotEqual(expected_mode, 0o600)
+                    retained = self.output / "products" / product / relative
+                    original_mode = retained.stat().st_mode & 0o7777
+                    retained.chmod(0o600)
+                    try:
+                        with self.assertRaises(ReceiptError):
+                            validate_report(self.path)
+                    finally:
+                        retained.chmod(original_mode)
+
+    def test_receipt_link_input_mode_projection_cannot_choose_the_policy(self) -> None:
+        self.report["link_input_modes"]["dynamic"]["usr/lib/libc.so"] = 0o644
+        self.path.write_text(json.dumps(self.report))
         with self.assertRaises(ReceiptError):
             validate_report(self.path)
 

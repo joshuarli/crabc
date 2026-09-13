@@ -171,8 +171,9 @@ python3 -B compat/x86_64/owned_syscall_alias_contract_reader.py validate-report 
   --report "$PWD/.work/x86_64/syscall-alias-receipt/current/report.json"
 ```
 
-The current receipt schema is `crabc.x86_64-owned-syscall-alias-contract/v2`.
-Version 1 reports cannot establish this boundary and must be recollected.
+The current receipt schema is `crabc.x86_64-owned-syscall-alias-contract/v3`.
+Version 1 and version 2 reports cannot establish this boundary and must be
+recollected.
 Collection retains the fixed 47 command envelopes, including complete argv,
 45-second timeout argv, stdin bytes, working directory, scrubbed environment,
 status, stdout and stderr. The two native source/ELF checks remain additional
@@ -215,6 +216,16 @@ product inputs, correct probe objects, output bytes and link trace. The exact ch
 or musl runtime plus the corresponding linked probes and regular input. Host
 replay does not execute a compiler, linker, ELF reader, Git, or any other command.
 
+The product owner fixes the installed modes of every sealed link role before
+the receipt runs. Static `crt1.o`, `rcrt1.o`, `crti.o`, `crtn.o`, `libc.a`, and
+`libcrabc-builtins.a` are `0644`. Dynamic `crt1.o`, `Scrt1.o`, `crti.o`,
+`crtn.o`, `libcrabc-builtins.a`, and `crabc-dynamic-attach.o` are `0644`; the
+final linked `libc.so` is `0755`. `owned_posix_product_evidence.py` supplies
+this finite source-owned policy to both product validators. The v3 report
+copies it as `link_input_modes`, but replay compares raw retained files with
+the current collector-source policy. A retained/current mode match or a
+resealed payload manifest therefore cannot define the allowed mode.
+
 The collector and selected product are distinct source epochs. Deduplicated
 loose Git commit/tree/blob objects under `source/git-objects/` authenticate both
 complete source trees, including modes, and independently derive the source
@@ -252,7 +263,7 @@ this local receipt is retained execution evidence, not a signed remote
 attestation or an independent proof of historical process scheduling.
 
 `test_owned_syscall_alias_contract_reader.py` checks each argument of all 47
-commands. Set `CRABC_SYSCALL_ALIAS_TEST_RECEIPT` to a freshly collected v2
+commands. Set `CRABC_SYSCALL_ALIAS_TEST_RECEIPT` to a freshly collected v3
 `report.json` to run the isolated real-artifact round trip and adversarial
 receipt mutations, including source/tool resealing, substituted ELF streams,
 forged chroot routes, environments, stdin, link receipts, runtime inputs,
