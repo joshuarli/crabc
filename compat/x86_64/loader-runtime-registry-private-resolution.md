@@ -53,7 +53,10 @@ trace, and zero-status triples.  Collection compares each original tool again
 after the workloads finish; replay verifies the copied bytes, original paths,
 and the complete finite preprocessing roster before opening a workload
 receipt. It parses rehashed retained ELF64 little-endian bytes for replayed
-fork, timer, and dlfcn links instead of executing a host `readelf`.
+fork, timer, and dlfcn links instead of executing a host `readelf`. It takes
+loader-visible dynamic facts only from `PT_DYNAMIC` and its uniquely mapped
+`DT_STRTAB`/`DT_STRSZ` `PT_LOAD` range; ELF section headers do not authorize
+replay metadata.
 
 The saved runner argv and `TMPDIR` keep their native `/workspace` spelling.
 On a host, the reader maps only that spelling through its one physical

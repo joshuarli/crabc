@@ -447,6 +447,8 @@ def _audit_linked_elf(output: Path, mode: str, expected_needed: tuple[str, ...],
     expected_kind = 3 if expected_type == "DYN" else 2
     if facts["machine"] != 62 or facts["type"] != expected_kind:
         fail("retained linked output ELF type drifted")
+    if not facts["dynamic"]:
+        fail("retained linked output has no PT_DYNAMIC segment")
     if facts["textrel"] or facts["rpaths"]:
         fail("retained linked output has forbidden text relocation or RPATH")
     if facts["runpaths"] != ["/usr/lib"]:

@@ -551,7 +551,7 @@ def _retained_dlfcn_link_record(product: Path, work: Path, output: Path, stem: s
     facts = product_evidence.retained_elf_facts(executable)
     expected_type = 3 if mode in {"shared", "pie"} else 2
     expected_needed = [*(path.name for path in application_paths), "libc.so"]
-    require(facts["machine"] == 62 and facts["type"] == expected_type and not facts["textrel"]
+    require(facts["machine"] == 62 and facts["type"] == expected_type and facts["dynamic"] and not facts["textrel"]
             and facts["rpaths"] == [] and facts["runpaths"] == ["/usr/lib"] and facts["needed"] == expected_needed,
             f"{stem} retained linked ELF shape drifted")
     if mode == "shared":

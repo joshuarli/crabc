@@ -37,24 +37,26 @@ def sealed_elf(linkage: str) -> bytes:
     interpreter = b"/lib/ld-crabc-x86_64.so.1\0" if dynamic else b""
     strings = b"\0libc.so\0/usr/lib\0" if dynamic else b""
     dynamic_entries = (
-        struct.pack("<qQ", 1, 1)
+        struct.pack("<qQ", 5, 0x400040)
+        + struct.pack("<qQ", 10, len(strings))
+        + struct.pack("<qQ", 1, 1)
         + struct.pack("<qQ", 29, len(b"\0libc.so\0"))
         + struct.pack("<qQ", 0, 0)
         if dynamic else b""
     )
-    data = bytearray(512)
+    data = bytearray(768)
     data[:16] = b"\x7fELF\x02\x01\x01" + b"\0" * 9
     data[16:64] = struct.pack(
         "<HHIQQQIHHHHHH", elf_type, 62, 1, 0, 64 if dynamic else 0,
-        320 if dynamic else 0, 0, 64, 56, 1 if dynamic else 0, 64, 2 if dynamic else 0, 0,
+        0, 0, 64, 56, 3 if dynamic else 0, 0, 0, 0,
     )
     if dynamic:
-        data[64:120] = struct.pack("<IIQQQQQQ", 3, 4, 128, 0, 0, len(interpreter), len(interpreter), 1)
-        data[128:128 + len(interpreter)] = interpreter
-        data[160:160 + len(strings)] = strings
-        data[192:192 + len(dynamic_entries)] = dynamic_entries
-        data[320:384] = struct.pack("<IIQQQQIIQQ", 0, 3, 0, 0, 160, len(strings), 0, 0, 1, 0)
-        data[384:448] = struct.pack("<IIQQQQIIQQ", 0, 6, 0, 0, 192, len(dynamic_entries), 0, 0, 8, 16)
+        data[64:120] = struct.pack("<IIQQQQQQ", 3, 4, 256, 0, 0, len(interpreter), len(interpreter), 1)
+        data[120:176] = struct.pack("<IIQQQQQQ", 1, 4, 256, 0x400000, 0, 256, 256, 0x1000)
+        data[176:232] = struct.pack("<IIQQQQQQ", 2, 4, 384, 0x400080, 0, len(dynamic_entries), len(dynamic_entries), 8)
+        data[256:256 + len(interpreter)] = interpreter
+        data[320:320 + len(strings)] = strings
+        data[384:384 + len(dynamic_entries)] = dynamic_entries
     return bytes(data)
 
 
@@ -62,11 +64,82 @@ def sealed_shared_elf(soname: str) -> bytes:
     """Add a real DT_SONAME to the bounded dynamic ELF byte fixture."""
     data = bytearray(sealed_elf("pie"))
     strings = b"\0libc.so\0/usr/lib\0" + soname.encode("ascii") + b"\0"
-    data[160:160 + len(strings)] = strings
-    struct.pack_into("<Q", data, 320 + 32, len(strings))
-    struct.pack_into("<qQ", data, 224, 14, len(b"\0libc.so\0/usr/lib\0"))
-    struct.pack_into("<qQ", data, 240, 0, 0)
-    struct.pack_into("<Q", data, 384 + 32, 64)
+    data[320:320 + len(strings)] = strings
+    struct.pack_into("<Q", data, 408, len(strings))
+    struct.pack_into("<qQ", data, 448, 14, len(b"\0libc.so\0/usr/lib\0"))
+    struct.pack_into("<qQ", data, 464, 0, 0)
+    struct.pack_into("<QQ", data, 208, 96, 96)
+    return bytes(data)
+
+
+def loader_dynamic_elf(*, section_headers: bool = True, post_null: bool = False,
+                       flags: int = 0, dynamic_segments: int = 1,
+                       string_table_address: int | None = None,
+                       ambiguous_string_mapping: bool = False,
+                       textrel_tag: bool = False, interpreter: bool = False,
+                       elf_type: int = 3) -> bytes:
+    """Build a byte-only ELF whose loader and section metadata may disagree.
+
+    The retained reader must follow the loader-visible ``PT_DYNAMIC`` table.
+    When present, the section table deliberately advertises benign facts after
+    ``DT_NULL`` so it cannot be used as an alternate authority.
+    """
+    load_offset, strings_offset, dynamic_offset = 256, 320, 448
+    load_address = 0x400000
+    strings = b"\0libforeign.so\0/bad\0"
+    owned_interpreter = b"/lib/ld-crabc-x86_64.so.1\0"
+    string_address = load_address + strings_offset - load_offset
+    if string_table_address is not None:
+        string_address = string_table_address
+    rpath_offset = len(b"\0libforeign.so\0")
+    entries = [
+        (5, string_address),  # DT_STRTAB
+        (10, len(strings)),   # DT_STRSZ
+        (1, 1),               # DT_NEEDED libforeign.so
+        (15, rpath_offset),   # DT_RPATH /bad
+        (30, flags),          # DT_FLAGS
+        (0, 0),               # DT_NULL
+    ]
+    if textrel_tag:
+        entries.insert(-1, (22, 0))  # DT_TEXTREL
+    if post_null:
+        entries.extend(((1, 1), (29, rpath_offset), (0, 0)))
+    programs = [(1, 4, load_offset, load_address, 320, 320, 0x1000)]
+    programs.extend((2, 4, dynamic_offset, load_address + dynamic_offset - load_offset,
+                     len(entries) * 16, len(entries) * 16, 8) for _ in range(dynamic_segments))
+    if ambiguous_string_mapping:
+        programs.append((1, 4, load_offset + 1, load_address, 320, 320, 0x1000))
+    if interpreter:
+        programs.append((3, 4, 1120, 0, len(owned_interpreter), len(owned_interpreter), 1))
+
+    data = bytearray(1200)
+    data[:16] = b"\x7fELF\x02\x01\x01" + b"\0" * 9
+    section_offset = 928 if section_headers else 0
+    data[16:64] = struct.pack(
+        "<HHIQQQIHHHHHH", elf_type, 62, 1, 0, 64, section_offset, 0,
+        64, 56, len(programs), 64 if section_headers else 0, 2 if section_headers else 0, 0,
+    )
+    for index, (kind, flags_value, offset, address, size, memory_size, alignment) in enumerate(programs):
+        data[64 + index * 56:120 + index * 56] = struct.pack(
+            "<IIQQQQQQ", kind, flags_value, offset, address, 0, size, memory_size, alignment
+        )
+    data[strings_offset:strings_offset + len(strings)] = strings
+    for index, entry in enumerate(entries):
+        struct.pack_into("<qQ", data, dynamic_offset + index * 16, *entry)
+    if interpreter:
+        data[1120:1120 + len(owned_interpreter)] = owned_interpreter
+    if section_headers:
+        fake_strings_offset, fake_dynamic_offset = 672, 736
+        fake_strings = b"\0libc.so\0/usr/lib\0"
+        data[fake_strings_offset:fake_strings_offset + len(fake_strings)] = fake_strings
+        for index, entry in enumerate(((0, 0), (1, 1), (29, len(b"\0libc.so\0")), (0, 0))):
+            struct.pack_into("<qQ", data, fake_dynamic_offset + index * 16, *entry)
+        data[928:992] = struct.pack(
+            "<IIQQQQIIQQ", 0, 3, 0, 0, fake_strings_offset, len(fake_strings), 0, 0, 1, 0
+        )
+        data[992:1056] = struct.pack(
+            "<IIQQQQIIQQ", 0, 6, 0, 0, fake_dynamic_offset, 64, 0, 0, 8, 16
+        )
     return bytes(data)
 
 
@@ -95,9 +168,65 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         self.assertEqual(
             facts,
             {"type": 3, "machine": 62, "interpreters": ["/lib/ld-crabc-x86_64.so.1"],
-             "needed": ["libc.so"], "runpaths": ["/usr/lib"], "rpaths": [],
+             "dynamic": True, "needed": ["libc.so"], "runpaths": ["/usr/lib"], "rpaths": [],
              "sonames": ["libfixture.so"], "textrel": False},
         )
+
+    def test_retained_elf_reader_uses_pt_dynamic_over_a_forged_dynamic_section(self) -> None:
+        path = self.put("forged-section", loader_dynamic_elf(flags=4))
+        facts = evidence.retained_elf_facts(path)
+        self.assertEqual(facts["needed"], ["libforeign.so"])
+        self.assertEqual(facts["rpaths"], ["/bad"])
+        self.assertEqual(facts["runpaths"], [])
+        self.assertTrue(facts["dynamic"])
+        self.assertTrue(facts["textrel"])
+        with self.assertRaisesRegex(evidence.ProductEvidenceError, "DT_TEXTREL"):
+            evidence._audit_retained_elf(path, "pie")
+
+    def test_retained_elf_reader_uses_pt_dynamic_without_section_headers(self) -> None:
+        path = self.put("sectionless", loader_dynamic_elf(section_headers=False, interpreter=True))
+        facts = evidence.retained_elf_facts(path)
+        self.assertEqual(facts["needed"], ["libforeign.so"])
+        self.assertEqual(facts["rpaths"], ["/bad"])
+        with self.assertRaisesRegex(evidence.ProductEvidenceError, "foreign DT_NEEDED"):
+            evidence._audit_retained_elf(path, "pie")
+
+    def test_retained_elf_reader_detects_dt_textrel_and_dt_flags_textrel(self) -> None:
+        for name, payload in (
+            ("tag", loader_dynamic_elf(textrel_tag=True)),
+            ("flags", loader_dynamic_elf(flags=4)),
+        ):
+            with self.subTest(name=name):
+                self.assertTrue(evidence.retained_elf_facts(self.put(name, payload))["textrel"])
+
+    def test_retained_elf_reader_rejects_nonzero_dynamic_entries_after_dt_null(self) -> None:
+        with self.assertRaisesRegex(evidence.ProductEvidenceError, "terminator"):
+            evidence.retained_elf_facts(self.put("post-null", loader_dynamic_elf(post_null=True)))
+
+    def test_retained_elf_reader_rejects_missing_or_duplicate_pt_dynamic(self) -> None:
+        for name, count in (("missing", 0), ("duplicate", 2)):
+            with self.subTest(name=name):
+                path = self.put(name, loader_dynamic_elf(dynamic_segments=count))
+                if count == 0:
+                    with self.assertRaisesRegex(evidence.ProductEvidenceError, "PT_DYNAMIC segment"):
+                        evidence._audit_retained_elf(path, "pie")
+                else:
+                    with self.assertRaisesRegex(evidence.ProductEvidenceError, "PT_DYNAMIC"):
+                        evidence.retained_elf_facts(path)
+
+    def test_retained_elf_reader_rejects_dynamic_string_tables_without_one_load_mapping(self) -> None:
+        cases = {
+            "unmappable": loader_dynamic_elf(string_table_address=0xDEADBEEF),
+            "ambiguous": loader_dynamic_elf(ambiguous_string_mapping=True),
+        }
+        for name, payload in cases.items():
+            with self.subTest(name=name), self.assertRaisesRegex(evidence.ProductEvidenceError, "string table"):
+                evidence.retained_elf_facts(self.put(name, payload))
+
+    def test_retained_static_link_rejects_a_loader_visible_dynamic_segment(self) -> None:
+        path = self.put("static-with-dynamic", loader_dynamic_elf(elf_type=2))
+        with self.assertRaisesRegex(evidence.ProductEvidenceError, "PT_DYNAMIC"):
+            evidence._audit_retained_elf(path, "static")
 
     def put(self, relative: str, payload: bytes) -> Path:
         path = self.root / relative

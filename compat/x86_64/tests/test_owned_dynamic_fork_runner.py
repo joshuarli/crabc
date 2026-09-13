@@ -40,12 +40,23 @@ class OwnedDynamicForkRunnerTests(unittest.TestCase):
     def test_replay_elf_shape_uses_in_process_bytes_without_host_readelf(self):
         evidence = load_evidence()
         facts = {
-            "type": 3, "machine": 62, "interpreters": [], "needed": ["libc.so"],
+            "type": 3, "machine": 62, "interpreters": [], "dynamic": True, "needed": ["libc.so"],
             "runpaths": ["/usr/lib"], "rpaths": [], "sonames": ["libfork-initial.so"], "textrel": False,
         }
         with patch.object(evidence.product_evidence, "retained_elf_facts", return_value=facts), \
              patch.object(evidence, "readelf", side_effect=AssertionError("host replay executed readelf")):
             evidence._audit_linked_elf(Path("libfork-initial.so"), "shared", ("libc.so",), replay=object())
+
+    def test_replay_elf_shape_rejects_the_dt_flags_textrel_fact(self):
+        evidence = load_evidence()
+        facts = {
+            "type": 3, "machine": 62, "interpreters": [], "dynamic": True, "needed": ["libc.so"],
+            "runpaths": ["/usr/lib"], "rpaths": [], "sonames": ["libfork-initial.so"], "textrel": True,
+        }
+        with patch.object(evidence.product_evidence, "retained_elf_facts", return_value=facts), \
+             patch.object(evidence, "readelf", side_effect=AssertionError("host replay executed readelf")):
+            with self.assertRaisesRegex(evidence.EvidenceError, "text relocation"):
+                evidence._audit_linked_elf(Path("libfork-initial.so"), "shared", ("libc.so",), replay=object())
 
     def test_retained_inputs_bind_physical_tool_bytes_and_exact_mount(self):
         evidence=load_evidence()

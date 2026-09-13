@@ -62,11 +62,14 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
                 'campaign_complete': False,
             }
             receipt_path = work / 'consumer.crabc-link.json'; receipt_path.write_text(json.dumps(receipt), encoding='utf-8')
-            facts = {'type': 3, 'machine': 62, 'interpreters': [EVIDENCE.fork_evidence.INTERPRETER], 'needed': ['libc.so'],
+            facts = {'type': 3, 'machine': 62, 'interpreters': [EVIDENCE.fork_evidence.INTERPRETER], 'dynamic': True, 'needed': ['libc.so'],
                      'runpaths': ['/usr/lib'], 'rpaths': [], 'sonames': [], 'textrel': False}
             with mock.patch.object(EVIDENCE.product_evidence, 'retained_elf_facts', return_value=facts):
                 observed = EVIDENCE._link_record(product, work, output, 'consumer', 'pie', replay=replay)
             self.assertEqual(observed['mode'], 'pie')
+            with mock.patch.object(EVIDENCE.product_evidence, 'retained_elf_facts', return_value={**facts, 'textrel': True}):
+                with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, 'ELF shape'):
+                    EVIDENCE._link_record(product, work, output, 'consumer', 'pie', replay=replay)
             receipt['link_command'][-1] = '/workspace/changed-output'
             receipt_path.write_text(json.dumps(receipt), encoding='utf-8')
             with mock.patch.object(EVIDENCE.product_evidence, 'retained_elf_facts', return_value=facts):

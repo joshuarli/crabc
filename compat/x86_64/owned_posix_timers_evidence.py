@@ -440,6 +440,8 @@ def _validate_tls_elf(output: Path, *, replay: RetainedRuntimeInputs | None = No
         facts = product_evidence.retained_elf_facts(output)
         if facts["machine"] != 62 or facts["type"] != 3:
             _fail("retained timer TLS DSO is not an x86-64 ET_DYN ELF")
+        if not facts["dynamic"]:
+            _fail("retained timer TLS DSO has no PT_DYNAMIC segment")
         if facts["interpreters"]:
             _fail("retained timer TLS DSO has an interpreter")
         if facts["textrel"] or facts["rpaths"]:
