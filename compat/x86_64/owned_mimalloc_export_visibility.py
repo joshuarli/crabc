@@ -218,11 +218,17 @@ def symbol_identity(row: object, description: str) -> tuple[str, str | None, boo
     return name, version, version_default
 
 
-def symbol_identities(rows: object, description: str) -> set[tuple[str, str | None, bool]]:
+def symbol_records(
+    rows: object, description: str,
+) -> dict[tuple[str, str | None, bool], dict[str, object]]:
     require(isinstance(rows, list), f"{description} is malformed")
-    identities = {symbol_identity(row, description) for row in rows}
-    require(len(identities) == len(rows), f"{description} repeats a symbol identity")
-    return identities
+    records: dict[tuple[str, str | None, bool], dict[str, object]] = {}
+    for row in rows:
+        identity = symbol_identity(row, description)
+        require(isinstance(row, dict), f"{description} has a malformed symbol row")
+        require(identity not in records, f"{description} repeats a symbol identity")
+        records[identity] = row
+    return records
 
 
 def derived_baseline_extra_names(
@@ -230,12 +236,15 @@ def derived_baseline_extra_names(
 ) -> set[str]:
     """Derive the retained pair's extras; do not make its count policy."""
 
-    reference = symbol_identities(reference_rows, "historical reference dynsym")
-    candidate = symbol_identities(candidate_rows, "historical candidate dynsym")
-    triage = symbol_identities(triage_rows, "historical raw triage extra roster")
-    derived = candidate - reference
-    require(triage == derived,
+    reference = symbol_records(reference_rows, "historical reference dynsym")
+    candidate = symbol_records(candidate_rows, "historical candidate dynsym")
+    triage = symbol_records(triage_rows, "historical raw triage extra roster")
+    derived = {identity: record for identity, record in candidate.items() if identity not in reference}
+    require(set(triage) == set(derived),
             "historical raw triage extra roster disagrees with reference/candidate symbol identities")
+    for identity, candidate_record in derived.items():
+        require(triage[identity] == candidate_record,
+                f"historical raw triage extra row differs from candidate record for {identity[0]}")
     names = {identity[0] for identity in derived}
     require(len(names) == len(derived),
             "historical extra roster repeats a name across symbol versions")
@@ -272,7 +281,7 @@ def baseline_symbols(report_path: Path) -> tuple[dict[str, dict[str, object]], s
         "identity": report_identity,
         "candidate_build": candidate_build,
         "extra_roster": {
-            "method": "candidate-minus-reference-dynamic-symbol-identities",
+            "method": "candidate-minus-reference-dynamic-symbol-identities-with-exact-triage-records",
             "name_count": len(extra_names),
             "names": sorted(extra_names),
         },
