@@ -1,4 +1,12 @@
-# Initial-graph worker TLS ownership
+# Historical initial-graph worker TLS foundation
+
+This page records the original fixed-graph worker TLS component. Its no-growth
+boundary and 32-byte CRT handoff below describe that historical stage. Current
+installed ownership, runtime TLS generations, and worker reclamation are
+defined in [prepared-worker-tls.md](prepared-worker-tls.md) and
+`loader-libc-tls-runtime-v1.toml::owned_runtime`, including its 144-byte CRT
+carrier. The 32-byte worker allocation token and 72-byte initial TLS descriptor
+remain distinct current contracts.
 
 The installed dynamic component selects `x86_64-owned-dynamic-runtime` in
 ldso. It retains the established arbitrary admitted initial graph, its module
