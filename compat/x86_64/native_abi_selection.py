@@ -47,6 +47,7 @@ import owned_pthread_alias_contract_reader as pthread_alias_evidence
 import prepared_worker_tls_evidence as prepared_worker_evidence
 import owned_errno_storage_lifecycle as errno_storage_evidence
 import native_c_allocator_boundary
+import owned_posix_product_evidence as product_evidence
 
 SCHEMA = 'crabc.x86_64-native-abi-selection-report/v1'
 CONTRACT_SCHEMA = 'crabc.x86_64-native-abi-selection/v1'
@@ -3846,7 +3847,8 @@ def _utmpx_product_identities(paths: Mapping[str, Path]) -> dict[str, dict[str, 
 
 
 def _utmpx_retained_inputs(report_path: Path, report: Mapping[str, Any],
-                           products: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+                           products: Mapping[str, Any],
+                           link_input_modes: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
     """Bind every selected link input to the reader-validated retained product.
 
     ``owned_utmpx_receipt.validate_report`` owns the complete retained-tree,
@@ -3894,6 +3896,9 @@ def _utmpx_retained_inputs(report_path: Path, report: Mapping[str, Any],
         manifest_identity = file_identity(manifest_path)
         files = contract['manifest_files'](read_json(manifest_path))
         require(type(files) is dict, f'utmpx retained {family} manifest file roster differs')
+        link_records = UTMPX_STATIC_LINK_INPUTS if family == 'static' else UTMPX_DYNAMIC_LINK_INPUTS
+        modes = exact(link_input_modes.get(family), {relative for _name, relative in link_records},
+                      f'utmpx retained {family} source mode roster')
         for name, relative in contract['records']:
             path = retained_root / relative
             require(path.is_file() and not path.is_symlink() and path.resolve() == path,
@@ -3907,6 +3912,9 @@ def _utmpx_retained_inputs(report_path: Path, report: Mapping[str, Any],
             if name != 'static_manifest' and name != 'dynamic_manifest':
                 require(files.get(relative) == value['sha256'],
                         f'utmpx {name} is not sealed by retained {family} manifest')
+            if relative in modes:
+                require(value['mode'] == modes[relative],
+                        f'utmpx retained {name} source-bound mode differs')
             retained[name] = value
             snapshots.append((path, value))
         require(same(manifest_identity, retained['static_manifest' if family == 'static' else 'dynamic_manifest']),
@@ -3964,8 +3972,8 @@ def native_utmpx_adapter(report_path: Path | None, *, facts: Mapping[str, Any],
     reader = _utmpx_reader()
     require(Path(reader.ROOT) == ROOT and Path(reader.__file__).resolve().parent == MODULE_DIR,
             'utmpx reader belongs to a different checkout')
-    require(reader.SCHEMA == 'crabc.x86_64-owned-utmpx-receipt/v1',
-            'utmpx reader is not the current receipt boundary')
+    require(reader.SCHEMA == 'crabc.x86_64-owned-utmpx-receipt/v3',
+            'utmpx reader is not the current v3 receipt boundary')
     report_path = physical_work_path(report_path, directory=False)
     before = file_identity(report_path)
     try:
@@ -3978,7 +3986,7 @@ def native_utmpx_adapter(report_path: Path | None, *, facts: Mapping[str, Any],
     _measurement_source_matches(source, measurement, 'utmpx')
     measurement_reports = _measurement_report_bindings(measurement, 'utmpx')
     report = exact(report, {
-        'schema', 'image', 'source_tree', 'sources', 'products', 'product_cohort', 'tools', 'commands',
+        'schema', 'image', 'source_tree', 'sources', 'products', 'product_cohort', 'link_input_modes', 'tools', 'commands',
         'symbols', 'runtime', 'links', 'projection',
     }, 'utmpx reader report')
     require(report['schema'] == reader.SCHEMA and type(report['image']) is dict
@@ -3998,12 +4006,25 @@ def native_utmpx_adapter(report_path: Path | None, *, facts: Mapping[str, Any],
     }, 'utmpx receipt product cohort')
     require(same(cohort['source'], {'revision': source['revision'], 'content_sha256': source['content_sha256']}),
             'utmpx receipt selected product source differs')
+    source_link_input_modes = getattr(reader, 'LINK_INPUT_MODES', None)
+    expected_link_input_modes = product_evidence.link_input_mode_projection()
+    require(type(source_link_input_modes) is dict and same(source_link_input_modes, expected_link_input_modes)
+            and same(report['link_input_modes'], expected_link_input_modes),
+            'utmpx source-bound link-input mode policy differs')
+    link_input_modes = exact(report['link_input_modes'], {'static', 'dynamic'},
+                             'utmpx source-bound link-input modes')
     products = _utmpx_product_identities(paths)
+    for family, records in (('static', UTMPX_STATIC_LINK_INPUTS), ('dynamic', UTMPX_DYNAMIC_LINK_INPUTS)):
+        modes = exact(link_input_modes[family], {relative for _name, relative in records},
+                      f'utmpx {family} source mode roster')
+        for name, relative in records:
+            require(products[name]['mode'] == modes[relative],
+                    f'utmpx {name} source-bound mode differs')
     _require_same_identity_payload(cohort['static_preparation'], products['static_preparation'],
                                    'utmpx static preparation')
     for name in ('static_manifest', 'dynamic_manifest', 'dynamic_state'):
         _require_same_identity_payload(cohort[name], products[name], f'utmpx {name.replace("_", " ")}')
-    retained = _utmpx_retained_inputs(report_path, report, products)
+    retained = _utmpx_retained_inputs(report_path, report, products, link_input_modes)
     for name, value in retained.items():
         _require_same_identity_payload(value, products[name], f'utmpx {name}')
     facts_artifacts = facts.get('artifacts')

@@ -272,8 +272,11 @@ link input to current bytes and modes. The finite static input roster is
 `crt1.o`, `rcrt1.o`, `crti.o`, `crtn.o`, `libc.a`, and
 `libcrabc-builtins.a`; the dynamic roster is `crt1.o`, `Scrt1.o`, `crti.o`,
 `crtn.o`, `libc.so`, `libcrabc-builtins.a`, and
-`crabc-dynamic-attach.o`. Retained product manifests and trees must seal each
-input, and the transaction rechecks the same roster after attachment.
+`crabc-dynamic-attach.o`. The source-owned static/dynamic link-input mode
+policy fixes the six static roles and seven dynamic roles before report replay;
+retained-tree or manifest mode fields cannot replace it. Retained product
+manifests and trees must seal each input, and the transaction rechecks the
+same roster after attachment.
 
 `attach_native_utmpx` maps only the reader's eight aliases — `endutent`,
 `setutent`, `getutent`, `getutid`, `getutline`, `pututline`, `updwtmp`, and

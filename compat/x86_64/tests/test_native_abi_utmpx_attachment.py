@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'compat/x86_64'))
 import native_abi_selection as selection
 import owned_utmpx_receipt as utmpx_reader
+import owned_posix_product_evidence as product_evidence
 
 ALIASES = tuple(utmpx_reader.ALIASES)
 PROVIDERS = (*utmpx_reader.STRONG, *utmpx_reader.WEAK)
@@ -33,12 +34,13 @@ DYNAMIC_LINK_INPUTS = {
 class FakeUtmpxReader:
     ROOT = ROOT
     __file__ = str(ROOT / 'compat/x86_64/owned_utmpx_receipt.py')
-    SCHEMA = utmpx_reader.SCHEMA
+    SCHEMA = 'crabc.x86_64-owned-utmpx-receipt/v3'
     PINNED_IMAGE = utmpx_reader.PINNED_IMAGE
     ALIASES = ALIASES
     STRONG = utmpx_reader.STRONG
     WEAK = utmpx_reader.WEAK
     SOURCES = utmpx_reader.SOURCES
+    LINK_INPUT_MODES = product_evidence.link_input_mode_projection()
     ReceiptError = ValueError
 
     def __init__(self, report: dict[str, object]):
@@ -91,6 +93,7 @@ class NativeUtmpxAttachmentTests(unittest.TestCase):
         for path, data in files:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
+        (self.dynamic / 'usr/lib/libc.so').chmod(0o755)
         for key, relative in STATIC_LINK_INPUTS.items():
             path = self.static / relative
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -187,7 +190,7 @@ class NativeUtmpxAttachmentTests(unittest.TestCase):
                 'static': {'workspace_path': '.work/utmpx-receipt/inputs/static', 'retained_tree': static_tree},
                 'dynamic': {'workspace_path': '.work/utmpx-receipt/inputs/dynamic', 'retained_tree': dynamic_tree},
             },
-            'product_cohort': cohort, 'tools': {}, 'commands': {},
+            'product_cohort': cohort, 'link_input_modes': copy.deepcopy(FakeUtmpxReader.LINK_INPUT_MODES), 'tools': {}, 'commands': {},
             'symbols': {
                 'headers': {},
                 'archive': {name: ('T' if name in FakeUtmpxReader.STRONG else 'W') for name in PROVIDERS},
@@ -291,6 +294,18 @@ class NativeUtmpxAttachmentTests(unittest.TestCase):
                 finally:
                     path.write_bytes(old)
                     path.chmod(old_mode)
+
+    def test_adapter_rejects_a_resealed_retained_mode_without_source_policy_change(self) -> None:
+        receipt = self._receipt()
+        retained = self.report_path.parent / 'workspace/.work/utmpx-receipt/inputs/dynamic/usr/lib/crabc-dynamic-attach.o'
+        old = retained.stat().st_mode & 0o777
+        try:
+            retained.chmod(0o600)
+            receipt['products']['dynamic']['retained_tree']['usr/lib/crabc-dynamic-attach.o']['mode'] = 0o600
+            with self.assertRaisesRegex(selection.SelectionError, 'source-bound mode'):
+                self._adapter(receipt)
+        finally:
+            retained.chmod(old)
 
     def test_adapter_rejects_unsealed_retained_link_input_and_final_recheck_mutation(self) -> None:
         receipt = self._receipt()
