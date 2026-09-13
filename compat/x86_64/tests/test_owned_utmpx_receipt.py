@@ -155,6 +155,16 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
             "pie": "dynamic-pie", "non-pie": "dynamic-non-pie",
         })
 
+    def test_rebuilt_link_product_is_projected_to_its_fixed_native_mount(self) -> None:
+        product = self.workspace / ".work/utmpx-receipt/inputs/dynamic"
+        product.mkdir(parents=True)
+        rebuilt = {"product": str(product), "linkage": "pie", "executable_sha256": "a" * 64}
+        projected = receipt.project_link_product("pie", product, rebuilt)
+        self.assertEqual(projected["product"], "/workspace/.work/utmpx-receipt/inputs/dynamic")
+        self.assertEqual(rebuilt["product"], str(product))
+        with self.assertRaisesRegex(receipt.ReceiptError, "physical product path"):
+            receipt.project_link_product("pie", product, {**rebuilt, "product": "/workspace/forged"})
+
     def test_contract_has_exact_eight_selected_aliases(self) -> None:
         self.assertEqual(receipt.ALIASES, (
             ("endutent", "endutxent"), ("setutent", "setutxent"), ("getutent", "getutxent"),
