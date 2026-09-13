@@ -122,6 +122,11 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
                 for symbol in (*receipt.STRONG, *receipt.WEAK)
             ).encode())
 
+    def test_static_symbol_receipt_names_follow_the_existing_runner_modes(self) -> None:
+        self.assertEqual(receipt.STATIC_EXECUTABLE_SYMBOLS, (
+            ("static", "static-symbols.txt"), ("static-pie", "static-pie-symbols.txt"),
+        ))
+
     def test_contract_has_exact_eight_selected_aliases(self) -> None:
         self.assertEqual(receipt.ALIASES, (
             ("endutent", "endutxent"), ("setutent", "setutxent"), ("getutent", "getutxent"),
