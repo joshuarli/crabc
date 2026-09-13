@@ -37,6 +37,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
 
 use crate::compiler_tls::current_thread_identity;
+use crate::arena::{ArenaId, ArenaView, FirstRegularStartupArenaSelection};
 use crate::main_theap::{
     MainStaticAttachmentStorage, MainStaticHeapFoundation,
     MainStaticHeapFoundationError, MainStaticHeapLease, MainStaticTheapAttachment,
@@ -914,6 +915,53 @@ pub(crate) struct ProcessMainBackingBinding {
     page_map: ProcessPageMapLease,
 }
 
+/// Source-start regular-arena admission for the bounded ticket-zero bridge.
+///
+/// This is intentionally not a general process arena enumeration.  It tells
+/// the first ordinary page owner whether startup left no published arena, one
+/// exact regular parent that it may search, or source state outside the
+/// supported first-regular shape.  The final case is fail-closed so a huge or
+/// multi-arena startup image cannot be relabeled as an absent option.
+#[derive(Clone, Copy)]
+pub(crate) enum ProcessStartupRegularArenaSelection {
+    Absent,
+    Eligible(ProcessStartupRegularArenaLease),
+    ExistingOutsideFirstRegularCapability,
+    Retained,
+}
+
+/// Copyable immutable proof of one source-start regular parent selected with
+/// the canonical process policy and PageMap root.
+///
+/// It exposes neither mapping release nor PageMap mutation.  Each arena view
+/// revalidates the process-owned registry/owner admission before use, while
+/// the consuming page backing still performs the source search and claim.
+#[derive(Clone, Copy)]
+pub(crate) struct ProcessStartupRegularArenaLease {
+    binding: ProcessMainBackingBinding,
+    arena: ArenaId,
+}
+
+impl ProcessStartupRegularArenaLease {
+    #[inline]
+    pub(crate) const fn process(self) -> VmProcess<'static> { self.binding.process() }
+
+    #[inline]
+    pub(crate) const fn page_map(self) -> ProcessPageMapLease { self.binding.page_map() }
+
+    /// Returns the exact published regular parent only while the process
+    /// binding remains `READY` and its backing repeats the finite admission.
+    #[inline]
+    pub(crate) fn arena(self) -> Option<ArenaView<'static>> {
+        let config = self.binding.page_map().memory_config().ok()?;
+        self.binding
+            .process()
+            .subprocess()
+            .arena_backing()
+            .first_regular_startup_arena_view(self.binding.process(), config, self.arena)
+    }
+}
+
 impl ProcessMainBackingBinding {
     #[inline]
     fn new(
@@ -950,6 +998,40 @@ impl ProcessMainBackingBinding {
     #[inline]
     pub(crate) fn is_active(self) -> bool {
         matches!(self.storage.state.load(Ordering::Acquire), INITIALIZING | READY)
+    }
+
+    /// Classifies source startup's regular arena outcome for its one bounded
+    /// ticket-zero consumer.  The immutable outcome is written before the
+    /// coordinator's `READY` Release; an initializing process cannot expose
+    /// it to a page owner.
+    pub(crate) fn startup_regular_arena_selection(self) -> ProcessStartupRegularArenaSelection {
+        if self.storage.state.load(Ordering::Acquire) != READY {
+            return ProcessStartupRegularArenaSelection::Retained;
+        }
+        let Ok(config) = self.page_map.memory_config() else {
+            return ProcessStartupRegularArenaSelection::Retained;
+        };
+        // SAFETY: READY Release follows the immutable source startup outcome
+        // write, and this binding proves the same retained process pair.
+        let outcomes = unsafe { (*self.storage.startup_reservations.get()).assume_init() };
+        match self.process.subprocess().arena_backing().first_regular_startup_arena_selection(
+            self.process,
+            config,
+            outcomes.regular_arena(),
+        ) {
+            FirstRegularStartupArenaSelection::Absent => {
+                ProcessStartupRegularArenaSelection::Absent
+            }
+            FirstRegularStartupArenaSelection::Eligible(arena) => {
+                ProcessStartupRegularArenaSelection::Eligible(ProcessStartupRegularArenaLease {
+                    binding: self,
+                    arena,
+                })
+            }
+            FirstRegularStartupArenaSelection::ExistingOutsideFirstRegularCapability => {
+                ProcessStartupRegularArenaSelection::ExistingOutsideFirstRegularCapability
+            }
+        }
     }
 }
 

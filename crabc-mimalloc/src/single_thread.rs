@@ -8221,8 +8221,11 @@ impl<'attach, 'heap, 'arena, 'map>
 
 }
 
-impl<'arena, 'map, Session: MainStaticTheapPageSession>
-    PageAllocatorEngine<'arena, 'map, Session>
+impl<'arena, 'map, Session, Backing>
+    PageAllocatorEngine<'arena, 'map, Session, Backing>
+where
+    Session: MainStaticTheapPageSession,
+    Backing: crate::page_backing::PageBacking<'arena>,
 {
     /// Activates the existing source page engine over the ticket-zero static
     /// owner. Unlike the caller-managed test/dynamic constructors, this takes
@@ -8238,7 +8241,7 @@ impl<'arena, 'map, Session: MainStaticTheapPageSession>
     /// engine. `session` must be the matching ticket-zero static owner.
     pub(crate) unsafe fn activate_main_static(
         session: Session,
-        arena: ArenaView<'arena>,
+        arena: Backing,
         requested_arena: ArenaId,
         page_map: &'map PageMap,
     ) -> Self {
@@ -39389,7 +39392,10 @@ impl TheapCollectAbandonCallbacks for ProductionOwnerExitCallbacks<'_, '_, '_, '
     }
 }
 
-impl PageAllocatorEngine<'static, 'static, MainStaticProcessPageSession> {
+impl<Backing> PageAllocatorEngine<'static, 'static, MainStaticProcessPageSession, Backing>
+where
+    Backing: crate::page_backing::PageBacking<'static>,
+{
     /// Activates the process-lifetime static owner over ranges that this
     /// engine will own directly.
     ///
@@ -39411,7 +39417,7 @@ impl PageAllocatorEngine<'static, 'static, MainStaticProcessPageSession> {
     #[cfg(not(test))]
     pub(crate) unsafe fn activate_main_static_for_owned_ranges(
         session: MainStaticProcessPageSession,
-        arena: ArenaView<'static>,
+        arena: Backing,
         requested_arena: ArenaId,
         page_map: &'static PageMap,
     ) -> Self {
@@ -39457,7 +39463,7 @@ impl PageAllocatorEngine<'static, 'static, MainStaticProcessPageSession> {
         self,
     ) -> (
         MainStaticProcessPageSession,
-        PageAllocatorEngineState<'static, 'static>,
+        PageAllocatorEngineState<'static, 'static, Backing>,
     ) {
         self.into_session_and_state()
     }
@@ -39472,7 +39478,7 @@ impl PageAllocatorEngine<'static, 'static, MainStaticProcessPageSession> {
     #[inline]
     pub(crate) fn resume_runtime_ticket_zero(
         session: MainStaticProcessPageSession,
-        state: PageAllocatorEngineState<'static, 'static>,
+        state: PageAllocatorEngineState<'static, 'static, Backing>,
     ) -> Self {
         Self::from_session_and_state(session, state)
     }

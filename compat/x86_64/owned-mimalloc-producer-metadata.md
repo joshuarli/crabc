@@ -55,6 +55,11 @@ The reader requires these finite producer facts:
   fallback and a `FUNC LOCAL DEFAULT` shared definition. Pinned
   `src/alloc.c` returns null from that fallback; it is not treated as an
   optional undefined C++ import or given an invented provider.
+- Every selected row resolves through one positive numeric defining-section
+  index in its own static-member or shared-DSO section roster. The 420
+  function definitions (the 419 strong functions and the weak fallback) must
+  resolve to an executable (`X`) section; a special, reserved, missing, or
+  duplicated index cannot stand in for a C body.
 - `_mi_cpu_has_popcnt`, `_mi_heap_default_key`, and `_mi_stats_main` retain
   their exact object size, source-required alignment, and static producer
   section alignment. Shared placement must meet the source requirement.

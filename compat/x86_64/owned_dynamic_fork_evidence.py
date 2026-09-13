@@ -854,7 +854,15 @@ def worker_survivor_observation(path: Path) -> dict[str, Any]:
     }
 
 
-def seal_observations(work: Path, product: Path) -> None:
+def observed_receipt(work: Path, product: Path) -> dict[str, Any]:
+    """Reconstruct the closed fork observation receipt from retained bytes.
+
+    This is deliberately the one workload-specific replay surface.  Callers
+    receive the complete record only after the supplied product, compiler
+    receipts, oracle products, execution-root copies, and every raw stream
+    have been rechecked.  It does not create another generic runtime receipt.
+    """
+
     work = physical(work, "evidence work directory", directory=True)
     # This is the final seal after execution, rather than a mere list of raw
     # files. Recheck the source product, compile/header/object identities,
@@ -890,13 +898,28 @@ def seal_observations(work: Path, product: Path) -> None:
                 for suffix in ("stdout", "stderr", "status"):
                     if (work / f"{oracle_label}.{suffix}").read_bytes() != (work / f"{semantic_label}.{suffix}").read_bytes():
                         fail(f"semantic same-object differential differs: {semantic_label}")
-    record = {
+    return {
         "schema": OBSERVATION_SCHEMA,
         "validation": validation,
         "semantic_consumer": {"role": "semantic-consumer", "oracle": semantic_oracle,
                               "candidate": semantic_candidate},
         "owned_layout_consumer": {"role": "owned-layout-consumer", "candidate": owned_layout},
     }
+
+
+def validate_observations(product: Path, work: Path) -> dict[str, Any]:
+    """Replay one already sealed fork workload against its supplied product."""
+
+    work = physical(work, "evidence work directory", directory=True)
+    recorded = json_object(work / "observations.json", "fork observation receipt")
+    expected = observed_receipt(work, product)
+    if recorded != expected:
+        fail("fork observation receipt does not reconstruct from retained inputs")
+    return expected
+
+
+def seal_observations(work: Path, product: Path) -> None:
+    record = observed_receipt(work, product)
     path = work / "observations.json"
     if path.exists() or path.is_symlink():
         fail("observation receipt already exists")
@@ -906,7 +929,7 @@ def seal_observations(work: Path, product: Path) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    for command in ("record-compile", "validate", "record-execution"):
+    for command in ("record-compile", "validate", "record-execution", "validate-observations"):
         subparser = commands.add_parser(command)
         subparser.add_argument("--product", type=Path, required=True)
         subparser.add_argument("--work", type=Path, required=True)
@@ -925,6 +948,8 @@ def main(argv: list[str] | None = None) -> int:
             record_oracle(args.work)
         elif args.command == "record-execution":
             record_execution(args.product, args.work)
+        elif args.command == "validate-observations":
+            validate_observations(args.product, args.work)
         else:
             seal_observations(args.work, args.product)
     except (EvidenceError, OSError, KeyError, TypeError) as error:
