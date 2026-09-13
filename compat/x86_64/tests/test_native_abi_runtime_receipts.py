@@ -1260,6 +1260,20 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
                 registry=registry_companion, pthread=pthread_companion,
             )
 
+    def test_existing_runtime_recheck_does_not_require_optional_crt_artifacts(self):
+        self.assertFalse((self.static / 'usr/lib/crt1.o').exists())
+        registry = self.registry_report()
+        with mock.patch.object(selection.runtime_registry_evidence, 'validate_report', return_value=registry):
+            companion = selection.loader_runtime_registry_adapter(
+                self.registry_report_path, facts=self.facts, measurement=self.measurement,
+                paths=self.paths, source=self.source,
+            )
+        with mock.patch.object(selection, 'selection_source', return_value=self.source):
+            selection._recheck_runtime_receipt_cohort(
+                paths=self.paths, facts=self.facts, measurement=self.measurement, source=self.source,
+                registry=companion, pthread=None,
+            )
+
     def test_tls_and_errno_attachments_recheck_the_same_product_cohort_after_joins(self):
         elf_account = {
             'operations': {name: {'.dynsym': {}, '.symtab': {}}

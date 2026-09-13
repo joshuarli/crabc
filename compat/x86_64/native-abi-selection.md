@@ -218,9 +218,10 @@ receipt or turning a component account into a generic runtime claim.
 `--crt-startup-report REPORT` is independently optional. Its owner replays the
 installed CRT receipt before the selector reads its finite twelve-identity
 projection. The selector requires the owner’s current collector and selected
-runtime source identities, its static/dynamic product roots, the public ELF
-facts, and all nine owned installed CRT/runtime artifacts to match the same
-selection transaction. It then joins every retained named row to exactly one
+runtime source identities, its static/dynamic product roots, their three
+mode-bearing manifest/state inputs, the public ELF facts, and all nine owned
+installed CRT/runtime artifacts to match the same selection transaction. It
+then joins every retained named row to exactly one
 complete-ELF occurrence and rejects an added, omitted, duplicated, or
 substituted occurrence. `_GLOBAL_OFFSET_TABLE_` remains the one exact
 link-time boundary: the attachment requires its archive undefined row and the

@@ -2180,15 +2180,13 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
     ):
         require(same(reports[name], file_identity(paths[path_key])),
                 f'public ELF replay {name} changed during runtime receipt attachment')
-    current = _runtime_attachment_identities(paths)
-    if c_allocator_boundary is not None:
-        current['static_provenance'] = file_identity(
-            paths['static_product'] / 'share/crabc/libc-static.provenance.json'
-        )
-    if stdio_alias_contract is not None:
-        current['static_provenance'] = file_identity(
-            paths['static_product'] / 'share/crabc/libc-static.provenance.json'
-        )
+    base_products = _current_product_identities(paths)
+    current = {
+        **base_products,
+        'dynamic_shared_provenance': file_identity(
+            paths['dynamic_product'] / 'share/crabc/libc-shared.provenance.json'
+        ),
+    }
     facts_artifacts = facts.get('artifacts')
     require(type(facts_artifacts) is dict, 'public ELF facts artifact roster changed during runtime receipt attachment')
     for current_name, artifact_key in (
@@ -2199,44 +2197,56 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
                 f'public ELF facts omit {artifact_key} during runtime receipt attachment')
         _require_same_identity_payload(artifact['identity'], current[current_name],
                                        f'public ELF {artifact_key} during runtime receipt attachment')
+    companion_rosters: list[tuple[str, Mapping[str, Any] | None, Mapping[str, Mapping[str, Any]], bool]] = [
+        ('runtime registry', registry, base_products, True),
+        ('pthread alias', pthread, base_products, True),
+        ('prepared worker TLS', prepared_worker, {
+            name: current[name] for name in (
+                'static_manifest', 'static_libc', 'dynamic_manifest', 'dynamic_state', 'dynamic_libc', 'dynamic_loader',
+            )
+        }, True),
+        ('errno storage lifecycle', errno_storage, {
+            name: current[name] for name in (
+                'static_manifest', 'static_libc', 'dynamic_manifest', 'dynamic_libc', 'dynamic_shared_provenance',
+            )
+        }, True),
+    ]
+    if c_allocator_boundary is not None or stdio_alias_contract is not None:
+        current['static_provenance'] = file_identity(
+            paths['static_product'] / 'share/crabc/libc-static.provenance.json'
+        )
+    if c_allocator_boundary is not None:
+        companion_rosters.append(('native C allocator boundary', c_allocator_boundary, {
+            name: current[name] for name in (
+                'static_manifest', 'static_libc', 'static_provenance', 'dynamic_manifest',
+                'dynamic_state', 'dynamic_libc', 'dynamic_shared_provenance',
+            )
+        }, True))
+    if stdio_alias_contract is not None:
+        companion_rosters.append(('FILE alias', stdio_alias_contract, {
+            name: current[name] for name in (
+                'static_manifest', 'static_driver', 'static_libc', 'static_provenance',
+                'dynamic_manifest', 'dynamic_state', 'dynamic_driver', 'dynamic_libc',
+                'dynamic_loader', 'dynamic_shared_provenance',
+            )
+        }, True))
     if crt_startup is not None:
         startup_products = _crt_startup_product_identities(paths)
         for artifact_key, identity_value in startup_products.items():
             artifact = facts_artifacts.get(artifact_key)
             require(type(artifact) is dict and 'identity' in artifact,
-                    f'public ELF facts omit CRT startup {artifact_key} during attachment')
+                f'public ELF facts omit CRT startup {artifact_key} during attachment')
             _require_same_identity_payload(artifact['identity'], identity_value,
                                            f'public ELF CRT startup {artifact_key} during attachment')
-    companion_rosters = (
-        ('runtime registry', registry, set(_current_product_identities(paths)), True),
-        ('pthread alias', pthread, set(_current_product_identities(paths)), True),
-        ('prepared worker TLS', prepared_worker, {
-            'static_manifest', 'static_libc', 'dynamic_manifest', 'dynamic_state', 'dynamic_libc', 'dynamic_loader',
-        }, True),
-        ('errno storage lifecycle', errno_storage, {
-            'static_manifest', 'static_libc', 'dynamic_manifest', 'dynamic_libc', 'dynamic_shared_provenance',
-        }, True),
-        ('native C allocator boundary', c_allocator_boundary, {
-            'static_manifest', 'static_libc', 'static_provenance', 'dynamic_manifest',
-            'dynamic_state', 'dynamic_libc', 'dynamic_shared_provenance',
-        }, True),
-        ('FILE alias', stdio_alias_contract, {
-            'static_manifest', 'static_driver', 'static_libc', 'static_provenance',
-            'dynamic_manifest', 'dynamic_state', 'dynamic_driver', 'dynamic_libc',
-            'dynamic_loader', 'dynamic_shared_provenance',
-        }, True),
-        ('CRT startup', crt_startup, set(_crt_startup_product_identities(paths)), True),
-    )
-    for label, companion, expected_roster, needs_measurement_reports in companion_rosters:
+        companion_rosters.append(('CRT startup', crt_startup, startup_products, True))
+    for label, companion, expected_products, needs_measurement_reports in companion_rosters:
         if companion is None:
             continue
         records = companion.get('products')
-        require(type(records) is dict and set(records) == expected_roster,
+        require(type(records) is dict and set(records) == set(expected_products),
                 f'{label} product roster differs during attachment')
-        selected_products = (_crt_startup_product_identities(paths)
-                             if label == 'CRT startup' else current)
-        for name in expected_roster:
-            _require_same_identity_payload(records[name], selected_products[name],
+        for name in expected_products:
+            _require_same_identity_payload(records[name], expected_products[name],
                                            f'{label} {name} changed during attachment')
         if needs_measurement_reports:
             require(same(companion.get('measurement_reports'), reports),
@@ -2249,6 +2259,14 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
                 f'{label} report disappeared during attachment')
         require(same(report, file_identity(report_path)),
                 f'{label} report changed during attachment')
+    if crt_startup is not None:
+        cohort_inputs = _crt_startup_cohort_inputs(paths)
+        retained_inputs = crt_startup.get('cohort_inputs')
+        require(type(retained_inputs) is dict and set(retained_inputs) == set(cohort_inputs),
+                'CRT startup metadata cohort differs during attachment')
+        for name in cohort_inputs:
+            _require_same_identity_payload(retained_inputs[name], cohort_inputs[name],
+                                           f'CRT startup {name} changed during attachment')
 
 
 def loader_runtime_registry_adapter(report_path: Path | None, *, facts: Mapping[str, Any],
@@ -3465,6 +3483,21 @@ def _crt_startup_product_identities(paths: Mapping[str, Path]) -> dict[str, dict
     return {name: file_identity(path) for name, path in records.items()}
 
 
+def _crt_startup_cohort_inputs(paths: Mapping[str, Path]) -> dict[str, dict[str, Any]]:
+    """Retain the three mode-bearing metadata inputs beside CRT ELF ownership.
+
+    The startup receipt consumes these product descriptors to admit its nine
+    installed ELF artifacts. They remain a separate cohort seal: they are not
+    extra startup symbols or CRT product authority.
+    """
+    records = {
+        'static_manifest': paths['static_product'] / 'share/crabc/manifest.json',
+        'dynamic_manifest': paths['dynamic_product'] / 'share/crabc/manifest.json',
+        'dynamic_state': paths['dynamic_product'] / inventory.DYNAMIC_STATE_RELATIVE,
+    }
+    return {name: file_identity(path) for name, path in records.items()}
+
+
 def _crt_startup_complete_facts_match(value: object, facts: Mapping[str, Any],
                                       products: Mapping[str, Any]) -> None:
     """Bind all component-owned raw ELF views to the public replay once."""
@@ -3556,6 +3589,7 @@ def native_crt_startup_adapter(report_path: Path | None, *, facts: Mapping[str, 
     require(same(report['inputs_after'], inputs) and same(inputs['selected_source'], source_pair),
             'CRT startup source/product input account changed')
     products = _crt_startup_product_identities(paths)
+    cohort_inputs = _crt_startup_cohort_inputs(paths)
     startup_artifacts = inputs['startup_artifacts']
     require(type(startup_artifacts) is dict and set(startup_artifacts) == set(products),
             'CRT startup installed artifact roster differs')
@@ -3573,14 +3607,14 @@ def native_crt_startup_adapter(report_path: Path | None, *, facts: Mapping[str, 
     static_product = exact(inputs['static_preparation'], {'primary'}, 'CRT startup static product')
     static_primary = exact(static_product['primary'], {'path', 'manifest'}, 'CRT startup static product primary')
     _require_stdio_product_root(static_primary['path'], paths['static_product'], 'CRT startup static product')
-    _require_stdio_receipt_identity(static_primary['manifest'], file_identity(
-        paths['static_product'] / 'share/crabc/manifest.json'), 'CRT startup static manifest')
+    _require_stdio_receipt_identity(static_primary['manifest'], cohort_inputs['static_manifest'],
+                                    'CRT startup static manifest')
     dynamic_product = exact(inputs['dynamic_product'], {'path', 'manifest'}, 'CRT startup dynamic product')
     _require_stdio_product_root(dynamic_product['path'], paths['dynamic_product'], 'CRT startup dynamic product')
-    _require_stdio_receipt_identity(dynamic_product['manifest'], file_identity(
-        paths['dynamic_product'] / 'share/crabc/manifest.json'), 'CRT startup dynamic manifest')
-    _require_stdio_receipt_identity(inputs['state'], file_identity(
-        paths['dynamic_product'] / inventory.DYNAMIC_STATE_RELATIVE), 'CRT startup dynamic state')
+    _require_stdio_receipt_identity(dynamic_product['manifest'], cohort_inputs['dynamic_manifest'],
+                                    'CRT startup dynamic manifest')
+    _require_stdio_receipt_identity(inputs['state'], cohort_inputs['dynamic_state'],
+                                    'CRT startup dynamic state')
     _runtime_facts_match_selected_products(
         facts, products, label='CRT startup',
         artifacts=tuple((name, name) for name in products),
@@ -3606,6 +3640,7 @@ def native_crt_startup_adapter(report_path: Path | None, *, facts: Mapping[str, 
         'source': copy.deepcopy(source),
         'source_inputs': source_inputs,
         'products': {name: copy.deepcopy(products[name]) for name in sorted(products)},
+        'cohort_inputs': {name: copy.deepcopy(cohort_inputs[name]) for name in sorted(cohort_inputs)},
         'measurement_reports': measurement_reports,
         'account': {
             'identity_names': list(names),
@@ -3656,7 +3691,7 @@ def attach_native_crt_startup(accounting: Mapping[str, Any], companion: Mapping[
     if companion is None:
         return []
     companion = exact(companion, {
-        'status', 'reader', 'contract', 'report', 'source', 'source_inputs', 'products',
+        'status', 'reader', 'contract', 'report', 'source', 'source_inputs', 'products', 'cohort_inputs',
         'measurement_reports', 'account', 'limits',
     }, 'CRT startup companion')
     require(companion['status'] == 'crt-startup-observed-with-boundaries'
@@ -3668,6 +3703,12 @@ def attach_native_crt_startup(accounting: Mapping[str, Any], companion: Mapping[
                     'CRT startup companion account')
     require(account['identity_names'] == list(names) and type(account['occurrences']) is list,
             'CRT startup companion identity roster differs')
+    cohort_inputs = companion['cohort_inputs']
+    require(type(cohort_inputs) is dict and set(cohort_inputs) == {
+        'static_manifest', 'dynamic_manifest', 'dynamic_state',
+    }, 'CRT startup companion metadata cohort differs')
+    for name, value in cohort_inputs.items():
+        _identity_payload(value, f'CRT startup companion {name}')
     records, _placements, occurrences = _accounting_indexes(accounting, description='CRT startup attachment')
     observed_by_name = {name: [] for name in names}
     selected_indices: set[int] = set()
