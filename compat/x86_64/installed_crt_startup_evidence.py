@@ -519,7 +519,8 @@ def validate_report(root,report_path):
 
 def main(argv=None):
     args=list(sys.argv[1:] if argv is None else argv)
-    require(all(args.count(x)==1 for x in set(args) if x.startswith('--')),'duplicate startup option')
+    options=[arg.split('=',1)[0] for arg in args if arg.startswith('--')]
+    require(len(options)==len(set(options)),'duplicate startup option')
     parser=argparse.ArgumentParser(description=__doc__,allow_abbrev=False);parser.add_argument('mode',choices=('collect','validate-report'))
     for name in ('output','report','static-preparation','static-product','dynamic-product','historical-facts'):parser.add_argument('--'+name,type=Path)
     ns=parser.parse_args(args);paths=[ns.static_preparation,ns.static_product,ns.dynamic_product,ns.historical_facts]

@@ -10,6 +10,13 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import installed_crt_startup_evidence as reader
 
 class InstalledCrtStartupTests(unittest.TestCase):
+    def test_duplicate_report_spellings_reject_before_replay(self):
+        for options in (['--report=one','--report=two'],['--report','one','--report=two']):
+            with self.subTest(options=options), mock.patch.object(reader,'validate_report',
+                    side_effect=AssertionError('duplicate option reached replay')):
+                with self.assertRaisesRegex(reader.StartupEvidenceError,'duplicate startup option'):
+                    reader.main(['validate-report',*options])
+
     def test_crt_caller_relocations_are_required_per_object(self):
         # Exact raw rows from pinned b525 product bytes, retained by the e434
         # startup receipt. Calling artifact_relocations keeps this regression
