@@ -175,7 +175,8 @@ for mode in pie non-pie; do
 
     "$ORACLE_CC" -std=c11 "${oracle_flags[@]}" -rdynamic "$work/workload.o" \
         -Wl,--dynamic-linker,"$MUSL_INTERPRETER" -o "$work/oracle-$mode"
-    "$installed/bin/crabc-cc-dynamic" "$candidate_mode" -rdynamic "$work/workload.o" \
+    "$installed/bin/crabc-cc-dynamic" "$candidate_mode" --link-receipt \
+        "$work/candidate-$mode.crabc-link.json" -rdynamic "$work/workload.o" \
         -o "$work/candidate-$mode"
     assert_exported_interposer "$work/oracle-$mode" "$work/oracle-$mode.symbols"
     assert_exported_interposer "$work/candidate-$mode" "$work/candidate-$mode.symbols"

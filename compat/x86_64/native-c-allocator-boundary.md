@@ -1,0 +1,37 @@
+# Installed C allocator boundary
+
+`native_c_allocator_boundary.py` joins the selected `libmimalloc-sys` 0.1.49
+implementation (C mimalloc v3.3.2) to the installed x86 allocator wrappers. It
+consumes supplied static and dynamic products; it never builds a product or
+selects a general allocator policy.
+
+The fixed-C producer account remains the authority for the exact C member and
+the seven Rust-root imports. This component adds the consumer side: the static
+Rust root imports exactly `_mi_auto_process_init`, `_mi_auto_process_done`,
+`mi_free`, `mi_malloc_aligned`, `mi_realloc_aligned`, `mi_usable_size`, and
+`mi_zalloc`; the same final shared C definitions remain local. Its source
+check binds the C ABI wrappers for `malloc`, `calloc`, `realloc`,
+`reallocarray`, `free`, `aligned_alloc`, `posix_memalign`, `memalign`,
+`valloc`, and `malloc_usable_size`, and binds the process initializer/finalizer
+to the selected x86 root.
+
+The collector runs only two existing installed-product workloads:
+
+- `run_owned_mimalloc_startup_errno.sh --static-sysroot STATIC DYNAMIC` keeps
+  static ET_EXEC/static PIE and dynamic PIE/non-PIE kernel/direct entries. The
+  retained link receipts prove the exact product and CRT inputs; the probe
+  checks preinit, user constructor, main allocation and final errno.
+- `run_owned_c_allocation_interposition.sh DYNAMIC` reuses one installed-header
+  object against musl and candidate PIE/non-PIE kernel/direct roots. It checks
+  `asprintf`, passwd cleanup, and AIO list state against executable
+  `malloc`/`realloc`/`free` interposition.
+
+Both runner work directories, their terminal streams, selected executable
+roots, and owned link receipts are sealed before and after replay. The product
+source epoch is retained separately from the collector source: a later reader
+requires the wrapper/lifecycle source blobs to equal that product revision,
+but does not call a historical collector result a current-source proof.
+
+This is a bounded C-wrapper/lifecycle receipt. It does not prove allocator
+family completion, Rust-port promotion, broad allocation behavior, or public
+x86 support.

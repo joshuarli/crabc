@@ -9,24 +9,46 @@ readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
 readonly CHROOT="$(command -v chroot)"
 
-[ "$#" -le 1 ] || {
-    printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2
+usage() {
+    printf 'usage: %s [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n' "$0" >&2
     exit 2
 }
-provided_dynamic="${1:-}"
+
+provided_static=''
+provided_dynamic=''
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --static-sysroot)
+            [ "$#" -ge 2 ] && [ -z "$provided_static" ] && [ -n "$2" ] || usage
+            provided_static="$2"
+            shift 2
+            ;;
+        -*) usage ;;
+        *)
+            [ -z "$provided_dynamic" ] && [ -n "$1" ] || usage
+            provided_dynamic="$1"
+            shift
+            ;;
+    esac
+done
+[ -z "$provided_static" ] || [ -n "$provided_dynamic" ] || usage
+if [ -n "$provided_static" ]; then
+    provided_static="$(realpath -e "$provided_static")"
+fi
 if [ -n "$provided_dynamic" ]; then
     provided_dynamic="$(realpath -e "$provided_dynamic")"
 fi
 
-python3 -B - "$ROOT" "${TMPDIR:-}" "$provided_dynamic" <<'PY'
+python3 -B - "$ROOT" "${TMPDIR:-}" "$provided_static" "$provided_dynamic" <<'PY'
 from pathlib import Path
 import sys
 
-root, temporary, product = map(Path, sys.argv[1:])
+root, temporary, static, dynamic = map(Path, sys.argv[1:])
 if not temporary.is_dir() or temporary.resolve() != temporary or not temporary.is_relative_to(root / '.work'):
     raise SystemExit('owned mimalloc startup errno TMPDIR must be a physical checkout .work directory')
-if str(product) != '.' and (not product.is_dir() or not product.is_relative_to(root / '.work')):
-    raise SystemExit('owned mimalloc startup errno product must be a checkout .work directory')
+for product, description in ((static, 'static product'), (dynamic, 'dynamic product')):
+    if str(product) != '.' and (not product.is_dir() or not product.is_relative_to(root / '.work')):
+        raise SystemExit(f'owned mimalloc startup errno {description} must be a checkout .work directory')
 PY
 
 readonly work="$(mktemp -d "$TMPDIR/owned-mimalloc-startup-errno.XXXXXX")"
@@ -74,7 +96,8 @@ run_in_root() {
 run_static_mode() {
     local product="$1" mode="$2" candidate="$work/static-$mode" root="$work/static-$mode-root"
 
-    "$product/bin/crabc-cc" "-$mode" "$PROBE" -o "$candidate"
+    "$product/bin/crabc-cc" "-$mode" --link-receipt "$work/static-$mode.crabc-link.json" \
+        "$PROBE" -o "$candidate"
     mkdir -p "$root/work"
     cp "$candidate" "$root/work/probe"
     run_in_root "$root" "static-$mode" /work/probe
@@ -83,7 +106,8 @@ run_static_mode() {
 run_dynamic_mode() {
     local product="$1" mode="$2" candidate="$work/dynamic-$mode" entry root
 
-    "$product/bin/crabc-cc-dynamic" "--dynamic-$mode" "$PROBE" -o "$candidate"
+    "$product/bin/crabc-cc-dynamic" "--dynamic-$mode" \
+        --link-receipt "$work/dynamic-$mode.crabc-link.json" "$PROBE" -o "$candidate"
     for entry in kernel direct; do
         root="$work/dynamic-$mode-$entry-root"
         mkdir -p "$root/lib" "$root/usr/lib" "$root/work"
@@ -110,8 +134,12 @@ if [ -z "$provided_dynamic" ]; then
     provided_dynamic="$work/dynamic-product"
     python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" \
         --output "$work/static-product" >"$work/static-build.json"
+    provided_static="$work/static-product"
+fi
+
+if [ -n "$provided_static" ]; then
     for mode in static static-pie; do
-        run_static_mode "$work/static-product" "$mode"
+        run_static_mode "$provided_static" "$mode"
     done
 fi
 
@@ -120,4 +148,4 @@ for mode in pie non-pie; do
     run_dynamic_mode "$provided_dynamic" "$mode"
 done
 
-printf 'owned mimalloc startup errno: PASS (musl reference; preinit allocation and sentinel; user constructor and main allocations; static ET_EXEC/static-PIE when self-built; dynamic PIE/non-PIE through kernel and direct loader entry in isolated chroots; retained stdout/stderr/status evidence); evidence: %s\n' "$work"
+printf 'owned mimalloc startup errno: PASS (musl reference; preinit allocation and sentinel; user constructor and main allocations; supplied static ET_EXEC/static-PIE when present; dynamic PIE/non-PIE through kernel and direct loader entry in isolated chroots; retained stdout/stderr/status evidence); evidence: %s\n' "$work"
