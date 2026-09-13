@@ -242,7 +242,11 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             row for row in report["families"] if row["id"] == "libc.c-abi-compat"
         )
         self.assertEqual(c_abi_compat["verified_slice_count"], 9)
-        self.assertEqual(c_abi_compat["verified_artifact_count"], 29)
+        self.assertEqual(c_abi_compat["verified_artifact_count"], 30)
+        self.assertIn(
+            {"family": "libc.c-abi-compat", "id": "native-thread-signal-c-abi"},
+            report["selected_private_artifacts"],
+        )
         self.assertIn(
             {"family": "libc.c-abi-compat", "id": "static-c-issetugid"},
             report["selected_private_artifacts"],
@@ -335,7 +339,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         )
         self.assertEqual(
             sum(row["verified_artifact_count"] for row in report["families"]),
-            380,
+            381,
         )
         self.assertEqual(
             sum(row["verified_slice_count"] for row in report["families"]),
@@ -463,10 +467,10 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             {row["contract_state"] for row in report["capabilities"]},
             {"implemented-foundation", "selected-private", "missing"},
         )
-        self.assertEqual(report["x86_boundary"]["selected_static_export_count"], 1254)
+        self.assertEqual(report["x86_boundary"]["selected_static_export_count"], 1276)
         self.assertEqual(
             report["x86_boundary"]["selected_static_exports_in_aarch64_dynamic_candidate_set"],
-            1209,
+            1218,
         )
         self.assertEqual(
             report["unsupported_contracts"],

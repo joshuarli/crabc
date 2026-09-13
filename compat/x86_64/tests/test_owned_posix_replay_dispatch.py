@@ -138,6 +138,28 @@ class OwnedPosixReplayDispatchTests(unittest.TestCase):
         self.assertIn("owned-assert takes no arguments", result.stderr)
         self.assertFalse(self.capture.exists())
 
+    def test_native_thread_signal_requires_both_supplied_products(self):
+        command = "native-thread-signal-abi"
+        for arguments in ([], [str(self.dynamic)], ["--static-sysroot", str(self.static)]):
+            with self.subTest(arguments=arguments):
+                result = self.invoke(command, arguments)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("usage:", result.stderr)
+                self.assertFalse(self.capture.exists())
+        result = self.invoke(command, ["--static-sysroot", str(self.static), str(self.dynamic)])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        runs = [a for a in map(json.loads, self.capture.read_text().splitlines()) if a[0] == "run"]
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(runs[0][-5:], [
+            "bash", "/workspace/compat/x86_64/run_native_thread_signal_abi.sh",
+            "--static-sysroot", "/workspace/.work/x86_64/static product",
+            "/workspace/.work/x86_64/dynamic product",
+        ])
+        self.assertIn("--cap-add=SYS_CHROOT", runs[0])
+        self.assertNotIn("--privileged", runs[0])
+        self.assertNotIn("--cap-add=SYS_ADMIN", runs[0])
+        self.assertNotIn("--security-opt=seccomp=unconfined", runs[0])
+
     def test_help_describes_exact_replay_interfaces(self):
         result = self.invoke("--help", [])
         self.assertEqual(result.returncode, 2)

@@ -1160,6 +1160,7 @@ tfind
 tgamma
 tgammaf
 tgammal
+tgkill
 thrd_create
 thrd_current
 thrd_detach

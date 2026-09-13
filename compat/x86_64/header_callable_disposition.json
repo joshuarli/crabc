@@ -1,10 +1,11 @@
 {
-  "contract_schema": "crabc.x86_64-header-callable-disposition/v1",
+  "contract_schema": "crabc.x86_64-header-callable-disposition/v2",
   "inputs": {
-    "callable_inventory_sha256": "1c17d46225b29d7a407cae0c6eefc66c501d2d5b26ee425d152e06b35d4390b9",
-    "candidate_external_callable_sha256": "b5d19a134ba65119f48d357bdedf87c168d54cf6568d35dd8e4c332329d23bca",
-    "parity_ledger_sha256": "39242fa858d524b896eab0f8bafea90ae753305235f43e92d6bd103824a402c5",
-    "static_c_abi_exports_sha256": "85807c31d39c85338d410b3f61d8d0e91a68561909608c8d3d137855a6951a66"
+    "callable_extension_contract_sha256": "950febf6d9d8f26f001eb31844438c047f6ada96dbb3c2ecc27de97e51151b7f",
+    "callable_inventory_sha256": "2a3a32489faeb0ce92b756e07ba19638f3e8914047063aa7caeaf1297e23dd2d",
+    "candidate_external_callable_sha256": "ac2057843e61094f0a8f1dc8b3774d2d2b848f8a860c0f7cf6193cd3ae7ac118",
+    "parity_ledger_sha256": "49b587d3034960539cdd82255616679661b1585fded57967a7a6fb425257d911",
+    "static_c_abi_exports_sha256": "d40b6ecc65ca473360c5b5edd746795d252c04a801d38ecd3798ea76b29c48e9"
   },
   "missing_reference_declaration_groups": [],
   "oracle": "Pinned musl 1.2.6",
@@ -1337,6 +1338,7 @@
         "tgamma",
         "tgammaf",
         "tgammal",
+        "tgkill",
         "thrd_create",
         "thrd_current",
         "thrd_detach",
@@ -1747,7 +1749,15 @@
       }
     ]
   },
-  "schema": "crabc.x86_64-header-callable-disposition-report/v1",
+  "reviewed_callable_extension_provider_routes": [
+    {
+      "candidate_external_present": true,
+      "header": "signal.h",
+      "name": "tgkill",
+      "provider_route": "default-static"
+    }
+  ],
+  "schema": "crabc.x86_64-header-callable-disposition-report/v2",
   "scope": {
     "archive_extraction": false,
     "compiler_derived_candidate_externals": true,
@@ -1755,12 +1765,13 @@
     "family_promotion": false,
     "header_ownership_routing": true,
     "public_support": false,
+    "reviewed_native_callable_extension_provider_routes": true,
     "runtime_semantics": false
   },
   "summary": {
-    "candidate_external_callable_count": 1525,
+    "candidate_external_callable_count": 1526,
     "declared_unverified_feature_callable_count": 310,
-    "default_static_callable_count": 1122,
+    "default_static_callable_count": 1123,
     "deferred_resolution_counts": {
       "compiler-builtin": 1,
       "consumer-supplied": 1,
@@ -1774,6 +1785,7 @@
     "missing_reference_declaration_record_count": 0,
     "missing_reference_declaration_routing_complete": true,
     "primary_disposition_exact_coverage": true,
+    "reviewed_native_callable_extension_provider_route_count": 1,
     "undispositioned_candidate_callable_count": 0,
     "undispositioned_missing_reference_name_count": 0,
     "unprovided_callable_count": 15,
@@ -1809,6 +1821,8 @@
     "source_owners": [
       "compat/x86_64/header_callable_disposition.toml",
       "compat/x86_64/header_callable_disposition.py",
+      "compat/x86_64/header_callable_extension_contract.toml",
+      "compat/x86_64/header_callable_extension_contract.py",
       "compat/x86_64/header_callable_linkage_audit.py",
       "compat/x86_64/header_callable_inventory.json",
       "compat/x86_64/static_c_abi_exports.txt",
@@ -1817,6 +1831,7 @@
       "compat/x86_64/headers-layouts-foundation.toml",
       "compat/x86_64/tests/test_feature_archive_roster.py",
       "compat/x86_64/tests/test_header_callable_disposition.py",
+      "compat/x86_64/tests/test_header_callable_extension_contract.py",
       "compat/x86_64/tests/test_header_callable_inventory.py",
       "compat/x86_64/tests/test_parity_ledger.py",
       "compat/x86_64/tests/test_runner.py",

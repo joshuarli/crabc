@@ -597,6 +597,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-c-allocation-interposition  qualify caller and passwd allocation ownership against musl
   owned-io-cancellation  qualify installed syscall cancellation and FILE cleanup
   owned-pthread-signal [--static-sysroot STATIC_SYSROOT] DYNAMIC_SYSROOT  test installed pthread signal delivery and task retirement
+  native-thread-signal-abi --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT  test the native tgkill C extension through supplied owned products
   owned-posix-timers [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed POSIX timer lifecycle and callback TLS reset
   owned-pthread-scheduling test installed pthread scheduling/default attributes
   owned-pthread-cpuclock [DYNAMIC_SYSROOT]  test installed live pthread CPU-clock IDs
@@ -6589,6 +6590,7 @@ case "$command" in
     vector-io-header-abi) ;;
     libc-crt1-static-tls) ;;
     owned-crypt-runtime|owned-atomic-addressable-profile) ;;
+    native-thread-signal-abi) ;;
     owned-system-cancellation) ;;
     owned-rand) ;;
     owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-fmtmsg|owned-utmpx|owned-process-trio|owned-underscore-fork|owned-aio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-account-files|owned-locale|owned-wordexp|owned-stdio|owned-numeric-calendar|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition) ;;
@@ -6791,6 +6793,12 @@ case "$command" in
     owned-pthread-family-composition)
         prepare_owned_pthread_family_composition_arguments "$@"
         set -- "${PTHREAD_COMPOSITION_ARGUMENTS[@]}"
+        ;;
+    native-thread-signal-abi)
+        [ "$#" -eq 3 ] && [ "$1" = --static-sysroot ] || \
+            fail "usage: ./scripts/dev-x86_64.sh native-thread-signal-abi --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT"
+        prepare_owned_posix_replay_arguments "$command" "$@"
+        set -- "${POSIX_REPLAY_ARGUMENTS[@]}"
         ;;
     owned-rand|owned-aio|owned-posix-filesystem|owned-process-control|owned-posix-signals|owned-posix-composition|owned-credentials-profile|owned-environment-lifecycle|owned-kernel-residual|owned-linux-control|owned-dynamic-spawn|owned-fmtmsg|owned-utmpx|owned-account-files|owned-locale|owned-wordexp|owned-stdio|owned-numeric-calendar|owned-process-trio|owned-underscore-fork|owned-syslog|owned-crypt-runtime|owned-system-cancellation|owned-signal-helpers|owned-pthread-signal|owned-posix-timers|owned-dynamic-io-cancellation|project-header-extension-policy)
         prepare_owned_posix_replay_arguments "$command" "$@"
@@ -9069,6 +9077,10 @@ PY
         [ "$#" -eq 0 ] || fail "owned-c-allocation-interposition takes no arguments"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_c_allocation_interposition.sh
+        ;;
+    native-thread-signal-abi)
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_native_thread_signal_abi.sh "$@"
         ;;
     owned-io-cancellation)
         ensure_image

@@ -2015,6 +2015,10 @@ class HeaderAbiMatrixTests(unittest.TestCase):
         The candidate's x86 branch and pinned musl both expose the exact
         object-like replacement ``(-1)`` for the BSD, GNU, and C++ profiles,
         so it is matched evidence rather than reviewed source-form debt.
+
+        The selected native ``tgkill`` extension adds one exact declaration
+        in the GNU/BSD-visible signal roots. Every musl declaration still
+        matches, and the raw candidate-only function remains explicit.
         """
         checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
         rows = {
@@ -2041,9 +2045,18 @@ class HeaderAbiMatrixTests(unittest.TestCase):
                     self.assertEqual(row["reference_status"], "oracle-not-applicable")
                     continue
 
+                candidate_only = []
+                if header in {"signal.h", "sys/wait.h", "aio.h"} and profile in {
+                    "c11-bsd", "c11-gnu", "cxx17-gnu", "cxx17-strict",
+                }:
+                    candidate_only = [{
+                        "kind": "function",
+                        "name": "tgkill",
+                        "signature": "int (int, int, int)|mangled=tgkill",
+                    }]
                 self.assertEqual(
                     row["comparison"],
-                    "matched",
+                    "candidate-only-reviewed-native-callable-extension" if candidate_only else "matched",
                     f"{header}:{profile} must retain musl's exact source form",
                 )
                 self.assertEqual(row["reference_status"], "ok")
@@ -2051,11 +2064,11 @@ class HeaderAbiMatrixTests(unittest.TestCase):
                 self.assertEqual(
                     difference,
                     {
-                        "candidate_only": [],
-                        "candidate_only_count": 0,
+                        "candidate_only": candidate_only,
+                        "candidate_only_count": len(candidate_only),
                         "incompatible": [],
                         "incompatible_count": 0,
-                        "matched_count": row["candidate"]["count"],
+                        "matched_count": row["candidate"]["count"] - len(candidate_only),
                         "reference_only": [],
                         "reference_only_count": 0,
                     },

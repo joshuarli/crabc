@@ -1,8 +1,9 @@
 {
-  "contract_schema": "crabc.x86_64-header-callable-feature-visibility-matrix/v1",
+  "contract_schema": "crabc.x86_64-header-callable-feature-visibility-matrix/v2",
   "inputs": {
-    "callable_inventory_sha256": "1c17d46225b29d7a407cae0c6eefc66c501d2d5b26ee425d152e06b35d4390b9",
-    "matrix_contract_sha256": "8128dae9c5b713f6c9b15eb9098151119a39b32d43ae3f15f576fed7b6346f3c",
+    "callable_extension_contract_sha256": "950febf6d9d8f26f001eb31844438c047f6ada96dbb3c2ecc27de97e51151b7f",
+    "callable_inventory_sha256": "2a3a32489faeb0ce92b756e07ba19638f3e8914047063aa7caeaf1297e23dd2d",
+    "matrix_contract_sha256": "c350a1e20821d32450a7e79a1f942f36dc3919a936dbdba99c3c7ffa61714910",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
   },
   "oracle": "Pinned musl 1.2.6",
@@ -390,12 +391,55 @@
       "x86_family": "libc.c-abi-compat"
     }
   ],
+  "reviewed_callable_extensions": [
+    {
+      "c_linkage_symbol": "tgkill",
+      "classification": "external",
+      "component_contract": "compat/x86_64/native_thread_signal_abi.json",
+      "declaration_kind": "function",
+      "disposition": "retained-reviewed-native-c-abi-callable-extension",
+      "evidence": [
+        "include/signal.h",
+        "libc/src/c_abi/x86_64/thread_signal.rs",
+        "compat/x86_64/native-thread-signal-abi.md"
+      ],
+      "header": "signal.h",
+      "hidden_profiles": [
+        "c11-strict",
+        "c11-posix-2008",
+        "c11-xopen-700"
+      ],
+      "name": "tgkill",
+      "provider_route": "default-static",
+      "signature": "int (int, int, int)",
+      "visible_from_headers": [
+        "aio.h",
+        "signal.h",
+        "sys/signal.h",
+        "sys/ucontext.h",
+        "sys/wait.h",
+        "ucontext.h",
+        "wait.h"
+      ],
+      "visible_profiles": [
+        "c11-gnu",
+        "cxx17-gnu",
+        "c11-bsd",
+        "cxx17-strict"
+      ]
+    }
+  ],
   "rows": [
     {
-      "candidate_callable_count": 74,
-      "candidate_only": [],
+      "candidate_callable_count": 75,
+      "candidate_only": [
+        {
+          "classification": "external",
+          "name": "tgkill"
+        }
+      ],
       "candidate_status": "ok",
-      "comparison": "matched",
+      "comparison": "candidate-only-reviewed-native-callable-extension",
       "header": "aio.h",
       "matched_callable_count": 74,
       "profile": "c11-gnu",
@@ -404,10 +448,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 74,
-      "candidate_only": [],
+      "candidate_callable_count": 75,
+      "candidate_only": [
+        {
+          "classification": "external",
+          "name": "tgkill"
+        }
+      ],
       "candidate_status": "ok",
-      "comparison": "matched",
+      "comparison": "candidate-only-reviewed-native-callable-extension",
       "header": "aio.h",
       "matched_callable_count": 74,
       "profile": "cxx17-gnu",
@@ -538,10 +587,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 70,
-      "candidate_only": [],
+      "candidate_callable_count": 71,
+      "candidate_only": [
+        {
+          "classification": "external",
+          "name": "tgkill"
+        }
+      ],
       "candidate_status": "ok",
-      "comparison": "matched",
+      "comparison": "candidate-only-reviewed-native-callable-extension",
       "header": "aio.h",
       "matched_callable_count": 70,
       "profile": "c11-bsd",
@@ -550,10 +604,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 74,
-      "candidate_only": [],
+      "candidate_callable_count": 75,
+      "candidate_only": [
+        {
+          "classification": "external",
+          "name": "tgkill"
+        }
+      ],
       "candidate_status": "ok",
-      "comparison": "matched",
+      "comparison": "candidate-only-reviewed-native-callable-extension",
       "header": "aio.h",
       "matched_callable_count": 74,
       "profile": "cxx17-strict",
@@ -8521,10 +8580,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 35,
-      "candidate_only": [],
+      "candidate_callable_count": 36,
+      "candidate_only": [
+        {
+          "classification": "external",
+          "name": "tgkill"
+        }
+      ],
       "candidate_status": "ok",
-      "comparison": "matched",
+      "comparison": "candidate-only-reviewed-native-callable-extension",
       "header": "signal.h",
       "matched_callable_count": 35,
       "profile": "c11-gnu",
@@ -8533,10 +8597,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 35,
-      "candidate_only": [],
+      "candidate_callable_count": 36,
+      "candidate_only": [
+        {
+          "classification": "external",
+          "name": "tgkill"
+        }
+      ],
       "candidate_status": "ok",
-      "comparison": "matched",
+      "comparison": "candidate-only-reviewed-native-callable-extension",
       "header": "signal.h",
       "matched_callable_count": 35,
       "profile": "cxx17-gnu",
@@ -8581,10 +8650,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 31,
-      "candidate_only": [],
+      "candidate_callable_count": 32,
+      "candidate_only": [
+        {
+          "classification": "external",
+          "name": "tgkill"
+        }
+      ],
       "candidate_status": "ok",
-      "comparison": "matched",
+      "comparison": "candidate-only-reviewed-native-callable-extension",
       "header": "signal.h",
       "matched_callable_count": 31,
       "profile": "c11-bsd",
@@ -8593,10 +8667,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 35,
-      "candidate_only": [],
+      "candidate_callable_count": 36,
+      "candidate_only": [
+        {
+          "classification": "external",
+          "name": "tgkill"
+        }
+      ],
       "candidate_status": "ok",
-      "comparison": "matched",
+      "comparison": "candidate-only-reviewed-native-callable-extension",
       "header": "signal.h",
       "matched_callable_count": 35,
       "profile": "cxx17-strict",
@@ -14004,10 +14083,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 35,
-      "candidate_only": [],
+      "candidate_callable_count": 36,
+      "candidate_only": [
+        {
+          "classification": "external",
+          "name": "tgkill"
+        }
+      ],
       "candidate_status": "ok",
-      "comparison": "matched",
+      "comparison": "candidate-only-reviewed-native-callable-extension",
       "header": "sys/signal.h",
       "matched_callable_count": 35,
       "profile": "c11-gnu",
@@ -14016,10 +14100,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 35,
-      "candidate_only": [],
+      "candidate_callable_count": 36,
+      "candidate_only": [
+        {
+          "classification": "external",
+          "name": "tgkill"
+        }
+      ],
       "candidate_status": "ok",
-      "comparison": "matched",
+      "comparison": "candidate-only-reviewed-native-callable-extension",
       "header": "sys/signal.h",
       "matched_callable_count": 35,
       "profile": "cxx17-gnu",
@@ -14064,10 +14153,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 31,
-      "candidate_only": [],
+      "candidate_callable_count": 32,
+      "candidate_only": [
+        {
+          "classification": "external",
+          "name": "tgkill"
+        }
+      ],
       "candidate_status": "ok",
-      "comparison": "matched",
+      "comparison": "candidate-only-reviewed-native-callable-extension",
       "header": "sys/signal.h",
       "matched_callable_count": 31,
       "profile": "c11-bsd",
@@ -14076,10 +14170,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 35,
-      "candidate_only": [],
+      "candidate_callable_count": 36,
+      "candidate_only": [
+        {
+          "classification": "external",
+          "name": "tgkill"
+        }
+      ],
       "candidate_status": "ok",
-      "comparison": "matched",
+      "comparison": "candidate-only-reviewed-native-callable-extension",
       "header": "sys/signal.h",
       "matched_callable_count": 35,
       "profile": "cxx17-strict",
@@ -15768,10 +15867,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 39,
-      "candidate_only": [],
+      "candidate_callable_count": 40,
+      "candidate_only": [
+        {
+          "classification": "external",
+          "name": "tgkill"
+        }
+      ],
       "candidate_status": "ok",
-      "comparison": "matched",
+      "comparison": "candidate-only-reviewed-native-callable-extension",
       "header": "sys/ucontext.h",
       "matched_callable_count": 39,
       "profile": "c11-gnu",
@@ -15780,10 +15884,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 39,
-      "candidate_only": [],
+      "candidate_callable_count": 40,
+      "candidate_only": [
+        {
+          "classification": "external",
+          "name": "tgkill"
+        }
+      ],
       "candidate_status": "ok",
-      "comparison": "matched",
+      "comparison": "candidate-only-reviewed-native-callable-extension",
       "header": "sys/ucontext.h",
       "matched_callable_count": 39,
       "profile": "cxx17-gnu",
@@ -15828,10 +15937,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 35,
-      "candidate_only": [],
+      "candidate_callable_count": 36,
+      "candidate_only": [
+        {
+          "classification": "external",
+          "name": "tgkill"
+        }
+      ],
       "candidate_status": "ok",
-      "comparison": "matched",
+      "comparison": "candidate-only-reviewed-native-callable-extension",
       "header": "sys/ucontext.h",
       "matched_callable_count": 35,
       "profile": "c11-bsd",
@@ -15840,10 +15954,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 39,
-      "candidate_only": [],
+      "candidate_callable_count": 40,
+      "candidate_only": [
+        {
+          "classification": "external",
+          "name": "tgkill"
+        }
+      ],
       "candidate_status": "ok",
-      "comparison": "matched",
+      "comparison": "candidate-only-reviewed-native-callable-extension",
       "header": "sys/ucontext.h",
       "matched_callable_count": 39,
       "profile": "cxx17-strict",
@@ -16356,10 +16475,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 76,
-      "candidate_only": [],
+      "candidate_callable_count": 77,
+      "candidate_only": [
+        {
+          "classification": "external",
+          "name": "tgkill"
+        }
+      ],
       "candidate_status": "ok",
-      "comparison": "matched",
+      "comparison": "candidate-only-reviewed-native-callable-extension",
       "header": "sys/wait.h",
       "matched_callable_count": 76,
       "profile": "c11-gnu",
@@ -16368,10 +16492,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 76,
-      "candidate_only": [],
+      "candidate_callable_count": 77,
+      "candidate_only": [
+        {
+          "classification": "external",
+          "name": "tgkill"
+        }
+      ],
       "candidate_status": "ok",
-      "comparison": "matched",
+      "comparison": "candidate-only-reviewed-native-callable-extension",
       "header": "sys/wait.h",
       "matched_callable_count": 76,
       "profile": "cxx17-gnu",
@@ -16416,10 +16545,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 69,
-      "candidate_only": [],
+      "candidate_callable_count": 70,
+      "candidate_only": [
+        {
+          "classification": "external",
+          "name": "tgkill"
+        }
+      ],
       "candidate_status": "ok",
-      "comparison": "matched",
+      "comparison": "candidate-only-reviewed-native-callable-extension",
       "header": "sys/wait.h",
       "matched_callable_count": 69,
       "profile": "c11-bsd",
@@ -16428,10 +16562,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 76,
-      "candidate_only": [],
+      "candidate_callable_count": 77,
+      "candidate_only": [
+        {
+          "classification": "external",
+          "name": "tgkill"
+        }
+      ],
       "candidate_status": "ok",
-      "comparison": "matched",
+      "comparison": "candidate-only-reviewed-native-callable-extension",
       "header": "sys/wait.h",
       "matched_callable_count": 76,
       "profile": "cxx17-strict",
@@ -17280,10 +17419,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 39,
-      "candidate_only": [],
+      "candidate_callable_count": 40,
+      "candidate_only": [
+        {
+          "classification": "external",
+          "name": "tgkill"
+        }
+      ],
       "candidate_status": "ok",
-      "comparison": "matched",
+      "comparison": "candidate-only-reviewed-native-callable-extension",
       "header": "ucontext.h",
       "matched_callable_count": 39,
       "profile": "c11-gnu",
@@ -17292,10 +17436,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 39,
-      "candidate_only": [],
+      "candidate_callable_count": 40,
+      "candidate_only": [
+        {
+          "classification": "external",
+          "name": "tgkill"
+        }
+      ],
       "candidate_status": "ok",
-      "comparison": "matched",
+      "comparison": "candidate-only-reviewed-native-callable-extension",
       "header": "ucontext.h",
       "matched_callable_count": 39,
       "profile": "cxx17-gnu",
@@ -17340,10 +17489,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 35,
-      "candidate_only": [],
+      "candidate_callable_count": 36,
+      "candidate_only": [
+        {
+          "classification": "external",
+          "name": "tgkill"
+        }
+      ],
       "candidate_status": "ok",
-      "comparison": "matched",
+      "comparison": "candidate-only-reviewed-native-callable-extension",
       "header": "ucontext.h",
       "matched_callable_count": 35,
       "profile": "c11-bsd",
@@ -17352,10 +17506,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 39,
-      "candidate_only": [],
+      "candidate_callable_count": 40,
+      "candidate_only": [
+        {
+          "classification": "external",
+          "name": "tgkill"
+        }
+      ],
       "candidate_status": "ok",
-      "comparison": "matched",
+      "comparison": "candidate-only-reviewed-native-callable-extension",
       "header": "ucontext.h",
       "matched_callable_count": 39,
       "profile": "cxx17-strict",
@@ -17868,10 +18027,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 76,
-      "candidate_only": [],
+      "candidate_callable_count": 77,
+      "candidate_only": [
+        {
+          "classification": "external",
+          "name": "tgkill"
+        }
+      ],
       "candidate_status": "ok",
-      "comparison": "matched",
+      "comparison": "candidate-only-reviewed-native-callable-extension",
       "header": "wait.h",
       "matched_callable_count": 76,
       "profile": "c11-gnu",
@@ -17880,10 +18044,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 76,
-      "candidate_only": [],
+      "candidate_callable_count": 77,
+      "candidate_only": [
+        {
+          "classification": "external",
+          "name": "tgkill"
+        }
+      ],
       "candidate_status": "ok",
-      "comparison": "matched",
+      "comparison": "candidate-only-reviewed-native-callable-extension",
       "header": "wait.h",
       "matched_callable_count": 76,
       "profile": "cxx17-gnu",
@@ -17928,10 +18097,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 69,
-      "candidate_only": [],
+      "candidate_callable_count": 70,
+      "candidate_only": [
+        {
+          "classification": "external",
+          "name": "tgkill"
+        }
+      ],
       "candidate_status": "ok",
-      "comparison": "matched",
+      "comparison": "candidate-only-reviewed-native-callable-extension",
       "header": "wait.h",
       "matched_callable_count": 69,
       "profile": "c11-bsd",
@@ -17940,10 +18114,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 76,
-      "candidate_only": [],
+      "candidate_callable_count": 77,
+      "candidate_only": [
+        {
+          "classification": "external",
+          "name": "tgkill"
+        }
+      ],
       "candidate_status": "ok",
-      "comparison": "matched",
+      "comparison": "candidate-only-reviewed-native-callable-extension",
       "header": "wait.h",
       "matched_callable_count": 76,
       "profile": "cxx17-strict",
@@ -18204,7 +18383,7 @@
       "reference_status": "ok"
     }
   ],
-  "schema": "crabc.x86_64-header-callable-feature-visibility-matrix-report/v1",
+  "schema": "crabc.x86_64-header-callable-feature-visibility-matrix-report/v2",
   "scope": {
     "callable_names_and_classes_only": true,
     "compiler_derived_inventory": true,
@@ -18214,15 +18393,17 @@
     "linkage_or_runtime": false,
     "noncallable_abi": false,
     "prototype_or_macro_replacement_equality": false,
-    "public_support": false
+    "public_support": false,
+    "reviewed_native_callable_extensions": true
   },
   "summary": {
-    "candidate_only_callable_count": 0,
+    "candidate_only_callable_count": 28,
     "candidate_public_header_count": 191,
-    "comparable_row_count": 1280,
+    "comparable_row_count": 1252,
     "comparison_counts": {
+      "candidate-only-reviewed-native-callable-extension": 28,
       "candidate-only-reviewed-project-c-abi-extension": 56,
-      "matched": 1280,
+      "matched": 1252,
       "oracle-not-applicable": 1
     },
     "complete": false,
@@ -18240,6 +18421,8 @@
     "project_only_header_count": 8,
     "project_only_row_count": 56,
     "reference_only_callable_count": 0,
+    "reviewed_native_callable_extension_callable_count": 28,
+    "reviewed_native_callable_extension_row_count": 28,
     "row_count": 1337
   },
   "target": "x86_64-unknown-linux-musl"

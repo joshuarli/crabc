@@ -394,10 +394,13 @@ class HeaderCallableInventoryTests(unittest.TestCase):
 
         self.assertIn("mkdirat", default_static)
         self.assertNotIn("mkdirat", unprovided)
+        self.assertIn("tgkill", default_static)
+        self.assertNotIn("tgkill", unprovided)
         self.assertEqual(
             set(planned),
-            {"x86-owned-static-runtime", "x86-owned-dynamic-runtime"},
+            {"x86-owned-static-runtime", "x86-owned-dynamic-runtime", "x86-kernel-admin"},
         )
+        self.assertEqual(planned["x86-kernel-admin"], set())
         self.assertEqual(
             planned["x86-owned-static-runtime"],
             {
@@ -413,6 +416,12 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "acosf",
                 "adjtime",
                 "adjtimex",
+                "aio_cancel",
+                "aio_fsync",
+                "aio_read",
+                "aio_return",
+                "aio_suspend",
+                "aio_write",
                 "asctime",
                 "asctime_r",
                 "asin",
@@ -704,6 +713,9 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "ulckpwdf",
                 "utmpname",
                 "utmpxname",
+                "lio_listio",
+                "rand",
+                "srand",
             },
         )
         self.assertEqual(

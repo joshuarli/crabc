@@ -413,7 +413,7 @@ def validate(args: argparse.Namespace) -> dict[str, object]:
                          "remaining_extra_count": len(remaining_extra)},
         "symtab_local_contract": {"members": localized, "member_count": len(localized)},
         "limits": [
-            "The historical ae0fcc22 product is a pre-change comparison input, not a source match for the fresh product.",
+            "The supplied pre-change product is a comparison input, not a source match for the fresh product.",
             "The collector and dynamic-product source identities are recorded separately; a mismatch is retained evidence, not current-source proof.",
             "This proves the shared-only visibility boundary and selected allocator provider; it does not qualify the runtime, allocator, or platform.",
         ],
