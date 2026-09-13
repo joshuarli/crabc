@@ -323,6 +323,35 @@ STATUS={'component':'prepared-worker-lifecycle-observed','runtime_qualification'
         'family_completion':False,'promotion_ready':False,'public_support':False,
         'public_facade_runtime_v1':False,'legacy_exports_added':False}
 REPORT_INPUTS=('base_inventory','elf_report','static_preparation','static_product','dynamic_product')
+RUST_SELECTOR_INVOCATION=Path('/opt/cargo/bin/rustup')
+RUST_SELECTOR_PHYSICAL=Path('/usr/bin/rustup-init')
+
+
+def rust_selector_invocation() -> dict[str,str]:
+    """Seal the pinned rustup applet spelling and its non-symlink executable.
+
+    The image deliberately exposes the selector at `/opt/cargo/bin/rustup`,
+    while its executable bytes live at `/usr/bin/rustup-init`. The generic
+    fixed-image tool reader must continue to reject aliases; this one command
+    needs its applet spelling for `rustup which rustc`, so retain the finite
+    alias relation alongside a snapshot of the physical executable.
+    """
+    try:
+        inventory.physical_directory(RUST_SELECTOR_INVOCATION.parent,
+                                     'Rust selector invocation parent')
+        inventory.physical_directory(RUST_SELECTOR_PHYSICAL.parent,
+                                     'Rust selector physical parent')
+        require(RUST_SELECTOR_INVOCATION.is_symlink(),
+                'Rust selector invocation is not the pinned image alias')
+        require(os.readlink(RUST_SELECTOR_INVOCATION)==str(RUST_SELECTOR_PHYSICAL),
+                'Rust selector alias target differs')
+        resolved=inventory.physical_executable(Path(os.path.realpath(RUST_SELECTOR_INVOCATION)),
+                                                'Rust selector physical executable')
+    except (inventory.InventoryError, OSError) as error:
+        raise PreparedWorkerTlsError('cannot identify Rust selector invocation: '+str(error)) from error
+    require(resolved==RUST_SELECTOR_PHYSICAL,
+            'Rust selector invocation no longer resolves to the pinned physical executable')
+    return {'path':str(RUST_SELECTOR_INVOCATION),'physical_path':str(resolved)}
 
 
 def runtime_cells() -> list[dict[str,str]]:
@@ -373,7 +402,7 @@ def command_plan(root: Path, work: Path, inputs: Mapping[str,Any], tools: Mappin
             add(f'{owner}-worker-{generation}-link',argv+[output(obj),'-o',output(name)])
             for flag,suffix in (('-hW','header'),('-lW','program'),('-sW','symbols'),('-SW','sections'),('-dW','dynamic')):
                 add(f'{owner}-worker-{generation}-'+suffix,[tool('readelf'),flag,output(name)])
-    add('rustc-discover',['/opt/cargo/bin/rustup','which','rustc'])
+    add('rustc-discover',[rust['selector_invocation']['path'],'which','rustc'])
     add('unit-build',[rust['compiler']['original']['path'],'--edition=2021','--test','--error-format=json',
         *[arg for cfg in UNIT_CFG for arg in ('--cfg',cfg)],'/workspace/'+UNIT_ROOT,'-o',output('loader-tests')])
     for index,name in enumerate(UNIT_TESTS):
@@ -446,10 +475,18 @@ def admitted(root: Path, paths: Mapping[str,Path]) -> tuple[dict[str,Any],dict[s
 
 
 def rust_tools(work: Path, record: object) -> None:
-    require(type(record) is dict and set(record)=={'selector','compiler'},'Rust tool roster differs')
-    for name,expected in [('selector','/opt/cargo/bin/rustup'),('compiler',None)]:
+    require(type(record) is dict and set(record)=={'selector_invocation','selector','compiler'},
+            'Rust tool roster differs')
+    invocation=record['selector_invocation']
+    require(type(invocation) is dict and set(invocation)=={'path','physical_path'},
+            'Rust selector invocation fields differ')
+    require(invocation=={'path':str(RUST_SELECTOR_INVOCATION),'physical_path':str(RUST_SELECTOR_PHYSICAL)},
+            'Rust selector invocation differs')
+    for name,expected in [('selector',str(RUST_SELECTOR_PHYSICAL)),('compiler',None)]:
         inventory._validate_snapshot(work,record[name],'worker source-test '+name,
             expected_original_path=expected,expected_retained_path='inputs/tools/worker-'+name)
+    require(record['selector']['original']['path']==invocation['physical_path'],
+            'Rust selector invocation physical bytes differ')
     compiler=record['compiler']['original']['path']
     pinned=tomllib.loads((ROOT/'rust-toolchain.toml').read_text())['toolchain']['channel']
     require(re.fullmatch(r'/opt/rustup/toolchains/'+re.escape(pinned)+r'-x86_64-unknown-linux-(gnu|musl)/bin/rustc',compiler) is not None,
@@ -667,11 +704,13 @@ def collect(root: Path, output: Path, **paths: Path) -> Path:
     oracle_static=ordinary.capture_oracle_static_inputs(output)
     tools=ordinary.capture_tool_roster(root,output,paths['static_product'],paths['dynamic_product'])
     collector=ordinary.Collector(root,output,paths['static_preparation'],paths['static_product'],paths['dynamic_product'])
-    selector=ordinary.retain_tool_snapshot(output,'worker-selector',ordinary.fixed_image_tool_identity(Path('/opt/cargo/bin/rustup'),'Rust selector'))
-    collector.run('rustc-discover',['/opt/cargo/bin/rustup','which','rustc'])
+    selector_invocation=rust_selector_invocation()
+    selector=ordinary.retain_tool_snapshot(output,'worker-selector',ordinary.fixed_image_tool_identity(
+        Path(selector_invocation['physical_path']),'Rust selector physical executable'))
+    collector.run('rustc-discover',[selector_invocation['path'],'which','rustc'])
     compiler_path=Path(raw_stdout(output,'rustc-discover').decode('utf-8').strip())
     compiler=ordinary.retain_tool_snapshot(output,'worker-compiler',ordinary.fixed_image_tool_identity(compiler_path,'Rust compiler'))
-    rust={'selector':selector,'compiler':compiler}
+    rust={'selector_invocation':selector_invocation,'selector':selector,'compiler':compiler}
     rust_tools(output,rust)
     plan=command_plan(root,output,before['products'],tools,rust)
     runtime_labels={cell['label'] for cell in runtime_cells()}
@@ -696,7 +735,9 @@ def collect(root: Path, output: Path, **paths: Path) -> Path:
     ordinary.require_live_tool_roster(tools)
     ordinary.require_live_oracle_static_inputs(oracle_static)
     ordinary.qualification.require_live_oracle(output,oracle)
-    for role in rust:
+    require(same(rust['selector_invocation'],rust_selector_invocation()),
+            'Rust selector invocation changed during collection')
+    for role in ('selector','compiler'):
         original=rust[role]['original']
         require(same(original,inventory.file_record(Path(original['path']),logical_path=original['path'])),'Rust tool changed')
     require(same(source,inventory.collector_source_seal()),'collector source changed')

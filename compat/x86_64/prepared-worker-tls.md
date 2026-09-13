@@ -91,7 +91,10 @@ streams using the existing launcher. Use native `linux/amd64`, network none,
 default root and `SYS_CHROOT`; no ptrace permission is needed. Mount source,
 Git metadata and supplied inputs read-only, with only the output parent and
 contained temporary/cache locations writable. Preserve `/usr/sbin/chroot`
-applet invocation while sealing its physical `/bin/coreutils` bytes. The
+applet invocation while sealing its physical `/bin/coreutils` bytes. Preserve
+the pinned `/opt/cargo/bin/rustup` applet spelling while retaining the
+physical `/usr/bin/rustup-init` bytes; this finite image alias does not relax
+generic physical-tool admission. The
 private oracle interpreter copy is executable 0755; the archived oracle bytes
 remain unchanged.
 

@@ -94,6 +94,70 @@ class PreparedWorkerTlsEvidenceTests(unittest.TestCase):
             self.assertIn(b'reclaimed=owned' if cell['owner']=='candidate' else b'reclaimed=unspecified',output)
         self.assertEqual({c['scenario'] for c in cells},set(EVIDENCE.SCENARIOS))
 
+    def test_rust_selector_alias_binds_the_invocation_to_physical_executable_bytes(self):
+        """`rustup` is the one pinned image applet alias, never a generic exception."""
+        import tempfile
+        from unittest.mock import patch
+        base=ROOT/'.work/x86_64/prepared-worker-tls-development'
+        base.mkdir(parents=True,exist_ok=True)
+        self.assertEqual(EVIDENCE.RUST_SELECTOR_INVOCATION,Path('/opt/cargo/bin/rustup'))
+        self.assertEqual(EVIDENCE.RUST_SELECTOR_PHYSICAL,Path('/usr/bin/rustup-init'))
+        with tempfile.TemporaryDirectory(dir=base) as directory:
+            root=Path(directory)
+            invocation=root/'opt/cargo/bin/rustup'
+            physical=root/'usr/bin/rustup-init'
+            invocation.parent.mkdir(parents=True)
+            physical.parent.mkdir(parents=True)
+            physical.write_bytes(b'fixed rustup-init bytes')
+            physical.chmod(0o755)
+            invocation.symlink_to(physical)
+            with patch.object(EVIDENCE,'RUST_SELECTOR_INVOCATION',invocation), \
+                 patch.object(EVIDENCE,'RUST_SELECTOR_PHYSICAL',physical):
+                captured=EVIDENCE.rust_selector_invocation()
+            self.assertEqual(captured,{'path':str(invocation),'physical_path':str(physical)})
+            with self.assertRaises(EVIDENCE.ordinary.PublicDataEvidenceError):
+                EVIDENCE.ordinary.fixed_image_tool_identity(invocation,'generic selector')
+            wrong=root/'usr/bin/other-rustup'
+            wrong.write_bytes(b'wrong bytes')
+            wrong.chmod(0o755)
+            invocation.unlink()
+            invocation.symlink_to(wrong)
+            with patch.object(EVIDENCE,'RUST_SELECTOR_INVOCATION',invocation), \
+                 patch.object(EVIDENCE,'RUST_SELECTOR_PHYSICAL',physical):
+                with self.assertRaises(EVIDENCE.PreparedWorkerTlsError):
+                    EVIDENCE.rust_selector_invocation()
+
+    def test_rust_tool_replay_requires_pinned_alias_and_physical_selector_snapshot(self):
+        import tempfile
+        base=ROOT/'.work/x86_64/prepared-worker-tls-development'
+        base.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=base) as directory:
+            work=Path(directory)
+            (work/'raw').mkdir()
+            compiler='/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/bin/rustc'
+            def snapshot(name,original):
+                path=work/'inputs/tools'/name
+                path.parent.mkdir(parents=True,exist_ok=True)
+                path.write_bytes(name.encode('ascii'))
+                path.chmod(0o555)
+                retained=EVIDENCE.inventory.file_record(path,logical_path='inputs/tools/'+name)
+                before=dict(retained); before['path']=original
+                return {'original':before,'retained':retained}
+            record={'selector_invocation':{'path':'/opt/cargo/bin/rustup','physical_path':'/usr/bin/rustup-init'},
+                    'selector':snapshot('worker-selector','/usr/bin/rustup-init'),
+                    'compiler':snapshot('worker-compiler',compiler)}
+            EVIDENCE.ordinary.raw_path(work,'rustc-discover','stdout').write_text(compiler+'\n')
+            EVIDENCE.rust_tools(work,record)
+            bad=copy.deepcopy(record)
+            bad['selector_invocation']['physical_path']='/usr/bin/not-rustup-init'
+            with self.assertRaises(EVIDENCE.PreparedWorkerTlsError):
+                EVIDENCE.rust_tools(work,bad)
+            retained=work/'inputs/tools/worker-selector'
+            retained.chmod(0o755)
+            retained.write_bytes(b'changed')
+            with self.assertRaises(EVIDENCE.inventory.InventoryError):
+                EVIDENCE.rust_tools(work,record)
+
     def test_command_replay_rejects_rebound_nonzero_status_and_changed_argv(self):
         import tempfile
         import json
@@ -130,7 +194,8 @@ class PreparedWorkerTlsEvidenceTests(unittest.TestCase):
             inputs={'static_preparation':{'primary':{'path':'.work/static'}},'dynamic_product':{'path':'.work/dynamic'}}
             tools={name:{'original':{'path':'/usr/bin/'+name}} for name in EVIDENCE.ordinary.TOOL_ROLES}
             tools['chroot']={'original':{'path':'/bin/coreutils'},'invocation':{'path':'/usr/sbin/chroot','physical_path':'/bin/coreutils'}}
-            rust={'compiler':{'original':{'path':'/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/bin/rustc'}}}
+            rust={'selector_invocation':{'path':'/opt/cargo/bin/rustup','physical_path':'/usr/bin/rustup-init'},
+                  'compiler':{'original':{'path':'/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/bin/rustc'}}}
             plan=EVIDENCE.command_plan(ROOT,work,inputs,tools,rust)
             capture=EVIDENCE.ordinary.Collector(ROOT,work,work,work,work)
             with patch.object(EVIDENCE.ordinary.subprocess,'Popen',return_value=Mock(wait=Mock(return_value=0))):
