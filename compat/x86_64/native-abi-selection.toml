@@ -188,6 +188,22 @@ reason = "Exact errno private alias: the archive retains a WEAK HIDDEN same-defi
 static_metadata_rule = "explicit"
 
 [[owner_groups]]
+id = "component-owned-stdio-private-bodies"
+selector = "explicit"
+disposition = "private-provider"
+owner = "x86-owned-stdio-private-bodies"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/owned_static_stdio.rs", "compat/x86_64/owned-stdio-alias-receipt.toml"]
+members = ["__fdopen", "__fseeko", "__ftello"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"candidate-static" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "HIDDEN"}, "candidate-shared" = {"type" = "FUNC", "binding" = "LOCAL", "visibility" = "HIDDEN"}}
+reason = "Three FILE alias targets are private implementation bodies: each named public weak alias shares its exact body while the shared libc keeps the body out of dynsym."
+static_metadata_rule = "explicit"
+
+[[owner_groups]]
 id = "source-owned-ctype-locator-bodies"
 selector = "explicit"
 disposition = "public-provider"

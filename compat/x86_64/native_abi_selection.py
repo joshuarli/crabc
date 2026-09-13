@@ -13,6 +13,7 @@ import copy
 import csv
 import fnmatch
 import hashlib
+import importlib
 import io
 import json
 import os
@@ -117,7 +118,7 @@ PREPARED_WORKER_TLS_LIMITS = [
 ]
 ERRNO_STORAGE_LIFECYCLE_LIMITS = [
     'Only __errno_location, __h_errno_location, h_errno and the private ___errno_location alias receive this storage/lifecycle account.',
-    'h_errno declaration and alignment proof, broad TLS/TCB semantics, loader evidence, family completion, promotion and public support remain open.',
+    'h_errno declaration/macro and accessor-to-storage agreement, broad TLS/TCB semantics, loader evidence, family completion, promotion and public support remain open.',
 ]
 C_ALLOCATOR_BOUNDARY_LIMITS = [
     'Only the seven authenticated candidate-static Rust-root imports are joined to the fixed-C mimalloc provider account.',
@@ -130,6 +131,39 @@ C_ALLOCATOR_BOUNDARY_SOURCE_FILES = (
     'compat/x86_64/tests/test_native_c_allocator_boundary.py',
     'compat/x86_64/tests/test_native_abi_c_allocator_boundary_attachment.py',
 )
+STDIO_ALIAS_PRIVATE_GROUP = 'component-owned-stdio-private-bodies'
+STDIO_ALIAS_PRIVATE_OWNER = 'x86-owned-stdio-private-bodies'
+STDIO_ALIAS_RECEIPT_REQUIREMENT = 'current source-bound FILE alias/private-body receipt'
+STDIO_ALIAS_LIMITS = [
+    'Only the fifteen named FILE weak aliases, their thirteen named bodies, and two protected-body controls are joined.',
+    'The receipt does not close general stdio behavior, declaration/profile agreement, runtime qualification, family completion, promotion or public support.',
+]
+
+
+def _stdio_alias_reader():
+    """Load the FILE reader after this selection module has initialized.
+
+    The FILE reader reuses the ordinary-data reader, which imports this
+    selector for its checked product boundary. Importing it at module load
+    would create a partial-module cycle when the FILE reader is used directly.
+    The attachment still loads its exact source-owned reader before accepting
+    a report; this delayed import only preserves that public reader entry
+    point.
+    """
+    try:
+        return importlib.import_module('owned_stdio_alias_contract_reader')
+    except (ImportError, OSError, ValueError) as error:
+        raise SelectionError(f'cannot load FILE alias reader: {error}') from error
+
+
+def _stdio_alias_source_files() -> tuple[str, ...]:
+    reader = _stdio_alias_reader()
+    return (
+        *reader.COLLECTOR_SOURCES,
+        *reader.RUNTIME_SOURCES,
+        'compat/x86_64/tests/test_owned_stdio_alias_contract_reader.py',
+        'compat/x86_64/tests/test_native_abi_stdio_alias_attachment.py',
+    )
 RUNTIME_REGISTRY_REQUIREMENTS = (
     'current signature and exact relocation-admission evidence',
     'graph rollback/reentry/fork and thread-local diagnostic component evidence',
@@ -641,6 +675,7 @@ def load_source_inputs(contract: Mapping[str, Any], contract_path: Path) -> dict
         'compat/x86_64/tests/test_prepared_worker_tls_evidence.py',
         *errno_storage_evidence.SOURCE_FILES,
         *C_ALLOCATOR_BOUNDARY_SOURCE_FILES,
+        *_stdio_alias_source_files(),
     })
     files.update(pthread_alias_evidence.SOURCE_CONTRACT_PATHS)
     for field in ('owner_groups', 'structural_groups', 'object_contracts', 'private_protocols'):
@@ -718,6 +753,12 @@ def expand_obligations(contract: Mapping[str, Any], inputs: Mapping[str, Any]) -
                 # Metadata selects this deliberately non-public provider, but
                 # cannot stand in for its source-bound alias/lifecycle receipt.
                 record['unresolved'].append(ERRNO_STORAGE_LIFECYCLE_REQUIREMENT)
+            if group['id'] == STDIO_ALIAS_PRIVATE_GROUP:
+                # The three named FILE bodies are deliberately private. Their
+                # exact static/shared placement and public weak alias domains
+                # require the finite owner receipt below; metadata alone is
+                # never a replacement for those runtime and ELF observations.
+                record['unresolved'].append(STDIO_ALIAS_RECEIPT_REQUIREMENT)
     for name, owner in inputs['deferred'].items():
         record = obtain(name)
         require(record['selection'] is None, f'deferred/provider overlap: {name}')
@@ -2086,7 +2127,8 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
                                     pthread: Mapping[str, Any] | None,
                                     prepared_worker: Mapping[str, Any] | None = None,
                                     errno_storage: Mapping[str, Any] | None = None,
-                                    c_allocator_boundary: Mapping[str, Any] | None = None) -> None:
+                                    c_allocator_boundary: Mapping[str, Any] | None = None,
+                                    stdio_alias_contract: Mapping[str, Any] | None = None) -> None:
     """Keep runtime attachments within the same source/product transaction.
 
     Both owning readers validate their receipts before the selector's placement
@@ -2095,7 +2137,8 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
     is sealed.
     """
     if (registry is None and pthread is None and prepared_worker is None
-            and errno_storage is None and c_allocator_boundary is None):
+            and errno_storage is None and c_allocator_boundary is None
+            and stdio_alias_contract is None):
         return
     require(same(source, selection_source()), 'selection source changed during runtime receipt attachment')
     reports = _measurement_report_bindings(measurement, 'runtime receipt')
@@ -2106,6 +2149,10 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
                 f'public ELF replay {name} changed during runtime receipt attachment')
     current = _runtime_attachment_identities(paths)
     if c_allocator_boundary is not None:
+        current['static_provenance'] = file_identity(
+            paths['static_product'] / 'share/crabc/libc-static.provenance.json'
+        )
+    if stdio_alias_contract is not None:
         current['static_provenance'] = file_identity(
             paths['static_product'] / 'share/crabc/libc-static.provenance.json'
         )
@@ -2131,6 +2178,11 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
         ('native C allocator boundary', c_allocator_boundary, {
             'static_manifest', 'static_libc', 'static_provenance', 'dynamic_manifest',
             'dynamic_state', 'dynamic_libc', 'dynamic_shared_provenance',
+        }, True),
+        ('FILE alias', stdio_alias_contract, {
+            'static_manifest', 'static_driver', 'static_libc', 'static_provenance',
+            'dynamic_manifest', 'dynamic_state', 'dynamic_driver', 'dynamic_libc',
+            'dynamic_loader', 'dynamic_shared_provenance',
         }, True),
     )
     for label, companion, expected_roster, needs_measurement_reports in companion_rosters:
@@ -2701,12 +2753,63 @@ def _errno_summary(value: object) -> dict[str, str]:
     expected = {
         'errno_public_accessor': 'GLOBAL DEFAULT FUNC',
         'errno_allocator_alias': 'static WEAK HIDDEN same-address; shared LOCAL DEFAULT absent-dynsym',
-        'h_errno': 'GLOBAL DEFAULT OBJECT size=4 with GLOBAL DEFAULT accessor',
-        'execution': 'main/live-worker isolation, stable live locations, selected pthread EBUSY preserves errno, and loaded DSO access',
+        'h_errno': 'GLOBAL DEFAULT OBJECT size=4, source-required alignment=4, and GLOBAL DEFAULT accessor',
+        'h_errno_layout': 'static/shared defining section and section-relative offset retain alignment=4; shared section over-alignment is observed separately',
+        'execution': 'main/live-worker isolation, aligned live accessor locations, stable live locations, selected pthread EBUSY preserves errno, and loaded DSO access',
         'worker_pointer_lifetime': 'never dereferenced after join',
     }
     require(same(value, expected), 'errno storage lifecycle summary differs')
     return copy.deepcopy(expected)
+
+
+def _errno_h_errno_layout(value: object) -> dict[str, dict[str, Any]]:
+    """Keep the errno reader's finite object-layout projection exact.
+
+    The owning reader reconstructs the complete raw section/member facts.  The
+    selector consumes only the source-required object metadata after requiring
+    both retained role records, so a section's incidental shared over-alignment
+    never becomes a generic native ABI rule.
+    """
+    roles = exact(value, {'static', 'shared'}, 'errno h_errno layout roster')
+    metadata = errno_storage_evidence.H_ERRNO_METADATA
+    fact_keys = {
+        'symbol_value_hex', 'object_size_bytes', 'required_alignment_bytes',
+        'defining_section_index', 'defining_section_name', 'defining_section_address_hex',
+        'defining_section_size_bytes', 'defining_section_alignment_bytes',
+        'offset_bytes', 'offset_modulo_required_alignment',
+    }
+    result: dict[str, dict[str, Any]] = {}
+    for role in ('static', 'shared'):
+        record = exact(roles[role], {'metadata', 'oracle', 'candidate'}, f'errno h_errno {role} layout')
+        observed_metadata = exact(record['metadata'], set(metadata), f'errno h_errno {role} metadata')
+        require(same(observed_metadata, metadata), f'errno h_errno {role} metadata differs')
+        expected_fact_keys = set(fact_keys)
+        if role == 'static':
+            expected_fact_keys.add('archive_member')
+        for owner in ('oracle', 'candidate'):
+            fact = exact(record[owner], expected_fact_keys, f'errno h_errno {role} {owner} fact')
+            require(fact['object_size_bytes'] == metadata['size_bytes']
+                    and fact['required_alignment_bytes'] == metadata['alignment_bytes']
+                    and fact['offset_modulo_required_alignment'] == 0
+                    and type(fact['defining_section_index']) is int and fact['defining_section_index'] > 0
+                    and type(fact['defining_section_alignment_bytes']) is int
+                    and fact['defining_section_alignment_bytes'] >= metadata['alignment_bytes']
+                    and fact['defining_section_alignment_bytes'] % metadata['alignment_bytes'] == 0
+                    and type(fact['offset_bytes']) is int and fact['offset_bytes'] >= 0
+                    and fact['offset_bytes'] % metadata['alignment_bytes'] == 0
+                    and all(type(fact[field]) is str and fact[field]
+                            for field in ('symbol_value_hex', 'defining_section_name', 'defining_section_address_hex'))
+                    and type(fact['defining_section_size_bytes']) is int and fact['defining_section_size_bytes'] >= metadata['size_bytes'],
+                    f'errno h_errno {role} {owner} alignment fact differs')
+            if role == 'static':
+                archive_member = exact(fact['archive_member'], {'name', 'index', 'occurrence'},
+                                       f'errno h_errno {role} {owner} member')
+                require(type(archive_member['name']) is str and archive_member['name']
+                        and type(archive_member['index']) is int and archive_member['index'] >= 0
+                        and type(archive_member['occurrence']) is int and archive_member['occurrence'] >= 0,
+                        f'errno h_errno {role} {owner} member differs')
+        result[role] = copy.deepcopy(observed_metadata)
+    return result
 
 
 def _errno_alias_policy(value: object, description: str) -> dict[str, Any]:
@@ -2758,8 +2861,9 @@ def errno_storage_lifecycle_adapter(report_path: Path | None, *, facts: Mapping[
     _measurement_source_matches(source, measurement, 'errno storage lifecycle')
     measurement_reports = _measurement_report_bindings(measurement, 'errno storage lifecycle')
     report = exact(report, {
-        'schema', 'target', 'work', 'source', 'products', 'shared_alias_link_policy', 'symbols', 'workload_symbols',
-        'objects', 'execution', 'dynamic_link_receipts', 'summary',
+        'schema', 'target', 'work', 'source', 'collection_checkout_root', 'products', 'shared_alias_link_policy',
+        'symbols', 'layout_artifacts', 'h_errno_layout', 'workload_symbols', 'objects', 'execution',
+        'dynamic_link_receipts', 'summary',
     }, 'errno storage lifecycle reader report')
     require(report['schema'] == errno_storage_evidence.SCHEMA and report['target'] == errno_storage_evidence.TARGET,
             'errno storage lifecycle reader report identity differs')
@@ -2786,7 +2890,10 @@ def errno_storage_lifecycle_adapter(report_path: Path | None, *, facts: Mapping[
         artifacts=(('static_libc', 'candidate-static'), ('dynamic_libc', 'candidate-shared')),
     )
     alias_policy = _errno_alias_policy(report['shared_alias_link_policy'], 'errno storage lifecycle receipt')
+    h_errno_layout = _errno_h_errno_layout(report['h_errno_layout'])
     require(type(report['symbols']) is dict and set(report['symbols']) == set(errno_storage_evidence.SYMBOL_INPUTS)
+            and type(report['layout_artifacts']) is dict
+            and set(report['layout_artifacts']) == set(errno_storage_evidence.LAYOUT_INPUTS)
             and type(report['workload_symbols']) is dict and set(report['workload_symbols']) == set(errno_storage_evidence.WORKLOAD_SYMBOL_INPUTS)
             and type(report['objects']) is dict and set(report['objects']) == set(errno_storage_evidence.OBJECTS)
             and type(report['execution']) is dict and set(report['execution']) == set(errno_storage_evidence.RUN_LABELS)
@@ -2809,6 +2916,7 @@ def errno_storage_lifecycle_adapter(report_path: Path | None, *, facts: Mapping[
             'public_symbols': list(errno_storage_evidence.PUBLIC_SYMBOLS),
             'private_alias': errno_storage_evidence.ALIAS,
             'shared_alias_policy': copy.deepcopy(alias_policy),
+            'h_errno_layout': h_errno_layout,
             'summary': summary,
             'execution_labels': list(errno_storage_evidence.RUN_LABELS),
         },
@@ -2984,6 +3092,225 @@ def native_c_allocator_boundary_adapter(report_path: Path | None, *, facts: Mapp
     }
 
 
+def _stdio_alias_identities(paths: Mapping[str, Path]) -> dict[str, dict[str, Any]]:
+    """Return the installed product files sealed by the FILE alias receipt.
+
+    The FILE reader validates complete static and dynamic trees.  Selection
+    retains this finite file roster as the transaction join, rather than
+    letting a matching alias row authorize an unrelated installed product.
+    """
+    return _c_allocator_boundary_identities(paths)
+
+
+def _stdio_receipt_identity(value: object, description: str) -> dict[str, Any]:
+    """Validate the FILE reader's path/hash/size form without inventing mode."""
+    row = exact(value, {'path', 'sha256', 'size'}, description)
+    relative = Path(row['path']) if type(row['path']) is str else None
+    require(relative is not None and str(relative) and not relative.is_absolute()
+            and '..' not in relative.parts
+            and type(row['sha256']) is str and re.fullmatch(r'[0-9a-f]{64}', row['sha256']) is not None
+            and type(row['size']) is int and not isinstance(row['size'], bool) and row['size'] >= 0,
+            f'{description} identity differs')
+    return {'path': relative.as_posix(), 'sha256': row['sha256'], 'size': row['size']}
+
+
+def _require_stdio_receipt_identity(value: object, current: object, description: str) -> None:
+    observed = _stdio_receipt_identity(value, description + ' receipt')
+    selected = _identity_payload(current, description + ' selected')
+    require(observed['sha256'] == selected['sha256'] and observed['size'] == selected['size'],
+            f'{description} bytes differ')
+
+
+def _require_stdio_receipt_path(value: object, expected: Path, description: str) -> None:
+    """Bind a reader-resolved input path to the selection's physical input."""
+    observed = _stdio_receipt_identity(value, description)
+    retained = (ROOT / observed['path']).resolve()
+    require(retained == expected.resolve(), f'{description} path differs from selected input')
+
+
+def _require_stdio_product_root(value: object, expected: Path, description: str) -> None:
+    require(type(value) is str and value and not Path(value).is_absolute()
+            and '..' not in Path(value).parts,
+            f'{description} root path differs')
+    require((ROOT / value).resolve() == expected.resolve(),
+            f'{description} root differs from selected product')
+
+
+def _require_stdio_tree_file(tree: object, relative: str, current: object, description: str) -> None:
+    require(type(tree) is dict, f'{description} tree differs')
+    row = exact(tree.get(relative), {'kind', 'mode', 'sha256', 'size'}, f'{description} tree file')
+    selected = _identity_payload(current, f'{description} selected')
+    require(row['kind'] == 'file' and row['mode'] == selected['mode']
+            and row['sha256'] == selected['sha256'] and row['size'] == selected['size'],
+            f'{description} tree file differs')
+
+
+def _stdio_source_snapshot(value: object, names: Sequence[str], description: str) -> dict[str, dict[str, Any]]:
+    require(type(value) is dict and set(value) == set(names), f'{description} source roster differs')
+    result = {}
+    for name in names:
+        row = _stdio_receipt_identity(value[name], f'{description} source {name}')
+        live = _identity_payload(file_identity(ROOT / name), f'{description} live source {name}')
+        require(row['sha256'] == live['sha256'] and row['size'] == live['size'],
+                f'{description} source differs: {name}')
+        result[name] = row
+    return result
+
+
+def _normalized_stdio_complete_facts(value: object, artifact_key: str) -> object:
+    """Normalize only retained archive path spelling before raw-row equality.
+
+    The public full-facts reader records its container input spelling while the
+    FILE receipt records the supplied product spelling.  Neither spelling is
+    ABI metadata.  Every member, table, section and raw row remains exact.
+    """
+    result = copy.deepcopy(value)
+    if artifact_key.endswith('static'):
+        require(type(result) is list, f'FILE {artifact_key} archive facts differ')
+        for member in result:
+            require(type(member) is dict and type(member.get('archive')) is str and member['archive'],
+                    f'FILE {artifact_key} archive path differs')
+            member['archive'] = '<receipt-archive-path>'
+    else:
+        require(type(result) is dict, f'FILE {artifact_key} shared facts differ')
+    return result
+
+
+def _stdio_complete_facts_match(value: object, facts: Mapping[str, Any]) -> None:
+    """Join the four raw FILE views to the public complete ELF facts once."""
+    keys = {'candidate-static', 'reference-static', 'candidate-shared', 'reference-shared'}
+    require(type(value) is dict and set(value) == keys
+            and type(facts.get('facts')) is dict and keys <= set(facts['facts']),
+            'FILE complete ELF facts roster differs')
+    for key in sorted(keys):
+        require(same(_normalized_stdio_complete_facts(value[key], key),
+                     _normalized_stdio_complete_facts(facts['facts'][key], key)),
+                f'FILE complete ELF facts differ: {key}')
+
+
+def native_stdio_alias_adapter(report_path: Path | None, *, facts: Mapping[str, Any],
+                               measurement: Mapping[str, Any], paths: Mapping[str, Path],
+                               source: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Replay and bind the finite current-source FILE alias receipt once.
+
+    The owner reader retains raw archive/shared observations and runtime
+    transcripts.  Selection consumes that public replay only for the fixed
+    alias/body domains and protected-body controls; it neither infers another
+    stdio provider nor treats this component as general stdio qualification.
+    """
+    if report_path is None:
+        return None
+    stdio_alias_evidence = _stdio_alias_reader()
+    require(Path(stdio_alias_evidence.ROOT) == ROOT
+            and Path(stdio_alias_evidence.__file__).resolve().parent == MODULE_DIR,
+            'FILE alias reader belongs to a different checkout')
+    report_path = physical_work_path(report_path, directory=False)
+    before = file_identity(report_path)
+    try:
+        report = stdio_alias_evidence.validate_report(ROOT, report_path)
+    except (KeyError, TypeError, ValueError, OSError, stdio_alias_evidence.StdioAliasEvidenceError) as error:
+        raise SelectionError(f'FILE alias component rejected: {error}') from error
+    require(same(before, file_identity(report_path)), 'FILE alias report changed during replay')
+    source = exact(dict(source), {'revision', 'content_sha256', 'clean'}, 'selection source')
+    _measurement_source_matches(source, measurement, 'FILE alias')
+    measurement_reports = _measurement_report_bindings(measurement, 'FILE alias')
+    report = exact(report, {
+        'schema', 'status', 'image', 'contract', 'collector_source', 'collector_files', 'selected_files',
+        'inputs_before', 'inputs_after', 'oracle', 'oracle_static', 'tools', 'commands', 'observations', 'files',
+    }, 'FILE alias reader report')
+    require(report['schema'] == stdio_alias_evidence.SCHEMA
+            and same(report['status'], stdio_alias_evidence.STATUS)
+            and same(report['contract'], stdio_alias_evidence.contract(ROOT)),
+            'FILE alias reader contract or status differs')
+    require(same(report['collector_source'], {
+        'revision': source['revision'], 'content_sha256': source['content_sha256'],
+    }), 'FILE alias collector source differs from selection')
+    collector_files = _stdio_source_snapshot(
+        report['collector_files'], stdio_alias_evidence.COLLECTOR_SOURCES, 'FILE collector',
+    )
+    selected_files = _stdio_source_snapshot(
+        report['selected_files'], stdio_alias_evidence.RUNTIME_SOURCES, 'FILE selected runtime',
+    )
+    inputs = exact(report['inputs_before'], {
+        'selected_source', 'producer_commands', 'preparation', 'historical_facts', 'static_preparation',
+        'dynamic_product', 'static_tree', 'dynamic_tree', 'state',
+    }, 'FILE alias input account')
+    require(same(report['inputs_after'], inputs), 'FILE alias input account changed')
+    require(same(inputs['selected_source'], {
+        'revision': source['revision'], 'content_sha256': source['content_sha256'],
+    }), 'FILE alias product source differs from selection')
+    current = _stdio_alias_identities(paths)
+    _require_stdio_receipt_path(inputs['preparation'], paths['static_preparation'], 'FILE static preparation')
+    _require_stdio_receipt_identity(inputs['preparation'], measurement_reports['static_preparation'],
+                                    'FILE static preparation')
+    _require_stdio_receipt_path(inputs['historical_facts'], paths['elf_report'], 'FILE complete ELF facts')
+    _require_stdio_receipt_identity(inputs['historical_facts'], measurement_reports['elf_report'],
+                                    'FILE complete ELF facts')
+    static_product = exact(inputs['static_preparation'], {'primary'}, 'FILE static product')
+    static_primary = exact(static_product['primary'], {'path', 'manifest'}, 'FILE static product primary')
+    _require_stdio_product_root(static_primary['path'], paths['static_product'], 'FILE static product')
+    _require_stdio_receipt_identity(static_primary['manifest'], current['static_manifest'], 'FILE static manifest')
+    dynamic_product = exact(inputs['dynamic_product'], {'path', 'manifest'}, 'FILE dynamic product')
+    _require_stdio_product_root(dynamic_product['path'], paths['dynamic_product'], 'FILE dynamic product')
+    _require_stdio_receipt_identity(dynamic_product['manifest'], current['dynamic_manifest'], 'FILE dynamic manifest')
+    _require_stdio_receipt_identity(inputs['state'], current['dynamic_state'], 'FILE dynamic state')
+    for tree, relative, name in (
+        (inputs['static_tree'], 'share/crabc/manifest.json', 'static_manifest'),
+        (inputs['static_tree'], 'share/crabc/libc-static.provenance.json', 'static_provenance'),
+        (inputs['static_tree'], 'bin/crabc-cc', 'static_driver'),
+        (inputs['static_tree'], 'usr/lib/libc.a', 'static_libc'),
+        (inputs['dynamic_tree'], 'share/crabc/manifest.json', 'dynamic_manifest'),
+        (inputs['dynamic_tree'], 'share/crabc/dynamic-product-state.json', 'dynamic_state'),
+        (inputs['dynamic_tree'], 'share/crabc/libc-shared.provenance.json', 'dynamic_shared_provenance'),
+        (inputs['dynamic_tree'], 'bin/crabc-cc-dynamic', 'dynamic_driver'),
+        (inputs['dynamic_tree'], 'usr/lib/libc.so', 'dynamic_libc'),
+        (inputs['dynamic_tree'], 'lib/ld-crabc-x86_64.so.1', 'dynamic_loader'),
+    ):
+        _require_stdio_tree_file(tree, relative, current[name], f'FILE {name}')
+    _runtime_facts_match_selected_products(
+        facts, current, label='FILE alias',
+        artifacts=(('static_libc', 'candidate-static'), ('dynamic_libc', 'candidate-shared')),
+    )
+    observations = exact(report['observations'], {
+        'complete_elf_facts', 'aliases', 'objects', 'executables', 'candidate_links', 'execution_roots', 'runtime_labels',
+    }, 'FILE alias observations')
+    _stdio_complete_facts_match(observations['complete_elf_facts'], facts)
+    aliases = observations['aliases']
+    artifact_keys = {'candidate-static', 'reference-static', 'candidate-shared', 'reference-shared'}
+    require(type(aliases) is dict and set(aliases) == artifact_keys
+            and all(type(value) is dict and set(value) == {'aliases', 'protected'} for value in aliases.values()),
+            'FILE alias observation roster differs')
+    require(type(observations['candidate_links']) is dict
+            and set(observations['candidate_links']) == {
+                name for name in stdio_alias_evidence.binaries() if name.startswith('candidate-')
+            }
+            and observations['runtime_labels'] == [row['label'] for row in stdio_alias_evidence.runtime_cells()],
+            'FILE alias runtime/link roster differs')
+    selected_products = {
+        name: copy.deepcopy(current[name]) for name in (
+            'static_manifest', 'static_driver', 'static_libc', 'static_provenance', 'dynamic_manifest',
+            'dynamic_state', 'dynamic_driver', 'dynamic_libc', 'dynamic_loader', 'dynamic_shared_provenance',
+        )
+    }
+    source_inputs = {name: file_identity(ROOT / name) for name in _stdio_alias_source_files()}
+    return {
+        'status': 'stdio-alias-observed-with-boundaries',
+        'reader': file_identity(Path(stdio_alias_evidence.__file__)),
+        'contract': file_identity(ROOT / 'compat/x86_64/owned-stdio-alias-receipt.toml'),
+        'report': before,
+        'source': copy.deepcopy(source),
+        'source_inputs': source_inputs,
+        'products': selected_products,
+        'measurement_reports': measurement_reports,
+        'account': {
+            'aliases': copy.deepcopy(aliases),
+            'runtime_labels': list(observations['runtime_labels']),
+            'candidate_link_labels': sorted(observations['candidate_links']),
+        },
+        'limits': list(STDIO_ALIAS_LIMITS),
+    }
+
+
 def _accounting_indexes(accounting: Mapping[str, Any], *, description: str) -> tuple[dict[tuple[str, str | None, bool], dict[str, Any]],
                                                                                       dict[tuple[tuple[str, str | None, bool], str], dict[str, Any]],
                                                                                       dict[int, dict[str, Any]]]:
@@ -3012,7 +3339,7 @@ def _selected_placement(placements: Mapping[tuple[tuple[str, str | None, bool], 
     require(occurrence is not None and occurrence.get('artifact_key') == artifact_key
             and occurrence.get('table') == table and occurrence.get('role') == role
             and same(row_identity(occurrence['row']), identity(name))
-            and all(occurrence['row'].get(field) == value for field, value in metadata.items()),
+            and not metadata_differences(metadata, occurrence['row'], occurrence.get('definition_section')),
             f'{description} selected occurrence differs')
     return dict(join), dict(occurrence)
 
@@ -3255,7 +3582,7 @@ def attach_errno_storage_lifecycle(accounting: Mapping[str, Any], companion: Map
             and companion['limits'] == ERRNO_STORAGE_LIFECYCLE_LIMITS,
             'errno storage lifecycle companion boundary differs')
     account = exact(companion['account'], {
-        'public_symbols', 'private_alias', 'shared_alias_policy', 'summary', 'execution_labels',
+        'public_symbols', 'private_alias', 'shared_alias_policy', 'h_errno_layout', 'summary', 'execution_labels',
     }, 'errno storage lifecycle companion account')
     require(account['public_symbols'] == list(errno_storage_evidence.PUBLIC_SYMBOLS)
             and account['private_alias'] == errno_storage_evidence.ALIAS
@@ -3263,13 +3590,25 @@ def attach_errno_storage_lifecycle(accounting: Mapping[str, Any], companion: Map
             'errno storage lifecycle finite identity roster differs')
     _errno_summary(account['summary'])
     _errno_alias_policy(account['shared_alias_policy'], 'errno storage lifecycle companion')
+    # The adapter already reconstructed the complete role facts through the
+    # public errno reader. The compact companion intentionally carries only
+    # the selected metadata for these generic placement joins.
+    h_errno_layout = account['h_errno_layout']
+    require(type(h_errno_layout) is dict and set(h_errno_layout) == {'static', 'shared'}
+            and all(same(h_errno_layout[role], errno_storage_evidence.H_ERRNO_METADATA)
+                    for role in ('static', 'shared')),
+            'errno storage lifecycle h_errno metadata differs')
     _errno_provider_partition(inputs)
     records, placements, occurrences = _accounting_indexes(accounting, description='errno storage lifecycle attachment')
     public_rows = []
-    for name, owner, metadata in (
-        ('__errno_location', 'checked-header-provider-routing', {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT'}),
-        ('__h_errno_location', 'x86-h-errno', {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT'}),
-        ('h_errno', 'object:h_errno', {'type': 'OBJECT', 'binding': 'GLOBAL', 'visibility': 'DEFAULT', 'size_bytes': 4}),
+    for name, owner, static_metadata, shared_metadata in (
+        ('__errno_location', 'checked-header-provider-routing',
+         {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT'},
+         {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT'}),
+        ('__h_errno_location', 'x86-h-errno',
+         {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT'},
+         {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT'}),
+        ('h_errno', 'object:h_errno', h_errno_layout['static'], h_errno_layout['shared']),
     ):
         record = records.get((name, None, False))
         require(record is not None and record.get('selection', {}).get('disposition') == 'public-provider'
@@ -3277,11 +3616,11 @@ def attach_errno_storage_lifecycle(accounting: Mapping[str, Any], companion: Map
                 f'errno storage lifecycle selected owner differs: {name}')
         static_join, static_occurrence = _selected_placement(
             placements, occurrences, name=name, artifact_key='candidate-static', table='.symtab', role='definition',
-            metadata=metadata, description=f'errno storage lifecycle {name} static',
+            metadata=static_metadata, description=f'errno storage lifecycle {name} static',
         )
         shared_join, shared_occurrence = _selected_placement(
             placements, occurrences, name=name, artifact_key='candidate-shared', table='.dynsym', role='definition',
-            metadata=metadata, description=f'errno storage lifecycle {name} shared',
+            metadata=shared_metadata, description=f'errno storage lifecycle {name} shared',
         )
         public_rows.append({
             'identity': copy.deepcopy(record['identity']), 'owner': owner,
@@ -3335,6 +3674,7 @@ def attach_errno_storage_lifecycle(accounting: Mapping[str, Any], companion: Map
             'requirements_discharged': [ERRNO_STORAGE_LIFECYCLE_REQUIREMENT],
         },
         'runtime_summary': copy.deepcopy(account['summary']),
+        'h_errno_layout': copy.deepcopy(h_errno_layout),
         'limits': list(ERRNO_STORAGE_LIFECYCLE_LIMITS),
     }]
 
@@ -3484,6 +3824,240 @@ def attach_native_c_allocator_boundary(accounting: Mapping[str, Any],
                     and blocker.get('reason') == ORDINARY_IMPORT_REASON)
         ]
     return result
+
+
+def _stdio_alias_occurrence(occurrences: Mapping[int, Mapping[str, Any]], *, artifact_key: str,
+                            observation: Mapping[str, Any], description: str) -> dict[str, Any]:
+    """Bind one retained FILE ``.symtab`` definition to a full-facts row."""
+    observed = exact(dict(observation), {
+        'member', 'member_index', 'member_occurrence', 'table_section_index', 'row', 'section',
+    }, description)
+    row = observed['row']
+    require(type(row) is dict and type(row.get('name')) is str and row['name']
+            and row.get('section_index') != 'UND' and type(observed['section']) is dict,
+            f'{description} raw definition differs')
+    matches = [candidate for candidate in occurrences.values()
+               if candidate.get('artifact_key') == artifact_key and candidate.get('table') == '.symtab'
+               and candidate.get('member_name') == observed['member']
+               and candidate.get('member_index') == observed['member_index']
+               and candidate.get('member_occurrence') == observed['member_occurrence']
+               and candidate.get('table_section_index') == observed['table_section_index']
+               and same(candidate.get('row'), row)
+               and same(candidate.get('definition_section'), observed['section'])]
+    require(len(matches) == 1, f'{description} does not bind one complete ELF occurrence')
+    return dict(matches[0])
+
+
+def _stdio_selected_alias_placement(placements: Mapping[tuple[tuple[str, str | None, bool], str], Mapping[str, Any]],
+                                    occurrences: Mapping[int, Mapping[str, Any]], *, name: str,
+                                    description: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    static = _selected_placement(
+        placements, occurrences, name=name, artifact_key='candidate-static', table='.symtab', role='definition',
+        metadata={'type': 'FUNC', 'binding': 'WEAK', 'visibility': 'DEFAULT'},
+        description=f'{description} static alias',
+    )
+    shared = _selected_placement(
+        placements, occurrences, name=name, artifact_key='candidate-shared', table='.dynsym', role='definition',
+        metadata={'type': 'FUNC', 'binding': 'WEAK', 'visibility': 'DEFAULT'},
+        description=f'{description} shared alias',
+    )
+    return static, shared
+
+
+def attach_native_stdio_alias(accounting: Mapping[str, Any], companion: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """Attach only the finite FILE alias/body and protected-boundary receipt.
+
+    The raw receipt covers four artifact views.  This join maps every retained
+    alias/body definition back to the single public complete-facts occurrence,
+    clears only the pre-existing feature-alias receipt requirement, and keeps
+    the three named hidden bodies private providers.  It does not make a
+    spelling-prefix rule for other stdio internals.
+    """
+    if companion is None:
+        return []
+    stdio_alias_evidence = _stdio_alias_reader()
+    companion = exact(companion, {
+        'status', 'reader', 'contract', 'report', 'source', 'source_inputs', 'products',
+        'measurement_reports', 'account', 'limits',
+    }, 'FILE alias companion')
+    require(companion['status'] == 'stdio-alias-observed-with-boundaries'
+            and companion['limits'] == STDIO_ALIAS_LIMITS,
+            'FILE alias companion boundary differs')
+    require(same(companion['source_inputs'], {
+        name: file_identity(ROOT / name) for name in _stdio_alias_source_files()
+    }), 'FILE alias source inputs changed')
+    account = exact(companion['account'], {'aliases', 'runtime_labels', 'candidate_link_labels'},
+                    'FILE alias companion account')
+    require(account['runtime_labels'] == [row['label'] for row in stdio_alias_evidence.runtime_cells()]
+            and account['candidate_link_labels'] == sorted(
+                name for name in stdio_alias_evidence.binaries() if name.startswith('candidate-')
+            ), 'FILE alias runtime/link account differs')
+    aliases = account['aliases']
+    artifact_keys = ('candidate-static', 'reference-static', 'candidate-shared', 'reference-shared')
+    require(type(aliases) is dict and set(aliases) == set(artifact_keys), 'FILE alias artifact roster differs')
+    records, placements, occurrences = _accounting_indexes(accounting, description='FILE alias attachment')
+    function_observations = accounting.get('function_alias_observations')
+    require(type(function_observations) is list, 'FILE function alias observation roster differs')
+    alias_joins: list[dict[str, Any]] = []
+    private_pairs: dict[str, dict[str, Any]] = {}
+    for alias_name, target_name in stdio_alias_evidence.ALIASES.items():
+        key = (alias_name, None, False)
+        record = records.get(key)
+        require(record is not None and record.get('selection', {}).get('disposition') == 'public-provider',
+                f'FILE public alias selection differs: {alias_name}')
+        feature = record.get('function_alias_requirements')
+        require(type(feature) is list and len(feature) == 1
+                and feature[0].get('name') == alias_name and feature[0].get('target') == target_name
+                and feature[0].get('binding') == 'weak-same-address'
+                and feature[0].get('owner') == 'x86-owned-static-runtime',
+                f'FILE feature alias contract differs: {alias_name}')
+        matching_observations = [row for row in function_observations
+                                 if type(row) is dict and same(row.get('identity'), identity(alias_name))
+                                 and same(row.get('target'), identity(target_name))]
+        require(len(matching_observations) == 1,
+                f'FILE function alias observation differs: {alias_name}')
+        function_observation = matching_observations[0]
+        require(function_observation.get('feature_contract') == feature[0]
+                and function_observation.get('feature_archive_receipt_proven') is False
+                and function_observation.get('runtime_semantics_proven') is False,
+                f'FILE function alias observation differs: {alias_name}')
+        static_placement, shared_placement = _stdio_selected_alias_placement(
+            placements, occurrences, name=alias_name, description=f'FILE {alias_name}',
+        )
+        artifact_pairs = {}
+        for artifact_key in artifact_keys:
+            artifact = exact(aliases[artifact_key], {'aliases', 'protected'},
+                             f'FILE {artifact_key} alias account')
+            pairs = artifact['aliases']
+            require(type(pairs) is dict and set(pairs) == set(stdio_alias_evidence.ALIASES),
+                    f'FILE {artifact_key} alias roster differs')
+            pair = exact(pairs[alias_name], {'target', 'alias_occurrence', 'target_occurrence'},
+                         f'FILE {artifact_key} {alias_name} pair')
+            require(pair['target'] == target_name, f'FILE {artifact_key} alias target differs: {alias_name}')
+            alias_occurrence = _stdio_alias_occurrence(
+                occurrences, artifact_key=artifact_key, observation=pair['alias_occurrence'],
+                description=f'FILE {artifact_key} alias {alias_name}',
+            )
+            target_occurrence = _stdio_alias_occurrence(
+                occurrences, artifact_key=artifact_key, observation=pair['target_occurrence'],
+                description=f'FILE {artifact_key} target {target_name}',
+            )
+            require(alias_occurrence['row'].get('type') == 'FUNC'
+                    and alias_occurrence['row'].get('binding') == 'WEAK'
+                    and alias_occurrence['row'].get('visibility') == 'DEFAULT'
+                    and same_definition_domain(alias_occurrence, target_occurrence),
+                    f'FILE {artifact_key} alias domain differs: {alias_name}')
+            artifact_pairs[artifact_key] = {
+                'alias_occurrence_index': alias_occurrence['index'],
+                'target_occurrence_index': target_occurrence['index'],
+            }
+        static_pair = artifact_pairs['candidate-static']
+        require(static_pair['alias_occurrence_index'] in static_placement[0]['occurrence_indices']
+                and [static_pair['alias_occurrence_index'], static_pair['target_occurrence_index']]
+                in function_observation.get('same_domain_pairs', []),
+                f'FILE static feature alias domain differs: {alias_name}')
+        function_observation['feature_archive_receipt_proven'] = True
+        function_observation['runtime_semantics_proven'] = True
+        _remove_identity_requirements(
+            accounting, record,
+            ('source-selected alias requires exact feature archive selection and component receipt',),
+            description=f'FILE alias {alias_name}',
+        )
+        alias_joins.append({
+            'identity': copy.deepcopy(record['identity']), 'target': identity(target_name),
+            'static_alias_occurrence_index': static_placement[1]['index'],
+            'shared_alias_occurrence_index': shared_placement[1]['index'],
+            'artifact_pairs': artifact_pairs,
+            'feature_archive_receipt_proven': True,
+            'runtime_semantics_proven': True,
+        })
+        if target_name in stdio_alias_evidence.HIDDEN:
+            private_pairs[target_name] = artifact_pairs
+    require([row['identity']['name'] for row in alias_joins] == list(stdio_alias_evidence.ALIASES),
+            'FILE alias join cardinality differs')
+
+    private_joins: list[dict[str, Any]] = []
+    for name in stdio_alias_evidence.HIDDEN:
+        record = records.get((name, None, False))
+        require(record is not None and record.get('selection', {}).get('disposition') == 'private-provider'
+                and record['selection'].get('owner') == STDIO_ALIAS_PRIVATE_OWNER
+                and record['selection'].get('group') == STDIO_ALIAS_PRIVATE_GROUP,
+                f'FILE private body selection differs: {name}')
+        static_placement, static_occurrence = _selected_placement(
+            placements, occurrences, name=name, artifact_key='candidate-static', table='.symtab', role='definition',
+            metadata={'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'HIDDEN'},
+            description=f'FILE private body {name} static',
+        )
+        shared_placement, shared_occurrence = _selected_placement(
+            placements, occurrences, name=name, artifact_key='candidate-shared', table='.symtab', role='local-definition',
+            metadata={'type': 'FUNC', 'binding': 'LOCAL', 'visibility': 'HIDDEN'},
+            description=f'FILE private body {name} shared',
+        )
+        require(not [row for row in occurrences.values()
+                     if row.get('artifact_key') == 'candidate-shared' and row.get('table') == '.dynsym'
+                     and row.get('row', {}).get('name') == name and row['row'].get('section_index') != 'UND'],
+                f'FILE private body leaked to candidate dynsym: {name}')
+        pairs = private_pairs.get(name)
+        require(type(pairs) is dict and set(pairs) == set(artifact_keys)
+                and pairs['candidate-static']['target_occurrence_index'] == static_occurrence['index']
+                and pairs['candidate-shared']['target_occurrence_index'] == shared_occurrence['index'],
+                f'FILE private body receipt domain differs: {name}')
+        _remove_identity_requirements(
+            accounting, record, (STDIO_ALIAS_RECEIPT_REQUIREMENT,),
+            description=f'FILE private body {name}',
+        )
+        private_joins.append({
+            'identity': copy.deepcopy(record['identity']),
+            'static_occurrence_index': static_occurrence['index'],
+            'shared_occurrence_index': shared_occurrence['index'],
+            'static_metadata': copy.deepcopy(static_placement['expected_metadata']),
+            'shared_metadata': copy.deepcopy(shared_placement['expected_metadata']),
+            'candidate_dynsym_definition_absent': True,
+            'requirements_discharged': [STDIO_ALIAS_RECEIPT_REQUIREMENT],
+        })
+
+    protected_joins: list[dict[str, Any]] = []
+    for name in stdio_alias_evidence.PROTECTED:
+        record = records.get((name, None, False))
+        require(record is not None and record.get('selection', {}).get('disposition') == 'public-provider'
+                and record['selection'].get('group') == 'source-owned-stdio-protected-boundaries',
+                f'FILE protected body selection differs: {name}')
+        static_placement, static_occurrence = _selected_placement(
+            placements, occurrences, name=name, artifact_key='candidate-static', table='.symtab', role='definition',
+            metadata={'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'PROTECTED'},
+            description=f'FILE protected body {name} static',
+        )
+        shared_placement, shared_occurrence = _selected_placement(
+            placements, occurrences, name=name, artifact_key='candidate-shared', table='.dynsym', role='definition',
+            metadata={'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'PROTECTED'},
+            description=f'FILE protected body {name} shared',
+        )
+        retained = []
+        for artifact_key in artifact_keys:
+            artifact = exact(aliases[artifact_key], {'aliases', 'protected'},
+                             f'FILE {artifact_key} protected account')
+            protected = artifact['protected']
+            require(type(protected) is dict and set(protected) == set(stdio_alias_evidence.PROTECTED),
+                    f'FILE {artifact_key} protected roster differs')
+            occurrence = _stdio_alias_occurrence(
+                occurrences, artifact_key=artifact_key, observation=protected[name],
+                description=f'FILE {artifact_key} protected body {name}',
+            )
+            require(occurrence['row'].get('type') == 'FUNC'
+                    and occurrence['row'].get('binding') == 'GLOBAL'
+                    and occurrence['row'].get('visibility') == 'PROTECTED',
+                    f'FILE {artifact_key} protected metadata differs: {name}')
+            retained.append(occurrence['index'])
+        require(static_occurrence['index'] in retained and shared_occurrence['index'] not in retained,
+                f'FILE protected candidate table domain differs: {name}')
+        protected_joins.append({
+            'identity': copy.deepcopy(record['identity']),
+            'static_occurrence_index': static_occurrence['index'],
+            'shared_dynsym_occurrence_index': shared_occurrence['index'],
+            'retained_symtab_occurrence_indices': retained,
+            'runtime_control_observed': True,
+        })
+    return [{'aliases': alias_joins, 'private_bodies': private_joins, 'protected_controls': protected_joins}]
 
 
 def _compiler_helper_shared_contract(contract: Mapping[str, Any], inputs: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
@@ -3762,7 +4336,8 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
                   pthread_alias_contract_report: Path | None = None,
                   prepared_worker_tls_report: Path | None = None,
                   errno_storage_lifecycle_report: Path | None = None,
-                  native_c_allocator_boundary_report: Path | None = None) -> dict[str, Any]:
+                  native_c_allocator_boundary_report: Path | None = None,
+                  stdio_alias_contract_report: Path | None = None) -> dict[str, Any]:
     source_before = selection_source()
     contract = load_contract(contract_path)
     inputs = load_source_inputs(contract, contract_path)
@@ -3789,6 +4364,9 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     native_c_allocator_boundary_companion = native_c_allocator_boundary_adapter(
         native_c_allocator_boundary_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
         fixed_c_companion=fixed_c_producer_metadata_companion,
+    )
+    stdio_alias_contract_companion = native_stdio_alias_adapter(
+        stdio_alias_contract_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
     )
     declaration = declaration_adapter(
         declaration_report,
@@ -3831,11 +4409,15 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     native_c_allocator_boundary_joins = attach_native_c_allocator_boundary(
         accounting, native_c_allocator_boundary_companion,
     )
+    stdio_alias_contract_joins = attach_native_stdio_alias(
+        accounting, stdio_alias_contract_companion,
+    )
     _recheck_runtime_receipt_cohort(
         paths=paths, facts=facts, measurement=measurement, source=source_before,
         registry=loader_runtime_registry_companion, pthread=pthread_alias_contract_companion,
         prepared_worker=prepared_worker_tls_companion, errno_storage=errno_storage_lifecycle_companion,
         c_allocator_boundary=native_c_allocator_boundary_companion,
+        stdio_alias_contract=stdio_alias_contract_companion,
     )
     candidate = measurement['candidate_build']
     source_matches = source_before['clean'] is True and source_before['revision'] == candidate['revision'] and source_before['content_sha256'] == candidate['source_content_sha256']
@@ -3865,6 +4447,8 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'errno_storage_lifecycle_joins': errno_storage_lifecycle_joins,
             'native_c_allocator_boundary_companion': native_c_allocator_boundary_companion,
             'native_c_allocator_boundary_joins': native_c_allocator_boundary_joins,
+            'stdio_alias_contract_companion': stdio_alias_contract_companion,
+            'stdio_alias_contract_joins': stdio_alias_contract_joins,
             **accounting, 'closure': {'complete': not blockers, 'blockers': blockers}, 'status': dict(STATUS),
             'limits': ['selection audit is not qualification', 'complete raw ELF observations stay with the publicly replayed supplement',
                        'no allocator metadata or unwinder investigation', 'no imported AArch64 execution proof',
@@ -3880,6 +4464,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                  prepared_worker_tls_report: Path | None = None,
                  errno_storage_lifecycle_report: Path | None = None,
                  native_c_allocator_boundary_report: Path | None = None,
+                 stdio_alias_contract_report: Path | None = None,
                  **measurement_inputs: Path) -> dict[str, Any]:
     output = physical_work_path(output, directory=True, own=True, fresh=True)
     paths = validate_measurement_paths(**measurement_inputs)
@@ -3893,7 +4478,8 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                            pthread_alias_contract_report=pthread_alias_contract_report,
                            prepared_worker_tls_report=prepared_worker_tls_report,
                            errno_storage_lifecycle_report=errno_storage_lifecycle_report,
-                           native_c_allocator_boundary_report=native_c_allocator_boundary_report)
+                           native_c_allocator_boundary_report=native_c_allocator_boundary_report,
+                           stdio_alias_contract_report=stdio_alias_contract_report)
     output.mkdir()
     (output / 'report.json').write_bytes(inventory._stable_json(report))
     return report
@@ -3908,6 +4494,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                     prepared_worker_tls_report: Path | None = None,
                     errno_storage_lifecycle_report: Path | None = None,
                     native_c_allocator_boundary_report: Path | None = None,
+                    stdio_alias_contract_report: Path | None = None,
                     **measurement_inputs: Path) -> dict[str, Any]:
     report_path = physical_work_path(report_path, directory=False, own=True)
     require(report_path.name == 'report.json', 'selection report has the wrong name')
@@ -3923,7 +4510,8 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                              pthread_alias_contract_report=pthread_alias_contract_report,
                              prepared_worker_tls_report=prepared_worker_tls_report,
                              errno_storage_lifecycle_report=errno_storage_lifecycle_report,
-                             native_c_allocator_boundary_report=native_c_allocator_boundary_report)
+                             native_c_allocator_boundary_report=native_c_allocator_boundary_report,
+                             stdio_alias_contract_report=stdio_alias_contract_report)
     require(same(report, expected), 'selection report does not reconstruct exactly from source inputs and public measurement replay')
     return report
 
@@ -3946,6 +4534,7 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument('--prepared-worker-tls-report', type=Path)
     parser.add_argument('--errno-storage-lifecycle-report', type=Path)
     parser.add_argument('--native-c-allocator-boundary-report', type=Path)
+    parser.add_argument('--stdio-alias-contract-report', type=Path)
     options = [arg.split('=', 1)[0] for arg in argv if arg.startswith('--')]
     if len(options) != len(set(options)):
         parser.error('duplicate options are not accepted')
@@ -3959,7 +4548,8 @@ def main(argv: Sequence[str]) -> int:
                                                 'loader_debug_abi_report', 'compiler_helper_aggregate_report',
                                                 'ordinary_declaration_abi_report', 'loader_runtime_registry_report',
                                                 'pthread_alias_contract_report', 'prepared_worker_tls_report',
-                                                'errno_storage_lifecycle_report', 'native_c_allocator_boundary_report')}
+                                                'errno_storage_lifecycle_report', 'native_c_allocator_boundary_report',
+                                                'stdio_alias_contract_report')}
     kwargs['ordinary_link_report'] = kwargs.pop('public_data_ordinary_link_report')
     kwargs['loader_debug_report'] = kwargs.pop('loader_debug_abi_report')
     kwargs.update(contract_path=args.contract, elf_report=args.elf_facts)

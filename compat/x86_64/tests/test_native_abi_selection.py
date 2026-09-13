@@ -1025,6 +1025,9 @@ class SelectedCallableDeclarationIntegrationTests(unittest.TestCase):
         self.assertIn('compat/x86_64/prepared-worker-tls.md', inputs['bindings'])
         self.assertIn('compat/x86_64/owned_errno_storage_lifecycle.py', inputs['bindings'])
         self.assertIn('compat/x86_64/owned-errno-storage-lifecycle.md', inputs['bindings'])
+        self.assertIn('compat/x86_64/owned_stdio_alias_contract_reader.py', inputs['bindings'])
+        self.assertIn('compat/x86_64/owned-stdio-alias-receipt.toml', inputs['bindings'])
+        self.assertIn('compat/x86_64/tests/test_native_abi_stdio_alias_attachment.py', inputs['bindings'])
 
     def test_checked_matrix_failure_cannot_be_projected_as_callable_evidence(self):
         contract = selection.load_contract()

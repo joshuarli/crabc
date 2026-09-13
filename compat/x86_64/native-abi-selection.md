@@ -152,9 +152,11 @@ dynamic export; it is never selected as a public callable. The runtime receipt
 proves main/live-worker accessor behavior and pointer lifetime within its own
 contract. Without that receipt, the private alias retains its own unresolved
 component requirement even when its static and shared metadata match. It does
-not prove the `h_errno` header macro/declaration, its
-alignment/layout requirement, broad TLS or loader behavior, family completion,
-promotion, or public support.
+also retains the source-required four-byte `h_errno` alignment in each static
+and shared defining section, without promoting incidental shared-section
+over-alignment into a generic ABI rule. It does not prove the `h_errno` header
+macro/declaration or accessor-to-storage relation, broad TLS or loader behavior,
+family completion, promotion, or public support.
 
 `--native-c-allocator-boundary-report REPORT` is independently optional as
 well. Its owner reader replays the selected static preparation, static product,
@@ -173,6 +175,24 @@ metadata. An import of the same name from another member or artifact remains
 an unresolved ordinary consumer. This does not make the C v3.3.2 backend an
 allocator-family, general allocation semantics, promotion, or public-support
 claim.
+
+`--stdio-alias-contract-report REPORT` is independently optional. Its owner
+reader replays the current selected source, static preparation, static and
+dynamic products, complete ELF facts, ordinary candidate links, and its
+contained FILE runtime controls. The selector seals that report before and
+after the replay, then binds all four retained `.symtab` views to the same
+complete ELF transaction. It discharges the finite feature-receipt requirement
+for the fifteen named weak FILE aliases only when each has its named target in
+the same archive-member/section or shared definition domain. It also selects
+only `__fdopen`, `__fseeko`, and `__ftello` as the private
+`x86-owned-stdio-private-bodies`: static `FUNC GLOBAL HIDDEN`, shared
+`.symtab` `FUNC LOCAL HIDDEN`, and absent from shared `.dynsym`. Their public
+weak aliases remain separate public identities. `__uflow` and `__overflow`
+remain retained protected-body controls; this receipt does not widen their
+scope. Missing or invalid FILE evidence leaves the three named private bodies'
+explicit receipt requirements open. The attachment does not establish general
+stdio semantics, declarations/profiles, runtime qualification, family
+completion, promotion, or public support.
 
 These runtime attachments run before the one public declaration-envelope replay
 and are rechecked after their scoped joins. Their source/product/ELF cohort is

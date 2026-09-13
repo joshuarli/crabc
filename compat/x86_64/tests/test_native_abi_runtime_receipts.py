@@ -51,6 +51,7 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
         self.pthread_report_path = self._write(self.work / 'pthread-report.json', b'{}\n')
         self.prepared_worker_report_path = self._write(self.work / 'prepared-worker-report.json', b'{}\n')
         self.errno_storage_report_path = self._write(self.work / 'errno-storage-report.json', b'{}\n')
+        self.stdio_alias_report_path = self._write(self.work / 'stdio-alias-report.json', b'{}\n')
         self.paths = {
             'measurement_checkout': ROOT,
             'base_inventory': self.base,
@@ -264,6 +265,39 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
     def _errno_identity(value):
         return {'path': value['path'], 'sha256': value['sha256'], 'size_bytes': value['size']}
 
+    @staticmethod
+    def _errno_layout_fact(*, archive=False):
+        value = {
+            'symbol_value_hex': '0000000000000040',
+            'object_size_bytes': 4,
+            'required_alignment_bytes': 4,
+            'defining_section_index': 7,
+            'defining_section_name': '.bss.h_errno',
+            'defining_section_address_hex': '0000000000000040',
+            'defining_section_size_bytes': 64,
+            'defining_section_alignment_bytes': 4,
+            'offset_bytes': 0,
+            'offset_modulo_required_alignment': 0,
+        }
+        if archive:
+            value['archive_member'] = {'name': 'h_errno.lo', 'index': 0, 'occurrence': 0}
+        return value
+
+    def _errno_h_errno_layout(self):
+        metadata = copy.deepcopy(selection.errno_storage_evidence.H_ERRNO_METADATA)
+        return {
+            'static': {
+                'metadata': copy.deepcopy(metadata),
+                'oracle': self._errno_layout_fact(archive=True),
+                'candidate': self._errno_layout_fact(archive=True),
+            },
+            'shared': {
+                'metadata': copy.deepcopy(metadata),
+                'oracle': self._errno_layout_fact(),
+                'candidate': self._errno_layout_fact(),
+            },
+        }
+
     def errno_storage_report(self):
         policy = {
             'source': {
@@ -280,6 +314,7 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
             'schema': selection.errno_storage_evidence.SCHEMA,
             'target': selection.errno_storage_evidence.TARGET,
             'work': str(self.work),
+            'collection_checkout_root': str(ROOT),
             'source': {
                 'schema': selection.errno_storage_evidence.SNAPSHOT_SCHEMA,
                 'root': str(ROOT), 'commit': self.source['revision'], 'status': '',
@@ -300,6 +335,8 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
             },
             'shared_alias_link_policy': policy,
             'symbols': {name: {} for name in selection.errno_storage_evidence.SYMBOL_INPUTS},
+            'layout_artifacts': {name: {} for name in selection.errno_storage_evidence.LAYOUT_INPUTS},
+            'h_errno_layout': self._errno_h_errno_layout(),
             'workload_symbols': {name: {} for name in selection.errno_storage_evidence.WORKLOAD_SYMBOL_INPUTS},
             'objects': {name: {} for name in selection.errno_storage_evidence.OBJECTS},
             'execution': {name: {} for name in selection.errno_storage_evidence.RUN_LABELS},
@@ -307,8 +344,9 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
             'summary': {
                 'errno_public_accessor': 'GLOBAL DEFAULT FUNC',
                 'errno_allocator_alias': 'static WEAK HIDDEN same-address; shared LOCAL DEFAULT absent-dynsym',
-                'h_errno': 'GLOBAL DEFAULT OBJECT size=4 with GLOBAL DEFAULT accessor',
-                'execution': 'main/live-worker isolation, stable live locations, selected pthread EBUSY preserves errno, and loaded DSO access',
+                'h_errno': 'GLOBAL DEFAULT OBJECT size=4, source-required alignment=4, and GLOBAL DEFAULT accessor',
+                'h_errno_layout': 'static/shared defining section and section-relative offset retain alignment=4; shared section over-alignment is observed separately',
+                'execution': 'main/live-worker isolation, aligned live accessor locations, stable live locations, selected pthread EBUSY preserves errno, and loaded DSO access',
                 'worker_pointer_lifetime': 'never dereferenced after join',
             },
         }
@@ -450,6 +488,7 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
                     'index': index, 'artifact_key': artifact, 'table': table, 'role': role,
                     'member_index': member_index, 'member_occurrence': member_occurrence,
                     'table_section_index': '11',
+                    'definition_section': {'index': 7, 'alignment': 4},
                     'row': {
                         'name': name, 'version': None, 'version_default': False, 'row_index': index,
                         'type': metadata['type'], 'binding': binding, 'visibility': visibility,
@@ -610,6 +649,16 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
         report['shared_alias_link_policy']['source']['sha256'] = '0' * 64
         with mock.patch.object(selection.errno_storage_evidence, 'validate_report', return_value=report), \
              self.assertRaisesRegex(selection.SelectionError, 'receipt source differs'):
+            selection.errno_storage_lifecycle_adapter(
+                self.errno_storage_report_path, facts=self.facts, measurement=self.measurement,
+                paths=self.paths, source=self.source,
+            )
+
+    def test_errno_adapter_rejects_h_errno_layout_below_the_selected_int_alignment(self):
+        report = self.errno_storage_report()
+        report['h_errno_layout']['shared']['candidate']['defining_section_alignment_bytes'] = 2
+        with mock.patch.object(selection.errno_storage_evidence, 'validate_report', return_value=report), \
+             self.assertRaisesRegex(selection.SelectionError, 'h_errno shared candidate alignment fact differs'):
             selection.errno_storage_lifecycle_adapter(
                 self.errno_storage_report_path, facts=self.facts, measurement=self.measurement,
                 paths=self.paths, source=self.source,
@@ -873,6 +922,7 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
             ('--pthread-alias-contract-report', self.pthread_report_path),
             ('--prepared-worker-tls-report', self.prepared_worker_report_path),
             ('--errno-storage-lifecycle-report', self.errno_storage_report_path),
+            ('--stdio-alias-contract-report', self.stdio_alias_report_path),
         ):
             with self.subTest(option=option), \
                  mock.patch.object(selection, 'validate_report', return_value=reconstructed) as replay, \
@@ -883,6 +933,7 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
             for other in (
                 'loader_runtime_registry_report', 'pthread_alias_contract_report',
                 'prepared_worker_tls_report', 'errno_storage_lifecycle_report',
+                'stdio_alias_contract_report',
             ):
                 if other != option[2:].replace('-', '_'):
                     self.assertIsNone(kwargs[other])
