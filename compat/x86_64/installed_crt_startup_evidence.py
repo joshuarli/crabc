@@ -449,6 +449,112 @@ def descriptor_handoff(product_relocations,executables):
             'probe_owned_modes':list(policy['owned_modes']),
             'static_slot_absent':True}
 
+def descriptor_loader_tables(data):
+    """Bind descriptor section records to the loader-visible dynamic tables.
+
+    Section headers make the retained byte offsets easy to audit, but an ELF
+    loader follows ``PT_DYNAMIC.p_vaddr`` through one ``PT_LOAD`` mapping.
+    This keeps a stale SHT_DYNAMIC/SHT_DYNSYM/SHT_RELA view from authenticating
+    a changed loader-visible request.
+    """
+    require(type(data) in (bytes,bytearray) and len(data)>=64 and data[:7]==b'\x7fELF\x02\x01\x01',
+            'descriptor admission input is not ELF64 little-endian')
+    header=struct.unpack_from('<16sHHIQQQIHHHHHH',data,0)
+    phoff,shoff,phentsize,phnum,shentsize,shnum=header[5],header[6],header[9],header[10],header[11],header[12]
+    require(phentsize==56 and phnum<65536 and phoff+phentsize*phnum<=len(data),
+            'descriptor admission program table differs')
+    require(shentsize==64 and shoff+shentsize*shnum<=len(data),'descriptor admission section table differs')
+    programs=[struct.unpack_from('<IIQQQQQQ',data,phoff+index*phentsize) for index in range(phnum)]
+    sections=[struct.unpack_from('<IIQQQQIIQQ',data,shoff+index*shentsize) for index in range(shnum)]
+
+    def virtual_end(address,size,label):
+        require(address+size<=1<<64,label+' leaves virtual address space')
+        return address+size
+
+    loads=[]
+    for program in programs:
+        if program[0]!=1:continue
+        offset,address,size,memory_size=program[2],program[3],program[5],program[6]
+        require(memory_size>=size and offset+size<=len(data),'descriptor admission PT_LOAD differs')
+        virtual_end(address,size,'descriptor admission PT_LOAD')
+        loads.append((offset,address,size))
+
+    def mapped_offset(address,size,label):
+        end=virtual_end(address,size,label);matches=[]
+        for offset,load_address,load_size in loads:
+            load_end=virtual_end(load_address,load_size,'descriptor admission PT_LOAD')
+            if address<load_address or end>load_end:continue
+            translated=offset+address-load_address
+            require(translated+size<=len(data),'descriptor admission mapped table leaves file')
+            matches.append(translated)
+        require(len(matches)==1,label+' does not have one PT_LOAD mapping')
+        return matches[0]
+
+    dynamic=[program for program in programs if program[0]==2]
+    require(len(dynamic)==1,'descriptor admission PT_DYNAMIC roster differs')
+    _kind,_flags,dynamic_offset,dynamic_address,_paddr,dynamic_size,dynamic_memory,_align=dynamic[0]
+    require(dynamic_memory>=dynamic_size and dynamic_size>0 and dynamic_size%16==0
+            and dynamic_offset+dynamic_size<=len(data),'descriptor admission PT_DYNAMIC layout differs')
+    require(mapped_offset(dynamic_address,dynamic_size,'descriptor admission PT_DYNAMIC')==dynamic_offset,
+            'descriptor admission PT_DYNAMIC virtual mapping differs from its file offset')
+    entries=[];terminated=False
+    for offset in range(dynamic_offset,dynamic_offset+dynamic_size,16):
+        tag,value=struct.unpack_from('<qQ',data,offset)
+        if terminated:
+            require(tag==0 and value==0,'descriptor admission dynamic table has entries after its terminator')
+        elif tag==0:
+            require(value==0,'descriptor admission dynamic table terminator differs')
+            terminated=True
+        else:entries.append((tag,value))
+    require(terminated,'descriptor admission dynamic table has no terminator')
+
+    def one(tag,label):
+        values=[value for observed,value in entries if observed==tag]
+        require(len(values)==1,label+' differs')
+        return values[0]
+
+    string_address,string_size=one(5,'descriptor admission DT_STRTAB'),one(10,'descriptor admission DT_STRSZ')
+    require(string_size>0,'descriptor admission DT_STRSZ differs')
+    string_offset=mapped_offset(string_address,string_size,'descriptor admission DT_STRTAB')
+    dynamic_sections=[(index,section) for index,section in enumerate(sections) if section[1]==6]
+    require(len(dynamic_sections)==1,'descriptor admission SHT_DYNAMIC roster differs')
+    dynamic_section_index,dynamic_section=dynamic_sections[0]
+    require(dynamic_section[3:6]==(dynamic_address,dynamic_offset,dynamic_size) and dynamic_section[9]==16,
+            'descriptor admission SHT_DYNAMIC differs from PT_DYNAMIC')
+    string_sections=[(index,section) for index,section in enumerate(sections)
+                     if section[1]==3 and section[3:6]==(string_address,string_offset,string_size)]
+    require(len(string_sections)==1,'descriptor admission dynstr section differs from DT_STRTAB')
+    string_section_index,string_section=string_sections[0]
+    require(dynamic_section[6]==string_section_index,'descriptor admission dynamic string link differs')
+
+    symbol_address,symbol_entry=one(6,'descriptor admission DT_SYMTAB'),one(11,'descriptor admission DT_SYMENT')
+    require(symbol_entry==24,'descriptor admission DT_SYMENT differs')
+    symbol_sections=[(index,section) for index,section in enumerate(sections)
+                     if section[1]==11 and section[3]==symbol_address]
+    require(len(symbol_sections)==1,'descriptor admission dynsym section differs from DT_SYMTAB')
+    symbol_section_index,symbol_section=symbol_sections[0]
+    symbol_offset,symbol_size=symbol_section[4],symbol_section[5]
+    require(symbol_section[9]==symbol_entry and symbol_size>0 and symbol_size%symbol_entry==0
+            and symbol_section[6]==string_section_index
+            and mapped_offset(symbol_address,symbol_size,'descriptor admission DT_SYMTAB')==symbol_offset,
+            'descriptor admission dynsym layout differs')
+
+    relocation_address,relocation_size,relocation_entry=(
+        one(7,'descriptor admission DT_RELA'),one(8,'descriptor admission DT_RELASZ'),
+        one(9,'descriptor admission DT_RELAENT'))
+    require(relocation_entry==24 and relocation_size>0 and relocation_size%relocation_entry==0,
+            'descriptor admission DT_RELA layout differs')
+    relocation_sections=[(index,section) for index,section in enumerate(sections)
+                         if section[1]==4 and section[3]==relocation_address]
+    require(len(relocation_sections)==1,'descriptor admission RELA section differs from DT_RELA')
+    relocation_section_index,relocation_section=relocation_sections[0]
+    require(relocation_section[4:6]==(
+                mapped_offset(relocation_address,relocation_size,'descriptor admission DT_RELA'),relocation_size)
+            and relocation_section[9]==relocation_entry and relocation_section[6]==symbol_section_index,
+            'descriptor admission RELA layout differs')
+    return {'entries':entries,'sections':sections,'dynstr':(string_section_index,string_section),
+            'dynsym':(symbol_section_index,symbol_section),'rela':(relocation_section_index,relocation_section)}
+
 def descriptor_slot(data):
     """Locate the one canonical dynamic descriptor request in one ELF image.
 
@@ -457,36 +563,22 @@ def descriptor_slot(data):
     and it cannot create an interpreter: `prepare_roots` executes every copy
     using the selected product loader already sealed by `admit` and `roots`.
     """
-    require(type(data) in (bytes,bytearray) and len(data)>=64 and data[:7]==b'\x7fELF\x02\x01\x01',
-            'descriptor admission input is not ELF64 little-endian')
-    header=struct.unpack_from('<16sHHIQQQIHHHHHH',data,0)
-    shoff,shentsize,shnum=header[6],header[11],header[12]
-    require(shentsize==64 and shoff+shentsize*shnum<=len(data),'descriptor admission section table differs')
-    sections=[struct.unpack_from('<IIQQQQIIQQ',data,shoff+index*shentsize) for index in range(shnum)]
-    names=[]
-    for section_index,section in enumerate(sections):
-        if section[1]!=11:continue
-        offset,size,entry,strings=section[4],section[5],section[9],section[6]
-        require(entry==24 and size%entry==0 and offset+size<=len(data) and strings<len(sections),
-                'descriptor admission dynsym layout differs')
-        string=sections[strings]
-        require(string[4]+string[5]<=len(data),'descriptor admission dynstr layout differs')
-        for record in range(offset,offset+size,entry):
-            name_offset=struct.unpack_from('<I',data,record)[0]
-            require(name_offset<string[5],'descriptor admission name leaves dynstr')
-            begin=string[4]+name_offset;end=data.find(b'\0',begin,string[4]+string[5])
-            require(end>=0,'descriptor admission name is unterminated')
-            if bytes(data[begin:end])==DESCRIPTOR.encode():
-                names.append((section_index,record,(record-offset)//entry))
+    tables=descriptor_loader_tables(data)
+    section_index,section=tables['dynsym'];_string_index,string=tables['dynstr']
+    offset,size,entry=section[4],section[5],section[9];names=[]
+    for record in range(offset,offset+size,entry):
+        name_offset=struct.unpack_from('<I',data,record)[0]
+        require(name_offset<string[5],'descriptor admission name leaves dynstr')
+        begin=string[4]+name_offset;end=data.find(b'\0',begin,string[4]+string[5])
+        require(end>=0,'descriptor admission name is unterminated')
+        if bytes(data[begin:end])==DESCRIPTOR.encode():
+            names.append((record,(record-offset)//entry))
     require(len(names)==1,'descriptor admission dynsym roster differs')
-    section_index,symbol,symbol_index=names[0];relocations=[]
-    for section in sections:
-        if section[1]!=4 or section[6]!=section_index:continue
-        offset,size,entry=section[4],section[5],section[9]
-        require(entry==24 and size%entry==0 and offset+size<=len(data),'descriptor admission RELA layout differs')
-        for record in range(offset,offset+size,entry):
-            info=struct.unpack_from('<Q',data,record+8)[0]
-            if info>>32==symbol_index:relocations.append((record,info))
+    symbol,symbol_index=names[0];_rela_index,relocation_section=tables['rela'];relocations=[]
+    offset,size,entry=relocation_section[4],relocation_section[5],relocation_section[9]
+    for record in range(offset,offset+size,entry):
+        info=struct.unpack_from('<Q',data,record+8)[0]
+        if info>>32==symbol_index:relocations.append((record,info))
     require(len(relocations)==1,'descriptor admission relocation roster differs')
     relocation,info=relocations[0]
     require(data[symbol+4]==0x20 and data[symbol+5]&3==0
@@ -541,25 +633,18 @@ def descriptor_source_object(path):
             'relocation':actual}
 
 def dynamic_names(path,require_table=False):
-    """Return exact dynamic NEEDED and SONAME records from one retained ELF."""
-    elf=Elf(path);needed=[];sonames=[];tables=[]
-    for section in elf.sections:
-        if section[1]!=6:continue
-        tables.append(section)
-        require(section[9]==16 and section[5]%16==0,'malformed dynamic section')
-        strings=elf.sections[section[6]]
-        require(strings[1]==3 and strings[4]+strings[5]<=len(elf.data),'invalid dynamic string table')
-        for index in range(section[5]//16):
-            tag,value=elf.unpack('<qQ',section[4]+index*16)
-            if tag==0:break
-            if tag not in (1,14):continue
-            require(value<strings[5],'invalid dynamic string offset')
-            begin=strings[4]+value;end=elf.data.find(b'\0',begin,strings[4]+strings[5])
-            require(end>=begin,'unterminated dynamic string')
-            (needed if tag==1 else sonames).append(elf.data[begin:end].decode('ascii'))
-    require(len(tables)==1 if require_table else len(tables)<=1,
-            'descriptor admission dynamic section roster differs')
-    return elf,needed,sonames
+    """Return exact loader-visible DT_NEEDED and DT_SONAME records.
+
+    `retained_elf_facts` already maps the one physical ``PT_DYNAMIC`` table
+    through its containing ``PT_LOAD`` segment and resolves `DT_STRTAB` from
+    that loader-visible table.  SHT_DYNAMIC is therefore never role authority.
+    """
+    elf=Elf(path)
+    try:facts=products.retained_elf_facts(Path(path))
+    except products.ProductEvidenceError as error:
+        raise StartupEvidenceError('descriptor admission dynamic table differs: '+str(error)) from error
+    require(facts['dynamic'] or not require_table,'descriptor admission PT_DYNAMIC roster differs')
+    return elf,facts['needed'],facts['sonames']
 
 def descriptor_admission_elf_roles(root,work):
     """Bind the DSO and direct endpoint to their distinct installed ELF roles."""
