@@ -171,6 +171,7 @@ SYSCALL_ALIAS_DYNAMIC_LINK_INPUTS = (
 )
 
 UTMPX_ALIAS_RECEIPT_REQUIREMENT = 'source-selected alias requires exact feature archive selection and component receipt'
+UTMPX_FEATURE_OWNER = 'x86-owned-static-runtime'
 UTMPX_LIMITS = [
     'Only the eight source-selected utmpx aliases are joined to their existing feature-alias receipt requirements.',
     'The retained sixteen-provider envelope, static function proof, dynamic imports, source/product cohort and runtime controls do not select private providers, qualify utmpx semantics, complete a family, promote support or erase unrelated imports.',
@@ -719,6 +720,17 @@ def selection_source() -> dict[str, Any]:
     return {'revision': _git(ROOT, 'rev-parse', 'HEAD').decode().strip(), 'content_sha256': digest.hexdigest(), 'clean': False}
 
 
+def _feature_alias_requirement(feature: Any, alias: Any) -> dict[str, Any]:
+    """Render the complete source-owned feature-alias accounting record."""
+    return {
+        'name': alias.name, 'target': alias.target, 'binding': alias.binding, 'owner': feature.identifier,
+        'state': feature.state, 'evidence_record': feature.evidence_record, 'runner': feature.runner,
+        'baseline_features': list(feature.baseline_features), 'enabled_features': list(feature.enabled_features),
+        'feature_selection_source': feature.feature_selection_source,
+        'sources': ['compat/x86_64/feature_archive_roster.py', 'compat/x86_64/parity.toml'],
+    }
+
+
 def load_source_inputs(contract: Mapping[str, Any], contract_path: Path) -> dict[str, Any]:
     paths = {key: source_path(value) for key, value in contract['inputs'].items()}
     coverage = tomllib.loads(paths['coverage'].read_text())
@@ -782,11 +794,7 @@ def load_source_inputs(contract: Mapping[str, Any], contract_path: Path) -> dict
     require(provider_names.isdisjoint(deferred) and provider_names | set(deferred) == {r['name'] for r in rows}, 'header provider partition differs')
     abi_only = [{'name': name, 'owner': row.identifier, 'state': row.state, 'runner': row.runner}
                 for row in feature_rows for name in row.abi_only_callables]
-    feature_aliases = [{'name': alias.name, 'target': alias.target, 'binding': alias.binding, 'owner': row.identifier,
-                        'state': row.state, 'evidence_record': row.evidence_record, 'runner': row.runner,
-                        'baseline_features': list(row.baseline_features), 'enabled_features': list(row.enabled_features),
-                        'feature_selection_source': row.feature_selection_source,
-                        'sources': ['compat/x86_64/feature_archive_roster.py', 'compat/x86_64/parity.toml']}
+    feature_aliases = [_feature_alias_requirement(row, alias)
                        for row in feature_rows for alias in row.aliases]
     files = set(contract['inputs'].values()) | {
         'compat/x86_64/native_abi_selection.py', 'compat/x86_64/tests/test_native_abi_selection.py',
@@ -4160,6 +4168,28 @@ def _utmpx_one_row(rows: Sequence[Mapping[str, Any]], *, artifact: str, table: s
     return dict(matches[0])
 
 
+def _utmpx_source_feature_requirement(alias: str, target: str) -> dict[str, Any]:
+    """Resolve one of the finite utmpx aliases from the current source roster.
+
+    The accounting producer carries the whole feature record, including its
+    state, runner, feature closure, and source provenance.  The receipt must
+    compare that complete record, rather than a locally reduced projection.
+    """
+    matches = [
+        _feature_alias_requirement(feature, declared)
+        for feature in feature_roster.load_feature_archive_roster()
+        for declared in feature.aliases
+        if declared.name == alias
+    ]
+    require(len(matches) == 1, f'utmpx source feature alias is absent or ambiguous: {alias}')
+    requirement = matches[0]
+    require(requirement['name'] == alias and requirement['target'] == target
+            and requirement['binding'] == 'weak-same-address'
+            and requirement['owner'] == UTMPX_FEATURE_OWNER,
+            f'utmpx source feature alias differs: {alias}')
+    return requirement
+
+
 def attach_native_utmpx(accounting: Mapping[str, Any], companion: Mapping[str, Any] | None) -> list[dict[str, Any]]:
     """Discharge only the eight already-selected utmpx feature-alias reasons."""
     if companion is None:
@@ -4201,9 +4231,8 @@ def attach_native_utmpx(accounting: Mapping[str, Any], companion: Mapping[str, A
         require(record is not None and record.get('selection', {}).get('disposition') == 'public-provider',
                 f'utmpx selected public alias differs: {alias}')
         feature = record.get('function_alias_requirements')
-        require(type(feature) is list and len(feature) == 1
-                and feature[0] == {'name': alias, 'target': target, 'binding': 'weak-same-address',
-                                   'owner': 'x86-owned-static-runtime'},
+        expected_feature = _utmpx_source_feature_requirement(alias, target)
+        require(type(feature) is list and len(feature) == 1 and feature[0] == expected_feature,
                 f'utmpx selected feature alias differs: {alias}')
         alias_static = _utmpx_one_row(_utmpx_named_rows(occurrences, alias), artifact='candidate-static',
                                        table='.symtab', binding='WEAK', description=f'utmpx alias {alias} static')
