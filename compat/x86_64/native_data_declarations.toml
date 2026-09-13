@@ -1,0 +1,567 @@
+schema = "crabc.x86_64-native-data-declarations/v1"
+target = "x86_64-unknown-linux-musl"
+oracle = "Pinned musl 1.2.6"
+header_declaration_report_schema = "crabc.x86_64-header-declaration-inventory/v1"
+
+# These are the finite compiler profiles retained by the declaration inventory.
+# cxx17-strict deliberately remains a C++ profile even though the pinned Clang
+# environment exposes the GNU feature surface there; visibility follows the
+# retained profile result, not the profile's informal label.
+[profile_languages]
+c11-gnu = "c"
+cxx17-gnu = "cxx"
+c11-strict = "c"
+c11-posix-2008 = "c"
+c11-xopen-700 = "c"
+c11-bsd = "c"
+cxx17-strict = "cxx"
+
+[profile_sets]
+all = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
+xopen_gnu_bsd = ["c11-gnu", "cxx17-gnu", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
+posix_xopen_gnu_bsd = ["c11-gnu", "cxx17-gnu", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
+gnu_effective = ["c11-gnu", "cxx17-gnu", "cxx17-strict"]
+gnu_bsd_effective = ["c11-gnu", "cxx17-gnu", "c11-bsd", "cxx17-strict"]
+
+# `qual_type` is the pinned Clang spelling to compare directly.  The semantic
+# pointer/array fields are reviewed annotations, not a second C type parser.
+# Object layout and provider selection stay outside this declaration adapter.
+
+[[objects]]
+id = "object:___environ"
+name = "___environ"
+declaration_kind = "abi-only"
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+c_abi_type = "char **"
+source_mutable = true
+header_storage_kind = "abi-only-absence"
+absence_scope = "finite-header-declaration-inventory"
+
+[[objects]]
+id = "object:__daylight"
+name = "__daylight"
+declaration_kind = "abi-only"
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+c_abi_type = "int"
+source_mutable = true
+header_storage_kind = "abi-only-absence"
+absence_scope = "finite-header-declaration-inventory"
+
+[[objects]]
+id = "object:__environ"
+name = "__environ"
+declaration_kind = "abi-only"
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+c_abi_type = "char **"
+source_mutable = true
+header_storage_kind = "abi-only-absence"
+absence_scope = "finite-header-declaration-inventory"
+
+[[objects]]
+id = "object:__optpos"
+name = "__optpos"
+declaration_kind = "abi-only"
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+c_abi_type = "int"
+source_mutable = true
+header_storage_kind = "abi-only-absence"
+absence_scope = "finite-header-declaration-inventory"
+
+[[objects]]
+id = "object:__optreset"
+name = "__optreset"
+declaration_kind = "abi-only"
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+c_abi_type = "int"
+source_mutable = true
+header_storage_kind = "abi-only-absence"
+absence_scope = "finite-header-declaration-inventory"
+
+[[objects]]
+id = "object:__progname"
+name = "__progname"
+declaration_kind = "abi-only"
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+c_abi_type = "char *"
+source_mutable = true
+header_storage_kind = "abi-only-absence"
+absence_scope = "finite-header-declaration-inventory"
+
+[[objects]]
+id = "object:__progname_full"
+name = "__progname_full"
+declaration_kind = "abi-only"
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+c_abi_type = "char *"
+source_mutable = true
+header_storage_kind = "abi-only-absence"
+absence_scope = "finite-header-declaration-inventory"
+
+[[objects]]
+id = "object:__signgam"
+name = "__signgam"
+declaration_kind = "abi-only"
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+c_abi_type = "int"
+source_mutable = true
+header_storage_kind = "abi-only-absence"
+absence_scope = "finite-header-declaration-inventory"
+
+[[objects]]
+id = "object:__stack_chk_guard"
+name = "__stack_chk_guard"
+declaration_kind = "abi-only"
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+c_abi_type = "uintptr_t / machine word"
+source_mutable = true
+header_storage_kind = "abi-only-absence"
+absence_scope = "finite-header-declaration-inventory"
+
+[[objects]]
+id = "object:__timezone"
+name = "__timezone"
+declaration_kind = "abi-only"
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+c_abi_type = "long"
+source_mutable = true
+header_storage_kind = "abi-only-absence"
+absence_scope = "finite-header-declaration-inventory"
+
+[[objects]]
+id = "object:__tzname"
+name = "__tzname"
+declaration_kind = "abi-only"
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+c_abi_type = "char *[2]"
+source_mutable = true
+header_storage_kind = "abi-only-absence"
+absence_scope = "finite-header-declaration-inventory"
+
+[[objects]]
+id = "object:_dl_debug_addr"
+name = "_dl_debug_addr"
+declaration_kind = "abi-only"
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+c_abi_type = "struct r_debug * protocol view; source uses void *"
+source_mutable = true
+header_storage_kind = "abi-only-absence"
+absence_scope = "finite-header-declaration-inventory"
+
+[[objects]]
+id = "object:_environ"
+name = "_environ"
+declaration_kind = "abi-only"
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+c_abi_type = "char **"
+source_mutable = true
+header_storage_kind = "abi-only-absence"
+absence_scope = "finite-header-declaration-inventory"
+
+[[objects]]
+id = "object:_ns_flagdata"
+name = "_ns_flagdata"
+declaration_kind = "installed-variable"
+declaration = "extern const struct _ns_flagdata _ns_flagdata[];"
+c_abi_type = "const struct _ns_flagdata[16] (provider bound; installed extern array is incomplete)"
+source_mutable = false
+header_storage_kind = "installed-variable"
+qual_type = "const struct _ns_flagdata[]"
+object_qualifier = "const-array-elements"
+pointer_target_mutability = "not-a-pointer"
+array_extent = "incomplete"
+layout_evidence = "not-proved-by-declaration-inventory"
+[[objects.sites]]
+header = "arpa/nameser.h"
+candidate_line = 51
+reference_line = 49
+profile_set = "all"
+
+[[objects]]
+id = "object:daylight"
+name = "daylight"
+declaration_kind = "installed-variable"
+declaration = "extern int daylight;"
+c_abi_type = "int"
+source_mutable = true
+header_storage_kind = "installed-variable"
+qual_type = "int"
+object_qualifier = "unqualified-object"
+pointer_target_mutability = "not-a-pointer"
+array_extent = "not-an-array"
+layout_evidence = "not-proved-by-declaration-inventory"
+[[objects.sites]]
+header = "time.h"
+candidate_line = 225
+reference_line = 123
+profile_set = "xopen_gnu_bsd"
+
+[[objects]]
+id = "object:environ"
+name = "environ"
+declaration_kind = "installed-variable"
+declaration = "extern char **environ;"
+c_abi_type = "char **"
+source_mutable = true
+header_storage_kind = "installed-variable"
+qual_type = "char **"
+object_qualifier = "unqualified-object"
+pointer_target_mutability = "mutable"
+array_extent = "not-an-array"
+layout_evidence = "not-proved-by-declaration-inventory"
+[[objects.sites]]
+header = "unistd.h"
+candidate_line = 189
+reference_line = 188
+profile_set = "gnu_effective"
+
+[[objects]]
+id = "object:getdate_err"
+name = "getdate_err"
+declaration_kind = "installed-variable"
+declaration = "extern int getdate_err;"
+c_abi_type = "int"
+source_mutable = true
+header_storage_kind = "installed-variable"
+qual_type = "int"
+object_qualifier = "unqualified-object"
+pointer_target_mutability = "not-a-pointer"
+array_extent = "not-an-array"
+layout_evidence = "not-proved-by-declaration-inventory"
+[[objects.sites]]
+header = "time.h"
+candidate_line = 150
+reference_line = 125
+profile_set = "xopen_gnu_bsd"
+
+[[objects]]
+id = "object:h_errno"
+name = "h_errno"
+declaration_kind = "accessor-macro"
+declaration = "accessor-macro-not-object-declaration"
+c_abi_type = "int"
+source_mutable = true
+header_storage_kind = "accessor-macro-not-object"
+macro_header = "netdb.h"
+macro_candidate_line = 123
+macro_reference_line = 123
+macro_profiles = ["c11-gnu", "cxx17-gnu", "c11-bsd", "cxx17-strict"]
+macro_form = "object-like"
+macro_replacement = " (*__h_errno_location())"
+accessor_name = "__h_errno_location"
+accessor_header = "netdb.h"
+accessor_candidate_line = 122
+accessor_reference_line = 122
+accessor_qual_types = { c = "int *(void)", cxx = "int *()" }
+accessor_storage_class = "none"
+accessor_linkage_status = "unresolved-from-json"
+accessor_definition_observation = "unresolved-from-json"
+
+[[objects]]
+id = "object:in6addr_any"
+name = "in6addr_any"
+declaration_kind = "installed-variable"
+declaration = "extern const struct in6_addr in6addr_any, in6addr_loopback;"
+c_abi_type = "const struct in6_addr"
+source_mutable = false
+header_storage_kind = "installed-variable"
+qual_type = "const struct in6_addr"
+object_qualifier = "const-object"
+pointer_target_mutability = "not-a-pointer"
+array_extent = "not-an-array"
+layout_evidence = "not-proved-by-declaration-inventory"
+[[objects.sites]]
+header = "netinet/in.h"
+candidate_line = 62
+reference_line = 62
+profile_set = "all"
+
+[[objects]]
+id = "object:in6addr_loopback"
+name = "in6addr_loopback"
+declaration_kind = "installed-variable"
+declaration = "extern const struct in6_addr in6addr_any, in6addr_loopback;"
+c_abi_type = "const struct in6_addr"
+source_mutable = false
+header_storage_kind = "installed-variable"
+qual_type = "const struct in6_addr"
+object_qualifier = "const-object"
+pointer_target_mutability = "not-a-pointer"
+array_extent = "not-an-array"
+layout_evidence = "not-proved-by-declaration-inventory"
+[[objects.sites]]
+header = "netinet/in.h"
+candidate_line = 62
+reference_line = 62
+profile_set = "all"
+
+[[objects]]
+id = "object:optarg"
+name = "optarg"
+declaration_kind = "installed-variable"
+declaration = "extern char *optarg;; extern char *optarg;"
+c_abi_type = "char *"
+source_mutable = true
+header_storage_kind = "installed-variable"
+qual_type = "char *"
+object_qualifier = "unqualified-object"
+pointer_target_mutability = "mutable"
+array_extent = "not-an-array"
+layout_evidence = "not-proved-by-declaration-inventory"
+[[objects.sites]]
+header = "getopt.h"
+candidate_line = 9
+reference_line = 9
+profile_set = "all"
+[[objects.sites]]
+header = "unistd.h"
+candidate_line = 129
+reference_line = 128
+profile_set = "all"
+
+[[objects]]
+id = "object:opterr"
+name = "opterr"
+declaration_kind = "installed-variable"
+declaration = "extern int optind, opterr, optopt;; extern int optind, opterr, optopt, optreset;"
+c_abi_type = "int"
+source_mutable = true
+header_storage_kind = "installed-variable"
+qual_type = "int"
+object_qualifier = "unqualified-object"
+pointer_target_mutability = "not-a-pointer"
+array_extent = "not-an-array"
+layout_evidence = "not-proved-by-declaration-inventory"
+[[objects.sites]]
+header = "getopt.h"
+candidate_line = 10
+reference_line = 10
+profile_set = "all"
+[[objects.sites]]
+header = "unistd.h"
+candidate_line = 130
+reference_line = 129
+profile_set = "all"
+
+[[objects]]
+id = "object:optind"
+name = "optind"
+declaration_kind = "installed-variable"
+declaration = "extern int optind, opterr, optopt;; extern int optind, opterr, optopt, optreset;"
+c_abi_type = "int"
+source_mutable = true
+header_storage_kind = "installed-variable"
+qual_type = "int"
+object_qualifier = "unqualified-object"
+pointer_target_mutability = "not-a-pointer"
+array_extent = "not-an-array"
+layout_evidence = "not-proved-by-declaration-inventory"
+[[objects.sites]]
+header = "getopt.h"
+candidate_line = 10
+reference_line = 10
+profile_set = "all"
+[[objects.sites]]
+header = "unistd.h"
+candidate_line = 130
+reference_line = 129
+profile_set = "all"
+
+[[objects]]
+id = "object:optopt"
+name = "optopt"
+declaration_kind = "installed-variable"
+declaration = "extern int optind, opterr, optopt;; extern int optind, opterr, optopt, optreset;"
+c_abi_type = "int"
+source_mutable = true
+header_storage_kind = "installed-variable"
+qual_type = "int"
+object_qualifier = "unqualified-object"
+pointer_target_mutability = "not-a-pointer"
+array_extent = "not-an-array"
+layout_evidence = "not-proved-by-declaration-inventory"
+[[objects.sites]]
+header = "getopt.h"
+candidate_line = 10
+reference_line = 10
+profile_set = "all"
+[[objects.sites]]
+header = "unistd.h"
+candidate_line = 130
+reference_line = 129
+profile_set = "all"
+
+[[objects]]
+id = "object:optreset"
+name = "optreset"
+declaration_kind = "installed-variable"
+declaration = "extern int optreset;; extern int optind, opterr, optopt, optreset;"
+c_abi_type = "int"
+source_mutable = true
+header_storage_kind = "installed-variable"
+qual_type = "int"
+object_qualifier = "unqualified-object"
+pointer_target_mutability = "not-a-pointer"
+array_extent = "not-an-array"
+layout_evidence = "not-proved-by-declaration-inventory"
+[[objects.sites]]
+header = "getopt.h"
+candidate_line = 10
+reference_line = 10
+profile_set = "all"
+[[objects.sites]]
+header = "unistd.h"
+candidate_line = 185
+reference_line = 184
+profile_set = "gnu_bsd_effective"
+
+[[objects]]
+id = "object:program_invocation_name"
+name = "program_invocation_name"
+declaration_kind = "installed-variable"
+declaration = "extern char *program_invocation_short_name, *program_invocation_name;"
+c_abi_type = "char *"
+source_mutable = true
+header_storage_kind = "installed-variable"
+qual_type = "char *"
+object_qualifier = "unqualified-object"
+pointer_target_mutability = "mutable"
+array_extent = "not-an-array"
+layout_evidence = "not-proved-by-declaration-inventory"
+[[objects.sites]]
+header = "errno.h"
+candidate_line = 20
+reference_line = 19
+profile_set = "gnu_effective"
+
+[[objects]]
+id = "object:program_invocation_short_name"
+name = "program_invocation_short_name"
+declaration_kind = "installed-variable"
+declaration = "extern char *program_invocation_short_name, *program_invocation_name;"
+c_abi_type = "char *"
+source_mutable = true
+header_storage_kind = "installed-variable"
+qual_type = "char *"
+object_qualifier = "unqualified-object"
+pointer_target_mutability = "mutable"
+array_extent = "not-an-array"
+layout_evidence = "not-proved-by-declaration-inventory"
+[[objects.sites]]
+header = "errno.h"
+candidate_line = 20
+reference_line = 19
+profile_set = "gnu_effective"
+
+[[objects]]
+id = "object:signgam"
+name = "signgam"
+declaration_kind = "installed-variable"
+declaration = "extern int signgam;"
+c_abi_type = "int"
+source_mutable = true
+header_storage_kind = "installed-variable"
+qual_type = "int"
+object_qualifier = "unqualified-object"
+pointer_target_mutability = "not-a-pointer"
+array_extent = "not-an-array"
+layout_evidence = "not-proved-by-declaration-inventory"
+[[objects.sites]]
+header = "math.h"
+candidate_line = 123
+reference_line = 384
+profile_set = "xopen_gnu_bsd"
+
+[[objects]]
+id = "object:stderr"
+name = "stderr"
+declaration_kind = "installed-variable"
+declaration = "extern FILE *const stderr;"
+c_abi_type = "FILE *const (installed declaration)"
+source_mutable = true
+header_storage_kind = "installed-variable"
+qual_type = "FILE *const"
+object_qualifier = "const-pointer-object"
+pointer_target_mutability = "mutable"
+array_extent = "not-an-array"
+layout_evidence = "not-proved-by-declaration-inventory"
+[[objects.sites]]
+header = "stdio.h"
+candidate_line = 65
+reference_line = 64
+profile_set = "all"
+
+[[objects]]
+id = "object:stdin"
+name = "stdin"
+declaration_kind = "installed-variable"
+declaration = "extern FILE *const stdin;"
+c_abi_type = "FILE *const (installed declaration)"
+source_mutable = true
+header_storage_kind = "installed-variable"
+qual_type = "FILE *const"
+object_qualifier = "const-pointer-object"
+pointer_target_mutability = "mutable"
+array_extent = "not-an-array"
+layout_evidence = "not-proved-by-declaration-inventory"
+[[objects.sites]]
+header = "stdio.h"
+candidate_line = 63
+reference_line = 62
+profile_set = "all"
+
+[[objects]]
+id = "object:stdout"
+name = "stdout"
+declaration_kind = "installed-variable"
+declaration = "extern FILE *const stdout;"
+c_abi_type = "FILE *const (installed declaration)"
+source_mutable = true
+header_storage_kind = "installed-variable"
+qual_type = "FILE *const"
+object_qualifier = "const-pointer-object"
+pointer_target_mutability = "mutable"
+array_extent = "not-an-array"
+layout_evidence = "not-proved-by-declaration-inventory"
+[[objects.sites]]
+header = "stdio.h"
+candidate_line = 64
+reference_line = 63
+profile_set = "all"
+
+[[objects]]
+id = "object:timezone"
+name = "timezone"
+declaration_kind = "installed-variable"
+declaration = "extern long timezone;"
+c_abi_type = "long"
+source_mutable = true
+header_storage_kind = "installed-variable"
+qual_type = "long"
+object_qualifier = "unqualified-object"
+pointer_target_mutability = "not-a-pointer"
+array_extent = "not-an-array"
+layout_evidence = "not-proved-by-declaration-inventory"
+[[objects.sites]]
+header = "time.h"
+candidate_line = 226
+reference_line = 124
+profile_set = "xopen_gnu_bsd"
+
+[[objects]]
+id = "object:tzname"
+name = "tzname"
+declaration_kind = "installed-variable"
+declaration = "extern char *tzname[2];"
+c_abi_type = "char *[2]"
+source_mutable = true
+header_storage_kind = "installed-variable"
+qual_type = "char *[2]"
+object_qualifier = "array-of-mutable-pointers"
+pointer_target_mutability = "mutable"
+array_extent = "fixed-2"
+layout_evidence = "not-proved-by-declaration-inventory"
+[[objects.sites]]
+header = "time.h"
+candidate_line = 222
+reference_line = 116
+profile_set = "posix_xopen_gnu_bsd"
