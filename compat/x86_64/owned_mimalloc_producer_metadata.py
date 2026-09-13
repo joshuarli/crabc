@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Account fixed-C mimalloc producer metadata for owned native products.
 
-This reader consumes facts already authenticated by native_abi_elf_facts and
-the two owned-product provenance records. It does not build products, replay
-ELF collection, select public ABI providers, or infer ownership from prefixes.
+This reader consumes facts already authenticated by native_abi_elf_facts, the
+two owned-product provenance records, and the selected dynamic-product manifest.
+It does not build products, replay ELF collection, select public ABI providers,
+or infer ownership from prefixes.
 Its closed contract binds the selected libmimalloc-sys 0.1.49 source bundle,
 the exact 424-name localization list, and four C producer metadata buckets.
 """
@@ -32,6 +33,9 @@ SCHEMA = "crabc.x86_64-owned-mimalloc-producer-metadata/v1"
 RECEIPT_SCHEMA = "crabc.x86_64-owned-mimalloc-producer-metadata-receipt/v1"
 ELF_FACTS_SCHEMA = "crabc.x86_64-native-abi-elf-facts/v1"
 TARGET = "x86_64-unknown-linux-musl"
+DYNAMIC_PRODUCT_MANIFEST_SCHEMA = 1
+DYNAMIC_PRODUCT_MANIFEST_FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
+DYNAMIC_PRODUCT_LIBC_PATH = "usr/lib/libc.so"
 ELF_FACTS_STATUS = {
     "classification": "measurement-only-no-abi-selection-or-promotion",
     "family_completion": False,
@@ -163,6 +167,70 @@ def _source_reference(value: object, description: str) -> dict[str, str]:
     return {"path": path, "sha256": sha256(record["sha256"], f"{description}.sha256")}
 
 
+def _source_layout(
+    value: object,
+    description: str,
+    source_hashes: Mapping[str, str],
+) -> dict[str, object]:
+    """Bind a selected object's C spelling and source-required layout authority.
+
+    This is intentionally distinct from the compiler/linker placement recorded
+    in ``producer.static_section_alignment``.  A section can be over-aligned
+    without changing the C type's required alignment.
+    """
+    record = mapping(
+        value,
+        description,
+        {
+            "definition_path",
+            "definition_sha256",
+            "definition_line",
+            "declaration",
+            "c_type",
+            "size_basis",
+            "alignment_path",
+            "alignment_sha256",
+            "alignment_line",
+            "alignment_basis",
+            "source_required_alignment",
+            "include_route",
+        },
+    )
+    definition_path = text(record["definition_path"], f"{description}.definition_path")
+    definition_sha256 = sha256(record["definition_sha256"], f"{description}.definition_sha256")
+    alignment_path = text(record["alignment_path"], f"{description}.alignment_path")
+    alignment_sha256 = sha256(record["alignment_sha256"], f"{description}.alignment_sha256")
+    require(source_hashes.get(definition_path) == definition_sha256,
+            f"{description} definition source is not pinned")
+    require(source_hashes.get(alignment_path) == alignment_sha256,
+            f"{description} alignment source is not pinned")
+    return {
+        "definition_path": definition_path,
+        "definition_sha256": definition_sha256,
+        "definition_line": positive(record["definition_line"], f"{description}.definition_line"),
+        "declaration": text(record["declaration"], f"{description}.declaration"),
+        "c_type": text(record["c_type"], f"{description}.c_type"),
+        "size_basis": text(record["size_basis"], f"{description}.size_basis"),
+        "alignment_path": alignment_path,
+        "alignment_sha256": alignment_sha256,
+        "alignment_line": positive(record["alignment_line"], f"{description}.alignment_line"),
+        "alignment_basis": text(record["alignment_basis"], f"{description}.alignment_basis"),
+        "source_required_alignment": positive(
+            record["source_required_alignment"], f"{description}.source_required_alignment"
+        ),
+        "include_route": text(record["include_route"], f"{description}.include_route"),
+    }
+
+
+def _producer_layout(value: object, description: str) -> dict[str, int]:
+    record = mapping(value, description, {"static_section_alignment"})
+    return {
+        "static_section_alignment": positive(
+            record["static_section_alignment"], f"{description}.static_section_alignment"
+        ),
+    }
+
+
 def _validate_contract(value: object) -> dict[str, Any]:
     contract = mapping(
         value,
@@ -205,10 +273,13 @@ def _validate_contract(value: object) -> dict[str, Any]:
             "upstream_prefix",
             "upstream_source_count",
             "upstream_sources_sha256",
+            "project_header_source_count",
+            "project_header_sources_sha256",
             "static_translation_unit",
             "public_header",
             "weak_fallback_source",
             "upstream_sources",
+            "project_header_sources",
         },
     )
     members_file = text(provenance["members_file"], "allocator member source")
@@ -227,6 +298,24 @@ def _validate_contract(value: object) -> dict[str, Any]:
             "allocator upstream source count differs")
     require(stable_sha256(normalized_sources) == sha256(provenance["upstream_sources_sha256"], "allocator upstream source map SHA-256"),
             "allocator upstream source map digest differs")
+    project_sources = mapping(provenance["project_header_sources"], "allocator installed header source map")
+    normalized_project_sources: dict[str, str] = {}
+    for path, digest in project_sources.items():
+        require(type(path) is str and path.startswith("include/"), "allocator installed header source path differs")
+        normalized_project_sources[path] = sha256(digest, f"allocator installed header source {path}")
+    require(
+        set(normalized_project_sources) == {"include/bits/alltypes.h", "include/pthread.h"}
+        and len(normalized_project_sources) == positive(
+            provenance["project_header_source_count"], "allocator installed header source count"
+        ),
+        "allocator installed header source roster differs",
+    )
+    require(
+        stable_sha256(normalized_project_sources) == sha256(
+            provenance["project_header_sources_sha256"], "allocator installed header source map SHA-256"
+        ),
+        "allocator installed header source map digest differs",
+    )
     for key, expected in (
         ("static_translation_unit", "libmimalloc-sys/c_src/mimalloc/v3/src/static.c"),
         ("public_header", "libmimalloc-sys/c_src/mimalloc/v3/include/mimalloc.h"),
@@ -297,6 +386,7 @@ def _validate_contract(value: object) -> dict[str, Any]:
         "weak null fallback contract differs",
     )
 
+    source_hashes = {**normalized_sources, **normalized_project_sources}
     raw_data = metadata["data_objects"]
     require(type(raw_data) is list and len(raw_data) == len(EXPECTED_DATA_OBJECTS), "allocator data object roster differs")
     data: list[dict[str, Any]] = []
@@ -304,15 +394,17 @@ def _validate_contract(value: object) -> dict[str, Any]:
         item = mapping(
             raw,
             f"allocator data object {index}",
-            {"name", "static", "shared", "size_bytes", "static_alignment", "shared_minimum_alignment"},
+            {"name", "static", "shared", "size_bytes", "source", "producer"},
         )
         item["name"] = text(item["name"], f"allocator data object {index} name")
         item["static"] = _exact_metadata(item["static"], f"allocator data object {item['name']} static metadata")
         item["shared"] = _exact_metadata(item["shared"], f"allocator data object {item['name']} shared metadata")
         item["size_bytes"] = positive(item["size_bytes"], f"allocator data object {item['name']} size")
-        item["static_alignment"] = positive(item["static_alignment"], f"allocator data object {item['name']} static alignment")
-        item["shared_minimum_alignment"] = positive(
-            item["shared_minimum_alignment"], f"allocator data object {item['name']} shared alignment"
+        item["source"] = _source_layout(
+            item["source"], f"allocator data object {item['name']} source layout", source_hashes
+        )
+        item["producer"] = _producer_layout(
+            item["producer"], f"allocator data object {item['name']} producer layout"
         )
         require(item["static"] == {"type": "OBJECT", "binding": "GLOBAL", "visibility": "DEFAULT"},
                 f"allocator data object {item['name']} static metadata differs")
@@ -324,14 +416,14 @@ def _validate_contract(value: object) -> dict[str, Any]:
     tls = mapping(
         metadata["tls_object"],
         "allocator TLS object",
-        {"name", "static", "shared", "size_bytes", "static_alignment", "shared_minimum_alignment"},
+        {"name", "static", "shared", "size_bytes", "source", "producer"},
     )
     tls["name"] = text(tls["name"], "allocator TLS object name")
     tls["static"] = _exact_metadata(tls["static"], "allocator TLS static metadata")
     tls["shared"] = _exact_metadata(tls["shared"], "allocator TLS shared metadata")
     tls["size_bytes"] = positive(tls["size_bytes"], "allocator TLS size")
-    tls["static_alignment"] = positive(tls["static_alignment"], "allocator TLS static alignment")
-    tls["shared_minimum_alignment"] = positive(tls["shared_minimum_alignment"], "allocator TLS shared alignment")
+    tls["source"] = _source_layout(tls["source"], "allocator TLS source layout", source_hashes)
+    tls["producer"] = _producer_layout(tls["producer"], "allocator TLS producer layout")
     require(
         tls["name"] == EXPECTED_TLS_OBJECT
         and tls["static"] == {"type": "TLS", "binding": "GLOBAL", "visibility": "DEFAULT"}
@@ -367,7 +459,11 @@ def _validate_contract(value: object) -> dict[str, Any]:
         "schema": SCHEMA,
         "target": TARGET,
         "backend": dict(backend),
-        "source_provenance": {**dict(provenance), "upstream_sources": normalized_sources},
+        "source_provenance": {
+            **dict(provenance),
+            "upstream_sources": normalized_sources,
+            "project_header_sources": normalized_project_sources,
+        },
         "build": {
             "static_target_flags": static_flags,
             "shared_allocator_flags": shared_flags,
@@ -414,6 +510,50 @@ def contract_members(contract: Mapping[str, Any]) -> list[str]:
     return result
 
 
+def selected_metadata() -> dict[str, dict[str, dict[str, object]]]:
+    """Project the reviewed static/shared metadata for every exact private name.
+
+    This policy projection intentionally contains no observed ELF values.  A
+    consumer can attach its own authenticated facts while using the same finite
+    424-name source contract instead of re-creating the four metadata buckets.
+    """
+    contract = load_contract()
+    metadata = contract["metadata"]
+    data = {item["name"]: item for item in metadata["data_objects"]}
+    tls = metadata["tls_object"]
+    weak = metadata["weak_null_fallback"]
+    result: dict[str, dict[str, dict[str, object]]] = {}
+    for name in contract_members(contract):
+        layout: Mapping[str, Any] | None = None
+        if name in data:
+            expected = data[name]
+            layout = expected
+        elif name == tls["name"]:
+            expected = tls
+            layout = expected
+        elif name == weak["name"]:
+            expected = weak
+        else:
+            expected = metadata["strong_functions"]
+        static = dict(expected["static"])
+        shared = dict(expected["shared"])
+        if layout is not None:
+            static.update({
+                "size_bytes": layout["size_bytes"],
+                "alignment_bytes": layout["producer"]["static_section_alignment"],
+            })
+            shared.update({
+                "size_bytes": layout["size_bytes"],
+                "alignment_bytes": layout["source"]["source_required_alignment"],
+            })
+        result[name] = {
+            "static": static,
+            "shared": shared,
+        }
+    require(len(result) == 424, "selected producer metadata roster differs")
+    return result
+
+
 def _require_exact_source_map(value: object, contract: Mapping[str, Any], description: str) -> dict[str, str]:
     record = mapping(value, description)
     normalized: dict[str, str] = {}
@@ -424,6 +564,15 @@ def _require_exact_source_map(value: object, contract: Mapping[str, Any], descri
     prefix = source["upstream_prefix"]
     upstream = {path: digest for path, digest in normalized.items() if path.startswith(prefix)}
     require(upstream == source["upstream_sources"], f"{description} pinned v3 source map differs")
+    project_headers = {
+        path: digest
+        for path, digest in normalized.items()
+        if path in source["project_header_sources"]
+    }
+    require(
+        project_headers == source["project_header_sources"],
+        f"{description} installed header source map differs",
+    )
     require(
         all(path.startswith(prefix) for path in normalized if path.startswith("libmimalloc-sys/")),
         f"{description} includes a non-v3 libmimalloc-sys source",
@@ -612,6 +761,56 @@ def _validate_elf_facts(facts: object, static_archive_sha256: str) -> dict[str, 
     return report
 
 
+def _shared_artifact_identity(report: Mapping[str, Any]) -> dict[str, object]:
+    """Return the final DSO identity that a dynamic manifest must name.
+
+    The ELF facts reader owns authentication of this record.  This component
+    only keeps the final ``libc.so`` identity connected to the product manifest
+    instead of assuming matching source/member bytes identify a linked DSO.
+    """
+    artifact = mapping(report["artifacts"]["candidate-shared"], "ELF facts shared artifact")
+    identity = mapping(artifact["identity"], "ELF facts shared identity")
+    require_keys(identity, {"path", "sha256", "size", "mode"}, "ELF facts shared identity")
+    return {
+        "path": text(identity["path"], "ELF facts shared artifact path"),
+        "sha256": sha256(identity["sha256"], "ELF facts shared artifact SHA-256"),
+        "size": positive(identity["size"], "ELF facts shared artifact size"),
+        "mode": nonnegative(identity["mode"], "ELF facts shared artifact mode"),
+    }
+
+
+def _validate_shared_product_manifest(
+    value: object,
+    shared_identity: Mapping[str, object],
+) -> dict[str, object]:
+    """Join authenticated shared facts to the selected dynamic product manifest.
+
+    Product replay remains the caller's precondition.  This narrow join does
+    not parse a whole sysroot: it validates only the stable manifest envelope
+    and its authoritative ``usr/lib/libc.so`` digest.
+    """
+    manifest = mapping(value, "shared product manifest", {"files", "format", "schema", "symlinks", "target"})
+    require(type(manifest["schema"]) is int and manifest["schema"] == DYNAMIC_PRODUCT_MANIFEST_SCHEMA,
+            "shared product manifest schema differs")
+    require(manifest["format"] == DYNAMIC_PRODUCT_MANIFEST_FORMAT,
+            "shared product manifest format differs")
+    require(manifest["target"] == TARGET, "shared product manifest target differs")
+    files = mapping(manifest["files"], "shared product manifest files")
+    manifest_libc_sha256 = sha256(files.get(DYNAMIC_PRODUCT_LIBC_PATH), "shared product manifest libc.so SHA-256")
+    symlinks = mapping(manifest["symlinks"], "shared product manifest symlinks")
+    require(
+        symlinks.get("lib/ld-musl-x86_64.so.1") == "ld-crabc-x86_64.so.1",
+        "shared product manifest loader symlink differs",
+    )
+    require(manifest_libc_sha256 == shared_identity["sha256"],
+            "shared artifact identity differs from shared product manifest libc.so")
+    return {
+        "manifest_libc_so_path": DYNAMIC_PRODUCT_LIBC_PATH,
+        "manifest_libc_so_sha256": manifest_libc_sha256,
+        "elf_facts_identity": dict(shared_identity),
+    }
+
+
 def _named_row(rows: Sequence[Mapping[str, Any]], name: str, description: str) -> dict[str, Any]:
     result = [dict(row) for row in rows if row.get("name") == name]
     require(len(result) == 1, f"{description} must contain exactly one {name} row")
@@ -650,6 +849,31 @@ def _section_alignment(member: Mapping[str, Any], row: Mapping[str, Any], descri
     matches = [section for section in sections if type(section) is dict and section.get("index") == index]
     require(len(matches) == 1, f"{description} section is absent or duplicated")
     return positive(matches[0].get("alignment"), f"{description} section alignment")
+
+
+def _symbol_value_alignment(
+    row: Mapping[str, Any],
+    required_alignment: int,
+    description: str,
+) -> dict[str, object]:
+    """Check the ELF symbol value itself, including TLS-relative offsets.
+
+    For a TLS symbol, ``st_value`` is an offset in its TLS block.  The same
+    modulo test applies directly; subtracting the virtual address of ``.tdata``
+    would turn that source-defined offset into an unrelated calculation.
+    """
+    value = text(row.get("value"), f"{description} symbol value")
+    require(re.fullmatch(r"[0-9a-f]{16}", value) is not None,
+            f"{description} symbol value spelling differs")
+    numeric = int(value, 16)
+    require(numeric % required_alignment == 0,
+            f"symbol value alignment differs for {description}")
+    return {
+        "hex": value,
+        "integer": numeric,
+        "source_required_alignment": required_alignment,
+        "modulo_source_required_alignment": numeric % required_alignment,
+    }
 
 
 def _validate_metadata_rows(
@@ -707,19 +931,28 @@ def _validate_metadata_rows(
             and shared_metadata["size_bytes"] == item["size_bytes"],
             f"data layout differs for {name}",
         )
+        source_alignment = item["source"]["source_required_alignment"]
         static_alignment = _section_alignment(c_member, static_row, f"static data {name}")
         shared_alignment = _section_alignment(shared, shared_row, f"shared data {name}")
-        require(static_alignment == item["static_alignment"], f"data layout differs for {name}")
-        require(shared_alignment >= item["shared_minimum_alignment"], f"data layout differs for {name}")
+        require(static_alignment == item["producer"]["static_section_alignment"], f"data layout differs for {name}")
+        require(shared_alignment >= source_alignment, f"data layout differs for {name}")
         data_records.append({
             "name": name,
             "static": static_metadata,
             "shared": shared_metadata,
             "layout": {
                 "size_bytes": item["size_bytes"],
+                "source": item["source"],
+                "producer": item["producer"],
                 "static_section_alignment": static_alignment,
                 "shared_section_alignment": shared_alignment,
-                "shared_minimum_alignment": item["shared_minimum_alignment"],
+                "shared_source_minimum_alignment": source_alignment,
+                "static_symbol_value": _symbol_value_alignment(
+                    static_row, source_alignment, f"static data {name}"
+                ),
+                "shared_symbol_value": _symbol_value_alignment(
+                    shared_row, source_alignment, f"shared data {name}"
+                ),
             },
         })
 
@@ -731,10 +964,11 @@ def _validate_metadata_rows(
         tls_static["size_bytes"] == tls["size_bytes"] and tls_shared["size_bytes"] == tls["size_bytes"],
         f"TLS layout differs for {tls['name']}",
     )
+    tls_source_alignment = tls["source"]["source_required_alignment"]
     tls_static_alignment = _section_alignment(c_member, tls_static_row, f"static TLS {tls['name']}")
     tls_shared_alignment = _section_alignment(shared, tls_shared_row, f"shared TLS {tls['name']}")
-    require(tls_static_alignment == tls["static_alignment"], f"TLS layout differs for {tls['name']}")
-    require(tls_shared_alignment >= tls["shared_minimum_alignment"], f"TLS layout differs for {tls['name']}")
+    require(tls_static_alignment == tls["producer"]["static_section_alignment"], f"TLS layout differs for {tls['name']}")
+    require(tls_shared_alignment >= tls_source_alignment, f"TLS layout differs for {tls['name']}")
 
     return {
         "strong-functions": {
@@ -762,9 +996,17 @@ def _validate_metadata_rows(
                 "shared": tls_shared,
                 "layout": {
                     "size_bytes": tls["size_bytes"],
+                    "source": tls["source"],
+                    "producer": tls["producer"],
                     "static_section_alignment": tls_static_alignment,
                     "shared_section_alignment": tls_shared_alignment,
-                    "shared_minimum_alignment": tls["shared_minimum_alignment"],
+                    "shared_source_minimum_alignment": tls_source_alignment,
+                    "static_symbol_value": _symbol_value_alignment(
+                        tls_static_row, tls_source_alignment, f"static TLS {tls['name']}"
+                    ),
+                    "shared_symbol_value": _symbol_value_alignment(
+                        tls_shared_row, tls_source_alignment, f"shared TLS {tls['name']}"
+                    ),
                 },
             }],
         },
@@ -831,12 +1073,15 @@ def account_producer_metadata(
     elf_facts: Mapping[str, Any],
     static_provenance: Mapping[str, Any],
     shared_provenance: Mapping[str, Any],
+    shared_product_manifest: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Account exactly the private fixed-C producer obligations.
 
     Preconditions: elf_facts was authenticated by native_abi_elf_facts and
-    each provenance mapping came from the corresponding owned product. This
-    function does not replay those larger receipts or choose a public provider.
+    each provenance mapping and the dynamic manifest came from the corresponding
+    owned product. This function does not replay those larger receipts or choose
+    a public provider.  The caller must authenticate the manifest/product join
+    with the owning product reader before invoking this pure account.
     """
     contract = load_contract()
     members = contract_members(contract)
@@ -850,6 +1095,9 @@ def account_producer_metadata(
         static_provenance, contract
     )
     report = _validate_elf_facts(elf_facts, static_archive_sha256)
+    shared_artifact = _validate_shared_product_manifest(
+        shared_product_manifest, _shared_artifact_identity(report)
+    )
     shared_rust_member, shared_members = _validate_shared_provenance(
         shared_provenance, contract, c_member_name, static_members[c_member_name]
     )
@@ -873,6 +1121,8 @@ def account_producer_metadata(
                 "members_count": contract["source_provenance"]["members_count"],
                 "upstream_sources_sha256": contract["source_provenance"]["upstream_sources_sha256"],
                 "upstream_source_count": contract["source_provenance"]["upstream_source_count"],
+                "project_header_sources_sha256": contract["source_provenance"]["project_header_sources_sha256"],
+                "project_header_source_count": contract["source_provenance"]["project_header_source_count"],
                 "static_translation_unit": contract["source_provenance"]["static_translation_unit"],
                 "public_header": contract["source_provenance"]["public_header"],
                 "weak_fallback_source": contract["source_provenance"]["weak_fallback_source"],
@@ -898,6 +1148,7 @@ def account_producer_metadata(
             "shared_c_member_sha256": shared_members[c_member_name],
         },
         "fact_source": dict(report["collector_execution_source"]),
+        "shared_product_binding": shared_artifact,
         "metadata_buckets": buckets,
         "rust_root_c_import_joins": joins,
         "boundaries": {
@@ -910,6 +1161,7 @@ def account_producer_metadata(
         "limits": [
             "Consumes already authenticated ELF facts and owned-product provenance; it does not replay either source receipt.",
             "Public malloc ABI, interposition, and runtime behavior are separate components.",
+            "The seven Rust-root C joins are retained producer observations; their separate selection closure needs an installed consumer/map component.",
             "The fixed mimalloc v3.5.0 Rust-port oracle is distinct from this selected v3.3.2 C backend.",
             "A qualified Rust-backend promotion removes this C producer contract instead of transferring its metadata to Rust.",
         ],
@@ -960,29 +1212,39 @@ def write_current_product_receipt(
     elf_facts_path: Path,
     static_provenance_path: Path,
     shared_provenance_path: Path,
+    shared_manifest_path: Path,
     output: Path,
 ) -> dict[str, Any]:
     """Bind one current product's authenticated inputs to this focused account."""
     require(output.parent.is_dir() and not output.parent.is_symlink(), "producer receipt output parent is invalid")
     require(not output.exists() and not output.is_symlink(), "producer receipt output already exists")
-    inputs = {
+    inputs_before = {
         "elf_facts": physical_identity(elf_facts_path, "ELF facts report"),
         "static_provenance": physical_identity(static_provenance_path, "static provenance"),
         "shared_provenance": physical_identity(shared_provenance_path, "shared provenance"),
+        "shared_manifest": physical_identity(shared_manifest_path, "shared product manifest"),
     }
     account = account_producer_metadata(
         _strict_json(elf_facts_path, "ELF facts report"),
         _strict_json(static_provenance_path, "static provenance"),
         _strict_json(shared_provenance_path, "shared provenance"),
+        _strict_json(shared_manifest_path, "shared product manifest"),
     )
+    inputs_after = {
+        "elf_facts": physical_identity(elf_facts_path, "ELF facts report"),
+        "static_provenance": physical_identity(static_provenance_path, "static provenance"),
+        "shared_provenance": physical_identity(shared_provenance_path, "shared provenance"),
+        "shared_manifest": physical_identity(shared_manifest_path, "shared product manifest"),
+    }
+    require(same(inputs_before, inputs_after), "producer receipt inputs changed during accounting")
     receipt = {
         "schema": RECEIPT_SCHEMA,
         "status": "component-pass-not-qualification",
         "collector": _collector_identity(),
-        "inputs": inputs,
+        "inputs": {"before": inputs_before, "after": inputs_after},
         "account": account,
         "limits": [
-            "Input product authentication and source freshness are preconditions owned by the existing ELF and product readers.",
+            "Input product authentication and source freshness are preconditions owned by the existing ELF and product readers; the shared manifest binds final libc.so bytes to the selected dynamic product.",
             "This receipt adds fixed-C producer metadata and archive/provider joins without creating another product builder or generic receipt framework.",
         ],
     }
@@ -995,6 +1257,7 @@ def main() -> int:
     parser.add_argument("--elf-facts", type=Path, required=True)
     parser.add_argument("--static-provenance", type=Path, required=True)
     parser.add_argument("--shared-provenance", type=Path, required=True)
+    parser.add_argument("--shared-manifest", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:
@@ -1002,6 +1265,7 @@ def main() -> int:
             args.elf_facts,
             args.static_provenance,
             args.shared_provenance,
+            args.shared_manifest,
             args.output,
         )
     except ProducerMetadataError as error:

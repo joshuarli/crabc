@@ -22,6 +22,8 @@ members_count = 424
 upstream_prefix = "libmimalloc-sys/c_src/mimalloc/v3/"
 upstream_source_count = 32
 upstream_sources_sha256 = "cd5ba1e4b1c3d85d371a49998a4977c721a6660c3e30f2299f2012784e92e8fa"
+project_header_source_count = 2
+project_header_sources_sha256 = "a9dc67e1786a5eb5915949bb8a0d9eb094e901ed36bf18677ed9dc95e2566df9"
 static_translation_unit = { path = "libmimalloc-sys/c_src/mimalloc/v3/src/static.c", sha256 = "4059be2a6676693be3433f5aedc711f56301772e65f3573654c236d6d1cfd074" }
 public_header = { path = "libmimalloc-sys/c_src/mimalloc/v3/include/mimalloc.h", sha256 = "869161433ab2d807a75752d0762accf5b68b6b24ce67e417af46bf181b9b6c72" }
 weak_fallback_source = { path = "libmimalloc-sys/c_src/mimalloc/v3/src/alloc.c", sha256 = "a92d58e47220e5b6d138b83d92498771be4195ee59136a134e4461f6f726b9b8" }
@@ -60,6 +62,10 @@ weak_fallback_source = { path = "libmimalloc-sys/c_src/mimalloc/v3/src/alloc.c",
 "libmimalloc-sys/c_src/mimalloc/v3/src/theap.c" = "7f76bcace4b0578f2063477752138adabd99f7b10a276998e296a312c47a7cfe"
 "libmimalloc-sys/c_src/mimalloc/v3/src/threadlocal.c" = "49be69a4b674e09690a63870830f3ffb05698ed4210949ef5add11957a08325b"
 
+[source_provenance.project_header_sources]
+"include/bits/alltypes.h" = "211f5b962fbc6d43810faa945d8bcd136d083bc16d7ef48f8e2ea5669943f021"
+"include/pthread.h" = "ee74865628a1315b833253a507b14e4e8d703735b8e280a69bad8f60061d69d0"
+
 [build]
 static_target_flags = ["-nostdinc", "-isystem", "$CRABC_SOURCE/include", "-fPIC", "-ftls-model=initial-exec", "-fstack-protector-strong", "-DMI_PRIM_HAS_PROCESS_ATTACH=1", "-ffile-prefix-map=$CRABC_SOURCE=/crabc", "-MD", "-MF", "$CRABC_X86_BUILD/allocator.d"]
 shared_allocator_flags = ["-nostdinc", "-isystem", "$SOURCE/include", "-fPIC", "-ftls-model=initial-exec", "-fstack-protector-strong", "-DMI_PRIM_HAS_PROCESS_ATTACH=1", "-ffile-prefix-map=$SOURCE=/crabc", "-MD", "-MF", "$BUILD/allocator.d"]
@@ -91,32 +97,32 @@ name = "_mi_cpu_has_popcnt"
 static = { type = "OBJECT", binding = "GLOBAL", visibility = "DEFAULT" }
 shared = { type = "OBJECT", binding = "LOCAL", visibility = "DEFAULT" }
 size_bytes = 1
-static_alignment = 64
-shared_minimum_alignment = 64
+source = { definition_path = "libmimalloc-sys/c_src/mimalloc/v3/src/init.c", definition_sha256 = "eca1fe77d72ab2aaccc447c8119056e9c4e8851bda9a95472b573539f76107ad", definition_line = 1027, declaration = "mi_decl_cache_align bool _mi_cpu_has_popcnt = false;", c_type = "bool (_Bool)", size_basis = "bool (_Bool)", alignment_path = "libmimalloc-sys/c_src/mimalloc/v3/include/mimalloc/internal.h", alignment_sha256 = "5aeeff21d667daf4aadcc66f634aa957ecd688d15b277828f367c8c2274251a8", alignment_line = 31, alignment_basis = "mi_decl_cache_align expands mi_decl_align(64)", source_required_alignment = 64, include_route = "not-applicable" }
+producer = { static_section_alignment = 64 }
 
 [[metadata.data_objects]]
 name = "_mi_heap_default_key"
 static = { type = "OBJECT", binding = "GLOBAL", visibility = "DEFAULT" }
 shared = { type = "OBJECT", binding = "LOCAL", visibility = "DEFAULT" }
 size_bytes = 4
-static_alignment = 4
-shared_minimum_alignment = 4
+source = { definition_path = "libmimalloc-sys/c_src/mimalloc/v3/src/prim/unix/prim.c", definition_sha256 = "c1ae32eaac7ccf18c10058cca99723892f8bd027318590151f5011c929c7e3be", definition_line = 948, declaration = "pthread_key_t _mi_heap_default_key = (pthread_key_t)(-1);", c_type = "pthread_key_t (unsigned int)", size_basis = "x86-64 unsigned int", alignment_path = "include/bits/alltypes.h", alignment_sha256 = "211f5b962fbc6d43810faa945d8bcd136d083bc16d7ef48f8e2ea5669943f021", alignment_line = 322, alignment_basis = "typedef unsigned pthread_key_t", source_required_alignment = 4, include_route = "x86-selected include/pthread.h:26,30 -> include/bits/alltypes.h:322" }
+producer = { static_section_alignment = 4 }
 
 [[metadata.data_objects]]
 name = "_mi_stats_main"
 static = { type = "OBJECT", binding = "GLOBAL", visibility = "DEFAULT" }
 shared = { type = "OBJECT", binding = "LOCAL", visibility = "DEFAULT" }
 size_bytes = 4368
-static_alignment = 32
-shared_minimum_alignment = 32
+source = { definition_path = "libmimalloc-sys/c_src/mimalloc/v3/src/init.c", definition_sha256 = "eca1fe77d72ab2aaccc447c8119056e9c4e8851bda9a95472b573539f76107ad", definition_line = 231, declaration = "mi_stats_t _mi_stats_main = { sizeof(mi_stats_t), MI_STAT_VERSION, MI_STATS_NULL };", c_type = "mi_stats_t", size_basis = "2*8 +15*24 +21*8 +4*24 +4*8 +(74+74+6)*24 = 4368", alignment_path = "libmimalloc-sys/c_src/mimalloc/v3/include/mimalloc-stats.h", alignment_sha256 = "5260df227ea1612b8678a06b063cc8f48e739b551554541cdeb4d430a7e257b3", alignment_line = 101, alignment_basis = "plain mi_stats_t; MI_STAT_FIELDS applies mi_decl_align(8), not 32", source_required_alignment = 8, include_route = "not-applicable" }
+producer = { static_section_alignment = 32 }
 
 [metadata.tls_object]
 name = "mi_thread_locals"
 static = { type = "TLS", binding = "GLOBAL", visibility = "DEFAULT" }
 shared = { type = "TLS", binding = "LOCAL", visibility = "DEFAULT" }
 size_bytes = 8
-static_alignment = 8
-shared_minimum_alignment = 8
+source = { definition_path = "libmimalloc-sys/c_src/mimalloc/v3/src/threadlocal.c", definition_sha256 = "49be69a4b674e09690a63870830f3ffb05698ed4210949ef5add11957a08325b", definition_line = 35, declaration = "mi_decl_thread mi_thread_locals_t* mi_thread_locals = &mi_thread_locals_empty;", c_type = "__thread mi_thread_locals_t *", size_basis = "native x86-64 pointer", alignment_path = "libmimalloc-sys/c_src/mimalloc/v3/include/mimalloc/internal.h", alignment_sha256 = "5aeeff21d667daf4aadcc66f634aa957ecd688d15b277828f367c8c2274251a8", alignment_line = 50, alignment_basis = "mi_decl_thread expands __thread; pointer object", source_required_alignment = 8, include_route = "not-applicable" }
+producer = { static_section_alignment = 8 }
 
 [rust_root_imports]
 names = ["_mi_auto_process_done", "_mi_auto_process_init", "mi_free", "mi_malloc_aligned", "mi_realloc_aligned", "mi_usable_size", "mi_zalloc"]

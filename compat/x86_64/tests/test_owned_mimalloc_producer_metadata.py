@@ -56,7 +56,7 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
         cls.contract = producer.load_contract()
         cls.members = producer.contract_members(cls.contract)
 
-    def fixture(self) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
+    def fixture(self) -> tuple[dict[str, object], dict[str, object], dict[str, object], dict[str, object]]:
         contract = self.contract
         metadata = contract["metadata"]
         data_layouts = {item["name"]: item for item in metadata["data_objects"]}
@@ -93,14 +93,14 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
                 static_sections.append(
                     {
                         "index": static_index,
-                        "alignment": layout["static_alignment"],
+                        "alignment": layout["producer"]["static_section_alignment"],
                         "name": ".fixture.static",
                     }
                 )
                 shared_sections.append(
                     {
                         "index": shared_index,
-                        "alignment": layout["shared_minimum_alignment"],
+                        "alignment": layout["source"]["source_required_alignment"],
                         "name": ".fixture.shared",
                     }
                 )
@@ -122,14 +122,14 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
                 static_sections.append(
                     {
                         "index": static_index,
-                        "alignment": tls_layout["static_alignment"],
+                        "alignment": tls_layout["producer"]["static_section_alignment"],
                         "name": ".fixture.tdata",
                     }
                 )
                 shared_sections.append(
                     {
                         "index": shared_index,
-                        "alignment": tls_layout["shared_minimum_alignment"],
+                        "alignment": tls_layout["source"]["source_required_alignment"],
                         "name": ".fixture.tdata",
                     }
                 )
@@ -155,6 +155,7 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
         static_sha = "a" * 64
         shared_sha = "b" * 64
         source_map = dict(contract["source_provenance"]["upstream_sources"])
+        source_map.update(contract["source_provenance"]["project_header_sources"])
         source_map["include/fixture.h"] = "f" * 64
         crate_pin = {
             "name": contract["backend"]["crate"],
@@ -218,7 +219,14 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
             },
             "artifacts": {
                 "candidate-static": {"identity": {"sha256": static_sha}},
-                "candidate-shared": {"identity": {"sha256": shared_sha}},
+                "candidate-shared": {
+                    "identity": {
+                        "path": "/fixture/usr/lib/libc.so",
+                        "sha256": shared_sha,
+                        "size": 4096,
+                        "mode": 0o755,
+                    },
+                },
             },
             "facts": {
                 "candidate-static": [
@@ -244,11 +252,18 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
                 },
             },
         }
-        return facts, static_provenance, shared_provenance
+        shared_manifest: dict[str, object] = {
+            "schema": producer.DYNAMIC_PRODUCT_MANIFEST_SCHEMA,
+            "format": producer.DYNAMIC_PRODUCT_MANIFEST_FORMAT,
+            "target": producer.TARGET,
+            "files": {producer.DYNAMIC_PRODUCT_LIBC_PATH: shared_sha},
+            "symlinks": {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"},
+        }
+        return facts, static_provenance, shared_provenance, shared_manifest
 
     def account(self) -> dict[str, object]:
-        facts, static_provenance, shared_provenance = self.fixture()
-        return producer.account_producer_metadata(facts, static_provenance, shared_provenance)
+        facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
+        return producer.account_producer_metadata(facts, static_provenance, shared_provenance, shared_manifest)
 
     def test_accounts_exact_four_metadata_buckets_and_seven_rust_root_joins(self) -> None:
         account = self.account()
@@ -276,12 +291,62 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
         self.assertFalse(account["status_flags"]["promotion_ready"])
         self.assertFalse(account["status_flags"]["public_support"])
 
+        layouts = {
+            record["name"]: record["layout"]
+            for record in account["metadata_buckets"]["data-objects"]["members"]
+        }
+        layouts[producer.EXPECTED_TLS_OBJECT] = account["metadata_buckets"]["initial-exec-tls"]["members"][0]["layout"]
+        self.assertEqual(
+            {
+                name: (
+                    layout["size_bytes"],
+                    layout["source"]["source_required_alignment"],
+                    layout["producer"]["static_section_alignment"],
+                )
+                for name, layout in layouts.items()
+            },
+            {
+                "_mi_cpu_has_popcnt": (1, 64, 64),
+                "_mi_heap_default_key": (4, 4, 4),
+                "_mi_stats_main": (4368, 8, 32),
+                "mi_thread_locals": (8, 8, 8),
+            },
+        )
+        self.assertEqual(layouts["mi_thread_locals"]["shared_symbol_value"]["integer"], 0)
+        self.assertEqual(layouts["mi_thread_locals"]["shared_symbol_value"]["modulo_source_required_alignment"], 0)
+
+    def test_selected_metadata_projects_exact_private_roster_without_observed_values(self) -> None:
+        projection = producer.selected_metadata()
+        self.assertEqual(list(projection), self.members)
+        self.assertEqual(projection["_mi_cpu_has_popcnt"], {
+            "static": {
+                "type": "OBJECT", "binding": "GLOBAL", "visibility": "DEFAULT",
+                "size_bytes": 1, "alignment_bytes": 64,
+            },
+            "shared": {
+                "type": "OBJECT", "binding": "LOCAL", "visibility": "DEFAULT",
+                "size_bytes": 1, "alignment_bytes": 64,
+            },
+        })
+        self.assertEqual(projection["_ZSt15get_new_handlerv"]["static"]["binding"], "WEAK")
+        self.assertEqual(projection["_mi_stats_main"], {
+            "static": {
+                "type": "OBJECT", "binding": "GLOBAL", "visibility": "DEFAULT",
+                "size_bytes": 4368, "alignment_bytes": 32,
+            },
+            "shared": {
+                "type": "OBJECT", "binding": "LOCAL", "visibility": "DEFAULT",
+                "size_bytes": 4368, "alignment_bytes": 8,
+            },
+        })
+        self.assertEqual(set(projection["mi_thread_locals"]), {"static", "shared"})
+
     def test_rejects_omitted_or_extra_identity_from_exact_roster(self) -> None:
-        facts, static_provenance, shared_provenance = self.fixture()
+        facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
         c_member = facts["facts"]["candidate-static"][1]
         c_member["symbol_tables"][0]["rows"].pop()
         with self.assertRaisesRegex(producer.ProducerMetadataError, "static provider roster differs"):
-            producer.account_producer_metadata(facts, static_provenance, shared_provenance)
+            producer.account_producer_metadata(facts, static_provenance, shared_provenance, shared_manifest)
 
         work = ROOT / ".work/x86_64/owned-mimalloc-producer-metadata-tests"
         work.mkdir(parents=True, exist_ok=True)
@@ -293,60 +358,92 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
                     producer.contract_members(self.contract)
 
     def test_rejects_metadata_layout_or_dynsym_exposure_drift(self) -> None:
-        facts, static_provenance, shared_provenance = self.fixture()
+        facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
         shared_rows = facts["facts"]["candidate-shared"]["symbol_tables"][1]["rows"]
         stats = next(row for row in shared_rows if row["name"] == "_mi_stats_main")
         stats["size_bytes"] = 4367
         stats["size"] = "4367"
         with self.assertRaisesRegex(producer.ProducerMetadataError, "data layout"):
-            producer.account_producer_metadata(facts, static_provenance, shared_provenance)
+            producer.account_producer_metadata(facts, static_provenance, shared_provenance, shared_manifest)
 
-        facts, static_provenance, shared_provenance = self.fixture()
+        facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
         dynsym = facts["facts"]["candidate-shared"]["symbol_tables"][0]["rows"]
         dynsym.append(symbol("mi_malloc_aligned"))
         with self.assertRaisesRegex(producer.ProducerMetadataError, "shared dynsym exposes"):
-            producer.account_producer_metadata(facts, static_provenance, shared_provenance)
+            producer.account_producer_metadata(facts, static_provenance, shared_provenance, shared_manifest)
+
+    def test_rejects_unaligned_symbol_values_and_unbound_shared_artifact_identity(self) -> None:
+        """ELF section alignment cannot stand in for each selected symbol's value."""
+        for placement in ("candidate-static", "candidate-shared"):
+            for name in (*producer.EXPECTED_DATA_OBJECTS, producer.EXPECTED_TLS_OBJECT):
+                with self.subTest(placement=placement, name=name):
+                    facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
+                    member = (
+                        facts["facts"][placement][1]
+                        if placement == "candidate-static"
+                        else facts["facts"][placement]
+                    )
+                    rows = next(table["rows"] for table in member["symbol_tables"] if table["name"] == ".symtab")
+                    row = next(item for item in rows if item["name"] == name)
+                    row["value"] = f"{int(row['value'], 16) + 1:016x}"
+                    with self.assertRaisesRegex(producer.ProducerMetadataError, "symbol value alignment"):
+                        producer.account_producer_metadata(facts, static_provenance, shared_provenance, shared_manifest)
+
+        facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
+        facts["artifacts"]["candidate-shared"]["identity"]["sha256"] = "f" * 64
+        with self.assertRaisesRegex(producer.ProducerMetadataError, "shared artifact identity"):
+            producer.account_producer_metadata(facts, static_provenance, shared_provenance, shared_manifest)
+
+        facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
+        shared_manifest["files"][producer.DYNAMIC_PRODUCT_LIBC_PATH] = "f" * 64
+        with self.assertRaisesRegex(producer.ProducerMetadataError, "shared artifact identity"):
+            producer.account_producer_metadata(facts, static_provenance, shared_provenance, shared_manifest)
 
     def test_rejects_crate_or_pinned_c_source_drift_and_optional_undefined_handler_substitution(self) -> None:
-        facts, static_provenance, shared_provenance = self.fixture()
+        facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
         static_provenance["allocator_backend"]["crate"]["version"] = "0.1.50"
         with self.assertRaisesRegex(producer.ProducerMetadataError, "allocator crate pin"):
-            producer.account_producer_metadata(facts, static_provenance, shared_provenance)
+            producer.account_producer_metadata(facts, static_provenance, shared_provenance, shared_manifest)
 
-        facts, static_provenance, shared_provenance = self.fixture()
+        facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
         static_provenance["allocator_backend"]["source_and_header_sha256"][
             "libmimalloc-sys/c_src/mimalloc/v3/src/alloc.c"
         ] = "0" * 64
         with self.assertRaisesRegex(producer.ProducerMetadataError, "pinned v3 source map"):
-            producer.account_producer_metadata(facts, static_provenance, shared_provenance)
+            producer.account_producer_metadata(facts, static_provenance, shared_provenance, shared_manifest)
 
-        facts, static_provenance, shared_provenance = self.fixture()
+        facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
+        static_provenance["allocator_backend"]["source_and_header_sha256"].pop("include/bits/alltypes.h")
+        with self.assertRaisesRegex(producer.ProducerMetadataError, "installed header source map"):
+            producer.account_producer_metadata(facts, static_provenance, shared_provenance, shared_manifest)
+
+        facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
         c_rows = facts["facts"]["candidate-static"][1]["symbol_tables"][0]["rows"]
         handler = next(row for row in c_rows if row["name"] == "_ZSt15get_new_handlerv")
         handler.update(binding="GLOBAL", section_index="UND", size="0", size_bytes=0)
         with self.assertRaisesRegex(producer.ProducerMetadataError, "weak null fallback"):
-            producer.account_producer_metadata(facts, static_provenance, shared_provenance)
+            producer.account_producer_metadata(facts, static_provenance, shared_provenance, shared_manifest)
 
     def test_rejects_missing_rust_import_provider_or_final_shared_provider_join(self) -> None:
-        facts, static_provenance, shared_provenance = self.fixture()
+        facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
         rust_rows = facts["facts"]["candidate-static"][0]["symbol_tables"][0]["rows"]
         rust_rows.pop()
         with self.assertRaisesRegex(producer.ProducerMetadataError, "Rust-root import roster"):
-            producer.account_producer_metadata(facts, static_provenance, shared_provenance)
+            producer.account_producer_metadata(facts, static_provenance, shared_provenance, shared_manifest)
 
-        facts, static_provenance, shared_provenance = self.fixture()
+        facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
         rust_rows = facts["facts"]["candidate-static"][0]["symbol_tables"][0]["rows"]
         rust_rows.append(symbol("_mi_os_alloc", kind="NOTYPE", section="UND", size=0))
         with self.assertRaisesRegex(producer.ProducerMetadataError, "Rust-root import roster"):
-            producer.account_producer_metadata(facts, static_provenance, shared_provenance)
+            producer.account_producer_metadata(facts, static_provenance, shared_provenance, shared_manifest)
 
-        facts, static_provenance, shared_provenance = self.fixture()
+        facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
         shared_provenance["selected_members"].pop("b85de32113adef8e-static.o")
         with self.assertRaisesRegex(producer.ProducerMetadataError, "shared allocator selected"):
-            producer.account_producer_metadata(facts, static_provenance, shared_provenance)
+            producer.account_producer_metadata(facts, static_provenance, shared_provenance, shared_manifest)
 
     def test_current_product_receipt_adapter_binds_input_bytes(self) -> None:
-        facts, static_provenance, shared_provenance = self.fixture()
+        facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
         work = ROOT / ".work/x86_64/owned-mimalloc-producer-metadata-tests"
         work.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=work) as temporary:
@@ -354,18 +451,54 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
             fact_path = root / "facts.json"
             static_path = root / "static.json"
             shared_path = root / "shared.json"
+            manifest_path = root / "manifest.json"
             output = root / "receipt.json"
             for path, value in (
                 (fact_path, facts),
                 (static_path, static_provenance),
                 (shared_path, shared_provenance),
+                (manifest_path, shared_manifest),
             ):
                 path.write_text(json.dumps(value, sort_keys=True) + "\n", encoding="utf-8")
-            receipt = producer.write_current_product_receipt(fact_path, static_path, shared_path, output)
+            receipt = producer.write_current_product_receipt(
+                fact_path, static_path, shared_path, manifest_path, output
+            )
             self.assertTrue(output.is_file())
             self.assertEqual(json.loads(output.read_text(encoding="utf-8")), receipt)
-            self.assertEqual(receipt["inputs"]["elf_facts"]["sha256"], producer.sha256_file(fact_path))
+            self.assertEqual(receipt["inputs"]["before"], receipt["inputs"]["after"])
+            self.assertEqual(receipt["inputs"]["before"]["elf_facts"]["sha256"], producer.sha256_file(fact_path))
+            self.assertEqual(receipt["inputs"]["before"]["shared_manifest"]["sha256"], producer.sha256_file(manifest_path))
             self.assertEqual(receipt["account"]["scope"]["member_count"], 424)
+
+    def test_current_product_receipt_rejects_manifest_change_during_accounting(self) -> None:
+        facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
+        work = ROOT / ".work/x86_64/owned-mimalloc-producer-metadata-tests"
+        work.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=work) as temporary:
+            root = Path(temporary)
+            fact_path = root / "facts.json"
+            static_path = root / "static.json"
+            shared_path = root / "shared.json"
+            manifest_path = root / "manifest.json"
+            output = root / "receipt.json"
+            for path, value in (
+                (fact_path, facts),
+                (static_path, static_provenance),
+                (shared_path, shared_provenance),
+                (manifest_path, shared_manifest),
+            ):
+                path.write_text(json.dumps(value, sort_keys=True) + "\n", encoding="utf-8")
+
+            def mutate_manifest(*_arguments: object) -> dict[str, object]:
+                manifest_path.write_text("{}\n", encoding="utf-8")
+                return {"fixture": "account"}
+
+            with mock.patch.object(producer, "account_producer_metadata", side_effect=mutate_manifest):
+                with self.assertRaisesRegex(producer.ProducerMetadataError, "inputs changed during accounting"):
+                    producer.write_current_product_receipt(
+                        fact_path, static_path, shared_path, manifest_path, output
+                    )
+            self.assertFalse(output.exists())
 
 
 if __name__ == "__main__":
