@@ -71,6 +71,31 @@ def _occurrence(index: int, name: str, artifact: str, table: str, binding: str) 
 
 
 class NativeUtmpxAttachmentTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        """Use the producer's full source-expanded feature records.
+
+        The attachment is an accounting consumer.  Its fixture must therefore
+        carry the exact record emitted by ``expand_obligations`` instead of a
+        reduced lookalike assembled in this test.
+        """
+        contract = selection.load_contract()
+        inputs = selection.load_source_inputs(contract, selection.CONTRACT_PATH)
+        records = {
+            row['identity']['name']: row
+            for row in selection.expand_obligations(contract, inputs)
+        }
+        requirements: dict[str, dict[str, object]] = {}
+        for alias, target in ALIASES:
+            feature = records[alias].get('function_alias_requirements')
+            if not isinstance(feature, list) or len(feature) != 1:
+                raise AssertionError(f'missing canonical source feature requirement: {alias}')
+            requirement = feature[0]
+            if not isinstance(requirement, dict) or requirement.get('target') != target:
+                raise AssertionError(f'canonical source feature target differs: {alias}')
+            requirements[alias] = copy.deepcopy(requirement)
+        cls.source_feature_requirements = requirements
+
     def setUp(self) -> None:
         checkout = mock.patch.object(selection, '_common_checkout', return_value=ROOT)
         checkout.start()
@@ -224,7 +249,7 @@ class NativeUtmpxAttachmentTests(unittest.TestCase):
         identities, blockers, function = [], [], []
         for alias, target in ALIASES:
             identity = {'name': alias, 'version': None, 'version_default': False}
-            feature = {'name': alias, 'target': target, 'binding': 'weak-same-address', 'owner': 'x86-owned-static-runtime'}
+            feature = copy.deepcopy(self.source_feature_requirements[alias])
             identities.append({'identity': identity, 'selection': {'disposition': 'public-provider'},
                                'function_alias_requirements': [feature],
                                'unresolved': [selection.UTMPX_ALIAS_RECEIPT_REQUIREMENT]})
@@ -341,6 +366,16 @@ class NativeUtmpxAttachmentTests(unittest.TestCase):
         self.assertTrue(any(row['reason'] == selection.ORDINARY_IMPORT_REASON for row in accounting['blockers']))
         self.assertEqual({row['target'] for row in joins[0]['aliases']}, {target for _, target in ALIASES})
         self.assertNotIn('utmpname', {row['alias'] for row in joins[0]['aliases']})
+
+    def test_attachment_rejects_changed_source_feature_metadata(self) -> None:
+        for field, value in (('state', 'verified'), ('baseline_features', []), ('runner', 'forged-runner')):
+            with self.subTest(field=field):
+                accounting = self._accounting()
+                record = next(row for row in accounting['identities'] if row['identity']['name'] == 'endutent')
+                record['function_alias_requirements'][0][field] = value
+                with mock.patch.object(selection, '_utmpx_reader', return_value=FakeUtmpxReader({})), \
+                     self.assertRaisesRegex(selection.SelectionError, 'selected feature alias differs: endutent'):
+                    selection.attach_native_utmpx(accounting, self._companion())
 
     def test_attachment_rejects_alias_domain_and_preserves_unknown_and_unnamed_rows(self) -> None:
         companion = self._companion()
