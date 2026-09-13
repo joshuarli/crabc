@@ -10,6 +10,7 @@ import os
 import shutil
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -24,14 +25,130 @@ CONSUMER = ROOT / "compat/x86_64/general_dynamic_fork_consumer.c"
 
 
 def load_evidence():
+    module_root = str(EVIDENCE.parent)
+    if module_root not in sys.path:
+        sys.path.insert(0, module_root)
     spec = importlib.util.spec_from_file_location("owned_dynamic_fork_evidence_test", EVIDENCE)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
 
 class OwnedDynamicForkRunnerTests(unittest.TestCase):
+    def test_retained_inputs_bind_physical_tool_bytes_and_exact_mount(self):
+        evidence=load_evidence()
+        scratch=ROOT/'.work/x86_64/owned-dynamic-fork-runner-tests';scratch.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            root=Path(temporary);work=root/'.work/receipt';work.mkdir(parents=True)
+            tools={}
+            for role,path in evidence.REPLAY_TOOL_PATHS.items():
+                source=root/(role+'-source');source.write_bytes(role.encode());source.chmod(0o755)
+                record=evidence.inventory._snapshot_regular(work,source,'inputs/tools/'+role,path)
+                tools[role]=record
+            replay=evidence.RetainedRuntimeInputs(root,work,tools)
+            source=root/'source.c';source.write_bytes(b'int x;')
+            self.assertEqual(replay.recorded(source),'/workspace/source.c')
+            self.assertEqual(replay.resolve('/workspace/source.c'),source)
+            evidence.require_identity({'path':'/workspace/source.c','sha256':evidence.digest(source)},source,'source',replay=replay)
+            for path in ('/workspace-other/source.c','/workspace/../source.c','/other/source.c'):
+                with self.assertRaises(evidence.EvidenceError):replay.resolve(path)
+            compiler=tools['compiler']['original']
+            replay.require_tool('compiler',{k:compiler[k] for k in ('path','sha256')})
+            (work/tools['compiler']['retained']['path']).write_bytes(b'substituted')
+            with self.assertRaises(evidence.EvidenceError):
+                evidence.RetainedRuntimeInputs(root,work,tools)
+
+    def test_replay_compile_uses_retained_preprocessing_without_importing_or_running_gcc(self):
+        evidence = load_evidence()
+        scratch = ROOT / '.work/x86_64/owned-dynamic-fork-runner-tests'; scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work = Path(temporary)
+            product = work / 'product'
+            manifest = product / 'share/crabc/manifest.json'
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text('{}\n', encoding='utf-8')
+            helper = manifest.parent / 'crabc_cc_static.py'
+            helper.write_text("raise RuntimeError('host replay must not import me')\n", encoding='utf-8')
+            driver = product / 'bin/crabc-cc-dynamic'
+            driver.parent.mkdir(parents=True)
+            driver.write_text('#!/bin/sh\n', encoding='utf-8')
+            driver.chmod(0o755)
+            header = product / 'usr/include/fork.h'
+            header.parent.mkdir(parents=True)
+            header.write_text('/* installed */\n', encoding='utf-8')
+            (work / 'objects').mkdir()
+            (work / 'dependencies').mkdir()
+            (work / 'preprocessed').mkdir()
+            tools = {}
+            for role, path in evidence.REPLAY_TOOL_PATHS.items():
+                source = work / f'{role}-source'
+                source.write_bytes(role.encode())
+                source.chmod(0o755)
+                tools[role] = evidence.inventory._snapshot_regular(work, source, 'inputs/tools/' + role, path)
+            replay = evidence.RetainedRuntimeInputs(ROOT, work, tools)
+            records = []
+            for identifier, source, codegen, defines, driver_mode, tag in [
+                *( (name, evidence.LIBRARY, '-fPIC', [f'FORK_LIBRARY_TAG={number}'], '--dynamic-shared-object', number)
+                   for name, number, _filename, _dependencies in evidence.DSO_TOPOLOGY ),
+                *( (role, evidence.CONSUMER, '-fPIE', list(defines), '--dynamic-pie', None)
+                   for role, _consumer, defines in evidence.CONSUMER_ROLES ),
+            ]:
+                object_path = work / 'objects' / (f'libfork-{identifier}.o' if tag is not None else f'{identifier}.o')
+                object_path.write_bytes((identifier + ' object\n').encode())
+                dependency = work / 'dependencies' / f'{identifier}.d'
+                dependency.write_text(
+                    f'{identifier}.o: {replay.recorded(source)} {replay.recorded(header)}\n', encoding='utf-8'
+                )
+                preprocessed = work / 'preprocessed' / f'{identifier}.i'
+                preprocessed.write_text(identifier + '\n', encoding='utf-8')
+                record = {
+                    'id': identifier,
+                    'source': replay.recorded(source),
+                    'source_sha256': evidence.digest(source),
+                    'object': replay.recorded(object_path),
+                    'object_sha256': evidence.digest(object_path),
+                    'driver_compile_command': [
+                        replay.recorded(driver), driver_mode, '-std=c11', '-fno-builtin',
+                        *(f'-D{item}' for item in defines), '-c', replay.recorded(source), '-o', replay.recorded(object_path),
+                    ],
+                    'codegen': codegen,
+                    'defines': defines,
+                    'preprocessed': replay.recorded(preprocessed),
+                    'preprocessed_sha256': evidence.digest(preprocessed),
+                    'dependencies': {
+                        replay.recorded(source): evidence.digest(source), replay.recorded(header): evidence.digest(header),
+                    },
+                    'dependency_audit_command': [
+                        str(replay.tool_path('compiler')), '-nostdinc', '-isystem', replay.recorded(product / 'usr/include'),
+                        '-std=c11', '-ffreestanding', '-fno-builtin', '-fstack-protector-strong', codegen,
+                        *(f'-D{item}' for item in defines), '-M', replay.recorded(source),
+                    ],
+                    'preprocessor_command': [
+                        str(replay.tool_path('compiler')), '-nostdinc', '-isystem', replay.recorded(product / 'usr/include'),
+                        '-std=c11', '-ffreestanding', '-fno-builtin', '-fstack-protector-strong', codegen,
+                        *(f'-D{item}' for item in defines), '-E', '-P', replay.recorded(source),
+                    ],
+                }
+                if tag is not None:
+                    record['tag'] = tag
+                records.append(record)
+            compile_record = {
+                'schema': evidence.COMPILE_SCHEMA,
+                'driver_sha256': evidence.digest(driver),
+                'driver': {'path': replay.recorded(driver), 'sha256': evidence.digest(driver)},
+                'compiler_helper': {'path': replay.recorded(helper), 'sha256': evidence.digest(helper)},
+                'selected_compiler': {key: tools['compiler']['original'][key] for key in ('path', 'sha256')},
+                'manifest_sha256': evidence.digest(manifest),
+                'libraries': records[:len(evidence.DSO_TOPOLOGY)],
+                'consumers': records[len(evidence.DSO_TOPOLOGY):],
+            }
+            (work / 'compile.json').write_text(json.dumps(compile_record), encoding='utf-8')
+            with patch.object(evidence, 'compiler_contract', side_effect=AssertionError('host replay imported helper')), \
+                 patch.object(evidence, 'capture', side_effect=AssertionError('host replay ran compiler')):
+                evidence.audit_compile(product, work, manifest, replay=replay)
+
     @staticmethod
     def _write_product(product: Path) -> None:
         required = (
@@ -201,7 +318,7 @@ class OwnedDynamicForkRunnerTests(unittest.TestCase):
                  patch.object(evidence, "audit_oracle", return_value="d" * 64), \
                  patch.object(evidence, "audit_execution", return_value="e" * 64):
                 evidence.seal_observations(work, Path("/validated-product"))
-            validate.assert_called_once_with(Path("/validated-product"), work)
+            validate.assert_called_once_with(Path("/validated-product"), work, replay=None)
             receipt = json.loads((work / "observations.json").read_text(encoding="utf-8"))
             self.assertEqual(receipt["schema"], "crabc.dynamic-fork-observations/v2")
             self.assertEqual(receipt["validation"], consumed)

@@ -24,6 +24,7 @@ import sys
 from typing import Any, Sequence
 
 import owned_dynamic_receipt as receipt_contract
+from owned_dynamic_fork_evidence import RetainedRuntimeInputs, recorded
 from owned_posix_product_evidence import (
     DYNAMIC_PRODUCT_FORMAT,
     ProductEvidenceError,
@@ -105,9 +106,9 @@ def _exact_object(value: object, fields: set[str], description: str) -> dict[str
     return value
 
 
-def _recorded_file(value: object, expected: Path, description: str) -> None:
+def _recorded_file(value: object, expected: Path, description: str, *, replay: RetainedRuntimeInputs | None = None) -> None:
     record = _exact_object(value, {"path", "sha256"}, description)
-    if record["path"] != str(expected):
+    if record["path"] != recorded(expected, replay):
         _fail(f"{description} path differs from this evidence invocation")
     if not isinstance(record["sha256"], str) or SHA256.fullmatch(record["sha256"]) is None:
         _fail(f"{description} has an invalid SHA-256")
@@ -127,7 +128,7 @@ def _dynamic_product(product: Path) -> tuple[Path, Path, Path]:
     return root, manifest, driver
 
 
-def _headers(trace: Path, product: Path, *, require_installed: bool) -> list[dict[str, str]]:
+def _headers(trace: Path, product: Path, *, require_installed: bool, replay: RetainedRuntimeInputs | None = None) -> list[dict[str, str]]:
     """Parse one GCC ``-H`` closure; only the headerless TLS source may be empty."""
     trace = _physical(trace, "installed-header trace")
     include_root = _physical(product / "usr/include", "installed header root", directory=True)
@@ -150,12 +151,12 @@ def _headers(trace: Path, product: Path, *, require_installed: bool) -> list[dic
         if match is None:
             _fail(f"installed-header trace has an unrecognized entry: {line!r}")
         candidate = match.group(1)
-        header = _physical(Path(candidate), "installed header")
+        header = _physical(Path(candidate), "installed header") if replay is None else replay.resolve(candidate)
         try:
             header.relative_to(include_root)
         except ValueError:
             _fail(f"header trace escaped the installed header root: {header}")
-        headers.append({"path": str(header), "sha256": _sha256(header), "root": "installed"})
+        headers.append({"path": recorded(header, replay), "sha256": _sha256(header), "root": "installed"})
     if require_installed:
         if not headers:
             _fail("installed-header trace has no admitted headers")
@@ -173,34 +174,34 @@ def _installed_compiler(product: Path):
     return module
 
 
-def _compile_command(role: str, driver: Path, source: Path, output: Path) -> list[str]:
+def _compile_command(role: str, driver: Path, source: Path, output: Path, *, replay: RetainedRuntimeInputs | None = None) -> list[str]:
     if role == "application":
         mode = "--dynamic-pie"
     elif role == "timer-tls-dso":
         mode = "-shared"
     else:
         _fail("compile role must be application or timer-tls-dso")
-    return [str(driver), mode, "-std=c11", "-c", str(source), "-o", str(output)]
+    return [recorded(driver, replay), mode, "-std=c11", "-c", recorded(source, replay), "-o", recorded(output, replay)]
 
 
-def _dependency_command(role: str, compiler: str, product: Path, source: Path) -> list[str]:
+def _dependency_command(role: str, compiler: str, product: Path, source: Path, *, replay: RetainedRuntimeInputs | None = None) -> list[str]:
     mode_flag = "-fPIE" if role == "application" else "-fPIC" if role == "timer-tls-dso" else None
     if mode_flag is None:
         _fail("compile role must be application or timer-tls-dso")
-    return [compiler, "-nostdinc", "-isystem", str(product / "usr/include"),
+    return [compiler, "-nostdinc", "-isystem", recorded(product / "usr/include", replay),
             "-ffreestanding", "-fno-builtin", "-fstack-protector-strong", "-std=c11",
-            mode_flag, "-M", "-H", str(source)]
+            mode_flag, "-M", "-H", recorded(source, replay)]
 
 
 def _dependency_headers(
-    dependencies: Path, product: Path, source: Path, role: str
+    dependencies: Path, product: Path, source: Path, role: str, *, replay: RetainedRuntimeInputs | None = None
 ) -> list[dict[str, str]]:
     text = _physical(dependencies, "installed-header dependencies").read_text(encoding="utf-8")
     if ":" not in text:
         _fail("installed-header dependencies lack a target")
     paths = set()
     for token in shlex.split(text.replace("\\\n", " ").split(":", 1)[1]):
-        path = _physical(Path(token), "installed-header dependency")
+        path = _physical(Path(token), "installed-header dependency") if replay is None else replay.resolve(token)
         if path == source:
             paths.add(path)
             continue
@@ -216,7 +217,7 @@ def _dependency_headers(
         _fail("application dependencies omit installed headers")
     if role == "timer-tls-dso" and headers:
         _fail("headerless TLS source gained an installed header dependency")
-    return [{"path": str(path), "sha256": _sha256(path), "root": "installed"} for path in headers]
+    return [{"path": recorded(path, replay), "sha256": _sha256(path), "root": "installed"} for path in headers]
 
 
 def record_compile_audit(
@@ -285,7 +286,7 @@ def record_compile_audit(
 
 
 def _validate_compile_audit(
-    product: Path, role: str, source: Path, output: Path, audit: Path
+    product: Path, role: str, source: Path, output: Path, audit: Path, *, replay: RetainedRuntimeInputs | None = None
 ) -> tuple[Path, Path, Path, str]:
     root, manifest, driver = _dynamic_product(product)
     source = _physical(source, f"{role} source")
@@ -301,36 +302,40 @@ def _validate_compile_audit(
     if record["role"] != role:
         _fail(f"{role} compile audit role differs")
     product_record = _exact_object(record["product"], {"path", "manifest"}, f"{role} compile product")
-    if product_record["path"] != str(root):
+    if product_record["path"] != recorded(root, replay):
         _fail(f"{role} compile product differs from this evidence invocation")
-    _recorded_file(product_record["manifest"], manifest, f"{role} compile manifest")
-    _recorded_file(record["source"], source, f"{role} compile source")
-    _recorded_file(record["object"], output, f"{role} compile object")
-    _recorded_file(record["driver"], driver, f"{role} compile driver")
-    if record["command"] != _compile_command(role, driver, source, output):
+    _recorded_file(product_record["manifest"], manifest, f"{role} compile manifest", replay=replay)
+    _recorded_file(record["source"], source, f"{role} compile source", replay=replay)
+    _recorded_file(record["object"], output, f"{role} compile object", replay=replay)
+    _recorded_file(record["driver"], driver, f"{role} compile driver", replay=replay)
+    if record["command"] != _compile_command(role, driver, source, output, replay=replay):
         _fail(f"{role} compile command differs from the sealed timer invocation")
-    policy = _installed_compiler(root)
     helper = _physical(root / "share/crabc/crabc_cc_static.py", "installed compiler helper")
-    compiler_command = policy.compiler()
-    compiler = _physical(Path(compiler_command).resolve(strict=True), "installed compiler")
-    _recorded_file(record["compiler"], compiler, f"{role} compiler")
-    _recorded_file(record["compiler_helper"], helper, f"{role} compiler helper")
-    if record["dependency_command"] != _dependency_command(role, compiler_command, root, source):
+    if replay is None:
+        policy = _installed_compiler(root)
+        compiler_command = policy.compiler()
+        compiler = _physical(Path(compiler_command).resolve(strict=True), "installed compiler")
+        _recorded_file(record["compiler"], compiler, f"{role} compiler")
+    else:
+        replay.require_tool("compiler", record["compiler"])
+        compiler_command = str(replay.tool_path("compiler"))
+    _recorded_file(record["compiler_helper"], helper, f"{role} compiler helper", replay=replay)
+    if record["dependency_command"] != _dependency_command(role, compiler_command, root, source, replay=replay):
         _fail(f"{role} dependency command differs from the installed driver")
     if type(record["dependency_exit_status"]) is not int or record["dependency_exit_status"] != 0:
         _fail(f"{role} dependency preprocessing did not succeed")
     dependencies_record = record["dependencies"]
     if not isinstance(dependencies_record, dict) or not isinstance(dependencies_record.get("path"), str):
         _fail(f"{role} dependency list is malformed")
-    dependencies = _physical(Path(dependencies_record["path"]), f"{role} installed-header dependencies")
-    _recorded_file(dependencies_record, dependencies, f"{role} installed-header dependencies")
+    dependencies = _physical(Path(dependencies_record["path"]), f"{role} installed-header dependencies") if replay is None else replay.resolve(dependencies_record["path"])
+    _recorded_file(dependencies_record, dependencies, f"{role} installed-header dependencies", replay=replay)
     trace_record = record["header_trace"]
     if not isinstance(trace_record, dict) or not isinstance(trace_record.get("path"), str):
         _fail(f"{role} compile header trace is malformed")
-    trace = _physical(Path(trace_record["path"]), f"{role} installed-header trace")
-    _recorded_file(trace_record, trace, f"{role} compile header trace")
-    dependency_headers = _dependency_headers(dependencies, root, source, role)
-    trace_headers = _headers(trace, root, require_installed=role == "application")
+    trace = _physical(Path(trace_record["path"]), f"{role} installed-header trace") if replay is None else replay.resolve(trace_record["path"])
+    _recorded_file(trace_record, trace, f"{role} compile header trace", replay=replay)
+    dependency_headers = _dependency_headers(dependencies, root, source, role, replay=replay)
+    trace_headers = _headers(trace, root, require_installed=role == "application", replay=replay)
     if record["headers"] != dependency_headers or {item["path"] for item in trace_headers} != {item["path"] for item in dependency_headers}:
         _fail(f"{role} compile headers differ from the installed closure")
     return root, manifest, driver, _sha256(audit)
@@ -349,14 +354,14 @@ def _readelf(path: Path, option: str) -> str:
     return result.stdout
 
 
-def _shared_link_command(root: Path, object_path: Path, output: Path, linker: Path) -> list[str]:
+def _shared_link_command(root: Path, object_path: Path, output: Path, linker: Path, *, replay: RetainedRuntimeInputs | None = None) -> list[str]:
     library = root / "usr/lib"
     return [
         str(linker), "-shared", "--hash-style=sysv", "-z", "relro", "-z", "now",
         "-z", "noexecstack", "-z", "text", "--no-undefined", "--allow-shlib-undefined",
         "--enable-new-dtags", "-rpath", "/usr/lib", "-soname", output.name,
-        str(library / "crti.o"), str(object_path), str(library / "libc.so"),
-        str(library / "libcrabc-builtins.a"), str(library / "crtn.o"), "-o", str(output),
+        recorded(library / "crti.o", replay), recorded(object_path, replay), recorded(library / "libc.so", replay),
+        recorded(library / "libcrabc-builtins.a", replay), recorded(library / "crtn.o", replay), "-o", recorded(output, replay),
     ]
 
 
@@ -377,13 +382,13 @@ def _validate_shared_metadata(record: dict[str, Any]) -> None:
 
 
 def _validate_shared_receipt(
-    root: Path, manifest: Path, object_path: Path, output: Path, receipt: Path
+    root: Path, manifest: Path, object_path: Path, output: Path, receipt: Path, *, replay: RetainedRuntimeInputs | None = None
 ) -> str:
     receipt = _physical(receipt, "timer TLS DSO receipt")
     output = _physical(output, "timer TLS DSO")
     record = _json(receipt, "timer TLS DSO receipt")
     _validate_shared_metadata(record)
-    if record["output_path"] != str(output):
+    if record["output_path"] != recorded(output, replay):
         _fail("timer TLS DSO receipt output path differs from this evidence invocation")
     if record["output_sha256"] != _sha256(output):
         _fail("timer TLS DSO receipt output hash differs from the physical DSO")
@@ -399,24 +404,28 @@ def _validate_shared_receipt(
     if not isinstance(record["input_receipts"], list) or len(record["input_receipts"]) != len(expected_inputs):
         _fail("timer TLS DSO receipt has the wrong input roster")
     for received, expected in zip(record["input_receipts"], expected_inputs):
-        _recorded_file(received, expected, "timer TLS DSO receipt input")
+        _recorded_file(received, expected, "timer TLS DSO receipt input", replay=replay)
     linker_record = _exact_object(record["resolved_linker"], {"path", "sha256"}, "timer TLS DSO linker")
     if not isinstance(linker_record["path"], str):
         _fail("timer TLS DSO linker path is malformed")
-    linker = _physical(Path(linker_record["path"]), "timer TLS DSO linker")
-    if linker.name != "ld.lld" or not linker.lstat().st_mode & 0o111:
-        _fail("timer TLS DSO linker is not the sealed LLD executable")
-    _recorded_file(linker_record, linker, "timer TLS DSO linker")
-    if record["link_command"] != _shared_link_command(root, object_path, output, linker):
+    if replay is None:
+        linker = _physical(Path(linker_record["path"]), "timer TLS DSO linker")
+        if linker.name != "ld.lld" or not linker.lstat().st_mode & 0o111:
+            _fail("timer TLS DSO linker is not the sealed LLD executable")
+        _recorded_file(linker_record, linker, "timer TLS DSO linker")
+    else:
+        replay.require_tool("linker", linker_record)
+        linker = replay.tool_path("linker")
+    if record["link_command"] != _shared_link_command(root, object_path, output, linker, replay=replay):
         _fail("timer TLS DSO receipt shared-mode command differs from the sealed product")
     if not isinstance(record["link_trace"], list) or not all(isinstance(line, str) for line in record["link_trace"]):
         _fail("timer TLS DSO receipt trace is malformed")
-    direct = {str(path) for path in [*runtime, object_path]}
+    direct = {recorded(path, replay) for path in [*runtime, object_path]}
     seen: set[str] = set()
     for line in record["link_trace"]:
         if line in direct:
             seen.add(line)
-        elif line == str(archive) or (line.startswith(str(archive) + "(") and line.endswith(")")):
+        elif line == recorded(archive, replay) or (line.startswith(recorded(archive, replay) + "(") and line.endswith(")")):
             continue
         else:
             _fail(f"timer TLS DSO trace names an unowned input: {line}")
@@ -444,12 +453,12 @@ def _validate_tls_elf(output: Path) -> tuple[str, list[str]]:
 
 
 def validate_timer_application_compile(
-    product: Path, source: Path, object_path: Path, compile_audit: Path
+    product: Path, source: Path, object_path: Path, compile_audit: Path, *, replay: RetainedRuntimeInputs | None = None
 ) -> dict[str, Any]:
     """Return the retained source/header identity for every timer executable link."""
 
     root, manifest, driver, compile_audit_hash = _validate_compile_audit(
-        product, "application", source, object_path, compile_audit
+        product, "application", source, object_path, compile_audit, replay=replay
     )
     source = _physical(source, "timer application source")
     object_path = _physical(object_path, "timer application object")
@@ -457,7 +466,7 @@ def validate_timer_application_compile(
     trace = _exact_object(record["header_trace"], {"path", "sha256"}, "timer application compile header trace")
     return {
         "schema": TIMER_APPLICATION_AUDIT_SCHEMA,
-        "product": str(root),
+        "product": recorded(root, replay),
         "product_manifest_sha256": _sha256(manifest),
         "source_sha256": _sha256(source),
         "object_sha256": _sha256(object_path),
@@ -469,20 +478,20 @@ def validate_timer_application_compile(
 
 
 def validate_timer_tls_dso(
-    product: Path, source: Path, object_path: Path, compile_audit: Path, output: Path, receipt: Path
+    product: Path, source: Path, object_path: Path, compile_audit: Path, output: Path, receipt: Path, *, replay: RetainedRuntimeInputs | None = None
 ) -> dict[str, Any]:
     """Validate the separate TLS DSO without creating an application edge."""
 
     root, manifest, _driver, compile_audit_hash = _validate_compile_audit(
-        product, "timer-tls-dso", source, object_path, compile_audit
+        product, "timer-tls-dso", source, object_path, compile_audit, replay=replay
     )
     object_path = _physical(object_path, "timer TLS object")
     output = _physical(output, "timer TLS DSO")
-    receipt_hash = _validate_shared_receipt(root, manifest, object_path, output, receipt)
+    receipt_hash = _validate_shared_receipt(root, manifest, object_path, output, receipt, replay=replay)
     soname, needed = _validate_tls_elf(output)
     return {
         "schema": TIMER_TLS_AUDIT_SCHEMA,
-        "product": str(root),
+        "product": recorded(root, replay),
         "product_manifest_sha256": _sha256(manifest),
         "source_sha256": _sha256(_physical(source, "timer TLS source")),
         "object_sha256": _sha256(object_path),

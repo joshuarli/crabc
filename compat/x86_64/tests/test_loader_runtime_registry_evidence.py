@@ -20,6 +20,61 @@ SPEC.loader.exec_module(EVIDENCE)
 
 
 class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
+    def test_supplied_identity_projects_only_the_exact_physical_checkout_mount(self):
+        scratch=ROOT/'.work/x86_64/loader-runtime-registry-tests';scratch.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            parent=Path(temporary);root=parent/'checkout';root.mkdir()
+            path=root/'.work/facts.json';path.parent.mkdir();path.write_bytes(b'facts')
+            physical=EVIDENCE.identity(path)
+            retained=EVIDENCE.checkout_identity(root,path)
+            self.assertEqual(retained,{**physical,'path':'/workspace/.work/facts.json'})
+            outside=parent/'outside';outside.write_bytes(b'facts')
+            link=root/'alias';link.symlink_to(path)
+            for bad in (outside,link,root/'../outside'):
+                with self.assertRaises(EVIDENCE.RuntimeRegistryEvidenceError):
+                    EVIDENCE.retained_checkout_path(root,bad)
+
+    def test_runner_contract_preserves_native_argv_and_tmpdir_during_host_replay(self):
+        scratch=ROOT/'.work/x86_64/loader-runtime-registry-tests';scratch.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            root=Path(temporary);script=root/'compat/x86_64/run_general_dynamic_dlopen.sh'
+            script.parent.mkdir(parents=True);script.write_bytes(b'fixture')
+            product=root/'.work/product';output=root/'.work/receipt'
+            product.mkdir(parents=True);output.mkdir()
+            with mock.patch.object(EVIDENCE,'ROOT',root):
+                command,environment=EVIDENCE.runner_contract(output,product,'dlfcn-pie')
+            self.assertEqual(command,['bash','/workspace/compat/x86_64/run_general_dynamic_dlopen.sh','/workspace/.work/product'])
+            self.assertEqual(environment,{**EVIDENCE.WORKLOAD_ENVIRONMENT,'TMPDIR':'/workspace/.work/receipt',
+                'CRABC_GENERAL_DYNAMIC_ENTRY_MODE':'--dynamic-pie',EVIDENCE.DLFCN_SKIP_SEARCH_ENV:'1'})
+
+    def test_replay_files_retain_every_fork_and_timer_preprocessing_input(self):
+        scratch = ROOT / '.work/x86_64/loader-runtime-registry-tests'; scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            output = Path(temporary)
+            fork, timer = output / 'fork', output / 'timer'
+            for directory in (fork / 'dependencies', fork / 'preprocessed', timer):
+                directory.mkdir(parents=True, exist_ok=True)
+            identifiers = [name for name, *_ in EVIDENCE.fork_evidence.DSO_TOPOLOGY]
+            identifiers += [role for role, *_ in EVIDENCE.fork_evidence.CONSUMER_ROLES]
+            for identifier in identifiers:
+                (fork / 'dependencies' / f'{identifier}.d').write_text('target: input\n', encoding='utf-8')
+                (fork / 'preprocessed' / f'{identifier}.i').write_text(identifier + '\n', encoding='utf-8')
+            for stem in ('probe.compile-audit', 'tls.compile-audit'):
+                (timer / f'{stem}.dependencies').write_text('target: input\n', encoding='utf-8')
+                (timer / f'{stem}.headers').write_text('', encoding='utf-8')
+                (timer / f'{stem}.exit-status').write_bytes(b'0\n')
+            records = EVIDENCE.replay_files(output, fork, timer)
+            self.assertEqual(len(records), 16)
+            self.assertEqual(records['fork/preprocessed/initial.i']['path'], 'fork/preprocessed/initial.i')
+            self.assertEqual(records['timer/probe.compile-audit.exit-status']['path'],
+                             'timer/probe.compile-audit.exit-status')
+            (timer / 'tls.compile-audit.exit-status').write_bytes(b'1\n')
+            with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, 'preprocessing status'):
+                EVIDENCE.replay_files(output, fork, timer)
+            outside = output.parent / 'outside-replay-work'; outside.mkdir()
+            with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, 'escapes report root'):
+                EVIDENCE.replay_files(output, outside, timer)
+
     def contract(self):
         return copy.deepcopy(EVIDENCE.load_contract(ROOT))
 
@@ -235,7 +290,9 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
 
     def test_fork_reader_extension_is_a_replay_command_not_a_second_runner(self):
         source = (ROOT / "compat/x86_64/owned_dynamic_fork_evidence.py").read_text(encoding="utf-8")
-        self.assertIn("def validate_observations(product: Path, work: Path)", source)
+        self.assertIn("def validate_observations(product: Path, work: Path, *, replay: RetainedRuntimeInputs | None = None)", source)
+        self.assertIn("replay is None else preprocessed_path.read_bytes()", source)
+        self.assertIn("record = receipt_record(Path(str(output) + \".crabc-link.json\"))", source)
         self.assertIn("fork observation receipt does not reconstruct", source)
         self.assertIn('"validate-observations"', source)
 

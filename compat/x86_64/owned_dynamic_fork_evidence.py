@@ -24,6 +24,7 @@ import sys
 from typing import Any
 
 import owned_dynamic_receipt as receipt_contract
+import native_abi_inventory as inventory
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -34,6 +35,11 @@ COMPILE_SCHEMA = "crabc.dynamic-fork-compile/v1"
 ORACLE_PRODUCTS_SCHEMA = "crabc.dynamic-fork-oracle-products/v1"
 EXECUTION_PAYLOAD_SCHEMA = "crabc.dynamic-fork-execution-payload/v1"
 ORACLE_COMPILER = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
+REPLAY_TOOL_PATHS = {
+    "compiler": "/usr/bin/gcc",
+    "linker": "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld",
+    "oracle_compiler": str(ORACLE_COMPILER),
+}
 LIBRARY = ROOT / "compat/x86_64/general_dynamic_fork_library.c"
 CONSUMER = ROOT / "compat/x86_64/general_dynamic_fork_consumer.c"
 DSO_TOPOLOGY = (
@@ -54,6 +60,60 @@ WORKER_SURVIVOR_PROTOCOL = re.compile(
 
 class EvidenceError(RuntimeError):
     """The retained product evidence no longer describes this fork workload."""
+
+
+class RetainedRuntimeInputs:
+    """Explicit physical input view for fork and timer retained replay.
+
+    The owning collector supplies the closed native tool snapshots. This view
+    validates those bytes and the exact /workspace mount; it neither executes
+    tools nor changes stored command/source identities. Default native readers
+    continue to use their live tools and preprocessing checks.
+    """
+    def __init__(self, checkout: Path, tool_root: Path, tools: object):
+        self.checkout = physical(checkout, "retained checkout", directory=True)
+        self.tool_root = physical(tool_root, "retained tool root", directory=True)
+        if not self.tool_root.is_relative_to(self.checkout / ".work"):
+            fail("retained tool root escapes checkout .work")
+        self.tools = require_keys(tools, set(REPLAY_TOOL_PATHS), "retained tool roster")
+        for role, path in REPLAY_TOOL_PATHS.items():
+            try:
+                inventory._validate_snapshot(self.tool_root, self.tools[role], role,
+                    expected_original_path=path, expected_retained_path="inputs/tools/" + role)
+            except inventory.InventoryError as error:
+                fail(str(error))
+            original = self.tools[role]["original"]
+            if type(original["mode"]) is not int or not original["mode"] & 0o111:
+                fail("retained tool original was not executable")
+
+    def recorded(self, path: Path) -> str:
+        path = physical(path, "retained checkout input", directory=Path(path).is_dir())
+        if not path.is_relative_to(self.checkout):
+            fail("retained input escapes checkout")
+        return str(Path("/workspace") / path.relative_to(self.checkout))
+
+    def resolve(self, value: str) -> Path:
+        if type(value) is not str or ".." in Path(value).parts or not Path(value).is_relative_to("/workspace"):
+            fail("retained path is not under the exact native checkout mount")
+        path = self.checkout / Path(value).relative_to("/workspace")
+        path = physical(path, "retained checkout input", directory=path.is_dir())
+        if self.recorded(path) != value:
+            fail("retained checkout spelling differs")
+        return path
+
+    def tool_path(self, role: str) -> Path:
+        return Path(REPLAY_TOOL_PATHS[role])
+
+    def require_tool(self, role: str, value: object) -> None:
+        record = require_keys(value, {"path", "sha256"}, "retained " + role)
+        original = self.tools[role]["original"]
+        if record != {key: original[key] for key in ("path", "sha256")}:
+            fail("retained tool identity drifted: " + role)
+        require_hash(original["sha256"], digest(self.tool_root / self.tools[role]["retained"]["path"]), role)
+
+
+def recorded(path: Path, replay: RetainedRuntimeInputs | None = None) -> str:
+    return str(path) if replay is None else replay.recorded(path)
 
 
 def fail(message: str) -> None:
@@ -185,17 +245,17 @@ def selected_compiler(contract: dict[str, Any]) -> Path:
     return physical(Path(contract["compiler"]()), "selected dynamic compiler")
 
 
-def require_identity(value: object, expected: Path, description: str) -> None:
+def require_identity(value: object, expected: Path, description: str, *, replay: RetainedRuntimeInputs | None = None) -> None:
     record = require_keys(value, {"path", "sha256"}, description)
     expected = physical(expected, description)
-    if record["path"] != str(expected):
+    if record["path"] != recorded(expected, replay):
         fail(f"{description} path drifted")
     require_hash(record["sha256"], digest(expected), description)
 
 
-def evidence_work(work: Path) -> Path:
+def evidence_work(work: Path, *, replay: RetainedRuntimeInputs | None = None) -> Path:
     work = physical(work, "evidence work directory", directory=True)
-    if not work.is_relative_to(ROOT / ".work"):
+    if not work.is_relative_to((ROOT if replay is None else replay.checkout) / ".work"):
         fail("evidence work directory escapes checkout .work")
     return work
 
@@ -220,7 +280,7 @@ def capture(command: list[str], *, environment: dict[str, str]) -> bytes:
     return completed.stdout
 
 
-def dependency_names_text(record: str, source: Path, headers: Path) -> list[Path]:
+def dependency_names_text(record: str, source: Path, headers: Path, *, replay: RetainedRuntimeInputs | None = None) -> list[Path]:
     try:
         record = record.replace("\\\n", " ")
         _, words = record.split(":", 1)
@@ -228,7 +288,7 @@ def dependency_names_text(record: str, source: Path, headers: Path) -> list[Path
         raise EvidenceError("dependency record is invalid") from error
     result: list[Path] = []
     for word in words.split():
-        candidate = physical(Path(word), "dependency input")
+        candidate = physical(Path(word), "dependency input") if replay is None else replay.resolve(word)
         if candidate != source and not candidate.is_relative_to(headers):
             fail(f"dependency escapes installed headers: {candidate}")
         result.append(candidate)
@@ -320,7 +380,7 @@ def record_compile(product: Path, work: Path) -> None:
     path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def expected_base(product: Path, output: Path, mode: str, object_path: Path, dsos: list[Path], linker: str) -> tuple[list[Path], list[str]]:
+def expected_base(product: Path, output: Path, mode: str, object_path: Path, dsos: list[Path], linker: str, *, replay: RetainedRuntimeInputs | None = None) -> tuple[list[Path], list[str]]:
     library = product / "usr/lib"
     runtime = [library / "crti.o", library / "libc.so", library / "crtn.o"]
     command = [linker]
@@ -335,12 +395,12 @@ def expected_base(product: Path, output: Path, mode: str, object_path: Path, dso
     if mode != "shared":
         entry = library / ("Scrt1.o" if mode == "pie" else "crt1.o")
         runtime += [entry, library / "crabc-dynamic-attach.o"]
-        command += ["--dynamic-linker", INTERPRETER, str(entry), str(library / "crabc-dynamic-attach.o")]
+        command += ["--dynamic-linker", INTERPRETER, recorded(entry, replay), recorded(library / "crabc-dynamic-attach.o", replay)]
     else:
         command += ["-soname", output.name]
-    command += [str(library / "crti.o"), str(object_path), *(str(path) for path in dsos),
-                str(library / "libc.so"), str(library / "libcrabc-builtins.a"), str(library / "crtn.o"),
-                "-o", str(output)]
+    command += [recorded(library / "crti.o", replay), recorded(object_path, replay), *(recorded(path, replay) for path in dsos),
+                recorded(library / "libc.so", replay), recorded(library / "libcrabc-builtins.a", replay), recorded(library / "crtn.o", replay),
+                "-o", recorded(output, replay)]
     inputs = [*runtime, object_path, *dsos, library / "libcrabc-builtins.a"]
     return inputs, command
 
@@ -360,9 +420,13 @@ def receipt_record(path: Path) -> dict[str, Any]:
 
 
 def audit_receipt(product: Path, manifest: Path, output: Path, object_path: Path, mode: str,
-                  dsos: list[Path], expected_needed: tuple[str, ...]) -> None:
+                  dsos: list[Path], expected_needed: tuple[str, ...], *, replay: RetainedRuntimeInputs | None = None) -> None:
     output = physical(output, "linked output")
     object_path = physical(object_path, "linked workload object")
+    # ``recorded`` describes the sealed native command.  The sidecar itself
+    # remains at the physical host path during replay; opening the recorded
+    # /workspace spelling here would either fail on a host or weaken the mount
+    # check by requiring that alias to exist.
     record = receipt_record(Path(str(output) + ".crabc-link.json"))
     if record["mode"] != mode:
         fail("dynamic producer receipt mode differs from the requested link")
@@ -374,7 +438,7 @@ def audit_receipt(product: Path, manifest: Path, output: Path, object_path: Path
     receipt_contract.require_runpath(search, "/usr/lib", label="dynamic producer receipt", fail=fail)
     if record.get("campaign_complete") is not False:
         fail("dynamic producer receipt search or campaign state drifted")
-    if record.get("output_path") != str(output):
+    if record.get("output_path") != recorded(output, replay):
         fail("dynamic producer receipt output path drifted")
     require_hash(record.get("output_sha256"), digest(output), "dynamic producer output")
     require_hash(record.get("manifest_sha256"), digest(manifest), "dynamic producer manifest")
@@ -382,11 +446,15 @@ def audit_receipt(product: Path, manifest: Path, output: Path, object_path: Path
     if record.get("application_dsos") != expected_dsos:
         fail("dynamic producer receipt application_dsos drifted")
     linker_record = require_keys(record.get("resolved_linker"), {"path", "sha256"}, "resolved linker")
-    linker_path = physical(Path(str(linker_record["path"])), "resolved linker")
-    if linker_path.name != "ld.lld" or not linker_path.stat().st_mode & 0o111:
-        fail("dynamic producer receipt linker is not an executable ld.lld")
-    require_hash(linker_record["sha256"], digest(linker_path), "dynamic producer linker")
-    inputs, command = expected_base(product, output, mode, object_path, dsos, str(linker_path))
+    if replay is None:
+        linker_path = physical(Path(str(linker_record["path"])), "resolved linker")
+        if linker_path.name != "ld.lld" or not linker_path.stat().st_mode & 0o111:
+            fail("dynamic producer receipt linker is not an executable ld.lld")
+        require_hash(linker_record["sha256"], digest(linker_path), "dynamic producer linker")
+    else:
+        replay.require_tool("linker", linker_record)
+        linker_path = replay.tool_path("linker")
+    inputs, command = expected_base(product, output, mode, object_path, dsos, str(linker_path), replay=replay)
     library = product / "usr/lib"
     runtime = [library / "crti.o", library / "libc.so", library / "crtn.o"]
     if mode != "shared":
@@ -399,14 +467,14 @@ def audit_receipt(product: Path, manifest: Path, output: Path, object_path: Path
         fail("dynamic producer receipt input roster drifted")
     for item, expected in zip(received, inputs):
         item = require_keys(item, {"path", "sha256"}, "dynamic producer input")
-        if item["path"] != str(expected):
+        if item["path"] != recorded(expected, replay):
             fail("dynamic producer receipt input path drifted")
         require_hash(item["sha256"], digest(expected), "dynamic producer input")
     if record.get("link_command") != command:
         fail("dynamic producer receipt link command drifted")
     trace = record.get("link_trace")
-    direct = {str(path) for path in inputs if path.name != "libcrabc-builtins.a"}
-    archive = str(library / "libcrabc-builtins.a")
+    direct = {recorded(path, replay) for path in inputs if path.name != "libcrabc-builtins.a"}
+    archive = recorded(library / "libcrabc-builtins.a", replay)
     if not isinstance(trace, list) or not all(isinstance(item, str) for item in trace):
         fail("dynamic producer receipt link_trace is invalid")
     seen: set[str] = set()
@@ -445,7 +513,7 @@ def audit_receipt(product: Path, manifest: Path, output: Path, object_path: Path
             fail("dynamic consumer interpreter drifted")
 
 
-def audit_compile(product: Path, work: Path, manifest: Path) -> None:
+def audit_compile(product: Path, work: Path, manifest: Path, *, replay: RetainedRuntimeInputs | None = None) -> None:
     record = json_object(work / "compile.json", "compile record")
     expected_keys = {
         "schema", "driver_sha256", "driver", "compiler_helper", "selected_compiler",
@@ -456,11 +524,20 @@ def audit_compile(product: Path, work: Path, manifest: Path) -> None:
         fail("compile record schema drifted")
     driver = product / "bin/crabc-cc-dynamic"
     require_hash(record.get("driver_sha256"), digest(driver), "compile driver")
-    require_identity(record["driver"], driver, "compile driver")
-    contract = compiler_contract(product)
-    require_identity(record["compiler_helper"], contract["helper"], "compile helper")
-    compiler_path = selected_compiler(contract)
-    require_identity(record["selected_compiler"], compiler_path, "selected compile compiler")
+    require_identity(record["driver"], driver, "compile driver", replay=replay)
+    # Native validation reopens the installed helper to derive the compiler
+    # environment. A host replay only needs its sealed bytes and never imports
+    # product-supplied Python or invokes the compiler.
+    contract = compiler_contract(product) if replay is None else {
+        "helper": physical(product / "share/crabc/crabc_cc_static.py", "dynamic compiler helper"),
+    }
+    require_identity(record["compiler_helper"], contract["helper"], "compile helper", replay=replay)
+    if replay is None:
+        compiler_path = selected_compiler(contract)
+        require_identity(record["selected_compiler"], compiler_path, "selected compile compiler")
+    else:
+        replay.require_tool("compiler", record["selected_compiler"])
+        compiler_path = replay.tool_path("compiler")
     require_hash(record.get("manifest_sha256"), digest(manifest), "compile manifest")
     libraries = record.get("libraries")
     consumers = record.get("consumers")
@@ -469,16 +546,16 @@ def audit_compile(product: Path, work: Path, manifest: Path) -> None:
     if not isinstance(consumers, list) or len(consumers) != len(CONSUMER_ROLES):
         fail("compile record consumer roster drifted")
     expected_units = [
-        (name, LIBRARY, work / "objects" / f"libfork-{name}.o", "-fPIC", [f"FORK_LIBRARY_TAG={tag}"], "--dynamic-shared-object", tag)
+        (name, LIBRARY if replay is None else replay.checkout / LIBRARY.relative_to(ROOT), work / "objects" / f"libfork-{name}.o", "-fPIC", [f"FORK_LIBRARY_TAG={tag}"], "--dynamic-shared-object", tag)
         for name, tag, _, _ in DSO_TOPOLOGY
     ]
     expected_units += [
-        (role, CONSUMER, work / "objects" / f"{role}.o", "-fPIE", list(defines), "--dynamic-pie", None)
+        (role, CONSUMER if replay is None else replay.checkout / CONSUMER.relative_to(ROOT), work / "objects" / f"{role}.o", "-fPIE", list(defines), "--dynamic-pie", None)
         for role, _, defines in CONSUMER_ROLES
     ]
     headers = physical(product / "usr/include", "installed headers", directory=True)
     compiler = str(compiler_path)
-    environment = contract["clean_environment"]()
+    environment = contract["clean_environment"]() if replay is None else None
     units = [*libraries, *consumers]
     preprocessed: set[str] = set()
     for unit, expected in zip(units, expected_units):
@@ -489,7 +566,7 @@ def audit_compile(product: Path, work: Path, manifest: Path) -> None:
         } | ({"tag"} if tag is not None else set())
         unit = require_keys(unit, keys, "compile unit")
         if (unit["id"], unit["source"], unit["object"], unit["codegen"], unit["defines"]) != (
-            identifier, str(source), str(object_path), codegen, defines
+            identifier, recorded(source, replay), recorded(object_path, replay), codegen, defines
         ):
             fail("compile unit source/tag/object identity drifted")
         if tag is not None and unit["tag"] != tag:
@@ -497,28 +574,28 @@ def audit_compile(product: Path, work: Path, manifest: Path) -> None:
         require_hash(unit["source_sha256"], digest(source), "compile source")
         require_hash(unit["object_sha256"], digest(object_path), "compile object")
         expected_driver_command = [
-            str(driver), driver_mode, "-std=c11", "-fno-builtin", *(f"-D{item}" for item in defines),
-            "-c", str(source), "-o", str(object_path),
+            recorded(driver, replay), driver_mode, "-std=c11", "-fno-builtin", *(f"-D{item}" for item in defines),
+            "-c", recorded(source, replay), "-o", recorded(object_path, replay),
         ]
         if unit["driver_compile_command"] != expected_driver_command:
             fail("installed driver compile command or prescribed flags drifted")
         # The exact installed-driver compiler contract and role flags are
         # recomputed here, rather than trusting the recorded command fields.
-        expected_base = [compiler, "-nostdinc", "-isystem", str(headers), "-std=c11", "-ffreestanding",
+        expected_base = [compiler, "-nostdinc", "-isystem", recorded(headers, replay), "-std=c11", "-ffreestanding",
                          "-fno-builtin", "-fstack-protector-strong", codegen,
                          *(f"-D{item}" for item in defines)]
-        expected_dependency_command = [*expected_base, "-M", str(source)]
-        expected_preprocessor_command = [*expected_base, "-E", "-P", str(source)]
+        expected_dependency_command = [*expected_base, "-M", recorded(source, replay)]
+        expected_preprocessor_command = [*expected_base, "-E", "-P", recorded(source, replay)]
         if unit["dependency_audit_command"] != expected_dependency_command:
             fail("compile dependency audit command drifted")
         if unit["preprocessor_command"] != expected_preprocessor_command:
             fail("compile preprocessor command drifted")
         expected_preprocessed_path = work / "preprocessed" / f"{identifier}.i"
-        if unit["preprocessed"] != str(expected_preprocessed_path):
+        if unit["preprocessed"] != recorded(expected_preprocessed_path, replay):
             fail("compile preprocessed path drifted")
         preprocessed_path = physical(expected_preprocessed_path, "preprocessed source")
         require_hash(unit["preprocessed_sha256"], digest(preprocessed_path), "preprocessor identity")
-        current_preprocessed = capture(expected_preprocessor_command, environment=environment)
+        current_preprocessed = capture(expected_preprocessor_command, environment=environment) if replay is None else preprocessed_path.read_bytes()
         current_preprocessed_sha256 = hashlib.sha256(current_preprocessed).hexdigest()
         require_hash(unit["preprocessed_sha256"], current_preprocessed_sha256,
                      "current preprocessor identity")
@@ -527,40 +604,41 @@ def audit_compile(product: Path, work: Path, manifest: Path) -> None:
         if not isinstance(dependencies, dict):
             fail("compile dependency roster drifted")
         current_dependencies = dependency_names_text(
-            capture(expected_dependency_command, environment=environment).decode(encoding="utf-8"),
-            source, headers,
+            (capture(expected_dependency_command, environment=environment).decode(encoding="utf-8") if replay is None
+             else (work / "dependencies" / f"{identifier}.d").read_text(encoding="utf-8")),
+            source, headers, replay=replay,
         )
         if len(current_dependencies) < 2:
             fail("compile dependency closure omits installed headers")
-        expected_dependencies = {str(path): digest(path) for path in current_dependencies}
+        expected_dependencies = {recorded(path, replay): digest(path) for path in current_dependencies}
         if dependencies != expected_dependencies:
             fail("compile dependency roster or installed-header hashes drifted")
     if len(preprocessed) != len(DSO_TOPOLOGY) + len(CONSUMER_ROLES):
         fail("compile preprocessor identities collapsed")
 
 
-def oracle_library_spec(work: Path, name: str, filename: str) -> tuple[str, Path, list[str], Path, list[str]]:
+def oracle_library_spec(work: Path, name: str, filename: str, *, replay: RetainedRuntimeInputs | None = None) -> tuple[str, Path, list[str], Path, list[str]]:
     object_path = work / "objects" / f"libfork-{name}.o"
     binary = work / "oracle" / filename
     flags = ["-shared"]
-    command = [str(ORACLE_COMPILER), "-shared", str(object_path)]
+    command = [str(ORACLE_COMPILER), "-shared", recorded(object_path, replay)]
     if name != "initial":
-        flags += [f"-L{work / 'oracle'}", "-l:libfork-initial.so"]
-        command += [f"-L{work / 'oracle'}", "-l:libfork-initial.so"]
+        flags += [f"-L{recorded(work / 'oracle', replay)}", "-l:libfork-initial.so"]
+        command += [f"-L{recorded(work / 'oracle', replay)}", "-l:libfork-initial.so"]
     soname = f"-Wl,-z,now,-soname,{filename}"
     flags.append(soname)
-    command += [soname, "-o", str(binary)]
+    command += [soname, "-o", recorded(binary, replay)]
     return name, object_path, flags, binary, command
 
 
-def oracle_consumer_spec(work: Path, mode: str) -> tuple[str, Path, list[str], Path, list[str]]:
+def oracle_consumer_spec(work: Path, mode: str, *, replay: RetainedRuntimeInputs | None = None) -> tuple[str, Path, list[str], Path, list[str]]:
     object_path = work / "objects" / "semantic-consumer.o"
     binary = work / "oracle" / f"consumer-{mode}"
     entry = ["-fPIE", "-pie"] if mode == "pie" else ["-fno-pie", "-no-pie"]
-    flags = ["-std=c11", *entry, f"-L{work / 'oracle'}", f"-Wl,-rpath,{work / 'oracle'}", "-l:libfork-initial.so"]
+    flags = ["-std=c11", *entry, f"-L{recorded(work / 'oracle', replay)}", f"-Wl,-rpath,{recorded(work / 'oracle', replay)}", "-l:libfork-initial.so"]
     command = [
-        str(ORACLE_COMPILER), "-std=c11", *entry, str(object_path), f"-L{work / 'oracle'}",
-        f"-Wl,-rpath,{work / 'oracle'}", "-l:libfork-initial.so", "-o", str(binary),
+        str(ORACLE_COMPILER), "-std=c11", *entry, recorded(object_path, replay), f"-L{recorded(work / 'oracle', replay)}",
+        f"-Wl,-rpath,{recorded(work / 'oracle', replay)}", "-l:libfork-initial.so", "-o", recorded(binary, replay),
     ]
     return f"semantic-consumer-{mode}", object_path, flags, binary, command
 
@@ -605,7 +683,7 @@ def record_oracle(work: Path) -> None:
 
 
 def audit_oracle_record(
-    value: object, role: str, object_path: Path, flags: list[str], binary: Path, command: list[str],
+    value: object, role: str, object_path: Path, flags: list[str], binary: Path, command: list[str], *, replay: RetainedRuntimeInputs | None = None,
 ) -> None:
     record = require_keys(
         value,
@@ -613,22 +691,25 @@ def audit_oracle_record(
         "oracle product",
     )
     if (record["role"], record["object"], record["flags"], record["binary"], record["link_command"]) != (
-        role, str(object_path), flags, str(binary), command,
+        role, recorded(object_path, replay), flags, recorded(binary, replay), command,
     ):
         fail("oracle product role/object/flags command drifted")
     require_hash(record["object_sha256"], digest(object_path), "oracle product object")
     require_hash(record["binary_sha256"], digest(binary), "oracle product binary")
 
 
-def audit_oracle(work: Path) -> str:
+def audit_oracle(work: Path, *, replay: RetainedRuntimeInputs | None = None) -> str:
     """Recheck the pre-run pinned-musl DSO and consumer products."""
 
-    work = evidence_work(work)
+    work = evidence_work(work, replay=replay)
     record = json_object(work / "oracle-products.json", "oracle product record")
     require_keys(record, {"schema", "compiler", "libraries", "consumers"}, "oracle product record")
     if record["schema"] != ORACLE_PRODUCTS_SCHEMA:
         fail("oracle product record schema drifted")
-    require_identity(record["compiler"], ORACLE_COMPILER, "pinned musl compiler")
+    if replay is None:
+        require_identity(record["compiler"], ORACLE_COMPILER, "pinned musl compiler")
+    else:
+        replay.require_tool("oracle_compiler", record["compiler"])
     libraries = record["libraries"]
     consumers = record["consumers"]
     if not isinstance(libraries, list) or len(libraries) != len(DSO_TOPOLOGY):
@@ -636,9 +717,9 @@ def audit_oracle(work: Path) -> str:
     if not isinstance(consumers, list) or len(consumers) != 2:
         fail("oracle product consumer roster drifted")
     for item, (name, _, filename, _) in zip(libraries, DSO_TOPOLOGY):
-        audit_oracle_record(item, *oracle_library_spec(work, name, filename))
+        audit_oracle_record(item, *oracle_library_spec(work, name, filename, replay=replay), replay=replay)
     for item, mode in zip(consumers, ("pie", "non-pie")):
-        audit_oracle_record(item, *oracle_consumer_spec(work, mode))
+        audit_oracle_record(item, *oracle_consumer_spec(work, mode, replay=replay), replay=replay)
     return digest(work / "oracle-products.json")
 
 
@@ -716,9 +797,9 @@ def record_execution(product: Path, work: Path) -> None:
     path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def audit_copied_payload(value: object, source: Path, execution: Path, description: str) -> None:
+def audit_copied_payload(value: object, source: Path, execution: Path, description: str, *, replay: RetainedRuntimeInputs | None = None) -> None:
     record = require_keys(value, {"source", "source_sha256", "execution", "execution_sha256"}, description)
-    if (record["source"], record["execution"]) != (str(source), str(execution)):
+    if (record["source"], record["execution"]) != (recorded(source, replay), recorded(execution, replay)):
         fail(f"{description} paths drifted")
     source_hash = digest(source)
     execution_hash = digest(execution)
@@ -728,11 +809,11 @@ def audit_copied_payload(value: object, source: Path, execution: Path, descripti
         fail(f"{description} execution copy differs from its source")
 
 
-def audit_execution(product: Path, work: Path) -> str:
+def audit_execution(product: Path, work: Path, *, replay: RetainedRuntimeInputs | None = None) -> str:
     """Recheck the copied runtime and workload files that candidate runs use."""
 
     product = physical(product, "dynamic product", directory=True)
-    work = evidence_work(work)
+    work = evidence_work(work, replay=replay)
     manifest = product_manifest(product)
     execution_root = physical(work / "execution-root", "execution root", directory=True)
     record = json_object(work / "execution-payload.json", "execution payload record")
@@ -744,17 +825,17 @@ def audit_execution(product: Path, work: Path) -> str:
     if record["schema"] != EXECUTION_PAYLOAD_SCHEMA:
         fail("execution payload record schema drifted")
     product_record = require_keys(record["product"], {"path", "manifest", "manifest_sha256"}, "execution product")
-    if (product_record["path"], product_record["manifest"]) != (str(product), str(manifest)):
+    if (product_record["path"], product_record["manifest"]) != (recorded(product, replay), recorded(manifest, replay)):
         fail("execution product paths drifted")
     require_hash(product_record["manifest_sha256"], digest(manifest), "execution product manifest")
-    if record["execution_root"] != str(execution_root):
+    if record["execution_root"] != recorded(execution_root, replay):
         fail("execution root path drifted")
     expected_product_payload = product_payload_paths(product, manifest)
     payload = record["product_payload"]
     if not isinstance(payload, dict) or set(payload) != set(expected_product_payload):
         fail("execution product payload roster drifted")
     for relative, source in expected_product_payload.items():
-        audit_copied_payload(payload[relative], source, execution_root / relative, f"installed payload {relative}")
+        audit_copied_payload(payload[relative], source, execution_root / relative, f"installed payload {relative}", replay=replay)
     applications = record["application_payload"]
     if not isinstance(applications, list) or len(applications) != len(APPLICATION_COPY_ROSTER):
         fail("execution application payload roster drifted")
@@ -767,39 +848,39 @@ def audit_execution(product: Path, work: Path) -> str:
             fail("execution application payload role drifted")
         audit_copied_payload(
             {key: item[key] for key in ("source", "source_sha256", "execution", "execution_sha256")},
-            work / source_relative, execution_root / execution_relative, f"application payload {role}",
+            work / source_relative, execution_root / execution_relative, f"application payload {role}", replay=replay,
         )
     return digest(work / "execution-payload.json")
 
 
-def validate_consumed(product: Path, work: Path) -> dict[str, Any]:
+def validate_consumed(product: Path, work: Path, *, replay: RetainedRuntimeInputs | None = None) -> dict[str, Any]:
     """Audit source products and the exact files that were actually executed."""
 
-    validation = validate(product, work)
+    validation = validate(product, work, replay=replay)
     return {
         **validation,
-        "oracle_products_sha256": audit_oracle(work),
-        "execution_payload_sha256": audit_execution(product, work),
+        "oracle_products_sha256": audit_oracle(work, replay=replay),
+        "execution_payload_sha256": audit_execution(product, work, replay=replay),
     }
 
 
-def validate(product: Path, work: Path) -> dict[str, Any]:
+def validate(product: Path, work: Path, *, replay: RetainedRuntimeInputs | None = None) -> dict[str, Any]:
     product = physical(product, "dynamic product", directory=True)
-    work = physical(work, "evidence work directory", directory=True)
+    work = evidence_work(work, replay=replay)
     manifest = product_manifest(product)
-    audit_compile(product, work, manifest)
+    audit_compile(product, work, manifest, replay=replay)
     link_receipts: dict[str, str] = {}
     for name, _, filename, dependencies in DSO_TOPOLOGY:
         dsos = [work / dependency for dependency in dependencies]
         expected_needed = (*dependencies, "libc.so")
         audit_receipt(product, manifest, work / filename, work / "objects" / f"libfork-{name}.o",
-                      "shared", dsos, expected_needed)
+                      "shared", dsos, expected_needed, replay=replay)
         link_receipts[filename] = digest(Path(str(work / filename) + ".crabc-link.json"))
     for role, consumer_name, _ in CONSUMER_ROLES:
         for mode in ("pie", "non-pie"):
             audit_receipt(product, manifest, work / f"{consumer_name}-{mode}",
                           work / "objects" / f"{role}.o", "pie" if mode == "pie" else "exec",
-                          [work / "libfork-initial.so"], ("libfork-initial.so", "libc.so"))
+                          [work / "libfork-initial.so"], ("libfork-initial.so", "libc.so"), replay=replay)
             link_receipts[f"{consumer_name}-{mode}"] = digest(
                 Path(str(work / f"{consumer_name}-{mode}") + ".crabc-link.json")
             )
@@ -854,7 +935,7 @@ def worker_survivor_observation(path: Path) -> dict[str, Any]:
     }
 
 
-def observed_receipt(work: Path, product: Path) -> dict[str, Any]:
+def observed_receipt(work: Path, product: Path, *, replay: RetainedRuntimeInputs | None = None) -> dict[str, Any]:
     """Reconstruct the closed fork observation receipt from retained bytes.
 
     This is deliberately the one workload-specific replay surface.  Callers
@@ -868,7 +949,7 @@ def observed_receipt(work: Path, product: Path) -> dict[str, Any]:
     # files. Recheck the source product, compile/header/object identities,
     # link receipts, ELF topology, pinned-musl products, and execution-root
     # copies so no completed observation can outlive what it claims to run.
-    validation = validate_consumed(product, work)
+    validation = validate_consumed(product, work, replay=replay)
     scenarios = ("main", "worker", "kernel-main", "kernel-worker", "recursive", "abandoned", "failure", "finalizer-single")
     special = ("finalizer-held", "worker-survivor")
     semantic_oracle: dict[str, dict[str, Any]] = {}
@@ -907,12 +988,12 @@ def observed_receipt(work: Path, product: Path) -> dict[str, Any]:
     }
 
 
-def validate_observations(product: Path, work: Path) -> dict[str, Any]:
+def validate_observations(product: Path, work: Path, *, replay: RetainedRuntimeInputs | None = None) -> dict[str, Any]:
     """Replay one already sealed fork workload against its supplied product."""
 
     work = physical(work, "evidence work directory", directory=True)
     recorded = json_object(work / "observations.json", "fork observation receipt")
-    expected = observed_receipt(work, product)
+    expected = observed_receipt(work, product, replay=replay)
     if recorded != expected:
         fail("fork observation receipt does not reconstruct from retained inputs")
     return expected

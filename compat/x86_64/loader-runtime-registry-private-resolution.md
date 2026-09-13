@@ -42,6 +42,31 @@ unchanged default runner still executes its trailing proc-mount search leaf;
 that separate component needs different authority and is recorded as skipped,
 not passed, by this dlfcn-only attachment.
 
+## Retained host replay inputs
+
+Fresh reports use
+`crabc.x86_64-loader-runtime-registry-private-resolution/v2`.  Their
+`replay_inputs` record retains the exact native bytes and original identities
+of the selected GCC, LLD, and pinned-musl compiler under `inputs/tools/`, plus
+the five fork dependency/preprocessed pairs and both timer dependency, header
+trace, and zero-status triples.  Collection compares each original tool again
+after the workloads finish; replay verifies the copied bytes, original paths,
+and the complete finite preprocessing roster before opening a workload
+receipt.
+
+The saved runner argv and `TMPDIR` keep their native `/workspace` spelling.
+On a host, the reader maps only that spelling through its one physical
+checkout, while it opens retained sidecars through their physical evidence
+paths.  Fork and timer replay reread the retained preprocessing bytes and use
+the sealed original compiler/linker identities to reconstruct exact commands;
+they do not import the installed compiler helper or invoke GCC, LLD, or the
+pinned musl compiler.  Link, dependency, raw-stream, product-byte, and source
+joins remain exact.
+
+Version 1 reports have no `replay_inputs` field and are deliberately rejected
+by this reader.  They remain historical observations; a later host replay
+requires a fresh version 2 collection and may not patch a prior receipt.
+
 This is source, import-placement, relocation-admission and finite behavior
 evidence.  It does not prove RuntimeV1 worker protocol semantics, CRT startup
 structure, general loader qualification, public ABI selection, family
