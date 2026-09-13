@@ -150,6 +150,8 @@ equal the trusted immutable-image manifest or its copied owned product bytes. It
 rehashes product trees, manifests, materialization state, object/dependency
 records, and raw streams; reconstructs every retained
 archive/shared/final `readelf` symbol row from the actual ELF or ar bytes;
+cross-checks every selected archive/static-final `nm` provider address,
+binding, and archive-member domain against those reconstructed rows;
 uses the existing bounded retained-link parser on all four copied links; and
 derives the eight-alias component projection itself.
 The projection explicitly remains component complete only; family completion,
