@@ -135,7 +135,7 @@ STDIO_ALIAS_PRIVATE_GROUP = 'component-owned-stdio-private-bodies'
 STDIO_ALIAS_PRIVATE_OWNER = 'x86-owned-stdio-private-bodies'
 STDIO_ALIAS_RECEIPT_REQUIREMENT = 'current source-bound FILE alias/private-body receipt'
 STDIO_ALIAS_LIMITS = [
-    'Only the fifteen named FILE weak aliases, their thirteen named bodies, and two protected-body controls are joined.',
+    'The receipt observes 42 named FILE weak aliases; selection joins 39 pending aliases, three private bodies and two protected controls. The three already-accounted aliases acquire no receipt obligation or discharge.',
     'The receipt does not close general stdio behavior, declaration/profile agreement, runtime qualification, family completion, promotion or public support.',
 ]
 
