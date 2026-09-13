@@ -51,6 +51,9 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
     def test_non_pie_workload_label_requires_the_owned_driver_exec_receipt(self):
         self.assertEqual(EVIDENCE.DLOPEN_DRIVER_MODES, {"pie": "pie", "non-pie": "exec"})
 
+    def test_workload_environment_retains_the_existing_chroot_search_path(self):
+        self.assertIn("/usr/sbin", EVIDENCE.WORKLOAD_ENVIRONMENT["PATH"].split(":"))
+
     def test_contract_rejects_ambiguous_unknown_and_promoting_operation(self):
         contract = self.contract()
         contract["operation"].append({"name": "__crabc_x86_64_runtime_unknown", "resolver": "unknown",
@@ -95,19 +98,24 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
             for suffix, contents in (("stdout", b"ok\n"), ("stderr", b""), ("status", b"0\n")):
                 (raw / f"dlfcn-pie.{suffix}").write_bytes(contents)
             command = ["bash", "/fixture/run_general_dynamic_dlopen.sh", "/fixture/product"]
-            record = {"argv": command,
+            environment = {"PATH": "/fixture/bin"}
+            record = {"argv": command, "environment": environment,
                       **{suffix: EVIDENCE.identity(raw / f"dlfcn-pie.{suffix}", logical_path=f"raw/dlfcn-pie.{suffix}")
                          for suffix in ("stdout", "stderr", "status")}}
-            EVIDENCE._validate_command(output, record, "dlfcn-pie", command)
+            EVIDENCE._validate_command(output, record, "dlfcn-pie", command, environment)
+            changed = copy.deepcopy(record)
+            changed["environment"] = {"PATH": "/usr/bin:/bin"}
+            with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "environment drifted"):
+                EVIDENCE._validate_command(output, changed, "dlfcn-pie", command, environment)
             changed = copy.deepcopy(record)
             changed["stdout"]["path"] = "raw/unrelated.stdout"
             with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "path drifted"):
-                EVIDENCE._validate_command(output, changed, "dlfcn-pie", command)
+                EVIDENCE._validate_command(output, changed, "dlfcn-pie", command, environment)
             (raw / "dlfcn-pie.status").write_bytes(b"1\n")
             changed["stdout"] = EVIDENCE.identity(raw / "dlfcn-pie.stdout", logical_path="raw/dlfcn-pie.stdout")
             changed["status"] = EVIDENCE.identity(raw / "dlfcn-pie.status", logical_path="raw/dlfcn-pie.status")
             with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "did not succeed"):
-                EVIDENCE._validate_command(output, changed, "dlfcn-pie", command)
+                EVIDENCE._validate_command(output, changed, "dlfcn-pie", command, environment)
 
     def test_fork_reader_extension_is_a_replay_command_not_a_second_runner(self):
         source = (ROOT / "compat/x86_64/owned_dynamic_fork_evidence.py").read_text(encoding="utf-8")

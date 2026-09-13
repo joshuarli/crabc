@@ -77,6 +77,10 @@ TIMER_MODES = ("pie", "non-pie")
 EXPECTED_GROWTH = b"runtime TLS: old/new workers, 41 modules, retained addresses, recursive/concurrent constructors\n"
 EXPECTED_DLOPEN = b"nested-dlopen=42\n"
 EXPECTED_TBSS = b"initial-tbss=8192,worker=isolated\n"
+# The retained runners invoke the image's existing `chroot` command.  Keep
+# its canonical system location available while excluding inherited host
+# configuration, then seal this exact environment in every outer transcript.
+WORKLOAD_ENVIRONMENT = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
 
 
 class RuntimeRegistryEvidenceError(RuntimeError):
@@ -451,7 +455,7 @@ def _capture(command: list[str], *, output: Path, label: str, environment: Mappi
                                 env=dict(environment), check=False)
     status.write_text(f"{result.returncode}\n", encoding="ascii")
     require(result.returncode == 0, f"{label} command failed ({result.returncode})")
-    return {"argv": command, "stdout": _raw_record(output, stdout, f"raw/{label}.stdout"),
+    return {"argv": command, "environment": dict(environment), "stdout": _raw_record(output, stdout, f"raw/{label}.stdout"),
             "stderr": _raw_record(output, stderr, f"raw/{label}.stderr"),
             "status": _raw_record(output, status, f"raw/{label}.status")}
 
@@ -491,7 +495,7 @@ def collect(*, base_inventory: Path, elf_report: Path, static_preparation: Path,
     physical_directory(output.parent, "component output parent")
     output.mkdir(mode=0o700)
     source = inventory.collector_source_seal()
-    environment = {"PATH": "/usr/bin:/bin", "TMPDIR": str(output), "CRABC_GENERAL_DYNAMIC_ENTRY_MODE": "--dynamic-pie"}
+    environment = {**WORKLOAD_ENVIRONMENT, "TMPDIR": str(output), "CRABC_GENERAL_DYNAMIC_ENTRY_MODE": "--dynamic-pie"}
     dlfcn: dict[str, object] = {}
     for mode in DLOPEN_MODES:
         before = set(output.glob("general-dynamic-dlopen.*"))
@@ -507,13 +511,13 @@ def collect(*, base_inventory: Path, elf_report: Path, static_preparation: Path,
         dlfcn[mode] = {"command": command_record, "observation": observation}
     before = set(output.glob("general-dynamic-fork.*"))
     fork_command = _capture(["bash", str(ROOT / "compat/x86_64/run_general_dynamic_fork.sh"), str(Path(dynamic_product).absolute())],
-                            output=output, label="fork", environment={"PATH": "/usr/bin:/bin", "TMPDIR": str(output)})
+                            output=output, label="fork", environment={**WORKLOAD_ENVIRONMENT, "TMPDIR": str(output)})
     fork_work = _new_work(output, "general-dynamic-fork", before)
     make_retained_readable(fork_work)
     fork_receipt = fork_evidence.validate_observations(Path(dynamic_product), fork_work)
     before = set(output.glob("owned-posix-timers.*"))
     timer_command = _capture(["bash", str(ROOT / "compat/x86_64/run_owned_posix_timers.sh"), str(Path(dynamic_product).absolute())],
-                             output=output, label="timer-reset", environment={"PATH": "/usr/bin:/bin", "TMPDIR": str(output)})
+                             output=output, label="timer-reset", environment={**WORKLOAD_ENVIRONMENT, "TMPDIR": str(output)})
     timer_work = _new_work(output, "owned-posix-timers", before)
     make_retained_readable(timer_work)
     timer = timer_observations(Path(dynamic_product), output, timer_work)
@@ -564,9 +568,10 @@ def timer_observations(product: Path, output: Path, work: Path) -> dict[str, obj
             "modes": observed, "operations": [RESET_NAME], "scenario": "dynamic-pie-and-non-pie-kernel-and-direct"}
 
 
-def _validate_command(output: Path, record: object, label: str, argv: list[str]) -> None:
-    row = exact(record, {"argv", "stdout", "stderr", "status"}, f"{label} command")
+def _validate_command(output: Path, record: object, label: str, argv: list[str], environment: Mapping[str, str]) -> None:
+    row = exact(record, {"argv", "environment", "stdout", "stderr", "status"}, f"{label} command")
     require(row["argv"] == argv, f"{label} command argv drifted")
+    require(row["environment"] == dict(environment), f"{label} command environment drifted")
     for suffix in ("stdout", "stderr", "status"):
         stream = _read_stream(output, row[suffix], f"raw/{label}.{suffix}")
         if suffix == "status":
@@ -595,7 +600,8 @@ def validate_report(report_path: Path, *, base_inventory: Path, elf_report: Path
     for mode in DLOPEN_MODES:
         record = exact(dlfcn[mode], {"command", "observation"}, f"general dlfcn {mode}")
         _validate_command(output, record["command"], f"dlfcn-{mode}",
-                          ["bash", str(ROOT / "compat/x86_64/run_general_dynamic_dlopen.sh"), str(Path(dynamic_product).absolute())])
+                          ["bash", str(ROOT / "compat/x86_64/run_general_dynamic_dlopen.sh"), str(Path(dynamic_product).absolute())],
+                          {**WORKLOAD_ENVIRONMENT, "TMPDIR": str(output), "CRABC_GENERAL_DYNAMIC_ENTRY_MODE": f"--dynamic-{mode}"})
         observation = record["observation"]
         require(isinstance(observation, dict) and observation.get("entry_mode") == mode
                 and observation.get("driver_mode") == DLOPEN_DRIVER_MODES[mode],
@@ -606,11 +612,13 @@ def validate_report(report_path: Path, *, base_inventory: Path, elf_report: Path
         require(same(observation, current), f"general dlfcn {mode} retained artifacts do not reconstruct")
         reconstructed[mode] = current
     fork = exact(report["fork"], {"command", "work", "receipt"}, "fork observation")
-    _validate_command(output, fork["command"], "fork", ["bash", str(ROOT / "compat/x86_64/run_general_dynamic_fork.sh"), str(Path(dynamic_product).absolute())])
+    _validate_command(output, fork["command"], "fork", ["bash", str(ROOT / "compat/x86_64/run_general_dynamic_fork.sh"), str(Path(dynamic_product).absolute())],
+                      {**WORKLOAD_ENVIRONMENT, "TMPDIR": str(output)})
     fork_current = fork_evidence.validate_observations(Path(dynamic_product), physical_directory(output / fork["work"], "fork work"))
     require(same(fork["receipt"], fork_current), "fork retained receipt does not reconstruct")
     timer = exact(report["timer_reset"], {"command", "observation"}, "timer reset observation")
-    _validate_command(output, timer["command"], "timer-reset", ["bash", str(ROOT / "compat/x86_64/run_owned_posix_timers.sh"), str(Path(dynamic_product).absolute())])
+    _validate_command(output, timer["command"], "timer-reset", ["bash", str(ROOT / "compat/x86_64/run_owned_posix_timers.sh"), str(Path(dynamic_product).absolute())],
+                      {**WORKLOAD_ENVIRONMENT, "TMPDIR": str(output)})
     timer_current = timer_observations(Path(dynamic_product), output,
                                        physical_directory(output / timer["observation"]["work"], "timer reset work"))
     require(same(timer["observation"], timer_current), "timer reset retained artifacts do not reconstruct")
