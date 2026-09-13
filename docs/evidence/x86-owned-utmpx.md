@@ -63,8 +63,10 @@ static and static-PIE when a static product is available, and dynamic PIE and
 non-PIE through both kernel dispatch and the direct loader. Dynamic-only input
 therefore reports only its supplied dynamic modes. Every owned link carries a
 sealed receipt validated before execution, and raw stdout, stderr, and process
-status are retained alongside the exact symbol multiplicity checks for the
-archive, shared library, and final executables.
+status are retained alongside exact provider/alias checks for the archive,
+shared library, and static final executables. Dynamic final executables retain
+their complete ELF rows and must import all sixteen public names from the
+shared library; they do not define those providers themselves.
 
 The probe checks same-address identity for all nine weak aliases. It calls each
 strong and weak spelling with ordinary, null, and protected ignored inputs,
@@ -123,7 +125,8 @@ The receipt copies the exact selected source and runner inputs; the static
 preparation plus its before/after whole-source seals; both complete product
 trees, manifests, and the dynamic materialization state; command programs and
 linker; installed-driver object/dependency record; sealed-link receipts and
-sidecars; raw archive/shared/final-executable symbol streams; retained C/C++
+sidecars; raw archive/shared/final-executable ELF symbol streams (and the
+static-final provider renderings); retained C/C++
 header-witness objects and their source-hash input file; and every raw
 oracle/candidate process stream. The preparation primary tree must equal the
 copied static tree and its full source digest must equal the materialized

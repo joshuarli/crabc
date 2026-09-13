@@ -102,8 +102,7 @@ COMMAND_ROLES = frozenset({
     "sealed-link-static", "sealed-link-static-pie", "sealed-link-pie", "sealed-link-non-pie",
     "executable-symbols-static-static", "executable-symbol-bytes-static-static", "executable-symbol-judge-static-static",
     "executable-symbols-static-static-pie", "executable-symbol-bytes-static-static-pie", "executable-symbol-judge-static-static-pie",
-    "executable-symbols-dynamic-pie", "executable-symbol-bytes-dynamic-pie", "executable-symbol-judge-dynamic-pie",
-    "executable-symbols-dynamic-non-pie", "executable-symbol-bytes-dynamic-non-pie", "executable-symbol-judge-dynamic-non-pie",
+    "executable-symbol-bytes-dynamic-pie", "executable-symbol-bytes-dynamic-non-pie",
     "runtime-oracle-ordinary", "runtime-static-static-ordinary", "runtime-static-static-pie-ordinary",
     "runtime-dynamic-pie-kernel-ordinary", "runtime-dynamic-pie-direct-ordinary",
     "runtime-dynamic-non-pie-kernel-ordinary", "runtime-dynamic-non-pie-direct-ordinary",
@@ -610,14 +609,13 @@ def validate_symbol_bytes(workspace: Path, products: Mapping[str, Path] | None =
     for alias, target in ALIASES:
         require(shared[alias][0] == shared[target][0], f"shared alias address differs: {alias}")
     executables: dict[str, Any] = {}
-    for label, name in (("static", "static-static-symbols.txt"), ("static-pie", "static-static-pie-symbols.txt"),
-                        ("pie", "dynamic-pie-symbols.txt"), ("non-pie", "dynamic-non-pie-symbols.txt")):
+    for label, name in (("static", "static-static-symbols.txt"), ("static-pie", "static-static-pie-symbols.txt")):
         symbols = _nm_symbols(regular(raw / name, label + " executable symbols"), label + " executable symbols")
         require(set(symbols) == {*STRONG, *WEAK} and all(binding in {"T", "W"} for _, binding in symbols.values()),
                 label + " executable provider roster differs")
         for alias, target in ALIASES:
             require(symbols[alias][0] == symbols[target][0], label + " executable alias address differs: " + alias)
-        executable = raw / ("static-" + label if label.startswith("static") else "dynamic-" + label)
+        executable = raw / ("static-" + label)
         if products is not None:
             validate_symbol_byte_stream(raw / (label + "-symbol-bytes.txt"), executable,
                                         SOURCE_MOUNT + "/.work/utmpx-receipt/owned-utmpx-receipt/" + executable.name,
@@ -626,8 +624,30 @@ def validate_symbol_bytes(workspace: Path, products: Mapping[str, Path] | None =
             require(type(links.get(label)) is dict and links[label].get("executable_sha256") == digest(executable),
                     label + " symbol stream is not bound to its retained linked ELF")
         executables[label] = {symbol: symbols[symbol][1] for symbol in sorted(symbols)}
+    imports: dict[str, Any] = {}
+    if products is not None:
+        for label in ("pie", "non-pie"):
+            executable = raw / ("dynamic-" + label)
+            validate_symbol_byte_stream(raw / (label + "-symbol-bytes.txt"), executable,
+                                        SOURCE_MOUNT + "/.work/utmpx-receipt/owned-utmpx-receipt/" + executable.name,
+                                        frozenset({".dynsym", ".symtab"}))
+            rows = expected_symbol_rows(executable, SOURCE_MOUNT + "/.work/utmpx-receipt/owned-utmpx-receipt/" + executable.name,
+                                        frozenset({".dynsym"}))
+            dynamic_imports: dict[str, tuple[Any, ...]] = {}
+            for name in (*STRONG, *WEAK):
+                matches = [row for row in rows if row[-1] == name]
+                require(len(matches) == 1, label + " dynamic import roster differs: " + name)
+                row = matches[0]
+                require(row[5:9] == ("FUNC", "GLOBAL", "DEFAULT", "UND"),
+                        label + " dynamic import differs: " + name)
+                dynamic_imports[name] = row
+            if links is not None:
+                require(type(links.get(label)) is dict and links[label].get("executable_sha256") == digest(executable),
+                        label + " import stream is not bound to its retained linked ELF")
+            imports[label] = {name: "GLOBAL DEFAULT UND" for name in (*STRONG, *WEAK)}
     return {"archive": {name: archive[name][1] for name in sorted(archive)},
-            "shared": {name: shared[name][1] for name in sorted(shared)}, "executables": executables}
+            "shared": {name: shared[name][1] for name in sorted(shared)}, "executables": executables,
+            "dynamic_imports": imports}
 
 
 def expected_command_program(argv0: str) -> str:
@@ -675,11 +695,12 @@ def command_records(workspace: Path) -> dict[str, Any]:
     require(records["shared-symbols"]["cwd"] == SOURCE_MOUNT and records["shared-symbols"]["argv"] ==
             ["readelf", "--dyn-syms", "--wide", SOURCE_MOUNT + "/.work/utmpx-receipt/inputs/dynamic/usr/lib/libc.so"],
             "shared symbol command differs")
-    for linkage, executable in (("static-static", "static-static"), ("static-static-pie", "static-static-pie"),
-                                ("dynamic-pie", "dynamic-pie"), ("dynamic-non-pie", "dynamic-non-pie")):
+    for linkage, executable in (("static-static", "static-static"), ("static-static-pie", "static-static-pie")):
         role = "executable-symbols-" + linkage
         require(records[role]["cwd"] == SOURCE_MOUNT and records[role]["argv"] ==
                 ["nm", "-g", "--defined-only", raw + "/" + executable], role + " command differs")
+    for linkage, executable in (("static-static", "static-static"), ("static-static-pie", "static-static-pie"),
+                                ("dynamic-pie", "dynamic-pie"), ("dynamic-non-pie", "dynamic-non-pie")):
         byte_role = "executable-symbol-bytes-" + linkage
         require(records[byte_role]["cwd"] == SOURCE_MOUNT and records[byte_role]["argv"] ==
                 ["readelf", "--symbols", "--wide", raw + "/" + executable], byte_role + " command differs")
@@ -1181,8 +1202,8 @@ def collect(static_preparation: Path, static_product: Path, dynamic_product: Pat
             "oracle", "oracle-ordinary.stdout", "oracle-ordinary.stderr", "oracle-ordinary.status",
             "static-static", "static-static.receipt.json", "static-static.receipt.map", "static-static.receipt.trace", "static-static-symbols.txt", "static-static-symbol-bytes.txt",
             "static-static-pie", "static-static-pie.receipt.json", "static-static-pie.receipt.map", "static-static-pie.receipt.trace", "static-static-pie-symbols.txt", "static-static-pie-symbol-bytes.txt",
-            "dynamic-pie", "dynamic-pie.crabc-link.json", "dynamic-pie-symbols.txt", "dynamic-pie-symbol-bytes.txt",
-            "dynamic-non-pie", "dynamic-non-pie.crabc-link.json", "dynamic-non-pie-symbols.txt", "dynamic-non-pie-symbol-bytes.txt",
+            "dynamic-pie", "dynamic-pie.crabc-link.json", "dynamic-pie-symbol-bytes.txt",
+            "dynamic-non-pie", "dynamic-non-pie.crabc-link.json", "dynamic-non-pie-symbol-bytes.txt",
         ]
         for prefix in ("static-static", "static-static-pie", "dynamic-pie-kernel", "dynamic-pie-direct", "dynamic-non-pie-kernel", "dynamic-non-pie-direct"):
             needed.extend([prefix + ".stdout", prefix + ".stderr", prefix + ".status"])

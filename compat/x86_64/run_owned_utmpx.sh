@@ -364,12 +364,17 @@ if '__utmpxname' in text:
 PY
 }
 
-assert_executable_symbols() {
-    local label="$1" executable="$2" symbols="$3"
-    record_command "executable-symbols-$label" nm -g --defined-only "$executable" >"$symbols"
+retain_executable_symbol_bytes() {
+    local label="$1" executable="$2"
     if [ "$retain_commands" = 1 ]; then
         record_command "executable-symbol-bytes-$label" readelf --symbols --wide "$executable" >"$work/$label-symbol-bytes.txt"
     fi
+}
+
+assert_executable_symbols() {
+    local label="$1" executable="$2" symbols="$3"
+    record_command "executable-symbols-$label" nm -g --defined-only "$executable" >"$symbols"
+    retain_executable_symbol_bytes "$label" "$executable"
     record_command "executable-symbol-judge-$label" python3 -B - "$symbols" <<'PY'
 from collections import Counter
 from pathlib import Path
@@ -588,7 +593,10 @@ for mode in pie non-pie; do
     record_command "dynamic-link-$mode" "$installed/bin/crabc-cc-dynamic" "--dynamic-$mode" "$work/workload.o" -o "$candidate"
     receipt="$candidate.crabc-link.json"
     validate_sealed_link "$installed" "$work/workload.o" "$candidate" "$receipt" "$mode"
-    assert_executable_symbols "dynamic-$mode" "$candidate" "$work/dynamic-$mode-symbols.txt"
+    # Dynamic consumers import the providers from libc.so; only the opted-in
+    # receipt retains their complete ELF rows.  The established provider
+    # multiplicity assertion remains confined to static final executables.
+    retain_executable_symbol_bytes "dynamic-$mode" "$candidate"
     root="$work/dynamic-$mode-root"
     mkdir -p "$root"
     cp -a "$installed/." "$root/"

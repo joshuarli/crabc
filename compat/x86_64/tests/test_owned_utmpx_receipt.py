@@ -116,7 +116,7 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
             f"  1: {addresses[name]} 0 FUNC {'GLOBAL' if name in receipt.STRONG else 'WEAK'} DEFAULT 1 {name}\n"
             for name in (*receipt.STRONG, *receipt.WEAK)
         ).encode())
-        for name in ("static-static-symbols.txt", "static-static-pie-symbols.txt", "dynamic-pie-symbols.txt", "dynamic-non-pie-symbols.txt"):
+        for name in ("static-static-symbols.txt", "static-static-pie-symbols.txt"):
             self.write(raw / name, "".join(
                 f"{addresses[symbol]} {'T' if symbol in receipt.STRONG else 'W'} {symbol}\n"
                 for symbol in (*receipt.STRONG, *receipt.WEAK)
