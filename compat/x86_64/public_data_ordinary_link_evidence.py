@@ -565,7 +565,10 @@ def require_live_tool_roster(tools: Mapping[str, Any]) -> None:
             raise PublicDataEvidenceError(f"ordinary-link {role} tool disappeared during collection") from error
         require(current == original, f"ordinary-link {role} tool changed during collection")
         if role == "chroot":
-            require(same_json(record.get("invocation"), capture_chroot_invocation(original)),
+            require(set(original) == {"path", "sha256", "size", "mode"},
+                    "ordinary-link retained chroot identity differs")
+            source_identity = {key: original[key] for key in ("path", "sha256", "mode")}
+            require(same_json(record.get("invocation"), capture_chroot_invocation(source_identity)),
                     "ordinary-link chroot invocation changed during collection")
 
 

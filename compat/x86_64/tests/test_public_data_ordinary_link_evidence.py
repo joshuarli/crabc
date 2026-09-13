@@ -462,6 +462,29 @@ class PublicDataOrdinaryLinkEvidenceTests(unittest.TestCase):
         )
         self.assertIn("size", snapshot["original"])
 
+    def test_live_tool_roster_projects_snapshot_identity_for_chroot_applet_check(self) -> None:
+        work = self.root / ".work/live-tool-roster"
+        physical = self.root / ".work/fixture-coreutils"
+        invocation = self.root / ".work/fixture-chroot"
+        physical.write_bytes(b"tool bytes")
+        physical.chmod(0o755)
+        invocation.symlink_to(physical)
+        with (
+            mock.patch.object(evidence, "CHROOT_INVOCATION", invocation),
+            mock.patch.object(evidence, "CHROOT_PHYSICAL", physical),
+        ):
+            source = evidence.wordexp._tool_identity(invocation, "fixture chroot")
+            snapshot = evidence.retain_tool_snapshot(work, "chroot", source)
+            snapshot["invocation"] = evidence.capture_chroot_invocation(source)
+            tools = {
+                role: {"original": dict(snapshot["original"])}
+                for role in evidence.TOOL_ROLES
+            }
+            tools["chroot"] = snapshot
+            evidence.write_new_json(work / "tools.json", tools)
+            replayed = evidence.read_json(work / "tools.json", "live tool roster", dict)
+            evidence.require_live_tool_roster(replayed)
+
     def test_retained_snapshot_replays_after_readability_finalization(self) -> None:
         work = self.root / ".work/finalized-snapshot"
         source = self.root / ".work/finalized-tool"
