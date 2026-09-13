@@ -21,14 +21,15 @@ have the same definition-domain section, value, type, and size.
 
 Run the collector in the pinned native environment only:
 
-    public-data-ordinary-link collect \
+    ./scripts/dev-x86_64.sh public-data-ordinary-link collect \
       --static-preparation .work/x86_64/.../preparation.json \
       --static-product .work/x86_64/.../products/primary \
       --dynamic-product .work/x86_64/.../dynamic-product \
       --output .work/x86_64/public-data-ordinary-link/RECEIPT
 
-The output must be a fresh physical child of the producing checkout's .work
-directory. Inputs must also be physical children of that same checkout. The
+The dispatcher requires a fresh physical output below the producing checkout's
+`.work/x86_64/public-data-ordinary-link/` directory. Inputs must also be physical
+children of that checkout's `.work/` tree. The
 collector requires CRABC_X86_PUBLIC_DATA_IMAGE_ID=crabc-core-evidence@sha256:...
 supplied by the dispatcher.
 
@@ -84,7 +85,7 @@ inputs or a purity claim.
 
 ## Retained validation
 
-    public-data-ordinary-link validate-report \
+    ./scripts/dev-x86_64.sh public-data-ordinary-link validate-report \
       .work/x86_64/public-data-ordinary-link/RECEIPT/report.json
 
 Host validation rechecks source/product admission, policy bytes and selected

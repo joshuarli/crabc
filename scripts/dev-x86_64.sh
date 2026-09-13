@@ -204,6 +204,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   native-abi-elf-facts {collect|validate-report} ...  inspect or replay complete ELF facts supplementing a current v1 inventory
   native-abi-selection {build-report|validate-report|require-closure} ...  account native ABI selection and replay its retained evidence
   header-declaration-inventory {collect|validate-report} ...  retain or replay compiler declaration and macro occurrences
+  public-data-ordinary-link {collect|validate-report} ...  prove or replay ordinary links to selected public data objects
   native-abi-ratchet {check|validate-report} ...  check or replay the reviewed native x86 public-dynamic ABI floor
   native-abi-ratchet-test  run focused native ABI-ratchet policy and dispatcher tests
   musl-oracle  verify the pinned musl-1.2.6 x86 C/POSIX oracle toolchain
@@ -2979,6 +2980,77 @@ except (OSError, RuntimeError, ValueError) as error:
 PY_NATIVE_ABI_INPUT
 }
 
+prepare_public_data_ordinary_link_arguments() {
+    local mode="$1"
+    shift
+    local static_product='' dynamic_product='' static_preparation='' output='' translated=''
+    # These receipts replay paths relative to their producing checkout. A
+    # virtual work/Cargo remapping would change those paths on the host.
+    [ "$WORK_DIR" = "$WORK_BOUNDARY" ] && [ "$CARGO_VOLUME" = "$WORK_BOUNDARY/cargo" ] || \
+        fail "public-data-ordinary-link requires default work and Cargo paths for retained host replay"
+    PUBLIC_DATA_MODE="$mode"
+    if [ "$mode" = validate-report ]; then
+        [ "$#" -eq 1 ] || fail "public-data-ordinary-link validate-report requires REPORT"
+        translated="$(translate_owned_posix_product "$1" receipt-file)" || exit 2
+        PUBLIC_DATA_ARGUMENTS=(validate-report "$(native_facade_performance_host_path "$translated")")
+        return
+    fi
+    while [ "$#" -gt 0 ]; do
+        [ "$#" -ge 2 ] && [ -n "$2" ] && [[ "$2" != -* ]] || \
+            fail "public-data-ordinary-link collection arguments require a value"
+        [[ "$2" != *:* ]] || fail "public-data-ordinary-link paths must not contain Docker mount syntax"
+        case "$1" in
+            --static-product)
+                [ -z "$static_product" ] || fail "--static-product may appear once"
+                static_product="$2"
+                ;;
+            --dynamic-product)
+                [ -z "$dynamic_product" ] || fail "--dynamic-product may appear once"
+                dynamic_product="$2"
+                ;;
+            --static-preparation)
+                [ -z "$static_preparation" ] || fail "--static-preparation may appear once"
+                static_preparation="$2"
+                ;;
+            --output)
+                [ -z "$output" ] || fail "--output may appear once"
+                output="$2"
+                ;;
+            *) fail "unknown public-data-ordinary-link collection argument: $1" ;;
+        esac
+        shift 2
+    done
+    [ -n "$static_product" ] && [ -n "$dynamic_product" ] && \
+        [ -n "$static_preparation" ] && [ -n "$output" ] || \
+        fail "public-data-ordinary-link collect requires --static-product, --dynamic-product, --static-preparation, and --output"
+    static_product="$(translate_owned_posix_product "$static_product")" || exit 2
+    dynamic_product="$(translate_owned_posix_product "$dynamic_product")" || exit 2
+    static_preparation="$(translate_owned_posix_product "$static_preparation" receipt-file)" || exit 2
+    output="$(translate_owned_posix_product "$output" fresh-output)" || exit 2
+    case "$output" in
+        /workspace/.work/x86_64/public-data-ordinary-link/*) ;;
+        *) fail "public data output must be below this checkout's .work/x86_64/public-data-ordinary-link" ;;
+    esac
+    PUBLIC_DATA_PREPARATION_ROOT="${static_preparation%/*}"
+    case "$output/" in
+        "$PUBLIC_DATA_PREPARATION_ROOT/"*|"$static_product/"*|"$dynamic_product/"*)
+            fail "public data output must be disjoint from the static preparation cohort and supplied products"
+            ;;
+    esac
+    PUBLIC_DATA_ARGUMENTS=(collect --static-product "$static_product" --dynamic-product "$dynamic_product"
+                           --static-preparation "$static_preparation" --output "$output")
+    # Retained readers use the original producing checkout paths. Read-only
+    # overlays also protect products below the writable output parent.
+    PUBLIC_DATA_INPUT_MOUNTS=(
+        --volume "$(native_facade_performance_host_path "$PUBLIC_DATA_PREPARATION_ROOT"):$PUBLIC_DATA_PREPARATION_ROOT:ro"
+        --volume "$(native_facade_performance_host_path "$static_product"):$static_product:ro"
+        --volume "$(native_facade_performance_host_path "$dynamic_product"):$dynamic_product:ro"
+        --volume "$(native_facade_performance_host_path "$static_preparation"):$static_preparation:ro"
+    )
+    PUBLIC_DATA_OUTPUT_PARENT="${output%/*}"
+    PUBLIC_DATA_HOST_OUTPUT_PARENT="$(native_facade_performance_host_path "$PUBLIC_DATA_OUTPUT_PARENT")"
+}
+
 prepare_header_declaration_inventory_arguments() {
     local mode="$1"
     shift
@@ -3511,6 +3583,30 @@ run_in_native_abi_elf_facts_container() {
         --volume "$NATIVE_ABI_DYNAMIC_PRODUCT:/inputs/dynamic-product:ro" \
         --volume "$NATIVE_ABI_STATIC_PREPARATION:/inputs/static-preparation.json:ro" \
         --volume "$NATIVE_ABI_ELF_FACTS_BASE_ROOT:/inputs/base-inventory:ro" \
+        "$image_id" "$@"
+}
+
+run_in_public_data_ordinary_link_container() {
+    prepare_work_dir
+    local image_id
+    image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+    [ -n "$image_id" ] || fail "cannot resolve public data evidence image identity"
+    # Ordinary dynamic entry uses a contained chroot. No mount namespace or
+    # relaxed syscall filter is needed for this finite address-taking probe.
+    docker run --rm --init \
+        "${GIT_METADATA_MOUNT[@]}" \
+        --platform "$PLATFORM" --network none --cap-add=SYS_CHROOT --workdir /workspace \
+        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
+        --env PYTHONDONTWRITEBYTECODE=1 --env GIT_OPTIONAL_LOCKS=0 \
+        --env GIT_CONFIG_COUNT=1 --env GIT_CONFIG_KEY_0=safe.directory \
+        --env GIT_CONFIG_VALUE_0=/workspace \
+        --env CRABC_X86_PUBLIC_DATA_IMAGE_ID="crabc-core-evidence@$image_id" \
+        --volume "$ROOT_DIR:/workspace:ro" \
+        --volume "$WORK_DIR:/workspace/.work/x86_64:ro" \
+        --volume "$TMP_DIR:/tmp" --volume "$TMP_DIR:/workspace/.work/x86_64/tmp" \
+        --volume "$PUBLIC_DATA_HOST_OUTPUT_PARENT:$PUBLIC_DATA_OUTPUT_PARENT" \
+        "${PUBLIC_DATA_INPUT_MOUNTS[@]}" \
         "$image_id" "$@"
 }
 
@@ -6565,6 +6661,13 @@ case "$command" in
             *) fail "header-declaration-inventory requires collect or validate-report" ;;
         esac
         ;;
+    public-data-ordinary-link)
+        [ "$#" -ge 1 ] || fail "public-data-ordinary-link requires collect or validate-report"
+        case "$1" in
+            collect|validate-report) ;;
+            *) fail "public-data-ordinary-link requires collect or validate-report" ;;
+        esac
+        ;;
     native-abi-inventory-test)
         [ "$#" -eq 0 ] || fail "native-abi-inventory-test takes no arguments"
         ;;
@@ -6832,6 +6935,10 @@ esac
 require_native_linux_x86_64_host
 
 case "$command" in
+    public-data-ordinary-link)
+        prepare_public_data_ordinary_link_arguments "$@"
+        set -- "${PUBLIC_DATA_ARGUMENTS[@]}"
+        ;;
     header-declaration-inventory)
         prepare_header_declaration_inventory_arguments "$@"
         set -- "${HEADER_DECLARATION_ARGUMENTS[@]}"
@@ -6951,6 +7058,15 @@ case "$command" in
             ensure_image
             run_in_header_declaration_inventory_container \
                 python3 -B /workspace/compat/x86_64/header_declaration_inventory.py "$@"
+        fi
+        ;;
+    public-data-ordinary-link)
+        if [ "$PUBLIC_DATA_MODE" = validate-report ]; then
+            python3 -B "$ROOT_DIR/compat/x86_64/public_data_ordinary_link_evidence.py" "$@"
+        else
+            ensure_image
+            run_in_public_data_ordinary_link_container \
+                python3 -B /workspace/compat/x86_64/public_data_ordinary_link_evidence.py "$@"
         fi
         ;;
     native-abi-ratchet-test)

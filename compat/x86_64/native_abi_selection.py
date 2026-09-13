@@ -13,7 +13,6 @@ import copy
 import csv
 import fnmatch
 import hashlib
-import importlib.util
 import io
 import json
 import os
@@ -34,6 +33,7 @@ import native_abi_inventory as inventory
 import native_abi_elf_facts as elf_facts
 import header_callable_disposition as callable_disposition
 import feature_archive_roster as feature_roster
+import header_declaration_inventory as declaration_inventory
 
 SCHEMA = 'crabc.x86_64-native-abi-selection-report/v1'
 CONTRACT_SCHEMA = 'crabc.x86_64-native-abi-selection/v1'
@@ -891,16 +891,10 @@ def account_object_declarations(report: Mapping[str, Any], selected_objects: Seq
 def declaration_adapter(report_path: Path | None, *, selected_objects: Sequence[Mapping[str, Any]]) -> dict[str, Any] | None:
     if report_path is None:
         return None
-    module_path = MODULE_DIR / 'header_declaration_inventory.py'
-    require(module_path.is_file(), 'declaration companion public reader is not integrated')
+    module_path = Path(declaration_inventory.__file__)
     report_path = physical_work_path(report_path, directory=False)
-    spec = importlib.util.spec_from_file_location('native_selection_declaration_companion', module_path)
-    require(spec is not None and spec.loader is not None, 'cannot load declaration companion')
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
     try:
-        envelope = module.validate_report(report_path, project_include=ROOT / 'include')
+        envelope = declaration_inventory.validate_report(report_path, project_include=ROOT / 'include')
     except (ValueError, OSError) as error:
         raise SelectionError(f'declaration companion rejected: {error}') from error
     exact(envelope, {'report', 'current_selecting_source'}, 'declaration reader envelope')
@@ -908,6 +902,25 @@ def declaration_adapter(report_path: Path | None, *, selected_objects: Sequence[
     require(type(source['matches_retained']) is bool and type(source['differences']) is list, 'declaration source comparison types differ')
     report = envelope['report']
     account = account_object_declarations(report, selected_objects)
+    # Reuse this one public replay for the finite data contract. Its type and
+    # profile checks do not establish callable declarations, record layout or
+    # accessor-to-storage behavior for the complete selected ABI.
+    import native_data_declarations as data_declarations
+    try:
+        typed_data = data_declarations.account_declarations(envelope, selected_objects)
+    except (ValueError, OSError) as error:
+        raise SelectionError(f'selected data declarations rejected: {error}') from error
+    for requirement in account['requirements']:
+        if requirement['kind'] == 'installed-variable':
+            requirement['remaining'] = ['selected object layout and runtime semantics remain unverified']
+        elif requirement['kind'] == 'accessor-macro':
+            requirement['remaining'] = ['selected accessor callable linkage and runtime-to-storage semantics remain unverified']
+    account['complete'] = False
+    account['selected_data_declarations'] = {
+        'adapter': file_identity(Path(data_declarations.__file__)),
+        'contract': file_identity(data_declarations.CONTRACT_PATH),
+        'account': typed_data,
+    }
     return {'report': file_identity(report_path), 'reader': file_identity(module_path),
             'current_selecting_source': source, 'physical_status': report['status'], **account}
 

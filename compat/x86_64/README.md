@@ -137,6 +137,16 @@ events across the existing finite header/profile roster. It retains the raw
 compiler inputs and outputs needed for host replay, while keeping unknown
 declaration semantics separate from physical collection completeness.
 
+[native-data-declarations.md](native-data-declarations.md) defines the selected
+public-data declaration checks over that replayed receipt: 19 installed
+variables, the `h_errno` accessor macro, and 13 ABI-only names. Provider layout
+and runtime behavior require their own evidence.
+
+[public-data-ordinary-link.md](public-data-ordinary-link.md) describes the
+ordinary-link matrix for the 32 data objects shared by the static and dynamic
+products. It consumes prepared products, links one workload object in seven
+candidate/oracle modes, and retains eleven executions for host replay.
+
 [native-thread-signal-abi.md](native-thread-signal-abi.md) records the native
 GNU/BSD `tgkill(int,int,int)` crabc extension, its frozen C source
 origin, separate musl syscall adapter, and installed-product static/dynamic

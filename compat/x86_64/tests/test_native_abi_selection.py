@@ -11,6 +11,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[3]
 SPEC = importlib.util.spec_from_file_location('native_abi_selection_test', ROOT / 'compat/x86_64/native_abi_selection.py')
@@ -429,6 +430,67 @@ class PathAndCommandTests(unittest.TestCase):
                 selection.main(variant)
             self.assertEqual(result.exception.code, 2)
 
+
+
+class SelectedDataDeclarationIntegrationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        path = ROOT / 'compat/x86_64/tests/test_native_data_declarations.py'
+        spec = importlib.util.spec_from_file_location('selection_data_declaration_fixture', path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        cls.fixture = module.NativeDataDeclarationsTests()
+        cls.objects = selection.load_contract()['object_contracts']
+
+    def setUp(self):
+        work = ROOT / '.work/x86_64/native-abi-selection-tests'
+        work.mkdir(parents=True, exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(dir=work)
+        self.addCleanup(temporary.cleanup)
+        self.report = Path(temporary.name) / 'report.json'
+        self.report.write_text('{}\n')
+
+    def account(self, envelope):
+        # The owning reader's raw replay is tested separately. Exercise the
+        # real typed adapter at the selection boundary using its full-roster
+        # fixture, and require exactly one public replay for that envelope.
+        # Pinned unit fixtures mount this checkout at /workspace while Git's
+        # worktree metadata names the host. Path admission has separate tests;
+        # make this fixture's checkout its local evidence boundary.
+        with mock.patch.object(selection, '_common_checkout', return_value=ROOT), \
+             mock.patch.object(selection.declaration_inventory, 'validate_report', return_value=envelope) as replay:
+            result = selection.declaration_adapter(self.report, selected_objects=self.objects)
+        replay.assert_called_once_with(self.report, project_include=ROOT / 'include')
+        return result
+
+    def test_typed_data_proof_reuses_public_replay_without_closing_all_declarations(self):
+        result = self.account(self.fixture.report_envelope())
+        typed = result['selected_data_declarations']
+        self.assertEqual(typed['account']['scope']['selected_object_contracts'], 33)
+        self.assertEqual(typed['account']['selected_data_declaration_status'], 'proved-with-explicit-boundaries')
+        self.assertEqual(typed['contract'], selection.file_identity(ROOT / 'compat/x86_64/native_data_declarations.toml'))
+        self.assertEqual(typed['adapter'], selection.file_identity(ROOT / 'compat/x86_64/native_data_declarations.py'))
+        self.assertFalse(result['complete'])
+        blockers = selection.evidence_blockers(declaration=result, semantic_receipts=[], family_receipts=[], source_matches=True)
+        self.assertIn('declaration-companion-incomplete', {item['code'] for item in blockers})
+        self.assertTrue(any('layout' in message for item in result['requirements'] for message in item['remaining']))
+
+    def test_typed_declaration_disagreement_is_a_selection_error(self):
+        envelope = self.fixture.report_envelope()
+        row = next(row for row in envelope['report']['occurrences'] if row['name'] == 'stdin')
+        row['type']['qual_type'] = 'FILE *'
+        with self.assertRaisesRegex(selection.SelectionError, 'selected data declarations rejected'):
+            self.account(envelope)
+
+    def test_historical_source_comparison_survives_nested_data_account(self):
+        envelope = self.fixture.report_envelope()
+        envelope['current_selecting_source'] = {'matches_retained': False, 'differences': [{'path': 'include/stdio.h', 'kind': 'sha256-differs'}]}
+        result = self.account(envelope)
+        self.assertEqual(result['current_selecting_source'], envelope['current_selecting_source'])
+        typed = result['selected_data_declarations']['account']
+        self.assertEqual(typed['selected_data_declaration_status'], 'historical-source-drift-with-explicit-boundaries')
+        self.assertFalse(result['complete'])
 
 
 def empty_facts():

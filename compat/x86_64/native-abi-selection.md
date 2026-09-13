@@ -60,10 +60,14 @@ while the reviewed policy stays in source control. No selection operation
 changes family, qualification, or public-platform promotion state.
 
 The current reader accounts for physical placements and source-selected
-metadata. Its declaration adapter retains selected object occurrences but does
-not yet establish complete declaration/type agreement. Typed component and
-family receipt adapters remain to be integrated, so current reports retain
-those blockers and `require-closure` refuses them.
+metadata. After the single public declaration replay, it applies
+[`native_data_declarations.py`](native-data-declarations.md) to the 19 installed
+variables, `h_errno` accessor macro and 13 ABI-only spellings. The nested account
+retains its adapter and policy identities, qualified types, direct and transitive
+observations, and current-source comparison. This selected data agreement leaves
+callable declarations, object layout and accessor-to-storage behavior open.
+Component and family receipt adapters remain to be integrated, so current
+reports retain those blockers and `require-closure` refuses them.
 
 ## Selection inputs and definition domains
 
