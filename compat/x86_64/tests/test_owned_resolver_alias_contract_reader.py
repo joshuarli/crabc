@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 import hashlib
+import json
 import os
 import stat
 from pathlib import Path
@@ -31,6 +32,7 @@ from owned_resolver_alias_contract_reader import (  # noqa: E402
     _record_in_work,
     _capture_input_identities,
     _validate_captured_input_identities,
+    _validate_product_cohort_links,
     _validate_runtime_roots,
     _validate_runtime,
     _validate_generated_resolv_conf,
@@ -194,6 +196,88 @@ class ResolverAliasOccurrenceTests(unittest.TestCase):
             'internal_callers': ['query_response'],
             'legacy_source_callers': ['lookup_dns_records'],
         })
+
+class ResolverAliasProductAnchorTests(unittest.TestCase):
+    def test_loader_debug_dynamic_artifacts_use_the_producer_relative_paths(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / '.work' / 'x86_64' / 'test-tmp') as temporary:
+            root = Path(temporary)
+            static = root / '.work' / 'static-product'
+            dynamic = root / '.work' / 'loader-component' / 'dynamic-product'
+            files = {
+                static / 'share/crabc/manifest.json': b'static-manifest',
+                dynamic / 'share/crabc/manifest.json': b'dynamic-manifest',
+                dynamic / 'share/crabc/dynamic-product-state.json': b'dynamic-state',
+                dynamic / 'usr/lib/libc.so': b'candidate-libc',
+                dynamic / 'lib/ld-crabc-x86_64.so.1': b'candidate-loader',
+            }
+            for path, content in files.items():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+            source = {'revision': 'a' * 40, 'source_sha256': 'b' * 64}
+            preparation = root / '.work' / 'static-preparation.json'
+            preparation.write_text(json.dumps({
+                'source': {'revision': source['revision'], 'content_sha256': source['source_sha256']},
+                'products': {
+                    'extracted': {},
+                    'primary': {'path': str(static.relative_to(root))},
+                    'reproduction': {},
+                },
+            }), encoding='utf-8')
+            artifacts = {}
+            for name, path in {
+                'static-manifest': static / 'share/crabc/manifest.json',
+                'dynamic-manifest': dynamic / 'share/crabc/manifest.json',
+                'dynamic-state': dynamic / 'share/crabc/dynamic-product-state.json',
+                'candidate-libc': dynamic / 'usr/lib/libc.so',
+                'candidate-loader': dynamic / 'lib/ld-crabc-x86_64.so.1',
+            }.items():
+                status = path.stat()
+                artifacts[name] = {
+                    'path': str(path.relative_to(root)),
+                    'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
+                    'size': status.st_size,
+                }
+            # The loader anchor has an independent static product; only the
+            # selected static manifest bytes are relevant to this receipt.
+            artifacts['static-manifest']['path'] = '.work/loader-component/static-product/share/crabc/manifest.json'
+            product_report = root / '.work' / 'loader-component' / 'report.json'
+            product_report.parent.mkdir(parents=True, exist_ok=True)
+            product_report.write_text(json.dumps({
+                'source_commit': source['revision'],
+                'source_sha256': source['source_sha256'],
+                'artifacts': artifacts,
+            }), encoding='utf-8')
+
+            def write_anchor() -> None:
+                product_report.write_text(json.dumps({
+                    'source_commit': source['revision'],
+                    'source_sha256': source['source_sha256'],
+                    'artifacts': artifacts,
+                }), encoding='utf-8')
+
+            write_anchor()
+            _validate_product_cohort_links(root, source, static, dynamic, product_report, preparation)
+            for name in ('dynamic-manifest', 'dynamic-state', 'candidate-libc', 'candidate-loader'):
+                with self.subTest(dynamic_artifact=name):
+                    original = artifacts[name]['path']
+                    artifacts[name]['path'] = '.work/incorrect/' + name
+                    write_anchor()
+                    with self.assertRaisesRegex(ReceiptError, f'loader-debug product artifact differs: {name}'):
+                        _validate_product_cohort_links(root, source, static, dynamic, product_report, preparation)
+                    artifacts[name]['path'] = original
+            for name in ('dynamic-manifest', 'dynamic-state', 'candidate-libc', 'candidate-loader'):
+                with self.subTest(dynamic_artifact_bytes=name):
+                    original = artifacts[name]['sha256']
+                    artifacts[name]['sha256'] = '0' * 64
+                    write_anchor()
+                    with self.assertRaisesRegex(ReceiptError, f'loader-debug product artifact differs: {name}'):
+                        _validate_product_cohort_links(root, source, static, dynamic, product_report, preparation)
+                    artifacts[name]['sha256'] = original
+            artifacts['static-manifest']['sha256'] = '0' * 64
+            write_anchor()
+            with self.assertRaisesRegex(ReceiptError, 'loader-debug product artifact differs: static-manifest'):
+                _validate_product_cohort_links(root, source, static, dynamic, product_report, preparation)
+
 
 class ResolverAliasRunnerSourceTests(unittest.TestCase):
     def test_component_sources_hold_the_three_normal_override_controls(self) -> None:

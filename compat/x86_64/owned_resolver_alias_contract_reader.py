@@ -1046,7 +1046,7 @@ def _validate_inputs(report: Mapping[str, Any], receipt_root: Path, root: Path,
     return origin_root
 
 
-def _validate_product_cohort_links(root: Path, origin_root: Path, source: Mapping[str, Any], static_product: Path,
+def _validate_product_cohort_links(root: Path, source: Mapping[str, Any], static_product: Path,
                                   dynamic_product: Path, product_report: Path,
                                   static_preparation: Path) -> None:
     """Bind the two supplied product roots to their selected cohort records."""
@@ -1077,7 +1077,7 @@ def _validate_product_cohort_links(root: Path, origin_root: Path, source: Mappin
     for name, (path, exact_path) in expected.items():
         record = artifacts.get(name)
         identity = _identity(path)
-        require(type(record) is dict and (not exact_path or record.get('path') == str(origin_root / path.relative_to(root)))
+        require(type(record) is dict and (not exact_path or record.get('path') == str(path.relative_to(root)))
                 and record.get('sha256') == identity['sha256'] and record.get('size') == identity['size'],
                 f'loader-debug product artifact differs: {name}')
 
@@ -1264,7 +1264,7 @@ def validate_report(report_path: Path, *, root: Path = ROOT, static_product: Pat
                                    Path(static_preparation), Path(elf_facts), Path(base_inventory))
     require(receipt_root.is_relative_to(root / '.work'), 'resolver host receipt root differs')
     origin_work = origin_root / receipt_root.relative_to(root)
-    _validate_product_cohort_links(root, origin_root, source, Path(static_product), Path(dynamic_product),
+    _validate_product_cohort_links(root, source, Path(static_product), Path(dynamic_product),
                                    Path(product_report), Path(static_preparation))
     _validate_measurement_cohort(Path(elf_facts), Path(base_inventory), Path(static_product),
                                  Path(dynamic_product), Path(static_preparation))
@@ -1331,7 +1331,7 @@ def _admit_current_collection(root: Path, static_product: Path, dynamic_product:
         product_evidence._validate_dynamic_product(dynamic_product)
     except product_evidence.ProductEvidenceError as error:
         raise ReceiptError(f'supplied product contract differs: {error}') from error
-    _validate_product_cohort_links(root, root, source, static_product, dynamic_product,
+    _validate_product_cohort_links(root, source, static_product, dynamic_product,
                                    product_report, static_preparation)
     _validate_measurement_cohort(elf_facts, base_inventory, static_product,
                                  dynamic_product, static_preparation)
@@ -1392,7 +1392,7 @@ def collect_report(*, root: Path, work: Path, static_product: Path, dynamic_prod
     origin_root = _validate_inputs({'selected_source': source, 'inputs': begin['inputs']}, work, root,
                                    static_product, dynamic_product, product_report,
                                    static_preparation, elf_facts, base_inventory)
-    _validate_product_cohort_links(root, origin_root, source, static_product, dynamic_product,
+    _validate_product_cohort_links(root, source, static_product, dynamic_product,
                                    product_report, static_preparation)
     _validate_measurement_cohort(elf_facts, base_inventory, static_product,
                                  dynamic_product, static_preparation)
