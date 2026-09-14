@@ -14,7 +14,6 @@ readonly OVERRIDE_CALLER="$ROOT/compat/x86_64/owned_resolver_alias_override_call
 readonly HEADER_C="$ROOT/compat/x86_64/resolver_runtime_header_abi_probe.c"
 readonly HEADER_CPP="$ROOT/compat/x86_64/resolver_runtime_header_abi_probe.cpp"
 readonly RAW_HEADER_COMPILER=/usr/bin/gcc
-readonly HEADER_BUILTIN_INCLUDE=/usr/lib/gcc/x86_64-alpine-linux-musl/15.2.0/include
 readonly READELF=/usr/bin/readelf
 readonly TIMEOUT=/usr/bin/timeout
 readonly CHROOT=/usr/sbin/chroot
@@ -101,7 +100,6 @@ for tool in chroot cp mkdir python3 readelf rm timeout; do command -v "$tool" >/
 for tool in "$RAW_HEADER_COMPILER" "$READELF" "$TIMEOUT" "$CHROOT" "$ORACLE_CC"; do
     [ -x "$tool" ] || fail "missing pinned command program: $tool"
 done
-[ -d "$HEADER_BUILTIN_INCLUDE" ] || fail 'missing pinned compiler builtin include directory'
 [ -f "$MUSL_ARCHIVE" ] && [ -f "$MUSL_SHARED" ] || fail 'missing pinned musl oracle files'
 
 readonly STATIC_PRODUCT="$(realpath -e "$STATIC_PRODUCT")"
@@ -173,14 +171,14 @@ prepare_dynamic_root() {
     prepare_fixture "$root/fixture"
 }
 
-# Header ABI is a source check through the pinned raw compiler. It names
-# only the selected dynamic installed headers and the pinned compiler builtin
-# include; the sealed dynamic driver deliberately remains link-only.
+# Header ABI is a source check through the pinned raw compiler. `-nostdinc`
+# and `-nostdinc++` admit only the selected installed header root; the sealed
+# dynamic driver deliberately remains link-only.
 record header-c "$RAW_HEADER_COMPILER" -x c -std=c11 -nostdinc -I "$DYNAMIC_PRODUCT/usr/include" \
-    -isystem "$HEADER_BUILTIN_INCLUDE" -U_GNU_SOURCE -D_GNU_SOURCE -fno-builtin \
+    -U_GNU_SOURCE -D_GNU_SOURCE -fno-builtin \
     -fsyntax-only "$HEADER_C"
 record header-cpp "$RAW_HEADER_COMPILER" -x c++ -std=c++17 -nostdinc -nostdinc++ \
-    -I "$DYNAMIC_PRODUCT/usr/include" -isystem "$HEADER_BUILTIN_INCLUDE" \
+    -I "$DYNAMIC_PRODUCT/usr/include" \
     -U_GNU_SOURCE -D_GNU_SOURCE -fno-builtin -c -o "$WORK/objects/header.cpp.o" "$HEADER_CPP"
 # Compile this public-caller object once. Every normal oracle/static/dynamic
 # link consumes these exact bytes; no lane silently recompiles it.

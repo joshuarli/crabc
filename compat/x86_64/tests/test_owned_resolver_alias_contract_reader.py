@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 import hashlib
+import os
 import stat
 from pathlib import Path
 
@@ -32,6 +33,7 @@ from owned_resolver_alias_contract_reader import (  # noqa: E402
     _validate_captured_input_identities,
     _validate_runtime_roots,
     _validate_runtime,
+    _validate_generated_resolv_conf,
     capture_runtime_root,
     FIXTURE_FILES,
     RUNTIME_ROOT_SPECS,
@@ -335,19 +337,17 @@ class ResolverAliasOrdinaryBoundaryRegressionTests(unittest.TestCase):
         with self.assertRaisesRegex(ReceiptError, 'legacy getaddrinfo caller is not excluded'):
             _validate_selected_source_text(source.replace(marker, '#[no_mangle]\npub unsafe extern "C" fn getaddrinfo(', 1))
 
-    def test_header_commands_use_pinned_raw_compiler_and_selected_headers(self) -> None:
-        from owned_resolver_alias_contract_reader import HEADER_BUILTIN_INCLUDE
-
+    def test_header_commands_use_only_pinned_raw_compiler_and_selected_headers(self) -> None:
         runner = (ROOT / 'compat/x86_64/run_owned_resolver_alias_contract.sh').read_text(encoding='utf-8')
+        reader = (ROOT / 'compat/x86_64/owned_resolver_alias_contract_reader.py').read_text(encoding='utf-8')
         self.assertIn('readonly RAW_HEADER_COMPILER=/usr/bin/gcc', runner)
-        self.assertIn('readonly HEADER_BUILTIN_INCLUDE=', runner)
         header_commands = runner[runner.index('# Header ABI is a source check'):runner.index('record compile-public-probe')]
         self.assertIn('"$RAW_HEADER_COMPILER"', header_commands)
         self.assertIn('-nostdinc -I "$DYNAMIC_PRODUCT/usr/include"', header_commands)
-        self.assertIn('-isystem "$HEADER_BUILTIN_INCLUDE"', header_commands)
+        self.assertNotIn('HEADER_BUILTIN_INCLUDE', header_commands)
+        self.assertNotIn('-isystem', header_commands)
+        self.assertNotIn('HEADER_BUILTIN_INCLUDE', reader)
         self.assertNotIn('"$DYNAMIC_DRIVER" --dynamic-pie -x', header_commands)
-        self.assertEqual(HEADER_BUILTIN_INCLUDE,
-                         '/usr/lib/gcc/x86_64-alpine-linux-musl/15.2.0/include')
 
 
 
@@ -365,6 +365,24 @@ class ResolverAliasRuntimeRootTransitionTests(unittest.TestCase):
     def _generated_resolv(self, identity: int = 42) -> bytes:
         return (f'nameserver 127.{128 + (identity >> 16)}.{(identity >> 8) & 0xff}.{identity & 0xff}\n'
                 'search fixture.test\noptions ndots:1 timeout:1 attempts:1\n').encode('ascii')
+
+    def _probe_truncate_resolv(self, path: Path, contents: bytes) -> None:
+        # Match libc_resolver_runtime_probe.c: an existing fixture is opened
+        # with O_TRUNC and mode 0600, which does not chmod the existing inode.
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            self.assertEqual(os.write(descriptor, contents), len(contents))
+        finally:
+            os.close(descriptor)
+
+    def test_probe_truncate_preserves_the_preexisting_fixture_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            resolv = root / 'etc/resolv.conf'
+            self._write(resolv, FIXTURE_FILES['etc/resolv.conf'], 0o644)
+            self._probe_truncate_resolv(resolv, self._generated_resolv())
+            self.assertEqual(stat.S_IMODE(resolv.stat().st_mode), 0o644)
+            _validate_generated_resolv_conf(resolv)
 
     def test_runtime_roots_retain_exact_before_and_bounded_resolver_after(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -405,7 +423,7 @@ class ResolverAliasRuntimeRootTransitionTests(unittest.TestCase):
 
                 if artifact_name in {'fixture', 'dynamic_pie', 'dynamic_non_pie'}:
                     resolv = root / ('etc/resolv.conf' if artifact_name == 'fixture' else 'fixture/etc/resolv.conf')
-                    self._write(resolv, self._generated_resolv(), 0o600)
+                    self._probe_truncate_resolv(resolv, self._generated_resolv())
                 capture_runtime_root(work=work, name=name, root=root, phase='after')
 
             value = {
@@ -429,7 +447,7 @@ class ResolverAliasRuntimeRootTransitionTests(unittest.TestCase):
 
             dynamic_contract.write_bytes(b'dynamic-pie')
             dynamic_after.unlink()
-            self._write(work / 'roots/dynamic-pie/fixture/etc/resolv.conf', b'nameserver 192.0.2.1\n', 0o600)
+            self._probe_truncate_resolv(work / 'roots/dynamic-pie/fixture/etc/resolv.conf', b'nameserver 192.0.2.1\n')
             capture_runtime_root(work=work, name='dynamic-pie', root=work / 'roots/dynamic-pie', phase='after')
             value['dynamic-pie']['after'] = _record_in_work(work, dynamic_after)
             with self.assertRaisesRegex(ReceiptError, 'generated resolv.conf differs'):

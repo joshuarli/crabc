@@ -35,7 +35,6 @@ IMAGE = 'crabc-core-evidence@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f
 IMAGE_MANIFEST = MODULE_DIR / 'owned-resolver-alias-image-inputs.json'
 MUSL_SOURCE_COMMIT = '9fa28ece75d8a2191de7c5bb53bed224c5947417'
 IMAGE_MARKER = 'CRABC_RESOLVER_ALIAS_IMAGE_ID'
-HEADER_BUILTIN_INCLUDE = '/usr/lib/gcc/x86_64-alpine-linux-musl/15.2.0/include'
 IMAGE_INPUTS = {
     'header_compiler': '/usr/bin/gcc',
     'readelf': '/usr/bin/readelf',
@@ -671,14 +670,12 @@ def _expected_command_argvs(inputs: Mapping[str, Any], origin_root: Path, origin
     expected = {
         # The sealed dynamic driver intentionally accepts only its narrow link
         # grammar. Header ABI is a separate raw-compiler source check against
-        # selected installed headers and the pinned compiler builtin include.
+        # exactly the selected installed header root.
         'header-c': [path['header_compiler'], '-x', 'c', '-std=c11', '-nostdinc', '-I', dynamic_include,
-                     '-isystem', HEADER_BUILTIN_INCLUDE, '-U_GNU_SOURCE', '-D_GNU_SOURCE',
-                     '-fno-builtin', '-fsyntax-only', path['header_c_probe']],
+                     '-U_GNU_SOURCE', '-D_GNU_SOURCE', '-fno-builtin', '-fsyntax-only', path['header_c_probe']],
         'header-cpp': [path['header_compiler'], '-x', 'c++', '-std=c++17', '-nostdinc', '-nostdinc++',
-                       '-I', dynamic_include, '-isystem', HEADER_BUILTIN_INCLUDE, '-U_GNU_SOURCE',
-                       '-D_GNU_SOURCE', '-fno-builtin', '-c', '-o', f'{objects}/header.cpp.o',
-                       path['header_cpp_probe']],
+                       '-I', dynamic_include, '-U_GNU_SOURCE', '-D_GNU_SOURCE', '-fno-builtin', '-c', '-o',
+                       f'{objects}/header.cpp.o', path['header_cpp_probe']],
         'compile-public-probe': [dynamic, '--dynamic-pie', '-std=c11', '-D_GNU_SOURCE', '-pthread', '-fno-builtin', '-fno-stack-protector', '-c', path['probe'], '-o', f'{objects}/public-probe.o'],
         'public-probe-relocations': [path['readelf'], '--relocs', '--wide', f'{objects}/public-probe.o'],
         'oracle-symbols': [path['readelf'], '--symbols', '--wide', path['oracle_archive']],
@@ -818,7 +815,10 @@ def _validate_generated_resolv_conf(path: Path) -> None:
     """Accept the selected probe's PID-to-loopback configuration bytes only."""
     require(not path.is_symlink() and path.is_file(), 'resolver generated resolv.conf is not physical')
     status = path.stat()
-    require(stat.S_IMODE(status.st_mode) == 0o600, 'resolver generated resolv.conf mode differs')
+    # The probe opens the runner-created 0644 fixture with O_TRUNC|O_CREAT and
+    # mode 0600. POSIX applies that creation mode only to a new inode, so the
+    # selected existing fixture remains 0644 after its contents change.
+    require(stat.S_IMODE(status.st_mode) == 0o644, 'resolver generated resolv.conf mode differs')
     match = re.fullmatch(
         rb'nameserver 127\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\n'
         rb'search fixture\.test\noptions ndots:1 timeout:1 attempts:1\n', path.read_bytes())

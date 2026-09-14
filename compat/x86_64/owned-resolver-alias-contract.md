@@ -83,13 +83,15 @@ input. Final sealing repeats that admission and requires the current bytes to
 equal the pre-execution copy. The pinned image marker and canonical invocation
 paths bind the raw header compiler, `readelf`, `timeout`, `chroot`, and musl
 oracle inputs; header C/C++ checks intentionally use the raw pinned compiler
-with selected installed headers because the selected dynamic driver admits only
-its narrow link grammar.
+with `-nostdinc` and the selected installed header root because the selected
+dynamic driver admits only its narrow link grammar.
 
 Each runtime root has a retained before and after tree record. Loader, libc,
 linked contract, directories, and `hosts` stay byte-identical. The normal
 resolver probe alone may rewrite `resolv.conf` from the supplied fixture to its
-documented `0600` PID-derived `127.128.0.0/9` nameserver configuration. Replay
+documented `0644` PID-derived `127.128.0.0/9` nameserver configuration. Its
+`O_TRUNC|O_CREAT, 0600` open retains the runner-created existing inode's mode;
+it does not chmod that inode. Replay
 binds that transition to the retained probe source and accepts only its exact
 three-line configuration grammar; dynamic override roots remain wholly
 immutable.
