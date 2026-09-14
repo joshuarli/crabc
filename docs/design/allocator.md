@@ -429,6 +429,21 @@ current source and capability inputs again; it cannot promote this work to
 production FILE transport, selected x86 libc startup, recursive output parity,
 or M7 completion.
 
+The existing `allocator-fault-seam-inventory` producer extends that private
+route without introducing a second warning framework. Its direct-included C
+profile and Rust `os::tests::emit_m2_fault_seam_inventory_c_rust_trace` use the
+same injected `mbind` EPERM at valid node 62, retain the source tuple
+`mask=1UL<<62`, `maxnode=64`, and `flags=0`, and prove gate-off suppression,
+two custom fragments, mapping/statistic survival, and node 63's no-attempt
+boundary. Each default warning is emitted before post-init through its
+respective native `fputs(stderr)` capability and retained as an unmodified
+LF-framed raw stderr block. Post-init retains that flushed warning plus its
+continuation LF; the subsequent inactive registration observes that exact
+delayed image, rather than trimming bytes into the default payload. This
+is a bounded private source relation; FILE short-write/error behavior,
+hardware huge-page/physical NUMA success, recursive output, M2, and M7 remain
+unqualified.
+
 For one source-start regular parent, `StartupArenaReservationOutcomes` retains
 the successful `mi_reserve_os_memory` arena ID while preserving C's scalar
 failure behavior: `src/init.c:566-579` ignores a rejected regular reservation

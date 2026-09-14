@@ -2464,18 +2464,22 @@ and a private Rust `FaultPlan` trace for selected OS/page-map receiver rows.
 It records raw process streams, fixed source closures, source anchors, and one
 named M2 check, while retaining stopped metadata and `OsAligned` publication
 receivers. Deterministic primitive failures do not qualify hardware huge-page
-success or ambient NUMA placement. C output-warning control flow is observed
-only after the fixture enables the pinned source option. A separate private
-x86 Rust regression initializes the same finite source environment and custom
-capture, then directly exercises the physical `HugeOsAllocation` failed-`mbind`
-receiver that `ProcessMainInitializationStorage` borrows during its selected
-startup reservation route. It retains the exact two source-formatted fragments
-for valid node 62 and proves node 63 makes neither `mbind` attempt nor delivery.
-This is a bounded Rust receiver relation with a caller-supplied test FILE
-capability, not a C/Rust fault differential or a production runtime receiver.
-It does not qualify the C-only inventory row, hardware huge pages, ambient NUMA placement, production
-FILE behavior, source recursive output, M2, or M7. The component and M2 remain
-partial.
+success or ambient NUMA placement. Its selected private extension drives the
+actual C and Rust failed-`mbind` receiver through the same injected EPERM at
+valid node 62, checks the `1UL << 62`/maxnode-64/flags-0 tuple, gate-off
+suppression, two custom prefix/body fragments, owner/statistic survival, and
+invalid node 63's no-attempt/no-delivery result. The C child flushes its
+delayed default warning through source `fputs(stderr)` at post-init; the Rust
+test gives its stored `RuntimeStderrOutput` an explicit native musl
+`fputs(stderr)` bridge. The reader retains both raw stderr streams as complete
+LF frames, validates each prefix against that process's observed TLS identity,
+and compares only the source-formatted body. The post-init delayed image keeps
+that flushed warning plus its continuation LF, and the later inactive custom
+registration observes it without trimming bytes into the default frame. This
+is a finite private default-sink
+observation, not FILE short-write/error/buffering parity, selected x86 libc
+startup, recursive output parity, hardware huge-page or physical NUMA
+evidence, M2, or M7 completion.
 
 Its C-only diagnostic controls are retained separately from that admission.
 They pin `stats.c`'s four-read clock calibration/start/elapsed shape and the

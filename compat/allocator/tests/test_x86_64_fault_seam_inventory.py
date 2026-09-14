@@ -29,6 +29,31 @@ def _trace(begin: str, end: str, keys: tuple[str, ...]) -> str:
     return "\n".join((begin, *(f"{key}=1" for key in keys), end, ""))
 
 
+def _fault_diagnostic_relation_trace(begin: str, end: str) -> str:
+    prefix = b"mimalloc: warning: thread 0xA: "
+    body = b"failed to bind huge (1GiB) pages to numa node 62 (error: 1 (0x01))\n"
+    continuation = prefix + body + b"\n"
+    return "\n".join((
+        begin,
+        *(f"{key}=1" for key in INVENTORY.FAULT_DIAGNOSTIC_TRACE_KEYS),
+        "custom_thread_identity=10",
+        f"default_continuation_hex={continuation.hex()}",
+        f"custom_prefix_hex={prefix.hex()}",
+        f"custom_body_hex={body.hex()}",
+        end,
+        "",
+    ))
+
+
+def _fault_diagnostic_default_frame(begin: str, end: str) -> str:
+    return (
+        f"{begin}\n"
+        "mimalloc: warning: thread 0xA: "
+        "failed to bind huge (1GiB) pages to numa node 62 (error: 1 (0x01))\n"
+        f"{end}\n"
+    )
+
+
 def _clean_source_state() -> dict[str, object]:
     return {
         "kind": "git",
@@ -96,8 +121,17 @@ def _valid_report(runner: object, profile: dict[str, object]) -> dict[str, objec
     c_build = {"command": c_command, "cwd": str(source), "status": 0, "stdout": "", "stderr": ""}
     c_run = {
         "command": [str(c_binary)], "cwd": str(source), "status": 0,
-        "stdout": _trace(INVENTORY.C_TRACE_BEGIN, INVENTORY.C_TRACE_END, INVENTORY.C_TRACE_KEYS),
-        "stderr": "",
+        "stdout": (
+            _trace(INVENTORY.C_TRACE_BEGIN, INVENTORY.C_TRACE_END, INVENTORY.C_TRACE_KEYS)
+            + _fault_diagnostic_relation_trace(
+                INVENTORY.FAULT_DIAGNOSTIC_C_TRACE_BEGIN,
+                INVENTORY.FAULT_DIAGNOSTIC_C_TRACE_END,
+            )
+        ),
+        "stderr": _fault_diagnostic_default_frame(
+            INVENTORY.FAULT_DIAGNOSTIC_DEFAULT_C_BEGIN,
+            INVENTORY.FAULT_DIAGNOSTIC_DEFAULT_C_END,
+        ),
     }
     rust_build = {
         "command": runner._m2_x86_64_vm_rust_build_command(), "cwd": str(INVENTORY.ROOT),
@@ -106,9 +140,18 @@ def _valid_report(runner: object, profile: dict[str, object]) -> dict[str, objec
     rust_run = {
         "command": [str(rust_binary), INVENTORY.RUST_TARGET, "--exact", "--test-threads=1", "--nocapture"],
         "cwd": str(INVENTORY.ROOT), "status": 0,
-        "stdout": _trace(INVENTORY.RUST_TRACE_BEGIN, INVENTORY.RUST_TRACE_END, INVENTORY.RUST_TRACE_KEYS)
-        + "\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n",
-        "stderr": "",
+        "stdout": (
+            _trace(INVENTORY.RUST_TRACE_BEGIN, INVENTORY.RUST_TRACE_END, INVENTORY.RUST_TRACE_KEYS)
+            + _fault_diagnostic_relation_trace(
+                INVENTORY.FAULT_DIAGNOSTIC_RUST_TRACE_BEGIN,
+                INVENTORY.FAULT_DIAGNOSTIC_RUST_TRACE_END,
+            )
+            + "\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n"
+        ),
+        "stderr": _fault_diagnostic_default_frame(
+            INVENTORY.FAULT_DIAGNOSTIC_DEFAULT_RUST_BEGIN,
+            INVENTORY.FAULT_DIAGNOSTIC_DEFAULT_RUST_END,
+        ),
     }
     state = _clean_source_state()
     return {
@@ -126,12 +169,12 @@ def _valid_report(runner: object, profile: dict[str, object]) -> dict[str, objec
             },
             "c_mbind_direct_include_profile": copy.deepcopy(profile),
             "c_run": c_run,
-            "c_source_files": list(INVENTORY.PINNED_C_SOURCE_FILES),
+            "c_source_files": [dict(record) for record in INVENTORY.PINNED_C_SOURCE_FILES],
             "fixture": INVENTORY._local_file_record(INVENTORY.FIXTURE),
             "rust_build": rust_build,
             "rust_passed_test_count": 1,
             "rust_run": rust_run,
-            "rust_source_files": [INVENTORY._local_file_record(INVENTORY.ROOT / INVENTORY.RUST_TRACE_SOURCE)],
+            "rust_source_files": INVENTORY._rust_trace_source_files(),
         },
         "inventory": INVENTORY.inventory_definition(),
         "nonclaims": ["bounded fixture only"],
@@ -455,13 +498,39 @@ class FaultInventoryShapeTests(unittest.TestCase):
                 report["huge_branch_receipt"],
             )
 
-    def test_report_names_the_partial_owner_without_admitting_fault_diagnostic_parity(self) -> None:
+    def test_report_rejects_changed_fault_diagnostic_source_rosters(self) -> None:
+        """The receipt binds every new C/Rust owner input rather than its trace alone."""
+
+        for roster, member in (
+            ("c_source_files", "src/options.c"),
+            ("c_source_files", "include/mimalloc/atomic.h"),
+            ("c_source_files", "include/mimalloc/prim-tls.h"),
+            ("rust_source_files", "crabc-mimalloc/src/diagnostic_output.rs"),
+            ("rust_source_files", "crabc-mimalloc/src/lock.rs"),
+            ("rust_source_files", ".cargo/config.toml"),
+        ):
+            with self.subTest(roster=roster, member=member), _retained_profile_contract() as (runner, profile):
+                report = _valid_report(runner, profile)
+                records = report["huge_branch_receipt"][roster]
+                record = next(item for item in records if item["path"] == member)
+                record["sha256"] = "0" * 64
+                with self.assertRaisesRegex(ValueError, "source"):
+                    INVENTORY.validate_report(report)
+
+    def test_report_names_the_bounded_private_receiver_without_admitting_general_parity(self) -> None:
         with _retained_profile_contract() as (runner, profile):
             report = INVENTORY.validate_report(_valid_report(runner, profile))
             boundary = report["diagnostic_owner_boundary"]
             self.assertEqual(boundary["rust_owner"], "crabc_mimalloc::diagnostic_output")
             self.assertEqual(boundary["rust_source_map_status"], "partial")
-            self.assertEqual(boundary["fault_diagnostic_relation"], "unqualified")
+            self.assertEqual(
+                boundary["fault_diagnostic_relation"],
+                "bounded-current-source-private-receiver",
+            )
+            self.assertEqual(
+                boundary["default_stderr_transport"],
+                "caller-supplied native musl fputs(stderr) test capability only",
+            )
 
     def test_report_rejects_absent_owner_or_promoted_fault_diagnostic_relation(self) -> None:
         with _retained_profile_contract() as (runner, profile):
@@ -637,6 +706,83 @@ class FaultInventoryShapeTests(unittest.TestCase):
                     report["run"]["stdout"] = "allocator fault seam mbind boundary: forged\n"
                 with self.assertRaises(ValueError):
                     INVENTORY.validate_mbind_boundary_report(report)
+
+    def test_fault_diagnostic_default_stderr_requires_one_complete_lf_frame(self) -> None:
+        """The private default sink is retained as literal stderr bytes, not lines normalized by Python."""
+
+        begin = "CRABC_MI_M2_FAULT_DIAGNOSTIC_RELATION_DEFAULT_BEGIN"
+        end = "CRABC_MI_M2_FAULT_DIAGNOSTIC_RELATION_DEFAULT_END"
+        payload = (
+            "mimalloc: warning: thread 0xA: "
+            "failed to bind huge (1GiB) pages to numa node 62 (error: 1 (0x01))\n"
+        )
+        stream = f"prelude\n{begin}\n{payload}{end}\ntrailer\n"
+        observed = INVENTORY._parse_fault_diagnostic_default_stderr(
+            stream, begin=begin, end=end, source="unit default stderr"
+        )
+        self.assertEqual(observed["thread_identity"], 0xA)
+        self.assertEqual(
+            observed["body"],
+            "failed to bind huge (1GiB) pages to numa node 62 (error: 1 (0x01))\n",
+        )
+        self.assertEqual(observed["frame"], f"{begin}\n{payload}{end}\n")
+
+    def test_fault_diagnostic_default_stderr_rejects_non_lf_or_inexact_frames(self) -> None:
+        """Only a literal-LF, single, unmodified source frame can bind the default sink."""
+
+        begin = "CRABC_MI_M2_FAULT_DIAGNOSTIC_RELATION_DEFAULT_BEGIN"
+        end = "CRABC_MI_M2_FAULT_DIAGNOSTIC_RELATION_DEFAULT_END"
+        payload = (
+            "mimalloc: warning: thread 0xA: "
+            "failed to bind huge (1GiB) pages to numa node 62 (error: 1 (0x01))\n"
+        )
+        complete = f"{begin}\n{payload}{end}\n"
+        mutations = {
+            "duplicate-begin": f"{complete}{begin}\n",
+            "missing-end": f"{begin}\n{payload}",
+            "reversed": f"{end}\n{payload}{begin}\n",
+            "payload-extra-byte": f"{begin}\n{payload[:-1]}!\n{end}\n",
+            "non-lf-predecessor": f"prelude\v{begin}\n{payload}{end}\n",
+            "missing-final-lf": complete[:-1],
+            "crlf": complete.replace("\n", "\r\n"),
+        }
+        for mutation, stream in mutations.items():
+            with self.subTest(mutation=mutation):
+                with self.assertRaises(INVENTORY.EvidenceError):
+                    INVENTORY._parse_fault_diagnostic_default_stderr(
+                        stream, begin=begin, end=end, source=f"unit {mutation}"
+                    )
+
+    def test_fault_diagnostic_relation_trace_rejects_tuple_or_identity_substitution(self) -> None:
+        """A source-shaped prefix is bound to its own trace identity, never address-masked."""
+
+        complete = _fault_diagnostic_relation_trace(
+            INVENTORY.FAULT_DIAGNOSTIC_C_TRACE_BEGIN,
+            INVENTORY.FAULT_DIAGNOSTIC_C_TRACE_END,
+        )
+        mutations = {
+            "continuation": complete.replace(
+                "default_continuation_flush=1", "default_continuation_flush=0"
+            ),
+            "continuation-bytes": complete.replace(
+                "default_continuation_hex=", "default_continuation_hex=00"
+            ),
+            "gate-off": complete.replace("gate_off_no_output=1", "gate_off_no_output=0"),
+            "identity": complete.replace("custom_thread_identity=10", "custom_thread_identity=11"),
+            "body": complete.replace("custom_body_hex=6661", "custom_body_hex=7661"),
+            "extra": complete.replace(
+                "custom_prefix_hex=", "unexpected=1\ncustom_prefix_hex="
+            ),
+        }
+        for mutation, stream in mutations.items():
+            with self.subTest(mutation=mutation):
+                with self.assertRaises(INVENTORY.EvidenceError):
+                    INVENTORY._parse_fault_diagnostic_relation_trace(
+                        stream,
+                        begin=INVENTORY.FAULT_DIAGNOSTIC_C_TRACE_BEGIN,
+                        end=INVENTORY.FAULT_DIAGNOSTIC_C_TRACE_END,
+                        source=f"unit {mutation}",
+                    )
 
 
 if __name__ == "__main__":

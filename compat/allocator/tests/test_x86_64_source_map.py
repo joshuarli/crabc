@@ -172,7 +172,7 @@ class X86_64SourceMapTests(unittest.TestCase):
         self.assertEqual(option_processing["status"], "partial")
         self.assertEqual(
             option_processing["rust_modules"],
-            ["crabc_mimalloc::diagnostic_output"],
+            ["crabc_mimalloc::diagnostic_output", "crabc_mimalloc::os"],
         )
         self.assertIn("show_errors/verbose/max_warnings", option_processing["difference"])
         self.assertIn("16 KiB delayed output", option_processing["difference"])
