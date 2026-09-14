@@ -4,7 +4,7 @@
       "id": "vm-primitives",
       "evidence_fragment": {
         "path": "compat/allocator/m2-vm-x86_64-v3.5.0.fragment.json",
-        "inventory_sha256": "a7cc24661dc816ef8733ce8c3233e5c7228071e513cedf9802f31e750dbcc701"
+        "inventory_sha256": "670aea9205e60c550452b30a5686f2631cf017a99bf9642183914e55d04bd799"
       }
     },
     {
@@ -198,7 +198,8 @@
     "x86-64-page-map-c-rust-differentials",
     "x86-64-page-map-focused-source-test-batch",
     "x86-64-bitmap-source-and-native-evidence",
-    "x86-64-vm-primitives-fixed-profile-c-rust-and-owner-evidence"
+    "x86-64-vm-primitives-fixed-profile-c-rust-and-owner-evidence",
+    "x86-64-runtime-source-environment-thp-configuration-admission"
   ],
   "milestone": {
     "completion_rule": "M2 is complete only when all eight native x86-64 components have complete target-local source boundaries, closed failure matrices, and their declared native C/Rust and Rust evidence.",
