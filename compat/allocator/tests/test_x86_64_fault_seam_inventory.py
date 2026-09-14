@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import copy
+from contextlib import contextmanager
 import hashlib
 import importlib.util
 import json
 import sys
 import tempfile
+import shutil
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -40,11 +42,49 @@ def _clean_source_state() -> dict[str, object]:
     }
 
 
-def _valid_report() -> dict[str, object]:
+@contextmanager
+def _retained_profile_contract() -> object:
+    """Materialize small bytes so reader controls exercise real profile reopening."""
+
     runner = INVENTORY._load_runner()
+    parent = runner.ARTIFACT_ROOT / "x86_64/fault-seam-inventory"
+    parent.mkdir(parents=True, exist_ok=True)
+    profile = Path(tempfile.mkdtemp(prefix="host-retained-mbind-", dir=parent))
+    profile.chmod(INVENTORY.MBIND_PROFILE_DIRECTORY_MODE)
+    direct = profile / "prim.c"
+    unix = profile / "unix/prim.c"
+    unix.parent.mkdir()
+    direct.write_bytes(b"direct profile\n")
+    unix.write_bytes(b"typed mbind profile\n")
+    direct.chmod(INVENTORY.MBIND_PROFILE_FILE_MODE)
+    unix.chmod(INVENTORY.MBIND_PROFILE_FILE_MODE)
+    expected = (
+        {
+            "path": "prim.c", "bytes": direct.stat().st_size,
+            "sha256": hashlib.sha256(direct.read_bytes()).hexdigest(),
+        },
+        {
+            "path": "unix/prim.c", "bytes": unix.stat().st_size,
+            "sha256": hashlib.sha256(unix.read_bytes()).hexdigest(),
+        },
+    )
+    try:
+        with (
+            mock.patch.object(INVENTORY, "MBIND_PROFILE_DERIVED_FILES", expected),
+            mock.patch.object(INVENTORY, "CONTAINER_WORK_ROOT", Path(runner.WORK_ROOT)),
+        ):
+            files = INVENTORY._retained_profile_file_records(runner, profile)
+            yield runner, INVENTORY._mbind_profile_record(
+                runner, profile, direct, pre_compile_files=files, post_compile_files=files
+            )
+    finally:
+        shutil.rmtree(profile)
+
+
+def _valid_report(runner: object, profile: dict[str, object]) -> dict[str, object]:
     source = Path("/evidence/mimalloc-3.5.0")
     c_binary = Path("/evidence/fault-profile")
-    direct_include = Path("/evidence/mbind-direct-include/prim.c")
+    direct_include = Path(str(profile["compiler_direct_include"]))
     c_command = INVENTORY._huge_branch_c_command(
         runner, "/usr/bin/musl-gcc", source, c_binary, direct_include=direct_include
     )
@@ -80,11 +120,11 @@ def _valid_report() -> dict[str, object]:
             "c_build": c_build,
             "c_compiled_source_closure": {
                 "direct_fixture_source_units": list(INVENTORY.DIRECT_FIXTURE_SOURCE_UNITS),
-                "mbind_direct_include_profile": INVENTORY._mbind_profile_record(direct_include),
+                "mbind_direct_include_profile": copy.deepcopy(profile),
                 "resolved_direct_primitive": INVENTORY.RESOLVED_DIRECT_PRIMITIVE,
                 "translation_units": list(runner.M2_X86_64_VM_C_ORACLE_SOURCES),
             },
-            "c_mbind_direct_include_profile": INVENTORY._mbind_profile_record(direct_include),
+            "c_mbind_direct_include_profile": copy.deepcopy(profile),
             "c_run": c_run,
             "c_source_files": list(INVENTORY.PINNED_C_SOURCE_FILES),
             "fixture": INVENTORY._local_file_record(INVENTORY.FIXTURE),
@@ -111,7 +151,50 @@ def _valid_report() -> dict[str, object]:
     }
 
 
+def _valid_mbind_boundary_report(runner: object, profile: dict[str, object]) -> dict[str, object]:
+    source = Path("/evidence/mimalloc-3.5.0")
+    binary = Path("/evidence/mbind-boundary")
+    command = INVENTORY._mbind_boundary_c_command(
+        runner,
+        "/usr/bin/musl-gcc",
+        source,
+        binary,
+        direct_include=Path(str(profile["compiler_direct_include"])),
+    )
+    return {
+        "build": {
+            "command": command, "cwd": str(source), "status": 0, "stdout": "", "stderr": "",
+        },
+        "fixture": INVENTORY._local_file_record(INVENTORY.FIXTURE),
+        "format": 1,
+        "mbind_direct_include_profile": copy.deepcopy(profile),
+        "run": {
+            "command": [str(binary)], "cwd": str(source), "status": 0,
+            "stdout": "allocator fault seam mbind boundary: PASS\n", "stderr": "",
+        },
+        "schema": INVENTORY.MBIND_BOUNDARY_SCHEMA,
+        "upstream": {
+            "archive_sha256": runner.load_pin()["sha256"], "revision": runner.load_pin()["revision"],
+        },
+    }
+
+
 class FaultInventoryShapeTests(unittest.TestCase):
+    def test_mbind_profile_derivation_records_the_pinned_two_file_bytes(self) -> None:
+        self.assertEqual(
+            INVENTORY.MBIND_PROFILE_DERIVED_FILES,
+            (
+                {
+                    "path": "prim.c", "bytes": 2449,
+                    "sha256": "241b1087a0e22609de71b2deba6c771135dd37e756ea89ba79b5900165b4f229",
+                },
+                {
+                    "path": "unix/prim.c", "bytes": 36836,
+                    "sha256": "7748ea6e69890f2b8e7f81fa9411ae19c4862f2fc7ad1d87d63df5d39e41fa00",
+                },
+            ),
+        )
+
     def test_mbind_profile_render_keeps_unrelated_raw_syscalls(self) -> None:
         """Only the fixed `mi_prim_mbind` expression is rewritten in its body."""
 
@@ -303,43 +386,122 @@ class FaultInventoryShapeTests(unittest.TestCase):
             INVENTORY.validate_branch_records(records)
 
     def test_report_reconstructs_the_retained_fixed_streams(self) -> None:
-        report = _valid_report()
-        self.assertEqual(
-            INVENTORY.validate_report(report)["huge_branch_receipt"],
-            report["huge_branch_receipt"],
-        )
+        with _retained_profile_contract() as (runner, profile):
+            report = _valid_report(runner, profile)
+            self.assertEqual(
+                INVENTORY.validate_report(report)["huge_branch_receipt"],
+                report["huge_branch_receipt"],
+            )
 
     def test_report_rejects_forged_c_stream_even_with_valid_row_inventory(self) -> None:
-        report = _valid_report()
-        report["huge_branch_receipt"]["c_run"]["stdout"] = report["huge_branch_receipt"]["c_run"]["stdout"].replace(
-            INVENTORY.C_TRACE_KEYS[0], "m2.fault.c.huge.forged"
-        )
-        with self.assertRaisesRegex(INVENTORY.EvidenceError, "observation changed"):
-            INVENTORY.validate_report(report)
+        with _retained_profile_contract() as (runner, profile):
+            report = _valid_report(runner, profile)
+            report["huge_branch_receipt"]["c_run"]["stdout"] = report["huge_branch_receipt"]["c_run"]["stdout"].replace(
+                INVENTORY.C_TRACE_KEYS[0], "m2.fault.c.huge.forged"
+            )
+            with self.assertRaisesRegex(INVENTORY.EvidenceError, "observation changed"):
+                INVENTORY.validate_report(report)
 
     def test_report_rejects_missing_rust_stream_even_with_a_valid_process_status(self) -> None:
-        report = _valid_report()
-        report["huge_branch_receipt"]["rust_run"]["stdout"] = (
-            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; "
-            "0 filtered out; finished in 0.00s\n"
-        )
-        with self.assertRaisesRegex(INVENTORY.EvidenceError, "marker count changed"):
-            INVENTORY.validate_report(report)
+        with _retained_profile_contract() as (runner, profile):
+            report = _valid_report(runner, profile)
+            report["huge_branch_receipt"]["rust_run"]["stdout"] = (
+                "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; "
+                "0 filtered out; finished in 0.00s\n"
+            )
+            with self.assertRaisesRegex(INVENTORY.EvidenceError, "marker count changed"):
+                INVENTORY.validate_report(report)
 
     def test_report_rejects_a_c_command_with_an_added_source_file(self) -> None:
-        report = _valid_report()
-        report["huge_branch_receipt"]["c_build"]["command"].insert(-2, "/evidence/mimalloc-3.5.0/src/os.c")
-        with self.assertRaisesRegex(ValueError, "C command or source closure"):
-            INVENTORY.validate_report(report)
+        with _retained_profile_contract() as (runner, profile):
+            report = _valid_report(runner, profile)
+            report["huge_branch_receipt"]["c_build"]["command"].insert(-2, "/evidence/mimalloc-3.5.0/src/os.c")
+            with self.assertRaisesRegex(ValueError, "C command or source closure"):
+                INVENTORY.validate_report(report)
 
     def test_report_rejects_a_mbind_profile_with_rewritten_derived_bytes(self) -> None:
         """The receipt binds its direct include to the one pinned derivation."""
 
-        report = _valid_report()
-        profile = report["huge_branch_receipt"]["c_mbind_direct_include_profile"]
-        profile["derived_files"][1]["sha256"] = "0" * 64
-        with self.assertRaisesRegex(ValueError, "direct-include profile bytes changed"):
-            INVENTORY.validate_report(report)
+        with _retained_profile_contract() as (runner, retained_profile):
+            report = _valid_report(runner, retained_profile)
+            profile = report["huge_branch_receipt"]["c_mbind_direct_include_profile"]
+            profile["derived_files"][1]["sha256"] = "0" * 64
+            with self.assertRaisesRegex(ValueError, "retained profile bytes changed"):
+                INVENTORY.validate_report(report)
+
+    def test_report_rejects_a_mbind_profile_compiler_input_outside_owned_evidence(self) -> None:
+        """Reported hashes cannot redirect the compiler to an arbitrary overlay path."""
+
+        with _retained_profile_contract() as (runner, retained_profile):
+            report = _valid_report(runner, retained_profile)
+            profile = report["huge_branch_receipt"]["c_mbind_direct_include_profile"]
+            profile["compiler_direct_include"] = "/tmp/forged/prim.c"
+            report["huge_branch_receipt"]["c_compiled_source_closure"][
+                "mbind_direct_include_profile"
+            ] = copy.deepcopy(profile)
+            command = report["huge_branch_receipt"]["c_build"]["command"]
+            macro = next(index for index, argument in enumerate(command) if "PRIM_PROFILE" in argument)
+            command[macro] = '-DCRABC_M2_FAULT_SEAM_PRIM_PROFILE="/tmp/forged/prim.c"'
+            with self.assertRaisesRegex(ValueError, "compiler direct include"):
+                INVENTORY.validate_report(report)
+
+    def test_report_rejects_profile_bytes_mutated_after_compilation(self) -> None:
+        """Reader replay reopens retained compiler input instead of trusting its record."""
+
+        with _retained_profile_contract() as (runner, retained_profile):
+            report = _valid_report(runner, retained_profile)
+            profile = runner.WORK_ROOT / retained_profile["directory"]["path"]
+            (profile / "unix/prim.c").write_bytes(b"mutated after compilation\n")
+            (profile / "unix/prim.c").chmod(INVENTORY.MBIND_PROFILE_FILE_MODE)
+            with self.assertRaisesRegex(ValueError, "files changed after compilation"):
+                INVENTORY.validate_report(report)
+
+    def test_report_rejects_a_retained_profile_symlink_or_mode_change(self) -> None:
+        """Replay requires a regular 0600 compiler input beneath a real directory."""
+
+        for mutation in ("symlink", "mode"):
+            with self.subTest(mutation=mutation), _retained_profile_contract() as (runner, retained_profile):
+                report = _valid_report(runner, retained_profile)
+                profile = runner.WORK_ROOT / retained_profile["directory"]["path"]
+                target = profile / "unix/prim.c"
+                if mutation == "symlink":
+                    target.unlink()
+                    target.symlink_to(profile / "prim.c")
+                else:
+                    target.chmod(0o644)
+                with self.assertRaisesRegex(ValueError, "retained profile files"):
+                    INVENTORY.validate_report(report)
+
+    def test_mbind_boundary_report_replays_exact_retained_input(self) -> None:
+        with _retained_profile_contract() as (runner, retained_profile):
+            report = _valid_mbind_boundary_report(runner, retained_profile)
+            self.assertEqual(INVENTORY.validate_mbind_boundary_report(report), report)
+
+    def test_mbind_boundary_report_rejects_profile_command_and_output_changes(self) -> None:
+        """The boundary receipt is independently replayable after collection."""
+
+        for mutation in (
+            "profile-path", "pre-compile-bytes", "profile-bytes", "build-command",
+            "run-command", "run-status", "output",
+        ):
+            with self.subTest(mutation=mutation), _retained_profile_contract() as (runner, retained_profile):
+                report = _valid_mbind_boundary_report(runner, retained_profile)
+                if mutation == "profile-path":
+                    report["mbind_direct_include_profile"]["directory"]["path"] = "target/forged"
+                elif mutation == "pre-compile-bytes":
+                    report["mbind_direct_include_profile"]["pre_compile_files"][1]["sha256"] = "0" * 64
+                elif mutation == "profile-bytes":
+                    report["mbind_direct_include_profile"]["post_compile_files"][1]["sha256"] = "0" * 64
+                elif mutation == "build-command":
+                    report["build"]["command"].append("-Dforged")
+                elif mutation == "run-command":
+                    report["run"]["command"] = ["/evidence/forged"]
+                elif mutation == "run-status":
+                    report["run"]["status"] = 1
+                else:
+                    report["run"]["stdout"] = "allocator fault seam mbind boundary: forged\n"
+                with self.assertRaises(ValueError):
+                    INVENTORY.validate_mbind_boundary_report(report)
 
 
 if __name__ == "__main__":

@@ -2471,7 +2471,10 @@ and M2 remain partial.
 
 The C placement profile derives a private direct include from exact pinned
 `src/prim/prim.c` and `src/prim/unix/prim.c` bytes. Its receipt retains the
-single `mi_prim_mbind` replacement and both derived-file hashes. The focused
+single `mi_prim_mbind` replacement and both derived files under an owned
+artifact directory. Replay reopens the regular non-symlink files, validates
+their `0600` modes and `0700` directory before/after the compiler, and binds
+the exact compiler macro argument to the retained `prim.c`. The focused
 boundary binary confirms that initialization's unrelated Unix syscalls do not
 enter the typed interceptor, while one direct `mi_prim_mbind` call records its
 fixed arguments and fails `EPERM`. This is deterministic primitive evidence,

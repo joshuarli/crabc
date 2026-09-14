@@ -2091,11 +2091,14 @@ the final wrong flag, and a changed retry hint.
 
 The focused mbind-boundary regression derives a direct include from the exact
 pinned `src/prim/prim.c` and `src/prim/unix/prim.c` bytes. It records the sole
-`mi_prim_mbind` expression replacement and the derived `prim.c`/Unix include
-hashes, then proves that process initialization does not enter the typed stub
-and that one explicit `mi_prim_mbind` call records the fixed six arguments and
-returns `EPERM`. Other pinned Unix `syscall` expressions remain in the source
-body and use their ordinary implementation.
+`mi_prim_mbind` expression replacement, then retains the derived
+`prim.c`/Unix include under the owned artifact root. The receipt reopens both
+regular, non-symlink `0600` files and their `0700` directory before replaying
+the exact compiler macro argument, pre-build records, and post-build records.
+The boundary then proves that process initialization does not enter the typed
+stub and that one explicit `mi_prim_mbind` call records the fixed six arguments
+and returns `EPERM`. Other pinned Unix `syscall` expressions remain in the
+source body and use their ordinary implementation.
 
 The separate ordinary reserved-medium on-demand differential is also native
 x86-64 only:
