@@ -288,6 +288,7 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
         report_path = report_root / "report.json"
         report_path.write_text(json.dumps(report), encoding="utf-8")
         with mock.patch.object(receipt, "ROOT", trusted), \
+             mock.patch("subprocess.Popen", side_effect=AssertionError("validate-report started a process")), \
              mock.patch.object(receipt, "_validate_image_inputs", return_value={"image": "deferred"}), \
              mock.patch.object(receipt, "_validate_products", return_value={"products": "deferred"}), \
              mock.patch.object(receipt, "_validate_collector_commands", return_value=[{"collector": "deferred"}]), \
