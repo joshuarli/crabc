@@ -4,9 +4,14 @@
 // capability.
 #![cfg(feature = "native-runtime-test-audit")]
 
+#[path = "support/native_runtime.rs"]
+mod native_runtime_test_support;
+
+
+
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
-    attach_current_thread, finish_current_thread_native_after_user_destructors, initialize_process,
+    attach_current_thread, finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, native_reallocate, native_runtime_lifecycle_test_audit,
     native_usable_size, prepare_native_later_thread_arena,
 };
@@ -171,7 +176,7 @@ struct ReplacementObservation {
 #[test]
 fn native_pointer_first_nonlocal_reallocate_audits_failure_and_one_old_consumption() {
     assert!(
-        initialize_process(current_page_size()),
+        native_runtime_test_support::initialize(current_page_size()),
         "the native runtime initializes before its nonlocal realloc state audit"
     );
     assert!(

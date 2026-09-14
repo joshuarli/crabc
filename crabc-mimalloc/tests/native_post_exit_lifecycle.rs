@@ -1,9 +1,12 @@
+#[path = "support/native_runtime.rs"]
+mod native_runtime_test_support;
+
 use std::sync::{Arc, Barrier, mpsc};
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult,
     ThreadFinishResult, attach_current_thread, finish_current_thread_native_after_user_destructors,
-    initialize_process, native_allocate_aligned, native_free, native_reallocate, native_usable_size,
+    native_allocate_aligned, native_free, native_reallocate, native_usable_size,
     prepare_native_later_thread_arena,
     ticket_zero_allocate, ticket_zero_free, TicketZeroPageAllocationResult, TicketZeroPageFreeResult,
 };
@@ -19,7 +22,7 @@ fn current_page_size() -> usize {
 #[test]
 fn native_post_exit_replacement_releases_the_dormant_pair_while_b_remains_attached() {
     assert!(
-        initialize_process(current_page_size()),
+        native_runtime_test_support::initialize(current_page_size()),
         "the native runtime initializes before its shadow owner-exit witness"
     );
     assert!(

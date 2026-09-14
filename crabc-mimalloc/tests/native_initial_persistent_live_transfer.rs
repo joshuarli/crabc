@@ -3,8 +3,13 @@
 // existing scalar audit feature and exposes no owner or page capability.
 #![cfg(feature = "native-runtime-test-audit")]
 
+#[path = "support/native_runtime.rs"]
+mod native_runtime_test_support;
+
+
+
 use crabc_mimalloc::__crabc_runtime::{
-    NativePageAllocationResult, NativePageFreeResult, initialize_process, native_allocate_aligned,
+    NativePageAllocationResult, NativePageFreeResult, native_allocate_aligned,
     native_free, prepare_native_later_thread_arena, process_is_active,
 };
 
@@ -19,7 +24,7 @@ fn current_page_size() -> usize {
 #[test]
 fn native_initial_persistent_live_transfer_retains_without_parking() {
     assert!(
-        initialize_process(current_page_size()),
+        native_runtime_test_support::initialize(current_page_size()),
         "the native runtime initializes before the initial-owner transfer witness"
     );
     let anchor = match native_allocate_aligned(97, 16, false) {

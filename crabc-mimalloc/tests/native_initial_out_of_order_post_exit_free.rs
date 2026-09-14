@@ -1,7 +1,10 @@
+#[path = "support/native_runtime.rs"]
+mod native_runtime_test_support;
+
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
     TicketZeroPageAllocationResult, TicketZeroPageFreeResult, attach_current_thread,
-    finish_current_thread_native_after_user_destructors, initialize_process, native_allocate_aligned,
+    finish_current_thread_native_after_user_destructors, native_allocate_aligned,
     native_free, prepare_native_later_thread_arena, ticket_zero_allocate, ticket_zero_free,
 };
 
@@ -36,7 +39,7 @@ fn publish_one_post_exit_worker_client(request: usize) -> usize {
 #[test]
 fn initial_free_releases_older_post_exit_client_before_newer_worker_client() {
     assert!(
-        initialize_process(current_page_size()),
+        native_runtime_test_support::initialize(current_page_size()),
         "the native runtime initializes before the post-exit workers start"
     );
     assert!(

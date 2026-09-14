@@ -1,8 +1,11 @@
+#[path = "support/native_runtime.rs"]
+mod native_runtime_test_support;
+
 use std::sync::{Arc, Barrier, mpsc};
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
-    attach_current_thread, finish_current_thread_native_after_user_destructors, initialize_process,
+    attach_current_thread, finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, native_usable_size, prepare_native_later_thread_arena,
 };
 
@@ -93,7 +96,7 @@ fn publish_concurrent_post_exit_os_singletons() -> [usize; LIVE_BLOCK_COUNT] {
 #[test]
 fn concurrent_distinct_post_exit_page_releases_complete_without_retention() {
     assert!(
-        initialize_process(current_page_size()),
+        native_runtime_test_support::initialize(current_page_size()),
         "the native runtime initializes before the concurrent owner-exit witness"
     );
     assert!(

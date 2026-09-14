@@ -1,9 +1,15 @@
 #![cfg(feature = "native-runtime-test-audit")]
 
+#[path = "support/native_runtime.rs"]
+mod native_runtime_test_support;
+
+
+
+
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
     TicketZeroPageAllocationResult, TicketZeroPageFreeResult, attach_current_thread,
-    finish_current_thread_native_after_user_destructors, initialize_process, native_allocate_aligned,
+    finish_current_thread_native_after_user_destructors, native_allocate_aligned,
     native_free, native_reallocate, native_runtime_lifecycle_test_audit, native_usable_size,
     prepare_native_later_thread_arena, ticket_zero_allocate, ticket_zero_free,
 };
@@ -42,7 +48,7 @@ fn allocate_local(request: usize) -> core::ptr::NonNull<u8> {
 #[test]
 fn attached_worker_reuses_its_owner_for_repeated_local_allocate_free_cycles() {
     assert!(
-        initialize_process(current_page_size()),
+        native_runtime_test_support::initialize(current_page_size()),
         "the private native runtime initializes before the owner-local lifecycle"
     );
     assert!(
@@ -141,7 +147,7 @@ fn attached_worker_reuses_its_owner_for_repeated_local_allocate_free_cycles() {
 #[test]
 fn live_persistent_owner_exits_without_scheduler_handoff() {
     if std::env::var_os(LIVE_OWNER_EXIT_CHILD).is_some() {
-        assert!(initialize_process(current_page_size()));
+        assert!(native_runtime_test_support::initialize(current_page_size()));
         assert!(prepare_native_later_thread_arena());
         let ticket_zero = match ticket_zero_allocate(73, false) {
             TicketZeroPageAllocationResult::Allocated(block) => block,

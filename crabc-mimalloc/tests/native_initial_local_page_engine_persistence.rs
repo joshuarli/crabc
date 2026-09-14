@@ -3,9 +3,14 @@
 // not expose an owner, raw PageMap capability, or allocation identity.
 #![cfg(feature = "native-runtime-test-audit")]
 
+#[path = "support/native_runtime.rs"]
+mod native_runtime_test_support;
+
+
+
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
-    attach_current_thread, finish_current_thread_native_after_user_destructors, initialize_process,
+    attach_current_thread, finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, native_runtime_lifecycle_test_audit,
     prepare_native_later_thread_arena,
 };
@@ -37,7 +42,7 @@ fn allocate_local() -> core::ptr::NonNull<u8> {
 #[test]
 fn initial_local_all_free_cycles_keep_the_page_engine_until_explicit_handoff() {
     assert!(
-        initialize_process(current_page_size()),
+        native_runtime_test_support::initialize(current_page_size()),
         "the native runtime initializes before the direct initial-local audit"
     );
 

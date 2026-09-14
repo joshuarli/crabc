@@ -50,6 +50,8 @@ use core::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 
 use crabc_core::{Errno, Result};
 
+#[cfg(target_arch = "x86_64")]
+use crate::diagnostic_output::MbindWarningRoute;
 use crate::config::{
     ARENA_SLICE_SIZE, VmOption, VmOptionEnvironmentReader, VmOptionState, VmOptions,
 };
@@ -3247,6 +3249,33 @@ impl<'a> HugeOsAllocation<'a> {
         )
     }
 
+    #[cfg(target_arch = "x86_64")]
+    /// The selected source-startup huge primitive with its already-retained
+    /// diagnostic route. This never changes mapping ownership or falls back to
+    /// a regular primitive: it differs only at the failed valid-node `mbind`
+    /// call site.
+    pub(crate) fn allocate_for_process_with_mbind_warning(
+        process: VmProcess<'a>,
+        config: MemoryConfig,
+        pages: usize,
+        numa_node: i32,
+        max_milliseconds: i64,
+        default_random: Option<&mut TheapRandomImage>,
+        warning: MbindWarningRoute<'_>,
+    ) -> HugeOsAllocationOutcome<'a> {
+        allocate_huge_pages_with(
+            process,
+            pages,
+            max_milliseconds,
+            default_random,
+            |hint| map_huge_page_for_process_with_mbind_warning(
+                process, config, hint, numa_node, warning,
+            ),
+            source_clock_start,
+            source_clock_end,
+        )
+    }
+
     #[inline]
     pub(crate) const fn page_count(&self) -> usize { self.page_count }
 
@@ -3462,6 +3491,19 @@ fn map_huge_page_for_process(
     Ok(mapping)
 }
 
+#[cfg(target_arch = "x86_64")]
+fn map_huge_page_for_process_with_mbind_warning(
+    process: VmProcess<'_>,
+    config: MemoryConfig,
+    hint: usize,
+    numa_node: i32,
+    warning: MbindWarningRoute<'_>,
+) -> Result<Mapping> {
+    let mapping = Mapping::map_huge_page_at(process.policy, config, hint)?;
+    apply_huge_page_numa_preference_with_mbind_warning(mapping.base()?, numa_node, warning);
+    Ok(mapping)
+}
+
 /// Applies the source's best-effort one-word NUMA preference after a huge
 /// primitive map. Its result has no ownership meaning: the mapping stays live
 /// whether the kernel accepts the preference or returns an error.
@@ -3471,12 +3513,29 @@ fn apply_huge_page_numa_preference(address: *mut u8, numa_node: i32) {
         return;
     }
     let mask = 1usize << numa_node as u32;
-    // The caller owns this full primitive mapping. Pinned C emits its output
-    // callback warning before it ignores a failed `mbind`. The private Rust
-    // diagnostic_output owner is not connected to this receiver, so this
-    // boundary preserves only ignored-result and retained-owner behavior.
-    // Its diagnostic delivery relation remains explicitly unqualified.
     let _ = huge_page_numa_bind(address, &mask);
+}
+
+/// The selected private startup receiver for `prim.c:630-645`: a valid NUMA
+/// node attempts one `mbind`, formats the captured errno on failure, delivers
+/// its warning, and preserves the complete mapping either way. Node 63 on
+/// 64-bit Linux remains an invalid source input: it neither calls nor emits.
+#[inline]
+#[cfg(target_arch = "x86_64")]
+fn apply_huge_page_numa_preference_with_mbind_warning(
+    address: *mut u8,
+    numa_node: i32,
+    warning: MbindWarningRoute<'_>,
+) {
+    if numa_node < 0 || numa_node >= usize::BITS as i32 - 1 {
+        return;
+    }
+    let mask = 1usize << numa_node as u32;
+    if let Err(error) = huge_page_numa_bind(address, &mask) {
+        // SAFETY: the source startup owner serialized this one mapping attempt
+        // with output registration and retains its borrowed route/callback.
+        unsafe { warning.mbind_failure(numa_node, error) };
+    }
 }
 
 #[inline]
@@ -5502,6 +5561,14 @@ mod tests {
 
     use super::*;
     use crabc_core::Errno;
+    #[cfg(target_arch = "x86_64")]
+    use crate::diagnostic_output::{MbindWarningRoute, OutputCallback, OutputOwner};
+    #[cfg(target_arch = "x86_64")]
+    use core::cell::UnsafeCell;
+    #[cfg(target_arch = "x86_64")]
+    use core::ffi::{c_char, c_void, CStr};
+    #[cfg(target_arch = "x86_64")]
+    use core::sync::atomic::{AtomicBool, AtomicUsize};
 
     /* This deadline exists only in the native test schedule. The production
      * source CAS never waits; a missed helper handoff must fail the witness
@@ -5543,12 +5610,109 @@ mod tests {
         }
     }
 
+    #[cfg(target_arch = "x86_64")]
+    struct MbindDiagnosticCapture {
+        count: AtomicUsize,
+        expected_body: AtomicBool,
+        _no_alias: UnsafeCell<()>,
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe impl Sync for MbindDiagnosticCapture {}
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn capture_mbind_diagnostic(message: *const c_char, argument: *mut c_void) {
+        // SAFETY: the source test registers one live capture and serializes
+        // this receiver call with the route under test.
+        let capture = unsafe { &*(argument as *const MbindDiagnosticCapture) };
+        let bytes = unsafe { CStr::from_ptr(message) }.to_bytes();
+        if bytes == b"failed to bind huge (1GiB) pages to numa node 62 (error: 4095 (0xFFF))\n" {
+            capture.expected_body.store(true, Ordering::Release);
+        }
+        capture.count.fetch_add(1, Ordering::AcqRel);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn unexpected_default_diagnostic_output(_: *const c_char) {
+        unreachable!("the actual mbind receiver test registers its custom route before emission")
+    }
+
     fn current_startup() -> StartupInput {
         let raw_page_size = crabc_core::param::auxv_value(crabc_core::param::AT_PAGESZ)
             .expect("the Linux test process must expose AT_PAGESZ");
         let page_size = PageSize::new(raw_page_size)
             .expect("AT_PAGESZ must be a valid Linux page size");
         StartupInput::new(page_size)
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn failed_valid_mbind_uses_the_actual_receiver_and_invalid_node_does_not_attempt_or_emit() {
+        let _environment_serial = VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK
+            .lock()
+            .expect("source environment test lock is not poisoned");
+        let _environment_reset = VmPolicySourceEnvironmentReset;
+        let show_errors = b"mimalloc_show_errors=1\0";
+        let verbose = b"mimalloc_verbose=0\0";
+        let max_warnings = b"mimalloc_max_warnings=32\0";
+        let mut environment = [
+            show_errors.as_ptr().cast(),
+            verbose.as_ptr().cast(),
+            max_warnings.as_ptr().cast(),
+            core::ptr::null(),
+        ];
+        VM_POLICY_SOURCE_ENVIRONMENT.store(environment.as_mut_ptr(), Ordering::Release);
+
+        let mut output = OutputOwner::new(unexpected_default_diagnostic_output);
+        // SAFETY: this test holds the raw vector stable while it performs the
+        // process-shaped selected descriptor initialization before borrowing
+        // the mbind receiver route.
+        unsafe { output.initialize_source_options(vm_policy_source_environment_for_test) };
+        let capture = MbindDiagnosticCapture {
+            count: AtomicUsize::new(0),
+            expected_body: AtomicBool::new(false),
+            _no_alias: UnsafeCell::new(()),
+        };
+        // SAFETY: the test retains the capture and serializes this one custom
+        // registration/delivery sequence.
+        unsafe {
+            output.register_output(
+                Some(capture_mbind_diagnostic as OutputCallback),
+                &capture as *const MbindDiagnosticCapture as *mut c_void,
+            )
+        };
+        // Source custom registration flushes even its empty delayed image.
+        // Count only the physical failed-mbind route below.
+        capture.count.store(0, Ordering::Release);
+        capture.expected_body.store(false, Ordering::Release);
+
+        let fault = fault::install(fault::Plan::at(fault::Point::NumaBind, 1, Errno::from_raw(4095).unwrap()));
+        let policy = VmPolicy::defaults_for_test();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        let config = MemoryConfig::from_observations(
+            PageSize::new(4096).unwrap(), 1 << 20, true, false,
+        );
+        let page = config.page_size().bytes();
+        let mut mapping = Mapping::map_for_process(
+            process, config, page, 1, MapAccess::Committed, false, None,
+        ).expect("receiver witness begins with one live mapping");
+        let base = mapping.base().expect("mapping remains live before mbind");
+
+        apply_huge_page_numa_preference_with_mbind_warning(base, 62, MbindWarningRoute::new(&output));
+        assert_eq!(fault.observed(), 1, "the valid source node attempts exactly one mbind");
+        assert_eq!(mapping.base(), Ok(base), "failed mbind leaves the mapping owner intact");
+        assert_eq!(capture.count.load(Ordering::Acquire), 2, "warning prefix and source body stay separate deliveries");
+        assert!(capture.expected_body.load(Ordering::Acquire));
+
+        capture.count.store(0, Ordering::Release);
+        fault.set(fault::Plan::at(fault::Point::NumaBind, 1, Errno::PERM));
+        apply_huge_page_numa_preference_with_mbind_warning(base, 63, MbindWarningRoute::new(&output));
+        assert_eq!(fault.observed(), 0, "node 63 is outside the 64-bit source receiver domain");
+        assert_eq!(capture.count.load(Ordering::Acquire), 0, "invalid node has no output delivery");
+        assert_eq!(mapping.base(), Ok(base));
+        drop(fault);
+        mapping.unmap_for_process(process, page, true).expect("the retained owner still releases normally");
     }
 
     #[test]

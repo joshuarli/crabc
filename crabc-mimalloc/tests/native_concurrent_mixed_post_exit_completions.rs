@@ -1,11 +1,17 @@
 #![cfg(feature = "native-runtime-test-audit")]
 
+#[path = "support/native_runtime.rs"]
+mod native_runtime_test_support;
+
+
+
+
 use std::sync::{Arc, Barrier, mpsc};
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
     TicketZeroPageAllocationResult, TicketZeroPageFreeResult, attach_current_thread,
-    finish_current_thread_native_after_user_destructors, initialize_process, native_allocate_aligned,
+    finish_current_thread_native_after_user_destructors, native_allocate_aligned,
     native_free, native_reallocate, native_runtime_fork_admission_test_audit,
     native_runtime_lifecycle_test_audit, native_usable_size, prepare_native_later_thread_arena,
     ticket_zero_allocate, ticket_zero_free,
@@ -320,7 +326,7 @@ fn assert_mixed_observation(observation: MixedObservation) {
 #[test]
 fn concurrent_mixed_post_exit_pointer_operations_complete_through_page_state() {
     assert!(
-        initialize_process(current_page_size()),
+        native_runtime_test_support::initialize(current_page_size()),
         "the native runtime initializes before the concurrent mixed pointer witness"
     );
     assert!(

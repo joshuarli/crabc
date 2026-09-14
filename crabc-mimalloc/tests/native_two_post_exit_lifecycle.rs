@@ -1,9 +1,12 @@
+#[path = "support/native_runtime.rs"]
+mod native_runtime_test_support;
+
 use std::sync::{Arc, Barrier, mpsc};
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult,
     ThreadFinishResult, attach_current_thread, finish_current_thread_native_after_user_destructors,
-    initialize_process, native_allocate_aligned, native_free, prepare_native_later_thread_arena,
+    native_allocate_aligned, native_free, prepare_native_later_thread_arena,
 };
 
 const OWNER_EXIT_CLIENT_COUNT: usize = 6;
@@ -64,7 +67,7 @@ fn free_exact_post_exit_client(address: usize) {
 #[test]
 fn two_owner_exit_aggregates_free_through_pointer_page_state() {
     assert!(
-        initialize_process(current_page_size()),
+        native_runtime_test_support::initialize(current_page_size()),
         "the native runtime initializes before the two-owner post-exit witness"
     );
     assert!(

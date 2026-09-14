@@ -3,9 +3,14 @@
 // exposes no owner, PageMap, scheduler, route, or client capability.
 #![cfg(feature = "native-runtime-test-audit")]
 
+#[path = "support/native_runtime.rs"]
+mod native_runtime_test_support;
+
+
+
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, after_fork_child,
-    after_fork_parent, before_fork, initialize_process, native_allocate_aligned, native_free,
+    after_fork_parent, before_fork, native_allocate_aligned, native_free,
     native_usable_size, prepare_native_later_thread_arena, process_is_active,
 };
 
@@ -75,7 +80,7 @@ fn dormant_initial_persistent_owner_fork_child() -> ! {
 #[test]
 fn dormant_promoted_initial_owner_is_preserved_across_prepared_fork() {
     assert!(
-        initialize_process(current_page_size()),
+        native_runtime_test_support::initialize(current_page_size()),
         "the native runtime initializes before the promoted-owner fork witness"
     );
     assert!(

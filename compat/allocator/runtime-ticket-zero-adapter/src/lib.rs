@@ -15,8 +15,13 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 use core::ffi::{c_int, c_void};
+#[cfg(target_arch = "x86_64")]
+use core::ffi::c_char;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicU8, Ordering};
+
+#[cfg(target_arch = "x86_64")]
+use crabc_mimalloc::__crabc_runtime::RuntimeStderrOutput;
 
 use crabc_mimalloc::__crabc_runtime::{
     TicketZeroLaterThreadPageResult, TicketZeroPageAllocationResult,
@@ -36,6 +41,43 @@ const ADAPTER_COLD: u8 = 0;
 const ADAPTER_INITIALIZING: u8 = 1;
 const ADAPTER_READY: u8 = 2;
 const ADAPTER_RETAINED: u8 = 3;
+
+#[cfg(target_arch = "x86_64")]
+/// The adapter's explicit musl-hosted test FILE capability. This evidence-only
+/// crate is linked by the pinned native fixture; it neither exposes nor looks
+/// up a production allocator transport. Pinned `_mi_prim_out_stderr` ignores
+/// the `fputs` status after preserving its FILE semantics.
+unsafe extern "C" fn adapter_musl_fputs_stderr(message: *const c_char) {
+    // SAFETY: `crabc_ticket_zero_test_init` runs in the linked musl test
+    // process. Its stderr FILE and this C function remain valid through the
+    // allocator's process lifetime, and the owner supplies a non-null
+    // NUL-terminated source fragment.
+    unsafe {
+        let _ = fputs(message, stderr);
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn adapter_runtime_stderr_output() -> RuntimeStderrOutput {
+    // SAFETY: the adapter keeps this musl C ABI boundary callable for the
+    // private runtime process lifetime; no raw-write/no-op substitute exists.
+    unsafe { RuntimeStderrOutput::new(adapter_musl_fputs_stderr) }
+}
+
+/// Preserves the frozen AArch adapter surface while requiring the explicit
+/// FILE provider for selected x86 evidence.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn adapter_initialize_process(page_size: usize) -> bool {
+    initialize_process(page_size, adapter_runtime_stderr_output())
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn adapter_initialize_process(page_size: usize) -> bool {
+    initialize_process(page_size)
+}
 
 // This state is only the evidence adapter's C-call boundary. The allocator's
 // permanent owner and non-reentrant READY -> BUSY transition remain in
@@ -92,6 +134,12 @@ impl From<NativeRuntimeLifecycleAudit> for CrabcTicketZeroTestLifecycleAudit {
             main_heap_os_abandoned_pages_empty: audit.main_heap_os_abandoned_pages_empty,
         }
     }
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe extern "C" {
+    fn fputs(message: *const c_char, stream: *mut c_void) -> c_int;
+    static mut stderr: *mut c_void;
 }
 
 unsafe extern "C" {
@@ -272,7 +320,7 @@ pub unsafe extern "C" fn crabc_ticket_zero_test_init(page_size: usize) -> c_int 
         ADAPTER_STATE.store(ADAPTER_RETAINED, Ordering::Release);
         return preserve_errno(saved_errno, EINVAL);
     }
-    if !initialize_process(page_size) {
+    if !adapter_initialize_process(page_size) {
         ADAPTER_STATE.store(ADAPTER_RETAINED, Ordering::Release);
         return preserve_errno(saved_errno, EBUSY);
     }

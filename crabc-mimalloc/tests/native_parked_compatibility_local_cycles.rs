@@ -1,7 +1,10 @@
+#[path = "support/native_runtime.rs"]
+mod native_runtime_test_support;
+
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
     TicketZeroPageAllocationResult, TicketZeroPageFreeResult, attach_current_thread,
-    finish_current_thread_native_after_user_destructors, initialize_process, native_allocate_aligned,
+    finish_current_thread_native_after_user_destructors, native_allocate_aligned,
     native_free, native_reallocate, prepare_native_later_thread_arena, ticket_zero_allocate,
     ticket_zero_free,
 };
@@ -31,7 +34,7 @@ fn allocate_local_compatibility_block(request: usize) -> core::ptr::NonNull<u8> 
 #[test]
 fn parked_compatibility_worker_repeats_local_cycles_then_returns_ticket_zero_to_baseline() {
     assert!(
-        initialize_process(current_page_size()),
+        native_runtime_test_support::initialize(current_page_size()),
         "the private native runtime initializes before the compatibility lifecycle"
     );
     assert!(

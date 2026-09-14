@@ -3,11 +3,16 @@
 // exposes A's client, page, PageMap, arena, or post-exit route to B.
 #![cfg(feature = "native-runtime-test-audit")]
 
+#[path = "support/native_runtime.rs"]
+mod native_runtime_test_support;
+
+
+
 use std::sync::mpsc;
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
-    attach_current_thread, finish_current_thread_native_after_user_destructors, initialize_process,
+    attach_current_thread, finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, native_runtime_fork_admission_test_audit,
     native_runtime_lifecycle_test_audit,
     native_runtime_live_client_page_map_span_test_audit,
@@ -520,7 +525,7 @@ fn run_later_natural_alignment_in_fresh_process(test_name: &'static str) {
 
 fn exercise_initial_natural_alignment_small_requests() {
     assert!(
-        initialize_process(current_page_size()),
+        native_runtime_test_support::initialize(current_page_size()),
         "the native runtime initializes before the initial small natural-alignment witness"
     );
     assert!(
@@ -533,7 +538,7 @@ fn exercise_initial_natural_alignment_small_requests() {
 
 fn exercise_later_natural_alignment_small_requests() {
     assert!(
-        initialize_process(current_page_size()),
+        native_runtime_test_support::initialize(current_page_size()),
         "the native runtime initializes before the later small natural-alignment witness"
     );
     assert!(
@@ -627,7 +632,7 @@ fn exercise_mapped_abandoned_regular_allocation(
     let source_request = source_class.request();
     let consumer_request = consumer_class.request();
     assert!(
-        initialize_process(current_page_size()),
+        native_runtime_test_support::initialize(current_page_size()),
         "the native runtime initializes before the ordinary mapped-regular witness"
     );
     assert!(

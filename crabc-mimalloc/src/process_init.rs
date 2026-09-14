@@ -50,6 +50,8 @@ use crate::main_static_page::{
 use crate::meta::{MetaAllocator, MetaError};
 use crate::once::{AllocatorOnce, AllocatorOnceCompletion, OnceThreadId};
 use crate::config::{VmOptionEnvironmentReader, VmOptions};
+#[cfg(target_arch = "x86_64")]
+use crate::diagnostic_output::{MbindWarningRoute, OutputOwner, ProcessDiagnosticInputs};
 use crate::os::{MemoryConfig, VmPolicy, VmPolicyConfigurationError, VmProcess};
 use crate::page_map::PageMapHeader;
 use crate::process_arena::{
@@ -81,6 +83,18 @@ enum VmPolicyStartup {
     None,
     RetainOnly(VmPolicy),
     ApplyProcessMemoryPolicy(VmPolicy),
+    // The only selected x86 raw-source construction joins the policy and
+    // mandatory diagnostic inputs in one variant; no caller can represent a
+    // VM-backed selected diagnostic owner without its process policy.
+    #[cfg(target_arch = "x86_64")]
+    ApplyProcessMemoryPolicyWithDiagnostics(VmPolicy, ProcessDiagnosticInputs),
+}
+
+#[cfg(target_arch = "x86_64")]
+#[derive(Clone, Copy)]
+enum ProcessStartupDiagnostics<'owner> {
+    Unconnected,
+    Selected(&'owner OutputOwner),
 }
 
 /// Final process-lifetime state for the bounded source main-process startup.
@@ -108,6 +122,11 @@ pub(crate) struct ProcessMainInitializationStorage {
     subprocess: AtomicPtr<MainSubprocess>,
     page_map_storage: AtomicPtr<ProcessPageMapStorage>,
     startup_reservations: UnsafeCell<MaybeUninit<crate::arena::StartupArenaReservationOutcomes>>,
+    // This is process-lifetime allocator diagnostic state, deliberately
+    // beside rather than inside VmPolicy/VmProcess. It is written before any
+    // VM/OS/arena operation and never moved or replaced.
+    #[cfg(target_arch = "x86_64")]
+    diagnostic_output: UnsafeCell<MaybeUninit<OutputOwner>>,
 }
 
 // SAFETY: `process_once` makes COLD -> INITIALIZING exclusive and retains its
@@ -130,6 +149,8 @@ impl ProcessMainInitializationStorage {
             subprocess: AtomicPtr::new(core::ptr::null_mut()),
             page_map_storage: AtomicPtr::new(core::ptr::null_mut()),
             startup_reservations: UnsafeCell::new(MaybeUninit::uninit()),
+            #[cfg(target_arch = "x86_64")]
+            diagnostic_output: UnsafeCell::new(MaybeUninit::uninit()),
         }
     }
 
@@ -228,6 +249,7 @@ impl ProcessMainInitializationStorage {
     /// addition, `environment_reader` must satisfy
     /// [`VmOptionEnvironmentReader`] for every future policy option read and
     /// remain associated with this exact process lifetime.
+    #[cfg(target_arch = "aarch64")]
     pub(crate) unsafe fn initialize_with_vm_options_from_source_environment(
         &'static self,
         config: MemoryConfig,
@@ -245,6 +267,39 @@ impl ProcessMainInitializationStorage {
             self.initialize_with_components_after_claim(
                 config,
                 VmPolicyStartup::ApplyProcessMemoryPolicy(policy),
+                MainStaticAttachmentStorage::global(),
+                MainSubprocess::global(),
+                MetaAllocator::global(),
+                ProcessPageMapStorage::global(),
+                || {},
+                || {},
+            )
+        }
+    }
+
+    /// Runs the selected x86 raw-source startup with its mandatory private
+    /// FILE capability. This is the only x86 runtime route that retains an
+    /// OutputOwner before source VM/OS/arena work.
+    ///
+    /// # Safety
+    ///
+    /// The `environment_reader` and output primitive obligations of
+    /// [`ProcessDiagnosticInputs`] apply for this complete process lifetime,
+    /// in addition to the source startup ownership requirements above.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn initialize_with_vm_options_from_source_environment(
+        &'static self,
+        config: MemoryConfig,
+        options: VmOptions,
+        diagnostics: ProcessDiagnosticInputs,
+    ) -> Result<ProcessMainThread, ProcessMainInitError> {
+        let environment_reader = diagnostics.environment_reader();
+        let policy = unsafe { VmPolicy::new_with_source_environment(options, environment_reader) }
+            .map_err(ProcessMainInitError::VmPolicy)?;
+        unsafe {
+            self.initialize_with_components_after_claim(
+                config,
+                VmPolicyStartup::ApplyProcessMemoryPolicyWithDiagnostics(policy, diagnostics),
                 MainStaticAttachmentStorage::global(),
                 MainSubprocess::global(),
                 MetaAllocator::global(),
@@ -488,6 +543,29 @@ impl ProcessMainInitializationStorage {
         self.state.store(INITIALIZING, Ordering::Release);
         after_claim();
 
+        #[cfg(target_arch = "x86_64")]
+        let (policy, apply_process_memory_policy, diagnostics) = {
+            // Source options precede `_mi_os_init`. The sole selected x86
+            // policy variant writes the process-lifetime owner here,
+            // initializes its three descriptors (including delayed invalid
+            // output), and retains the borrowed route before VM/OS/arena work.
+            match vm_policy {
+                VmPolicyStartup::None => (None, false, ProcessStartupDiagnostics::Unconnected),
+                VmPolicyStartup::RetainOnly(policy) => (Some(policy), false, ProcessStartupDiagnostics::Unconnected),
+                VmPolicyStartup::ApplyProcessMemoryPolicy(policy) => {
+                    (Some(policy), true, ProcessStartupDiagnostics::Unconnected)
+                }
+                VmPolicyStartup::ApplyProcessMemoryPolicyWithDiagnostics(policy, inputs) => {
+                    let (environment_reader, default_stderr_output) = inputs.into_parts();
+                    let output = OutputOwner::new(default_stderr_output);
+                    unsafe { (*self.diagnostic_output.get()).write(output) };
+                    let output = unsafe { (&mut *self.diagnostic_output.get()).assume_init_mut() };
+                    unsafe { output.initialize_source_options(environment_reader) };
+                    (Some(policy), true, ProcessStartupDiagnostics::Selected(output))
+                }
+            }
+        };
+        #[cfg(target_arch = "aarch64")]
         let (policy, apply_process_memory_policy) = match vm_policy {
             VmPolicyStartup::None => (None, false),
             VmPolicyStartup::RetainOnly(policy) => (Some(policy), false),
@@ -617,15 +695,47 @@ impl ProcessMainInitializationStorage {
         // Source startup reserves huge memory first and regular memory next,
         // after the default Theap/TLS attachment exists. Failed reservations
         // do not prevent READY; their exact cleanup owners remain retained.
+        #[cfg(target_arch = "x86_64")]
+        let reservations = match (vm_process, diagnostics) {
+            (Some(process), ProcessStartupDiagnostics::Selected(output)) => {
+                // SAFETY: this source once winner still owns startup; the
+                // retained output owner predates VM/OS/arena work, and no
+                // process-ready client can race its callback default path.
+                unsafe { attachment.with_startup_vm_random(|random| {
+                    process.subprocess().arena_backing().reserve_startup_options_with_mbind_warning(
+                        process, config, metadata, random, MbindWarningRoute::new(output),
+                    )
+                }) }
+            }
+            (Some(process), ProcessStartupDiagnostics::Unconnected) => {
+                unsafe { attachment.with_startup_vm_random(|random| {
+                    process.subprocess().arena_backing().reserve_startup_options(process,
+                        config, metadata, random)
+                }) }
+            }
+            (None, ProcessStartupDiagnostics::Unconnected) => {
+                crate::arena::StartupArenaReservationOutcomes::empty()
+            }
+            (None, ProcessStartupDiagnostics::Selected(_)) => unreachable!(
+                "mandatory diagnostic startup always owns one source VM process"
+            ),
+        };
+        #[cfg(target_arch = "aarch64")]
         let reservations = if let Some(process) = vm_process {
-            // SAFETY: this source once winner still owns startup; attachment
-            // just completed and no process-ready or page client exists.
             unsafe { attachment.with_startup_vm_random(|random| {
                 process.subprocess().arena_backing().reserve_startup_options(process,
                     config, metadata, random)
             }) }
         } else { crate::arena::StartupArenaReservationOutcomes::empty() };
         unsafe { (*self.startup_reservations.get()).write(reservations) };
+
+        #[cfg(target_arch = "x86_64")]
+        if let ProcessStartupDiagnostics::Selected(output) = diagnostics {
+            // SAFETY: source startup still has exclusive dispatch ownership;
+            // this is `_mi_options_post_init` after automatic attachment and
+            // the source startup reservation work.
+            unsafe { output.post_init() };
+        }
 
         self.publish_terminal_state_and_release_with_hook(completion, READY, before_release);
 

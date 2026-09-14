@@ -1,9 +1,12 @@
+#[path = "support/native_runtime.rs"]
+mod native_runtime_test_support;
+
 use std::sync::mpsc;
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
     attach_current_thread, finish_current_thread_native_after_user_destructors,
-    initialize_process, native_allocate_aligned, native_free, native_reallocate, native_usable_size,
+    native_allocate_aligned, native_free, native_reallocate, native_usable_size,
 };
 
 fn current_page_size() -> usize {
@@ -18,7 +21,7 @@ fn current_page_size() -> usize {
 #[test]
 fn native_pointer_first_nonlocal_reallocate_replaces_through_the_callers_owner() {
     assert!(
-        initialize_process(current_page_size()),
+        native_runtime_test_support::initialize(current_page_size()),
         "the isolated process initializes the native runtime"
     );
 

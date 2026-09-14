@@ -4,13 +4,18 @@
 // it does not fabricate an ArenaView or call a private policy helper.
 #![cfg(feature = "native-runtime-test-audit")]
 
+#[path = "support/native_runtime.rs"]
+mod native_runtime_test_support;
+
+
+
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crabc_mimalloc::__crabc_runtime::{
-    TicketZeroPageAllocationResult, TicketZeroPageFreeResult, initialize_process,
+    TicketZeroPageAllocationResult, TicketZeroPageFreeResult,
     native_runtime_first_arena_policy_test_audit,
     native_runtime_live_client_page_test_audit,
     native_runtime_live_client_uses_startup_regular_arena_test_audit,
@@ -282,7 +287,7 @@ fn runtime_ticket_zero_uses_source_startup_regular_arena_and_source_fallbacks() 
         .expect("the child names one fixed source-start route");
 
     assert!(
-        initialize_process(current_page_size()),
+        native_runtime_test_support::initialize(current_page_size()),
         "the native runtime accepts the source startup option image"
     );
     let initial = native_runtime_first_arena_policy_test_audit()
