@@ -2465,9 +2465,11 @@ It records raw process streams, fixed source closures, source anchors, and one
 named M2 check, while retaining stopped metadata and `OsAligned` publication
 receivers. Deterministic primitive failures do not qualify hardware huge-page
 success or ambient NUMA placement. C output-warning control flow is observed
-only after the fixture enables the pinned source option; a Rust diagnostic
-output owner remains an explicit option-processing prerequisite. The component
-and M2 remain partial.
+only after the fixture enables the pinned source option. The private Rust
+`diagnostic_output` owner is source-mapped as partial; this C-only fault row
+does not qualify warning delivery through that owner. Its separate differential
+receipt cannot substitute for fault-receiver integration. The component and M2
+remain partial.
 
 Its C-only diagnostic controls are retained separately from that admission.
 They pin `stats.c`'s four-read clock calibration/start/elapsed shape and the

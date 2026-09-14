@@ -124,7 +124,7 @@
       "id": "fault-injection",
       "evidence_fragment": {
         "path": "compat/allocator/m2-fault-seam-inventory-x86_64-v3.5.0.fragment.json",
-        "inventory_sha256": "de61c50d48e60e9a33ab205b6581dedc6c265ed6238b3b8d8bab2a4125d3d501"
+        "inventory_sha256": "fa7d560d6ed468eaf95ad4b2e985f3c12057e6c8d549d2dc82042f6d55f280d4"
       }
     },
     {

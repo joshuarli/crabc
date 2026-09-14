@@ -147,13 +147,16 @@ DIRECT_FIXTURE_SOURCE_UNITS = (
 )
 RESOLVED_DIRECT_PRIMITIVE = "src/prim/unix/prim.c"
 RUST_TRACE_SOURCE = "crabc-mimalloc/src/os.rs"
+# This receipt records C warning control flow only. A separately mapped private
+# Rust owner does not qualify delivery through the fault receiver.
 DIAGNOSTIC_OWNER_BOUNDARY = {
     "c_output_registration": "src/options.c:415-433 mi_out_get_default/mi_register_output",
     "c_warning_emission": "src/options.c:540-550 _mi_warning_message",
     "initialization_order": "src/init.c:537-548 mi_process_init_once/_mi_options_init",
     "rust_source_map_unit": "option-processing",
-    "rust_source_map_status": "not-started",
-    "rust_owner": None,
+    "rust_source_map_status": "partial",
+    "rust_owner": "crabc_mimalloc::diagnostic_output",
+    "fault_diagnostic_relation": "unqualified",
 }
 FRAGMENT_PATH = ROOT / "compat/allocator/m2-fault-seam-inventory-x86_64-v3.5.0.fragment.json"
 FAULT_COMPONENT_CHECK_ID = "source-indexed-fault-seam-inventory"
@@ -166,7 +169,7 @@ FAULT_COMPONENT_SOURCE_UNITS = [
 ]
 FAULT_COMPONENT_UNQUALIFIED_IDS = (
     "stopped-metadata-and-os-aligned-publication",
-    "unmapped-rust-output-owner",
+    "unqualified-fault-diagnostic-relation",
     "remaining-ambient-and-hardware-fault-receivers",
 )
 SOURCE_ANCHORS = (
@@ -196,10 +199,10 @@ FAULT_COMPONENT_UNQUALIFIED_MATRIX = [
         ],
     },
     {
-        "id": "unmapped-rust-output-owner",
+        "id": "unqualified-fault-diagnostic-relation",
         "source_scope": "src/options.c:415-433 mi_register_output and 540-550 _mi_warning_message after src/init.c:537-548 option initialization.",
         "required_evidence": [
-            "Rust allocator output registration owner",
+            "current-source fault warning delivery through the private Rust diagnostic_output owner",
             "source-faithful warning delivery/ordering evidence",
         ],
     },
@@ -214,7 +217,7 @@ FAULT_COMPONENT_UNQUALIFIED_MATRIX = [
 ]
 FAULT_COMPONENT_REMAINING_CONDITIONS = [
     "Metadata-map publication and OsAligned claim-to-publication receivers remain stopped and unadmitted.",
-    "The C output callback warning is bounded, but Rust output registration/delivery remains the not-started option-processing source-map prerequisite.",
+    "The private Rust diagnostic_output owner is partial; this C-only fault warning row does not qualify its warning delivery/ordering relation.",
     "Ambient hardware huge-page success, physical NUMA placement, unselected callers, and general callback/statistics owners remain unqualified.",
     "The fault-injection component and M2 remain partial.",
 ]

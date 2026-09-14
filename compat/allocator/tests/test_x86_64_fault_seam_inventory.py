@@ -455,6 +455,28 @@ class FaultInventoryShapeTests(unittest.TestCase):
                 report["huge_branch_receipt"],
             )
 
+    def test_report_names_the_partial_owner_without_admitting_fault_diagnostic_parity(self) -> None:
+        with _retained_profile_contract() as (runner, profile):
+            report = INVENTORY.validate_report(_valid_report(runner, profile))
+            boundary = report["diagnostic_owner_boundary"]
+            self.assertEqual(boundary["rust_owner"], "crabc_mimalloc::diagnostic_output")
+            self.assertEqual(boundary["rust_source_map_status"], "partial")
+            self.assertEqual(boundary["fault_diagnostic_relation"], "unqualified")
+
+    def test_report_rejects_absent_owner_or_promoted_fault_diagnostic_relation(self) -> None:
+        with _retained_profile_contract() as (runner, profile):
+            for changes in (
+                {"rust_owner": None, "rust_source_map_status": "not-started"},
+                {"fault_diagnostic_relation": "qualified"},
+            ):
+                with self.subTest(changes=changes):
+                    report = _valid_report(runner, profile)
+                    report["diagnostic_owner_boundary"] = {
+                        **report["diagnostic_owner_boundary"], **changes,
+                    }
+                    with self.assertRaisesRegex(ValueError, "diagnostic owner boundary changed"):
+                        INVENTORY.validate_report(report)
+
     def test_report_rejects_forged_c_stream_even_with_valid_row_inventory(self) -> None:
         with _retained_profile_contract() as (runner, profile):
             report = _valid_report(runner, profile)

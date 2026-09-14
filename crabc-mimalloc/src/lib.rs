@@ -62,6 +62,7 @@ mod config;
 mod compiler_tls;
 mod dynamic_theap;
 mod deferred_free;
+mod diagnostic_output;
 mod free_list;
 mod invariants;
 mod lock;

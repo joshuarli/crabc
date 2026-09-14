@@ -310,6 +310,102 @@ The safety bookkeeping difference and performance scope are recorded in
 `compat/allocator/known-differences.md`. Hardware huge-page success, diagnostic
 callbacks, broader lifecycle qualification, and M2 closure remain open.
 
+### Private diagnostic output owner
+
+`crabc-mimalloc/src/diagnostic_output.rs` is a deliberately partial owner for
+pinned mimalloc v3.5.0 `src/options.c:15-16,111-178,347-549`, with its startup
+edge anchored in `src/init.c:505-550` and Linux stderr primitive in
+`include/mimalloc/prim.h:105-113` / `src/prim/unix/prim.c:862-866`. It owns
+only the source release descriptors `show_errors=0`, `verbose=0`, and
+`max_warnings=32`; the initial source warning limit is 16 until the private
+`initialize_options` transition installs the selected `max_warnings` value
+before OS initialization.
+
+`OutputOwner` keeps the source's fixed 16 KiB delayed buffer plus its extra
+NUL byte, a private lock, independently Release-published custom callback and
+opaque argument, and the AcqRel warning counter. `raw_message` and `warning`
+accept `SourceFormattedMessage`, a stack-owned 992-byte source-format route:
+the pinned `mi_vfprintf` gives `_mi_vsnprintf` 991 bytes and therefore permits
+at most 990 payload bytes plus NUL. Formatting syntax and sanitizing remain
+outside this slice; a later M7 formatter must produce this bounded form before
+dispatching it.
+
+The owner preserves `_mi_fputs`' two deliveries: the selected warning calls a
+custom callback first with source `mi_vfprintf_thread`'s stack-bounded
+`mimalloc: warning: thread 0x<THREAD-POINTER>: ` prefix, then with the
+formatted body. Its selected `%tx` number route emits zero as `0` and all
+other values as minimal uppercase hexadecimal; the 19-byte warning stem meets
+the source's 32-byte predicate and its maximum 64-bit visible prefix is 46
+bytes, occupying 47 bytes including NUL within the pinned 64-byte `tprefix`.
+The private Linux/x86-64 owner reads `crabc_core::thread::thread_pointer_identity()`
+at that source boundary, which
+is the calling musl TCB self pointer (`%fs:0`), not `gettid`. With
+`verbose == 0`, disabled `show_errors` suppresses a warning; an enabled warning
+uses `include/mimalloc/atomic.h`'s AcqRel C11 `fetch_add` result and is
+suppressed only when its pre-increment count exceeds a nonnegative maximum.
+With `show_errors` enabled, cap 0 admits one warning, cap 1 admits two, and
+the selected default cap 32 admits 33; `verbose != 0` bypasses both gates.
+A custom registration flushes the delayed bytes exactly once while holding the
+buffer lock and terminally stops that buffer. A null registration selects
+stderr without flushing it. The source post-init transition instead flushes to
+stderr, inserts the retained newline into the delayed phase, and selects the
+stderr-plus-buffer sink.
+
+The callback/argument are non-owning. `register_output`, `raw_message`, and
+`warning` are unsafe because the caller must retain a callback/argument through
+every in-flight delivery and serialize registration or replacement against
+every unrelated dispatch. The pinned source independently Release-stores the
+callback and argument, so a racing dispatch may observe a mismatched pair. A
+registration-flush callback may reenter normal default dispatch after that
+custom default is published, but must not re-register output or invoke
+post-init. This is a source constraint, not a new callback framework.
+
+`OutputOwner::new` receives the private `DefaultStderrOutput` primitive for
+the source `_mi_prim_out_stderr` route. Directly inspected pinned musl 1.2.6
+`src/stdio/fputs.c`, `fwrite.c`, `__stdio_write.c`, and `stderr.c` show that
+`fputs(msg, stderr)` computes the string length, locks the unbuffered stderr
+`FILE`, and drives its `writev` backend until a short write is complete or an
+error sets FILE state; mimalloc ignores only the resulting `fputs` status. A
+single raw `write(2, ...)` does not preserve that behavior, so this owner does
+not contain one or claim it is equivalent. The later private runtime receiver
+must supply its owned `fputs(message, stderr)` primitive and qualify normal,
+short-write, and error behavior before default-stderr transport parity can be
+claimed. The prepared C/Rust receipt checks finite normal default-sink bytes
+and their ordering separately from custom callback fragments; it records this
+transport prerequisite rather than closing it.
+
+The source map marks `option-processing` partial only. Environment parsing,
+the rest of the descriptor table, option mutation/public APIs,
+`mi_register_output` ABI, error/deferred-free callbacks, statistics, mode
+handling, ordinary mapping-error receivers, and runtime integration remain
+open M7 work.
+
+`compat/allocator/x86_64_diagnostic_output_owner_oracle.c` and
+`compat/allocator/x86_64_diagnostic_output_owner_evidence.py` prepare the
+pinned C producer and process-free retained-stream reader for that later
+receiver. Its reader binds the current fixture, Cargo lock, the finite Rust
+source closure (`crabc-mimalloc` module route/owner/lock and the selected
+`crabc-core` module route/error/futex/syscall files), the root Cargo
+configuration, selected Cargo manifests, and toolchain input, exact pinned C
+source roster, reconstructed collector commands/cwds, and every finite
+custom/default output stream. The Rust command's complete stderr remains a
+retained command stream, including Cargo or rustup diagnostics. Within it, the
+private test capture must contain exactly one LF-delimited default-stderr
+BEGIN/END block; the reader compares that inclusive block byte-for-byte and
+then reconstructs its seven observations. This framing distinguishes command
+stderr from the encoded private sink capture; it does not establish production
+FILE transport parity. Each C scenario and each Rust trace scenario
+also retains a separately observed same-process TLS identity; the reader
+reconstructs the exact dynamic prefix from that identity and rejects missing,
+mismatched, lower-case, or zero-padded values without comparing C and Rust
+process addresses. Before semantic validation, a separate
+`*.candidate.json` receipt retains the raw source inputs, physical extracted C
+source tree, compiler/scenario commands, statuses, streams, and Rust command;
+it stays `unvalidated` and cannot stand in for an admitted report. This commit
+does not run native
+collection: the concrete mapping-error body, source-order integration, and
+FILE transport receiver must first receive ordinary root review.
+
 For one source-start regular parent, `StartupArenaReservationOutcomes` retains
 the successful `mi_reserve_os_memory` arena ID while preserving C's scalar
 failure behavior: `src/init.c:566-579` ignores a rejected regular reservation
