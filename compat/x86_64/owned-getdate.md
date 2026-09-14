@@ -45,5 +45,12 @@ disabled cancellation state, and records errno and `getdate_err` separately.
 This does not inject allocation failure or pending asynchronous cancellation.
 The runner retains source/object hashes and raw output/status records.
 
+The public-data declaration receipt gives every successful probe a private
+root. After its final successful observation, `owned_getdate_probe.c` removes
+only the `/templates/mask` file it created. The `templates` directory itself
+remains unchanged, so the receipt's before/after root identity rejects every
+other fixture mutation. A failing probe still exits nonzero and cannot supply
+an accepted execution record.
+
 This installed component preserves the frozen default archive and paused
 AArch64 implementation; full POSIX family qualification remains separate.

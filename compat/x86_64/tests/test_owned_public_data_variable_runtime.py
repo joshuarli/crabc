@@ -148,6 +148,34 @@ class PublicDataVariableRuntimeContractTests(unittest.TestCase):
             {entry['source'] for entry in reader.probe_execution_plan()},
         )
 
+    def test_writable_fixture_sources_leave_their_declared_roots_reversible(self) -> None:
+        """The source cleanup and retained-root policy name the same two files.
+
+        The pinned C execution control exercises the cleanup itself.  This
+        guard keeps a later source edit from silently moving either mutable
+        path away from the reader's exact before/after root predicate.
+        """
+        getdate = next(entry for entry in reader.execution_plan() if entry['id'] == 'getdate')
+        tzif = next(entry for entry in reader.execution_plan()
+                    if entry['id'] == 'timezone-tzif-known-difference')
+        getdate_source = (ROOT / getdate['source']).read_text(encoding='utf-8')
+        tzif_source = (ROOT / tzif['source']).read_text(encoding='utf-8')
+        self.assertGreater(getdate_source.index('unlink("/templates/mask")'),
+                           getdate_source.index('observe("second-chunk"'))
+        self.assertIn('fopen(path,"wb")', tzif_source)
+        self.assertIn('CHECK(!unlink(path))', tzif_source)
+
+        for scenario, retained in ((getdate, 'templates/mask'), (tzif, 'fixture/zone.tzif')):
+            tree = {
+                'consumer': {'kind': 'file', 'mode': 0o755},
+                **{directory: {'kind': 'directory', 'mode': 0o755}
+                   for directory in scenario['fixture_directories']},
+            }
+            reader._validate_fixture_tree(tree, scenario, scenario['id'] + ' empty fixture root')
+            tree[retained] = {'kind': 'file', 'mode': 0o644}
+            with self.assertRaisesRegex(reader.PublicDataVariableRuntimeError, 'remains after execution'):
+                reader._validate_fixture_tree(tree, scenario, scenario['id'] + ' retained fixture file')
+
     def test_new_probe_streams_are_actual_c_byte_sequences_not_escaped_renderings(self) -> None:
         self.assertEqual(reader.EXPECTED_STDOUT['math-sign'], b'math-sign-global-ok\n')
         self.assertEqual(len(reader.EXPECTED_STDOUT['math-sign']), 20)

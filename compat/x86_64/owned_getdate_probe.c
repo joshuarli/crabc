@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 static struct tm *previous;
 
@@ -67,5 +68,7 @@ int main(void)
     memcpy(chunks + 99, "%Y\n", 4);
     if (template(chunks)) return 22;
     if (observe("second-chunk", "2031", PTHREAD_CANCEL_DISABLE)) return 23;
+    /* The receipt root admits templates as a reversible private fixture. */
+    if (unlink("/templates/mask")) return 24;
     return 0;
 }
