@@ -341,21 +341,31 @@ stderr without flushing it. The source post-init transition instead flushes to
 stderr, inserts the retained newline into the delayed phase, and selects the
 stderr-plus-buffer sink.
 
-The callback/argument are non-owning. `register_output` is unsafe because the
-caller must retain both through every delivery and serialize registration on a
-single thread; the pinned source explicitly permits callback/argument mismatch
-when registrations race. Registration flush invokes the callback while the
-delayed-buffer lock is held. A callback may reenter normal default dispatch
-after custom registration, but must not re-register output or invoke post-init.
-This is a source constraint, not a new callback framework.
+The callback/argument are non-owning. `register_output`, `raw_message`, and
+`warning` are unsafe because the caller must retain a callback/argument through
+every in-flight delivery and serialize registration or replacement against
+every unrelated dispatch. The pinned source independently Release-stores the
+callback and argument, so a racing dispatch may observe a mismatched pair. A
+registration-flush callback may reenter normal default dispatch after that
+custom default is published, but must not re-register output or invoke
+post-init. This is a source constraint, not a new callback framework.
 
-Pinned Unix `_mi_prim_out_stderr` calls `fputs(msg, stderr)` and ignores its
-result. Before this runtime has a `FILE` owner, the private Rust sink performs
-one raw descriptor-2 write and discards an error or short count; it does not
-retry or complete a short write. That preserves the source best-effort failure
-boundary, while stdio buffering itself remains a full primitive/integration
-question. The source map marks `option-processing` partial only. Environment
-parsing, the rest of the descriptor table, option mutation/public APIs,
+`OutputOwner::new` receives the private `DefaultStderrOutput` primitive for
+the source `_mi_prim_out_stderr` route. Directly inspected pinned musl 1.2.6
+`src/stdio/fputs.c`, `fwrite.c`, `__stdio_write.c`, and `stderr.c` show that
+`fputs(msg, stderr)` computes the string length, locks the unbuffered stderr
+`FILE`, and drives its `writev` backend until a short write is complete or an
+error sets FILE state; mimalloc ignores only the resulting `fputs` status. A
+single raw `write(2, ...)` does not preserve that behavior, so this owner does
+not contain one or claim it is equivalent. The later private runtime receiver
+must supply its owned `fputs(message, stderr)` primitive and qualify normal,
+short-write, and error behavior before default-stderr transport parity can be
+claimed. The prepared C/Rust receipt checks finite normal default-sink bytes
+and their ordering separately from custom callback fragments; it records this
+transport prerequisite rather than closing it.
+
+The source map marks `option-processing` partial only. Environment parsing,
+the rest of the descriptor table, option mutation/public APIs,
 `mi_register_output` ABI, error/deferred-free callbacks, statistics, mode
 handling, ordinary mapping-error receivers, and runtime integration remain
 open M7 work.
@@ -363,9 +373,11 @@ open M7 work.
 `compat/allocator/x86_64_diagnostic_output_owner_oracle.c` and
 `compat/allocator/x86_64_diagnostic_output_owner_evidence.py` prepare the
 pinned C producer and process-free retained-stream reader for that later
-receiver. This commit does not run native collection: the concrete mapping
-error body and source-order integration must first receive ordinary root
-review.
+receiver. Its reader binds the current fixture, Cargo lock, Rust source, exact
+pinned C source roster, reconstructed collector commands/cwds, and every
+finite custom/default output stream. This commit does not run native
+collection: the concrete mapping-error body, source-order integration, and
+FILE transport receiver must first receive ordinary root review.
 
 For one source-start regular parent, `StartupArenaReservationOutcomes` retains
 the successful `mi_reserve_os_memory` arena ID while preserving C's scalar

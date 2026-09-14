@@ -176,6 +176,8 @@ class X86_64SourceMapTests(unittest.TestCase):
         )
         self.assertIn("show_errors/verbose/max_warnings", option_processing["difference"])
         self.assertIn("16 KiB delayed output", option_processing["difference"])
+        self.assertIn("caller-supplied source-shaped fputs primitive", option_processing["difference"])
+        self.assertIn("short-write/error transport parity", option_processing["difference"])
         self.assertIn("mi_register_output ABI", option_processing["difference"])
 
         options = self.sources["src/options.c"]

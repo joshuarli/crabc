@@ -37,6 +37,8 @@ PINNED_UPSTREAM = {
 PROFILE = "linux-x86_64-private-mimalloc-diagnostic-output-owner"
 TRACE_BEGIN = "CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_TRACE_BEGIN"
 TRACE_END = "CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_TRACE_END"
+DEFAULT_STDERR_BEGIN = "CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_DEFAULT_STDERR_BEGIN"
+DEFAULT_STDERR_END = "CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_DEFAULT_STDERR_END"
 SCENARIOS = ("release", "enabled", "cap", "verbose", "delayed", "null", "post_init")
 C_LINK_SOURCES = (
     "src/alloc.c",
@@ -68,8 +70,32 @@ C_SOURCE_FILES = (
     # translation unit; retain its separate identity without compiling it twice.
     "src/prim/unix/prim.c",
 )
+PINNED_C_SOURCE_IDENTITIES = (
+    ("include/mimalloc.h", "af34f215cb6fe9e4e97bf08d78bfda877ab4cdd63c9222640c483d7d6a4488a5"),
+    ("include/mimalloc/internal.h", "4fd7b1dd450989b1a8a5b4cb54e163a36d932bbf7e341abcd882763251252852"),
+    ("include/mimalloc/prim.h", "1987e8e2eedc07bb181bf2a11a27bec80a5309c32cfa66a56900fb4cbb64b172"),
+    ("src/alloc.c", "fd4b4a86af93754227137a43c84e84f846d0ff0fd7046a264396a80c95e5c1a9"),
+    ("src/alloc-aligned.c", "3546ff6046c384f050cde21e9f3f314b6dc7d4ba1f1b462960a5a38672b898ba"),
+    ("src/alloc-posix.c", "a6dcdef4694964c972e6cf37f197f93c95f321566a3b5ccc1761129257255e93"),
+    ("src/arena.c", "5d9aa2dc06fa6e942d6a46eb4748b0c10c81f96c2ed50042412a9e66fd6f4d7a"),
+    ("src/bitmap.c", "c8dde3533b9803380fb948f86288ccf0a812a858aae7fca727e3b05e681d08b4"),
+    ("src/heap.c", "c788b309cf5208f72679b81b00f0a68b59b8c01da6bebc891d3e4154857d0989"),
+    ("src/init.c", "e22486042ba132e002822315ccd4b24738fc3a151fc14172e5e45426e8add299"),
+    ("src/libc.c", "7cd5cbbe56d70fb5f232757a763f694c0bd847e99a71b70bd9d345707f4bbd8c"),
+    ("src/options.c", "760c694c7663a18ae9745deb969215544d682c15fedd87ffe2645c6d31d5ba30"),
+    ("src/os.c", "8410b04c2d5b37e59fff1854364fed1fba873133b064cfe02083277038388548"),
+    ("src/page-map.c", "ff3509ae3d4185e9cb2a95e1f35daba3329e998bac917ac7938f1bf06dba0f78"),
+    ("src/page.c", "f7b1c3c0725b425516e22cf49d3ff7e03b708732fdba4bd1f4c759484d52593c"),
+    ("src/random.c", "c833eaf89ebd73c05a47a5ea8b439f4cc8a7ec5b87f85ddad4ddb72640d1c34e"),
+    ("src/stats.c", "ce57c5f21ea2366f5d50591fbe6617de1493fd9e048452562df171ae0d20e1d3"),
+    ("src/subproc.c", "39ab44c15b0dd91a53268fd52590d681e3c62e1930144b9392db0fde44439054"),
+    ("src/theap.c", "2f1a4fddb96cb2da91433221976a0a3b6b8c923c0c38c9bc20b4f2420cb3e845"),
+    ("src/threadlocal.c", "b3f140f7fbfa2ce8796dc397626b3a768285e2a17533cae8f0dbb19e4e4831f2"),
+    ("src/prim/prim.c", "241b1087a0e22609de71b2deba6c771135dd37e756ea89ba79b5900165b4f229"),
+    ("src/prim/prim-tls.c", "4970ab233c499a1080db2fa77386439cd35a029a9be7ce25eef817e281ad8d70"),
+    ("src/prim/unix/prim.c", "8efeac14a9952aa7c3117ce2d9d801f93692bda6cd80e09a51ddca398d7ac774"),
+)
 HEX = re.compile(r"(?:[0-9a-f]{2})*")
-SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 
 PREFIX = "6d696d616c6c6f633a207761726e696e673a20"
 SELECTED_BODY = "73656c6563746564206d62696e64206661696c7572650a"
@@ -87,6 +113,19 @@ EXPECTED_TRACE = {
     "null": [EARLY],
     "post_init": [POST_INIT],
 }
+EXPECTED_DEFAULT_STDERR_TRACE = {
+    "release": [],
+    "enabled": [],
+    "cap": [],
+    "verbose": [],
+    "delayed": [],
+    "null": ["7374646572720a"],
+    "post_init": [EARLY, LATER],
+}
+EXPECTED_C_STDERR = {
+    scenario: "".join(bytes.fromhex(fragment).decode("ascii") for fragment in fragments)
+    for scenario, fragments in EXPECTED_DEFAULT_STDERR_TRACE.items()
+}
 SCOPE = {
     "claim": "private source-faithful diagnostic output owner trace",
     "public_runtime_support": False,
@@ -94,6 +133,7 @@ SCOPE = {
         "public mi_register_output ABI or general callback API",
         "environment parsing and complete options API parity",
         "normal mapping-error receiver integration",
+        "fputs FILE locking/buffering and short-write or error transport parity",
         "VM/M2 or M7 qualification, allocator backend selection, and runtime integration",
         "AArch64 evidence or public x86-64 support",
     ],
@@ -128,13 +168,17 @@ def sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def current_file_identity(path: Path) -> dict[str, str]:
+    return {"path": relative(path), "sha256": sha256_file(path)}
+
+
 def relative(path: Path) -> str:
     return path.resolve().relative_to(ROOT.resolve()).as_posix()
 
 
 def command_record(command: Sequence[str], cwd: Path) -> dict[str, Any]:
     environment = {"PATH": os.environ.get("PATH", "")}
-    for name in ("CARGO_HOME", "CRABC_WORK_DIR", "TMPDIR"):
+    for name in ("CARGO_HOME", "CRABC_WORK_DIR", "RUSTUP_HOME", "TMPDIR"):
         if name in os.environ:
             environment[name] = os.environ[name]
     completed = subprocess.run(
@@ -143,6 +187,7 @@ def command_record(command: Sequence[str], cwd: Path) -> dict[str, Any]:
     )
     return {
         "command": list(command),
+        "cwd": str(cwd),
         "status": completed.returncode,
         "stdout": completed.stdout,
         "stderr": completed.stderr,
@@ -178,6 +223,10 @@ def source_records(source: Path) -> list[dict[str, str]]:
             raise EvidenceError(f"pinned source closure has no {member}")
         records.append({"path": member, "sha256": sha256_file(path)})
     return records
+
+
+def expected_pinned_c_source_records() -> list[dict[str, str]]:
+    return [{"path": member, "sha256": digest} for member, digest in PINNED_C_SOURCE_IDENTITIES]
 
 
 def parse_trace(output: str, begin: str | None, end: str | None) -> dict[str, list[str]]:
@@ -218,6 +267,14 @@ def parse_single_trace(output: str, scenario: str) -> list[str]:
     return fragments
 
 
+def expected_default_stderr_stream() -> str:
+    return "\n".join(
+        [DEFAULT_STDERR_BEGIN]
+        + [f"{scenario}={':'.join(EXPECTED_DEFAULT_STDERR_TRACE[scenario])}" for scenario in SCENARIOS]
+        + [DEFAULT_STDERR_END, ""]
+    )
+
+
 def c_compile_command(compiler: str, source: Path, binary: Path) -> list[str]:
     return [
         compiler,
@@ -246,7 +303,8 @@ def c_compile_command(compiler: str, source: Path, binary: Path) -> list[str]:
 
 def rust_command(cargo: str, target: Path) -> list[str]:
     return [
-        cargo, "test", "--locked", "--target", TARGET, "--target-dir", str(target),
+        cargo, "test", "--quiet", "--config=build.rustflags=[\"-Awarnings\"]", "--locked",
+        "--target", TARGET, "--target-dir", str(target),
         "-p", "crabc-mimalloc", "--lib",
         "diagnostic_output::tests::diagnostic_output_owner_trace_for_future_pinned_c_comparison",
         "--", "--exact", "--nocapture", "--test-threads=1",
@@ -260,15 +318,14 @@ def collect(archive: Path, report_path: Path) -> dict[str, Any]:
         raise EvidenceError("collector requires the exact pinned mimalloc archive")
     harness = load_harness()
     require_checkout_work_path(Path(harness.WORK_ROOT), "allocator harness work root")
-    compiler = harness.require_tool("musl-gcc")
-    cargo = shutil_which("cargo")
-    if cargo is None:
+    harness.require_tool("musl-gcc")
+    if shutil_which("cargo") is None:
         raise EvidenceError("collector requires cargo")
     with harness.temporary_directory(prefix="crabc-diagnostic-output-owner-") as temporary:
         temporary_path = Path(temporary)
         source = harness.safe_extract(archive, temporary_path / "source", "mimalloc-3.5.0")
         binary = temporary_path / "diagnostic-output-owner-c-oracle"
-        compile_command = c_compile_command(compiler, source, binary)
+        compile_command = c_compile_command("musl-gcc", source, binary)
         build = command_record(compile_command, source)
         if build["status"] != 0:
             raise EvidenceError("pinned diagnostic-output C oracle failed to build")
@@ -278,28 +335,30 @@ def collect(archive: Path, report_path: Path) -> dict[str, Any]:
         if any(run["status"] != 0 for run in c_runs.values()):
             raise EvidenceError("pinned diagnostic-output C oracle scenario failed")
         target = temporary_path / "rust-target"
-        rust = command_record(rust_command(cargo, target), ROOT)
+        rust = command_record(rust_command("cargo", target), ROOT)
         if rust["status"] != 0:
             raise EvidenceError("private diagnostic-output Rust trace failed")
         report = {
-            "cargo_lock": {"path": relative(LOCKFILE), "sha256": sha256_file(LOCKFILE)},
+            "cargo_lock": current_file_identity(LOCKFILE),
             "c_oracle": {
                 "build": build,
                 "runs": c_runs,
                 "source_files": source_records(source),
             },
-            "fixture": {"path": relative(FIXTURE), "sha256": sha256_file(FIXTURE)},
+            "fixture": current_file_identity(FIXTURE),
             "format": 1,
             "kind": "mimalloc-x86_64-diagnostic-output-owner-evidence",
             "native_execution_provenance": provenance,
             "profile": PROFILE,
             "rust": rust,
-            "rust_source": {"path": relative(RUST_SOURCE), "sha256": sha256_file(RUST_SOURCE)},
+            "rust_source": current_file_identity(RUST_SOURCE),
             "scope": SCOPE,
             "status": "passed",
             "target": {"architecture": "x86_64", "endianness": "little", "rust_target": TARGET, "system": "linux"},
             "upstream": PINNED_UPSTREAM,
         }
+    if report["c_oracle"]["source_files"] != expected_pinned_c_source_records():
+        raise EvidenceError("extracted C source closure differs from the admitted pinned archive")
     validate_report(report)
     atomic_write_json(report_path, report)
     return report
@@ -314,13 +373,26 @@ def shutil_which(name: str) -> str | None:
 
 
 def require_record(record: object, name: str) -> Mapping[str, Any]:
-    if not isinstance(record, Mapping) or set(record) != {"command", "status", "stdout", "stderr"}:
+    if not isinstance(record, Mapping) or set(record) != {"command", "cwd", "status", "stdout", "stderr"}:
         raise EvidenceError(f"{name} raw command/stream record drifted")
     if not isinstance(record["command"], list) or not all(isinstance(item, str) for item in record["command"]):
         raise EvidenceError(f"{name} command is not retained exactly")
-    if type(record["status"]) is not int or not isinstance(record["stdout"], str) or not isinstance(record["stderr"], str):
+    if (
+        not isinstance(record["cwd"], str)
+        or not Path(record["cwd"]).is_absolute()
+        or type(record["status"]) is not int
+        or not isinstance(record["stdout"], str)
+        or not isinstance(record["stderr"], str)
+    ):
         raise EvidenceError(f"{name} status or raw streams are invalid")
     return record
+
+
+def collector_source_root(build: Mapping[str, Any]) -> Path:
+    source = require_checkout_work_path(Path(str(build["cwd"])), "C oracle source cwd")
+    if source.name != "mimalloc-3.5.0" or source.parent.name != "source":
+        raise EvidenceError("C oracle source cwd is not the collector's pinned source root")
+    return source
 
 
 def validate_report(report: object) -> None:
@@ -340,21 +412,26 @@ def validate_report(report: object) -> None:
     provenance = report["native_execution_provenance"]
     if provenance not in ({"execution_mode": "native", "host_architecture": "x86_64"}, {"execution_mode": "native", "host_architecture": "amd64"}):
         raise EvidenceError("diagnostic-output report native provenance drifted")
-    fixture = report["fixture"]
-    if not isinstance(fixture, Mapping) or fixture.get("path") != relative(FIXTURE) or not isinstance(fixture.get("sha256"), str) or not SHA256.fullmatch(fixture["sha256"]):
+    if report["fixture"] != current_file_identity(FIXTURE):
         raise EvidenceError("diagnostic-output fixture identity drifted")
-    for name, path in (("Cargo lock", LOCKFILE), ("Rust source", RUST_SOURCE)):
-        record = report["cargo_lock" if name == "Cargo lock" else "rust_source"]
-        if not isinstance(record, Mapping) or record.get("path") != relative(path) or not isinstance(record.get("sha256"), str) or not SHA256.fullmatch(record["sha256"]):
-            raise EvidenceError(f"diagnostic-output {name.lower()} identity drifted")
+    if report["cargo_lock"] != current_file_identity(LOCKFILE):
+        raise EvidenceError("diagnostic-output Cargo.lock identity drifted")
+    if report["rust_source"] != current_file_identity(RUST_SOURCE):
+        raise EvidenceError("diagnostic-output Rust source identity drifted")
     c_oracle = report["c_oracle"]
     if not isinstance(c_oracle, Mapping) or set(c_oracle) != {"build", "runs", "source_files"}:
         raise EvidenceError("diagnostic-output C oracle schema drifted")
     build = require_record(c_oracle["build"], "C build")
-    if build["status"] != 0 or not any(
-        argument.endswith("/src/options.c") for argument in build["command"]
+    source = collector_source_root(build)
+    temporary = source.parent.parent
+    binary = temporary / "diagnostic-output-owner-c-oracle"
+    if (
+        build["status"] != 0
+        or build["command"] != c_compile_command("musl-gcc", source, binary)
+        or build["stdout"] != ""
+        or build["stderr"] != ""
     ):
-        raise EvidenceError("diagnostic-output C build does not retain the pinned options source")
+        raise EvidenceError("diagnostic-output C build receipt drifted")
     runs = c_oracle["runs"]
     if not isinstance(runs, Mapping) or tuple(runs) != SCENARIOS:
         raise EvidenceError("diagnostic-output C scenario roster drifted")
@@ -363,25 +440,38 @@ def validate_report(report: object) -> None:
         run = require_record(runs[scenario], f"C {scenario}")
         if (
             run["status"] != 0
-            or len(run["command"]) != 2
-            or run["command"][1] != scenario
-            or Path(run["command"][0]).name != "diagnostic-output-owner-c-oracle"
+            or run["cwd"] != str(source)
+            or run["command"] != [str(binary), scenario]
+            or run["stderr"] != EXPECTED_C_STDERR[scenario]
         ):
             raise EvidenceError(f"diagnostic-output C {scenario} command/status drifted")
         c_trace[scenario] = parse_single_trace(run["stdout"], scenario)
     if c_trace != EXPECTED_TRACE:
         raise EvidenceError("pinned C diagnostic-output trace drifted")
     source_files = c_oracle["source_files"]
-    if not isinstance(source_files, list) or [item.get("path") if isinstance(item, Mapping) else None for item in source_files] != list(C_SOURCE_FILES):
-        raise EvidenceError("diagnostic-output C source roster drifted")
-    if not all(isinstance(item, Mapping) and SHA256.fullmatch(str(item.get("sha256"))) for item in source_files):
-        raise EvidenceError("diagnostic-output C source identity is invalid")
+    if source_files != expected_pinned_c_source_records():
+        raise EvidenceError("diagnostic-output C source identity drifted")
     rust = require_record(report["rust"], "Rust trace")
-    if rust["status"] != 0 or "--locked" not in rust["command"] or TARGET not in rust["command"]:
+    target = temporary / "rust-target"
+    if (
+        rust["status"] != 0
+        or rust["cwd"] != str(ROOT)
+        or rust["command"] != rust_command("cargo", target)
+    ):
         raise EvidenceError("diagnostic-output Rust command/status drifted")
     rust_trace = parse_trace(rust["stdout"], TRACE_BEGIN, TRACE_END)
     if rust_trace != EXPECTED_TRACE or rust_trace != c_trace:
         raise EvidenceError("diagnostic-output C/Rust trace reconstruction drifted")
+    if rust["stderr"] != expected_default_stderr_stream():
+        raise EvidenceError("diagnostic-output Rust default-stderr raw stream drifted")
+    rust_default_stderr = parse_trace(rust["stderr"], DEFAULT_STDERR_BEGIN, DEFAULT_STDERR_END)
+    if rust_default_stderr != EXPECTED_DEFAULT_STDERR_TRACE:
+        raise EvidenceError("diagnostic-output Rust default-stderr trace drifted")
+    if {
+        scenario: b"".join(bytes.fromhex(fragment) for fragment in fragments).decode("ascii")
+        for scenario, fragments in rust_default_stderr.items()
+    } != EXPECTED_C_STDERR:
+        raise EvidenceError("diagnostic-output C/Rust default-stderr reconstruction drifted")
 
 
 def atomic_write_json(path: Path, value: Mapping[str, Any]) -> None:

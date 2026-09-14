@@ -10,11 +10,13 @@
 // The C source keeps one 16 KiB delayed byte buffer, one lock, independently
 // published output function/argument pointers, and an AcqRel warning counter.
 // This private owner preserves those observable transitions without exporting
-// a `mi_*` ABI or putting callback state in the VM policy.  The source's
+// a `mi_*` ABI or putting callback state in the VM policy. The source's
 // built-in callbacks are C statics and can reach static `out_buf` directly.
 // Rust permits several test-local owners, so `default_sink` represents those
 // three built-ins while the custom callback and opaque argument retain their
-// separate source-shaped atomic publication.
+// separate source-shaped atomic publication. The source's `fputs(msg,stderr)`
+// primitive stays caller-supplied: this owner does not assert that a raw Linux
+// descriptor write has FILE buffering, locking, or failure equivalence.
 
 use crate::lock::PrivateLock;
 use core::cell::UnsafeCell;
@@ -115,6 +117,26 @@ impl SourceFormattedMessage {
 /// fragment at a time, so a warning emits its prefix and body in two calls.
 pub(crate) type OutputCallback = unsafe extern "C" fn(*const c_char, *mut c_void);
 
+/// Private source-shaped `_mi_prim_out_stderr` primitive.
+///
+/// The supplied function must retain the selected Linux/musl
+/// `fputs(message, stderr)` transport contract, including the runtime-owned
+/// FILE's locking, buffering, and error/short-write behavior. It receives a
+/// non-null, nonempty NUL-terminated message and has no opaque allocator
+/// state. The current diagnostic owner has no production receiver for this
+/// primitive; a raw `write(2, ...)` substitute is not source-equivalent
+/// evidence and cannot close that prerequisite.
+pub(crate) type DefaultStderrOutput = unsafe extern "C" fn(*const c_char);
+
+#[derive(Clone, Copy)]
+enum DelayedFlushSink {
+    Custom {
+        output: OutputCallback,
+        argument: *mut c_void,
+    },
+    DefaultStderr(DefaultStderrOutput),
+}
+
 /// Private owner for the selected `options.c` output and warning path.
 ///
 /// The fixed delayed storage is intentionally the source `16*1024 + 1` image.
@@ -129,6 +151,7 @@ pub(crate) struct OutputOwner {
     out_len: AtomicUsize,
     out_buf_lock: PrivateLock,
     default_sink: AtomicU8,
+    default_stderr_output: DefaultStderrOutput,
     callback: AtomicPtr<()>,
     argument: AtomicPtr<c_void>,
     warning_count: AtomicUsize,
@@ -141,14 +164,20 @@ pub(crate) struct OutputOwner {
 unsafe impl Sync for OutputOwner {}
 
 impl OutputOwner {
-    /// Creates the source's pre-init diagnostic state.
+    /// Creates the source's pre-init diagnostic state with its FILE owner.
+    ///
+    /// `default_stderr_output` is the future private runtime integration
+    /// receiver for the pinned `_mi_prim_out_stderr` primitive. It is fixed at
+    /// construction because the source's `mi_out_stderr` callback is static;
+    /// it is not a registered custom callback or VM policy field.
     #[inline]
-    pub(crate) const fn new() -> Self {
+    pub(crate) const fn new(default_stderr_output: DefaultStderrOutput) -> Self {
         Self {
             out_buf: UnsafeCell::new([0; DELAYED_OUTPUT_BYTES + 1]),
             out_len: AtomicUsize::new(0),
             out_buf_lock: PrivateLock::new(),
             default_sink: AtomicU8::new(DEFAULT_DELAYED),
+            default_stderr_output,
             callback: AtomicPtr::new(core::ptr::null_mut()),
             argument: AtomicPtr::new(core::ptr::null_mut()),
             warning_count: AtomicUsize::new(0),
@@ -173,13 +202,15 @@ impl OutputOwner {
     ///
     /// For a non-null callback, `output` and `argument` must remain valid for
     /// every future delivery until a serialized replacement is installed. The
-    /// program must register from one thread and must not race any registration:
-    /// like `mi_register_output`, the separately Release-stored callback and
-    /// argument can otherwise be observed as a mismatched pair. A custom
-    /// registration flushes delayed bytes while `out_buf_lock` is held; its
-    /// callback must therefore not call `register_output` or `post_init`.
-    /// Reentrant `raw_message`/`warning` dispatch is permitted after the custom
-    /// default is installed and bypasses that delayed-buffer lock.
+    /// program must register from one thread and must not race any registration
+    /// or unrelated default dispatch: like `mi_register_output`, the separately
+    /// Release-stored callback and argument can otherwise be observed as a
+    /// mismatched pair. The callback/argument being replaced also remain live
+    /// until all in-flight deliveries finish. A custom registration flushes
+    /// delayed bytes while `out_buf_lock` is held; its callback must therefore
+    /// not call `register_output` or `post_init`. Reentrant `raw_message` or
+    /// `warning` from that just-installed custom callback is permitted after
+    /// the custom default is published and bypasses the delayed-buffer lock.
     pub(crate) unsafe fn register_output(
         &self,
         output: Option<OutputCallback>,
@@ -192,7 +223,13 @@ impl OutputOwner {
                 // precedes the independent argument store below.
                 self.default_sink.store(DEFAULT_CALLBACK, Ordering::Release);
                 self.argument.store(argument, Ordering::Release);
-                self.flush_delayed(callback, true, argument);
+                self.flush_delayed(
+                    DelayedFlushSink::Custom {
+                        output: callback,
+                        argument,
+                    },
+                    true,
+                );
             }
             None => {
                 // Source `mi_register_output(NULL,arg)` installs stderr but
@@ -209,25 +246,46 @@ impl OutputOwner {
     ///
     /// The caller must invoke this exactly once after automatic thread setup,
     /// before any custom registration, and after source-order option
-    /// initialization. Calling it from a callback is invalid because it takes
-    /// the delayed-buffer lock while source registration flushing holds it.
+    /// initialization. It must also serialize this transition against every
+    /// unrelated `raw_message` or `warning` dispatch. Calling it from a
+    /// callback is invalid because it takes the delayed-buffer lock while
+    /// source registration flushing holds it.
     pub(crate) unsafe fn post_init(&self) {
         debug_assert_eq!(self.default_sink.load(Ordering::Relaxed), DEFAULT_DELAYED);
-        self.flush_delayed(stderr_output, false, core::ptr::null_mut());
+        self.flush_delayed(
+            DelayedFlushSink::DefaultStderr(self.default_stderr_output),
+            false,
+        );
         self.default_sink
             .store(DEFAULT_STDERR_AND_DELAYED, Ordering::Release);
         self.argument.store(core::ptr::null_mut(), Ordering::Release);
     }
 
     /// Emits a preformatted source message through `_mi_fputs`' default path.
+    ///
+    /// # Safety
+    ///
+    /// The caller must serialize this dispatch against `register_output` and
+    /// `post_init`, and retain any registered callback/argument until every
+    /// in-flight delivery completes. The only permitted overlap is reentry
+    /// from the just-installed custom callback during its own registration
+    /// flush: the source has already published that default before invoking
+    /// the callback. An unrelated thread must not dispatch while a callback
+    /// pair is being installed or replaced, because the source intentionally
+    /// publishes that pair in separate stores.
     #[inline]
-    pub(crate) fn raw_message(&self, message: SourceFormattedMessage) {
+    pub(crate) unsafe fn raw_message(&self, message: SourceFormattedMessage) {
         self.fputs_default(None, message.as_c_str());
     }
 
     /// Emits the selected `_mi_warning_message` path.
+    ///
+    /// # Safety
+    ///
+    /// This has the same dispatch-versus-registration and in-flight callback
+    /// lifetime obligations as `raw_message`.
     #[inline]
-    pub(crate) fn warning(
+    pub(crate) unsafe fn warning(
         &self,
         options: DiagnosticOptionSnapshot,
         message: SourceFormattedMessage,
@@ -262,11 +320,9 @@ impl OutputOwner {
     fn dispatch_default(&self, message: &CStr) {
         match self.default_sink.load(Ordering::Acquire) {
             DEFAULT_DELAYED => self.delayed_output(message),
-            DEFAULT_STDERR => unsafe { stderr_output(message.as_ptr(), core::ptr::null_mut()) },
+            DEFAULT_STDERR => self.default_stderr(message),
             DEFAULT_STDERR_AND_DELAYED => {
-                // SAFETY: `message` supplies the non-null NUL-terminated
-                // string expected by the private stderr callback.
-                unsafe { stderr_output(message.as_ptr(), core::ptr::null_mut()) };
+                self.default_stderr(message);
                 self.delayed_output(message);
             }
             DEFAULT_CALLBACK => {
@@ -311,7 +367,18 @@ impl OutputOwner {
         }
     }
 
-    fn flush_delayed(&self, output: OutputCallback, no_more_buffer: bool, argument: *mut c_void) {
+    fn default_stderr(&self, message: &CStr) {
+        // `mi_out_stderr` filters empty messages before it reaches the source
+        // primitive, including ordinary NULL-registration dispatches.
+        if message.to_bytes().is_empty() {
+            return;
+        }
+        // SAFETY: `message` is source-shaped non-null/nonempty C text and the
+        // constructor fixes this primitive for the owner's full lifetime.
+        unsafe { (self.default_stderr_output)(message.as_ptr()) };
+    }
+
+    fn flush_delayed(&self, sink: DelayedFlushSink, no_more_buffer: bool) {
         let Ok(_guard) = self.out_buf_lock.lock() else {
             return;
         };
@@ -324,10 +391,25 @@ impl OutputOwner {
         // extra byte so `count == DELAYED_OUTPUT_BYTES` remains NUL-terminated.
         let buffer = unsafe { &mut *self.out_buf.get() };
         buffer[count] = 0;
-        // SAFETY: `buffer` stays live until this callback returns. The custom
-        // callback's other validity requirements are documented on
-        // `register_output`; stderr ignores its null argument.
-        unsafe { output(buffer.as_ptr().cast::<c_char>(), argument) };
+        let message = buffer.as_ptr().cast::<c_char>();
+        match sink {
+            DelayedFlushSink::Custom { output, argument } => {
+                // SAFETY: `buffer` stays live until this callback returns.
+                // The custom callback's validity requirements are documented
+                // on `register_output`.
+                unsafe { output(message, argument) };
+            }
+            DelayedFlushSink::DefaultStderr(output) => {
+                // `mi_out_stderr` filters the empty delayed image before it
+                // reaches `_mi_prim_out_stderr`; preserve that boundary before
+                // invoking the nonempty caller-supplied primitive.
+                if buffer[0] != 0 {
+                    // SAFETY: this is the constructor-fixed source primitive
+                    // and `buffer` supplies its non-null NUL-terminated input.
+                    unsafe { output(message) };
+                }
+            }
+        }
         if !no_more_buffer {
             buffer[count] = b'\n';
         }
@@ -353,27 +435,6 @@ unsafe fn invoke_callback(callback: OutputCallback, message: &CStr, argument: *m
     unsafe { callback(message.as_ptr(), argument) };
 }
 
-/// Source `mi_out_stderr` plus Linux `_mi_prim_out_stderr`'s best-effort path.
-///
-/// Pinned `src/prim/unix/prim.c` calls `fputs(msg, stderr)` and ignores its
-/// result. The no_std owner cannot use a `FILE`, so it issues exactly one raw
-/// descriptor-2 write and discards both an error and a short count. It neither
-/// retries nor loops to complete a short write, preserving the source's
-/// best-effort observable failure boundary. stdio's internal buffering is not
-/// available before the runtime owns it; a future full primitive owner must
-/// assess that transport distinction before widening this private route.
-unsafe extern "C" fn stderr_output(message: *const c_char, _argument: *mut c_void) {
-    if message.is_null() {
-        return;
-    }
-    // SAFETY: every caller provides a live NUL-terminated source message.
-    let message = unsafe { CStr::from_ptr(message) };
-    if message.to_bytes().is_empty() {
-        return;
-    }
-    let _result = crabc_core::io::write(2, message.to_bytes());
-}
-
 #[cfg(test)]
 mod tests {
     extern crate std;
@@ -384,6 +445,7 @@ mod tests {
     use core::cell::UnsafeCell;
     use core::ffi::{c_char, c_void, CStr};
     use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{Mutex, MutexGuard};
 
     const MAX_MESSAGES: usize = 8;
     const MAX_MESSAGE_BYTES: usize = 256;
@@ -453,10 +515,59 @@ mod tests {
         capture as *const Capture as *mut c_void
     }
 
-    fn source_message(bytes: &'static [u8]) -> SourceFormattedMessage {
+    static DEFAULT_STDERR_CAPTURE: Capture = Capture::new();
+    static DEFAULT_STDERR_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn default_stderr_test_guard() -> MutexGuard<'static, ()> {
+        DEFAULT_STDERR_TEST_LOCK
+            .lock()
+            .expect("default stderr capture lock is not poisoned")
+    }
+
+    unsafe extern "C" fn test_default_stderr_output(message: *const c_char) {
+        // SAFETY: the test suite serializes this fixed test primitive and the
+        // static capture remains live for every default delivery.
+        unsafe { capture_output(message, capture_argument(&DEFAULT_STDERR_CAPTURE)) };
+    }
+
+    fn output_owner() -> OutputOwner {
+        OutputOwner::new(test_default_stderr_output)
+    }
+
+    fn reset_default_stderr_capture() {
+        DEFAULT_STDERR_CAPTURE.reset();
+    }
+
+    fn source_message(bytes: &[u8]) -> SourceFormattedMessage {
         SourceFormattedMessage::from_source_formatted(
             CStr::from_bytes_with_nul(bytes).expect("test messages are NUL-terminated"),
         )
+    }
+
+    struct LengthCapture {
+        count: AtomicUsize,
+        last_length: AtomicUsize,
+    }
+
+    impl LengthCapture {
+        const fn new() -> Self {
+            Self {
+                count: AtomicUsize::new(0),
+                last_length: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    unsafe extern "C" fn capture_length(message: *const c_char, argument: *mut c_void) {
+        if message.is_null() || argument.is_null() {
+            return;
+        }
+        // SAFETY: this test passes a live `LengthCapture` and the owner holds
+        // the source-shaped buffer live through the callback.
+        let capture = unsafe { &*(argument as *const LengthCapture) };
+        let length = unsafe { CStr::from_ptr(message) }.to_bytes().len();
+        capture.last_length.store(length, Ordering::Relaxed);
+        capture.count.fetch_add(1, Ordering::Relaxed);
     }
 
     #[test]
@@ -471,9 +582,91 @@ mod tests {
     }
 
     #[test]
+    fn default_dispatch_and_registration_are_explicitly_unsafe_contracts() {
+        let _ = OutputOwner::register_output
+            as unsafe fn(&OutputOwner, Option<OutputCallback>, *mut c_void);
+        let _ = OutputOwner::post_init as unsafe fn(&OutputOwner);
+        let _ = OutputOwner::raw_message as unsafe fn(&OutputOwner, SourceFormattedMessage);
+        let _ = OutputOwner::warning
+            as unsafe fn(&OutputOwner, DiagnosticOptionSnapshot, SourceFormattedMessage);
+    }
+
+    #[test]
+    fn delayed_output_keeps_at_most_16k_minus_its_terminal_nul_then_stops() {
+        let owner = output_owner();
+        let capture = LengthCapture::new();
+        let mut source = [b'x'; 991];
+        source[990] = 0;
+
+        for _ in 0..17 {
+            // SAFETY: the test has no concurrent registration or dispatch.
+            unsafe { owner.raw_message(source_message(&source)) };
+        }
+        // SAFETY: this is the only registration, and the capture remains live.
+        unsafe {
+            owner.register_output(
+                Some(capture_length),
+                &capture as *const LengthCapture as *mut c_void,
+            )
+        };
+
+        assert_eq!(capture.count.load(Ordering::Relaxed), 1);
+        assert_eq!(capture.last_length.load(Ordering::Relaxed), 16 * 1024 - 1);
+
+        // SAFETY: registration is complete before the final custom dispatch.
+        unsafe { owner.raw_message(source_message(&source)) };
+        assert_eq!(capture.count.load(Ordering::Relaxed), 2);
+        assert_eq!(capture.last_length.load(Ordering::Relaxed), 990);
+    }
+
+    #[test]
+    fn initialized_release_limit_replaces_the_initial_16_warning_cap() {
+        let initial_owner = output_owner();
+        let initial_capture = Capture::new();
+        // SAFETY: the test owns the one callback and serializes all dispatch.
+        unsafe {
+            initial_owner.register_output(
+                Some(capture_output),
+                capture_argument(&initial_capture),
+            )
+        };
+        initial_capture.reset();
+
+        for _ in 0..17 {
+            // SAFETY: no registration overlaps these isolated pre-init calls.
+            unsafe {
+                initial_owner.warning(
+                    DiagnosticOptionSnapshot::new(1, 0, 32),
+                    source_message(b"w\n\0"),
+                )
+            };
+        }
+        assert_eq!(initial_capture.count(), 32);
+
+        let initialized_options = DiagnosticOptionSnapshot::new(1, 0, 32);
+        let mut initialized_owner = output_owner();
+        initialized_owner.initialize_options(DiagnosticOptionSnapshot::release_defaults());
+        let initialized_capture = Capture::new();
+        // SAFETY: the test owns the one callback and serializes all dispatch.
+        unsafe {
+            initialized_owner.register_output(
+                Some(capture_output),
+                capture_argument(&initialized_capture),
+            )
+        };
+        initialized_capture.reset();
+
+        for _ in 0..17 {
+            // SAFETY: no registration overlaps these isolated initialized calls.
+            unsafe { initialized_owner.warning(initialized_options, source_message(b"w\n\0")) };
+        }
+        assert_eq!(initialized_capture.count(), 34);
+    }
+
+    #[test]
     fn release_default_suppresses_warning_after_custom_registration() {
         let options = DiagnosticOptionSnapshot::release_defaults();
-        let mut owner = OutputOwner::new();
+        let mut owner = output_owner();
         owner.initialize_options(options);
         let capture = Capture::new();
 
@@ -482,7 +675,8 @@ mod tests {
         unsafe { owner.register_output(Some(capture_output), capture_argument(&capture)) };
         capture.reset(); // Registration flushes the source's empty delayed buffer.
 
-        owner.warning(options, source_message(b"selected mbind failure\n\0"));
+        // SAFETY: this test serializes dispatch with the one registration.
+        unsafe { owner.warning(options, source_message(b"selected mbind failure\n\0")) };
 
         assert_eq!(capture.count(), 0);
     }
@@ -490,7 +684,7 @@ mod tests {
     #[test]
     fn enabled_warning_delivers_prefix_then_body() {
         let options = DiagnosticOptionSnapshot::new(1, 0, 1);
-        let mut owner = OutputOwner::new();
+        let mut owner = output_owner();
         owner.initialize_options(options);
         let capture = Capture::new();
 
@@ -499,7 +693,8 @@ mod tests {
         unsafe { owner.register_output(Some(capture_output), capture_argument(&capture)) };
         capture.reset();
 
-        owner.warning(options, source_message(b"selected mbind failure\n\0"));
+        // SAFETY: this test serializes dispatch with the one registration.
+        unsafe { owner.warning(options, source_message(b"selected mbind failure\n\0")) };
 
         assert_eq!(capture.count(), 2);
         assert_eq!(capture.message(0), b"mimalloc: warning: ");
@@ -509,7 +704,7 @@ mod tests {
     #[test]
     fn warning_count_cap_suppresses_after_the_source_acqrel_increment() {
         let options = DiagnosticOptionSnapshot::new(1, 0, 1);
-        let mut owner = OutputOwner::new();
+        let mut owner = output_owner();
         owner.initialize_options(options);
         let capture = Capture::new();
 
@@ -518,8 +713,11 @@ mod tests {
         unsafe { owner.register_output(Some(capture_output), capture_argument(&capture)) };
         capture.reset();
 
-        owner.warning(options, source_message(b"first\n\0"));
-        owner.warning(options, source_message(b"second\n\0"));
+        // SAFETY: this test serializes dispatch with the one registration.
+        unsafe {
+            owner.warning(options, source_message(b"first\n\0"));
+            owner.warning(options, source_message(b"second\n\0"));
+        }
 
         assert_eq!(capture.count(), 2);
         assert_eq!(capture.message(0), b"mimalloc: warning: ");
@@ -529,7 +727,7 @@ mod tests {
     #[test]
     fn negative_warning_cap_leaves_the_source_counter_gate_unbounded() {
         let options = DiagnosticOptionSnapshot::new(1, 0, -1);
-        let mut owner = OutputOwner::new();
+        let mut owner = output_owner();
         owner.initialize_options(options);
         let capture = Capture::new();
 
@@ -538,8 +736,11 @@ mod tests {
         unsafe { owner.register_output(Some(capture_output), capture_argument(&capture)) };
         capture.reset();
 
-        owner.warning(options, source_message(b"first\n\0"));
-        owner.warning(options, source_message(b"second\n\0"));
+        // SAFETY: this test serializes dispatch with the one registration.
+        unsafe {
+            owner.warning(options, source_message(b"first\n\0"));
+            owner.warning(options, source_message(b"second\n\0"));
+        }
 
         assert_eq!(capture.count(), 4);
         assert_eq!(capture.message(0), b"mimalloc: warning: ");
@@ -551,7 +752,7 @@ mod tests {
     #[test]
     fn verbose_bypasses_show_errors_and_warning_cap() {
         let options = DiagnosticOptionSnapshot::new(0, 1, 0);
-        let mut owner = OutputOwner::new();
+        let mut owner = output_owner();
         owner.initialize_options(options);
         let capture = Capture::new();
 
@@ -560,8 +761,11 @@ mod tests {
         unsafe { owner.register_output(Some(capture_output), capture_argument(&capture)) };
         capture.reset();
 
-        owner.warning(options, source_message(b"first\n\0"));
-        owner.warning(options, source_message(b"second\n\0"));
+        // SAFETY: this test serializes dispatch with the one registration.
+        unsafe {
+            owner.warning(options, source_message(b"first\n\0"));
+            owner.warning(options, source_message(b"second\n\0"));
+        }
 
         assert_eq!(capture.count(), 4);
         assert_eq!(capture.message(0), b"mimalloc: warning: ");
@@ -572,14 +776,16 @@ mod tests {
 
     #[test]
     fn custom_registration_flushes_delayed_bytes_once_and_stops_the_buffer() {
-        let owner = OutputOwner::new();
+        let owner = output_owner();
         let capture = Capture::new();
 
-        owner.raw_message(source_message(b"early\n\0"));
+        // SAFETY: this test serializes each dispatch with registration.
+        unsafe { owner.raw_message(source_message(b"early\n\0")) };
         // SAFETY: this one registration retains the callback state until the
         // test ends and is not concurrent with another registration.
         unsafe { owner.register_output(Some(capture_output), capture_argument(&capture)) };
-        owner.raw_message(source_message(b"later\n\0"));
+        // SAFETY: registration is complete before this dispatch.
+        unsafe { owner.raw_message(source_message(b"later\n\0")) };
 
         assert_eq!(capture.count(), 2);
         assert_eq!(capture.message(0), b"early\n");
@@ -588,37 +794,63 @@ mod tests {
 
     #[test]
     fn null_registration_keeps_delayed_bytes_for_a_later_custom_registration() {
-        let owner = OutputOwner::new();
+        let _guard = default_stderr_test_guard();
+        let owner = output_owner();
         let capture = Capture::new();
+        reset_default_stderr_capture();
 
-        owner.raw_message(source_message(b"early\n\0"));
+        // SAFETY: this test serializes each dispatch with registration.
+        unsafe { owner.raw_message(source_message(b"early\n\0")) };
         // SAFETY: the null route still follows the source's serialized
         // registration contract. Its argument is ignored by the stderr sink.
         unsafe { owner.register_output(None, core::ptr::null_mut()) };
+        // SAFETY: the null default is installed before this serialized dispatch.
+        unsafe { owner.raw_message(source_message(b"stderr\n\0")) };
         // SAFETY: the later custom callback remains live, and there is still
         // only one registration thread.
         unsafe { owner.register_output(Some(capture_output), capture_argument(&capture)) };
 
         assert_eq!(capture.count(), 1);
         assert_eq!(capture.message(0), b"early\n");
+        assert_eq!(DEFAULT_STDERR_CAPTURE.count(), 1);
+        assert_eq!(DEFAULT_STDERR_CAPTURE.message(0), b"stderr\n");
+    }
+
+    #[test]
+    fn post_init_does_not_call_the_stderr_primitive_for_an_empty_delayed_buffer() {
+        let _guard = default_stderr_test_guard();
+        let owner = output_owner();
+        reset_default_stderr_capture();
+
+        // SAFETY: this isolated owner has no dispatch or custom registration.
+        unsafe { owner.post_init() };
+
+        assert_eq!(DEFAULT_STDERR_CAPTURE.count(), 0);
     }
 
     #[test]
     fn post_init_flushes_to_stderr_then_retains_newline_delayed_phase() {
-        let owner = OutputOwner::new();
+        let _guard = default_stderr_test_guard();
+        let owner = output_owner();
         let capture = Capture::new();
+        reset_default_stderr_capture();
 
-        owner.raw_message(source_message(b"early\n\0"));
+        // SAFETY: this test serializes each dispatch with post-init.
+        unsafe { owner.raw_message(source_message(b"early\n\0")) };
         // SAFETY: the test invokes the source post-init transition before any
         // custom registration and after all pre-init emission for this owner.
         unsafe { owner.post_init() };
-        owner.raw_message(source_message(b"later\n\0"));
+        // SAFETY: post-init is complete before this dispatch.
+        unsafe { owner.raw_message(source_message(b"later\n\0")) };
         // SAFETY: this is the single custom registration and the capture
         // outlives every callback.
         unsafe { owner.register_output(Some(capture_output), capture_argument(&capture)) };
 
         assert_eq!(capture.count(), 1);
         assert_eq!(capture.message(0), b"early\n\nlater\n");
+        assert_eq!(DEFAULT_STDERR_CAPTURE.count(), 2);
+        assert_eq!(DEFAULT_STDERR_CAPTURE.message(0), b"early\n");
+        assert_eq!(DEFAULT_STDERR_CAPTURE.message(1), b"later\n");
     }
 
     struct ReentrantCapture {
@@ -649,15 +881,18 @@ mod tests {
         if !capture.reentered.swap(true, Ordering::Relaxed) {
             // SAFETY: the owner remains live through the registration callback.
             let owner = unsafe { &*capture.owner };
-            owner.raw_message(source_message(b"reentrant\n\0"));
+            // SAFETY: source permits this custom-callback reentry after that
+            // same registration has published the custom default.
+            unsafe { owner.raw_message(source_message(b"reentrant\n\0")) };
         }
     }
 
     #[test]
     fn registration_callback_can_reenter_default_dispatch_without_relocking_buffer() {
-        let owner = OutputOwner::new();
+        let owner = output_owner();
         let capture = ReentrantCapture::new(&owner);
-        owner.raw_message(source_message(b"early\n\0"));
+        // SAFETY: this test serializes the first dispatch with registration.
+        unsafe { owner.raw_message(source_message(b"early\n\0")) };
 
         // SAFETY: this is one serialized registration. The callback and opaque
         // argument remain valid until it returns; its permitted reentrant
@@ -687,89 +922,133 @@ mod tests {
         std::println!();
     }
 
+    fn print_default_stderr_line(name: &str, bytes: &[u8]) {
+        std::eprint!("{name}=");
+        for byte in bytes {
+            std::eprint!("{byte:02x}");
+        }
+        std::eprintln!();
+    }
+
     /// Machine-readable Rust half for the uncollected diagnostic C/Rust
     /// producer. The producer retains this raw stream and reconstructs the
     /// comparison from it; this test itself is not native evidence.
     #[test]
     fn diagnostic_output_owner_trace_for_future_pinned_c_comparison() {
+        let _guard = default_stderr_test_guard();
+        reset_default_stderr_capture();
         std::println!("CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_TRACE_BEGIN");
 
         let release = DiagnosticOptionSnapshot::release_defaults();
-        let mut release_owner = OutputOwner::new();
+        let mut release_owner = output_owner();
         release_owner.initialize_options(release);
         let release_capture = Capture::new();
         // SAFETY: this fixture retains the callback state and has one
         // serialized registration.
         unsafe { release_owner.register_output(Some(capture_output), capture_argument(&release_capture)) };
         release_capture.reset();
-        release_owner.warning(release, source_message(b"selected mbind failure\n\0"));
+        // SAFETY: this fixture serializes dispatch with registration.
+        unsafe { release_owner.warning(release, source_message(b"selected mbind failure\n\0")) };
         print_trace_capture("release", &release_capture);
 
         let enabled = DiagnosticOptionSnapshot::new(1, 0, 1);
-        let mut enabled_owner = OutputOwner::new();
+        let mut enabled_owner = output_owner();
         enabled_owner.initialize_options(enabled);
         let enabled_capture = Capture::new();
         // SAFETY: this fixture retains the callback state and has one
         // serialized registration.
         unsafe { enabled_owner.register_output(Some(capture_output), capture_argument(&enabled_capture)) };
         enabled_capture.reset();
-        enabled_owner.warning(enabled, source_message(b"selected mbind failure\n\0"));
+        // SAFETY: this fixture serializes dispatch with registration.
+        unsafe { enabled_owner.warning(enabled, source_message(b"selected mbind failure\n\0")) };
         print_trace_capture("enabled", &enabled_capture);
 
         let cap = DiagnosticOptionSnapshot::new(1, 0, 1);
-        let mut cap_owner = OutputOwner::new();
+        let mut cap_owner = output_owner();
         cap_owner.initialize_options(cap);
         let cap_capture = Capture::new();
         // SAFETY: this fixture retains the callback state and has one
         // serialized registration.
         unsafe { cap_owner.register_output(Some(capture_output), capture_argument(&cap_capture)) };
         cap_capture.reset();
-        cap_owner.warning(cap, source_message(b"first\n\0"));
-        cap_owner.warning(cap, source_message(b"second\n\0"));
+        // SAFETY: this fixture serializes dispatch with registration.
+        unsafe {
+            cap_owner.warning(cap, source_message(b"first\n\0"));
+            cap_owner.warning(cap, source_message(b"second\n\0"));
+        }
         print_trace_capture("cap", &cap_capture);
 
         let verbose = DiagnosticOptionSnapshot::new(0, 1, 0);
-        let mut verbose_owner = OutputOwner::new();
+        let mut verbose_owner = output_owner();
         verbose_owner.initialize_options(verbose);
         let verbose_capture = Capture::new();
         // SAFETY: this fixture retains the callback state and has one
         // serialized registration.
         unsafe { verbose_owner.register_output(Some(capture_output), capture_argument(&verbose_capture)) };
         verbose_capture.reset();
-        verbose_owner.warning(verbose, source_message(b"first\n\0"));
-        verbose_owner.warning(verbose, source_message(b"second\n\0"));
+        // SAFETY: this fixture serializes dispatch with registration.
+        unsafe {
+            verbose_owner.warning(verbose, source_message(b"first\n\0"));
+            verbose_owner.warning(verbose, source_message(b"second\n\0"));
+        }
         print_trace_capture("verbose", &verbose_capture);
 
-        let delayed_owner = OutputOwner::new();
+        let delayed_owner = output_owner();
         let delayed_capture = Capture::new();
-        delayed_owner.raw_message(source_message(b"early\n\0"));
+        // SAFETY: this fixture serializes dispatch with registration.
+        unsafe { delayed_owner.raw_message(source_message(b"early\n\0")) };
         // SAFETY: this fixture retains the callback state and has one
         // serialized registration.
         unsafe { delayed_owner.register_output(Some(capture_output), capture_argument(&delayed_capture)) };
-        delayed_owner.raw_message(source_message(b"later\n\0"));
+        // SAFETY: registration is complete before this dispatch.
+        unsafe { delayed_owner.raw_message(source_message(b"later\n\0")) };
         print_trace_capture("delayed", &delayed_capture);
 
-        let null_owner = OutputOwner::new();
+        let null_owner = output_owner();
         let null_capture = Capture::new();
-        null_owner.raw_message(source_message(b"early\n\0"));
+        // SAFETY: this fixture serializes dispatch with registration.
+        unsafe { null_owner.raw_message(source_message(b"early\n\0")) };
         // SAFETY: both registrations are serialized; the null route's
         // argument is ignored and the custom capture remains live.
         unsafe { null_owner.register_output(None, core::ptr::null_mut()) };
+        // SAFETY: the null default is installed before this serialized dispatch.
+        unsafe { null_owner.raw_message(source_message(b"stderr\n\0")) };
         // SAFETY: see the preceding registration.
         unsafe { null_owner.register_output(Some(capture_output), capture_argument(&null_capture)) };
         print_trace_capture("null", &null_capture);
 
-        let post_owner = OutputOwner::new();
+        let post_owner = output_owner();
         let post_capture = Capture::new();
-        post_owner.raw_message(source_message(b"early\n\0"));
+        // SAFETY: this fixture serializes dispatch with post-init.
+        unsafe { post_owner.raw_message(source_message(b"early\n\0")) };
         // SAFETY: this follows source post-init before custom registration.
         unsafe { post_owner.post_init() };
-        post_owner.raw_message(source_message(b"later\n\0"));
+        // SAFETY: post-init is complete before this dispatch.
+        unsafe { post_owner.raw_message(source_message(b"later\n\0")) };
         // SAFETY: this fixture retains the callback state and has one custom
         // registration after the source post-init transition.
         unsafe { post_owner.register_output(Some(capture_output), capture_argument(&post_capture)) };
         print_trace_capture("post_init", &post_capture);
 
         std::println!("CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_TRACE_END");
+        assert_eq!(DEFAULT_STDERR_CAPTURE.count(), 3);
+        std::eprintln!("CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_DEFAULT_STDERR_BEGIN");
+        print_default_stderr_line("release", b"");
+        print_default_stderr_line("enabled", b"");
+        print_default_stderr_line("cap", b"");
+        print_default_stderr_line("verbose", b"");
+        print_default_stderr_line("delayed", b"");
+        print_default_stderr_line("null", DEFAULT_STDERR_CAPTURE.message(0));
+        std::eprint!("post_init=");
+        for index in 1..DEFAULT_STDERR_CAPTURE.count() {
+            if index != 1 {
+                std::eprint!(":");
+            }
+            for byte in DEFAULT_STDERR_CAPTURE.message(index) {
+                std::eprint!("{byte:02x}");
+            }
+        }
+        std::eprintln!();
+        std::eprintln!("CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_DEFAULT_STDERR_END");
     }
 }

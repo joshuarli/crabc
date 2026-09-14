@@ -114,6 +114,7 @@ static int run_null(void) {
   capture_reset(&capture);
   _mi_raw_message("early\n");
   mi_register_output(NULL, NULL);
+  _mi_raw_message("stderr\n");
   mi_register_output(&capture_output, &capture);
   print_capture("null", &capture);
   return 0;
