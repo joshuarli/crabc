@@ -24,7 +24,7 @@
 // descriptor write has FILE buffering, locking, or failure equivalence.
 
 use crate::lock::PrivateLock;
-use crabc_core::thread::thread_pointer_identity;
+use crabc_core::{Errno, thread::thread_pointer_identity};
 use core::cell::UnsafeCell;
 use core::ffi::{c_char, c_void, CStr};
 use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicUsize, Ordering};
@@ -111,11 +111,122 @@ impl SourceFormattedMessage {
         Self { bytes, length }
     }
 
+    /// Formats the one pinned huge-page `mbind` warning body.
+    ///
+    /// Pinned mimalloc v3.5.0 `src/prim/unix/prim.c:630-645` calls
+    /// `_mi_warning_message` with its fixed `%d`/`%ld`/`%lx` literal after a
+    /// failed `mbind`. Its selected formatter is `src/libc.c:285-307,
+    /// 313-436`: decimal emits its ordinary source digits, while a widthless
+    /// `x` still has the source minimum width two, zero fill, and uppercase
+    /// digits. This private constructor retains only that fixed call site in
+    /// the existing 992-byte `mi_vfprintf` image; it is not a general format
+    /// parser or logger.
+    ///
+    /// The future receiver calls this only after the source node predicate
+    /// `0 <= numa_node < 8 * MI_INTPTR_SIZE - 1`. `Errno` supplies the
+    /// positive captured Linux `errno` value that the C source passes as both
+    /// its `%ld` and `%lx` arguments.
+    #[inline]
+    pub(crate) fn mbind_failure(numa_node: i32, errno: Errno) -> Self {
+        debug_assert!(numa_node >= 0);
+        debug_assert!(numa_node < usize::BITS as i32 - 1);
+
+        let mut bytes = [0; SOURCE_FORMAT_STORAGE_BYTES];
+        let mut length = 0;
+        append_mbind_bytes(&mut bytes, &mut length, b"failed to bind huge (1GiB) pages to numa node ");
+        append_mbind_signed_decimal(&mut bytes, &mut length, numa_node);
+        append_mbind_bytes(&mut bytes, &mut length, b" (error: ");
+        let raw_errno = errno.raw() as u64;
+        append_mbind_unsigned_decimal(&mut bytes, &mut length, raw_errno);
+        append_mbind_bytes(&mut bytes, &mut length, b" (0x");
+        append_mbind_uppercase_hex_minimum_two(&mut bytes, &mut length, raw_errno);
+        append_mbind_bytes(&mut bytes, &mut length, b"))\n");
+        Self { bytes, length }
+    }
+
     #[inline]
     fn as_c_str(&self) -> &CStr {
         // SAFETY: construction always places a zero byte immediately after
         // `length`, and only copies the NUL-free contents of a `CStr`.
         unsafe { CStr::from_bytes_with_nul_unchecked(&self.bytes[..=self.length]) }
+    }
+}
+
+#[inline]
+fn append_mbind_bytes(
+    bytes: &mut [u8; SOURCE_FORMAT_STORAGE_BYTES], length: &mut usize, source: &[u8],
+) {
+    for byte in source {
+        if *length == SOURCE_FORMAT_PAYLOAD_BYTES {
+            return;
+        }
+        bytes[*length] = *byte;
+        *length += 1;
+    }
+}
+
+/// The selected signed `%d` route. The future primitive receiver admits only
+/// nonnegative nodes, but retaining the signed source spelling here keeps the
+/// body constructor tied to its exact C conversion rather than a fixture type.
+#[inline]
+fn append_mbind_signed_decimal(
+    bytes: &mut [u8; SOURCE_FORMAT_STORAGE_BYTES], length: &mut usize, value: i32,
+) {
+    if value < 0 {
+        append_mbind_bytes(bytes, length, b"-");
+        append_mbind_unsigned_decimal(bytes, length, (-(value as i64)) as u64);
+    } else {
+        append_mbind_unsigned_decimal(bytes, length, value as u64);
+    }
+}
+
+/// The selected base-10 part of `mi_out_num`; it writes zero as one `0` and
+/// otherwise reverses source digits without heap storage.
+#[inline]
+fn append_mbind_unsigned_decimal(
+    bytes: &mut [u8; SOURCE_FORMAT_STORAGE_BYTES], length: &mut usize, mut value: u64,
+) {
+    if value == 0 {
+        append_mbind_bytes(bytes, length, b"0");
+        return;
+    }
+    let mut reversed = [0_u8; 20];
+    let mut digits = 0;
+    while value != 0 {
+        reversed[digits] = b'0' + (value % 10) as u8;
+        digits += 1;
+        value /= 10;
+    }
+    while digits != 0 {
+        digits -= 1;
+        append_mbind_bytes(bytes, length, &reversed[digits..digits + 1]);
+    }
+}
+
+/// The selected `%lx` path: `mi_out_num`'s uppercase digits plus
+/// `_mi_vsnprintf`'s widthless-hex minimum of two and zero fill.
+#[inline]
+fn append_mbind_uppercase_hex_minimum_two(
+    bytes: &mut [u8; SOURCE_FORMAT_STORAGE_BYTES], length: &mut usize, mut value: u64,
+) {
+    if value == 0 {
+        append_mbind_bytes(bytes, length, b"00");
+        return;
+    }
+    let mut reversed = [0_u8; 16];
+    let mut digits = 0;
+    while value != 0 {
+        let digit = (value & 0x0f) as u8;
+        reversed[digits] = if digit <= 9 { b'0' + digit } else { b'A' + digit - 10 };
+        digits += 1;
+        value >>= 4;
+    }
+    if digits == 1 {
+        append_mbind_bytes(bytes, length, b"0");
+    }
+    while digits != 0 {
+        digits -= 1;
+        append_mbind_bytes(bytes, length, &reversed[digits..digits + 1]);
     }
 }
 
@@ -509,7 +620,7 @@ mod tests {
         DiagnosticOptionSnapshot, OutputCallback, OutputOwner, SourceFormattedMessage,
         ThreadWarningPrefix,
     };
-    use crabc_core::thread::thread_pointer_identity;
+    use crabc_core::{Errno, thread::thread_pointer_identity};
     use core::cell::UnsafeCell;
     use core::ffi::{c_char, c_void, CStr};
     use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -655,6 +766,31 @@ mod tests {
         let bounded = SourceFormattedMessage::from_source_formatted(source);
 
         assert_eq!(bounded.as_c_str().to_bytes().len(), 990);
+    }
+
+    #[test]
+    fn mbind_failure_body_formats_each_valid_source_node_and_representative_errno() {
+        // `_mi_prim_alloc_huge_os_pages` accepts a node strictly below
+        // `8 * MI_INTPTR_SIZE - 1`: every 64-bit source-valid node is 0..62.
+        // These errno representatives prove `%ld` and the source `%lx`
+        // minimum-two, uppercase format without baking the fixture's EPERM
+        // body into this selected formatter.
+        for numa_node in 0..63 {
+            for raw_errno in [1, 9, 10, 15, 16, 255, 4095] {
+                let body = SourceFormattedMessage::mbind_failure(
+                    numa_node,
+                    Errno::from_raw(raw_errno).expect("representative Linux errno"),
+                );
+                let expected = std::format!(
+                    "failed to bind huge (1GiB) pages to numa node {numa_node} (error: {raw_errno} (0x{raw_errno:02X}))\n"
+                );
+
+                assert_eq!(body.as_c_str().to_bytes(), expected.as_bytes());
+                assert_eq!(body.as_c_str().to_bytes_with_nul().len(), body.length + 1);
+                assert_eq!(body.bytes.len(), 992);
+                assert!(body.length <= 990);
+            }
+        }
     }
 
     #[test]
