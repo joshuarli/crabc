@@ -18,12 +18,15 @@
     "completion_status": "partial",
     "source_units": [
       "include/mimalloc/prim.h",
+      "include/mimalloc/internal.h",
+      "include/mimalloc-stats.h",
       "src/arena.c",
       "src/init.c",
       "src/os.c",
       "src/page.c",
       "src/prim/prim.c",
-      "src/prim/unix/prim.c"
+      "src/prim/unix/prim.c",
+      "src/stats.c"
     ],
     "source_map_records": [
       {
@@ -32,6 +35,10 @@
       },
       {
         "unit_id": "arena-lifecycle",
+        "required_status": "partial"
+      },
+      {
+        "unit_id": "statistics-collection",
         "required_status": "partial"
       },
       {
@@ -49,12 +56,16 @@
         "source_anchor": {
           "member": "src/init.c",
           "start_line": 493,
-          "end_line": 498,
-          "sha256": "840c37a72fe41be0dfbcb547f2a8d1d483725606cc87f109915d6cc0ed587b22"
+          "end_line": 512,
+          "sha256": "3cb365144a880e12b707b804efe62c40b267558d46845aa8dde2f3e70ddbe95a"
         },
         "required_definitions": [
           "static bool os_preloading",
-          "bool mi_decl_noinline _mi_preloading"
+          "bool mi_decl_noinline _mi_preloading",
+          "void _mi_auto_process_init",
+          "os_preloading = false",
+          "mi_process_init",
+          "_mi_options_post_init"
         ],
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential",
@@ -1022,7 +1033,7 @@
       "Complete the aligned-overmap substrate beyond the selected native direct map, direct-map fallback, prefix-zero/suffix-only geometry, direct/prefix/suffix success and Reserved/Committed cleanup-failure matrix, and one process-bound suffix terminal receiver: every other receiving allocator caller, callback/counter/error/retry path, and native cleanup differential remains required.",
       "Complete aligned-hint policy beyond the finite normal-release cursor, virtual-address eligibility, strict threshold, one controlled CAS schedule, and selected pinned-C debug/secure source profiles plus one admitted wrapped direct caller: actual secure/debug runtime configuration, ambient source options/attachments, source warning/error reporting, every caller, and broader contention remain required. Also complete Linux THP failed-prctl/production-caller behavior, MAP_HUGETLB/MADV_HUGEPAGE success behavior, and their native differential evidence.",
       "Complete huge-page reservation/free/progress/timeout behavior, high-address hints, mbind and NUMA option/arena-placement policy, plus all associated failure ownership and diagnostics.",
-      "Complete the unconditional subprocess statistics-event owner and the full allocator/arena lifecycle and callback routes beyond the selected fixed normal/offset MemoryId owner, normal-offset release counter/failure retry, contained Linux reuse no-op, reset-advice snapshot, one-page protection retry, first-arena adjustment restoration, one process-lived external mi_manage_memory callback owner with bounded commit/purge results, and selected ordinary/external direct page-extension receivers."
+      "Complete the unconditional subprocess statistics-event owner beyond the private selected `arena_count` fresh-high-water and `arena_purges` eligible-expiry counters, plus the full allocator/arena lifecycle and callback routes beyond the selected fixed normal/offset MemoryId owner, normal-offset release counter/failure retry, contained Linux reuse no-op, reset-advice snapshot, one-page protection retry, first-arena adjustment restoration, one process-lived external mi_manage_memory callback owner with bounded commit/purge results, and selected ordinary/external direct page-extension receivers."
     ]
   }
 }

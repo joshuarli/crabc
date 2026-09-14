@@ -45,6 +45,7 @@ static void emit_purge(int64_t value) {
 static void trace_purge(long delay, bool decommit, bool mixed) {
   mi_option_set(mi_option_purge_delay, delay);
   mi_option_set(mi_option_purge_decommits, decommit);
+  const int64_t arena_count = subprocess->stats.arena_count.total;
   mi_arena_t* owner = arena(false);
   mi_memid_t memory;
   void* p = mi_arena_try_alloc_at(owner, 2, !mixed, 0, &memory);
@@ -69,10 +70,14 @@ static void trace_purge(long delay, bool decommit, bool mixed) {
   emit_purge(subprocess->stats.committed.current - committed);
   emit_purge(mi_bitmap_popcountN(owner->slices_committed, start, 2));
   emit_purge(subprocess->stats.arena_purges.total - arena_purges);
+  emit_purge(subprocess->stats.arena_count.total - arena_count);
 }
 
 int main(void) {
-  mi_process_init();
+  // `src/init.c`'s process-loader entry clears the source preloading state
+  // before its normal process initialization. This direct fixture needs that
+  // exact state for delayed purge scheduling; it does not claim CRT integration.
+  _mi_auto_process_init();
   subprocess = _mi_subproc_main();
   require(_mi_os_has_overcommit());
   mi_arena_t* eager = arena(true);
@@ -93,6 +98,6 @@ int main(void) {
   trace_purge(0, false, false);
   trace_purge(0, false, true);
   trace_purge(1000, true, false);
-  require(purge_field == 28);
+  require(purge_field == 32);
   return 0;
 }

@@ -72,6 +72,61 @@ pub(crate) struct StatCounter {
     pub(crate) total: AtomicI64Value,
 }
 
+/// The two unconditional subprocess counter fields driven by the selected
+/// arena lifecycle receiver.
+///
+/// Source map: pinned mimalloc v3.5.0 `src/arena.c:1573-1605` increments
+/// `arena_count` only after a fresh high-water slot has published its arena
+/// pointer; `src/arena.c:2362-2385` increments `arena_purges` immediately
+/// after consuming an eligible expiry. Both calls expand through
+/// `include/mimalloc/internal.h:394` to the relaxed counter operation in
+/// `src/stats.c:43-45`. This remains a private process event owner, not a
+/// `mi_stats_t` layout, statistics collector, or reporting API.
+pub(crate) struct ArenaStatistics {
+    arena_count: StatCounter,
+    arena_purges: StatCounter,
+}
+
+/// One read-only observation of the selected source arena lifecycle events.
+///
+/// This evidence-only value deliberately exposes no generic adjustment path:
+/// its two fields name the exact pinned `mi_stats_t` counters that the bounded
+/// Rust arena registry and delayed-purge receivers mutate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ArenaStatisticsSnapshot {
+    pub(crate) arena_count: i64,
+    pub(crate) arena_purges: i64,
+}
+
+impl ArenaStatistics {
+    pub(crate) const fn new() -> Self {
+        Self {
+            arena_count: StatCounter::new(),
+            arena_purges: StatCounter::new(),
+        }
+    }
+
+    /// Records the source's successful fresh high-water arena publication.
+    #[inline]
+    pub(crate) fn high_water_arena_published(&self) {
+        self.arena_count.increase(1);
+    }
+
+    /// Records the source's consumption of an eligible arena purge expiry.
+    #[inline]
+    pub(crate) fn arena_purge_expiry_consumed(&self) {
+        self.arena_purges.increase(1);
+    }
+
+    #[inline]
+    pub(crate) fn snapshot(&self) -> ArenaStatisticsSnapshot {
+        ArenaStatisticsSnapshot {
+            arena_count: i64_load_relaxed(&self.arena_count.total),
+            arena_purges: i64_load_relaxed(&self.arena_purges.total),
+        }
+    }
+}
+
 impl StatCounter {
     pub(crate) const fn new() -> Self {
         Self {
@@ -246,6 +301,29 @@ mod tests {
         count.adjust(2);
         assert_eq!(i64_load_relaxed(&count.total), 10);
         assert_eq!(i64_load_relaxed(&count.peak), 10);
+    }
+
+    #[test]
+    fn arena_events_are_two_relaxed_source_counters_without_a_generic_adjustment() {
+        let events = ArenaStatistics::new();
+        assert_eq!(
+            events.snapshot(),
+            ArenaStatisticsSnapshot {
+                arena_count: 0,
+                arena_purges: 0,
+            }
+        );
+
+        events.high_water_arena_published();
+        events.arena_purge_expiry_consumed();
+        events.arena_purge_expiry_consumed();
+        assert_eq!(
+            events.snapshot(),
+            ArenaStatisticsSnapshot {
+                arena_count: 1,
+                arena_purges: 2,
+            }
+        );
     }
 
     #[test]

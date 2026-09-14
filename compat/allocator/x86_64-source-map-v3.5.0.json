@@ -1321,17 +1321,32 @@
     },
     {
       "id": "statistics-collection",
-      "source_scope": "Thread and process statistics maintenance and reporting.",
+      "source_scope": "Thread and process statistics maintenance and reporting, including the selected unconditional subprocess arena events.",
       "source_anchor": {
         "member": "src/stats.c",
         "start_line": 20,
         "end_line": 847,
         "sha256": "2f1bb4ddd180ae8349352dc6ba13443fd7a14f3572eb67f809a1959676a31c9a"
       },
-      "rust_modules": [],
-      "status": "not-started",
-      "difference": "No statistics collection or reporting subsystem is mapped in this engine evidence profile.",
-      "evidence": []
+      "rust_modules": [
+        "crabc_mimalloc::arena",
+        "crabc_mimalloc::arena_owned",
+        "crabc_mimalloc::statistics",
+        "crabc_mimalloc::subproc"
+      ],
+      "status": "partial",
+      "difference": "`MainSubprocess` privately owns only the unconditional `arena_count` and `arena_purges` counter fields reached by pinned `src/arena.c`: a successful fresh high-water arena pointer publication increments `arena_count`, and consuming an eligible delayed-purge expiry increments `arena_purges` before range traversal. Both use the pinned relaxed multi-thread counter operation. No `mi_stats_t` layout, aggregation, collection, reporting, public statistics API, other subprocess field, or allocator lifecycle claim is mapped.",
+      "evidence": [
+        "compat/allocator/m2-vm-x86_64-v3.5.0.fragment.json",
+        "compat/allocator/m2_arena_owned_x86_64.c",
+        "compat/allocator/m2_vm_x86_64.py",
+        "compat/allocator/test_m2_vm_x86_64.py",
+        "crabc-mimalloc/src/arena.rs",
+        "crabc-mimalloc/src/arena_owned.rs",
+        "crabc-mimalloc/src/arena_purge.rs",
+        "crabc-mimalloc/src/statistics.rs",
+        "crabc-mimalloc/src/subproc.rs"
+      ]
     },
     {
       "id": "static-c-amalgamation",
@@ -1579,12 +1594,12 @@
     "status_counts": {
       "implemented": 3,
       "inapplicable": 3,
-      "not-started": 4,
-      "partial": 24
+      "not-started": 3,
+      "partial": 25
     },
     "unfinished_unit_count": 28,
     "unit_count": 34,
     "unit_ids_sha256": "dca679d8587cb38bcf6e6c62379284ed35a55d1b7991d07b0d30eac767670052",
-    "units_sha256": "368993710197c41085ed376884892c014ed11435c98fefb989efb2dc12fb1ba3"
+    "units_sha256": "f9ea56a611f57640a3e4246f42f7842b1318f0b65d466cf70cc129508141a4f1"
   }
 }

@@ -182,8 +182,11 @@ pub(crate) struct ArenaRegistry {
 }
 
 // SAFETY: every slot is independently atomically published. The subprocess
-// pointer is selected once before registry publication, then only read as an
-// immutable opaque identity and never dereferenced here.
+// pointer is selected once before registry publication. After a fresh slot's
+// Release pointer publication succeeds, `insert` dereferences the matching
+// process-long arena pointer solely to perform the source's relaxed private
+// event update; the registry binding and every initialized arena retain that
+// owner for the arena's whole published lifetime.
 unsafe impl Send for ArenaRegistry {}
 unsafe impl Sync for ArenaRegistry {}
 
@@ -271,7 +274,10 @@ impl ArenaRegistry {
     /// # Safety
     ///
     /// `arena` must be uniquely owned, fully initialized, and remain live
-    /// until the registry is quiesced. It must not already be registered.
+    /// until the registry is quiesced. It must not already be registered. Its
+    /// `subprocess` pointer must equal this registry's initialized binding and
+    /// remain valid for that same lifetime, because a newly published
+    /// high-water slot performs the source's subprocess counter update.
     unsafe fn insert(&self, arena: *mut Arena) -> bool {
         if arena.is_null() {
             return false;
@@ -293,6 +299,24 @@ impl ArenaRegistry {
                 unsafe { (*arena).arena_index = count };
                 let mut expected = null_mut();
                 if pointer_cas_strong_release(&self.arenas[count], &mut expected, arena) {
+                    // Pinned `mi_arenas_add` increments only after this fresh
+                    // high-water slot's pointer publication succeeds. A
+                    // reused null slot and every failed publication bypass it.
+                    // SAFETY: `insert` requires the initialized arena and
+                    // registry to carry the same non-null, process-long
+                    // subprocess pointer. All production constructors bind
+                    // before management; the only nullable registry state is
+                    // the pre-publication construction state.
+                    let subprocess = unsafe {
+                        core::ptr::NonNull::new_unchecked((*arena).subprocess)
+                    };
+                    debug_assert!(core::ptr::eq(subprocess.as_ptr(), self.subprocess()));
+                    unsafe {
+                        subprocess
+                            .as_ref()
+                            .arena_statistics()
+                            .high_water_arena_published();
+                    }
                     return true;
                 }
             }
@@ -1342,6 +1366,14 @@ where
     F: FnMut(*mut Arena) -> Result<(), ManageArenaError>,
     N: FnMut() -> i32,
 {
+    // `mi_arenas_add` always receives the source subprocess that owns the
+    // arena. Rust permits constructing a registry before that one-time
+    // binding, but never publishing through it: a successful fresh slot must
+    // update the mandatory process-owned source counter immediately after
+    // pointer publication.
+    if registry.subprocess().is_null() {
+        return Err(ManageArenaError::InvalidRegion);
+    }
     let plan = ExternalArenaPlan::from_address(start as usize, size)
         .ok_or(ManageArenaError::InvalidRegion)?;
     let aligned_start = unsafe { start.add(plan.prefix_bytes()) };
@@ -2944,7 +2976,8 @@ mod tests {
     #[test]
     fn in_place_initialization_marks_only_usable_slices_free_and_preserves_flags() {
         let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
-        let registry = ArenaRegistry::new(MainSubprocess::test_static_owner().as_ptr());
+        let subprocess = MainSubprocess::test_static_owner();
+        let registry = ArenaRegistry::new(subprocess.as_ptr());
         let managed = unsafe {
             manage_external_in_place(
                 &registry,
@@ -2964,6 +2997,11 @@ mod tests {
         assert_eq!(managed.total_size(), ARENA_MIN_SIZE);
         assert_eq!(managed.managed_size(), ARENA_MIN_SIZE);
         assert_eq!(registry.count(), 1);
+        assert_eq!(
+            subprocess.arena_statistics().snapshot().arena_count,
+            1,
+            "src/arena.c counts only a newly published high-water arena slot",
+        );
 
         let arena = unsafe { registry.arena_at(0) }.unwrap();
         assert_eq!(arena.memid.kind(), crate::types::MemoryKind::External);
@@ -2988,6 +3026,113 @@ mod tests {
         assert_eq!(purge.is_clear_range(0, BCHUNK_BITS), Some(true));
         let pages = unsafe { view.pages() }.unwrap();
         assert_eq!(pages.is_clear_range(0, BCHUNK_BITS), Some(true));
+    }
+
+    #[test]
+    fn unbound_registry_refuses_management_before_any_source_publication() {
+        let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let registry = ArenaRegistry::new(null_mut());
+        let error = unsafe {
+            manage_external_in_place(
+                &registry,
+                region.as_ptr(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                true,
+                false,
+                true,
+                -1,
+                false,
+                None,
+            )
+        }
+        .unwrap_err();
+
+        assert_eq!(error, ManageArenaError::InvalidRegion);
+        assert_eq!(registry.count(), 0);
+    }
+
+    #[test]
+    fn reused_null_registry_slot_does_not_repeat_the_high_water_event() {
+        let subprocess = MainSubprocess::test_static_owner();
+        let registry = ArenaRegistry::new(subprocess.as_ptr());
+        let mut first_region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let first = unsafe {
+            manage_external_in_place(
+                &registry,
+                first_region.as_ptr(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                true,
+                false,
+                true,
+                -1,
+                false,
+                None,
+            )
+        }
+        .unwrap();
+        assert!(first.is_complete());
+        assert_eq!(subprocess.arena_statistics().snapshot().arena_count, 1);
+
+        // Model the source registry state after an arena slot becomes NULL.
+        // The original external region remains live and is never inspected
+        // after this controlled test transition.
+        registry.arenas[0].store(null_mut(), Ordering::Release);
+        let mut replacement_region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let replacement = unsafe {
+            manage_external_in_place(
+                &registry,
+                replacement_region.as_ptr(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                true,
+                false,
+                true,
+                -1,
+                false,
+                None,
+            )
+        }
+        .unwrap();
+
+        assert!(replacement.is_complete());
+        assert_eq!(registry.count(), 1);
+        assert_eq!(
+            subprocess.arena_statistics().snapshot().arena_count,
+            1,
+            "pinned src/arena.c returns from a reused NULL slot before arena_count",
+        );
+    }
+
+    #[test]
+    fn failed_arena_preparation_never_records_a_high_water_publication() {
+        let subprocess = MainSubprocess::test_static_owner();
+        let registry = ArenaRegistry::new(subprocess.as_ptr());
+        let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let error = unsafe {
+            manage_external_in_place(
+                &registry,
+                region.as_ptr(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                false,
+                false,
+                false,
+                -1,
+                false,
+                None,
+            )
+        }
+        .unwrap_err();
+
+        assert_eq!(error, ManageArenaError::CommitRequired);
+        assert_eq!(registry.count(), 0);
+        assert_eq!(
+            subprocess.arena_statistics().snapshot().arena_count,
+            0,
+            "pinned src/arena.c reaches arena_count only after successful pointer publication",
+        );
     }
 
     #[test]

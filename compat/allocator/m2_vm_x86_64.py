@@ -34,6 +34,11 @@ ALIGNED_HINT_PROFILE_TRACE_BEGIN = "CRABC_MI_M2_ALIGNED_HINT_SOURCE_PROFILE_TRAC
 ALIGNED_HINT_PROFILE_TRACE_END = "CRABC_MI_M2_ALIGNED_HINT_SOURCE_PROFILE_TRACE_END"
 ALIGNED_OVERMAP_TRACE_BEGIN = "CRABC_MI_M2_ALIGNED_OVERMAP_TRACE_BEGIN"
 ALIGNED_OVERMAP_TRACE_END = "CRABC_MI_M2_ALIGNED_OVERMAP_TRACE_END"
+ARENA_OWNED_EVENT_FIELD_COUNT = 32
+ARENA_OWNED_EVENT_PREFIX = "m2.arena.purge."
+ARENA_OWNED_RUST_INLINE_PREFIX = (
+    "test arena::owned::tests::emit_native_owned_arena_purge_trace ... "
+)
 EXPECTED_RUST_TEST_COUNT = 1
 LARGE_PAGE_RETRY_CAPTURE_REAP_TEST_DEFINE = (
     "-DCRABC_M2_LARGE_PAGE_RETRY_CAPTURE_REAP_TEST=1"
@@ -442,12 +447,15 @@ BRANCH_IDS = (
 )
 SOURCE_UNITS = (
     "include/mimalloc/prim.h",
+    "include/mimalloc/internal.h",
+    "include/mimalloc-stats.h",
     "src/arena.c",
     "src/init.c",
     "src/os.c",
     "src/page.c",
     "src/prim/prim.c",
     "src/prim/unix/prim.c",
+    "src/stats.c",
 )
 
 
@@ -527,6 +535,7 @@ def load_fragment(path: Path) -> dict[str, Any]:
     expected_source_map = [
         {"unit_id": "os-allocation-policy", "required_status": "partial"},
         {"unit_id": "arena-lifecycle", "required_status": "partial"},
+        {"unit_id": "statistics-collection", "required_status": "partial"},
         {"unit_id": "linux-unix-primitives", "required_status": "partial"},
         {"unit_id": "primitive-interface", "required_status": "partial"},
     ]
@@ -770,6 +779,45 @@ def parse_trace(output: str, *, source: str) -> dict[str, int]:
         )
     _validate_trace_values(values, source=source)
     return values
+
+
+def parse_arena_owned_purge_trace(output: str, *, source: str) -> tuple[int, ...]:
+    """Read the finite raw arena-event trace without accepting generic log text.
+
+    The pinned C producer emits every `m2.arena.purge.N=V` field at a line
+    start. Rust libtest writes only field zero after this exact test-name
+    delimiter and puts fields one through 31 at line starts. No other prefix,
+    separator, field order, or integer spelling is accepted.
+    """
+
+    values: list[int] = []
+    for line in output.splitlines():
+        expected = f"{ARENA_OWNED_EVENT_PREFIX}{len(values)}="
+        if line.startswith(expected):
+            raw_value = line[len(expected):]
+        elif not values and line.startswith(ARENA_OWNED_RUST_INLINE_PREFIX + expected):
+            raw_value = line[len(ARENA_OWNED_RUST_INLINE_PREFIX + expected):]
+        elif ARENA_OWNED_EVENT_PREFIX in line:
+            raise ValueError(f"{source} arena event trace has an unexpected field position or index")
+        else:
+            continue
+        negative = raw_value.startswith("-")
+        digits = raw_value[1:] if negative else raw_value
+        if (
+            not digits
+            or not digits.isascii()
+            or not digits.isdecimal()
+            or (len(digits) > 1 and digits.startswith("0"))
+            or (negative and digits == "0")
+        ):
+            raise ValueError(f"{source} arena event trace has a noncanonical decimal field value")
+        values.append(int(raw_value))
+    if len(values) != ARENA_OWNED_EVENT_FIELD_COUNT:
+        raise ValueError(
+            f"{source} arena event trace has {len(values)} fields, expected {ARENA_OWNED_EVENT_FIELD_COUNT}"
+        )
+    return tuple(values)
+
 
 
 def parse_aligned_hint_profile_trace(

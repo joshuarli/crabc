@@ -418,7 +418,6 @@ pub(crate) struct ProcessArenaBacking {
     registry: ArenaRegistry,
     slots: [ArenaAllocationSlot; MAX_ARENAS],
     purge_expire: crate::atomic::AtomicI64Value,
-    arena_purges: crate::statistics::StatCounter,
 }
 
 // SAFETY: the lock exclusively owns all unpublished slot transitions. Once
@@ -439,7 +438,6 @@ impl ProcessArenaBacking {
             registry: ArenaRegistry::new(core::ptr::null_mut()),
             slots: [const { ArenaAllocationSlot::new() }; MAX_ARENAS],
             purge_expire: crate::atomic::AtomicI64Value::new(0),
-            arena_purges: crate::statistics::StatCounter::new(),
         }
     }
 
@@ -2407,14 +2405,18 @@ mod tests {
         let claim = unsafe { backing.try_find_free(search(id), 2, ARENA_SLICE_SIZE, true) }.unwrap();
         assert!(claim.release());
         let before = process.subprocess().vm_statistics().snapshot();
+        let before_arena_events = process.subprocess().arena_statistics().snapshot();
         let guard = crate::atomic::try_atomic_guard(&purge::PURGE_GUARD).unwrap();
         assert!(unsafe { backing.collect_purge(process, config(), true, true, 0) });
         assert_eq!(process.subprocess().vm_statistics().snapshot(), before);
-        assert_eq!(crate::atomic::i64_load_relaxed(&backing.arena_purges.total), 0);
+        assert_eq!(process.subprocess().arena_statistics().snapshot(), before_arena_events,
+            "the nonblocking source purge guard prevents the post-expiry counter update");
         drop(guard);
         assert!(unsafe { backing.collect_purge(process, config(), true, true, 0) });
         assert_eq!(process.subprocess().vm_statistics().snapshot().purge_calls, before.purge_calls + 1);
-        assert_eq!(crate::atomic::i64_load_relaxed(&backing.arena_purges.total), 1);
+        assert_eq!(process.subprocess().arena_statistics().snapshot().arena_purges,
+            before_arena_events.arena_purges + 1,
+            "src/arena.c increments immediately after it clears an eligible expiry");
     }
 
     #[test]
@@ -2437,10 +2439,10 @@ mod tests {
         assert!(unsafe { backing.collect_purge(process, config(), true, false, 1) });
         assert_eq!(expiry(arenas[1]), 0);
         assert!(expiry(arenas[0]) > 0 && expiry(arenas[2]) > 0);
-        assert_eq!(crate::atomic::i64_load_relaxed(&backing.arena_purges.total), 1);
+        assert_eq!(process.subprocess().arena_statistics().snapshot().arena_purges, 1);
         assert!(unsafe { backing.collect_purge(process, config(), true, true, 2) });
         assert!(arenas.iter().all(|id| expiry(*id) == 0));
-        assert_eq!(crate::atomic::i64_load_relaxed(&backing.arena_purges.total), 3);
+        assert_eq!(process.subprocess().arena_statistics().snapshot().arena_purges, 3);
         assert!(crate::atomic::i64_load_relaxed(&backing.purge_expire) > 0);
         assert!(unsafe { backing.collect_purge(process, config(), true, true, 0) });
         assert_eq!(crate::atomic::i64_load_relaxed(&backing.purge_expire), 0);
@@ -2540,6 +2542,7 @@ mod tests {
             (0, false, true), (1000, true, false)] {
             let process = purge_process(delay, decommit);
             let backing = backing();
+            let before_registry_events = process.subprocess().arena_statistics().snapshot();
             let id = install(backing, process, MapAccess::Reserved);
             let claim = unsafe { backing.try_find_free(search(id), 2, ARENA_SLICE_SIZE, !mixed) }.unwrap();
             let start = claim.slice_index();
@@ -2550,18 +2553,21 @@ mod tests {
                 unsafe { view.slices_committed() }.unwrap().set_range(start, 1).unwrap();
             }
             let before = process.subprocess().vm_statistics().snapshot();
+            let before_purge_events = process.subprocess().arena_statistics().snapshot();
             assert!(claim.release());
             assert!(unsafe { backing.collect_purge(process, config(), true, true, 0) });
             let after = process.subprocess().vm_statistics().snapshot();
+            let after_arena_events = process.subprocess().arena_statistics().snapshot();
             for value in [after.purge_calls - before.purge_calls, after.purged - before.purged,
                 after.reset_calls - before.reset_calls, after.reset - before.reset,
                 after.committed_current - before.committed_current,
                 unsafe { view.slices_committed() }.unwrap().popcount_range(start, 2).unwrap() as i64,
-                crate::atomic::i64_load_relaxed(&backing.arena_purges.total)] {
+                after_arena_events.arena_purges - before_purge_events.arena_purges,
+                after_arena_events.arena_count - before_registry_events.arena_count] {
                 std::println!("m2.arena.purge.{field}={value}"); field += 1;
             }
         }
-        assert_eq!(field, 28);
+        assert_eq!(field, 32);
     }
 
     #[test]

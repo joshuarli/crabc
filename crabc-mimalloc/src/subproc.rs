@@ -117,6 +117,10 @@ pub(crate) struct MainSubprocess {
     /// Source VM events are unconditional at `MI_STAT=0`. This is the exact
     /// OS-path subset, not a public `mi_stats_t` layout or a generic sink.
     vm_statistics: crate::statistics::VmStatistics,
+    /// The selected source arena lifecycle events share the subprocess
+    /// lifetime with their arena registry. This remains a two-counter private
+    /// owner, not a general statistics state or public ABI projection.
+    arena_statistics: crate::statistics::ArenaStatistics,
     /// Source bitmap events are unconditional even when optional statistics
     /// are disabled. This is a typed subset, not the full `mi_stats_t` ABI.
     bitmap_statistics: crate::bitmap::BitmapStatistics,
@@ -275,6 +279,7 @@ impl MainSubprocess {
         Self {
             arena_backing: crate::arena::ProcessArenaBacking::new(),
             vm_statistics: crate::statistics::VmStatistics::new(),
+            arena_statistics: crate::statistics::ArenaStatistics::new(),
             bitmap_statistics: crate::bitmap::BitmapStatistics::new(),
             thread_count: AtomicUsize::new(0),
             thread_total_count: AtomicUsize::new(0),
@@ -315,6 +320,11 @@ impl MainSubprocess {
     #[inline]
     pub(crate) fn vm_statistics(&self) -> &crate::statistics::VmStatistics {
         &self.vm_statistics
+    }
+
+    #[inline]
+    pub(crate) fn arena_statistics(&self) -> &crate::statistics::ArenaStatistics {
+        &self.arena_statistics
     }
 
     /// Reserves the unique source-static ticket-zero path for a process
