@@ -1340,7 +1340,7 @@ def validate_mbind_boundary_report(report: Mapping[str, Any]) -> dict[str, Any]:
     expected_keys = {
         "build", "fixture", "format", "mbind_direct_include_profile", "run", "schema", "upstream",
     }
-    if set(report) != expected_keys:
+    if not isinstance(report, Mapping) or set(report) != expected_keys:
         raise ValueError("mbind boundary report fields changed")
     if report.get("schema") != MBIND_BOUNDARY_SCHEMA or report.get("format") != 1:
         raise ValueError("mbind boundary report schema changed")
