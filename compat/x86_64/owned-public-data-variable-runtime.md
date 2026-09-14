@@ -61,6 +61,12 @@ commands. Every probe compile calls the selected dynamic driver with only
 -fno-stack-protector -c SOURCE -o OBJECT`. The installed driver itself fixes
 the installed header root and selected PIE code generation; a caller cannot
 pass `-nostdinc`, `-isystem`, or an explicit PIC/PIE mode into this receipt.
+Each static link runs in its executable directory and passes only the basename
+of its `.crabc-link.json` receipt. The sealed static driver records map and
+trace sidecars relative to that receipt, and the retained product reader
+resolves them from the receipt parent. Dynamic links derive their own sidecars
+from `-o` and retain the collection directory as their command working
+directory.
 `validate-report REPORT` takes the same supplied cohort and companion
 paths; it replays retained source, objects, link receipts, transcripts, roots,
 and source-specific expected streams without running a compiler, linker, target

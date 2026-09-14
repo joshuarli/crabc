@@ -17,6 +17,8 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'compat/x86_64'))
 import owned_public_data_variable_runtime as reader
 import crabc_cc_owned_dynamic as dynamic_driver
+import crabc_cc_static as static_driver
+import owned_posix_product_evidence as product_evidence
 
 
 class PublicDataVariableRuntimeContractTests(unittest.TestCase):
@@ -217,6 +219,96 @@ class PublicDataVariableRuntimeContractTests(unittest.TestCase):
                     self.assertIn('-fPIE', compiler_command)
                     self.assertNotIn('-fPIC', compiler_command)
                     self.assertNotIn('-fno-pie', compiler_command)
+
+    def test_static_link_receipts_use_their_parent_as_the_driver_working_directory(self) -> None:
+        """The static driver serializes relative map paths beside its receipt.
+
+        Its retained product reader resolves those paths from the receipt
+        parent.  Passing a receipt path which already names that parent while
+        running from a higher directory would duplicate ``executables/<id>``
+        on replay.
+        """
+        output = ROOT / '.work' / 'x86_64' / 'public-data-runtime-static-receipt-command-tests'
+        output.mkdir(parents=True, exist_ok=True)
+        for mode in ('static', 'static-pie'):
+            with self.subTest(mode=mode):
+                directory = output / mode / 'executables' / 'ns-flagdata'
+                object_path = output / mode / 'objects' / 'ns-flagdata.o'
+                executable = directory / mode
+                argv, cwd = reader.runtime_probe_static_link_command(
+                    '/tools/static', mode, object_path, executable,
+                )
+                self.assertEqual(cwd, directory)
+                self.assertEqual(argv, [
+                    '/tools/static', '-' + mode, '--link-receipt', mode + '.crabc-link.json',
+                    str(object_path), '-o', str(executable),
+                ])
+
+    def test_static_driver_sidecar_record_resolves_from_the_receipt_parent(self) -> None:
+        """Exercise the static driver's record against the retained product reader.
+
+        This uses only text stand-ins for the linker's inputs and sidecars. It
+        proves the path convention shared by the driver and product reader,
+        without compiling, linking, or altering an ELF payload.
+        """
+        work = ROOT / '.work' / 'x86_64' / 'public-data-runtime-static-receipt-sidecar-tests'
+        work.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=work) as temporary:
+            checkout = Path(temporary) / 'checkout'
+            product = checkout / 'product'
+            library = product / 'usr/lib'
+            for name in ('crt1.o', 'rcrt1.o', 'crti.o', 'crtn.o', 'libc.a', 'libcrabc-builtins.a'):
+                path = library / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(('product:' + name).encode())
+            linker = checkout / '.work/x86_64/receipt/tools/ld.lld'
+            linker.parent.mkdir(parents=True)
+            linker.write_bytes(b'linker')
+            for mode, static_mode in (
+                ('static', static_driver.STATIC_ET_EXEC),
+                ('static-pie', static_driver.STATIC_PIE),
+            ):
+                with self.subTest(mode=mode):
+                    directory = checkout / '.work/x86_64/receipt/executables/ns-flagdata' / mode
+                    directory.mkdir(parents=True)
+                    object_path = checkout / '.work/x86_64/receipt/objects' / (mode + '.o')
+                    object_path.parent.mkdir(parents=True, exist_ok=True)
+                    object_path.write_bytes(b'ordinary source object:' + mode.encode())
+                    executable = directory / mode
+                    executable.write_bytes(b'ordinary static output:' + mode.encode())
+                    argv, cwd = reader.runtime_probe_static_link_command(
+                        '/tools/static', mode, object_path, executable,
+                    )
+                    receipt_argument = Path(argv[argv.index('--link-receipt') + 1])
+                    self.assertEqual(cwd, directory)
+                    previous = Path.cwd()
+                    try:
+                        os.chdir(cwd)
+                        receipt, map_path, trace_path = static_driver.receipt_sidecars(product, receipt_argument)
+                        map_path.write_bytes(b'ordinary link map:' + mode.encode())
+                        trace_path.write_bytes(b'ordinary link trace:' + mode.encode())
+                        static_driver.write_link_receipt(
+                            product, static_mode, [object_path], executable, linker,
+                            receipt, map_path, trace_path,
+                        )
+                    finally:
+                        os.chdir(previous)
+
+                    receipt_path = directory / (mode + '.crabc-link.json')
+                    record = json.loads(receipt_path.read_text(encoding='utf-8'))
+                    self.assertEqual(record['map']['path'], mode + '.crabc-link.map')
+                    self.assertEqual(
+                        product_evidence._retained_source_path(
+                            checkout, '/workspace', record['map']['path'], receipt_path, 'static link map',
+                        ),
+                        directory / (mode + '.crabc-link.map'),
+                    )
+                    stale = dict(record['map'])
+                    stale['path'] = directory.relative_to(checkout).as_posix() + '/' + mode + '.crabc-link.map'
+                    with self.assertRaisesRegex(product_evidence.ProductEvidenceError, 'unreadable'):
+                        product_evidence._retained_source_path(
+                            checkout, '/workspace', stale['path'], receipt_path, 'static link map',
+                        )
 
 
 class PublicDataVariableRuntimeExecutionRootTests(unittest.TestCase):
@@ -498,7 +590,8 @@ class PublicDataVariableRuntimePublicReplayTests(unittest.TestCase):
     def _identity(self, path: Path, description: str) -> dict[str, object]:
         return reader._receipt_file_identity(self.receipt, path, description)
 
-    def _raw_record(self, label: str, argv: list[str], stdout: bytes = b'') -> dict[str, object]:
+    def _raw_record(self, label: str, argv: list[str], stdout: bytes = b'',
+                    cwd: Path | None = None) -> dict[str, object]:
         paths = {}
         for field, suffix, payload in (
             ('command', 'command.json', json.dumps(argv).encode()),
@@ -507,7 +600,8 @@ class PublicDataVariableRuntimePublicReplayTests(unittest.TestCase):
             path = reader._recorded_command_path(self.receipt, label, suffix)
             self._write(path, payload, 0o644)
             paths[field] = reader.ordinary_link.work_file_identity(ROOT, path, 'synthetic ' + field)
-        return {'label': label, 'argv': argv, 'cwd': str(self.receipt), 'outcome': 'ok', **paths}
+        return {'label': label, 'argv': argv, 'cwd': str(self.receipt if cwd is None else cwd),
+                'outcome': 'ok', **paths}
 
     def _command_rows(self) -> list[dict[str, object]]:
         rows = []
@@ -529,13 +623,14 @@ class PublicDataVariableRuntimePublicReplayTests(unittest.TestCase):
             for mode in reader.CANDIDATE_MODES:
                 executable = executable_dir / mode
                 if mode in {'static', 'static-pie'}:
-                    argv = ['/tools/static', '-' + mode, '--link-receipt',
-                            (executable_dir / (mode + '.crabc-link.json')).relative_to(self.receipt).as_posix(),
-                            object_path, '-o', str(executable)]
+                    argv, cwd = reader.runtime_probe_static_link_command(
+                        '/tools/static', mode, Path(object_path), executable,
+                    )
                 else:
                     argv = ['/tools/dynamic', '--dynamic-pie' if mode == 'dynamic-pie' else '--dynamic-non-pie',
                             object_path, '-o', str(executable)]
-                rows.append(self._raw_record(identifier + '-' + mode + '-link', argv))
+                    cwd = None
+                rows.append(self._raw_record(identifier + '-' + mode + '-link', argv, cwd=cwd))
             oracle_root = self.receipt / 'roots' / identifier / 'oracle-static'
             oracle_stdout = (reader.TZIF_ORACLE_STDOUT if identifier == 'timezone-tzif-known-difference'
                              else scenario['expected_stdout'])
@@ -658,6 +753,14 @@ class PublicDataVariableRuntimePublicReplayTests(unittest.TestCase):
             self.assertEqual(result['coverage'], report['coverage'])
             self.assertEqual(result['report']['path'], 'report.json')
 
+            changed = copy.deepcopy(report)
+            next(row for row in changed['commands']
+                 if row['label'] == 'ns-flagdata-static-link')['cwd'] = str(self.receipt)
+            self._write_report(changed)
+            with self.assertRaisesRegex(reader.PublicDataVariableRuntimeError, 'working directory differs'):
+                self._validate(path)
+
+            self._write_report(report)
             changed = copy.deepcopy(report)
             changed['executions']['ns-flagdata/oracle-static']['command'] = 'math-sign-static-run'
             self._write_report(changed)

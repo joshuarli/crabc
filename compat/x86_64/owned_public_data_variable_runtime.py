@@ -696,6 +696,22 @@ def runtime_probe_compile_argv(dynamic_driver: str, source: Path, destination: P
             '-fno-stack-protector', '-c', str(source), '-o', str(destination)]
 
 
+def runtime_probe_static_link_command(static_driver: str, mode: str, object_path: Path,
+                                      executable: Path) -> tuple[list[str], Path]:
+    """Build one static link at the receipt parent's exact working directory.
+
+    ``crabc-cc`` serializes its map and trace paths exactly as the relative
+    sidecar spellings it receives. The retained product reader resolves those
+    spellings relative to the JSON receipt, so the static receipt itself must
+    be a basename while the command runs in its parent directory. Dynamic
+    drivers derive their sidecars from ``-o`` and do not use this boundary.
+    """
+    require(mode in {'static', 'static-pie'}, 'public-data runtime static link mode differs')
+    receipt = executable.parent / (mode + '.crabc-link.json')
+    return ([static_driver, '-' + mode, '--link-receipt', receipt.name,
+             str(object_path), '-o', str(executable)], receipt.parent)
+
+
 class Collector:
     """Collect exactly the installed-variable runtime matrix once.
 
@@ -761,9 +777,10 @@ class Collector:
             executable = directory / mode
             if mode in {'static', 'static-pie'}:
                 receipt = directory / (mode + '.crabc-link.json')
-                argv = [self.tools['static_driver']['original']['path'], '-' + mode, '--link-receipt',
-                        receipt.relative_to(self.output).as_posix(), str(object_path), '-o', str(executable)]
-                self._run(identifier + '-' + mode + '-link', argv, cwd=self.output)
+                argv, cwd = runtime_probe_static_link_command(
+                    self.tools['static_driver']['original']['path'], mode, object_path, executable,
+                )
+                self._run(identifier + '-' + mode + '-link', argv, cwd=cwd)
             else:
                 driver_mode = '--dynamic-pie' if mode == 'dynamic-pie' else '--dynamic-non-pie'
                 argv = [self.tools['dynamic_driver']['original']['path'], driver_mode, str(object_path),
@@ -920,8 +937,7 @@ def _validate_commands(receipt_root: Path, records: object, *, origin_output: Pa
         label = row['label']
         require(type(label) is str and type(row['argv']) is list and all(type(item) is str for item in row['argv']),
                 'public-data runtime command values differ')
-        require(row['cwd'] == str(origin_output) and row['outcome'] == 'ok',
-                'public-data runtime command working directory differs')
+        require(row['outcome'] == 'ok', 'public-data runtime command outcome differs')
         for field, suffix in (('command', 'command.json'), ('stdout', 'stdout'), ('stderr', 'stderr'), ('status', 'status')):
             raw = _recorded_command_path(receipt_root, label, suffix)
             observed = ordinary_link.work_file_identity(ROOT, raw, 'runtime command ' + label + ' ' + field)
@@ -936,6 +952,9 @@ def _validate_commands(receipt_root: Path, records: object, *, origin_output: Pa
         source = str(origin_root / scenario['source'])
         object_path = str(origin_output / 'objects' / (identifier + '.o'))
         executable_dir = origin_output / 'executables' / identifier
+        static_link = label in {identifier + '-static-link', identifier + '-static-pie-link'}
+        require(row['cwd'] == str(executable_dir if static_link else origin_output),
+                'public-data runtime command working directory differs')
         if label == identifier + '-compile':
             require(row['argv'] == runtime_probe_compile_argv(
                 expected_paths['dynamic_driver'], Path(source), Path(object_path),
@@ -949,9 +968,10 @@ def _validate_commands(receipt_root: Path, records: object, *, origin_output: Pa
             mode = label[len(identifier) + 1:-len('-link')]
             executable = executable_dir / mode
             if mode in {'static', 'static-pie'}:
-                require(row['argv'] == [expected_paths['static_driver'], '-' + mode, '--link-receipt',
-                                        (executable_dir / (mode + '.crabc-link.json')).relative_to(origin_output).as_posix(),
-                                        object_path, '-o', str(executable)],
+                expected_argv, expected_cwd = runtime_probe_static_link_command(
+                    expected_paths['static_driver'], mode, Path(object_path), executable,
+                )
+                require(row['cwd'] == str(expected_cwd) and row['argv'] == expected_argv,
                         'public-data runtime static link argv differs')
             else:
                 driver_mode = '--dynamic-pie' if mode == 'dynamic-pie' else '--dynamic-non-pie'
