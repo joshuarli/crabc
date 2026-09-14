@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import copy
+import contextlib
+import json
 import os
 from pathlib import Path
 import shutil
@@ -390,6 +392,262 @@ class PublicDataVariableRuntimeExecutionRootTests(unittest.TestCase):
                     collection=collection, companions=companions, supplied_companions=supplied,
                     oracle={}, oracle_static_inputs={}, tools=tools,
                 )
+
+
+class PublicDataVariableRuntimePublicReplayTests(unittest.TestCase):
+    """Exercise the public reader's complete retained command/root join.
+
+    The fixture keeps external product, tool, oracle and companion owners as
+    typed admissions. It does not replace this reader's object, link, command,
+    root, execution, or final-transaction validators: those operate over all
+    eleven scenarios and seventy-seven actual plain-text execution roots.
+    """
+
+    def setUp(self) -> None:
+        work = ROOT / '.work' / 'public-data-runtime-public-replay-tests'
+        work.mkdir(parents=True, exist_ok=True)
+        self.temporary = tempfile.TemporaryDirectory(dir=work)
+        self.addCleanup(self.temporary.cleanup)
+        self.directory = Path(self.temporary.name)
+        self.receipt = self.directory / 'receipt'
+        self.receipt.mkdir()
+        self.static_primary = self.directory / 'static-primary'
+        self.static_primary.mkdir()
+        self.dynamic_product = self.directory / 'dynamic-product'
+        self._write(self.dynamic_product / 'lib/ld-crabc-x86_64.so.1', b'loader')
+        self._write(self.dynamic_product / 'usr/lib/libc.so', b'libc', 0o644)
+        self.companions = {}
+        for name in reader.COMPANION_NAMES:
+            path = self.directory / 'companions' / name / 'report.json'
+            self._write(path, (name + '\n').encode(), 0o644)
+            self.companions[name] = path
+        self.cohort = {
+            'static_preparation': {'primary': {'path': self.static_primary.relative_to(ROOT).as_posix()}},
+            'dynamic_product': {'path': self.dynamic_product.relative_to(ROOT).as_posix()},
+        }
+        self.source = {'revision': 'test-current-source', 'content_sha256': 'a' * 64}
+        self.projection = {'typed': 'current companion projection'}
+        self.tools = {
+            'static_driver': {'original': {'path': '/tools/static'}},
+            'dynamic_driver': {'original': {'path': '/tools/dynamic'}},
+            'oracle_wrapper': {'original': {'path': '/tools/oracle'}},
+            'env': {'original': {'path': '/tools/env'}},
+            'chroot': {'original': {'path': '/tools/chroot'}, 'invocation': {}},
+            'linker': {'original': {'path': '/tools/linker', 'sha256': 'b' * 64}},
+        }
+
+    @staticmethod
+    def _write(path: Path, payload: bytes, mode: int = 0o755) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+        os.chmod(path, mode)
+
+    def _identity(self, path: Path, description: str) -> dict[str, object]:
+        return reader._receipt_file_identity(self.receipt, path, description)
+
+    def _raw_record(self, label: str, argv: list[str], stdout: bytes = b'') -> dict[str, object]:
+        paths = {}
+        for field, suffix, payload in (
+            ('command', 'command.json', json.dumps(argv).encode()),
+            ('stdout', 'stdout', stdout), ('stderr', 'stderr', b''), ('status', 'status', b'0\n'),
+        ):
+            path = reader._recorded_command_path(self.receipt, label, suffix)
+            self._write(path, payload, 0o644)
+            paths[field] = reader.ordinary_link.work_file_identity(ROOT, path, 'synthetic ' + field)
+        return {'label': label, 'argv': argv, 'cwd': str(self.receipt), 'outcome': 'ok', **paths}
+
+    def _command_rows(self) -> list[dict[str, object]]:
+        rows = []
+        invocation = '/tools/chroot'
+        dynamic_root = ROOT / self.cohort['dynamic_product']['path']
+        for scenario in reader.execution_plan():
+            identifier = scenario['id']
+            source = str(ROOT / scenario['source'])
+            object_path = str(self.receipt / 'objects' / (identifier + '.o'))
+            executable_dir = self.receipt / 'executables' / identifier
+            rows.append(self._raw_record(
+                identifier + '-compile',
+                ['/tools/dynamic', '--dynamic-pie', '-std=c11', '-D_GNU_SOURCE=1', '-fno-builtin',
+                 '-fno-stack-protector', '-nostdinc', '-isystem', str(dynamic_root / 'usr/include'),
+                 '-c', source, '-o', object_path],
+            ))
+            rows.append(self._raw_record(
+                identifier + '-oracle-static-link',
+                ['/tools/oracle', '-static', '-fno-pie', '-no-pie', object_path,
+                 '-o', str(executable_dir / 'oracle-static')],
+            ))
+            for mode in reader.CANDIDATE_MODES:
+                executable = executable_dir / mode
+                if mode in {'static', 'static-pie'}:
+                    argv = ['/tools/static', '-' + mode, '--link-receipt',
+                            (executable_dir / (mode + '.crabc-link.json')).relative_to(self.receipt).as_posix(),
+                            object_path, '-o', str(executable)]
+                else:
+                    argv = ['/tools/dynamic', '--dynamic-pie' if mode == 'dynamic-pie' else '--dynamic-non-pie',
+                            object_path, '-o', str(executable)]
+                rows.append(self._raw_record(identifier + '-' + mode + '-link', argv))
+            oracle_root = self.receipt / 'roots' / identifier / 'oracle-static'
+            oracle_stdout = (reader.TZIF_ORACLE_STDOUT if identifier == 'timezone-tzif-known-difference'
+                             else scenario['expected_stdout'])
+            rows.append(self._raw_record(
+                identifier + '-oracle-static-run',
+                ['/tools/env', '-i', 'LC_ALL=C', 'TZ=UTC', 'PATH=/usr/bin:/bin', invocation,
+                 str(oracle_root), *scenario['oracle_argv']], oracle_stdout,
+            ))
+            for cell in scenario['candidate_cells']:
+                root = self.receipt / 'roots' / identifier / cell['id']
+                argv = (['/lib/ld-crabc-x86_64.so.1', *scenario['candidate_argv']]
+                        if cell['route'] == 'direct-interpreter' else scenario['candidate_argv'])
+                rows.append(self._raw_record(
+                    identifier + '-' + cell['id'] + '-run',
+                    ['/tools/env', '-i', 'LC_ALL=C', 'TZ=UTC', 'PATH=/usr/bin:/bin', invocation,
+                     str(root), *argv], scenario['expected_stdout'],
+                ))
+        self.assertEqual([row['label'] for row in rows], reader._expected_labels())
+        return rows
+
+    def _report(self) -> dict[str, object]:
+        sources = reader._source_capture(self.receipt)
+        copied_companions = reader._capture_companions(self.receipt, self.companions)
+        self._write(self.receipt / 'qualification-oracle/runtime', b'oracle-runtime', 0o644)
+        objects, links, executions = {}, {}, {}
+        for scenario in reader.execution_plan():
+            identifier = scenario['id']
+            object_path = self.receipt / 'objects' / (identifier + '.o')
+            self._write(object_path, ('object:' + identifier).encode())
+            objects[identifier] = self._identity(object_path, identifier + ' object')
+            directory = self.receipt / 'executables' / identifier
+            oracle = directory / 'oracle-static'
+            self._write(oracle, ('oracle:' + identifier).encode())
+            links[identifier] = {'oracle-static': {'executable': self._identity(oracle, identifier + ' oracle')}}
+            for mode in reader.CANDIDATE_MODES:
+                executable = directory / mode
+                link_receipt = directory / (mode + '.crabc-link.json')
+                self._write(executable, (identifier + ':' + mode).encode())
+                self._write(link_receipt, ('receipt:' + identifier + ':' + mode).encode(), 0o644)
+                product = ROOT / (
+                    self.cohort['static_preparation']['primary']['path']
+                    if mode in {'static', 'static-pie'} else self.cohort['dynamic_product']['path']
+                )
+                links[identifier][mode] = {
+                    'executable': self._identity(executable, identifier + ' ' + mode),
+                    'receipt': self._identity(link_receipt, identifier + ' ' + mode + ' receipt'),
+                    'identity': {'linkage': reader._mode_linkage(mode), 'product': str(product)},
+                }
+            oracle_root = self.receipt / 'roots' / identifier / 'oracle-static'
+            reader._oracle_root_setup(oracle_root, self.receipt, oracle, scenario['fixture_directories'])
+            oracle_tree = reader.ordinary_link.execution_tree(ROOT, oracle_root, identifier + ' oracle root')
+            executions[identifier + '/oracle-static'] = {
+                'root': oracle_root.relative_to(self.receipt).as_posix(),
+                'before': oracle_tree, 'after': oracle_tree,
+                'command': identifier + '-oracle-static-run',
+            }
+            for cell in scenario['candidate_cells']:
+                root = self.receipt / 'roots' / identifier / cell['id']
+                executable = directory / cell['mode']
+                if cell['mode'] in {'static', 'static-pie'}:
+                    reader._static_root_setup(root, executable, scenario['fixture_directories'])
+                else:
+                    reader._dynamic_root_setup(root, self.dynamic_product, executable, scenario['fixture_directories'])
+                tree = reader.ordinary_link.execution_tree(ROOT, root, identifier + ' ' + cell['id'] + ' root')
+                executions[identifier + '/' + cell['id']] = {
+                    'root': root.relative_to(self.receipt).as_posix(),
+                    'before': tree, 'after': tree,
+                    'command': identifier + '-' + cell['id'] + '-run',
+                }
+        return {
+            'schema': reader.SCHEMA, 'status': reader.STATUS, 'component': reader.COMPONENT,
+            'collection': {'image': reader.IMAGE, 'source': self.source},
+            'contract': reader.load_contract(), 'inputs_before': self.cohort, 'inputs_after': self.cohort,
+            'sources': sources, 'companions': {'inputs': copied_companions, 'projection': self.projection},
+            'oracle': {}, 'oracle_static_inputs': {}, 'tools': self.tools, 'objects': objects,
+            'links': links, 'commands': self._command_rows(), 'executions': executions,
+            'runtime_matrix': reader.empty_runtime_matrix(),
+            'h_errno': reader.h_errno_composition_contract(),
+            'coverage': {
+                'objects': list(reader.OBJECTS), 'groups': [name for name, _objects in reader.GROUPS],
+                'component_complete': True, 'family_completion': False,
+                'runtime_qualification': False, 'public_support': False,
+            },
+        }
+
+    def _write_report(self, report: dict[str, object]) -> Path:
+        path = self.receipt / 'report.json'
+        path.write_text(json.dumps(report, sort_keys=True), encoding='utf-8')
+        os.chmod(path, 0o644)
+        return path
+
+    def _validate(self, path: Path):
+        return reader.validate_report(
+            path, root=ROOT, static_preparation=self.static_primary,
+            static_product=self.static_primary, dynamic_product=self.dynamic_product,
+            **self.companions,
+        )
+
+    def test_public_replay_binds_all_command_object_link_root_and_final_boundaries(self) -> None:
+        report = self._report()
+        path = self._write_report(report)
+
+        def retained_link(_root, _mount, _product, _object, _executable, _receipt, linkage, _linker):
+            return {'linkage': linkage}
+
+        patches = (
+            mock.patch.object(reader.ordinary_link, 'admit_inputs', return_value=self.cohort),
+            mock.patch.object(reader.static_products, 'source_identity', return_value=self.source),
+            mock.patch.object(reader, '_current_companion_projection', return_value=self.projection),
+            mock.patch.object(reader.ordinary_link.qualification, 'validate_oracle'),
+            mock.patch.object(reader.ordinary_link, 'validate_oracle_static_inputs'),
+            mock.patch.object(reader.ordinary_link, 'validate_tool_roster', return_value=self.tools),
+            mock.patch.object(reader.ordinary_link, 'validate_chroot_invocation', return_value='/tools/chroot'),
+            mock.patch.object(reader.product_evidence, 'validate_retained_link', side_effect=retained_link),
+        )
+        with contextlib.ExitStack() as stack:
+            for patch in patches:
+                stack.enter_context(patch)
+            result = self._validate(path)
+            self.assertEqual(result['coverage'], report['coverage'])
+            self.assertEqual(result['report']['path'], 'report.json')
+
+            changed = copy.deepcopy(report)
+            changed['executions']['ns-flagdata/oracle-static']['command'] = 'math-sign-static-run'
+            self._write_report(changed)
+            with self.assertRaisesRegex(reader.PublicDataVariableRuntimeError, 'command differs'):
+                self._validate(path)
+
+            self._write_report(report)
+            changed = copy.deepcopy(report)
+            changed['objects']['ns-flagdata']['sha256'] = '0' * 64
+            self._write_report(changed)
+            with self.assertRaisesRegex(reader.PublicDataVariableRuntimeError, 'object identity differs'):
+                self._validate(path)
+
+            self._write_report(report)
+            changed = copy.deepcopy(report)
+            changed['links']['ns-flagdata']['static']['executable']['path'] = 'executables/ns-flagdata/other'
+            self._write_report(changed)
+            with self.assertRaisesRegex(reader.PublicDataVariableRuntimeError, 'executable identity differs'):
+                self._validate(path)
+
+            self._write_report(report)
+            consumer = self.receipt / 'roots' / 'ns-flagdata' / 'static' / 'consumer'
+            self._write(consumer, b'resealed consumer')
+            with self.assertRaisesRegex(reader.PublicDataVariableRuntimeError, 'payload differs'):
+                self._validate(path)
+            shutil.copy2(self.receipt / 'executables' / 'ns-flagdata' / 'static', consumer)
+
+            calls = 0
+
+            def mutate_at_final_tool_recheck(*_args: object, **_kwargs: object) -> dict[str, object]:
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    path.write_text('{"replaced":true}', encoding='utf-8')
+                    os.chmod(path, 0o644)
+                return self.tools
+
+            with mock.patch.object(reader.ordinary_link, 'validate_tool_roster', side_effect=mutate_at_final_tool_recheck):
+                with self.assertRaisesRegex(reader.PublicDataVariableRuntimeError, 'report changed during replay'):
+                    self._validate(path)
 
 
 if __name__ == '__main__':
