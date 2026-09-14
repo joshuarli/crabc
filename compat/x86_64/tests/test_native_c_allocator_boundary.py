@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import importlib.util
+import json
 import sys
 import tempfile
 import unittest
@@ -128,6 +129,67 @@ class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "map selection"):
                 BOUNDARY._runtime_static_member_links(output, output, static, imports)
+
+    def test_public_reader_threads_reconstructed_runtime_imports_to_startup_replay(self) -> None:
+        scratch = ROOT / ".work/x86_64/native-c-allocator-boundary-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            output = Path(temporary)
+            (output / "startup").mkdir()
+            (output / "interposition").mkdir()
+            report_path = output / "report.json"
+            static, dynamic, preparation, facts = (output / name for name in (
+                "static", "dynamic", "preparation.json", "facts.json",
+            ))
+            source = {"revision": "a" * 40, "content_sha256": "b" * 64, "clean": True}
+            runtime = {
+                "static_c_member": {"name": "selected-c-mimalloc.o", "member_index": 1,
+                                    "member_occurrence": 0, "sha256": "c" * 64},
+                "static_rust_root_member": {"name": "native-c-root.rcgu.o", "member_index": 0,
+                                            "member_occurrence": 0},
+                "shared_rust_root_member": "native-c-shared.rcgu.o",
+                "shared_c_member_sha256": "c" * 64,
+                "imports": [],
+            }
+            inputs = {"c_runtime_import_bindings": runtime}
+            report = {
+                "schema": BOUNDARY.SCHEMA, "target": BOUNDARY.TARGET,
+                "status": {"family_completion": False, "promotion": False, "public_support": False},
+                "collector_source": source, "component_sources": {}, "inputs": inputs,
+                "startup": {"command": {}, "work": "startup", "observation": {}},
+                "interposition": {"command": {}, "work": "interposition", "observation": {}},
+            }
+            report_path.write_text(json.dumps(report), encoding="utf-8")
+            with (
+                mock.patch.object(BOUNDARY.inventory, "collector_source_seal", return_value=source),
+                mock.patch.object(BOUNDARY, "validate_source_records"),
+                mock.patch.object(BOUNDARY, "admitted_supplied_path", return_value="/workspace/input"),
+                mock.patch.object(BOUNDARY, "validate_supplied_products", return_value=inputs),
+                mock.patch.object(BOUNDARY, "_validate_capture"),
+                mock.patch.object(BOUNDARY, "_replay_startup_observations") as replay_startup,
+                mock.patch.object(BOUNDARY, "_replay_interposition_observations"),
+            ):
+                self.assertEqual(
+                    BOUNDARY.validate_report(
+                        report_path, static_preparation=preparation, static_product=static,
+                        dynamic_product=dynamic, elf_facts_report=facts,
+                    ), report,
+                )
+            self.assertEqual(replay_startup.call_args.args[4], runtime)
+            changed = json.loads(report_path.read_text(encoding="utf-8"))
+            changed["inputs"]["c_runtime_import_bindings"]["static_c_member"]["name"] = "forged-member.o"
+            report_path.write_text(json.dumps(changed), encoding="utf-8")
+            with (
+                mock.patch.object(BOUNDARY.inventory, "collector_source_seal", return_value=source),
+                mock.patch.object(BOUNDARY, "validate_source_records"),
+                mock.patch.object(BOUNDARY, "admitted_supplied_path", return_value="/workspace/input"),
+                mock.patch.object(BOUNDARY, "validate_supplied_products", return_value=inputs),
+                self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "supplied product account changed"),
+            ):
+                BOUNDARY.validate_report(
+                    report_path, static_preparation=preparation, static_product=static,
+                    dynamic_product=dynamic, elf_facts_report=facts,
+                )
 
     def test_link_receipt_reader_keeps_the_real_workload_separate_from_its_output(self) -> None:
         scratch = ROOT / ".work/x86_64/native-c-allocator-boundary-tests"
