@@ -15,6 +15,23 @@ check binds the C ABI wrappers for `malloc`, `calloc`, `realloc`,
 `valloc`, and `malloc_usable_size`, and binds the process initializer/finalizer
 to the selected x86 root.
 
+The same producer account authenticates the selected C static member. This
+reader separately records its finite inverse dependency roster: 27 `NOTYPE
+GLOBAL DEFAULT UND` imports from that one current archive member to selected
+public Rust libc providers. Each row is reconstructed from the current static
+archive and shared libc facts, including the exact `GLOBAL` or `WEAK` provider
+binding in static `.symtab` and shared `.dynsym`/`.symtab`. The static ET_EXEC
+and static-PIE startup links must each select both that C member and the static
+Rust root in their LLD map and trace sidecars. The same installed-header object
+is also linked through the existing dynamic PIE and non-PIE roots, while the
+shared provider rows bind that selected shared product. This proves a finite
+ordinary link-availability boundary; it does not claim that every imported API
+was executed by the startup probe.
+
+The source provenance remains `libmimalloc-sys` 0.1.49 carrying C mimalloc
+v3.3.2 and its pinned 32-source `static.c` closure. It is distinct from the
+fixed v3.5.0 Rust-port oracle.
+
 `malloc` is the only weak wrapper. `calloc`, `realloc`, `reallocarray`,
 `free`, `aligned_alloc`, `posix_memalign`, `memalign`, `valloc`, and
 `malloc_usable_size` are exact global definitions. The reader checks each
@@ -70,5 +87,5 @@ dynamic, or facts epoch; it does not call a historical collector result a
 current-source proof.
 
 This is a bounded C-wrapper/lifecycle receipt. It does not prove allocator
-family completion, Rust-port promotion, broad allocation behavior, or public
-x86 support.
+family completion, Rust-port promotion, broad allocation behavior, public C
+API semantics, or public x86 support.

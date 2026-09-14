@@ -31,13 +31,25 @@ import owned_posix_static_products as static_products
 
 ROOT = inventory.ROOT
 CONTRACT_PATH = ROOT / "compat/x86_64/native_c_allocator_boundary.toml"
-SCHEMA = "crabc.x86_64-native-c-allocator-boundary/v1"
+SCHEMA = "crabc.x86_64-native-c-allocator-boundary/v2"
 TARGET = "x86_64-unknown-linux-musl"
 RAW = "raw"
 STATIC_MODES = ("static", "static-pie")
 DYNAMIC_MODES = ("pie", "non-pie")
 ENTRIES = ("kernel", "direct")
 SCENARIOS = ("asprintf", "passwd", "lio")
+C_RUNTIME_IMPORTS = (
+    ("__errno_location", "GLOBAL"), ("abort", "GLOBAL"), ("clock_gettime", "WEAK"),
+    ("fputs", "GLOBAL"), ("free", "GLOBAL"), ("getenv", "GLOBAL"),
+    ("getrusage", "GLOBAL"), ("madvise", "WEAK"), ("memcpy", "GLOBAL"),
+    ("memset", "GLOBAL"), ("mmap", "WEAK"), ("mprotect", "WEAK"),
+    ("munmap", "WEAK"), ("pathconf", "GLOBAL"), ("prctl", "GLOBAL"),
+    ("pthread_key_create", "WEAK"), ("pthread_key_delete", "WEAK"),
+    ("pthread_mutex_destroy", "GLOBAL"), ("pthread_mutex_lock", "WEAK"),
+    ("pthread_mutex_unlock", "WEAK"), ("pthread_setspecific", "GLOBAL"),
+    ("realpath", "GLOBAL"), ("sleep", "GLOBAL"), ("strtol", "GLOBAL"),
+    ("syscall", "GLOBAL"), ("sysconf", "GLOBAL"), ("sysinfo", "WEAK"),
+)
 RUNTIME_SOURCES = (
     "libc/src/allocator_mimalloc.rs",
     "libc/src/allocator_observability_mimalloc.rs",
@@ -192,14 +204,17 @@ def load_contract(root: Path = ROOT) -> dict[str, Any]:
 def validate_contract(value: object) -> None:
     record = exact(value, {"schema", "id", "target", "status", "backend", "scope", "limits"}, "allocator boundary contract")
     require((record["schema"], record["id"], record["target"], record["status"]) == (
-        "crabc.x86_64-native-c-allocator-boundary-contract/v1", "x86-native-c-allocator-boundary",
+        "crabc.x86_64-native-c-allocator-boundary-contract/v2", "x86-native-c-allocator-boundary",
         TARGET, "implemented-unqualified"), "allocator boundary contract identity drifted")
     require(record["backend"] == {"crate": "libmimalloc-sys", "version": "0.1.49", "mimalloc_version": "3.3.2"},
             "allocator backend contract drifted")
-    scope = exact(record["scope"], {"weak_entries", "global_entries", "rust_c_imports", "lifecycle_entries", "interposition_scenarios", "dynamic_modes", "dynamic_entries", "static_modes"}, "allocator boundary scope")
+    scope = exact(record["scope"], {"weak_entries", "global_entries", "rust_c_imports", "c_runtime_imports", "lifecycle_entries", "interposition_scenarios", "dynamic_modes", "dynamic_entries", "static_modes"}, "allocator boundary scope")
     require(scope["weak_entries"] == ["malloc"], "weak allocator entry roster drifted")
     require(scope["global_entries"] == ["calloc", "realloc", "reallocarray", "free", "aligned_alloc", "posix_memalign", "memalign", "valloc", "malloc_usable_size"], "global allocator entry roster drifted")
     require(scope["rust_c_imports"] == ["_mi_auto_process_done", "_mi_auto_process_init", "mi_free", "mi_malloc_aligned", "mi_realloc_aligned", "mi_usable_size", "mi_zalloc"], "Rust C import roster drifted")
+    require(scope["c_runtime_imports"] == [
+        {"name": name, "binding": binding} for name, binding in C_RUNTIME_IMPORTS
+    ], "C runtime import roster drifted")
     require(scope["lifecycle_entries"] == ["__crabc_x86_owned_mimalloc_process_initializer", "__crabc_x86_owned_mimalloc_process_finalizer"], "allocator lifecycle roster drifted")
     require(scope["interposition_scenarios"] == list(SCENARIOS) and scope["dynamic_modes"] == list(DYNAMIC_MODES)
             and scope["dynamic_entries"] == list(ENTRIES) and scope["static_modes"] == list(STATIC_MODES),
@@ -212,6 +227,12 @@ def wrapper_roles(contract: Mapping[str, Any]) -> dict[str, str]:
     scope = contract["scope"]
     return {**{name: "WEAK" for name in scope["weak_entries"]},
             **{name: "GLOBAL" for name in scope["global_entries"]}}
+
+
+def c_runtime_import_roles(contract: Mapping[str, Any]) -> dict[str, str]:
+    """Return the finite C translation-unit imports and their Rust bindings."""
+    scope = contract["scope"]
+    return {item["name"]: item["binding"] for item in scope["c_runtime_imports"]}
 
 
 WRAPPER_C_ABI = {
@@ -344,6 +365,106 @@ def _wrapper_product_bindings(facts: Mapping[str, Any], account: Mapping[str, An
     }
 
 
+def _static_member(facts: Mapping[str, Any], name: str, description: str) -> Mapping[str, Any]:
+    placements = facts.get("facts")
+    require(isinstance(placements, dict) and isinstance(placements.get("candidate-static"), list),
+            "ELF facts omit static C runtime members")
+    matches = [member for member in placements["candidate-static"]
+               if isinstance(member, dict) and member.get("member") == name
+               and member.get("member_occurrence") == 0]
+    require(len(matches) == 1, f"{description} differs")
+    member = matches[0]
+    require(isinstance(member.get("member_index"), int) and member["member_index"] >= 0,
+            f"{description} index differs")
+    return member
+
+
+def _runtime_import_row(row: Mapping[str, Any], name: str, binding: str, description: str,
+                        *, import_row: bool) -> dict[str, object]:
+    require(row.get("name") == name and row.get("raw_name") == name
+            and row.get("version") is None and row.get("version_default") is False,
+            f"{description} name/version differs for {name}")
+    if import_row:
+        require(row.get("type") == "NOTYPE" and row.get("binding") == "GLOBAL"
+                and row.get("visibility") == "DEFAULT" and row.get("section_index") == "UND"
+                and row.get("size_bytes") == 0 and row.get("value") == "0000000000000000",
+                f"{description} import differs for {name}")
+    else:
+        section = row.get("section_index")
+        require(row.get("type") == "FUNC" and row.get("binding") == binding
+                and row.get("visibility") == "DEFAULT" and isinstance(section, str)
+                and section.isdigit() and int(section) > 0
+                and isinstance(row.get("size_bytes"), int) and row["size_bytes"] > 0,
+                f"{description} provider differs for {name}")
+    return {key: row[key] for key in (
+        "name", "raw_name", "type", "binding", "visibility", "section_index", "size_bytes",
+        "value", "version", "version_default",
+    )}
+
+
+def _c_runtime_import_bindings(facts: Mapping[str, Any], account: Mapping[str, Any],
+                               roles: Mapping[str, str]) -> dict[str, object]:
+    """Join the selected C static member to finite public Rust providers.
+
+    ``archive_map`` comes from the fixed-C producer reader, which already
+    authenticates the C member bytes and source bundle.  The rows below are
+    reconstructed from the supplied current ELF facts rather than accepted
+    from a receipt-provided member name, hash, or provider list.
+    """
+    archive = account.get("archive_map")
+    require(isinstance(archive, dict), "fixed-C producer account omits archive map")
+    required = {
+        "static_c_member", "static_c_member_sha256", "static_rust_root_member",
+        "shared_rust_root_member", "shared_c_member_sha256",
+    }
+    require(required <= set(archive) and all(isinstance(archive[name], str) and archive[name]
+                                              for name in required),
+            "fixed-C producer archive map differs")
+    c_member = _static_member(facts, archive["static_c_member"], "static C runtime member")
+    rust_member = _static_member(facts, archive["static_rust_root_member"], "static Rust runtime root")
+    try:
+        c_rows = producer._symbol_tables(c_member.get("symbol_tables"), "static C runtime imports", {".symtab"})[".symtab"]
+        rust_rows = producer._symbol_tables(rust_member.get("symbol_tables"), "static Rust runtime providers", {".symtab"})[".symtab"]
+        placements = facts.get("facts")
+        shared = placements.get("candidate-shared") if isinstance(placements, dict) else None
+        shared_tables = producer._symbol_tables(
+            shared.get("symbol_tables") if isinstance(shared, dict) else None,
+            "shared Rust runtime providers", {".dynsym", ".symtab"},
+        )
+    except producer.ProducerMetadataError as error:
+        raise AllocatorBoundaryError(str(error)) from error
+
+    def exactly_one(rows: Sequence[Mapping[str, Any]], name: str, description: str,
+                    *, import_row: bool) -> dict[str, object]:
+        selected = [row for row in rows if row.get("name") == name]
+        require(len(selected) == 1, f"{description} repeats or omits {name}")
+        return _runtime_import_row(selected[0], name, roles[name], description, import_row=import_row)
+
+    claims = []
+    for name, binding in roles.items():
+        claims.append({
+            "name": name,
+            "binding": binding,
+            "static_c_import": exactly_one(c_rows, name, "static C runtime", import_row=True),
+            "static_rust_provider": exactly_one(rust_rows, name, "static Rust runtime", import_row=False),
+            "shared_dynsym_provider": exactly_one(shared_tables[".dynsym"], name, "shared .dynsym runtime", import_row=False),
+            "shared_symtab_provider": exactly_one(shared_tables[".symtab"], name, "shared .symtab runtime", import_row=False),
+        })
+    return {
+        "static_c_member": {
+            "name": archive["static_c_member"], "member_index": c_member["member_index"],
+            "member_occurrence": c_member["member_occurrence"], "sha256": archive["static_c_member_sha256"],
+        },
+        "static_rust_root_member": {
+            "name": archive["static_rust_root_member"], "member_index": rust_member["member_index"],
+            "member_occurrence": rust_member["member_occurrence"],
+        },
+        "shared_rust_root_member": archive["shared_rust_root_member"],
+        "shared_c_member_sha256": archive["shared_c_member_sha256"],
+        "imports": claims,
+    }
+
+
 def source_resolution(root: Path, product_revision: str) -> dict[str, object]:
     """Check C call sites and prove their blobs still equal the product epoch."""
     require(REVISION.fullmatch(product_revision) is not None, "product source revision is invalid")
@@ -453,6 +574,7 @@ def validate_supplied_products(*, root: Path, static_preparation: Path, static_p
     root = Path(root).absolute()
     contract = load_contract(root)
     roles = wrapper_roles(contract)
+    runtime_roles = c_runtime_import_roles(contract)
     static_product = physical_directory(static_product, "static product")
     dynamic_product = physical_directory(dynamic_product, "dynamic product")
     static_preparation = physical_file(static_preparation, "static preparation")
@@ -485,6 +607,7 @@ def validate_supplied_products(*, root: Path, static_preparation: Path, static_p
     require(isinstance(joins, list) and [item.get("name") for item in joins if isinstance(item, dict)] == expected,
             "fixed-C producer import joins drifted")
     wrappers = _wrapper_product_bindings(report, account, roles)
+    runtime_imports = _c_runtime_import_bindings(report, account, runtime_roles)
     return {
         "product_source": product_source,
         "source_resolution": source,
@@ -497,6 +620,7 @@ def validate_supplied_products(*, root: Path, static_preparation: Path, static_p
         "elf_facts": identity(elf_facts_report, logical_path="/inputs/elf-facts-report.json"),
         "producer_account": account,
         "wrapper_product_bindings": wrappers,
+        "c_runtime_import_bindings": runtime_imports,
     }
 
 def _capture(output: Path, label: str, argv: list[str], environment: Mapping[str, str]) -> dict[str, object]:
@@ -608,8 +732,54 @@ def _startup_workload(work: Path) -> Path:
     return physical_file(work / "workload.o", "startup same-object workload")
 
 
+def _runtime_static_member_links(work: Path, output: Path, static_product: Path,
+                                 runtime_imports: Mapping[str, Any]) -> dict[str, object]:
+    """Require ordinary static consumers to select the authenticated C member.
+
+    The generic owned-product reader authenticates each retained link receipt,
+    map, and trace.  This component adds only the finite semantic join needed
+    here: both ordinary static modes must select the producer-authenticated C
+    member and the Rust root that provides its fixed public imports.
+    """
+    c_member = exact(runtime_imports.get("static_c_member"), {
+        "name", "member_index", "member_occurrence", "sha256",
+    }, "C runtime static member")
+    rust_member = exact(runtime_imports.get("static_rust_root_member"), {
+        "name", "member_index", "member_occurrence",
+    }, "C runtime static Rust root")
+    require(type(c_member["name"]) is str and c_member["name"]
+            and type(rust_member["name"]) is str and rust_member["name"],
+            "C runtime static member names differ")
+    archive = mounted_path(static_product / "usr/lib/libc.a")
+    selected = {
+        "static_c_member": f"{archive}({c_member['name']})",
+        "static_rust_root_member": f"{archive}({rust_member['name']})",
+    }
+    result: dict[str, object] = {}
+    for mode in STATIC_MODES:
+        receipt = physical_file(work / f"static-{mode}.crabc-link.json", f"{mode} C runtime receipt")
+        trace = physical_file(receipt.with_suffix(".trace"), f"{mode} C runtime trace")
+        link_map = physical_file(receipt.with_suffix(".map"), f"{mode} C runtime map")
+        try:
+            trace_lines = trace.read_text(encoding="utf-8").splitlines()
+            map_text = link_map.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as error:
+            raise AllocatorBoundaryError(f"{mode} C runtime link sidecar is unreadable") from error
+        for label, member in selected.items():
+            require(trace_lines.count(member) == 1,
+                    f"{mode} C runtime trace selection differs for {label}")
+            require(member + ":" in map_text,
+                    f"{mode} C runtime map selection differs for {label}")
+        result[mode] = {
+            "map": identity(link_map, logical_path=link_map.relative_to(output).as_posix()),
+            "trace": identity(trace, logical_path=trace.relative_to(output).as_posix()),
+            "selected_members": dict(selected),
+        }
+    return result
+
+
 def _startup_observations(work: Path, output: Path, static_product: Path, dynamic_product: Path,
-                          *, validate_links: bool = True) -> dict[str, object]:
+                          runtime_imports: Mapping[str, Any], *, validate_links: bool = True) -> dict[str, object]:
     captures = {stem: _stream(work, output, stem) for stem in ("oracle-dynamic", "oracle-static", *[f"static-{mode}" for mode in STATIC_MODES], *[f"dynamic-{mode}-{entry}" for mode in DYNAMIC_MODES for entry in ENTRIES])}
     for stem in captures:
         require((work / f"{stem}.stdout").read_bytes() == b"" and (work / f"{stem}.stderr").read_bytes() == b"",
@@ -630,17 +800,22 @@ def _startup_observations(work: Path, output: Path, static_product: Path, dynami
                 f"startup lifecycle symbol {name} is not one local-data entry")
     require("mi_process_attach" not in symbols and "mi_process_detach" not in symbols,
             "shared C backend retained implicit lifecycle hooks")
-    return {"captures": captures, "oracle": oracle_artifacts, "workload": workload_artifacts, "links": links,
-            "symbols": identity(work / "dynamic-symbols.txt", logical_path=(work / "dynamic-symbols.txt").relative_to(output).as_posix())}
+    return {
+        "captures": captures, "oracle": oracle_artifacts, "workload": workload_artifacts, "links": links,
+        "symbols": identity(work / "dynamic-symbols.txt", logical_path=(work / "dynamic-symbols.txt").relative_to(output).as_posix()),
+        "c_runtime_static_links": _runtime_static_member_links(work, output, static_product, runtime_imports),
+    }
 
 
 def _replay_startup_observations(work: Path, output: Path, static_product: Path, dynamic_product: Path,
-                                 observed: object) -> dict[str, object]:
-    current = _startup_observations(work, output, static_product, dynamic_product, validate_links=False)
-    record = exact(observed, {"captures", "oracle", "workload", "links", "symbols"}, "startup observation")
+                                 runtime_imports: Mapping[str, Any], observed: object) -> dict[str, object]:
+    current = _startup_observations(work, output, static_product, dynamic_product, runtime_imports, validate_links=False)
+    record = exact(observed, {"captures", "oracle", "workload", "links", "symbols", "c_runtime_static_links"}, "startup observation")
     require(same(record["captures"], current["captures"]) and same(record["oracle"], current["oracle"])
             and same(record["workload"], current["workload"])
-            and same(record["symbols"], current["symbols"]), "startup raw observations drifted")
+            and same(record["symbols"], current["symbols"])
+            and same(record["c_runtime_static_links"], current["c_runtime_static_links"]),
+            "startup raw observations drifted")
     workload = _startup_workload(work)
     links = exact(record["links"], {*STATIC_MODES, *(f"dynamic-{mode}" for mode in DYNAMIC_MODES)}, "startup link roster")
     for mode in STATIC_MODES:
@@ -715,15 +890,22 @@ def collect(*, static_preparation: Path, static_product: Path, dynamic_product: 
     startup_before = set(output.glob("owned-mimalloc-startup-errno.*"))
     startup_command = _capture(output, "startup", ["bash", mounted_path(ROOT / "compat/x86_64/run_owned_mimalloc_startup_errno.sh"), "--static-sysroot", static_mount, dynamic_mount], environment)
     startup_work = _new_work(output, "owned-mimalloc-startup-errno", startup_before)
-    startup = _startup_observations(startup_work, output, Path(static_product), Path(dynamic_product))
+    startup = _startup_observations(
+        startup_work, output, Path(static_product), Path(dynamic_product),
+        inputs["c_runtime_import_bindings"],
+    )
     interposition_before = set(output.glob("owned-c-allocation-interposition.*"))
     interposition_command = _capture(output, "interposition", ["bash", mounted_path(ROOT / "compat/x86_64/run_owned_c_allocation_interposition.sh"), dynamic_mount], environment)
     interposition_work = _new_work(output, "owned-c-allocation-interposition", interposition_before)
     interposition = _interposition_observations(interposition_work, output, Path(dynamic_product))
-    before = {key: value for key, value in inputs.items() if key in {"product_source", "static_preparation", "static", "dynamic", "elf_facts"}}
+    before = {key: value for key, value in inputs.items() if key in {
+        "product_source", "static_preparation", "static", "dynamic", "elf_facts", "c_runtime_import_bindings",
+    }}
     after_inputs = validate_supplied_products(root=ROOT, static_preparation=static_preparation, static_product=static_product,
                                               dynamic_product=dynamic_product, elf_facts_report=elf_facts_report)
-    after = {key: value for key, value in after_inputs.items() if key in {"product_source", "static_preparation", "static", "dynamic", "elf_facts"}}
+    after = {key: value for key, value in after_inputs.items() if key in {
+        "product_source", "static_preparation", "static", "dynamic", "elf_facts", "c_runtime_import_bindings",
+    }}
     require(same(before, after), "supplied product inputs changed during collection")
     source = inventory.collector_source_seal()
     report = {"schema": SCHEMA, "target": TARGET, "status": {"family_completion": False, "promotion": False, "public_support": False},
@@ -764,7 +946,10 @@ def validate_report(report_path: Path, *, static_preparation: Path, static_produ
     startup = exact(report["startup"], {"command", "work", "observation"}, "startup report")
     startup_work = physical_directory(output / startup["work"], "startup retained work")
     _validate_capture(output, startup["command"], "startup", ["bash", mounted_path(ROOT / "compat/x86_64/run_owned_mimalloc_startup_errno.sh"), "--static-sysroot", static_mount, dynamic_mount])
-    _replay_startup_observations(startup_work, output, Path(static_product), Path(dynamic_product), startup["observation"])
+    _replay_startup_observations(
+        startup_work, output, Path(static_product), Path(dynamic_product),
+        inputs["c_runtime_import_bindings"], startup["observation"],
+    )
     interposition = exact(report["interposition"], {"command", "work", "observation"}, "interposition report")
     interposition_work = physical_directory(output / interposition["work"], "interposition retained work")
     _validate_capture(output, interposition["command"], "interposition", ["bash", mounted_path(ROOT / "compat/x86_64/run_owned_c_allocation_interposition.sh"), dynamic_mount])
