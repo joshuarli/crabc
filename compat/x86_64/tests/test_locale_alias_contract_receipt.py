@@ -296,9 +296,10 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
             receipt._raw_runner_records(receipt_root, output_relative)
 
     def test_dynamic_link_sidecars_use_the_sealed_product_reader(self) -> None:
-        raw = self.root / receipt.RUNNER_DIRECTORY
+        receipt_root = self.root / ".work/x86_64/retained-receipt"
+        raw = receipt_root / receipt.RUNNER_DIRECTORY
         raw.mkdir(parents=True)
-        dynamic = self.root / receipt.DYNAMIC_PRODUCT_DIRECTORY
+        dynamic = receipt_root / receipt.DYNAMIC_PRODUCT_DIRECTORY
         dynamic.mkdir(parents=True)
         image = {"files": {
             receipt.DYNAMIC_LINKER_PATH: {"image": {
@@ -310,7 +311,7 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
             "workload_sha256": "c" * 64, "executable_sha256": "d" * 64, "receipt_sha256": "e" * 64,
         }
         with mock.patch("owned_posix_product_evidence.validate_retained_link", return_value=result) as validate:
-            observed = receipt._validate_dynamic_executable_link_sidecars(self.root, image)
+            observed = receipt._validate_dynamic_executable_link_sidecars(self.root, receipt_root, image)
 
         self.assertEqual(set(observed), {"candidate-dynamic-pie", "candidate-dynamic-non-pie"})
         self.assertEqual(validate.call_count, 2)

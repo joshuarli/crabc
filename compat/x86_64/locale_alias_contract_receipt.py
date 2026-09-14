@@ -700,7 +700,7 @@ def _validate_artifacts(root: Path, value: object) -> dict[str, dict[str, object
 
 
 def _validate_dynamic_executable_link_sidecars(
-    root: Path, image: Mapping[str, object],
+    checkout_root: Path, root: Path, image: Mapping[str, object],
 ) -> dict[str, dict[str, str]]:
     """Replay the two normal candidate executable link receipts without tools."""
 
@@ -725,7 +725,7 @@ def _validate_dynamic_executable_link_sidecars(
     for executable, sidecar, linkage in DYNAMIC_EXECUTABLE_LINK_SIDECARS:
         try:
             result = product_evidence.validate_retained_link(
-                root, SOURCE_MOUNT, dynamic, raw / "probe.o", raw / executable, raw / sidecar, linkage,
+                checkout_root, SOURCE_MOUNT, dynamic, raw / "probe.o", raw / executable, raw / sidecar, linkage,
                 linker, export_dynamic=True,
             )
         except (product_evidence.ProductEvidenceError, OSError, ValueError) as error:
@@ -1376,7 +1376,7 @@ def validate_report(root: Path, report_path: Path) -> dict[str, object]:
     runner_commands = _runner_records(receipt_root, output_relative, record["runner_commands"])
     _validate_execution_tools(receipt_root, output_relative, source, image, products, collector_commands, runner_commands)
     artifacts = _validate_artifacts(receipt_root, record["artifacts"])
-    dynamic_links = _validate_dynamic_executable_link_sidecars(receipt_root, image)
+    dynamic_links = _validate_dynamic_executable_link_sidecars(root, receipt_root, image)
     snapshots = {name: _validate_snapshot(receipt_root, record["snapshots"].get(name) if isinstance(record["snapshots"], Mapping) else None, name)
                  for name in ("before", "after")}
     if snapshots["before"]["records"] != snapshots["after"]["records"]:
@@ -1442,7 +1442,7 @@ def _public_replay_exit_recheck(
     runner_again = _runner_records(receipt_root, output_relative, record["runner_commands"])
     _validate_execution_tools(receipt_root, output_relative, source_again, image_again, products_again, collector_again, runner_again)
     artifacts_again = _validate_artifacts(receipt_root, record["artifacts"])
-    dynamic_links_again = _validate_dynamic_executable_link_sidecars(receipt_root, image_again)
+    dynamic_links_again = _validate_dynamic_executable_link_sidecars(checkout_root, receipt_root, image_again)
     snapshots_again = {name: _validate_snapshot(receipt_root, record["snapshots"].get(name) if isinstance(record["snapshots"], Mapping) else None, name)
                        for name in ("before", "after")}
     runtime_again = _validate_runtime_and_headers(receipt_root)
@@ -1528,7 +1528,7 @@ def _final_transaction_recheck(
         _fail("collector raw streams changed after locale alias report construction")
     if _raw_runner_records(receipt_root, output_relative) != list(runner_commands):
         _fail("runner raw streams changed after locale alias report construction")
-    _validate_dynamic_executable_link_sidecars(receipt_root, image)
+    _validate_dynamic_executable_link_sidecars(root, receipt_root, image)
 
 
 def collect(root: Path, output: Path) -> dict[str, object]:
