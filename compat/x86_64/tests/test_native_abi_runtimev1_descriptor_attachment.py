@@ -258,7 +258,7 @@ class RuntimeV1DescriptorLifecycleAttachmentTests(unittest.TestCase):
                 'source_provenance_verified': True, 'installed_import_required': False,
                 'transport_occurrence_indices': [30634], 'provider_occurrence_indices': [],
                 'consumer_occurrence_indices': [30634], 'requirements_discharged': [],
-                'requirements_remaining': list(selection.PREPARED_WORKER_TLS_DESCRIPTOR_REQUIREMENTS),
+                'requirements_remaining': sorted(selection.PREPARED_WORKER_TLS_DESCRIPTOR_REQUIREMENTS),
             },
         }]
         return crt, worker, startup_joins, handoff, worker_joins
@@ -356,7 +356,8 @@ class RuntimeV1DescriptorLifecycleAttachmentTests(unittest.TestCase):
 
     def test_paired_runtimev1_attachment_rejects_closed_account_and_occurrence_changes(self) -> None:
         for mutation in ('value-cases', 'crt-source-input', 'worker-post-fork', 'worker-geometry',
-                         'provider', 'second-occurrence', 'foreign-occurrence', 'provider-definition', 'cohort'):
+                         'worker-requirement-order', 'provider', 'second-occurrence', 'foreign-occurrence',
+                         'provider-definition', 'cohort'):
             with self.subTest(mutation=mutation):
                 accounting = self._accounting()
                 crt, worker, startup, handoff, worker_joins = self._companions()
@@ -368,6 +369,8 @@ class RuntimeV1DescriptorLifecycleAttachmentTests(unittest.TestCase):
                     del worker['account']['source']['post_fork_generation']
                 elif mutation == 'worker-geometry':
                     worker_joins[0]['descriptor']['contract_geometry']['size_bytes'] = 71
+                elif mutation == 'worker-requirement-order':
+                    worker_joins[0]['descriptor']['requirements_remaining'].reverse()
                 elif mutation == 'provider':
                     accounting['identities'][0]['selection']['protocol']['provider_artifacts'] = ['candidate-loader']
                 elif mutation == 'second-occurrence':

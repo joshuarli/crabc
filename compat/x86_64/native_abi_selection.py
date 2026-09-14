@@ -5485,7 +5485,9 @@ def attach_runtimev1_descriptor_lifecycle(
             and worker_descriptor['provider_occurrence_indices'] == []
             and worker_descriptor['consumer_occurrence_indices'] == [occurrence['index']]
             and worker_descriptor['requirements_discharged'] == []
-            and worker_descriptor['requirements_remaining'] == list(PREPARED_WORKER_TLS_DESCRIPTOR_REQUIREMENTS),
+            # account_placements() sorted the record before the worker
+            # attachment copied it. Keep that canonical source order exact.
+            and worker_descriptor['requirements_remaining'] == sorted(PREPARED_WORKER_TLS_DESCRIPTOR_REQUIREMENTS),
             'RuntimeV1 prepared-worker descriptor join differs')
     require(record['unresolved'] == list(PREPARED_WORKER_TLS_DESCRIPTOR_FINAL_REQUIREMENTS),
             'RuntimeV1 descriptor requirements differ before final attachment')

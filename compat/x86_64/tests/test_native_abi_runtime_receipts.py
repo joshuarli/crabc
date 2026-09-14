@@ -430,7 +430,8 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
             })
         descriptor_name = '__crabc_x86_64_loader_tls_runtime_v1'
         descriptor_identity = selection.identity(descriptor_name)
-        descriptor_requirements = list(selection.PREPARED_WORKER_TLS_DESCRIPTOR_REQUIREMENTS)
+        # account_placements() closes unresolved reasons in sorted canonical order.
+        descriptor_requirements = sorted(selection.PREPARED_WORKER_TLS_DESCRIPTOR_REQUIREMENTS)
         identities.append({
             'identity': descriptor_identity,
             'selection': {
@@ -923,6 +924,8 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
         descriptor_record = next(row for row in accounting['identities']
                                  if row['identity']['name'] == '__crabc_x86_64_loader_tls_runtime_v1')
         self.assertEqual(descriptor['requirements_remaining'], descriptor_record['unresolved'])
+        self.assertEqual(descriptor['requirements_remaining'],
+                         sorted(selection.PREPARED_WORKER_TLS_DESCRIPTOR_REQUIREMENTS))
         self.assertEqual(len(accounting['blockers']), len(descriptor_record['unresolved']))
         descriptor_joins = [row for row in accounting['private_protocol_joins']
                             if row['identity']['name'] == '__crabc_x86_64_loader_tls_runtime_v1']
