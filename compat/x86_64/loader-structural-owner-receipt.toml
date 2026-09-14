@@ -1,0 +1,284 @@
+# Design contract for the finite native x86 loader structural-owner receipt.
+#
+# This is deliberately a component contract, not a selector projection.  It
+# names only the eight unresolved structural identities and requires a future
+# reader to reconstruct current source, supplied-product and retained-runtime
+# evidence before an adapter can attach anything.
+
+schema = "crabc.x86_64-loader-structural-owner-contract/v1"
+id = "x86-loader-structural-owner"
+status = "design-only"
+target = "x86_64-unknown-linux-musl"
+component = "loader-structural-owner"
+
+[selection]
+disposition = "structural-replacement"
+requirement = "current source-bound owning component and consumer semantics receipt"
+identities = [
+  "__dls2b",
+  "__dls3",
+  "_dlstart",
+  "__ldso_register_dlopen",
+  "__ldso_register_dlsym",
+  "__ldso_register_dlclose",
+  "__ldso_register_dlerror",
+  "__ldso_register_mark_multithreaded",
+]
+
+# The identity list is finite.  It supplies no expected provider placement:
+# these are structural dispositions, not a request to materialize old symbols
+# in the selected static archive, libc.so, or interpreter dynsym.
+expected_placements = []
+
+[report]
+schema = "crabc.x86_64-loader-structural-owner-receipt/v1"
+status = "component-verified"
+fields = [
+  "schema",
+  "status",
+  "component",
+  "collection",
+  "selected_source",
+  "collector",
+  "inputs",
+  "selected_products",
+  "static_preparation",
+  "base_inventory",
+  "full_facts",
+  "source_contract",
+  "source_algorithm",
+  "normal_consumer",
+  "commands",
+  "runtime",
+  "artifacts",
+  "coverage",
+  "limits",
+]
+
+[report.coverage]
+fields = ["identities", "groups", "fact_filter", "source_functions", "normal_consumer_cells"]
+
+[report.fact_filter]
+fields = [
+  "full_occurrence_count",
+  "unnamed_occurrence_count",
+  "named_identity_filter",
+  "reference_startup_rows",
+  "candidate_rows",
+]
+
+[report.limits]
+family_completion = false
+promotion_ready = false
+public_support = false
+runtime_qualification = false
+
+# This is a development anchor, not a receipt that a future collection may
+# reuse.  A fresh receipt must bind its own current clean source and products.
+[development_anchor]
+revision = "7dcafabe18a8ccea5bd73c6af49ae51be718c249"
+source_content_sha256 = "685265a025c9b7b15a350ad21dafb8c3170a123c75b3d222bba84dead980b1ac"
+selection_report = ".work/x86_64/native-abi-selection/clean-7dcafabe/report.json"
+selection_report_sha256 = "96f92b954e65cf52927529e38992f199c4499db0e2f7543e3b8b5df0f2647dc5"
+full_facts_report = ".work/x86_64/native-abi-elf-facts/clean-7dcafabe/report.json"
+full_facts_report_sha256 = "e92e2308250e6697c7e3796f540b0c43f399ea78b95fca3b5685abf19a4f5224"
+base_inventory_report = ".work/x86_64/native-abi-inventory/clean-7dcafabe/report.json"
+base_inventory_report_sha256 = "5392b1e55d8950708d85b83ac9cfc07d85e553c1de55799ace4bd7cc1b3ad0cd"
+static_preparation = ".work/x86_64/public-data-products/static-7dcafabe/preparation.json"
+static_preparation_sha256 = "a88ed97517f16331c94105359434dbc042e0e12176e4c31289eae8e3d998b0c5"
+dynamic_manifest = ".work/x86_64/loader-debug-abi/clean-7dcafabe/component/dynamic-product/share/crabc/manifest.json"
+dynamic_manifest_sha256 = "69a6992558ebf0d5c999ed8453bf39f62b796c2ebd6578025795f5b492500f56"
+runtime_registry_report = ".work/x86_64/loader-runtime-registry/clean-7dcafabe/report.json"
+runtime_registry_report_sha256 = "e0721b93aeec0c4e761357b22a04274a971ea385a97f6815fa9325342990b609"
+loader_debug_report = ".work/x86_64/loader-debug-abi/clean-7dcafabe/component/report.json"
+loader_debug_report_sha256 = "a4611ca7237f4fff45651a550e2f5650746b80d69101c0916390e18817961f92"
+full_occurrence_count = 30667
+unnamed_occurrence_count = 1365
+blockers = 339
+
+# Name filtering precedes strict identity construction.  The future reader
+# retains all raw rows, including unnamed physical observations; it only maps
+# the eight non-null spellings below to this component's finite coverage.
+[fact_filter]
+identity_names = [
+  "__dls2b",
+  "__dls3",
+  "_dlstart",
+  "__ldso_register_dlopen",
+  "__ldso_register_dlsym",
+  "__ldso_register_dlclose",
+  "__ldso_register_dlerror",
+  "__ldso_register_mark_multithreaded",
+]
+reference_artifact = "reference-shared"
+reference_tables = [".dynsym", ".symtab"]
+reference_startup_names = ["__dls2b", "__dls3", "_dlstart"]
+# There are exactly two retained reference rows for each startup identity at
+# the 7dc design anchor: one .dynsym and one .symtab row.  The five private
+# registration spellings have structural-contract origins, not invented raw
+# occurrences.  Future source-matched facts are validated as supplied facts;
+# this anchor is not a fixed fresh-product row-index requirement.
+reference_rows_per_startup_name = 2
+registration_names_have_no_raw_origin = true
+
+[[group]]
+id = "loader-entry-stages"
+identities = ["__dls2b", "__dls3", "_dlstart"]
+kind = "frozen-startup-structural-disposition"
+source_functions = [
+  "ldso/src/x86_64_initial_graph.rs::_start",
+  "ldso/src/x86_64_general_initial_graph.rs::run",
+  "ldso/src/x86_64_general_initial_graph.rs::run_with_initial_tls",
+  "ldso/src/x86_64_general_relocation.rs::relocate_initial_graph_with_debugger",
+  "ldso/src/x86_64_direct_entry.rs::prepare",
+  "libc/src/loader_startup_exports.rs::__dls2b",
+  "libc/src/loader_startup_exports.rs::__dls3",
+]
+source_algorithm = "The selected x86 graph discovers dependencies, plans and materializes initial TLS, relocates and protects every object, seals RELRO, prepares and publishes the runtime registry, then dispatches the preflighted initializer plan or jumps to entry. The named legacy helpers are frozen-origin context, not the selected entry owner."
+normal_consumer = "A source-compiled dynamic constructor/main probe reaches the selected interpreter through PIE/non-PIE kernel and direct entry, then uses only installed public dlfcn APIs."
+not_a_callable_proof = "The probe never calls __dls2b, __dls3, or _dlstart. Successful application execution cannot alone establish their internal order."
+
+[[group]]
+id = "loader-registration-operations"
+identities = ["__ldso_register_dlopen", "__ldso_register_dlsym", "__ldso_register_dlclose", "__ldso_register_dlerror"]
+kind = "legacy-registration-replaced-by-selected-direct-operations"
+source_functions = [
+  "libc/src/c_abi.rs::__ldso_register_dlopen",
+  "libc/src/c_abi.rs::__ldso_register_dlsym",
+  "libc/src/c_abi.rs::__ldso_register_dlclose",
+  "libc/src/c_abi.rs::__ldso_register_dlerror",
+  "libc/src/c_abi/x86_64/static_c_abi.rs::fixed_graph_dlfcn module selection",
+  "libc/src/c_abi/x86_64/general_dlfcn.rs::dlopen",
+  "libc/src/c_abi/x86_64/general_dlfcn.rs::__crabc_x86_general_dlsym",
+  "libc/src/c_abi/x86_64/general_dlfcn.rs::dlclose",
+  "libc/src/c_abi/x86_64/general_dlfcn.rs::dlerror",
+  "ldso/src/x86_64_runtime_registry.rs::runtime_function",
+  "ldso/src/x86_64_general_initial_graph.rs::run_with_initial_tls",
+  "ldso/src/x86_64_runtime_registry.rs::PreparedInitialRegistry::publish",
+]
+source_algorithm = "The old generic callback setters remain frozen-origin source context. The selected x86 public dlfcn leaf imports the closed runtime-operation table instead; the selected initial graph prepares and publishes that registry before dependency constructors or application entry can use the public leaf."
+normal_consumer = "One installed-header C probe loads a known DSO, resolves a known definition, records a failed lookup followed by one non-null then one null dlerror result, and closes the handle."
+not_a_callable_proof = "The probe does not call any __ldso_register_* spelling. A successful dlopen is evidence of the selected direct consumer path only after the source algorithm proves its ordering and closed operation mapping."
+
+[[group]]
+id = "loader-always-atomic-guard"
+identities = ["__ldso_register_mark_multithreaded"]
+kind = "legacy-registration-replaced-by-one-way-selected-lock-transition"
+source_functions = [
+  "ldso/src/x86_64_runtime_lock.rs::RuntimeGuard::acquire",
+  "ldso/src/x86_64_initial_worker_tls.rs::allocate",
+  "libc/src/c_abi/x86_64/dynamic_tls.rs::allocate_thread",
+  "libc/src/c_abi/x86_64/pthread_create_join.rs::create_selected_worker_with_attributes",
+  "ldso/src/x86_64_runtime_registry.rs::attach_worker_tls",
+  "libc/src/c_abi.rs::__ldso_register_mark_multithreaded (legacy source context)",
+]
+source_algorithm = "The selected dynamic worker path obtains its opaque TLS token through the loader's RuntimeGuard before clone. This replaces the old callback handoff; the retained __ldso_mark_multithreaded and generic registration sources are legacy-context disposition evidence, not the selected pthread call chain."
+normal_consumer = "The dynamic C probe performs its ordinary dlfcn sequence before its first application pthread_create, joins the worker, and has the worker perform a defined dlfcn lookup."
+not_a_callable_proof = "This does not call the private registration spelling or infer first-clone ordering from a successful worker. The source algorithm is the proof that the selected TLS allocation takes RuntimeGuard before clone."
+
+[[source_algorithm]]
+id = "initial-x86-graph-order"
+path = "ldso/src/x86_64_general_initial_graph.rs"
+function = "run_with_initial_tls"
+ordered_calls = [
+  "discover_needed and finish_discovery",
+  "plan_initial_tls",
+  "PreparedInitialDebugger::prepare and relocate_initial_graph_with_debugger",
+  "mark_relocated",
+  "protect_segments",
+  "apply_relro and apply_self_relro",
+  "preflight_dependency_initializers",
+  "PreparedInitialRegistry::prepare",
+  "reserve publication state",
+  "materialize_initial_tls and commit_runtime_v1",
+  "runtime_registry.publish",
+  "dispatch_dependency_initializers or jump",
+]
+meaning = "The future reader must isolate the selected x86 function body and reject reordered, omitted, duplicated, or widened transitions rather than use an arbitrary source-wide substring search. It must separately confirm the cfg-selected runtime path, its x86 entry assembly, and direct-interpreter preparation."
+
+[[source_algorithm]]
+id = "selected-direct-dlfcn-route"
+path = "libc/src/c_abi/x86_64/static_c_abi.rs"
+function = "fixed_graph_dlfcn module selection"
+requires = [
+  "cfg_attr(feature = x86-owned-dynamic-runtime, path = general_dlfcn.rs)",
+  "general_dlfcn imports exactly the closed runtime-operation names",
+  "ldso/src/x86_64_runtime_registry.rs::runtime_function maps those names exactly",
+  "run_with_initial_tls publishes the prepared registry before any dependency initializer or application entry",
+]
+meaning = "The selected public dlfcn route is the replacement behavior. It is distinct from the generic legacy callback-slot source and from the nine-name registry component's existing receipt."
+
+[[source_algorithm]]
+id = "first-worker-lock-transition"
+paths = ["libc/src/c_abi/x86_64/pthread_create_join.rs", "libc/src/c_abi/x86_64/dynamic_tls.rs", "ldso/src/x86_64_initial_worker_tls.rs", "ldso/src/x86_64_runtime_lock.rs", "ldso/src/x86_64_runtime_registry.rs"]
+requires = [
+  "selected dynamic_tls::allocate_thread requests __crabc_x86_64_initial_tls_allocate",
+  "x86_64_initial_worker_tls::allocate takes RuntimeGuard before it materializes and registers a worker TLS token",
+  "create_selected_worker_with_attributes obtains that token before its clone seam",
+  "the legacy __ldso_mark_multithreaded and callback-registration definitions remain source-context disposition evidence rather than the selected x86 pthread route",
+]
+meaning = "The reader must prove the selected token-before-clone and RuntimeGuard ownership relation, not replace it with an unbounded thread-scheduling assertion or claim that the selected pthread path calls the legacy callback."
+
+# New source-compiled probes are intentionally ordinary consumers.  They use
+# installed dlfcn.h/pthread.h names only and never name an internal stage or
+# registration callback.  Their object bytes are shared between the pinned
+# musl lane and the candidate link for each probe role.
+[[probe]]
+id = "startup-entry-public-dlfcn"
+source = "compat/x86_64/loader_structural_owner_startup_probe.c"
+plugin_source = "compat/x86_64/loader_structural_owner_plugin.c"
+roles = ["constructor", "main", "plugin"]
+lanes = ["pinned-musl-1.2.6", "candidate"]
+modes = ["dynamic-pie-kernel", "dynamic-pie-direct", "dynamic-non-pie-kernel", "dynamic-non-pie-direct"]
+operations = ["dlopen", "dlsym", "dlclose", "dlerror"]
+required_observation = "A constructor completes one normal public dlfcn transaction before main; main repeats a defined transaction and records the fixed transcript."
+excludes = ["direct calls to __dls2b", "direct calls to __dls3", "direct calls to _dlstart", "private registration calls", "ELF mutation"]
+
+[[probe]]
+id = "registration-replacement-before-worker"
+source = "compat/x86_64/loader_structural_owner_registration_probe.c"
+plugin_source = "compat/x86_64/loader_structural_owner_plugin.c"
+roles = ["main", "worker", "plugin"]
+lanes = ["pinned-musl-1.2.6", "candidate"]
+modes = ["dynamic-pie-kernel", "dynamic-pie-direct", "dynamic-non-pie-kernel", "dynamic-non-pie-direct"]
+operations = ["dlopen", "dlsym", "dlclose", "dlerror", "pthread_create", "pthread_join"]
+required_observation = "The first application worker is created only after the public dlfcn transaction. The worker performs a defined public lookup and the joined transcript is exact."
+excludes = ["direct calls to __ldso_register_*", "private registry calls", "schedule-race claims", "ELF mutation"]
+
+[product_inputs]
+# Structural interpreter behavior is dynamic-only.  The supplied static
+# preparation remains an authenticated cohort input, but no static execution
+# is misrepresented as an interpreter-entry or dlfcn-registration probe.
+static_preparation_required = true
+dynamic_product_required = true
+base_inventory_required = true
+full_elf_facts_required = true
+loader_debug_component_required = true
+loader_runtime_registry_component_required = true
+# The established source policy supplies all sealed static/dynamic link-input
+# modes. The future reader uses this exact finite projection rather than
+# comparing self-resealed retained modes.
+link_input_mode_projection = "owned_posix_product_evidence.link_input_mode_projection()"
+static_link_input_roles = 6
+dynamic_link_input_roles = 7
+
+[replay]
+collector_source = "current-clean-only"
+selected_source = "current-clean-only"
+retained_host_replay = "required"
+replay_uses_ambient_target_tools = false
+final_recheck = [
+  "current source and source-contract inputs",
+  "static preparation, products, manifests and all finite input bytes/modes",
+  "base inventory and complete ELF facts",
+  "nested loader-debug and loader-runtime-registry reports",
+  "probe objects, links, commands, runtime roots and report bytes",
+]
+
+[limits]
+no_selector_admission = true
+no_family_admission = true
+no_campaign_transition = true
+no_dynamic_elf_authority_review = true
+no_elf_or_binary_mutation_controls = true
+no_aarch64_execution = true
