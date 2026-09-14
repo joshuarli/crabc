@@ -1,10 +1,12 @@
 # Native x86 loader structural-owner receipt
 
-`loader-structural-owner-receipt.toml` defines a finite implemented-but-unqualified component for eight current
-structural identities. Every one currently has exactly the selector reason
-`current source-bound owning component and consumer semantics receipt`. This is
-not a selector adapter, family receipt, export rule, or request to reproduce a
-historical symbol in an installed product.
+`loader-structural-owner-receipt.toml` defines a finite component for eight
+current structural identities. Without its admitted receipt, each carries the
+selector reason `current source-bound owning component and consumer semantics receipt`.
+The separate `native_loader_structural_owner_adapter` and
+`attach_loader_structural_owner` in `native_abi_selection.py` discharge only
+that reason after validating the component. They add no symbol placement or
+family qualification.
 
 The design anchor is clean
 `7dcafabe18a8ccea5bd73c6af49ae51be718c249`. Its selector report contains
@@ -22,7 +24,7 @@ current evidence.
 | `loader-registration-operations` | `__ldso_register_dlopen`, `__ldso_register_dlsym`, `__ldso_register_dlclose`, `__ldso_register_dlerror` | structural replacement | Selected x86 direct runtime operations and per-thread `dlerror` state. |
 | `loader-always-atomic-guard` | `__ldso_register_mark_multithreaded` | structural replacement | An always-atomic loader graph lock from the first transaction, plus a separately proved worker-TLS-token-before-clone relation. |
 
-None has an expected placement. The future component must not invent a
+None has an expected placement. The component must not invent a
 candidate archive, shared-library, loader `dynsym`, private provider, or
 current-occurrence rule for these structural dispositions.
 
@@ -32,7 +34,7 @@ At the anchor, `__dls2b`, `__dls3`, and `_dlstart` each have one
 `frozen-project-dynamic` and native-structural-contract origins, with no
 invented reference occurrence. The receipt retains all supplied raw rows,
 including unnamed rows. It filters only non-null names in this exact eight-name
-set before logical identity construction. The report and eventual selector join
+set before logical identity construction. The report and selector join
 compare complete and unnamed counts before and after the join; no unowned row
 is discarded.
 
@@ -184,7 +186,7 @@ failure path. No source fixture names an internal stage, callback registration
 spelling, or private registry function. Pinned musl compares this public
 surface; it is never an oracle for calling historical internal stages.
 
-## Tests and limits before collection
+## Tests and qualification boundary
 
 Focused reader/contract tests begin with missing, duplicate, reordered and
 extra identities; missing/changed raw counts; null/unknown rows; stale or
@@ -194,9 +196,27 @@ publish ordering, or owned-CRT tail; and missing/substituted/unpaired matrix
 cells. Source fixtures retain expected public references before link. Every
 candidate dynamic mode and its paired pinned comparator remains required.
 
-This component is implemented but unqualified: no source-matched native
-receipt has been collected and no selector admission exists. It makes no
-family, campaign, promotion, or public-support claim and contains no AArch64
-execution, ELF or binary mutation control, or dynamic-ELF authority review.
+Bounded native evidence is accepted at clean revision
+`60f18674e7ea831bbf17a14d3c0f1d7c508e8298`, retained in
+`.work/worktrees/loader_structural_owner_contract`. Its
+`.work/x86_64/loader-structural-owner/clean-60f18674/report.json` is
+`component-verified` (SHA-256
+`f0ab5260f278509d4315dd5bacee38bfbafd7a0df92a8b5d60a583f690f075f4`),
+with 37 successful commands and all 16 paired consumer executions. The
+separately recorded replay recovery preserves the original failed attempt.
+
+The selector audit at that revision passed; its closure replay returned the
+expected incomplete status. The retained
+`.work/x86_64/native-abi-selection/clean-60f18674/report.json` (SHA-256
+`3db65b7b49b9d9829d2d3c68f7951b8e551337fe47a49601764ce3dc7232447b`)
+has 331 blockers. Compared with the design anchor, only the eight named
+requirements were removed. All 2,531 identities, 30,667 occurrences, and
+1,365 unnamed occurrences remain; no placement was added.
+
+The component receipt itself retains `selector_admission=false` and
+`runtime_qualification=false`: the separate selector proves its bounded attachment.
+Neither result closes a family or campaign, promotes the runtime, or changes
+public support. The evidence contains no AArch64 execution, ELF or binary
+mutation control, or dynamic-ELF authority review.
 The stopped private pthread dynamic-ELF authority review with final-only
 mutation controls remains stopped and is not reframed here.
