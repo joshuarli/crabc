@@ -19,6 +19,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import sys
 from typing import Any, Mapping, Sequence
 
 
@@ -769,7 +770,13 @@ def _load_runner() -> Any:
     if spec is None or spec.loader is None:
         raise EvidenceError("allocator native runner is absent")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        if sys.modules.get(spec.name) is module:
+            sys.modules.pop(spec.name, None)
+        raise
     return module
 
 

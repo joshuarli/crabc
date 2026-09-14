@@ -107,6 +107,19 @@ def _valid_report() -> dict[str, object]:
 
 
 class FaultInventoryShapeTests(unittest.TestCase):
+    def test_runner_loader_registers_the_module_for_its_vm_producer(self) -> None:
+        """The dynamically loaded runner names itself while invoking its producer."""
+
+        module_name = "crabc_allocator_fault_inventory_runner"
+        previous = sys.modules.pop(module_name, None)
+        try:
+            runner = INVENTORY._load_runner()
+            self.assertIs(sys.modules.get(module_name), runner)
+        finally:
+            sys.modules.pop(module_name, None)
+            if previous is not None:
+                sys.modules[module_name] = previous
+
     def test_standalone_producer_builds_the_vm_validator_canonical_cargo_target(self) -> None:
         """The standalone producer must feed the same target the VM reader admits."""
 
