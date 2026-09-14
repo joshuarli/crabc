@@ -120,6 +120,78 @@ class RetainedStreamReaderTests(unittest.TestCase):
         self.assertIn("stderr", report["rust"])
         self.assertNotIn("stdout_sha256", report["rust"])
 
+    def test_reader_reconstructs_canonical_scenarios_after_the_sorted_json_round_trip(self) -> None:
+        report = json.loads(json.dumps(self.complete_report(), sort_keys=True))
+        self.assertEqual(
+            list(report["c_oracle"]["runs"]),
+            sorted(EVIDENCE.SCENARIOS),
+        )
+
+        EVIDENCE.validate_report(report)
+
+    def test_reader_rejects_missing_or_extra_c_scenarios_after_the_sorted_json_round_trip(self) -> None:
+        for name, mutate in {
+            "missing": lambda runs: runs.pop("cap"),
+            "extra": lambda runs: runs.__setitem__("unexpected", runs["cap"]),
+        }.items():
+            with self.subTest(case=name):
+                report = json.loads(json.dumps(self.complete_report(), sort_keys=True))
+                mutate(report["c_oracle"]["runs"])
+                with self.assertRaisesRegex(EVIDENCE.EvidenceError, "C scenario roster drifted"):
+                    EVIDENCE.validate_report(report)
+
+    def test_reader_accepts_native03_toolchain_prelude_around_the_exact_default_sink_capture(self) -> None:
+        report = self.complete_report()
+        # native-differential-03 retained this Cargo/rustup prelude before the
+        # test-owned line-delimited default-sink capture. It is command stderr,
+        # not allocator output. Its candidate is retained under the checkout's
+        # ignored evidence root with SHA
+        # 2c6b2efca5c127ab1eb24d3756104aadf07a6076c3b2ae26757bb70d7ebed13c.
+        prelude = (
+            "info: syncing channel updates for nightly-2026-07-24-x86_64-unknown-linux-musl\n"
+            "info: latest update on 2026-07-24 for version 1.99.0-nightly (89c61a754 2026-07-23)\n"
+            "info: downloading 8 components\n"
+        )
+        suffix = "info: cargo wrapper completed\n"
+        report["rust"]["stderr"] = prelude + report["rust"]["stderr"] + suffix
+
+        EVIDENCE.validate_report(report)
+        self.assertEqual(report["rust"]["stderr"], prelude + EVIDENCE.expected_default_stderr_stream() + suffix)
+
+    def test_reader_rejects_duplicate_missing_reordered_or_non_lf_default_sink_markers(self) -> None:
+        block = EVIDENCE.expected_default_stderr_stream()
+        cases = {
+            "duplicate": block + block,
+            "missing": block.replace(EVIDENCE.DEFAULT_STDERR_END + "\n", ""),
+            "missing_final_lf": block[:-1],
+            "reordered": (
+                EVIDENCE.DEFAULT_STDERR_END
+                + "\n"
+                + EVIDENCE.DEFAULT_STDERR_BEGIN
+                + "\n"
+                + "release=\n"
+            ),
+            "carriage_return": block.replace(EVIDENCE.DEFAULT_STDERR_BEGIN + "\n", EVIDENCE.DEFAULT_STDERR_BEGIN + "\r\n"),
+            "vertical_tab_predecessor": "toolchain\v" + block,
+        }
+        for name, stderr in cases.items():
+            with self.subTest(case=name):
+                report = self.complete_report()
+                report["rust"]["stderr"] = stderr
+                with self.assertRaisesRegex(EVIDENCE.EvidenceError, "default-stderr marker framing drifted"):
+                    EVIDENCE.validate_report(report)
+
+    def test_reader_rejects_extra_or_mutated_bytes_inside_the_default_sink_capture(self) -> None:
+        for name, stderr in {
+            "extra": EVIDENCE.expected_default_stderr_stream().replace("enabled=\n", "enabled=\nextra=\n"),
+            "mutated": EVIDENCE.expected_default_stderr_stream().replace("7374646572720a", "77726f6e670a"),
+        }.items():
+            with self.subTest(case=name):
+                report = self.complete_report()
+                report["rust"]["stderr"] = stderr
+                with self.assertRaisesRegex(EVIDENCE.EvidenceError, "default-stderr framed bytes drifted"):
+                    EVIDENCE.validate_report(report)
+
     def test_reader_requires_the_source_pre_increment_cap_boundary(self) -> None:
         prefix = f"mimalloc: warning: thread 0x{self.C_THREAD_IDENTITY:X}: ".encode("ascii").hex()
         self.assertEqual(

@@ -388,7 +388,13 @@ source closure (`crabc-mimalloc` module route/owner/lock and the selected
 `crabc-core` module route/error/futex/syscall files), the root Cargo
 configuration, selected Cargo manifests, and toolchain input, exact pinned C
 source roster, reconstructed collector commands/cwds, and every finite
-custom/default output stream. Each C scenario and each Rust trace scenario
+custom/default output stream. The Rust command's complete stderr remains a
+retained command stream, including Cargo or rustup diagnostics. Within it, the
+private test capture must contain exactly one LF-delimited default-stderr
+BEGIN/END block; the reader compares that inclusive block byte-for-byte and
+then reconstructs its seven observations. This framing distinguishes command
+stderr from the encoded private sink capture; it does not establish production
+FILE transport parity. Each C scenario and each Rust trace scenario
 also retains a separately observed same-process TLS identity; the reader
 reconstructs the exact dynamic prefix from that identity and rejects missing,
 mismatched, lower-case, or zero-padded values without comparing C and Rust

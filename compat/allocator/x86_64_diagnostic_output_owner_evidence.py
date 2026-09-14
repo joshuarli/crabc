@@ -374,6 +374,30 @@ def expected_default_stderr_stream() -> str:
     )
 
 
+def extract_single_line_framed_stream(output: str, begin: str, end: str, context: str) -> str:
+    """Return one exact LF-delimited capture without discarding command stderr.
+
+    The retained Rust command record owns the entire Cargo stderr stream. The
+    test's private default-sink observation is only the one inclusive marker
+    block in that stream, so toolchain-manager diagnostics before or after it
+    remain authenticated command output rather than allocator bytes.
+    """
+
+    # Split only on literal LF: Python's `str.splitlines` also accepts CR,
+    # VT, FF, and Unicode separators, which are not valid marker boundaries.
+    lines = output.split("\n")
+    begins = [index for index, line in enumerate(lines) if line == begin]
+    ends = [index for index, line in enumerate(lines) if line == end]
+    if (
+        len(begins) != 1
+        or len(ends) != 1
+        or begins[0] >= ends[0]
+        or ends[0] == len(lines) - 1
+    ):
+        raise EvidenceError(f"{context} marker framing drifted")
+    return "\n".join(lines[begins[0]:ends[0] + 1]) + "\n"
+
+
 def c_compile_command(compiler: str, source: Path, binary: Path) -> list[str]:
     return [
         compiler,
@@ -609,7 +633,11 @@ def validate_report(report: object) -> None:
     ):
         raise EvidenceError("diagnostic-output C build receipt drifted")
     runs = c_oracle["runs"]
-    if not isinstance(runs, Mapping) or tuple(runs) != SCENARIOS:
+    if (
+        not isinstance(runs, Mapping)
+        or len(runs) != len(SCENARIOS)
+        or set(runs) != set(SCENARIOS)
+    ):
         raise EvidenceError("diagnostic-output C scenario roster drifted")
     c_trace: dict[str, list[str]] = {}
     c_thread_identities: dict[str, int] = {}
@@ -638,9 +666,12 @@ def validate_report(report: object) -> None:
     rust_trace = parse_trace(rust["stdout"], TRACE_BEGIN, TRACE_END)
     rust_thread_identities = parse_thread_identities(rust["stdout"])
     validate_callback_trace(rust_trace, rust_thread_identities, "Rust diagnostic-output")
-    if rust["stderr"] != expected_default_stderr_stream():
-        raise EvidenceError("diagnostic-output Rust default-stderr raw stream drifted")
-    rust_default_stderr = parse_trace(rust["stderr"], DEFAULT_STDERR_BEGIN, DEFAULT_STDERR_END)
+    rust_default_stderr_stream = extract_single_line_framed_stream(
+        rust["stderr"], DEFAULT_STDERR_BEGIN, DEFAULT_STDERR_END, "diagnostic-output Rust default-stderr"
+    )
+    if rust_default_stderr_stream != expected_default_stderr_stream():
+        raise EvidenceError("diagnostic-output Rust default-stderr framed bytes drifted")
+    rust_default_stderr = parse_trace(rust_default_stderr_stream, DEFAULT_STDERR_BEGIN, DEFAULT_STDERR_END)
     if rust_default_stderr != EXPECTED_DEFAULT_STDERR_TRACE:
         raise EvidenceError("diagnostic-output Rust default-stderr trace drifted")
     if {
