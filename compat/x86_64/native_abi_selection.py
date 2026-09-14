@@ -49,7 +49,7 @@ import owned_errno_storage_lifecycle as errno_storage_evidence
 import native_c_allocator_boundary
 import owned_posix_product_evidence as product_evidence
 
-SCHEMA = 'crabc.x86_64-native-abi-selection-report/v1'
+SCHEMA = 'crabc.x86_64-native-abi-selection-report/v2'
 CONTRACT_SCHEMA = 'crabc.x86_64-native-abi-selection/v1'
 TARGET = inventory.TARGET
 CONTRACT_PATH = MODULE_DIR / 'native-abi-selection.toml'
@@ -259,6 +259,7 @@ def _crt_startup_source_files() -> tuple[str, ...]:
         'compat/x86_64/installed-crt-startup.md',
         'compat/x86_64/tests/test_installed_crt_startup_evidence.py',
         'compat/x86_64/tests/test_native_abi_crt_startup_attachment.py',
+        'compat/x86_64/tests/test_native_abi_runtimev1_descriptor_attachment.py',
     )
 
 
@@ -324,6 +325,10 @@ PREPARED_WORKER_TLS_DESCRIPTOR_REQUIREMENTS = (
 PREPARED_WORKER_TLS_DESCRIPTOR_MEASURED_REQUIREMENTS = (
     'exact main-image weak-GOT transport and static no-slot receipt',
     'current owned main descriptor geometry and acquire READY/TP-DTV receipt',
+)
+PREPARED_WORKER_TLS_DESCRIPTOR_FINAL_REQUIREMENTS = (
+    'pointer lifetime, worker mapping generation and fork ownership evidence',
+    'release READY ordering and malformed descriptor rejection receipt',
 )
 PREPARED_WORKER_TLS_DESCRIPTOR_SOURCE_FIELDS = (
     'magic:u64', 'version:u32', 'abi_size:u32', 'process_mode:u32', 'owner:u32', 'state:AtomicU8',
@@ -2477,6 +2482,28 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
         except (KeyError, TypeError, ValueError, OSError, reader.ReceiptError) as error:
             raise SelectionError(f'pthread timed component changed during attachment: {error}') from error
         require(same(before, file_identity(report_path)), 'pthread timed report changed during final replay')
+    if crt_startup is not None and prepared_worker is not None:
+        # The paired RuntimeV1 discharge has a semantic account beyond the
+        # report bytes. Re-run both owners after all joins so a retained map,
+        # probe, raw stream, source copy, or command artifact cannot change in
+        # the interval between the first replay and report sealing.
+        crt_report = physical_work_path(Path(crt_startup['report']['path']), directory=False)
+        crt_before = file_identity(crt_report)
+        replayed_crt = native_crt_startup_adapter(
+            crt_report, facts=facts, measurement=measurement, paths=paths, source=source,
+        )
+        require(same(replayed_crt, crt_startup), 'CRT startup changed during final RuntimeV1 replay')
+        require(same(crt_before, file_identity(crt_report)),
+                'CRT startup report changed during final RuntimeV1 replay')
+        worker_report = physical_work_path(Path(prepared_worker['report']['path']), directory=False)
+        worker_before = file_identity(worker_report)
+        replayed_worker = prepared_worker_tls_adapter(
+            worker_report, facts=facts, measurement=measurement, paths=paths, source=source,
+        )
+        require(same(replayed_worker, prepared_worker),
+                'prepared worker TLS changed during final RuntimeV1 replay')
+        require(same(worker_before, file_identity(worker_report)),
+                'prepared worker TLS report changed during final RuntimeV1 replay')
 
 
 def loader_runtime_registry_adapter(report_path: Path | None, *, facts: Mapping[str, Any],
@@ -3701,6 +3728,7 @@ def _crt_startup_identity_names(reader: Any) -> tuple[str, ...]:
                     }},
                     'rejection': {'status': 127, 'stdout': '', 'stderr': 'reloc\n'},
                 },
+                'runtime_admission': reader.expected_contract()['descriptor_handoff']['runtime_admission'],
             },
             'CRT startup owner contract differs')
     return names
@@ -3798,6 +3826,137 @@ def _crt_startup_observed_rows(value: object, names: Sequence[str],
     return result
 
 
+def _crt_descriptor_runtime_admission(reader: Any, value: object,
+                                      products: Mapping[str, Any]) -> dict[str, Any]:
+    """Project the CRT owner's finite RuntimeV1 selected-object receipt.
+
+    The owner reconstructs retained sources, links, maps, raw streams, and
+    probe objects.  Selection retains only that closed projection so it can
+    bind the local admission exercise to the same selected product cohort as
+    the one descriptor occurrence.  This does not turn the lexical source
+    order into a compiler or concurrent-publication claim.
+    """
+    policy = exact(reader.expected_contract()['descriptor_handoff']['runtime_admission'], {
+        'probe', 'value_cases', 'consumer_bodies', 'cells',
+    }, 'CRT descriptor runtime owner contract')
+    probe_policy = exact(policy['probe'], {
+        'source', 'attachment_artifact', 'static_artifact', 'mode',
+    }, 'CRT descriptor runtime probe policy')
+    admission = exact(value, {
+        'scope', 'source', 'inputs', 'source_order', 'value_cases', 'cells',
+    }, 'CRT descriptor runtime admission')
+    require(admission['scope'] == (
+        'selected attachment local admission only; source order is lexical and no concurrent publication claim is made'
+    ), 'CRT descriptor runtime scope differs')
+    _stdio_receipt_identity(admission['source'], 'CRT descriptor runtime probe source')
+    require(same(admission['value_cases'], policy['value_cases']),
+            'CRT descriptor runtime malformed-value roster differs')
+
+    inputs = exact(admission['inputs'], {'attachment', 'static_libc'}, 'CRT descriptor runtime inputs')
+    for role, policy_key in (('attachment', 'attachment_artifact'), ('static_libc', 'static_artifact')):
+        observed = exact(inputs[role], {'artifact', 'identity', 'mode'}, f'CRT descriptor runtime {role}')
+        require(observed['artifact'] == probe_policy[policy_key],
+                f'CRT descriptor runtime {role} artifact differs')
+        _require_stdio_receipt_identity(observed['identity'], products[observed['artifact']],
+                                        f'CRT descriptor runtime {role}')
+        selected = _identity_payload(products[observed['artifact']], f'CRT descriptor runtime {role} selected')
+        require(type(observed['mode']) is int and not isinstance(observed['mode'], bool)
+                and observed['mode'] == selected['mode'],
+                f'CRT descriptor runtime {role} mode differs')
+
+    expected_order = {
+        'scope': 'selected source release/acquire order and CRT attachment route; no compiler or concurrency proof',
+        'builder': {'attachment': 'direct PIC object', 'loader_feature': 'x86_64-owned-dynamic-runtime'},
+        'publisher': {'state_store': 'Release READY last'},
+        'consumer': {
+            'state_load': 'Acquire READY before TLS coordinate reads',
+            'bodies': policy['consumer_bodies'],
+        },
+        'crt': {'attachment': 'before __libc_start_main'},
+    }
+    require(same(admission['source_order'], expected_order),
+            'CRT descriptor runtime source order differs')
+
+    expected_cells = policy['cells']
+    require(type(admission['cells']) is list and len(admission['cells']) == len(expected_cells),
+            'CRT descriptor runtime cell count differs')
+    expected_functions = [
+        {
+            'name': reader.ATTACH, 'source_binding': 'GLOBAL', 'source_visibility': 'DEFAULT',
+            'final_binding': 'GLOBAL', 'final_visibility': 'DEFAULT',
+        },
+        {
+            'name': reader.RECORD, 'source_binding': 'GLOBAL', 'source_visibility': 'HIDDEN',
+            'final_binding': 'LOCAL', 'final_visibility': 'HIDDEN',
+        },
+        *[
+            {
+                'name': body['symbol'], 'source_function': body['source_function'],
+                'source_binding': body['source_binding'], 'source_visibility': body['source_visibility'],
+                'final_binding': body['final_binding'], 'final_visibility': body['final_visibility'],
+            }
+            for body in policy['consumer_bodies']
+        ],
+    ]
+    copied_cells: list[dict[str, Any]] = []
+    for observed, expected in zip(admission['cells'], expected_cells, strict=True):
+        cell = exact(observed, {
+            'label', 'define', 'probe_object', 'probe_definition', 'endpoint', 'map', 'relation', 'streams',
+        }, 'CRT descriptor runtime cell')
+        require(cell['label'] == expected['name'] and cell['define'] == expected['define'],
+                'CRT descriptor runtime cell differs')
+        for field in ('probe_object', 'endpoint', 'map'):
+            _stdio_receipt_identity(cell[field], f'CRT descriptor runtime {cell["label"]} {field}')
+        require(same(cell['streams'], {'status': 0, 'stdout': '', 'stderr': ''}),
+                'CRT descriptor runtime endpoint streams differ')
+        relation = exact(cell['relation'], {'attachment', 'static_libc', 'probe_object', 'functions'},
+                         f'CRT descriptor runtime {cell["label"]} map relation')
+        require(all(type(relation[field]) is str and relation[field]
+                    for field in ('attachment', 'static_libc', 'probe_object')),
+                'CRT descriptor runtime map input differs')
+        functions = relation['functions']
+        require(type(functions) is list and len(functions) == len(expected_functions),
+                'CRT descriptor runtime map function count differs')
+        for function, expected_function in zip(functions, expected_functions, strict=True):
+            expected_keys = {'name', 'input_owner', 'source_binding', 'source_visibility',
+                             'final_binding', 'final_visibility'}
+            if 'source_function' in expected_function:
+                expected_keys.add('source_function')
+            row = exact(function, expected_keys, 'CRT descriptor runtime map function')
+            require(row.get('input_owner') == relation['attachment']
+                    and all(row[field] == expected_function[field] for field in expected_function),
+                    'CRT descriptor runtime map function differs')
+        definition = cell['probe_definition']
+        if expected['define'] == '':
+            descriptor = exact(definition, {'descriptor'}, 'CRT descriptor runtime matrix definition')['descriptor']
+            require(type(descriptor) is dict and descriptor.get('name') == reader.DESCRIPTOR
+                    and descriptor.get('type') == 'OBJECT' and descriptor.get('binding') == 'GLOBAL'
+                    and descriptor.get('visibility') == 'DEFAULT' and descriptor.get('size') == 72,
+                    'CRT descriptor runtime matrix definition differs')
+        elif expected['define'] == 'CRABC_RUNTIME_CASE_ABSENT':
+            require(same(exact(definition, {'descriptor'}, 'CRT descriptor runtime absent definition'),
+                         {'descriptor': None}), 'CRT descriptor runtime absent definition differs')
+        else:
+            unaligned = exact(definition, {'descriptor', 'backing'}, 'CRT descriptor runtime unaligned definition')
+            descriptor = unaligned['descriptor']
+            backing = unaligned['backing']
+            require(type(descriptor) is dict and type(backing) is dict
+                    and descriptor.get('name') == reader.DESCRIPTOR
+                    and descriptor.get('binding') == 'GLOBAL' and descriptor.get('visibility') == 'DEFAULT'
+                    and descriptor.get('section') == backing.get('section')
+                    and descriptor.get('value') == backing.get('value', -1) + 1
+                    and backing.get('name') == 'runtime_unaligned_record'
+                    and backing.get('type') == 'OBJECT' and backing.get('binding') == 'LOCAL'
+                    and backing.get('size') == 73,
+                    'CRT descriptor runtime unaligned definition differs')
+        copied_cells.append(copy.deepcopy(cell))
+    return {
+        'scope': admission['scope'], 'source': copy.deepcopy(admission['source']),
+        'inputs': copy.deepcopy(inputs), 'source_order': copy.deepcopy(admission['source_order']),
+        'value_cases': copy.deepcopy(admission['value_cases']), 'cells': copied_cells,
+    }
+
+
 def native_crt_startup_adapter(report_path: Path | None, *, facts: Mapping[str, Any],
                                measurement: Mapping[str, Any], paths: Mapping[str, Path],
                                source: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -3878,6 +4037,7 @@ def native_crt_startup_adapter(report_path: Path | None, *, facts: Mapping[str, 
     observations = exact(report['observations'], {
         'complete_elf_facts', 'product_placements', 'product_relocations', 'executables', 'roots',
         'runtime_labels', 'limits', 'descriptor_handoff', 'descriptor_admission',
+        'descriptor_runtime_admission',
     }, 'CRT startup observations')
     _crt_startup_complete_facts_match(observations['complete_elf_facts'], facts, products)
     placements = observations['product_placements']
@@ -3892,6 +4052,9 @@ def native_crt_startup_adapter(report_path: Path | None, *, facts: Mapping[str, 
     descriptor_handoff = reader.descriptor_handoff(relocations, observations['executables'])
     require(same(observations['descriptor_handoff'], descriptor_handoff),
             'CRT startup descriptor handoff observation differs')
+    descriptor_runtime_admission = _crt_descriptor_runtime_admission(
+        reader, observations['descriptor_runtime_admission'], products,
+    )
     source_inputs = {name: file_identity(ROOT / name) for name in _crt_startup_source_files()}
     return {
         'status': 'crt-startup-observed-with-boundaries',
@@ -3908,6 +4071,7 @@ def native_crt_startup_adapter(report_path: Path | None, *, facts: Mapping[str, 
             'occurrences': observed_rows,
             'runtime_labels': list(observations['runtime_labels']),
             'descriptor_handoff': copy.deepcopy(descriptor_handoff),
+            'descriptor_runtime_admission': descriptor_runtime_admission,
         },
         'limits': list(CRT_STARTUP_LIMITS),
     }
@@ -4995,7 +5159,9 @@ def attach_native_crt_startup(accounting: Mapping[str, Any], companion: Mapping[
             'CRT startup companion boundary differs')
     reader = _crt_startup_reader()
     names = _crt_startup_identity_names(reader)
-    account = exact(companion['account'], {'identity_names', 'occurrences', 'runtime_labels', 'descriptor_handoff'},
+    account = exact(companion['account'], {
+        'identity_names', 'occurrences', 'runtime_labels', 'descriptor_handoff', 'descriptor_runtime_admission',
+    },
                     'CRT startup companion account')
     require(account['identity_names'] == list(names) and type(account['occurrences']) is list,
             'CRT startup companion identity roster differs')
@@ -5068,7 +5234,9 @@ def attach_native_crt_descriptor_handoff(accounting: Mapping[str, Any],
     require(companion['status'] == 'crt-startup-observed-with-boundaries'
             and companion['limits'] == CRT_STARTUP_LIMITS,
             'CRT descriptor handoff companion boundary differs')
-    account = exact(companion['account'], {'identity_names', 'occurrences', 'runtime_labels', 'descriptor_handoff'},
+    account = exact(companion['account'], {
+        'identity_names', 'occurrences', 'runtime_labels', 'descriptor_handoff', 'descriptor_runtime_admission',
+    },
                     'CRT descriptor handoff companion account')
     reader = _crt_startup_reader()
     policy = reader.expected_contract()['descriptor_handoff']
@@ -5156,6 +5324,186 @@ def attach_native_crt_descriptor_handoff(accounting: Mapping[str, Any],
     }]
 
 
+def attach_runtimev1_descriptor_lifecycle(
+        accounting: Mapping[str, Any], *, crt_companion: Mapping[str, Any] | None,
+        prepared_worker_companion: Mapping[str, Any] | None,
+        crt_startup_joins: Sequence[Mapping[str, Any]],
+        crt_descriptor_handoff_joins: Sequence[Mapping[str, Any]],
+        prepared_worker_tls_joins: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Join both remaining RuntimeV1 descriptor obligations as one transaction.
+
+    Neither owner's standalone receipt supplies a loader provider or a new ELF
+    consumer.  The CRT receipt proves finite selected-object admission and the
+    worker receipt proves the owned mapping/lifetime boundary.  Both must be
+    current and already attached before this routine removes the two remaining
+    obligations from the one source-side weak import.
+    """
+    if crt_companion is None or prepared_worker_companion is None:
+        return []
+    crt = exact(crt_companion, {
+        'status', 'reader', 'contract', 'report', 'source', 'source_inputs', 'products', 'cohort_inputs',
+        'measurement_reports', 'account', 'limits',
+    }, 'RuntimeV1 CRT companion')
+    worker = exact(prepared_worker_companion, {
+        'status', 'reader', 'contract', 'report', 'source', 'products', 'measurement_reports', 'account', 'limits',
+    }, 'RuntimeV1 prepared-worker companion')
+    require(crt['status'] == 'crt-startup-observed-with-boundaries'
+            and crt['limits'] == CRT_STARTUP_LIMITS
+            and worker['status'] == 'prepared-worker-tls-observed-with-boundaries'
+            and worker['limits'] == PREPARED_WORKER_TLS_LIMITS,
+            'RuntimeV1 descriptor companion boundary differs')
+    require(same(crt['source'], worker['source']),
+            'RuntimeV1 descriptor component sources differ')
+    require(same(crt['source_inputs'], {
+        name: file_identity(ROOT / name) for name in _crt_startup_source_files()
+    }), 'RuntimeV1 CRT source inputs differ')
+    require(same(crt['measurement_reports'], worker['measurement_reports']),
+            'RuntimeV1 descriptor public replay bindings differ')
+
+    crt_account = exact(crt['account'], {
+        'identity_names', 'occurrences', 'runtime_labels', 'descriptor_handoff', 'descriptor_runtime_admission',
+    }, 'RuntimeV1 CRT account')
+    reader = _crt_startup_reader()
+    runtime_admission = _crt_descriptor_runtime_admission(
+        reader, crt_account['descriptor_runtime_admission'], crt['products'],
+    )
+    worker_account = exact(worker['account'], {'elf', 'source', 'worker_relocations', 'runtime'},
+                          'RuntimeV1 prepared-worker account')
+    worker_source = exact(worker_account['source'], {
+        'source_files', 'operations', 'source_signatures', 'legacy_replacement', 'worker_token', 'ordering',
+        'post_fork_generation', 'descriptor', 'descriptor_source_fields', 'scope',
+    }, 'RuntimeV1 prepared-worker source account')
+    require(same(worker_source, prepared_worker_evidence.account_source(ROOT)),
+            'RuntimeV1 prepared-worker source account differs')
+    _prepared_runtime_projection(worker_account['runtime'])
+
+    worker_products = exact(worker['products'], {
+        'static_manifest', 'static_libc', 'dynamic_manifest', 'dynamic_state', 'dynamic_libc', 'dynamic_loader',
+    }, 'RuntimeV1 prepared-worker products')
+    for crt_name, worker_name in (
+        ('candidate-static', 'static_libc'), ('candidate-shared', 'dynamic_libc'),
+        ('candidate-loader', 'dynamic_loader'),
+    ):
+        _require_same_identity_payload(crt['products'][crt_name], worker_products[worker_name],
+                                       f'RuntimeV1 {crt_name} product')
+    for cohort_name, worker_name in (
+        ('static_manifest', 'static_manifest'), ('dynamic_manifest', 'dynamic_manifest'),
+        ('dynamic_state', 'dynamic_state'),
+    ):
+        _require_same_identity_payload(crt['cohort_inputs'][cohort_name], worker_products[worker_name],
+                                       f'RuntimeV1 {cohort_name} product')
+
+    names = _crt_startup_identity_names(reader)
+    require(len(crt_startup_joins) == len(names), 'RuntimeV1 CRT startup join count differs')
+    joined_names = set()
+    for join in crt_startup_joins:
+        row = exact(join, {'identity', 'occurrence_indices', 'owner_observation_count', 'current_source_product_cohort'},
+                    'RuntimeV1 CRT startup join')
+        name = row['identity'].get('name') if type(row['identity']) is dict else None
+        require(type(name) is str and name in names and name not in joined_names
+                and type(row['occurrence_indices']) is list and type(row['owner_observation_count']) is int
+                and row['owner_observation_count'] == len(row['occurrence_indices'])
+                and row['current_source_product_cohort'] is True,
+                'RuntimeV1 CRT startup join differs')
+        joined_names.add(name)
+    require(joined_names == set(names), 'RuntimeV1 CRT startup join roster differs')
+
+    records, _placements, occurrences = _accounting_indexes(accounting, description='RuntimeV1 descriptor lifecycle')
+    descriptor_name = reader.DESCRIPTOR
+    record = records.get((descriptor_name, None, False))
+    require(record is not None
+            and record.get('selection', {}).get('disposition') == 'private-resolution-operation'
+            and record['selection'].get('owner') == 'loader-libc-tls-descriptor-v1',
+            'RuntimeV1 descriptor selection differs')
+    protocol = record['selection'].get('protocol')
+    require(type(protocol) is dict and protocol.get('id') == 'loader-libc-tls-descriptor-v1'
+            and protocol.get('members') == [descriptor_name]
+            and protocol.get('consumer_artifacts') == ['dynamic-crabc-dynamic-attach.o']
+            and protocol.get('provider_artifacts') == [] and protocol.get('provider_metadata') == {}
+            and protocol.get('endpoint_kind') == 'main-image-weak-got-transport'
+            and protocol.get('requirements') == list(PREPARED_WORKER_TLS_DESCRIPTOR_REQUIREMENTS),
+            'RuntimeV1 descriptor protocol differs')
+    descriptor_occurrences = [row for row in occurrences.values()
+                              if same(row_identity(row.get('row')), identity(descriptor_name))]
+    require(len(descriptor_occurrences) == 1, 'RuntimeV1 descriptor occurrence roster differs')
+    occurrence = descriptor_occurrences[0]
+    require(occurrence.get('artifact_key') == 'dynamic-crabc-dynamic-attach.o'
+            and occurrence.get('member_name') is None and occurrence.get('member_index') is None
+            and occurrence.get('member_occurrence') is None and occurrence.get('table') == '.symtab'
+            and occurrence.get('role') == 'import' and occurrence.get('definition_section') is None
+            and same({field: occurrence['row'].get(field) for field in (
+        'type', 'binding', 'visibility', 'section_index', 'size_bytes', 'value', 'version', 'version_default',
+    )}, {
+        'type': 'NOTYPE', 'binding': 'WEAK', 'visibility': 'DEFAULT', 'section_index': 'UND',
+        'size_bytes': 0, 'value': '0000000000000000', 'version': None, 'version_default': False,
+    }) and occurrence.get('accounting', {}).get('disposition') == 'private-resolution-operation'
+            and occurrence['accounting'].get('owner') == 'loader-libc-tls-descriptor-v1'
+            and occurrence['accounting'].get('scope') == 'dynamic-crabc-dynamic-attach.o',
+            'RuntimeV1 descriptor source occurrence metadata differs')
+
+    transport = [row for row in accounting['private_protocol_joins']
+                 if row.get('identity') == record['identity']]
+    require(len(transport) == 1 and transport[0].get('artifact_key') == 'dynamic-crabc-dynamic-attach.o'
+            and transport[0].get('role') == 'consumer-import'
+            and transport[0].get('occurrence_indices') == [occurrence['index']]
+            and transport[0].get('endpoint_kind') == 'main-image-weak-got-transport'
+            and transport[0].get('relocation_lifecycle_proven') is True,
+            'RuntimeV1 descriptor transport join differs')
+    require(len(crt_descriptor_handoff_joins) == 1, 'RuntimeV1 CRT descriptor handoff join count differs')
+    handoff = exact(crt_descriptor_handoff_joins[0], {
+        'identity', 'source_occurrence_indices', 'owned_main_slots', 'non_owned_main_slots_absent',
+        'requirements_discharged', 'requirements_remaining',
+    }, 'RuntimeV1 CRT descriptor handoff join')
+    require(handoff['identity'] == record['identity']
+            and handoff['source_occurrence_indices'] == [occurrence['index']]
+            and handoff['requirements_discharged'] == list(PREPARED_WORKER_TLS_DESCRIPTOR_MEASURED_REQUIREMENTS)
+            and handoff['requirements_remaining'] == list(PREPARED_WORKER_TLS_DESCRIPTOR_FINAL_REQUIREMENTS),
+            'RuntimeV1 CRT descriptor handoff differs')
+    require(len(prepared_worker_tls_joins) == 1, 'RuntimeV1 prepared-worker join count differs')
+    worker_join = exact(prepared_worker_tls_joins[0], {'operations', 'legacy_replacements', 'descriptor'},
+                        'RuntimeV1 prepared-worker join')
+    worker_descriptor = exact(worker_join['descriptor'], {
+        'identity', 'contract_geometry', 'source_provenance_verified', 'installed_import_required',
+        'transport_occurrence_indices', 'provider_occurrence_indices', 'consumer_occurrence_indices',
+        'requirements_discharged', 'requirements_remaining',
+    }, 'RuntimeV1 prepared-worker descriptor join')
+    require(worker_descriptor['identity'] == record['identity']
+            and worker_descriptor['contract_geometry'] == {
+                'size_bytes': 72,
+                'alignment_bytes': 8,
+                'role': 'private-process-lifetime-initial-tls-provenance',
+            }
+            and worker_descriptor['source_provenance_verified'] is True
+            and worker_descriptor['installed_import_required'] is False
+            and worker_descriptor['transport_occurrence_indices'] == [occurrence['index']]
+            and worker_descriptor['provider_occurrence_indices'] == []
+            and worker_descriptor['consumer_occurrence_indices'] == [occurrence['index']]
+            and worker_descriptor['requirements_discharged'] == []
+            and worker_descriptor['requirements_remaining'] == list(PREPARED_WORKER_TLS_DESCRIPTOR_REQUIREMENTS),
+            'RuntimeV1 prepared-worker descriptor join differs')
+    require(record['unresolved'] == list(PREPARED_WORKER_TLS_DESCRIPTOR_FINAL_REQUIREMENTS),
+            'RuntimeV1 descriptor requirements differ before final attachment')
+    _remove_identity_requirements(accounting, record, PREPARED_WORKER_TLS_DESCRIPTOR_FINAL_REQUIREMENTS,
+                                  description='RuntimeV1 descriptor lifecycle')
+    return [{
+        'identity': copy.deepcopy(record['identity']),
+        'source_occurrence_indices': [occurrence['index']],
+        'consumer_occurrence_indices': [occurrence['index']],
+        'provider_occurrence_indices': [],
+        'requirements_discharged': list(PREPARED_WORKER_TLS_DESCRIPTOR_FINAL_REQUIREMENTS),
+        'requirements_remaining': copy.deepcopy(record['unresolved']),
+        'crt_runtime_admission': {
+            'value_cases': copy.deepcopy(runtime_admission['value_cases']),
+            'cells': [row['label'] for row in runtime_admission['cells']],
+        },
+        'worker_lifecycle': {
+            'post_fork_generation': copy.deepcopy(worker_source['post_fork_generation']),
+            'runtime_source_tests': copy.deepcopy(worker_account['runtime']['source_tests']),
+        },
+        'current_source_product_cohort': True,
+    }]
+
+
 def _accounting_indexes(accounting: Mapping[str, Any], *, description: str) -> tuple[dict[tuple[str, str | None, bool], dict[str, Any]],
                                                                                       dict[tuple[tuple[str, str | None, bool], str], dict[str, Any]],
                                                                                       dict[int, dict[str, Any]]]:
@@ -5237,7 +5585,7 @@ def attach_prepared_worker_tls(accounting: Mapping[str, Any], companion: Mapping
             'prepared worker TLS imported legacy/descriptor policy differs')
     source_account = exact(account['source'], {
         'source_files', 'operations', 'source_signatures', 'legacy_replacement', 'worker_token', 'ordering',
-        'descriptor', 'descriptor_source_fields', 'scope',
+        'post_fork_generation', 'descriptor', 'descriptor_source_fields', 'scope',
     }, 'prepared worker TLS source account')
     require(source_account['operations'] == prepared_worker_evidence.OPERATIONS
             and source_account['legacy_replacement'] == prepared_worker_evidence.expected_contract()['legacy_replacement']
@@ -5353,6 +5701,7 @@ def attach_prepared_worker_tls(accounting: Mapping[str, Any], companion: Mapping
     source_descriptor = source_account['descriptor']
     current_source_account = prepared_worker_evidence.account_source(ROOT)
     require(same(source_descriptor, current_source_account['descriptor'])
+            and same(source_account['post_fork_generation'], current_source_account['post_fork_generation'])
             and source_account['descriptor_source_fields'] == list(PREPARED_WORKER_TLS_DESCRIPTOR_SOURCE_FIELDS)
             and same(source_account['descriptor_source_fields'], current_source_account['descriptor_source_fields']),
             'prepared worker TLS descriptor source provenance differs')
@@ -6533,6 +6882,14 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     )
     crt_startup_joins = attach_native_crt_startup(accounting, crt_startup_companion)
     crt_descriptor_handoff_joins = attach_native_crt_descriptor_handoff(accounting, crt_startup_companion)
+    runtimev1_descriptor_lifecycle_joins = attach_runtimev1_descriptor_lifecycle(
+        accounting,
+        crt_companion=crt_startup_companion,
+        prepared_worker_companion=prepared_worker_tls_companion,
+        crt_startup_joins=crt_startup_joins,
+        crt_descriptor_handoff_joins=crt_descriptor_handoff_joins,
+        prepared_worker_tls_joins=prepared_worker_tls_joins,
+    )
     syscall_alias_contract_joins = attach_native_syscall_alias(accounting, syscall_alias_contract_companion)
     utmpx_receipt_joins = attach_native_utmpx(accounting, utmpx_receipt_companion)
     pthread_timed_feature_joins = attach_native_pthread_timed_feature(accounting, pthread_timed_feature_companion)
@@ -6579,6 +6936,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'crt_startup_companion': crt_startup_companion,
             'crt_startup_joins': crt_startup_joins,
             'crt_descriptor_handoff_joins': crt_descriptor_handoff_joins,
+            'runtimev1_descriptor_lifecycle_joins': runtimev1_descriptor_lifecycle_joins,
             'syscall_alias_contract_companion': syscall_alias_contract_companion,
             'syscall_alias_contract_joins': syscall_alias_contract_joins,
             'utmpx_receipt_companion': utmpx_receipt_companion,

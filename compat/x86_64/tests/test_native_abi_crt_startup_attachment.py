@@ -64,7 +64,8 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
         reader = selection._crt_startup_reader()
         contract = reader.contract(ROOT)
         for change in ('omit-admission', 'omit-direct', 'allow-success', 'omit-dso',
-                       'omit-source-object', 'wrong-source-relocation'):
+                       'omit-source-object', 'wrong-source-relocation', 'omit-runtime-admission',
+                       'omit-runtime-value-case', 'omit-runtime-consumer-body'):
             with self.subTest(change=change):
                 altered = copy.deepcopy(contract)
                 handoff = altered['descriptor_handoff']
@@ -78,8 +79,14 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
                     del handoff['admission']['dso']
                 elif change == 'omit-source-object':
                     del handoff['admission']['source_object']
-                else:
+                elif change == 'wrong-source-relocation':
                     handoff['admission']['source_object']['relocation']['kind'] = 6
+                elif change == 'omit-runtime-admission':
+                    del handoff['runtime_admission']
+                elif change == 'omit-runtime-value-case':
+                    handoff['runtime_admission']['value_cases'].pop()
+                else:
+                    handoff['runtime_admission']['consumer_bodies'].pop()
                 with mock.patch.object(reader, 'contract', return_value=altered):
                     with self.assertRaisesRegex(selection.SelectionError, 'owner contract differs'):
                         selection._crt_startup_identity_names(reader)
@@ -155,7 +162,7 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
             'cohort_inputs': self._projection_cohort_inputs(),
             'measurement_reports': {},
             'account': {'identity_names': list(names), 'occurrences': observed, 'runtime_labels': [],
-                        'descriptor_handoff': {}},
+                        'descriptor_handoff': {}, 'descriptor_runtime_admission': {}},
             'limits': list(selection.CRT_STARTUP_LIMITS),
         }
         accounting = {'identities': identities, 'placement_joins': [], 'occurrences': occurrences, 'blockers': blockers}
@@ -224,7 +231,7 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
             'account': {
                 'identity_names': list(names), 'occurrences': observed,
                 'runtime_labels': receipt['observations']['runtime_labels'],
-                'descriptor_handoff': {},
+                'descriptor_handoff': {}, 'descriptor_runtime_admission': {},
             },
             'limits': list(selection.CRT_STARTUP_LIMITS),
         }
@@ -291,7 +298,7 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
             'status': 'crt-startup-observed-with-boundaries', 'reader': {}, 'contract': {}, 'report': {},
             'source': {}, 'source_inputs': {}, 'products': {}, 'cohort_inputs': {}, 'measurement_reports': {},
             'account': {'identity_names': list(reader.NAMES), 'occurrences': [], 'runtime_labels': [],
-                        'descriptor_handoff': handoff},
+                        'descriptor_handoff': handoff, 'descriptor_runtime_admission': {}},
             'limits': list(selection.CRT_STARTUP_LIMITS),
         }
         joins = selection.attach_native_crt_descriptor_handoff(accounting, companion)
@@ -439,6 +446,7 @@ class NativeCrtStartupCohortRecheckTests(unittest.TestCase):
         self.elf = self._write('elf-facts.json', b'elf\n')
         self.preparation = self._write('preparation.json', b'preparation\n')
         self.report = self._write('crt-startup-report.json', b'{}\n')
+        self.worker_report = self._write('prepared-worker-report.json', b'{}\n')
         self.paths = {
             'measurement_checkout': ROOT, 'base_inventory': self.base, 'elf_report': self.elf,
             'static_preparation': self.preparation, 'static_product': self.static,
@@ -470,6 +478,19 @@ class NativeCrtStartupCohortRecheckTests(unittest.TestCase):
             'report': selection.file_identity(self.report),
         }
 
+    def _worker_companion(self) -> dict[str, object]:
+        current = selection._runtime_attachment_identities(self.paths)
+        return {
+            'products': {
+                name: current[name] for name in (
+                    'static_manifest', 'static_libc', 'dynamic_manifest',
+                    'dynamic_state', 'dynamic_libc', 'dynamic_loader',
+                )
+            },
+            'measurement_reports': copy.deepcopy(self.measurement['reports']),
+            'report': selection.file_identity(self.worker_report),
+        }
+
     def test_crt_recheck_seals_each_mode_bearing_metadata_input(self) -> None:
         targets = {
             'static_manifest': self.static / 'share/crabc/manifest.json',
@@ -493,6 +514,43 @@ class NativeCrtStartupCohortRecheckTests(unittest.TestCase):
                     )
                 path.write_bytes(original_bytes)
                 os.chmod(path, original_mode)
+
+    def test_paired_runtimev1_recheck_replays_both_owners_after_all_joins(self) -> None:
+        crt = self._companion()
+        worker = self._worker_companion()
+        with (
+            mock.patch.object(selection, 'selection_source', return_value=self.source),
+            mock.patch.object(selection, 'native_crt_startup_adapter', return_value=crt) as replay_crt,
+            mock.patch.object(selection, 'prepared_worker_tls_adapter', return_value=worker) as replay_worker,
+        ):
+            selection._recheck_runtime_receipt_cohort(
+                paths=self.paths, facts=self.facts, measurement=self.measurement, source=self.source,
+                registry=None, pthread=None, crt_startup=crt, prepared_worker=worker,
+            )
+        replay_crt.assert_called_once_with(
+            self.report, facts=self.facts, measurement=self.measurement, paths=self.paths, source=self.source,
+        )
+        replay_worker.assert_called_once_with(
+            self.worker_report, facts=self.facts, measurement=self.measurement, paths=self.paths, source=self.source,
+        )
+
+        original = self.report.read_bytes()
+        def mutate_crt(*_args, **_kwargs):
+            self.report.write_bytes(original + b'changed after first owner replay\n')
+            return crt
+        try:
+            with (
+                mock.patch.object(selection, 'selection_source', return_value=self.source),
+                mock.patch.object(selection, 'native_crt_startup_adapter', side_effect=mutate_crt),
+                mock.patch.object(selection, 'prepared_worker_tls_adapter', return_value=worker),
+                self.assertRaisesRegex(selection.SelectionError, 'CRT startup report changed during final RuntimeV1 replay'),
+            ):
+                selection._recheck_runtime_receipt_cohort(
+                    paths=self.paths, facts=self.facts, measurement=self.measurement, source=self.source,
+                    registry=None, pthread=None, crt_startup=crt, prepared_worker=worker,
+                )
+        finally:
+            self.report.write_bytes(original)
 
 
 if __name__ == '__main__':

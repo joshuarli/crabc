@@ -617,6 +617,28 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
                 paths=self.paths, source=self.source,
             )
 
+    def test_prepared_worker_adapter_rejects_an_earlier_source_before_cohort_attachment(self):
+        elf_account = {
+            'operations': {name: {'.dynsym': {}, '.symtab': {}}
+                           for name in selection.prepared_worker_evidence.OPERATIONS},
+            'descriptor_named_elf_observations': [], 'descriptor_installed_import_required': False,
+            'legacy_named_shared_loader_rows': [],
+        }
+        report = self.prepared_worker_report(
+            elf_account, self._prepared_source_account(),
+            {name: {} for name in selection.prepared_worker_evidence.OPERATIONS},
+        )
+        report['source_before']['revision'] = 'c' * 40
+        report['source_after']['revision'] = 'c' * 40
+        with (
+            mock.patch.object(selection.prepared_worker_evidence, 'validate_report', return_value=report),
+            self.assertRaisesRegex(selection.SelectionError, 'source differs from selection'),
+        ):
+            selection.prepared_worker_tls_adapter(
+                self.prepared_worker_report_path, facts=self.facts, measurement=self.measurement,
+                paths=self.paths, source=self.source,
+            )
+
     def test_prepared_worker_adapter_accepts_the_owner_relative_path_hash_size_input_shape(self):
         """The current owner receipt keeps its supplied-input identities relative."""
         elf_account = {
@@ -765,18 +787,13 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
                 registry=None, pthread=None, prepared_worker=companion,
             )
 
-    def test_frozen_0e_prepared_worker_public_replay_attaches_only_observed_joins(self):
-        """A real owner replay leaves the uninstalled descriptor protocol open."""
-        if not (self._FROZEN_0E_PREPARED_RECEIPT.is_file()
-                and self._FROZEN_0E_PREPARED_ACCOUNTING.is_file()):
-            self.skipTest('requires frozen 0e prepared-worker receipt and selector accounting')
+    def test_frozen_0e_prepared_worker_receipt_is_rejected_after_the_v2_source_contract(self):
+        """A retained older reader receipt cannot be redirected into current selection."""
+        if not self._FROZEN_0E_PREPARED_RECEIPT.is_file():
+            self.skipTest('requires frozen 0e prepared-worker receipt')
         self.assertEqual(
             hashlib.sha256(self._FROZEN_0E_PREPARED_RECEIPT.read_bytes()).hexdigest(),
             'cbf6ae5c7e5e9c3caa8e23b4d1ca422ddf055fe83973c926d679b7d0a3fd430e',
-        )
-        self.assertEqual(
-            hashlib.sha256(self._FROZEN_0E_PREPARED_ACCOUNTING.read_bytes()).hexdigest(),
-            'ff3a3a58e58f52cc2a43ec65dbf8a2bb450c6ba7d4ccef0d6b58fa728e8f5299',
         )
         report = json.loads(self._FROZEN_0E_PREPARED_RECEIPT.read_text())
         inputs = report['inputs_before']
@@ -789,7 +806,6 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
             'static_product': self._FROZEN_0E_ROOT / products['static_preparation']['primary']['path'],
             'dynamic_product': self._FROZEN_0E_ROOT / products['dynamic_product']['path'],
         }
-        self.assertTrue(all(path.is_file() or path.is_dir() for path in paths.values()))
         facts = json.loads(paths['elf_report'].read_text())
         source = copy.deepcopy(report['source_before'])
         measurement = {
@@ -804,55 +820,6 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
                 )
             },
         }
-        diagnostic = json.loads(self._FROZEN_0E_PREPARED_ACCOUNTING.read_text())
-        operations = set(selection.prepared_worker_evidence.OPERATIONS)
-        descriptor_name = '__crabc_x86_64_loader_tls_runtime_v1'
-        names = operations | set(selection.prepared_worker_evidence.LEGACY) | {descriptor_name}
-        accounting = {
-            'identities': [copy.deepcopy(row) for row in diagnostic['identities']
-                           if row['identity']['name'] in names],
-            'occurrences': copy.deepcopy(diagnostic['occurrences']),
-            'placement_joins': [],
-            'private_protocol_joins': [copy.deepcopy(row) for row in diagnostic['private_protocol_joins']
-                                       if row['identity']['name'] in operations | {descriptor_name}],
-            'blockers': [copy.deepcopy(row) for row in diagnostic['closure']['blockers']
-                         if row.get('identity', {}).get('name') in names],
-        }
-        # The retained report is replayed for its actual raw occurrence and
-        # worker account. Its old selector protocol is deliberately replaced
-        # by the current source contract: v2 has no shared consumer or loader
-        # provider, only this one dynamic attachment import and the CRT-owned
-        # main-image-slot receipt.
-        descriptor_protocol = next(row for row in selection.load_contract()['private_protocols']
-                                   if row['id'] == 'loader-libc-tls-descriptor-v1')
-        descriptor_index = next(row['index'] for row in accounting['occurrences']
-                                if row['row']['name'] == descriptor_name)
-        descriptor_record = next(row for row in accounting['identities']
-                                 if row['identity']['name'] == descriptor_name)
-        descriptor_record['selection']['protocol'] = copy.deepcopy(descriptor_protocol)
-        descriptor_record['unresolved'] = list(selection.PREPARED_WORKER_TLS_DESCRIPTOR_REQUIREMENTS)
-        accounting['private_protocol_joins'] = [
-            row for row in accounting['private_protocol_joins']
-            if row['identity']['name'] != descriptor_name
-        ]
-        accounting['private_protocol_joins'].append({
-            'identity': copy.deepcopy(descriptor_record['identity']),
-            'artifact_key': 'dynamic-crabc-dynamic-attach.o', 'role': 'consumer-import',
-            'occurrence_indices': [descriptor_index], 'endpoint_kind': 'main-image-weak-got-transport',
-            'signature_status': descriptor_protocol['signature_status'], 'relocation_lifecycle_proven': False,
-        })
-        accounting['blockers'] = [row for row in accounting['blockers']
-                                  if row.get('identity', {}).get('name') != descriptor_name]
-        accounting['blockers'].extend({
-            'code': 'identity-unresolved', 'identity': copy.deepcopy(descriptor_record['identity']),
-            'reason': requirement,
-        } for requirement in descriptor_record['unresolved'])
-        descriptor_before = next(row for row in accounting['identities']
-                                 if row['identity']['name'] == descriptor_name)
-        descriptor_requirements = copy.deepcopy(descriptor_before['unresolved'])
-        # The frozen report lives below an immutable sibling checkout.  These
-        # root redirects model its read-only mount while the owner replay and
-        # product/ELF joins remain real.
         reader = selection.prepared_worker_evidence
         with contextlib.ExitStack() as stack:
             stack.enter_context(mock.patch.object(selection, 'ROOT', self._FROZEN_0E_ROOT))
@@ -866,34 +833,11 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
                 reader, 'CONTRACT', self._FROZEN_0E_ROOT / 'compat/x86_64/prepared-worker-tls.toml',
             ))
             stack.enter_context(mock.patch.object(reader.ordinary.qualification, 'ROOT', self._FROZEN_0E_ROOT))
-            companion = selection.prepared_worker_tls_adapter(
-                self._FROZEN_0E_PREPARED_RECEIPT, facts=facts, measurement=measurement,
-                paths=paths, source=source,
-            )
-            joins = selection.attach_prepared_worker_tls(accounting, companion)
-        self.assertEqual(len(joins), 1)
-        self.assertEqual(len(joins[0]['operations']), 3)
-        self.assertEqual(len(joins[0]['legacy_replacements']), 7)
-        descriptor_indices = [row['index'] for row in accounting['occurrences']
-                              if row['row']['name'] == descriptor_name]
-        self.assertEqual(joins[0]['descriptor']['transport_occurrence_indices'], descriptor_indices)
-        self.assertEqual(joins[0]['descriptor']['provider_occurrence_indices'], [])
-        self.assertEqual(joins[0]['descriptor']['consumer_occurrence_indices'], descriptor_indices)
-        self.assertEqual(joins[0]['descriptor']['requirements_discharged'], [])
-        self.assertEqual(joins[0]['descriptor']['requirements_remaining'], descriptor_requirements)
-        descriptor_after = next(row for row in accounting['identities']
-                                if row['identity']['name'] == descriptor_name)
-        self.assertEqual(descriptor_after['unresolved'], descriptor_requirements)
-        descriptor_joins = [row for row in accounting['private_protocol_joins']
-                            if row['identity']['name'] == descriptor_name]
-        self.assertEqual(
-            [(row['artifact_key'], row['role'], row['occurrence_indices']) for row in descriptor_joins],
-            [('dynamic-crabc-dynamic-attach.o', 'consumer-import', descriptor_indices)],
-        )
-        self.assertFalse(descriptor_joins[0]['relocation_lifecycle_proven'])
-        descriptor_blockers = [row for row in accounting['blockers']
-                               if row.get('identity', {}).get('name') == descriptor_name]
-        self.assertEqual([row['reason'] for row in descriptor_blockers], descriptor_requirements)
+            with self.assertRaisesRegex(selection.SelectionError, 'prepared worker TLS component rejected'):
+                selection.prepared_worker_tls_adapter(
+                    self._FROZEN_0E_PREPARED_RECEIPT, facts=facts, measurement=measurement,
+                    paths=paths, source=source,
+                )
 
     def test_errno_adapter_replays_the_owner_and_rejects_a_cross_cohort_library(self):
         report = self.errno_storage_report()

@@ -145,9 +145,11 @@ normal/empty PIE and non-PIE main image, and proves no slot in static,
 conventional, default, or oracle images. The owned probe checks 72-byte/8-byte
 geometry, magic/version/mode/owner, acquire-READY, and FS TP/DTV coordinates.
 Those measured transport and geometry requirements discharge only through the
-current CRT receipt. Release-READY ordering, malformed-record rejection,
-worker lifetime/mapping generation, and fork ownership remain open; source
-fixtures do not qualify installed products. The owner records its supplied preparation,
+current CRT receipt. The worker v2 source account additionally retains the
+post-fork third-generation/adopted-main ordering, 55 lifecycle cells, and
+seven source-test observations. Neither independently removes the remaining
+descriptor requirements: the selector requires both current readers before it
+records their paired RuntimeV1 lifecycle join. The owner records its supplied preparation,
 public reports, product roots, manifests, and dynamic state as exact
 checkout-relative path/hash/size identities; the selector joins each to the
 same supplied path and content, then retains its mode-bearing product cohort
@@ -356,14 +358,31 @@ does not supply release-READY ordering, malformed rejection, worker lifetime,
 mapping-generation, fork, general CRT lifecycle, runtime qualification, family
 completion, promotion, or public support.
 
-The v3 receipt additionally requires the canonical owner's finite descriptor
-admission controls for kernel and direct entry. The selector checks that exact
-contract in `_crt_startup_identity_names` and accepts the publicly replayed
-`descriptor_admission` observation in `native_crt_startup_adapter`. These
-checks include the DSO source object's weak `REX_GOTPCRELX` relocation before
-its shared-object link; the owner separately reconstructs both fixture links.
-The controls do not add a selector discharge: malformed-record rejection and the
-other outstanding descriptor protocol requirements remain explicit obligations.
+The v4 receipt retains the earlier kernel/direct relocation admission controls
+and adds `descriptor_runtime_admission`: 21 malformed-value cases, three
+selected-object cells (normal, absent, and unaligned), exact raw streams,
+five map-bound attachment/consumer functions, and the finite lexical
+Release-READY/Acquire-READY/CRT-before-libc-start order. The selector projects
+that closed account only after the owner has reconstructed it. It joins the
+runtime admission with the worker v2 lifetime/mapping/fork account in one
+`runtimev1_descriptor_lifecycle_joins` record. That record references the
+existing one weak source occurrence, retains empty provider occurrence lists,
+and removes only the two remaining descriptor requirements. It does not alter
+the twelve CRT identity joins, the existing transport join, or any raw ELF
+occurrence.
+
+Both reports must bind the same clean selected source, complete/base/static
+measurement reports, static preparation, static archive, dynamic manifest and
+state, shared libc, loader, and the selected dynamic attachment. The selector
+replays both owner readers again after all joins before sealing its report, so
+a retained runtime map, probe, source snapshot, or raw command output cannot
+change after the initial reader replay. A report with only one component stays
+independently optional and leaves both descriptor requirements unresolved.
+
+The selection report schema is `crabc.x86_64-native-abi-selection-report/v2`;
+v2 adds the closed `runtimev1_descriptor_lifecycle_joins` field. A source-built
+omitted-`ADOPTED_MAIN` control remains development regression sensitivity
+evidence, not a worker receipt field or selector input.
 
 ## Selection inputs and definition domains
 
