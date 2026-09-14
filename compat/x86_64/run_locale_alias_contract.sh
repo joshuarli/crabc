@@ -16,7 +16,7 @@ readonly SYMBOLS="$ROOT/compat/x86_64/locale_alias_contract_symbols.py"
 readonly TIMEOUT=20
 
 usage() {
-    printf 'usage: %s --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT\n' "$0" >&2
+    printf 'usage: %s [--receipt-dir DIR] --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT\n' "$0" >&2
     exit 2
 }
 
@@ -27,8 +27,14 @@ fail() {
 
 static_product=''
 dynamic_product=''
+receipt_dir=''
 while [ "$#" -gt 0 ]; do
     case "$1" in
+        --receipt-dir)
+            [ "$#" -ge 2 ] && [ -z "$receipt_dir" ] && [ -n "$2" ] || usage
+            receipt_dir="$2"
+            shift 2
+            ;;
         --static-sysroot)
             [ "$#" -ge 2 ] && [ -z "$static_product" ] && [ -n "$2" ] || usage
             static_product="$2"
@@ -77,7 +83,19 @@ products._validate_static_product(static)
 products._validate_dynamic_product(dynamic)
 PY
 
-work="$(mktemp -d "$TMPDIR/locale-alias-contract.XXXXXX")"
+if [ -n "$receipt_dir" ]; then
+    receipt_dir="$(realpath -m "$receipt_dir")"
+    tmp_root="$(realpath -e "$TMPDIR")"
+    case "$receipt_dir" in
+        "$tmp_root"/*) ;;
+        *) fail 'receipt directory must be below checkout-local TMPDIR' ;;
+    esac
+    [ ! -e "$receipt_dir" ] || fail "receipt directory must be fresh: $receipt_dir"
+    mkdir -p "$receipt_dir"
+    work="$receipt_dir"
+else
+    work="$(mktemp -d "$TMPDIR/locale-alias-contract.XXXXXX")"
+fi
 chmod a+rx "$work"
 trap 'chmod -R a+rX "$work" 2>/dev/null || true' EXIT
 printf 'locale alias contract evidence: %s\n' "$work"
@@ -92,6 +110,7 @@ import sys
 Path(sys.argv[1]).write_text(json.dumps(sys.argv[2:], separators=(",", ":")) + "\n",
                              encoding="utf-8")
 PY
+    pwd -P >"$work/$stem.cwd"
     local status
     set +e
     timeout "$TIMEOUT" "$@" >"$work/$stem.stdout" 2>"$work/$stem.stderr"

@@ -80,3 +80,38 @@ internal, unexpected time internal dynamic export, a duplicated `.symtab`/
 public strong replacements. It intentionally does not claim a general locale
 catalog, legacy encodings, timezone-data qualification, or full application
 interposition coverage.
+
+## Retained receipt and host replay
+
+`locale_alias_contract_receipt.py` wraps the existing runner; it does not turn
+an older shell transcript into current evidence. In the pinned native image it
+builds fresh selected static and dynamic products, copies the fixed musl 1.2.6
+archive, shared object, compiler wrapper, specs, and oracle metadata, then
+passes one fresh explicit `--receipt-dir` to
+`run_locale_alias_contract.sh`. Every captured compile, link, header, normal
+static runtime, dynamic kernel/direct runtime, and symbol-observation command
+retains its exact argv, `/workspace` working directory, stdout, stderr, and
+status. The receipt also retains the compiled object and every linked consumer
+identity, the before/after input snapshots, source state, current selected
+source bytes, and both product trees/manifests.
+
+The host-side `validate-report` path only reads the receipt. It reconstructs
+the fixed 35-command runner roster and its paths, validates current and
+retained source bytes, product manifests, the oracle identity, all runtime
+comparisons, and the complete alias observation from the retained `readelf`
+streams. It therefore rejects a missing, renamed, or relabelled raw command
+without invoking a compiler, linker, target executable, shell, or container.
+
+The selected source relation remains deliberately narrow: `locale_narrow.rs`,
+`locale_objects.rs`, `gmtime_r.rs`, `owned_calendar.rs`,
+`owned_strftime.rs`, `owned_timezone.rs`, and their selected
+`static_c_abi.rs` composition are byte-bound. The four time internals retain
+the source-specific distinction described above: musl's full table has local
+`DEFAULT` definitions while the candidate's has local `HIDDEN` definitions;
+neither is accepted as a dynamic export. The receipt also retains the
+source-local oracle `tzset`/`__tzset` distinction instead of inferring a
+candidate static placement from a symbol's presence.
+
+This receipt still excludes `wcsftime_l`, native ABI selection, a general
+locale or timezone implementation, dynamic-authority review, runtime
+qualification, family completion, and public-support promotion.
