@@ -2476,11 +2476,13 @@ typedef struct huge_branch_matrix_record_s {
 } huge_branch_matrix_record_t;
 
 static bool huge_branch_huge_mmap_arguments(const huge_branch_probe_t* probe,
-                                            size_t count, bool second_and_later_two_mib) {
+                                            size_t count, bool two_mib_after_one_gib_retry) {
   const int base_flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB;
   if (!probe->valid || probe->mmap_calls != count) return false;
   for (size_t index = 0; index < count; index++) {
-    const int page_flag = second_and_later_two_mib && index >= 1
+    /* `unix_mmap` retries the failed second 1GiB primitive at the same hint
+     * with 2MiB only after setting its 1GiB-unavailable source state. */
+    const int page_flag = two_mib_after_one_gib_retry && index >= 2
         ? MAP_HUGE_2MB : MAP_HUGE_1GB;
     if (probe->hints[index] == NULL || probe->lengths[index] != MI_GiB
         || probe->protections[index] != (PROT_READ | PROT_WRITE)
