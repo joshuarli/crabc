@@ -310,6 +310,63 @@ The safety bookkeeping difference and performance scope are recorded in
 `compat/allocator/known-differences.md`. Hardware huge-page success, diagnostic
 callbacks, broader lifecycle qualification, and M2 closure remain open.
 
+### Private diagnostic output owner
+
+`crabc-mimalloc/src/diagnostic_output.rs` is a deliberately partial owner for
+pinned mimalloc v3.5.0 `src/options.c:15-16,111-178,347-549`, with its startup
+edge anchored in `src/init.c:505-550` and Linux stderr primitive in
+`include/mimalloc/prim.h:105-113` / `src/prim/unix/prim.c:862-866`. It owns
+only the source release descriptors `show_errors=0`, `verbose=0`, and
+`max_warnings=32`; the initial source warning limit is 16 until the private
+`initialize_options` transition installs the selected `max_warnings` value
+before OS initialization.
+
+`OutputOwner` keeps the source's fixed 16 KiB delayed buffer plus its extra
+NUL byte, a private lock, independently Release-published custom callback and
+opaque argument, and the AcqRel warning counter. `raw_message` and `warning`
+accept `SourceFormattedMessage`, a stack-owned 992-byte source-format route:
+the pinned `mi_vfprintf` gives `_mi_vsnprintf` 991 bytes and therefore permits
+at most 990 payload bytes plus NUL. Formatting syntax and sanitizing remain
+outside this slice; a later M7 formatter must produce this bounded form before
+dispatching it.
+
+The owner preserves `_mi_fputs`' two deliveries: the selected warning calls a
+custom callback first with `mimalloc: warning: ` and then with the formatted
+body. With `verbose == 0`, disabled `show_errors` suppresses a warning; an
+enabled warning increments the count with AcqRel and is suppressed only after
+the count exceeds a nonnegative maximum. `verbose != 0` bypasses both gates.
+A custom registration flushes the delayed bytes exactly once while holding the
+buffer lock and terminally stops that buffer. A null registration selects
+stderr without flushing it. The source post-init transition instead flushes to
+stderr, inserts the retained newline into the delayed phase, and selects the
+stderr-plus-buffer sink.
+
+The callback/argument are non-owning. `register_output` is unsafe because the
+caller must retain both through every delivery and serialize registration on a
+single thread; the pinned source explicitly permits callback/argument mismatch
+when registrations race. Registration flush invokes the callback while the
+delayed-buffer lock is held. A callback may reenter normal default dispatch
+after custom registration, but must not re-register output or invoke post-init.
+This is a source constraint, not a new callback framework.
+
+Pinned Unix `_mi_prim_out_stderr` calls `fputs(msg, stderr)` and ignores its
+result. Before this runtime has a `FILE` owner, the private Rust sink performs
+one raw descriptor-2 write and discards an error or short count; it does not
+retry or complete a short write. That preserves the source best-effort failure
+boundary, while stdio buffering itself remains a full primitive/integration
+question. The source map marks `option-processing` partial only. Environment
+parsing, the rest of the descriptor table, option mutation/public APIs,
+`mi_register_output` ABI, error/deferred-free callbacks, statistics, mode
+handling, ordinary mapping-error receivers, and runtime integration remain
+open M7 work.
+
+`compat/allocator/x86_64_diagnostic_output_owner_oracle.c` and
+`compat/allocator/x86_64_diagnostic_output_owner_evidence.py` prepare the
+pinned C producer and process-free retained-stream reader for that later
+receiver. This commit does not run native collection: the concrete mapping
+error body and source-order integration must first receive ordinary root
+review.
+
 For one source-start regular parent, `StartupArenaReservationOutcomes` retains
 the successful `mi_reserve_os_memory` arena ID while preserving C's scalar
 failure behavior: `src/init.c:566-579` ignores a rejected regular reservation

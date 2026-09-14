@@ -6,6 +6,7 @@ from __future__ import annotations
 import copy
 import importlib.util
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -51,10 +52,11 @@ assert SPEC is not None and SPEC.loader is not None
 SOURCE_MAP = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = SOURCE_MAP
 SPEC.loader.exec_module(SOURCE_MAP)
+ARCHIVE_PATH = Path(os.environ.get("CRABC_MIMALLOC_SOURCE_MAP_ARCHIVE", SOURCE_MAP.DEFAULT_ARCHIVE_PATH))
 
 
 @unittest.skipUnless(
-    SOURCE_MAP.DEFAULT_ARCHIVE_PATH.is_file(),
+    ARCHIVE_PATH.is_file(),
     "native allocator oracle has not populated the pinned source archive cache",
 )
 class X86_64SourceMapTests(unittest.TestCase):
@@ -63,7 +65,7 @@ class X86_64SourceMapTests(unittest.TestCase):
         cls.contract = json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
         cls.pin = SOURCE_MAP.load_mimalloc_pin()
         cls.sources = SOURCE_MAP.read_pinned_sources(
-            SOURCE_MAP.DEFAULT_ARCHIVE_PATH,
+            ARCHIVE_PATH,
             cls.pin,
             SOURCE_MAP.source_members_from_contract(cls.contract),
         )
@@ -72,7 +74,7 @@ class X86_64SourceMapTests(unittest.TestCase):
         SOURCE_MAP.validate_contract(self.contract, self.pin, self.sources)
 
     def test_callable_validator_returns_a_scoped_checked_result(self) -> None:
-        result = SOURCE_MAP.checked_contract_result(SOURCE_MAP.DEFAULT_ARCHIVE_PATH)
+        result = SOURCE_MAP.checked_contract_result(ARCHIVE_PATH)
         self.assertEqual(result["status"], "passed")
         self.assertEqual(result["profile"], "linux-x86_64-mimalloc-engine-parity")
         self.assertEqual(result["overall_status"], "incomplete")
@@ -153,8 +155,8 @@ class X86_64SourceMapTests(unittest.TestCase):
             {
                 "implemented": 3,
                 "inapplicable": 3,
-                "not-started": 5,
-                "partial": 23,
+                "not-started": 4,
+                "partial": 24,
             },
         )
         implemented = [
@@ -162,6 +164,60 @@ class X86_64SourceMapTests(unittest.TestCase):
         ]
         self.assertEqual(implemented, ["x86-64-width-and-bit-operations", "bitmap-algorithms", "bitmap-layout"])
         self.assertGreater(self.contract["ratchet"]["unfinished_unit_count"], 0)
+
+    def test_option_processing_partial_owner_pins_descriptors_output_and_startup_order(self) -> None:
+        option_processing = next(
+            unit for unit in self.contract["units"] if unit["id"] == "option-processing"
+        )
+        self.assertEqual(option_processing["status"], "partial")
+        self.assertEqual(
+            option_processing["rust_modules"],
+            ["crabc_mimalloc::diagnostic_output"],
+        )
+        self.assertIn("show_errors/verbose/max_warnings", option_processing["difference"])
+        self.assertIn("16 KiB delayed output", option_processing["difference"])
+        self.assertIn("mi_register_output ABI", option_processing["difference"])
+
+        options = self.sources["src/options.c"]
+        init = self.sources["src/init.c"]
+        prim = self.sources["include/mimalloc/prim.h"]
+        unix_prim = self.sources["src/prim/unix/prim.c"]
+
+        def assert_contract_bound(member: str, source: bytes, anchor: bytes) -> None:
+            self.assertIn(anchor, source)
+            changed_sources = dict(self.sources)
+            changed_sources[member] = source.replace(anchor, b"source-anchor-drift", 1)
+            with self.assertRaisesRegex(SOURCE_MAP.SourceMapError, "source anchor drifted"):
+                SOURCE_MAP.validate_units(self.contract, changed_sources)
+
+        anchors = (
+            b"{ 0, MI_OPTION_UNINIT, MI_OPTION(show_errors) },",
+            b"{ MI_DEFAULT_VERBOSE, MI_OPTION_UNINIT, MI_OPTION(verbose) },",
+            b"{ 32,  MI_OPTION_UNINIT, MI_OPTION(max_warnings) },",
+            b"#define MI_MAX_DELAY_OUTPUT ((size_t)(16*1024))",
+            b"mi_out_buf_flush(out,true,arg);",
+            b"if (mi_max_warning_count >= 0 && (long)mi_atomic_increment_acq_rel(&warning_count) > mi_max_warning_count) return;",
+        )
+        for anchor in anchors:
+            with self.subTest(anchor=anchor):
+                assert_contract_bound("src/options.c", options, anchor)
+
+        fputs = options[options.index(b"void _mi_fputs"):options.index(b"static void mi_vfprintf")]
+        prefix_dispatch = b"if (prefix != NULL) out(prefix, arg);"
+        body_dispatch = b"out(message, arg);"
+        self.assertLess(fputs.index(prefix_dispatch), fputs.index(body_dispatch))
+        assert_contract_bound("src/options.c", options, prefix_dispatch)
+
+        assert_contract_bound("include/mimalloc/prim.h", prim, b"void _mi_prim_out_stderr( const char* msg );")
+        options_init = b"_mi_options_init();"
+        os_init = b"_mi_os_init();"
+        auto_setup = b"mi_process_setup_auto_thread_done();"
+        post_init = b"_mi_options_post_init();"
+        self.assertLess(init.index(options_init), init.index(os_init))
+        self.assertLess(init.index(auto_setup), init.index(post_init))
+        assert_contract_bound("src/init.c", init, options_init)
+        assert_contract_bound("src/init.c", init, auto_setup)
+        assert_contract_bound("src/prim/unix/prim.c", unix_prim, b"fputs(msg,stderr);")
 
     def test_ordinary_allocation_scope_records_private_expand_and_recalloc_slices(self) -> None:
         ordinary = next(
