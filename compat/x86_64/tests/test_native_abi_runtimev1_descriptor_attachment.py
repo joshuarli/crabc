@@ -307,6 +307,53 @@ class RuntimeV1DescriptorLifecycleAttachmentTests(unittest.TestCase):
             'current_source_product_cohort': True,
         }])
 
+    def test_paired_runtimev1_attachment_skips_unnamed_null_and_section_rows(self) -> None:
+        """Complete ELF accounting retains raw null and section rows."""
+        accounting = self._accounting()
+        # These rows match the fresh 825 complete-facts shapes: the first
+        # candidate-loader .dynsym row is null, and the dynamic attachment
+        # keeps its local SECTION row in .symtab.
+        null = {
+            'index': 30635, 'artifact_key': 'candidate-loader',
+            'member_name': None, 'member_index': None, 'member_occurrence': None,
+            'table': '.dynsym', 'table_section_index': 3, 'definition_section': None,
+            'role': 'unnamed',
+            'row': {
+                'name': None, 'raw_name': None, 'row_index': 0,
+                'type': 'NOTYPE', 'binding': 'LOCAL', 'visibility': 'DEFAULT',
+                'section_index': 'UND', 'size': '0', 'size_bytes': 0,
+                'value': '0000000000000000', 'version': None, 'version_default': False,
+                'version_index': None, 'common_alignment': None, 'other': None,
+                'raw': '     0: 0000000000000000     0 NOTYPE  LOCAL  DEFAULT  UND ',
+            },
+            'accounting': {'disposition': 'unnamed-observation', 'owner': 'candidate'},
+        }
+        section = {
+            'index': 30636, 'artifact_key': 'dynamic-crabc-dynamic-attach.o',
+            'member_name': None, 'member_index': None, 'member_occurrence': None,
+            'table': '.symtab', 'table_section_index': 16, 'definition_section': {'name': '.text'},
+            'role': 'unsupported',
+            'row': {
+                'name': '.text._RNvNtCsdlKvXcqhVMX_24crabc_dynamic_attachment21loader_tls_runtime_v122current_thread_pointer',
+                'raw_name': '.text._RNvNtCsdlKvXcqhVMX_24crabc_dynamic_attachment21loader_tls_runtime_v122current_thread_pointer',
+                'row_index': 2, 'type': 'SECTION', 'binding': 'LOCAL', 'visibility': 'DEFAULT',
+                'section_index': '5', 'size': '0', 'size_bytes': 0,
+                'value': '0000000000000000', 'version': None, 'version_default': False,
+                'version_index': None, 'common_alignment': None, 'other': None,
+                'raw': '     2: 0000000000000000     0 SECTION LOCAL  DEFAULT    5 .text._RNvNtCsdlKvXcqhVMX_24crabc_dynamic_attachment21loader_tls_runtime_v122current_thread_pointer',
+            },
+            'accounting': {'disposition': 'unresolved', 'owner': None},
+        }
+        accounting['occurrences'].extend((null, section))
+        crt, worker, startup, handoff, worker_joins = self._companions()
+        joins = selection.attach_runtimev1_descriptor_lifecycle(
+            accounting, crt_companion=crt, prepared_worker_companion=worker,
+            crt_startup_joins=startup, crt_descriptor_handoff_joins=handoff,
+            prepared_worker_tls_joins=worker_joins,
+        )
+        self.assertEqual(joins[0]['source_occurrence_indices'], [30634])
+        self.assertEqual(accounting['identities'][0]['unresolved'], [])
+
     def test_paired_runtimev1_attachment_rejects_closed_account_and_occurrence_changes(self) -> None:
         for mutation in ('value-cases', 'crt-source-input', 'worker-post-fork', 'worker-geometry',
                          'provider', 'second-occurrence', 'foreign-occurrence', 'provider-definition', 'cohort'):

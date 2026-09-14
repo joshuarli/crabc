@@ -5423,8 +5423,14 @@ def attach_runtimev1_descriptor_lifecycle(
             and protocol.get('endpoint_kind') == 'main-image-weak-got-transport'
             and protocol.get('requirements') == list(PREPARED_WORKER_TLS_DESCRIPTOR_REQUIREMENTS),
             'RuntimeV1 descriptor protocol differs')
-    descriptor_occurrences = [row for row in occurrences.values()
-                              if same(row_identity(row.get('row')), identity(descriptor_name))]
+    descriptor_occurrences = [
+        row for row in occurrences.values()
+        # Full facts retain raw null and section rows. Filter by the named
+        # descriptor before constructing a logical identity from it.
+        if type(row.get('row')) is dict
+        and row['row'].get('name') == descriptor_name
+        and same(row_identity(row['row']), identity(descriptor_name))
+    ]
     require(len(descriptor_occurrences) == 1, 'RuntimeV1 descriptor occurrence roster differs')
     occurrence = descriptor_occurrences[0]
     require(occurrence.get('artifact_key') == 'dynamic-crabc-dynamic-attach.o'
