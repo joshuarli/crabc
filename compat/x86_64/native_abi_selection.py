@@ -2737,6 +2737,7 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
                                     prepared_worker: Mapping[str, Any] | None = None,
                                     errno_storage: Mapping[str, Any] | None = None,
                                     c_allocator_boundary: Mapping[str, Any] | None = None,
+                                    fixed_c_producer: Mapping[str, Any] | None = None,
                                     stdio_alias_contract: Mapping[str, Any] | None = None,
                                     crt_startup: Mapping[str, Any] | None = None,
                                     syscall_alias: Mapping[str, Any] | None = None,
@@ -2747,8 +2748,8 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
 
     Both owning readers validate their receipts before the selector's placement
     joins.  Recheck the exact supplied files after those joins so a mutable
-    product or raw report cannot change in the interval before `report.json`
-    is sealed.
+    product, retained sidecar, or raw report cannot change in the interval
+    before `report.json` is sealed.
     """
     if (registry is None and pthread is None and prepared_worker is None
             and errno_storage is None and c_allocator_boundary is None
@@ -2841,6 +2842,22 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
                 f'{label} report disappeared during attachment')
         require(same(report, file_identity(report_path)),
                 f'{label} report changed during attachment')
+    if c_allocator_boundary is not None:
+        require(isinstance(fixed_c_producer, Mapping),
+                'native C allocator boundary lacks its fixed-C producer companion during final replay')
+        report = c_allocator_boundary.get('report')
+        require(type(report) is dict and type(report.get('path')) is str,
+                'native C allocator boundary report identity differs during final replay')
+        report_path = physical_work_path(Path(report['path']), directory=False)
+        before = file_identity(report_path)
+        replayed = native_c_allocator_boundary_adapter(
+            report_path, facts=facts, measurement=measurement, paths=paths, source=source,
+            fixed_c_companion=fixed_c_producer,
+        )
+        require(same(replayed, c_allocator_boundary),
+                'native C allocator boundary changed during final replay')
+        require(same(before, file_identity(report_path)),
+                'native C allocator boundary report changed during final replay')
     if crt_startup is not None:
         cohort_inputs = _crt_startup_cohort_inputs(paths)
         retained_inputs = crt_startup.get('cohort_inputs')
@@ -8326,6 +8343,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         registry=loader_runtime_registry_companion, pthread=pthread_alias_contract_companion,
         prepared_worker=prepared_worker_tls_companion, errno_storage=errno_storage_lifecycle_companion,
         c_allocator_boundary=native_c_allocator_boundary_companion,
+        fixed_c_producer=fixed_c_producer_metadata_companion,
         stdio_alias_contract=stdio_alias_contract_companion,
         crt_startup=crt_startup_companion, syscall_alias=syscall_alias_contract_companion,
         utmpx=utmpx_receipt_companion,

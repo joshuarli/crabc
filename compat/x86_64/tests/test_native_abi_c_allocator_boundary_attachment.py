@@ -598,6 +598,78 @@ class NativeCAllocatorBoundaryAttachmentTests(unittest.TestCase):
                 c_allocator_boundary=companion,
             )
 
+    def test_runtime_recheck_replays_c_boundary_retained_static_sidecars(self) -> None:
+        """The final interval must replay map/trace semantics, not just their old identities."""
+        report = self.boundary_report()
+        runtime = report["inputs"]["c_runtime_import_bindings"]
+        startup = self.work / "retained-startup"
+        startup.mkdir()
+        archive = "/workspace/" + (self.static / "usr/lib/libc.a").relative_to(ROOT).as_posix()
+        selected = (
+            f"{archive}(selected-c-mimalloc.o)",
+            f"{archive}(native-c-root.rcgu.o)",
+        )
+        for mode in ("static", "static-pie"):
+            self._write(startup / f"static-{mode}.crabc-link.json", b"{}\n")
+            self._write(startup / f"static-{mode}.crabc-link.trace", ("\n".join(selected) + "\n").encode())
+            self._write(startup / f"static-{mode}.crabc-link.map",
+                        ("\n".join(f"  {member}:(.text)" for member in selected) + "\n").encode())
+        report["startup"]["observation"]["c_runtime_static_links"] = (
+            selection.native_c_allocator_boundary._runtime_static_member_links(
+                startup, self.work, self.static, runtime,
+            )
+        )
+
+        def replay_reader(*_args: object, **_kwargs: object) -> dict[str, object]:
+            current = selection.native_c_allocator_boundary._runtime_static_member_links(
+                startup, self.work, self.static, runtime,
+            )
+            if current != report["startup"]["observation"]["c_runtime_static_links"]:
+                raise selection.native_c_allocator_boundary.AllocatorBoundaryError(
+                    "retained C runtime static sidecars changed after initial replay"
+                )
+            return copy.deepcopy(report)
+
+        with (
+            mock.patch.object(selection.native_c_allocator_boundary, "validate_report", side_effect=replay_reader) as replay,
+            mock.patch.object(
+                selection.native_c_allocator_boundary,
+                "source_resolution",
+                return_value=copy.deepcopy(report["inputs"]["source_resolution"]),
+            ),
+            mock.patch.object(selection, "selection_source", return_value=self.source),
+        ):
+            companion = selection.native_c_allocator_boundary_adapter(
+                self.report_path, facts=self.facts, measurement=self.measurement, paths=self.paths,
+                source=self.source, fixed_c_companion=self.fixed_c_companion,
+            )
+            assert companion is not None
+            selection._recheck_runtime_receipt_cohort(
+                paths=self.paths, facts=self.facts, measurement=self.measurement,
+                source=self.source, registry=None, pthread=None,
+                c_allocator_boundary=companion,
+                fixed_c_producer=self.fixed_c_companion,
+            )
+            for label, relative, suffix in (
+                ("trace", "static-static.crabc-link.trace", b"\n"),
+                ("map", "static-static-pie.crabc-link.map", b"# changed after initial replay\n"),
+            ):
+                with self.subTest(sidecar=label):
+                    path = startup / relative
+                    original = path.read_bytes()
+                    path.write_bytes(original + suffix)
+                    with self.assertRaisesRegex(
+                        selection.SelectionError, "sidecars changed after initial replay",
+                    ):
+                        selection._recheck_runtime_receipt_cohort(
+                            paths=self.paths, facts=self.facts, measurement=self.measurement,
+                            source=self.source, registry=None, pthread=None,
+                            c_allocator_boundary=companion,
+                            fixed_c_producer=self.fixed_c_companion,
+                    )
+                    path.write_bytes(original)
+        self.assertEqual(replay.call_count, 4)
+
     def test_public_cli_keeps_the_c_boundary_receipt_independently_optional(self) -> None:
         reconstructed = {
             "identities": [],
