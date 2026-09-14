@@ -158,6 +158,7 @@ def _valid_report(runner: object, profile: dict[str, object]) -> dict[str, objec
         "architecture": "x86_64",
         "branch_records": INVENTORY._branch_records(),
         "diagnostic_owner_boundary": INVENTORY.DIAGNOSTIC_OWNER_BOUNDARY,
+        "fault_component_fragment": INVENTORY.fault_component_fragment_receipt(),
         "format": INVENTORY.FORMAT,
         "huge_branch_receipt": {
             "c_build": c_build,
@@ -177,7 +178,7 @@ def _valid_report(runner: object, profile: dict[str, object]) -> dict[str, objec
             "rust_source_files": INVENTORY._rust_trace_source_files(),
         },
         "inventory": INVENTORY.inventory_definition(),
-        "nonclaims": ["bounded fixture only"],
+        "nonclaims": list(INVENTORY.NONCLAIMS),
         "schema": INVENTORY.SCHEMA,
         "source_state_after": state,
         "source_state_before": copy.deepcopy(state),
@@ -360,6 +361,7 @@ class FaultInventoryShapeTests(unittest.TestCase):
         """The standalone producer must feed the same target the VM reader admits."""
 
         runner = INVENTORY._load_runner()
+        pin = runner.load_pin()
         observed: dict[str, object] = {}
 
         class StopAfterVmProvenance(Exception):
@@ -390,7 +392,7 @@ class FaultInventoryShapeTests(unittest.TestCase):
             mock.patch.object(INVENTORY, "_load_runner", return_value=runner),
             mock.patch.object(runner, "require_native_x86_64"),
             mock.patch.object(runner, "m2_memory_substrate_source_state", return_value={}),
-            mock.patch.object(runner, "load_pin", return_value={}),
+            mock.patch.object(runner, "load_pin", return_value=pin),
             mock.patch.object(runner, "fetch_archive", return_value=Path("/archive")),
             mock.patch.object(runner, "require_tool", return_value="/usr/bin/musl-gcc"),
             mock.patch.object(runner, "_x86_64_unit_test_program", side_effect=capture_target),
@@ -497,6 +499,31 @@ class FaultInventoryShapeTests(unittest.TestCase):
                 INVENTORY.validate_report(report)["huge_branch_receipt"],
                 report["huge_branch_receipt"],
             )
+
+    def test_report_requires_its_current_fragment_projection(self) -> None:
+        """A receiver receipt cannot omit the fragment that defines its boundary."""
+
+        with _retained_profile_contract() as (runner, profile):
+            report = _valid_report(runner, profile)
+            report.pop("fault_component_fragment")
+            with self.assertRaisesRegex(ValueError, "fragment"):
+                INVENTORY.validate_report(report)
+
+    def test_report_rejects_a_fragment_projection_rewrite(self) -> None:
+        with _retained_profile_contract() as (runner, profile):
+            report = _valid_report(runner, profile)
+            report["fault_component_fragment"]["source"]["sha256"] = "0" * 64
+            with self.assertRaisesRegex(ValueError, "fragment"):
+                INVENTORY.validate_report(report)
+
+    def test_report_rejects_a_nonclaims_rewrite(self) -> None:
+        """The bounded receiver's open boundaries are report data, not prose."""
+
+        with _retained_profile_contract() as (runner, profile):
+            report = _valid_report(runner, profile)
+            report["nonclaims"] = ["unbounded"]
+            with self.assertRaisesRegex(ValueError, "nonclaims"):
+                INVENTORY.validate_report(report)
 
     def test_report_rejects_changed_fault_diagnostic_source_rosters(self) -> None:
         """The receipt binds every new C/Rust owner input rather than its trace alone."""

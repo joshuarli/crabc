@@ -444,6 +444,11 @@ is a bounded private source relation; FILE short-write/error behavior,
 hardware huge-page/physical NUMA success, recursive output, M2, and M7 remain
 unqualified.
 
+Its format-2 fault receipt repeats the current validated fault-component
+fragment projection and exact open-boundary statements. The reader rejects a
+legacy format-1/C-only receipt, a changed fragment, or a rewritten nonclaim
+before it reconstructs the retained C and Rust streams.
+
 For one source-start regular parent, `StartupArenaReservationOutcomes` retains
 the successful `mi_reserve_os_memory` arena ID while preserving C's scalar
 failure behavior: `src/init.c:566-579` ignores a rejected regular reservation

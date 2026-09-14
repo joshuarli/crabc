@@ -26,7 +26,9 @@ from typing import Any, Mapping, Sequence
 
 
 SCHEMA = "crabc-mimalloc-x86_64-fault-seam-inventory-evidence"
-FORMAT = 1
+# Format 2 adds the current validated fragment projection. A format-1 C-only
+# receipt cannot be replayed as the selected private diagnostic receiver.
+FORMAT = 2
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "compat/allocator/m2_vm_x86_64.c"
 REPORT_DEFAULT = ROOT / "compat/reports/allocator/x86_64/fault-seam-inventory.json"
@@ -198,6 +200,12 @@ DIAGNOSTIC_OWNER_BOUNDARY = {
     "default_stderr_transport": "caller-supplied native musl fputs(stderr) test capability only",
     "unqualified": "general FILE transport, recursive output, and full M2 remain open",
 }
+NONCLAIMS = (
+    "This selected node-62 EPERM receiver proves current-source C/Rust private diagnostic delivery through the stored default sink and custom callback; it does not qualify general FILE short-write/error/buffering parity, recursive output, selected x86 libc startup, or ambient NUMA placement.",
+    "This fixed primitive-response profile does not qualify successful hardware huge pages or physical NUMA placement.",
+    "Metadata and OsAligned publication receivers remain stopped and unadmitted.",
+    "This receipt leaves the fault-injection component and M2 partial.",
+)
 FRAGMENT_PATH = ROOT / "compat/allocator/m2-fault-seam-inventory-x86_64-v3.5.0.fragment.json"
 FAULT_COMPONENT_CHECK_ID = "source-indexed-fault-seam-inventory"
 FAULT_COMPONENT_SOURCE_MAP_RECORDS = [
@@ -708,6 +716,28 @@ def _rust_trace_source_files() -> list[dict[str, Any]]:
     return [_local_file_record(ROOT / path) for path in RUST_TRACE_SOURCE_FILES]
 
 
+def fault_component_fragment_receipt() -> dict[str, Any]:
+    """Bind this report to the exact current fragment and its projection.
+
+    `load_fragment` is the fail-closed schema/roster reader used by the M2
+    assembly. Repeating its projection and both byte/canonical identities in
+    the producer report prevents a legacy C-only receipt from being replayed
+    under the selected private diagnostic-receiver boundary.
+    """
+
+    fragment = load_fragment()
+    runner = _load_runner()
+    return {
+        "canonical_sha256": runner._m1_inventory_digest(fragment),
+        "component": dict(fragment["component"]),
+        "format": fragment["format"],
+        "schema": fragment["schema"],
+        "source": _local_file_record(FRAGMENT_PATH),
+        "target": dict(fragment["target"]),
+        "upstream": dict(fragment["upstream"]),
+    }
+
+
 def _combined_output(record: Mapping[str, Any]) -> str:
     return str(record["stdout"]) + "\n" + str(record["stderr"])
 
@@ -841,10 +871,12 @@ def validate_report(report: Mapping[str, Any]) -> dict[str, Any]:
 
     expected_keys = {
         "architecture", "branch_records", "diagnostic_owner_boundary", "format",
-        "huge_branch_receipt", "inventory", "nonclaims", "schema", "status",
+        "fault_component_fragment", "huge_branch_receipt", "inventory", "nonclaims", "schema", "status",
         "stopped_receivers", "source_state_after", "source_state_before", "upstream",
         "unqualified_branches", "vm_receipt",
     }
+    if "fault_component_fragment" not in report:
+        raise ValueError("fault inventory fragment receipt is missing")
     if set(report) != expected_keys:
         raise ValueError("fault inventory receipt fields changed")
     if report.get("schema") != SCHEMA or report.get("format") != FORMAT:
@@ -864,6 +896,9 @@ def validate_report(report: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError("fault inventory diagnostic owner boundary changed")
 
     runner = _load_runner()
+    fragment_receipt = fault_component_fragment_receipt()
+    if report.get("fault_component_fragment") != fragment_receipt:
+        raise ValueError("fault inventory fragment receipt changed")
     huge_receipt = _validate_huge_branch_receipt(report.get("huge_branch_receipt"), runner)
     pin = runner.load_pin()
     if report.get("upstream") != {
@@ -884,7 +919,9 @@ def validate_report(report: Mapping[str, Any]) -> dict[str, Any]:
         or len(vm_receipt["trace_sha256"]) != 64
     ):
         raise ValueError("fault inventory VM receipt is invalid")
-    nonclaims = _exact_strings(report.get("nonclaims"), label="nonclaims")
+    if report.get("nonclaims") != list(NONCLAIMS):
+        raise ValueError("fault inventory nonclaims changed")
+    nonclaims = list(NONCLAIMS)
     try:
         before = runner.validate_runtime_ticket_zero_soak_source_state(
             report.get("source_state_before"), "fault inventory source before"
@@ -899,6 +936,7 @@ def validate_report(report: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "branch_records": records,
         "diagnostic_owner_boundary": dict(DIAGNOSTIC_OWNER_BOUNDARY),
+        "fault_component_fragment": fragment_receipt,
         "huge_branch_receipt": huge_receipt,
         "inventory": inventory,
         "nonclaims": nonclaims,
@@ -2049,6 +2087,7 @@ def run_evidence(
     runner = _load_runner()
     try:
         runner.require_native_x86_64()
+        fragment_receipt = fault_component_fragment_receipt()
         before = runner.m2_memory_substrate_source_state()
         pin = runner.load_pin()
         archive = runner.fetch_archive(pin, offline)
@@ -2131,6 +2170,7 @@ def run_evidence(
         "architecture": "x86_64",
         "branch_records": _branch_records(),
         "format": FORMAT,
+        "fault_component_fragment": fragment_receipt,
         "huge_branch_receipt": {
             "c_build": {**c_build, "cwd": str(source)},
             "c_compiled_source_closure": {
@@ -2150,12 +2190,7 @@ def run_evidence(
         },
         "diagnostic_owner_boundary": DIAGNOSTIC_OWNER_BOUNDARY,
         "inventory": inventory_definition(),
-        "nonclaims": [
-            "This fixed primitive-response profile does not qualify successful hardware huge pages.",
-            "The fixed mbind result proves C output-callback warning control flow and Rust retained ownership, not a Rust diagnostic-output parity contract or ambient NUMA placement.",
-            "Metadata and OsAligned publication receivers remain stopped and unadmitted.",
-            "This receipt leaves the fault-injection component and M2 partial.",
-        ],
+        "nonclaims": list(NONCLAIMS),
         "schema": SCHEMA,
         "source_state_after": after,
         "source_state_before": before,
