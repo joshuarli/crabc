@@ -52,7 +52,7 @@ import headers_layouts_aggregate
 import owned_public_data_variable_runtime as public_data_variable_runtime
 import loader_structural_owner_contract_reader as loader_structural_owner_evidence
 
-SCHEMA = 'crabc.x86_64-native-abi-selection-report/v6'
+SCHEMA = 'crabc.x86_64-native-abi-selection-report/v7'
 CONTRACT_SCHEMA = 'crabc.x86_64-native-abi-selection/v1'
 TARGET = inventory.TARGET
 CONTRACT_PATH = MODULE_DIR / 'native-abi-selection.toml'
@@ -172,6 +172,16 @@ RESOLVER_ALIAS_RECEIPT_REQUIREMENT = 'current source-bound resolver alias/privat
 RESOLVER_ALIAS_LIMITS = [
     'Only res_mkquery, res_send, res_search, __res_mkquery and __res_send are joined to the current resolver receipt.',
     'res_query and res_querydomain remain existing checked-header public-provider controls; the receipt does not complete resolver behavior, a family, promotion or public support.',
+]
+LOCALE_ALIAS_PRIVATE_GROUP = 'component-owned-locale-time-private-bodies'
+LOCALE_ALIAS_PRIVATE_OWNER = 'x86-owned-locale-time-private-bodies'
+LOCALE_ALIAS_RECEIPT_REQUIREMENT = 'current source-bound locale/time alias and normal consumer receipt'
+LOCALE_ALIAS_PRIVATE_BODIES = ('__asctime_r', '__gmtime_r', '__localtime_r', '__strftime_l')
+LOCALE_ALIAS_PUBLIC_FEATURE_ALIASES = ('asctime_r', 'localtime_r', 'strftime_l')
+LOCALE_ALIAS_LIMITS = [
+    'Only the four hidden locale/time bodies and three matching public feature aliases are joined.',
+    'The complete 98-name locale receipt remains an input boundary; __tzset has no selected placement and wcsftime_l is excluded.',
+    'The receipt selects no other locale provider, runtime qualification, family completion, promotion, or public support.',
 ]
 RESOLVER_ALIAS_STATIC_LINK_INPUTS = (
     ('static_crt1', 'usr/lib/crt1.o'), ('static_rcrt1', 'usr/lib/rcrt1.o'),
@@ -390,6 +400,30 @@ def _resolver_alias_source_files(reader: Any) -> tuple[str, ...]:
         'compat/x86_64/native-abi-selection.md',
     )
     require(len(names) == len(set(names)), 'resolver alias source roster duplicates a path')
+    return names
+
+
+def _locale_alias_reader():
+    """Load the source-bound locale/time receipt only at this join boundary."""
+    try:
+        return importlib.import_module('locale_alias_contract_receipt')
+    except (ImportError, OSError, ValueError) as error:
+        raise SelectionError(f'cannot load locale alias reader: {error}') from error
+
+
+def _locale_alias_source_files(reader: Any) -> tuple[str, ...]:
+    """Return the exact current files that define the locale attachment."""
+    selected = getattr(reader, 'SELECTED_SOURCES', None)
+    require(isinstance(selected, tuple) and selected and all(isinstance(name, str) for name in selected),
+            'locale alias reader source roster differs')
+    names = (
+        *selected,
+        'compat/x86_64/native_abi_selection.py',
+        'compat/x86_64/native-abi-selection.toml',
+        'compat/x86_64/native-abi-selection.md',
+        'compat/x86_64/tests/test_native_abi_locale_alias_attachment.py',
+    )
+    require(len(names) == len(set(names)), 'locale alias source roster duplicates a path')
     return names
 RUNTIME_REGISTRY_REQUIREMENTS = (
     'current signature and exact relocation-admission evidence',
@@ -1179,6 +1213,12 @@ def expand_obligations(contract: Mapping[str, Any], inputs: Mapping[str, Any]) -
                 # finite current-source alias/body receipt proves their exact
                 # public weak aliases, selected callers, and placement shape.
                 record['unresolved'].append(RESOLVER_ALIAS_RECEIPT_REQUIREMENT)
+            if group['id'] == LOCALE_ALIAS_PRIVATE_GROUP:
+                # The four time bodies need the component's complete 98-name
+                # source/product/consumer receipt.  Private metadata is only
+                # a selected placement; it cannot imply the weak public
+                # aliases, hidden shared localization, or normal consumers.
+                record['unresolved'].append(LOCALE_ALIAS_RECEIPT_REQUIREMENT)
     for name, owner in inputs['deferred'].items():
         record = obtain(name)
         require(record['selection'] is None, f'deferred/provider overlap: {name}')
@@ -7438,6 +7478,506 @@ def attach_native_resolver_alias(accounting: Mapping[str, Any],
     }]
 
 
+def _locale_alias_tree(path: Path, description: str) -> list[dict[str, Any]]:
+    """Record every product descendant by relative byte, mode, and link data.
+
+    Existing product owners intentionally represent descendants rather than a
+    product root's own mode.  Keep that shared tree convention here, including
+    retained setgid/sticky bits in every recorded descendant mode.
+    """
+    require(path.is_dir() and not path.is_symlink(), f'{description} is not a physical directory')
+    records: list[dict[str, Any]] = []
+    for candidate in sorted(path.rglob('*')):
+        metadata = candidate.lstat()
+        relative = candidate.relative_to(path).as_posix()
+        mode = stat.S_IMODE(metadata.st_mode)
+        if stat.S_ISDIR(metadata.st_mode):
+            records.append({'path': relative, 'kind': 'directory', 'mode': mode})
+        elif candidate.is_symlink():
+            records.append({'path': relative, 'kind': 'symlink', 'target': os.readlink(candidate), 'mode': mode})
+        elif stat.S_ISREG(metadata.st_mode):
+            identity_value = file_identity(candidate)
+            records.append({'path': relative, 'kind': 'file', 'bytes': identity_value['size'],
+                            'sha256': identity_value['sha256'], 'mode': mode})
+        else:
+            raise SelectionError(f'{description} has unsupported filesystem entry: {relative}')
+    require(records, f'{description} is empty')
+    return records
+
+
+def _locale_alias_product_root_mode(path: Path, description: str) -> int:
+    """Read the source-owned root mode kept outside the descendant roster."""
+    require(path.is_dir() and not path.is_symlink(), f'{description} is not a physical directory')
+    return stat.S_IMODE(path.lstat().st_mode)
+
+
+def _locale_alias_normalized_tree(value: object, prefix: str, description: str) -> list[dict[str, Any]]:
+    """Remove only a receipt-local product prefix from an authenticated tree."""
+    require(isinstance(value, list) and value, f'{description} is not a nonempty tree roster')
+    root = Path(prefix)
+    require(not root.is_absolute() and str(root) not in {'', '.'} and '..' not in root.parts,
+            f'{description} product prefix is invalid')
+    records: list[dict[str, Any]] = []
+    names: set[str] = set()
+    for index, raw in enumerate(value):
+        require(isinstance(raw, Mapping), f'{description} tree entry {index} is invalid')
+        kind = raw.get('kind')
+        expected = {'path', 'kind', 'mode'}
+        if kind == 'file':
+            expected |= {'bytes', 'sha256'}
+        elif kind == 'symlink':
+            expected |= {'target'}
+        require(kind in {'directory', 'file', 'symlink'} and set(raw) == expected,
+                f'{description} tree entry {index} fields differ')
+        source = raw['path']
+        require(isinstance(source, str) and source and not Path(source).is_absolute()
+                and '..' not in Path(source).parts,
+                f'{description} tree entry {index} path differs')
+        try:
+            relative = Path(source).relative_to(root)
+        except ValueError as error:
+            raise SelectionError(f'{description} tree entry {index} escapes its product root') from error
+        rendered = relative.as_posix()
+        require(rendered not in {'', '.'} and rendered not in names,
+                f'{description} tree entry {index} duplicates a normalized path')
+        require(type(raw['mode']) is int and not isinstance(raw['mode'], bool) and 0 <= raw['mode'] <= 0o7777,
+                f'{description} tree entry {index} mode differs')
+        item: dict[str, Any] = {'path': rendered, 'kind': kind, 'mode': raw['mode']}
+        if kind == 'file':
+            require(type(raw['bytes']) is int and not isinstance(raw['bytes'], bool) and raw['bytes'] >= 0
+                    and type(raw['sha256']) is str and re.fullmatch(r'[0-9a-f]{64}', raw['sha256']) is not None,
+                    f'{description} tree entry {index} file identity differs')
+            item.update(bytes=raw['bytes'], sha256=raw['sha256'])
+        elif kind == 'symlink':
+            require(isinstance(raw['target'], str) and raw['target'],
+                    f'{description} tree entry {index} symlink target differs')
+            item['target'] = raw['target']
+        names.add(rendered)
+        records.append(item)
+    return sorted(records, key=lambda item: item['path'])
+
+
+def _locale_alias_static_owner_tree(value: object) -> list[dict[str, Any]]:
+    """Translate the established static owner's primary-tree representation."""
+    require(isinstance(value, Mapping) and value, 'locale static preparation primary tree is absent')
+    records: list[dict[str, Any]] = []
+    for name, raw in value.items():
+        require(isinstance(name, str) and name and not Path(name).is_absolute() and '..' not in Path(name).parts
+                and isinstance(raw, Mapping), 'locale static preparation primary tree entry differs')
+        kind = raw.get('kind')
+        expected = {'kind', 'mode'} if kind == 'directory' else {'kind', 'mode', 'sha256', 'size'}
+        require(kind in {'directory', 'file'} and set(raw) == expected,
+                'locale static preparation primary tree entry fields differ')
+        require(type(raw['mode']) is int and not isinstance(raw['mode'], bool) and 0 <= raw['mode'] <= 0o7777,
+                'locale static preparation primary tree entry mode differs')
+        item: dict[str, Any] = {'path': name, 'kind': kind, 'mode': raw['mode']}
+        if kind == 'file':
+            require(type(raw['size']) is int and not isinstance(raw['size'], bool) and raw['size'] >= 0
+                    and type(raw['sha256']) is str and re.fullmatch(r'[0-9a-f]{64}', raw['sha256']) is not None,
+                    'locale static preparation primary tree entry identity differs')
+            item.update(bytes=raw['size'], sha256=raw['sha256'])
+        records.append(item)
+    return sorted(records, key=lambda item: item['path'])
+
+
+def _locale_alias_product_join(reader: Any, validated: Mapping[str, Any], raw: Mapping[str, Any],
+                               paths: Mapping[str, Path], source: Mapping[str, Any]) -> dict[str, Any]:
+    """Join receipt-local products to the supplied selector product cohort.
+
+    The locale collector owns a static preparation transaction whose commands
+    intentionally retain its own work paths.  Its authenticated primary tree,
+    rather than those path-bearing receipt bytes, must equal the selector's
+    supplied static root.  Dynamic has no preparation owner, so its full tree
+    and source-state digest are joined directly.
+    """
+    products = exact(validated.get('products'), {'static', 'dynamic'}, 'locale reader products')
+    receipt_products = exact(raw.get('products'), {'static', 'dynamic'}, 'locale receipt products')
+    require(same(products, receipt_products), 'locale reader product reconstruction differs from receipt')
+    static = exact(products['static'], {'root_mode', 'tree', 'manifest', 'preparation'}, 'locale static receipt product')
+    dynamic = exact(products['dynamic'], {'root_mode', 'tree', 'manifest', 'source_before', 'source_after', 'state'},
+                    'locale dynamic receipt product')
+    static_receipt_tree = _locale_alias_normalized_tree(static['tree'], reader.STATIC_PRODUCT_DIRECTORY,
+                                                        'locale static receipt product')
+    dynamic_receipt_tree = _locale_alias_normalized_tree(dynamic['tree'], reader.DYNAMIC_PRODUCT_DIRECTORY,
+                                                         'locale dynamic receipt product')
+    static_current_tree = _locale_alias_tree(paths['static_product'], 'selector supplied static product')
+    dynamic_current_tree = _locale_alias_tree(paths['dynamic_product'], 'selector supplied dynamic product')
+    require(same(static_receipt_tree, static_current_tree),
+            'locale receipt static product differs from selector supplied product')
+    require(same(dynamic_receipt_tree, dynamic_current_tree),
+            'locale receipt dynamic product differs from selector supplied product')
+    require(static['root_mode'] == _locale_alias_product_root_mode(paths['static_product'], 'selector supplied static product')
+            and dynamic['root_mode'] == _locale_alias_product_root_mode(paths['dynamic_product'], 'selector supplied dynamic product'),
+            'locale receipt product root mode differs from selector supplied product')
+
+    preparation_path = paths['static_preparation']
+    preparation = read_json(preparation_path)
+    preparation_source = exact(preparation.get('source'), {'revision', 'content_sha256'},
+                               'selector static preparation source')
+    require(preparation_source == {key: source[key] for key in ('revision', 'content_sha256')},
+            'selector static preparation source differs from locale receipt source')
+    preparation_products = exact(preparation.get('products'), {'primary', 'reproduction', 'extracted'},
+                                 'selector static preparation products')
+    primary = exact(preparation_products['primary'], {'path', 'manifest', 'tree', 'producer_tools', 'toolchain'},
+                    'selector static preparation primary product')
+    require(same(_locale_alias_static_owner_tree(primary['tree']), static_current_tree),
+            'selector static preparation primary differs from supplied static product')
+
+    for field in ('source_before', 'source_after'):
+        source_state = exact(dynamic[field], {'revision', 'tree', 'content_sha256', 'clean'},
+                             f'locale dynamic receipt {field}')
+        require(source_state == {key: validated['source'][key] for key in ('revision', 'tree', 'content_sha256', 'clean')},
+                f'locale dynamic receipt {field} differs from its source transaction')
+    dynamic_state_path = paths['dynamic_product'] / inventory.DYNAMIC_STATE_RELATIVE
+    dynamic_state = read_json(dynamic_state_path)
+    require(dynamic_state.get('source_sha256') == source['content_sha256'],
+            'selector dynamic product source differs from locale receipt source')
+    _require_same_identity_payload(static['manifest'], file_identity(paths['static_product'] / 'share/crabc/manifest.json'),
+                                   'locale static manifest')
+    _require_same_identity_payload(dynamic['manifest'], file_identity(paths['dynamic_product'] / 'share/crabc/manifest.json'),
+                                   'locale dynamic manifest')
+    _require_same_identity_payload(dynamic['state'], file_identity(dynamic_state_path), 'locale dynamic state')
+    return {
+        'static_tree': static_current_tree,
+        'dynamic_tree': dynamic_current_tree,
+        'static_root_mode': static['root_mode'],
+        'dynamic_root_mode': dynamic['root_mode'],
+        'selector_static_preparation': file_identity(preparation_path),
+        'selector_static_manifest': file_identity(paths['static_product'] / 'share/crabc/manifest.json'),
+        'selector_dynamic_manifest': file_identity(paths['dynamic_product'] / 'share/crabc/manifest.json'),
+        'selector_dynamic_state': file_identity(dynamic_state_path),
+    }
+
+
+def _locale_alias_contract_projection(reader: Any) -> dict[str, Any]:
+    """Derive the current finite 98-name surface; do not hard-code a count alone."""
+    contract = read_json(ROOT / reader.CONTRACT_PATH)
+    expected = {
+        'schema', 'oracle', 'visible_aliases', 'hidden_aliases', 'file_local_aliases',
+        'reverse_visible_aliases', 'non_alias_locale_entries', 'family_completion', 'promotion_ready', 'public_support',
+    }
+    exact(contract, expected, 'locale source contract')
+    visible = contract['visible_aliases']
+    hidden = contract['hidden_aliases']
+    reverse = contract['reverse_visible_aliases']
+    direct = contract['non_alias_locale_entries']
+    require(isinstance(visible, Mapping) and isinstance(hidden, Mapping) and isinstance(reverse, Mapping)
+            and isinstance(direct, list) and all(isinstance(name, str) for name in direct),
+            'locale source contract alias fields differ')
+    names: set[str] = set()
+    for aliases, description in ((visible, 'visible'), (hidden, 'hidden'), (reverse, 'reverse')):
+        for public, target in aliases.items():
+            require(isinstance(public, str) and isinstance(target, str) and public and target,
+                    f'locale {description} alias spelling differs')
+            names.update((public, target))
+    names.update(direct)
+    expected_hidden = {
+        'asctime_r': '__asctime_r', 'gmtime_r': '__gmtime_r',
+        'localtime_r': '__localtime_r', 'strftime_l': '__strftime_l',
+    }
+    require(len(names) == 98 and dict(hidden) == expected_hidden
+            and contract['file_local_aliases'] == {'tzset': '__tzset'}
+            and '__tzset' not in names and 'wcsftime_l' not in names,
+            'locale source contract finite 98-name boundary differs')
+    return {
+        'hidden_aliases': [[public, expected_hidden[public]] for public in expected_hidden],
+        'names': sorted(names),
+        'source_local_alias': 'tzset/__tzset (source-local oracle distinction)',
+        'wcsftime_l_in_contract': False,
+    }
+
+
+def native_locale_alias_adapter(report_path: Path | None, *, facts: Mapping[str, Any],
+                                measurement: Mapping[str, Any], paths: Mapping[str, Path],
+                                source: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Admit one full locale receipt before selecting its seven exact reasons."""
+    if report_path is None:
+        return None
+    reader = _locale_alias_reader()
+    path = physical_work_path(report_path, directory=False)
+    before = file_identity(path)
+    try:
+        validated = reader.validate_report(ROOT, path)
+    except (OSError, TypeError, ValueError, getattr(reader, 'LocaleAliasReceiptError', ValueError)) as error:
+        raise SelectionError(f'locale alias receipt rejected: {error}') from error
+    require(same(before, file_identity(path)), 'locale alias receipt changed during public replay')
+    raw = read_json(path)
+    require(same(before, file_identity(path)), 'locale alias receipt changed while reading its projection')
+    raw = exact(raw, {
+        'schema', 'status', 'mode_policy', 'image_inputs', 'source_before', 'source_after', 'source_contract',
+        'products', 'collector_commands', 'runner_commands', 'snapshots', 'artifacts', 'runtime', 'symbols', 'nonclaims',
+    }, 'locale alias receipt')
+    require(raw['schema'] == reader.SCHEMA and raw['status'] == reader.STATUS,
+            'locale alias receipt schema or status differs')
+    receipt_source = exact(validated.get('source'), {'revision', 'tree', 'content_sha256', 'clean', 'paths'},
+                           'locale reader source')
+    require(receipt_source['clean'] is True
+            and {key: receipt_source[key] for key in ('revision', 'tree', 'content_sha256', 'clean')}
+                == raw['source_before'] == raw['source_after']
+            and source['clean'] is True
+            and all(receipt_source[key] == source[key] for key in ('revision', 'content_sha256')),
+            'locale alias selected or collector source differs from selection')
+    _measurement_source_matches(source, measurement, 'locale alias')
+    source_contract = _locale_alias_contract_projection(reader)
+    require(raw['source_contract'] == reader.validate_source_contract(ROOT),
+            'locale retained source contract differs from current source')
+    products = _locale_alias_product_join(reader, validated, raw, paths, source)
+    commands = validated.get('runner_commands')
+    require(isinstance(commands, list) and [row.get('role') if isinstance(row, Mapping) else None for row in commands]
+            == list(reader.RUNNER_STEMS) and all(isinstance(row, Mapping) and row.get('status') == 0 for row in commands),
+            'locale normal consumer command roster differs')
+    require(same(commands, raw['runner_commands']) and len(commands) == 35,
+            'locale normal consumer command reconstruction differs')
+    require(isinstance(validated.get('artifacts'), Mapping)
+            and set(validated['artifacts']) == set(reader.RUNNER_ARTIFACTS),
+            'locale normal consumer artifact roster differs')
+    source_inputs = {name: file_identity(ROOT / name) for name in _locale_alias_source_files(reader)}
+    reports = _measurement_report_bindings(measurement, 'locale alias')
+    return {
+        'status': 'locale-alias-observed-with-boundaries',
+        'reader': file_identity(Path(reader.__file__)),
+        'report': before,
+        'source': copy.deepcopy(receipt_source),
+        'source_inputs': source_inputs,
+        'products': products,
+        'measurement_reports': reports,
+        'result': {
+            'source_contract': source_contract,
+            'runner_command_count': len(commands),
+            'runner_roles': [row['role'] for row in commands],
+            'artifact_names': sorted(validated['artifacts']),
+            'runtime': copy.deepcopy(validated['runtime']),
+            'symbols': copy.deepcopy(validated['symbols']),
+        },
+        'receipt': {
+            'image_inputs': copy.deepcopy(validated['image_inputs']),
+            'collector_commands': copy.deepcopy(validated['collector_commands']),
+            'runner_commands': copy.deepcopy(commands),
+            'artifacts': copy.deepcopy(validated['artifacts']),
+            'runtime': copy.deepcopy(validated['runtime']),
+            'symbols': copy.deepcopy(validated['symbols']),
+        },
+        'limits': list(LOCALE_ALIAS_LIMITS),
+    }
+
+
+def _locale_alias_named_rows(occurrences: Mapping[int, Mapping[str, Any]], name: str) -> list[dict[str, Any]]:
+    """Keep the 98-name receipt separate from the seven selector identities."""
+    return [dict(row) for row in occurrences.values()
+            if type(row.get('row')) is dict and row['row'].get('name') == name]
+
+
+def _locale_alias_one_row(rows: Sequence[Mapping[str, Any]], *, artifact_key: str, table: str,
+                          role: str, metadata: Mapping[str, str], description: str) -> dict[str, Any]:
+    matches = [row for row in rows
+               if row.get('artifact_key') == artifact_key and row.get('table') == table
+               and row.get('role') == role and row.get('row', {}).get('type') == metadata['type']
+               and row['row'].get('binding') == metadata['binding']
+               and row['row'].get('visibility') == metadata['visibility']]
+    require(len(matches) == 1, f'{description} exact candidate occurrence differs')
+    return dict(matches[0])
+
+
+def _locale_alias_source_feature_requirements() -> dict[str, dict[str, Any]]:
+    """Re-read the three existing public feature requirements exactly."""
+    contract = load_contract(CONTRACT_PATH)
+    inputs = load_source_inputs(contract, CONTRACT_PATH)
+    expanded = expand_obligations(contract, inputs)
+    records = {identity_key(record['identity']): record for record in expanded}
+    fields = {
+        'name', 'target', 'binding', 'owner', 'state', 'evidence_record', 'runner',
+        'feature_selection_source', 'sources', 'baseline_features', 'enabled_features',
+    }
+    expected = {
+        'asctime_r': '__asctime_r', 'localtime_r': '__localtime_r', 'strftime_l': '__strftime_l',
+    }
+    requirements: dict[str, dict[str, Any]] = {}
+    for public, target in expected.items():
+        record = records.get((public, None, False))
+        require(record is not None and type(record.get('function_alias_requirements')) is list
+                and len(record['function_alias_requirements']) == 1,
+                f'locale public source feature requirement differs: {public}')
+        feature = exact(record['function_alias_requirements'][0], fields,
+                        f'locale public source feature requirement {public}')
+        require(feature['name'] == public and feature['target'] == target
+                and feature['binding'] == 'weak-same-address',
+                f'locale public source feature requirement differs: {public}')
+        requirements[public] = copy.deepcopy(feature)
+    require(tuple(requirements) == LOCALE_ALIAS_PUBLIC_FEATURE_ALIASES,
+            'locale public source feature roster differs')
+    return requirements
+
+
+def attach_native_locale_alias(accounting: Mapping[str, Any],
+                               companion: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """Discharge exactly four private and three public locale/time reasons."""
+    if companion is None:
+        return []
+    reader = _locale_alias_reader()
+    companion = exact(companion, {
+        'status', 'reader', 'report', 'source', 'source_inputs', 'products', 'measurement_reports',
+        'result', 'receipt', 'limits',
+    }, 'locale alias companion')
+    require(companion['status'] == 'locale-alias-observed-with-boundaries'
+            and companion['limits'] == LOCALE_ALIAS_LIMITS
+            and same(companion['reader'], file_identity(Path(reader.__file__)))
+            and same(companion['source_inputs'], {
+                name: file_identity(ROOT / name) for name in _locale_alias_source_files(reader)
+            }), 'locale alias companion source boundary differs')
+    result = exact(companion['result'], {
+        'source_contract', 'runner_command_count', 'runner_roles', 'artifact_names', 'runtime', 'symbols',
+    }, 'locale alias companion result')
+    expected_contract = _locale_alias_contract_projection(reader)
+    require(same(result['source_contract'], expected_contract)
+            and result['runner_command_count'] == len(reader.RUNNER_STEMS) == 35
+            and result['runner_roles'] == list(reader.RUNNER_STEMS)
+            and result['artifact_names'] == sorted(reader.RUNNER_ARTIFACTS),
+            'locale alias companion finite receipt projection differs')
+    receipt = exact(companion['receipt'], {
+        'image_inputs', 'collector_commands', 'runner_commands', 'artifacts', 'runtime', 'symbols',
+    }, 'locale alias companion receipt')
+    require(receipt['runtime'] == result['runtime'] and receipt['symbols'] == result['symbols']
+            and receipt['runner_commands'] == [*receipt['runner_commands']]
+            and len(receipt['runner_commands']) == 35
+            and all(isinstance(row, Mapping) and row.get('status') == 0 for row in receipt['runner_commands'])
+            and [row.get('role') for row in receipt['runner_commands']] == list(reader.RUNNER_STEMS)
+            and isinstance(receipt['artifacts'], Mapping) and set(receipt['artifacts']) == set(reader.RUNNER_ARTIFACTS),
+            'locale alias companion normal consumer receipt differs')
+    products = exact(companion['products'], {
+        'static_tree', 'dynamic_tree', 'static_root_mode', 'dynamic_root_mode', 'selector_static_preparation', 'selector_static_manifest',
+        'selector_dynamic_manifest', 'selector_dynamic_state',
+    }, 'locale alias companion product join')
+    require(isinstance(products['static_tree'], list) and isinstance(products['dynamic_tree'], list)
+            and type(products['static_root_mode']) is int and type(products['dynamic_root_mode']) is int
+            and 0 <= products['static_root_mode'] <= 0o7777 and 0 <= products['dynamic_root_mode'] <= 0o7777,
+            'locale alias companion product trees differ')
+    records, placements, occurrences = _accounting_indexes(accounting, description='locale alias attachment')
+    occurrence_count = len(occurrences)
+    unnamed_count = sum(row.get('role') == 'unnamed' for row in occurrences.values())
+    public_metadata = {'type': 'FUNC', 'binding': 'WEAK', 'visibility': 'DEFAULT'}
+    private_static_metadata = {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'HIDDEN'}
+    private_shared_metadata = {'type': 'FUNC', 'binding': 'LOCAL', 'visibility': 'HIDDEN'}
+    feature_requirements = _locale_alias_source_feature_requirements()
+    hidden_pairs = tuple((str(public), str(target)) for public, target in expected_contract['hidden_aliases'])
+    require(hidden_pairs == (
+        ('asctime_r', '__asctime_r'), ('gmtime_r', '__gmtime_r'),
+        ('localtime_r', '__localtime_r'), ('strftime_l', '__strftime_l'),
+    ), 'locale hidden time alias roster differs')
+    joins: list[dict[str, Any]] = []
+    expected_indices: set[int] = set()
+    for public, target in hidden_pairs:
+        public_record = records.get((public, None, False))
+        private_record = records.get((target, None, False))
+        require(public_record is not None and public_record.get('selection', {}).get('disposition') == 'public-provider'
+                and public_record['selection'].get('owner') == 'checked-header-provider-routing'
+                and private_record is not None and private_record.get('selection', {}).get('disposition') == 'private-provider'
+                and private_record['selection'].get('group') == LOCALE_ALIAS_PRIVATE_GROUP
+                and private_record['selection'].get('owner') == LOCALE_ALIAS_PRIVATE_OWNER,
+                f'locale selected owner differs: {public}')
+        public_rows = _locale_alias_named_rows(occurrences, public)
+        private_rows = _locale_alias_named_rows(occurrences, target)
+        static_public = _locale_alias_one_row(
+            public_rows, artifact_key='candidate-static', table='.symtab', role='definition',
+            metadata=public_metadata, description=f'locale {public} static public alias')
+        shared_dyn_public = _locale_alias_one_row(
+            public_rows, artifact_key='candidate-shared', table='.dynsym', role='definition',
+            metadata=public_metadata, description=f'locale {public} shared dynsym public alias')
+        shared_public = _locale_alias_one_row(
+            public_rows, artifact_key='candidate-shared', table='.symtab', role='definition',
+            metadata=public_metadata, description=f'locale {public} shared symtab public alias')
+        static_placement, static_private = _selected_placement(
+            placements, occurrences, name=target, artifact_key='candidate-static', table='.symtab', role='definition',
+            metadata=private_static_metadata, description=f'locale {target} selected static private body')
+        shared_placement, shared_private = _selected_placement(
+            placements, occurrences, name=target, artifact_key='candidate-shared', table='.symtab',
+            role='local-definition', metadata=private_shared_metadata,
+            description=f'locale {target} selected shared private body')
+        require(static_private in private_rows and shared_private in private_rows
+                and same_definition_domain(static_public, static_private)
+                and same_definition_domain(shared_public, shared_private)
+                and not [row for row in private_rows
+                         if row.get('artifact_key') == 'candidate-shared' and row.get('table') == '.dynsym'
+                         and row.get('role') in {'definition', 'local-definition'}],
+                f'locale private dynamic-export boundary differs: {target}')
+        expected_indices.update({
+            static_public['index'], shared_dyn_public['index'], shared_public['index'],
+            static_private['index'], shared_private['index'],
+        })
+        _remove_identity_requirements(
+            accounting, private_record, (LOCALE_ALIAS_RECEIPT_REQUIREMENT,),
+            description=f'locale private body {target}',
+        )
+        discharged = [LOCALE_ALIAS_RECEIPT_REQUIREMENT]
+        if public in feature_requirements:
+            require(type(public_record.get('function_alias_requirements')) is list
+                    and len(public_record['function_alias_requirements']) == 1
+                    and same(public_record['function_alias_requirements'][0], feature_requirements[public]),
+                    f'locale public source feature selection differs: {public}')
+            _remove_identity_requirements(
+                accounting, public_record,
+                ('source-selected alias requires exact feature archive selection and component receipt',),
+                description=f'locale public alias {public}',
+            )
+            discharged.append('source-selected alias requires exact feature archive selection and component receipt')
+        else:
+            require(public == 'gmtime_r' and public_record.get('function_alias_requirements') is None
+                    and public_record.get('unresolved') == [],
+                    'locale default-static public alias selection differs')
+        joins.append({
+            'public_identity': copy.deepcopy(public_record['identity']),
+            'private_identity': copy.deepcopy(private_record['identity']),
+            'static_public_occurrence_index': static_public['index'],
+            'shared_dynsym_public_occurrence_index': shared_dyn_public['index'],
+            'shared_symtab_public_occurrence_index': shared_public['index'],
+            'static_private_occurrence_index': static_private['index'],
+            'shared_symtab_private_occurrence_index': shared_private['index'],
+            'static_private_metadata': copy.deepcopy(static_placement['expected_metadata']),
+            'shared_private_metadata': copy.deepcopy(shared_placement['expected_metadata']),
+            'private_dynsym_definition_absent': True,
+            'requirements_discharged': discharged,
+        })
+    known_names = {name for pair in hidden_pairs for name in pair}
+    actual_indices = {
+        row['index'] for row in occurrences.values()
+        if row.get('artifact_key') in {'candidate-static', 'candidate-shared'}
+        and type(row.get('row')) is dict and row['row'].get('name') in known_names
+    }
+    require(actual_indices == expected_indices, 'locale alias candidate occurrence roster differs')
+    require(len(occurrences) == occurrence_count
+            and sum(row.get('role') == 'unnamed' for row in occurrences.values()) == unnamed_count
+            and len(joins) == 4,
+            'locale alias attachment changed complete occurrence accounting')
+    return [{
+        'time_aliases': joins,
+        'source_local_alias': 'tzset/__tzset (source-local oracle distinction)',
+        'wcsftime_l_in_contract': False,
+        'requirements_discharged': [
+            LOCALE_ALIAS_RECEIPT_REQUIREMENT,
+            'source-selected alias requires exact feature archive selection and component receipt',
+        ],
+        'complete_elf_occurrence_count': occurrence_count,
+        'unnamed_occurrence_count': unnamed_count,
+    }]
+
+
+def _recheck_locale_alias(companion: Mapping[str, Any] | None, *, paths: Mapping[str, Path],
+                          facts: Mapping[str, Any], measurement: Mapping[str, Any],
+                          source: Mapping[str, Any]) -> None:
+    """Replay the public locale reader after all selector joins are complete."""
+    if companion is None:
+        return
+    report = companion.get('report')
+    require(isinstance(report, Mapping) and type(report.get('path')) is str,
+            'locale alias report identity differs during final replay')
+    path = physical_work_path(Path(report['path']), directory=False)
+    before = file_identity(path)
+    replayed = native_locale_alias_adapter(
+        path, facts=facts, measurement=measurement, paths=paths, source=source,
+    )
+    require(same(replayed, companion) and same(before, file_identity(path)),
+            'locale alias changed during final replay')
+
+
 def _compiler_helper_shared_contract(contract: Mapping[str, Any], inputs: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """Authenticate the finite helper source selection before using its DSO view.
 
@@ -7906,6 +8446,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
                   utmpx_receipt_report: Path | None = None,
                   pthread_timed_feature_report: Path | None = None,
                   resolver_alias_receipt_report: Path | None = None,
+                  locale_alias_contract_report: Path | None = None,
                   headers_layouts_aggregate_report: Path | None = None,
                   public_data_declaration_runtime_report: Path | None = None,
                   loader_structural_owner_receipt_report: Path | None = None) -> dict[str, Any]:
@@ -7968,6 +8509,9 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     resolver_alias_receipt_companion = native_resolver_alias_adapter(
         resolver_alias_receipt_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
         product_report=loader_debug_report,
+    )
+    locale_alias_contract_companion = native_locale_alias_adapter(
+        locale_alias_contract_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
     )
     loader_structural_owner_companion = native_loader_structural_owner_adapter(
         loader_structural_owner_receipt_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
@@ -8040,6 +8584,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     utmpx_receipt_joins = attach_native_utmpx(accounting, utmpx_receipt_companion)
     pthread_timed_feature_joins = attach_native_pthread_timed_feature(accounting, pthread_timed_feature_companion)
     resolver_alias_receipt_joins = attach_native_resolver_alias(accounting, resolver_alias_receipt_companion)
+    locale_alias_contract_joins = attach_native_locale_alias(accounting, locale_alias_contract_companion)
     loader_structural_owner_joins = attach_loader_structural_owner(accounting, loader_structural_owner_companion)
     family_evidence_blockers, headers_layouts_aggregate_evidence = headers_layouts_family_evidence(
         inputs['families'], headers_layouts_aggregate_companion,
@@ -8054,6 +8599,9 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         utmpx=utmpx_receipt_companion,
         pthread_timed=pthread_timed_feature_companion,
         resolver_alias=resolver_alias_receipt_companion,
+    )
+    _recheck_locale_alias(
+        locale_alias_contract_companion, paths=paths, facts=facts, measurement=measurement, source=source_before,
     )
     _recheck_loader_structural_owner(
         loader_structural_owner_companion, paths=paths, source=source_before, measurement=measurement,
@@ -8108,6 +8656,8 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'pthread_timed_feature_joins': pthread_timed_feature_joins,
             'resolver_alias_receipt_companion': resolver_alias_receipt_companion,
             'resolver_alias_receipt_joins': resolver_alias_receipt_joins,
+            'locale_alias_contract_companion': locale_alias_contract_companion,
+            'locale_alias_contract_joins': locale_alias_contract_joins,
             'loader_structural_owner_companion': loader_structural_owner_companion,
             'loader_structural_owner_joins': loader_structural_owner_joins,
             'headers_layouts_aggregate_companion': headers_layouts_aggregate_companion,
@@ -8133,6 +8683,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                  utmpx_receipt_report: Path | None = None,
                  pthread_timed_feature_report: Path | None = None,
                  resolver_alias_receipt_report: Path | None = None,
+                 locale_alias_contract_report: Path | None = None,
                  headers_layouts_aggregate_report: Path | None = None,
                  public_data_declaration_runtime_report: Path | None = None,
                  loader_structural_owner_receipt_report: Path | None = None,
@@ -8156,6 +8707,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                            utmpx_receipt_report=utmpx_receipt_report,
                            pthread_timed_feature_report=pthread_timed_feature_report,
                            resolver_alias_receipt_report=resolver_alias_receipt_report,
+                           locale_alias_contract_report=locale_alias_contract_report,
                            headers_layouts_aggregate_report=headers_layouts_aggregate_report,
                            public_data_declaration_runtime_report=public_data_declaration_runtime_report,
                            loader_structural_owner_receipt_report=loader_structural_owner_receipt_report)
@@ -8179,6 +8731,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                     utmpx_receipt_report: Path | None = None,
                     pthread_timed_feature_report: Path | None = None,
                     resolver_alias_receipt_report: Path | None = None,
+                    locale_alias_contract_report: Path | None = None,
                     headers_layouts_aggregate_report: Path | None = None,
                     public_data_declaration_runtime_report: Path | None = None,
                     loader_structural_owner_receipt_report: Path | None = None,
@@ -8204,6 +8757,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                              utmpx_receipt_report=utmpx_receipt_report,
                              pthread_timed_feature_report=pthread_timed_feature_report,
                              resolver_alias_receipt_report=resolver_alias_receipt_report,
+                             locale_alias_contract_report=locale_alias_contract_report,
                              headers_layouts_aggregate_report=headers_layouts_aggregate_report,
                              public_data_declaration_runtime_report=public_data_declaration_runtime_report,
                              loader_structural_owner_receipt_report=loader_structural_owner_receipt_report)
@@ -8235,6 +8789,7 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument('--utmpx-receipt-report', type=Path)
     parser.add_argument('--pthread-timed-feature-report', type=Path)
     parser.add_argument('--resolver-alias-receipt-report', type=Path)
+    parser.add_argument('--locale-alias-contract-report', type=Path)
     parser.add_argument('--headers-layouts-aggregate-report', type=Path)
     parser.add_argument('--public-data-declaration-runtime-report', type=Path)
     parser.add_argument('--loader-structural-owner-receipt-report', type=Path)
@@ -8255,6 +8810,7 @@ def main(argv: Sequence[str]) -> int:
                                                 'stdio_alias_contract_report', 'crt_startup_report',
                                                 'syscall_alias_contract_report', 'utmpx_receipt_report',
                                                 'pthread_timed_feature_report', 'resolver_alias_receipt_report',
+                                                'locale_alias_contract_report',
                                                 'headers_layouts_aggregate_report',
                                                 'public_data_declaration_runtime_report',
                                                 'loader_structural_owner_receipt_report')}

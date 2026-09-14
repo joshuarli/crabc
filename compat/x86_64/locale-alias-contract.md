@@ -107,7 +107,10 @@ launcher, stdout, stderr, status, and modes. The normal consumer runner uses
 consumer mode policies are all checked from retained bytes. The receipt also
 retains the compiled object and every linked consumer identity, before/after
 input snapshots, and complete static/dynamic product trees including directory
-and symlink modes.
+and symlink modes. The descendant-tree convention intentionally omits each
+product root, so receipt schema v3 records the physical static and dynamic
+root modes separately. This preserves a dynamic setgid root such as `02755`
+without inventing a root mode from descendants.
 
 The host-side `validate-report` path only reads the receipt. It reconstructs
 the fixed 35-command runner roster and its paths, authenticates the retained

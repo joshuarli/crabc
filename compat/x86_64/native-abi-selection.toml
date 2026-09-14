@@ -236,6 +236,22 @@ reason = "Two resolver implementation bodies are private providers: the static a
 static_metadata_rule = "explicit"
 
 [[owner_groups]]
+id = "component-owned-locale-time-private-bodies"
+selector = "explicit"
+disposition = "private-provider"
+owner = "x86-owned-locale-time-private-bodies"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/gmtime_r.rs", "libc/src/c_abi/x86_64/owned_calendar.rs", "libc/src/c_abi/x86_64/owned_strftime.rs", "compat/x86_64/locale-alias-contract.md"]
+members = ["__asctime_r", "__gmtime_r", "__localtime_r", "__strftime_l"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"candidate-static" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "HIDDEN"}, "candidate-shared" = {"type" = "FUNC", "binding" = "LOCAL", "visibility" = "HIDDEN"}}
+reason = "The four hidden locale/time bodies are private implementation providers. The static archive retains GLOBAL HIDDEN definitions while the shared libc localizes the bodies and exposes only the contract's public weak aliases."
+static_metadata_rule = "explicit"
+
+[[owner_groups]]
 id = "source-owned-ctype-locator-bodies"
 selector = "explicit"
 disposition = "public-provider"

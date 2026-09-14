@@ -405,6 +405,53 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
                        "sha256": self.digest(b"driver\n"), "mode": 0o755}, records)
         self.assertIn({"path": "products/static/driver-link", "kind": "symlink", "target": "bin/crabc-cc", "mode": 0o777}, records)
 
+    def test_product_root_mode_is_explicit_and_rejects_legacy_or_forged_records(self) -> None:
+        """The descendant roster cannot silently stand in for a setgid root."""
+        static = self.root / receipt.STATIC_PRODUCT_DIRECTORY
+        dynamic = self.root / receipt.DYNAMIC_PRODUCT_DIRECTORY
+        for product, name in ((static, "static"), (dynamic, "dynamic")):
+            metadata = product / "share/crabc/manifest.json"
+            metadata.parent.mkdir(parents=True, exist_ok=True)
+            metadata.write_text("{}\n", encoding="utf-8")
+            (product / "usr/lib").mkdir(parents=True, exist_ok=True)
+            (product / "usr/lib" / f"lib{name}.a").write_bytes(name.encode())
+        static.chmod(0o2755)
+        dynamic.chmod(0o2755)
+        state = dynamic / "share/crabc/dynamic-product-state.json"
+        state.write_text('{"source_sha256":"' + "c" * 64 + '"}\n', encoding="utf-8")
+        source = {"revision": "a" * 40, "tree": "b" * 40, "content_sha256": "c" * 64, "clean": True}
+        products = {
+            "static": {
+                "root_mode": 0o2755, "tree": receipt._tree_records(self.root, receipt.STATIC_PRODUCT_DIRECTORY),
+                "manifest": receipt._identity(self.root, static / "share/crabc/manifest.json"), "preparation": {},
+            },
+            "dynamic": {
+                "root_mode": 0o2755, "tree": receipt._tree_records(self.root, receipt.DYNAMIC_PRODUCT_DIRECTORY),
+                "manifest": receipt._identity(self.root, dynamic / "share/crabc/manifest.json"),
+                "source_before": source, "source_after": source,
+                "state": receipt._identity(self.root, state),
+            },
+        }
+        with mock.patch.object(receipt, "_validate_static_preparation", return_value={}), \
+             mock.patch("owned_posix_product_evidence._validate_static_product", return_value=(static / "share/crabc/manifest.json", {})), \
+             mock.patch("owned_posix_product_evidence._validate_dynamic_product", return_value=(dynamic / "share/crabc/manifest.json", {})), \
+             mock.patch.object(receipt, "_validate_producer_tools"):
+            observed = receipt._validate_products(self.root, self.root, products, source, {"files": {}})
+            self.assertEqual(observed["static"]["root_mode"], 0o2755)
+            self.assertEqual(observed["dynamic"]["root_mode"], 0o2755)
+            forged = json.loads(json.dumps(products))
+            forged["dynamic"]["root_mode"] = 0o755
+            with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "dynamic retained product root mode changed"):
+                receipt._validate_products(self.root, self.root, forged, source, {"files": {}})
+            forged = json.loads(json.dumps(products))
+            forged["dynamic"]["root_mode"] = float(0o2755)
+            with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "dynamic retained product root mode is invalid"):
+                receipt._validate_products(self.root, self.root, forged, source, {"files": {}})
+            forged = json.loads(json.dumps(products))
+            forged["dynamic"].pop("root_mode")
+            with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "dynamic retained product fields changed"):
+                receipt._validate_products(self.root, self.root, forged, source, {"files": {}})
+
     def test_retained_image_input_binds_manifest_bytes_and_mode(self) -> None:
         tool_bytes = b"pinned tool\n"
         image_entry = {"path": "/tool", "sha256": self.digest(tool_bytes), "size": len(tool_bytes), "mode": 0o644}
@@ -482,6 +529,13 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
         trusted, report_path, report = self.public_entry_fixture()
         admitted = self.admit_public_entry(trusted, report_path)
         self.assertEqual(admitted["source"], report["source_before"])
+
+    def test_validate_report_rejects_the_v2_product_root_omission_schema(self) -> None:
+        trusted, report_path, report = self.public_entry_fixture()
+        report["schema"] = "crabc.x86_64-locale-alias-contract-receipt/v2"
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+        with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "status changed"):
+            self.admit_public_entry(trusted, report_path)
 
     def test_validate_report_public_exit_rejects_a_report_changed_after_initial_reconstruction(self) -> None:
         trusted, report_path, report = self.public_entry_fixture()

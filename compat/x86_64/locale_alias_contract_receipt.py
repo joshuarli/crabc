@@ -31,7 +31,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE_MOUNT = "/workspace"
-SCHEMA = "crabc.x86_64-locale-alias-contract-receipt/v2"
+SCHEMA = "crabc.x86_64-locale-alias-contract-receipt/v3"
 COMMAND_SCHEMA = "crabc.x86_64-locale-alias-contract-command/v2"
 IMAGE_MANIFEST_PATH = "compat/x86_64/locale-alias-contract-image-inputs.json"
 PINNED_IMAGE = "crabc-core-evidence@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d"
@@ -781,6 +781,18 @@ def _tree_records(root: Path, directory: str) -> list[dict[str, object]]:
     return records
 
 
+def _product_root_mode(root: Path, directory: str) -> int:
+    """Retain the physical product root mode omitted by the descendant tree.
+
+    ``_tree_records`` deliberately models descendants, matching the existing
+    static-preparation owner.  The supplied dynamic root can carry setgid, so
+    retain its exact ``stat.S_IMODE`` separately instead of inferring a root
+    mode from children or a receipt path.
+    """
+    product = _relative_directory(root, directory, f"{directory} product")
+    return stat.S_IMODE(product.lstat().st_mode)
+
+
 def _copy_physical_tree(source: Path, destination: Path, label: str) -> None:
     """Copy a retained static-preparation tree without accepting links or devices."""
 
@@ -963,23 +975,31 @@ def _validate_products(
     sys.path.insert(0, str(ROOT / "compat/x86_64"))
     import owned_posix_product_evidence as products
 
-    static_item = _exact_mapping(records["static"], {"tree", "manifest", "preparation"}, "static retained product")
+    static_item = _exact_mapping(records["static"], {"root_mode", "tree", "manifest", "preparation"}, "static retained product")
     preparation = _validate_static_preparation(checkout_root, root, source_state, static_item["preparation"])
     static_tree = _tree_records(root, STATIC_PRODUCT_DIRECTORY)
     if static_item["tree"] != static_tree:
         _fail("static retained product tree changed")
+    if (type(static_item["root_mode"]) is not int or not 0 <= static_item["root_mode"] <= 0o7777):
+        _fail("static retained product root mode is invalid")
+    if static_item["root_mode"] != _product_root_mode(root, STATIC_PRODUCT_DIRECTORY):
+        _fail("static retained product root mode changed")
     static_product = root / STATIC_PRODUCT_DIRECTORY
     static_manifest_path, _details = products._validate_static_product(static_product)
     static_manifest = _identity(root, static_manifest_path)
     if static_item["manifest"] != static_manifest:
         _fail("static retained product manifest changed")
 
-    dynamic_item = _exact_mapping(records["dynamic"], {"tree", "manifest", "source_before", "source_after", "state"}, "dynamic retained product")
+    dynamic_item = _exact_mapping(records["dynamic"], {"root_mode", "tree", "manifest", "source_before", "source_after", "state"}, "dynamic retained product")
     if dynamic_item["source_before"] != source_state or dynamic_item["source_after"] != source_state:
         _fail("dynamic product source transaction changed")
     dynamic_tree = _tree_records(root, DYNAMIC_PRODUCT_DIRECTORY)
     if dynamic_item["tree"] != dynamic_tree:
         _fail("dynamic retained product tree changed")
+    if (type(dynamic_item["root_mode"]) is not int or not 0 <= dynamic_item["root_mode"] <= 0o7777):
+        _fail("dynamic retained product root mode is invalid")
+    if dynamic_item["root_mode"] != _product_root_mode(root, DYNAMIC_PRODUCT_DIRECTORY):
+        _fail("dynamic retained product root mode changed")
     dynamic_product = root / DYNAMIC_PRODUCT_DIRECTORY
     dynamic_manifest_path, _details = products._validate_dynamic_product(dynamic_product)
     dynamic_manifest = _identity(root, dynamic_manifest_path)
@@ -998,8 +1018,8 @@ def _validate_products(
     _validate_producer_tools(root, static_product, "static", image)
     _validate_producer_tools(root, dynamic_product, "dynamic", image)
     return {
-        "static": {"tree": static_tree, "manifest": static_manifest, "preparation": preparation},
-        "dynamic": {"tree": dynamic_tree, "manifest": dynamic_manifest, "source_before": source_state,
+        "static": {"root_mode": static_item["root_mode"], "tree": static_tree, "manifest": static_manifest, "preparation": preparation},
+        "dynamic": {"root_mode": dynamic_item["root_mode"], "tree": dynamic_tree, "manifest": dynamic_manifest, "source_before": source_state,
                     "source_after": source_state, "state": dynamic_state},
     }
 
@@ -1570,6 +1590,7 @@ def collect(root: Path, output: Path) -> dict[str, object]:
         dynamic_manifest = products._validate_dynamic_product(dynamic_product)[0]
         product_records = {
             "static": {
+                "root_mode": _product_root_mode(output, STATIC_PRODUCT_DIRECTORY),
                 "tree": _tree_records(output, STATIC_PRODUCT_DIRECTORY),
                 "manifest": _identity(output, static_manifest),
                 "preparation": {
@@ -1579,6 +1600,7 @@ def collect(root: Path, output: Path) -> dict[str, object]:
                 },
             },
             "dynamic": {
+                "root_mode": _product_root_mode(output, DYNAMIC_PRODUCT_DIRECTORY),
                 "tree": _tree_records(output, DYNAMIC_PRODUCT_DIRECTORY),
                 "manifest": _identity(output, dynamic_manifest),
                 "source_before": before,

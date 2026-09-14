@@ -443,8 +443,14 @@ a retained runtime map, probe, source snapshot, or raw command output cannot
 change after the initial reader replay. A report with only one component stays
 independently optional and leaves both descriptor requirements unresolved.
 
-The selection report schema is `crabc.x86_64-native-abi-selection-report/v6`;
-v6 adds the closed `loader_structural_owner_companion` and
+The selection report schema is `crabc.x86_64-native-abi-selection-report/v7`;
+v7 adds the optional closed `locale_alias_contract_companion` and
+`locale_alias_contract_joins` fields. It admits the locale reader only after
+its complete 98-name source contract, all 35 normal consumer commands, and
+the receipt-local static/dynamic product trees match the selector's supplied
+cohort by relative bytes, modes, and links. The static preparation keeps its
+own path-bearing transaction and is revalidated by its owner; only its
+authenticated primary tree is compared to the selected static product. v6 adds the closed `loader_structural_owner_companion` and
 `loader_structural_owner_joins` fields. v5 added the closed
 `public_data_declaration_runtime_companion` and
 `public_data_declaration_runtime_joins` fields. v4 added the closed
@@ -565,6 +571,16 @@ without replaying the header declaration envelope.
   alone joins that finite projection to the current full occurrence accounting;
   it neither widens private provider scope nor treats the receipt as resolver
   family evidence.
+- `locale_alias_contract_receipt.py` owns source-bound replay for the complete
+  existing 98-name locale/time surface and 35 normal installed-header consumer
+  commands. The optional `--locale-alias-contract-report` does not select that
+  whole surface. It joins only `__asctime_r`, `__gmtime_r`, `__localtime_r`,
+  `__strftime_l`, and the existing feature requirements for `asctime_r`,
+  `localtime_r`, and `strftime_l`. The `tzset`/`__tzset` relation remains
+  source-local with no selected `__tzset` placement; `wcsftime_l` is not part
+  of this component. The selector requires exact current-source and full
+  product-tree joins, then replays the public reader after the join. It does
+  not infer a provider from a symbol name or complete locale behavior.
 - `loader_structural_owner_contract_reader.py` owns retained replay for the
   eight existing structural replacements in `loader-entry-stages`,
   `loader-registration-operations`, and `loader-always-atomic-guard`.  The
