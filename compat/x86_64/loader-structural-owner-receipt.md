@@ -178,10 +178,11 @@ pair; a missing, substituted, duplicate, unpaired, or extra cell rejects.
 transaction before main and a second exact main transaction.
 `loader_structural_owner_registration_probe.c` requires its public dlfcn
 transaction before first application `pthread_create`, then a worker lookup and
-join. Both use only installed `dlfcn.h` and `pthread.h`; no source fixture
-names an internal stage, callback registration spelling, or private registry
-function. Pinned musl compares this public surface; it is never an oracle for
-calling historical internal stages.
+join. They use only installed public headers: `dlfcn.h`, `pthread.h` where the
+worker probe needs it, and `stdio.h`/`stdlib.h` for their fixed transcript and
+failure path. No source fixture names an internal stage, callback registration
+spelling, or private registry function. Pinned musl compares this public
+surface; it is never an oracle for calling historical internal stages.
 
 ## Tests and limits before collection
 
@@ -193,8 +194,9 @@ publish ordering, or owned-CRT tail; and missing/substituted/unpaired matrix
 cells. Source fixtures retain expected public references before link. Every
 candidate dynamic mode and its paired pinned comparator remains required.
 
-This design neither implements nor selects a receipt. It contains no native
-collection, selector admission, family/campaign/promotion/public-support claim,
-AArch64 execution, ELF or binary mutation control, or dynamic-ELF authority
-review. The stopped private pthread dynamic-ELF authority review with
-final-only mutation controls remains stopped and is not reframed here.
+This component is implemented but unqualified: no source-matched native
+receipt has been collected and no selector admission exists. It makes no
+family, campaign, promotion, or public-support claim and contains no AArch64
+execution, ELF or binary mutation control, or dynamic-ELF authority review.
+The stopped private pthread dynamic-ELF authority review with final-only
+mutation controls remains stopped and is not reframed here.
