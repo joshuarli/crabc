@@ -29,6 +29,7 @@ FORMAT = 1
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "compat/allocator/m2_vm_x86_64.c"
 REPORT_DEFAULT = ROOT / "compat/reports/allocator/x86_64/fault-seam-inventory.json"
+CANONICAL_M2_VM_FIXTURE = ROOT / "compat/allocator/m2_vm_x86_64.c"
 FAULT_PROFILE_DEFINE = "-DCRABC_M2_FAULT_SEAM_INVENTORY_PROFILE=1"
 HUGE_RETRY_HELPER_TEST_DEFINE = "-DCRABC_M2_FAULT_SEAM_RETRY_HELPER_TEST=1"
 HUGE_TIMEOUT_CLOCK_HELPER_TEST_DEFINE = "-DCRABC_M2_FAULT_SEAM_TIMEOUT_CLOCK_HELPER_TEST=1"
@@ -40,6 +41,9 @@ HUGE_TIMEOUT_CLOCK_HELPER_SCHEMA = "crabc-mimalloc-x86_64-fault-seam-timeout-clo
 HUGE_PLACEMENT_WARNING_HELPER_SCHEMA = "crabc-mimalloc-x86_64-fault-seam-placement-warning-helper-regression"
 MBIND_BOUNDARY_SCHEMA = "crabc-mimalloc-x86_64-fault-seam-mbind-boundary-regression"
 HUGE_BRANCH_DIAGNOSTIC_SCHEMA = "crabc-mimalloc-x86_64-fault-seam-huge-branch-diagnosis"
+CANONICAL_M2_VM_C_COMPILE_REGRESSION_SCHEMA = (
+    "crabc-mimalloc-x86_64-fault-seam-canonical-m2-vm-c-compile-regression"
+)
 C_TRACE_BEGIN = "CRABC_MI_M2_FAULT_SEAM_INVENTORY_C_TRACE_BEGIN"
 C_TRACE_END = "CRABC_MI_M2_FAULT_SEAM_INVENTORY_C_TRACE_END"
 RUST_TRACE_BEGIN = "CRABC_MI_M2_FAULT_SEAM_INVENTORY_RUST_TRACE_BEGIN"
@@ -1290,6 +1294,44 @@ def _huge_branch_c_command(
     ]
 
 
+def _canonical_m2_vm_c_compile_command(
+    runner: Any, compiler: str, source: Path, binary: Path,
+) -> list[str]:
+    """Rebuild the uninstrumented M2 C oracle without running its VM trace.
+
+    This is the exact ordinary C command owned by `m2_vm_x86_64.py`.  The
+    fault-inventory helpers must remain absent from this compilation unless
+    their explicit profile is selected, so this narrow control catches a
+    missing test-only preprocessor boundary before the full VM producer.
+    """
+
+    return [
+        compiler,
+        "-std=c11",
+        "-fPIC",
+        "-ftls-model=initial-exec",
+        "-DMI_SHARED_LIB",
+        "-DMI_SHARED_LIB_EXPORT",
+        "-DMI_LIBC_MUSL=1",
+        "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
+        "-I",
+        str(source / "include"),
+        "-I",
+        str(source / "src"),
+        *runner.CONFIGURATION_PROFILES["release"],
+        str(CANONICAL_M2_VM_FIXTURE),
+        *(str(source / item) for item in runner.M2_X86_64_VM_C_ORACLE_SOURCES),
+        "-Wl,--wrap=munmap",
+        "-Wl,--wrap=mmap",
+        "-Wl,--wrap=madvise",
+        "-Wl,--wrap=mprotect",
+        "-Wl,--wrap=prctl",
+        "-pthread",
+        "-o",
+        str(binary),
+    ]
+
+
 def _fixture_command_argument_is_bound(argument: str) -> bool:
     """Accept the local or fixed Docker spelling of this one tracked fixture."""
 
@@ -1378,6 +1420,47 @@ def _mbind_boundary_c_command(
     )
     command.insert(command.index(FAULT_PROFILE_DEFINE) + 1, MBIND_BOUNDARY_TEST_DEFINE)
     return command
+
+
+def run_canonical_m2_vm_c_compile_regression(*, offline: bool) -> dict[str, Any]:
+    """Compile only the ordinary M2 C fixture before the fault-profile lane.
+
+    The retained record is a compiler-bound regression control. It neither
+    runs the VM fixture nor admits a fault-inventory or M2 evidence report.
+    """
+
+    runner = _load_runner()
+    try:
+        runner.require_native_x86_64()
+        pin = runner.load_pin()
+        archive = runner.fetch_archive(pin, offline)
+        compiler = runner.require_tool("musl-gcc")
+        artifacts = runner.ARTIFACT_ROOT / "x86_64/fault-seam-inventory"
+        artifacts.mkdir(parents=True, exist_ok=True)
+        with runner.temporary_directory(prefix="crabc-mimalloc-fault-seam-canonical-m2-vm-") as temporary:
+            source = runner.safe_extract(archive, Path(temporary), pin["archive_root"])
+            binary = artifacts / "m2-vm-primitives-canonical-compile-regression"
+            build = runner.command_record(
+                _canonical_m2_vm_c_compile_command(runner, compiler, source, binary),
+                cwd=source,
+                timeout_seconds=300,
+            )
+            report = {
+                "build": {**build, "cwd": str(source)},
+                "c_source_files": list(runner.M2_X86_64_VM_C_ORACLE_SOURCES),
+                "fixture": runner.artifact_record(CANONICAL_M2_VM_FIXTURE),
+                "format": 1,
+                "schema": CANONICAL_M2_VM_C_COMPILE_REGRESSION_SCHEMA,
+                "upstream": {
+                    "archive_sha256": pin["sha256"],
+                    "revision": pin["revision"],
+                },
+            }
+            runner.write_json(artifacts / "canonical-m2-vm-c-compile-regression.json", report)
+            runner.require_success(build, "pinned C native x86 M2 VM oracle build")
+            return report
+    except runner.HarnessError as error:
+        raise EvidenceError(str(error)) from error
 
 
 def compile_huge_branch_profile(*, offline: bool) -> dict[str, Any]:
@@ -1893,6 +1976,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--compile-only", action="store_true")
+    parser.add_argument("--canonical-m2-vm-c-compile-regression", action="store_true")
     parser.add_argument("--retry-helper-regression", action="store_true")
     parser.add_argument("--timeout-clock-helper-regression", action="store_true")
     parser.add_argument("--placement-warning-helper-regression", action="store_true")
@@ -1903,6 +1987,7 @@ def main() -> int:
     try:
         selected_modes = sum((
             arguments.compile_only,
+            arguments.canonical_m2_vm_c_compile_regression,
             arguments.retry_helper_regression,
             arguments.timeout_clock_helper_regression,
             arguments.placement_warning_helper_regression,
@@ -1914,6 +1999,10 @@ def main() -> int:
         if arguments.compile_only:
             compile_huge_branch_profile(offline=arguments.offline)
             print("allocator x86-64 fault seam inventory: C profile compile PASS")
+            return 0
+        if arguments.canonical_m2_vm_c_compile_regression:
+            run_canonical_m2_vm_c_compile_regression(offline=arguments.offline)
+            print("allocator x86-64 fault seam inventory: canonical M2 VM C compile PASS")
             return 0
         if arguments.retry_helper_regression:
             run_huge_retry_helper_regression(offline=arguments.offline)

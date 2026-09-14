@@ -2595,6 +2595,8 @@ static int run_huge_branch_partial_retry_helper_test(void) {
       && rejects_wrong_fallback_flag && rejects_wrong_same_hint ? 0 : 3;
 }
 
+#if defined(CRABC_M2_FAULT_SEAM_INVENTORY_PROFILE)
+
 /* `stats.c:_mi_clock_start` first calibrates `mi_clock_diff` with two reads,
  * then takes the start reading. The timeout arm must therefore provide four
  * concrete readings: calibration start/diff, allocation start, and its first
@@ -2658,6 +2660,8 @@ static int run_huge_branch_placement_warning_helper_test(void) {
   if (mapping != NULL) (void)__real_munmap(mapping, MI_GiB);
   return complete ? 0 : 3;
 }
+
+#endif
 
 /* The outer matrix child never initializes pinned source state.  It forks one
  * exact inner child for each fixed arm so `unix_mmap`'s static one-GiB retry

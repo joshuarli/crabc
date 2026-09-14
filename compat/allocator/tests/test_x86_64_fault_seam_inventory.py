@@ -507,6 +507,47 @@ class FaultInventoryShapeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "compiler direct include"):
                 INVENTORY.validate_report(report)
 
+    def test_canonical_m2_vm_c_compile_command_excludes_fault_profile_instrumentation(self) -> None:
+        """The normal M2 C build may not compile fault-only helper bodies."""
+
+        runner = INVENTORY._load_runner()
+        command = INVENTORY._canonical_m2_vm_c_compile_command(
+            runner,
+            "/usr/bin/musl-gcc",
+            Path("/pinned/mimalloc-3.5.0"),
+            Path("/evidence/m2-vm-primitives-oracle"),
+        )
+        self.assertEqual(
+            command,
+            [
+                "/usr/bin/musl-gcc",
+                "-std=c11",
+                "-fPIC",
+                "-ftls-model=initial-exec",
+                "-DMI_SHARED_LIB",
+                "-DMI_SHARED_LIB_EXPORT",
+                "-DMI_LIBC_MUSL=1",
+                "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
+                "-I",
+                "/pinned/mimalloc-3.5.0/include",
+                "-I",
+                "/pinned/mimalloc-3.5.0/src",
+                *runner.CONFIGURATION_PROFILES["release"],
+                str(INVENTORY.CANONICAL_M2_VM_FIXTURE),
+                *(f"/pinned/mimalloc-3.5.0/{unit}" for unit in runner.M2_X86_64_VM_C_ORACLE_SOURCES),
+                "-Wl,--wrap=munmap",
+                "-Wl,--wrap=mmap",
+                "-Wl,--wrap=madvise",
+                "-Wl,--wrap=mprotect",
+                "-Wl,--wrap=prctl",
+                "-pthread",
+                "-o",
+                "/evidence/m2-vm-primitives-oracle",
+            ],
+        )
+        self.assertNotIn(INVENTORY.FAULT_PROFILE_DEFINE, command)
+        self.assertNotIn("-Wl,--wrap=clock_gettime", command)
+
     def test_report_rejects_profile_bytes_mutated_after_compilation(self) -> None:
         """Reader replay reopens retained compiler input instead of trusting its record."""
 
