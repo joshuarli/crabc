@@ -4,7 +4,9 @@ Components own the function roster, exact admitted owners, source/final metadata
 link-mode audit, and all source/tool/product admission. This reader only joins
 those admitted inputs through the LLD map to their fully relocated final bytes.
 It supports the reviewed PC32, PLT32, GOTPCREL, GOTTPOFF and REX_GOTPCRELX forms;
-an unclassified input form fails instead of widening the byte relation.
+an unclassified input form fails instead of widening the byte relation. A static
+link may be TLS-free only when the selected mapped inputs and final ELF contain
+none of the TLS evidence that would require segment geometry.
 """
 from __future__ import annotations
 
@@ -14,6 +16,9 @@ from pathlib import Path
 import re
 
 from loader_debug_abi_evidence import Elf
+
+
+WEAK_UNDEFINED_ZERO_GOT_DESCRIPTOR = '__crabc_x86_64_loader_tls_runtime_v1'
 
 
 class StaticLinkAuthorityError(ValueError):
@@ -173,6 +178,26 @@ def _require_static_functions(map_path, executable, admitted, functions):
         require(name in source_targets[owner], 'static relocation target lacks its selected definition')
         return source_targets[owner][name]
 
+    def final_weak_undefined_symbol(name):
+        rows = []
+        for index, table in enumerate(final.sections):
+            if table[1] != 2:
+                continue
+            require(table[9] == 24 and table[5] % 24 == 0, 'invalid static symbol table')
+            strings = final.sections[table[6]]
+            require(strings[1] == 3 and strings[4] + strings[5] <= len(final.data),
+                    'invalid static symbol strings')
+            for number in range(table[5] // 24):
+                offset = final.unpack('<I', table[4] + number * 24)[0]
+                require(offset < strings[5], 'invalid static symbol name offset')
+                start = strings[4] + offset
+                end = final.data.find(b'\0', start, strings[4] + strings[5])
+                require(end >= 0, 'unterminated static symbol name')
+                if final.data[start:end].decode() == name:
+                    rows.append(final.symbol_row(index, number))
+        require(len(rows) == 1, 'static weak undefined target differs in final ELF')
+        return rows[0]
+
     def placed_section(owner, index):
         source = images[owner]
         require(0 < index < len(source.sections), 'static relocation target has no input section')
@@ -191,6 +216,24 @@ def _require_static_functions(map_path, executable, admitted, functions):
         resolved_map = None
         if symbol['binding'] != 'LOCAL' and symbol['visibility'] == 'DEFAULT':
             rows = map_symbols.get(symbol['name'], [])
+            if not rows:
+                require(
+                    symbol['name'] == WEAK_UNDEFINED_ZERO_GOT_DESCRIPTOR
+                    and symbol['type'] == '0' and symbol['binding'] == 'WEAK'
+                    and symbol['visibility'] == 'DEFAULT' and symbol['section'] == 0
+                    and symbol['value'] == symbol['size'] == 0 and symbol['version_index'] == 1,
+                    'static relocation target has no unique selected definition',
+                )
+                after = final_weak_undefined_symbol(symbol['name'])
+                require(
+                    final.elf_type == 2 and after['type'] == symbol['type']
+                    and after['binding'] == symbol['binding'] and after['visibility'] == symbol['visibility']
+                    and after['section'] == after['value'] == after['size'] == 0
+                    and after['version_index'] == symbol['version_index']
+                    and not any(section[1] == 4 for section in final.sections),
+                    'static weak undefined descriptor is not a relocation-free zero target',
+                )
+                return 0, True
             require(len(rows) == 1, 'static relocation target has no unique selected definition')
             resolved_map = rows[0]
             owner, _part, _address, extent = resolved_map
@@ -220,7 +263,7 @@ def _require_static_functions(map_path, executable, admitted, functions):
             matches = [base + i for i in range(0, extent, section[9])
                        if final.data[offset + i:offset + i + symbol['size']] == constant]
             require(len(matches) == 1, 'merged static target lacks its unique selected constant')
-            return matches[0]
+            return matches[0], False
         address = placed_section(owner, symbol['section']) + symbol['value']
         require(symbol['value'] + symbol['size'] <= section[5], 'static target exceeds selected section')
         if resolved_map is not None:
@@ -232,20 +275,22 @@ def _require_static_functions(map_path, executable, admitted, functions):
             require(after['type'] == symbol['type'] and after['size'] == symbol['size'],
                     'static relocation target type/size differs')
             if symbol['type'] == '6':  # STT_TLS values are relative to PT_TLS.
+                require(tls is not None, 'static TLS target lacks TLS geometry')
                 require(after['value'] == address - tls[3], 'static TLS symbol placement differs')
             else:
                 require(after['value'] == address, 'static relocation target symbol placement differs')
-        return address
+        return address, False
 
     # The selected TLS contributions determine the segment geometry, including
     # zero-fill and alignment. This prevents a resealed PT_TLS from changing the
     # thread-pointer displacement without changing the selected input layout.
+    # A genuinely TLS-free static function link has no geometry to prove: it
+    # must have no final TLS segment or section, no selected mapped TLS input,
+    # and no selected mapped TLS relocation. Those four absences are a finite
+    # admission condition; a synthetic output TLS segment still reaches the
+    # unchanged nonempty proof below.
     tls_rows = [program for program in final.programs if program[0] == 7]
-    require(len(tls_rows) == 1, 'static output lacks a unique TLS segment')
-    tls = tls_rows[0]
     tls_sections = [section for section in final.sections if section[2] & 0x400]
-    require(tls_sections and tls[7] > 0 and tls[7] & (tls[7] - 1) == 0
-            and tls[3] % tls[7] == 0, 'unclassified static TLS alignment')
     tls_inputs = []
     for owner, source in images.items():
         for index, section in enumerate(source.sections):
@@ -254,19 +299,45 @@ def _require_static_functions(map_path, executable, admitted, functions):
                 base, extent, _name = contributions[key]
                 require(placed_section(owner, index) == base, 'static TLS placement differs')
                 tls_inputs.append((base, extent, section))
-    require(tls_inputs and max(s[8] for _b, _e, s in tls_inputs) == tls[7], 'static TLS input alignment differs')
-    cursor = tls[3]
-    file_end = cursor
-    for base, extent, section in sorted(tls_inputs):
-        cursor = (cursor + section[8] - 1) // section[8] * section[8]
-        require(base == cursor, 'static TLS selected input order/padding differs')
-        cursor += extent
-        if section[1] != 8:
-            file_end = cursor
-    require(cursor - tls[3] == tls[6] and file_end - tls[3] == tls[5]
-            and min(s[3] for s in tls_sections) == tls[3]
-            and max(s[3] + s[5] for s in tls_sections) == cursor, 'static TLS segment geometry differs')
-    tls_size = (tls[6] + tls[7] - 1) // tls[7] * tls[7]
+    tls_relocations = []
+    for owner, source in images.items():
+        for relocations in source.sections:
+            if relocations[1] != 4 or not 0 < relocations[7] < len(source.sections):
+                continue
+            target_section = source.sections[relocations[7]]
+            if (owner, section_name(source, target_section)) not in contributions:
+                continue
+            require(relocations[9] == 24 and relocations[5] % 24 == 0,
+                    'malformed selected static input relocations')
+            for offset in range(0, relocations[5], 24):
+                _position, info, _addend = source.unpack('<QQq', relocations[4] + offset)
+                symbol = source.symbol_row(relocations[6], info >> 32)
+                if info & 0xffffffff == 22 or symbol['type'] == '6':
+                    tls_relocations.append((owner, info & 0xffffffff, symbol['name']))
+    if not tls_rows:
+        require(not tls_sections, 'TLS-free static output has a TLS section')
+        require(not tls_inputs, 'TLS-free static output has a selected TLS input')
+        require(not tls_relocations, 'TLS-free static output has a selected TLS relocation')
+        tls = None
+        tls_size = None
+    else:
+        require(len(tls_rows) == 1, 'static output lacks a unique TLS segment')
+        tls = tls_rows[0]
+        require(tls_sections and tls[7] > 0 and tls[7] & (tls[7] - 1) == 0
+                and tls[3] % tls[7] == 0, 'unclassified static TLS alignment')
+        require(tls_inputs and max(s[8] for _b, _e, s in tls_inputs) == tls[7], 'static TLS input alignment differs')
+        cursor = tls[3]
+        file_end = cursor
+        for base, extent, section in sorted(tls_inputs):
+            cursor = (cursor + section[8] - 1) // section[8] * section[8]
+            require(base == cursor, 'static TLS selected input order/padding differs')
+            cursor += extent
+            if section[1] != 8:
+                file_end = cursor
+        require(cursor - tls[3] == tls[6] and file_end - tls[3] == tls[5]
+                and min(s[3] for s in tls_sections) == tls[3]
+                and max(s[3] + s[5] for s in tls_sections) == cursor, 'static TLS segment geometry differs')
+        tls_size = (tls[6] + tls[7] - 1) // tls[7] * tls[7]
 
     def got_addresses(target):
         sections = [section for section in final.sections if section_name(final, section) == '.got']
@@ -327,7 +398,9 @@ def _require_static_functions(map_path, executable, admitted, functions):
         for position, kind, addend, symbol in function_relocations[name]:
             require(kind in (2, 4, 9, 22, 42), f'unclassified mapped static relocation {kind} in {name}')
             require(position + 4 <= size, 'static relocation crosses a function boundary')
-            target = target_address(owner, symbol)
+            target, weak_undefined_zero_got = target_address(owner, symbol)
+            require(not weak_undefined_zero_got or kind == 9 and addend == -4,
+                    'static weak undefined descriptor lacks its exact GOTPCREL relocation')
             value = target + addend - (address + position)
             if kind == 9:
                 values = [slot + addend - (address + position) for slot in got_addresses(target)]
@@ -342,6 +415,8 @@ def _require_static_functions(map_path, executable, admitted, functions):
                         'unclassified static relaxed load')
                 if kind == 22:
                     require(symbol['type'] == '6', 'GOTTPOFF target is not selected TLS')
+                    require(tls is not None and tls_size is not None,
+                            'GOTTPOFF target lacks TLS geometry')
                     value = target - tls[3] - tls_size
                     original[position - 3:position] = bytes([0x48 | ((rex >> 2) & 1), 0xc7,
                                                            0xc0 | ((modrm >> 3) & 7)])
