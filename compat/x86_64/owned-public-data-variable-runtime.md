@@ -1,0 +1,43 @@
+# Installed public-data declaration runtime receipt
+
+`owned_public_data_variable_runtime.py` owns one finite native x86-64 C-ABI
+receipt for the nineteen installed variables that the declaration companion
+otherwise leaves unresolved. Its source contract is
+`owned_public_data_variable_runtime.toml`; it has seven fixed runtime groups:
+immutable network data, environment, getdate, getopt/program names, `signgam`,
+permanent standard-stream slots, and timezone globals.
+
+The receipt is deliberately narrower than an export or family audit. It records
+exact source Git inputs, pinned musl 1.2.6 oracle inputs, installed static and
+dynamic product inputs, C probe objects, sealed link receipts, command argv,
+raw stdout/stderr/status streams, and execution roots. Every group must execute
+through candidate static, static PIE, dynamic PIE, and dynamic non-PIE products.
+Both dynamic modes retain kernel and direct-interpreter entries. The reader
+reconstructs those fixed source and product inputs from retained bytes without
+running a compiler, linker, or target executable.
+
+The immutable group reads all sixteen `_ns_flagdata` records and both IPv6
+values. Environment retains caller-serialized initial publication, exact
+same-storage dependencies, replacement/removal/clear behavior and its borrowed
+pointer boundary. Getdate preserves the existing source/template/error rows.
+The getopt group covers startup program-name publication, parser changes and
+both reset paths. The narrow signgam probe checks only that `lgamma` updates
+`signgam`, `lgamma_r` writes its explicit sign without updating it, and
+`__signgam` is the same storage. It does not make a math-family claim. The
+standard-stream group observes three distinct initialized slots and descriptor
+behavior without selecting a `FILE` layout. Timezone retains its existing TZif
+fixture as a source-specific known-difference observation and adds the direct
+POSIX-TZ `timezone`, `daylight`, `tzname` refresh and same-storage dependency
+probe. It does not bless a raw candidate/oracle TZif transcript difference.
+
+`h_errno` is not collected here. The declaration selector composes the installed
+`netdb.h` object-like macro and exact C/C++ accessor declaration with the current
+`owned_errno_storage_lifecycle.py` receipt's selected `h_errno` static/shared
+metadata and its existing main, worker, and loaded-DSO observations. A report
+that merely names the errno receipt cannot satisfy that composed owner join.
+
+A valid receipt can complete only the fixed nineteen installed-variable and one
+accessor-macro declaration obligations. It does not select a provider; prove
+strong overrides, interposition, COPY relocations, FILE layout, broad TLS/TCB,
+timezone database behavior, family completion, promotion, qualification, or
+public support. ABI-only data names remain outside this predicate.

@@ -1,0 +1,93 @@
+schema = "crabc.x86_64-owned-public-data-variable-runtime-contract/v1"
+component = "public-data-declaration-runtime"
+target = "x86_64-unknown-linux-musl"
+pinned_musl_commit = "9fa28ece75d8a2191de7c5bb53bed224c5947417"
+candidate_modes = ["static", "static-pie", "dynamic-pie", "dynamic-non-pie"]
+dynamic_execution_routes = ["kernel", "direct-interpreter"]
+
+[[groups]]
+id = "immutable-network-data"
+objects = ["_ns_flagdata", "in6addr_any", "in6addr_loopback"]
+probe_sources = ["compat/x86_64/libc_ns_flagdata_probe.c", "compat/x86_64/libc_in6addr_any_probe.c", "compat/x86_64/libc_in6addr_loopback_probe.c"]
+owner_sources = ["libc/src/c_abi/x86_64/ns_flagdata.rs", "libc/src/c_abi/x86_64/in6addr_any.rs", "libc/src/c_abi/x86_64/in6addr_loopback.rs"]
+semantics = "exact immutable nameserver-table and IPv6 payload bytes"
+
+[[groups]]
+id = "environment-global"
+objects = ["environ"]
+probe_sources = ["compat/x86_64/owned_environment_lifecycle_probe.c"]
+owner_sources = ["libc/src/c_abi/x86_64/environment_runtime.rs"]
+semantics = "startup publication, same-storage aliases, replacement, removal and clear"
+
+[[groups]]
+id = "getdate-global"
+objects = ["getdate_err"]
+probe_sources = ["compat/x86_64/owned_getdate_probe.c"]
+owner_sources = ["libc/src/c_abi/x86_64/owned_getdate.rs"]
+semantics = "getdate error outcomes, successful-call persistence and partial-write boundary"
+
+[[groups]]
+id = "getopt-and-program-name-globals"
+objects = ["optarg", "opterr", "optind", "optopt", "optreset", "program_invocation_name", "program_invocation_short_name"]
+probe_sources = ["compat/x86_64/libc_process_globals_getopt_probe.c"]
+owner_sources = ["libc/src/getopt_exports.rs", "libc/src/c_abi/x86_64/process_globals.rs"]
+semantics = "startup publication, parser updates and both reset routes"
+
+[[groups]]
+id = "math-sign-global"
+objects = ["signgam"]
+probe_sources = ["compat/x86_64/owned_public_data_variable_runtime_probe.c"]
+owner_sources = ["libc/src/c_abi/x86_64/math_special_musl_x86_64.S"]
+semantics = "lgamma updates signgam while explicit-sign lgamma_r does not"
+
+[[groups]]
+id = "permanent-standard-stream-slots"
+objects = ["stdin", "stdout", "stderr"]
+probe_sources = ["compat/x86_64/libc_stdio_standard_probe.c"]
+owner_sources = ["libc/src/c_abi/x86_64/owned_static_stdio.rs"]
+semantics = "three distinct initialized pointer slots and standard descriptor behavior"
+
+[[groups]]
+id = "timezone-globals"
+objects = ["timezone", "daylight", "tzname"]
+probe_sources = ["compat/x86_64/owned_timezone_tzif_probe.c", "compat/x86_64/owned_public_data_variable_runtime_probe.c"]
+owner_sources = ["libc/src/c_abi/x86_64/owned_timezone.rs"]
+semantics = "initial and tzset refresh publication under caller coordination"
+
+[[alias_dependencies]]
+dependency = "__environ"
+object = "environ"
+[[alias_dependencies]]
+dependency = "_environ"
+object = "environ"
+[[alias_dependencies]]
+dependency = "___environ"
+object = "environ"
+[[alias_dependencies]]
+dependency = "__optreset"
+object = "optreset"
+[[alias_dependencies]]
+dependency = "__progname"
+object = "program_invocation_short_name"
+[[alias_dependencies]]
+dependency = "__progname_full"
+object = "program_invocation_name"
+[[alias_dependencies]]
+dependency = "__signgam"
+object = "signgam"
+[[alias_dependencies]]
+dependency = "__timezone"
+object = "timezone"
+[[alias_dependencies]]
+dependency = "__daylight"
+object = "daylight"
+[[alias_dependencies]]
+dependency = "__tzname"
+object = "tzname"
+
+[h_errno]
+object = "h_errno"
+accessor = "__h_errno_location"
+header = "include/netdb.h"
+owner_sources = ["libc/src/c_abi/x86_64/h_errno.rs"]
+semantics = "compose the existing selected errno storage/lifecycle account with the installed macro and accessor declaration"
