@@ -16,6 +16,7 @@ EXPECTED_VM_CHECK_IDS = (
     "normal-release-large-page-retry-suppression-and-ordinary-fallback",
     "large-only-one-gib-failure-no-regular-owner",
     "thp-direct-policy-outcome-matrix",
+    "process-main-thp-policy-owner-traversal",
     "aligned-hint-source-profile-and-direct-caller-matrix",
     "aligned-overmap-cleanup-c-rust-boundary-matrix",
     "process-policy-first-arena-clean-primary-fallback",
@@ -447,7 +448,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
         self.assertEqual(vm["id"], "vm-primitives")
         self.assertEqual(vm["native_status"], "partial")
         self.assertEqual(tuple(check["id"] for check in vm["checks"]), EXPECTED_VM_CHECK_IDS)
-        self.assertEqual(len(vm["checks"]), 31)
+        self.assertEqual(len(vm["checks"]), 32)
         self.assertEqual(len(vm["bounded_source_definitions"]), 20)
         callback_definitions = {
             definition["id"]: definition["source_anchor"]
@@ -580,6 +581,21 @@ class NativeVmAssemblyTests(unittest.TestCase):
         self.assertEqual(observed["gate_name"], "native x86 M2 focused source evidence")
         self.assertTrue(
             {record["id"] for record in vm_records}.issubset(observed["ids"])
+        )
+        owner_check = next(
+            check
+            for component in summary["components"]
+            for check in component["checks"]
+            if check["id"] == "process-main-thp-policy-owner-traversal"
+        )
+        self.assertEqual(
+            owner_check["target"],
+            "process_init::tests::process_main_thp_policy_owner_traversal",
+        )
+        self.assertNotIn(
+            owner_check["id"],
+            observed["ids"],
+            "the full M2 dispatcher must leave this Rust owner check for its focused batch",
         )
         self.assertEqual(
             {
