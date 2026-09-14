@@ -687,6 +687,19 @@ class PathAndCommandTests(unittest.TestCase):
             Path('compat/x86_64/generated/headers_layouts_aggregate/report.json'),
         )
 
+    def test_cli_threads_loader_structural_owner_receipt(self):
+        arguments = ['build-report']
+        for flag in ('measurement-checkout', 'elf-facts', 'base-inventory', 'static-product', 'dynamic-product', 'static-preparation'):
+            arguments += ['--' + flag, '.work/not-present']
+        arguments += ['--output', '.work/output', '--public-data-ordinary-link-report', '.work/ordinary/report.json',
+                      '--loader-debug-abi-report', '.work/loader/report.json', '--loader-runtime-registry-report', '.work/registry/report.json',
+                      '--loader-structural-owner-receipt-report', '.work/loader-structural/report.json']
+        report = {'identities': [], 'occurrences': [], 'closure': {'complete': False, 'blockers': []}}
+        with mock.patch.object(selection, 'build_report', return_value=report) as build:
+            self.assertEqual(selection.main(arguments), 0)
+        self.assertEqual(build.call_args.kwargs['loader_structural_owner_receipt_report'],
+                         Path('.work/loader-structural/report.json'))
+
     def test_cli_threads_public_data_declaration_runtime_report(self):
         arguments = ['build-report']
         for flag in ('measurement-checkout', 'elf-facts', 'base-inventory', 'static-product', 'dynamic-product', 'static-preparation'):

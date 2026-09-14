@@ -545,9 +545,76 @@ def _source(root: Path, relative: str) -> str:
     return _physical_regular(root / relative, f"source {relative}").read_text(encoding="utf-8")
 
 
+def _braced_body(text: str, marker: str, description: str) -> str:
+    """Return the one selected non-function Rust branch body."""
+    code = _rust_code(text)
+    start = text.find(marker)
+    require(start >= 0 and text.count(marker) == 1,
+            f"selected {description} is absent or duplicated")
+    brace = code.find("{", start)
+    require(brace >= 0, f"selected {description} has no body")
+    depth = 0
+    for index in range(brace, len(code)):
+        if code[index] == "{":
+            depth += 1
+        elif code[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[brace:index + 1]
+    fail(f"selected {description} body is unbalanced")
+
+
+def validate_build_feature_routes(build: str) -> None:
+    """Bind the selected Cargo feature branches to their five exact cfgs."""
+    lifecycle = _braced_body(build,
+        'if std::env::var_os("CARGO_FEATURE_X86_64_GENERAL_INITIAL_LIFECYCLE").is_some()',
+        'initial lifecycle build feature branch')
+    require(_rust_without_comments(lifecycle).count('cargo::rustc-cfg=crabc_general_initial_lifecycle') == 1,
+            'initial lifecycle build cfg differs')
+    feature = 'CARGO_FEATURE_X86_64_GENERAL_INITIAL_TLS_RUNTIME_V1_DYNAMIC_MAIN_THREAD_INTERPRETER'
+    branch = _braced_body(build, f'if std::env::var_os(\n        "{feature}",\n    )\n    .is_some()',
+                          'dynamic main interpreter build feature branch')
+    branch_code = _rust_without_comments(branch)
+    cfgs = (
+        'crabc_general_initial_graph', 'crabc_general_initial_tls_materialization_v1',
+        'crabc_general_loader_libc_tls_runtime_v1', 'crabc_dynamic_main_thread_runtime_v1',
+    )
+    require(all(branch_code.count(f'\"cargo::rustc-cfg={cfg}\"') == 1 for cfg in cfgs),
+            'dynamic main interpreter build cfg route differs')
+
+
+def validate_dynamic_tls_bridge(body: str) -> None:
+    code = _rust_code(body)
+    call = '__crabc_x86_64_initial_tls_allocate(block.as_mut_ptr())'
+    require(code.count(call) == 1 and _ordered(body, ('if !is_ready()', call, 'Some(unsafe { block.assume_init() })'),
+            'selected dynamic TLS allocation bridge'),
+            'selected dynamic TLS allocation bridge differs')
+
+
+def validate_dlfcn_routes(dlfcn: str, registry: str) -> None:
+    """Bind installed public dlfcn leaves to the closed runtime registry table."""
+    routes = (
+        ('pub unsafe extern "C" fn dlopen', '__crabc_x86_64_runtime_open(', 'runtime_open'),
+        ('unsafe extern "C" fn __crabc_x86_general_dlsym', '__crabc_x86_64_runtime_symbol(', 'runtime_symbol'),
+        ('pub unsafe extern "C" fn dlclose', '__crabc_x86_64_runtime_close(', 'runtime_close'),
+        ('pub unsafe extern "C" fn dladdr', '__crabc_x86_64_runtime_address(', 'runtime_address_info'),
+        ('pub unsafe extern "C" fn dlinfo', '__crabc_x86_64_runtime_information(', 'runtime_information'),
+        ('pub unsafe extern "C" fn dl_iterate_phdr', '__crabc_x86_64_runtime_iterate(', 'runtime_iterate'),
+    )
+    registry_body = rust_function_body(registry, 'pub(super) fn runtime_function')
+    registry_code = _rust_without_comments(registry_body)
+    for marker, import_name, target in routes:
+        route = f'b"{import_name.removesuffix("(")}" => Some({target} as *const () as usize as u64)'
+        body = rust_function_body(dlfcn, marker)
+        require(_rust_code(body).count(import_name) == 1 and registry_code.count(route) == 1,
+                f'selected dlfcn runtime route differs: {marker}')
+
+
 def validate_source_algorithms(root: Path = ROOT) -> dict[str, object]:
     root = _physical_directory(root, "component checkout")
     graph = _source(root, "ldso/src/x86_64_general_initial_graph.rs")
+    build = _source(root, "ldso/build.rs")
+    validate_build_feature_routes(build)
     run = rust_function_body(graph, "pub(super) unsafe fn run")
     selected = rust_function_body(graph, "unsafe fn run_with_initial_tls")
     validate_feature_routes(
@@ -586,6 +653,7 @@ def validate_source_algorithms(root: Path = ROOT) -> dict[str, object]:
     _reviewed_body("pthread_creator", creator)
     dlfcn = _source(root, "libc/src/c_abi/x86_64/general_dlfcn.rs")
     registry = _source(root, "ldso/src/x86_64_runtime_registry.rs")
+    validate_dlfcn_routes(dlfcn, registry)
     for name in (
         "__crabc_x86_64_runtime_open", "__crabc_x86_64_runtime_symbol",
         "__crabc_x86_64_runtime_close", "__crabc_x86_64_runtime_address",
@@ -604,6 +672,8 @@ def validate_source_algorithms(root: Path = ROOT) -> dict[str, object]:
         "always_atomic_graph_lock": True,
         "worker_tls_token_before_clone": True,
         "direct_dlfcn_registry_route": True,
+        "build_feature_cfg_closure": True,
+        "dynamic_tls_allocate_bridge": True,
     }
 
 
@@ -1168,6 +1238,33 @@ def _write_json(path: Path, value: object) -> None:
     path.write_text(json.dumps(value, sort_keys=True, indent=2) + "\n", encoding="utf-8")
 
 
+def _selected_runtime_projection() -> dict[str, object]:
+    selected = _contract()["selected_runtime"]
+    return {"cfg": selected["cfg"], "candidate_cells": list(MODES),
+            "constructor_owner": selected["constructor_owner"]}
+
+
+def _begin_fields() -> set[str]:
+    return {"schema", "image", "output", "selected_source", "collector", "contract", "inputs",
+            "source_contract", "source_algorithm", "upstream"}
+
+
+def _validate_begin_record(begin: object, *, source: Mapping[str, object], contract: Mapping[str, object],
+                           collector_output: str, inputs: Mapping[str, object],
+                           source_contract: Mapping[str, object], source_algorithm: Mapping[str, object],
+                           upstream: Mapping[str, object]) -> dict[str, object]:
+    """Bind every pre-execution admission record to the final cohort."""
+    row = _exact(begin, _begin_fields(), "component begin record")
+    require(row["schema"] == "crabc.x86_64-loader-structural-owner-begin/v1" and row["image"] == PINNED_IMAGE
+            and row["output"] == collector_output and same(row["selected_source"], source)
+            and same(row["collector"], source)
+            and same(row["contract"], {"schema": contract["schema"], "id": contract["id"]})
+            and same(row["inputs"], inputs) and same(row["source_contract"], source_contract)
+            and same(row["source_algorithm"], source_algorithm) and same(row["upstream"], upstream),
+            "component begin admission differs")
+    return row
+
+
 def begin_collection(*, root: Path, output: Path, static_product: Path, dynamic_product: Path,
                      static_preparation: Path, base_inventory: Path, full_facts: Path,
                      loader_debug_report: Path, loader_runtime_registry_report: Path,
@@ -1216,8 +1313,8 @@ def collect_report(*, root: Path, output: Path, static_product: Path, dynamic_pr
                    oracle_compiler: Path, musl_shared: Path, image: str) -> dict[str, object]:
     """Seal a completed normal-consumer matrix after a second full admission."""
     root, output = _physical_directory(root, "component checkout"), _physical_directory(output, "component output")
-    begin = _read_json(output / "begin.json", "component begin record")
-    require(begin.get("schema") == "crabc.x86_64-loader-structural-owner-begin/v1" and begin.get("image") == image == PINNED_IMAGE,
+    begin = _exact(_read_json(output / "begin.json", "component begin record"), _begin_fields(), "component begin record")
+    require(begin["schema"] == "crabc.x86_64-loader-structural-owner-begin/v1" and begin["image"] == image == PINNED_IMAGE,
             "component begin record differs")
     collector_output = _collector_path(root, output, "collection output")
     require(begin.get("output") == collector_output, "component begin output path differs")
@@ -1240,6 +1337,8 @@ def collect_report(*, root: Path, output: Path, static_product: Path, dynamic_pr
                                   dynamic_product=dynamic_product, loader_debug_report=loader_debug_report,
                                   loader_runtime_registry_report=loader_runtime_registry_report)
     require(same(begin.get("upstream"), upstream), "supplied product or nested receipt changed during collection")
+    _validate_begin_record(begin, source=source, contract=_contract(), collector_output=collector_output,
+                           inputs=inputs, source_contract=sources, source_algorithm=algorithm, upstream=upstream)
     commands = {name: _read_command(output, name, collector_output=collector_output, inputs=inputs)
                 for name in _command_names()}
     matrix = _normal_matrix(output, commands)
@@ -1259,8 +1358,7 @@ def collect_report(*, root: Path, output: Path, static_product: Path, dynamic_pr
         "full_facts": upstream["full_facts"], "source_contract": sources,
         "source_cohort": {"relation": "one-current-clean-source", "identity": source},
         "source_algorithm": algorithm,
-        "selected_runtime": {"cfg": _contract()["selected_runtime"]["cfg"], "candidate_cells": list(MODES),
-                             "constructor_owner": _contract()["selected_runtime"]["constructor_owner"]},
+        "selected_runtime": _selected_runtime_projection(),
         "normal_consumer_matrix": matrix, "commands": commands, "runtime": runtime,
         "artifacts": {"begin": _identity(output / "begin.json", "begin.json")}, "coverage": coverage,
         "limits": {"family_completion": False, "promotion_ready": False, "public_support": False,
@@ -1308,10 +1406,17 @@ def validate_report(report_path: Path, *, root: Path, static_product: Path, dyna
                          "dynamic_loader": inputs["dynamic_loader"], "loader_debug": upstream["loader_debug"],
                          "loader_runtime_registry": upstream["loader_runtime_registry"]}
     require(same(report["selected_products"], expected_products), "selected product binding differs")
-    begin = _read_json(output / "begin.json", "component begin record")
-    require(begin.get("schema") == "crabc.x86_64-loader-structural-owner-begin/v1"
-            and begin.get("image") == PINNED_IMAGE and isinstance(begin.get("output"), str),
-            "component begin record differs")
+    begin_identity = _identity(output / "begin.json", "begin.json")
+    require(same(report["collection"], {"image": PINNED_IMAGE, "output": _collector_path(root, output, "collection output"),
+                                         "begin": begin_identity})
+            and same(report["artifacts"], {"begin": begin_identity})
+            and same(report["selected_runtime"], _selected_runtime_projection()),
+            "component collection or selected runtime binding differs")
+    begin = _validate_begin_record(
+        _read_json(output / "begin.json", "component begin record"), source=source, contract=_contract(),
+        collector_output=_collector_path(root, output, "collection output"), inputs=inputs,
+        source_contract=sources, source_algorithm=validate_source_algorithms(root), upstream=upstream,
+    )
     require(report["collection"] == {"image": PINNED_IMAGE, "output": begin["output"],
                                      "begin": _identity(output / "begin.json", "begin.json")},
             "component collection record differs")

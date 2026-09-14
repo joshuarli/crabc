@@ -84,6 +84,24 @@ class LoaderStructuralOwnerSourceTests(unittest.TestCase):
         with self.assertRaisesRegex(reader.LoaderStructuralOwnerError, "reviewed selected source body differs"):
             reader._reviewed_body("graph_selected", changed)
 
+    def test_build_tls_bridge_and_public_dlfcn_route_mutations_reject(self) -> None:
+        build = (ROOT / "ldso/build.rs").read_text(encoding="utf-8")
+        before, after = build.rsplit('cargo::rustc-cfg=crabc_dynamic_main_thread_runtime_v1', 1)
+        changed_build = before + 'cargo::rustc-cfg=crabc_dynamic_main_thread_runtime_v1_wrong' + after
+        with self.assertRaisesRegex(reader.LoaderStructuralOwnerError, "dynamic main interpreter build cfg"):
+            reader.validate_build_feature_routes(changed_build)
+        dynamic_tls = (ROOT / "libc/src/c_abi/x86_64/dynamic_tls.rs").read_text(encoding="utf-8")
+        body = reader.rust_function_body(dynamic_tls, "pub(super) unsafe fn allocate_thread")
+        with self.assertRaisesRegex(reader.LoaderStructuralOwnerError, "dynamic TLS allocation bridge"):
+            reader.validate_dynamic_tls_bridge(body.replace(
+                "__crabc_x86_64_initial_tls_allocate", "__crabc_x86_64_initial_tls_release", 1))
+        dlfcn = (ROOT / "libc/src/c_abi/x86_64/general_dlfcn.rs").read_text(encoding="utf-8")
+        registry = (ROOT / "ldso/src/x86_64_runtime_registry.rs").read_text(encoding="utf-8")
+        with self.assertRaisesRegex(reader.LoaderStructuralOwnerError, "selected dlfcn runtime route"):
+            reader.validate_dlfcn_routes(dlfcn.replace(
+                "let result = unsafe { __crabc_x86_64_runtime_close(handle) };",
+                "let result = unsafe { __crabc_x86_64_runtime_open(handle.cast(), 0, ptr::null_mut()) };", 1), registry)
+
     def test_lock_bypass_and_changed_registry_target_reject(self) -> None:
         lock = (ROOT / "ldso/src/x86_64_runtime_lock.rs").read_text(encoding="utf-8")
         with self.assertRaisesRegex(reader.LoaderStructuralOwnerError, "RuntimeGuard acquire bypasses"):
@@ -111,6 +129,18 @@ class LoaderStructuralOwnerFactsTests(unittest.TestCase):
         self.assertEqual(result["candidate_rows"], [])
         self.assertEqual(result["named_identity_filter"], list(reader.IDENTITIES))
 
+    def test_actual_raw_fact_report_keeps_the_complete_named_filter_counts(self) -> None:
+        report = (ROOT.parent / "runtimev1_descriptor_requirement_order/.work/x86_64/native-abi-elf-facts/"
+                  "clean-6b5e146b/report.json")
+        if not report.is_file():
+            self.skipTest("requires the retained complete 6b5 ELF fact report")
+        facts = json.loads(report.read_text(encoding="utf-8"))
+        rows = reader._flatten_fact_rows(facts)
+        projection = reader.project_structural_facts(rows)
+        self.assertEqual(projection["full_occurrence_count"], 30667)
+        self.assertEqual(projection["unnamed_occurrence_count"], 1365)
+        self.assertEqual(projection["reference_startup_rows"], 6)
+
     def test_candidate_row_for_a_legacy_registration_name_rejects(self) -> None:
         rows = []
         for name in ("__dls2b", "__dls3", "_dlstart"):
@@ -137,6 +167,26 @@ class LoaderStructuralOwnerFactsTests(unittest.TestCase):
             "member": "first.o", "member_index": 0, "member_occurrence": 0,
         })
         self.assertEqual(sum(row["row"]["name"] is None for row in rows), 1)
+
+
+class LoaderStructuralOwnerLifecycleTests(unittest.TestCase):
+    def test_begin_record_requires_every_preexecution_cohort_join(self) -> None:
+        source = {"revision": "r", "tree": "t", "source_sha256": "s"}
+        contract = {"schema": "contract", "id": "owner"}
+        begin = {"schema": "crabc.x86_64-loader-structural-owner-begin/v1", "image": reader.PINNED_IMAGE,
+                 "output": "/workspace/.work/out", "selected_source": source, "collector": source,
+                 "contract": contract, "inputs": {"input": 1}, "source_contract": {"source": 2},
+                 "source_algorithm": {"algorithm": 3}, "upstream": {"upstream": 4}}
+        reader._validate_begin_record(begin, source=source, contract=contract, collector_output=begin["output"],
+                                      inputs=begin["inputs"], source_contract=begin["source_contract"],
+                                      source_algorithm=begin["source_algorithm"], upstream=begin["upstream"])
+        for field in ("selected_source", "collector", "inputs", "source_contract", "source_algorithm", "upstream"):
+            changed = dict(begin)
+            changed[field] = {"changed": True}
+            with self.subTest(field=field), self.assertRaisesRegex(reader.LoaderStructuralOwnerError, "begin admission"):
+                reader._validate_begin_record(changed, source=source, contract=contract, collector_output=begin["output"],
+                                              inputs=begin["inputs"], source_contract=begin["source_contract"],
+                                              source_algorithm=begin["source_algorithm"], upstream=begin["upstream"])
 
 
 class LoaderStructuralOwnerCommandTests(unittest.TestCase):

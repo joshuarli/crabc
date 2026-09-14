@@ -563,6 +563,15 @@ without replaying the header declaration envelope.
   alone joins that finite projection to the current full occurrence accounting;
   it neither widens private provider scope nor treats the receipt as resolver
   family evidence.
+- `loader_structural_owner_contract_reader.py` owns retained replay for the
+  eight existing structural replacements in `loader-entry-stages`,
+  `loader-registration-operations`, and `loader-always-atomic-guard`.  The
+  optional `--loader-structural-owner-receipt-report` binds its current clean
+  source, complete facts, static preparation, loader-debug and loader-registry
+  receipts, and finite installed input modes before it can discharge only the
+  matching component-and-consumer receipt requirement. It creates no old
+  provider placement or registration-reference row and leaves family,
+  qualification, promotion, and public-support flags false.
 
 Each receipt must name the current selected source and product cohort. Their
 status flags remain false; header, semantic, family, and public-support gates

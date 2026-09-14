@@ -50,8 +50,9 @@ import native_c_allocator_boundary
 import owned_posix_product_evidence as product_evidence
 import headers_layouts_aggregate
 import owned_public_data_variable_runtime as public_data_variable_runtime
+import loader_structural_owner_contract_reader as loader_structural_owner_evidence
 
-SCHEMA = 'crabc.x86_64-native-abi-selection-report/v5'
+SCHEMA = 'crabc.x86_64-native-abi-selection-report/v6'
 CONTRACT_SCHEMA = 'crabc.x86_64-native-abi-selection/v1'
 TARGET = inventory.TARGET
 CONTRACT_PATH = MODULE_DIR / 'native-abi-selection.toml'
@@ -81,6 +82,19 @@ PUBLIC_DATA_LINKAGE_LIMITS = [
     'No lifecycle, strong-override, interposition, COPY-relocation, or header-feature-profile proof.',
     'Shared-only _dl_debug_addr remains owned by the loader debugger component.',
     'Linkage evidence is not runtime qualification, family completion, or public support.',
+]
+
+LOADER_STRUCTURAL_OWNER_REQUIREMENT = 'current source-bound owning component and consumer semantics receipt'
+LOADER_STRUCTURAL_OWNER_IDENTITIES = (
+    '__dls2b', '__dls3', '_dlstart', '__ldso_register_dlopen', '__ldso_register_dlsym',
+    '__ldso_register_dlclose', '__ldso_register_dlerror', '__ldso_register_mark_multithreaded',
+)
+LOADER_STRUCTURAL_OWNER_GROUPS = (
+    'loader-entry-stages', 'loader-registration-operations', 'loader-always-atomic-guard',
+)
+LOADER_STRUCTURAL_OWNER_LIMITS = [
+    'Only eight structural-replacement identities are attached.',
+    'The component selects no old provider placement, family completion, runtime qualification, promotion, or public support.',
 ]
 FIXED_C_PRODUCER_GROUP = 'allocator-shared-local'
 FIXED_C_PRODUCER_OWNER = 'fixed-C-mimalloc-producer'
@@ -7692,6 +7706,191 @@ def attach_compiler_helper_import(accounting: Mapping[str, Any], companion: Mapp
     return joins
 
 
+def _loader_structural_owner_product_identities(paths: Mapping[str, Path]) -> dict[str, dict[str, Any]]:
+    """Return precisely the installed roles the loader owner reader consumes."""
+    records: dict[str, dict[str, Any]] = {}
+    for name, relative in loader_structural_owner_evidence.STATIC_ROLES.items():
+        records[name] = file_identity(paths['static_product'] / relative)
+    for name, relative in loader_structural_owner_evidence.DYNAMIC_ROLES.items():
+        records[name] = file_identity(paths['dynamic_product'] / relative)
+    records.update({
+        'static_preparation': file_identity(paths['static_preparation']),
+        'base_inventory': file_identity(paths['base_inventory']),
+        'full_facts': file_identity(paths['elf_report']),
+    })
+    return records
+
+
+def _loader_structural_owner_input(value: object, description: str) -> dict[str, Any]:
+    row = exact(value, {'path', 'sha256', 'size', 'mode', 'retained'}, description)
+    require(type(row['path']) is str and row['path'] and type(row['retained']) is str and row['retained']
+            and type(row['sha256']) is str and re.fullmatch(r'[0-9a-f]{64}', row['sha256']) is not None
+            and type(row['size']) is int and not isinstance(row['size'], bool) and row['size'] >= 0
+            and type(row['mode']) is int and not isinstance(row['mode'], bool) and 0 <= row['mode'] <= 0o777,
+            f'{description} values differ')
+    return row
+
+
+def _require_loader_structural_owner_identity(value: object, current: object, description: str) -> None:
+    row = _loader_structural_owner_input(value, description)
+    require(same({key: row[key] for key in ('sha256', 'size', 'mode')},
+                 _identity_payload(current, description + ' selected')),
+            f'{description} bytes or mode differ')
+
+
+def native_loader_structural_owner_adapter(
+        report_path: Path | None, *, facts: Mapping[str, Any], measurement: Mapping[str, Any],
+        paths: Mapping[str, Path], source: Mapping[str, Any], loader_debug_report: Path | None,
+        loader_runtime_registry_report: Path | None) -> dict[str, Any] | None:
+    """Replay the finite loader structural-owner receipt in this exact cohort."""
+    if report_path is None:
+        return None
+    require(loader_debug_report is not None and loader_runtime_registry_report is not None,
+            'loader structural-owner receipt requires current loader-debug and loader-registry receipts')
+    reader = loader_structural_owner_evidence
+    require(Path(reader.ROOT) == ROOT and Path(reader.__file__).resolve().parent == MODULE_DIR
+            and reader.SCHEMA == 'crabc.x86_64-loader-structural-owner-receipt/v1'
+            and reader.STATUS == 'component-verified' and reader.COMPONENT == 'loader-structural-owner'
+            and tuple(reader.IDENTITIES) == LOADER_STRUCTURAL_OWNER_IDENTITIES,
+            'loader structural-owner reader is not the current v1 boundary')
+    report_path = physical_work_path(report_path, directory=False)
+    loader_debug_report = physical_work_path(loader_debug_report, directory=False)
+    loader_runtime_registry_report = physical_work_path(loader_runtime_registry_report, directory=False)
+    before = file_identity(report_path)
+    try:
+        result = reader.validate_report(
+            report_path, root=ROOT, static_product=paths['static_product'], dynamic_product=paths['dynamic_product'],
+            static_preparation=paths['static_preparation'], base_inventory=paths['base_inventory'],
+            full_facts=paths['elf_report'], loader_debug_report=loader_debug_report,
+            loader_runtime_registry_report=loader_runtime_registry_report,
+            oracle_compiler=Path(reader.IMAGE_INPUT_PATHS['oracle_compiler']),
+            musl_shared=Path(reader.IMAGE_INPUT_PATHS['musl_shared']),
+        )
+    except (KeyError, TypeError, ValueError, OSError, reader.LoaderStructuralOwnerError) as error:
+        raise SelectionError(f'loader structural-owner component rejected: {error}') from error
+    require(same(before, file_identity(report_path)), 'loader structural-owner report changed during replay')
+    source = exact(dict(source), {'revision', 'content_sha256', 'clean'}, 'loader structural-owner selection source')
+    require(source['clean'] is True, 'loader structural-owner selection source is not clean')
+    _measurement_source_matches(source, measurement, 'loader structural-owner')
+    measurement_reports = _measurement_report_bindings(measurement, 'loader structural-owner')
+    report = read_json(report_path)
+    require(same(before, file_identity(report_path)), 'loader structural-owner report changed while reading its projection')
+    report = exact(report, set(reader.REPORT_FIELDS), 'loader structural-owner reader report')
+    require(same(report, result), 'loader structural-owner reader replay result differs')
+    require((report['schema'], report['status'], report['component'], report['target'])
+            == (reader.SCHEMA, reader.STATUS, reader.COMPONENT, reader.TARGET),
+            'loader structural-owner reader identity differs')
+    selected = exact(report['selected_source'], {'revision', 'tree', 'source_sha256'}, 'loader structural-owner selected source')
+    collector = exact(report['collector'], {'revision', 'tree', 'source_sha256'}, 'loader structural-owner collector source')
+    require(same(selected, collector) and selected['revision'] == source['revision']
+            and selected['source_sha256'] == source['content_sha256'],
+            'loader structural-owner source differs from selection')
+    require(report['source_cohort'] == {'relation': 'one-current-clean-source', 'identity': selected},
+            'loader structural-owner source cohort differs')
+    products = _loader_structural_owner_product_identities(paths)
+    inputs = report['inputs']
+    require(type(inputs) is dict and set(inputs) == set(reader.INPUT_NAMES),
+            'loader structural-owner retained input roster differs')
+    for name in (*reader.STATIC_ROLES, *reader.DYNAMIC_ROLES, 'static_preparation', 'base_inventory', 'full_facts'):
+        _require_loader_structural_owner_identity(inputs[name], products[name],
+                                                  f'loader structural-owner {name}')
+    _require_same_identity_payload(report['static_preparation'], products['static_preparation'],
+                                   'loader structural-owner static preparation')
+    _require_same_identity_payload(report['base_inventory'], products['base_inventory'],
+                                   'loader structural-owner base inventory')
+    _require_same_identity_payload(report['full_facts'], products['full_facts'],
+                                   'loader structural-owner full facts')
+    _require_same_identity_payload(report['selected_products']['loader_debug'], file_identity(loader_debug_report),
+                                   'loader structural-owner loader-debug report')
+    _require_same_identity_payload(report['selected_products']['loader_runtime_registry'],
+                                   file_identity(loader_runtime_registry_report),
+                                   'loader structural-owner loader-registry report')
+    for artifact_key, name in (('candidate-static', 'static_libc'), ('candidate-shared', 'dynamic_libc'),
+                               ('candidate-loader', 'dynamic_loader')):
+        artifact = facts.get('artifacts', {}).get(artifact_key)
+        require(type(artifact) is dict and type(artifact.get('identity')) is dict,
+                f'loader structural-owner public ELF artifact differs: {artifact_key}')
+        _require_same_identity_payload(artifact['identity'], products[name],
+                                       f'loader structural-owner public ELF {artifact_key}')
+    complete_rows = reader._flatten_fact_rows(facts)
+    require(same(report['coverage']['fact_filter'], {
+        'full_occurrence_count': len(complete_rows),
+        'unnamed_occurrence_count': sum(row['row'].get('name') is None for row in complete_rows),
+        'named_identity_filter': list(reader.IDENTITIES), 'reference_startup_rows': 6, 'candidate_rows': [],
+    }), 'loader structural-owner full fact accounting differs')
+    require(same(report['coverage']['identities'], list(reader.IDENTITIES))
+            and same(report['coverage']['groups'], list(LOADER_STRUCTURAL_OWNER_GROUPS))
+            and report['limits'] == {'family_completion': False, 'promotion_ready': False, 'public_support': False,
+                                     'runtime_qualification': False, 'selector_admission': False},
+            'loader structural-owner receipt scope differs')
+    return {'status': 'loader-structural-owner-observed-with-boundaries', 'reader': file_identity(Path(reader.__file__)),
+            'report': before, 'source': copy.deepcopy(source), 'products': copy.deepcopy(products),
+            'measurement_reports': measurement_reports, 'receipt': copy.deepcopy(report),
+            'limits': list(LOADER_STRUCTURAL_OWNER_LIMITS)}
+
+
+def attach_loader_structural_owner(accounting: Mapping[str, Any], companion: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """Discharge only the eight existing structural receipt requirements."""
+    if companion is None:
+        return []
+    companion = exact(companion, {'status', 'reader', 'report', 'source', 'products', 'measurement_reports', 'receipt', 'limits'},
+                      'loader structural-owner companion')
+    require(companion['status'] == 'loader-structural-owner-observed-with-boundaries'
+            and companion['limits'] == LOADER_STRUCTURAL_OWNER_LIMITS,
+            'loader structural-owner companion boundary differs')
+    receipt = companion['receipt']
+    require(type(receipt) is dict and receipt.get('coverage', {}).get('identities') == list(LOADER_STRUCTURAL_OWNER_IDENTITIES),
+            'loader structural-owner companion identity roster differs')
+    records, _placements, occurrences = _accounting_indexes(accounting, description='loader structural-owner attachment')
+    before_count, before_unnamed = len(occurrences), sum(
+        type(row.get('row')) is dict and row['row'].get('name') is None for row in occurrences.values())
+    require(before_count == receipt['coverage']['fact_filter']['full_occurrence_count']
+            and before_unnamed == receipt['coverage']['fact_filter']['unnamed_occurrence_count'],
+            'loader structural-owner complete fact accounting differs')
+    joins = []
+    expected_group = {name: ('loader-entry-stages' if name in LOADER_STRUCTURAL_OWNER_IDENTITIES[:3]
+                             else 'loader-registration-operations' if name in LOADER_STRUCTURAL_OWNER_IDENTITIES[3:7]
+                             else 'loader-always-atomic-guard') for name in LOADER_STRUCTURAL_OWNER_IDENTITIES}
+    for name in LOADER_STRUCTURAL_OWNER_IDENTITIES:
+        record = records.get((name, None, False))
+        require(record is not None and record.get('selection', {}).get('disposition') == 'structural-replacement'
+                and record['selection'].get('owner') == expected_group[name]
+                and record.get('expected_placements') == []
+                and record.get('unresolved') == [LOADER_STRUCTURAL_OWNER_REQUIREMENT],
+                f'loader structural-owner selected requirement differs: {name}')
+        record['unresolved'].remove(LOADER_STRUCTURAL_OWNER_REQUIREMENT)
+        joins.append({'identity': copy.deepcopy(record['identity']), 'owner': expected_group[name],
+                      'requirements_discharged': [LOADER_STRUCTURAL_OWNER_REQUIREMENT]})
+    discharged = {identity_key(row['identity']) for row in joins}
+    accounting['blockers'][:] = [row for row in accounting['blockers'] if not (
+        row.get('code') == 'identity-unresolved' and identity_key(row.get('identity', {})) in discharged
+        and row.get('reason') == LOADER_STRUCTURAL_OWNER_REQUIREMENT)]
+    require(len(occurrences) == before_count and sum(type(row.get('row')) is dict and row['row'].get('name') is None
+            for row in occurrences.values()) == before_unnamed,
+            'loader structural-owner attachment changed complete raw facts')
+    return [{'identities': joins, 'requirements_discharged': [LOADER_STRUCTURAL_OWNER_REQUIREMENT],
+             'complete_elf_occurrence_count': before_count, 'unnamed_occurrence_count': before_unnamed}]
+
+
+def _recheck_loader_structural_owner(companion: Mapping[str, Any] | None, *, paths: Mapping[str, Path],
+                                     source: Mapping[str, Any], measurement: Mapping[str, Any],
+                                     loader_debug_report: Path | None,
+                                     loader_runtime_registry_report: Path | None) -> None:
+    if companion is None:
+        return
+    report = companion.get('report')
+    require(type(report) is dict and type(report.get('path')) is str,
+            'loader structural-owner report identity differs during final recheck')
+    path = physical_work_path(Path(report['path']), directory=False)
+    before = file_identity(path)
+    replayed = native_loader_structural_owner_adapter(
+        path, facts=read_json(paths['elf_report']), measurement=measurement, paths=paths, source=source,
+        loader_debug_report=loader_debug_report, loader_runtime_registry_report=loader_runtime_registry_report,
+    )
+    require(same(replayed, companion) and same(before, file_identity(path)),
+            'loader structural-owner changed during final recheck')
+
+
 def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration_report: Path | None,
                   ordinary_declaration_abi_report: Path | None = None,
                   ordinary_link_report: Path | None = None, loader_debug_report: Path | None = None,
@@ -7708,7 +7907,8 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
                   pthread_timed_feature_report: Path | None = None,
                   resolver_alias_receipt_report: Path | None = None,
                   headers_layouts_aggregate_report: Path | None = None,
-                  public_data_declaration_runtime_report: Path | None = None) -> dict[str, Any]:
+                  public_data_declaration_runtime_report: Path | None = None,
+                  loader_structural_owner_receipt_report: Path | None = None) -> dict[str, Any]:
     if pthread_timed_feature_report is not None:
         require(ordinary_link_report is not None and loader_debug_report is not None,
                 'pthread timed receipt requires the complete public-data loader-debug anchor pair')
@@ -7719,6 +7919,9 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         require(all(report is not None for report in (
             declaration_report, ordinary_declaration_abi_report, ordinary_link_report, errno_storage_lifecycle_report,
         )), 'public-data declaration runtime receipt requires its four current companion reports')
+    if loader_structural_owner_receipt_report is not None:
+        require(loader_debug_report is not None and loader_runtime_registry_report is not None,
+                'loader structural-owner receipt requires current loader-debug and loader-registry reports')
     source_before = selection_source()
     contract = load_contract(contract_path)
     inputs = load_source_inputs(contract, contract_path)
@@ -7765,6 +7968,10 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     resolver_alias_receipt_companion = native_resolver_alias_adapter(
         resolver_alias_receipt_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
         product_report=loader_debug_report,
+    )
+    loader_structural_owner_companion = native_loader_structural_owner_adapter(
+        loader_structural_owner_receipt_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
+        loader_debug_report=loader_debug_report, loader_runtime_registry_report=loader_runtime_registry_report,
     )
     headers_layouts_aggregate_companion = headers_layouts_aggregate_adapter(headers_layouts_aggregate_report)
     declaration = declaration_adapter(
@@ -7833,6 +8040,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     utmpx_receipt_joins = attach_native_utmpx(accounting, utmpx_receipt_companion)
     pthread_timed_feature_joins = attach_native_pthread_timed_feature(accounting, pthread_timed_feature_companion)
     resolver_alias_receipt_joins = attach_native_resolver_alias(accounting, resolver_alias_receipt_companion)
+    loader_structural_owner_joins = attach_loader_structural_owner(accounting, loader_structural_owner_companion)
     family_evidence_blockers, headers_layouts_aggregate_evidence = headers_layouts_family_evidence(
         inputs['families'], headers_layouts_aggregate_companion,
     )
@@ -7846,6 +8054,10 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         utmpx=utmpx_receipt_companion,
         pthread_timed=pthread_timed_feature_companion,
         resolver_alias=resolver_alias_receipt_companion,
+    )
+    _recheck_loader_structural_owner(
+        loader_structural_owner_companion, paths=paths, source=source_before, measurement=measurement,
+        loader_debug_report=loader_debug_report, loader_runtime_registry_report=loader_runtime_registry_report,
     )
     _recheck_headers_layouts_aggregate(headers_layouts_aggregate_companion)
     _recheck_public_data_declaration_runtime(
@@ -7896,6 +8108,8 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'pthread_timed_feature_joins': pthread_timed_feature_joins,
             'resolver_alias_receipt_companion': resolver_alias_receipt_companion,
             'resolver_alias_receipt_joins': resolver_alias_receipt_joins,
+            'loader_structural_owner_companion': loader_structural_owner_companion,
+            'loader_structural_owner_joins': loader_structural_owner_joins,
             'headers_layouts_aggregate_companion': headers_layouts_aggregate_companion,
             'headers_layouts_aggregate_evidence': headers_layouts_aggregate_evidence,
             **accounting, 'closure': {'complete': not blockers, 'blockers': blockers}, 'status': dict(STATUS),
@@ -7921,6 +8135,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                  resolver_alias_receipt_report: Path | None = None,
                  headers_layouts_aggregate_report: Path | None = None,
                  public_data_declaration_runtime_report: Path | None = None,
+                 loader_structural_owner_receipt_report: Path | None = None,
                  **measurement_inputs: Path) -> dict[str, Any]:
     output = physical_work_path(output, directory=True, own=True, fresh=True)
     paths = validate_measurement_paths(**measurement_inputs)
@@ -7942,7 +8157,8 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                            pthread_timed_feature_report=pthread_timed_feature_report,
                            resolver_alias_receipt_report=resolver_alias_receipt_report,
                            headers_layouts_aggregate_report=headers_layouts_aggregate_report,
-                           public_data_declaration_runtime_report=public_data_declaration_runtime_report)
+                           public_data_declaration_runtime_report=public_data_declaration_runtime_report,
+                           loader_structural_owner_receipt_report=loader_structural_owner_receipt_report)
     output.mkdir()
     (output / 'report.json').write_bytes(inventory._stable_json(report))
     return report
@@ -7965,6 +8181,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                     resolver_alias_receipt_report: Path | None = None,
                     headers_layouts_aggregate_report: Path | None = None,
                     public_data_declaration_runtime_report: Path | None = None,
+                    loader_structural_owner_receipt_report: Path | None = None,
                     **measurement_inputs: Path) -> dict[str, Any]:
     report_path = physical_work_path(report_path, directory=False, own=True)
     require(report_path.name == 'report.json', 'selection report has the wrong name')
@@ -7988,7 +8205,8 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                              pthread_timed_feature_report=pthread_timed_feature_report,
                              resolver_alias_receipt_report=resolver_alias_receipt_report,
                              headers_layouts_aggregate_report=headers_layouts_aggregate_report,
-                             public_data_declaration_runtime_report=public_data_declaration_runtime_report)
+                             public_data_declaration_runtime_report=public_data_declaration_runtime_report,
+                             loader_structural_owner_receipt_report=loader_structural_owner_receipt_report)
     require(same(report, expected), 'selection report does not reconstruct exactly from source inputs and public measurement replay')
     return report
 
@@ -8019,6 +8237,7 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument('--resolver-alias-receipt-report', type=Path)
     parser.add_argument('--headers-layouts-aggregate-report', type=Path)
     parser.add_argument('--public-data-declaration-runtime-report', type=Path)
+    parser.add_argument('--loader-structural-owner-receipt-report', type=Path)
     options = [arg.split('=', 1)[0] for arg in argv if arg.startswith('--')]
     if len(options) != len(set(options)):
         parser.error('duplicate options are not accepted')
@@ -8037,7 +8256,8 @@ def main(argv: Sequence[str]) -> int:
                                                 'syscall_alias_contract_report', 'utmpx_receipt_report',
                                                 'pthread_timed_feature_report', 'resolver_alias_receipt_report',
                                                 'headers_layouts_aggregate_report',
-                                                'public_data_declaration_runtime_report')}
+                                                'public_data_declaration_runtime_report',
+                                                'loader_structural_owner_receipt_report')}
     kwargs['ordinary_link_report'] = kwargs.pop('public_data_ordinary_link_report')
     kwargs['loader_debug_report'] = kwargs.pop('loader_debug_abi_report')
     kwargs.update(contract_path=args.contract, elf_report=args.elf_facts)

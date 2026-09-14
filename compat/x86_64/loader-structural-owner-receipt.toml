@@ -1,9 +1,9 @@
 # Component contract for the finite native x86 loader structural-owner receipt.
 #
 # This is deliberately a component contract, not a selector projection.  It
-# names only the eight unresolved structural identities and requires a future
-# reader to reconstruct current source, supplied-product and retained-runtime
-# evidence before an adapter can attach anything.
+# names only the eight unresolved structural identities.  Its implemented
+# reader reconstructs current source, supplied-product and retained-runtime
+# evidence; no selector attachment or native receipt is accepted yet.
 
 schema = "crabc.x86_64-loader-structural-owner-contract/v1"
 id = "x86-loader-structural-owner"
@@ -148,7 +148,7 @@ full_occurrence_count = 30667
 unnamed_occurrence_count = 1365
 blockers = 339
 
-# Name filtering precedes strict identity construction.  The future reader
+# Name filtering precedes strict identity construction.  The implemented reader
 # retains all raw rows, including unnamed physical observations; it only maps
 # the eight non-null spellings below to this component's finite coverage.
 [fact_filter]
@@ -251,7 +251,7 @@ ordered_calls = [
   "conventional-startup publication",
   "selected dynamic-main-thread tail: jump with retained owned-CRT constructor plan",
 ]
-meaning = "The future reader must isolate the selected x86 function body and reject reordered, omitted, duplicated, or widened transitions. In particular, it rejects materialization before relocation/RELRO or after registry publication. It separately confirms the selected cfg, x86 entry branch, canonical-libc selection, and owned-CRT constructor tail; it must not treat dispatch or jump as an unconstrained alternative."
+meaning = "The implemented reader isolates the selected x86 function body and rejects reordered, omitted, duplicated, or widened transitions. In particular, it rejects materialization before relocation/RELRO or after registry publication. It separately confirms the selected cfg, x86 entry branch, canonical-libc selection, and owned-CRT constructor tail; it must not treat dispatch or jump as an unconstrained alternative."
 
 [[source_algorithm]]
 id = "selected-x86-cfg-entry-and-constructor-tail"
