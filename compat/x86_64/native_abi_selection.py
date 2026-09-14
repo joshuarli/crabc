@@ -49,7 +49,7 @@ import owned_errno_storage_lifecycle as errno_storage_evidence
 import native_c_allocator_boundary
 import owned_posix_product_evidence as product_evidence
 
-SCHEMA = 'crabc.x86_64-native-abi-selection-report/v2'
+SCHEMA = 'crabc.x86_64-native-abi-selection-report/v3'
 CONTRACT_SCHEMA = 'crabc.x86_64-native-abi-selection/v1'
 TARGET = inventory.TARGET
 CONTRACT_PATH = MODULE_DIR / 'native-abi-selection.toml'
@@ -137,6 +137,38 @@ STDIO_ALIAS_PRIVATE_OWNER = 'x86-owned-stdio-private-bodies'
 STDIO_ALIAS_RECEIPT_REQUIREMENT = 'current source-bound FILE alias/private-body receipt'
 SYSCALL_ALIAS_PRIVATE_GROUP = 'component-owned-syscall-private-bodies'
 SYSCALL_ALIAS_PRIVATE_OWNER = 'x86-owned-syscall-private-bodies'
+RESOLVER_ALIAS_PRIVATE_GROUP = 'component-owned-resolver-private-bodies'
+RESOLVER_ALIAS_PRIVATE_OWNER = 'x86-owned-resolver-private-bodies'
+RESOLVER_ALIAS_RECEIPT_REQUIREMENT = 'current source-bound resolver alias/private-body receipt'
+RESOLVER_ALIAS_LIMITS = [
+    'Only res_mkquery, res_send, res_search, __res_mkquery and __res_send are joined to the current resolver receipt.',
+    'res_query and res_querydomain remain existing checked-header public-provider controls; the receipt does not complete resolver behavior, a family, promotion or public support.',
+]
+RESOLVER_ALIAS_STATIC_LINK_INPUTS = (
+    ('static_crt1', 'usr/lib/crt1.o'), ('static_rcrt1', 'usr/lib/rcrt1.o'),
+    ('static_crti', 'usr/lib/crti.o'), ('static_crtn', 'usr/lib/crtn.o'),
+    ('static_libc', 'usr/lib/libc.a'), ('static_builtins', 'usr/lib/libcrabc-builtins.a'),
+)
+RESOLVER_ALIAS_DYNAMIC_LINK_INPUTS = (
+    ('dynamic_crt1', 'usr/lib/crt1.o'), ('dynamic_scrt1', 'usr/lib/Scrt1.o'),
+    ('dynamic_crti', 'usr/lib/crti.o'), ('dynamic_crtn', 'usr/lib/crtn.o'),
+    ('dynamic_attach', 'usr/lib/crabc-dynamic-attach.o'),
+    ('dynamic_builtins', 'usr/lib/libcrabc-builtins.a'), ('dynamic_libc', 'usr/lib/libc.so'),
+)
+RESOLVER_ALIAS_INPUT_NAMES = (
+    'reader', 'runner', 'probe', 'override_probe', 'override_caller', 'contract',
+    'resolver_source', 'static_c_abi_source', 'resolver_batch_source', 'cargo_manifest',
+    'resolv_header', 'feature_roster', 'parity_contract', 'cancellation_contract',
+    'header_c_probe', 'header_cpp_probe', 'header_runner', 'legacy_probe', 'legacy_runner',
+    'static_authority', 'elf_reader', 'product_authority', 'image_manifest',
+    'header_compiler', 'readelf', 'timeout', 'chroot',
+    'oracle_compiler', 'oracle_archive', 'oracle_shared',
+    'static_driver', 'static_manifest', 'static_libc', 'static_crt1', 'static_rcrt1',
+    'static_crti', 'static_crtn', 'static_builtins',
+    'dynamic_driver', 'dynamic_libc', 'dynamic_loader', 'dynamic_crt1', 'dynamic_scrt1',
+    'dynamic_crti', 'dynamic_crtn', 'dynamic_attach', 'dynamic_builtins', 'dynamic_manifest',
+    'dynamic_state', 'product_report', 'static_preparation', 'elf_facts', 'base_inventory',
+)
 STDIO_ALIAS_LIMITS = [
     'The receipt observes 42 named FILE weak aliases; selection joins 39 pending aliases, three private bodies and two protected controls. The three already-accounted aliases acquire no receipt obligation or discharge.',
     'The receipt does not close general stdio behavior, declaration/profile agreement, runtime qualification, family completion, promotion or public support.',
@@ -309,6 +341,27 @@ def _syscall_alias_source_files() -> tuple[str, ...]:
         'compat/x86_64/tests/test_native_abi_syscall_alias_attachment.py',
         'compat/x86_64/native-abi-selection.md',
     )
+
+
+def _resolver_alias_reader():
+    """Load the finite resolver receipt only at its selection boundary."""
+    try:
+        return importlib.import_module('owned_resolver_alias_contract_reader')
+    except (ImportError, OSError, ValueError) as error:
+        raise SelectionError(f'cannot load resolver alias reader: {error}') from error
+
+
+def _resolver_alias_source_files(reader: Any) -> tuple[str, ...]:
+    """Return all current source bytes that define this finite attachment."""
+    names = (
+        *reader.SOURCE_CONTRACT_PATHS,
+        *reader.COLLECTOR_PATHS,
+        'compat/x86_64/tests/test_owned_resolver_alias_contract_reader.py',
+        'compat/x86_64/tests/test_native_abi_resolver_alias_attachment.py',
+        'compat/x86_64/native-abi-selection.md',
+    )
+    require(len(names) == len(set(names)), 'resolver alias source roster duplicates a path')
+    return names
 RUNTIME_REGISTRY_REQUIREMENTS = (
     'current signature and exact relocation-admission evidence',
     'graph rollback/reentry/fork and thread-local diagnostic component evidence',
@@ -935,6 +988,11 @@ def expand_obligations(contract: Mapping[str, Any], inputs: Mapping[str, Any]) -
                 # source, alias, override and interposition evidence. Metadata
                 # alone cannot make the 13 syscall bodies an owner discharge.
                 record['unresolved'].append(SYSCALL_ALIAS_RECEIPT_REQUIREMENT)
+            if group['id'] == RESOLVER_ALIAS_PRIVATE_GROUP:
+                # These two resolver bodies remain private providers until the
+                # finite current-source alias/body receipt proves their exact
+                # public weak aliases, selected callers, and placement shape.
+                record['unresolved'].append(RESOLVER_ALIAS_RECEIPT_REQUIREMENT)
     for name, owner in inputs['deferred'].items():
         record = obtain(name)
         require(record['selection'] is None, f'deferred/provider overlap: {name}')
@@ -2308,7 +2366,8 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
                                     crt_startup: Mapping[str, Any] | None = None,
                                     syscall_alias: Mapping[str, Any] | None = None,
                                     utmpx: Mapping[str, Any] | None = None,
-                                    pthread_timed: Mapping[str, Any] | None = None) -> None:
+                                    pthread_timed: Mapping[str, Any] | None = None,
+                                    resolver_alias: Mapping[str, Any] | None = None) -> None:
     """Keep runtime attachments within the same source/product transaction.
 
     Both owning readers validate their receipts before the selector's placement
@@ -2319,7 +2378,7 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
     if (registry is None and pthread is None and prepared_worker is None
             and errno_storage is None and c_allocator_boundary is None
             and stdio_alias_contract is None and crt_startup is None and syscall_alias is None and utmpx is None
-            and pthread_timed is None):
+            and pthread_timed is None and resolver_alias is None):
         return
     require(same(source, selection_source()), 'selection source changed during runtime receipt attachment')
     reports = _measurement_report_bindings(measurement, 'runtime receipt')
@@ -2482,6 +2541,36 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
         except (KeyError, TypeError, ValueError, OSError, reader.ReceiptError) as error:
             raise SelectionError(f'pthread timed component changed during attachment: {error}') from error
         require(same(before, file_identity(report_path)), 'pthread timed report changed during final replay')
+    if resolver_alias is not None:
+        reader = _resolver_alias_reader()
+        require(same(resolver_alias.get('source_inputs'), {
+            name: file_identity(ROOT / name) for name in _resolver_alias_source_files(reader)
+        }), 'resolver alias source inputs changed during attachment')
+        records = resolver_alias.get('products')
+        require(type(records) is dict and type(records.get('product_report')) is dict
+                and type(records['product_report'].get('path')) is str,
+                'resolver alias product anchor differs during attachment')
+        product_report = physical_work_path(Path(records['product_report']['path']), directory=False)
+        expected_products = _resolver_alias_product_identities(paths, product_report)
+        require(set(records) == set(expected_products),
+                'resolver alias product roster differs during attachment')
+        for name in expected_products:
+            _require_same_identity_payload(records[name], expected_products[name],
+                                           f'resolver alias {name} changed during attachment')
+        require(same(resolver_alias.get('measurement_reports'), reports),
+                'resolver alias public replay binding changed during attachment')
+        report = resolver_alias.get('report')
+        require(type(report) is dict and type(report.get('path')) is str,
+                'resolver alias report identity differs during attachment')
+        report_path = physical_work_path(Path(report['path']), directory=False)
+        before = file_identity(report_path)
+        replayed = native_resolver_alias_adapter(
+            report_path, facts=facts, measurement=measurement, paths=paths, source=source,
+            product_report=product_report,
+        )
+        require(same(replayed, resolver_alias), 'resolver alias changed during final replay')
+        require(same(before, file_identity(report_path)),
+                'resolver alias report changed during final replay')
     if crt_startup is not None and prepared_worker is not None:
         # The paired RuntimeV1 discharge has a semantic account beyond the
         # report bytes. Re-run both owners after all joins so a retained map,
@@ -6516,6 +6605,465 @@ def attach_native_syscall_alias(accounting: Mapping[str, Any],
              'complete_elf_occurrence_count': occurrence_count}]
 
 
+def _resolver_alias_product_identities(paths: Mapping[str, Path], product_report: Path) -> dict[str, dict[str, Any]]:
+    """Return exactly the current product bytes the resolver reader consumes."""
+    records = _current_product_identities(paths)
+    records.update({
+        'product_report': file_identity(product_report),
+        'static_preparation': file_identity(paths['static_preparation']),
+    })
+    for name, relative in RESOLVER_ALIAS_STATIC_LINK_INPUTS:
+        records.setdefault(name, file_identity(paths['static_product'] / relative))
+    for name, relative in RESOLVER_ALIAS_DYNAMIC_LINK_INPUTS:
+        records.setdefault(name, file_identity(paths['dynamic_product'] / relative))
+    return records
+
+
+def _resolver_alias_source_link_input_modes(reader: Any) -> dict[str, dict[str, int]]:
+    """Read the component's finite installed-role mode policy from its owner."""
+    expected = exact(product_evidence.link_input_mode_projection(), {'static', 'dynamic'},
+                     'resolver alias shared link-input mode policy')
+    result: dict[str, dict[str, int]] = {}
+    for family, rows in (('static', RESOLVER_ALIAS_STATIC_LINK_INPUTS),
+                         ('dynamic', RESOLVER_ALIAS_DYNAMIC_LINK_INPUTS)):
+        modes = exact(expected[family], {relative for _name, relative in rows},
+                      f'resolver alias {family} source link-input mode roster')
+        require(all(type(mode) is int and not isinstance(mode, bool) and 0 <= mode <= 0o777
+                    for mode in modes.values()),
+                f'resolver alias {family} source link-input mode values differ')
+        result[family] = dict(modes)
+    require(same(getattr(reader, 'LINK_INPUT_MODES', None), result),
+            'resolver alias reader link-input mode policy differs')
+    return result
+
+
+def _resolver_alias_receipt_input(value: object, description: str) -> dict[str, Any]:
+    """Validate the reader's retained input record before a current-byte join."""
+    row = exact(value, {'path', 'sha256', 'size', 'mode', 'retained'}, description)
+    require(type(row['path']) is str and row['path']
+            and type(row['retained']) is str and row['retained']
+            and type(row['sha256']) is str and re.fullmatch(r'[0-9a-f]{64}', row['sha256']) is not None
+            and type(row['size']) is int and not isinstance(row['size'], bool) and row['size'] >= 0
+            and type(row['mode']) is int and not isinstance(row['mode'], bool) and 0 <= row['mode'] <= 0o777,
+            f'{description} values differ')
+    return row
+
+
+def _resolver_alias_receipt_identity_payload(value: object, description: str) -> dict[str, Any]:
+    """Join a retained resolver input to a selected file without its copy path."""
+    row = _resolver_alias_receipt_input(value, description)
+    return {key: row[key] for key in ('sha256', 'size', 'mode')}
+
+
+def _require_resolver_alias_receipt_identity(value: object, current: object, description: str) -> None:
+    """Keep receipt retention metadata strict while matching the selected bytes."""
+    require(same(
+        _resolver_alias_receipt_identity_payload(value, description + ' retained'),
+        _identity_payload(current, description + ' selected'),
+    ), f'{description} bytes or mode differ')
+
+
+def native_resolver_alias_adapter(report_path: Path | None, *, facts: Mapping[str, Any],
+                                  measurement: Mapping[str, Any], paths: Mapping[str, Path],
+                                  source: Mapping[str, Any], product_report: Path | None) -> dict[str, Any] | None:
+    """Replay the finite resolver receipt against this exact selected cohort."""
+    if report_path is None:
+        return None
+    require(product_report is not None, 'resolver alias receipt requires the current loader-debug product report')
+    reader = _resolver_alias_reader()
+    require(Path(reader.ROOT) == ROOT and Path(reader.__file__).resolve().parent == MODULE_DIR,
+            'resolver alias reader belongs to a different checkout')
+    require(reader.SCHEMA == 'crabc.x86_64-owned-resolver-alias-contract/v1'
+            and reader.STATUS == 'component-verified'
+            and reader.COMPONENT == 'resolver-alias-private-bodies'
+            and tuple(reader.INPUT_NAMES) == RESOLVER_ALIAS_INPUT_NAMES,
+            'resolver alias reader is not the current v1 boundary')
+    report_path = physical_work_path(report_path, directory=False)
+    product_report = physical_work_path(product_report, directory=False)
+    before = file_identity(report_path)
+    try:
+        result = reader.validate_report(
+            report_path, root=ROOT, static_product=paths['static_product'], dynamic_product=paths['dynamic_product'],
+            product_report=product_report, static_preparation=paths['static_preparation'],
+            elf_facts=paths['elf_report'], base_inventory=paths['base_inventory'],
+        )
+    except (KeyError, TypeError, ValueError, OSError, reader.ReceiptError) as error:
+        raise SelectionError(f'resolver alias component rejected: {error}') from error
+    require(same(before, file_identity(report_path)), 'resolver alias report changed during replay')
+    source = exact(dict(source), {'revision', 'content_sha256', 'clean'}, 'resolver alias selection source')
+    require(source['clean'] is True, 'resolver alias selection source is not clean')
+    _measurement_source_matches(source, measurement, 'resolver alias')
+    measurement_reports = _measurement_report_bindings(measurement, 'resolver alias')
+    report = read_json(report_path)
+    require(same(before, file_identity(report_path)), 'resolver alias report changed while reading its projection')
+    report = exact(report, {
+        'schema', 'status', 'component', 'collection', 'collection_begin', 'selected_source', 'collector', 'inputs',
+        'selected_products', 'static_preparation', 'product_input_modes', 'measurement_reports',
+        'source_alias_routes', 'observations', 'artifacts', 'commands', 'execution', 'runtime', 'runtime_roots', 'coverage',
+    }, 'resolver alias reader report')
+    require(report['schema'] == reader.SCHEMA and report['status'] == reader.STATUS
+            and report['component'] == reader.COMPONENT,
+            'resolver alias reader identity differs')
+    collection = exact(report['collection'], {'image', 'source_revision'}, 'resolver alias collection')
+    require(collection == {'image': reader.IMAGE, 'source_revision': source['revision']},
+            'resolver alias collection differs from selection')
+    selected_source = exact(report['selected_source'], {'revision', 'tree', 'source_sha256'},
+                            'resolver alias selected source')
+    collector = exact(report['collector'], {'revision', 'tree', 'source_sha256'}, 'resolver alias collector source')
+    require(same(selected_source, collector)
+            and selected_source['revision'] == source['revision']
+            and selected_source['source_sha256'] == source['content_sha256']
+            and type(selected_source['tree']) is str and re.fullmatch(r'[0-9a-f]{40}', selected_source['tree']) is not None,
+            'resolver alias selected or collector source differs from selection')
+    modes = _resolver_alias_source_link_input_modes(reader)
+    require(same(report['product_input_modes'], modes), 'resolver alias source-bound link-input modes differ')
+    inputs = report['inputs']
+    require(type(inputs) is dict and set(inputs) == set(RESOLVER_ALIAS_INPUT_NAMES),
+            'resolver alias retained input roster differs')
+    for name in RESOLVER_ALIAS_INPUT_NAMES:
+        _resolver_alias_receipt_input(inputs[name], f'resolver alias retained input {name}')
+    products = _resolver_alias_product_identities(paths, product_report)
+    for name, current in products.items():
+        _require_resolver_alias_receipt_identity(
+            inputs[name], current,
+            f'resolver alias current {name}',
+        )
+    _require_resolver_alias_receipt_identity(
+        inputs['elf_facts'],
+        measurement_reports['elf_report'], 'resolver alias current ELF facts',
+    )
+    _require_resolver_alias_receipt_identity(
+        inputs['base_inventory'],
+        measurement_reports['base_inventory'], 'resolver alias current base inventory',
+    )
+    _require_resolver_alias_receipt_identity(
+        inputs['static_preparation'],
+        measurement_reports['static_preparation'], 'resolver alias current static preparation',
+    )
+    selected_products = exact(report['selected_products'], {'static', 'dynamic', 'product_report'},
+                              'resolver alias selected product projection')
+    require(selected_products == {
+        'static': ['static_driver', 'static_manifest', 'static_libc'],
+        'dynamic': ['dynamic_driver', 'dynamic_manifest', 'dynamic_state', 'dynamic_libc', 'dynamic_loader'],
+        'product_report': 'product_report',
+    }, 'resolver alias selected product projection differs')
+    static_preparation = exact(report['static_preparation'], {'input', 'products'},
+                               'resolver alias static preparation projection')
+    require(static_preparation == {'input': 'static_preparation', 'products': 'primary'},
+            'resolver alias static preparation projection differs')
+    measurement_projection = exact(report['measurement_reports'],
+                                   {'elf_facts', 'base_inventory', 'occurrence_count', 'unnamed_count'},
+                                   'resolver alias measurement projection')
+    require(measurement_projection['elf_facts'] == 'elf_facts'
+            and measurement_projection['base_inventory'] == 'base_inventory'
+            and type(measurement_projection['occurrence_count']) is int
+            and type(measurement_projection['unnamed_count']) is int,
+            'resolver alias measurement projection differs')
+    require(report['coverage'] == reader.coverage_projection()
+            and report['source_alias_routes'] == list(reader.SOURCE_ALIAS_ROUTES),
+            'resolver alias coverage or source routes differ')
+    observations = exact(report['observations'], {
+        'candidate_occurrences', 'candidate_projection', 'public_caller', 'private_calls', 'overrides',
+    }, 'resolver alias observations')
+    projection = reader.validate_candidate_occurrences(observations['candidate_occurrences'])
+    require(same(observations['candidate_projection'], projection),
+            'resolver alias candidate projection differs')
+    result = exact(result, {
+        'status', 'coverage', 'candidate_occurrence_count', 'full_occurrence_count', 'unnamed_occurrence_count',
+        'source_alias_routes',
+    }, 'resolver alias replay result')
+    require(result['status'] == reader.STATUS and result['coverage'] == report['coverage']
+            and result['candidate_occurrence_count'] == projection['candidate_occurrence_count']
+            and result['full_occurrence_count'] == measurement_projection['occurrence_count']
+            and result['unnamed_occurrence_count'] == measurement_projection['unnamed_count']
+            and result['source_alias_routes'] == report['source_alias_routes'],
+            'resolver alias replay result differs')
+    facts_artifacts = facts.get('artifacts')
+    require(type(facts_artifacts) is dict, 'resolver alias public ELF artifact roster differs')
+    for artifact_key, name in (
+        ('candidate-static', 'static_libc'), ('candidate-shared', 'dynamic_libc'),
+        ('candidate-loader', 'dynamic_loader'),
+    ):
+        artifact = facts_artifacts.get(artifact_key)
+        require(type(artifact) is dict and type(artifact.get('identity')) is dict,
+                f'resolver alias public ELF artifact differs: {artifact_key}')
+        _require_same_identity_payload(artifact['identity'], products[name],
+                                       f'resolver alias public ELF {artifact_key}')
+    source_inputs = {name: file_identity(ROOT / name) for name in _resolver_alias_source_files(reader)}
+    return {
+        'status': 'resolver-alias-observed-with-boundaries', 'reader': file_identity(Path(reader.__file__)),
+        'report': before, 'source': copy.deepcopy(source), 'source_inputs': source_inputs,
+        'products': {name: copy.deepcopy(products[name]) for name in sorted(products)},
+        'measurement_reports': measurement_reports, 'result': copy.deepcopy(result),
+        'receipt': {
+            'collection': copy.deepcopy(collection), 'selected_source': copy.deepcopy(selected_source),
+            'collector': copy.deepcopy(collector), 'inputs': copy.deepcopy(inputs),
+            'selected_products': copy.deepcopy(selected_products), 'static_preparation': copy.deepcopy(static_preparation),
+            'product_input_modes': copy.deepcopy(modes), 'measurement_reports': copy.deepcopy(measurement_projection),
+            'source_alias_routes': copy.deepcopy(report['source_alias_routes']),
+            'observations': copy.deepcopy(observations), 'coverage': copy.deepcopy(report['coverage']),
+        },
+        'limits': list(RESOLVER_ALIAS_LIMITS),
+    }
+
+
+def _resolver_alias_named_rows(occurrences: Mapping[int, Mapping[str, Any]], name: str) -> list[dict[str, Any]]:
+    """Filter only named resolver rows before identity joins; retain all raw facts."""
+    return [dict(row) for row in occurrences.values()
+            if type(row.get('row')) is dict and row['row'].get('name') == name]
+
+
+def _resolver_alias_one_row(rows: Sequence[Mapping[str, Any]], *, artifact_key: str, table: str,
+                            role: str, metadata: Mapping[str, str], description: str) -> dict[str, Any]:
+    matches = [row for row in rows
+               if row.get('artifact_key') == artifact_key and row.get('table') == table
+               and row.get('role') == role and row.get('row', {}).get('type') == metadata['type']
+               and row['row'].get('binding') == metadata['binding']
+               and row['row'].get('visibility') == metadata['visibility']]
+    require(len(matches) == 1, f'{description} exact candidate occurrence differs')
+    return dict(matches[0])
+
+
+def _resolver_alias_source_feature_requirements(
+        aliases: Sequence[tuple[str, str]]) -> dict[str, dict[str, Any]]:
+    """Read all source-expanded public alias records without reducing their fields."""
+    contract = load_contract(CONTRACT_PATH)
+    inputs = load_source_inputs(contract, CONTRACT_PATH)
+    expanded = expand_obligations(contract, inputs)
+    records = {identity_key(record['identity']): record for record in expanded}
+    require(len(records) == len(expanded), 'resolver alias source feature identities duplicate')
+    fields = {
+        'name', 'target', 'binding', 'owner', 'state', 'evidence_record', 'runner',
+        'feature_selection_source', 'sources', 'baseline_features', 'enabled_features',
+    }
+    result: dict[str, dict[str, Any]] = {}
+    for public, target in aliases:
+        record = records.get((public, None, False))
+        require(record is not None and type(record.get('function_alias_requirements')) is list
+                and len(record['function_alias_requirements']) == 1,
+                f'resolver alias source feature requirement differs: {public}')
+        feature = exact(record['function_alias_requirements'][0], fields,
+                        f'resolver alias source feature requirement {public}')
+        require(feature['name'] == public and feature['target'] == target
+                and feature['binding'] == 'weak-same-address',
+                f'resolver alias source feature requirement differs: {public}')
+        result[public] = copy.deepcopy(feature)
+    require(set(result) == {public for public, _target in aliases},
+            'resolver alias source feature roster differs')
+    return result
+
+
+def attach_native_resolver_alias(accounting: Mapping[str, Any],
+                                 companion: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """Discharge only the two private and three existing resolver alias reasons."""
+    if companion is None:
+        return []
+    reader = _resolver_alias_reader()
+    companion = exact(companion, {
+        'status', 'reader', 'report', 'source', 'source_inputs', 'products', 'measurement_reports',
+        'result', 'receipt', 'limits',
+    }, 'resolver alias companion')
+    require(companion['status'] == 'resolver-alias-observed-with-boundaries'
+            and companion['limits'] == RESOLVER_ALIAS_LIMITS
+            and same(companion['source_inputs'], {
+                name: file_identity(ROOT / name) for name in _resolver_alias_source_files(reader)
+            }), 'resolver alias companion source boundary differs')
+    receipt = exact(companion['receipt'], {
+        'collection', 'selected_source', 'collector', 'inputs', 'selected_products', 'static_preparation',
+        'product_input_modes', 'measurement_reports', 'source_alias_routes', 'observations', 'coverage',
+    }, 'resolver alias companion receipt')
+    require(receipt['coverage'] == reader.coverage_projection()
+            and receipt['source_alias_routes'] == list(reader.SOURCE_ALIAS_ROUTES)
+            and same(receipt['product_input_modes'], _resolver_alias_source_link_input_modes(reader)),
+            'resolver alias companion receipt projection differs')
+    result = exact(companion['result'], {
+        'status', 'coverage', 'candidate_occurrence_count', 'full_occurrence_count',
+        'unnamed_occurrence_count', 'source_alias_routes',
+    }, 'resolver alias companion replay result')
+    require(result['status'] == reader.STATUS and result['coverage'] == receipt['coverage']
+            and result['source_alias_routes'] == receipt['source_alias_routes']
+            and type(result['candidate_occurrence_count']) is int
+            and type(result['full_occurrence_count']) is int
+            and type(result['unnamed_occurrence_count']) is int,
+            'resolver alias companion replay result differs')
+    aliases = tuple((str(alias), str(target)) for alias, target in reader.ALIASES)
+    private_bodies = tuple(str(name) for name in reader.PRIVATE_BODIES)
+    controls = tuple(str(name) for name in reader.PROTECTED_CONTROLS)
+    require(aliases == (('res_mkquery', '__res_mkquery'), ('res_send', '__res_send'), ('res_search', 'res_query'))
+            and private_bodies == ('__res_mkquery', '__res_send')
+            and controls == ('res_query', 'res_querydomain'),
+            'resolver alias finite name roster differs')
+    source_features = _resolver_alias_source_feature_requirements(aliases)
+    observations = exact(receipt['observations'], {
+        'candidate_occurrences', 'candidate_projection', 'public_caller', 'private_calls', 'overrides',
+    }, 'resolver alias companion observations')
+    projection = reader.validate_candidate_occurrences(observations['candidate_occurrences'])
+    require(same(observations['candidate_projection'], projection),
+            'resolver alias companion candidate projection differs')
+    require(projection['candidate_occurrence_count'] == result['candidate_occurrence_count'],
+            'resolver alias companion candidate occurrence count differs')
+    records, placements, occurrences = _accounting_indexes(accounting, description='resolver alias attachment')
+    occurrence_count = len(occurrences)
+    require(occurrence_count == result['full_occurrence_count']
+            and sum(row.get('role') == 'unnamed' for row in occurrences.values()) == result['unnamed_occurrence_count'],
+            'resolver alias complete occurrence accounting differs')
+    expected_indices: set[int] = set()
+    alias_joins: list[dict[str, Any]] = []
+    public_metadata = {'type': 'FUNC', 'binding': 'WEAK', 'visibility': 'DEFAULT'}
+    private_static_metadata = {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'HIDDEN'}
+    private_shared_metadata = {'type': 'FUNC', 'binding': 'LOCAL', 'visibility': 'HIDDEN'}
+    public_target_metadata = {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT'}
+    for public, target in aliases:
+        record = records.get((public, None, False))
+        require(record is not None and record.get('selection', {}).get('disposition') == 'public-provider'
+                and record['selection'].get('owner') == 'checked-header-provider-routing'
+                and type(record.get('function_alias_requirements')) is list
+                and len(record['function_alias_requirements']) == 1
+                and same(record['function_alias_requirements'][0], source_features[public]),
+                f'resolver alias public source feature selection differs: {public}')
+        alias_rows = _resolver_alias_named_rows(occurrences, public)
+        target_rows = _resolver_alias_named_rows(occurrences, target)
+        static_alias = _resolver_alias_one_row(
+            alias_rows, artifact_key='candidate-static', table='.symtab', role='definition',
+            metadata=public_metadata, description=f'resolver alias {public} static',
+        )
+        shared_dyn_alias = _resolver_alias_one_row(
+            alias_rows, artifact_key='candidate-shared', table='.dynsym', role='definition',
+            metadata=public_metadata, description=f'resolver alias {public} shared dynsym',
+        )
+        shared_alias = _resolver_alias_one_row(
+            alias_rows, artifact_key='candidate-shared', table='.symtab', role='definition',
+            metadata=public_metadata, description=f'resolver alias {public} shared symtab',
+        )
+        target_metadata = private_static_metadata if target in private_bodies else public_target_metadata
+        target_role = 'definition'
+        static_target = _resolver_alias_one_row(
+            target_rows, artifact_key='candidate-static', table='.symtab', role=target_role,
+            metadata=target_metadata, description=f'resolver alias target {target} static',
+        )
+        shared_target = _resolver_alias_one_row(
+            target_rows, artifact_key='candidate-shared', table='.symtab',
+            role='local-definition' if target in private_bodies else 'definition',
+            metadata=private_shared_metadata if target in private_bodies else public_target_metadata,
+            description=f'resolver alias target {target} shared symtab',
+        )
+        require(same_definition_domain(static_alias, static_target)
+                and same_definition_domain(shared_alias, shared_target),
+                f'resolver alias definition domain differs: {public}')
+        target_dyn_index: int | None = None
+        if target not in private_bodies:
+            shared_dyn_target = _resolver_alias_one_row(
+                target_rows, artifact_key='candidate-shared', table='.dynsym', role='definition',
+                metadata=public_target_metadata, description=f'resolver alias target {target} shared dynsym',
+            )
+            require(same_definition_domain(shared_dyn_alias, shared_dyn_target),
+                    f'resolver alias shared dynsym domain differs: {public}')
+            target_dyn_index = shared_dyn_target['index']
+            expected_indices.add(shared_dyn_target['index'])
+        expected_indices.update({
+            static_alias['index'], shared_dyn_alias['index'], shared_alias['index'],
+            static_target['index'], shared_target['index'],
+        })
+        _remove_identity_requirements(
+            accounting, record,
+            ('source-selected alias requires exact feature archive selection and component receipt',),
+            description=f'resolver alias {public}',
+        )
+        alias_joins.append({
+            'identity': copy.deepcopy(record['identity']), 'target': identity(target),
+            'static_alias_occurrence_index': static_alias['index'],
+            'shared_dynsym_alias_occurrence_index': shared_dyn_alias['index'],
+            'shared_symtab_alias_occurrence_index': shared_alias['index'],
+            'static_target_occurrence_index': static_target['index'],
+            'shared_symtab_target_occurrence_index': shared_target['index'],
+            'shared_dynsym_target_occurrence_index': target_dyn_index,
+            'requirements_discharged': ['source-selected alias requires exact feature archive selection and component receipt'],
+        })
+    private_joins: list[dict[str, Any]] = []
+    for name in private_bodies:
+        record = records.get((name, None, False))
+        require(record is not None and record.get('selection', {}).get('disposition') == 'private-provider'
+                and record['selection'].get('group') == RESOLVER_ALIAS_PRIVATE_GROUP
+                and record['selection'].get('owner') == RESOLVER_ALIAS_PRIVATE_OWNER,
+                f'resolver private body selection differs: {name}')
+        rows = _resolver_alias_named_rows(occurrences, name)
+        static_placement, static_body = _selected_placement(
+            placements, occurrences, name=name, artifact_key='candidate-static', table='.symtab', role='definition',
+            metadata=private_static_metadata, description=f'resolver private body {name} selected static',
+        )
+        shared_placement, shared_body = _selected_placement(
+            placements, occurrences, name=name, artifact_key='candidate-shared', table='.symtab', role='local-definition',
+            metadata=private_shared_metadata, description=f'resolver private body {name} selected shared',
+        )
+        require(static_body in rows and shared_body in rows
+                and not [row for row in rows if row.get('artifact_key') == 'candidate-shared'
+                         and row.get('table') == '.dynsym' and row.get('role') in {'definition', 'local-definition'}],
+                f'resolver private body dynsym boundary differs: {name}')
+        expected_indices.update({static_body['index'], shared_body['index']})
+        _remove_identity_requirements(
+            accounting, record, (RESOLVER_ALIAS_RECEIPT_REQUIREMENT,),
+            description=f'resolver private body {name}',
+        )
+        private_joins.append({
+            'identity': copy.deepcopy(record['identity']), 'static_occurrence_index': static_body['index'],
+            'shared_occurrence_index': shared_body['index'],
+            'static_metadata': copy.deepcopy(static_placement['expected_metadata']),
+            'shared_metadata': copy.deepcopy(shared_placement['expected_metadata']),
+            'candidate_dynsym_definition_absent': True,
+            'requirements_discharged': [RESOLVER_ALIAS_RECEIPT_REQUIREMENT],
+        })
+    control_joins: list[dict[str, Any]] = []
+    for name in controls:
+        record = records.get((name, None, False))
+        require(record is not None and record.get('selection', {}).get('disposition') == 'public-provider'
+                and record['selection'].get('owner') == 'checked-header-provider-routing'
+                and record.get('unresolved') == [],
+                f'resolver protected control differs: {name}')
+        _static, static_control = _selected_placement(
+            placements, occurrences, name=name, artifact_key='candidate-static', table='.symtab', role='definition',
+            metadata=public_target_metadata, description=f'resolver protected control {name} static',
+        )
+        _shared, shared_control = _selected_placement(
+            placements, occurrences, name=name, artifact_key='candidate-shared', table='.dynsym', role='definition',
+            metadata=public_target_metadata, description=f'resolver protected control {name} shared',
+        )
+        shared_symtab_control = _resolver_alias_one_row(
+            _resolver_alias_named_rows(occurrences, name), artifact_key='candidate-shared', table='.symtab',
+            role='definition', metadata=public_target_metadata,
+            description=f'resolver protected control {name} shared symtab',
+        )
+        require(same_definition_domain(shared_control, shared_symtab_control),
+                f'resolver protected control {name} shared definition domain differs')
+        expected_indices.update({static_control['index'], shared_control['index'], shared_symtab_control['index']})
+        control_joins.append({
+            'identity': copy.deepcopy(record['identity']),
+            'static_occurrence_index': static_control['index'],
+            'shared_dynsym_occurrence_index': shared_control['index'],
+            'shared_symtab_occurrence_index': shared_symtab_control['index'],
+            'requirements_discharged': [],
+        })
+    known_names = {*private_bodies, *(public for public, _target in aliases), *controls}
+    actual_indices = {
+        row['index'] for row in occurrences.values()
+        if row.get('artifact_key') in {'candidate-static', 'candidate-shared'}
+        and type(row.get('row')) is dict and row['row'].get('name') in known_names
+    }
+    expected_projection_indices = set(projection['indices'])
+    require(actual_indices == expected_indices == expected_projection_indices,
+            'resolver alias candidate occurrence roster differs')
+    require(len(occurrences) == occurrence_count and len(alias_joins) == 3
+            and len(private_joins) == 2 and len(control_joins) == 2,
+            'resolver alias finite attachment cardinality differs')
+    return [{
+        'aliases': alias_joins, 'private_bodies': private_joins, 'protected_controls': control_joins,
+        'requirements_discharged': [
+            RESOLVER_ALIAS_RECEIPT_REQUIREMENT,
+            'source-selected alias requires exact feature archive selection and component receipt',
+        ],
+        'complete_elf_occurrence_count': occurrence_count,
+    }]
+
+
 def _compiler_helper_shared_contract(contract: Mapping[str, Any], inputs: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """Authenticate the finite helper source selection before using its DSO view.
 
@@ -6797,10 +7345,14 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
                   crt_startup_report: Path | None = None,
                   syscall_alias_contract_report: Path | None = None,
                   utmpx_receipt_report: Path | None = None,
-                  pthread_timed_feature_report: Path | None = None) -> dict[str, Any]:
+                  pthread_timed_feature_report: Path | None = None,
+                  resolver_alias_receipt_report: Path | None = None) -> dict[str, Any]:
     if pthread_timed_feature_report is not None:
         require(ordinary_link_report is not None and loader_debug_report is not None,
                 'pthread timed receipt requires the complete public-data loader-debug anchor pair')
+    if resolver_alias_receipt_report is not None:
+        require(loader_debug_report is not None,
+                'resolver alias receipt requires the current loader-debug product report')
     source_before = selection_source()
     contract = load_contract(contract_path)
     inputs = load_source_inputs(contract, contract_path)
@@ -6843,6 +7395,10 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     pthread_timed_feature_companion = native_pthread_timed_feature_adapter(
         pthread_timed_feature_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
         product_anchor=loader_debug_report,
+    )
+    resolver_alias_receipt_companion = native_resolver_alias_adapter(
+        resolver_alias_receipt_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
+        product_report=loader_debug_report,
     )
     declaration = declaration_adapter(
         declaration_report,
@@ -6901,6 +7457,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     syscall_alias_contract_joins = attach_native_syscall_alias(accounting, syscall_alias_contract_companion)
     utmpx_receipt_joins = attach_native_utmpx(accounting, utmpx_receipt_companion)
     pthread_timed_feature_joins = attach_native_pthread_timed_feature(accounting, pthread_timed_feature_companion)
+    resolver_alias_receipt_joins = attach_native_resolver_alias(accounting, resolver_alias_receipt_companion)
     _recheck_runtime_receipt_cohort(
         paths=paths, facts=facts, measurement=measurement, source=source_before,
         registry=loader_runtime_registry_companion, pthread=pthread_alias_contract_companion,
@@ -6910,6 +7467,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         crt_startup=crt_startup_companion, syscall_alias=syscall_alias_contract_companion,
         utmpx=utmpx_receipt_companion,
         pthread_timed=pthread_timed_feature_companion,
+        resolver_alias=resolver_alias_receipt_companion,
     )
     candidate = measurement['candidate_build']
     source_matches = source_before['clean'] is True and source_before['revision'] == candidate['revision'] and source_before['content_sha256'] == candidate['source_content_sha256']
@@ -6951,6 +7509,8 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'utmpx_receipt_joins': utmpx_receipt_joins,
             'pthread_timed_feature_companion': pthread_timed_feature_companion,
             'pthread_timed_feature_joins': pthread_timed_feature_joins,
+            'resolver_alias_receipt_companion': resolver_alias_receipt_companion,
+            'resolver_alias_receipt_joins': resolver_alias_receipt_joins,
             **accounting, 'closure': {'complete': not blockers, 'blockers': blockers}, 'status': dict(STATUS),
             'limits': ['selection audit is not qualification', 'complete raw ELF observations stay with the publicly replayed supplement',
                        'no allocator metadata or unwinder investigation', 'no imported AArch64 execution proof',
@@ -6971,6 +7531,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                  syscall_alias_contract_report: Path | None = None,
                  utmpx_receipt_report: Path | None = None,
                  pthread_timed_feature_report: Path | None = None,
+                 resolver_alias_receipt_report: Path | None = None,
                  **measurement_inputs: Path) -> dict[str, Any]:
     output = physical_work_path(output, directory=True, own=True, fresh=True)
     paths = validate_measurement_paths(**measurement_inputs)
@@ -6989,7 +7550,8 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                            crt_startup_report=crt_startup_report,
                            syscall_alias_contract_report=syscall_alias_contract_report,
                            utmpx_receipt_report=utmpx_receipt_report,
-                           pthread_timed_feature_report=pthread_timed_feature_report)
+                           pthread_timed_feature_report=pthread_timed_feature_report,
+                           resolver_alias_receipt_report=resolver_alias_receipt_report)
     output.mkdir()
     (output / 'report.json').write_bytes(inventory._stable_json(report))
     return report
@@ -7009,6 +7571,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                     syscall_alias_contract_report: Path | None = None,
                     utmpx_receipt_report: Path | None = None,
                     pthread_timed_feature_report: Path | None = None,
+                    resolver_alias_receipt_report: Path | None = None,
                     **measurement_inputs: Path) -> dict[str, Any]:
     report_path = physical_work_path(report_path, directory=False, own=True)
     require(report_path.name == 'report.json', 'selection report has the wrong name')
@@ -7029,7 +7592,8 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                              crt_startup_report=crt_startup_report,
                              syscall_alias_contract_report=syscall_alias_contract_report,
                              utmpx_receipt_report=utmpx_receipt_report,
-                             pthread_timed_feature_report=pthread_timed_feature_report)
+                             pthread_timed_feature_report=pthread_timed_feature_report,
+                             resolver_alias_receipt_report=resolver_alias_receipt_report)
     require(same(report, expected), 'selection report does not reconstruct exactly from source inputs and public measurement replay')
     return report
 
@@ -7057,6 +7621,7 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument('--syscall-alias-contract-report', type=Path)
     parser.add_argument('--utmpx-receipt-report', type=Path)
     parser.add_argument('--pthread-timed-feature-report', type=Path)
+    parser.add_argument('--resolver-alias-receipt-report', type=Path)
     options = [arg.split('=', 1)[0] for arg in argv if arg.startswith('--')]
     if len(options) != len(set(options)):
         parser.error('duplicate options are not accepted')
@@ -7073,7 +7638,7 @@ def main(argv: Sequence[str]) -> int:
                                                 'errno_storage_lifecycle_report', 'native_c_allocator_boundary_report',
                                                 'stdio_alias_contract_report', 'crt_startup_report',
                                                 'syscall_alias_contract_report', 'utmpx_receipt_report',
-                                                'pthread_timed_feature_report')}
+                                                'pthread_timed_feature_report', 'resolver_alias_receipt_report')}
     kwargs['ordinary_link_report'] = kwargs.pop('public_data_ordinary_link_report')
     kwargs['loader_debug_report'] = kwargs.pop('loader_debug_abi_report')
     kwargs.update(contract_path=args.contract, elf_report=args.elf_facts)

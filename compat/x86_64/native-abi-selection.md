@@ -329,6 +329,35 @@ other imports, all unowned rows, and all unnamed rows remain unchanged. This
 attachment does not prove pthread semantics, family completion, runtime
 qualification, promotion, or public support.
 
+`--resolver-alias-receipt-report REPORT` is independently optional, but it
+requires the current `--loader-debug-abi-report REPORT` product anchor. Its
+v1 owner reader performs retained replay of the current resolver receipt for
+the existing public aliases `res_mkquery`, `res_send`, and `res_search`, their
+respective targets `__res_mkquery`, `__res_send`, and `res_query`, and the two
+private resolver bodies. The selector seals the report before owner replay,
+after reading the projection it consumes, and again after every scoped join.
+It binds the selected and collector source records, source-owned input files,
+complete facts/base inventory, full static preparation, loader-debug anchor,
+selected manifests/state/drivers/libc/loader, and six static plus seven
+dynamic installed link inputs to the current cohort. Those installed roles use
+the existing source-owned mode policy; receipt/current equality does not choose
+their modes.
+
+The finite source-owner group `component-owned-resolver-private-bodies`
+selects the existing `__res_mkquery` and `__res_send` bodies: candidate-static
+`FUNC GLOBAL HIDDEN`, candidate-shared `.symtab` `FUNC LOCAL HIDDEN`, and no
+same-named candidate-shared `.dynsym` definition. It replaces only the four
+existing generic ownership/placement reasons for those two bodies with their
+two explicit receipt requirements. A valid current receipt then discharges
+those two requirements and the three existing public feature-alias reasons.
+For every public alias, the attachment preserves and compares the complete
+source-expanded feature record, then requires its static, shared `.dynsym`,
+and shared `.symtab` weak definition domains and its exact target domain.
+`res_query` and `res_querydomain` remain protected public controls. All other
+identities and every raw named or unnamed ELF occurrence remain in accounting.
+This finite selection does not establish resolver semantics, family completion,
+runtime qualification, promotion, or public support.
+
 These runtime attachments run before the one public declaration-envelope replay
 and are rechecked after their scoped joins. Their source/product/ELF cohort is
 therefore shared with the selection transaction without rereading the header
@@ -379,10 +408,12 @@ a retained runtime map, probe, source snapshot, or raw command output cannot
 change after the initial reader replay. A report with only one component stays
 independently optional and leaves both descriptor requirements unresolved.
 
-The selection report schema is `crabc.x86_64-native-abi-selection-report/v2`;
-v2 adds the closed `runtimev1_descriptor_lifecycle_joins` field. A source-built
-omitted-`ADOPTED_MAIN` control remains development regression sensitivity
-evidence, not a worker receipt field or selector input.
+The selection report schema is `crabc.x86_64-native-abi-selection-report/v3`;
+v3 adds the closed `resolver_alias_receipt_companion` and
+`resolver_alias_receipt_joins` fields alongside the existing closed
+`runtimev1_descriptor_lifecycle_joins` field. A source-built omitted-
+`ADOPTED_MAIN` control remains development regression sensitivity evidence, not
+a worker receipt field or selector input.
 
 ## Selection inputs and definition domains
 
@@ -486,6 +517,14 @@ without replaying the header declaration envelope.
   an ordinary import only if the exact selected static undefined row exists.
   It does not select the private provider spellings or close the general
   pthread family.
+- `owned_resolver_alias_contract_reader.py` owns retained replay for exactly
+  three existing public resolver aliases and two selected private bodies. Its
+  v1 report carries the source alias routes, current selected-product and
+  measurement bindings, complete candidate projection, normal and strong
+  override observations, and retained command/runtime evidence. The selector
+  alone joins that finite projection to the current full occurrence accounting;
+  it neither widens private provider scope nor treats the receipt as resolver
+  family evidence.
 
 Each receipt must name the current selected source and product cohort. Their
 status flags remain false; header, semantic, family, and public-support gates
