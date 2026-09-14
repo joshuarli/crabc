@@ -220,6 +220,22 @@ reason = "The exact thirteen non-local syscall alias bodies are private implemen
 static_metadata_rule = "explicit"
 
 [[owner_groups]]
+id = "component-owned-resolver-private-bodies"
+selector = "explicit"
+disposition = "private-provider"
+owner = "x86-owned-resolver-private-bodies"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/resolver_runtime.rs", "compat/x86_64/owned-resolver-alias-contract.md"]
+members = ["__res_mkquery", "__res_send"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"candidate-static" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "HIDDEN"}, "candidate-shared" = {"type" = "FUNC", "binding" = "LOCAL", "visibility" = "HIDDEN"}}
+reason = "Two resolver implementation bodies are private providers: the static archive retains GLOBAL HIDDEN definitions while the shared libc localizes the same bodies and exposes only their reviewed public weak aliases."
+static_metadata_rule = "explicit"
+
+[[owner_groups]]
 id = "source-owned-ctype-locator-bodies"
 selector = "explicit"
 disposition = "public-provider"
