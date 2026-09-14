@@ -119,6 +119,12 @@ REVIEWED_FUNCTION_FINGERPRINTS = {
     "worker_tls_allocate": "28bd02edb866ccf4967b0b9088714ddbac5a2bc8125a0ca9f2da68a799265ade",
     "pthread_creator": "0169ccadaaf7ac40820a3938551b18fd238514ee50d27ce4069327d585458c17",
     "registry_runtime_function": "65032fa5c8f30985477192262e23cf77cff3b84b5a9ebf8a0dfbd0df70ecbf4d",
+    "dlfcn_dlopen": "490cf95c67cec7a8c8197d7a9cef2309888f4d02349f0170f1edb57e33db488c",
+    "dlfcn_dlsym": "4614bddb7798e9fbf0073bea8f13d7f94dc56ef60b99311ad9d71e41072083ed",
+    "dlfcn_dlclose": "a301639c4ba11f3b889af23fadd76639667139edacec4bdab121b6e021636077",
+    "dlfcn_dladdr": "9f5f5d24c84523e96f9e965618e066979313bd687c9752d640ba342721623e1c",
+    "dlfcn_dlinfo": "0dd91517c082f16c322a5893f66006ddae008485c8545b336f05cd18d52816e5",
+    "dlfcn_dl_iterate_phdr": "ee4cd3492be18dbc908d0d7668915a11ee92a4c46b96c3fa882539ef87a33156",
 }
 STATIC_ROLES = {
     "static_driver": "bin/crabc-cc",
@@ -569,17 +575,16 @@ def validate_build_feature_routes(build: str) -> None:
     lifecycle = _braced_body(build,
         'if std::env::var_os("CARGO_FEATURE_X86_64_GENERAL_INITIAL_LIFECYCLE").is_some()',
         'initial lifecycle build feature branch')
-    require(_rust_without_comments(lifecycle).count('cargo::rustc-cfg=crabc_general_initial_lifecycle') == 1,
-            'initial lifecycle build cfg differs')
+    require(re.findall(r'cargo::rustc-cfg=([^"]+)', _rust_without_comments(lifecycle))
+            == ['crabc_general_initial_lifecycle'], 'initial lifecycle build cfg differs')
     feature = 'CARGO_FEATURE_X86_64_GENERAL_INITIAL_TLS_RUNTIME_V1_DYNAMIC_MAIN_THREAD_INTERPRETER'
     branch = _braced_body(build, f'if std::env::var_os(\n        "{feature}",\n    )\n    .is_some()',
                           'dynamic main interpreter build feature branch')
-    branch_code = _rust_without_comments(branch)
     cfgs = (
         'crabc_general_initial_graph', 'crabc_general_initial_tls_materialization_v1',
         'crabc_general_loader_libc_tls_runtime_v1', 'crabc_dynamic_main_thread_runtime_v1',
     )
-    require(all(branch_code.count(f'\"cargo::rustc-cfg={cfg}\"') == 1 for cfg in cfgs),
+    require(re.findall(r'cargo::rustc-cfg=([^"]+)', _rust_without_comments(branch)) == list(cfgs),
             'dynamic main interpreter build cfg route differs')
 
 
@@ -594,20 +599,21 @@ def validate_dynamic_tls_bridge(body: str) -> None:
 def validate_dlfcn_routes(dlfcn: str, registry: str) -> None:
     """Bind installed public dlfcn leaves to the closed runtime registry table."""
     routes = (
-        ('pub unsafe extern "C" fn dlopen', '__crabc_x86_64_runtime_open(', 'runtime_open'),
-        ('unsafe extern "C" fn __crabc_x86_general_dlsym', '__crabc_x86_64_runtime_symbol(', 'runtime_symbol'),
-        ('pub unsafe extern "C" fn dlclose', '__crabc_x86_64_runtime_close(', 'runtime_close'),
-        ('pub unsafe extern "C" fn dladdr', '__crabc_x86_64_runtime_address(', 'runtime_address_info'),
-        ('pub unsafe extern "C" fn dlinfo', '__crabc_x86_64_runtime_information(', 'runtime_information'),
-        ('pub unsafe extern "C" fn dl_iterate_phdr', '__crabc_x86_64_runtime_iterate(', 'runtime_iterate'),
+        ('dlfcn_dlopen', 'pub unsafe extern "C" fn dlopen', '__crabc_x86_64_runtime_open(', 'runtime_open'),
+        ('dlfcn_dlsym', 'unsafe extern "C" fn __crabc_x86_general_dlsym', '__crabc_x86_64_runtime_symbol(', 'runtime_symbol'),
+        ('dlfcn_dlclose', 'pub unsafe extern "C" fn dlclose', '__crabc_x86_64_runtime_close(', 'runtime_close'),
+        ('dlfcn_dladdr', 'pub unsafe extern "C" fn dladdr', '__crabc_x86_64_runtime_address(', 'runtime_address_info'),
+        ('dlfcn_dlinfo', 'pub unsafe extern "C" fn dlinfo', '__crabc_x86_64_runtime_information(', 'runtime_information'),
+        ('dlfcn_dl_iterate_phdr', 'pub unsafe extern "C" fn dl_iterate_phdr', '__crabc_x86_64_runtime_iterate(', 'runtime_iterate'),
     )
     registry_body = rust_function_body(registry, 'pub(super) fn runtime_function')
     registry_code = _rust_without_comments(registry_body)
-    for marker, import_name, target in routes:
+    for fingerprint, marker, import_name, target in routes:
         route = f'b"{import_name.removesuffix("(")}" => Some({target} as *const () as usize as u64)'
         body = rust_function_body(dlfcn, marker)
         require(_rust_code(body).count(import_name) == 1 and registry_code.count(route) == 1,
                 f'selected dlfcn runtime route differs: {marker}')
+        _reviewed_body(fingerprint, body)
 
 
 def validate_source_algorithms(root: Path = ROOT) -> dict[str, object]:
@@ -643,6 +649,8 @@ def validate_source_algorithms(root: Path = ROOT) -> dict[str, object]:
     lock = _source(root, "ldso/src/x86_64_runtime_lock.rs")
     validate_runtime_lock_source(lock)
     worker = _source(root, "ldso/src/x86_64_initial_worker_tls.rs")
+    dynamic_tls = _source(root, "libc/src/c_abi/x86_64/dynamic_tls.rs")
+    validate_dynamic_tls_bridge(rust_function_body(dynamic_tls, "pub(super) unsafe fn allocate_thread"))
     allocate = rust_function_body(worker, "unsafe extern \"C\" fn allocate")
     _ordered(allocate, ("let _guard = Guard::acquire();", "materialize_initial_tls(", "register_allocation("),
              "selected worker TLS token")

@@ -101,6 +101,41 @@ class LoaderStructuralOwnerSourceTests(unittest.TestCase):
             reader.validate_dlfcn_routes(dlfcn.replace(
                 "let result = unsafe { __crabc_x86_64_runtime_close(handle) };",
                 "let result = unsafe { __crabc_x86_64_runtime_open(handle.cast(), 0, ptr::null_mut()) };", 1), registry)
+        with self.assertRaisesRegex(reader.LoaderStructuralOwnerError, "reviewed selected source body differs: dlfcn_dlclose"):
+            reader.validate_dlfcn_routes(dlfcn.replace(
+                "let result = unsafe { __crabc_x86_64_runtime_close(handle) };",
+                "let alternate = unsafe { __crabc_x86_64_runtime_open(handle.cast(), 0, ptr::null_mut()) };\n    let result = unsafe { __crabc_x86_64_runtime_close(handle) };", 1), registry)
+
+        changed_tls_body = body.replace("__crabc_x86_64_initial_tls_allocate", "__crabc_x86_64_initial_tls_release", 1)
+        changed_tls = dynamic_tls.replace(body, changed_tls_body, 1)
+        changed_build = build.replace('println!("cargo::rustc-cfg=crabc_dynamic_main_thread_runtime_v1");',
+                                      'println!("cargo::rustc-cfg=crabc_dynamic_main_thread_runtime_v1");\n        println!("cargo::rustc-cfg=unexpected");', 1)
+        original_source = reader._source
+        def source_with_mutations(root: Path, relative: str) -> str:
+            if relative == "libc/src/c_abi/x86_64/dynamic_tls.rs":
+                return changed_tls
+            if relative == "ldso/build.rs":
+                return changed_build
+            return original_source(root, relative)
+        with mock.patch.object(reader, "_source", side_effect=source_with_mutations), \
+             self.assertRaisesRegex(reader.LoaderStructuralOwnerError, "dynamic main interpreter build cfg"):
+            reader.validate_source_algorithms(ROOT)
+        def source_with_changed_tls(root: Path, relative: str) -> str:
+            return changed_tls if relative == "libc/src/c_abi/x86_64/dynamic_tls.rs" else original_source(root, relative)
+        with mock.patch.object(reader, "_source", side_effect=source_with_changed_tls), \
+             self.assertRaisesRegex(reader.LoaderStructuralOwnerError, "dynamic TLS allocation bridge"):
+            reader.validate_source_algorithms(ROOT)
+        legacy_body = reader.rust_function_body(dlfcn, 'pub unsafe extern "C" fn dlclose')
+        changed_legacy_body = legacy_body.replace(
+            "let result = unsafe { __crabc_x86_64_runtime_close(handle) };",
+            "let legacy = unsafe { __crabc_x86_64_fixed_graph_close(handle) };\n    let result = unsafe { __crabc_x86_64_runtime_close(handle) };",
+            1)
+        changed_legacy_dlfcn = dlfcn.replace(legacy_body, changed_legacy_body, 1)
+        def source_with_legacy_route(root: Path, relative: str) -> str:
+            return changed_legacy_dlfcn if relative == "libc/src/c_abi/x86_64/general_dlfcn.rs" else original_source(root, relative)
+        with mock.patch.object(reader, "_source", side_effect=source_with_legacy_route), \
+             self.assertRaisesRegex(reader.LoaderStructuralOwnerError, "reviewed selected source body differs: dlfcn_dlclose"):
+            reader.validate_source_algorithms(ROOT)
 
     def test_lock_bypass_and_changed_registry_target_reject(self) -> None:
         lock = (ROOT / "ldso/src/x86_64_runtime_lock.rs").read_text(encoding="utf-8")
@@ -187,6 +222,125 @@ class LoaderStructuralOwnerLifecycleTests(unittest.TestCase):
                 reader._validate_begin_record(changed, source=source, contract=contract, collector_output=begin["output"],
                                               inputs=begin["inputs"], source_contract=begin["source_contract"],
                                               source_algorithm=begin["source_algorithm"], upstream=begin["upstream"])
+
+
+class LoaderStructuralOwnerValidateReportTests(unittest.TestCase):
+    """Exercise the public reader boundary with retained JSON and no target tools."""
+
+    def _fixture(self):
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(dir=scratch)
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name) / "checkout"
+        output = root / "receipt"
+        output.mkdir(parents=True)
+        source = {"revision": "revision", "tree": "tree", "source_sha256": "source"}
+        inputs = {"static_libc": {"input": "static"}, "dynamic_libc": {"input": "shared"},
+                  "dynamic_loader": {"input": "loader"}}
+        source_contract = {name: {"source": name} for name in reader.SOURCE_CONTRACT_PATHS}
+        algorithm = {"algorithm": "selected"}
+        projection = {"full_occurrence_count": 8, "unnamed_occurrence_count": 2,
+                      "named_identity_filter": list(reader.IDENTITIES), "reference_startup_rows": 6,
+                      "candidate_rows": []}
+        upstream = {"base_inventory": {"path": "inventory"}, "full_facts": {"path": "facts"},
+                    "static_preparation": {"path": "preparation"}, "loader_debug": {"path": "debug"},
+                    "loader_runtime_registry": {"path": "registry"}, "facts_projection": projection,
+                    "registry_schema": "registry"}
+        collector_output = reader._collector_path(root, output, "collection output")
+        contract = reader._contract()
+        begin = {"schema": "crabc.x86_64-loader-structural-owner-begin/v1", "image": reader.PINNED_IMAGE,
+                 "output": collector_output, "selected_source": source, "collector": source,
+                 "contract": {"schema": contract["schema"], "id": contract["id"]}, "inputs": inputs,
+                 "source_contract": source_contract, "source_algorithm": algorithm, "upstream": upstream}
+        begin_path = output / "begin.json"
+        begin_path.write_text(json.dumps(begin, sort_keys=True) + "\n", encoding="utf-8")
+        commands = {name: {"command": name} for name in reader._command_names()}
+        matrix, runtime = {"matrix": "normal"}, {"roots": "bound"}
+        report = {
+            "schema": reader.SCHEMA, "status": reader.STATUS, "component": reader.COMPONENT, "target": reader.TARGET,
+            "collection": {"image": reader.PINNED_IMAGE, "output": collector_output,
+                           "begin": reader._identity(begin_path, "begin.json")},
+            "selected_source": source, "collector": source, "inputs": inputs,
+            "selected_products": {"static": inputs["static_libc"], "dynamic_libc": inputs["dynamic_libc"],
+                                  "dynamic_loader": inputs["dynamic_loader"], "loader_debug": upstream["loader_debug"],
+                                  "loader_runtime_registry": upstream["loader_runtime_registry"]},
+            "static_preparation": upstream["static_preparation"], "base_inventory": upstream["base_inventory"],
+            "full_facts": upstream["full_facts"], "source_contract": source_contract,
+            "source_cohort": {"relation": "one-current-clean-source", "identity": source},
+            "source_algorithm": algorithm, "selected_runtime": reader._selected_runtime_projection(),
+            "normal_consumer_matrix": matrix, "commands": commands, "runtime": runtime,
+            "artifacts": {"begin": reader._identity(begin_path, "begin.json")},
+            "coverage": {"identities": list(reader.IDENTITIES),
+                         "groups": ["loader-entry-stages", "loader-registration-operations", "loader-always-atomic-guard"],
+                         "fact_filter": projection, "source_functions": list(reader.SOURCE_ALGORITHM_PATHS),
+                         "selected_runtime_cells": list(reader.MODES),
+                         "normal_consumer_cells": [f"{lane}/{mode}" for lane in reader.LANES for mode in reader.MODES],
+                         "normal_consumer_pairs": list(reader.MODES)},
+            "limits": {"family_completion": False, "promotion_ready": False, "public_support": False,
+                       "runtime_qualification": False, "selector_admission": False},
+        }
+        report_path = output / "report.json"
+        def write_report() -> None:
+            report_path.write_text(json.dumps(report, sort_keys=True) + "\n", encoding="utf-8")
+        def refresh_begin() -> None:
+            begin_path.write_text(json.dumps(begin, sort_keys=True) + "\n", encoding="utf-8")
+            identity = reader._identity(begin_path, "begin.json")
+            report["collection"]["begin"] = identity
+            report["artifacts"]["begin"] = identity
+            write_report()
+        write_report()
+        patches = (
+            mock.patch.object(reader, "current_source_identity", return_value=source),
+            mock.patch.object(reader, "_collection_paths", return_value={}),
+            mock.patch.object(reader, "_validate_inputs", return_value=inputs),
+            mock.patch.object(reader, "_validate_input_modes"),
+            mock.patch.object(reader, "_validate_source_record", side_effect=lambda _r, _o, _n, row: row),
+            mock.patch.object(reader, "validate_source_algorithms", return_value=algorithm),
+            mock.patch.object(reader, "_validate_upstream", return_value=upstream),
+            mock.patch.object(reader, "_read_command", side_effect=lambda _o, name, **_kw: commands[name]),
+            mock.patch.object(reader, "_normal_matrix", return_value=matrix),
+            mock.patch.object(reader, "_validate_matrix", return_value=matrix),
+            mock.patch.object(reader, "_validate_runtime", return_value=runtime),
+        )
+        return root, output, report_path, report, begin, refresh_begin, write_report, patches
+
+    def _validate(self, fixture) -> dict[str, object]:
+        root, _output, report_path, _report, _begin, _refresh, _write, patches = fixture
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9], patches[10]:
+            return reader.validate_report(report_path, root=root, static_product=root, dynamic_product=root,
+                                          static_preparation=root / "preparation.json", base_inventory=root / "inventory.json",
+                                          full_facts=root / "facts.json", loader_debug_report=root / "debug.json",
+                                          loader_runtime_registry_report=root / "registry.json",
+                                          oracle_compiler=Path("/oracle"), musl_shared=Path("/musl"))
+
+    def test_validate_report_reconstructs_the_complete_retained_boundary(self) -> None:
+        fixture = self._fixture()
+        result = self._validate(fixture)
+        self.assertEqual(result["selected_runtime"], reader._selected_runtime_projection())
+        self.assertEqual(result["coverage"]["fact_filter"]["full_occurrence_count"], 8)
+
+    def test_validate_report_rejects_selected_runtime_artifacts_and_each_begin_join(self) -> None:
+        fixture = self._fixture()
+        _root, _output, _path, report, begin, refresh, write, _patches = fixture
+        report["selected_runtime"] = {"cfg": "wrong"}
+        write()
+        with self.assertRaisesRegex(reader.LoaderStructuralOwnerError, "selected runtime"):
+            self._validate(fixture)
+        fixture = self._fixture()
+        _root, _output, _path, report, begin, refresh, write, _patches = fixture
+        report["artifacts"] = {"begin": {"forged": True}}
+        write()
+        with self.assertRaisesRegex(reader.LoaderStructuralOwnerError, "collection or selected runtime"):
+            self._validate(fixture)
+        for field in ("selected_source", "collector", "contract", "inputs", "source_contract", "source_algorithm", "upstream"):
+            with self.subTest(field=field):
+                fixture = self._fixture()
+                _root, _output, _path, report, begin, refresh, write, _patches = fixture
+                begin[field] = {"forged": field}
+                refresh()
+                with self.assertRaisesRegex(reader.LoaderStructuralOwnerError, "begin admission"):
+                    self._validate(fixture)
 
 
 class LoaderStructuralOwnerCommandTests(unittest.TestCase):

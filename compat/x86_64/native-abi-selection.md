@@ -443,8 +443,10 @@ a retained runtime map, probe, source snapshot, or raw command output cannot
 change after the initial reader replay. A report with only one component stays
 independently optional and leaves both descriptor requirements unresolved.
 
-The selection report schema is `crabc.x86_64-native-abi-selection-report/v5`;
-v5 adds the closed `public_data_declaration_runtime_companion` and
+The selection report schema is `crabc.x86_64-native-abi-selection-report/v6`;
+v6 adds the closed `loader_structural_owner_companion` and
+`loader_structural_owner_joins` fields. v5 added the closed
+`public_data_declaration_runtime_companion` and
 `public_data_declaration_runtime_joins` fields. v4 added the closed
 `headers_layouts_aggregate_companion` and `headers_layouts_aggregate_evidence`
 fields. v3 added the closed

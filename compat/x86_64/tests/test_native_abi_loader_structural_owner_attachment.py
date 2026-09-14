@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import copy
+import json
+import tempfile
 from pathlib import Path
 import sys
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'compat/x86_64'))
@@ -76,3 +79,141 @@ class LoaderStructuralOwnerPolicyTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class LoaderStructuralOwnerAdapterEntryTests(unittest.TestCase):
+    """Exercise adapter replay, not only the final accounting join."""
+
+    def _fixture(self):
+        temporary = tempfile.TemporaryDirectory(dir=ROOT / '.work/x86_64/tmp')
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        static, dynamic = root / 'static', root / 'dynamic'
+        static.mkdir(); dynamic.mkdir()
+        def write(path: Path, mode: int = 0o644) -> None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(path.as_posix().encode())
+            path.chmod(mode)
+        for name, relative in selection.loader_structural_owner_evidence.STATIC_ROLES.items():
+            write(static / relative, 0o755 if name == 'static_driver' else 0o644)
+        for name, relative in selection.loader_structural_owner_evidence.DYNAMIC_ROLES.items():
+            write(dynamic / relative, 0o755 if name in {'dynamic_driver', 'dynamic_loader'} else 0o644)
+        preparation, inventory, full_facts, debug, registry = (root / name for name in
+            ('preparation.json', 'inventory.json', 'facts.json', 'debug.json', 'registry.json'))
+        for path in (preparation, inventory, full_facts, debug, registry):
+            write(path)
+        paths = {'static_product': static, 'dynamic_product': dynamic, 'static_preparation': preparation,
+                 'base_inventory': inventory, 'elf_report': full_facts}
+        products = selection._loader_structural_owner_product_identities(paths)
+        source = {'revision': 'current', 'content_sha256': 'source', 'clean': True}
+        selected = {'revision': 'current', 'tree': 'tree', 'source_sha256': 'source'}
+        startup = []
+        for name in selection.LOADER_STRUCTURAL_OWNER_IDENTITIES[:3]:
+            for table in ('.dynsym', '.symtab'):
+                startup.append({'name': name, 'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT',
+                                'section_index': '1'})
+        facts = {'artifacts': {
+            'candidate-static': {'identity': products['static_libc']},
+            'candidate-shared': {'identity': products['dynamic_libc']},
+            'candidate-loader': {'identity': products['dynamic_loader']},
+        }, 'facts': {'reference-shared': {'symbol_tables': [
+            {'name': '.dynsym', 'rows': [row for row in startup if row['name'] in selection.LOADER_STRUCTURAL_OWNER_IDENTITIES[:3]]},
+            {'name': '.symtab', 'rows': [row for row in startup if row['name'] in selection.LOADER_STRUCTURAL_OWNER_IDENTITIES[:3]]},
+        ]}}}
+        # Use exact table rows rather than a summary: reader flattening is the adapter's raw-schema boundary.
+        facts['facts']['reference-shared']['symbol_tables'][0]['rows'] = [
+            {'name': name, 'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT', 'section_index': '1'}
+            for name in selection.LOADER_STRUCTURAL_OWNER_IDENTITIES[:3]]
+        facts['facts']['reference-shared']['symbol_tables'][1]['rows'] = [
+            {'name': name, 'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT', 'section_index': '1'}
+            for name in selection.LOADER_STRUCTURAL_OWNER_IDENTITIES[:3]]
+        reader = selection.loader_structural_owner_evidence
+        inputs = {}
+        for name in reader.INPUT_NAMES:
+            if name in products:
+                identity = products[name]
+            else:
+                identity = {'path': name, 'sha256': '0' * 64, 'size': 0, 'mode': 0o644}
+            inputs[name] = {**identity, 'retained': f'retained/inputs/{name}'}
+        projection = {'full_occurrence_count': 6, 'unnamed_occurrence_count': 0,
+                      'named_identity_filter': list(reader.IDENTITIES), 'reference_startup_rows': 6,
+                      'candidate_rows': []}
+        report = {
+            'schema': reader.SCHEMA, 'status': reader.STATUS, 'component': reader.COMPONENT, 'target': reader.TARGET,
+            'collection': {}, 'selected_source': selected, 'collector': selected, 'inputs': inputs,
+            'selected_products': {'static': inputs['static_libc'], 'dynamic_libc': inputs['dynamic_libc'],
+                                  'dynamic_loader': inputs['dynamic_loader'], 'loader_debug': selection.file_identity(debug),
+                                  'loader_runtime_registry': selection.file_identity(registry)},
+            'static_preparation': products['static_preparation'], 'base_inventory': products['base_inventory'],
+            'full_facts': products['full_facts'], 'source_contract': {},
+            'source_cohort': {'relation': 'one-current-clean-source', 'identity': selected}, 'source_algorithm': {},
+            'selected_runtime': {}, 'normal_consumer_matrix': {}, 'commands': {}, 'runtime': {}, 'artifacts': {},
+            'coverage': {'identities': list(reader.IDENTITIES), 'groups': list(selection.LOADER_STRUCTURAL_OWNER_GROUPS),
+                         'fact_filter': projection, 'source_functions': [], 'selected_runtime_cells': [],
+                         'normal_consumer_cells': [], 'normal_consumer_pairs': []},
+            'limits': {'family_completion': False, 'promotion_ready': False, 'public_support': False,
+                       'runtime_qualification': False, 'selector_admission': False},
+        }
+        report_path = root / 'report.json'
+        report_path.write_text(json.dumps(report, sort_keys=True) + '\n', encoding='utf-8')
+        measurement = {'candidate_build': {'revision': 'current', 'source_content_sha256': 'source'},
+                       'reports': {name: selection.file_identity(paths[path]) for name, path in
+                                   (('elf_report', 'elf_report'), ('base_inventory', 'base_inventory'),
+                                    ('static_preparation', 'static_preparation'))}}
+        return report_path, report, facts, measurement, paths, source, debug, registry
+
+    def _adapter(self, fixture):
+        report_path, report, facts, measurement, paths, source, debug, registry = fixture
+        with mock.patch.object(selection.loader_structural_owner_evidence, 'validate_report', return_value=report) as replay:
+            result = selection.native_loader_structural_owner_adapter(
+                report_path, facts=facts, measurement=measurement, paths=paths, source=source,
+                loader_debug_report=debug, loader_runtime_registry_report=registry)
+        self.replay = replay
+        return result
+
+    def test_adapter_replays_the_raw_fact_schema_and_current_cohort(self):
+        fixture = self._fixture()
+        companion = self._adapter(fixture)
+        assert companion is not None
+        self.assertEqual(companion['receipt']['coverage']['fact_filter']['full_occurrence_count'], 6)
+        self.assertEqual(companion['status'], 'loader-structural-owner-observed-with-boundaries')
+        self.replay.assert_called_once()
+        kwargs = self.replay.call_args.kwargs
+        self.assertEqual(kwargs['static_product'], fixture[4]['static_product'])
+        self.assertEqual(kwargs['dynamic_product'], fixture[4]['dynamic_product'])
+        self.assertEqual(kwargs['full_facts'], fixture[4]['elf_report'])
+
+    def test_adapter_rejects_absent_stale_report_or_product_substitution(self):
+        fixture = self._fixture()
+        report_path, report, facts, measurement, paths, source, debug, registry = fixture
+        self.assertIsNone(selection.native_loader_structural_owner_adapter(
+            None, facts=facts, measurement=measurement, paths=paths, source=source,
+            loader_debug_report=debug, loader_runtime_registry_report=registry))
+        report['selected_source']['source_sha256'] = 'stale'
+        report_path.write_text(json.dumps(report, sort_keys=True) + '\n', encoding='utf-8')
+        with self.assertRaisesRegex(selection.SelectionError, 'source differs'):
+            self._adapter(fixture)
+        report['selected_source']['source_sha256'] = 'source'
+        report['collector']['source_sha256'] = 'source'
+        report['inputs']['static_libc']['sha256'] = 'f' * 64
+        report_path.write_text(json.dumps(report, sort_keys=True) + '\n', encoding='utf-8')
+        with self.assertRaisesRegex(selection.SelectionError, 'static_libc bytes or mode differ'):
+            self._adapter(fixture)
+        fixture = self._fixture()
+        report_path, report, facts, measurement, paths, source, debug, registry = fixture
+        with mock.patch.object(selection.loader_structural_owner_evidence, 'validate_report',
+                               side_effect=selection.loader_structural_owner_evidence.LoaderStructuralOwnerError('replay failed')):
+            with self.assertRaisesRegex(selection.SelectionError, 'component rejected: replay failed'):
+                selection.native_loader_structural_owner_adapter(
+                    report_path, facts=facts, measurement=measurement, paths=paths, source=source,
+                    loader_debug_report=debug, loader_runtime_registry_report=registry)
+        fixture = self._fixture()
+        report_path, report, facts, measurement, paths, source, debug, registry = fixture
+        def replay_then_mutate(*_args, **_kwargs):
+            report_path.write_text('{"changed":true}\n', encoding='utf-8')
+            return report
+        with mock.patch.object(selection.loader_structural_owner_evidence, 'validate_report',
+                               side_effect=replay_then_mutate):
+            with self.assertRaisesRegex(selection.SelectionError, 'report changed during replay'):
+                selection.native_loader_structural_owner_adapter(
+                    report_path, facts=facts, measurement=measurement, paths=paths, source=source,
+                    loader_debug_report=debug, loader_runtime_registry_report=registry)
