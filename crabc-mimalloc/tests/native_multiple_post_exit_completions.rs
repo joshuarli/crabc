@@ -1,9 +1,12 @@
+#[path = "support/native_runtime.rs"]
+mod native_runtime_test_support;
+
 use std::sync::mpsc;
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
     TicketZeroPageAllocationResult, TicketZeroPageFreeResult, attach_current_thread,
-    finish_current_thread_native_after_user_destructors, initialize_process, native_allocate_aligned,
+    finish_current_thread_native_after_user_destructors, native_allocate_aligned,
     native_free, native_reallocate, native_runtime_fork_admission_test_audit, native_usable_size,
     prepare_native_later_thread_arena, ticket_zero_allocate, ticket_zero_free,
 };
@@ -115,7 +118,7 @@ fn consume_owner_exit_page_map_sources(
 #[test]
 fn one_b_consumes_multiple_post_exit_page_map_sources_while_initial_owner_remains_independent() {
     assert!(
-        initialize_process(current_page_size()),
+        native_runtime_test_support::initialize(current_page_size()),
         "the native runtime initializes before the multiple-source witness"
     );
     assert!(

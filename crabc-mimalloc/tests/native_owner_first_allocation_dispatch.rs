@@ -3,11 +3,16 @@
 // no owner, route, PageMap, scheduler token, or allocation identity.
 #![cfg(feature = "native-runtime-test-audit")]
 
+#[path = "support/native_runtime.rs"]
+mod native_runtime_test_support;
+
+
+
 use std::sync::{Arc, Barrier, mpsc};
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
-    attach_current_thread, finish_current_thread_native_after_user_destructors, initialize_process,
+    attach_current_thread, finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, native_runtime_fork_admission_test_audit,
     native_runtime_lifecycle_test_audit, prepare_native_later_thread_arena,
 };
@@ -75,7 +80,7 @@ fn run_local_worker(worker: usize, ready: mpsc::SyncSender<()>, start: Arc<Barri
 
 fn run_width(width: usize) {
     assert!(
-        initialize_process(current_page_size()),
+        native_runtime_test_support::initialize(current_page_size()),
         "the private native runtime initializes before the owner-first allocation audit"
     );
     assert!(

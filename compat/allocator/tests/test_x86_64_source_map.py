@@ -172,12 +172,15 @@ class X86_64SourceMapTests(unittest.TestCase):
         self.assertEqual(option_processing["status"], "partial")
         self.assertEqual(
             option_processing["rust_modules"],
-            ["crabc_mimalloc::diagnostic_output"],
+            ["crabc_mimalloc::diagnostic_output", "crabc_mimalloc::os"],
         )
         self.assertIn("show_errors/verbose/max_warnings", option_processing["difference"])
         self.assertIn("16 KiB delayed output", option_processing["difference"])
         self.assertIn("caller-supplied source-shaped fputs primitive", option_processing["difference"])
         self.assertIn("short-write/error transport parity", option_processing["difference"])
+        self.assertIn("private x86 runtime relation", option_processing["difference"])
+        self.assertIn("source-option-route reentry", option_processing["difference"])
+        self.assertIn("selected x86 libc startup", option_processing["difference"])
         self.assertIn("mi_register_output ABI", option_processing["difference"])
         self.assertIn("atomic.h", option_processing["difference"])
 

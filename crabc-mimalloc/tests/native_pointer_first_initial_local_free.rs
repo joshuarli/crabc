@@ -3,9 +3,14 @@
 // no owner, route, PageMap, scheduler token, or allocation identity.
 #![cfg(feature = "native-runtime-test-audit")]
 
+#[path = "support/native_runtime.rs"]
+mod native_runtime_test_support;
+
+
+
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
-    attach_current_thread, finish_current_thread_native_after_user_destructors, initialize_process,
+    attach_current_thread, finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, native_reallocate, native_runtime_lifecycle_test_audit,
     native_usable_size, prepare_native_later_thread_arena,
 };
@@ -23,7 +28,7 @@ fn current_page_size() -> usize {
 #[test]
 fn native_initial_local_sequence_keeps_page_out_of_legacy_scheduler() {
     assert!(
-        initialize_process(current_page_size()),
+        native_runtime_test_support::initialize(current_page_size()),
         "the native runtime initializes before the initial local-free ratchet"
     );
     let anchor = match native_allocate_aligned(97, 16, false) {

@@ -1,9 +1,12 @@
+#[path = "support/native_runtime.rs"]
+mod native_runtime_test_support;
+
 use std::sync::mpsc;
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
     attach_current_thread, finish_current_thread_native_after_user_destructors,
-    initialize_process, native_allocate_aligned, native_free,
+    native_allocate_aligned, native_free,
 };
 
 fn current_page_size() -> usize {
@@ -17,7 +20,7 @@ fn current_page_size() -> usize {
 #[test]
 fn native_free_publishes_an_aligned_initial_client_from_a_foreign_owner() {
     assert!(
-        initialize_process(current_page_size()),
+        native_runtime_test_support::initialize(current_page_size()),
         "the native runtime initializes before the pointer-first foreign-free witness"
     );
 

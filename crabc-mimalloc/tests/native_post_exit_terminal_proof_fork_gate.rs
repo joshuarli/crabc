@@ -1,10 +1,13 @@
+#[path = "support/native_runtime.rs"]
+mod native_runtime_test_support;
+
 use std::sync::mpsc;
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult,
     ThreadFinishResult, TicketZeroPageAllocationResult, TicketZeroPageFreeResult,
     after_fork_child, after_fork_parent, attach_current_thread, before_fork,
-    finish_current_thread_native_after_user_destructors, initialize_process,
+    finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, prepare_native_later_thread_arena,
     process_is_active, ticket_zero_allocate, ticket_zero_free,
 };
@@ -102,7 +105,7 @@ fn free_exact_post_exit_client(address: usize) {
 #[test]
 fn post_exit_page_free_keeps_fork_child_disabled_until_b_finishes() {
     assert!(
-        initialize_process(current_page_size()),
+        native_runtime_test_support::initialize(current_page_size()),
         "the native runtime initializes before the post-exit fork regression"
     );
     assert!(

@@ -50,6 +50,8 @@ use core::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 
 use crabc_core::{Errno, Result};
 
+#[cfg(target_arch = "x86_64")]
+use crate::diagnostic_output::MbindWarningRoute;
 use crate::config::{
     ARENA_SLICE_SIZE, VmOption, VmOptionEnvironmentReader, VmOptionState, VmOptions,
 };
@@ -3247,6 +3249,33 @@ impl<'a> HugeOsAllocation<'a> {
         )
     }
 
+    #[cfg(target_arch = "x86_64")]
+    /// The selected source-startup huge primitive with its already-retained
+    /// diagnostic route. This never changes mapping ownership or falls back to
+    /// a regular primitive: it differs only at the failed valid-node `mbind`
+    /// call site.
+    pub(crate) fn allocate_for_process_with_mbind_warning(
+        process: VmProcess<'a>,
+        config: MemoryConfig,
+        pages: usize,
+        numa_node: i32,
+        max_milliseconds: i64,
+        default_random: Option<&mut TheapRandomImage>,
+        warning: MbindWarningRoute<'_>,
+    ) -> HugeOsAllocationOutcome<'a> {
+        allocate_huge_pages_with(
+            process,
+            pages,
+            max_milliseconds,
+            default_random,
+            |hint| map_huge_page_for_process_with_mbind_warning(
+                process, config, hint, numa_node, warning,
+            ),
+            source_clock_start,
+            source_clock_end,
+        )
+    }
+
     #[inline]
     pub(crate) const fn page_count(&self) -> usize { self.page_count }
 
@@ -3462,6 +3491,19 @@ fn map_huge_page_for_process(
     Ok(mapping)
 }
 
+#[cfg(target_arch = "x86_64")]
+fn map_huge_page_for_process_with_mbind_warning(
+    process: VmProcess<'_>,
+    config: MemoryConfig,
+    hint: usize,
+    numa_node: i32,
+    warning: MbindWarningRoute<'_>,
+) -> Result<Mapping> {
+    let mapping = Mapping::map_huge_page_at(process.policy, config, hint)?;
+    apply_huge_page_numa_preference_with_mbind_warning(mapping.base()?, numa_node, warning);
+    Ok(mapping)
+}
+
 /// Applies the source's best-effort one-word NUMA preference after a huge
 /// primitive map. Its result has no ownership meaning: the mapping stays live
 /// whether the kernel accepts the preference or returns an error.
@@ -3471,12 +3513,29 @@ fn apply_huge_page_numa_preference(address: *mut u8, numa_node: i32) {
         return;
     }
     let mask = 1usize << numa_node as u32;
-    // The caller owns this full primitive mapping. Pinned C emits its output
-    // callback warning before it ignores a failed `mbind`. The private Rust
-    // diagnostic_output owner is not connected to this receiver, so this
-    // boundary preserves only ignored-result and retained-owner behavior.
-    // Its diagnostic delivery relation remains explicitly unqualified.
     let _ = huge_page_numa_bind(address, &mask);
+}
+
+/// The selected private startup receiver for `prim.c:630-645`: a valid NUMA
+/// node attempts one `mbind`, formats the captured errno on failure, delivers
+/// its warning, and preserves the complete mapping either way. Node 63 on
+/// 64-bit Linux remains an invalid source input: it neither calls nor emits.
+#[inline]
+#[cfg(target_arch = "x86_64")]
+fn apply_huge_page_numa_preference_with_mbind_warning(
+    address: *mut u8,
+    numa_node: i32,
+    warning: MbindWarningRoute<'_>,
+) {
+    if numa_node < 0 || numa_node >= usize::BITS as i32 - 1 {
+        return;
+    }
+    let mask = 1usize << numa_node as u32;
+    if let Err(error) = huge_page_numa_bind(address, &mask) {
+        // SAFETY: the source startup owner serialized this one mapping attempt
+        // with output registration and retains its borrowed route/callback.
+        unsafe { warning.mbind_failure(numa_node, error) };
+    }
 }
 
 #[inline]
@@ -5502,6 +5561,16 @@ mod tests {
 
     use super::*;
     use crabc_core::Errno;
+    #[cfg(target_arch = "x86_64")]
+    use crate::diagnostic_output::{
+        MbindWarningRoute, OutputCallback, OutputOwner, RuntimeStderrOutput,
+    };
+    #[cfg(target_arch = "x86_64")]
+    use core::cell::UnsafeCell;
+    #[cfg(target_arch = "x86_64")]
+    use core::ffi::{c_char, c_void, CStr};
+    #[cfg(target_arch = "x86_64")]
+    use core::sync::atomic::{AtomicBool, AtomicUsize};
 
     /* This deadline exists only in the native test schedule. The production
      * source CAS never waits; a missed helper handoff must fail the witness
@@ -5543,12 +5612,218 @@ mod tests {
         }
     }
 
+    #[cfg(target_arch = "x86_64")]
+    struct MbindDiagnosticCapture {
+        count: AtomicUsize,
+        expected_body: AtomicBool,
+        _no_alias: UnsafeCell<()>,
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe impl Sync for MbindDiagnosticCapture {}
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn capture_mbind_diagnostic(message: *const c_char, argument: *mut c_void) {
+        // SAFETY: the source test registers one live capture and serializes
+        // this receiver call with the route under test.
+        let capture = unsafe { &*(argument as *const MbindDiagnosticCapture) };
+        let bytes = unsafe { CStr::from_ptr(message) }.to_bytes();
+        if bytes == b"failed to bind huge (1GiB) pages to numa node 62 (error: 4095 (0xFFF))\n" {
+            capture.expected_body.store(true, Ordering::Release);
+        }
+        capture.count.fetch_add(1, Ordering::AcqRel);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn unexpected_default_diagnostic_output(_: *const c_char) {
+        unreachable!("the actual mbind receiver test registers its custom route before emission")
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    struct FaultDiagnosticRelationCapture {
+        count: AtomicUsize,
+        lengths: UnsafeCell<[usize; 2]>,
+        fragments: UnsafeCell<[[u8; 192]; 2]>,
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe impl Sync for FaultDiagnosticRelationCapture {}
+
+    #[cfg(target_arch = "x86_64")]
+    impl FaultDiagnosticRelationCapture {
+        const fn new() -> Self {
+            Self {
+                count: AtomicUsize::new(0),
+                lengths: UnsafeCell::new([0; 2]),
+                fragments: UnsafeCell::new([[0; 192]; 2]),
+            }
+        }
+
+        fn reset(&self) {
+            self.count.store(0, Ordering::Release);
+            // SAFETY: this source witness resets only between serialized
+            // callback deliveries and before its next observation.
+            unsafe {
+                *self.lengths.get() = [0; 2];
+                *self.fragments.get() = [[0; 192]; 2];
+            }
+        }
+
+        fn fragment(&self, index: usize) -> &[u8] {
+            assert!(index < self.count.load(Ordering::Acquire));
+            // SAFETY: the selected callback has completed before this
+            // single-threaded source witness reads its fixed capture slots.
+            unsafe { &(&*self.fragments.get())[index][..(&*self.lengths.get())[index]] }
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn capture_fault_diagnostic_relation(
+        message: *const c_char, argument: *mut c_void,
+    ) {
+        if message.is_null() || argument.is_null() {
+            return;
+        }
+        // SAFETY: this fixture registers its address-stable capture once and
+        // serializes every selected source delivery on this test thread.
+        let capture = unsafe { &*(argument as *const FaultDiagnosticRelationCapture) };
+        let bytes = unsafe { CStr::from_ptr(message) }.to_bytes();
+        let index = capture.count.fetch_add(1, Ordering::AcqRel);
+        if index >= 2 || bytes.len() > 192 {
+            return;
+        }
+        // SAFETY: `index` is this callback's unique bounded fixed slot and
+        // reads happen only after the callback route returns.
+        unsafe {
+            (&mut *capture.fragments.get())[index][..bytes.len()].copy_from_slice(bytes);
+            (&mut *capture.lengths.get())[index] = bytes.len();
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" {
+        fn fputs(message: *const c_char, stream: *mut c_void) -> i32;
+        static mut stderr: *mut c_void;
+    }
+
+    /// Test-only explicit bridge for the selected native musl FILE primitive.
+    /// It intentionally ignores `fputs`'s result, as pinned
+    /// `_mi_prim_out_stderr` does. It is not an ambient production lookup or
+    /// a FILE transport qualification claim.
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn m2_fault_diagnostic_musl_stderr(message: *const c_char) {
+        // SAFETY: the x86 native test binary links the pinned musl `stderr`
+        // object and `fputs`; `RuntimeStderrOutput` guarantees a non-null
+        // source NUL-terminated fragment for this test's process lifetime.
+        unsafe { let _ = fputs(message, stderr); }
+    }
+
     fn current_startup() -> StartupInput {
         let raw_page_size = crabc_core::param::auxv_value(crabc_core::param::AT_PAGESZ)
             .expect("the Linux test process must expose AT_PAGESZ");
         let page_size = PageSize::new(raw_page_size)
             .expect("AT_PAGESZ must be a valid Linux page size");
         StartupInput::new(page_size)
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn failed_valid_mbind_uses_the_actual_receiver_and_invalid_node_does_not_attempt_or_emit() {
+        let _environment_serial = VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK
+            .lock()
+            .expect("source environment test lock is not poisoned");
+        let _environment_reset = VmPolicySourceEnvironmentReset;
+        let show_errors = b"mimalloc_show_errors=1\0";
+        let verbose = b"mimalloc_verbose=0\0";
+        let max_warnings = b"mimalloc_max_warnings=32\0";
+        let mut environment = [
+            show_errors.as_ptr().cast(),
+            verbose.as_ptr().cast(),
+            max_warnings.as_ptr().cast(),
+            core::ptr::null(),
+        ];
+        VM_POLICY_SOURCE_ENVIRONMENT.store(environment.as_mut_ptr(), Ordering::Release);
+
+        let mut output = OutputOwner::new(unexpected_default_diagnostic_output);
+        // SAFETY: this test holds the raw vector stable while it performs the
+        // process-shaped selected descriptor initialization before borrowing
+        // the mbind receiver route.
+        unsafe { output.initialize_source_options(vm_policy_source_environment_for_test) };
+        let capture = MbindDiagnosticCapture {
+            count: AtomicUsize::new(0),
+            expected_body: AtomicBool::new(false),
+            _no_alias: UnsafeCell::new(()),
+        };
+        // SAFETY: the test retains the capture and serializes this one custom
+        // registration/delivery sequence.
+        unsafe {
+            output.register_output(
+                Some(capture_mbind_diagnostic as OutputCallback),
+                &capture as *const MbindDiagnosticCapture as *mut c_void,
+            )
+        };
+        // Source custom registration flushes even its empty delayed image.
+        // Count only the physical failed-mbind route below.
+        capture.count.store(0, Ordering::Release);
+        capture.expected_body.store(false, Ordering::Release);
+
+        let fault = fault::install(fault::Plan::at(fault::Point::NumaBind, 1, Errno::from_raw(4095).unwrap()));
+        let policy = VmPolicy::defaults_for_test();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        let config = MemoryConfig::from_observations(
+            PageSize::new(4096).unwrap(), 1 << 20, true, false,
+        );
+        let page = config.page_size().bytes();
+        let mut mapping = Mapping::map_for_process(
+            process, config, page, 1, MapAccess::Committed, false, None,
+        ).expect("receiver witness begins with one live mapping");
+        let base = mapping.base().expect("mapping remains live before mbind");
+
+        apply_huge_page_numa_preference_with_mbind_warning(base, 62, MbindWarningRoute::new(&output));
+        assert_eq!(fault.observed(), 1, "the valid source node attempts exactly one mbind");
+        assert_eq!(mapping.base(), Ok(base), "failed mbind leaves the mapping owner intact");
+        assert_eq!(capture.count.load(Ordering::Acquire), 2, "warning prefix and source body stay separate deliveries");
+        assert!(capture.expected_body.load(Ordering::Acquire));
+
+        capture.count.store(0, Ordering::Release);
+        fault.set(fault::Plan::at(fault::Point::NumaBind, 1, Errno::PERM));
+        apply_huge_page_numa_preference_with_mbind_warning(base, 63, MbindWarningRoute::new(&output));
+        assert_eq!(fault.observed(), 0, "node 63 is outside the 64-bit source receiver domain");
+        assert_eq!(capture.count.load(Ordering::Acquire), 0, "invalid node has no output delivery");
+        assert_eq!(mapping.base(), Ok(base));
+        drop(fault);
+        mapping.unmap_for_process(process, page, true).expect("the retained owner still releases normally");
+    }
+
+    /// Drives the actual private `prim.c:630-645` receiver with one live
+    /// source-owned mapping. The selected fault seam supplies the syscall
+    /// failure; this helper preserves the mapping and statistic observations
+    /// around that exact call instead of synthesizing a warning directly.
+    #[cfg(target_arch = "x86_64")]
+    fn m2_fault_diagnostic_relation_mapping(
+        output: &OutputOwner,
+        numa_node: i32,
+    ) -> bool {
+        let policy = VmPolicy::defaults_for_test();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        let config = MemoryConfig::from_observations(
+            PageSize::new(4096).unwrap(), 1 << 20, true, false,
+        );
+        let page = config.page_size().bytes();
+        let mut mapping = Mapping::map_for_process(
+            process, config, page, 1, MapAccess::Committed, false, None,
+        ).expect("fault-diagnostic relation begins with one explicit mapping owner");
+        let base = mapping.base().expect("fault-diagnostic mapping is live before mbind");
+        let before = subprocess.vm_statistics().snapshot();
+        apply_huge_page_numa_preference_with_mbind_warning(
+            base, numa_node, MbindWarningRoute::new(output),
+        );
+        let survives = mapping.base() == Ok(base) && subprocess.vm_statistics().snapshot() == before;
+        mapping.unmap_for_process(process, page, true)
+            .expect("best-effort mbind leaves the mapping owner releasable");
+        survives
     }
 
     #[test]
@@ -8049,6 +8324,185 @@ mod tests {
             && noncontiguous_after.committed_current
                 == noncontiguous_before.committed_current - HUGE_PAGE_SIZE as i64;
         drop(noncontiguous_fault);
+
+        #[cfg(target_arch = "x86_64")]
+        let fault_diagnostic_relation = {
+            let _environment_serial = VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK
+                .lock()
+                .expect("fault-diagnostic source environment lock is not poisoned");
+            let _environment_reset = VmPolicySourceEnvironmentReset;
+            let show_errors_on = b"mimalloc_show_errors=1\0";
+            let show_errors_off = b"mimalloc_show_errors=0\0";
+            let verbose = b"mimalloc_verbose=0\0";
+            let max_warnings = b"mimalloc_max_warnings=32\0";
+            let mut enabled_environment = [
+                show_errors_on.as_ptr().cast(), verbose.as_ptr().cast(),
+                max_warnings.as_ptr().cast(), core::ptr::null(),
+            ];
+            let mut disabled_environment = [
+                show_errors_off.as_ptr().cast(), verbose.as_ptr().cast(),
+                max_warnings.as_ptr().cast(), core::ptr::null(),
+            ];
+
+            VM_POLICY_SOURCE_ENVIRONMENT.store(enabled_environment.as_mut_ptr(), Ordering::Release);
+            // SAFETY: the source-test lock and stable vector meet the reader
+            // and process-lifetime FILE capability obligations for this
+            // single-threaded native target witness.
+            let capability = unsafe { RuntimeStderrOutput::new(m2_fault_diagnostic_musl_stderr) };
+            let mut default_output = OutputOwner::new(capability.into_default_stderr_output());
+            unsafe { default_output.initialize_source_options(vm_policy_source_environment_for_test) };
+            let default_fault = fault::install(fault::Plan::at(
+                fault::Point::NumaBind, 1, Errno::PERM,
+            ));
+            let default_mapping_survives = m2_fault_diagnostic_relation_mapping(&default_output, 62);
+            let default_mbind = default_fault.observed() == 1;
+            drop(default_fault);
+            // Keep the complete raw native `fputs(stderr)` payload between
+            // literal markers. `post_init` itself retains the source's
+            // delayed warning image plus its continuation LF for a later
+            // registration, outside this frame.
+            std::eprintln!("CRABC_MI_M2_FAULT_DIAGNOSTIC_RELATION_RUST_DEFAULT_BEGIN");
+            unsafe { default_output.post_init() };
+            std::eprintln!("CRABC_MI_M2_FAULT_DIAGNOSTIC_RELATION_RUST_DEFAULT_END");
+            // Pinned `mi_out_buf_flush(..., false)` retains the flushed
+            // warning and adds one final LF in the delayed buffer. The next
+            // registration observes that exact image outside the default
+            // `fputs(stderr)` frame.
+            let default_continuation_capture = FaultDiagnosticRelationCapture::new();
+            let default_thread_identity = thread_pointer_identity();
+            let expected_default_continuation = std::format!(
+                "mimalloc: warning: thread 0x{default_thread_identity:X}: \
+                 failed to bind huge (1GiB) pages to numa node 62 (error: 1 (0x01))\n\n"
+            );
+            unsafe {
+                default_output.register_output(
+                    Some(capture_fault_diagnostic_relation as OutputCallback),
+                    &default_continuation_capture as *const FaultDiagnosticRelationCapture
+                        as *mut c_void,
+                )
+            };
+            let default_continuation_flush = default_continuation_capture.count.load(Ordering::Acquire) == 1
+                && default_continuation_capture.fragment(0)
+                    == expected_default_continuation.as_bytes();
+
+            VM_POLICY_SOURCE_ENVIRONMENT.store(disabled_environment.as_mut_ptr(), Ordering::Release);
+            let mut gate_off_output = OutputOwner::new(unexpected_default_diagnostic_output);
+            unsafe { gate_off_output.initialize_source_options(vm_policy_source_environment_for_test) };
+            let gate_off_capture = FaultDiagnosticRelationCapture::new();
+            unsafe {
+                gate_off_output.register_output(
+                    Some(capture_fault_diagnostic_relation as OutputCallback),
+                    &gate_off_capture as *const FaultDiagnosticRelationCapture as *mut c_void,
+                )
+            };
+            gate_off_capture.reset();
+            let gate_off_fault = fault::install(fault::Plan::at(
+                fault::Point::NumaBind, 1, Errno::PERM,
+            ));
+            let gate_off_mapping_survives =
+                m2_fault_diagnostic_relation_mapping(&gate_off_output, 62);
+            let gate_off_mbind = gate_off_fault.observed() == 1;
+            drop(gate_off_fault);
+            let gate_off_no_output = gate_off_capture.count.load(Ordering::Acquire) == 0;
+
+            VM_POLICY_SOURCE_ENVIRONMENT.store(enabled_environment.as_mut_ptr(), Ordering::Release);
+            let mut custom_output = OutputOwner::new(unexpected_default_diagnostic_output);
+            unsafe { custom_output.initialize_source_options(vm_policy_source_environment_for_test) };
+            let custom_capture = FaultDiagnosticRelationCapture::new();
+            unsafe {
+                custom_output.register_output(
+                    Some(capture_fault_diagnostic_relation as OutputCallback),
+                    &custom_capture as *const FaultDiagnosticRelationCapture as *mut c_void,
+                )
+            };
+            // Custom registration flushes its empty delayed image. The next
+            // capture contains only the selected valid-node source warning.
+            custom_capture.reset();
+            let custom_fault = fault::install(fault::Plan::at(
+                fault::Point::NumaBind, 1, Errno::PERM,
+            ));
+            let custom_mapping_survives = m2_fault_diagnostic_relation_mapping(&custom_output, 62);
+            let custom_mbind = custom_fault.observed() == 1;
+            drop(custom_fault);
+            let custom_thread_identity = thread_pointer_identity();
+            let custom_fragments = custom_capture.count.load(Ordering::Acquire) == 2
+                && custom_capture.fragment(0) == std::format!(
+                    "mimalloc: warning: thread 0x{custom_thread_identity:X}: "
+                ).as_bytes()
+                && custom_capture.fragment(1)
+                    == b"failed to bind huge (1GiB) pages to numa node 62 (error: 1 (0x01))\n";
+
+            let mut invalid_output = OutputOwner::new(unexpected_default_diagnostic_output);
+            unsafe { invalid_output.initialize_source_options(vm_policy_source_environment_for_test) };
+            let invalid_capture = FaultDiagnosticRelationCapture::new();
+            unsafe {
+                invalid_output.register_output(
+                    Some(capture_fault_diagnostic_relation as OutputCallback),
+                    &invalid_capture as *const FaultDiagnosticRelationCapture as *mut c_void,
+                )
+            };
+            invalid_capture.reset();
+            let invalid_fault = fault::install(fault::Plan::at(
+                fault::Point::NumaBind, 1, Errno::PERM,
+            ));
+            let invalid_mapping_survives = m2_fault_diagnostic_relation_mapping(&invalid_output, 63);
+            let invalid_no_mbind = invalid_fault.observed() == 0;
+            drop(invalid_fault);
+            let invalid_no_output = invalid_capture.count.load(Ordering::Acquire) == 0;
+
+            // libtest prefixes the first uncaptured stdout write with its test
+            // label. Emit one LF first so the retained receipt marker remains
+            // a complete literal-LF line rather than a substring of that
+            // harness status text.
+            std::println!();
+            std::println!("CRABC_MI_M2_FAULT_DIAGNOSTIC_RELATION_RUST_TRACE_BEGIN");
+            for (name, value) in [
+                ("default_mbind", default_mbind),
+                ("default_mapping_survives", default_mapping_survives),
+                ("default_stats_survive", default_mapping_survives),
+                ("default_continuation_flush", default_continuation_flush),
+                ("gate_off_mbind", gate_off_mbind),
+                ("gate_off_no_output", gate_off_no_output),
+                ("gate_off_mapping_survives", gate_off_mapping_survives),
+                ("gate_off_stats_survive", gate_off_mapping_survives),
+                ("custom_mbind", custom_mbind),
+                ("custom_fragments", custom_fragments),
+                ("custom_mapping_survives", custom_mapping_survives),
+                ("custom_stats_survive", custom_mapping_survives),
+                ("invalid_no_mbind", invalid_no_mbind),
+                ("invalid_no_output", invalid_no_output),
+                ("invalid_mapping_survives", invalid_mapping_survives),
+                ("invalid_stats_survive", invalid_mapping_survives),
+            ] {
+                std::println!("{name}={}", usize::from(value));
+            }
+            std::println!("custom_thread_identity={custom_thread_identity}");
+            std::print!("default_continuation_hex=");
+            if default_continuation_capture.count.load(Ordering::Acquire) == 1 {
+                for byte in default_continuation_capture.fragment(0) {
+                    std::print!("{byte:02x}");
+                }
+            }
+            std::println!();
+            std::print!("custom_prefix_hex=");
+            for byte in custom_capture.fragment(0) { std::print!("{byte:02x}"); }
+            std::println!();
+            std::print!("custom_body_hex=");
+            for byte in custom_capture.fragment(1) { std::print!("{byte:02x}"); }
+            std::println!();
+            std::println!("CRABC_MI_M2_FAULT_DIAGNOSTIC_RELATION_RUST_TRACE_END");
+            default_mbind && default_mapping_survives && default_continuation_flush
+                && gate_off_mbind && gate_off_no_output
+                && gate_off_mapping_survives && custom_mbind && custom_fragments
+                && custom_mapping_survives && invalid_no_mbind && invalid_no_output
+                && invalid_mapping_survives
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let fault_diagnostic_relation = true;
+        assert!(
+            fault_diagnostic_relation,
+            "the selected source mbind receiver preserves its gate, mapping, and two-fragment delivery relation",
+        );
 
         let placement_fault = fault::install(fault::Plan::at(
             fault::Point::NumaBind,

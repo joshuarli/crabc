@@ -22,6 +22,8 @@ use crabc_core::Errno;
 use super::ProcessArenaBacking;
 use crate::arena::{ArenaId, ManageArenaError};
 use crate::meta::{MetaAllocation, MetaAllocator, MetaError, MetaRelease, MetaReleaseFailure};
+#[cfg(target_arch = "x86_64")]
+use crate::diagnostic_output::MbindWarningRoute;
 use crate::os::{HugeOsAllocation, HugeOsAllocationOutcome, HugeOsAllocationStop,
     HugeOsRawReleaseRetry, HugeOsRejectedPrimitive, HugeOsReleaseFailure, MemoryConfig, VmProcess};
 use crate::random::TheapRandomImage;
@@ -251,6 +253,51 @@ impl ProcessArenaBacking {
         results
     }
 
+    #[cfg(target_arch = "x86_64")]
+    /// Selected source startup with a mandatory borrowed failed-`mbind`
+    /// receiver. Its regular reservation and outcome ownership are identical
+    /// to [`Self::reserve_startup_options`].
+    ///
+    /// # Safety
+    /// The ordinary startup requirements apply; `warning` remains borrowed
+    /// from the retained process diagnostic owner through this full route.
+    pub(crate) unsafe fn reserve_startup_options_with_mbind_warning(
+        &'static self, process: VmProcess<'static>, config: MemoryConfig,
+        metadata: Pin<&'static MetaAllocator>, mut random: Option<&mut TheapRandomImage>,
+        warning: MbindWarningRoute<'_>,
+    ) -> StartupArenaReservationOutcomes {
+        let mut results = StartupArenaReservationOutcomes::empty();
+        let pages_option = process.policy().reserve_huge_os_pages();
+        if pages_option != 0 {
+            let pages = pages_option.clamp(0, 128 * 1024) as usize;
+            let node = process.policy().reserve_huge_os_pages_at().clamp(-1, i32::MAX as i64) as i32;
+            let timeout = pages * 500;
+            let result = if node != -1 {
+                unsafe { self.reserve_huge_at_with_mbind_warning(process, config, metadata, pages, node,
+                    timeout, false, random.as_deref_mut(), warning) }.map(|_| ())
+            } else {
+                unsafe { self.reserve_huge_interleaved_with_mbind_warning(process, config, metadata, pages, 0,
+                    timeout, random.as_deref_mut(), warning) }
+            };
+            results.huge = Some(result.map_err(|_| Errno::NOMEM));
+        }
+        let regular_kib = process.policy().reserve_os_memory_kib();
+        if regular_kib > 0 {
+            let size = (regular_kib as usize).wrapping_mul(crate::config::KIB);
+            match unsafe {
+                self.reserve_os_memory_for_process(process, config, size,
+                    crate::os::MapAccess::Committed, true, random.as_deref_mut())
+            } {
+                Ok(arena) => {
+                    results.regular = Some(Ok(()));
+                    results.regular_arena = Some(arena);
+                }
+                Err(error) => results.regular = Some(Err(error)),
+            }
+        }
+        results
+    }
+
     /// Reserves and installs pinned `mi_reserve_huge_os_pages_at_ex` backing.
     /// Zero pages succeeds without NUMA lookup or allocation. A nonempty
     /// partial primitive prefix is a successful reservation if manage accepts
@@ -275,6 +322,28 @@ impl ProcessArenaBacking {
         } else { numa_node };
         let outcome = HugeOsAllocation::allocate_for_process(process, config, pages,
             numa_node, timeout_milliseconds as i64, random);
+        unsafe { self.finish_huge_reservation(config, metadata, numa_node, exclusive, outcome) }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    /// Same source huge reservation with the process-owned failed-`mbind`
+    /// warning route threaded to the physical primitive mapping call.
+    pub(crate) unsafe fn reserve_huge_at_with_mbind_warning(
+        &'static self, process: VmProcess<'static>, config: MemoryConfig,
+        metadata: Pin<&'static MetaAllocator>, pages: usize, numa_node: i32,
+        timeout_milliseconds: usize, exclusive: bool, random: Option<&mut TheapRandomImage>,
+        warning: MbindWarningRoute<'_>,
+    ) -> Result<Option<ArenaId>, HugeArenaReserveError> {
+        if pages == 0 { return Ok(None); }
+        let _guard = self.huge_reservation_lock.lock().map_err(HugeArenaReserveError::Lock)?;
+        if self.huge_cleanup_retained.load(Ordering::Acquire) {
+            return Err(HugeArenaReserveError::PendingCleanup);
+        }
+        let numa_node = if numa_node < -1 { -1 } else if numa_node >= 0 {
+            (numa_node as usize % process.policy().numa_node_count()) as i32
+        } else { numa_node };
+        let outcome = HugeOsAllocation::allocate_for_process_with_mbind_warning(process, config,
+            pages, numa_node, timeout_milliseconds as i64, random, warning);
         unsafe { self.finish_huge_reservation(config, metadata, numa_node, exclusive, outcome) }
     }
 
@@ -359,6 +428,23 @@ impl ProcessArenaBacking {
             timeout_milliseconds, |pages, node, timeout| unsafe {
                 self.reserve_huge_at(process, config, metadata, pages, node, timeout, false,
                     random.as_deref_mut()).map(|_| ())
+            })
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    /// Same interleave policy as [`Self::reserve_huge_interleaved`] with the
+    /// mandatory startup warning route carried to every selected node attempt.
+    pub(crate) unsafe fn reserve_huge_interleaved_with_mbind_warning(
+        &'static self, process: VmProcess<'static>, config: MemoryConfig,
+        metadata: Pin<&'static MetaAllocator>, pages: usize, numa_nodes: usize,
+        timeout_milliseconds: usize, mut random: Option<&mut TheapRandomImage>,
+        warning: MbindWarningRoute<'_>,
+    ) -> Result<(), HugeArenaReserveError> {
+        if pages == 0 { return Ok(()); }
+        reserve_huge_interleaved_with(pages, numa_nodes, process.policy().numa_node_count(),
+            timeout_milliseconds, |pages, node, timeout| unsafe {
+                self.reserve_huge_at_with_mbind_warning(process, config, metadata, pages, node,
+                    timeout, false, random.as_deref_mut(), warning).map(|_| ())
             })
     }
 }

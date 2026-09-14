@@ -113,6 +113,8 @@ pub use test_context::{
 // source-shaped owners without depending on libc or public pthread APIs.
 #[doc(hidden)]
 pub mod __crabc_runtime {
+    #[cfg(target_arch = "x86_64")]
+    pub use crate::diagnostic_output::RuntimeStderrOutput;
     #[cfg(feature = "native-runtime-test-audit")]
     pub use crate::runtime_lifecycle::{
         NativeRuntimeFirstArenaPolicyAudit, NativeRuntimeForkAdmissionAudit, NativeRuntimeLifecycleAudit,

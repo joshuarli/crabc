@@ -94,6 +94,8 @@ use crate::meta::MetaAllocation;
 #[cfg(any(test, feature = "native-runtime-test-audit"))]
 use crate::meta::MetaAllocator;
 use crate::os::{MemoryConfig, PageSize, StartupInput};
+#[cfg(target_arch = "x86_64")]
+use crate::diagnostic_output::{ProcessDiagnosticInputs, RuntimeStderrOutput};
 use crate::process_init::{ProcessMainInitializationStorage, ProcessMainThread};
 use crate::process_arena::{
     ProcessPageArenaLease, ProcessPageArenaLeaseError, ProcessSharedArenaStorage,
@@ -3740,6 +3742,100 @@ impl RuntimeProcessStorage {
         }
     }
 
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    fn initialize(&'static self, page_size_bytes: usize, stderr_output: RuntimeStderrOutput) -> bool {
+        let default_stderr_output = stderr_output.into_default_stderr_output();
+        match self.state.compare_exchange(
+            PROCESS_COLD,
+            PROCESS_INITIALIZING,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => {}
+            Err(PROCESS_ACTIVE) => return true,
+            Err(_) => return false,
+        }
+
+        let Some(page_size) = PageSize::new(page_size_bytes) else {
+            self.retain();
+            return false;
+        };
+        // Source `mi_process_init_once` observes its environment options
+        // before `_mi_os_init` builds the process memory configuration. The
+        // runtime owns that raw-environ read while startup still owns a stable
+        // initial vector; the resolved image then stays beside this exact
+        // ticket-zero subprocess for its process lifetime.
+        let options = source_vm_options_from_process_environment();
+        let config = MemoryConfig::detect(StartupInput::new(page_size));
+        // SAFETY: libc calls this only after initial TLS exists and before
+        // application constructors. This static owner retains ticket zero for
+        // the process lifetime, and no competing runtime lifecycle call can
+        // pass the INITIALIZING state above.
+        let owner = unsafe {
+            ProcessMainInitializationStorage::global()
+                .initialize_with_vm_options_from_source_environment(
+                    config,
+                    options,
+                    // SAFETY: the runtime winning startup owns stable raw
+                    // environ observation and the public x86 capability owns
+                    // its FILE provider for this exact process lifetime.
+                    unsafe { ProcessDiagnosticInputs::new(process_environment_pointer, default_stderr_output) },
+                )
+        };
+        let Ok(mut owner) = owner else {
+            self.retain();
+            return false;
+        };
+
+        #[cfg(feature = "native-runtime-test-audit")]
+        let initial_tld_numa_node = owner
+            .attachment_mut()
+            .ok()
+            .and_then(|attachment| attachment.tld().ok())
+            .map(|tld| tld.numa_node())
+            .unwrap_or(INITIAL_TLD_NUMA_NODE_UNAVAILABLE);
+
+        // SAFETY: this successful COLD -> INITIALIZING winner is the sole
+        // writer, and `owner` is moved into its final static process slot
+        // before PROCESS_ACTIVE makes it visible to worker threads.
+        unsafe { (*self.owner.get()).write(owner) };
+        // A shared main-Heap lease may only be minted by the ticket-zero
+        // owner on its own thread. Store that immutable process witness now;
+        // later pthread workers may copy it but must never try to mint it
+        // while their TPIDR identity differs from the initial attachment.
+        let owner = unsafe { (&*self.owner.get()).assume_init_ref() };
+        let Ok(main_heap) = owner.shared_main_heap_lease() else {
+            self.retain();
+            return false;
+        };
+        let Some(initial_thread) = current_thread_identity() else {
+            self.retain();
+            return false;
+        };
+        // SAFETY: the same sole initializer writes this second final slot
+        // before the Release publication below.
+        unsafe { (*self.main_heap.get()).write(main_heap) };
+        // The initial thread identity is written before PROCESS_ACTIVE's
+        // Release publication. It is an immutable witness: a quiescent child
+        // retains the copied TPIDR_EL0 image, while every fresh pthread gets a
+        // distinct image and cannot pass the fork-preservation check.
+        self.initial_thread_identity
+            .store(initial_thread.get(), Ordering::Release);
+        #[cfg(feature = "native-runtime-test-audit")]
+        self.initial_tld_numa_node
+            .store(initial_tld_numa_node, Ordering::Release);
+        self.state.store(PROCESS_ACTIVE, Ordering::Release);
+        true
+    }
+
+    #[cfg(all(target_arch = "x86_64", miri))]
+    fn initialize(&'static self, _page_size_bytes: usize, _stderr_output: RuntimeStderrOutput) -> bool {
+        // Miri has no raw `environ` model. Do not activate a parallel/no-op
+        // diagnostic startup path merely to consume the required x86 input.
+        false
+    }
+
+    #[cfg(target_arch = "aarch64")]
     fn initialize(&'static self, page_size_bytes: usize) -> bool {
         match self.state.compare_exchange(
             PROCESS_COLD,
@@ -3767,7 +3863,6 @@ impl RuntimeProcessStorage {
         // application constructors. This static owner retains ticket zero for
         // the process lifetime, and no competing runtime lifecycle call can
         // pass the INITIALIZING state above.
-        #[cfg(not(miri))]
         let owner = unsafe {
             ProcessMainInitializationStorage::global()
                 .initialize_with_vm_options_from_source_environment(
@@ -3775,10 +3870,6 @@ impl RuntimeProcessStorage {
                     options,
                     process_environment_pointer,
                 )
-        };
-        #[cfg(miri)]
-        let owner = unsafe {
-            ProcessMainInitializationStorage::global().initialize_with_vm_options(config, options)
         };
         let Ok(mut owner) = owner else {
             self.retain();
@@ -6550,6 +6641,12 @@ fn with_current_thread_native_persistent_pointer<R>(
 /// for this process; the existing C mimalloc backend remains selected.
 #[doc(hidden)]
 #[inline]
+#[cfg(target_arch = "x86_64")]
+pub fn initialize_process(page_size_bytes: usize, stderr_output: RuntimeStderrOutput) -> bool {
+    RUNTIME_PROCESS.initialize(page_size_bytes, stderr_output)
+}
+
+#[cfg(target_arch = "aarch64")]
 pub fn initialize_process(page_size_bytes: usize) -> bool {
     RUNTIME_PROCESS.initialize(page_size_bytes)
 }

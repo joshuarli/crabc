@@ -498,6 +498,8 @@ typedef struct huge_branch_probe_s {
   unsigned long mbind_mask_value;
   unsigned long mbind_maxnode;
   unsigned mbind_flags;
+  long mbind_result;
+  int mbind_errno;
 } huge_branch_probe_t;
 
 static huge_branch_probe_t huge_branch_probe;
@@ -505,6 +507,8 @@ static huge_branch_probe_case_t huge_branch_child_case;
 
 #if defined(CRABC_M2_FAULT_SEAM_INVENTORY_PROFILE)
 static size_t huge_branch_registration_callback_calls;
+static size_t huge_branch_registration_fragment_length;
+static char huge_branch_registration_fragment[192];
 
 static bool m2_fault_inventory_warning_prefix(const char* message) {
   char expected[96];
@@ -526,10 +530,21 @@ static size_t m2_fault_inventory_copy_fragment(char* destination, size_t capacit
   return length;
 }
 
+static bool m2_fault_inventory_default_continuation(const char* message) {
+  char expected[192];
+  _mi_snprintf(expected, sizeof(expected),
+      "mimalloc: warning: thread 0x%tx: "
+      "failed to bind huge (1GiB) pages to numa node 62 (error: 1 (0x01))\n\n",
+      (uintptr_t)_mi_thread_id());
+  return message != NULL && strcmp(message, expected) == 0;
+}
+
 static void m2_fault_inventory_output(const char* message, void* argument) {
   (void)argument;
   if (!huge_branch_probe.active) {
     huge_branch_registration_callback_calls++;
+    huge_branch_registration_fragment_length = m2_fault_inventory_copy_fragment(
+        huge_branch_registration_fragment, sizeof(huge_branch_registration_fragment), message);
     return;
   }
   const size_t index = huge_branch_probe.diagnostic_calls++;
@@ -542,7 +557,7 @@ static void m2_fault_inventory_output(const char* message, void* argument) {
     huge_branch_probe.diagnostic_second_length = m2_fault_inventory_copy_fragment(
         huge_branch_probe.diagnostic_second, sizeof(huge_branch_probe.diagnostic_second), message);
     huge_branch_probe.diagnostic_body_second = message != NULL && strcmp(message,
-        "failed to bind huge (1GiB) pages to numa node 0 (error: 1 (0x01))\n") == 0;
+        "failed to bind huge (1GiB) pages to numa node 62 (error: 1 (0x01))\n") == 0;
   }
 }
 
@@ -563,6 +578,8 @@ static long m2_fault_inventory_mbind_syscall(
   huge_branch_probe.mbind_mask_value = mask == NULL ? 0 : *mask;
   huge_branch_probe.mbind_maxnode = maxnode;
   huge_branch_probe.mbind_flags = flags;
+  huge_branch_probe.mbind_result = -1;
+  huge_branch_probe.mbind_errno = EPERM;
   errno = EPERM;
   return -1;
 }
@@ -2786,7 +2803,7 @@ static int run_huge_branch_case_child(int record_descriptor) {
     size_t suppressed_size = SIZE_MAX;
     mi_memid_t suppressed_memid = _mi_memid_none();
     void* const suppressed = _mi_os_alloc_huge_os_pages(
-        subproc, 1, 0, 0, &suppressed_pages, &suppressed_size, &suppressed_memid);
+        subproc, 1, 62, 0, &suppressed_pages, &suppressed_size, &suppressed_memid);
     const huge_branch_probe_t suppressed_probe = huge_branch_probe;
     huge_branch_probe.active = false;
     const bool suppressed_relation = suppressed != NULL && suppressed_pages == 1
@@ -2808,7 +2825,7 @@ static int run_huge_branch_case_child(int record_descriptor) {
     size_t size = SIZE_MAX;
     mi_memid_t memid = _mi_memid_none();
     void* const placed = _mi_os_alloc_huge_os_pages(
-        subproc, 1, 0, 0, &pages, &size, &memid);
+        subproc, 1, 62, 0, &pages, &size, &memid);
     const huge_branch_probe_t probe = huge_branch_probe;
     huge_branch_probe.active = false;
     complete = diagnostics_suppressed && suppressed_relation && diagnostics_enabled
@@ -2818,7 +2835,7 @@ static int run_huge_branch_case_child(int record_descriptor) {
         && huge_branch_anonymous_fallback_arguments(&probe, 1, false)
         && probe.syscall_calls == 1 && probe.mbind_start == placed
         && probe.mbind_length == MI_GiB && probe.mbind_mode == MPOL_PREFERRED
-        && probe.mbind_mask_nonnull && probe.mbind_mask_value == 1UL
+        && probe.mbind_mask_nonnull && probe.mbind_mask_value == (1UL << 62)
         && probe.mbind_maxnode == 8 * MI_INTPTR_SIZE && probe.mbind_flags == 0
         && probe.diagnostic_calls == 2 && probe.diagnostic_prefix_first
         && probe.diagnostic_body_second
@@ -2842,7 +2859,7 @@ static int run_huge_branch_case_child(int record_descriptor) {
     huge_branch_case_diagnostic.mbind_tuple = probe.syscall_calls == 1
         && probe.mbind_start == placed && probe.mbind_length == MI_GiB
         && probe.mbind_mode == MPOL_PREFERRED && probe.mbind_mask_nonnull
-        && probe.mbind_mask_value == 1UL && probe.mbind_maxnode == 8 * MI_INTPTR_SIZE
+        && probe.mbind_mask_value == (1UL << 62) && probe.mbind_maxnode == 8 * MI_INTPTR_SIZE
         && probe.mbind_flags == 0;
     huge_branch_case_diagnostic.diagnostics = probe.diagnostic_calls == 2
         && probe.diagnostic_prefix_first && probe.diagnostic_body_second;
@@ -2968,6 +2985,196 @@ static bool capture_huge_branch_case(
       "huge branch exact source child", run_huge_branch_case_child,
       result, sizeof(*result));
 }
+
+#if defined(CRABC_M2_FAULT_SEAM_INVENTORY_PROFILE)
+/* This fixed child extends the existing source-included huge allocation
+ * witness. It drives only `prim.c:630-645` through its actual caller with the
+ * profile's one `mbind` seam: valid node 62 and forced EPERM, gate off/on,
+ * and invalid node 63. The anonymous raw mapping is an import-boundary test
+ * stand-in; it never claims a hardware hugepage or physical NUMA placement. */
+typedef struct fault_diagnostic_relation_record_s {
+  bool default_mbind;
+  bool default_mapping_survives;
+  bool default_stats_survive;
+  bool default_continuation_flush;
+  bool gate_off_mbind;
+  bool gate_off_no_output;
+  bool gate_off_mapping_survives;
+  bool gate_off_stats_survive;
+  bool custom_mbind;
+  bool custom_fragments;
+  bool custom_mapping_survives;
+  bool custom_stats_survive;
+  bool invalid_no_mbind;
+  bool invalid_no_output;
+  bool invalid_mapping_survives;
+  bool invalid_stats_survive;
+  size_t default_continuation_length;
+  char default_continuation[192];
+  size_t custom_prefix_length;
+  size_t custom_body_length;
+  char custom_prefix[96];
+  char custom_body[192];
+  uintptr_t custom_thread_identity;
+} fault_diagnostic_relation_record_t;
+
+static bool fault_diagnostic_relation_probe_is_valid(
+    const huge_branch_probe_t* probe, void* mapping) {
+  return probe->valid && probe->syscall_calls == 1
+      && probe->mbind_result == -1 && probe->mbind_errno == EPERM
+      && probe->mbind_start == mapping && probe->mbind_length == MI_GiB
+      && probe->mbind_mode == MPOL_PREFERRED && probe->mbind_mask_nonnull
+      && probe->mbind_mask_value == (1UL << 62)
+      && probe->mbind_maxnode == 8 * MI_INTPTR_SIZE && probe->mbind_flags == 0;
+}
+
+static int run_fault_diagnostic_relation_child(int record_descriptor) {
+  fault_diagnostic_relation_record_t record = {0};
+  mi_process_init();
+  mi_subproc_t* const subproc = _mi_subproc_main();
+  if (subproc == NULL) return 1;
+
+  const int64_t reserved_initial = current_reserved(subproc);
+  const int64_t committed_initial = current_committed(subproc);
+  mi_option_set_enabled(mi_option_verbose, false);
+  mi_option_set_enabled(mi_option_show_errors, true);
+
+  huge_branch_probe = (huge_branch_probe_t){
+      .active = true, .valid = true, .selected = HUGE_BRANCH_PROBE_PLACEMENT_FAILURE,
+  };
+  size_t pages = SIZE_MAX;
+  size_t size = SIZE_MAX;
+  mi_memid_t memid = _mi_memid_none();
+  void* const default_mapping = _mi_os_alloc_huge_os_pages(
+      subproc, 1, 62, 0, &pages, &size, &memid);
+  const huge_branch_probe_t default_probe = huge_branch_probe;
+  huge_branch_probe.active = false;
+  record.default_mbind = default_mapping != NULL
+      && fault_diagnostic_relation_probe_is_valid(&default_probe, default_mapping);
+  record.default_mapping_survives = default_mapping != NULL && pages == 1 && size == MI_GiB
+      && memid.memkind == MI_MEM_OS_HUGE && memid.mem.os.base == default_mapping;
+  record.default_stats_survive = current_reserved(subproc) == reserved_initial + (int64_t)MI_GiB
+      && current_committed(subproc) == committed_initial + (int64_t)MI_GiB;
+
+  /* The exact post-init transition flushes this delayed source warning through
+   * `fputs(stderr)` between literal markers. It then leaves one continuation
+   * LF delayed for the following custom registration; that byte is not folded
+   * into this default frame. */
+  fprintf(stderr, "CRABC_MI_M2_FAULT_DIAGNOSTIC_RELATION_C_DEFAULT_BEGIN\n");
+  fflush(stderr);
+  _mi_options_post_init();
+  fprintf(stderr, "CRABC_MI_M2_FAULT_DIAGNOSTIC_RELATION_C_DEFAULT_END\n");
+  fflush(stderr);
+  if (default_mapping != NULL) _mi_os_free(subproc, default_mapping, size, memid);
+  if (current_reserved(subproc) != reserved_initial
+      || current_committed(subproc) != committed_initial) return 2;
+
+  /* `mi_out_buf_flush(..., false)` retains the flushed warning plus a final
+   * continuation LF. Registration observes that exact delayed image while
+   * inactive before the explicit custom cases below. */
+  huge_branch_registration_callback_calls = 0;
+  huge_branch_registration_fragment_length = 0;
+  huge_branch_registration_fragment[0] = '\0';
+  mi_register_output(m2_fault_inventory_output, NULL);
+  record.default_continuation_flush = huge_branch_registration_callback_calls == 1
+      && m2_fault_inventory_default_continuation(huge_branch_registration_fragment);
+  record.default_continuation_length = huge_branch_registration_fragment_length;
+  memcpy(record.default_continuation, huge_branch_registration_fragment,
+      sizeof(record.default_continuation));
+  huge_branch_probe = (huge_branch_probe_t){
+      .active = true, .valid = true, .selected = HUGE_BRANCH_PROBE_PLACEMENT_FAILURE,
+  };
+  mi_option_set_enabled(mi_option_show_errors, false);
+  pages = SIZE_MAX;
+  size = SIZE_MAX;
+  memid = _mi_memid_none();
+  void* const gate_off_mapping = _mi_os_alloc_huge_os_pages(
+      subproc, 1, 62, 0, &pages, &size, &memid);
+  const huge_branch_probe_t gate_off_probe = huge_branch_probe;
+  huge_branch_probe.active = false;
+  record.gate_off_mbind = gate_off_mapping != NULL
+      && fault_diagnostic_relation_probe_is_valid(&gate_off_probe, gate_off_mapping);
+  record.gate_off_no_output = gate_off_probe.diagnostic_calls == 0;
+  record.gate_off_mapping_survives = gate_off_mapping != NULL && pages == 1 && size == MI_GiB
+      && memid.memkind == MI_MEM_OS_HUGE && memid.mem.os.base == gate_off_mapping;
+  record.gate_off_stats_survive = current_reserved(subproc) == reserved_initial + (int64_t)MI_GiB
+      && current_committed(subproc) == committed_initial + (int64_t)MI_GiB;
+  if (gate_off_mapping != NULL) _mi_os_free(subproc, gate_off_mapping, size, memid);
+  if (current_reserved(subproc) != reserved_initial
+      || current_committed(subproc) != committed_initial) return 3;
+
+  mi_option_set_enabled(mi_option_show_errors, true);
+  huge_branch_probe = (huge_branch_probe_t){
+      .active = true, .valid = true, .selected = HUGE_BRANCH_PROBE_PLACEMENT_FAILURE,
+  };
+  pages = SIZE_MAX;
+  size = SIZE_MAX;
+  memid = _mi_memid_none();
+  void* const custom_mapping = _mi_os_alloc_huge_os_pages(
+      subproc, 1, 62, 0, &pages, &size, &memid);
+  const huge_branch_probe_t custom_probe = huge_branch_probe;
+  huge_branch_probe.active = false;
+  record.custom_mbind = custom_mapping != NULL
+      && fault_diagnostic_relation_probe_is_valid(&custom_probe, custom_mapping);
+  record.custom_fragments = custom_probe.diagnostic_calls == 2
+      && custom_probe.diagnostic_prefix_first && custom_probe.diagnostic_body_second;
+  record.custom_mapping_survives = custom_mapping != NULL && pages == 1 && size == MI_GiB
+      && memid.memkind == MI_MEM_OS_HUGE && memid.mem.os.base == custom_mapping;
+  record.custom_stats_survive = current_reserved(subproc) == reserved_initial + (int64_t)MI_GiB
+      && current_committed(subproc) == committed_initial + (int64_t)MI_GiB;
+  record.custom_prefix_length = custom_probe.diagnostic_first_length;
+  record.custom_body_length = custom_probe.diagnostic_second_length;
+  memcpy(record.custom_prefix, custom_probe.diagnostic_first, sizeof(record.custom_prefix));
+  memcpy(record.custom_body, custom_probe.diagnostic_second, sizeof(record.custom_body));
+  record.custom_thread_identity = (uintptr_t)_mi_thread_id();
+  if (custom_mapping != NULL) _mi_os_free(subproc, custom_mapping, size, memid);
+  if (current_reserved(subproc) != reserved_initial
+      || current_committed(subproc) != committed_initial) return 4;
+
+  huge_branch_probe = (huge_branch_probe_t){
+      .active = true, .valid = true, .selected = HUGE_BRANCH_PROBE_PLACEMENT_FAILURE,
+  };
+  pages = SIZE_MAX;
+  size = SIZE_MAX;
+  memid = _mi_memid_none();
+  void* const invalid_mapping = _mi_os_alloc_huge_os_pages(
+      subproc, 1, 63, 0, &pages, &size, &memid);
+  const huge_branch_probe_t invalid_probe = huge_branch_probe;
+  huge_branch_probe.active = false;
+  record.invalid_no_mbind = invalid_mapping != NULL && invalid_probe.syscall_calls == 0;
+  record.invalid_no_output = invalid_probe.diagnostic_calls == 0;
+  record.invalid_mapping_survives = invalid_mapping != NULL && pages == 1 && size == MI_GiB
+      && memid.memkind == MI_MEM_OS_HUGE && memid.mem.os.base == invalid_mapping;
+  record.invalid_stats_survive = current_reserved(subproc) == reserved_initial + (int64_t)MI_GiB
+      && current_committed(subproc) == committed_initial + (int64_t)MI_GiB;
+  if (invalid_mapping != NULL) _mi_os_free(subproc, invalid_mapping, size, memid);
+  if (current_reserved(subproc) != reserved_initial
+      || current_committed(subproc) != committed_initial) return 5;
+
+  const bool complete = record.default_mbind && record.default_mapping_survives
+      && record.default_stats_survive && record.default_continuation_flush
+      && record.gate_off_mbind && record.gate_off_no_output
+      && record.gate_off_mapping_survives && record.gate_off_stats_survive
+      && record.custom_mbind && record.custom_fragments && record.custom_mapping_survives
+      && record.custom_stats_survive && record.invalid_no_mbind && record.invalid_no_output
+      && record.invalid_mapping_survives && record.invalid_stats_survive;
+  if (!write_all(record_descriptor, &record, sizeof(record))) return 6;
+  return complete ? 0 : 7;
+}
+
+static bool capture_fault_diagnostic_relation_child(
+    fault_diagnostic_relation_record_t* record) {
+  return capture_large_page_retry_child(
+      "fault diagnostic relation child", run_fault_diagnostic_relation_child,
+      record, sizeof(*record));
+}
+
+static void fault_diagnostic_relation_print_hex(const char* bytes, size_t length) {
+  for (size_t index = 0; index < length; index++) {
+    printf("%02x", (unsigned)(unsigned char)bytes[index]);
+  }
+}
+#endif
 
 #if defined(CRABC_M2_FAULT_SEAM_HUGE_DIAGNOSTIC_TEST)
 /* Unlike the accepting matrix, this direct control retains a false result.
@@ -3527,7 +3734,9 @@ int main(void) {
  * callback and requires its one selected source warning. */
 int main(void) {
   huge_branch_matrix_record_t record = {0};
+  fault_diagnostic_relation_record_t diagnostic = {0};
   if (!capture_huge_branch_matrix_child(&record)) return 1;
+  if (!capture_fault_diagnostic_relation_child(&diagnostic)) return 2;
   puts("CRABC_MI_M2_FAULT_SEAM_INVENTORY_C_TRACE_BEGIN");
   U("m2.fault.c.huge.partial_primitive_failure_retains_one_os_huge_owner_and_stats",
       record.partial_primitive_failure_retains_one_os_huge_owner_and_stats);
@@ -3540,6 +3749,35 @@ int main(void) {
   U("m2.fault.c.huge.free_continues_after_failed_page_and_applies_source_stats",
       record.free_continues_after_failed_page_and_applies_source_stats);
   puts("CRABC_MI_M2_FAULT_SEAM_INVENTORY_C_TRACE_END");
+  puts("CRABC_MI_M2_FAULT_DIAGNOSTIC_RELATION_C_TRACE_BEGIN");
+  U("default_mbind", diagnostic.default_mbind);
+  U("default_mapping_survives", diagnostic.default_mapping_survives);
+  U("default_stats_survive", diagnostic.default_stats_survive);
+  U("default_continuation_flush", diagnostic.default_continuation_flush);
+  U("gate_off_mbind", diagnostic.gate_off_mbind);
+  U("gate_off_no_output", diagnostic.gate_off_no_output);
+  U("gate_off_mapping_survives", diagnostic.gate_off_mapping_survives);
+  U("gate_off_stats_survive", diagnostic.gate_off_stats_survive);
+  U("custom_mbind", diagnostic.custom_mbind);
+  U("custom_fragments", diagnostic.custom_fragments);
+  U("custom_mapping_survives", diagnostic.custom_mapping_survives);
+  U("custom_stats_survive", diagnostic.custom_stats_survive);
+  U("invalid_no_mbind", diagnostic.invalid_no_mbind);
+  U("invalid_no_output", diagnostic.invalid_no_output);
+  U("invalid_mapping_survives", diagnostic.invalid_mapping_survives);
+  U("invalid_stats_survive", diagnostic.invalid_stats_survive);
+  printf("custom_thread_identity=%zu\n", (size_t)diagnostic.custom_thread_identity);
+  fputs("default_continuation_hex=", stdout);
+  fault_diagnostic_relation_print_hex(
+      diagnostic.default_continuation, diagnostic.default_continuation_length);
+  fputc('\n', stdout);
+  fputs("custom_prefix_hex=", stdout);
+  fault_diagnostic_relation_print_hex(diagnostic.custom_prefix, diagnostic.custom_prefix_length);
+  fputc('\n', stdout);
+  fputs("custom_body_hex=", stdout);
+  fault_diagnostic_relation_print_hex(diagnostic.custom_body, diagnostic.custom_body_length);
+  fputc('\n', stdout);
+  puts("CRABC_MI_M2_FAULT_DIAGNOSTIC_RELATION_C_TRACE_END");
   return 0;
 }
 

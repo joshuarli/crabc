@@ -1,9 +1,12 @@
+#[path = "support/native_runtime.rs"]
+mod native_runtime_test_support;
+
 use std::sync::mpsc;
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult,
     ThreadFinishResult, TicketZeroPageAllocationResult, TicketZeroPageFreeResult,
-    attach_current_thread, finish_current_thread_native_after_user_destructors, initialize_process,
+    attach_current_thread, finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, prepare_native_later_thread_arena, ticket_zero_allocate,
     ticket_zero_free,
 };
@@ -25,7 +28,7 @@ fn native_aggregate_reclaims_its_final_mapped_regular_member_before_b_finishes()
     // shared `--lib` unit-test process: a second initialization would test
     // the intentional one-shot rejection, not aggregate reclamation.
     assert!(
-        initialize_process(current_page_size()),
+        native_runtime_test_support::initialize(current_page_size()),
         "the native runtime initializes before its aggregate-reclaim witness"
     );
     assert!(

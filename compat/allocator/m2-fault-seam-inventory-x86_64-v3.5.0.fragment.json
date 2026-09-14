@@ -468,14 +468,6 @@
         ]
       },
       {
-        "id": "unqualified-fault-diagnostic-relation",
-        "source_scope": "src/options.c:415-433 mi_register_output and 540-550 _mi_warning_message after src/init.c:537-548 option initialization.",
-        "required_evidence": [
-          "current-source fault warning delivery through the private Rust diagnostic_output owner",
-          "source-faithful warning delivery/ordering evidence"
-        ]
-      },
-      {
         "id": "remaining-ambient-and-hardware-fault-receivers",
         "source_scope": "Ambient option/detection, hardware huge-page success, physical NUMA placement, generic callbacks/statistics, and unselected OS/PageMap callers.",
         "required_evidence": [
@@ -494,7 +486,7 @@
     ],
     "remaining_conditions": [
       "Metadata-map publication and OsAligned claim-to-publication receivers remain stopped and unadmitted.",
-      "The private Rust diagnostic_output owner is partial; this C-only fault warning row does not qualify its warning delivery/ordering relation.",
+      "The selected node-62 fault diagnostic relation is source-bound and private; general diagnostic receivers, FILE parity, and recursive output remain unqualified.",
       "Ambient hardware huge-page success, physical NUMA placement, unselected callers, and general callback/statistics owners remain unqualified.",
       "The fault-injection component and M2 remain partial."
     ]

@@ -3,11 +3,16 @@
 // no client, page, owner, route, or scheduler capability.
 #![cfg(feature = "native-runtime-test-audit")]
 
+#[path = "support/native_runtime.rs"]
+mod native_runtime_test_support;
+
+
+
 use std::sync::mpsc;
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
-    attach_current_thread, finish_current_thread_native_after_user_destructors, initialize_process,
+    attach_current_thread, finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, native_runtime_lifecycle_test_audit, native_usable_size,
 };
 
@@ -37,7 +42,7 @@ fn allocate_aligned_current(request: usize, alignment: usize) -> core::ptr::NonN
 #[test]
 fn native_usable_size_observes_aligned_initial_and_later_clients_from_foreign_threads() {
     assert!(
-        initialize_process(current_page_size()),
+        native_runtime_test_support::initialize(current_page_size()),
         "the native runtime initializes before the pointer-observer witness"
     );
 

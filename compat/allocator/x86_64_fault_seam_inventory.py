@@ -19,13 +19,16 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import stat
 import sys
 from typing import Any, Mapping, Sequence
 
 
 SCHEMA = "crabc-mimalloc-x86_64-fault-seam-inventory-evidence"
-FORMAT = 1
+# Format 2 adds the current validated fragment projection. A format-1 C-only
+# receipt cannot be replayed as the selected private diagnostic receiver.
+FORMAT = 2
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "compat/allocator/m2_vm_x86_64.c"
 REPORT_DEFAULT = ROOT / "compat/reports/allocator/x86_64/fault-seam-inventory.json"
@@ -48,6 +51,14 @@ C_TRACE_BEGIN = "CRABC_MI_M2_FAULT_SEAM_INVENTORY_C_TRACE_BEGIN"
 C_TRACE_END = "CRABC_MI_M2_FAULT_SEAM_INVENTORY_C_TRACE_END"
 RUST_TRACE_BEGIN = "CRABC_MI_M2_FAULT_SEAM_INVENTORY_RUST_TRACE_BEGIN"
 RUST_TRACE_END = "CRABC_MI_M2_FAULT_SEAM_INVENTORY_RUST_TRACE_END"
+FAULT_DIAGNOSTIC_C_TRACE_BEGIN = "CRABC_MI_M2_FAULT_DIAGNOSTIC_RELATION_C_TRACE_BEGIN"
+FAULT_DIAGNOSTIC_C_TRACE_END = "CRABC_MI_M2_FAULT_DIAGNOSTIC_RELATION_C_TRACE_END"
+FAULT_DIAGNOSTIC_RUST_TRACE_BEGIN = "CRABC_MI_M2_FAULT_DIAGNOSTIC_RELATION_RUST_TRACE_BEGIN"
+FAULT_DIAGNOSTIC_RUST_TRACE_END = "CRABC_MI_M2_FAULT_DIAGNOSTIC_RELATION_RUST_TRACE_END"
+FAULT_DIAGNOSTIC_DEFAULT_C_BEGIN = "CRABC_MI_M2_FAULT_DIAGNOSTIC_RELATION_C_DEFAULT_BEGIN"
+FAULT_DIAGNOSTIC_DEFAULT_C_END = "CRABC_MI_M2_FAULT_DIAGNOSTIC_RELATION_C_DEFAULT_END"
+FAULT_DIAGNOSTIC_DEFAULT_RUST_BEGIN = "CRABC_MI_M2_FAULT_DIAGNOSTIC_RELATION_RUST_DEFAULT_BEGIN"
+FAULT_DIAGNOSTIC_DEFAULT_RUST_END = "CRABC_MI_M2_FAULT_DIAGNOSTIC_RELATION_RUST_DEFAULT_END"
 C_TRACE_KEYS = (
     "m2.fault.c.huge.partial_primitive_failure_retains_one_os_huge_owner_and_stats",
     "m2.fault.c.huge.timeout_after_progress_retains_one_os_huge_owner_and_stats",
@@ -61,6 +72,17 @@ RUST_TRACE_KEYS = (
     "m2.fault.rust.huge.noncontiguous_adjustment_retains_rejected_cleanup_owner",
     "m2.fault.rust.huge.placement_failure_is_best_effort_and_retains_mapping_owner",
     "m2.fault.rust.huge.free_continues_after_failed_page_and_records_retry_bits",
+)
+FAULT_DIAGNOSTIC_TRACE_KEYS = (
+    "default_mbind", "default_mapping_survives", "default_stats_survive",
+    "default_continuation_flush",
+    "gate_off_mbind", "gate_off_no_output", "gate_off_mapping_survives",
+    "gate_off_stats_survive", "custom_mbind", "custom_fragments",
+    "custom_mapping_survives", "custom_stats_survive", "invalid_no_mbind",
+    "invalid_no_output", "invalid_mapping_survives", "invalid_stats_survive",
+)
+FAULT_DIAGNOSTIC_TRACE_TAIL_KEYS = (
+    "custom_thread_identity", "default_continuation_hex", "custom_prefix_hex", "custom_body_hex",
 )
 HUGE_BRANCH_DIAGNOSTIC_BEGIN = "CRABC_MI_M2_FAULT_SEAM_HUGE_DIAG_BEGIN"
 HUGE_BRANCH_DIAGNOSTIC_END = "CRABC_MI_M2_FAULT_SEAM_HUGE_DIAG_END"
@@ -92,20 +114,26 @@ HUGE_BRANCH_DIAGNOSTIC_FIELDS = (
 )
 RUST_TARGET = "os::tests::emit_m2_fault_seam_inventory_c_rust_trace"
 SOURCE_UNITS = (
+    "include/mimalloc/atomic.h",
     "include/mimalloc/prim.h",
+    "include/mimalloc/prim-tls.h",
     "src/arena.c",
     "src/init.c",
     "src/os.c",
+    "src/options.c",
     "src/page.c",
     "src/prim/prim.c",
     "src/prim/unix/prim.c",
 )
 
 PINNED_C_SOURCE_FILES = (
+    {"path": "include/mimalloc/atomic.h", "bytes": 24497, "sha256": "106b267e98ccc5e01b48252c9742584cd5c914f309e7f4a4413ad85e65063d41"},
     {"path": "include/mimalloc/prim.h", "bytes": 6403, "sha256": "1987e8e2eedc07bb181bf2a11a27bec80a5309c32cfa66a56900fb4cbb64b172"},
+    {"path": "include/mimalloc/prim-tls.h", "bytes": 19214, "sha256": "46d871923b38c9463da985c54503cd5cb64bb2c91008f3d35bcbaae2a11c31c2"},
     {"path": "src/arena.c", "bytes": 115645, "sha256": "5d9aa2dc06fa6e942d6a46eb4748b0c10c81f96c2ed50042412a9e66fd6f4d7a"},
     {"path": "src/init.c", "bytes": 25096, "sha256": "e22486042ba132e002822315ccd4b24738fc3a151fc14172e5e45426e8add299"},
     {"path": "src/os.c", "bytes": 39093, "sha256": "8410b04c2d5b37e59fff1854364fed1fba873133b064cfe02083277038388548"},
+    {"path": "src/options.c", "bytes": 28585, "sha256": "760c694c7663a18ae9745deb969215544d682c15fedd87ffe2645c6d31d5ba30"},
     {"path": "src/page.c", "bytes": 44473, "sha256": "f7b1c3c0725b425516e22cf49d3ff7e03b708732fdba4bd1f4c759484d52593c"},
     {"path": "src/prim/prim.c", "bytes": 2449, "sha256": "241b1087a0e22609de71b2deba6c771135dd37e756ea89ba79b5900165b4f229"},
     {"path": "src/prim/unix/prim.c", "bytes": 36822, "sha256": "8efeac14a9952aa7c3117ce2d9d801f93692bda6cd80e09a51ddca398d7ac774"},
@@ -147,8 +175,20 @@ DIRECT_FIXTURE_SOURCE_UNITS = (
 )
 RESOLVED_DIRECT_PRIMITIVE = "src/prim/unix/prim.c"
 RUST_TRACE_SOURCE = "crabc-mimalloc/src/os.rs"
-# This receipt records C warning control flow only. A separately mapped private
-# Rust owner does not qualify delivery through the fault receiver.
+RUST_TRACE_SOURCE_FILES = (
+    "Cargo.lock", "Cargo.toml", ".cargo/config.toml", "crabc-core/Cargo.toml",
+    "crabc-core/src/error.rs", "crabc-core/src/lib.rs", "crabc-core/src/mm.rs",
+    "crabc-core/src/mm_x86_64.rs", "crabc-core/src/param.rs", "crabc-core/src/syscall.rs",
+    "crabc-core/src/syscall_x86_64.rs", "crabc-core/src/thread.rs",
+    "crabc-mimalloc/Cargo.toml", "crabc-mimalloc/src/config.rs",
+    "crabc-mimalloc/src/diagnostic_output.rs", "crabc-mimalloc/src/invariants.rs",
+    "crabc-mimalloc/src/lib.rs", "crabc-mimalloc/src/lock.rs",
+    "crabc-mimalloc/src/os.rs", "crabc-mimalloc/src/random.rs",
+    "crabc-mimalloc/src/subproc.rs", "crabc-mimalloc/src/types.rs",
+)
+# This receipt reconstructs one selected C/Rust fault receiver and the private
+# caller-supplied default sink. The target still does not qualify general FILE
+# behavior, recursive output, ambient placement, or M2 as a whole.
 DIAGNOSTIC_OWNER_BOUNDARY = {
     "c_output_registration": "src/options.c:415-433 mi_out_get_default/mi_register_output",
     "c_warning_emission": "src/options.c:540-550 _mi_warning_message",
@@ -156,8 +196,16 @@ DIAGNOSTIC_OWNER_BOUNDARY = {
     "rust_source_map_unit": "option-processing",
     "rust_source_map_status": "partial",
     "rust_owner": "crabc_mimalloc::diagnostic_output",
-    "fault_diagnostic_relation": "unqualified",
+    "fault_diagnostic_relation": "bounded-current-source-private-receiver",
+    "default_stderr_transport": "caller-supplied native musl fputs(stderr) test capability only",
+    "unqualified": "general FILE transport, recursive output, and full M2 remain open",
 }
+NONCLAIMS = (
+    "This selected node-62 EPERM receiver proves current-source C/Rust private diagnostic delivery through the stored default sink and custom callback; it does not qualify general FILE short-write/error/buffering parity, recursive output, selected x86 libc startup, or ambient NUMA placement.",
+    "This fixed primitive-response profile does not qualify successful hardware huge pages or physical NUMA placement.",
+    "Metadata and OsAligned publication receivers remain stopped and unadmitted.",
+    "This receipt leaves the fault-injection component and M2 partial.",
+)
 FRAGMENT_PATH = ROOT / "compat/allocator/m2-fault-seam-inventory-x86_64-v3.5.0.fragment.json"
 FAULT_COMPONENT_CHECK_ID = "source-indexed-fault-seam-inventory"
 FAULT_COMPONENT_SOURCE_MAP_RECORDS = [
@@ -169,7 +217,6 @@ FAULT_COMPONENT_SOURCE_UNITS = [
 ]
 FAULT_COMPONENT_UNQUALIFIED_IDS = (
     "stopped-metadata-and-os-aligned-publication",
-    "unqualified-fault-diagnostic-relation",
     "remaining-ambient-and-hardware-fault-receivers",
 )
 SOURCE_ANCHORS = (
@@ -199,14 +246,6 @@ FAULT_COMPONENT_UNQUALIFIED_MATRIX = [
         ],
     },
     {
-        "id": "unqualified-fault-diagnostic-relation",
-        "source_scope": "src/options.c:415-433 mi_register_output and 540-550 _mi_warning_message after src/init.c:537-548 option initialization.",
-        "required_evidence": [
-            "current-source fault warning delivery through the private Rust diagnostic_output owner",
-            "source-faithful warning delivery/ordering evidence",
-        ],
-    },
-    {
         "id": "remaining-ambient-and-hardware-fault-receivers",
         "source_scope": "Ambient option/detection, hardware huge-page success, physical NUMA placement, generic callbacks/statistics, and unselected OS/PageMap callers.",
         "required_evidence": [
@@ -217,7 +256,7 @@ FAULT_COMPONENT_UNQUALIFIED_MATRIX = [
 ]
 FAULT_COMPONENT_REMAINING_CONDITIONS = [
     "Metadata-map publication and OsAligned claim-to-publication receivers remain stopped and unadmitted.",
-    "The private Rust diagnostic_output owner is partial; this C-only fault warning row does not qualify its warning delivery/ordering relation.",
+    "The selected node-62 fault diagnostic relation is source-bound and private; general diagnostic receivers, FILE parity, and recursive output remain unqualified.",
     "Ambient hardware huge-page success, physical NUMA placement, unselected callers, and general callback/statistics owners remain unqualified.",
     "The fault-injection component and M2 remain partial.",
 ]
@@ -664,6 +703,41 @@ def _local_file_record(path: Path) -> dict[str, Any]:
     }
 
 
+def _rust_trace_source_files() -> list[dict[str, Any]]:
+    """Bind the finite Rust route and its Cargo configuration inputs.
+
+    `source_state_before/after` additionally authenticates the current whole
+    checkout revision. This explicit roster names the selected direct receiver
+    modules and all Cargo files that resolve this test binary, so a changed
+    owner, lock, source-option reader, x86 syscall boundary, or root config
+    cannot be hidden behind the aggregate revision record.
+    """
+
+    return [_local_file_record(ROOT / path) for path in RUST_TRACE_SOURCE_FILES]
+
+
+def fault_component_fragment_receipt() -> dict[str, Any]:
+    """Bind this report to the exact current fragment and its projection.
+
+    `load_fragment` is the fail-closed schema/roster reader used by the M2
+    assembly. Repeating its projection and both byte/canonical identities in
+    the producer report prevents a legacy C-only receipt from being replayed
+    under the selected private diagnostic-receiver boundary.
+    """
+
+    fragment = load_fragment()
+    runner = _load_runner()
+    return {
+        "canonical_sha256": runner._m1_inventory_digest(fragment),
+        "component": dict(fragment["component"]),
+        "format": fragment["format"],
+        "schema": fragment["schema"],
+        "source": _local_file_record(FRAGMENT_PATH),
+        "target": dict(fragment["target"]),
+        "upstream": dict(fragment["upstream"]),
+    }
+
+
 def _combined_output(record: Mapping[str, Any]) -> str:
     return str(record["stdout"]) + "\n" + str(record["stderr"])
 
@@ -736,6 +810,16 @@ def _validate_huge_branch_receipt(receipt: object, runner: Any) -> dict[str, Any
         _combined_output(c_run), begin=C_TRACE_BEGIN, end=C_TRACE_END,
         keys=C_TRACE_KEYS, source="retained pinned C stream",
     )
+    c_relation = _parse_fault_diagnostic_relation_trace(
+        _combined_output(c_run), begin=FAULT_DIAGNOSTIC_C_TRACE_BEGIN,
+        end=FAULT_DIAGNOSTIC_C_TRACE_END, source="retained pinned C stream",
+    )
+    c_default = _parse_fault_diagnostic_default_stderr(
+        c_run["stderr"], begin=FAULT_DIAGNOSTIC_DEFAULT_C_BEGIN,
+        end=FAULT_DIAGNOSTIC_DEFAULT_C_END, source="retained pinned C stderr",
+    )
+    if c_relation["thread_identity"] != c_default["thread_identity"]:
+        raise EvidenceError("retained pinned C default/custom thread identities differ")
 
     rust_build = _validate_process_record(receipt.get("rust_build"), label="fault inventory Rust build")
     rust_run = _validate_process_record(receipt.get("rust_run"), label="fault inventory Rust run")
@@ -761,12 +845,24 @@ def _validate_huge_branch_receipt(receipt: object, runner: Any) -> dict[str, Any
         raise EvidenceError("retained Rust stream has no exact test summary") from error
     if passed_test_count != 1 or receipt.get("rust_passed_test_count") != 1:
         raise ValueError("fault inventory Rust test count changed")
-    if receipt.get("rust_source_files") != [_local_file_record(ROOT / RUST_TRACE_SOURCE)]:
+    if receipt.get("rust_source_files") != _rust_trace_source_files():
         raise ValueError("fault inventory Rust trace source changed")
     _parse_fixed_trace(
         output, begin=RUST_TRACE_BEGIN, end=RUST_TRACE_END,
         keys=RUST_TRACE_KEYS, source="retained Rust stream",
     )
+    rust_relation = _parse_fault_diagnostic_relation_trace(
+        output, begin=FAULT_DIAGNOSTIC_RUST_TRACE_BEGIN,
+        end=FAULT_DIAGNOSTIC_RUST_TRACE_END, source="retained Rust stream",
+    )
+    rust_default = _parse_fault_diagnostic_default_stderr(
+        rust_run["stderr"], begin=FAULT_DIAGNOSTIC_DEFAULT_RUST_BEGIN,
+        end=FAULT_DIAGNOSTIC_DEFAULT_RUST_END, source="retained Rust stderr",
+    )
+    if rust_relation["thread_identity"] != rust_default["thread_identity"]:
+        raise EvidenceError("retained Rust default/custom thread identities differ")
+    if c_relation["body"] != rust_relation["body"] or c_default["body"] != rust_default["body"]:
+        raise EvidenceError("retained C/Rust source mbind warning body differs")
     return dict(receipt)
 
 
@@ -775,10 +871,12 @@ def validate_report(report: Mapping[str, Any]) -> dict[str, Any]:
 
     expected_keys = {
         "architecture", "branch_records", "diagnostic_owner_boundary", "format",
-        "huge_branch_receipt", "inventory", "nonclaims", "schema", "status",
+        "fault_component_fragment", "huge_branch_receipt", "inventory", "nonclaims", "schema", "status",
         "stopped_receivers", "source_state_after", "source_state_before", "upstream",
         "unqualified_branches", "vm_receipt",
     }
+    if "fault_component_fragment" not in report:
+        raise ValueError("fault inventory fragment receipt is missing")
     if set(report) != expected_keys:
         raise ValueError("fault inventory receipt fields changed")
     if report.get("schema") != SCHEMA or report.get("format") != FORMAT:
@@ -798,6 +896,9 @@ def validate_report(report: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError("fault inventory diagnostic owner boundary changed")
 
     runner = _load_runner()
+    fragment_receipt = fault_component_fragment_receipt()
+    if report.get("fault_component_fragment") != fragment_receipt:
+        raise ValueError("fault inventory fragment receipt changed")
     huge_receipt = _validate_huge_branch_receipt(report.get("huge_branch_receipt"), runner)
     pin = runner.load_pin()
     if report.get("upstream") != {
@@ -818,7 +919,9 @@ def validate_report(report: Mapping[str, Any]) -> dict[str, Any]:
         or len(vm_receipt["trace_sha256"]) != 64
     ):
         raise ValueError("fault inventory VM receipt is invalid")
-    nonclaims = _exact_strings(report.get("nonclaims"), label="nonclaims")
+    if report.get("nonclaims") != list(NONCLAIMS):
+        raise ValueError("fault inventory nonclaims changed")
+    nonclaims = list(NONCLAIMS)
     try:
         before = runner.validate_runtime_ticket_zero_soak_source_state(
             report.get("source_state_before"), "fault inventory source before"
@@ -833,6 +936,7 @@ def validate_report(report: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "branch_records": records,
         "diagnostic_owner_boundary": dict(DIAGNOSTIC_OWNER_BOUNDARY),
+        "fault_component_fragment": fragment_receipt,
         "huge_branch_receipt": huge_receipt,
         "inventory": inventory,
         "nonclaims": nonclaims,
@@ -881,6 +985,140 @@ def _parse_fixed_trace(output: str, *, begin: str, end: str, keys: Sequence[str]
     if tuple(values) != tuple(keys) or any(value != 1 for value in values.values()):
         raise EvidenceError(f"{source} fault trace relations changed")
     return values
+
+
+_FAULT_DIAGNOSTIC_DEFAULT_MESSAGE = (
+    b"failed to bind huge (1GiB) pages to numa node 62 (error: 1 (0x01))\n"
+)
+_FAULT_DIAGNOSTIC_DEFAULT_LINE = re.compile(
+    rb"mimalloc: warning: thread 0x([0-9A-F]+): "
+    + re.escape(_FAULT_DIAGNOSTIC_DEFAULT_MESSAGE[:-1])
+)
+
+
+def _extract_one_complete_lf_frame(stream: str, *, begin: str, end: str, source: str) -> bytes:
+    """Return one exact line-delimited marker frame without line normalization.
+
+    The selected C `fputs(stderr)` observation and its Rust caller-supplied
+    musl bridge both produce ASCII source text.  Retain the authenticated
+    process stream as-is and use literal LF separators only: Python's
+    `splitlines` would incorrectly treat CR, VT, FF, and Unicode separators as
+    marker boundaries.
+    """
+
+    try:
+        raw = stream.encode("ascii")
+    except UnicodeEncodeError as error:
+        raise EvidenceError(f"{source} default stderr is not source ASCII") from error
+    begin_line = begin.encode("ascii")
+    end_line = end.encode("ascii")
+    lines = raw.split(b"\n")
+    begin_indexes = [index for index, line in enumerate(lines) if line == begin_line]
+    end_indexes = [index for index, line in enumerate(lines) if line == end_line]
+    if len(begin_indexes) != 1 or len(end_indexes) != 1:
+        raise EvidenceError(f"{source} default stderr marker count changed")
+    start = begin_indexes[0]
+    finish = end_indexes[0]
+    if finish <= start:
+        raise EvidenceError(f"{source} default stderr markers are reversed")
+    # A marker at the final split position has no literal LF after it.  CRLF
+    # markers are not equal to their source-LF spelling above and are rejected.
+    if finish == len(lines) - 1:
+        raise EvidenceError(f"{source} default stderr end marker lacks LF")
+    return b"\n".join(lines[start:finish + 1]) + b"\n"
+
+
+def _parse_fault_diagnostic_default_stderr(
+    stream: str, *, begin: str, end: str, source: str,
+) -> dict[str, int | str]:
+    """Reconstruct the one valid-node source default-sink warning frame.
+
+    This finite reader binds the actual `options.c` post-init flush byte image:
+    one source warning prefix and the fixed node-62/EPERM `prim.c` body.  It
+    does not trim or synthesize the delayed image that `mi_out_buf_flush`
+    retains for a later registration: that flushed warning plus its appended
+    continuation LF.
+    """
+
+    frame = _extract_one_complete_lf_frame(stream, begin=begin, end=end, source=source)
+    lines = frame.split(b"\n")
+    # begin, one warning line, end, then the required terminal empty entry.
+    if len(lines) != 4:
+        raise EvidenceError(f"{source} default stderr payload shape changed")
+    match = _FAULT_DIAGNOSTIC_DEFAULT_LINE.fullmatch(lines[1])
+    if match is None:
+        raise EvidenceError(f"{source} default stderr payload changed")
+    raw_identity = match.group(1)
+    if len(raw_identity) > 1 and raw_identity.startswith(b"0"):
+        raise EvidenceError(f"{source} default stderr thread identity is noncanonical")
+    identity = int(raw_identity, 16)
+    return {
+        "body": _FAULT_DIAGNOSTIC_DEFAULT_MESSAGE.decode("ascii"),
+        "frame": frame.decode("ascii"),
+        "thread_identity": identity,
+    }
+
+
+def _parse_fault_diagnostic_relation_trace(
+    stream: str, *, begin: str, end: str, source: str,
+) -> dict[str, Any]:
+    """Read the finite source-receiver trace without address masking.
+
+    C and Rust naturally have different TLS addresses. Each side therefore
+    retains its own decimal identity, and this reader independently rebuilds
+    the source's uppercase prefix before comparing the invariant body and
+    selected control-flow fields. A malformed, noncanonical, or mismatched
+    prefix cannot be admitted by dropping arbitrary address bytes.
+    """
+
+    frame = _extract_one_complete_lf_frame(stream, begin=begin, end=end, source=source)
+    lines = frame.split(b"\n")
+    expected_line_count = len(FAULT_DIAGNOSTIC_TRACE_KEYS) + len(FAULT_DIAGNOSTIC_TRACE_TAIL_KEYS) + 3
+    if len(lines) != expected_line_count:
+        raise EvidenceError(f"{source} fault-diagnostic relation trace shape changed")
+    values: dict[str, str] = {}
+    for line in lines[1:-2]:
+        if line.count(b"=") != 1:
+            raise EvidenceError(f"{source} fault-diagnostic relation observation is malformed")
+        raw_key, raw_value = line.split(b"=", 1)
+        try:
+            key = raw_key.decode("ascii")
+            value = raw_value.decode("ascii")
+        except UnicodeDecodeError as error:
+            raise EvidenceError(f"{source} fault-diagnostic relation is not ASCII") from error
+        if not key or not value or key in values:
+            raise EvidenceError(f"{source} fault-diagnostic relation observation changed")
+        values[key] = value
+    expected_keys = (*FAULT_DIAGNOSTIC_TRACE_KEYS, *FAULT_DIAGNOSTIC_TRACE_TAIL_KEYS)
+    if tuple(values) != expected_keys:
+        raise EvidenceError(f"{source} fault-diagnostic relation key order changed")
+    if any(values[key] != "1" for key in FAULT_DIAGNOSTIC_TRACE_KEYS):
+        raise EvidenceError(f"{source} fault-diagnostic relation control flow changed")
+    identity_text = values["custom_thread_identity"]
+    if not identity_text.isdecimal() or (len(identity_text) > 1 and identity_text.startswith("0")):
+        raise EvidenceError(f"{source} fault-diagnostic relation identity changed")
+    identity = int(identity_text, 10)
+    encoded: dict[str, bytes] = {}
+    for key in ("default_continuation_hex", "custom_prefix_hex", "custom_body_hex"):
+        raw = values[key]
+        if not raw or len(raw) % 2 != 0 or any(character not in "0123456789abcdef" for character in raw):
+            raise EvidenceError(f"{source} fault-diagnostic relation fragment changed")
+        encoded[key] = bytes.fromhex(raw)
+    expected_prefix = f"mimalloc: warning: thread 0x{identity:X}: ".encode("ascii")
+    if encoded["custom_prefix_hex"] != expected_prefix:
+        raise EvidenceError(f"{source} fault-diagnostic relation prefix identity mismatched")
+    if encoded["custom_body_hex"] != _FAULT_DIAGNOSTIC_DEFAULT_MESSAGE:
+        raise EvidenceError(f"{source} fault-diagnostic relation body changed")
+    if encoded["default_continuation_hex"] != (
+        expected_prefix + _FAULT_DIAGNOSTIC_DEFAULT_MESSAGE + b"\n"
+    ):
+        raise EvidenceError(f"{source} fault-diagnostic delayed continuation changed")
+    return {
+        "body": encoded["custom_body_hex"],
+        "continuation": encoded["default_continuation_hex"],
+        "prefix": encoded["custom_prefix_hex"],
+        "thread_identity": identity,
+    }
 
 
 def _parse_huge_branch_diagnosis(output: str) -> list[dict[str, int | str]]:
@@ -1849,6 +2087,7 @@ def run_evidence(
     runner = _load_runner()
     try:
         runner.require_native_x86_64()
+        fragment_receipt = fault_component_fragment_receipt()
         before = runner.m2_memory_substrate_source_state()
         pin = runner.load_pin()
         archive = runner.fetch_archive(pin, offline)
@@ -1931,6 +2170,7 @@ def run_evidence(
         "architecture": "x86_64",
         "branch_records": _branch_records(),
         "format": FORMAT,
+        "fault_component_fragment": fragment_receipt,
         "huge_branch_receipt": {
             "c_build": {**c_build, "cwd": str(source)},
             "c_compiled_source_closure": {
@@ -1946,16 +2186,11 @@ def run_evidence(
             "rust_build": {**test_program["build"], "cwd": str(ROOT)},
             "rust_passed_test_count": rust_passed_test_count,
             "rust_run": {**rust_run, "cwd": str(ROOT)},
-            "rust_source_files": [_local_file_record(ROOT / RUST_TRACE_SOURCE)],
+            "rust_source_files": _rust_trace_source_files(),
         },
         "diagnostic_owner_boundary": DIAGNOSTIC_OWNER_BOUNDARY,
         "inventory": inventory_definition(),
-        "nonclaims": [
-            "This fixed primitive-response profile does not qualify successful hardware huge pages.",
-            "The fixed mbind result proves C output-callback warning control flow and Rust retained ownership, not a Rust diagnostic-output parity contract or ambient NUMA placement.",
-            "Metadata and OsAligned publication receivers remain stopped and unadmitted.",
-            "This receipt leaves the fault-injection component and M2 partial.",
-        ],
+        "nonclaims": list(NONCLAIMS),
         "schema": SCHEMA,
         "source_state_after": after,
         "source_state_before": before,

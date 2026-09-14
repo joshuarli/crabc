@@ -5,12 +5,17 @@
 // owner capability.
 #![cfg(feature = "native-runtime-test-audit")]
 
+#[path = "support/native_runtime.rs"]
+mod native_runtime_test_support;
+
+
+
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crabc_mimalloc::__crabc_runtime::{
-    TicketZeroPageAllocationResult, TicketZeroPageFreeResult, initialize_process,
+    TicketZeroPageAllocationResult, TicketZeroPageFreeResult,
     native_runtime_lifecycle_test_audit, ticket_zero_allocate, ticket_zero_free,
 };
 
@@ -252,7 +257,7 @@ fn runtime_process_uses_source_vm_policy_for_ticket_zero_first_arena_and_client_
     }
 
     assert!(
-        initialize_process(current_page_size()),
+        native_runtime_test_support::initialize(current_page_size()),
         "the native runtime accepts one source-policy process image"
     );
     assert!(
@@ -366,7 +371,7 @@ fn runtime_process_admits_source_allow_thp_images_with_retained_ready_configurat
         "the normal runtime child receives its selected raw source option",
     );
     assert!(
-        initialize_process(current_page_size()),
+        native_runtime_test_support::initialize(current_page_size()),
         "the native runtime accepts one source-THP process image"
     );
     let block = match ticket_zero_allocate(79, false) {
