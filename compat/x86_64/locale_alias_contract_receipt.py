@@ -109,6 +109,8 @@ PRODUCER_TOOL_PATHS = {
           "lib/rustlib/x86_64-unknown-linux-musl/bin/" + name
     for name in ("llvm-ar", "llvm-nm", "llvm-objdump")
 }
+DYNAMIC_LINKER_PATH = "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/" \
+                      "lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld"
 IMPLEMENTATION_SOURCES = (
     "libc/src/c_abi/x86_64/locale_narrow.rs",
     "libc/src/c_abi/x86_64/locale_objects.rs",
@@ -185,6 +187,28 @@ RUNNER_STEMS = (
     "executable-dynamic-pie-symbols",
     "executable-dynamic-non-pie-symbols",
     "alias-symbol-observation",
+)
+
+# The normal dynamic driver writes a sealed receipt beside each candidate
+# executable it links. They are not extra commands or probes: the two fixed
+# receipts describe the already-recorded PIE and non-PIE consumer links. Keep
+# their names, modes, bytes, and source-owned link claims finite here instead
+# of accepting every ``*.crabc-link.json`` file the driver might create.
+DYNAMIC_EXECUTABLE_LINK_SIDECARS = (
+    ("candidate-dynamic-pie", "candidate-dynamic-pie.crabc-link.json", "pie"),
+    ("candidate-dynamic-non-pie", "candidate-dynamic-non-pie.crabc-link.json", "non-pie"),
+)
+
+RUNNER_ARTIFACTS = (
+    "probe.o", "oracle-static", "candidate-static", "candidate-static-pie",
+    "oracle-dynamic-pie", "oracle-dynamic-non-pie",
+    "candidate-dynamic-pie", "candidate-dynamic-non-pie",
+    *(sidecar for _executable, sidecar, _linkage in DYNAMIC_EXECUTABLE_LINK_SIDECARS),
+)
+
+RUNNER_GENERATED_ENTRIES = (
+    *RUNNER_ARTIFACTS,
+    "oracle-dynamic-root", "candidate-dynamic-root",
 )
 
 STATUS = {
@@ -560,12 +584,7 @@ def _raw_runner_records(root: Path, output_relative: str) -> list[dict[str, obje
     expected = {f"{stem}.{suffix}" for stem in RUNNER_STEMS
                 for suffix in ("argv.json", "cwd", "environment.json", "stdin", "launcher.json", "stdout", "stderr", "status")}
     expected.update({"before.sha256", "after.sha256", "alias-observation.json"})
-    generated = {
-        "probe.o", "oracle-static", "candidate-static", "candidate-static-pie",
-        "oracle-dynamic-pie", "oracle-dynamic-non-pie",
-        "candidate-dynamic-pie", "candidate-dynamic-non-pie",
-        "oracle-dynamic-root", "candidate-dynamic-root",
-    }
+    generated = set(RUNNER_GENERATED_ENTRIES)
     actual = {path.name for path in raw.iterdir()}
     if actual != expected | generated:
         _fail("runner raw file roster changed")
@@ -668,12 +687,7 @@ def _validate_runtime_and_headers(root: Path) -> dict[str, object]:
 
 def _artifacts(root: Path) -> dict[str, dict[str, object]]:
     raw = _relative_directory(root, RUNNER_DIRECTORY, "runner raw")
-    names = (
-        "probe.o", "oracle-static", "candidate-static", "candidate-static-pie",
-        "oracle-dynamic-pie", "oracle-dynamic-non-pie",
-        "candidate-dynamic-pie", "candidate-dynamic-non-pie",
-    )
-    return {name: _identity(root, raw / name) for name in names}
+    return {name: _identity(root, raw / name) for name in RUNNER_ARTIFACTS}
 
 
 def _validate_artifacts(root: Path, value: object) -> dict[str, dict[str, object]]:
@@ -683,6 +697,47 @@ def _validate_artifacts(root: Path, value: object) -> dict[str, dict[str, object
     if value != actual:
         _fail("compiled object or linked executable bytes changed")
     return actual
+
+
+def _validate_dynamic_executable_link_sidecars(
+    root: Path, image: Mapping[str, object],
+) -> dict[str, dict[str, str]]:
+    """Replay the two normal candidate executable link receipts without tools."""
+
+    files = image.get("files")
+    if not isinstance(files, Mapping):
+        _fail("retained image linker authority is absent")
+    image_entry = files.get(DYNAMIC_LINKER_PATH)
+    if not isinstance(image_entry, Mapping):
+        _fail("retained image linker authority is absent")
+    image_identity = _exact_mapping(
+        image_entry.get("image"), {"path", "sha256", "size", "mode"}, "retained dynamic linker identity",
+    )
+    if image_identity["path"] != DYNAMIC_LINKER_PATH:
+        _fail("retained dynamic linker path changed")
+    linker = {name: image_identity[name] for name in ("path", "sha256")}
+    raw = _relative_directory(root, RUNNER_DIRECTORY, "runner raw")
+    dynamic = _relative_directory(root, DYNAMIC_PRODUCT_DIRECTORY, "retained dynamic product")
+    sys.path.insert(0, str(ROOT / "compat/x86_64"))
+    import owned_posix_product_evidence as product_evidence
+
+    observed: dict[str, dict[str, str]] = {}
+    for executable, sidecar, linkage in DYNAMIC_EXECUTABLE_LINK_SIDECARS:
+        try:
+            result = product_evidence.validate_retained_link(
+                root, SOURCE_MOUNT, dynamic, raw / "probe.o", raw / executable, raw / sidecar, linkage,
+                linker, export_dynamic=True,
+            )
+        except (product_evidence.ProductEvidenceError, OSError, ValueError) as error:
+            raise LocaleAliasReceiptError(f"retained {executable} link receipt differs: {error}") from error
+        expected = {
+            "linkage", "product", "product_format", "product_manifest_sha256", "workload_sha256",
+            "executable_sha256", "receipt_sha256",
+        }
+        if not isinstance(result, Mapping) or set(result) != expected or not all(isinstance(value, str) for value in result.values()):
+            _fail(f"retained {executable} link validation changed")
+        observed[executable] = dict(result)
+    return observed
 
 
 def _validate_symbol_observation(root: Path) -> dict[str, object]:
@@ -1321,6 +1376,7 @@ def validate_report(root: Path, report_path: Path) -> dict[str, object]:
     runner_commands = _runner_records(receipt_root, output_relative, record["runner_commands"])
     _validate_execution_tools(receipt_root, output_relative, source, image, products, collector_commands, runner_commands)
     artifacts = _validate_artifacts(receipt_root, record["artifacts"])
+    dynamic_links = _validate_dynamic_executable_link_sidecars(receipt_root, image)
     snapshots = {name: _validate_snapshot(receipt_root, record["snapshots"].get(name) if isinstance(record["snapshots"], Mapping) else None, name)
                  for name in ("before", "after")}
     if snapshots["before"]["records"] != snapshots["after"]["records"]:
@@ -1333,7 +1389,7 @@ def validate_report(root: Path, report_path: Path) -> dict[str, object]:
         _fail("symbol observation changed")
     _public_replay_exit_recheck(
         root, receipt_root, report_path, report_identity, record, output_relative, source, after_source,
-        source_contract, image, products, collector_commands, runner_commands, artifacts, snapshots, runtime, symbols,
+        source_contract, image, products, collector_commands, runner_commands, artifacts, dynamic_links, snapshots, runtime, symbols,
     )
     return {
         "source": source,
@@ -1363,6 +1419,7 @@ def _public_replay_exit_recheck(
     collector_commands: Sequence[Mapping[str, object]],
     runner_commands: Sequence[Mapping[str, object]],
     artifacts: Mapping[str, object],
+    dynamic_links: Mapping[str, object],
     snapshots: Mapping[str, object],
     runtime: Mapping[str, object],
     symbols: Mapping[str, object],
@@ -1385,12 +1442,13 @@ def _public_replay_exit_recheck(
     runner_again = _runner_records(receipt_root, output_relative, record["runner_commands"])
     _validate_execution_tools(receipt_root, output_relative, source_again, image_again, products_again, collector_again, runner_again)
     artifacts_again = _validate_artifacts(receipt_root, record["artifacts"])
+    dynamic_links_again = _validate_dynamic_executable_link_sidecars(receipt_root, image_again)
     snapshots_again = {name: _validate_snapshot(receipt_root, record["snapshots"].get(name) if isinstance(record["snapshots"], Mapping) else None, name)
                        for name in ("before", "after")}
     runtime_again = _validate_runtime_and_headers(receipt_root)
     symbols_again = _validate_symbol_observation(receipt_root)
     if (image_again != image or products_again != products or list(collector_again) != list(collector_commands)
-            or list(runner_again) != list(runner_commands) or artifacts_again != artifacts
+            or list(runner_again) != list(runner_commands) or artifacts_again != artifacts or dynamic_links_again != dynamic_links
             or snapshots_again != snapshots or runtime_again != runtime or symbols_again != symbols):
         _fail("receipt reconstruction changed during process-free replay")
 
@@ -1470,6 +1528,7 @@ def _final_transaction_recheck(
         _fail("collector raw streams changed after locale alias report construction")
     if _raw_runner_records(receipt_root, output_relative) != list(runner_commands):
         _fail("runner raw streams changed after locale alias report construction")
+    _validate_dynamic_executable_link_sidecars(receipt_root, image)
 
 
 def collect(root: Path, output: Path) -> dict[str, object]:

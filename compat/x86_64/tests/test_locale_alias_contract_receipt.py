@@ -115,6 +115,7 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
              mock.patch.object(receipt, "_runner_records", return_value=[{"runner": "deferred"}]), \
              mock.patch.object(receipt, "_validate_execution_tools"), \
              mock.patch.object(receipt, "_validate_artifacts", return_value={"artifacts": "deferred"}), \
+             mock.patch.object(receipt, "_validate_dynamic_executable_link_sidecars", return_value={"links": "deferred"}), \
              mock.patch.object(receipt, "_validate_snapshot", side_effect=lambda _root, value, _name: value), \
              mock.patch.object(receipt, "_validate_runtime_and_headers", side_effect=runtime_side_effect or (lambda _root: runtime)), \
              mock.patch.object(receipt, "_validate_symbol_observation", return_value={"symbols": "deferred"}):
@@ -256,6 +257,71 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
         )
         self.assertNotIn("build_x86_64_owned_sysroot.py", "\n".join(" ".join(argv) for _role, argv in commands))
 
+    def test_runner_raw_roster_admits_the_two_dynamic_link_receipts(self) -> None:
+        output_relative = ".work/x86_64/runner-roster"
+        receipt_root = self.root / output_relative
+        raw = receipt_root / receipt.RUNNER_DIRECTORY
+        raw.mkdir(parents=True)
+        for stem, argv in receipt._runner_plan(output_relative):
+            (raw / f"{stem}.argv.json").write_text(json.dumps(argv), encoding="utf-8")
+            (raw / f"{stem}.cwd").write_text("/workspace\n", encoding="utf-8")
+            (raw / f"{stem}.environment.json").write_text(json.dumps(receipt.COMMAND_ENVIRONMENT), encoding="utf-8")
+            (raw / f"{stem}.stdin").write_text("/dev/null\n", encoding="utf-8")
+            (raw / f"{stem}.launcher.json").write_text(json.dumps(receipt.RUNNER_LAUNCHER), encoding="utf-8")
+            (raw / f"{stem}.stdout").write_bytes(b"")
+            (raw / f"{stem}.stderr").write_bytes(b"")
+            (raw / f"{stem}.status").write_text("0\n", encoding="utf-8")
+        for name in ("before.sha256", "after.sha256", "alias-observation.json", *receipt.RUNNER_ARTIFACTS):
+            (raw / name).write_bytes(b"{}\n")
+        for name in ("oracle-dynamic-root", "candidate-dynamic-root"):
+            (raw / name).mkdir()
+
+        records = receipt._raw_runner_records(receipt_root, output_relative)
+        self.assertEqual([record["role"] for record in records], list(receipt.RUNNER_STEMS))
+        artifacts = receipt._artifacts(receipt_root)
+        self.assertEqual(set(artifacts), set(receipt.RUNNER_ARTIFACTS))
+        for _executable, sidecar, _linkage in receipt.DYNAMIC_EXECUTABLE_LINK_SIDECARS:
+            self.assertEqual(artifacts[sidecar], {
+                "path": f"{receipt.RUNNER_DIRECTORY}/{sidecar}", "bytes": 3,
+                "sha256": self.digest(b"{}\n"), "mode": 0o644,
+            })
+        sidecar = receipt.DYNAMIC_EXECUTABLE_LINK_SIDECARS[0][1]
+        (raw / sidecar).write_bytes(b"forged sidecar\n")
+        with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "linked executable bytes changed"):
+            receipt._validate_artifacts(receipt_root, artifacts)
+        (raw / sidecar).write_bytes(b"{}\n")
+
+        (raw / "forged-extra").write_bytes(b"forged\n")
+        with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "raw file roster"):
+            receipt._raw_runner_records(receipt_root, output_relative)
+
+    def test_dynamic_link_sidecars_use_the_sealed_product_reader(self) -> None:
+        raw = self.root / receipt.RUNNER_DIRECTORY
+        raw.mkdir(parents=True)
+        dynamic = self.root / receipt.DYNAMIC_PRODUCT_DIRECTORY
+        dynamic.mkdir(parents=True)
+        image = {"files": {
+            receipt.DYNAMIC_LINKER_PATH: {"image": {
+                "path": receipt.DYNAMIC_LINKER_PATH, "sha256": "a" * 64, "size": 1, "mode": 0o755,
+            }},
+        }}
+        result = {
+            "linkage": "pie", "product": str(dynamic), "product_format": "dynamic", "product_manifest_sha256": "b" * 64,
+            "workload_sha256": "c" * 64, "executable_sha256": "d" * 64, "receipt_sha256": "e" * 64,
+        }
+        with mock.patch("owned_posix_product_evidence.validate_retained_link", return_value=result) as validate:
+            observed = receipt._validate_dynamic_executable_link_sidecars(self.root, image)
+
+        self.assertEqual(set(observed), {"candidate-dynamic-pie", "candidate-dynamic-non-pie"})
+        self.assertEqual(validate.call_count, 2)
+        for call, (executable, sidecar, linkage) in zip(validate.call_args_list, receipt.DYNAMIC_EXECUTABLE_LINK_SIDECARS):
+            args, kwargs = call
+            self.assertEqual(args, (
+                self.root, "/workspace", dynamic, raw / "probe.o", raw / executable, raw / sidecar, linkage,
+                {"path": receipt.DYNAMIC_LINKER_PATH, "sha256": "a" * 64},
+            ))
+            self.assertEqual(kwargs, {"export_dynamic": True})
+
     def test_both_product_producer_tool_records_must_match_pinned_image_inputs(self) -> None:
         base = "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/"
         tools = {
@@ -359,7 +425,8 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
              mock.patch.object(receipt, "_validate_image_inputs"), \
              mock.patch.object(receipt, "_validate_products"), \
              mock.patch.object(receipt, "_raw_collector_commands"), \
-             mock.patch.object(receipt, "_raw_runner_records"):
+             mock.patch.object(receipt, "_raw_runner_records"), \
+             mock.patch.object(receipt, "_validate_dynamic_executable_link_sidecars"):
             with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "source changed after"):
                 receipt._final_transaction_recheck(self.root, self.root, source, {}, {}, [], [], ".work/x86_64/test")
 
@@ -370,7 +437,8 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
              mock.patch.object(receipt, "_validate_image_inputs", return_value={}), \
              mock.patch.object(receipt, "_validate_products", return_value={}), \
              mock.patch.object(receipt, "_raw_collector_commands", return_value=[{"changed": True}]), \
-             mock.patch.object(receipt, "_raw_runner_records", return_value=[]):
+             mock.patch.object(receipt, "_raw_runner_records", return_value=[]), \
+             mock.patch.object(receipt, "_validate_dynamic_executable_link_sidecars"):
             with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "collector raw streams changed"):
                 receipt._final_transaction_recheck(self.root, self.root, source, {}, {}, [], [], ".work/x86_64/test")
 
@@ -474,13 +542,14 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
              mock.patch.object(receipt, "_runner_records", return_value=[{"runner": "ok"}]) as runner, \
              mock.patch.object(receipt, "_validate_execution_tools") as tools, \
              mock.patch.object(receipt, "_validate_artifacts", return_value={"object": "ok"}) as artifacts, \
+             mock.patch.object(receipt, "_validate_dynamic_executable_link_sidecars", return_value={"links": "ok"}) as dynamic_links, \
              mock.patch.object(receipt, "_validate_snapshot", side_effect=lambda _root, value, _name: value) as snapshots, \
              mock.patch.object(receipt, "_validate_runtime_and_headers", return_value={"runtime": "ok"}) as runtime, \
              mock.patch.object(receipt, "_validate_symbol_observation", return_value={"symbols": "ok"}) as symbols:
             admitted = receipt.validate_report(ROOT, report_path)
 
         self.assertEqual(admitted["status"], receipt.STATUS)
-        for boundary in (source_seal, source_contract, image, products, collector, runner, tools, artifacts, snapshots, runtime, symbols):
+        for boundary in (source_seal, source_contract, image, products, collector, runner, tools, artifacts, dynamic_links, snapshots, runtime, symbols):
             self.assertGreaterEqual(boundary.call_count, 1)
 
         malformed = dict(report)
