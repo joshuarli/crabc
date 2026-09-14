@@ -311,7 +311,7 @@ class PreparedWorkerTlsEvidenceTests(unittest.TestCase):
                          'three fresh initial images after adopted-main growth')
         with self.assertRaises(EVIDENCE.PreparedWorkerTlsError):
             EVIDENCE.check_post_fork_generation_source(
-                probe.replace('load_generation(generation3_path,2);',''),owner)
+                probe.replace('load_generation(generation3_path,2,0);',''),owner)
         with self.assertRaises(EVIDENCE.PreparedWorkerTlsError):
             EVIDENCE.check_post_fork_generation_source(
                 probe,owner.replace('ADOPTED_MAIN.store(thread_pointer as usize, Ordering::Release);',''))
@@ -320,6 +320,11 @@ class PreparedWorkerTlsEvidenceTests(unittest.TestCase):
             EVIDENCE.check_post_fork_generation_source(
                 probe.replace('for (int n=0;dynamic && n<active_generations;n++)',
                               'for (int n=0;n<active_generations;n++)'),owner)
+
+        with self.assertRaises(EVIDENCE.PreparedWorkerTlsError):
+            EVIDENCE.check_post_fork_generation_source(
+                probe.replace('load_generation(generation3_path,2,0)',
+                              'load_generation(generation3_path,2,1)'),owner)
 
     def test_source_account_requires_active_full_fork_loader_before_registry_reset(self):
         """Dynamic full fork keeps minimal child identity work before loader repair.

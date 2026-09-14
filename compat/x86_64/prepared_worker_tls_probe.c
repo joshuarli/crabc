@@ -140,7 +140,7 @@ static void inspect_runtime(struct worker *worker, int index)
     worker->runtime_count=(unsigned)index+1;
 }
 static void *entry(void *opaque);
-static void load_generation(const char *path, int index);
+static void load_generation(const char *path, int index, int mutate_template);
 static void worker_fork(struct worker *worker)
 {
     pid_t child=fork();
@@ -151,7 +151,7 @@ static void worker_fork(struct worker *worker)
         if (dynamic) {
             uintptr_t old0=worker->runtime_addresses[0],old1=worker->runtime_addresses[1];
             struct runtime_view *before=owned ? current_view(worker->tp) : 0;
-            load_generation(generation3_path,2);
+            load_generation(generation3_path,2,0);
             active_generations=3;
             inspect_runtime(worker,2);
             REQUIRE(worker->runtime_addresses[0]==old0 && worker->runtime_addresses[1]==old1);
@@ -234,7 +234,7 @@ static void *entry(void *opaque)
     if (worker->action==EXPLICIT) pthread_exit(worker);
     return worker;
 }
-static void load_generation(const char *path, int index)
+static void load_generation(const char *path, int index, int mutate_template)
 {
     if (!dynamic) return;
     void *handle=dlopen(path,RTLD_NOW|RTLD_LOCAL);
@@ -244,9 +244,14 @@ static void load_generation(const char *path, int index)
     REQUIRE(image[index] && tbss[index]);
     REQUIRE(*image[index]()==301+index);
     require_zero(tbss[index](),257);
-    /* Main image mutations cannot become new-worker initial templates. */
-    *image[index]()=900+index;
-    tbss[index]()[256]=99;
+    /* Only the pre-worker main mutations prove that later workers receive
+     * relocated ELF templates rather than a copied live TLS image. The
+     * fork-surviving worker must retain generation 3's initial image until
+     * inspect_runtime records its own independent mutation. */
+    if (mutate_template) {
+        *image[index]()=900+index;
+        tbss[index]()[256]=99;
+    }
 }
 static void released(struct worker *worker)
 {
@@ -278,10 +283,10 @@ int main(int argc,char **argv)
     wait_at_least(&first.ready,1);
     REQUIRE(first.tp!=thread_pointer() && first.initialized_address!=(uintptr_t)&initialized);
     if (action==DETACHED) REQUIRE(pthread_detach(first_thread)==0);
-    load_generation(argv[3],0);
+    load_generation(argv[3],0,1);
     atomic_store_explicit(&first.phase,1,memory_order_release);
     wait_at_least(&first.ready,2);
-    load_generation(argv[4],1);
+    load_generation(argv[4],1,1);
     atomic_store_explicit(&first.phase,2,memory_order_release);
     wait_at_least(&first.ready,3);
     check_live(&first);

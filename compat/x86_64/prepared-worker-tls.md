@@ -53,9 +53,9 @@ The C boundary verifies initialized TLS, zero TBSS, independent thread
 addresses and values, callback/TSD lifetime, and fork ownership. In dynamic
 modes, an existing worker observes two later `dlopen` TLS generations while
 retaining its old addresses/values. In the fork-worker child, that surviving
-worker loads a third generation after fork, retains its first two values and
-receives the new one, then a freshly created child worker receives the three
-fresh initial images. This makes the post-fork adopted main the target of the
+worker loads a third generation after fork without mutating its own newly
+resolved template first, retains its first two values and receives the new one,
+then a freshly created child worker receives the three fresh initial images. This makes the post-fork adopted main the target of the
 next all-thread TLS growth. A worker created after the ordinary two-generation
 case sees fresh initial images too. Static fork-worker cells retain their
 existing no-DSO behavior and pass a placeholder third path only. Musl is the

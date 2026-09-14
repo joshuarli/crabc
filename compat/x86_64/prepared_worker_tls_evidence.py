@@ -274,7 +274,7 @@ def check_post_fork_generation_source(probe: str, worker_owner: str) -> dict[str
     fork=_c_body(probe,'worker_fork')
     _ordered(fork,(
         'REQUIRE(thread_pointer()==worker->tp)',
-        'load_generation(generation3_path,2)',
+        'load_generation(generation3_path,2,0)',
         'active_generations=3',
         'inspect_runtime(worker,2)',
         'REQUIRE(worker->runtime_addresses[0]==old0 && worker->runtime_addresses[1]==old1)',
@@ -284,6 +284,14 @@ def check_post_fork_generation_source(probe: str, worker_owner: str) -> dict[str
     entry=_c_body(probe,'entry')
     require('if (worker->already_loaded && active_generations==3) inspect_runtime(worker,2)' in entry,
             'fresh child worker does not inspect the third initial image')
+    loader=_c_body(probe,'load_generation')
+    require('if (mutate_template) {' in loader,
+            'runtime generation loading no longer separates main-template mutation')
+    main=_c_body(probe,'main')
+    _ordered(main,(
+        'load_generation(argv[3],0,1)',
+        'load_generation(argv[4],1,1)',
+    ),'pre-worker template mutations')
     adoption=_body(worker_owner,'adopt_after_fork')
     _ordered(adoption,(
         'ADOPTED_MAIN.store(thread_pointer as usize, Ordering::Release)',
