@@ -132,7 +132,9 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
             receipt.retained_static_admitted_inputs(self.workspace, product, raw, "static")
 
     def test_shared_static_authority_is_the_reviewed_extraction(self) -> None:
-        self.assertEqual(receipt.STATIC_LINK_AUTHORITY_COMMIT, "4847fff0284b515baac336f572edd1b1e1bf544d")
+        self.assertEqual(receipt.STATIC_LINK_AUTHORITY_COMMIT, "06135a4c927f0ba4c57d11331193d8a4c6e1b144")
+        self.assertEqual(receipt.STATIC_LINK_AUTHORITY_SHA256,
+                         "044d744f273472425329f8228f4e57535e1686f157e547f8226a28b009d33c97")
         self.assertEqual(receipt.digest(ROOT / "compat/x86_64/owned_static_link_authority.py"),
                          receipt.STATIC_LINK_AUTHORITY_SHA256)
 
