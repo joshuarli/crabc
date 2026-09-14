@@ -121,24 +121,11 @@
       }
     },
     {
-      "checks": [],
       "id": "fault-injection",
-      "native_status": "partial",
-      "remaining_conditions": [
-        "Qualify the broader native fault-injection seam inventory; the PageMap lazy-commit witness is PageMap evidence and does not complete this component."
-      ],
-      "source_map_records": [
-        { "required_status": "partial", "unit_id": "page-map-lifecycle" },
-        { "required_status": "partial", "unit_id": "os-allocation-policy" }
-      ],
-      "source_units": ["src/os.c", "src/page-map.c"],
-      "unqualified_failure_matrix": [
-        {
-          "id": "cross-component-allocation-and-release-seams",
-          "required_evidence": ["native injected OS failure inventory", "retry, rollback, and terminal-state source tests"],
-          "source_scope": "allocation and release injection seams outside the completed PageMap matrix"
-        }
-      ]
+      "evidence_fragment": {
+        "path": "compat/allocator/m2-fault-seam-inventory-x86_64-v3.5.0.fragment.json",
+        "inventory_sha256": "de61c50d48e60e9a33ab205b6581dedc6c265ed6238b3b8d8bab2a4125d3d501"
+      }
     },
     {
       "checks": [],
@@ -186,7 +173,8 @@
     "x86-64-bitmap-source-and-native-evidence",
     "x86-64-vm-primitives-fixed-profile-c-rust-and-owner-evidence",
     "x86-64-runtime-source-environment-thp-configuration-admission",
-    "x86-64-initialization-three-fixed-tld-and-worker-recovery-admission"
+    "x86-64-initialization-three-fixed-tld-and-worker-recovery-admission",
+    "x86-64-source-indexed-fault-seam-inventory-admission"
   ],
   "milestone": {
     "completion_rule": "M2 is complete only when all eight native x86-64 components have complete target-local source boundaries, closed failure matrices, and their declared native C/Rust and Rust evidence.",

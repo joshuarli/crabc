@@ -909,7 +909,7 @@
       },
       "rust_modules": [],
       "status": "not-started",
-      "difference": "No configurable option subsystem or public option API is part of this private engine evidence profile.",
+      "difference": "No Rust option or diagnostic-output owner exists. The fault inventory observes only the pinned C prerequisite: `mi_register_output` selects the private sink, and `_mi_warning_message` returns under the release default until the fixture explicitly enables `show_errors`; the selected warning then reaches the sink as the source prefix followed by the formatted body. This C-only observation neither maps option parsing nor establishes a Rust output/callback contract; `option-processing` remains the named M7 prerequisite for source-faithful diagnostic parity.",
       "evidence": []
     },
     {
@@ -926,15 +926,19 @@
         "crabc_mimalloc::os_page"
       ],
       "status": "partial",
-      "difference": "Rust maps selected fixed Linux allocation and release policy, while option-driven policy and general default-theap routing are absent. A separate 21-value native C/Rust differential covers one 7-byte, 128 KiB-aligned OS singleton: real C `mi_thread_done()` and pthread join precede the sole consumer free; it is semantically full (`reserved == used == 1`) but remains an unflagged `BIN_HUGE` member with an empty `BIN_FULL` queue, then follows the bounded OS-list/PageMap/mapping terminal tail. Rust observes only its typed private owner-exit handoff. A separate child-isolated C/Rust record covers only the first failure of `_mi_os_alloc_huge_os_pages`: a claimed one-GiB huge primitive fails with ENOMEM, retries the same claim at two MiB and fails, and a later claim uses only two MiB after the sticky unavailable state. C returns NULL with zero pages/size and no MemoryId; Rust returns Unavailable with no allocation owner; both observe unchanged statistics. This excludes huge-page success, multiple-page/partial-prefix or timeout, NUMA placement, diagnostics, and callers. This is not general lifecycle, abandonment/adoption, remote routing, public runtime behavior, public x86 support, or non-x86 target evidence.",
+      "difference": "Rust maps selected fixed Linux allocation and release policy, while option-driven policy and general default-theap routing remain absent. A separate 21-value native C/Rust differential covers one 7-byte, 128 KiB-aligned OS singleton: real C `mi_thread_done()` and pthread join precede the sole consumer free; it is semantically full (`reserved == used == 1`) but remains an unflagged `BIN_HUGE` member with an empty `BIN_FULL` queue, then follows the bounded OS-list/PageMap/mapping terminal tail. Rust observes only its typed private owner-exit handoff. A separate child-isolated C/Rust record covers only the first failure of `_mi_os_alloc_huge_os_pages`: a claimed one-GiB huge primitive fails with ENOMEM, retries the same claim at two MiB and fails, and a later claim uses only two MiB after the sticky unavailable state. C returns NULL with zero pages/size and no MemoryId; Rust returns Unavailable with no allocation owner; both observe unchanged statistics. A distinct fixed direct fault inventory admits the selected deterministic OS branch rows: full-release retry, regular/aligned cleanup, normal full-offset ownership, commit/decommit/purge/protect/unprotect retry, selected external callback/statistics, huge partial prefix, timeout, noncontiguous adjustment cleanup, per-page release continuation, and `mbind` EPERM continuation. It retains exact C primitive streams, source flags, ownership/statistics observations, and Rust `FaultPlan` owner outcomes. C void continuation/statistics and Rust retained-cleanup outcomes are source-specific relations, not matching owner representations. The C warning row configures the source option and observes its two output fragments; Rust diagnostic-output parity remains an explicit option-processing prerequisite. These direct profiles do not qualify successful hardware huge pages, ambient NUMA placement, general callbacks/statistics, option APIs, production callers, lifecycle, public x86 support, or non-x86 targets.",
       "evidence": [
+        "compat/allocator/m2-fault-seam-inventory-x86_64-v3.5.0.fragment.json",
         "compat/allocator/m2-vm-x86_64-v3.5.0.fragment.json",
         "compat/allocator/m2_vm_x86_64.c",
         "compat/allocator/m2_vm_x86_64.py",
         "compat/allocator/test_m2_vm_x86_64.py",
         "compat/allocator/tests/test_x86_64_dynamic_os_aligned_singleton_evidence.py",
+        "compat/allocator/tests/test_x86_64_fault_seam_inventory.py",
+        "compat/allocator/tests/test_x86_64_m2_fault_seam_inventory.py",
         "compat/allocator/x86_64-dynamic-os-aligned-singleton-evidence-v3.5.0.json",
         "compat/allocator/x86_64_dynamic_os_aligned_singleton_evidence.py",
+        "compat/allocator/x86_64_fault_seam_inventory.py",
         "crabc-mimalloc/src/os.rs",
         "crabc-mimalloc/src/os_page.rs"
       ]
@@ -1548,6 +1552,6 @@
     "unfinished_unit_count": 28,
     "unit_count": 34,
     "unit_ids_sha256": "dca679d8587cb38bcf6e6c62379284ed35a55d1b7991d07b0d30eac767670052",
-    "units_sha256": "6f987dbf8e7cf66cefa2796baea6b6579ae3ce6488eb99637ab33b4035e89a0c"
+    "units_sha256": "4db0e9a15648be345c31aa0ee558f963a3e73fdc88f0e55f49e49eff66726293"
   }
 }

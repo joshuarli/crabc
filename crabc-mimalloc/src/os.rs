@@ -3458,24 +3458,42 @@ fn map_huge_page_for_process(
     numa_node: i32,
 ) -> Result<Mapping> {
     let mapping = Mapping::map_huge_page_at(process.policy, config, hint)?;
-    if numa_node >= 0 && numa_node < usize::BITS as i32 - 1 {
-        let mask = 1usize << numa_node as u32;
-        let address = mapping.base()?;
-        // SAFETY: `mapping` owns this whole live primitive mapping; the
-        // source accepts `mbind` failure as a best-effort NUMA preference and
-        // supplies exactly one native unsigned-long mask word.
-        let _ = unsafe {
-            crabc_core::mm::mbind_raw(
-                address,
-                HUGE_PAGE_SIZE,
-                MPOL_PREFERRED,
-                &mask,
-                usize::BITS as usize,
-                0,
-            )
-        };
-    }
+    apply_huge_page_numa_preference(mapping.base()?, numa_node);
     Ok(mapping)
+}
+
+/// Applies the source's best-effort one-word NUMA preference after a huge
+/// primitive map. Its result has no ownership meaning: the mapping stays live
+/// whether the kernel accepts the preference or returns an error.
+#[inline]
+fn apply_huge_page_numa_preference(address: *mut u8, numa_node: i32) {
+    if numa_node < 0 || numa_node >= usize::BITS as i32 - 1 {
+        return;
+    }
+    let mask = 1usize << numa_node as u32;
+    // The caller owns this full primitive mapping. Pinned C emits its output
+    // callback warning before it ignores a failed `mbind`; the current Rust
+    // port has no allocator-output owner, so this boundary preserves only the
+    // ignored-result and retained-owner behavior. Diagnostic parity stays
+    // explicitly unadmitted.
+    let _ = huge_page_numa_bind(address, &mask);
+}
+
+#[inline]
+fn huge_page_numa_bind(address: *mut u8, mask: &usize) -> Result<()> {
+    fault_before(FaultPoint::NumaBind)?;
+    // SAFETY: `address` names the caller's full huge primitive mapping and
+    // `mask` provides exactly one native unsigned-long NUMA bitmask word.
+    unsafe {
+        crabc_core::mm::mbind_raw(
+            address,
+            HUGE_PAGE_SIZE,
+            MPOL_PREFERRED,
+            mask,
+            usize::BITS as usize,
+            0,
+        )
+    }
 }
 
 fn free_huge_page_for_process(process: VmProcess<'_>, address: NonNull<u8>) -> Result<()> {
@@ -4634,6 +4652,10 @@ pub(crate) enum FaultPoint {
     LargeMap = 14,
     /// The best-effort `MADV_HUGEPAGE` advisory after a regular source map.
     Madvise = 15,
+    /// The one-word best-effort NUMA preference after a successful huge map.
+    /// It remains distinct from HugeMap: its error is deliberately ignored by
+    /// the source and cannot change the completed mapping owner.
+    NumaBind = 16,
 }
 
 #[cfg(not(any(test, feature = "native-runtime-test-fault")))]
@@ -7924,6 +7946,207 @@ mod tests {
             after_source_free,
             "raw retries must not repeat a source-accounted free event",
         );
+    }
+
+    /// Emits the fixed Rust half of the fault-inventory huge-page branch
+    /// receipt.  The map closure supplies anonymous test mappings only: it
+    /// proves source control-flow and retained-owner accounting, never Linux
+    /// huge-page provisioning or a NUMA placement result.
+    #[test]
+    fn emit_m2_fault_seam_inventory_c_rust_trace() {
+        let config = MemoryConfig::detect(current_startup());
+
+        let partial_policy = VmPolicy::defaults_for_test();
+        let partial_subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let partial_process = VmProcess::new(&partial_policy, partial_subprocess);
+        let partial_before = partial_subprocess.vm_statistics().snapshot();
+        let mut partial_maps = 0;
+        let partial = match allocate_huge_pages_with(
+            partial_process,
+            2,
+            0,
+            None,
+            |hint| {
+                partial_maps += 1;
+                if partial_maps == 2 {
+                    Err(Errno::NOMEM)
+                } else {
+                    Ok(synthetic_huge_mapping(config, hint))
+                }
+            },
+            || 0,
+            |_| 0,
+        ) {
+            HugeOsAllocationOutcome::Allocated(allocation) => allocation,
+            _ => panic!("one completed primitive page retains a partial huge owner"),
+        };
+        let partial_after = partial_subprocess.vm_statistics().snapshot();
+        let partial_relation = partial_maps == 2
+            && partial.page_count() == 1
+            && partial.size() == HUGE_PAGE_SIZE
+            && partial.memory_id().kind() == MemoryKind::OsHuge
+            && matches!(partial.stop(), HugeOsAllocationStop::PrimitiveMapFailed(Errno::NOMEM))
+            && partial_after.reserved_current
+                == partial_before.reserved_current + HUGE_PAGE_SIZE as i64
+            && partial_after.committed_current
+                == partial_before.committed_current + HUGE_PAGE_SIZE as i64;
+
+        let timeout_policy = VmPolicy::defaults_for_test();
+        let timeout_subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let timeout_process = VmProcess::new(&timeout_policy, timeout_subprocess);
+        let timeout_before = timeout_subprocess.vm_statistics().snapshot();
+        let mut timeout_maps = 0;
+        let timeout = match allocate_huge_pages_with(
+            timeout_process,
+            2,
+            1,
+            None,
+            |hint| {
+                timeout_maps += 1;
+                Ok(synthetic_huge_mapping(config, hint))
+            },
+            || 0,
+            |_| 2,
+        ) {
+            HugeOsAllocationOutcome::Allocated(allocation) => allocation,
+            _ => panic!("the first primitive page precedes the source timeout check"),
+        };
+        let timeout_after = timeout_subprocess.vm_statistics().snapshot();
+        let timeout_relation = timeout_maps == 1
+            && timeout.page_count() == 1
+            && matches!(timeout.stop(), HugeOsAllocationStop::TimedOut)
+            && timeout_after.reserved_current
+                == timeout_before.reserved_current + HUGE_PAGE_SIZE as i64
+            && timeout_after.committed_current
+                == timeout_before.committed_current + HUGE_PAGE_SIZE as i64;
+
+        let noncontiguous_fault = fault::install(fault::Plan::at(
+            fault::Point::Unmap,
+            1,
+            Errno::NOMEM,
+        ));
+        let noncontiguous_policy = VmPolicy::defaults_for_test();
+        let noncontiguous_subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let noncontiguous_process = VmProcess::new(&noncontiguous_policy, noncontiguous_subprocess);
+        let noncontiguous_before = noncontiguous_subprocess.vm_statistics().snapshot();
+        let rejected = match allocate_huge_pages_with(
+            noncontiguous_process,
+            1,
+            0,
+            None,
+            |hint| Ok(synthetic_huge_mapping(config, hint + HUGE_PAGE_SIZE)),
+            || 0,
+            |_| 0,
+        ) {
+            HugeOsAllocationOutcome::RejectedPrimitive(rejected) => rejected,
+            _ => panic!("a noncontiguous primitive result must retain its adjustment owner"),
+        };
+        let noncontiguous_after = noncontiguous_subprocess.vm_statistics().snapshot();
+        let noncontiguous_relation = rejected.error() == Errno::NOMEM
+            && noncontiguous_fault.observed() == 1
+            && noncontiguous_after.reserved_current
+                == noncontiguous_before.reserved_current - HUGE_PAGE_SIZE as i64
+            && noncontiguous_after.committed_current
+                == noncontiguous_before.committed_current - HUGE_PAGE_SIZE as i64;
+        drop(noncontiguous_fault);
+
+        let placement_fault = fault::install(fault::Plan::at(
+            fault::Point::NumaBind,
+            1,
+            Errno::PERM,
+        ));
+        let placement_policy = VmPolicy::defaults_for_test();
+        let placement_subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let placement_process = VmProcess::new(&placement_policy, placement_subprocess);
+        let page = config.page_size().bytes();
+        let mut placement_mapping = Mapping::map_for_process(
+            placement_process,
+            config,
+            page,
+            1,
+            MapAccess::Committed,
+            false,
+            None,
+        )
+        .expect("the placement witness begins with one explicit mapping owner");
+        let placement_base = placement_mapping.base().expect("the placement mapping is live");
+        let placement_before = placement_subprocess.vm_statistics().snapshot();
+        apply_huge_page_numa_preference(placement_base, 0);
+        let placement_after = placement_subprocess.vm_statistics().snapshot();
+        let placement_relation = placement_fault.observed() == 1
+            && placement_mapping.base() == Ok(placement_base)
+            && placement_after == placement_before;
+        drop(placement_fault);
+        placement_mapping
+            .unmap_for_process(placement_process, page, true)
+            .expect("the best-effort placement result cannot consume its mapping owner");
+
+        let base = NonNull::new(HUGE_HINT_BASE as *mut u8).unwrap();
+        let mut failed = [0usize; 1];
+        let mut release_calls = 0;
+        let source_free = release_huge_pages_with(base, 2, &mut failed, |address| {
+            let page = (address.as_ptr().addr() - base.as_ptr().addr()) / HUGE_PAGE_SIZE;
+            release_calls += 1;
+            if page == 0 { Err(Errno::NOMEM) } else { Ok(()) }
+        });
+        let source_free_relation = source_free == Some(Errno::NOMEM)
+            && release_calls == 2
+            && failed == [1];
+
+        let release_fault = fault::install(fault::Plan::at(
+            fault::Point::Unmap,
+            1,
+            Errno::NOMEM,
+        ));
+        let release_policy = VmPolicy::defaults_for_test();
+        let release_subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let release_process = VmProcess::new(&release_policy, release_subprocess);
+        assert_eq!(free_huge_page_for_process(release_process, base), Err(Errno::NOMEM));
+        let after_source_free = release_subprocess.vm_statistics().snapshot();
+        let mut failed_page = [1usize];
+        let retry = HugeOsRawReleaseRetry {
+            process: release_process,
+            base,
+            page_count: 1,
+            memory: MemoryId::os_huge(base.as_ptr(), HUGE_PAGE_SIZE, true, true),
+            source_error: Errno::NOMEM,
+            failed_pages: &mut failed_page,
+            failed_words: 1,
+        };
+        release_fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+        let retry_failure = match retry.retry_raw() {
+            Ok(_) => panic!("the selected raw retry must retain its failed source page"),
+            Err(failure) => failure,
+        };
+        let retry = retry_failure.into_retry();
+        let continued_free_relation = source_free_relation
+            && retry.source_error() == Errno::NOMEM
+            && retry.failed_page(0)
+            && release_subprocess.vm_statistics().snapshot() == after_source_free;
+        drop(release_fault);
+
+        std::println!("CRABC_MI_M2_FAULT_SEAM_INVENTORY_RUST_TRACE_BEGIN");
+        std::println!(
+            "m2.fault.rust.huge.partial_primitive_failure_retains_one_os_huge_owner_and_stats={}",
+            usize::from(partial_relation),
+        );
+        std::println!(
+            "m2.fault.rust.huge.timeout_after_progress_retains_one_os_huge_owner_and_stats={}",
+            usize::from(timeout_relation),
+        );
+        std::println!(
+            "m2.fault.rust.huge.noncontiguous_adjustment_retains_rejected_cleanup_owner={}",
+            usize::from(noncontiguous_relation),
+        );
+        std::println!(
+            "m2.fault.rust.huge.placement_failure_is_best_effort_and_retains_mapping_owner={}",
+            usize::from(placement_relation),
+        );
+        std::println!(
+            "m2.fault.rust.huge.free_continues_after_failed_page_and_records_retry_bits={}",
+            usize::from(continued_free_relation),
+        );
+        std::println!("CRABC_MI_M2_FAULT_SEAM_INVENTORY_RUST_TRACE_END");
     }
 
     #[test]
