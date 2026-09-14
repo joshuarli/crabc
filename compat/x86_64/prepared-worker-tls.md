@@ -80,10 +80,12 @@ it does not turn `_Fork` into loader-lifecycle evidence.
 Seven exact existing loader source tests independently cover initialized
 worker materialization, stale/malformed/double-release tokens, abandoned and
 malformed view preparation, live readers across publication, preserved TLS
-addresses, and pre-FS descriptor reservation rollback. The source root and
-production feature predicates are retained; no source-root permissions or
-runtime algorithm are changed. The Rust executable and compiler diagnostics
-are sealed. Compiler warnings are retained as structured observations;
+addresses, and pre-FS descriptor reservation rollback. These source-test
+harnesses retain the production algorithms and feature predicates they
+observe; their test-only setup changes neither source-root permissions nor
+those exercised predicates. The full dynamic-fork registry ordering is the
+separate production repair described above. The Rust executable and compiler
+diagnostics are sealed. Compiler warnings are retained as structured observations;
 errors and unparsed diagnostics reject the receipt.
 
 ## Collection and replay
