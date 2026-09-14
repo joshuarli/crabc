@@ -40,6 +40,26 @@ DESCRIPTOR_RUNTIME_VALUE_CASES=(
     'unaligned-dtv','zero-module-count','short-dtv-words','module-count-overflow','fs-mismatch',
     'self-word-mismatch','dtv-slot-mismatch','dtv-count-mismatch',
 )
+DESCRIPTOR_RUNTIME_CONSUMER_BODIES=(
+    {
+        'source_function':'validate_loader_tls_runtime_v1',
+        'symbol':'_RNvNtCsdlKvXcqhVMX_24crabc_dynamic_attachment21loader_tls_runtime_v130validate_loader_tls_runtime_v1',
+        'source_binding':'LOCAL','source_visibility':'DEFAULT',
+        'final_binding':'LOCAL','final_visibility':'DEFAULT',
+    },
+    {
+        'source_function':'current_thread_pointer',
+        'symbol':'_RNvNtCsdlKvXcqhVMX_24crabc_dynamic_attachment21loader_tls_runtime_v122current_thread_pointer',
+        'source_binding':'LOCAL','source_visibility':'DEFAULT',
+        'final_binding':'LOCAL','final_visibility':'DEFAULT',
+    },
+    {
+        'source_function':'observe_validated_loader_tls',
+        'symbol':'_RNvNtCsdlKvXcqhVMX_24crabc_dynamic_attachment21loader_tls_runtime_v128observe_validated_loader_tls',
+        'source_binding':'LOCAL','source_visibility':'DEFAULT',
+        'final_binding':'LOCAL','final_visibility':'DEFAULT',
+    },
+)
 DESCRIPTOR_RUNTIME_SOURCE_FILES=(
     'scripts/build_x86_64_owned_dynamic_sysroot.py','ldso/Cargo.toml','ldso/build.rs',
     'crt/build_x86_64.py','crt/src/x86_64_dynamic_startup.rs',
@@ -116,6 +136,7 @@ def expected_contract():
                              'static_artifact':'candidate-static',
                              'mode':'static-freestanding-selected-object'},
                     'value_cases':list(DESCRIPTOR_RUNTIME_VALUE_CASES),
+                    'consumer_bodies':list(DESCRIPTOR_RUNTIME_CONSUMER_BODIES),
                     'cells':[
                         {'name':'descriptor-runtime-matrix','define':''},
                         {'name':'descriptor-runtime-absent','define':'CRABC_RUNTIME_CASE_ABSENT'},
@@ -331,10 +352,14 @@ def descriptor_runtime_source_order(sources):
                                   'RuntimeV1 consumer attachment')
     _runtime_order(attach_body,('validate_loader_tls_runtime_v1()','observe_validated_loader_tls(record)'),
                    'RuntimeV1 consumer attachment')
+    bodies=expected_contract()['descriptor_handoff']['runtime_admission']['consumer_bodies']
+    for body in bodies:
+        marker='#[inline(never)]\nunsafe fn '+body['source_function']+'('
+        require(consumer.count(marker)==1,'RuntimeV1 selected consumer body differs: '+body['source_function'])
     return {'scope':'selected source release/acquire order and CRT attachment route; no compiler or concurrency proof',
             'builder':{'attachment':'direct PIC object','loader_feature':'x86_64-owned-dynamic-runtime'},
             'publisher':{'state_store':'Release READY last'},
-            'consumer':{'state_load':'Acquire READY before TLS coordinate reads'},
+            'consumer':{'state_load':'Acquire READY before TLS coordinate reads','bodies':bodies},
             'crt':{'attachment':'before __libc_start_main'}}
 
 
@@ -452,7 +477,7 @@ def descriptor_runtime_plan(root,work,inputs,tools):
                 '-c',p(Path(policy['source']).name),'-o',p(cell['label']+'.o'),
             ],'cwd':'/workspace','expected_stdout':b'','expected_stderr':b''},
             {'label':cell['label']+'-link','argv':[
-                tool('linker'),'-static','--no-dynamic-linker','--no-undefined','-e','_start',
+                tool('linker'),'-static','--no-dynamic-linker','--no-undefined','--no-demangle','-e','_start',
                 '-Map='+p(cell['label']+'.map'),p(cell['label']+'.o'),
                 m(paths[policy['attachment_artifact']]),m(paths[policy['static_artifact']]),
                 '-o',p(cell['label']),
@@ -1139,9 +1164,14 @@ def descriptor_runtime_map_relation(root,work,inputs,cell):
     attachment=ordinary.mounted(root,product_paths(root,inputs)[inputs_account['attachment']['artifact']])
     archive=ordinary.mounted(root,product_paths(root,inputs)[inputs_account['static_libc']['artifact']])
     probe=ordinary.mounted(root,work/(cell['label']+'.o'))
+    policy=expected_contract()['descriptor_handoff']['runtime_admission']
     contracts=(
         static_authority.StaticFunctionContract(ATTACH,attachment,'GLOBAL','DEFAULT','GLOBAL','DEFAULT'),
         static_authority.StaticFunctionContract(RECORD,attachment,'GLOBAL','HIDDEN','LOCAL','HIDDEN'),
+        *(static_authority.StaticFunctionContract(
+            body['symbol'],attachment,body['source_binding'],body['source_visibility'],
+            body['final_binding'],body['final_visibility'],
+        ) for body in policy['consumer_bodies']),
     )
     try:
         static_authority.require_static_functions(
@@ -1152,11 +1182,15 @@ def descriptor_runtime_map_relation(root,work,inputs,cell):
         )
     except static_authority.StaticLinkAuthorityError as error:
         raise StartupEvidenceError('descriptor runtime selected attachment authority differs: '+str(error)) from error
+    source_functions={body['symbol']:body['source_function'] for body in policy['consumer_bodies']}
     return {'attachment':attachment,'static_libc':archive,'probe_object':probe,
-            'functions':[{'name':row.name,'input_owner':row.input_owner,
-                          'source_binding':row.source_binding,'source_visibility':row.source_visibility,
-                          'final_binding':row.final_binding,'final_visibility':row.final_visibility}
-                         for row in contracts]}
+            'functions':[
+                {'name':row.name,'input_owner':row.input_owner,
+                 'source_binding':row.source_binding,'source_visibility':row.source_visibility,
+                 'final_binding':row.final_binding,'final_visibility':row.final_visibility,
+                 **({'source_function':source_functions[row.name]} if row.name in source_functions else {})}
+                for row in contracts
+            ]}
 
 
 def descriptor_runtime_probe_object(path,cell):

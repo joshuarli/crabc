@@ -118,7 +118,8 @@ ordinary pinned compiler first produces the retained probe object; the sealed
 pinned LLD then links that exact object with the two direct product inputs.
 Their exact commands, map, source/object/product/output identities, statuses
 and empty streams are retained. The shared static-link authority checks the
-two selected attachment bodies from their LLD map through the final linked
+two exported attachment bodies plus the three exact `#[inline(never)]` local
+consumer bodies from their non-demangled LLD map through the final linked
 bytes. Before that link, the finite source-object account requires the matrix
 to define its 72-byte descriptor, the absent branch to define none, and the
 unaligned branch to retain its defined global alias one byte after the local

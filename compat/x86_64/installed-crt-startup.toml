@@ -80,6 +80,11 @@ stderr = "reloc\n"
 
 [descriptor_handoff.runtime_admission]
 value_cases = ["bad-magic", "bad-version", "bad-abi-size", "bad-mode", "bad-owner", "unpublished", "publishing", "unexpected-state", "nonzero-reserved", "bad-generation", "null-tp", "null-dtv", "unaligned-tp", "unaligned-dtv", "zero-module-count", "short-dtv-words", "module-count-overflow", "fs-mismatch", "self-word-mismatch", "dtv-slot-mismatch", "dtv-count-mismatch"]
+consumer_bodies = [
+  { source_function = "validate_loader_tls_runtime_v1", symbol = "_RNvNtCsdlKvXcqhVMX_24crabc_dynamic_attachment21loader_tls_runtime_v130validate_loader_tls_runtime_v1", source_binding = "LOCAL", source_visibility = "DEFAULT", final_binding = "LOCAL", final_visibility = "DEFAULT" },
+  { source_function = "current_thread_pointer", symbol = "_RNvNtCsdlKvXcqhVMX_24crabc_dynamic_attachment21loader_tls_runtime_v122current_thread_pointer", source_binding = "LOCAL", source_visibility = "DEFAULT", final_binding = "LOCAL", final_visibility = "DEFAULT" },
+  { source_function = "observe_validated_loader_tls", symbol = "_RNvNtCsdlKvXcqhVMX_24crabc_dynamic_attachment21loader_tls_runtime_v128observe_validated_loader_tls", source_binding = "LOCAL", source_visibility = "DEFAULT", final_binding = "LOCAL", final_visibility = "DEFAULT" },
+]
 
 [descriptor_handoff.runtime_admission.probe]
 source = "compat/x86_64/installed_crt_startup_descriptor_runtime_probe.c"

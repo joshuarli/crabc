@@ -442,6 +442,7 @@ int main(void) {
             {'name':'descriptor-runtime-unaligned-record','define':'CRABC_RUNTIME_CASE_UNALIGNED_RECORD'},
         ])
         self.assertEqual(admission['value_cases'], list(reader.DESCRIPTOR_RUNTIME_VALUE_CASES))
+        self.assertEqual(admission['consumer_bodies'], list(reader.DESCRIPTOR_RUNTIME_CONSUMER_BODIES))
         self.assertIn(reader.DESCRIPTOR_RUNTIME_PROBE,reader.COLLECTOR_SOURCES)
         self.assertNotIn(reader.DESCRIPTOR_RUNTIME_PROBE,reader.RUNTIME_SOURCES)
         self.assertIn('compat/x86_64/owned_static_link_authority.py',reader.COLLECTOR_SOURCES)
@@ -488,6 +489,21 @@ int main(void) {
             1,
         )
         with self.assertRaises(reader.StartupEvidenceError):reader.descriptor_runtime_source_order(changed)
+
+    def test_descriptor_runtime_source_order_requires_each_named_local_consumer_body(self):
+        """The final-byte roster names all three source-level admission bodies."""
+        sources=reader.descriptor_runtime_source_bytes(reader.ROOT)
+        observed=reader.descriptor_runtime_source_order(sources)
+        self.assertEqual(observed['consumer']['bodies'],list(reader.DESCRIPTOR_RUNTIME_CONSUMER_BODIES))
+        path='libc/src/c_abi/x86_64/loader_tls_runtime_v1.rs'
+        for body in reader.DESCRIPTOR_RUNTIME_CONSUMER_BODIES:
+            marker=('#[inline(never)]\nunsafe fn '+body['source_function']+'(').encode('ascii')
+            changed=copy.deepcopy(sources)
+            self.assertEqual(changed[path].count(marker),1)
+            changed[path]=changed[path].replace(marker,
+                ('#[inline(always)]\nunsafe fn '+body['source_function']+'(').encode('ascii'),1)
+            with self.subTest(source_function=body['source_function']),self.assertRaises(reader.StartupEvidenceError):
+                reader.descriptor_runtime_source_order(changed)
 
     def test_descriptor_runtime_source_order_rejects_an_early_ready_store_or_post_ready_write(self):
         """READY is the publisher's one final operation, not merely an ordered snippet."""
@@ -620,8 +636,9 @@ int main(void) {
                 link=next(row for row in plan if row['label']==cell['label']+'-link')
                 self.assertEqual(link['argv'].count(attachment),1)
                 self.assertEqual(link['argv'].count(archive),1)
-                self.assertEqual(link['argv'][:6],[
-                    '/sealed/linker','-static','--no-dynamic-linker','--no-undefined','-e','_start'])
+                self.assertEqual(link['argv'][:7],[
+                    '/sealed/linker','-static','--no-dynamic-linker','--no-undefined','--no-demangle','-e','_start'])
+                self.assertEqual(link['argv'].count('--no-demangle'),1)
                 self.assertEqual(link['argv'].count(reader.ordinary.mounted(root,work/(cell['label']+'.o'))),1)
                 self.assertEqual(link['expected_stdout'],b'')
                 self.assertEqual(link['expected_stderr'],b'')
@@ -655,11 +672,15 @@ int main(void) {
             with mock.patch.object(reader.static_authority,'require_static_functions') as relation:
                 observed=reader.descriptor_runtime_map_relation(root,work,inputs,cell)
             self.assertEqual(observed['attachment'],attach)
-            self.assertEqual([row['name'] for row in observed['functions']],[reader.ATTACH,reader.RECORD])
+            expected_names=[reader.ATTACH,reader.RECORD,
+                            *(body['symbol'] for body in reader.DESCRIPTOR_RUNTIME_CONSUMER_BODIES)]
+            self.assertEqual([row['name'] for row in observed['functions']],expected_names)
+            self.assertEqual([row.get('source_function') for row in observed['functions'][2:]],
+                             [body['source_function'] for body in reader.DESCRIPTOR_RUNTIME_CONSUMER_BODIES])
             called_map,called_endpoint,admitted,contracts=relation.call_args.args
             self.assertEqual((called_map,called_endpoint),(path,endpoint))
             self.assertEqual(admitted[attach],attachment)
-            self.assertEqual([row.name for row in contracts],[reader.ATTACH,reader.RECORD])
+            self.assertEqual([row.name for row in contracts],expected_names)
             with mock.patch.object(reader.static_authority,'require_static_functions',
                                    side_effect=reader.static_authority.StaticLinkAuthorityError('wrong final bytes')):
                 with self.assertRaisesRegex(reader.StartupEvidenceError,'wrong final bytes'):
