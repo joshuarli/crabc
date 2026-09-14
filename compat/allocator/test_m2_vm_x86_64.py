@@ -36,6 +36,12 @@ LARGE_ONLY_TRACE_KEYS = (
     "m2.vm.large_only.terminal_failures_leave_statistics_and_owners_unpublished",
 )
 
+THP_DISABLE_FAILURE_TRACE_KEYS = (
+    "m2.vm.thp_disable.get_zero_then_set_perm_exact_arguments",
+    "m2.vm.thp_disable.set_perm_leaves_configuration_disabled",
+    "m2.vm.thp_disable.set_perm_failure_returns_from_policy_transition",
+)
+
 
 EXPECTED_CHECK_IDS = (
     "native-vm-fixed-lifecycle-differential",
@@ -43,6 +49,7 @@ EXPECTED_CHECK_IDS = (
     "normal-release-aligned-hint-cursor-random-and-cas-matrix",
     "normal-release-large-page-retry-suppression-and-ordinary-fallback",
     "large-only-one-gib-failure-no-regular-owner",
+    "thp-disable-set-perm-keeps-configuration-disabled",
     "aligned-hint-source-profile-and-direct-caller-matrix",
     "aligned-overmap-cleanup-c-rust-boundary-matrix",
     "process-policy-first-arena-clean-primary-fallback",
@@ -127,6 +134,25 @@ class NativeM2VmTraceTests(unittest.TestCase):
                 1,
             ),
             good.replace(f"{LARGE_ONLY_TRACE_KEYS[0]}=1", f"{LARGE_ONLY_TRACE_KEYS[0]}=0", 1),
+        ):
+            with self.subTest(malformed=malformed), self.assertRaises(ValueError):
+                parse_trace(malformed, source="test")
+
+    def test_thp_disable_failure_record_is_finite_and_fail_closed(self) -> None:
+        good = valid_trace()
+        for malformed in (
+            good.replace(f"{THP_DISABLE_FAILURE_TRACE_KEYS[0]}=1\n", "", 1),
+            good.replace(
+                f"{THP_DISABLE_FAILURE_TRACE_KEYS[0]}=1",
+                f"{THP_DISABLE_FAILURE_TRACE_KEYS[0]}=1\n{THP_DISABLE_FAILURE_TRACE_KEYS[0]}=1",
+                1,
+            ),
+            good.replace(
+                f"{THP_DISABLE_FAILURE_TRACE_KEYS[0]}=1\n{THP_DISABLE_FAILURE_TRACE_KEYS[1]}=1",
+                f"{THP_DISABLE_FAILURE_TRACE_KEYS[1]}=1\n{THP_DISABLE_FAILURE_TRACE_KEYS[0]}=1",
+                1,
+            ),
+            good.replace(f"{THP_DISABLE_FAILURE_TRACE_KEYS[2]}=1", f"{THP_DISABLE_FAILURE_TRACE_KEYS[2]}=0", 1),
         ):
             with self.subTest(malformed=malformed), self.assertRaises(ValueError):
                 parse_trace(malformed, source="test")
@@ -249,6 +275,25 @@ class NativeM2VmFragmentTests(unittest.TestCase):
         promoted["component"]["branch_matrix"][2]["missing_conditions"] = []
         for fragment in (dropped_evidence, promoted):
             with self.subTest(fragment=fragment), self.assertRaisesRegex(ValueError, "THP"):
+                load_fragment(self.write_fragment(fragment))
+
+    def test_thp_disable_failure_definition_and_check_cannot_be_dropped(self) -> None:
+        dropped_definition = copy.deepcopy(self.fragment)
+        definitions = dropped_definition["component"]["bounded_source_definitions"]
+        definitions[:] = [
+            definition
+            for definition in definitions
+            if definition["id"] != "unix-thp-disable-process-policy"
+        ]
+        dropped_check = copy.deepcopy(self.fragment)
+        checks = dropped_check["component"]["checks"]
+        checks[:] = [
+            check
+            for check in checks
+            if check["id"] != "thp-disable-set-perm-keeps-configuration-disabled"
+        ]
+        for fragment in (dropped_definition, dropped_check):
+            with self.subTest(fragment=fragment), self.assertRaises(ValueError):
                 load_fragment(self.write_fragment(fragment))
 
     def test_large_only_branch_cannot_drop_its_evidence_or_open_frontier(self) -> None:

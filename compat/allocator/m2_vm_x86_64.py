@@ -38,7 +38,7 @@ EXPECTED_RUST_TEST_COUNT = 1
 LARGE_PAGE_RETRY_CAPTURE_REAP_TEST_DEFINE = (
     "-DCRABC_M2_LARGE_PAGE_RETRY_CAPTURE_REAP_TEST=1"
 )
-EVIDENCE_PROFILE = "release-no-default-features-process-paired-regular-vm-reset-eagain-fallback-state-external-page-extension-child-policy-large-page-retry-suppression-large-only-one-gib-terminal-aligned-hint-and-aligned-overmap-cleanup-boundary-fault"
+EVIDENCE_PROFILE = "release-no-default-features-process-paired-regular-vm-reset-eagain-fallback-state-external-page-extension-child-policy-thp-disable-set-perm-large-page-retry-suppression-large-only-one-gib-terminal-aligned-hint-and-aligned-overmap-cleanup-boundary-fault"
 
 CHECKS = (
     (
@@ -65,6 +65,11 @@ CHECKS = (
         "large-only-one-gib-failure-no-regular-owner",
         "rust-unit",
         "os::tests::large_only_one_gib_failure_retries_two_mib_once_then_stays_terminal",
+    ),
+    (
+        "thp-disable-set-perm-keeps-configuration-disabled",
+        "rust-unit",
+        "os::tests::thp_disable_set_failure_keeps_configuration_disabled",
     ),
     (
         "aligned-hint-source-profile-and-direct-caller-matrix",
@@ -205,6 +210,9 @@ TRACE_KEYS = (
     "m2.vm.config.has_virtual_reserve",
     "m2.vm.config.has_transparent_huge_pages",
     "m2.vm.thp.process_disabled",
+    "m2.vm.thp_disable.get_zero_then_set_perm_exact_arguments",
+    "m2.vm.thp_disable.set_perm_leaves_configuration_disabled",
+    "m2.vm.thp_disable.set_perm_failure_returns_from_policy_transition",
     "m2.vm.reserved.initially_zero",
     "m2.vm.reserved.initially_committed",
     "m2.vm.reserved.commit.failure_returns_false",
@@ -595,10 +603,31 @@ def load_fragment(path: Path) -> dict[str, Any]:
     if (
         thp_branch["disposition"] != "partial-fixed-profile"
         or TRACE_CHECK_ID not in thp_branch["evidence_check_ids"]
+        or "thp-disable-set-perm-keeps-configuration-disabled"
+        not in thp_branch["evidence_check_ids"]
         or not any("ambient" in condition.lower() for condition in thp_branch["missing_conditions"])
         or not any("child-isolated" in condition.lower() for condition in thp_branch["missing_conditions"])
     ):
         raise _error("THP process-policy branch lost its bounded native evidence or open frontier")
+    thp_definition = next(
+        (definition for definition in definitions if definition["id"] == "unix-thp-disable-process-policy"),
+        None,
+    )
+    if (
+        thp_definition is None
+        or thp_definition["source_anchor"] != {
+            "member": "src/prim/unix/prim.c",
+            "start_line": 250,
+            "end_line": 277,
+            "sha256": "955c45eab6dcb9a5fa09decdc76350b69962f806d7d571ac9f39b6e4f08675e0",
+        }
+        or thp_definition["evidence_check_ids"]
+        != [
+            TRACE_CHECK_ID,
+            "thp-disable-set-perm-keeps-configuration-disabled",
+        ]
+    ):
+        raise _error("THP disable failure source definition lost its exact evidence binding")
 
     large_route_branch = branches[8]
     if (
@@ -988,6 +1017,7 @@ def run_evidence(
             "-Wl,--wrap=mmap",
             "-Wl,--wrap=madvise",
             "-Wl,--wrap=mprotect",
+            "-Wl,--wrap=prctl",
             "-pthread",
             "-o",
             str(binary),
@@ -1023,6 +1053,7 @@ def run_evidence(
             "-Wl,--wrap=mmap",
             "-Wl,--wrap=madvise",
             "-Wl,--wrap=mprotect",
+            "-Wl,--wrap=prctl",
             "-pthread",
             "-o",
             str(capture_reap_binary),
@@ -1068,6 +1099,7 @@ def run_evidence(
                 "-Wl,--wrap=mmap",
                 "-Wl,--wrap=madvise",
                 "-Wl,--wrap=mprotect",
+                "-Wl,--wrap=prctl",
                 "-pthread",
                 "-o",
                 str(profile_binary),

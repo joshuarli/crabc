@@ -321,7 +321,7 @@ M2_X86_64_VM_FRAGMENT = ALLOCATOR_ROOT / "m2-vm-x86_64-v3.5.0.fragment.json"
 # rows into both the aggregate manifest and Python. Source bytes are verified
 # separately against the upstream archive before any native check executes.
 M2_X86_64_BITMAP_FRAGMENT_DIGEST = "dbb2bc7d34762819f7ed76c3b50fd3d8599d46b0ba7b9f78fcc9310afe536300"
-M2_X86_64_VM_FRAGMENT_DIGEST = "f6e4b47e25aec8de302f3f5fbbb8ff752fa55b40b232a81837597e6dea79cb51"
+M2_X86_64_VM_FRAGMENT_DIGEST = "4e213c9be5df6e6264ec2bbccfe0e1e448317d0d432e8563e3faef2e6b2e96ad"
 M2_X86_64_PAGE_MAP_CHECK_IDS = (
     "successful-page-map-lifecycle",
     "lazy-page-map-commit-failure",
@@ -12471,6 +12471,7 @@ def _m2_x86_64_vm_c_command_is_bound(
         "-Wl,--wrap=mmap",
         "-Wl,--wrap=madvise",
         "-Wl,--wrap=mprotect",
+        "-Wl,--wrap=prctl",
         "-pthread",
         "-o",
         output,

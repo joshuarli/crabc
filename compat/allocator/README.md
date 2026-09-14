@@ -2607,6 +2607,21 @@ ordinary fallback owner remains valid. This is direct VM-policy evidence only:
 it does not qualify successful hardware huge pages, ambient diagnostics, or an
 allocator/runtime caller.
 
+### Native M2 THP disable SET failure
+
+`allocator-m2` also compares one child-isolated direct pinned-C
+`_mi_prim_mem_init` call with a private Rust `VmPolicy` capture. With
+`allow_thp=0`, both records require `PR_GET_THP_DISABLE(0,0,0,0)` to return
+zero, then require `PR_SET_THP_DISABLE(1,0,0,0)` to fail with EPERM, while the
+memory configuration remains THP-disabled. The C source returns from its void
+initializer after discarding the SET result. Rust records
+`ThpPolicyOutcome::DisabledSetFailed(Errno::PERM)`; its process initializer's
+discarding caller is not executed or qualified by this record.
+
+This does not cover GET errors or nonzero results, successful or other failing
+SET outcomes, diagnostics, ambient source option discovery, or production
+policy callers. The M2 VM component remains partial.
+
 ### Native M2 large-only one-GiB terminal failure
 
 `allocator-m2` also compares a child-isolated direct pinned-C
