@@ -149,9 +149,10 @@ class GeneralLoaderLibcTlsRuntimeV1Tests(unittest.TestCase):
             common_rollback.index("graph.rollback_to_main"),
         )
 
+        general_state = state.index("impl GeneralInitialTlsState {")
         commit = state[
-            state.index("pub(crate) unsafe fn commit_runtime_v1") : state.index(
-                "/// Rolls back the map-owned portion"
+            state.index("pub(crate) unsafe fn commit_runtime_v1", general_state) : state.index(
+                "/// Rolls back the map-owned portion", general_state
             )
         ]
         self.assertNotIn("compare_exchange", commit)
