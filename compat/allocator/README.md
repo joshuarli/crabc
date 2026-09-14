@@ -2604,8 +2604,28 @@ a disabled `allow_large_os_pages` option do not consume the counter; the ninth
 eligible call retries the failed large route. One controlled real competing
 AcqRel decrement proves the source's ignored strong-CAS failure while the
 ordinary fallback owner remains valid. This is direct VM-policy evidence only:
-it does not qualify successful hardware huge pages, `large_only`/1-GiB modes,
-ambient diagnostics, or an allocator/runtime caller.
+it does not qualify successful hardware huge pages, ambient diagnostics, or an
+allocator/runtime caller.
+
+### Native M2 large-only one-GiB terminal failure
+
+`allocator-m2` also compares a child-isolated direct pinned-C
+`_mi_os_alloc_huge_os_pages` record with Rust
+`HugeOsAllocation::allocate_for_process`. The first claimed one-GiB huge map
+fails with ENOMEM, retries with the same explicit hint as a two-MiB huge map
+and fails, then a second upper request obtains a new hint and attempts only the
+sticky two-MiB form. Each side captures its own raw map length, protection, and
+exact huge-page flags; it does not compare raw addresses across languages.
+The C terminal upper outcomes return NULL with zero pages/size and
+`MI_MEM_NONE`; Rust returns `Unavailable` with no allocation owner. Both
+observe unchanged reserve/commit statistics. The C fixture separately observes
+no `MADV_HUGEPAGE` call. ENOMEM here is a wrapped primitive observation, not
+an ambient final-errno contract of `_mi_os_alloc_huge_os_pages`.
+
+This is failure-only evidence for one requested page. It does not qualify
+hardware huge-page success, multiple-page/partial-prefix or timeout behavior,
+mbind/NUMA placement, diagnostics, THP success, or allocator/runtime callers;
+the M2 VM component remains partial.
 
 ### Native M2 aligned-overmap cleanup boundary
 

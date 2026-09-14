@@ -17,6 +17,7 @@ from m2_vm_x86_64 import (
     ALIGNED_OVERMAP_RUST_TRACE_KEYS,
     ALIGNED_OVERMAP_TRACE_BEGIN,
     ALIGNED_OVERMAP_TRACE_END,
+    CHECK_IDS,
     TRACE_KEYS,
     load_fragment,
     parse_aligned_overmap_trace,
@@ -26,6 +27,48 @@ from m2_vm_x86_64 import (
 
 ROOT = Path(__file__).resolve().parents[2]
 FRAGMENT = ROOT / "compat/allocator/m2-vm-x86_64-v3.5.0.fragment.json"
+
+
+LARGE_ONLY_TRACE_KEYS = (
+    "m2.vm.large_only.first_one_gib_then_two_mib_same_claim_terminal_enomem",
+    "m2.vm.large_only.second_only_two_mib_after_sticky_unavailable",
+    "m2.vm.large_only.all_raw_maps_are_huge_and_no_regular_owner",
+    "m2.vm.large_only.terminal_failures_leave_statistics_and_owners_unpublished",
+)
+
+
+EXPECTED_CHECK_IDS = (
+    "native-vm-fixed-lifecycle-differential",
+    "source-policy-lazy-environment-retry",
+    "normal-release-aligned-hint-cursor-random-and-cas-matrix",
+    "normal-release-large-page-retry-suppression-and-ordinary-fallback",
+    "large-only-one-gib-failure-no-regular-owner",
+    "aligned-hint-source-profile-and-direct-caller-matrix",
+    "aligned-overmap-cleanup-c-rust-boundary-matrix",
+    "process-policy-first-arena-clean-primary-fallback",
+    "process-policy-first-arena-retained-cleanup-statistics",
+    "process-policy-ticket-zero-live-random",
+    "aligned-map-direct-cleanup-owner",
+    "aligned-map-prefix-cleanup-owner",
+    "aligned-map-suffix-cleanup-owner",
+    "aligned-map-complete-trim-sequence",
+    "reset-advice-retry-snapshot",
+    "aligned-map-os-page-claim-owner",
+    "aligned-map-process-os-page-suffix-terminal-owner",
+    "aligned-map-metadata-owner",
+    "aligned-map-process-arena-owner",
+    "normal-os-offset-full-provenance-and-release-retry",
+    "process-offset-prefix-decommit-advisory-owner",
+    "normal-no-callback-purge-policy-range-matrix",
+    "normal-os-good-size-and-base-provenance",
+    "normal-os-offset-zero-delegation-and-geometry",
+    "normal-os-aligned-failure-owner",
+    "normal-os-source-reservation-caller",
+    "linux-os-reuse-contained-range-noop",
+    "fixed-no-option-numa-cache-and-current-node-normalization",
+    "native-protection-owner-and-retry",
+    "normal-page-extension-direct-commit-failure-and-retry",
+)
 
 
 def valid_aligned_overmap_trace(keys: tuple[str, ...]) -> str:
@@ -64,6 +107,29 @@ class NativeM2VmTraceTests(unittest.TestCase):
     def test_complete_address_free_trace_is_accepted(self) -> None:
         trace = parse_trace(valid_trace(), source="test")
         self.assertEqual(tuple(trace), TRACE_KEYS)
+
+    def test_large_only_terminal_failure_record_is_finite_and_fail_closed(self) -> None:
+        good = valid_trace()
+        self.assertEqual(
+            parse_trace(good, source="test"),
+            parse_trace(valid_trace(), source="test"),
+        )
+        for malformed in (
+            good.replace(f"{LARGE_ONLY_TRACE_KEYS[0]}=1\n", "", 1),
+            good.replace(
+                f"{LARGE_ONLY_TRACE_KEYS[0]}=1",
+                f"{LARGE_ONLY_TRACE_KEYS[0]}=1\n{LARGE_ONLY_TRACE_KEYS[0]}=1",
+                1,
+            ),
+            good.replace(
+                f"{LARGE_ONLY_TRACE_KEYS[0]}=1\n{LARGE_ONLY_TRACE_KEYS[1]}=1",
+                f"{LARGE_ONLY_TRACE_KEYS[1]}=1\n{LARGE_ONLY_TRACE_KEYS[0]}=1",
+                1,
+            ),
+            good.replace(f"{LARGE_ONLY_TRACE_KEYS[0]}=1", f"{LARGE_ONLY_TRACE_KEYS[0]}=0", 1),
+        ):
+            with self.subTest(malformed=malformed), self.assertRaises(ValueError):
+                parse_trace(malformed, source="test")
 
     def test_aligned_overmap_sides_remain_separate_and_fail_closed(self) -> None:
         c_trace = valid_aligned_overmap_trace(ALIGNED_OVERMAP_C_TRACE_KEYS)
@@ -133,7 +199,11 @@ class NativeM2VmFragmentTests(unittest.TestCase):
     def test_checked_fragment_preserves_the_complete_branch_matrix(self) -> None:
         loaded = load_fragment(self.write_fragment(self.fragment))
         self.assertEqual(loaded["component"]["completion_status"], "partial")
-        self.assertEqual(len(loaded["component"]["checks"]), 28)
+        self.assertEqual(CHECK_IDS, EXPECTED_CHECK_IDS)
+        self.assertEqual(
+            tuple(check["id"] for check in loaded["component"]["checks"]),
+            EXPECTED_CHECK_IDS,
+        )
         self.assertIn(
             "aligned-overmap-cleanup-c-rust-boundary-matrix",
             [check["id"] for check in loaded["component"]["checks"]],
@@ -179,6 +249,20 @@ class NativeM2VmFragmentTests(unittest.TestCase):
         promoted["component"]["branch_matrix"][2]["missing_conditions"] = []
         for fragment in (dropped_evidence, promoted):
             with self.subTest(fragment=fragment), self.assertRaisesRegex(ValueError, "THP"):
+                load_fragment(self.write_fragment(fragment))
+
+    def test_large_only_branch_cannot_drop_its_evidence_or_open_frontier(self) -> None:
+        dropped_evidence = copy.deepcopy(self.fragment)
+        route = dropped_evidence["component"]["branch_matrix"][8]
+        route["evidence_check_ids"].remove("large-only-one-gib-failure-no-regular-owner")
+        dropped_frontier = copy.deepcopy(self.fragment)
+        route = dropped_frontier["component"]["branch_matrix"][8]
+        route["missing_conditions"] = [
+            condition.replace("large_only/MAP_HUGE_1GB", "removed-large-only-route")
+            for condition in route["missing_conditions"]
+        ]
+        for fragment in (dropped_evidence, dropped_frontier):
+            with self.subTest(fragment=fragment), self.assertRaisesRegex(ValueError, "large-only"):
                 load_fragment(self.write_fragment(fragment))
 
 
