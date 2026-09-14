@@ -393,8 +393,8 @@ class NativeVmAssemblyTests(unittest.TestCase):
         vm = summary["components"][0]
         self.assertEqual(vm["id"], "vm-primitives")
         self.assertEqual(vm["native_status"], "partial")
-        self.assertEqual(len(vm["checks"]), 29)
-        self.assertEqual(len(vm["bounded_source_definitions"]), 17)
+        self.assertEqual(len(vm["checks"]), 30)
+        self.assertEqual(len(vm["bounded_source_definitions"]), 19)
         callback_definitions = {
             definition["id"]: definition["source_anchor"]
             for definition in vm["bounded_source_definitions"]

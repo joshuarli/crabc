@@ -416,6 +416,23 @@ static large_page_retry_probe_t large_page_retry_probe = {
     .last_release_result = -1,
 };
 
+/* This distinct child-owned probe faults only the three raw mmap imports of
+ * two `_mi_os_alloc_huge_os_pages` calls. It records the literal source
+ * arguments, leaving the fixed upstream large-only/one-GiB state machine and
+ * upper failure ownership in the directly included C bodies. */
+typedef struct large_only_failure_probe_s {
+  bool active;
+  size_t mmap_calls;
+  void* hints[3];
+  size_t lengths[3];
+  int protections[3];
+  int flags[3];
+  int errors[3];
+  size_t madvise_calls;
+} large_only_failure_probe_t;
+
+static large_only_failure_probe_t large_only_failure_probe;
+
 /* The pinned `mi_os_prim_alloc_aligned` body is included above. This tiny
  * fixture state controls only its imported mmap/munmap results while a COW
  * child executes one selected call. It does not model an allocator function:
@@ -497,6 +514,20 @@ int __wrap_munmap(void* address, size_t length) {
 
 void* __wrap_mmap(void* address, size_t length, int protection, int flags,
                   int descriptor, off_t offset) {
+  if (large_only_failure_probe.active) {
+    const size_t index = large_only_failure_probe.mmap_calls;
+    if (index < sizeof(large_only_failure_probe.hints)
+                    / sizeof(large_only_failure_probe.hints[0])) {
+      large_only_failure_probe.hints[index] = address;
+      large_only_failure_probe.lengths[index] = length;
+      large_only_failure_probe.protections[index] = protection;
+      large_only_failure_probe.flags[index] = flags;
+      large_only_failure_probe.errors[index] = ENOMEM;
+    }
+    large_only_failure_probe.mmap_calls++;
+    errno = ENOMEM;
+    return MAP_FAILED;
+  }
   if (aligned_overmap_probe.active) {
     if (aligned_overmap_probe.phase == ALIGNED_OVERMAP_DIRECT) {
       aligned_overmap_probe.direct_mmap_calls++;
@@ -600,6 +631,9 @@ int __wrap_mprotect(void* address, size_t length, int protection) {
 }
 
 int __wrap_madvise(void* address, size_t length, int advice) {
+  if (large_only_failure_probe.active) {
+    large_only_failure_probe.madvise_calls++;
+  }
   if (capture_policy_mapping && advice == MADV_HUGEPAGE) {
     captured_policy_thp_calls++;
     errno = ENOMEM;
@@ -1879,6 +1913,102 @@ static bool capture_large_page_retry_child(
       label, child_body, record, record_size, NULL);
 }
 
+typedef struct large_only_failure_record_s {
+  bool first_one_gib_then_two_mib_same_claim_terminal_enomem;
+  bool second_only_two_mib_after_sticky_unavailable;
+  bool all_raw_maps_are_huge_and_no_regular_owner;
+  bool terminal_failures_leave_statistics_and_owners_unpublished;
+} large_only_failure_record_t;
+
+/* Run the source upper huge allocator twice in one COW child. The first
+ * `unix_mmap` call is the 1-GiB form and its fallback must retain the exact
+ * claimed hint; the second upper call proves the source static unavailable bit
+ * selects only 2 MiB at its new claim. Every raw mmap is injected as ENOMEM.
+ * This records no ambient terminal errno from `_mi_os_alloc_huge_os_pages`:
+ * its C contract returns a pointer and output ownership, while ENOMEM belongs
+ * to the wrapped primitive observations. */
+static int run_large_only_failure_child(int record_descriptor) {
+  mi_process_init();
+  mi_subproc_t* const subproc = _mi_subproc_main();
+  if (subproc == NULL) return 1;
+
+  const int64_t reserved_before = current_reserved(subproc);
+  const int64_t committed_before = current_committed(subproc);
+  large_only_failure_probe = (large_only_failure_probe_t){
+      .active = true,
+  };
+
+  size_t first_pages = SIZE_MAX;
+  size_t first_size = SIZE_MAX;
+  mi_memid_t first_memid = _mi_memid_none();
+  void* const first = _mi_os_alloc_huge_os_pages(
+      subproc, 1, -1, 0, &first_pages, &first_size, &first_memid);
+  size_t second_pages = SIZE_MAX;
+  size_t second_size = SIZE_MAX;
+  mi_memid_t second_memid = _mi_memid_none();
+  void* const second = _mi_os_alloc_huge_os_pages(
+      subproc, 1, -1, 0, &second_pages, &second_size, &second_memid);
+  large_only_failure_probe.active = false;
+  const int64_t reserved_after = current_reserved(subproc);
+  const int64_t committed_after = current_committed(subproc);
+
+  const int huge_flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB;
+  large_only_failure_record_t record = {0};
+  record.first_one_gib_then_two_mib_same_claim_terminal_enomem = first == NULL
+      && first_pages == 0 && first_size == 0 && first_memid.memkind == MI_MEM_NONE
+      && large_only_failure_probe.mmap_calls == 3
+      && large_only_failure_probe.hints[0] != NULL
+      && large_only_failure_probe.hints[1] == large_only_failure_probe.hints[0]
+      && large_only_failure_probe.lengths[0] == MI_GiB
+      && large_only_failure_probe.protections[0] == (PROT_READ | PROT_WRITE)
+      && large_only_failure_probe.flags[0] == (huge_flags | MAP_HUGE_1GB)
+      && large_only_failure_probe.lengths[1] == MI_GiB
+      && large_only_failure_probe.protections[1] == (PROT_READ | PROT_WRITE)
+      && large_only_failure_probe.flags[1] == (huge_flags | MAP_HUGE_2MB)
+      && large_only_failure_probe.errors[0] == ENOMEM
+      && large_only_failure_probe.errors[1] == ENOMEM;
+  record.second_only_two_mib_after_sticky_unavailable = second == NULL
+      && second_pages == 0 && second_size == 0 && second_memid.memkind == MI_MEM_NONE
+      && large_only_failure_probe.hints[2] != NULL
+      && large_only_failure_probe.hints[2] != large_only_failure_probe.hints[0]
+      && large_only_failure_probe.lengths[2] == MI_GiB
+      && large_only_failure_probe.protections[2] == (PROT_READ | PROT_WRITE)
+      && large_only_failure_probe.flags[2] == (huge_flags | MAP_HUGE_2MB)
+      && large_only_failure_probe.errors[2] == ENOMEM;
+  record.all_raw_maps_are_huge_and_no_regular_owner = first == NULL && second == NULL
+      && large_only_failure_probe.mmap_calls == 3
+      && (large_only_failure_probe.flags[0] & MAP_HUGETLB) != 0
+      && (large_only_failure_probe.flags[1] & MAP_HUGETLB) != 0
+      && (large_only_failure_probe.flags[2] & MAP_HUGETLB) != 0;
+  record.terminal_failures_leave_statistics_and_owners_unpublished =
+      reserved_after == reserved_before && committed_after == committed_before
+      && large_only_failure_probe.madvise_calls == 0
+      && first_memid.memkind == MI_MEM_NONE && second_memid.memkind == MI_MEM_NONE;
+
+  const bool complete = record.first_one_gib_then_two_mib_same_claim_terminal_enomem
+      && record.second_only_two_mib_after_sticky_unavailable
+      && record.all_raw_maps_are_huge_and_no_regular_owner
+      && record.terminal_failures_leave_statistics_and_owners_unpublished;
+  if (!complete) {
+    fprintf(stderr,
+            "large-only failure record failed: calls=%zu hints=%p/%p/%p flags=%x/%x/%x "
+            "lengths=%zu/%zu/%zu first=%p pages=%zu size=%zu kind=%d second=%p pages=%zu "
+            "size=%zu kind=%d reserve=%lld/%lld commit=%lld/%lld madvise=%zu\n",
+            large_only_failure_probe.mmap_calls,
+            large_only_failure_probe.hints[0], large_only_failure_probe.hints[1],
+            large_only_failure_probe.hints[2], large_only_failure_probe.flags[0],
+            large_only_failure_probe.flags[1], large_only_failure_probe.flags[2],
+            large_only_failure_probe.lengths[0], large_only_failure_probe.lengths[1],
+            large_only_failure_probe.lengths[2], first, first_pages, first_size,
+            first_memid.memkind, second, second_pages, second_size, second_memid.memkind,
+            (long long)reserved_before, (long long)reserved_after,
+            (long long)committed_before, (long long)committed_after,
+            large_only_failure_probe.madvise_calls);
+  }
+  if (!write_all(record_descriptor, &record, sizeof(record))) return 2;
+  return complete ? 0 : 3;
+}
+
 /* A fixture-ownership regression, deliberately separate from the upstream VM
  * trace: an empty child record must reject capture and still leave no waitable
  * exact child. With the old short-circuit this final wait consumes the zombie;
@@ -2409,7 +2539,7 @@ int main(void) {
 
 #else
 int main(void) {
-  /* These two children run before the first-arena option row. Their directly
+  /* These selected children run before the first-arena option row. Their directly
    * included `unix_mmap` static retry state therefore begins at zero in each
    * selected source process; neither record inherits a prior large failure. */
   large_page_retry_normal_record_t large_page_retry_normal_record = {0};
@@ -2422,6 +2552,11 @@ int main(void) {
           "large-page retry CAS child", run_large_page_retry_cas_child,
           &large_page_retry_cas_record,
           sizeof(large_page_retry_cas_record))) return 42;
+  large_only_failure_record_t large_only_failure_record = {0};
+  if (!capture_large_page_retry_child(
+          "large-only one-GiB failure child", run_large_only_failure_child,
+          &large_only_failure_record,
+          sizeof(large_only_failure_record))) return 43;
 
   /* This fork is the literal constructor-suppressed source preimage. The
    * child proves `_mi_os_get_aligned_hint` advances its zero static cursor
@@ -3004,6 +3139,14 @@ int main(void) {
       large_page_retry_cas_record.competing_cas_failure_regular_owner);
   U("m2.vm.large_retry.competing_cas_seven_then_reopens",
       large_page_retry_cas_record.competing_cas_seven_then_reopens);
+  U("m2.vm.large_only.first_one_gib_then_two_mib_same_claim_terminal_enomem",
+      large_only_failure_record.first_one_gib_then_two_mib_same_claim_terminal_enomem);
+  U("m2.vm.large_only.second_only_two_mib_after_sticky_unavailable",
+      large_only_failure_record.second_only_two_mib_after_sticky_unavailable);
+  U("m2.vm.large_only.all_raw_maps_are_huge_and_no_regular_owner",
+      large_only_failure_record.all_raw_maps_are_huge_and_no_regular_owner);
+  U("m2.vm.large_only.terminal_failures_leave_statistics_and_owners_unpublished",
+      large_only_failure_record.terminal_failures_leave_statistics_and_owners_unpublished);
   puts("CRABC_MI_M2_VM_TRACE_END");
   puts("CRABC_MI_M2_ALIGNED_OVERMAP_TRACE_BEGIN");
   U("m2.vm.aligned_overmap.c.normal_direct_aligned_source_owner_and_stats",

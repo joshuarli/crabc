@@ -923,8 +923,12 @@
         "crabc_mimalloc::os_page"
       ],
       "status": "partial",
-      "difference": "Rust maps selected fixed Linux allocation and release policy, while option-driven policy and general default-theap routing are absent. A separate 21-value native C/Rust differential covers one 7-byte, 128 KiB-aligned OS singleton: real C `mi_thread_done()` and pthread join precede the sole consumer free; it is semantically full (`reserved == used == 1`) but remains an unflagged `BIN_HUGE` member with an empty `BIN_FULL` queue, then follows the bounded OS-list/PageMap/mapping terminal tail. Rust observes only its typed private owner-exit handoff. This is not general lifecycle, abandonment/adoption, remote routing, public runtime behavior, public x86 support, or non-x86 target evidence.",
+      "difference": "Rust maps selected fixed Linux allocation and release policy, while option-driven policy and general default-theap routing are absent. A separate 21-value native C/Rust differential covers one 7-byte, 128 KiB-aligned OS singleton: real C `mi_thread_done()` and pthread join precede the sole consumer free; it is semantically full (`reserved == used == 1`) but remains an unflagged `BIN_HUGE` member with an empty `BIN_FULL` queue, then follows the bounded OS-list/PageMap/mapping terminal tail. Rust observes only its typed private owner-exit handoff. A separate child-isolated C/Rust record covers only the first failure of `_mi_os_alloc_huge_os_pages`: a claimed one-GiB huge primitive fails with ENOMEM, retries the same claim at two MiB and fails, and a later claim uses only two MiB after the sticky unavailable state. C returns NULL with zero pages/size and no MemoryId; Rust returns Unavailable with no allocation owner; both observe unchanged statistics. This excludes huge-page success, multiple-page/partial-prefix or timeout, NUMA placement, diagnostics, and callers. This is not general lifecycle, abandonment/adoption, remote routing, public runtime behavior, public x86 support, or non-x86 target evidence.",
       "evidence": [
+        "compat/allocator/m2-vm-x86_64-v3.5.0.fragment.json",
+        "compat/allocator/m2_vm_x86_64.c",
+        "compat/allocator/m2_vm_x86_64.py",
+        "compat/allocator/test_m2_vm_x86_64.py",
         "compat/allocator/tests/test_x86_64_dynamic_os_aligned_singleton_evidence.py",
         "compat/allocator/x86_64-dynamic-os-aligned-singleton-evidence-v3.5.0.json",
         "compat/allocator/x86_64_dynamic_os_aligned_singleton_evidence.py",
@@ -1517,8 +1521,12 @@
         "crabc_mimalloc::os_page"
       ],
       "status": "partial",
-      "difference": "Rust uses direct fixed Linux syscalls and records selected fallback policy, not the full Unix portability implementation.",
+      "difference": "Rust uses direct fixed Linux syscalls and records selected fallback policy, not the full Unix portability implementation. A child-isolated C/Rust record proves only the failure-only `unix_mmap` large-only route: the first explicit one-GiB map fails with ENOMEM, its same hint retries as two MiB and fails, then the sticky unavailable state makes the next claimed request attempt only two MiB. The record captures exact huge-map length/protection/flags, avoids a regular fallback, and leaves no terminal owner or statistics; it does not qualify successful huge mappings, THP advice, NUMA, diagnostics, timeout/partial progress, or callers.",
       "evidence": [
+        "compat/allocator/m2-vm-x86_64-v3.5.0.fragment.json",
+        "compat/allocator/m2_vm_x86_64.c",
+        "compat/allocator/m2_vm_x86_64.py",
+        "compat/allocator/test_m2_vm_x86_64.py",
         "crabc-mimalloc/src/os.rs",
         "crabc-mimalloc/src/os_page.rs"
       ]
@@ -1537,6 +1545,6 @@
     "unfinished_unit_count": 28,
     "unit_count": 34,
     "unit_ids_sha256": "dca679d8587cb38bcf6e6c62379284ed35a55d1b7991d07b0d30eac767670052",
-    "units_sha256": "15cc8b315ea1a6dd927cbaeadead8ef1e014adeadc71c9d6e8ecde9b0bf296ae"
+    "units_sha256": "82498d97f27329936e47f6477ff54d92704ca4da5b112741f8dc8df0030bd03f"
   }
 }

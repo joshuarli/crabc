@@ -2171,7 +2171,7 @@ impl Mapping {
     ) -> Result<*mut u8> {
         let map_once = |address: Option<usize>| {
             #[cfg(any(test, feature = "native-runtime-test-fault"))]
-            fault::record_policy_mmap(address, flags);
+            fault::record_policy_mmap(address, length, protection, flags);
             if flags & MAP_HUGETLB != 0 {
                 fault_before(FaultPoint::LargeMap)?;
             }
@@ -4711,6 +4711,18 @@ pub(crate) mod fault {
         AtomicUsize::new(0),
         AtomicUsize::new(0),
     ];
+    static POLICY_MMAP_CAPTURE_LENGTHS: [AtomicUsize; POLICY_MMAP_CAPTURE_CAPACITY] = [
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+    ];
+    static POLICY_MMAP_CAPTURE_PROTECTIONS: [AtomicUsize; POLICY_MMAP_CAPTURE_CAPACITY] = [
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+    ];
     static POLICY_MMAP_CAPTURE_FLAGS: [AtomicUsize; POLICY_MMAP_CAPTURE_CAPACITY] = [
         AtomicUsize::new(0),
         AtomicUsize::new(0),
@@ -4903,10 +4915,12 @@ pub(crate) mod fault {
         _guard: core::marker::PhantomData<&'guard Guard>,
     }
 
-    /// One raw mmap argument pair from the bounded process-policy route.
+    /// One raw mmap argument tuple from the bounded process-policy route.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub(crate) struct PolicyMmapAttempt {
         pub(crate) hint: Option<usize>,
+        pub(crate) length: usize,
+        pub(crate) protection: u32,
         pub(crate) flags: u32,
     }
 
@@ -5002,6 +5016,12 @@ pub(crate) mod fault {
             POLICY_MMAP_CAPTURE_COUNT.store(0, Ordering::Release);
             for hint in &POLICY_MMAP_CAPTURE_HINTS {
                 hint.store(0, Ordering::Release);
+            }
+            for length in &POLICY_MMAP_CAPTURE_LENGTHS {
+                length.store(0, Ordering::Release);
+            }
+            for protection in &POLICY_MMAP_CAPTURE_PROTECTIONS {
+                protection.store(0, Ordering::Release);
             }
             for flags in &POLICY_MMAP_CAPTURE_FLAGS {
                 flags.store(0, Ordering::Release);
@@ -5102,6 +5122,8 @@ pub(crate) mod fault {
                     0 => None,
                     hint => Some(hint),
                 },
+                length: POLICY_MMAP_CAPTURE_LENGTHS[index].load(Ordering::Acquire),
+                protection: POLICY_MMAP_CAPTURE_PROTECTIONS[index].load(Ordering::Acquire) as u32,
                 flags: POLICY_MMAP_CAPTURE_FLAGS[index].load(Ordering::Acquire) as u32,
             });
             Some((attempts, count))
@@ -5225,13 +5247,17 @@ pub(crate) mod fault {
 
     /// Records one raw Unix mmap edge before a controlled injected result.
     #[inline]
-    pub(crate) fn record_policy_mmap(hint: Option<usize>, flags: u32) {
+    pub(crate) fn record_policy_mmap(
+        hint: Option<usize>, length: usize, protection: u32, flags: u32,
+    ) {
         if !POLICY_MMAP_CAPTURE_ACTIVE.load(Ordering::Acquire) {
             return;
         }
         let index = POLICY_MMAP_CAPTURE_COUNT.fetch_add(1, Ordering::AcqRel);
         if index < POLICY_MMAP_CAPTURE_CAPACITY {
             POLICY_MMAP_CAPTURE_HINTS[index].store(hint.unwrap_or(0), Ordering::Release);
+            POLICY_MMAP_CAPTURE_LENGTHS[index].store(length, Ordering::Release);
+            POLICY_MMAP_CAPTURE_PROTECTIONS[index].store(protection as usize, Ordering::Release);
             POLICY_MMAP_CAPTURE_FLAGS[index].store(flags as usize, Ordering::Release);
         }
     }
@@ -6445,6 +6471,104 @@ mod tests {
     fn normal_release_large_page_retry_suppression_reopens_after_eight_regular_owners() {
         assert_eq!(normal_release_large_page_retry_suppression_matrix(), [true; 6]);
         assert_eq!(normal_release_large_page_retry_competing_cas_matrix(), [true; 2]);
+    }
+
+    /// Covers the terminal large-only source route in
+    /// `src/prim/unix/prim.c:401-449` and `src/os.c:771-841`. The first
+    /// claimed one-GiB page retries its same explicit claim as a two-MiB
+    /// huge map after ENOMEM. The source then retains its unavailable bit, so
+    /// the next upper huge allocation attempts only two MiB at its next claim.
+    /// Neither upper allocation may create a regular mapping or an ownership
+    /// token, and the observed subprocess statistics remain unchanged.
+    #[cfg(not(miri))]
+    fn large_only_one_gib_failure_terminal_matrix() -> [bool; 4] {
+        let fault = fault::install(fault::Plan::at_triple(
+            fault::Point::LargeMap,
+            1,
+            fault::Point::LargeMap,
+            1,
+            fault::Point::LargeMap,
+            1,
+            Errno::NOMEM,
+        ));
+        let config = MemoryConfig::from_observations(
+            PageSize::new(4 * 1024).expect("four KiB is one selected Linux page size"),
+            0,
+            true,
+            true,
+        );
+        let policy = VmPolicy::defaults_for_test();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        let before = subprocess.vm_statistics().snapshot();
+        let capture = fault.capture_policy_mmaps();
+
+        let first = HugeOsAllocation::allocate_for_process(process, config, 1, -1, 0, None);
+        let first_fault_observations = (
+            fault.observed(),
+            fault.secondary_observed(),
+            fault.third_observed(),
+        );
+        let Some((first_attempts, first_count)) = capture.attempts() else {
+            return [false; 4];
+        };
+        let second = HugeOsAllocation::allocate_for_process(process, config, 1, -1, 0, None);
+        let Some((attempts, count)) = capture.attempts() else {
+            return [false; 4];
+        };
+        drop(capture);
+        let after = subprocess.vm_statistics().snapshot();
+
+        let first_terminal_enomem = matches!(
+            first,
+            HugeOsAllocationOutcome::Unavailable(HugeOsAllocationStop::PrimitiveMapFailed(
+                Errno::NOMEM
+            ))
+        );
+        let second_terminal_enomem = matches!(
+            second,
+            HugeOsAllocationOutcome::Unavailable(HugeOsAllocationStop::PrimitiveMapFailed(
+                Errno::NOMEM
+            ))
+        );
+        let huge_flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB;
+        let huge_protection = PROT_READ | PROT_WRITE;
+        let first_one_gib_then_two_mib_same_claim = first_count == 2
+            && first_attempts[0].hint.is_some()
+            && first_attempts[1].hint == first_attempts[0].hint
+            && first_attempts[0].length == HUGE_PAGE_SIZE
+            && first_attempts[0].protection == huge_protection
+            && first_attempts[0].flags == (huge_flags | MAP_HUGE_1GB)
+            && first_attempts[1].length == HUGE_PAGE_SIZE
+            && first_attempts[1].protection == huge_protection
+            && first_attempts[1].flags == (huge_flags | MAP_HUGE_2MB);
+        let second_only_two_mib_after_sticky_unavailable = count == 3
+            && attempts[2].hint.is_some()
+            && attempts[2].hint != attempts[0].hint
+            && attempts[2].length == HUGE_PAGE_SIZE
+            && attempts[2].protection == huge_protection
+            && attempts[2].flags == (huge_flags | MAP_HUGE_2MB);
+        let all_raw_maps_are_huge = attempts[..count]
+            .iter()
+            .all(|attempt| attempt.uses_huge_page_flag());
+
+        [
+            first_terminal_enomem
+                && first_one_gib_then_two_mib_same_claim
+                && first_fault_observations == (2, 1, 0),
+            second_terminal_enomem
+                && second_only_two_mib_after_sticky_unavailable
+                && (fault.observed(), fault.secondary_observed(), fault.third_observed())
+                    == (3, 2, 1),
+            all_raw_maps_are_huge,
+            after == before,
+        ]
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn large_only_one_gib_failure_retries_two_mib_once_then_stays_terminal() {
+        assert_eq!(large_only_one_gib_failure_terminal_matrix(), [true; 4]);
     }
 
     #[cfg(not(miri))]
@@ -9316,8 +9440,10 @@ mod tests {
         drop(fault);
         let large_page_retry_trace = normal_release_large_page_retry_suppression_matrix();
         let large_page_retry_cas_trace = normal_release_large_page_retry_competing_cas_matrix();
+        let large_only_trace = large_only_one_gib_failure_terminal_matrix();
         assert_eq!(large_page_retry_trace, [true; 6]);
         assert_eq!(large_page_retry_cas_trace, [true; 2]);
+        assert_eq!(large_only_trace, [true; 4]);
         let policy_trace = crate::process_arena::m2_vm_policy_first_arena_trace();
 
         macro_rules! emit {
@@ -9580,6 +9706,22 @@ mod tests {
         emit!(
             "m2.vm.large_retry.competing_cas_seven_then_reopens",
             u8::from(large_page_retry_cas_trace[1])
+        );
+        emit!(
+            "m2.vm.large_only.first_one_gib_then_two_mib_same_claim_terminal_enomem",
+            u8::from(large_only_trace[0])
+        );
+        emit!(
+            "m2.vm.large_only.second_only_two_mib_after_sticky_unavailable",
+            u8::from(large_only_trace[1])
+        );
+        emit!(
+            "m2.vm.large_only.all_raw_maps_are_huge_and_no_regular_owner",
+            u8::from(large_only_trace[2])
+        );
+        emit!(
+            "m2.vm.large_only.terminal_failures_leave_statistics_and_owners_unpublished",
+            u8::from(large_only_trace[3])
         );
         std::println!("CRABC_MI_M2_VM_TRACE_END");
     }

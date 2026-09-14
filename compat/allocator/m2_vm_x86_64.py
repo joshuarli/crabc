@@ -38,7 +38,7 @@ EXPECTED_RUST_TEST_COUNT = 1
 LARGE_PAGE_RETRY_CAPTURE_REAP_TEST_DEFINE = (
     "-DCRABC_M2_LARGE_PAGE_RETRY_CAPTURE_REAP_TEST=1"
 )
-EVIDENCE_PROFILE = "release-no-default-features-process-paired-regular-vm-reset-eagain-fallback-state-external-page-extension-child-policy-large-page-retry-suppression-aligned-hint-and-aligned-overmap-cleanup-boundary-fault"
+EVIDENCE_PROFILE = "release-no-default-features-process-paired-regular-vm-reset-eagain-fallback-state-external-page-extension-child-policy-large-page-retry-suppression-large-only-one-gib-terminal-aligned-hint-and-aligned-overmap-cleanup-boundary-fault"
 
 CHECKS = (
     (
@@ -60,6 +60,11 @@ CHECKS = (
         "normal-release-large-page-retry-suppression-and-ordinary-fallback",
         "rust-unit",
         "os::tests::normal_release_large_page_retry_suppression_reopens_after_eight_regular_owners",
+    ),
+    (
+        "large-only-one-gib-failure-no-regular-owner",
+        "rust-unit",
+        "os::tests::large_only_one_gib_failure_retries_two_mib_once_then_stays_terminal",
     ),
     (
         "aligned-hint-source-profile-and-direct-caller-matrix",
@@ -290,6 +295,10 @@ TRACE_KEYS = (
     "m2.vm.large_retry.ninth_reopens_large_regular_owner",
     "m2.vm.large_retry.competing_cas_failure_regular_owner",
     "m2.vm.large_retry.competing_cas_seven_then_reopens",
+    "m2.vm.large_only.first_one_gib_then_two_mib_same_claim_terminal_enomem",
+    "m2.vm.large_only.second_only_two_mib_after_sticky_unavailable",
+    "m2.vm.large_only.all_raw_maps_are_huge_and_no_regular_owner",
+    "m2.vm.large_only.terminal_failures_leave_statistics_and_owners_unpublished",
 )
 TRACE_TRUE_KEYS = frozenset(TRACE_KEYS).difference(
     {
@@ -591,6 +600,15 @@ def load_fragment(path: Path) -> dict[str, Any]:
     ):
         raise _error("THP process-policy branch lost its bounded native evidence or open frontier")
 
+    large_route_branch = branches[8]
+    if (
+        large_route_branch["disposition"] != "partial-fixed-profile"
+        or "large-only-one-gib-failure-no-regular-owner"
+        not in large_route_branch["evidence_check_ids"]
+        or not any("large_only/MAP_HUGE_1GB" in condition for condition in large_route_branch["missing_conditions"])
+    ):
+        raise _error("large-only one-GiB route lost its bounded evidence or open frontier")
+
     unqualified = component.get("unqualified_failure_matrix")
     if not isinstance(unqualified, list) or not unqualified:
         raise _error("unqualified failure matrix is absent")
@@ -686,6 +704,8 @@ def parse_trace(output: str, *, source: str) -> dict[str, int]:
         if key in values or key not in TRACE_KEYS or not raw_value.isascii() or not raw_value.isdecimal():
             raise ValueError(f"{source} M2 VM trace has an invalid observation: {line}")
         values[key] = int(raw_value)
+    if tuple(values) != TRACE_KEYS:
+        raise ValueError(f"{source} M2 VM trace observation order changed")
     missing = sorted(set(TRACE_KEYS).difference(values))
     unexpected = sorted(set(values).difference(TRACE_KEYS))
     if missing or unexpected:
