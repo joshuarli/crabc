@@ -1,4 +1,4 @@
-schema = "crabc.x86_64-native-c-allocator-boundary-contract/v1"
+schema = "crabc.x86_64-native-c-allocator-boundary-contract/v2"
 id = "x86-native-c-allocator-boundary"
 target = "x86_64-unknown-linux-musl"
 status = "implemented-unqualified"
@@ -12,6 +12,38 @@ mimalloc_version = "3.3.2"
 weak_entries = ["malloc"]
 global_entries = ["calloc", "realloc", "reallocarray", "free", "aligned_alloc", "posix_memalign", "memalign", "valloc", "malloc_usable_size"]
 rust_c_imports = ["_mi_auto_process_done", "_mi_auto_process_init", "mi_free", "mi_malloc_aligned", "mi_realloc_aligned", "mi_usable_size", "mi_zalloc"]
+# The selected C static translation unit imports these public Rust libc
+# providers.  This is a finite installed link boundary, not an allocator API
+# behavior or source-semantics claim.
+c_runtime_imports = [
+  { name = "__errno_location", binding = "GLOBAL" },
+  { name = "abort", binding = "GLOBAL" },
+  { name = "clock_gettime", binding = "WEAK" },
+  { name = "fputs", binding = "GLOBAL" },
+  { name = "free", binding = "GLOBAL" },
+  { name = "getenv", binding = "GLOBAL" },
+  { name = "getrusage", binding = "GLOBAL" },
+  { name = "madvise", binding = "WEAK" },
+  { name = "memcpy", binding = "GLOBAL" },
+  { name = "memset", binding = "GLOBAL" },
+  { name = "mmap", binding = "WEAK" },
+  { name = "mprotect", binding = "WEAK" },
+  { name = "munmap", binding = "WEAK" },
+  { name = "pathconf", binding = "GLOBAL" },
+  { name = "prctl", binding = "GLOBAL" },
+  { name = "pthread_key_create", binding = "WEAK" },
+  { name = "pthread_key_delete", binding = "WEAK" },
+  { name = "pthread_mutex_destroy", binding = "GLOBAL" },
+  { name = "pthread_mutex_lock", binding = "WEAK" },
+  { name = "pthread_mutex_unlock", binding = "WEAK" },
+  { name = "pthread_setspecific", binding = "GLOBAL" },
+  { name = "realpath", binding = "GLOBAL" },
+  { name = "sleep", binding = "GLOBAL" },
+  { name = "strtol", binding = "GLOBAL" },
+  { name = "syscall", binding = "GLOBAL" },
+  { name = "sysconf", binding = "GLOBAL" },
+  { name = "sysinfo", binding = "WEAK" },
+]
 lifecycle_entries = ["__crabc_x86_owned_mimalloc_process_initializer", "__crabc_x86_owned_mimalloc_process_finalizer"]
 interposition_scenarios = ["asprintf", "passwd", "lio"]
 dynamic_modes = ["pie", "non-pie"]

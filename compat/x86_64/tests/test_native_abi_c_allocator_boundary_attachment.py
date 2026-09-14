@@ -86,6 +86,7 @@ class NativeCAllocatorBoundaryAttachmentTests(unittest.TestCase):
         self.names = tuple(
             selection.native_c_allocator_boundary.load_contract()["scope"]["rust_c_imports"]
         )
+        self.runtime_roles = dict(selection.native_c_allocator_boundary.C_RUNTIME_IMPORTS)
         self.producer_account = self._producer_account()
         self.fixed_c_companion = {"account": copy.deepcopy(self.producer_account)}
 
@@ -133,9 +134,67 @@ class NativeCAllocatorBoundaryAttachmentTests(unittest.TestCase):
                 "shared_dynsym_private_names": "absent",
             },
             "archive_map": {
+                "static_c_member": "selected-c-mimalloc.o",
+                "static_c_member_sha256": "d" * 64,
                 "static_rust_root_member": "native-c-root.rcgu.o",
+                "shared_rust_root_member": "native-c-shared.rcgu.o",
+                "shared_c_member_sha256": "d" * 64,
             },
             "rust_root_c_import_joins": imports,
+        }
+
+    def _runtime_import_bindings(self) -> dict[str, object]:
+        def provider(name: str, binding: str) -> dict[str, object]:
+            return {
+                "name": name, "raw_name": name, "type": "FUNC", "binding": binding,
+                "visibility": "DEFAULT", "section_index": "7", "size_bytes": 1,
+                "value": "0000000000000000", "version": None, "version_default": False,
+            }
+
+        def imported(name: str) -> dict[str, object]:
+            return {
+                "name": name, "raw_name": name, "type": "NOTYPE", "binding": "GLOBAL",
+                "visibility": "DEFAULT", "section_index": "UND", "size_bytes": 0,
+                "value": "0000000000000000", "version": None, "version_default": False,
+            }
+
+        return {
+            "static_c_member": {
+                "name": "selected-c-mimalloc.o", "member_index": 1,
+                "member_occurrence": 0, "sha256": "d" * 64,
+            },
+            "static_rust_root_member": {
+                "name": "native-c-root.rcgu.o", "member_index": 0, "member_occurrence": 0,
+            },
+            "shared_rust_root_member": "native-c-shared.rcgu.o",
+            "shared_c_member_sha256": "d" * 64,
+            "imports": [
+                {
+                    "name": name, "binding": binding,
+                    "static_c_import": imported(name),
+                    "static_rust_provider": provider(name, binding),
+                    "shared_dynsym_provider": provider(name, binding),
+                    "shared_symtab_provider": provider(name, binding),
+                }
+                for name, binding in self.runtime_roles.items()
+            ],
+        }
+
+    def _runtime_static_links(self, runtime: dict[str, object]) -> dict[str, object]:
+        archive = "/workspace/" + (self.static / "usr/lib/libc.a").relative_to(ROOT).as_posix()
+        selected = {
+            "static_c_member": f"{archive}({runtime['static_c_member']['name']})",
+            "static_rust_root_member": f"{archive}({runtime['static_rust_root_member']['name']})",
+        }
+        map_path = self._write(self.work / "static.map", b"map\n")
+        trace_path = self._write(self.work / "static.trace", b"trace\n")
+        return {
+            mode: {
+                "map": selection.file_identity(map_path),
+                "trace": selection.file_identity(trace_path),
+                "selected_members": copy.deepcopy(selected),
+            }
+            for mode in ("static", "static-pie")
         }
 
     def boundary_report(self) -> dict[str, object]:
@@ -143,6 +202,7 @@ class NativeCAllocatorBoundaryAttachmentTests(unittest.TestCase):
             "revision": self.source["revision"],
             "content_sha256": self.source["content_sha256"],
         }
+        runtime = self._runtime_import_bindings()
         return {
             "schema": selection.native_c_allocator_boundary.SCHEMA,
             "target": selection.native_c_allocator_boundary.TARGET,
@@ -190,6 +250,7 @@ class NativeCAllocatorBoundaryAttachmentTests(unittest.TestCase):
                 },
                 "elf_facts": copy.deepcopy(self.measurement["reports"]["elf_report"]),
                 "producer_account": copy.deepcopy(self.producer_account),
+                "c_runtime_import_bindings": runtime,
                 "wrapper_product_bindings": {
                     "static_member": "native-c-root.rcgu.o",
                     "static": {
@@ -210,7 +271,9 @@ class NativeCAllocatorBoundaryAttachmentTests(unittest.TestCase):
                 },
             },
             "startup": {
-                "command": {}, "work": "startup", "observation": {},
+                "command": {}, "work": "startup", "observation": {
+                    "c_runtime_static_links": self._runtime_static_links(runtime),
+                },
             },
             "interposition": {
                 "command": {}, "work": "interposition", "observation": {},
@@ -285,6 +348,66 @@ class NativeCAllocatorBoundaryAttachmentTests(unittest.TestCase):
             "occurrences": occurrences,
             "placement_joins": placement_joins,
             "blockers": blockers,
+        }
+
+    def runtime_accounting(self) -> dict[str, object]:
+        identities, occurrences, placement_joins, blockers = [], [], [], []
+        for name, binding in self.runtime_roles.items():
+            identity = selection.identity(name)
+            unresolved = [selection.ORDINARY_IMPORT_REASON]
+            if name in {"memcpy", "memset"}:
+                unresolved.insert(0, "candidate definition placement is not selected: candidate-loader")
+            identities.append({
+                "identity": identity,
+                "selection": {
+                    "disposition": "public-provider",
+                    "owner": "checked-header-provider-routing",
+                },
+                "unresolved": unresolved,
+            })
+            for reason in unresolved:
+                blockers.append({
+                    "code": "identity-unresolved", "identity": copy.deepcopy(identity), "reason": reason,
+                })
+
+            def add(artifact: str, table: str, role: str, member: str | None,
+                    member_index: int | None, row: dict[str, object]) -> None:
+                index = len(occurrences)
+                occurrences.append({
+                    "index": index, "artifact_key": artifact, "table": table, "role": role,
+                    "member_name": member, "member_index": member_index, "member_occurrence": 0 if member else None,
+                    "row": {**row, "row_index": index},
+                    "accounting": {
+                        "disposition": "public-provider", "owner": "checked-header-provider-routing",
+                        "scope": artifact,
+                    },
+                })
+
+            add("candidate-static", ".symtab", "import", "selected-c-mimalloc.o", 1, {
+                "name": name, "raw_name": name, "type": "NOTYPE", "binding": "GLOBAL",
+                "visibility": "DEFAULT", "section_index": "UND", "size_bytes": 0,
+                "value": "0000000000000000", "version": None, "version_default": False,
+            })
+            provider = {
+                "name": name, "raw_name": name, "type": "FUNC", "binding": binding,
+                "visibility": "DEFAULT", "section_index": "7", "size_bytes": 1,
+                "value": "0000000000000000", "version": None, "version_default": False,
+            }
+            add("candidate-static", ".symtab", "definition", "native-c-root.rcgu.o", 0, provider)
+            add("candidate-shared", ".dynsym", "definition", None, None, provider)
+            add("candidate-shared", ".symtab", "definition", None, None, provider)
+            for artifact in ("candidate-static", "candidate-shared"):
+                placement_joins.append({
+                    "identity": copy.deepcopy(identity), "artifact_key": artifact,
+                    "expected_metadata": {
+                        "type": "FUNC", "binding": binding, "visibility": "DEFAULT",
+                    },
+                    "placement_observed": True, "definition_count": 1,
+                    "occurrence_indices": [0], "metadata_differences": [{"occurrence_index": 0, "fields": []}],
+                })
+        return {
+            "identities": identities, "occurrences": occurrences,
+            "placement_joins": placement_joins, "blockers": blockers,
         }
 
     def _adapter(self, report: dict[str, object]) -> dict[str, object]:
@@ -385,6 +508,63 @@ class NativeCAllocatorBoundaryAttachmentTests(unittest.TestCase):
             selection.ORDINARY_IMPORT_REASON not in row["unresolved"]
             for row in accounting["identities"]
         ))
+
+    def test_exact_c_runtime_imports_clear_only_their_ordinary_reasons(self) -> None:
+        accounting = self.runtime_accounting()
+        companion = self._adapter(self.boundary_report())
+        joins = selection.attach_native_c_allocator_runtime_imports(accounting, companion)
+        self.assertEqual([row["identity"]["name"] for row in joins], list(self.runtime_roles))
+        self.assertTrue(all(row["ordinary_import_covered"] for row in joins))
+        for row in accounting["identities"]:
+            self.assertNotIn(selection.ORDINARY_IMPORT_REASON, row["unresolved"])
+            if row["identity"]["name"] in {"memcpy", "memset"}:
+                self.assertEqual(row["unresolved"], [
+                    "candidate definition placement is not selected: candidate-loader",
+                ])
+            else:
+                self.assertEqual(row["unresolved"], [])
+
+    def test_runtime_import_foreign_member_keeps_the_generic_blocker(self) -> None:
+        accounting = self.runtime_accounting()
+        foreign = copy.deepcopy(accounting["occurrences"][0])
+        foreign["index"] = len(accounting["occurrences"])
+        foreign["member_name"] = "foreign-c-member.o"
+        foreign["member_index"] = 9
+        foreign["row"]["row_index"] = foreign["index"]
+        accounting["occurrences"].append(foreign)
+        joins = selection.attach_native_c_allocator_runtime_imports(
+            accounting, self._adapter(self.boundary_report())
+        )
+        self.assertFalse(joins[0]["ordinary_import_covered"])
+        self.assertIn(selection.ORDINARY_IMPORT_REASON, accounting["identities"][0]["unresolved"])
+
+    def test_runtime_import_provider_binding_drift_keeps_the_generic_blocker(self) -> None:
+        accounting = self.runtime_accounting()
+        static_provider = accounting["occurrences"][1]
+        static_provider["row"]["binding"] = "WEAK"
+        joins = selection.attach_native_c_allocator_runtime_imports(
+            accounting, self._adapter(self.boundary_report())
+        )
+        self.assertFalse(joins[0]["ordinary_import_covered"])
+        self.assertIn(selection.ORDINARY_IMPORT_REASON, accounting["identities"][0]["unresolved"])
+
+    def test_adapter_rejects_a_report_side_c_member_substitution(self) -> None:
+        report = self.boundary_report()
+        report["inputs"]["c_runtime_import_bindings"]["static_c_member"]["name"] = "forged-member.o"
+        with mock.patch.object(
+            selection.native_c_allocator_boundary, "validate_report", return_value=report
+        ), mock.patch.object(
+            selection.native_c_allocator_boundary,
+            "source_resolution", return_value=copy.deepcopy(report["inputs"]["source_resolution"]),
+        ), self.assertRaisesRegex(selection.SelectionError, "static C member differs"):
+            selection.native_c_allocator_boundary_adapter(
+                self.report_path,
+                facts=self.facts,
+                measurement=self.measurement,
+                paths=self.paths,
+                source=self.source,
+                fixed_c_companion=self.fixed_c_companion,
+            )
 
     def test_foreign_same_name_import_keeps_the_generic_blocker(self) -> None:
         accounting = self.accounting()

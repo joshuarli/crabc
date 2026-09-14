@@ -22,6 +22,39 @@ SPEC.loader.exec_module(BOUNDARY)
 
 
 class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
+    def test_contract_declares_the_finite_inverse_c_runtime_import_roster(self) -> None:
+        contract = BOUNDARY.load_contract(ROOT)
+
+        self.assertEqual(contract["scope"]["c_runtime_imports"], [
+            {"name": "__errno_location", "binding": "GLOBAL"},
+            {"name": "abort", "binding": "GLOBAL"},
+            {"name": "clock_gettime", "binding": "WEAK"},
+            {"name": "fputs", "binding": "GLOBAL"},
+            {"name": "free", "binding": "GLOBAL"},
+            {"name": "getenv", "binding": "GLOBAL"},
+            {"name": "getrusage", "binding": "GLOBAL"},
+            {"name": "madvise", "binding": "WEAK"},
+            {"name": "memcpy", "binding": "GLOBAL"},
+            {"name": "memset", "binding": "GLOBAL"},
+            {"name": "mmap", "binding": "WEAK"},
+            {"name": "mprotect", "binding": "WEAK"},
+            {"name": "munmap", "binding": "WEAK"},
+            {"name": "pathconf", "binding": "GLOBAL"},
+            {"name": "prctl", "binding": "GLOBAL"},
+            {"name": "pthread_key_create", "binding": "WEAK"},
+            {"name": "pthread_key_delete", "binding": "WEAK"},
+            {"name": "pthread_mutex_destroy", "binding": "GLOBAL"},
+            {"name": "pthread_mutex_lock", "binding": "WEAK"},
+            {"name": "pthread_mutex_unlock", "binding": "WEAK"},
+            {"name": "pthread_setspecific", "binding": "GLOBAL"},
+            {"name": "realpath", "binding": "GLOBAL"},
+            {"name": "sleep", "binding": "GLOBAL"},
+            {"name": "strtol", "binding": "GLOBAL"},
+            {"name": "syscall", "binding": "GLOBAL"},
+            {"name": "sysconf", "binding": "GLOBAL"},
+            {"name": "sysinfo", "binding": "WEAK"},
+        ])
+
     def test_interposition_runner_derives_owned_dynamic_link_receipts(self) -> None:
         runner = (ROOT / "compat/x86_64/run_owned_c_allocation_interposition.sh").read_text(
             encoding="utf-8"
@@ -43,6 +76,58 @@ class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
             workload = work / "workload.o"
             workload.write_bytes(b"ELF fixture")
             self.assertEqual(BOUNDARY._startup_workload(work), workload)
+
+    def test_runtime_static_member_links_require_both_authenticated_members(self) -> None:
+        scratch = ROOT / ".work/x86_64/native-c-allocator-boundary-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            output = Path(temporary)
+            static = output / "static"
+            library = static / "usr/lib/libc.a"
+            library.parent.mkdir(parents=True)
+            library.write_bytes(b"archive fixture")
+            archive = BOUNDARY.mounted_path(library)
+            imports = {
+                "static_c_member": {
+                    "name": "selected-c-mimalloc.o", "member_index": 1,
+                    "member_occurrence": 0, "sha256": "a" * 64,
+                },
+                "static_rust_root_member": {
+                    "name": "native-c-root.rcgu.o", "member_index": 0, "member_occurrence": 0,
+                },
+            }
+            for mode in BOUNDARY.STATIC_MODES:
+                receipt = output / f"static-{mode}.crabc-link.json"
+                receipt.write_bytes(b"receipt fixture")
+                receipt.with_suffix(".trace").write_text(
+                    f"{archive}(native-c-root.rcgu.o)\n{archive}(selected-c-mimalloc.o)\n",
+                    encoding="utf-8",
+                )
+                receipt.with_suffix(".map").write_text(
+                    f"  {archive}(native-c-root.rcgu.o):(.text.root)\n"
+                    f"  {archive}(selected-c-mimalloc.o):(.text.c)\n",
+                    encoding="utf-8",
+                )
+            links = BOUNDARY._runtime_static_member_links(output, output, static, imports)
+            self.assertEqual(set(links), set(BOUNDARY.STATIC_MODES))
+            self.assertEqual(
+                links["static"]["selected_members"]["static_c_member"],
+                f"{archive}(selected-c-mimalloc.o)",
+            )
+            (output / "static-static-pie.crabc-link.trace").write_text(
+                f"{archive}(native-c-root.rcgu.o)\n", encoding="utf-8",
+            )
+            with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "trace selection"):
+                BOUNDARY._runtime_static_member_links(output, output, static, imports)
+            (output / "static-static-pie.crabc-link.trace").write_text(
+                f"{archive}(native-c-root.rcgu.o)\n{archive}(selected-c-mimalloc.o)\n",
+                encoding="utf-8",
+            )
+            (output / "static-static-pie.crabc-link.map").write_text(
+                f"  {archive}(native-c-root.rcgu.o):(.text.root)\n", encoding="utf-8",
+            )
+            with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "map selection"):
+                BOUNDARY._runtime_static_member_links(output, output, static, imports)
 
     def test_link_receipt_reader_keeps_the_real_workload_separate_from_its_output(self) -> None:
         scratch = ROOT / ".work/x86_64/native-c-allocator-boundary-tests"
