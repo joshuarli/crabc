@@ -86,13 +86,18 @@ interposition coverage.
 `locale_alias_contract_receipt.py` wraps the existing runner; it does not turn
 an older shell transcript into current evidence. `locale-alias-contract-image-inputs.json`
 is the finite immutable image-input manifest. It binds the pinned image, musl
-1.2.6 archive/shared object/specs/compiler, and every runner or collector tool
-by physical path, bytes, and mode. Collection requires a clean Git checkout
+1.2.6 archive/shared object/specs/compiler, the pinned target `llvm-ar`,
+`llvm-nm`, and `llvm-objdump`, and every runner or collector tool by physical
+path, bytes, and mode. Both static and dynamic product metadata must name those
+same three retained LLVM inputs. Collection requires a clean Git checkout
 including no untracked inputs, captures the complete HEAD/tree Git bytes and
 modes, and copies the selected source files both before and after the native
-work. Each fresh static and dynamic product is joined to that same source
-transaction; the dynamic product additionally retains its producer's source
-digest. It then passes one fresh explicit `--receipt-dir` to
+work. The dynamic product is joined to that source transaction through its
+source digest. Static source authority instead remains with the established
+`owned_posix_static_products.py` preparation: the receipt retains its complete
+primary/reproduction/extracted product, archive, source-seal, and command
+transaction, and the normal runner receives only that preparation's `primary`
+sysroot. It then passes one fresh explicit `--receipt-dir` to
 `run_locale_alias_contract.sh`. Every captured compile, link, header, normal
 static runtime, dynamic kernel/direct runtime, and symbol-observation command
 retains its exact argv, `/workspace` working directory, closed `LC_ALL`/`PATH`
@@ -106,11 +111,16 @@ and symlink modes.
 
 The host-side `validate-report` path only reads the receipt. It reconstructs
 the fixed 35-command runner roster and its paths, authenticates the retained
-complete Git source tree, rechecks selected current source bytes/modes, image
-inputs, product manifests/trees, launch context, all runtime comparisons, and
-the complete alias observation from the retained `readelf` streams. Collection
-repeats the source/image/product/raw-input checks after report construction;
-host replay starts no compiler, linker, target executable, shell, or container.
+complete Git source tree, rechecks the trusted checkout's recorded HEAD and
+every tracked source byte/mode, replays the retained static preparation against
+that sealed Git tree, checks image inputs and both product producer-tool
+records, then reconstructs product manifests/trees, launch context, runtime
+comparisons, and the complete alias observation from the retained `readelf`
+streams. Before public success it reopens the report and repeats those finite
+joins, including source, inputs, products, commands, artifacts, snapshots,
+runtime, and symbols. Collection likewise repeats its mutable
+source/image/product/raw-input checks after report construction; host replay
+starts no compiler, linker, target executable, shell, or container.
 
 The selected source relation remains deliberately narrow: `locale_narrow.rs`,
 `locale_objects.rs`, `gmtime_r.rs`, `owned_calendar.rs`,

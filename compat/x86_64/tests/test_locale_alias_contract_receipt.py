@@ -59,6 +59,67 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
             "launcher_stream": self.write("raw/compile.launcher.json", b'["/usr/bin/env","-i","LC_ALL=C","PATH=/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","/usr/bin/timeout","20"]\n'),
         }
 
+    def public_entry_fixture(self, *, tracked_unselected: bool = False) -> tuple[Path, Path, dict[str, object]]:
+        """Build a copied receipt whose source admission remains real on replay."""
+
+        trusted = self.root / "trusted"
+        for relative in receipt.SELECTED_SOURCES:
+            source = ROOT / relative
+            destination = trusted / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+        if tracked_unselected:
+            (trusted / "unselected-tracked.txt").write_text("tracked original\n", encoding="utf-8")
+        for command in (("git", "init", "-q"), ("git", "add", "."),
+                        ("git", "-c", "user.email=receipt@example.invalid", "-c", "user.name=Receipt", "commit", "-qm", "receipt")):
+            subprocess.run(command, cwd=trusted, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        revision = subprocess.check_output(("git", "rev-parse", "HEAD"), cwd=trusted, text=True).strip()
+        tree = subprocess.check_output(("git", "rev-parse", "HEAD^{tree}"), cwd=trusted, text=True).strip()
+        report_root = trusted / ".work/x86_64/entry-report"
+        report_root.mkdir(parents=True)
+        sys.path.insert(0, str(ROOT / "compat/x86_64"))
+        import owned_syscall_alias_authority as authority
+
+        authority.capture_git_objects(trusted, report_root, [revision])
+        authenticated, _files = authority.source_tree(report_root, revision)
+        for directory in ("inputs/source", "source-after/inputs/source"):
+            for relative in receipt.SELECTED_SOURCES:
+                destination = report_root / directory / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(trusted / relative, destination)
+        source = {"revision": revision, "tree": tree, "content_sha256": authenticated["content_sha256"],
+                  "clean": True, "paths": receipt.source_records(report_root / "inputs/source", receipt.SELECTED_SOURCES)}
+        source_contract = receipt.validate_source_contract(report_root / "inputs/source")
+        report = {
+            "schema": receipt.SCHEMA, "status": receipt.STATUS, "mode_policy": receipt.MODE_POLICY,
+            "image_inputs": {"image": "deferred"}, "source_before": source, "source_after": source,
+            "source_contract": source_contract, "products": {"products": "deferred"},
+            "collector_commands": [{"collector": "deferred"}], "runner_commands": [{"runner": "deferred"}],
+            "snapshots": {"before": {"records": ["same"]}, "after": {"records": ["same"]}},
+            "artifacts": {"artifacts": "deferred"}, "runtime": {"runtime": "deferred"},
+            "symbols": {"symbols": "deferred"}, "nonclaims": list(receipt.NONCLAIMS),
+        }
+        report_path = report_root / "report.json"
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+        return trusted, report_path, report
+
+    def admit_public_entry(self, trusted: Path, report_path: Path, *, runtime_side_effect: object | None = None) -> dict[str, object]:
+        """Keep source admission real while deferring the expensive native product leaves."""
+
+        runtime = {"runtime": "deferred"}
+        with mock.patch.object(receipt, "ROOT", trusted), \
+             mock.patch("subprocess.Popen", side_effect=AssertionError("validate-report started a process")), \
+             mock.patch.object(receipt, "_validate_image_inputs", return_value={"image": "deferred"}), \
+             mock.patch.object(receipt, "_validate_products", return_value={"products": "deferred"}), \
+             mock.patch.object(receipt, "_validate_collector_commands", return_value=[{"collector": "deferred"}]), \
+             mock.patch.object(receipt, "_runner_records", return_value=[{"runner": "deferred"}]), \
+             mock.patch.object(receipt, "_validate_execution_tools"), \
+             mock.patch.object(receipt, "_validate_artifacts", return_value={"artifacts": "deferred"}), \
+             mock.patch.object(receipt, "_validate_snapshot", side_effect=lambda _root, value, _name: value), \
+             mock.patch.object(receipt, "_validate_runtime_and_headers", side_effect=runtime_side_effect or (lambda _root: runtime)), \
+             mock.patch.object(receipt, "_validate_symbol_observation", return_value={"symbols": "deferred"}):
+            return receipt.validate_report(trusted, report_path)
+
     def test_retained_command_requires_exact_argv_and_all_raw_streams(self) -> None:
         record = self.fixed_command()
         receipt.validate_command_record(
@@ -143,10 +204,74 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
         self.assertEqual(plan[0][1][-2:], ["-o", "/workspace/.work/x86_64/locale-alias-contract-receipt/tmp/runner/probe.o"])
         self.assertNotIn("wcsftime_l", "\n".join(argument for _role, argv in plan for argument in argv))
 
+    def test_collector_uses_the_established_static_preparation_primary(self) -> None:
+        output = ".work/x86_64/locale-alias-contract-receipt"
+        commands = receipt._expected_collector_commands(output)
+        self.assertEqual(
+            commands[0],
+            ("prepare-static", [
+                "/usr/bin/python3", "-B", "/workspace/compat/x86_64/owned_posix_static_products.py",
+                "prepare", "/workspace/.work/x86_64/locale-alias-contract-receipt/static-preparation",
+            ]),
+        )
+        self.assertEqual(
+            commands[-1][1][-3:],
+            ["--static-sysroot", "/workspace/.work/x86_64/locale-alias-contract-receipt/static-preparation/products/primary",
+             "/workspace/.work/x86_64/locale-alias-contract-receipt/products/dynamic"],
+        )
+        self.assertNotIn("build_x86_64_owned_sysroot.py", "\n".join(" ".join(argv) for _role, argv in commands))
+
+    def test_both_product_producer_tool_records_must_match_pinned_image_inputs(self) -> None:
+        base = "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/"
+        tools = {
+            "schema": 1,
+            "target": "x86_64-unknown-linux-musl",
+            "toolchain": "nightly-2026-07-24",
+            "selection": {}, "rustup": {}, "rustc": {},
+            "llvm_target_tools": {
+                name: {"path": base + name, "resolved_path": base + name, "sha256": self.digest(name.encode())}
+                for name in ("llvm-ar", "llvm-nm", "llvm-objdump")
+            },
+        }
+        image = {"files": {
+            base + name: {"image": {"path": base + name, "sha256": self.digest(name.encode())}}
+            for name in ("llvm-ar", "llvm-nm", "llvm-objdump")
+        }}
+        static = self.root / "products/static/share/crabc"
+        dynamic = self.root / "products/dynamic/share/crabc"
+        static.mkdir(parents=True)
+        dynamic.mkdir(parents=True)
+        (static / "manifest.json").write_text(json.dumps({"producer_tools": tools}), encoding="utf-8")
+        (dynamic / "producer-tools.json").write_text(json.dumps(tools), encoding="utf-8")
+        self.assertEqual(
+            set(receipt._validate_producer_tools(self.root, static.parents[1], "static", image)["llvm_target_tools"]),
+            {"llvm-ar", "llvm-nm", "llvm-objdump"},
+        )
+        self.assertEqual(
+            set(receipt._validate_producer_tools(self.root, dynamic.parents[1], "dynamic", image)["llvm_target_tools"]),
+            {"llvm-ar", "llvm-nm", "llvm-objdump"},
+        )
+        forged = json.loads(json.dumps(tools))
+        forged["llvm_target_tools"]["llvm-ar"]["sha256"] = "0" * 64
+        (static / "manifest.json").write_text(json.dumps({"producer_tools": forged}), encoding="utf-8")
+        with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "llvm-ar producer tool differs"):
+            receipt._validate_producer_tools(self.root, static.parents[1], "static", image)
+        forged = json.loads(json.dumps(tools))
+        forged["llvm_target_tools"]["llvm-nm"]["sha256"] = "0" * 64
+        (dynamic / "producer-tools.json").write_text(json.dumps(forged), encoding="utf-8")
+        with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "llvm-nm producer tool differs"):
+            receipt._validate_producer_tools(self.root, dynamic.parents[1], "dynamic", image)
+
     def test_trusted_image_manifest_requires_the_pinned_oracle_and_actual_launch_tools(self) -> None:
         manifest = json.loads((ROOT / receipt.IMAGE_MANIFEST_PATH).read_text(encoding="utf-8"))
         self.assertIn("/opt/musl-1.2.6/lib/libc.a", manifest["files"])
         self.assertIn("/usr/bin/timeout", manifest["files"])
+        self.assertEqual(
+            {path.rsplit("/", 1)[-1] for path in receipt.PRODUCER_TOOL_PATHS.values()},
+            {"llvm-ar", "llvm-nm", "llvm-objdump"},
+        )
+        for path in receipt.PRODUCER_TOOL_PATHS.values():
+            self.assertIn(path, manifest["files"])
 
         forged_root = self.root / "forged-root"
         manifest_path = forged_root / receipt.IMAGE_MANIFEST_PATH
@@ -250,56 +375,38 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
     def test_validate_report_entry_uses_real_source_and_contract_validators(self) -> None:
         """The public entry reaches source admission without mocking it away."""
 
-        trusted = self.root / "trusted"
-        for relative in receipt.SELECTED_SOURCES:
-            source = ROOT / relative
-            destination = trusted / relative
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, destination)
-        for command in (("git", "init", "-q"), ("git", "add", "."),
-                        ("git", "-c", "user.email=receipt@example.invalid", "-c", "user.name=Receipt", "commit", "-qm", "receipt")):
-            subprocess.run(command, cwd=trusted, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        revision = subprocess.check_output(("git", "rev-parse", "HEAD"), cwd=trusted, text=True).strip()
-        tree = subprocess.check_output(("git", "rev-parse", "HEAD^{tree}"), cwd=trusted, text=True).strip()
-        report_root = trusted / ".work/x86_64/entry-report"
-        report_root.mkdir(parents=True)
-        sys.path.insert(0, str(ROOT / "compat/x86_64"))
-        import owned_syscall_alias_authority as authority
+        trusted, report_path, report = self.public_entry_fixture()
+        admitted = self.admit_public_entry(trusted, report_path)
+        self.assertEqual(admitted["source"], report["source_before"])
 
-        authority.capture_git_objects(trusted, report_root, [revision])
-        authenticated, _files = authority.source_tree(report_root, revision)
-        for directory in ("inputs/source", "source-after/inputs/source"):
-            for relative in receipt.SELECTED_SOURCES:
-                destination = report_root / directory / relative
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(trusted / relative, destination)
-        source = {"revision": revision, "tree": tree, "content_sha256": authenticated["content_sha256"],
-                  "clean": True, "paths": receipt.source_records(report_root / "inputs/source", receipt.SELECTED_SOURCES)}
-        source_contract = receipt.validate_source_contract(report_root / "inputs/source")
-        report = {
-            "schema": receipt.SCHEMA, "status": receipt.STATUS, "mode_policy": receipt.MODE_POLICY,
-            "image_inputs": {"image": "deferred"}, "source_before": source, "source_after": source,
-            "source_contract": source_contract, "products": {"products": "deferred"},
-            "collector_commands": [{"collector": "deferred"}], "runner_commands": [{"runner": "deferred"}],
-            "snapshots": {"before": {"records": ["same"]}, "after": {"records": ["same"]}},
-            "artifacts": {"artifacts": "deferred"}, "runtime": {"runtime": "deferred"},
-            "symbols": {"symbols": "deferred"}, "nonclaims": list(receipt.NONCLAIMS),
-        }
-        report_path = report_root / "report.json"
-        report_path.write_text(json.dumps(report), encoding="utf-8")
-        with mock.patch.object(receipt, "ROOT", trusted), \
-             mock.patch("subprocess.Popen", side_effect=AssertionError("validate-report started a process")), \
-             mock.patch.object(receipt, "_validate_image_inputs", return_value={"image": "deferred"}), \
-             mock.patch.object(receipt, "_validate_products", return_value={"products": "deferred"}), \
-             mock.patch.object(receipt, "_validate_collector_commands", return_value=[{"collector": "deferred"}]), \
-             mock.patch.object(receipt, "_runner_records", return_value=[{"runner": "deferred"}]), \
-             mock.patch.object(receipt, "_validate_execution_tools"), \
-             mock.patch.object(receipt, "_validate_artifacts", return_value={"artifacts": "deferred"}), \
-             mock.patch.object(receipt, "_validate_snapshot", side_effect=lambda _root, value, _name: value), \
-             mock.patch.object(receipt, "_validate_runtime_and_headers", return_value={"runtime": "deferred"}), \
-             mock.patch.object(receipt, "_validate_symbol_observation", return_value={"symbols": "deferred"}):
-            admitted = receipt.validate_report(trusted, report_path)
-        self.assertEqual(admitted["source"], source)
+    def test_validate_report_public_exit_rejects_a_report_changed_after_initial_reconstruction(self) -> None:
+        trusted, report_path, report = self.public_entry_fixture()
+
+        def mutate_report(_root: Path) -> dict[str, object]:
+            changed = dict(report)
+            changed["runtime"] = {"runtime": "changed-after-initial-read"}
+            report_path.write_text(json.dumps(changed), encoding="utf-8")
+            return {"runtime": "deferred"}
+
+        with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "report changed during process-free replay"):
+            self.admit_public_entry(trusted, report_path, runtime_side_effect=mutate_report)
+
+    def test_validate_report_public_exit_rechecks_retained_source_after_initial_reconstruction(self) -> None:
+        trusted, report_path, _report = self.public_entry_fixture()
+        changed = trusted / ".work/x86_64/entry-report/inputs/source" / receipt.CONTRACT_PATH
+
+        def mutate_retained_source(_root: Path) -> dict[str, object]:
+            changed.write_bytes(changed.read_bytes() + b"\n")
+            return {"runtime": "deferred"}
+
+        with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "retained source bytes changed"):
+            self.admit_public_entry(trusted, report_path, runtime_side_effect=mutate_retained_source)
+
+    def test_validate_report_rejects_an_unselected_tracked_source_change_without_spawning(self) -> None:
+        trusted, report_path, _report = self.public_entry_fixture(tracked_unselected=True)
+        (trusted / "unselected-tracked.txt").write_text("changed after receipt\n", encoding="utf-8")
+        with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "current tracked source differs"):
+            self.admit_public_entry(trusted, report_path)
 
     def test_validate_report_entry_joins_every_required_retained_relation(self) -> None:
         report_root = Path(tempfile.mkdtemp(prefix="report-", dir=ROOT / ".work/x86_64"))

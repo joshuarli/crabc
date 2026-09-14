@@ -24,6 +24,7 @@ import stat
 import subprocess
 import sys
 import re
+import tempfile
 import zlib
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -44,6 +45,9 @@ IMAGE_INPUTS = (
     "/bin/bash", "/bin/chmod", "/bin/cp", "/bin/grep", "/bin/ln", "/bin/mkdir", "/bin/mktemp", "/bin/sh", "/bin/uname",
     "/opt/cargo/bin/rustup", "/opt/musl-1.2.6/lib/libc.a", "/opt/musl-1.2.6/lib/libc.so", "/opt/musl-1.2.6/lib/musl-gcc.specs",
     "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/bin/rustc",
+    "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/llvm-ar",
+    "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/llvm-nm",
+    "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/llvm-objdump",
     "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld",
     "/usr/bin/as", "/usr/bin/cmp", "/usr/bin/env", "/usr/bin/gcc", "/usr/bin/git", "/usr/bin/ld", "/usr/bin/python3", "/usr/bin/readelf",
     "/usr/bin/realpath", "/usr/bin/sha256sum", "/usr/bin/timeout",
@@ -57,9 +61,9 @@ IMAGE_INPUTS = (
 # directory, regular file, and symlink; and consumer artifacts/raw streams are
 # retained at their observed modes under the runner's ordinary ``umask 022``.
 MODE_POLICY = {
-    "source": "complete clean Git tree bytes and modes; selected files are copied before and after",
-    "tools": "checked-in pinned-image manifest bytes, modes, and invocation paths",
-    "products": "every installed product directory, regular file, and symlink is retained with mode",
+    "source": "complete clean Git tree bytes and modes; replay admits current HEAD and every tracked byte/mode",
+    "tools": "checked-in pinned-image manifest bytes, modes, invocation paths, and product LLVM producer-tool identities",
+    "products": "static primary/reproduction/extracted preparation and dynamic product trees are retained with mode",
     "consumers": "normal installed-header runner uses umask 022 and retains every artifact and raw stream mode",
 }
 
@@ -85,6 +89,16 @@ DOCUMENT_PATH = "compat/x86_64/locale-alias-contract.md"
 STATIC_BUILDER_PATH = "scripts/build_x86_64_owned_sysroot.py"
 DYNAMIC_BUILDER_PATH = "scripts/build_x86_64_owned_dynamic_sysroot.py"
 PRODUCT_READER_PATH = "compat/x86_64/owned_posix_product_evidence.py"
+STATIC_PREPARATION_OWNER_PATH = "compat/x86_64/owned_posix_static_products.py"
+STATIC_PACKAGE_OWNER_PATH = "compat/x86_64/owned_static_sysroot_package.py"
+STATIC_PREPARATION_DIRECTORY = "static-preparation"
+STATIC_PRODUCT_DIRECTORY = f"{STATIC_PREPARATION_DIRECTORY}/products/primary"
+DYNAMIC_PRODUCT_DIRECTORY = "products/dynamic"
+PRODUCER_TOOL_PATHS = {
+    name: "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/"
+          "lib/rustlib/x86_64-unknown-linux-musl/bin/" + name
+    for name in ("llvm-ar", "llvm-nm", "llvm-objdump")
+}
 IMPLEMENTATION_SOURCES = (
     "libc/src/c_abi/x86_64/locale_narrow.rs",
     "libc/src/c_abi/x86_64/locale_objects.rs",
@@ -106,11 +120,12 @@ SELECTED_SOURCES = (
     DYNAMIC_BUILDER_PATH,
     PRODUCT_READER_PATH,
     IMAGE_MANIFEST_PATH,
-    "compat/x86_64/owned_posix_static_products.py",
+    STATIC_PREPARATION_OWNER_PATH,
+    STATIC_PACKAGE_OWNER_PATH,
     "compat/x86_64/owned_syscall_alias_authority.py",
+    "compat/x86_64/owned_utmpx_receipt.py",
     "compat/x86_64/owned_dynamic_receipt.py",
     "compat/x86_64/crabc_cc_owned_dynamic.py",
-    "compat/x86_64/owned_static_sysroot_package.py",
     "compat/x86_64/owned_dynamic_qualification.py",
     "compat/x86_64/locale_alias_contract_receipt.py",
     *IMPLEMENTATION_SOURCES,
@@ -472,8 +487,8 @@ def _runner_plan(output_relative: str) -> list[tuple[str, list[str]]]:
     """Reconstruct every runner ``capture`` argv in its fixed execution order."""
 
     work = _mount(f"{output_relative}/{RUNNER_DIRECTORY}")
-    static = _mount(f"{output_relative}/products/static")
-    dynamic = _mount(f"{output_relative}/products/dynamic")
+    static = _mount(f"{output_relative}/{STATIC_PRODUCT_DIRECTORY}")
+    dynamic = _mount(f"{output_relative}/{DYNAMIC_PRODUCT_DIRECTORY}")
     probe = _mount(PROBE_PATH)
     contract = _mount(CONTRACT_PATH)
     symbol_reader = _mount(SYMBOL_READER_PATH)
@@ -587,7 +602,13 @@ def _snapshot(root: Path, name: str) -> dict[str, object]:
         lines = path.read_text(encoding="ascii").splitlines()
     except (OSError, UnicodeDecodeError) as error:
         raise LocaleAliasReceiptError(f"runner {name} snapshot is invalid") from error
-    expected_names = (PROBE_PATH, CONTRACT_PATH, SYMBOL_READER_PATH, "products/static/usr/lib/libc.a", "products/dynamic/usr/lib/libc.so")
+    expected_names = (
+        PROBE_PATH,
+        CONTRACT_PATH,
+        SYMBOL_READER_PATH,
+        f"{STATIC_PRODUCT_DIRECTORY}/usr/lib/libc.a",
+        f"{DYNAMIC_PRODUCT_DIRECTORY}/usr/lib/libc.so",
+    )
     if len(lines) != len(expected_names):
         _fail(f"runner {name} snapshot roster changed")
     records: list[dict[str, str]] = []
@@ -695,41 +716,227 @@ def _tree_records(root: Path, directory: str) -> list[dict[str, object]]:
     return records
 
 
-def _validate_products(root: Path, value: object, source_state: Mapping[str, object]) -> dict[str, object]:
+def _copy_physical_tree(source: Path, destination: Path, label: str) -> None:
+    """Copy a retained static-preparation tree without accepting links or devices."""
+
+    metadata = source.lstat()
+    if not stat.S_ISDIR(metadata.st_mode) or source.is_symlink() or destination.exists():
+        _fail(f"{label} tree is unsafe")
+    destination.mkdir(parents=True, mode=stat.S_IMODE(metadata.st_mode))
+    for candidate in sorted(source.rglob("*")):
+        relative = candidate.relative_to(source)
+        copied = destination / relative
+        mode = candidate.lstat().st_mode
+        if candidate.is_symlink():
+            _fail(f"{label} tree contains a symlink")
+        if stat.S_ISDIR(mode):
+            copied.mkdir(mode=stat.S_IMODE(mode))
+            os.chmod(copied, stat.S_IMODE(mode))
+        elif stat.S_ISREG(mode):
+            copied.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(candidate, copied)
+            os.chmod(copied, stat.S_IMODE(mode))
+        else:
+            _fail(f"{label} tree has an unsupported entry")
+
+
+def _materialize_authoritative_source(destination: Path, files: Mapping[str, tuple[int, bytes, bool]]) -> None:
+    """Materialize the retained complete Git tree for the static owner only."""
+
+    if destination.exists():
+        _fail("static preparation source materialization already exists")
+    destination.mkdir()
+    for relative, (mode, data, symlink) in sorted(files.items()):
+        candidate = Path(relative)
+        if candidate.is_absolute() or any(part in {"", ".", ".."} for part in candidate.parts):
+            _fail("retained complete Git source path is unsafe")
+        target = destination / candidate
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if symlink:
+            target.symlink_to(os.fsdecode(data))
+        else:
+            target.write_bytes(data)
+            os.chmod(target, mode)
+
+
+def _validate_static_preparation(
+    checkout_root: Path,
+    receipt_root: Path,
+    source_state: Mapping[str, object],
+    value: object,
+) -> dict[str, object]:
+    """Replay the established static preparation from the receipt's Git tree.
+
+    Static product source provenance belongs to ``owned_posix_static_products``.
+    The locale receipt retains that full primary/reproduction/extracted
+    transaction and supplies its already-authenticated complete Git identity to
+    the owner.  Its own before/after fields remain collection context only.
+    """
+
+    record = _exact_mapping(value, {"directory", "tree", "record"}, "retained static preparation")
+    if record["directory"] != STATIC_PREPARATION_DIRECTORY:
+        _fail("static preparation directory changed")
+    preparation_root = _relative_directory(receipt_root, STATIC_PREPARATION_DIRECTORY, "retained static preparation")
+    tree = _tree_records(receipt_root, STATIC_PREPARATION_DIRECTORY)
+    if record["tree"] != tree:
+        _fail("retained static preparation tree changed")
+    preparation_record = _file_record(receipt_root, record["record"], "retained static preparation receipt")
+    if preparation_record != _identity(receipt_root, preparation_root / "preparation.json"):
+        _fail("retained static preparation receipt path changed")
+    preparation = _strict_json(preparation_root / "preparation.json", "retained static preparation")
+    if not isinstance(preparation, Mapping):
+        _fail("retained static preparation is malformed")
+    try:
+        output_relative = receipt_root.relative_to(checkout_root).as_posix()
+    except ValueError as error:
+        raise LocaleAliasReceiptError("retained static preparation escaped the checkout") from error
+    if preparation.get("work") != f"{output_relative}/{STATIC_PREPARATION_DIRECTORY}":
+        _fail("retained static preparation work path changed")
+
+    revision = source_state.get("revision")
+    digest = source_state.get("content_sha256")
+    if not isinstance(revision, str) or not isinstance(digest, str):
+        _fail("static preparation source identity is malformed")
+    sys.path.insert(0, str(ROOT / "compat/x86_64"))
+    import owned_posix_static_products as static_products
+    import owned_syscall_alias_authority as authority
+
+    try:
+        derived, files = authority.source_tree(receipt_root, revision)
+    except authority.AuthorityError as error:
+        raise LocaleAliasReceiptError("retained static preparation source authority is invalid") from error
+    expected_source = {"revision": revision, "content_sha256": digest}
+    if derived != expected_source:
+        _fail("retained static preparation source identity changed")
+    scratch = checkout_root / ".work/x86_64/locale-alias-contract-replay"
+    scratch.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".static-preparation.", dir=scratch) as temporary:
+        materialized = Path(temporary) / "source"
+        _materialize_authoritative_source(materialized, files)
+        replay_preparation = materialized / str(preparation["work"])
+        _copy_physical_tree(preparation_root, replay_preparation, "retained static preparation")
+        original_source_identity = static_products.source_identity
+
+        def sealed_source_identity(candidate: Path) -> dict[str, object]:
+            if candidate != materialized:
+                _fail("static preparation owner escaped the sealed source root")
+            return dict(expected_source)
+
+        try:
+            static_products.source_identity = sealed_source_identity
+            observed = static_products.validate_receipt(materialized, replay_preparation / "preparation.json")
+        except (static_products.PreparationError, static_products.package.PackageError, OSError, ValueError) as error:
+            raise LocaleAliasReceiptError(f"static preparation differs: {error}") from error
+        finally:
+            static_products.source_identity = original_source_identity
+    if not isinstance(observed, Mapping):
+        _fail("static preparation owner produced no record")
+    primary = observed.get("products", {}).get("primary")
+    if not isinstance(primary, Mapping) or not isinstance(primary.get("tree"), Mapping):
+        _fail("static preparation has no primary product tree")
+    product = receipt_root / STATIC_PRODUCT_DIRECTORY
+    try:
+        if primary["tree"] != static_products.tree_identity(product):
+            _fail("static preparation primary differs from retained static product")
+    except (static_products.PreparationError, static_products.package.PackageError, OSError, ValueError) as error:
+        raise LocaleAliasReceiptError(f"static preparation primary differs: {error}") from error
+    return {"directory": STATIC_PREPARATION_DIRECTORY, "tree": tree, "record": preparation_record}
+
+
+def _validate_producer_tools(
+    root: Path,
+    product: Path,
+    name: str,
+    image: Mapping[str, object],
+) -> dict[str, object]:
+    """Bind the three target LLVM tools recorded by both product producers."""
+
+    if name == "static":
+        metadata = product / "share/crabc/manifest.json"
+        value = _strict_json(metadata, "static product manifest")
+        if not isinstance(value, Mapping):
+            _fail("static product manifest is malformed")
+        tools = value.get("producer_tools")
+    else:
+        metadata = product / "share/crabc/producer-tools.json"
+        tools = _strict_json(metadata, "dynamic producer tools")
+    if not isinstance(tools, Mapping):
+        _fail(f"{name} product producer tools are absent")
+    expected_fields = {"schema", "target", "toolchain", "selection", "rustup", "rustc", "llvm_target_tools"}
+    if set(tools) != expected_fields or tools.get("schema") != 1 or tools.get("target") != "x86_64-unknown-linux-musl":
+        _fail(f"{name} product producer tool record changed")
+    llvm = tools.get("llvm_target_tools")
+    if not isinstance(llvm, Mapping) or set(llvm) != set(PRODUCER_TOOL_PATHS):
+        _fail(f"{name} product LLVM tool roster changed")
+    files = image.get("files")
+    if not isinstance(files, Mapping):
+        _fail("retained image tool records are absent")
+    normalized: dict[str, object] = {}
+    for tool, invocation in PRODUCER_TOOL_PATHS.items():
+        received = _exact_mapping(llvm[tool], {"path", "resolved_path", "sha256"}, f"{name} {tool} producer tool")
+        image_record = files.get(invocation)
+        if not isinstance(image_record, Mapping) or not isinstance(image_record.get("image"), Mapping):
+            _fail(f"{name} {tool} image authority is absent")
+        trusted = image_record["image"]
+        if (received["path"], received["resolved_path"], received["sha256"]) != (
+            invocation, trusted.get("path"), trusted.get("sha256"),
+        ):
+            _fail(f"{name} {tool} producer tool differs from pinned image")
+        normalized[tool] = dict(received)
+    return {"metadata": _identity(root, metadata), "llvm_target_tools": normalized}
+
+
+def _validate_products(
+    checkout_root: Path,
+    root: Path,
+    value: object,
+    source_state: Mapping[str, object],
+    image: Mapping[str, object],
+) -> dict[str, object]:
     expected = {"static", "dynamic"}
     records = _exact_mapping(value, expected, "retained products")
     sys.path.insert(0, str(ROOT / "compat/x86_64"))
     import owned_posix_product_evidence as products
 
-    result: dict[str, object] = {}
-    for name in ("static", "dynamic"):
-        fields = {"tree", "manifest", "source_before", "source_after"}
-        if name == "dynamic":
-            fields.add("state")
-        item = _exact_mapping(records[name], fields, f"{name} retained product")
-        if item["source_before"] != source_state or item["source_after"] != source_state:
-            _fail(f"{name} product source transaction changed")
-        current_tree = _tree_records(root, f"products/{name}")
-        if item["tree"] != current_tree:
-            _fail(f"{name} retained product tree changed")
-        product = root / "products" / name
-        manifest_path, _details = (products._validate_static_product(product) if name == "static"
-                                   else products._validate_dynamic_product(product))
-        manifest = _identity(root, manifest_path)
-        if item["manifest"] != manifest:
-            _fail(f"{name} retained product manifest changed")
-        result[name] = {"tree": current_tree, "manifest": manifest,
-                        "source_before": source_state, "source_after": source_state}
-        if name == "dynamic":
-            state_path = product / "share/crabc/dynamic-product-state.json"
-            state = _identity(root, state_path)
-            if item["state"] != state:
-                _fail("dynamic product state changed")
-            state_value = _strict_json(state_path, "dynamic product state")
-            if not isinstance(state_value, Mapping) or state_value.get("source_sha256") != source_state["content_sha256"]:
-                _fail("dynamic product source identity differs from receipt source")
-            result[name]["state"] = state
-    return result
+    static_item = _exact_mapping(records["static"], {"tree", "manifest", "preparation"}, "static retained product")
+    preparation = _validate_static_preparation(checkout_root, root, source_state, static_item["preparation"])
+    static_tree = _tree_records(root, STATIC_PRODUCT_DIRECTORY)
+    if static_item["tree"] != static_tree:
+        _fail("static retained product tree changed")
+    static_product = root / STATIC_PRODUCT_DIRECTORY
+    static_manifest_path, _details = products._validate_static_product(static_product)
+    static_manifest = _identity(root, static_manifest_path)
+    if static_item["manifest"] != static_manifest:
+        _fail("static retained product manifest changed")
+
+    dynamic_item = _exact_mapping(records["dynamic"], {"tree", "manifest", "source_before", "source_after", "state"}, "dynamic retained product")
+    if dynamic_item["source_before"] != source_state or dynamic_item["source_after"] != source_state:
+        _fail("dynamic product source transaction changed")
+    dynamic_tree = _tree_records(root, DYNAMIC_PRODUCT_DIRECTORY)
+    if dynamic_item["tree"] != dynamic_tree:
+        _fail("dynamic retained product tree changed")
+    dynamic_product = root / DYNAMIC_PRODUCT_DIRECTORY
+    dynamic_manifest_path, _details = products._validate_dynamic_product(dynamic_product)
+    dynamic_manifest = _identity(root, dynamic_manifest_path)
+    if dynamic_item["manifest"] != dynamic_manifest:
+        _fail("dynamic retained product manifest changed")
+    state_path = dynamic_product / "share/crabc/dynamic-product-state.json"
+    dynamic_state = _identity(root, state_path)
+    if dynamic_item["state"] != dynamic_state:
+        _fail("dynamic product state changed")
+    state_value = _strict_json(state_path, "dynamic product state")
+    if not isinstance(state_value, Mapping) or state_value.get("source_sha256") != source_state["content_sha256"]:
+        _fail("dynamic product source identity differs from receipt source")
+    # The tool facts are derived from product metadata protected by the trees
+    # above and the immutable image records.  They are checked here rather than
+    # copied as a self-attested second product relation.
+    _validate_producer_tools(root, static_product, "static", image)
+    _validate_producer_tools(root, dynamic_product, "dynamic", image)
+    return {
+        "static": {"tree": static_tree, "manifest": static_manifest, "preparation": preparation},
+        "dynamic": {"tree": dynamic_tree, "manifest": dynamic_manifest, "source_before": source_state,
+                    "source_after": source_state, "state": dynamic_state},
+    }
 
 
 def _hex(value: object, length: int, label: str) -> str:
@@ -893,6 +1100,7 @@ def _validate_source_seal(root: Path, value: object, source_directory: str) -> d
         raise LocaleAliasReceiptError("retained complete Git source authority is invalid") from error
     if authenticated != {"revision": revision, "content_sha256": digest} or _retained_git_tree(root, revision) != tree:
         _fail("retained complete Git source authority differs from source seal")
+    _validate_current_tracked_source(revision, digest, files)
     retained_root = _relative_directory(root, source_directory, "retained source")
     retained = source_records(retained_root, SELECTED_SOURCES)
     if record["paths"] != retained:
@@ -910,13 +1118,50 @@ def _validate_source_seal(root: Path, value: object, source_directory: str) -> d
     return {"revision": revision, "tree": tree, "content_sha256": digest, "clean": True, "paths": retained}
 
 
+def _validate_current_tracked_source(revision: str, digest: str, files: Mapping[str, tuple[int, bytes, bool]]) -> None:
+    """Admit the trusted checkout's exact recorded HEAD and every tracked byte/mode."""
+
+    sys.path.insert(0, str(ROOT / "compat/x86_64"))
+    import owned_utmpx_receipt as utmpx
+
+    try:
+        if utmpx.local_git_head(ROOT) != revision:
+            _fail("current Git HEAD differs from retained source authority")
+    except utmpx.ReceiptError as error:
+        raise LocaleAliasReceiptError("current Git HEAD is unreadable") from error
+    current_digest = hashlib.sha256()
+    for name, (mode, expected, symlink) in sorted(files.items()):
+        path = ROOT / name
+        try:
+            metadata = path.lstat()
+        except OSError as error:
+            raise LocaleAliasReceiptError(f"current tracked source is absent: {name}") from error
+        if stat.S_IMODE(metadata.st_mode) != mode:
+            _fail(f"current tracked source mode differs: {name}")
+        if symlink:
+            if not stat.S_ISLNK(metadata.st_mode):
+                _fail(f"current tracked source kind differs: {name}")
+            actual = os.fsencode(os.readlink(path))
+        else:
+            if not stat.S_ISREG(metadata.st_mode) or path.is_symlink():
+                _fail(f"current tracked source kind differs: {name}")
+            actual = path.read_bytes()
+        if actual != expected:
+            _fail(f"current tracked source differs from retained authority: {name}")
+        current_digest.update(name.encode() + b"\0" + str(mode).encode() + b"\0")
+        current_digest.update(hashlib.sha256(actual).digest())
+    if current_digest.hexdigest() != digest:
+        _fail("current tracked source digest differs from retained authority")
+
+
 def _expected_collector_commands(output_relative: str) -> list[tuple[str, list[str]]]:
-    static = _mount(f"{output_relative}/products/static")
-    dynamic = _mount(f"{output_relative}/products/dynamic")
+    preparation = _mount(f"{output_relative}/{STATIC_PREPARATION_DIRECTORY}")
+    static = _mount(f"{output_relative}/{STATIC_PRODUCT_DIRECTORY}")
+    dynamic = _mount(f"{output_relative}/{DYNAMIC_PRODUCT_DIRECTORY}")
     runner = _mount(RUNNER_PATH)
     raw = _mount(f"{output_relative}/{RUNNER_DIRECTORY}")
     return [
-        ("build-static", ["/usr/bin/python3", "-B", _mount(STATIC_BUILDER_PATH), "--output", static]),
+        ("prepare-static", ["/usr/bin/python3", "-B", _mount(STATIC_PREPARATION_OWNER_PATH), "prepare", preparation]),
         ("build-dynamic", ["/usr/bin/python3", "-B", _mount(DYNAMIC_BUILDER_PATH), "--output", dynamic]),
         ("locale-alias-runner", [runner, "--receipt-dir", raw, "--static-sysroot", static, dynamic]),
     ]
@@ -982,24 +1227,27 @@ def _validate_execution_tools(
     source_entries = {item["path"]: item for item in source["paths"]}
     image_files = image["files"]
     assert isinstance(image_files, Mapping)
-    product_prefix = _mount(f"{output_relative}/products/")
+    product_prefixes = {
+        name: _mount(f"{output_relative}/{directory}") + "/"
+        for name, directory in (("static", STATIC_PRODUCT_DIRECTORY), ("dynamic", DYNAMIC_PRODUCT_DIRECTORY))
+    }
 
     def require_program(program: object, label: str) -> None:
         if not isinstance(program, str) or not program:
             _fail(f"{label} program is malformed")
         if program.startswith(SOURCE_MOUNT + "/"):
             relative = program[len(SOURCE_MOUNT) + 1:]
-            if relative in {STATIC_BUILDER_PATH, DYNAMIC_BUILDER_PATH, RUNNER_PATH}:
+            if relative in {STATIC_PREPARATION_OWNER_PATH, STATIC_BUILDER_PATH, DYNAMIC_BUILDER_PATH, RUNNER_PATH}:
                 retained = _identity(root, root / "inputs/source" / relative)
                 if source_entries.get(relative) != retained:
                     _fail(f"{label} source tool differs from retained source")
                 return
-            if program.startswith(product_prefix):
-                product_relative = relative[len(f"{output_relative}/products/"):]
-                product_name = product_relative.split("/", 1)[0]
-                if product_name not in {"static", "dynamic"}:
-                    _fail(f"{label} product tool root changed")
-                retained_path = f"products/{product_relative}"
+            product_name = next((name for name, prefix in product_prefixes.items() if program.startswith(prefix)), None)
+            if product_name is not None:
+                prefix = product_prefixes[product_name]
+                product_relative = program[len(prefix):]
+                directory = STATIC_PRODUCT_DIRECTORY if product_name == "static" else DYNAMIC_PRODUCT_DIRECTORY
+                retained_path = f"{directory}/{product_relative}"
                 retained = _relative_file(root, retained_path, f"{label} product tool")
                 tree = products[product_name]["tree"]
                 if not any(entry.get("kind") == "file" and entry.get("path") == retained_path for entry in tree):
@@ -1041,6 +1289,7 @@ def validate_report(root: Path, report_path: Path) -> dict[str, object]:
     except ValueError as error:
         raise LocaleAliasReceiptError("receipt report is outside supplied checkout") from error
     _output_relative(root, receipt_root)
+    report_identity = _identity(receipt_root, report_path)
     report = _strict_json(report_path, "locale alias receipt report")
     expected = {"schema", "status", "mode_policy", "image_inputs", "source_before", "source_after", "source_contract", "products", "collector_commands", "runner_commands", "snapshots", "artifacts", "runtime", "symbols", "nonclaims"}
     record = _exact_mapping(report, expected, "locale alias receipt report")
@@ -1057,7 +1306,7 @@ def validate_report(root: Path, report_path: Path) -> dict[str, object]:
     if record["source_contract"] != source_contract:
         _fail("source alias contract observation changed")
     image = _validate_image_inputs(receipt_root, record["image_inputs"])
-    products = _validate_products(receipt_root, record["products"], source)
+    products = _validate_products(root, receipt_root, record["products"], source, image)
     collector_commands = _validate_collector_commands(receipt_root, output_relative, record["collector_commands"])
     runner_commands = _runner_records(receipt_root, output_relative, record["runner_commands"])
     _validate_execution_tools(receipt_root, output_relative, source, image, products, collector_commands, runner_commands)
@@ -1072,6 +1321,10 @@ def validate_report(root: Path, report_path: Path) -> dict[str, object]:
     symbols = _validate_symbol_observation(receipt_root)
     if record["symbols"] != symbols:
         _fail("symbol observation changed")
+    _public_replay_exit_recheck(
+        root, receipt_root, report_path, report_identity, record, output_relative, source, after_source,
+        source_contract, image, products, collector_commands, runner_commands, artifacts, snapshots, runtime, symbols,
+    )
     return {
         "source": source,
         "image_inputs": image,
@@ -1083,6 +1336,53 @@ def validate_report(root: Path, report_path: Path) -> dict[str, object]:
         "symbols": symbols,
         "status": STATUS,
     }
+
+
+def _public_replay_exit_recheck(
+    checkout_root: Path,
+    receipt_root: Path,
+    report_path: Path,
+    report_identity: Mapping[str, object],
+    record: Mapping[str, object],
+    output_relative: str,
+    source: Mapping[str, object],
+    after_source: Mapping[str, object],
+    source_contract: Mapping[str, object],
+    image: Mapping[str, object],
+    products: Mapping[str, object],
+    collector_commands: Sequence[Mapping[str, object]],
+    runner_commands: Sequence[Mapping[str, object]],
+    artifacts: Mapping[str, object],
+    snapshots: Mapping[str, object],
+    runtime: Mapping[str, object],
+    symbols: Mapping[str, object],
+) -> None:
+    """Repeat the public reader's finite reconstruction without starting a process."""
+
+    if _identity(receipt_root, report_path) != report_identity:
+        _fail("report changed during process-free replay")
+    if _strict_json(report_path, "locale alias receipt report") != record:
+        _fail("report content changed during process-free replay")
+    source_again = _validate_source_seal(receipt_root, record["source_before"], "inputs/source")
+    after_again = _validate_source_seal(receipt_root, record["source_after"], "source-after/inputs/source")
+    if source_again != source or after_again != after_source:
+        _fail("source reconstruction changed during process-free replay")
+    if validate_source_contract(receipt_root / "inputs/source") != source_contract:
+        _fail("source contract changed during process-free replay")
+    image_again = _validate_image_inputs(receipt_root, record["image_inputs"])
+    products_again = _validate_products(checkout_root, receipt_root, record["products"], source_again, image_again)
+    collector_again = _validate_collector_commands(receipt_root, output_relative, record["collector_commands"])
+    runner_again = _runner_records(receipt_root, output_relative, record["runner_commands"])
+    _validate_execution_tools(receipt_root, output_relative, source_again, image_again, products_again, collector_again, runner_again)
+    artifacts_again = _validate_artifacts(receipt_root, record["artifacts"])
+    snapshots_again = {name: _validate_snapshot(receipt_root, record["snapshots"].get(name) if isinstance(record["snapshots"], Mapping) else None, name)
+                       for name in ("before", "after")}
+    runtime_again = _validate_runtime_and_headers(receipt_root)
+    symbols_again = _validate_symbol_observation(receipt_root)
+    if (image_again != image or products_again != products or list(collector_again) != list(collector_commands)
+            or list(runner_again) != list(runner_commands) or artifacts_again != artifacts
+            or snapshots_again != snapshots or runtime_again != runtime or symbols_again != symbols):
+        _fail("receipt reconstruction changed during process-free replay")
 
 
 def _require_native_collection(root: Path, output: Path) -> str:
@@ -1153,7 +1453,7 @@ def _final_transaction_recheck(
         _fail("source changed after locale alias report construction")
     if _validate_image_inputs(receipt_root, image) != image:
         _fail("image inputs changed after locale alias report construction")
-    if _validate_products(receipt_root, products, source) != products:
+    if _validate_products(root, receipt_root, products, source, image) != products:
         _fail("products changed after locale alias report construction")
     if _raw_collector_commands(receipt_root, output_relative) != list(collector_commands):
         _fail("collector raw streams changed after locale alias report construction")
@@ -1180,7 +1480,7 @@ def collect(root: Path, output: Path) -> dict[str, object]:
         collector_commands = []
         if _live_source_state(root) != source_state:
             _fail("source changed before static product construction")
-        collector_commands.append(_run(root, output, "build-static", _expected_collector_commands(output_relative)[0][1], env=env))
+        collector_commands.append(_run(root, output, "prepare-static", _expected_collector_commands(output_relative)[0][1], env=env))
         if _live_source_state(root) != source_state:
             _fail("source changed during static product construction")
         collector_commands.append(_run(root, output, "build-dynamic", _expected_collector_commands(output_relative)[1][1], env=env))
@@ -1193,13 +1493,28 @@ def collect(root: Path, output: Path) -> dict[str, object]:
         raw_commands = _raw_runner_records(output, output_relative)
         sys.path.insert(0, str(ROOT / "compat/x86_64"))
         import owned_posix_product_evidence as products
+        static_product = output / STATIC_PRODUCT_DIRECTORY
+        dynamic_product = output / DYNAMIC_PRODUCT_DIRECTORY
+        static_manifest = products._validate_static_product(static_product)[0]
+        dynamic_manifest = products._validate_dynamic_product(dynamic_product)[0]
         product_records = {
-            name: {"tree": _tree_records(output, f"products/{name}"), "manifest": _identity(output, manifest),
-                   "source_before": before, "source_after": before}
-            for name, manifest in (("static", products._validate_static_product(output / "products/static")[0]),
-                                   ("dynamic", products._validate_dynamic_product(output / "products/dynamic")[0]))
+            "static": {
+                "tree": _tree_records(output, STATIC_PRODUCT_DIRECTORY),
+                "manifest": _identity(output, static_manifest),
+                "preparation": {
+                    "directory": STATIC_PREPARATION_DIRECTORY,
+                    "tree": _tree_records(output, STATIC_PREPARATION_DIRECTORY),
+                    "record": _identity(output, output / STATIC_PREPARATION_DIRECTORY / "preparation.json"),
+                },
+            },
+            "dynamic": {
+                "tree": _tree_records(output, DYNAMIC_PRODUCT_DIRECTORY),
+                "manifest": _identity(output, dynamic_manifest),
+                "source_before": before,
+                "source_after": before,
+            },
         }
-        dynamic_state = output / "products/dynamic/share/crabc/dynamic-product-state.json"
+        dynamic_state = dynamic_product / "share/crabc/dynamic-product-state.json"
         product_records["dynamic"]["state"] = _identity(output, dynamic_state)
         report = {
             "schema": SCHEMA,

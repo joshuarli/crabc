@@ -90,6 +90,24 @@
       "sha256": "77b559676e861fc06207f89875a41df87fdfe08f89f856b9fe984c207bdcf675",
       "size": 381704
     },
+    "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/llvm-ar": {
+      "mode": 493,
+      "path": "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/llvm-ar",
+      "sha256": "8c1104fe69b82f6e79ab4381e4d21678ef6098fb9c31889789b6d2058072adc1",
+      "size": 51084784
+    },
+    "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/llvm-nm": {
+      "mode": 493,
+      "path": "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/llvm-nm",
+      "sha256": "5099323b4bfcaaf2e30599a7fa4571e74406d5e7b7eb2a61b317b4122ad85efc",
+      "size": 52665208
+    },
+    "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/llvm-objdump": {
+      "mode": 493,
+      "path": "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/llvm-objdump",
+      "sha256": "f050e81374334989a9d3149967e4f9be8032e003d588a5e9304b74e75e894cba",
+      "size": 43876800
+    },
     "/usr/bin/as": {
       "mode": 493,
       "path": "/usr/bin/as",
