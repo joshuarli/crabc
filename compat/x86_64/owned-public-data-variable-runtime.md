@@ -29,8 +29,22 @@ The immutable group reads all sixteen `_ns_flagdata` records and both IPv6
 values. Environment retains caller-serialized initial publication, exact
 same-storage dependencies, replacement/removal/clear behavior and its borrowed
 pointer boundary. Getdate preserves the existing source/template/error rows.
-The getopt group covers startup program-name publication, parser changes and
-both reset paths. The narrow signgam probe checks only that `lgamma` updates
+The getopt group covers startup program-name publication, public parser changes
+and both same-storage reset paths. Its ordinary-main probe is separate from
+`libc_process_globals_getopt_probe.c`: that legacy freestanding static fixture
+retains the ABI-only `__optpos` cursor assertion. Pinned musl dynamic execution
+leaves the executable-visible `__optpos` storage unchanged while the selected
+public `getopt` result, `optind`, `optarg`, `opterr`, `optopt`, `optreset`, and
+program-name aliases update correctly. This receipt therefore checks those
+seven installed variables and its named reset/program-name dependencies, while
+the static runner retains the private cursor proof. The boundary control uses
+`/usr/local/bin/crabc-x86_64-musl-gcc` (SHA-256
+`9b28cac06b7a1f35331ca06e23a1fc3fa7be9a6f85d9c6006363e8185001c90a`)
+and its dynamic interpreter
+`/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1` resolving to pinned runtime
+`libc.so` (SHA-256
+`8aea1cf45942b85b9d20bfcc4fbe78dcd6748f7d7c615513b38d3f9a897bdb65`);
+it never uses Alpine's bootstrap musl as an oracle. The narrow signgam probe checks only that `lgamma` updates
 `signgam`, `lgamma_r` writes its explicit sign without updating it, and
 `__signgam` is the same storage. It does not make a math-family claim. The
 standard-stream group observes three distinct initialized slots and descriptor

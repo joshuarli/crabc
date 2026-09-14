@@ -148,6 +148,21 @@ class PublicDataVariableRuntimeContractTests(unittest.TestCase):
             {entry['source'] for entry in reader.probe_execution_plan()},
         )
 
+    def test_getopt_runtime_probe_exercises_only_selected_public_state(self) -> None:
+        contract = reader.load_contract()
+        group = next(item for item in contract['groups']
+                     if item['id'] == 'getopt-and-program-name-globals')
+        self.assertEqual(group['probe_sources'], ['compat/x86_64/owned_public_data_getopt_probe.c'])
+        source = (ROOT / group['probe_sources'][0]).read_text(encoding='utf-8')
+        self.assertNotIn('extern int __optpos;', source)
+        self.assertNotRegex(source, r'__optpos\s*(?:==|!=|[<>])')
+        for required in (
+            'optarg', 'opterr', 'optind', 'optopt', 'optreset',
+            'program_invocation_name', 'program_invocation_short_name',
+            '__optreset = 1', 'optreset = 1', 'getopt_long',
+        ):
+            self.assertIn(required, source)
+
     def test_writable_fixture_sources_leave_their_declared_roots_reversible(self) -> None:
         """The source cleanup and retained-root policy name the same two files.
 

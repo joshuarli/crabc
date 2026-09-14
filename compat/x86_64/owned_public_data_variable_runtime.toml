@@ -29,9 +29,9 @@ semantics = "getdate error outcomes, successful-call persistence and partial-wri
 [[groups]]
 id = "getopt-and-program-name-globals"
 objects = ["optarg", "opterr", "optind", "optopt", "optreset", "program_invocation_name", "program_invocation_short_name"]
-probe_sources = ["compat/x86_64/libc_process_globals_getopt_probe.c"]
+probe_sources = ["compat/x86_64/owned_public_data_getopt_probe.c"]
 owner_sources = ["libc/src/getopt_exports.rs", "libc/src/c_abi/x86_64/process_globals.rs"]
-semantics = "startup publication, parser updates and both reset routes"
+semantics = "startup publication, public parser updates and both alias reset routes"
 
 [[groups]]
 id = "math-sign-global"

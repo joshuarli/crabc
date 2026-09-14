@@ -77,7 +77,7 @@ PROBE_SCENARIOS = (
      'compat/x86_64/owned_environment_lifecycle_probe.c', ('allocation-failure',), (), True),
     ('getdate', 'getdate-global', 'compat/x86_64/owned_getdate_probe.c', (), ('templates',), True),
     ('getopt-and-program-names', 'getopt-and-program-name-globals',
-     'compat/x86_64/libc_process_globals_getopt_probe.c', (), (), True),
+     'compat/x86_64/owned_public_data_getopt_probe.c', (), (), True),
     ('math-sign', 'math-sign-global', 'compat/x86_64/owned_public_data_variable_runtime_probe.c', (), (), True),
     ('standard-stream-slots', 'permanent-standard-stream-slots',
      'compat/x86_64/libc_stdio_standard_probe.c', (), (), True),
