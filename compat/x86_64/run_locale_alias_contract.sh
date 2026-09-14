@@ -6,17 +6,24 @@
 # Its strong public replacements must link and run, while calls inside libc
 # retain the source-selected private implementations.
 set -euo pipefail
-export LC_ALL=C
+
+readonly COMMAND_PATH=/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+readonly COMMAND_LOCALE=C
+export PATH="$COMMAND_PATH"
+export LC_ALL="$COMMAND_LOCALE"
+umask 022
 
 readonly ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly PROBE="$ROOT/compat/x86_64/locale_alias_contract_probe.c"
 readonly CONTRACT="$ROOT/compat/x86_64/locale_alias_contract.json"
 readonly SYMBOLS="$ROOT/compat/x86_64/locale_alias_contract_symbols.py"
-readonly TIMEOUT=20
+readonly TIMEOUT=/usr/bin/timeout
+readonly TIMEOUT_SECONDS=20
+readonly COMMAND_ENV=/usr/bin/env
 
 usage() {
-    printf 'usage: %s --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT\n' "$0" >&2
+    printf 'usage: %s [--receipt-dir DIR] --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT\n' "$0" >&2
     exit 2
 }
 
@@ -27,8 +34,14 @@ fail() {
 
 static_product=''
 dynamic_product=''
+receipt_dir=''
 while [ "$#" -gt 0 ]; do
     case "$1" in
+        --receipt-dir)
+            [ "$#" -ge 2 ] && [ -z "$receipt_dir" ] && [ -n "$2" ] || usage
+            receipt_dir="$2"
+            shift 2
+            ;;
         --static-sysroot)
             [ "$#" -ge 2 ] && [ -z "$static_product" ] && [ -n "$2" ] || usage
             static_product="$2"
@@ -44,18 +57,15 @@ while [ "$#" -gt 0 ]; do
 done
 [ -n "$static_product" ] && [ -n "$dynamic_product" ] || usage
 
-[ "$(uname -s)" = Linux ] || fail 'requires native Linux'
-case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64, got $(uname -m)" ;; esac
+[ "$(/bin/uname -s)" = Linux ] || fail 'requires native Linux'
+case "$(/bin/uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64, got $(/bin/uname -m)" ;; esac
 [ -n "${TMPDIR:-}" ] || fail 'requires explicit checkout-local TMPDIR'
-for tool in ar chroot cmp cp env grep mkdir mktemp readelf sha256sum timeout; do
-    command -v "$tool" >/dev/null 2>&1 || fail "missing tool: $tool"
-done
 [ -x "$ORACLE_CC" ] || fail 'missing pinned musl compiler'
 [ -f "$PROBE" ] && [ -f "$CONTRACT" ] && [ -f "$SYMBOLS" ] ||
     fail 'missing probe, alias contract, or selected-symbol validator'
 
-static_product="$(realpath -e "$static_product")"
-dynamic_product="$(realpath -e "$dynamic_product")"
+static_product="$(/usr/bin/realpath -e "$static_product")"
+dynamic_product="$(/usr/bin/realpath -e "$dynamic_product")"
 for path in "$static_product" "$dynamic_product"; do
     [ -d "$path" ] || fail "product is not a directory: $path"
     [ ! -L "$path" ] || fail "product root must be physical: $path"
@@ -63,7 +73,7 @@ done
 [ -x "$static_product/bin/crabc-cc" ] || fail 'static product lacks installed driver'
 [ -x "$dynamic_product/bin/crabc-cc-dynamic" ] || fail 'dynamic product lacks installed driver'
 
-python3 -B - "$ROOT" "$static_product" "$dynamic_product" <<'PY'
+/usr/bin/python3 -B - "$ROOT" "$static_product" "$dynamic_product" <<'PY'
 from pathlib import Path
 import sys
 
@@ -77,24 +87,54 @@ products._validate_static_product(static)
 products._validate_dynamic_product(dynamic)
 PY
 
-work="$(mktemp -d "$TMPDIR/locale-alias-contract.XXXXXX")"
-chmod a+rx "$work"
-trap 'chmod -R a+rX "$work" 2>/dev/null || true' EXIT
+if [ -n "$receipt_dir" ]; then
+    receipt_dir="$(/usr/bin/realpath -m "$receipt_dir")"
+    tmp_root="$(/usr/bin/realpath -e "$TMPDIR")"
+    case "$receipt_dir" in
+        "$tmp_root"/*) ;;
+        *) fail 'receipt directory must be below checkout-local TMPDIR' ;;
+    esac
+    [ ! -e "$receipt_dir" ] || fail "receipt directory must be fresh: $receipt_dir"
+    /bin/mkdir -p "$receipt_dir"
+    work="$receipt_dir"
+else
+    work="$(/bin/mktemp -d "$TMPDIR/locale-alias-contract.XXXXXX")"
+fi
+/bin/chmod a+rx "$work"
+trap '/bin/chmod -R a+rX "$work" 2>/dev/null || true' EXIT
 printf 'locale alias contract evidence: %s\n' "$work"
 
 capture() {
     local stem="$1"
     shift
-    python3 -B - "$work/$stem.argv.json" "$@" <<'PY'
+    /usr/bin/python3 -B - "$work/$stem.argv.json" "$@" <<'PY'
 import json
 from pathlib import Path
 import sys
 Path(sys.argv[1]).write_text(json.dumps(sys.argv[2:], separators=(",", ":")) + "\n",
                              encoding="utf-8")
 PY
+    pwd -P >"$work/$stem.cwd"
+    /usr/bin/python3 -B - "$work/$stem.environment.json" "$COMMAND_LOCALE" "$COMMAND_PATH" <<'PY'
+import json
+from pathlib import Path
+import sys
+Path(sys.argv[1]).write_text(json.dumps({"LC_ALL": sys.argv[2], "PATH": sys.argv[3]},
+                                        separators=(",", ":")) + "\n", encoding="utf-8")
+PY
+    printf '/dev/null\n' >"$work/$stem.stdin"
+    /usr/bin/python3 -B - "$work/$stem.launcher.json" "$COMMAND_ENV" "$COMMAND_LOCALE" "$COMMAND_PATH" "$TIMEOUT" "$TIMEOUT_SECONDS" <<'PY'
+import json
+from pathlib import Path
+import sys
+Path(sys.argv[1]).write_text(json.dumps([sys.argv[2], "-i", "LC_ALL=" + sys.argv[3],
+                                         "PATH=" + sys.argv[4], sys.argv[5], sys.argv[6]],
+                                        separators=(",", ":")) + "\n", encoding="utf-8")
+PY
     local status
     set +e
-    timeout "$TIMEOUT" "$@" >"$work/$stem.stdout" 2>"$work/$stem.stderr"
+    "$COMMAND_ENV" -i "LC_ALL=$COMMAND_LOCALE" "PATH=$COMMAND_PATH" "$TIMEOUT" "$TIMEOUT_SECONDS" "$@" \
+        < /dev/null >"$work/$stem.stdout" 2>"$work/$stem.stderr"
     status=$?
     set -e
     printf '%s\n' "$status" >"$work/$stem.status"
@@ -106,7 +146,7 @@ PY
 
 snapshot() {
     local point="$1"
-    sha256sum "$PROBE" "$CONTRACT" "$SYMBOLS" \
+    /usr/bin/sha256sum "$PROBE" "$CONTRACT" "$SYMBOLS" \
         "$static_product/usr/lib/libc.a" "$dynamic_product/usr/lib/libc.so" \
         >"$work/$point.sha256"
 }
@@ -139,12 +179,12 @@ done
 for executable in oracle-static candidate-static candidate-static-pie \
                   oracle-dynamic-pie oracle-dynamic-non-pie \
                   candidate-dynamic-pie candidate-dynamic-non-pie; do
-    capture "$executable-header" readelf -h "$work/$executable"
+    capture "$executable-header" /usr/bin/readelf -h "$work/$executable"
 done
 require_elf_type() {
     local executable="$1"
     local expected="$2"
-    grep -Eq "^[[:space:]]*Type:[[:space:]]+$expected\b" "$work/$executable-header.stdout" ||
+    /bin/grep -Eq "^[[:space:]]*Type:[[:space:]]+$expected\b" "$work/$executable-header.stdout" ||
         fail "$executable has wrong ELF type; expected $expected"
 }
 require_elf_type oracle-static EXEC
@@ -155,29 +195,29 @@ require_elf_type oracle-dynamic-non-pie EXEC
 require_elf_type candidate-dynamic-pie DYN
 require_elf_type candidate-dynamic-non-pie EXEC
 
-capture oracle-static-run env -i TZ=UTC "$work/oracle-static"
+capture oracle-static-run /usr/bin/env -i TZ=UTC "$work/oracle-static"
 for mode in static static-pie; do
-    capture "candidate-$mode-run" env -i TZ=UTC "$work/candidate-$mode"
-    cmp "$work/oracle-static-run.stdout" "$work/candidate-$mode-run.stdout"
-    cmp "$work/oracle-static-run.stderr" "$work/candidate-$mode-run.stderr"
-    cmp "$work/oracle-static-run.status" "$work/candidate-$mode-run.status"
+    capture "candidate-$mode-run" /usr/bin/env -i TZ=UTC "$work/candidate-$mode"
+    /usr/bin/cmp "$work/oracle-static-run.stdout" "$work/candidate-$mode-run.stdout"
+    /usr/bin/cmp "$work/oracle-static-run.stderr" "$work/candidate-$mode-run.stderr"
+    /usr/bin/cmp "$work/oracle-static-run.status" "$work/candidate-$mode-run.status"
 done
 
 prepare_oracle_root() {
     local root="$1"
-    mkdir -p "$root/lib"
-    cp /opt/musl-1.2.6/lib/libc.so "$root/lib/ld-musl-x86_64.so.1"
-    ln -s ld-musl-x86_64.so.1 "$root/lib/libc.so"
+    /bin/mkdir -p "$root/lib"
+    /bin/cp /opt/musl-1.2.6/lib/libc.so "$root/lib/ld-musl-x86_64.so.1"
+    /bin/ln -s ld-musl-x86_64.so.1 "$root/lib/libc.so"
     for mode in pie non-pie; do
-        cp "$work/oracle-dynamic-$mode" "$root/consumer-$mode"
+        /bin/cp "$work/oracle-dynamic-$mode" "$root/consumer-$mode"
     done
 }
 
 prepare_candidate_root() {
     local root="$1"
-    cp -a "$dynamic_product/." "$root"
+    /bin/cp -a "$dynamic_product/." "$root"
     for mode in pie non-pie; do
-        cp "$work/candidate-dynamic-$mode" "$root/consumer-$mode"
+        /bin/cp "$work/candidate-dynamic-$mode" "$root/consumer-$mode"
     done
 }
 
@@ -189,32 +229,32 @@ prepare_candidate_root "$candidate_root"
 for mode in pie non-pie; do
     for entry in kernel direct; do
         if [ "$entry" = kernel ]; then
-            capture "oracle-dynamic-$mode-$entry" chroot "$oracle_root" "/consumer-$mode"
-            capture "candidate-dynamic-$mode-$entry" chroot "$candidate_root" "/consumer-$mode"
+            capture "oracle-dynamic-$mode-$entry" /usr/sbin/chroot "$oracle_root" "/consumer-$mode"
+            capture "candidate-dynamic-$mode-$entry" /usr/sbin/chroot "$candidate_root" "/consumer-$mode"
         else
-            capture "oracle-dynamic-$mode-$entry" chroot "$oracle_root" \
+            capture "oracle-dynamic-$mode-$entry" /usr/sbin/chroot "$oracle_root" \
                 /lib/ld-musl-x86_64.so.1 "/consumer-$mode"
-            capture "candidate-dynamic-$mode-$entry" chroot "$candidate_root" \
+            capture "candidate-dynamic-$mode-$entry" /usr/sbin/chroot "$candidate_root" \
                 /lib/ld-crabc-x86_64.so.1 "/consumer-$mode"
         fi
-        cmp "$work/oracle-dynamic-$mode-$entry.stdout" \
+        /usr/bin/cmp "$work/oracle-dynamic-$mode-$entry.stdout" \
             "$work/candidate-dynamic-$mode-$entry.stdout"
-        cmp "$work/oracle-dynamic-$mode-$entry.stderr" \
+        /usr/bin/cmp "$work/oracle-dynamic-$mode-$entry.stderr" \
             "$work/candidate-dynamic-$mode-$entry.stderr"
-        cmp "$work/oracle-dynamic-$mode-$entry.status" \
+        /usr/bin/cmp "$work/oracle-dynamic-$mode-$entry.status" \
             "$work/candidate-dynamic-$mode-$entry.status"
     done
 done
 
-capture oracle-static-symbols readelf -Ws /opt/musl-1.2.6/lib/libc.a
-capture oracle-dynamic-symbols readelf --dyn-syms -W /opt/musl-1.2.6/lib/libc.so
-capture oracle-shared-symbols readelf -Ws /opt/musl-1.2.6/lib/libc.so
-capture candidate-static-symbols readelf -Ws "$static_product/usr/lib/libc.a"
-capture candidate-dynamic-symbols readelf --dyn-syms -W "$dynamic_product/usr/lib/libc.so"
-capture candidate-shared-symbols readelf -Ws "$dynamic_product/usr/lib/libc.so"
-capture executable-dynamic-pie-symbols readelf --dyn-syms -W "$work/candidate-dynamic-pie"
-capture executable-dynamic-non-pie-symbols readelf --dyn-syms -W "$work/candidate-dynamic-non-pie"
-capture alias-symbol-observation python3 -B "$SYMBOLS" \
+capture oracle-static-symbols /usr/bin/readelf -Ws /opt/musl-1.2.6/lib/libc.a
+capture oracle-dynamic-symbols /usr/bin/readelf --dyn-syms -W /opt/musl-1.2.6/lib/libc.so
+capture oracle-shared-symbols /usr/bin/readelf -Ws /opt/musl-1.2.6/lib/libc.so
+capture candidate-static-symbols /usr/bin/readelf -Ws "$static_product/usr/lib/libc.a"
+capture candidate-dynamic-symbols /usr/bin/readelf --dyn-syms -W "$dynamic_product/usr/lib/libc.so"
+capture candidate-shared-symbols /usr/bin/readelf -Ws "$dynamic_product/usr/lib/libc.so"
+capture executable-dynamic-pie-symbols /usr/bin/readelf --dyn-syms -W "$work/candidate-dynamic-pie"
+capture executable-dynamic-non-pie-symbols /usr/bin/readelf --dyn-syms -W "$work/candidate-dynamic-non-pie"
+capture alias-symbol-observation /usr/bin/python3 -B "$SYMBOLS" \
     "$CONTRACT" \
     "$work/oracle-static-symbols.stdout" \
     "$work/oracle-dynamic-symbols.stdout" \
@@ -227,6 +267,6 @@ capture alias-symbol-observation python3 -B "$SYMBOLS" \
     "$work/alias-observation.json"
 
 snapshot after
-cmp "$work/before.sha256" "$work/after.sha256" ||
+/usr/bin/cmp "$work/before.sha256" "$work/after.sha256" ||
     fail 'probe, contract, or supplied product changed during the proof'
 printf 'locale alias contract: PASS (one installed-header object; static ET_EXEC/static-PIE and dynamic PIE/non-PIE kernel/direct links; public overrides, retained internal calls, and selected .dynsym/.symtab observations); evidence: %s\n' "$work"
