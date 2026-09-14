@@ -44,7 +44,7 @@ class RetainedStreamReaderTests(unittest.TestCase):
         return {
             "release": [],
             "enabled": [prefix, EVIDENCE.SELECTED_BODY],
-            "cap": [prefix, EVIDENCE.FIRST],
+            "cap": [prefix, EVIDENCE.FIRST, prefix, EVIDENCE.SECOND],
             "verbose": [prefix, EVIDENCE.FIRST, prefix, EVIDENCE.SECOND],
             "delayed": [EVIDENCE.EARLY, EVIDENCE.LATER],
             "null": [EVIDENCE.EARLY],
@@ -119,6 +119,13 @@ class RetainedStreamReaderTests(unittest.TestCase):
         self.assertIn("stdout", report["c_oracle"]["runs"]["enabled"])
         self.assertIn("stderr", report["rust"])
         self.assertNotIn("stdout_sha256", report["rust"])
+
+    def test_reader_requires_the_source_pre_increment_cap_boundary(self) -> None:
+        prefix = f"mimalloc: warning: thread 0x{self.C_THREAD_IDENTITY:X}: ".encode("ascii").hex()
+        self.assertEqual(
+            EVIDENCE.expected_trace_for_thread_identity(self.C_THREAD_IDENTITY)["cap"],
+            [prefix, EVIDENCE.FIRST, prefix, EVIDENCE.SECOND],
+        )
 
     def test_reader_rejects_changed_raw_callback_order_without_running_a_process(self) -> None:
         report = self.complete_report()
@@ -212,6 +219,24 @@ class RetainedStreamReaderTests(unittest.TestCase):
 
     def test_c_source_roster_binds_the_compiled_thread_identity_header(self) -> None:
         header = "include/mimalloc/prim-tls.h"
+        source_paths = [record["path"] for record in EVIDENCE.expected_pinned_c_source_records()]
+        self.assertIn(header, source_paths)
+
+        report = self.complete_report()
+        index = source_paths.index(header)
+        report["c_oracle"]["source_files"][index]["sha256"] = "0" * 64
+        with self.assertRaisesRegex(EVIDENCE.EvidenceError, "C source identity drifted"):
+            EVIDENCE.validate_report(report)
+
+        current_report = self.complete_report()
+        current_pin = list(EVIDENCE.PINNED_C_SOURCE_IDENTITIES)
+        current_pin[index] = (header, "0" * 64)
+        with mock.patch.object(EVIDENCE, "PINNED_C_SOURCE_IDENTITIES", tuple(current_pin)):
+            with self.assertRaisesRegex(EVIDENCE.EvidenceError, "C source identity drifted"):
+                EVIDENCE.validate_report(current_report)
+
+    def test_c_source_roster_binds_the_warning_counter_fetch_add_header(self) -> None:
+        header = "include/mimalloc/atomic.h"
         source_paths = [record["path"] for record in EVIDENCE.expected_pinned_c_source_records()]
         self.assertIn(header, source_paths)
 

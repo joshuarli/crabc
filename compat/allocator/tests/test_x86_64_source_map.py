@@ -179,8 +179,10 @@ class X86_64SourceMapTests(unittest.TestCase):
         self.assertIn("caller-supplied source-shaped fputs primitive", option_processing["difference"])
         self.assertIn("short-write/error transport parity", option_processing["difference"])
         self.assertIn("mi_register_output ABI", option_processing["difference"])
+        self.assertIn("atomic.h", option_processing["difference"])
 
         options = self.sources["src/options.c"]
+        atomic = self.sources["include/mimalloc/atomic.h"]
         init = self.sources["src/init.c"]
         prim = self.sources["include/mimalloc/prim.h"]
         unix_prim = self.sources["src/prim/unix/prim.c"]
@@ -203,6 +205,12 @@ class X86_64SourceMapTests(unittest.TestCase):
         for anchor in anchors:
             with self.subTest(anchor=anchor):
                 assert_contract_bound("src/options.c", options, anchor)
+
+        assert_contract_bound(
+            "include/mimalloc/atomic.h",
+            atomic,
+            b"#define mi_atomic_increment_acq_rel(p)           mi_atomic_add_acq_rel(p,(uintptr_t)1)",
+        )
 
         fputs = options[options.index(b"void _mi_fputs"):options.index(b"static void mi_vfprintf")]
         prefix_dispatch = b"if (prefix != NULL) out(prefix, arg);"

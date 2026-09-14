@@ -93,6 +93,9 @@ C_LINK_SOURCES = (
 C_SOURCE_FILES = (
     "include/mimalloc.h",
     "include/mimalloc/internal.h",
+    # Included by `src/options.c`; its C11 AcqRel `fetch_add` makes the
+    # selected warning cap compare the pre-increment value.
+    "include/mimalloc/atomic.h",
     "include/mimalloc/prim.h",
     # Directly included by compiled `src/prim/prim-tls.c`; its inline
     # `_mi_prim_thread_id` supplies the selected `_mi_thread_id` route.
@@ -105,6 +108,7 @@ C_SOURCE_FILES = (
 PINNED_C_SOURCE_IDENTITIES = (
     ("include/mimalloc.h", "af34f215cb6fe9e4e97bf08d78bfda877ab4cdd63c9222640c483d7d6a4488a5"),
     ("include/mimalloc/internal.h", "4fd7b1dd450989b1a8a5b4cb54e163a36d932bbf7e341abcd882763251252852"),
+    ("include/mimalloc/atomic.h", "106b267e98ccc5e01b48252c9742584cd5c914f309e7f4a4413ad85e65063d41"),
     ("include/mimalloc/prim.h", "1987e8e2eedc07bb181bf2a11a27bec80a5309c32cfa66a56900fb4cbb64b172"),
     ("include/mimalloc/prim-tls.h", "46d871923b38c9463da985c54503cd5cb64bb2c91008f3d35bcbaae2a11c31c2"),
     ("src/alloc.c", "fd4b4a86af93754227137a43c84e84f846d0ff0fd7046a264396a80c95e5c1a9"),
@@ -146,7 +150,7 @@ def expected_trace_for_thread_identity(identity: int) -> dict[str, list[str]]:
     return {
         "release": [],
         "enabled": [prefix, SELECTED_BODY],
-        "cap": [prefix, FIRST],
+        "cap": [prefix, FIRST, prefix, SECOND],
         "verbose": [prefix, FIRST, prefix, SECOND],
         "delayed": [EARLY, LATER],
         "null": [EARLY],

@@ -341,8 +341,10 @@ The private Linux/x86-64 owner reads `crabc_core::thread::thread_pointer_identit
 at that source boundary, which
 is the calling musl TCB self pointer (`%fs:0`), not `gettid`. With
 `verbose == 0`, disabled `show_errors` suppresses a warning; an enabled warning
-increments the count with AcqRel and is suppressed only after the count exceeds
-a nonnegative maximum. `verbose != 0` bypasses both gates.
+uses `include/mimalloc/atomic.h`'s AcqRel C11 `fetch_add` result and is
+suppressed only when its pre-increment count exceeds a nonnegative maximum.
+With `show_errors` enabled, cap 0 admits one warning, cap 1 admits two, and
+the selected default cap 32 admits 33; `verbose != 0` bypasses both gates.
 A custom registration flushes the delayed bytes exactly once while holding the
 buffer lock and terminally stops that buffer. A null registration selects
 stderr without flushing it. The source post-init transition instead flushes to

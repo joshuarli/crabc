@@ -8,7 +8,8 @@
 // its `mi_vfprintf_thread` prefix at `src/options.c:498-507`, the selected
 // `%tx` formatter route at `src/libc.c:254-261,285-307,313-397`, and Linux
 // thread identity at `include/mimalloc/prim-tls.h:170-190` /
-// `src/prim/prim-tls.c:34-38`, plus surrounding process ordering in
+// `src/prim/prim-tls.c:34-38`, the warning gate's C11 fetch-add at
+// `include/mimalloc/atomic.h:88,98`, and surrounding process ordering in
 // `src/init.c:505-550`.
 //
 // The C source keeps one 16 KiB delayed byte buffer, one lock, independently
@@ -355,7 +356,11 @@ impl OutputOwner {
                 return;
             }
             if self.max_warning_count >= 0 {
-                let count = self.warning_count.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
+                // Pinned `mi_atomic_increment_acq_rel` is a C11 `fetch_add`,
+                // so this comparison intentionally observes the old count.
+                // A nonnegative source cap therefore admits values 0 through
+                // the cap before suppressing the next warning.
+                let count = self.warning_count.fetch_add(1, Ordering::AcqRel);
                 if (count as isize) > self.max_warning_count {
                     return;
                 }
@@ -510,7 +515,7 @@ mod tests {
     use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Mutex, MutexGuard};
 
-    const MAX_MESSAGES: usize = 8;
+    const MAX_MESSAGES: usize = 80;
     const MAX_MESSAGE_BYTES: usize = 256;
 
     struct Capture {
@@ -712,7 +717,7 @@ mod tests {
                 )
             };
         }
-        assert_eq!(initial_capture.count(), 32);
+        assert_eq!(initial_capture.count(), 34);
 
         let initialized_options = DiagnosticOptionSnapshot::new(1, 0, 32);
         let mut initialized_owner = output_owner();
@@ -790,8 +795,33 @@ mod tests {
     }
 
     #[test]
-    fn warning_count_cap_suppresses_after_the_source_acqrel_increment() {
+    fn warning_count_cap_one_admits_the_two_pre_increment_values() {
         let options = DiagnosticOptionSnapshot::new(1, 0, 1);
+        let mut owner = output_owner();
+        owner.initialize_options(options);
+        let capture = Capture::new();
+
+        // SAFETY: the callback/argument lifetime and serialized-registration
+        // obligations hold for this test.
+        unsafe { owner.register_output(Some(capture_output), capture_argument(&capture)) };
+        capture.reset();
+
+        // SAFETY: this test serializes dispatch with the one registration.
+        unsafe {
+            owner.warning(options, source_message(b"first\n\0"));
+            owner.warning(options, source_message(b"second\n\0"));
+        }
+
+        assert_eq!(capture.count(), 4);
+        assert_live_thread_warning_prefix(capture.message(0));
+        assert_eq!(capture.message(1), b"first\n");
+        assert_live_thread_warning_prefix(capture.message(2));
+        assert_eq!(capture.message(3), b"second\n");
+    }
+
+    #[test]
+    fn zero_warning_cap_admits_only_the_zero_pre_increment_value() {
+        let options = DiagnosticOptionSnapshot::new(1, 0, 0);
         let mut owner = output_owner();
         owner.initialize_options(options);
         let capture = Capture::new();
@@ -810,6 +840,30 @@ mod tests {
         assert_eq!(capture.count(), 2);
         assert_live_thread_warning_prefix(capture.message(0));
         assert_eq!(capture.message(1), b"first\n");
+    }
+
+    #[test]
+    fn configured_default_32_warning_cap_admits_33_pre_increment_values() {
+        let options = DiagnosticOptionSnapshot::new(1, 0, 32);
+        let mut owner = output_owner();
+        owner.initialize_options(options);
+        let capture = Capture::new();
+
+        // SAFETY: the callback/argument lifetime and serialized-registration
+        // obligations hold for this test.
+        unsafe { owner.register_output(Some(capture_output), capture_argument(&capture)) };
+        capture.reset();
+
+        // SAFETY: this test serializes dispatch with the one registration.
+        for _ in 0..34 {
+            unsafe { owner.warning(options, source_message(b"default\n\0")) };
+        }
+
+        assert_eq!(capture.count(), 66);
+        assert_live_thread_warning_prefix(capture.message(0));
+        assert_eq!(capture.message(1), b"default\n");
+        assert_live_thread_warning_prefix(capture.message(64));
+        assert_eq!(capture.message(65), b"default\n");
     }
 
     #[test]

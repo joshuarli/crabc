@@ -276,7 +276,7 @@
     },
     {
       "id": "atomic-operation-facade",
-      "source_scope": "C11 word and pointer atomic operation/order macros used by mapped engine paths.",
+      "source_scope": "C11 word and pointer atomic operation/order macros used by selected engine and diagnostic paths.",
       "source_anchor": {
         "member": "include/mimalloc/atomic.h",
         "start_line": 65,
@@ -285,13 +285,15 @@
       },
       "rust_modules": [
         "crabc_mimalloc::atomic",
+        "crabc_mimalloc::diagnostic_output",
         "crabc_mimalloc::lock",
         "crabc_mimalloc::once"
       ],
       "status": "partial",
-      "difference": "Concrete Rust atomics preserve selected ordering pairs, while generic C macro forms and all source lifecycle consumers remain outside this scope.",
+      "difference": "Concrete Rust atomics preserve selected ordering pairs, including diagnostic_output's one C11 AcqRel fetch-add result used as the warning gate's pre-increment value. Generic C macro forms and all other source lifecycle consumers remain outside this scope.",
       "evidence": [
         "crabc-mimalloc/src/atomic.rs",
+        "crabc-mimalloc/src/diagnostic_output.rs",
         "crabc-mimalloc/src/lock.rs",
         "crabc-mimalloc/src/once.rs"
       ]
@@ -923,7 +925,7 @@
         "crabc_mimalloc::diagnostic_output"
       ],
       "status": "partial",
-      "difference": "Private `diagnostic_output` maps only the show_errors/verbose/max_warnings startup snapshot, 16 KiB delayed output state, stderr/default/custom sink transitions through a caller-supplied source-shaped fputs primitive, and selected warning prefix/body dispatch. The 19-byte warning prefix satisfies `mi_vfprintf_thread` and produces its source-sized 64-byte `thread 0x%tx: ` prefix from an independently observed Linux TLS identity after that same AcqRel warning gate. It does not establish FILE locking/buffering or short-write/error transport parity, parse environments, implement the remaining descriptor table, runtime option mutation, mi_option_* APIs, mi_register_output ABI, error/deferred-free callbacks, statistics, options printing, debug/secure/guarded modes, or runtime integration.",
+      "difference": "Private `diagnostic_output` maps only the show_errors/verbose/max_warnings startup snapshot, 16 KiB delayed output state, stderr/default/custom sink transitions through a caller-supplied source-shaped fputs primitive, and selected warning prefix/body dispatch. The selected warning gate uses `include/mimalloc/atomic.h`'s AcqRel C11 fetch-add result before increment, so nonnegative cap N admits N+1 warnings. The 19-byte warning prefix satisfies `mi_vfprintf_thread` and produces its source-sized 64-byte `thread 0x%tx: ` prefix from an independently observed Linux TLS identity after that same gate. It does not establish FILE locking/buffering or short-write/error transport parity, parse environments, implement the remaining descriptor table, runtime option mutation, mi_option_* APIs, mi_register_output ABI, error/deferred-free callbacks, statistics, options printing, debug/secure/guarded modes, or runtime integration.",
       "evidence": [
         "compat/allocator/tests/test_x86_64_diagnostic_output_owner_evidence.py",
         "compat/allocator/tests/test_x86_64_source_map.py",
@@ -1575,6 +1577,6 @@
     "unfinished_unit_count": 28,
     "unit_count": 34,
     "unit_ids_sha256": "dca679d8587cb38bcf6e6c62379284ed35a55d1b7991d07b0d30eac767670052",
-    "units_sha256": "c7b2f2ccf02cc7f2fe794e390be24cf92067bb6cee7817e92caacc8390520dd0"
+    "units_sha256": "d520e292a1f3176173cd7b1b1dcb56ad05c3e3bd38841d605e0414cc9f499cde"
   }
 }
