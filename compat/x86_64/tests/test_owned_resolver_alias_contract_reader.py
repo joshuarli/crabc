@@ -23,6 +23,7 @@ from owned_resolver_alias_contract_reader import (  # noqa: E402
     _retained_record,
     SOURCE_ALIAS_ROUTES,
     COMMAND_NAMES,
+    IMAGE_INPUTS,
     INPUT_NAMES,
     _expected_command_argvs,
     _git,
@@ -580,12 +581,67 @@ class ResolverAliasPreExecutionCaptureTests(unittest.TestCase):
             paths = self._paths(root)
             image_inputs = {'readelf': '/usr/bin/readelf'}
             record = file_identity(paths['readelf'], root=root)
-            manifest = {'files': {'/usr/bin/readelf': {key: record[key] for key in ('sha256', 'size', 'mode')}}}
+            manifest = {'files': {'/usr/bin/readelf': {
+                'path': str(paths['readelf']),
+                **{key: record[key] for key in ('sha256', 'size', 'mode')},
+            }}}
             inputs = _capture_input_identities(work, paths, manifest, image_inputs=image_inputs)
             _validate_captured_input_identities(work, inputs, paths, manifest, image_inputs=image_inputs)
             inputs['readelf'] = dict(inputs['readelf'], path='/usr/bin/other')
             with self.assertRaisesRegex(ReceiptError, 'pinned image input differs: readelf'):
                 _validate_captured_input_identities(work, inputs, paths, manifest, image_inputs=image_inputs)
+
+
+    def test_image_manifest_aliases_resolve_to_the_exact_physical_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            work = root / 'receipt'
+            work.mkdir()
+            paths = self._paths(root)
+            target = root / 'image/bin/coreutils'
+            target.parent.mkdir(parents=True)
+            target.write_bytes(b'coreutils')
+            target.chmod(0o755)
+            aliases = {
+                'timeout': (root / 'image/usr/bin/timeout', '/usr/bin/timeout'),
+                'chroot': (root / 'image/usr/sbin/chroot', '/usr/sbin/chroot'),
+            }
+            for name, (alias, _invocation) in aliases.items():
+                alias.parent.mkdir(parents=True, exist_ok=True)
+                alias.symlink_to('../../bin/coreutils')
+                paths[name] = alias
+            target_record = file_identity(target, root=root)
+            manifest = {'files': {
+                invocation: {'path': str(target), **{key: target_record[key] for key in ('sha256', 'size', 'mode')}}
+                for _name, (_alias, invocation) in aliases.items()
+            }}
+            image_inputs = {name: invocation for name, (_alias, invocation) in aliases.items()}
+
+            inputs = _capture_input_identities(work, paths, manifest, image_inputs=image_inputs)
+            _validate_captured_input_identities(work, inputs, paths, manifest, image_inputs=image_inputs,
+                                                verify_image_sources=True)
+            self.assertEqual(inputs['timeout']['path'], '/usr/bin/timeout')
+            self.assertEqual(inputs['chroot']['path'], '/usr/sbin/chroot')
+
+            wrong_target = root / 'image/bin/not-coreutils'
+            wrong_target.write_bytes(target.read_bytes())
+            wrong_target.chmod(0o755)
+            paths['timeout'].unlink()
+            paths['timeout'].symlink_to('../../bin/not-coreutils')
+            _validate_captured_input_identities(work, inputs, paths, manifest, image_inputs=image_inputs)
+            with self.assertRaisesRegex(ReceiptError, 'pinned image program differs: timeout'):
+                _validate_captured_input_identities(work, inputs, paths, manifest, image_inputs=image_inputs,
+                                                    verify_image_sources=True)
+
+            with self.assertRaisesRegex(ReceiptError, 'pinned image manifest: timeout shape differs'):
+                _capture_input_identities(root / 'unknown-receipt', paths, manifest,
+                                          image_inputs={'timeout': '/usr/bin/unknown'})
+
+    def test_image_manifest_covers_each_declared_image_input(self) -> None:
+        manifest = json.loads((ROOT / 'compat/x86_64/owned-resolver-alias-image-inputs.json').read_text(encoding='utf-8'))
+        self.assertTrue(set(IMAGE_INPUTS.values()).issubset(manifest['files']))
+        self.assertEqual(manifest['files']['/usr/bin/timeout']['path'], '/bin/coreutils')
+        self.assertEqual(manifest['files']['/usr/sbin/chroot']['path'], '/bin/coreutils')
 
 
 

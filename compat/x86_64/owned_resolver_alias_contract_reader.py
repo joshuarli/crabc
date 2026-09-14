@@ -382,14 +382,31 @@ def _copy_input(work: Path, name: str, source: Path) -> dict[str, Any]:
     return {**original, 'retained': retained['path']}
 
 
+def _image_input_physical(source: Path, name: str, invocation: str,
+                          image_manifest: Mapping[str, Any]) -> tuple[Path, dict[str, Any]]:
+    """Resolve one manifest-declared image invocation to its sole physical file."""
+    expected = image_manifest.get('files', {}).get(invocation)
+    expected = exact(expected, {'path', 'sha256', 'size', 'mode'}, f'resolver pinned image manifest: {name}')
+    target = Path(expected['path'])
+    require(target.is_absolute() and '..' not in target.parts, f'resolver pinned image target differs: {name}')
+    try:
+        physical = source.resolve(strict=True)
+    except OSError as error:
+        raise ReceiptError(f'resolver pinned image program differs: {name}') from error
+    require(physical == target, f'resolver pinned image program differs: {name}')
+    current = _identity(physical)
+    require(all(current[key] == expected[key] for key in ('sha256', 'size', 'mode')),
+            f'resolver pinned image program differs: {name}')
+    return physical, current
+
+
 def _copy_image_input(work: Path, name: str, source: Path, invocation: str,
                       image_manifest: Mapping[str, Any]) -> dict[str, Any]:
-    """Copy one invoked image program while preserving its canonical argv path."""
-    expected = image_manifest.get('files', {}).get(invocation)
-    current = _identity(source)
-    require(type(expected) is dict and all(current[key] == expected.get(key) for key in ('sha256', 'size', 'mode')),
-            f'resolver pinned image program differs: {name}')
-    record = _copy_input(work, name, source)
+    """Copy one exact manifest-resolved image program under its canonical argv path."""
+    physical, current = _image_input_physical(source, name, invocation, image_manifest)
+    record = _copy_input(work, name, physical)
+    require(all(record[key] == current[key] for key in ('sha256', 'size', 'mode')),
+            f'resolver pinned image input copy differs: {name}')
     record['path'] = invocation
     return record
 
@@ -410,9 +427,15 @@ def _capture_input_identities(work: Path, paths: Mapping[str, Path], image_manif
 
 
 def _validate_captured_input_identities(receipt_root: Path, inputs: Any, paths: Mapping[str, Path],
-                                        image_manifest: Mapping[str, Any],
-                                        *, image_inputs: Mapping[str, str] = IMAGE_INPUTS) -> dict[str, Any]:
-    """Require the final seal to use the exact pre-execution input bytes again."""
+                                        image_manifest: Mapping[str, Any], *,
+                                        image_inputs: Mapping[str, str] = IMAGE_INPUTS,
+                                        verify_image_sources: bool = False) -> dict[str, Any]:
+    """Require the final seal to use the exact pre-execution input bytes again.
+
+    The native collector also re-resolves image invocations to their one
+    manifest-owned physical target. Process-free host replay deliberately
+    validates only the retained target bytes and manifest, never host ``/usr``.
+    """
     inputs = exact(inputs, set(INPUT_NAMES), 'resolver input roster')
     require(set(paths) == set(INPUT_NAMES) and type(image_manifest.get('files')) is dict,
             'resolver current input roster differs')
@@ -423,10 +446,12 @@ def _validate_captured_input_identities(receipt_root: Path, inputs: Any, paths: 
         if name in image_inputs:
             invocation = image_inputs[name]
             expected = image_manifest['files'].get(invocation)
-            require(record['path'] == invocation and type(expected) is dict
+            require(type(expected) is dict and record['path'] == invocation
                     and all(record[key] == expected.get(key) for key in ('sha256', 'size', 'mode'))
                     and all(retained_identity[key] == expected.get(key) for key in ('sha256', 'size', 'mode')),
                     f'resolver retained pinned image input differs: {name}')
+            if verify_image_sources:
+                _image_input_physical(paths[name], name, invocation, image_manifest)
             continue
         current = _identity(paths[name])
         require(all(record[key] == current[key] and retained_identity[key] == current[key]
@@ -1023,7 +1048,8 @@ def _origin_root(inputs: Mapping[str, Any]) -> Path:
 
 def _validate_inputs(report: Mapping[str, Any], receipt_root: Path, root: Path,
                      static_product: Path, dynamic_product: Path, product_report: Path,
-                     static_preparation: Path, elf_facts: Path, base_inventory: Path) -> Path:
+                     static_preparation: Path, elf_facts: Path, base_inventory: Path, *,
+                     verify_image_sources: bool = False) -> Path:
     """Compare the pre-execution retained input capture to the current cohort."""
     expected_paths = _all_input_paths(root, static_product, dynamic_product, product_report,
                                       static_preparation, elf_facts, base_inventory)
@@ -1031,7 +1057,8 @@ def _validate_inputs(report: Mapping[str, Any], receipt_root: Path, root: Path,
     inputs = exact(report['inputs'], set(INPUT_NAMES), 'resolver input roster')
     origin_root = _origin_root(inputs)
     image_manifest = read_json(_source_paths(root)['image_manifest'], 'resolver image manifest')
-    _validate_captured_input_identities(receipt_root, inputs, expected_paths, image_manifest)
+    _validate_captured_input_identities(receipt_root, inputs, expected_paths, image_manifest,
+                                         verify_image_sources=verify_image_sources)
     for name, source in expected_paths.items():
         if name in IMAGE_INPUTS:
             continue
@@ -1391,7 +1418,8 @@ def collect_report(*, root: Path, work: Path, static_product: Path, dynamic_prod
             'resolver selected cohort changed after command execution')
     origin_root = _validate_inputs({'selected_source': source, 'inputs': begin['inputs']}, work, root,
                                    static_product, dynamic_product, product_report,
-                                   static_preparation, elf_facts, base_inventory)
+                                   static_preparation, elf_facts, base_inventory,
+                                   verify_image_sources=True)
     _validate_product_cohort_links(root, source, static_product, dynamic_product,
                                    product_report, static_preparation)
     _validate_measurement_cohort(elf_facts, base_inventory, static_product,

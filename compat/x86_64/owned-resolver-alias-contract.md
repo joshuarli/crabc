@@ -82,7 +82,12 @@ admits the supplied source/product/measurement cohort and copies every finite
 input. Final sealing repeats that admission and requires the current bytes to
 equal the pre-execution copy. The pinned image marker and canonical invocation
 paths bind the raw header compiler, `readelf`, `timeout`, `chroot`, and musl
-oracle inputs; header C/C++ checks intentionally use the raw pinned compiler
+oracle inputs. During native collection, each invocation resolves only to its
+one manifest-declared physical file: the `timeout` and `chroot` aliases resolve
+to the pinned `/bin/coreutils` bytes while their retained command spelling stays
+canonical. Final native sealing repeats that resolution; host replay validates
+the retained target bytes and manifest without reading host `/usr` paths. Header
+C/C++ checks intentionally use the raw pinned compiler
 with `-nostdinc` and the selected installed header root because the selected
 dynamic driver admits only its narrow link grammar.
 
