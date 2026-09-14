@@ -4250,6 +4250,13 @@ pub struct NativeRuntimeLifecycleAudit {
     pub vm_policy_arena_reserve_bytes: usize,
     pub vm_policy_arena_eager_commit: i64,
     pub vm_policy_allow_large_os_pages: usize,
+    /// Raw selected `mi_option_allow_thp` value retained by the ready process
+    /// policy. This remains distinct from the boolean projection below.
+    pub vm_policy_allow_thp_raw: i64,
+    /// The existing READY memory configuration's retained THP state. This
+    /// audit reads no new detector input and does not use purge geometry as a
+    /// proxy for the configuration.
+    pub ready_memory_config_has_transparent_huge_pages: bool,
     pub vm_policy_allow_thp: usize,
     /// Raw selected `mi_option_arena_is_numa_local` value for the first
     /// regular arena initialization.
@@ -5112,6 +5119,9 @@ pub fn native_runtime_lifecycle_test_audit() -> Option<NativeRuntimeLifecycleAud
     // separate global state.
     let process_backing = ready.process_backing().ok()?;
     let vm_policy = process_backing.process().policy();
+    let ready_memory_config_has_transparent_huge_pages =
+        ready.memory_config().ok()?.has_transparent_huge_pages();
+    let vm_policy_allow_thp_raw = vm_policy.options().value(VmOption::AllowThp)?;
     let startup_regular_reservation_outcome = match ready.startup_reservation_outcomes().ok()?.regular {
         None => 0,
         Some(Ok(())) => 1,
@@ -5168,9 +5178,9 @@ pub fn native_runtime_lifecycle_test_audit() -> Option<NativeRuntimeLifecycleAud
         vm_policy_arena_reserve_bytes: vm_policy.arena_reserve_bytes(),
         vm_policy_arena_eager_commit: vm_policy.arena_eager_commit(),
         vm_policy_allow_large_os_pages: usize::from(vm_policy.allow_large_os_pages()),
-        vm_policy_allow_thp: usize::from(
-            vm_policy.options().value(VmOption::AllowThp)? != 0,
-        ),
+        vm_policy_allow_thp_raw,
+        ready_memory_config_has_transparent_huge_pages,
+        vm_policy_allow_thp: usize::from(vm_policy_allow_thp_raw != 0),
         vm_policy_arena_is_numa_local: vm_policy
             .options()
             .value(VmOption::ArenaIsNumaLocal)?,

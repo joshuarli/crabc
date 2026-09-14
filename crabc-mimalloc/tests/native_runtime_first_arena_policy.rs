@@ -21,6 +21,15 @@ const TEST_NAME: &str =
 const CHILD_TRACE_PATH: &str = "CRABC_M2_NATIVE_RUNTIME_INITIAL_TLD_NUMA_TRACE_PATH";
 const INITIAL_TLD_NUMA_TRACE_BEGIN: &str = "CRABC_MI_RUNTIME_INITIAL_TLD_NUMA_TRACE_BEGIN";
 const INITIAL_TLD_NUMA_TRACE_END: &str = "CRABC_MI_RUNTIME_INITIAL_TLD_NUMA_TRACE_END";
+const RUNTIME_THP_CHILD_MARKER: &str = "CRABC_M2_NATIVE_RUNTIME_THP_CONFIGURATION_CHILD";
+const RUNTIME_THP_CHILD_IMAGE: &str = "CRABC_M2_NATIVE_RUNTIME_THP_CONFIGURATION_IMAGE";
+const RUNTIME_THP_TRACE_PATH: &str = "CRABC_M2_NATIVE_RUNTIME_THP_CONFIGURATION_TRACE_PATH";
+const RUNTIME_THP_TEST_NAME: &str =
+    "runtime_process_admits_source_allow_thp_images_with_retained_ready_configuration";
+const RUNTIME_THP_DISABLED_TRACE_BEGIN: &str = "CRABC_MI_RUNTIME_THP_DISABLED_TRACE_BEGIN";
+const RUNTIME_THP_DISABLED_TRACE_END: &str = "CRABC_MI_RUNTIME_THP_DISABLED_TRACE_END";
+const RUNTIME_THP_MODE_TWO_TRACE_BEGIN: &str = "CRABC_MI_RUNTIME_THP_MODE_TWO_TRACE_BEGIN";
+const RUNTIME_THP_MODE_TWO_TRACE_END: &str = "CRABC_MI_RUNTIME_THP_MODE_TWO_TRACE_END";
 
 /// One short-lived parent-owned scalar trace file below the runner's `TMPDIR`.
 ///
@@ -34,8 +43,12 @@ struct ChildTraceFile {
 
 impl ChildTraceFile {
     fn create() -> Self {
+        Self::create_named("initial-tld-numa")
+    }
+
+    fn create_named(name: &str) -> Self {
         let path = std::env::temp_dir().join(format!(
-            "crabc-mimalloc-initial-tld-numa-{}.trace",
+            "crabc-mimalloc-{name}-{}.trace",
             std::process::id()
         ));
         OpenOptions::new()
@@ -51,6 +64,44 @@ impl ChildTraceFile {
     fn read(&self) -> String {
         fs::read_to_string(&self.path)
             .expect("the successful source-policy child writes its initial-TLD NUMA trace")
+    }
+}
+
+#[derive(Clone, Copy)]
+enum RuntimeThpImage {
+    Disabled,
+    ModeTwo,
+}
+
+impl RuntimeThpImage {
+    const ALL: [Self; 2] = [Self::Disabled, Self::ModeTwo];
+
+    const fn environment_value(self) -> &'static str {
+        match self {
+            Self::Disabled => "0",
+            Self::ModeTwo => "2",
+        }
+    }
+
+    const fn selected_raw(self) -> i64 {
+        match self {
+            Self::Disabled => 0,
+            Self::ModeTwo => 2,
+        }
+    }
+
+    const fn trace_begin(self) -> &'static str {
+        match self {
+            Self::Disabled => RUNTIME_THP_DISABLED_TRACE_BEGIN,
+            Self::ModeTwo => RUNTIME_THP_MODE_TWO_TRACE_BEGIN,
+        }
+    }
+
+    const fn trace_end(self) -> &'static str {
+        match self {
+            Self::Disabled => RUNTIME_THP_DISABLED_TRACE_END,
+            Self::ModeTwo => RUNTIME_THP_MODE_TWO_TRACE_END,
+        }
     }
 }
 
@@ -134,6 +185,62 @@ fn run_in_clean_source_environment() {
     println!();
     for line in trace.lines().skip(begin).take(end - begin + 1) {
         println!("{line}");
+    }
+}
+
+fn run_in_clean_source_thp_environment() {
+    for image in RuntimeThpImage::ALL {
+        let trace_file = ChildTraceFile::create_named("runtime-thp-configuration");
+        let output = Command::new(
+            std::env::current_exe()
+                .expect("the focused native THP witness has its executable path"),
+        )
+        .arg("--exact")
+        .arg(RUNTIME_THP_TEST_NAME)
+        .arg("--test-threads=1")
+        // This child starts from only the selected source option and one
+        // parent-owned scalar trace path. Its normal RuntimeProcessStorage
+        // initialization therefore reads raw `environ`, rather than an
+        // inherited mimalloc setting or a synthetic option fixture.
+        .env_clear()
+        .env(RUNTIME_THP_CHILD_MARKER, "1")
+        .env(RUNTIME_THP_CHILD_IMAGE, image.environment_value())
+        .env("mimalloc_allow_thp", image.environment_value())
+        .env(RUNTIME_THP_TRACE_PATH, trace_file.path())
+        .output()
+        .expect("the source-THP child starts");
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "the source-THP child completes its normal runtime witness\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        let trace = trace_file.read();
+        let lines: Vec<_> = trace.lines().collect();
+        let begin = lines
+            .iter()
+            .position(|line| *line == image.trace_begin())
+            .expect("the source-THP child emits its image trace");
+        let end = lines
+            .iter()
+            .position(|line| *line == image.trace_end())
+            .expect("the source-THP child terminates its image trace");
+        assert_eq!(
+            lines.iter().filter(|line| **line == image.trace_begin()).count(),
+            1,
+            "the source-THP child emits one image trace",
+        );
+        assert_eq!(
+            lines.iter().filter(|line| **line == image.trace_end()).count(),
+            1,
+            "the source-THP child terminates one image trace",
+        );
+        assert!(begin < end, "the source-THP child orders its image trace boundaries");
+        println!();
+        for line in &lines[begin..=end] {
+            println!("{line}");
+        }
     }
 }
 
@@ -236,4 +343,68 @@ fn runtime_process_uses_source_vm_policy_for_ticket_zero_first_arena_and_client_
     );
     assert_eq!(after.main_heap_abandoned_page_count, 0);
     assert_eq!(after.main_heap_os_abandoned_pages_empty, 1);
+}
+
+#[test]
+fn runtime_process_admits_source_allow_thp_images_with_retained_ready_configuration() {
+    if std::env::var_os(RUNTIME_THP_CHILD_MARKER).is_none() {
+        run_in_clean_source_thp_environment();
+        return;
+    }
+
+    let image = match std::env::var(RUNTIME_THP_CHILD_IMAGE)
+        .expect("the source-THP child receives its fixed image identifier")
+        .as_str()
+    {
+        "0" => RuntimeThpImage::Disabled,
+        "2" => RuntimeThpImage::ModeTwo,
+        other => panic!("the source-THP child receives one fixed image, observed {other:?}"),
+    };
+    assert_eq!(
+        std::env::var("mimalloc_allow_thp").as_deref(),
+        Ok(image.environment_value()),
+        "the normal runtime child receives its selected raw source option",
+    );
+    assert!(
+        initialize_process(current_page_size()),
+        "the native runtime accepts one source-THP process image"
+    );
+    let block = match ticket_zero_allocate(79, false) {
+        TicketZeroPageAllocationResult::Allocated(block) => block,
+        TicketZeroPageAllocationResult::Unavailable
+        | TicketZeroPageAllocationResult::AllocationFailed
+        | TicketZeroPageAllocationResult::Retained => {
+            panic!("the first ticket-zero request maps the source-THP runtime arena")
+        }
+    };
+    let live = native_runtime_lifecycle_test_audit()
+        .expect("the first source-THP ticket-zero allocation exposes one scalar READY audit");
+    let selected_raw = image.selected_raw();
+    assert_eq!(live.vm_policy_allow_thp_raw, selected_raw);
+    assert_eq!(live.vm_policy_allow_thp, usize::from(selected_raw != 0));
+    if matches!(image, RuntimeThpImage::Disabled) {
+        assert!(
+            !live.ready_memory_config_has_transparent_huge_pages,
+            "allow_thp=0 clears the retained READY configuration before the ordinary runtime uses it",
+        );
+    }
+    // This audit is a retained configuration observation after normal startup;
+    // it does not invoke a fresh detector or infer THP state from purge size.
+    let trace_path = std::env::var_os(RUNTIME_THP_TRACE_PATH)
+        .expect("the source-THP child receives its parent-owned scalar trace path");
+    fs::write(
+        trace_path,
+        format!(
+            "{}\nselected_allow_thp_raw={}\nvm_policy_allow_thp={}\nready_memory_config_has_transparent_huge_pages={}\n{}\n",
+            image.trace_begin(),
+            live.vm_policy_allow_thp_raw,
+            live.vm_policy_allow_thp,
+            usize::from(live.ready_memory_config_has_transparent_huge_pages),
+            image.trace_end(),
+        ),
+    )
+    .expect("the source-THP child writes its scalar READY trace");
+
+    // SAFETY: `block` is the exact fresh ticket-zero result retained above.
+    assert_eq!(unsafe { ticket_zero_free(block) }, TicketZeroPageFreeResult::Freed);
 }

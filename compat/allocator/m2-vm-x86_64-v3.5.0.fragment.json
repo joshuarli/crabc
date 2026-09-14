@@ -115,7 +115,8 @@
         ],
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential",
-          "thp-direct-policy-outcome-matrix"
+          "thp-direct-policy-outcome-matrix",
+          "runtime-source-environment-thp-ready-configuration-admission"
         ]
       },
       {
@@ -473,7 +474,7 @@
       {
         "id": "unix-configuration-and-thp-process-policy",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/prim/unix/prim.c:250-277 host observations and the mi_option_allow_thp PR_GET_THP_DISABLE/PR_SET_THP_DISABLE process-policy branch. Child-isolated C and private Rust captures cover one finite direct matrix: allow_thp=1 bypasses both calls; allow_thp=0 selects GET(0,0,0,0) as EPERM, EINVAL, raw nonzero 1, raw nonzero 3, or zero followed by SET(1,0,0,0) success, EPERM, or EINVAL. C records concrete tuple/count, forced disabled configuration only for allow_thp=0, and continuation through its void initializer; it does not compare the ambient allow-enabled detection result. Rust separately records Allowed while preserving synthetic true and false configurations, DisabledQueryFailed(PERM/INVAL), DisabledAlready(1/3), DisabledSet, and DisabledSetFailed(PERM/INVAL). The C/Rust direct comparison does not exercise a process owner. A separate child-isolated explicit Rust ProcessMain traversal covers AllowEnabled, QueryNonzeroOne, and SetPerm through the existing owner helper, preserving exact call shape, READY configuration, and one matching retained VM/process-backing pair; raw nonzero 3 is a return-class representative, not a Linux kernel claim.",
+        "source_scope": "src/prim/unix/prim.c:250-277 host observations and the mi_option_allow_thp PR_GET_THP_DISABLE/PR_SET_THP_DISABLE process-policy branch. Child-isolated C and private Rust captures cover one finite direct matrix: allow_thp=1 bypasses both calls; allow_thp=0 selects GET(0,0,0,0) as EPERM, EINVAL, raw nonzero 1, raw nonzero 3, or zero followed by SET(1,0,0,0) success, EPERM, or EINVAL. C records concrete tuple/count, forced disabled configuration only for allow_thp=0, and continuation through its void initializer; it does not compare the ambient allow-enabled detection result. Rust separately records Allowed while preserving synthetic true and false configurations, DisabledQueryFailed(PERM/INVAL), DisabledAlready(1/3), DisabledSet, and DisabledSetFailed(PERM/INVAL). The C/Rust direct comparison does not exercise a process owner. A separate child-isolated explicit Rust ProcessMain traversal covers AllowEnabled, QueryNonzeroOne, and SetPerm through the existing owner helper, preserving exact call shape, READY configuration, and one matching retained VM/process-backing pair. Separately, two clean allow_thp=0/2 source images run normal RuntimeProcessStorage initialization and compare their retained raw option plus READY configuration bit after the first ticket-zero allocation; mode two records the current equal C/Rust observation without a host THP-mode assumption. Raw nonzero 3 is a return-class representative, not a Linux kernel claim.",
         "source_anchors": [
           {
             "member": "src/prim/unix/prim.c",
@@ -487,10 +488,11 @@
           "source-policy-lazy-environment-retry",
           "thp-direct-policy-outcome-matrix",
           "process-main-thp-policy-owner-traversal",
+          "runtime-source-environment-thp-ready-configuration-admission",
           "process-policy-ticket-zero-live-random"
         ],
         "missing_conditions": [
-          "Ambient source-option discovery and C THP detection/configuration, runtime-lifecycle environment/detection integration and every other production policy caller, real hardware THP/huge-page mapping and arena behavior, and full VM/M2 qualification remain unqualified; this is only child-isolated finite direct branch evidence. The exact pinned THP branch emits no diagnostics."
+          "Arbitrary source-option syntax or mutation, C/Rust detector implementation parity beyond the two retained clean-image observations, every other production policy caller, real hardware THP/huge-page mapping and arena behavior, and full VM/M2 qualification remain unqualified; this is only child-isolated finite direct branch evidence. The exact pinned THP branch emits no diagnostics."
         ]
       },
       {
@@ -795,7 +797,7 @@
         "source_scope": "src/os.c:110-158,303-430,438-527,534-712, src/arena.c:341-406,1886-1912, and src/prim/unix/prim.c:250-277,308-497 ambient option routing, random hints, large/THP attempts, first-arena policy, purge policy, and diagnostics beyond the selected child-isolated 128-MiB first-arena fallback.",
         "required_evidence": [
           "typed allocator-option and default-Theap random-state owners for every caller",
-          "native C/Rust ambient-option, hint, large-page success/retry, THP diagnostic, and full arena-caller failure differential"
+          "native C/Rust ambient-option, hint, large-page success/retry, actual OS/large-page diagnostic paths, and full arena-caller failure differential"
         ]
       },
       {
@@ -856,6 +858,12 @@
         "id": "process-main-thp-policy-owner-traversal",
         "kind": "rust-unit",
         "target": "process_init::tests::process_main_thp_policy_owner_traversal",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "runtime-source-environment-thp-ready-configuration-admission",
+        "kind": "c-rust-runtime-thp-source-environment-admission",
+        "target": "native_runtime_first_arena_policy::runtime_process_admits_source_allow_thp_images_with_retained_ready_configuration",
         "expected_passed_test_count": 1
       },
       {

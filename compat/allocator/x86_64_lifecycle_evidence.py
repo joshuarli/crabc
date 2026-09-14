@@ -42,10 +42,30 @@ RUNTIME_FIRST_ARENA_REPORT = (
 )
 LOCKFILE = ROOT / "Cargo.lock"
 INITIAL_TLD_NUMA_FIXTURE = ROOT / "compat/allocator/x86_64_initial_tld_numa_oracle.c"
+RUNTIME_THP_CONFIGURATION_FIXTURE = (
+    ROOT / "compat/allocator/x86_64_runtime_thp_configuration_oracle.c"
+)
 INITIAL_TLD_NUMA_TRACE_BEGIN = "CRABC_MI_INITIAL_TLD_NUMA_TRACE_BEGIN"
 INITIAL_TLD_NUMA_TRACE_END = "CRABC_MI_INITIAL_TLD_NUMA_TRACE_END"
 RUNTIME_INITIAL_TLD_NUMA_TRACE_BEGIN = "CRABC_MI_RUNTIME_INITIAL_TLD_NUMA_TRACE_BEGIN"
 RUNTIME_INITIAL_TLD_NUMA_TRACE_END = "CRABC_MI_RUNTIME_INITIAL_TLD_NUMA_TRACE_END"
+RUNTIME_THP_CONFIGURATION_IMAGE_IDS = ("disabled", "mode-two")
+RUNTIME_THP_CONFIGURATION_TRACE_BEGIN = {
+    "disabled": "CRABC_MI_RUNTIME_THP_DISABLED_TRACE_BEGIN",
+    "mode-two": "CRABC_MI_RUNTIME_THP_MODE_TWO_TRACE_BEGIN",
+}
+RUNTIME_THP_CONFIGURATION_TRACE_END = {
+    "disabled": "CRABC_MI_RUNTIME_THP_DISABLED_TRACE_END",
+    "mode-two": "CRABC_MI_RUNTIME_THP_MODE_TWO_TRACE_END",
+}
+RUNTIME_THP_CONFIGURATION_C_TRACE_BEGIN = {
+    "disabled": "CRABC_MI_RUNTIME_THP_C_DISABLED_TRACE_BEGIN",
+    "mode-two": "CRABC_MI_RUNTIME_THP_C_MODE_TWO_TRACE_BEGIN",
+}
+RUNTIME_THP_CONFIGURATION_C_TRACE_END = {
+    "disabled": "CRABC_MI_RUNTIME_THP_C_DISABLED_TRACE_END",
+    "mode-two": "CRABC_MI_RUNTIME_THP_C_MODE_TWO_TRACE_END",
+}
 
 # `src/init.c` is included into the fixture to retain source-private access to
 # `mi_process_tld_main`; each remaining normal-release object stays linked
@@ -81,6 +101,22 @@ INITIAL_TLD_NUMA_C_ORACLE_SOURCE_FILES = (
     *INITIAL_TLD_NUMA_C_ORACLE_LINK_SOURCES,
     "src/prim/unix/prim.c",
 )
+# The source-environment fixture directly includes both source units so its
+# scalar configuration observation remains in their original translation unit.
+RUNTIME_THP_CONFIGURATION_C_ORACLE_LINK_SOURCES = tuple(
+    source
+    for source in INITIAL_TLD_NUMA_C_ORACLE_LINK_SOURCES
+    if source not in {"src/os.c", "src/init.c"}
+)
+RUNTIME_THP_CONFIGURATION_C_ORACLE_SOURCE_FILES = (
+    "include/mimalloc.h",
+    "include/mimalloc/internal.h",
+    "include/mimalloc/prim.h",
+    "src/os.c",
+    "src/init.c",
+    *RUNTIME_THP_CONFIGURATION_C_ORACLE_LINK_SOURCES,
+    "src/prim/unix/prim.c",
+)
 INITIAL_TLD_NUMA_C_TRACE_KEYS = (
     "source_option_applied",
     "arena_is_numa_local_option_applied",
@@ -101,6 +137,19 @@ RUNTIME_INITIAL_TLD_NUMA_TRACE_KEYS = (
     "vm_policy_numa_node_count_cache",
     "ticket_zero_tld_numa_node",
     "process_arena_numa_node",
+)
+RUNTIME_THP_CONFIGURATION_C_TRACE_KEYS = (
+    "selected_allow_thp_raw",
+    "config_has_transparent_huge_pages",
+)
+RUNTIME_THP_CONFIGURATION_TRACE_KEYS = (
+    "selected_allow_thp_raw",
+    "vm_policy_allow_thp",
+    "ready_memory_config_has_transparent_huge_pages",
+)
+RUNTIME_THP_CONFIGURATION_C_IMAGES = (
+    ("disabled", "-DCRABC_RUNTIME_THP_IMAGE_DISABLED=1"),
+    ("mode-two", "-DCRABC_RUNTIME_THP_IMAGE_MODE_TWO=1"),
 )
 
 # The focused receipt names every local input whose current bytes participate
@@ -124,6 +173,7 @@ CANDIDATE_SOURCE_INPUTS = (
     "compat/allocator/run-x86_64.sh",
     "compat/allocator/run.py",
     "compat/allocator/x86_64_initial_tld_numa_oracle.c",
+    "compat/allocator/x86_64_runtime_thp_configuration_oracle.c",
     "compat/allocator/x86_64_lifecycle_evidence.py",
 )
 CANDIDATE_SOURCE_GIT_READ_ENVIRONMENT = {"GIT_OPTIONAL_LOCKS": "0"}
@@ -174,6 +224,22 @@ TEST_LANES = (
             "the actual ticket-zero TLD consumes mimalloc_use_numa_nodes=3 through that retained policy and stores one normalized node before the first client allocation",
             "the original ticket-zero allocation reaches begin_for_process, maps one committed 128-MiB regular arena, then the source arena initializer resolves arena_is_numa_local through that same policy after metadata preparation",
             "the exact client free removes its PageMap registration while the selected regular arena mapping and normalized stored node remain retained",
+        ),
+    ),
+    TestLane(
+        identifier="runtime-source-environment-thp-ready-configuration-admission",
+        kind="native-integration",
+        test_filter="runtime_process_admits_source_allow_thp_images_with_retained_ready_configuration",
+        exact_filter=True,
+        features=("native-runtime-test-audit",),
+        expected_pass_count=1,
+        source_tests=(
+            "native_runtime_first_arena_policy::runtime_process_admits_source_allow_thp_images_with_retained_ready_configuration",
+        ),
+        bounded_behavior=(
+            "two clean child source environments retain mimalloc_allow_thp raw values zero and two through normal RuntimeProcessStorage initialization",
+            "after the first ticket-zero allocation, the scalar audit reads the retained READY memory configuration and the same retained VM policy without a new detector read",
+            "the disabled image records a disabled READY configuration while the mode-two image records its current C/Rust-equal configuration observation without assuming a host THP mode",
         ),
     ),
     TestLane(
@@ -331,7 +397,8 @@ RUNTIME_FIRST_ARENA_EXCLUSIONS = (
     "No public mi_*, malloc-family, crabc-libc, dynamic-linker, or crabc-rs x86-64 runtime support is exercised or claimed.",
     "No complete process or pthread/TLS callback lifecycle is exercised or claimed.",
     "No general allocation/free routing, cross-thread client API, owner-exit traversal, adoption, or whole-allocator stress regime is exercised or claimed.",
-    "The direct C oracle covers only pinned init.c/arena.c/os.c's configured ticket-zero TLD and one ordinary regular first-arena NUMA relations, including retained arena identity after its one client free; it does not qualify host multi-node placement, huge-page behavior, or general allocator lifecycle parity.",
+    "The direct C oracles cover only pinned init.c/arena.c/os.c's configured ticket-zero TLD and one ordinary regular first-arena NUMA relation, plus two clean mimalloc_allow_thp source images' retained configuration bits after normal process initialization; they do not qualify host multi-node placement, THP hardware mode, huge-page behavior, or general allocator lifecycle parity.",
+    "The source-THP images do not qualify arbitrary environment syntax or mutation, C/Rust detector implementation parity beyond their two observed retained bits, PRCTL outcomes, other production policy callers, arena policy, or minimum-purge semantics.",
     "No fault injection, interposition, sanitizer, performance, or API-surface conclusion follows from this focused C/Rust policy witness.",
 )
 
@@ -837,6 +904,140 @@ def run_initial_tld_numa_c_oracle() -> dict[str, Any]:
     }
 
 
+def validate_runtime_thp_configuration_c_trace(
+    image_id: str, trace: Mapping[str, int]
+) -> None:
+    """Require one direct C image's raw option and retained configuration."""
+
+    if image_id not in RUNTIME_THP_CONFIGURATION_IMAGE_IDS:
+        raise EvidenceError("pinned C runtime THP image is unknown")
+    if set(trace) != set(RUNTIME_THP_CONFIGURATION_C_TRACE_KEYS):
+        raise EvidenceError("pinned C runtime THP trace schema drifted")
+    if any(type(trace.get(key)) is not int for key in RUNTIME_THP_CONFIGURATION_C_TRACE_KEYS):
+        raise EvidenceError("pinned C runtime THP trace requires exact integer scalars")
+    if trace["config_has_transparent_huge_pages"] not in {0, 1}:
+        raise EvidenceError("pinned C runtime THP configuration observation is not boolean")
+    expected_raw = 0 if image_id == "disabled" else 2
+    if trace["selected_allow_thp_raw"] != expected_raw:
+        raise EvidenceError("pinned C runtime THP image did not retain its selected raw option")
+    if image_id == "disabled" and trace["config_has_transparent_huge_pages"] != 0:
+        raise EvidenceError("pinned C runtime disabled THP image did not clear its configuration")
+
+
+def normalize_runtime_thp_configuration_c_command(
+    command: Sequence[str], source: Path, binary: Path, image_id: str
+) -> list[str]:
+    """Retain one direct C replay shape without a temporary source path."""
+
+    normalized: list[str] = []
+    for argument in command:
+        if argument == str(binary):
+            normalized.append(f"<runtime-thp-configuration-{image_id}-oracle-binary>")
+        elif argument.startswith(f"{source}/"):
+            normalized.append(
+                f"<pinned-mimalloc-source>/{Path(argument).relative_to(source).as_posix()}"
+            )
+        else:
+            normalized.append(argument)
+    return normalized
+
+
+def run_runtime_thp_configuration_c_oracle() -> dict[str, Any]:
+    """Build the two fixed direct `os.c`/`init.c` source configuration images."""
+
+    harness = allocator_harness()
+    pin = pinned_mimalloc_pin()
+    try:
+        archive = harness.fetch_archive(pin, offline=True)
+        compiler = harness.require_tool("musl-gcc")
+        artifacts = harness.ARTIFACT_ROOT / "x86_64/runtime-thp-configuration"
+        artifacts.mkdir(parents=True, exist_ok=True)
+        images: list[dict[str, Any]] = []
+        with harness.temporary_directory(
+            prefix="crabc-mimalloc-x86_64-runtime-thp-configuration-source-"
+        ) as temporary:
+            source = harness.safe_extract(archive, Path(temporary), pin["archive_root"])
+            for image_id, image_define in RUNTIME_THP_CONFIGURATION_C_IMAGES:
+                binary = artifacts / f"runtime-thp-configuration-{image_id}-oracle"
+                command = [
+                    compiler,
+                    "-std=c11",
+                    "-fPIC",
+                    "-ftls-model=initial-exec",
+                    "-DMI_SHARED_LIB",
+                    "-DMI_SHARED_LIB_EXPORT",
+                    "-DMI_LIBC_MUSL=1",
+                    "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
+                    "-I",
+                    str(source / "include"),
+                    "-I",
+                    str(source / "src"),
+                    *harness.CONFIGURATION_PROFILES["release"],
+                    image_define,
+                    str(RUNTIME_THP_CONFIGURATION_FIXTURE),
+                    *(str(source / name) for name in RUNTIME_THP_CONFIGURATION_C_ORACLE_LINK_SOURCES),
+                    "-pthread",
+                    "-o",
+                    str(binary),
+                ]
+                build = harness.command_record(command, cwd=source, timeout_seconds=300)
+                harness.require_success(build, f"pinned C runtime THP {image_id} oracle build")
+                run_record = harness.command_record(
+                    [str(binary)], cwd=source, timeout_seconds=120, env={}
+                )
+                harness.require_success(run_record, f"pinned C runtime THP {image_id} oracle")
+                trace = parse_scalar_trace(
+                    str(run_record["stdout"]),
+                    begin=RUNTIME_THP_CONFIGURATION_C_TRACE_BEGIN[image_id],
+                    end=RUNTIME_THP_CONFIGURATION_C_TRACE_END[image_id],
+                    keys=RUNTIME_THP_CONFIGURATION_C_TRACE_KEYS,
+                    source=f"pinned C runtime THP {image_id} oracle",
+                )
+                validate_runtime_thp_configuration_c_trace(image_id, trace)
+                if not binary.is_file():
+                    raise EvidenceError(f"pinned C runtime THP {image_id} binary was not retained")
+                images.append(
+                    {
+                        "binary": harness.artifact_record(binary),
+                        "build": {
+                            "command": normalize_runtime_thp_configuration_c_command(
+                                command, source, binary, image_id
+                            ),
+                            "status": build["status"],
+                            "stderr_sha256": text_sha256(str(build["stderr"])),
+                            "stdout_sha256": text_sha256(str(build["stdout"])),
+                        },
+                        "id": image_id,
+                        "run": {
+                            "command": [f"<runtime-thp-configuration-{image_id}-oracle-binary>"],
+                            "status": run_record["status"],
+                            "stderr_sha256": text_sha256(str(run_record["stderr"])),
+                            "stdout_sha256": text_sha256(str(run_record["stdout"])),
+                        },
+                        "trace": trace,
+                        "trace_sha256": hashlib.sha256(
+                            json.dumps(trace, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                        ).hexdigest(),
+                    }
+                )
+            source_files = harness.source_file_records(
+                source, RUNTIME_THP_CONFIGURATION_C_ORACLE_SOURCE_FILES
+            )
+    except harness.HarnessError as error:
+        raise EvidenceError(f"pinned C runtime THP configuration oracle failed: {error}") from error
+
+    return {
+        "fixture": {
+            "bytes": RUNTIME_THP_CONFIGURATION_FIXTURE.stat().st_size,
+            "path": relative(RUNTIME_THP_CONFIGURATION_FIXTURE),
+            "sha256": sha256_file(RUNTIME_THP_CONFIGURATION_FIXTURE),
+        },
+        "images": images,
+        "source_files": source_files,
+        "upstream": {"archive_sha256": pin["sha256"], "revision": pin["revision"]},
+    }
+
+
 def require_tool(name: str) -> str:
     path = shutil.which(name)
     if path is None:
@@ -926,10 +1127,10 @@ def cargo_test_command(cargo: str, lane: TestLane, target_dir: Path) -> list[str
         command.extend(("--features", ",".join(lane.features)))
     command.append(lane.test_filter)
     command.extend(("--", "--test-threads=1"))
-    if lane.identifier == "runtime-process-policy-first-arena":
-        # The nested clean-environment child forwards only its scalar
-        # initial-TLD trace; retaining it binds the policy assertion to the
-        # actual ordinary runtime execution rather than a helper invocation.
+    if lane.kind == "native-integration":
+        # Each integration child forwards only its named scalar trace. This
+        # binds the selected ordinary runtime execution without retaining an
+        # allocation address or a lifecycle capability.
         command.append("--nocapture")
     if lane.exact_filter:
         command.append("--exact")
@@ -992,6 +1193,35 @@ def parse_runtime_initial_tld_numa_trace(output: str) -> dict[str, int]:
     return trace
 
 
+def parse_runtime_thp_configuration_trace(output: str) -> dict[str, dict[str, int]]:
+    """Read the two fixed normal-runtime source-environment THP observations."""
+
+    images = {
+        image_id: parse_scalar_trace(
+            output,
+            begin=RUNTIME_THP_CONFIGURATION_TRACE_BEGIN[image_id],
+            end=RUNTIME_THP_CONFIGURATION_TRACE_END[image_id],
+            keys=RUNTIME_THP_CONFIGURATION_TRACE_KEYS,
+            source=f"Rust runtime THP {image_id} witness",
+        )
+        for image_id in RUNTIME_THP_CONFIGURATION_IMAGE_IDS
+    }
+    if images["disabled"] != {
+        "selected_allow_thp_raw": 0,
+        "vm_policy_allow_thp": 0,
+        "ready_memory_config_has_transparent_huge_pages": 0,
+    }:
+        raise EvidenceError("Rust runtime disabled THP image did not retain its required READY state")
+    mode_two = images["mode-two"]
+    if (
+        mode_two["selected_allow_thp_raw"] != 2
+        or mode_two["vm_policy_allow_thp"] != 1
+        or mode_two["ready_memory_config_has_transparent_huge_pages"] not in {0, 1}
+    ):
+        raise EvidenceError("Rust runtime mode-two THP image did not retain its selected observation")
+    return images
+
+
 def run_lane(cargo: str, lane: TestLane, target_dir: Path) -> dict[str, Any]:
     command = cargo_test_command(cargo, lane, target_dir)
     output = run(command)
@@ -1007,6 +1237,8 @@ def run_lane(cargo: str, lane: TestLane, target_dir: Path) -> dict[str, Any]:
     }
     if lane.identifier == "runtime-process-policy-first-arena":
         record["initial_tld_numa_trace"] = parse_runtime_initial_tld_numa_trace(output)
+    if lane.identifier == "runtime-source-environment-thp-ready-configuration-admission":
+        record["runtime_thp_configuration_trace"] = parse_runtime_thp_configuration_trace(output)
     return record
 
 
@@ -1164,6 +1396,32 @@ def validate_report(report: Mapping[str, Any]) -> None:
                 or runtime_trace["process_arena_numa_node"] >= 3
             ):
                 raise EvidenceError("runtime first-arena lane NUMA trace drifted")
+        if configured.identifier == "runtime-source-environment-thp-ready-configuration-admission":
+            runtime_thp_trace = observed.get("runtime_thp_configuration_trace")
+            if (
+                not isinstance(runtime_thp_trace, Mapping)
+                or tuple(runtime_thp_trace) != RUNTIME_THP_CONFIGURATION_IMAGE_IDS
+                or any(
+                    not isinstance(runtime_thp_trace.get(image_id), Mapping)
+                    or set(runtime_thp_trace[image_id]) != set(RUNTIME_THP_CONFIGURATION_TRACE_KEYS)
+                    for image_id in RUNTIME_THP_CONFIGURATION_IMAGE_IDS
+                )
+            ):
+                raise EvidenceError("runtime THP configuration lane lacks its image traces")
+            reconstructed = "\n".join(
+                row
+                for image_id in RUNTIME_THP_CONFIGURATION_IMAGE_IDS
+                for row in (
+                    RUNTIME_THP_CONFIGURATION_TRACE_BEGIN[image_id],
+                    *(
+                        f"{key}={runtime_thp_trace[image_id][key]}"
+                        for key in RUNTIME_THP_CONFIGURATION_TRACE_KEYS
+                    ),
+                    RUNTIME_THP_CONFIGURATION_TRACE_END[image_id],
+                )
+            )
+            if parse_runtime_thp_configuration_trace(reconstructed) != runtime_thp_trace:
+                raise EvidenceError("runtime THP configuration lane trace drifted")
         expected_total += configured.expected_pass_count
         observed_total += int(result["passed"])
 
@@ -1244,6 +1502,15 @@ def runtime_first_arena_lane() -> TestLane:
     raise EvidenceError("runtime first-arena lifecycle lane is not configured")
 
 
+def runtime_thp_configuration_lane() -> TestLane:
+    """Return the fixed normal-runtime THP source-environment admission lane."""
+
+    for lane in TEST_LANES:
+        if lane.identifier == "runtime-source-environment-thp-ready-configuration-admission":
+            return lane
+    raise EvidenceError("runtime THP configuration lifecycle lane is not configured")
+
+
 def compare_initial_tld_numa_observations(
     c_oracle: Mapping[str, Any], rust_lane: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -1286,6 +1553,59 @@ def compare_initial_tld_numa_observations(
     }
 
 
+def compare_runtime_thp_configuration_observations(
+    c_oracle: Mapping[str, Any], rust_lane: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Compare only the two retained source-option configuration relations."""
+
+    c_images = c_oracle.get("images")
+    rust_images = rust_lane.get("runtime_thp_configuration_trace")
+    if not isinstance(c_images, list) or not isinstance(rust_images, Mapping):
+        raise EvidenceError("runtime THP configuration comparison lacks one raw observation")
+    if [image.get("id") for image in c_images if isinstance(image, Mapping)] != list(
+        RUNTIME_THP_CONFIGURATION_IMAGE_IDS
+    ):
+        raise EvidenceError("runtime THP C image roster drifted")
+    if tuple(rust_images) != RUNTIME_THP_CONFIGURATION_IMAGE_IDS:
+        raise EvidenceError("runtime THP Rust image roster drifted")
+    compared_images: list[dict[str, int | str]] = []
+    for image_id, c_image in zip(RUNTIME_THP_CONFIGURATION_IMAGE_IDS, c_images, strict=True):
+        if not isinstance(c_image, Mapping) or not isinstance(c_image.get("trace"), Mapping):
+            raise EvidenceError("runtime THP C image trace is malformed")
+        c_trace = c_image["trace"]
+        validate_runtime_thp_configuration_c_trace(image_id, c_trace)
+        rust_trace = rust_images[image_id]
+        if not isinstance(rust_trace, Mapping) or set(rust_trace) != set(
+            RUNTIME_THP_CONFIGURATION_TRACE_KEYS
+        ):
+            raise EvidenceError("runtime THP Rust image trace is malformed")
+        if any(type(rust_trace.get(key)) is not int for key in RUNTIME_THP_CONFIGURATION_TRACE_KEYS):
+            raise EvidenceError("runtime THP Rust image requires exact integer scalars")
+        if (
+            rust_trace["selected_allow_thp_raw"] != c_trace["selected_allow_thp_raw"]
+            or rust_trace["ready_memory_config_has_transparent_huge_pages"]
+            != c_trace["config_has_transparent_huge_pages"]
+            or rust_trace["vm_policy_allow_thp"]
+            != int(rust_trace["selected_allow_thp_raw"] != 0)
+        ):
+            raise EvidenceError("runtime THP C/Rust retained configuration relation changed")
+        compared_images.append(
+            {
+                "config_has_transparent_huge_pages": c_trace[
+                    "config_has_transparent_huge_pages"
+                ],
+                "id": image_id,
+                "selected_allow_thp_raw": c_trace["selected_allow_thp_raw"],
+            }
+        )
+    return {
+        "compared_value_count": 4,
+        "images": compared_images,
+        "rust_boolean_projection_count": 2,
+        "status": "matched-retained-ready-configuration",
+    }
+
+
 def validate_runtime_first_arena_policy_report(report: Mapping[str, Any]) -> None:
     """Validate receipt structure and self-consistency, not live candidate-source identity."""
 
@@ -1300,6 +1620,7 @@ def validate_runtime_first_arena_policy_report(report: Mapping[str, Any]) -> Non
         "lane",
         "native_execution_provenance",
         "profile",
+        "runtime_thp_configuration",
         "scope",
         "status",
         "target",
@@ -1309,10 +1630,10 @@ def validate_runtime_first_arena_policy_report(report: Mapping[str, Any]) -> Non
         raise EvidenceError("runtime first-arena report schema drifted")
     if (
         type(report.get("format")) is not int
-        or report["format"] != 3
+        or report["format"] != 4
         or report.get("status") != "passed"
     ):
-        raise EvidenceError("runtime first-arena report must record a passed format-3 result")
+        raise EvidenceError("runtime first-arena report must record a passed format-4 result")
     if report.get("kind") != "mimalloc-x86_64-runtime-first-arena-policy-evidence":
         raise EvidenceError("runtime first-arena report kind drifted")
     if report.get("profile") != "linux-x86_64-private-engine-runtime-first-arena-policy-witness":
@@ -1351,9 +1672,9 @@ def validate_runtime_first_arena_policy_report(report: Mapping[str, Any]) -> Non
         raise EvidenceError("runtime first-arena exclusions drifted")
     scope = report.get("scope")
     if not isinstance(scope, Mapping) or scope != {
-        "boundary": "one child-isolated pinned-C and one process-isolated private Rust TLD/regular-first-arena policy witness only",
+        "boundary": "one child-isolated pinned-C and one process-isolated private Rust TLD/regular-first-arena policy witness, plus two fixed child source-environment THP configuration images only",
         "public_runtime_support": False,
-        "claim": "focused initial-TLD and regular-first-arena NUMA option-policy witness",
+        "claim": "focused initial-TLD/regular-first-arena NUMA and retained runtime source-THP configuration witnesses",
     }:
         raise EvidenceError("runtime first-arena scope drifted")
 
@@ -1417,6 +1738,100 @@ def validate_runtime_first_arena_policy_report(report: Mapping[str, Any]) -> Non
     if report.get("comparison") != comparison:
         raise EvidenceError("runtime first-arena C/Rust normalized comparison drifted")
 
+    runtime_thp = report.get("runtime_thp_configuration")
+    if not isinstance(runtime_thp, Mapping) or set(runtime_thp) != {
+        "c_oracle",
+        "comparison",
+        "lane",
+    }:
+        raise EvidenceError("runtime THP configuration record schema drifted")
+    thp_lane = runtime_thp.get("lane")
+    configured_thp_lane = runtime_thp_configuration_lane()
+    if (
+        not isinstance(thp_lane, Mapping)
+        or thp_lane.get("id") != configured_thp_lane.identifier
+        or thp_lane.get("observed", {}).get("passed") != configured_thp_lane.expected_pass_count
+    ):
+        raise EvidenceError("runtime THP configuration Rust lane drifted")
+    thp_trace = thp_lane.get("runtime_thp_configuration_trace")
+    if (
+        not isinstance(thp_trace, Mapping)
+        or tuple(thp_trace) != RUNTIME_THP_CONFIGURATION_IMAGE_IDS
+        or any(
+            not isinstance(thp_trace.get(image_id), Mapping)
+            or set(thp_trace[image_id]) != set(RUNTIME_THP_CONFIGURATION_TRACE_KEYS)
+            for image_id in RUNTIME_THP_CONFIGURATION_IMAGE_IDS
+        )
+    ):
+        raise EvidenceError("runtime THP configuration report lacks its Rust image traces")
+    # Reuse the finite parser's semantic relations after retaining the exact
+    # object schema, so neither an omitted image nor a mode-two host assumption
+    # can pass through the report validator.
+    reconstructed = "\n".join(
+        row
+        for image_id in RUNTIME_THP_CONFIGURATION_IMAGE_IDS
+        for row in (
+            RUNTIME_THP_CONFIGURATION_TRACE_BEGIN[image_id],
+            *(f"{key}={thp_trace[image_id][key]}" for key in RUNTIME_THP_CONFIGURATION_TRACE_KEYS),
+            RUNTIME_THP_CONFIGURATION_TRACE_END[image_id],
+        )
+    )
+    if parse_runtime_thp_configuration_trace(reconstructed) != thp_trace:
+        raise EvidenceError("runtime THP configuration Rust image relations drifted")
+    thp_c_oracle = runtime_thp.get("c_oracle")
+    if not isinstance(thp_c_oracle, Mapping) or set(thp_c_oracle) != {
+        "fixture",
+        "images",
+        "source_files",
+        "upstream",
+    }:
+        raise EvidenceError("runtime THP configuration C oracle schema drifted")
+    if thp_c_oracle.get("upstream") != {
+        "archive_sha256": pin["sha256"],
+        "revision": pin["revision"],
+    }:
+        raise EvidenceError("runtime THP configuration C oracle pin drifted")
+    fixture = thp_c_oracle.get("fixture")
+    if (
+        not isinstance(fixture, Mapping)
+        or fixture.get("path") != relative(RUNTIME_THP_CONFIGURATION_FIXTURE)
+        or type(fixture.get("bytes")) is not int
+        or fixture.get("bytes", 0) <= 0
+        or not isinstance(fixture.get("sha256"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", fixture["sha256"]) is None
+    ):
+        raise EvidenceError("runtime THP configuration C fixture identity drifted")
+    thp_source_files = thp_c_oracle.get("source_files")
+    if (
+        not isinstance(thp_source_files, list)
+        or [record.get("path") for record in thp_source_files if isinstance(record, Mapping)]
+        != sorted(set(RUNTIME_THP_CONFIGURATION_C_ORACLE_SOURCE_FILES))
+        or len(thp_source_files) != len(set(RUNTIME_THP_CONFIGURATION_C_ORACLE_SOURCE_FILES))
+    ):
+        raise EvidenceError("runtime THP configuration C source roster drifted")
+    thp_images = thp_c_oracle.get("images")
+    if (
+        not isinstance(thp_images, list)
+        or [image.get("id") for image in thp_images if isinstance(image, Mapping)]
+        != list(RUNTIME_THP_CONFIGURATION_IMAGE_IDS)
+        or len(thp_images) != len(RUNTIME_THP_CONFIGURATION_IMAGE_IDS)
+    ):
+        raise EvidenceError("runtime THP configuration C image record drifted")
+    for image_id, image in zip(RUNTIME_THP_CONFIGURATION_IMAGE_IDS, thp_images, strict=True):
+        if (
+            not isinstance(image, Mapping)
+            or set(image) != {"binary", "build", "id", "run", "trace", "trace_sha256"}
+            or image.get("id") != image_id
+            or not isinstance(image.get("trace"), Mapping)
+            or not isinstance(image.get("trace_sha256"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", image["trace_sha256"]) is None
+        ):
+            raise EvidenceError("runtime THP configuration C image schema drifted")
+        validate_runtime_thp_configuration_c_trace(image_id, image["trace"])
+    thp_comparison = compare_runtime_thp_configuration_observations(thp_c_oracle, thp_lane)
+    if runtime_thp.get("comparison") != thp_comparison:
+        raise EvidenceError("runtime THP configuration C/Rust comparison drifted")
+
 
 def run_runtime_first_arena_policy_evidence(report_path: Path) -> dict[str, Any]:
     """Publish the one policy-bound runtime witness without a campaign claim."""
@@ -1428,11 +1843,14 @@ def run_runtime_first_arena_policy_evidence(report_path: Path) -> dict[str, Any]
     toolchain = toolchain_record(cargo, rustc)
     before_lockfile = sha256_file(LOCKFILE)
     lane = runtime_first_arena_lane()
+    thp_lane = runtime_thp_configuration_lane()
 
     c_oracle = run_initial_tld_numa_c_oracle()
+    thp_c_oracle = run_runtime_thp_configuration_c_oracle()
     with tempfile.TemporaryDirectory(prefix="crabc-mimalloc-x86_64-runtime-first-arena-") as temporary:
         target_dir = Path(temporary) / "target"
         result = run_lane(cargo, lane, target_dir)
+        thp_result = run_lane(cargo, thp_lane, target_dir)
 
     after_lockfile = sha256_file(LOCKFILE)
     if after_lockfile != before_lockfile:
@@ -1442,7 +1860,7 @@ def run_runtime_first_arena_policy_evidence(report_path: Path) -> dict[str, Any]
     )
 
     report: dict[str, Any] = {
-        "format": 3,
+        "format": 4,
         "kind": "mimalloc-x86_64-runtime-first-arena-policy-evidence",
         "profile": "linux-x86_64-private-engine-runtime-first-arena-policy-witness",
         "status": "passed",
@@ -1467,10 +1885,17 @@ def run_runtime_first_arena_policy_evidence(report_path: Path) -> dict[str, Any]
         "c_oracle": c_oracle,
         "comparison": compare_initial_tld_numa_observations(c_oracle, result),
         "lane": result,
+        "runtime_thp_configuration": {
+            "c_oracle": thp_c_oracle,
+            "comparison": compare_runtime_thp_configuration_observations(
+                thp_c_oracle, thp_result
+            ),
+            "lane": thp_result,
+        },
         "scope": {
-            "boundary": "one child-isolated pinned-C and one process-isolated private Rust TLD/regular-first-arena policy witness only",
+            "boundary": "one child-isolated pinned-C and one process-isolated private Rust TLD/regular-first-arena policy witness, plus two fixed child source-environment THP configuration images only",
             "public_runtime_support": False,
-            "claim": "focused initial-TLD and regular-first-arena NUMA option-policy witness",
+            "claim": "focused initial-TLD/regular-first-arena NUMA and retained runtime source-THP configuration witnesses",
         },
         "exclusions": list(RUNTIME_FIRST_ARENA_EXCLUSIONS),
     }

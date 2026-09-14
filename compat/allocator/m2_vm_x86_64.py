@@ -77,6 +77,11 @@ CHECKS = (
         "process_init::tests::process_main_thp_policy_owner_traversal",
     ),
     (
+        "runtime-source-environment-thp-ready-configuration-admission",
+        "c-rust-runtime-thp-source-environment-admission",
+        "native_runtime_first_arena_policy::runtime_process_admits_source_allow_thp_images_with_retained_ready_configuration",
+    ),
+    (
         "aligned-hint-source-profile-and-direct-caller-matrix",
         "c-rust-vm-primitives-source-profile-matrix",
         "os::tests::emit_m2_aligned_hint_source_profile_c_rust_trace",
@@ -617,10 +622,14 @@ def load_fragment(path: Path) -> dict[str, Any]:
         not in thp_branch["evidence_check_ids"]
         or "process-main-thp-policy-owner-traversal"
         not in thp_branch["evidence_check_ids"]
+        or "runtime-source-environment-thp-ready-configuration-admission"
+        not in thp_branch["evidence_check_ids"]
+        or "normal RuntimeProcessStorage initialization" not in thp_branch["source_scope"]
         or "explicit Rust ProcessMain traversal" not in thp_branch["source_scope"]
         or "finite direct matrix" not in thp_branch["source_scope"].lower()
         or "raw nonzero 3" not in thp_branch["source_scope"].lower()
-        or not any("ambient" in condition.lower() for condition in thp_branch["missing_conditions"])
+        or not any("arbitrary source-option" in condition.lower()
+                   for condition in thp_branch["missing_conditions"])
         or not any("production policy caller" in condition.lower() for condition in thp_branch["missing_conditions"])
         or any("diagnostic" in condition.lower() and "no diagnostics" not in condition.lower()
                for condition in thp_branch["missing_conditions"])
@@ -642,6 +651,7 @@ def load_fragment(path: Path) -> dict[str, Any]:
         != [
             TRACE_CHECK_ID,
             "thp-direct-policy-outcome-matrix",
+            "runtime-source-environment-thp-ready-configuration-admission",
         ]
     ):
         raise _error("THP direct-policy matrix source definition lost its exact evidence binding")

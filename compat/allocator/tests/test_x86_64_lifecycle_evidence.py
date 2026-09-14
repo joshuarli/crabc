@@ -90,7 +90,11 @@ class CargoCommandTests(unittest.TestCase):
                 self.assertEqual(command[delimiter + 1], "--test-threads=1")
                 self.assertEqual(
                     "--nocapture" in command,
-                    lane.identifier == "runtime-process-policy-first-arena",
+                    lane.identifier
+                    in {
+                        "runtime-process-policy-first-arena",
+                        "runtime-source-environment-thp-ready-configuration-admission",
+                    },
                 )
                 self.assertEqual(command[-1] == "--exact", lane.exact_filter)
 
@@ -105,13 +109,14 @@ class CargoCommandTests(unittest.TestCase):
             all(lane.exact_filter for lane in EVIDENCE.TEST_LANES if lane is not loom)
         )
 
-    def test_fixed_selection_has_the_bounded_fourteen_test_total(self) -> None:
-        self.assertEqual(len(EVIDENCE.TEST_LANES), 10)
-        self.assertEqual(sum(lane.expected_pass_count for lane in EVIDENCE.TEST_LANES), 14)
+    def test_fixed_selection_has_the_bounded_fifteen_test_total(self) -> None:
+        self.assertEqual(len(EVIDENCE.TEST_LANES), 11)
+        self.assertEqual(sum(lane.expected_pass_count for lane in EVIDENCE.TEST_LANES), 15)
         self.assertEqual(
             [lane.identifier for lane in EVIDENCE.TEST_LANES],
             [
                 "runtime-process-policy-first-arena",
+                "runtime-source-environment-thp-ready-configuration-admission",
                 "compiler-tls-fresh-native-thread",
                 "compiler-tls-explicit-reset",
                 "compiler-tls-overlapping-native-threads",
@@ -156,6 +161,19 @@ class ReportTests(unittest.TestCase):
                     "ticket_zero_tld_numa_node": 0,
                     "process_arena_numa_node": 0,
                 }
+            if lane.identifier == "runtime-source-environment-thp-ready-configuration-admission":
+                lanes[-1]["runtime_thp_configuration_trace"] = {
+                    "disabled": {
+                        "selected_allow_thp_raw": 0,
+                        "vm_policy_allow_thp": 0,
+                        "ready_memory_config_has_transparent_huge_pages": 0,
+                    },
+                    "mode-two": {
+                        "selected_allow_thp_raw": 2,
+                        "vm_policy_allow_thp": 1,
+                        "ready_memory_config_has_transparent_huge_pages": 1,
+                    },
+                }
         return lanes
 
     def complete_report(self) -> dict[str, object]:
@@ -175,9 +193,9 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(report["status"], "passed")
         self.assertFalse(report["scope"]["public_runtime_support"])
         self.assertEqual(report["summary"], {
-            "expected_pass_count": 14,
-            "observed_pass_count": 14,
-            "lane_count": 10,
+            "expected_pass_count": 15,
+            "observed_pass_count": 15,
+            "lane_count": 11,
         })
         self.assertTrue(report["cargo"]["locked"])
         self.assertEqual(
@@ -302,11 +320,56 @@ class CandidateSourceReceiptTests(unittest.TestCase):
                 for path in sorted(set(EVIDENCE.INITIAL_TLD_NUMA_C_ORACLE_SOURCE_FILES))
             ],
         }
+        thp_lane = {
+            "id": "runtime-source-environment-thp-ready-configuration-admission",
+            "observed": {"passed": 1},
+            "runtime_thp_configuration_trace": {
+                "disabled": {
+                    "selected_allow_thp_raw": 0,
+                    "vm_policy_allow_thp": 0,
+                    "ready_memory_config_has_transparent_huge_pages": 0,
+                },
+                "mode-two": {
+                    "selected_allow_thp_raw": 2,
+                    "vm_policy_allow_thp": 1,
+                    "ready_memory_config_has_transparent_huge_pages": 1,
+                },
+            },
+        }
+        thp_c_oracle = {
+            "fixture": {
+                "bytes": 1,
+                "path": EVIDENCE.relative(EVIDENCE.RUNTIME_THP_CONFIGURATION_FIXTURE),
+                "sha256": "e" * 64,
+            },
+            "images": [
+                {
+                    "binary": {},
+                    "build": {},
+                    "id": image_id,
+                    "run": {},
+                    "trace": {
+                        "selected_allow_thp_raw": 0 if image_id == "disabled" else 2,
+                        "config_has_transparent_huge_pages": 0 if image_id == "disabled" else 1,
+                    },
+                    "trace_sha256": "e" * 64,
+                }
+                for image_id in EVIDENCE.RUNTIME_THP_CONFIGURATION_IMAGE_IDS
+            ],
+            "source_files": [
+                {"path": path}
+                for path in sorted(set(EVIDENCE.RUNTIME_THP_CONFIGURATION_C_ORACLE_SOURCE_FILES))
+            ],
+            "upstream": {
+                "archive_sha256": "f" * 64,
+                "revision": "a" * 40,
+            },
+        }
         candidate_source = EVIDENCE.candidate_source_attestation(
             self.clean_snapshot(), self.clean_snapshot()
         )
         return {
-            "format": 3,
+            "format": 4,
             "kind": "mimalloc-x86_64-runtime-first-arena-policy-evidence",
             "profile": "linux-x86_64-private-engine-runtime-first-arena-policy-witness",
             "status": "passed",
@@ -333,10 +396,17 @@ class CandidateSourceReceiptTests(unittest.TestCase):
             "c_oracle": c_oracle,
             "comparison": EVIDENCE.compare_initial_tld_numa_observations(c_oracle, lane),
             "lane": lane,
+            "runtime_thp_configuration": {
+                "c_oracle": thp_c_oracle,
+                "comparison": EVIDENCE.compare_runtime_thp_configuration_observations(
+                    thp_c_oracle, thp_lane
+                ),
+                "lane": thp_lane,
+            },
             "scope": {
-                "boundary": "one child-isolated pinned-C and one process-isolated private Rust TLD/regular-first-arena policy witness only",
+                "boundary": "one child-isolated pinned-C and one process-isolated private Rust TLD/regular-first-arena policy witness, plus two fixed child source-environment THP configuration images only",
                 "public_runtime_support": False,
-                "claim": "focused initial-TLD and regular-first-arena NUMA option-policy witness",
+                "claim": "focused initial-TLD/regular-first-arena NUMA and retained runtime source-THP configuration witnesses",
             },
             "exclusions": list(EVIDENCE.RUNTIME_FIRST_ARENA_EXCLUSIONS),
         }
@@ -389,10 +459,10 @@ class CandidateSourceReceiptTests(unittest.TestCase):
             with self.assertRaisesRegex(EVIDENCE.EvidenceError, "unchanged"):
                 EVIDENCE.validate_runtime_first_arena_policy_report(malformed)
 
-        with self.subTest(report_format=3.0):
+        with self.subTest(report_format=4.0):
             malformed = copy.deepcopy(report)
-            malformed["format"] = 3.0
-            with self.assertRaisesRegex(EVIDENCE.EvidenceError, "format-3"):
+            malformed["format"] = 4.0
+            with self.assertRaisesRegex(EVIDENCE.EvidenceError, "format-4"):
                 EVIDENCE.validate_runtime_first_arena_policy_report(malformed)
 
         with self.subTest(runtime_regular_arena_node=True):
