@@ -51,7 +51,13 @@ standard-stream group observes three distinct initialized slots and descriptor
 behavior without selecting a `FILE` layout. Timezone retains its existing TZif
 fixture as a source-specific known-difference observation and adds the direct
 POSIX-TZ `timezone`, `daylight`, `tzname` refresh and same-storage dependency
-probe. It does not bless a raw candidate/oracle TZif transcript difference.
+probe. For `TZ=UTC0`, it requires a non-null `tzname[0]` of `UTC` and the
+non-null empty daylight-name slot which pinned musl's POSIX parser and
+`owned_timezone.rs` both publish when the input contains no DST abbreviation.
+The subsequent EST/EDT refresh proves the daylight-bearing case. This ordinary
+POSIX-TZ publication check is separate from the source-specific TZif
+known-difference observation and does not bless a raw candidate/oracle TZif
+transcript difference.
 
 `h_errno` is not collected here. The declaration selector composes the installed
 `netdb.h` object-like macro and exact C/C++ accessor declaration with the current

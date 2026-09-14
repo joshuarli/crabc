@@ -1,4 +1,5 @@
-/* Narrow installed-product signgam contract; it intentionally is not math-family evidence. */
+/* Narrow installed-product signgam and POSIX-TZ global contract; it intentionally
+ * is not math-family or timezone-family evidence. */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE 1
 #endif
@@ -35,7 +36,7 @@ static int timezone_probe(void) {
     if (setenv("TZ", "UTC0", 1)) return 21;
     tzset();
     if (timezone != 0 || daylight != 0 || !tzname[0] || !tzname[1] ||
-        strcmp(tzname[0], "UTC") || strcmp(tzname[1], "UTC")) return 21;
+        strcmp(tzname[0], "UTC") || strcmp(tzname[1], "")) return 21;
     if (setenv("TZ", "EST5EDT,M3.2.0,M11.1.0", 1)) return 22;
     tzset();
     if (timezone != 18000 || daylight != 1 || !tzname[0] || !tzname[1] ||

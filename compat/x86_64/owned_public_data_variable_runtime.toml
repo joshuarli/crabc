@@ -52,7 +52,7 @@ id = "timezone-globals"
 objects = ["timezone", "daylight", "tzname"]
 probe_sources = ["compat/x86_64/owned_timezone_tzif_probe.c", "compat/x86_64/owned_public_data_variable_runtime_probe.c"]
 owner_sources = ["libc/src/c_abi/x86_64/owned_timezone.rs"]
-semantics = "initial and tzset refresh publication under caller coordination"
+semantics = "initial and tzset refresh publication under caller coordination, including an empty daylight abbreviation for no-DST POSIX forms"
 
 [[alias_dependencies]]
 dependency = "__environ"

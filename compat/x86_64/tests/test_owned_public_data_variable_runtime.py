@@ -163,6 +163,26 @@ class PublicDataVariableRuntimeContractTests(unittest.TestCase):
         ):
             self.assertIn(required, source)
 
+    def test_posix_timezone_probe_keeps_the_empty_daylight_name_without_dst_rules(self) -> None:
+        """``UTC0`` has a standard abbreviation but no daylight abbreviation.
+
+        Pinned musl 1.2.6 and the selected source both publish the parsed
+        daylight-name buffer for POSIX TZ strings.  It is a non-null empty
+        string when the input supplies no DST rule; this is separate from the
+        source-specific TZif known-difference observation.
+        """
+        source = (ROOT / 'compat/x86_64/owned_public_data_variable_runtime_probe.c').read_text(
+            encoding='utf-8')
+        self.assertIn('if (timezone != 0 || daylight != 0 || !tzname[0] || !tzname[1] ||', source)
+        self.assertIn('strcmp(tzname[0], "UTC") || strcmp(tzname[1], "")) return 21;', source)
+        timezone_group = next(item for item in reader.load_contract()['groups']
+                              if item['id'] == 'timezone-globals')
+        self.assertEqual(
+            timezone_group['semantics'],
+            'initial and tzset refresh publication under caller coordination, '
+            'including an empty daylight abbreviation for no-DST POSIX forms',
+        )
+
     def test_writable_fixture_sources_leave_their_declared_roots_reversible(self) -> None:
         """The source cleanup and retained-root policy name the same two files.
 
