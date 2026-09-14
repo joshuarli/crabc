@@ -84,23 +84,33 @@ interposition coverage.
 ## Retained receipt and host replay
 
 `locale_alias_contract_receipt.py` wraps the existing runner; it does not turn
-an older shell transcript into current evidence. In the pinned native image it
-builds fresh selected static and dynamic products, copies the fixed musl 1.2.6
-archive, shared object, compiler wrapper, specs, and oracle metadata, then
-passes one fresh explicit `--receipt-dir` to
+an older shell transcript into current evidence. `locale-alias-contract-image-inputs.json`
+is the finite immutable image-input manifest. It binds the pinned image, musl
+1.2.6 archive/shared object/specs/compiler, and every runner or collector tool
+by physical path, bytes, and mode. Collection requires a clean Git checkout
+including no untracked inputs, captures the complete HEAD/tree Git bytes and
+modes, and copies the selected source files both before and after the native
+work. Each fresh static and dynamic product is joined to that same source
+transaction; the dynamic product additionally retains its producer's source
+digest. It then passes one fresh explicit `--receipt-dir` to
 `run_locale_alias_contract.sh`. Every captured compile, link, header, normal
 static runtime, dynamic kernel/direct runtime, and symbol-observation command
-retains its exact argv, `/workspace` working directory, stdout, stderr, and
-status. The receipt also retains the compiled object and every linked consumer
-identity, the before/after input snapshots, source state, current selected
-source bytes, and both product trees/manifests.
+retains its exact argv, `/workspace` working directory, closed `LC_ALL`/`PATH`
+environment, `/dev/null` stdin, `/usr/bin/env -i` plus `/usr/bin/timeout`
+launcher, stdout, stderr, status, and modes. The normal consumer runner uses
+`umask 022`; source, image-tool, installed-product, raw-stream, and linked
+consumer mode policies are all checked from retained bytes. The receipt also
+retains the compiled object and every linked consumer identity, before/after
+input snapshots, and complete static/dynamic product trees including directory
+and symlink modes.
 
 The host-side `validate-report` path only reads the receipt. It reconstructs
-the fixed 35-command runner roster and its paths, validates current and
-retained source bytes, product manifests, the oracle identity, all runtime
-comparisons, and the complete alias observation from the retained `readelf`
-streams. It therefore rejects a missing, renamed, or relabelled raw command
-without invoking a compiler, linker, target executable, shell, or container.
+the fixed 35-command runner roster and its paths, authenticates the retained
+complete Git source tree, rechecks selected current source bytes/modes, image
+inputs, product manifests/trees, launch context, all runtime comparisons, and
+the complete alias observation from the retained `readelf` streams. Collection
+repeats the source/image/product/raw-input checks after report construction;
+host replay starts no compiler, linker, target executable, shell, or container.
 
 The selected source relation remains deliberately narrow: `locale_narrow.rs`,
 `locale_objects.rs`, `gmtime_r.rs`, `owned_calendar.rs`,

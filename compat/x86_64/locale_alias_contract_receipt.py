@@ -23,13 +23,54 @@ import shutil
 import stat
 import subprocess
 import sys
+import re
+import zlib
 from typing import Any, Iterable, Mapping, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE_MOUNT = "/workspace"
-SCHEMA = "crabc.x86_64-locale-alias-contract-receipt/v1"
-COMMAND_SCHEMA = "crabc.x86_64-locale-alias-contract-command/v1"
+SCHEMA = "crabc.x86_64-locale-alias-contract-receipt/v2"
+COMMAND_SCHEMA = "crabc.x86_64-locale-alias-contract-command/v2"
+IMAGE_MANIFEST_PATH = "compat/x86_64/locale-alias-contract-image-inputs.json"
+PINNED_IMAGE = "crabc-core-evidence@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d"
+COMMAND_PATH = "/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+COMMAND_ENVIRONMENT = {"LC_ALL": "C", "PATH": COMMAND_PATH}
+RUNNER_TIMEOUT_SECONDS = 20
+COLLECTOR_TIMEOUT_SECONDS = 1200
+COMMAND_LAUNCHER_PREFIX = ("/usr/bin/env", "-i")
+RUNNER_LAUNCHER = [*COMMAND_LAUNCHER_PREFIX, "LC_ALL=C", f"PATH={COMMAND_PATH}", "/usr/bin/timeout", str(RUNNER_TIMEOUT_SECONDS)]
+IMAGE_INPUTS = (
+    "/bin/bash", "/bin/chmod", "/bin/cp", "/bin/grep", "/bin/ln", "/bin/mkdir", "/bin/mktemp", "/bin/sh", "/bin/uname",
+    "/opt/cargo/bin/rustup", "/opt/musl-1.2.6/lib/libc.a", "/opt/musl-1.2.6/lib/libc.so", "/opt/musl-1.2.6/lib/musl-gcc.specs",
+    "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/bin/rustc",
+    "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld",
+    "/usr/bin/as", "/usr/bin/cmp", "/usr/bin/env", "/usr/bin/gcc", "/usr/bin/git", "/usr/bin/ld", "/usr/bin/python3", "/usr/bin/readelf",
+    "/usr/bin/realpath", "/usr/bin/sha256sum", "/usr/bin/timeout",
+    "/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/cc1", "/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/collect2",
+    "/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/liblto_plugin.so", "/usr/local/bin/crabc-x86_64-musl-gcc", "/usr/sbin/chroot",
+)
+
+# Every retained regular file carries its observed permissions.  Source modes
+# are additionally authenticated by the complete clean Git tree; immutable
+# image inputs come from the checked-in manifest; product trees include every
+# directory, regular file, and symlink; and consumer artifacts/raw streams are
+# retained at their observed modes under the runner's ordinary ``umask 022``.
+MODE_POLICY = {
+    "source": "complete clean Git tree bytes and modes; selected files are copied before and after",
+    "tools": "checked-in pinned-image manifest bytes, modes, and invocation paths",
+    "products": "every installed product directory, regular file, and symlink is retained with mode",
+    "consumers": "normal installed-header runner uses umask 022 and retains every artifact and raw stream mode",
+}
+
+def _collector_environment(output_relative: str) -> dict[str, str]:
+    return {**COMMAND_ENVIRONMENT, "TMPDIR": _mount(f"{output_relative}/tmp"), "TZ": "UTC", "PYTHONDONTWRITEBYTECODE": "1"}
+
+
+def _collector_launcher(output_relative: str) -> list[str]:
+    environment = _collector_environment(output_relative)
+    return [*COMMAND_LAUNCHER_PREFIX, *(f"{key}={value}" for key, value in environment.items()),
+            "/usr/bin/timeout", str(COLLECTOR_TIMEOUT_SECONDS)]
 MUSL_RELEASE = "musl-1.2.6"
 MUSL_REVISION = "9fa28ece75d8a2191de7c5bb53bed224c5947417"
 MUSL_SOURCE_SHA256 = "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a"
@@ -64,6 +105,9 @@ SELECTED_SOURCES = (
     STATIC_BUILDER_PATH,
     DYNAMIC_BUILDER_PATH,
     PRODUCT_READER_PATH,
+    IMAGE_MANIFEST_PATH,
+    "compat/x86_64/owned_posix_static_products.py",
+    "compat/x86_64/owned_syscall_alias_authority.py",
     "compat/x86_64/owned_dynamic_receipt.py",
     "compat/x86_64/crabc_cc_owned_dynamic.py",
     "compat/x86_64/owned_static_sysroot_package.py",
@@ -212,7 +256,7 @@ def _relative_directory(root: Path, value: object, label: str) -> Path:
 
 
 def _file_record(root: Path, value: object, label: str) -> dict[str, object]:
-    record = _exact_mapping(value, {"path", "bytes", "sha256"}, label)
+    record = _exact_mapping(value, {"path", "bytes", "sha256", "mode"}, label)
     path = _relative_file(root, record["path"], label)
     if type(record["bytes"]) is not int or record["bytes"] < 0:
         _fail(f"{label} byte count is invalid")
@@ -226,7 +270,11 @@ def _file_record(root: Path, value: object, label: str) -> dict[str, object]:
         _fail(f"{label} byte count changed")
     if _sha256(path) != record["sha256"]:
         _fail(f"{label} bytes changed")
-    return {"path": record["path"], "bytes": record["bytes"], "sha256": record["sha256"]}
+    if type(record["mode"]) is not int or not 0 <= record["mode"] <= 0o777:
+        _fail(f"{label} mode is invalid")
+    if stat.S_IMODE(path.stat().st_mode) != record["mode"]:
+        _fail(f"{label} mode changed")
+    return {"path": record["path"], "bytes": record["bytes"], "sha256": record["sha256"], "mode": record["mode"]}
 
 
 def _identity(root: Path, path: Path) -> dict[str, object]:
@@ -237,7 +285,7 @@ def _identity(root: Path, path: Path) -> dict[str, object]:
     metadata = path.lstat()
     if not stat.S_ISREG(metadata.st_mode) or path.is_symlink():
         _fail(f"retained path is not a physical regular file: {relative}")
-    return {"path": relative, "bytes": metadata.st_size, "sha256": _sha256(path)}
+    return {"path": relative, "bytes": metadata.st_size, "sha256": _sha256(path), "mode": stat.S_IMODE(metadata.st_mode)}
 
 
 def _copy_regular(source: Path, destination: Path) -> None:
@@ -270,12 +318,14 @@ def validate_command_record(
     role: str,
     cwd: str,
     argv: Sequence[str],
+    environment: Mapping[str, str],
+    launcher: Sequence[str],
 ) -> dict[str, object]:
-    """Validate one successful command and its three immutable raw streams."""
+    """Validate one successful command and its immutable launch-context streams."""
 
     record = _exact_mapping(
         value,
-        {"schema", "role", "cwd", "argv", "status", "stdout", "stderr", "status_stream"},
+        {"schema", "role", "cwd", "argv", "status", "environment", "stdin", "launcher", "stdout", "stderr", "status_stream", "cwd_stream", "environment_stream", "stdin_stream", "launcher_stream"},
         "retained command",
     )
     if record["schema"] != COMMAND_SCHEMA or record["role"] != role:
@@ -286,12 +336,27 @@ def validate_command_record(
         _fail("retained command argv changed")
     if record["status"] != 0:
         _fail("retained command status changed")
+    if record["environment"] != dict(environment):
+        _fail("retained command environment changed")
+    if record["stdin"] != "/dev/null":
+        _fail("retained command stdin changed")
+    if record["launcher"] != list(launcher):
+        _fail("retained command launcher changed")
     result = {name: _file_record(root, record[name], f"retained command {name}")
-              for name in ("stdout", "stderr", "status_stream")}
+              for name in ("stdout", "stderr", "status_stream", "cwd_stream", "environment_stream", "stdin_stream", "launcher_stream")}
     status_path = _relative_file(root, result["status_stream"]["path"], "retained command status")
     if status_path.read_bytes() != b"0\n":
         _fail("retained command raw status stream changed")
-    return {"role": role, "argv": list(argv), "cwd": cwd, "status": 0, **result}
+    if _relative_file(root, result["cwd_stream"]["path"], "retained command cwd").read_bytes() != (cwd + "\n").encode():
+        _fail("retained command cwd stream changed")
+    if _strict_json(_relative_file(root, result["environment_stream"]["path"], "retained command environment"), "retained command environment") != dict(environment):
+        _fail("retained command environment stream changed")
+    if _relative_file(root, result["stdin_stream"]["path"], "retained command stdin").read_bytes() != b"/dev/null\n":
+        _fail("retained command stdin stream changed")
+    if _strict_json(_relative_file(root, result["launcher_stream"]["path"], "retained command launcher"), "retained command launcher") != record["launcher"]:
+        _fail("retained command launcher stream changed")
+    return {"role": role, "argv": list(argv), "cwd": cwd, "status": 0,
+            "environment": dict(environment), "stdin": "/dev/null", "launcher": record["launcher"], **result}
 
 
 def source_records(root: Path, paths: Iterable[str]) -> list[dict[str, object]]:
@@ -304,7 +369,7 @@ def source_records(root: Path, paths: Iterable[str]) -> list[dict[str, object]]:
             _fail("source roster is not finite and unique")
         seen.add(value)
         path = _relative_file(root, value, "source")
-        records.append({"path": value, "bytes": path.stat().st_size, "sha256": _sha256(path)})
+        records.append({"path": value, "bytes": path.stat().st_size, "sha256": _sha256(path), "mode": stat.S_IMODE(path.stat().st_mode)})
     if not records:
         _fail("source roster is empty")
     return records
@@ -380,6 +445,7 @@ def validate_source_contract(root: Path) -> dict[str, object]:
     objects = texts["libc/src/c_abi/x86_64/locale_objects.rs"]
     timezone = texts["libc/src/c_abi/x86_64/owned_timezone.rs"]
     static_c_abi = texts["libc/src/c_abi/x86_64/static_c_abi.rs"]
+    oracle_wrapper = (root / "docker/x86_64-musl-oracle-gcc").read_text(encoding="utf-8")
     if '".weak __freelocale", ".set __freelocale, freelocale"' not in objects:
         _fail("source reverse freelocale declaration changed")
     if '#[linkage = "weak"]\npub extern "C" fn tzset()' not in timezone:
@@ -390,6 +456,8 @@ def validate_source_contract(root: Path) -> dict[str, object]:
         filename = Path(source).name
         if f'#[path = "{filename}"]' not in static_c_abi:
             _fail(f"selected static source is not composed: {filename}")
+    if not oracle_wrapper.startswith("#!/bin/sh\n") or 'exec /usr/bin/gcc -specs /opt/musl-1.2.6/lib/musl-gcc.specs "$@"' not in oracle_wrapper:
+        _fail("pinned musl compiler wrapper changed")
     return {
         "visible_pairs": len(contract["visible_aliases"]),
         "hidden_pairs": len(contract["hidden_aliases"]),
@@ -420,14 +488,14 @@ def _runner_plan(output_relative: str) -> list[tuple[str, list[str]]]:
         add(f"oracle-dynamic-{mode}-link", [ORACLE_COMPILER, *flags, f"{work}/probe.o", "-Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1", "-o", f"{work}/oracle-dynamic-{mode}"])
         add(f"candidate-dynamic-{mode}-link", [f"{dynamic}/bin/crabc-cc-dynamic", f"--dynamic-{mode}", "-rdynamic", f"{work}/probe.o", "-o", f"{work}/candidate-dynamic-{mode}"])
     for executable in ("oracle-static", "candidate-static", "candidate-static-pie", "oracle-dynamic-pie", "oracle-dynamic-non-pie", "candidate-dynamic-pie", "candidate-dynamic-non-pie"):
-        add(f"{executable}-header", ["readelf", "-h", f"{work}/{executable}"])
-    add("oracle-static-run", ["env", "-i", "TZ=UTC", f"{work}/oracle-static"])
-    add("candidate-static-run", ["env", "-i", "TZ=UTC", f"{work}/candidate-static"])
-    add("candidate-static-pie-run", ["env", "-i", "TZ=UTC", f"{work}/candidate-static-pie"])
+        add(f"{executable}-header", ["/usr/bin/readelf", "-h", f"{work}/{executable}"])
+    add("oracle-static-run", ["/usr/bin/env", "-i", "TZ=UTC", f"{work}/oracle-static"])
+    add("candidate-static-run", ["/usr/bin/env", "-i", "TZ=UTC", f"{work}/candidate-static"])
+    add("candidate-static-pie-run", ["/usr/bin/env", "-i", "TZ=UTC", f"{work}/candidate-static-pie"])
     for mode in ("pie", "non-pie"):
         for entry in ("kernel", "direct"):
-            oracle = ["chroot", f"{work}/oracle-dynamic-root"]
-            candidate = ["chroot", f"{work}/candidate-dynamic-root"]
+            oracle = ["/usr/sbin/chroot", f"{work}/oracle-dynamic-root"]
+            candidate = ["/usr/sbin/chroot", f"{work}/candidate-dynamic-root"]
             if entry == "kernel":
                 oracle.append(f"/consumer-{mode}")
                 candidate.append(f"/consumer-{mode}")
@@ -436,15 +504,15 @@ def _runner_plan(output_relative: str) -> list[tuple[str, list[str]]]:
                 candidate.extend(["/lib/ld-crabc-x86_64.so.1", f"/consumer-{mode}"])
             add(f"oracle-dynamic-{mode}-{entry}", oracle)
             add(f"candidate-dynamic-{mode}-{entry}", candidate)
-    add("oracle-static-symbols", ["readelf", "-Ws", "/opt/musl-1.2.6/lib/libc.a"])
-    add("oracle-dynamic-symbols", ["readelf", "--dyn-syms", "-W", "/opt/musl-1.2.6/lib/libc.so"])
-    add("oracle-shared-symbols", ["readelf", "-Ws", "/opt/musl-1.2.6/lib/libc.so"])
-    add("candidate-static-symbols", ["readelf", "-Ws", f"{static}/usr/lib/libc.a"])
-    add("candidate-dynamic-symbols", ["readelf", "--dyn-syms", "-W", f"{dynamic}/usr/lib/libc.so"])
-    add("candidate-shared-symbols", ["readelf", "-Ws", f"{dynamic}/usr/lib/libc.so"])
-    add("executable-dynamic-pie-symbols", ["readelf", "--dyn-syms", "-W", f"{work}/candidate-dynamic-pie"])
-    add("executable-dynamic-non-pie-symbols", ["readelf", "--dyn-syms", "-W", f"{work}/candidate-dynamic-non-pie"])
-    add("alias-symbol-observation", ["python3", "-B", symbol_reader, contract,
+    add("oracle-static-symbols", ["/usr/bin/readelf", "-Ws", "/opt/musl-1.2.6/lib/libc.a"])
+    add("oracle-dynamic-symbols", ["/usr/bin/readelf", "--dyn-syms", "-W", "/opt/musl-1.2.6/lib/libc.so"])
+    add("oracle-shared-symbols", ["/usr/bin/readelf", "-Ws", "/opt/musl-1.2.6/lib/libc.so"])
+    add("candidate-static-symbols", ["/usr/bin/readelf", "-Ws", f"{static}/usr/lib/libc.a"])
+    add("candidate-dynamic-symbols", ["/usr/bin/readelf", "--dyn-syms", "-W", f"{dynamic}/usr/lib/libc.so"])
+    add("candidate-shared-symbols", ["/usr/bin/readelf", "-Ws", f"{dynamic}/usr/lib/libc.so"])
+    add("executable-dynamic-pie-symbols", ["/usr/bin/readelf", "--dyn-syms", "-W", f"{work}/candidate-dynamic-pie"])
+    add("executable-dynamic-non-pie-symbols", ["/usr/bin/readelf", "--dyn-syms", "-W", f"{work}/candidate-dynamic-non-pie"])
+    add("alias-symbol-observation", ["/usr/bin/python3", "-B", symbol_reader, contract,
                                      f"{work}/oracle-static-symbols.stdout", f"{work}/oracle-dynamic-symbols.stdout", f"{work}/oracle-shared-symbols.stdout",
                                      f"{work}/candidate-static-symbols.stdout", f"{work}/candidate-dynamic-symbols.stdout", f"{work}/candidate-shared-symbols.stdout",
                                      f"{work}/executable-dynamic-pie-symbols.stdout", f"{work}/executable-dynamic-non-pie-symbols.stdout", f"{work}/alias-observation.json"])
@@ -464,7 +532,8 @@ def _runner_records(root: Path, output_relative: str, records: object) -> list[d
 
 def _raw_runner_records(root: Path, output_relative: str) -> list[dict[str, object]]:
     raw = _relative_directory(root, RUNNER_DIRECTORY, "runner raw")
-    expected = {f"{stem}.{suffix}" for stem in RUNNER_STEMS for suffix in ("argv.json", "cwd", "stdout", "stderr", "status")}
+    expected = {f"{stem}.{suffix}" for stem in RUNNER_STEMS
+                for suffix in ("argv.json", "cwd", "environment.json", "stdin", "launcher.json", "stdout", "stderr", "status")}
     expected.update({"before.sha256", "after.sha256", "alias-observation.json"})
     generated = {
         "probe.o", "oracle-static", "candidate-static", "candidate-static-pie",
@@ -496,12 +565,19 @@ def _raw_runner_records(root: Path, output_relative: str) -> list[dict[str, obje
             "cwd": SOURCE_MOUNT,
             "argv": argv,
             "status": 0 if (raw / f"{stem}.status").read_bytes() == b"0\n" else -1,
+            "environment": COMMAND_ENVIRONMENT,
+            "stdin": "/dev/null",
+            "launcher": RUNNER_LAUNCHER,
             "stdout": _identity(root, raw / f"{stem}.stdout"),
             "stderr": _identity(root, raw / f"{stem}.stderr"),
             "status_stream": _identity(root, raw / f"{stem}.status"),
+            "cwd_stream": _identity(root, cwd_path),
+            "environment_stream": _identity(root, raw / f"{stem}.environment.json"),
+            "stdin_stream": _identity(root, raw / f"{stem}.stdin"),
+            "launcher_stream": _identity(root, raw / f"{stem}.launcher.json"),
         })
     for record, (role, argv) in zip(records, _runner_plan(output_relative)):
-        validate_command_record(root, record, role=role, cwd=SOURCE_MOUNT, argv=argv)
+        validate_command_record(root, record, role=role, cwd=SOURCE_MOUNT, argv=argv, environment=COMMAND_ENVIRONMENT, launcher=RUNNER_LAUNCHER)
     return records
 
 
@@ -523,11 +599,11 @@ def _snapshot(root: Path, name: str) -> dict[str, object]:
         if len(digest) != 64 or filename != _mount(expected):
             _fail(f"runner {name} snapshot path changed")
         records.append({"path": expected, "sha256": digest})
-    return {"path": f"{RUNNER_DIRECTORY}/{name}.sha256", "records": records, "sha256": _sha256(path)}
+    return {"stream": _identity(root, path), "records": records}
 
 
 def _validate_snapshot(root: Path, value: object, name: str) -> dict[str, object]:
-    record = _exact_mapping(value, {"path", "records", "sha256"}, f"runner {name} snapshot")
+    record = _exact_mapping(value, {"stream", "records"}, f"runner {name} snapshot")
     current = _snapshot(root, name)
     if record != current:
         _fail(f"runner {name} snapshot bytes changed")
@@ -600,14 +676,18 @@ def _tree_records(root: Path, directory: str) -> list[dict[str, object]]:
     path = _relative_directory(root, directory, f"{directory} product")
     records: list[dict[str, object]] = []
     for candidate in sorted(path.rglob("*")):
+        metadata = candidate.lstat()
+        relative = candidate.relative_to(root).as_posix()
         if candidate.is_symlink():
             target = os.readlink(candidate)
-            records.append({"path": candidate.relative_to(root).as_posix(), "kind": "symlink", "target": target})
-        elif candidate.is_file():
+            records.append({"path": relative, "kind": "symlink", "target": target,
+                            "mode": stat.S_IMODE(metadata.st_mode)})
+        elif stat.S_ISREG(metadata.st_mode):
             identity = _identity(root, candidate)
-            records.append({"path": identity["path"], "kind": "file", "bytes": identity["bytes"], "sha256": identity["sha256"]})
-        elif candidate.is_dir():
-            continue
+            records.append({"path": identity["path"], "kind": "file", "bytes": identity["bytes"],
+                            "sha256": identity["sha256"], "mode": identity["mode"]})
+        elif stat.S_ISDIR(metadata.st_mode):
+            records.append({"path": relative, "kind": "directory", "mode": stat.S_IMODE(metadata.st_mode)})
         else:
             _fail(f"product has unsupported filesystem entry: {candidate}")
     if not records:
@@ -615,7 +695,7 @@ def _tree_records(root: Path, directory: str) -> list[dict[str, object]]:
     return records
 
 
-def _validate_products(root: Path, value: object) -> dict[str, object]:
+def _validate_products(root: Path, value: object, source_state: Mapping[str, object]) -> dict[str, object]:
     expected = {"static", "dynamic"}
     records = _exact_mapping(value, expected, "retained products")
     sys.path.insert(0, str(ROOT / "compat/x86_64"))
@@ -623,7 +703,12 @@ def _validate_products(root: Path, value: object) -> dict[str, object]:
 
     result: dict[str, object] = {}
     for name in ("static", "dynamic"):
-        item = _exact_mapping(records[name], {"tree", "manifest"}, f"{name} retained product")
+        fields = {"tree", "manifest", "source_before", "source_after"}
+        if name == "dynamic":
+            fields.add("state")
+        item = _exact_mapping(records[name], fields, f"{name} retained product")
+        if item["source_before"] != source_state or item["source_after"] != source_state:
+            _fail(f"{name} product source transaction changed")
         current_tree = _tree_records(root, f"products/{name}")
         if item["tree"] != current_tree:
             _fail(f"{name} retained product tree changed")
@@ -633,48 +718,196 @@ def _validate_products(root: Path, value: object) -> dict[str, object]:
         manifest = _identity(root, manifest_path)
         if item["manifest"] != manifest:
             _fail(f"{name} retained product manifest changed")
-        result[name] = {"tree": current_tree, "manifest": manifest}
+        result[name] = {"tree": current_tree, "manifest": manifest,
+                        "source_before": source_state, "source_after": source_state}
+        if name == "dynamic":
+            state_path = product / "share/crabc/dynamic-product-state.json"
+            state = _identity(root, state_path)
+            if item["state"] != state:
+                _fail("dynamic product state changed")
+            state_value = _strict_json(state_path, "dynamic product state")
+            if not isinstance(state_value, Mapping) or state_value.get("source_sha256") != source_state["content_sha256"]:
+                _fail("dynamic product source identity differs from receipt source")
+            result[name]["state"] = state
     return result
 
 
-def _oracle_records(root: Path) -> dict[str, object]:
-    oracle = _relative_directory(root, "inputs/oracle", "pinned musl")
-    expected = {"lib/libc.a", "lib/libc.so", ".crabc-oracle", "lib/musl-gcc.specs", "bin/crabc-x86_64-musl-gcc"}
-    actual = {path.relative_to(oracle).as_posix() for path in oracle.rglob("*") if path.is_file()}
-    if actual != expected:
-        _fail("pinned musl retained file roster changed")
-    metadata = (oracle / ".crabc-oracle").read_text(encoding="ascii")
-    expected_metadata = (
-        "format=crabc-pinned-musl-oracle-v1\n"
-        "version=1.2.6\n"
-        f"source_sha256={MUSL_SOURCE_SHA256}\n"
-        f"fallback_revision={MUSL_REVISION}\n"
-        "architecture=x86_64\n"
-    )
-    if metadata != expected_metadata:
-        _fail("pinned musl metadata changed")
-    return {path: _identity(root, oracle / path) for path in sorted(expected)}
+def _hex(value: object, length: int, label: str) -> str:
+    if not isinstance(value, str) or len(value) != length or any(character not in "0123456789abcdef" for character in value):
+        _fail(f"{label} is invalid")
+    return value
 
 
-def _validate_source_seal(root: Path, value: object, source_directory: str) -> list[dict[str, object]]:
-    record = _exact_mapping(value, {"revision", "clean", "paths"}, "source seal")
-    if record["clean"] is not True:
+def _trusted_image_manifest() -> dict[str, object]:
+    """Read the finite checked-in image input authority without probing a host."""
+
+    value = _strict_json(ROOT / IMAGE_MANIFEST_PATH, "trusted locale image input manifest")
+    manifest = _exact_mapping(value, {"schema", "image", "path", "files"}, "trusted locale image input manifest")
+    if manifest["schema"] != "crabc.x86_64-locale-alias-image-inputs/v1":
+        _fail("trusted locale image manifest schema changed")
+    if manifest["image"] != PINNED_IMAGE.removeprefix("crabc-core-evidence@") or manifest["path"] != COMMAND_PATH:
+        _fail("trusted locale image identity changed")
+    files = manifest["files"]
+    if not isinstance(files, Mapping) or not files:
+        _fail("trusted locale image input roster is empty")
+    if set(files) != set(IMAGE_INPUTS) or len(IMAGE_INPUTS) != len(set(IMAGE_INPUTS)):
+        _fail("trusted locale image manifest has an unexpected oracle or tool roster")
+    for invocation, record in files.items():
+        if not isinstance(invocation, str) or not invocation.startswith("/"):
+            _fail("trusted locale image invocation changed")
+        entry = _exact_mapping(record, {"path", "sha256", "size", "mode"}, "trusted locale image input")
+        if not isinstance(entry["path"], str) or not entry["path"].startswith("/"):
+            _fail("trusted locale image physical path changed")
+        _hex(entry["sha256"], 64, "trusted locale image hash")
+        if type(entry["size"]) is not int or entry["size"] < 0 or type(entry["mode"]) is not int or not 0 <= entry["mode"] <= 0o777:
+            _fail("trusted locale image input identity changed")
+    return dict(manifest)
+
+
+def _copy_image_inputs(root: Path, receipt_root: Path) -> dict[str, object]:
+    """Copy each manifest-selected physical image input before any producer runs."""
+
+    manifest = _trusted_image_manifest()
+    files = manifest["files"]
+    assert isinstance(files, Mapping)
+    records: dict[str, object] = {}
+    for index, invocation in enumerate(sorted(files)):
+        expected = files[invocation]
+        assert isinstance(expected, Mapping)
+        try:
+            source = Path(invocation).resolve(strict=True)
+        except OSError as error:
+            raise LocaleAliasReceiptError(f"pinned locale image input is absent: {invocation}") from error
+        metadata = source.lstat()
+        if not stat.S_ISREG(metadata.st_mode) or source.is_symlink() or str(source) != expected["path"]:
+            _fail(f"pinned locale image input physical path changed: {invocation}")
+        if (_sha256(source), metadata.st_size, stat.S_IMODE(metadata.st_mode)) != (expected["sha256"], expected["size"], expected["mode"]):
+            _fail(f"pinned locale image input bytes or mode changed: {invocation}")
+        destination = receipt_root / "inputs/image" / f"{index:02d}-{expected['sha256']}"
+        _copy_regular(source, destination)
+        records[invocation] = {"image": dict(expected), "retained": _identity(receipt_root, destination)}
+    return {"id": PINNED_IMAGE,
+            "manifest": _identity(receipt_root, receipt_root / "inputs/source" / IMAGE_MANIFEST_PATH),
+            "files": records}
+
+
+def _validate_image_inputs(root: Path, value: object) -> dict[str, object]:
+    record = _exact_mapping(value, {"id", "manifest", "files"}, "retained locale image inputs")
+    if record["id"] != PINNED_IMAGE:
+        _fail("retained locale image identity changed")
+    manifest_record = _file_record(root, record["manifest"], "retained locale image manifest")
+    if manifest_record != _identity(root, root / "inputs/source" / IMAGE_MANIFEST_PATH):
+        _fail("retained locale image manifest is not the copied selected source")
+    retained_manifest = _strict_json(root / manifest_record["path"], "retained locale image manifest")
+    trusted = _trusted_image_manifest()
+    if retained_manifest != trusted:
+        _fail("retained locale image manifest differs from trusted source")
+    entries = record["files"]
+    if not isinstance(entries, Mapping) or set(entries) != set(trusted["files"]):
+        _fail("retained locale image file roster changed")
+    actual: dict[str, object] = {}
+    for invocation in sorted(entries):
+        item = _exact_mapping(entries[invocation], {"image", "retained"}, "retained locale image input")
+        expected = trusted["files"][invocation]
+        if item["image"] != expected:
+            _fail("retained locale image input no longer matches its manifest")
+        retained = _file_record(root, item["retained"], "retained locale image input")
+        if {key: retained[key] for key in ("sha256", "bytes", "mode")} != {"sha256": expected["sha256"], "bytes": expected["size"], "mode": expected["mode"]}:
+            _fail("retained locale image input bytes or mode changed")
+        actual[invocation] = {"image": expected, "retained": retained}
+    return {"id": PINNED_IMAGE, "manifest": manifest_record, "files": actual}
+
+
+def _live_source_state(root: Path) -> dict[str, object]:
+    """Require exact clean HEAD/tree and hash every source byte/mode, including untracked."""
+
+    sys.path.insert(0, str(ROOT / "compat/x86_64"))
+    import owned_posix_static_products as static_products
+
+    try:
+        state = static_products.source_identity(root)
+        tree = subprocess.check_output(["/usr/bin/git", "rev-parse", str(state["revision"]) + "^{tree}"], cwd=root, text=True).strip()
+    except (OSError, subprocess.CalledProcessError, RuntimeError, ValueError) as error:
+        raise LocaleAliasReceiptError("locale receipt cannot read the clean Git source state") from error
+    _hex(state.get("revision"), 40, "source revision")
+    _hex(tree, 40, "source tree")
+    _hex(state.get("content_sha256"), 64, "source content digest")
+    return {"revision": state["revision"], "tree": tree, "content_sha256": state["content_sha256"], "clean": True}
+
+
+def _retained_git_tree(root: Path, revision: str) -> str:
+    """Read the commit's tree object directly from retained Git bytes."""
+
+    path = _relative_file(root, f"source/git-objects/{revision}", "retained Git commit")
+    try:
+        raw = zlib.decompress(path.read_bytes())
+        header, body = raw.split(b"\0", 1)
+    except (OSError, ValueError, zlib.error) as error:
+        raise LocaleAliasReceiptError("retained Git commit is malformed") from error
+    if hashlib.sha1(raw).hexdigest() != revision or header != b"commit " + str(len(body)).encode():
+        _fail("retained Git commit identity changed")
+    first = body.split(b"\n", 1)[0]
+    if not first.startswith(b"tree "):
+        _fail("retained Git commit omits its tree")
+    return _hex(first[5:].decode("ascii", "strict"), 40, "retained Git tree")
+
+
+def _capture_source_phase(root: Path, receipt_root: Path, directory: str, state: Mapping[str, object] | None = None) -> dict[str, object]:
+    """Copy selected source after authenticating the complete clean Git tree."""
+
+    live = _live_source_state(root)
+    if state is not None and live != state:
+        _fail("source changed during locale alias collection")
+    sys.path.insert(0, str(ROOT / "compat/x86_64"))
+    import owned_syscall_alias_authority as authority
+
+    if state is None:
+        authority.capture_git_objects(root, receipt_root, [live["revision"]])
+    try:
+        authenticated, files = authority.source_tree(receipt_root, live["revision"])
+    except authority.AuthorityError as error:
+        raise LocaleAliasReceiptError("retained Git source authority is invalid") from error
+    if authenticated != {"revision": live["revision"], "content_sha256": live["content_sha256"]} or _retained_git_tree(receipt_root, live["revision"]) != live["tree"]:
+        _fail("retained complete Git source authority differs from clean source state")
+    source_root = receipt_root / directory
+    for relative in SELECTED_SOURCES:
+        expected = files.get(relative)
+        if expected is None or expected[2] or expected[0] != stat.S_IMODE((root / relative).stat().st_mode) or expected[1] != (root / relative).read_bytes():
+            _fail(f"selected source differs from authenticated Git tree: {relative}")
+        _copy_regular(root / relative, source_root / relative)
+    return {**live, "paths": source_records(source_root, SELECTED_SOURCES)}
+
+
+def _validate_source_seal(root: Path, value: object, source_directory: str) -> dict[str, object]:
+    record = _exact_mapping(value, {"revision", "tree", "content_sha256", "clean", "paths"}, "source seal")
+    if record["clean"] is not True or not isinstance(record["paths"], list):
         _fail("source seal is not clean")
-    if (not isinstance(record["revision"], str) or len(record["revision"]) != 40
-            or any(character not in "0123456789abcdef" for character in record["revision"])):
-        _fail("source revision is invalid")
-    if not isinstance(record["paths"], list):
-        _fail("source seal paths are invalid")
+    revision = _hex(record["revision"], 40, "source revision")
+    tree = _hex(record["tree"], 40, "source tree")
+    digest = _hex(record["content_sha256"], 64, "source content digest")
+    sys.path.insert(0, str(ROOT / "compat/x86_64"))
+    import owned_syscall_alias_authority as authority
+    try:
+        authenticated, files = authority.source_tree(root, revision)
+    except authority.AuthorityError as error:
+        raise LocaleAliasReceiptError("retained complete Git source authority is invalid") from error
+    if authenticated != {"revision": revision, "content_sha256": digest} or _retained_git_tree(root, revision) != tree:
+        _fail("retained complete Git source authority differs from source seal")
     retained_root = _relative_directory(root, source_directory, "retained source")
     retained = source_records(retained_root, SELECTED_SOURCES)
     if record["paths"] != retained:
         _fail("retained source bytes changed")
-    current = source_records(ROOT, SELECTED_SOURCES)
-    if retained != current:
-        _fail("current selected source differs from retained native receipt")
+    for source in retained:
+        path = source["path"]
+        expected = files.get(path)
+        if expected is None or expected[2] or expected[0] != source["mode"] or expected[1] != (retained_root / path).read_bytes():
+            _fail(f"retained source differs from authenticated Git tree: {path}")
+        current = _relative_file(ROOT, path, "current selected source")
+        if current.read_bytes() != expected[1] or stat.S_IMODE(current.stat().st_mode) != expected[0]:
+            _fail(f"current selected source differs from retained native receipt: {path}")
     validate_source_contract(retained_root)
     validate_source_contract(ROOT)
-    return retained
+    return {"revision": revision, "tree": tree, "content_sha256": digest, "clean": True, "paths": retained}
 
 
 def _expected_collector_commands(output_relative: str) -> list[tuple[str, list[str]]]:
@@ -683,8 +916,8 @@ def _expected_collector_commands(output_relative: str) -> list[tuple[str, list[s
     runner = _mount(RUNNER_PATH)
     raw = _mount(f"{output_relative}/{RUNNER_DIRECTORY}")
     return [
-        ("build-static", ["python3", "-B", _mount(STATIC_BUILDER_PATH), "--output", static]),
-        ("build-dynamic", ["python3", "-B", _mount(DYNAMIC_BUILDER_PATH), "--output", dynamic]),
+        ("build-static", ["/usr/bin/python3", "-B", _mount(STATIC_BUILDER_PATH), "--output", static]),
+        ("build-dynamic", ["/usr/bin/python3", "-B", _mount(DYNAMIC_BUILDER_PATH), "--output", dynamic]),
         ("locale-alias-runner", [runner, "--receipt-dir", raw, "--static-sysroot", static, dynamic]),
     ]
 
@@ -694,11 +927,13 @@ def _raw_collector_commands(root: Path, output_relative: str) -> list[dict[str, 
     expected_names = {
         f"{role}.{suffix}"
         for role, _argv in _expected_collector_commands(output_relative)
-        for suffix in ("argv.json", "cwd", "stdout", "stderr", "status")
+        for suffix in ("argv.json", "cwd", "environment.json", "stdin", "launcher.json", "stdout", "stderr", "status")
     }
     actual_names = {path.name for path in collector.iterdir()}
     if actual_names != expected_names:
         _fail("collector raw file roster changed")
+    environment = _collector_environment(output_relative)
+    launcher = _collector_launcher(output_relative)
     records: list[dict[str, object]] = []
     for role, argv in _expected_collector_commands(output_relative):
         argv_path = collector / f"{role}.argv.json"
@@ -710,12 +945,17 @@ def _raw_collector_commands(root: Path, output_relative: str) -> list[dict[str, 
         records.append({
             "schema": COMMAND_SCHEMA, "role": role, "cwd": SOURCE_MOUNT,
             "argv": received_argv, "status": 0 if status_path.read_bytes() == b"0\n" else -1,
+            "environment": environment, "stdin": "/dev/null", "launcher": launcher,
             "stdout": _identity(root, collector / f"{role}.stdout"),
             "stderr": _identity(root, collector / f"{role}.stderr"),
             "status_stream": _identity(root, status_path),
+            "cwd_stream": _identity(root, cwd_path),
+            "environment_stream": _identity(root, collector / f"{role}.environment.json"),
+            "stdin_stream": _identity(root, collector / f"{role}.stdin"),
+            "launcher_stream": _identity(root, collector / f"{role}.launcher.json"),
         })
     for record, (role, argv) in zip(records, _expected_collector_commands(output_relative)):
-        validate_command_record(root, record, role=role, cwd=SOURCE_MOUNT, argv=argv)
+        validate_command_record(root, record, role=role, cwd=SOURCE_MOUNT, argv=argv, environment=environment, launcher=launcher)
     return records
 
 
@@ -726,6 +966,66 @@ def _validate_collector_commands(root: Path, output_relative: str, value: object
     if value != actual:
         _fail("collector command records do not name the retained raw streams")
     return actual
+
+
+def _validate_execution_tools(
+    root: Path,
+    output_relative: str,
+    source: Mapping[str, object],
+    image: Mapping[str, object],
+    products: Mapping[str, object],
+    collector: Sequence[Mapping[str, object]],
+    runner: Sequence[Mapping[str, object]],
+) -> None:
+    """Join every recorded executable and launcher to a retained input policy."""
+
+    source_entries = {item["path"]: item for item in source["paths"]}
+    image_files = image["files"]
+    assert isinstance(image_files, Mapping)
+    product_prefix = _mount(f"{output_relative}/products/")
+
+    def require_program(program: object, label: str) -> None:
+        if not isinstance(program, str) or not program:
+            _fail(f"{label} program is malformed")
+        if program.startswith(SOURCE_MOUNT + "/"):
+            relative = program[len(SOURCE_MOUNT) + 1:]
+            if relative in {STATIC_BUILDER_PATH, DYNAMIC_BUILDER_PATH, RUNNER_PATH}:
+                retained = _identity(root, root / "inputs/source" / relative)
+                if source_entries.get(relative) != retained:
+                    _fail(f"{label} source tool differs from retained source")
+                return
+            if program.startswith(product_prefix):
+                product_relative = relative[len(f"{output_relative}/products/"):]
+                product_name = product_relative.split("/", 1)[0]
+                if product_name not in {"static", "dynamic"}:
+                    _fail(f"{label} product tool root changed")
+                retained_path = f"products/{product_relative}"
+                retained = _relative_file(root, retained_path, f"{label} product tool")
+                tree = products[product_name]["tree"]
+                if not any(entry.get("kind") == "file" and entry.get("path") == retained_path for entry in tree):
+                    _fail(f"{label} product tool is absent from retained product tree")
+                _identity(root, retained)
+                return
+            _fail(f"{label} executable escapes retained source or product")
+        if program not in image_files:
+            _fail(f"{label} executable is not a retained image input")
+        item = image_files[program]
+        assert isinstance(item, Mapping)
+        retained = item["retained"]
+        assert isinstance(retained, Mapping)
+        _file_record(root, retained, f"{label} image tool")
+
+    require_program("/bin/bash", "runner interpreter")
+    require_program("/bin/sh", "oracle compiler interpreter")
+    require_program("/usr/bin/gcc", "oracle compiler backend")
+    for record in [*collector, *runner]:
+        require_program(record["argv"][0] if isinstance(record.get("argv"), list) and record["argv"] else None,
+                        f"{record.get('role', 'recorded')} command")
+        launcher = record.get("launcher")
+        if not isinstance(launcher, list) or len(launcher) < 2:
+            _fail("recorded launcher is malformed")
+        require_program(launcher[0], f"{record.get('role', 'recorded')} launcher")
+        require_program(launcher[-2], f"{record.get('role', 'recorded')} timeout")
 
 
 def validate_report(root: Path, report_path: Path) -> dict[str, object]:
@@ -742,25 +1042,25 @@ def validate_report(root: Path, report_path: Path) -> dict[str, object]:
         raise LocaleAliasReceiptError("receipt report is outside supplied checkout") from error
     _output_relative(root, receipt_root)
     report = _strict_json(report_path, "locale alias receipt report")
-    expected = {"schema", "status", "oracle", "source_before", "source_after", "source_contract", "products", "collector_commands", "runner_commands", "snapshots", "artifacts", "runtime", "symbols", "nonclaims"}
+    expected = {"schema", "status", "mode_policy", "image_inputs", "source_before", "source_after", "source_contract", "products", "collector_commands", "runner_commands", "snapshots", "artifacts", "runtime", "symbols", "nonclaims"}
     record = _exact_mapping(report, expected, "locale alias receipt report")
-    if record["schema"] != SCHEMA or record["status"] != STATUS or record["nonclaims"] != list(NONCLAIMS):
+    if (record["schema"] != SCHEMA or record["status"] != STATUS or record["mode_policy"] != MODE_POLICY
+            or record["nonclaims"] != list(NONCLAIMS)):
         _fail("locale alias receipt status changed")
     if record["source_before"] != record["source_after"]:
         _fail("source changed during locale alias collection")
-    sources = _validate_source_seal(receipt_root, record["source_before"], "inputs/source")
-    after_sources = _validate_source_seal(receipt_root, record["source_after"], "source-after/inputs/source")
-    if sources != after_sources:
+    source = _validate_source_seal(receipt_root, record["source_before"], "inputs/source")
+    after_source = _validate_source_seal(receipt_root, record["source_after"], "source-after/inputs/source")
+    if source != after_source:
         _fail("retained source before/after bytes differ")
     source_contract = validate_source_contract(receipt_root / "inputs/source")
     if record["source_contract"] != source_contract:
         _fail("source alias contract observation changed")
-    oracle = _oracle_records(receipt_root)
-    if record["oracle"] != oracle:
-        _fail("pinned musl receipt changed")
-    products = _validate_products(receipt_root, record["products"])
+    image = _validate_image_inputs(receipt_root, record["image_inputs"])
+    products = _validate_products(receipt_root, record["products"], source)
     collector_commands = _validate_collector_commands(receipt_root, output_relative, record["collector_commands"])
     runner_commands = _runner_records(receipt_root, output_relative, record["runner_commands"])
+    _validate_execution_tools(receipt_root, output_relative, source, image, products, collector_commands, runner_commands)
     artifacts = _validate_artifacts(receipt_root, record["artifacts"])
     snapshots = {name: _validate_snapshot(receipt_root, record["snapshots"].get(name) if isinstance(record["snapshots"], Mapping) else None, name)
                  for name in ("before", "after")}
@@ -773,9 +1073,9 @@ def validate_report(root: Path, report_path: Path) -> dict[str, object]:
     if record["symbols"] != symbols:
         _fail("symbol observation changed")
     return {
-        "sources": sources,
+        "source": source,
+        "image_inputs": image,
         "products": products,
-        "oracle": oracle,
         "collector_commands": collector_commands,
         "runner_commands": runner_commands,
         "artifacts": artifacts,
@@ -797,50 +1097,68 @@ def _require_native_collection(root: Path, output: Path) -> str:
 
 
 def _run(root: Path, receipt_root: Path, role: str, argv: list[str], *, env: Mapping[str, str]) -> dict[str, object]:
+    """Run one collector action through the same sealed launcher as the runner."""
+
+    output_relative = _output_relative(root, receipt_root)
+    environment = _collector_environment(output_relative)
+    launcher = _collector_launcher(output_relative)
+    if dict(env) != {**COMMAND_ENVIRONMENT, "TMPDIR": str(receipt_root / "tmp"), "TZ": "UTC", "PYTHONDONTWRITEBYTECODE": "1"}:
+        _fail("collector environment differs from its closed contract")
     raw = receipt_root / "collector" / role
     raw.parent.mkdir(parents=True, exist_ok=True)
-    stdout = raw.with_suffix(".stdout")
-    stderr = raw.with_suffix(".stderr")
-    status = raw.with_suffix(".status")
-    argv_path = raw.with_suffix(".argv.json")
-    cwd_path = raw.with_suffix(".cwd")
-    argv_path.write_text(json.dumps(argv, separators=(",", ":")) + "\n", encoding="utf-8")
-    cwd_path.write_text(SOURCE_MOUNT + "\n", encoding="utf-8")
-    completed = subprocess.run(argv, cwd=root, env=dict(env), stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-    stdout.write_bytes(completed.stdout)
-    stderr.write_bytes(completed.stderr)
-    status.write_bytes(f"{completed.returncode}\n".encode("ascii"))
+    paths = {suffix: raw.with_suffix("." + suffix) for suffix in (
+        "stdout", "stderr", "status", "argv.json", "cwd", "environment.json", "stdin", "launcher.json",
+    )}
+    paths["argv.json"].write_text(json.dumps(argv, separators=(",", ":")) + "\n", encoding="utf-8")
+    paths["cwd"].write_text(SOURCE_MOUNT + "\n", encoding="utf-8")
+    paths["environment.json"].write_text(json.dumps(environment, separators=(",", ":")) + "\n", encoding="utf-8")
+    paths["stdin"].write_bytes(b"/dev/null\n")
+    paths["launcher.json"].write_text(json.dumps(launcher, separators=(",", ":")) + "\n", encoding="utf-8")
+    completed = subprocess.run(
+        [*launcher, *argv], cwd=root, env=dict(env), stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+    )
+    paths["stdout"].write_bytes(completed.stdout)
+    paths["stderr"].write_bytes(completed.stderr)
+    paths["status"].write_bytes(f"{completed.returncode}\n".encode("ascii"))
     record = {
         "schema": COMMAND_SCHEMA, "role": role, "cwd": SOURCE_MOUNT, "argv": argv,
-        "status": completed.returncode,
-        "stdout": _identity(receipt_root, stdout), "stderr": _identity(receipt_root, stderr), "status_stream": _identity(receipt_root, status),
+        "status": completed.returncode, "environment": environment, "stdin": "/dev/null", "launcher": launcher,
+        "stdout": _identity(receipt_root, paths["stdout"]), "stderr": _identity(receipt_root, paths["stderr"]),
+        "status_stream": _identity(receipt_root, paths["status"]), "cwd_stream": _identity(receipt_root, paths["cwd"]), "environment_stream": _identity(receipt_root, paths["environment.json"]),
+        "stdin_stream": _identity(receipt_root, paths["stdin"]), "launcher_stream": _identity(receipt_root, paths["launcher.json"]),
     }
     if completed.returncode != 0:
         _fail(f"native command failed and retained raw output: {role}")
     return record
 
 
-def _source_seal(root: Path, receipt_root: Path) -> dict[str, object]:
-    revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
-    dirty = subprocess.check_output(["git", "status", "--porcelain=v1", "--untracked-files=no"], cwd=root, text=True)
-    if dirty:
-        _fail("native collection requires a clean tracked source")
-    source_root = receipt_root / "inputs/source"
-    for relative in SELECTED_SOURCES:
-        _copy_regular(root / relative, source_root / relative)
-    return {"revision": revision, "clean": True, "paths": source_records(source_root, SELECTED_SOURCES)}
+def _source_state(value: Mapping[str, object]) -> dict[str, object]:
+    return {name: value[name] for name in ("revision", "tree", "content_sha256", "clean")}
 
 
-def _copy_oracle(receipt_root: Path) -> None:
-    copied = {
-        "lib/libc.a": ORACLE_ROOT / "lib/libc.a",
-        "lib/libc.so": ORACLE_ROOT / "lib/libc.so",
-        ".crabc-oracle": ORACLE_ROOT / ".crabc-oracle",
-        "lib/musl-gcc.specs": ORACLE_ROOT / "lib/musl-gcc.specs",
-        "bin/crabc-x86_64-musl-gcc": Path(ORACLE_COMPILER),
-    }
-    for relative, source in copied.items():
-        _copy_regular(source, receipt_root / "inputs/oracle" / relative)
+def _final_transaction_recheck(
+    root: Path,
+    receipt_root: Path,
+    source: Mapping[str, object],
+    image: Mapping[str, object],
+    products: Mapping[str, object],
+    collector_commands: Sequence[Mapping[str, object]],
+    runner_commands: Sequence[Mapping[str, object]],
+    output_relative: str,
+) -> None:
+    """Recheck every mutable collection input after report construction."""
+
+    if _live_source_state(root) != _source_state(source):
+        _fail("source changed after locale alias report construction")
+    if _validate_image_inputs(receipt_root, image) != image:
+        _fail("image inputs changed after locale alias report construction")
+    if _validate_products(receipt_root, products, source) != products:
+        _fail("products changed after locale alias report construction")
+    if _raw_collector_commands(receipt_root, output_relative) != list(collector_commands):
+        _fail("collector raw streams changed after locale alias report construction")
+    if _raw_runner_records(receipt_root, output_relative) != list(runner_commands):
+        _fail("runner raw streams changed after locale alias report construction")
 
 
 def collect(root: Path, output: Path) -> dict[str, object]:
@@ -851,32 +1169,43 @@ def collect(root: Path, output: Path) -> dict[str, object]:
     output_relative = _require_native_collection(root, output)
     output.mkdir(parents=True)
     try:
-        before = _source_seal(root, output)
-        _copy_oracle(output)
+        before = _capture_source_phase(root, output, "inputs/source")
+        source_state = _source_state(before)
+        image_inputs = _copy_image_inputs(root, output)
         env = {
-            "PATH": "/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "PATH": COMMAND_PATH,
             "TMPDIR": str(output / "tmp"), "LC_ALL": "C", "TZ": "UTC", "PYTHONDONTWRITEBYTECODE": "1",
         }
         (output / "tmp").mkdir(mode=0o700)
         collector_commands = []
+        if _live_source_state(root) != source_state:
+            _fail("source changed before static product construction")
         collector_commands.append(_run(root, output, "build-static", _expected_collector_commands(output_relative)[0][1], env=env))
+        if _live_source_state(root) != source_state:
+            _fail("source changed during static product construction")
         collector_commands.append(_run(root, output, "build-dynamic", _expected_collector_commands(output_relative)[1][1], env=env))
+        if _live_source_state(root) != source_state:
+            _fail("source changed during dynamic product construction")
         collector_commands.append(_run(root, output, "locale-alias-runner", _expected_collector_commands(output_relative)[2][1], env=env))
-        after = _source_seal(root, output / "source-after")
+        after = _capture_source_phase(root, output, "source-after/inputs/source", source_state)
         if before != after:
             _fail("source changed during locale alias collection")
         raw_commands = _raw_runner_records(output, output_relative)
         sys.path.insert(0, str(ROOT / "compat/x86_64"))
         import owned_posix_product_evidence as products
         product_records = {
-            name: {"tree": _tree_records(output, f"products/{name}"), "manifest": _identity(output, manifest)}
+            name: {"tree": _tree_records(output, f"products/{name}"), "manifest": _identity(output, manifest),
+                   "source_before": before, "source_after": before}
             for name, manifest in (("static", products._validate_static_product(output / "products/static")[0]),
-                                   ("dynamic", products._validate_dynamic_product(output / "products/dynamic")[0]) )
+                                   ("dynamic", products._validate_dynamic_product(output / "products/dynamic")[0]))
         }
+        dynamic_state = output / "products/dynamic/share/crabc/dynamic-product-state.json"
+        product_records["dynamic"]["state"] = _identity(output, dynamic_state)
         report = {
             "schema": SCHEMA,
             "status": STATUS,
-            "oracle": _oracle_records(output),
+            "mode_policy": MODE_POLICY,
+            "image_inputs": image_inputs,
             "source_before": before,
             "source_after": after,
             "source_contract": validate_source_contract(output / "inputs/source"),
@@ -892,6 +1221,7 @@ def collect(root: Path, output: Path) -> dict[str, object]:
         report_path = output / "report.json"
         report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         validate_report(root, report_path)
+        _final_transaction_recheck(root, output, before, image_inputs, product_records, collector_commands, raw_commands, output_relative)
         return report
     except Exception:
         # The fresh root deliberately remains available with raw command output

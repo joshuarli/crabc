@@ -206,11 +206,11 @@ class LocaleAliasContractTests(unittest.TestCase):
         )
         self.assertIn('readelf -Ws "$static_product/usr/lib/libc.a"', source)
         self.assertIn('readelf --dyn-syms -W "$dynamic_product/usr/lib/libc.so"', source)
-        self.assertIn('capture oracle-shared-symbols readelf -Ws /opt/musl-1.2.6/lib/libc.so', source)
-        self.assertIn('capture candidate-shared-symbols readelf -Ws "$dynamic_product/usr/lib/libc.so"', source)
-        self.assertIn('capture oracle-static-symbols readelf -Ws /opt/musl-1.2.6/lib/libc.a', source)
+        self.assertIn('capture oracle-shared-symbols /usr/bin/readelf -Ws /opt/musl-1.2.6/lib/libc.so', source)
+        self.assertIn('capture candidate-shared-symbols /usr/bin/readelf -Ws "$dynamic_product/usr/lib/libc.so"', source)
+        self.assertIn('capture oracle-static-symbols /usr/bin/readelf -Ws /opt/musl-1.2.6/lib/libc.a', source)
         self.assertIn(
-            'capture oracle-dynamic-symbols readelf --dyn-syms -W /opt/musl-1.2.6/lib/libc.so',
+            'capture oracle-dynamic-symbols /usr/bin/readelf --dyn-syms -W /opt/musl-1.2.6/lib/libc.so',
             source,
         )
 
