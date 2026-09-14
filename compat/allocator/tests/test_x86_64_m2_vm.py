@@ -9,6 +9,40 @@ from unittest import mock
 from test_runner import RUNNER
 
 
+EXPECTED_VM_CHECK_IDS = (
+    "native-vm-fixed-lifecycle-differential",
+    "source-policy-lazy-environment-retry",
+    "normal-release-aligned-hint-cursor-random-and-cas-matrix",
+    "normal-release-large-page-retry-suppression-and-ordinary-fallback",
+    "large-only-one-gib-failure-no-regular-owner",
+    "thp-disable-set-perm-keeps-configuration-disabled",
+    "aligned-hint-source-profile-and-direct-caller-matrix",
+    "aligned-overmap-cleanup-c-rust-boundary-matrix",
+    "process-policy-first-arena-clean-primary-fallback",
+    "process-policy-first-arena-retained-cleanup-statistics",
+    "process-policy-ticket-zero-live-random",
+    "aligned-map-direct-cleanup-owner",
+    "aligned-map-prefix-cleanup-owner",
+    "aligned-map-suffix-cleanup-owner",
+    "aligned-map-complete-trim-sequence",
+    "reset-advice-retry-snapshot",
+    "aligned-map-os-page-claim-owner",
+    "aligned-map-process-os-page-suffix-terminal-owner",
+    "aligned-map-metadata-owner",
+    "aligned-map-process-arena-owner",
+    "normal-os-offset-full-provenance-and-release-retry",
+    "process-offset-prefix-decommit-advisory-owner",
+    "normal-no-callback-purge-policy-range-matrix",
+    "normal-os-good-size-and-base-provenance",
+    "normal-os-offset-zero-delegation-and-geometry",
+    "normal-os-aligned-failure-owner",
+    "normal-os-source-reservation-caller",
+    "linux-os-reuse-contained-range-noop",
+    "fixed-no-option-numa-cache-and-current-node-normalization",
+    "native-protection-owner-and-retry",
+    "normal-page-extension-direct-commit-failure-and-retry",
+)
+
 class NativeVmAssemblyTests(unittest.TestCase):
     @staticmethod
     def vm_evidence(summary):
@@ -55,6 +89,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
             "-Wl,--wrap=mmap",
             "-Wl,--wrap=madvise",
             "-Wl,--wrap=mprotect",
+            "-Wl,--wrap=prctl",
             "-pthread",
             "-o",
             str(
@@ -87,6 +122,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
                         "-Wl,--wrap=mmap",
                         "-Wl,--wrap=madvise",
                         "-Wl,--wrap=mprotect",
+                        "-Wl,--wrap=prctl",
                         "-pthread",
                         "-o",
                         str(
@@ -224,6 +260,18 @@ class NativeVmAssemblyTests(unittest.TestCase):
             "m2.vm.policy.large_null_hint_retry_failed",
             "m2.vm.policy.regular_hinted_map_after_large_fallback",
             "m2.vm.policy.thp_advice_failure_ignored",
+        ):
+            with self.subTest(key=key):
+                self.assertIn(key, producer.TRACE_KEYS)
+
+    def test_thp_disable_failure_trace_requires_the_exact_prctl_tuple_and_configuration(self):
+        """Keep the selected allow_thp=0 failure branch finite and explicit."""
+
+        producer = RUNNER._m2_x86_64_vm_producer()
+        for key in (
+            "m2.vm.thp_disable.get_zero_then_set_perm_exact_arguments",
+            "m2.vm.thp_disable.set_perm_leaves_configuration_disabled",
+            "m2.vm.thp_disable.set_perm_failure_returns_from_policy_transition",
         ):
             with self.subTest(key=key):
                 self.assertIn(key, producer.TRACE_KEYS)
@@ -393,8 +441,9 @@ class NativeVmAssemblyTests(unittest.TestCase):
         vm = summary["components"][0]
         self.assertEqual(vm["id"], "vm-primitives")
         self.assertEqual(vm["native_status"], "partial")
-        self.assertEqual(len(vm["checks"]), 30)
-        self.assertEqual(len(vm["bounded_source_definitions"]), 19)
+        self.assertEqual(tuple(check["id"] for check in vm["checks"]), EXPECTED_VM_CHECK_IDS)
+        self.assertEqual(len(vm["checks"]), 31)
+        self.assertEqual(len(vm["bounded_source_definitions"]), 20)
         callback_definitions = {
             definition["id"]: definition["source_anchor"]
             for definition in vm["bounded_source_definitions"]
@@ -612,6 +661,11 @@ class NativeVmAssemblyTests(unittest.TestCase):
         without_mprotect_wrap["c_command"].remove("-Wl,--wrap=mprotect")
         with self.assertRaises(RUNNER.HarnessError):
             RUNNER._m2_x86_64_vm_check_records(summary, without_mprotect_wrap)
+
+        without_prctl_wrap = self.vm_evidence(summary)
+        without_prctl_wrap["c_command"].remove("-Wl,--wrap=prctl")
+        with self.assertRaises(RUNNER.HarnessError):
+            RUNNER._m2_x86_64_vm_check_records(summary, without_prctl_wrap)
 
         direct_arena_source = self.vm_evidence(summary)
         direct_arena_source["c_command"].append("/pinned/src/arena.c")

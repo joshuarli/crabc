@@ -6,7 +6,8 @@
 //
 // Source map: pinned mimalloc v3.5.0 `include/mimalloc/prim.h`,
 // `src/prim/prim.c`, `src/prim/unix/prim.c` (including the raw
-// `_mi_prim_numa_node_count` observation), and the raw page-alignment and
+// `_mi_prim_numa_node_count` observation and the bounded
+// `_mi_prim_mem_init` THP-disable branch at lines 250-277), and the raw page-alignment and
 // memory-transition portions of `src/os.c`, including `src/os.c:240-294`,
 // `src/os.c:344-467`, `src/os.c:502-527`, `src/os.c:655-680`'s default
 // `purge_decommits` branch for non-owning arena spans, and the fixed,
@@ -440,6 +441,24 @@ pub(crate) enum ThpPolicyOutcome {
     DisabledSet,
     DisabledSetFailed(Errno),
     DisabledQueryFailed(Errno),
+}
+
+#[cfg(not(test))]
+#[inline]
+unsafe fn thp_policy_prctl_raw(
+    option: i32, argument0: usize, argument1: usize, argument2: usize, argument3: usize,
+) -> Result<usize> {
+    // SAFETY: the sole production callers below use the two Linux THP
+    // constants with their source scalar zero/one tuples.
+    unsafe { crabc_core::process::prctl_raw(option, argument0, argument1, argument2, argument3) }
+}
+
+#[cfg(test)]
+#[inline]
+unsafe fn thp_policy_prctl_raw(
+    option: i32, argument0: usize, argument1: usize, argument2: usize, argument3: usize,
+) -> Result<usize> {
+    fault::thp_policy_prctl_raw(option, argument0, argument1, argument2, argument3)
 }
 
 /// Process-owned state for the source VM option, hint, large-page retry, and
@@ -974,8 +993,8 @@ impl VmPolicy {
         config.disable_transparent_huge_pages();
         // SAFETY: these two PR_* values take only scalar zero/one arguments.
         // The caller owns the process-local THP transition and its timing.
-        match unsafe { crabc_core::process::prctl_raw(PR_GET_THP_DISABLE, 0, 0, 0, 0) } {
-            Ok(0) => match unsafe { crabc_core::process::prctl_raw(PR_SET_THP_DISABLE, 1, 0, 0, 0) } {
+        match unsafe { thp_policy_prctl_raw(PR_GET_THP_DISABLE, 0, 0, 0, 0) } {
+            Ok(0) => match unsafe { thp_policy_prctl_raw(PR_SET_THP_DISABLE, 1, 0, 0, 0) } {
                 Ok(_) => ThpPolicyOutcome::DisabledSet,
                 Err(error) => ThpPolicyOutcome::DisabledSetFailed(error),
             },
@@ -4729,6 +4748,29 @@ pub(crate) mod fault {
         AtomicUsize::new(0),
         AtomicUsize::new(0),
     ];
+    // The THP process-policy failure witness is intentionally narrower than
+    // the generic fault plan: it scripts only the two scalar prctl tuples
+    // emitted by `_mi_prim_mem_init` after `allow_thp=0`.  It remains within
+    // this serial test module and falls through to the real raw primitive
+    // unless a capture token explicitly selects it.
+    const THP_DISABLE_PRCTL_CAPTURE_CAPACITY: usize = 2;
+    static THP_DISABLE_PRCTL_CAPTURE_ACTIVE: AtomicBool = AtomicBool::new(false);
+    static THP_DISABLE_PRCTL_CAPTURE_VALID: AtomicBool = AtomicBool::new(false);
+    static THP_DISABLE_PRCTL_CAPTURE_COUNT: AtomicUsize = AtomicUsize::new(0);
+    static THP_DISABLE_PRCTL_CAPTURE_OPTIONS: [AtomicI32; THP_DISABLE_PRCTL_CAPTURE_CAPACITY] = [
+        AtomicI32::new(0),
+        AtomicI32::new(0),
+    ];
+    static THP_DISABLE_PRCTL_CAPTURE_ARGUMENTS: [AtomicUsize; THP_DISABLE_PRCTL_CAPTURE_CAPACITY * 4] = [
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+    ];
 
     /// An allocation-free deterministic failure plan for one serial test.
     #[derive(Clone, Copy)]
@@ -4939,6 +4981,11 @@ pub(crate) mod fault {
         _guard: core::marker::PhantomData<&'guard Guard>,
     }
 
+    /// A serial exact capture of the allow_thp=0 GET/SET pair.
+    pub(crate) struct ThpDisablePrctlCapture<'guard> {
+        _guard: core::marker::PhantomData<&'guard Guard>,
+    }
+
     pub(crate) fn install(plan: Plan) -> Guard {
         while LOCKED
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
@@ -5028,6 +5075,25 @@ pub(crate) mod fault {
             }
             POLICY_MMAP_CAPTURE_ACTIVE.store(true, Ordering::Release);
             PolicyMmapCapture {
+                _guard: core::marker::PhantomData,
+            }
+        }
+
+        /// Scripts GET_THP_DISABLE=0 then SET_THP_DISABLE=EPERM and records
+        /// both concrete source argument tuples. More, fewer, or different
+        /// calls invalidate the witness instead of being treated as a prefix.
+        pub(crate) fn capture_thp_disable_set_failure(&self) -> ThpDisablePrctlCapture<'_> {
+            THP_DISABLE_PRCTL_CAPTURE_ACTIVE.store(false, Ordering::Release);
+            THP_DISABLE_PRCTL_CAPTURE_VALID.store(true, Ordering::Release);
+            THP_DISABLE_PRCTL_CAPTURE_COUNT.store(0, Ordering::Release);
+            for option in &THP_DISABLE_PRCTL_CAPTURE_OPTIONS {
+                option.store(0, Ordering::Release);
+            }
+            for argument in &THP_DISABLE_PRCTL_CAPTURE_ARGUMENTS {
+                argument.store(0, Ordering::Release);
+            }
+            THP_DISABLE_PRCTL_CAPTURE_ACTIVE.store(true, Ordering::Release);
+            ThpDisablePrctlCapture {
                 _guard: core::marker::PhantomData,
             }
         }
@@ -5130,9 +5196,37 @@ pub(crate) mod fault {
         }
     }
 
+    impl ThpDisablePrctlCapture<'_> {
+        /// Returns the selected pair only when both source calls matched the
+        /// fixed tuple and no third call reached this capture.
+        pub(crate) fn attempts(&self) -> Option<[(i32, [usize; 4]); THP_DISABLE_PRCTL_CAPTURE_CAPACITY]> {
+            if !THP_DISABLE_PRCTL_CAPTURE_VALID.load(Ordering::Acquire)
+                || THP_DISABLE_PRCTL_CAPTURE_COUNT.load(Ordering::Acquire)
+                    != THP_DISABLE_PRCTL_CAPTURE_CAPACITY
+            {
+                return None;
+            }
+            Some(core::array::from_fn(|index| {
+                (
+                    THP_DISABLE_PRCTL_CAPTURE_OPTIONS[index].load(Ordering::Acquire),
+                    core::array::from_fn(|argument| {
+                        THP_DISABLE_PRCTL_CAPTURE_ARGUMENTS[index * 4 + argument]
+                            .load(Ordering::Acquire)
+                    }),
+                )
+            }))
+        }
+    }
+
     impl Drop for PolicyMmapCapture<'_> {
         fn drop(&mut self) {
             POLICY_MMAP_CAPTURE_ACTIVE.store(false, Ordering::Release);
+        }
+    }
+
+    impl Drop for ThpDisablePrctlCapture<'_> {
+        fn drop(&mut self) {
+            THP_DISABLE_PRCTL_CAPTURE_ACTIVE.store(false, Ordering::Release);
         }
     }
 
@@ -5141,6 +5235,7 @@ pub(crate) mod fault {
             UNMAP_RANGE_CAPTURE_ACTIVE.store(false, Ordering::Release);
             ADVICE_RANGE_CAPTURE_ACTIVE.store(false, Ordering::Release);
             POLICY_MMAP_CAPTURE_ACTIVE.store(false, Ordering::Release);
+            THP_DISABLE_PRCTL_CAPTURE_ACTIVE.store(false, Ordering::Release);
             set(Plan::disabled());
             LOCKED.store(false, Ordering::Release);
         }
@@ -5260,6 +5355,53 @@ pub(crate) mod fault {
             POLICY_MMAP_CAPTURE_PROTECTIONS[index].store(protection as usize, Ordering::Release);
             POLICY_MMAP_CAPTURE_FLAGS[index].store(flags as usize, Ordering::Release);
         }
+    }
+
+    /// Test-only raw THP policy receiver. It injects the one selected GET/SET
+    /// failure sequence or directly invokes the native primitive when no
+    /// capture is active, so unrelated child-isolation tests retain their
+    /// process-local kernel observation.
+    #[inline]
+    pub(crate) fn thp_policy_prctl_raw(
+        option: i32, argument0: usize, argument1: usize, argument2: usize, argument3: usize,
+    ) -> Result<usize> {
+        if !THP_DISABLE_PRCTL_CAPTURE_ACTIVE.load(Ordering::Acquire) {
+            // SAFETY: callers use only the two Linux THP constants with their
+            // source scalar zero/one arguments.
+            return unsafe {
+                crabc_core::process::prctl_raw(option, argument0, argument1, argument2, argument3)
+            };
+        }
+
+        let index = THP_DISABLE_PRCTL_CAPTURE_COUNT.fetch_add(1, Ordering::AcqRel);
+        if index < THP_DISABLE_PRCTL_CAPTURE_CAPACITY {
+            THP_DISABLE_PRCTL_CAPTURE_OPTIONS[index].store(option, Ordering::Release);
+            let arguments = [argument0, argument1, argument2, argument3];
+            for (argument_index, argument) in arguments.into_iter().enumerate() {
+                THP_DISABLE_PRCTL_CAPTURE_ARGUMENTS[index * 4 + argument_index]
+                    .store(argument, Ordering::Release);
+            }
+        }
+        if index == 0
+            && option == super::PR_GET_THP_DISABLE
+            && argument0 == 0
+            && argument1 == 0
+            && argument2 == 0
+            && argument3 == 0
+        {
+            return Ok(0);
+        }
+        if index == 1
+            && option == super::PR_SET_THP_DISABLE
+            && argument0 == 1
+            && argument1 == 0
+            && argument2 == 0
+            && argument3 == 0
+        {
+            return Err(Errno::PERM);
+        }
+        THP_DISABLE_PRCTL_CAPTURE_VALID.store(false, Ordering::Release);
+        Err(Errno::INVAL)
     }
 }
 
@@ -5429,6 +5571,43 @@ mod tests {
             configuration_disabled,
             "the source branch must clear its allocation-policy THP observation even if prctl fails"
         );
+    }
+
+    /// Exercises the selected source failure without issuing a real process
+    /// mutation. The C oracle observes its void `_mi_prim_mem_init` return;
+    /// this Rust boundary instead exposes `DisabledSetFailed(PERM)` before
+    /// its process owner elects to discard that typed outcome.
+    fn thp_disable_set_failure_matrix() -> [bool; 3] {
+        let fault = fault::install(fault::Plan::disabled());
+        let mut options = VmOptions::uninitialized();
+        options.set(VmOption::AllowThp, 0);
+        options.initialize_all(|_| VmOptionEnvironment::Absent);
+        let policy = VmPolicy::new(options).expect("the selected source option image resolves");
+        let mut config = MemoryConfig::from_observations(
+            PageSize::new(4 * 1024).expect("four KiB is the selected Linux page size"),
+            0,
+            true,
+            true,
+        );
+        let capture = fault.capture_thp_disable_set_failure();
+        let outcome = policy.apply_thp_process_policy(&mut config);
+        let attempts = capture.attempts();
+        drop(capture);
+        let typed_set_failure = matches!(outcome, ThpPolicyOutcome::DisabledSetFailed(Errno::PERM));
+        [
+            attempts
+                == Some([
+                    (PR_GET_THP_DISABLE, [0, 0, 0, 0]),
+                    (PR_SET_THP_DISABLE, [1, 0, 0, 0]),
+                ]),
+            typed_set_failure && !config.has_transparent_huge_pages(),
+            typed_set_failure,
+        ]
+    }
+
+    #[test]
+    fn thp_disable_set_failure_keeps_configuration_disabled() {
+        assert_eq!(thp_disable_set_failure_matrix(), [true; 3]);
     }
 
     #[test]
@@ -9438,9 +9617,11 @@ mod tests {
         drop(failed_release_unmap_ranges);
         let external_callback_trace = crate::arena::m2_external_callback_trace(&fault);
         drop(fault);
+        let thp_disable_failure_trace = thp_disable_set_failure_matrix();
         let large_page_retry_trace = normal_release_large_page_retry_suppression_matrix();
         let large_page_retry_cas_trace = normal_release_large_page_retry_competing_cas_matrix();
         let large_only_trace = large_only_one_gib_failure_terminal_matrix();
+        assert_eq!(thp_disable_failure_trace, [true; 3]);
         assert_eq!(large_page_retry_trace, [true; 6]);
         assert_eq!(large_page_retry_cas_trace, [true; 2]);
         assert_eq!(large_only_trace, [true; 4]);
@@ -9464,6 +9645,18 @@ mod tests {
             u8::from(config.has_transparent_huge_pages())
         );
         emit!("m2.vm.thp.process_disabled", u8::from(thp_process_disabled));
+        emit!(
+            "m2.vm.thp_disable.get_zero_then_set_perm_exact_arguments",
+            u8::from(thp_disable_failure_trace[0])
+        );
+        emit!(
+            "m2.vm.thp_disable.set_perm_leaves_configuration_disabled",
+            u8::from(thp_disable_failure_trace[1])
+        );
+        emit!(
+            "m2.vm.thp_disable.set_perm_failure_returns_from_policy_transition",
+            u8::from(thp_disable_failure_trace[2])
+        );
         emit!("m2.vm.reserved.initially_zero", u8::from(reserved_initially_zero));
         emit!(
             "m2.vm.reserved.initially_committed",

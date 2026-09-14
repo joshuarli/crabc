@@ -18,6 +18,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <sys/mman.h>
 #include <sys/prctl.h>
 #include <sys/types.h>
@@ -433,6 +434,24 @@ typedef struct large_only_failure_probe_s {
 
 static large_only_failure_probe_t large_only_failure_probe;
 
+/* This COW-child-only script receives precisely the two scalar forms used by
+ * `_mi_prim_mem_init`: GET(0,0,0,0), then SET(1,0,0,0).  It is deliberately
+ * not a generic variadic forwarder.  The pinned source also names one VMA
+ * annotation form, so the inactive wrapper forwards that separately with its
+ * concrete int/pointer/size_t/pointer tuple; every other prctl operation is
+ * rejected rather than being read through an unchecked va_list shape. */
+#define THP_DISABLE_PRCTL_CAPTURE_CAPACITY 2
+typedef struct thp_disable_prctl_probe_s {
+  bool active;
+  bool valid;
+  size_t calls;
+  int options[THP_DISABLE_PRCTL_CAPTURE_CAPACITY];
+  int arguments[THP_DISABLE_PRCTL_CAPTURE_CAPACITY][4];
+  int errors[THP_DISABLE_PRCTL_CAPTURE_CAPACITY];
+} thp_disable_prctl_probe_t;
+
+static thp_disable_prctl_probe_t thp_disable_prctl_probe;
+
 /* The pinned `mi_os_prim_alloc_aligned` body is included above. This tiny
  * fixture state controls only its imported mmap/munmap results while a COW
  * child executes one selected call. It does not model an allocator function:
@@ -465,6 +484,71 @@ void* __real_mmap(void* address, size_t length, int protection, int flags,
                   int descriptor, off_t offset);
 int __real_madvise(void* address, size_t length, int advice);
 int __real_mprotect(void* address, size_t length, int protection);
+int __real_prctl(int option, ...);
+
+int __wrap_prctl(int option, ...) {
+  va_list arguments;
+  va_start(arguments, option);
+
+  if (option == PR_GET_THP_DISABLE || option == PR_SET_THP_DISABLE) {
+    /* Both selected source calls pass literal `int` arguments. */
+    const int argument0 = va_arg(arguments, int);
+    const int argument1 = va_arg(arguments, int);
+    const int argument2 = va_arg(arguments, int);
+    const int argument3 = va_arg(arguments, int);
+    va_end(arguments);
+
+    if (!thp_disable_prctl_probe.active) {
+      return __real_prctl(option, argument0, argument1, argument2, argument3);
+    }
+
+    const size_t index = thp_disable_prctl_probe.calls++;
+    if (index < THP_DISABLE_PRCTL_CAPTURE_CAPACITY) {
+      thp_disable_prctl_probe.options[index] = option;
+      thp_disable_prctl_probe.arguments[index][0] = argument0;
+      thp_disable_prctl_probe.arguments[index][1] = argument1;
+      thp_disable_prctl_probe.arguments[index][2] = argument2;
+      thp_disable_prctl_probe.arguments[index][3] = argument3;
+    }
+    if (index == 0 && option == PR_GET_THP_DISABLE && argument0 == 0
+        && argument1 == 0 && argument2 == 0 && argument3 == 0) {
+      return 0;
+    }
+    if (index == 1 && option == PR_SET_THP_DISABLE && argument0 == 1
+        && argument1 == 0 && argument2 == 0 && argument3 == 0) {
+      thp_disable_prctl_probe.errors[index] = EPERM;
+      errno = EPERM;
+      return -1;
+    }
+    thp_disable_prctl_probe.valid = false;
+    errno = EINVAL;
+    return -1;
+  }
+
+#if defined(PR_SET_VMA)
+  if (option == PR_SET_VMA) {
+    /* `unix_mmap` passes this exact source tuple when VMA naming is enabled. */
+    const int suboption = va_arg(arguments, int);
+    void* const address = va_arg(arguments, void*);
+    const size_t length = va_arg(arguments, size_t);
+    char* const name = va_arg(arguments, char*);
+    va_end(arguments);
+    if (thp_disable_prctl_probe.active) {
+      thp_disable_prctl_probe.valid = false;
+      errno = EINVAL;
+      return -1;
+    }
+    return __real_prctl(option, suboption, address, length, name);
+  }
+#endif
+
+  va_end(arguments);
+  if (thp_disable_prctl_probe.active) {
+    thp_disable_prctl_probe.valid = false;
+  }
+  errno = EINVAL;
+  return -1;
+}
 
 int __wrap_munmap(void* address, size_t length) {
   wrapped_munmap_calls++;
@@ -1548,6 +1632,92 @@ static bool capture_policy_child(policy_child_record_t* record) {
   return captured;
 }
 
+/* The process-wide THP setting is not touched by this fixture parent.  This
+ * child calls the directly included `_mi_prim_mem_init` body with the selected
+ * source option, while the narrowly typed `prctl` import script returns
+ * GET=0 then SET=-1/EPERM.  The source function is void: returning from it is
+ * the C continuation observation, not an errno-valued allocator contract. */
+typedef struct thp_disable_failure_record_s {
+  bool get_zero_then_set_perm_exact_arguments;
+  bool set_perm_leaves_configuration_disabled;
+  bool set_perm_failure_returns_from_policy_transition;
+} thp_disable_failure_record_t;
+
+static int run_thp_disable_failure_child(int record_descriptor) {
+  thp_disable_failure_record_t record = {0};
+  mi_os_mem_config_t config = {0};
+  _mi_options_init();
+  mi_option_set(mi_option_allow_thp, 0);
+  thp_disable_prctl_probe = (thp_disable_prctl_probe_t){
+      .active = true,
+      .valid = true,
+  };
+  _mi_prim_mem_init(&config);
+  thp_disable_prctl_probe.active = false;
+
+  record.get_zero_then_set_perm_exact_arguments =
+      thp_disable_prctl_probe.valid
+      && thp_disable_prctl_probe.calls == THP_DISABLE_PRCTL_CAPTURE_CAPACITY
+      && thp_disable_prctl_probe.options[0] == PR_GET_THP_DISABLE
+      && thp_disable_prctl_probe.arguments[0][0] == 0
+      && thp_disable_prctl_probe.arguments[0][1] == 0
+      && thp_disable_prctl_probe.arguments[0][2] == 0
+      && thp_disable_prctl_probe.arguments[0][3] == 0
+      && thp_disable_prctl_probe.options[1] == PR_SET_THP_DISABLE
+      && thp_disable_prctl_probe.arguments[1][0] == 1
+      && thp_disable_prctl_probe.arguments[1][1] == 0
+      && thp_disable_prctl_probe.arguments[1][2] == 0
+      && thp_disable_prctl_probe.arguments[1][3] == 0
+      && thp_disable_prctl_probe.errors[0] == 0
+      && thp_disable_prctl_probe.errors[1] == EPERM;
+  record.set_perm_leaves_configuration_disabled =
+      !config.has_transparent_huge_pages;
+  record.set_perm_failure_returns_from_policy_transition = true;
+  if (!write_all(record_descriptor, &record, sizeof(record))) return 1;
+  return record.get_zero_then_set_perm_exact_arguments
+      && record.set_perm_leaves_configuration_disabled
+      && record.set_perm_failure_returns_from_policy_transition ? 0 : 2;
+}
+
+static bool capture_thp_disable_failure_child(thp_disable_failure_record_t* record) {
+  int descriptors[2];
+  if (pipe(descriptors) != 0) return false;
+  const pid_t child = fork();
+  if (child < 0) {
+    close(descriptors[0]);
+    close(descriptors[1]);
+    return false;
+  }
+  if (child == 0) {
+    close(descriptors[0]);
+    const int result = run_thp_disable_failure_child(descriptors[1]);
+    close(descriptors[1]);
+    _exit(result);
+  }
+  close(descriptors[1]);
+  const size_t record_bytes = read_all(descriptors[0], record, sizeof(*record));
+  close(descriptors[0]);
+  int status = 0;
+  pid_t waited;
+  do {
+    waited = waitpid(child, &status, 0);
+  } while (waited < 0 && errno == EINTR);
+  const bool captured = record_bytes == sizeof(*record)
+      && waited == child && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+  if (!captured) {
+    fprintf(stderr,
+            "THP disable failure child failed: bytes=%zu expected=%zu waited=%ld "
+            "expected_pid=%ld errno=%d exited=%d status=%d get_set=%d config=%d return=%d\\n",
+            record_bytes, sizeof(*record), (long)waited, (long)child,
+            waited < 0 ? errno : 0, waited == child && WIFEXITED(status),
+            waited == child && WIFEXITED(status) ? WEXITSTATUS(status) : -1,
+            record->get_zero_then_set_perm_exact_arguments,
+            record->set_perm_leaves_configuration_disabled,
+            record->set_perm_failure_returns_from_policy_transition);
+  }
+  return captured;
+}
+
 /* The direct retry rows stay below the first-arena child in source ownership,
  * but execute first in `main` as separate COW children. `unix_mmap` owns a
  * function-static retry counter, so each child starts before any selected
@@ -2569,6 +2739,8 @@ int main(void) {
   if (!aligned_hint_cold_missing_default_advances) return 38;
   policy_child_record_t policy_record = {0};
   if (!capture_policy_child(&policy_record)) return 8;
+  thp_disable_failure_record_t thp_disable_failure_record = {0};
+  if (!capture_thp_disable_failure_child(&thp_disable_failure_record)) return 44;
   /* The direct external callback receiver requires the same complete source
    * process and main-theap owner as `mi_manage_memory`, rather than only the
    * low-level OS statistics image used by the fixed primitive records. */
@@ -2999,6 +3171,12 @@ int main(void) {
   U("m2.vm.config.has_virtual_reserve", mi_os_mem_config.has_virtual_reserve);
   U("m2.vm.config.has_transparent_huge_pages", mi_os_mem_config.has_transparent_huge_pages);
   U("m2.vm.thp.process_disabled", thp_process_disabled);
+  U("m2.vm.thp_disable.get_zero_then_set_perm_exact_arguments",
+      thp_disable_failure_record.get_zero_then_set_perm_exact_arguments);
+  U("m2.vm.thp_disable.set_perm_leaves_configuration_disabled",
+      thp_disable_failure_record.set_perm_leaves_configuration_disabled);
+  U("m2.vm.thp_disable.set_perm_failure_returns_from_policy_transition",
+      thp_disable_failure_record.set_perm_failure_returns_from_policy_transition);
   U("m2.vm.reserved.initially_zero", reserved_id.initially_zero);
   U("m2.vm.reserved.initially_committed", reserved_id.initially_committed);
   U("m2.vm.reserved.commit.failure_returns_false", commit_failure_returns_false);

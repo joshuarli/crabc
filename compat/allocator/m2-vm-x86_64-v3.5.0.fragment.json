@@ -100,6 +100,25 @@
         ]
       },
       {
+        "id": "unix-thp-disable-process-policy",
+        "source_anchor": {
+          "member": "src/prim/unix/prim.c",
+          "start_line": 250,
+          "end_line": 277,
+          "sha256": "955c45eab6dcb9a5fa09decdc76350b69962f806d7d571ac9f39b6e4f08675e0"
+        },
+        "required_definitions": [
+          "void _mi_prim_mem_init",
+          "config->has_transparent_huge_pages = false",
+          "prctl(PR_GET_THP_DISABLE, 0, 0, 0, 0)",
+          "(void)prctl(PR_SET_THP_DISABLE, 1, 0, 0, 0)"
+        ],
+        "evidence_check_ids": [
+          "native-vm-fixed-lifecycle-differential",
+          "thp-disable-set-perm-keeps-configuration-disabled"
+        ]
+      },
+      {
         "id": "unix-aligned-hint-direct-caller",
         "source_anchor": {
           "member": "src/prim/unix/prim.c",
@@ -454,7 +473,7 @@
       {
         "id": "unix-configuration-and-thp-process-policy",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/prim/unix/prim.c:250-277 host observations and the mi_option_allow_thp PR_GET_THP_DISABLE/PR_SET_THP_DISABLE process-policy branch; the bounded record uses child-isolated allow_thp=0 and allow_thp=1 source-option cases.",
+        "source_scope": "src/prim/unix/prim.c:250-277 host observations and the mi_option_allow_thp PR_GET_THP_DISABLE/PR_SET_THP_DISABLE process-policy branch; child-isolated C and private Rust captures select allow_thp=0, GET(0,0,0,0)=0, and SET(1,0,0,0)=EPERM. C observes its void continuation while Rust records DisabledSetFailed(PERM); the process owner remains outside this witness.",
         "source_anchors": [
           {
             "member": "src/prim/unix/prim.c",
@@ -466,10 +485,11 @@
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential",
           "source-policy-lazy-environment-retry",
+          "thp-disable-set-perm-keeps-configuration-disabled",
           "process-policy-ticket-zero-live-random"
         ],
         "missing_conditions": [
-          "Ambient source-option discovery beyond the selected source reader, failed-prctl diagnostic evidence, and every production policy caller remain unqualified; the selected allow_thp=0 and allow_thp=1 transactions are only child-isolated evidence."
+          "Ambient source-option discovery beyond the selected source reader, PR_GET nonzero/query-failure behavior, successful and non-EPERM PR_SET outcomes, diagnostics, and every production policy caller remain unqualified; the selected allow_thp=0 failure is only child-isolated evidence."
         ]
       },
       {
@@ -823,6 +843,12 @@
         "id": "large-only-one-gib-failure-no-regular-owner",
         "kind": "rust-unit",
         "target": "os::tests::large_only_one_gib_failure_retries_two_mib_once_then_stays_terminal",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "thp-disable-set-perm-keeps-configuration-disabled",
+        "kind": "rust-unit",
+        "target": "os::tests::thp_disable_set_failure_keeps_configuration_disabled",
         "expected_passed_test_count": 1
       },
       {
