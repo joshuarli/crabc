@@ -1,6 +1,6 @@
-# Native x86 loader structural-owner receipt design
+# Native x86 loader structural-owner receipt
 
-`loader-structural-owner-receipt.toml` defines a finite design for eight current
+`loader-structural-owner-receipt.toml` defines a finite implemented-but-unqualified component for eight current
 structural identities. Every one currently has exactly the selector reason
 `current source-bound owning component and consumer semantics receipt`. This is
 not a selector adapter, family receipt, export rule, or request to reproduce a
@@ -60,6 +60,45 @@ The existing `loader_runtime_registry_evidence.py` remains a nested receipt for
 its different nine-name private protocol; its `crt_structural_leaves=false`
 limit prevents it from discharging this component. The loader-debug component
 supplies selected entry/debugger product context only.
+
+## Component collection and retained replay
+
+`run_loader_structural_owner_contract.sh` compiles the two ordinary C
+consumers and their one public plugin once, then links each unchanged
+consumer/plugin object pair through pinned musl 1.2.6 and the supplied
+candidate in the four dynamic entry cells. The startup consumer performs its
+normal public dlfcn transaction in a constructor and again in `main`. The
+registration consumer completes that transaction before its first application
+worker, whose public lookup is joined before the fixed transcript. Neither
+probe names a frozen stage spelling or a private registration callback.
+
+`loader_structural_owner_contract_reader.py` retains every source/product/tool
+input, command stream, executable, and before/after root. It validates the
+selected source functions independently: the graph order, crate-qualified
+ldso/libc feature routes, owned-CRT constructor tail, always-atomic lock,
+worker token before clone, and closed public dlfcn registry route. It replays
+the same current clean source, static preparation, complete facts, loader-debug
+receipt, and loader-runtime-registry receipt before and after normal execution.
+Host replay reconstructs the retained bytes without a compiler, linker, or
+target execution tool. This is component evidence only; it cannot attach a
+selector companion or close a runtime family.
+
+The source checks isolate brace-balanced selected bodies, remove comments only
+for their reviewed fingerprints, retain every string and character literal,
+and reject duplicated or false-branch transitions. The fingerprint is a
+reviewed source-algorithm baseline, separate from the retained current source
+hash: a changed cfg feature or resolver target cannot become accepted merely
+by retaining its own new bytes.
+
+Native collection records checkout and supplied-product paths under the fixed
+`/workspace` mount. It separately retains the pinned image invocations for
+the musl compiler/runtime, `timeout`, and `chroot`; retained host replay uses
+those copied identities and canonical recorded paths, never an ambient host
+`/opt` or `/usr/local` tool. The existing pinned-image manifest
+`owned-resolver-alias-image-inputs.json` is a source-contract input for this
+finite invocation set: it resolves `/usr/bin/timeout` and `/usr/sbin/chroot`
+to their one physical `/bin/coreutils` target while preserving their canonical
+argv spellings.
 
 ## Exact startup and constructor tail
 

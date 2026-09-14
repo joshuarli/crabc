@@ -1,4 +1,4 @@
-# Design contract for the finite native x86 loader structural-owner receipt.
+# Component contract for the finite native x86 loader structural-owner receipt.
 #
 # This is deliberately a component contract, not a selector projection.  It
 # names only the eight unresolved structural identities and requires a future
@@ -7,9 +7,49 @@
 
 schema = "crabc.x86_64-loader-structural-owner-contract/v1"
 id = "x86-loader-structural-owner"
-status = "design-only"
+status = "implemented-unqualified"
 target = "x86_64-unknown-linux-musl"
 component = "loader-structural-owner"
+
+[implementation]
+reader = "compat/x86_64/loader_structural_owner_contract_reader.py"
+runner = "compat/x86_64/run_loader_structural_owner_contract.sh"
+probes = [
+  "compat/x86_64/loader_structural_owner_startup_probe.c",
+  "compat/x86_64/loader_structural_owner_registration_probe.c",
+  "compat/x86_64/loader_structural_owner_plugin.c",
+]
+replay = "retained bytes and current same-clean-source supplied-product admission; no ambient target tools"
+
+[source_contract]
+paths = [
+  "compat/x86_64/loader-structural-owner-receipt.toml",
+  "compat/x86_64/loader-structural-owner-receipt.md",
+  "compat/x86_64/loader_structural_owner_contract_reader.py",
+  "compat/x86_64/run_loader_structural_owner_contract.sh",
+  "compat/x86_64/loader_structural_owner_startup_probe.c",
+  "compat/x86_64/loader_structural_owner_registration_probe.c",
+  "compat/x86_64/loader_structural_owner_plugin.c",
+  "ldso/Cargo.toml",
+  "ldso/build.rs",
+  "ldso/src/x86_64_initial_graph.rs",
+  "ldso/src/x86_64_general_initial_graph.rs",
+  "ldso/src/x86_64_general_initial_lifecycle.rs",
+  "ldso/src/x86_64_direct_entry.rs",
+  "ldso/src/x86_64_runtime_lock.rs",
+  "ldso/src/x86_64_initial_worker_tls.rs",
+  "ldso/src/x86_64_runtime_registry.rs",
+  "libc/Cargo.toml",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/general_dlfcn.rs",
+  "libc/src/c_abi/x86_64/dynamic_tls.rs",
+  "libc/src/c_abi/x86_64/pthread_create_join.rs",
+  "crt/src/x86_64_dynamic_startup.rs",
+  "compat/x86_64/loader_runtime_registry_evidence.py",
+  "compat/x86_64/loader_debug_abi_evidence.py",
+  "compat/x86_64/owned_posix_product_evidence.py",
+  "compat/x86_64/owned-resolver-alias-image-inputs.json",
+]
 
 [selection]
 disposition = "structural-replacement"
@@ -37,6 +77,7 @@ fields = [
   "schema",
   "status",
   "component",
+  "target",
   "collection",
   "selected_source",
   "collector",
@@ -82,6 +123,7 @@ family_completion = false
 promotion_ready = false
 public_support = false
 runtime_qualification = false
+selector_admission = false
 
 # This is a development anchor, not a receipt that a future collection may
 # reuse.  A fresh receipt must bind its own current clean source and products.
