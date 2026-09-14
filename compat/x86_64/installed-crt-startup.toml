@@ -1,4 +1,4 @@
-schema = "crabc.x86_64-installed-crt-startup/v3"
+schema = "crabc.x86_64-installed-crt-startup/v4"
 identities = ["_GLOBAL_OFFSET_TABLE_", "__crabc_x86_64_loader_conventional_startup_v1", "__crabc_x86_64_owned_crt_handoff", "__crabc_x86_loader_tls_runtime_v1_attach", "__crabc_x86_loader_tls_runtime_v1_record", "__crabc_x86_static_tls_bootstrap", "__preinit_array_start", "__preinit_array_end", "__init_array_start", "__init_array_end", "__fini_array_start", "__fini_array_end"]
 modes = ["static", "static-pie", "owned-pie", "owned-non-pie", "conventional-pie", "conventional-non-pie", "default-pie", "oracle-static", "oracle-static-pie", "oracle-pie", "oracle-non-pie"]
 variants = ["normal", "empty"]
@@ -77,3 +77,24 @@ symbol_value = 0
 status = 127
 stdout = ""
 stderr = "reloc\n"
+
+[descriptor_handoff.runtime_admission]
+value_cases = ["bad-magic", "bad-version", "bad-abi-size", "bad-mode", "bad-owner", "unpublished", "publishing", "unexpected-state", "nonzero-reserved", "bad-generation", "null-tp", "null-dtv", "unaligned-tp", "unaligned-dtv", "zero-module-count", "short-dtv-words", "module-count-overflow", "fs-mismatch", "self-word-mismatch", "dtv-slot-mismatch", "dtv-count-mismatch"]
+
+[descriptor_handoff.runtime_admission.probe]
+source = "compat/x86_64/installed_crt_startup_descriptor_runtime_probe.c"
+attachment_artifact = "dynamic-crabc-dynamic-attach.o"
+static_artifact = "candidate-static"
+mode = "static-freestanding-selected-object"
+
+[[descriptor_handoff.runtime_admission.cells]]
+name = "descriptor-runtime-matrix"
+define = ""
+
+[[descriptor_handoff.runtime_admission.cells]]
+name = "descriptor-runtime-absent"
+define = "CRABC_RUNTIME_CASE_ABSENT"
+
+[[descriptor_handoff.runtime_admission.cells]]
+name = "descriptor-runtime-unaligned-record"
+define = "CRABC_RUNTIME_CASE_UNALIGNED_RECORD"

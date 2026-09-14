@@ -46,7 +46,7 @@ GLOB_DAT slots: owned handoff non-null/conventional slot null, conventional
 snapshot non-null/no owned handoff, default CRT weak-null, oracle neither.
 The borrowed record is read but private callbacks are not called by the probe.
 The 32-byte owned carrier and separate 88-byte conventional snapshot preserve
-source-defined roles. Schema v3 adds a separate private descriptor-handoff
+source-defined roles. Schema v3 added a separate private descriptor-handoff
 account: `dynamic-crabc-dynamic-attach.o` has exactly one weak, undefined
 `NOTYPE` GOTPCREL descriptor reference, and each owned PIE/non-PIE normal and
 empty final main image has exactly one weak undefined `GLOB_DAT` slot. Static,
@@ -106,8 +106,46 @@ object, selected runtime and linker identities, direct DSO input, exact command
 and trace, output, and manifest. The general ordinary-link reader intentionally
 does not admit application DSOs; this component owns only this one named direct
 DSO relation. A previous source/product cohort that admits a malformed wire cannot
-produce a schema-v3 receipt. It remains an observed development failure, not
+produce a schema-v4 receipt. It remains an observed development failure, not
 a waiver or a qualified green result.
+
+Schema v4 adds a separate RuntimeV1 selected-object admission account to that
+same transaction. Its collector-only
+`installed_crt_startup_descriptor_runtime_probe.c` provides controlled record,
+TCB and DTV prefixes and directly statically links the sealed selected
+`dynamic-crabc-dynamic-attach.o` with the sealed selected `libc.a`. The
+ordinary pinned compiler first produces the retained probe object; the sealed
+pinned LLD then links that exact object with the two direct product inputs.
+Their exact commands, map, source/object/product/output identities, statuses
+and empty streams are retained. The shared static-link authority checks the
+two selected attachment bodies from their LLD map through the final linked
+bytes. Before that link, the finite source-object account requires the matrix
+to define its 72-byte descriptor, the absent branch to define none, and the
+unaligned branch to retain its defined global alias one byte after the local
+73-byte backing storage. The account neither rebuilds the attachment nor
+supplies a replacement helper or interpreter.
+
+The closed exercise has three endpoint binaries. The matrix restores a valid
+record and confirms an exact successful attach before each of 21 individual
+value mutations, then requires the selected attachment to return exactly
+`-1`: magic, version, ABI size, mode, owner, unpublished/PUBLISHING/other
+state, reserved, generation, null/alignment coordinates, zero/short/overflow
+DTV counts, FS mismatch, TCB self/DTV slots, and DTV count. The zero and
+overflow cases set the related DTV values so an earlier unrelated count check
+cannot mask the intended predicate. Separate absent-record and unaligned-record
+binaries require the same exact rejection. This is deliberately three
+consolidated process endpoints, not a claim of 22 independent binaries.
+
+The source account seals the selected builder's direct attachment `rustc`
+route, including `--emit=obj` and `-C relocation-model=pic`; its feature and
+module route; the dynamic CRT call before `__libc_start_main`; the scoped
+`GeneralInitialTlsState::commit_runtime_v1` calls; and the complete publisher
+body whose sole final operation is the release `READY` store. It separately
+requires the consumer's acquire load before coordinate reads. The reader
+rejects an early READY store, a write after READY, changed compiler route,
+changed order, or a missing selected operation. These are source-level lexical
+claims plus selected-object local behavior. They do not verify compiler
+lowering or arbitrary concurrent publication interleavings.
 
 The earlier rebuilt-interpreter twelve-cell development matrix and its source
 tests remain author evidence under ignored `.work/x86_64` only. This reader
@@ -115,10 +153,11 @@ does not consume or reseal that matrix: a component receipt can use only its
 selected installed dynamic product, finite linked inputs, and canonical plan.
 
 The component does not requalify prepared-worker/72-byte descriptor lifetime,
-release-READY publication ordering, first-bootstrap failure transitions, or
-the full process-exit family. The admission account does not establish release order,
-pointer lifetime, generation transitions, or fork ownership. Those limits
-remain explicit in both reports. Existing source contracts in `static_tls.rs`, `x86_64_general_relocation.rs`,
+first-bootstrap failure transitions, or the full process-exit family. Its
+closed source order and finite selected-object rejections do not establish
+compiler-lowered ordering, exhaustive malformed bit-pattern coverage, pointer
+lifetime, generation transitions, fork ownership, or arbitrary concurrent
+interleavings. Those limits remain explicit in both reports. Existing source contracts in `static_tls.rs`, `x86_64_general_relocation.rs`,
 `conventional_startup_v1.rs` and their owner tests remain authoritative; a
 successful ordinary consumer is not a replacement for their negative proofs.
 No current-source receipt is transferred to a later product or collector.

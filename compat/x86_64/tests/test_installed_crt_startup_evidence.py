@@ -5,6 +5,7 @@ import json
 import shutil
 import struct
 import subprocess
+import stat
 from unittest import mock
 from pathlib import Path
 import sys
@@ -424,6 +425,260 @@ int main(void) {
                 expected_original_path=str(source),expected_retained_path='inputs/oracle-crt/crt1.o')
             self.assertEqual(record['retained']['mode'],0o644)
             self.assertEqual(source.read_bytes(),b'retained CRT fixture')
+
+    def test_descriptor_runtime_admission_contract_has_a_closed_case_and_input_roster(self):
+        """Requirement-three evidence has one finite selected-object boundary."""
+        contract=reader.expected_contract()
+        admission=contract['descriptor_handoff']['runtime_admission']
+        self.assertEqual(admission['probe'], {
+            'source':'compat/x86_64/installed_crt_startup_descriptor_runtime_probe.c',
+            'attachment_artifact':'dynamic-crabc-dynamic-attach.o',
+            'static_artifact':'candidate-static',
+            'mode':'static-freestanding-selected-object',
+        })
+        self.assertEqual(admission['cells'], [
+            {'name':'descriptor-runtime-matrix','define':''},
+            {'name':'descriptor-runtime-absent','define':'CRABC_RUNTIME_CASE_ABSENT'},
+            {'name':'descriptor-runtime-unaligned-record','define':'CRABC_RUNTIME_CASE_UNALIGNED_RECORD'},
+        ])
+        self.assertEqual(admission['value_cases'], list(reader.DESCRIPTOR_RUNTIME_VALUE_CASES))
+        self.assertIn(reader.DESCRIPTOR_RUNTIME_PROBE,reader.COLLECTOR_SOURCES)
+        self.assertNotIn(reader.DESCRIPTOR_RUNTIME_PROBE,reader.RUNTIME_SOURCES)
+        self.assertIn('compat/x86_64/owned_static_link_authority.py',reader.COLLECTOR_SOURCES)
+        self.assertNotIn('compat/x86_64/owned_static_link_authority.py',reader.RUNTIME_SOURCES)
+        reader.validate_contract(contract)
+        for mutate in (
+            lambda value:value['descriptor_handoff']['runtime_admission']['cells'].pop(),
+            lambda value:value['descriptor_handoff']['runtime_admission']['value_cases'].append('bad-extra'),
+            lambda value:value['descriptor_handoff']['runtime_admission']['probe'].update({'mode':'dynamic'}),
+        ):
+            with self.subTest(mutate=mutate):
+                changed=copy.deepcopy(contract);mutate(changed)
+                with self.assertRaises(reader.StartupEvidenceError):reader.validate_contract(changed)
+
+    def test_descriptor_runtime_source_order_rejects_missing_or_reordered_selected_operations(self):
+        """The receipt binds the selected producer, consumer and CRT route, not prose."""
+        sources=reader.descriptor_runtime_source_bytes(reader.ROOT)
+        observed=reader.descriptor_runtime_source_order(sources)
+        self.assertEqual(observed['scope'],
+                         'selected source release/acquire order and CRT attachment route; no compiler or concurrency proof')
+        self.assertEqual(observed['publisher']['state_store'],'Release READY last')
+        self.assertEqual(observed['consumer']['state_load'],'Acquire READY before TLS coordinate reads')
+        for path,old,new in (
+            ('ldso/src/x86_64_general_initial_tls_state.rs',
+             '.store(GENERAL_LOADER_TLS_RUNTIME_V1_STATE_READY, Ordering::Release);',
+             '.store(GENERAL_LOADER_TLS_RUNTIME_V1_STATE_READY, Ordering::Relaxed);'),
+            ('libc/src/c_abi/x86_64/loader_tls_runtime_v1.rs','Ordering::Acquire','Ordering::Relaxed'),
+            ('crt/src/x86_64_dynamic_startup.rs','if unsafe { __crabc_x86_loader_tls_runtime_v1_attach() } != 0','if unsafe { missing_attach() } != 0'),
+            ('scripts/build_x86_64_owned_dynamic_sysroot.py','"--emit=obj"','"--emit=llvm-ir"'),
+        ):
+            with self.subTest(path=path,old=old):
+                changed=copy.deepcopy(sources)
+                changed[path]=changed[path].replace(old.encode('ascii'),new.encode('ascii'),1)
+                with self.assertRaises(reader.StartupEvidenceError):reader.descriptor_runtime_source_order(changed)
+        builder='scripts/build_x86_64_owned_dynamic_sysroot.py'
+        selected=(b'"-C", "opt-level=2", "-C", "panic=abort", '
+                  b'"-C", "relocation-model=pic",')
+        changed=copy.deepcopy(sources)
+        self.assertEqual(changed[builder].count(selected),1)
+        changed[builder]=changed[builder].replace(
+            selected,
+            b'"-C", "opt-level=2", "-C", "panic=abort", '
+            b'"-C", "relocation-model=static",',
+            1,
+        )
+        with self.assertRaises(reader.StartupEvidenceError):reader.descriptor_runtime_source_order(changed)
+
+    def test_descriptor_runtime_source_order_rejects_an_early_ready_store_or_post_ready_write(self):
+        """READY is the publisher's one final operation, not merely an ordered snippet."""
+        sources=reader.descriptor_runtime_source_bytes(reader.ROOT)
+        path='ldso/src/x86_64_general_initial_tls_state.rs'
+        marker=b'        (*record).thread_pointer = installed.thread_pointer.cast_const();\n'
+        ready=b'    }\n}'
+        store=(b'        (*record).state.store(GENERAL_LOADER_TLS_RUNTIME_V1_STATE_READY, '
+               b'Ordering::Release);\n')
+        final=(b'        (*record)\n            .state\n            .store('
+               b'GENERAL_LOADER_TLS_RUNTIME_V1_STATE_READY, Ordering::Release);\n'+ready)
+        self.assertEqual(sources[path].count(marker),1)
+        self.assertEqual(sources[path].count(final),1)
+        for name,changed_source in (
+            ('early-ready',sources[path].replace(marker,store+marker,1)),
+            ('post-ready-write',sources[path].replace(final,
+                b'        (*record)\n            .state\n            .store('
+                b'GENERAL_LOADER_TLS_RUNTIME_V1_STATE_READY, Ordering::Release);\n'
+                b'        (*record).generation = 1;\n'+ready,1)),
+        ):
+            self.assertNotEqual(changed_source,sources[path])
+            with self.subTest(name=name):
+                changed=copy.deepcopy(sources);changed[path]=changed_source
+                with self.assertRaises(reader.StartupEvidenceError):reader.descriptor_runtime_source_order(changed)
+
+    def test_descriptor_runtime_cells_have_exact_zero_streams_and_reconstructed_defines(self):
+        """Every selected-object endpoint is one retained command, never a shell aggregate."""
+        cells=reader.descriptor_runtime_cells()
+        self.assertEqual([cell['label'] for cell in cells],[
+            'descriptor-runtime-matrix','descriptor-runtime-absent','descriptor-runtime-unaligned-record'])
+        self.assertEqual([cell['define'] for cell in cells],['','CRABC_RUNTIME_CASE_ABSENT',
+                                                              'CRABC_RUNTIME_CASE_UNALIGNED_RECORD'])
+        self.assertTrue(all(cell['status']==0 and cell['stdout']==b'' and cell['stderr']==b'' for cell in cells))
+        for changed in (cells[:-1], [*cells,copy.deepcopy(cells[0])],
+                        [{**cells[0],'status':1},*cells[1:]]):
+                with self.subTest(changed=changed):
+                    with self.assertRaises(reader.StartupEvidenceError):reader.validate_descriptor_runtime_cells(changed)
+
+    def test_unaligned_descriptor_probe_keeps_a_defined_plus_one_alias(self):
+        """The unaligned endpoint cannot silently become the absent-symbol endpoint."""
+        parent=reader.ROOT/'.work/x86_64/runtimev1-installed-admission';parent.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as directory:
+            object_path=Path(directory)/'unaligned-record.o'
+            subprocess.run([
+                'cc','-std=c11','-O2','-ffreestanding','-fno-builtin','-fno-stack-protector','-fno-pie',
+                '-DCRABC_RUNTIME_CASE_UNALIGNED_RECORD','-c',str(reader.ROOT/reader.DESCRIPTOR_RUNTIME_PROBE),
+                '-o',str(object_path),
+            ],cwd=reader.ROOT,check=True,capture_output=True,text=True)
+            cell=next(cell for cell in reader.descriptor_runtime_cells()
+                      if cell['define']=='CRABC_RUNTIME_CASE_UNALIGNED_RECORD')
+            observed=reader.descriptor_runtime_probe_object(object_path,cell)
+            descriptor=observed['descriptor'];backing=observed['backing']
+            self.assertEqual((descriptor['binding'],descriptor['visibility']),('GLOBAL','DEFAULT'))
+            self.assertNotEqual(descriptor['section'],0)
+            self.assertEqual(descriptor['section'],backing['section'])
+            self.assertEqual(descriptor['value'],backing['value']+1)
+
+    def test_descriptor_runtime_source_cells_keep_their_closed_object_roster(self):
+        """Each source branch has its intended definition before the direct link."""
+        parent=reader.ROOT/'.work/x86_64/runtimev1-installed-admission';parent.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as directory:
+            observed={}
+            for cell in reader.descriptor_runtime_cells():
+                object_path=Path(directory)/(cell['label']+'.o')
+                subprocess.run([
+                    'cc','-std=c11','-O2','-ffreestanding','-fno-builtin','-fno-stack-protector','-fno-pie',
+                    *([] if not cell['define'] else ['-D'+cell['define']]),
+                    '-c',str(reader.ROOT/reader.DESCRIPTOR_RUNTIME_PROBE),'-o',str(object_path),
+                ],cwd=reader.ROOT,check=True,capture_output=True,text=True)
+                observed[cell['label']]=reader.descriptor_runtime_probe_object(object_path,cell)
+            self.assertEqual(observed['descriptor-runtime-matrix']['descriptor']['size'],72)
+            self.assertIsNone(observed['descriptor-runtime-absent']['descriptor'])
+            self.assertEqual(
+                observed['descriptor-runtime-unaligned-record']['descriptor']['value'],
+                observed['descriptor-runtime-unaligned-record']['backing']['value']+1,
+            )
+
+    def test_descriptor_runtime_inputs_require_selected_bytes_and_source_bound_modes(self):
+        """The selected attachment and archive cannot be resealed as loose inputs."""
+        parent=reader.ROOT/'.work/x86_64/runtimev1-installed-admission';parent.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as directory:
+            root=reader.ROOT;directory=Path(directory);static=directory/'static';dynamic=directory/'dynamic'
+            static_libc=static/'usr/lib/libc.a';attachment=dynamic/'usr/lib/crabc-dynamic-attach.o'
+            for path,contents in ((static_libc,b'static libc'),(attachment,b'selected attachment')):
+                path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(contents);path.chmod(0o644)
+            inputs={
+                'static_preparation':{'primary':{'path':static.relative_to(root).as_posix()}},
+                'dynamic_product':{'path':dynamic.relative_to(root).as_posix()},
+                'startup_artifacts':{
+                    'candidate-static':reader.ident(root,static_libc),
+                    'dynamic-crabc-dynamic-attach.o':reader.ident(root,attachment),
+                },
+            }
+            observed=reader.descriptor_runtime_inputs(root,inputs)
+            self.assertEqual(observed['static_libc']['mode'],0o644)
+            self.assertEqual(observed['attachment']['mode'],0o644)
+            for path in (static_libc,attachment):
+                original=stat.S_IMODE(path.stat().st_mode);path.chmod(0o600)
+                with self.subTest(path=path),self.assertRaises(reader.StartupEvidenceError):
+                    reader.descriptor_runtime_inputs(root,inputs)
+                path.chmod(original)
+            attachment.write_bytes(b'substituted attachment')
+            with self.assertRaises(reader.StartupEvidenceError):reader.descriptor_runtime_inputs(root,inputs)
+
+    def test_descriptor_runtime_plan_keeps_the_finite_direct_static_link_and_exact_streams(self):
+        """The collector cannot broaden the selected attachment experiment."""
+        parent=reader.ROOT/'.work/x86_64/runtimev1-installed-admission';parent.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as directory:
+            root=reader.ROOT;directory=Path(directory);work=directory/'receipt';work.mkdir()
+            static=directory/'static';dynamic=directory/'dynamic'
+            inputs={'static_preparation':{'primary':{'path':static.relative_to(root).as_posix()}},
+                    'dynamic_product':{'path':dynamic.relative_to(root).as_posix()}}
+            tools={'compiler':{'original':{'path':'/sealed/compiler'}},
+                   'linker':{'original':{'path':'/sealed/linker'}},
+                   'env':{'original':{'path':'/sealed/env'}}}
+            plan=reader.descriptor_runtime_plan(root,work,inputs,tools)
+            cells=reader.descriptor_runtime_cells()
+            self.assertEqual([row['label'] for row in plan],
+                             [name for cell in cells for name in (cell['label']+'-source',cell['label']+'-link',cell['label'])])
+            attachment=reader.ordinary.mounted(root,dynamic/'usr/lib/crabc-dynamic-attach.o')
+            archive=reader.ordinary.mounted(root,static/'usr/lib/libc.a')
+            source=reader.ordinary.mounted(root,work/'installed_crt_startup_descriptor_runtime_probe.c')
+            for cell in cells:
+                compile=next(row for row in plan if row['label']==cell['label']+'-source')
+                self.assertEqual(compile['argv'][:7],[
+                    '/sealed/compiler','-std=c11','-O2','-ffreestanding','-fno-builtin',
+                    '-fno-stack-protector','-fno-pie'])
+                self.assertEqual(compile['argv'].count(source),1)
+                self.assertEqual(compile['argv'][-2:],['-o',reader.ordinary.mounted(root,work/(cell['label']+'.o'))])
+                link=next(row for row in plan if row['label']==cell['label']+'-link')
+                self.assertEqual(link['argv'].count(attachment),1)
+                self.assertEqual(link['argv'].count(archive),1)
+                self.assertEqual(link['argv'][:6],[
+                    '/sealed/linker','-static','--no-dynamic-linker','--no-undefined','-e','_start'])
+                self.assertEqual(link['argv'].count(reader.ordinary.mounted(root,work/(cell['label']+'.o'))),1)
+                self.assertEqual(link['expected_stdout'],b'')
+                self.assertEqual(link['expected_stderr'],b'')
+                run=next(row for row in plan if row['label']==cell['label'])
+                self.assertEqual(run['argv'],['/sealed/env','-i',reader.ordinary.mounted(root,work/cell['label'])])
+                self.assertEqual((run['expected_status'],run['expected_stdout'],run['expected_stderr']),
+                                 (0,b'',b''))
+
+    def test_descriptor_runtime_map_requires_selected_attachment_bodies_in_each_final_link(self):
+        """The shared static authority receives only this finite selected relation."""
+        parent=reader.ROOT/'.work/x86_64/runtimev1-installed-admission';parent.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as directory:
+            root=reader.ROOT;directory=Path(directory);work=directory/'receipt';work.mkdir()
+            static=directory/'static';dynamic=directory/'dynamic'
+            static_libc=static/'usr/lib/libc.a';attachment=dynamic/'usr/lib/crabc-dynamic-attach.o'
+            for path,contents in ((static_libc,b'static libc'),(attachment,b'selected attachment')):
+                path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(contents);path.chmod(0o644)
+            inputs={
+                'static_preparation':{'primary':{'path':static.relative_to(root).as_posix()}},
+                'dynamic_product':{'path':dynamic.relative_to(root).as_posix()},
+                'startup_artifacts':{
+                    'candidate-static':reader.ident(root,static_libc),
+                    'dynamic-crabc-dynamic-attach.o':reader.ident(root,attachment),
+                },
+            }
+            cell=reader.descriptor_runtime_cells()[0]
+            path=work/(cell['label']+'.map');path.write_text('LLD map is checked by the shared authority\n')
+            endpoint=work/cell['label'];probe=work/(cell['label']+'.o')
+            endpoint.write_bytes(b'final static endpoint');probe.write_bytes(b'compiled probe object')
+            attach=reader.ordinary.mounted(root,attachment)
+            with mock.patch.object(reader.static_authority,'require_static_functions') as relation:
+                observed=reader.descriptor_runtime_map_relation(root,work,inputs,cell)
+            self.assertEqual(observed['attachment'],attach)
+            self.assertEqual([row['name'] for row in observed['functions']],[reader.ATTACH,reader.RECORD])
+            called_map,called_endpoint,admitted,contracts=relation.call_args.args
+            self.assertEqual((called_map,called_endpoint),(path,endpoint))
+            self.assertEqual(admitted[attach],attachment)
+            self.assertEqual([row.name for row in contracts],[reader.ATTACH,reader.RECORD])
+            with mock.patch.object(reader.static_authority,'require_static_functions',
+                                   side_effect=reader.static_authority.StaticLinkAuthorityError('wrong final bytes')):
+                with self.assertRaisesRegex(reader.StartupEvidenceError,'wrong final bytes'):
+                    reader.descriptor_runtime_map_relation(root,work,inputs,cell)
+
+    def test_descriptor_runtime_streams_keep_raw_checks_but_project_json_safe_cells(self):
+        """The report account cannot retain Python bytes after raw validation."""
+        parent=reader.ROOT/'.work/x86_64/runtimev1-installed-admission';parent.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as directory:
+            work=Path(directory);cell=reader.descriptor_runtime_cells()[0]
+            raw={suffix:reader.ordinary.raw_path(work,cell['label'],suffix)
+                 for suffix in ('stdout','stderr','status')}
+            raw['stdout'].parent.mkdir(parents=True)
+            raw['stdout'].write_bytes(b'');raw['stderr'].write_bytes(b'');raw['status'].write_bytes(b'0\n')
+            observed=reader.descriptor_runtime_streams(work,cell)
+            self.assertEqual(observed,{'stdout':'','stderr':'','status':0})
+            json.dumps({'streams':observed},sort_keys=True)
+            raw['status'].write_bytes(b'1\n')
+            with self.assertRaises(reader.StartupEvidenceError):reader.descriptor_runtime_streams(work,cell)
 
     def test_contract_is_closed_and_flags_are_booleans(self):
         contract=reader.expected_contract()

@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import struct
 import subprocess
 import sys
@@ -21,9 +22,10 @@ import owned_dynamic_receipt as dynamic_receipt
 import owned_posix_product_evidence as products
 import owned_posix_static_products as static_products
 import owned_dynamic_qualification as qualification
+import owned_static_link_authority as static_authority
 from loader_debug_abi_evidence import Elf
 ROOT=Path(__file__).resolve().parents[2]
-SCHEMA='crabc.x86_64-installed-crt-startup/v3'
+SCHEMA='crabc.x86_64-installed-crt-startup/v4'
 CONVENTIONAL='__crabc_x86_64_loader_conventional_startup_v1'
 HANDOFF='__crabc_x86_64_owned_crt_handoff'
 ATTACH='__crabc_x86_loader_tls_runtime_v1_attach'
@@ -32,6 +34,20 @@ BOOTSTRAP='__crabc_x86_static_tls_bootstrap'
 DESCRIPTOR='__crabc_x86_64_loader_tls_runtime_v1'
 DESCRIPTOR_DSO='descriptor-rogue-dso.so'
 DESCRIPTOR_ENDPOINT='descriptor-dso-endpoint'
+DESCRIPTOR_RUNTIME_VALUE_CASES=(
+    'bad-magic','bad-version','bad-abi-size','bad-mode','bad-owner','unpublished','publishing',
+    'unexpected-state','nonzero-reserved','bad-generation','null-tp','null-dtv','unaligned-tp',
+    'unaligned-dtv','zero-module-count','short-dtv-words','module-count-overflow','fs-mismatch',
+    'self-word-mismatch','dtv-slot-mismatch','dtv-count-mismatch',
+)
+DESCRIPTOR_RUNTIME_SOURCE_FILES=(
+    'scripts/build_x86_64_owned_dynamic_sysroot.py','ldso/Cargo.toml','ldso/build.rs',
+    'crt/build_x86_64.py','crt/src/x86_64_dynamic_startup.rs',
+    'ldso/src/x86_64_general_initial_graph.rs','ldso/src/x86_64_general_initial_tls_state.rs',
+    'libc/src/c_abi/x86_64/owned_dynamic_attachment.rs',
+    'libc/src/c_abi/x86_64/loader_tls_runtime_v1.rs',
+)
+DESCRIPTOR_RUNTIME_PROBE='compat/x86_64/installed_crt_startup_descriptor_runtime_probe.c'
 DESCRIPTOR_MUTATIONS={
     'wrong-symbol-type':('symbol-info',0x21),
     'wrong-binding':('symbol-info',0x10),
@@ -89,6 +105,22 @@ def expected_contract():
                                                     'symbol_section':0,'symbol_value':0}},
                     'entry_modes':['kernel','direct'],
                     'rejection':{'status':127,'stdout':'','stderr':'reloc\n'},
+                },
+                # This is a selected-object execution account. Its freestanding
+                # endpoints deliberately use controlled storage and a strong
+                # test record where present; it neither changes nor replaces
+                # the separate main-image weak-GOT transport account above.
+                'runtime_admission':{
+                    'probe':{'source':DESCRIPTOR_RUNTIME_PROBE,
+                             'attachment_artifact':'dynamic-crabc-dynamic-attach.o',
+                             'static_artifact':'candidate-static',
+                             'mode':'static-freestanding-selected-object'},
+                    'value_cases':list(DESCRIPTOR_RUNTIME_VALUE_CASES),
+                    'cells':[
+                        {'name':'descriptor-runtime-matrix','define':''},
+                        {'name':'descriptor-runtime-absent','define':'CRABC_RUNTIME_CASE_ABSENT'},
+                        {'name':'descriptor-runtime-unaligned-record','define':'CRABC_RUNTIME_CASE_UNALIGNED_RECORD'},
+                    ],
                 },
             },
             'descriptor_import_required':False,'family_completion':False,'public_support':False}
@@ -148,6 +180,164 @@ def descriptor_admission_cells():
     return [{'binary':binary,'entry':entry,'label':binary+'-'+entry}
             for binary in binaries for entry in policy['entry_modes']]
 
+def descriptor_runtime_cells():
+    policy=expected_contract()['descriptor_handoff']['runtime_admission']
+    cells=[]
+    for row in policy['cells']:
+        cells.append({'label':row['name'],'define':row['define'],'status':0,'stdout':b'','stderr':b''})
+    validate_descriptor_runtime_cells(cells)
+    return cells
+
+
+def validate_descriptor_runtime_cells(cells):
+    policy=expected_contract()['descriptor_handoff']['runtime_admission']
+    expected=[{'label':row['name'],'define':row['define'],'status':0,'stdout':b'','stderr':b''}
+              for row in policy['cells']]
+    require(same(cells,expected),'descriptor runtime cell roster differs')
+
+
+def descriptor_runtime_source_bytes(root):
+    require(set(DESCRIPTOR_RUNTIME_SOURCE_FILES)<=set(RUNTIME_SOURCES),
+            'descriptor runtime source roster is not selected')
+    return {name:(root/name).read_bytes() for name in DESCRIPTOR_RUNTIME_SOURCE_FILES}
+
+
+def _runtime_source_text(sources,name):
+    require(type(sources) is dict and set(sources)==set(DESCRIPTOR_RUNTIME_SOURCE_FILES),
+            'descriptor runtime source roster differs')
+    value=sources[name]
+    require(type(value) is bytes,'descriptor runtime source bytes differ: '+name)
+    try:return value.decode('utf-8')
+    except UnicodeDecodeError as error:raise StartupEvidenceError('descriptor runtime source encoding differs: '+name) from error
+
+
+PUBLISHER_SOURCE_TEMPLATE=(
+    'unsafefnpublish_reserved_loader_tls_runtime_v1(installed:InstalledInitialTls){'
+    'letrecord=core::ptr::addr_of_mut!(__crabc_x86_64_loader_tls_runtime_v1);'
+    '#[cfg(crabc_general_loader_libc_tls_runtime_v1_poisoned_dtv)]'
+    'letdescriptor_dtv=1usizeas*constusize;'
+    '#[cfg(not(crabc_general_loader_libc_tls_runtime_v1_poisoned_dtv))]'
+    'letdescriptor_dtv=installed.dtv.cast_const();unsafe{'
+    '(*record).thread_pointer=installed.thread_pointer.cast_const();'
+    '(*record).dtv=descriptor_dtv;(*record).dtv_words=installed.dtv_words;'
+    '(*record).module_count=installed.module_count;'
+    '(*record).state.store(GENERAL_LOADER_TLS_RUNTIME_V1_STATE_READY,Ordering::Release);}}'
+)
+
+
+def _runtime_region(text,signature,end_marker,label):
+    require(text.count(signature)==1,label+' signature differs')
+    begin=text.index(signature);end=text.find(end_marker,begin+len(signature))
+    require(end>=0 and text.find(end_marker,end+len(end_marker))<0,label+' boundary differs')
+    return text[begin:end]
+
+
+def _runtime_order(text,anchors,label):
+    positions=[]
+    for anchor in anchors:
+        require(text.count(anchor)==1,label+' anchor differs: '+anchor)
+        positions.append(text.index(anchor))
+    require(positions==sorted(positions),label+' operation order differs')
+
+
+def _runtime_python_definition(text,signature,label):
+    require(text.count(signature)==1,label+' signature differs')
+    begin=text.index(signature);end=text.find('\ndef ',begin+1)
+    require(end>=0,label+' body is unterminated')
+    return text[begin:end]
+
+
+def _runtime_source_code(text):
+    return re.sub(r'\s+','',re.sub(r'//[^\n]*','',text))
+
+
+
+def descriptor_runtime_source_order(sources):
+    """Account only selected lexical Release/Acquire and CRT-call order.
+
+    This bounded source account is intentionally not a compiler-lowering or
+    concurrent-scheduling proof. The selected object execution account below
+    independently checks the consumer's current behavior.
+    """
+    builder=_runtime_source_text(sources,'scripts/build_x86_64_owned_dynamic_sysroot.py')
+    cargo=_runtime_source_text(sources,'ldso/Cargo.toml')
+    build=_runtime_source_text(sources,'ldso/build.rs')
+    crt_build=_runtime_source_text(sources,'crt/build_x86_64.py')
+    crt=_runtime_source_text(sources,'crt/src/x86_64_dynamic_startup.rs')
+    graph=_runtime_source_text(sources,'ldso/src/x86_64_general_initial_graph.rs')
+    tls=_runtime_source_text(sources,'ldso/src/x86_64_general_initial_tls_state.rs')
+    attachment=_runtime_source_text(sources,'libc/src/c_abi/x86_64/owned_dynamic_attachment.rs')
+    consumer=_runtime_source_text(sources,'libc/src/c_abi/x86_64/loader_tls_runtime_v1.rs')
+    _runtime_order(builder,('LOADER_FEATURE = "x86_64-owned-dynamic-runtime"',
+                            'str(ROOT / "libc/src/c_abi/x86_64/owned_dynamic_attachment.rs")',
+                            'str(library / "crabc-dynamic-attach.o")',
+                            '"--features",\n                      LOADER_FEATURE'), 'dynamic builder')
+    attachment_compile=_runtime_region(
+        builder,
+        'run([rustup, "run", common.PINNED_TOOLCHAIN, "rustc", "--edition=2021",',
+        '\n    (library / "crabc-dynamic-attach.o").chmod(0o644)',
+        'selected attachment compile route',
+    )
+    _runtime_order(attachment_compile,(
+        '"--crate-name", "crabc_dynamic_attachment"', '"--crate-type", "lib"',
+        '"--emit=obj"', '"-C", "opt-level=2"',
+        '"-C", "relocation-model=pic"',
+        'str(ROOT / "libc/src/c_abi/x86_64/owned_dynamic_attachment.rs")',
+        '"-o", str(library / "crabc-dynamic-attach.o")',
+    ), 'selected attachment compile route')
+    require(cargo.count('x86_64-owned-dynamic-runtime = ["x86_64-general-initial-lifecycle", "x86_64-general-initial-tls-runtime-v1-dynamic-main-thread-interpreter"]')==1,
+            'dynamic loader feature route differs')
+    dynamic_build=_runtime_region(
+        build,
+        'if std::env::var_os(\n        "CARGO_FEATURE_X86_64_GENERAL_INITIAL_TLS_RUNTIME_V1_DYNAMIC_MAIN_THREAD_INTERPRETER",',
+        '\n    println!("cargo:rustc-cdylib-link-arg=-nostartfiles");',
+        'dynamic loader build route',
+    )
+    _runtime_order(dynamic_build,('crabc_general_initial_graph','crabc_general_initial_tls_materialization_v1',
+                                  'crabc_general_loader_libc_tls_runtime_v1','crabc_dynamic_main_thread_runtime_v1'),
+                   'dynamic loader cfg route')
+    _runtime_order(attachment,('#![no_std]','#[path = "loader_tls_runtime_v1.rs"]','mod loader_tls_runtime_v1;'),
+                   'selected attachment root')
+    require(attachment.count('mod loader_tls_runtime_v1;')==1,'selected attachment module roster differs')
+    selected=_runtime_python_definition(crt_build,'def selected_objects(args: argparse.Namespace) -> tuple[ObjectSpec, ...]:','dynamic CRT selection')
+    _runtime_order(selected,('owned = getattr(args, "owned_dynamic_sysroot", False)',
+                             '"owned-dynamic-exec-entry"','"owned-dynamic-pie-entry"'), 'dynamic CRT selection')
+    compile_loop=_runtime_python_definition(crt_build,'def build(args: argparse.Namespace) -> dict[str, object]:','dynamic CRT compile')
+    _runtime_order(compile_loop,('["--cfg", "crabc_dynamic_main_thread_runtime_v1"]',
+                                 'or (args.dynamic_main_thread_runtime_v1 and spec.name == "Scrt1.o")',
+                                 'str(source)'), 'dynamic CRT compile')
+    startup=_runtime_region(crt,'pub unsafe extern "C" fn __crabc_x86_64_dynamic_start(','\n\n#[no_mangle]\npub unsafe extern "C" fn __crabc_x86_64_dynamic_executable_init','dynamic CRT startup')
+    _runtime_order(startup,('if unsafe { __crabc_x86_loader_tls_runtime_v1_attach() } != 0',
+                            'startup_reject();','__libc_start_main('), 'dynamic CRT attachment')
+    publisher=_runtime_region(tls,'unsafe fn publish_reserved_loader_tls_runtime_v1(installed: InstalledInitialTls) {','\n\nimpl GeneralInitialTlsState {','RuntimeV1 publisher')
+    require(_runtime_source_code(publisher)==PUBLISHER_SOURCE_TEMPLATE,'RuntimeV1 publisher write/store template differs')
+    implementation='impl GeneralInitialTlsState {\n'
+    commit_signature='pub(crate) unsafe fn commit_runtime_v1(\n        mut self,'
+    require(tls.count(implementation)==1,'RuntimeV1 commit implementation differs')
+    implementation_start=tls.index(implementation)
+    commit_start=tls.find(commit_signature,implementation_start+len(implementation))
+    commit_end=tls.find('\n\n    /// Rolls back the map-owned portion',commit_start+len(commit_signature))
+    require(commit_start>=0 and commit_end>=0,'RuntimeV1 commit boundary differs')
+    commit=tls[commit_start:commit_end]
+    _runtime_order(commit,('unsafe { publish_initial_tls_attachment(self.registry, installed) };','unsafe { self.loader.commit() };',
+                           'unsafe { publish_reserved_loader_tls_runtime_v1(installed) };'),'RuntimeV1 commit')
+    route=_runtime_region(graph,'fn run_with_initial_tls(','\n\n/// The complete prevalidated constructor call list','RuntimeV1 graph route')
+    _runtime_order(route,('state.materialize_initial_tls()','let conventional_startup = unsafe { state.commit_runtime_v1(installed) };','runtime_registry.publish(ldso_base);'),
+                   'RuntimeV1 graph route')
+    validate=_runtime_region(consumer,"unsafe fn validate_loader_tls_runtime_v1() -> Option<&'static LoaderLibcTlsRuntimeV1> {",'\n\n/// Obtain the current x86-64 `%fs` base','RuntimeV1 consumer validation')
+    _runtime_order(validate,('record.state.load(Ordering::Acquire)','record.thread_pointer.is_null()',
+                             'record.dtv.is_null()','record.module_count.checked_add(1)?'), 'RuntimeV1 consumer validation')
+    attach_body=_runtime_region(consumer,'pub unsafe extern "C" fn __crabc_x86_loader_tls_runtime_v1_attach() -> c_int {','\n}',
+                                  'RuntimeV1 consumer attachment')
+    _runtime_order(attach_body,('validate_loader_tls_runtime_v1()','observe_validated_loader_tls(record)'),
+                   'RuntimeV1 consumer attachment')
+    return {'scope':'selected source release/acquire order and CRT attachment route; no compiler or concurrency proof',
+            'builder':{'attachment':'direct PIC object','loader_feature':'x86_64-owned-dynamic-runtime'},
+            'publisher':{'state_store':'Release READY last'},
+            'consumer':{'state_load':'Acquire READY before TLS coordinate reads'},
+            'crt':{'attachment':'before __libc_start_main'}}
+
+
 def expected_stdout(cell):
     mode=cell['mode']; owned=mode in MODES[:4]; empty=cell['variant']=='empty'
     prefix=('P' if owned and not empty else '')+'I'+('' if empty else 'C')
@@ -160,6 +350,7 @@ def validate_streams(streams):
 
 RUNTIME_SOURCES=('crt/src/x86_64_startup.rs','crt/src/x86_64_dynamic_startup.rs','crt/src/x86_64_array_boundaries.rs',
     'crt/src/x86_64_crt1.rs','crt/src/x86_64_rcrt1.rs','crt/src/x86_64_Scrt1.rs','crt/build_x86_64.py',
+    'scripts/build_x86_64_owned_dynamic_sysroot.py','ldso/Cargo.toml','ldso/build.rs',
     'libc/src/c_abi/x86_64/static_tls.rs','libc/src/c_abi/x86_64/static_startup.rs',
     'libc/src/c_abi/x86_64/conventional_startup_v1.rs','libc/src/c_abi/x86_64/dynamic_main_thread_runtime_v1_lifecycle.rs',
     'libc/src/c_abi/x86_64/owned_dynamic_attachment.rs','libc/src/c_abi/x86_64/loader_tls_runtime_v1.rs',
@@ -172,6 +363,8 @@ RUNTIME_SOURCES=('crt/src/x86_64_startup.rs','crt/src/x86_64_dynamic_startup.rs'
 COLLECTOR_SOURCES=tuple(dict.fromkeys((*substrate.COLLECTOR_SOURCES,*RUNTIME_SOURCES,
     'compat/x86_64/installed_crt_startup_evidence.py','compat/x86_64/installed-crt-startup.toml',
     'compat/x86_64/installed_crt_startup_probe.c','compat/x86_64/installed_crt_startup_descriptor_dso.c',
+    DESCRIPTOR_RUNTIME_PROBE,
+    'compat/x86_64/owned_static_link_authority.py',
     'compat/x86_64/prepared_worker_tls_evidence.py')))
 ORACLE_CRT=('crt1.o','Scrt1.o','rcrt1.o','crti.o','crtn.o')
 EXTRA_TOOLS=substrate.EXTRA_TOOLS
@@ -195,6 +388,35 @@ def product_paths(root,inputs):
             **{'static-'+n:static/'usr/lib'/n for n in ('crt1.o','Scrt1.o','rcrt1.o')},
             **{'dynamic-'+n:dynamic/'usr/lib'/n for n in ('crt1.o','Scrt1.o','crabc-dynamic-attach.o')}}
 
+
+def descriptor_runtime_inputs(root,inputs):
+    """Return the two selected physical inputs for the RuntimeV1 probe.
+
+    The product reader already validates the whole source-owned mode policy.
+    This narrower account records the two roles the standalone command uses,
+    so a retained command cannot silently substitute a byte-identical file
+    with a different installed permission.
+    """
+    paths=product_paths(root,inputs);policy=expected_contract()['descriptor_handoff']['runtime_admission']['probe']
+    modes=products.link_input_mode_projection()
+    selected={
+        'attachment':(policy['attachment_artifact'],paths[policy['attachment_artifact']],
+                      modes['dynamic']['usr/lib/crabc-dynamic-attach.o']),
+        'static_libc':(policy['static_artifact'],paths[policy['static_artifact']],
+                       modes['static']['usr/lib/libc.a']),
+    }
+    result={}
+    for role,(artifact,path,expected_mode) in selected.items():
+        require(path.is_file() and not path.is_symlink() and path.resolve()==path,
+                'descriptor runtime selected input is not physical: '+role)
+        identity=ident(root,path)
+        require(same(identity,inputs['startup_artifacts'][artifact]),
+                'descriptor runtime selected input identity differs: '+role)
+        mode=stat.S_IMODE(path.stat().st_mode)
+        require(mode==expected_mode,'descriptor runtime source-bound input mode differs: '+role)
+        result[role]={'artifact':artifact,'identity':identity,'mode':mode}
+    return result
+
 def admit(root,preparation,static,dynamic,historical):
     value=substrate.admitted(root,preparation,static,dynamic,historical)
     history=read(historical)
@@ -208,6 +430,38 @@ def admit(root,preparation,static,dynamic,historical):
 
 def mode_owner(mode):
     return 'candidate' if mode in MODES[:6] else 'oracle'
+
+
+def descriptor_runtime_plan(root,work,inputs,tools):
+    """Build the closed selected-object probe command roster.
+
+    The direct attachment object and selected static archive remain explicit
+    argv entries.  This is deliberately an ordinary static link, not a
+    product builder or a substitute dynamic-loader execution path.
+    """
+    m=lambda path:ordinary.mounted(root,path);p=lambda name:m(work/name)
+    tool=lambda name:tools[name]['original']['path']
+    policy=expected_contract()['descriptor_handoff']['runtime_admission']['probe']
+    paths=product_paths(root,inputs);specs=[]
+    for cell in descriptor_runtime_cells():
+        specs.extend((
+            {'label':cell['label']+'-source','argv':[
+                tool('compiler'),'-std=c11','-O2','-ffreestanding','-fno-builtin',
+                '-fno-stack-protector','-fno-pie',
+                *([] if not cell['define'] else ['-D'+cell['define']]),
+                '-c',p(Path(policy['source']).name),'-o',p(cell['label']+'.o'),
+            ],'cwd':'/workspace','expected_stdout':b'','expected_stderr':b''},
+            {'label':cell['label']+'-link','argv':[
+                tool('linker'),'-static','--no-dynamic-linker','--no-undefined','-e','_start',
+                '-Map='+p(cell['label']+'.map'),p(cell['label']+'.o'),
+                m(paths[policy['attachment_artifact']]),m(paths[policy['static_artifact']]),
+                '-o',p(cell['label']),
+            ],'cwd':'/workspace','expected_stdout':b'','expected_stderr':b''},
+            {'label':cell['label'],'argv':[tool('env'),'-i',p(cell['label'])],
+             'cwd':'/workspace','expected_status':cell['status'],
+             'expected_stdout':cell['stdout'],'expected_stderr':cell['stderr']},
+        ))
+    return specs
 
 def plan(root,work,inputs,tools):
     m=lambda path:ordinary.mounted(root,path);p=lambda name:m(work/name)
@@ -245,6 +499,9 @@ def plan(root,work,inputs,tools):
         '-o',p(dso['shared_object'])])
     add('descriptor-endpoint-link',[tool('dynamic_driver'),'--dynamic-pie','--application-dso',
         p(dso['shared_object']),p('normal.o'),'-o',p(dso['endpoint'])])
+    for spec in descriptor_runtime_plan(root,work,inputs,tools):
+        add(spec['label'],spec['argv'],spec['cwd'],
+            **{key:value for key,value in spec.items() if key not in ('label','argv','cwd')})
     paths={**product_paths(root,inputs),**{case['name']:work/case['name'] for case in cases()},
            **{variant+'-object':work/(variant+'.o') for variant in ('normal','empty')}}
     for key,path in paths.items():
@@ -288,7 +545,7 @@ def validate_commands(root,work,inputs,tools,commands):
                 'startup status or diagnostic differs')
         if 'expected_stdout' in spec:
             require(ordinary.raw_path(work,spec['label'],'stdout').read_bytes()==spec['expected_stdout'],
-                    'startup descriptor admission stdout differs')
+                    'startup command stdout differs')
 
 def projection(root,work,inputs):
     paths={**product_paths(root,inputs),**{case['name']:work/case['name'] for case in cases()},
@@ -873,6 +1130,110 @@ def roots(root,work,inputs):
         result[owner]=observed
     return result
 
+
+def descriptor_runtime_map_relation(root,work,inputs,cell):
+    """Bind selected attachment bodies through the sealed LLD map and final bytes."""
+    inputs_account=descriptor_runtime_inputs(root,inputs)
+    map_path=work/(cell['label']+'.map')
+    require(map_path.is_file() and not map_path.is_symlink(),'descriptor runtime link map is absent: '+cell['label'])
+    attachment=ordinary.mounted(root,product_paths(root,inputs)[inputs_account['attachment']['artifact']])
+    archive=ordinary.mounted(root,product_paths(root,inputs)[inputs_account['static_libc']['artifact']])
+    probe=ordinary.mounted(root,work/(cell['label']+'.o'))
+    contracts=(
+        static_authority.StaticFunctionContract(ATTACH,attachment,'GLOBAL','DEFAULT','GLOBAL','DEFAULT'),
+        static_authority.StaticFunctionContract(RECORD,attachment,'GLOBAL','HIDDEN','LOCAL','HIDDEN'),
+    )
+    try:
+        static_authority.require_static_functions(
+            map_path,work/cell['label'],
+            {probe:work/(cell['label']+'.o'),
+             attachment:product_paths(root,inputs)[inputs_account['attachment']['artifact']]},
+            contracts,
+        )
+    except static_authority.StaticLinkAuthorityError as error:
+        raise StartupEvidenceError('descriptor runtime selected attachment authority differs: '+str(error)) from error
+    return {'attachment':attachment,'static_libc':archive,'probe_object':probe,
+            'functions':[{'name':row.name,'input_owner':row.input_owner,
+                          'source_binding':row.source_binding,'source_visibility':row.source_visibility,
+                          'final_binding':row.final_binding,'final_visibility':row.final_visibility}
+                         for row in contracts]}
+
+
+def descriptor_runtime_probe_object(path,cell):
+    """Require the exact descriptor definition intended by one source cell.
+
+    This is a finite source-object check before the sealed direct link.  In
+    particular, the unaligned alias must survive optimization as an actual
+    defined address one byte after its backing storage; it cannot collapse to
+    the deliberately absent weak-symbol endpoint.
+    """
+    path=Path(path)
+    require(path.is_file() and not path.is_symlink(),'descriptor runtime probe object is absent: '+cell['label'])
+    elf=Elf(path);descriptor=elf.symbol(DESCRIPTOR,dynamic=False,required=False)
+    define=cell['define']
+    if not define:
+        require(descriptor is not None
+                and {key:descriptor[key] for key in ('type','binding','visibility','size')}
+                    =={'type':'OBJECT','binding':'GLOBAL','visibility':'DEFAULT','size':72},
+                'descriptor runtime matrix object definition differs')
+        return {'descriptor':descriptor}
+    if define=='CRABC_RUNTIME_CASE_ABSENT':
+        require(descriptor is None,'descriptor runtime absent object defines the descriptor')
+        return {'descriptor':None}
+    require(define=='CRABC_RUNTIME_CASE_UNALIGNED_RECORD','unknown descriptor runtime probe cell')
+    backing=elf.symbol('runtime_unaligned_record',dynamic=False)
+    require(descriptor is not None
+            and {key:descriptor[key] for key in ('binding','visibility','section')}
+                =={'binding':'GLOBAL','visibility':'DEFAULT','section':backing['section']}
+            and descriptor['value']==backing['value']+1,
+            'descriptor runtime unaligned object alias differs')
+    require(backing['type']=='OBJECT' and backing['binding']=='LOCAL' and backing['size']==73,
+            'descriptor runtime unaligned backing storage differs')
+    return {'descriptor':descriptor,'backing':backing}
+
+
+def descriptor_runtime_streams(work,cell):
+    """Check retained raw endpoint streams and return their JSON-safe account."""
+    streams={suffix:ordinary.raw_path(work,cell['label'],suffix).read_bytes()
+             for suffix in ('stdout','stderr','status')}
+    require(streams=={'stdout':cell['stdout'],'stderr':cell['stderr'],
+                      'status':str(cell['status']).encode('ascii')+b'\n'},
+            'descriptor runtime endpoint result differs: '+cell['label'])
+    return {'stdout':'','stderr':'','status':cell['status']}
+
+
+def descriptor_runtime_observations(root,work,inputs):
+    """Reconstruct the selected-object RuntimeV1 admission exercise.
+
+    Each process is static and terminates immediately after its raw FS-base
+    setup.  The result therefore establishes the selected attachment's local
+    admission behavior for this finite record roster; it is not an installed
+    loader publication or a concurrent scheduling proof.
+    """
+    policy=expected_contract()['descriptor_handoff']['runtime_admission']
+    cells=descriptor_runtime_cells();validate_descriptor_runtime_cells(cells)
+    source=work/Path(policy['probe']['source']).name
+    require(source.is_file() and not source.is_symlink() and source.read_bytes()==(root/DESCRIPTOR_RUNTIME_PROBE).read_bytes(),
+            'descriptor runtime probe source differs')
+    account=[]
+    for cell in cells:
+        binary=work/cell['label']
+        require(binary.is_file() and not binary.is_symlink(),'descriptor runtime endpoint is absent: '+cell['label'])
+        relation=descriptor_runtime_map_relation(root,work,inputs,cell)
+        probe_object=work/(cell['label']+'.o')
+        probe_account=descriptor_runtime_probe_object(probe_object,cell)
+        account.append({'label':cell['label'],'define':cell['define'],'probe_object':ident(root,probe_object),
+                        'probe_definition':probe_account,
+                        'endpoint':ident(root,binary),
+                        'map':ident(root,work/(cell['label']+'.map')),'relation':relation,
+                        'streams':descriptor_runtime_streams(work,cell)})
+    return {
+        'scope':'selected attachment local admission only; source order is lexical and no concurrent publication claim is made',
+        'source':ident(root,source),'inputs':descriptor_runtime_inputs(root,inputs),
+        'source_order':descriptor_runtime_source_order(descriptor_runtime_source_bytes(root)),
+        'value_cases':list(policy['value_cases']),'cells':account,
+    }
+
 def observations(root,work,inputs,tools):
     require((work/'oracle-link/libc.so').read_bytes()==(work/'qualification-oracle/runtime').read_bytes(),'oracle named link input differs')
     facts=projection(root,work,inputs);products_account=account_products(facts)
@@ -887,9 +1248,11 @@ def observations(root,work,inputs,tools):
             'executables':executables_account,
             'descriptor_handoff':descriptor_handoff(relocations_account,executables_account),'roots':roots(root,work,inputs),
             'descriptor_admission':descriptor_admission_observations(root,work,inputs,tools),
+            'descriptor_runtime_admission':descriptor_runtime_observations(root,work,inputs),
             'runtime_labels':[cell['label'] for cell in runtime_cells()],
             'limits':{'descriptor_worker_lifecycle':'not requalified by startup receipt',
                       'failed_first_bootstrap':'source contract retained; dedicated runtime rejection receipt not supplied',
+                      'descriptor_runtime_order':'source-level lexical account; arbitrary concurrent interleavings are not observed',
                       'family_semantics':'incomplete'}}
 
 def retain_oracle_crt(work,source,name):
@@ -933,6 +1296,7 @@ def collect(root,output,preparation,static,dynamic,historical):
         for role,path in EXTRA_TOOLS.items():tools[role]=ordinary.retain_tool_snapshot(output,role,ordinary.fixed_image_tool_identity(Path(path),role))
         shutil.copy2(root/'compat/x86_64/installed_crt_startup_probe.c',output/'installed_crt_startup_probe.c')
         shutil.copy2(root/'compat/x86_64/installed_crt_startup_descriptor_dso.c',output/'installed_crt_startup_descriptor_dso.c')
+        shutil.copy2(root/DESCRIPTOR_RUNTIME_PROBE,output/Path(DESCRIPTOR_RUNTIME_PROBE).name)
         (output/'oracle-link').mkdir();shutil.copyfile(output/'qualification-oracle/runtime',output/'oracle-link/libc.so')
         runner=ordinary.Collector(root,output,preparation,static,dynamic)
         for spec in plan(root,output,before,tools):
