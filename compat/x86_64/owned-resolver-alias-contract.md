@@ -94,7 +94,9 @@ with `-nostdinc` and the selected installed header root because the selected
 dynamic driver admits only its narrow link grammar.
 
 Each runtime root has a retained before and after tree record. Loader, libc,
-linked contract, directories, and `hosts` stay byte-identical. The normal
+linked contract, directories, and `hosts` stay byte-identical. The runner clears
+inherited setgid bits with explicit `00755` directory modes before capture, so
+all retained execution directories meet the reader's exact `0755` shape. The normal
 resolver probe alone may rewrite `resolv.conf` from the supplied fixture to its
 documented `0644` PID-derived `127.128.0.0/9` nameserver configuration. Its
 `O_TRUNC|O_CREAT, 0600` open retains the runner-created existing inode's mode;

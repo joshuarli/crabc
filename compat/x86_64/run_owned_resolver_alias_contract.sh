@@ -155,7 +155,7 @@ capture_runtime_root() {
 prepare_fixture() {
     local fixture="$1"
     mkdir -p "$fixture/etc"
-    chmod 0755 "$fixture" "$fixture/etc"
+    chmod 00755 "$fixture" "$fixture/etc"
     printf '%s\n' '192.0.2.44 host.fixture host-alias' >"$fixture/etc/hosts"
     printf '%s\n' 'nameserver 127.0.0.1' 'search fixture.test' 'options ndots:1 timeout:1 attempts:1' >"$fixture/etc/resolv.conf"
     chmod 0644 "$fixture/etc/hosts" "$fixture/etc/resolv.conf"
@@ -164,7 +164,7 @@ prepare_fixture() {
 prepare_dynamic_root() {
     local root="$1" executable="$2"
     mkdir -p "$root/lib" "$root/usr/lib" "$root/fixture"
-    chmod 0755 "$root" "$root/lib" "$root/usr" "$root/usr/lib" "$root/fixture"
+    chmod 00755 "$root" "$root/lib" "$root/usr" "$root/usr/lib" "$root/fixture"
     cp "$DYNAMIC_PRODUCT/lib/ld-crabc-x86_64.so.1" "$root/lib/ld-crabc-x86_64.so.1"
     cp "$DYNAMIC_PRODUCT/usr/lib/libc.so" "$root/usr/lib/libc.so"
     cp "$executable" "$root/contract"

@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import stat
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -302,6 +303,37 @@ class ResolverAliasRunnerSourceTests(unittest.TestCase):
                        '`lookup_dns_records`', 'legacy-source observation'):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, document)
+
+class ResolverAliasRunnerRuntimeModeTests(unittest.TestCase):
+    def test_runtime_setup_clears_inherited_setgid_bits_from_every_execution_directory(self) -> None:
+        runner = (ROOT / 'compat/x86_64/run_owned_resolver_alias_contract.sh').read_text(encoding='utf-8')
+        setup = runner[runner.index('prepare_fixture()'):runner.index('# Header ABI is a source check')]
+        self.assertIn('chmod 00755 "$fixture" "$fixture/etc"', setup)
+        self.assertIn('chmod 00755 "$root" "$root/lib" "$root/usr" "$root/usr/lib" "$root/fixture"', setup)
+        with tempfile.TemporaryDirectory(dir=ROOT / '.work' / 'x86_64' / 'test-tmp') as temporary:
+            root = Path(temporary)
+            parent = root / 'setgid-parent'
+            parent.mkdir()
+            parent.chmod(0o2755)
+            dynamic = root / 'dynamic-product'
+            for relative in ('lib/ld-crabc-x86_64.so.1', 'usr/lib/libc.so'):
+                path = dynamic / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(relative.encode('ascii'))
+                path.chmod(0o755)
+            executable = root / 'contract'
+            executable.write_bytes(b'contract')
+            executable.chmod(0o755)
+            runtime = parent / 'runtime'
+            subprocess.run([
+                'bash', '-c', 'DYNAMIC_PRODUCT="$1"\n' + setup + '\nprepare_dynamic_root "$2" "$3"',
+                'runner-runtime-mode', str(dynamic), str(runtime), str(executable),
+            ], check=True)
+            for path in (runtime, runtime / 'lib', runtime / 'usr', runtime / 'usr/lib',
+                         runtime / 'fixture', runtime / 'fixture/etc'):
+                with self.subTest(path=path.relative_to(root)):
+                    self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o755)
+
 
 class ResolverAliasRunnerInterfaceTests(unittest.TestCase):
     def test_runner_uses_only_supplied_products_and_the_four_sealed_driver_modes(self) -> None:
