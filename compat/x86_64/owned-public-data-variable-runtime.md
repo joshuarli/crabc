@@ -41,3 +41,13 @@ accessor-macro declaration obligations. It does not select a provider; prove
 strong overrides, interposition, COPY relocations, FILE layout, broad TLS/TCB,
 timezone database behavior, family completion, promotion, qualification, or
 public support. ABI-only data names remain outside this predicate.
+
+`run_owned_public_data_variable_runtime.sh check-contract` is the source-only
+preflight. `collect` requires the selected static preparation and static/dynamic
+products plus the four current public companions: header declarations, ordinary
+declaration ABI, public-data ordinary link, and errno storage lifecycle. It
+first admits and snapshots that exact cohort, then records the ordinary C
+commands. `validate-report REPORT` takes the same supplied cohort and companion
+paths; it replays retained source, objects, link receipts, transcripts, roots,
+and source-specific expected streams without running a compiler, linker, target
+executable, or host oracle.

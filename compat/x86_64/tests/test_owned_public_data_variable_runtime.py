@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import copy
+import os
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -83,7 +85,10 @@ class PublicDataVariableRuntimeContractTests(unittest.TestCase):
         paths = [record['path'] for record in reader.source_inputs()]
         self.assertIn('compat/x86_64/owned_timezone_tzif_probe.c', paths)
         self.assertIn('compat/x86_64/owned_public_data_variable_runtime_probe.c', paths)
+        self.assertIn('compat/x86_64/tests/test_owned_public_data_variable_runtime.py', paths)
         self.assertIn('include/netdb.h', paths)
+        self.assertIn('compat/x86_64/native-abi-selection.toml', paths)
+        self.assertIn('compat/x86_64/native_data_declarations.toml', paths)
         self.assertIn('compat/x86_64/owned_errno_storage_lifecycle.py', paths)
         self.assertEqual(len(paths), len(set(paths)))
 
@@ -97,6 +102,64 @@ class PublicDataVariableRuntimeContractTests(unittest.TestCase):
             'static_shared_roles': ['static', 'shared'],
             'execution_scope': ['main', 'live-worker', 'loaded-dso'],
         })
+
+    def test_every_group_probe_has_all_candidate_modes_and_both_dynamic_routes(self) -> None:
+        plan = reader.probe_execution_plan()
+        self.assertEqual([entry['group'] for entry in plan], [
+            'immutable-network-data', 'immutable-network-data', 'immutable-network-data',
+            'environment-global', 'getdate-global', 'getopt-and-program-name-globals',
+            'math-sign-global', 'permanent-standard-stream-slots',
+            'timezone-globals', 'timezone-globals',
+        ])
+        for entry in plan:
+            self.assertEqual(entry['candidate_modes'], ['static', 'static-pie', 'dynamic-pie', 'dynamic-non-pie'])
+            self.assertEqual(entry['dynamic_routes'], ['kernel', 'direct-interpreter'])
+
+    def test_execution_plan_keeps_all_sixty_six_candidate_cells_and_tzif_difference(self) -> None:
+        plan = reader.execution_plan()
+        self.assertEqual(len(plan), 11)
+        self.assertEqual(sum(len(entry['candidate_cells']) for entry in plan), 66)
+        self.assertEqual(
+            [entry['id'] for entry in plan],
+            [
+                'ns-flagdata', 'in6addr-any', 'in6addr-loopback',
+                'environment-lifecycle-normal', 'environment-lifecycle-allocation-failure',
+                'getdate', 'getopt-and-program-names', 'math-sign',
+                'standard-stream-slots', 'timezone-tzif-known-difference',
+                'timezone-posix-publication',
+            ],
+        )
+        tzif = plan[-2]
+        self.assertFalse(tzif['candidate_equals_musl'])
+        self.assertEqual(tzif['candidate_argv'], ['/consumer', '/fixture/zone.tzif', 'check'])
+        self.assertEqual(tzif['oracle_argv'], ['/consumer', '/fixture/zone.tzif', 'observe'])
+        environment = plan[3]
+        self.assertEqual(environment['candidate_argv'], ['/consumer'])
+        self.assertEqual(environment['expected_stdout'], b'environment-lifecycle-ok\n')
+        self.assertEqual(
+            {entry['source'] for entry in plan},
+            {entry['source'] for entry in reader.probe_execution_plan()},
+        )
+
+    def test_new_probe_streams_are_actual_c_byte_sequences_not_escaped_renderings(self) -> None:
+        self.assertEqual(reader.EXPECTED_STDOUT['math-sign'], b'math-sign-global-ok\n')
+        self.assertEqual(len(reader.EXPECTED_STDOUT['math-sign']), 20)
+        self.assertEqual(reader.EXPECTED_STDOUT['timezone-posix-publication'], b'timezone-globals-ok\n')
+        self.assertEqual(len(reader.EXPECTED_STDOUT['timezone-posix-publication']), 20)
+        self.assertNotIn(b'\\n', reader.EXPECTED_STDOUT['math-sign'])
+        self.assertNotIn(b'\\n', reader.TZIF_ORACLE_STDOUT)
+
+    def test_retained_input_policy_rejects_a_symlink_before_resolving_it(self) -> None:
+        work = ROOT / '.work' / 'public-data-runtime-source-tests'
+        work.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=work) as temporary:
+            directory = Path(temporary)
+            target = directory / 'target'
+            target.write_bytes(b'current source')
+            alias = directory / 'alias'
+            os.symlink(target.name, alias)
+            with self.assertRaisesRegex(reader.PublicDataVariableRuntimeError, 'symlink'):
+                reader._physical_file(alias, 'test retained input')
 
 
 if __name__ == '__main__':
