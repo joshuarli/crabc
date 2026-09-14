@@ -63,12 +63,19 @@ supplies selected entry/debugger product context only.
 
 ## Exact startup and constructor tail
 
-The selected cfg set is fixed in the TOML:
-`x86-owned-dynamic-runtime`, `crabc_general_initial_graph`,
+The selected cfg is crate-qualified in the TOML. `ldso`'s
+`x86_64-owned-dynamic-runtime` feature selects
+`x86_64-general-initial-lifecycle` and
+`x86_64-general-initial-tls-runtime-v1-dynamic-main-thread-interpreter`; its
+build route emits `crabc_general_initial_graph`,
 `crabc_general_initial_lifecycle`,
 `crabc_general_initial_tls_materialization_v1`,
 `crabc_general_loader_libc_tls_runtime_v1`, and
-`crabc_dynamic_main_thread_runtime_v1`.
+`crabc_dynamic_main_thread_runtime_v1` for
+`x86_64_general_initial_graph.rs::run_with_initial_tls`. Separately, libc's
+`x86-owned-dynamic-runtime` feature selects
+`static_c_abi.rs::fixed_graph_dlfcn` from `general_dlfcn.rs`. The two feature
+names are source-specific routes and cannot substitute for one another.
 
 `run_with_initial_tls` must retain this order: discovery; canonical-libc
 selection; TLS planning; debugger/relocation; protection and RELRO; initializer

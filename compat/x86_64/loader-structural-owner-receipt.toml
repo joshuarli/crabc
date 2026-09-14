@@ -219,10 +219,14 @@ paths = [
   "ldso/src/x86_64_initial_graph.rs",
   "ldso/src/x86_64_general_initial_graph.rs",
   "ldso/src/x86_64_general_initial_lifecycle.rs",
+  "libc/Cargo.toml",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
   "crt/src/x86_64_dynamic_startup.rs",
 ]
 requires = [
-  "x86-owned-dynamic-runtime selects the general-initial-lifecycle and initial-TLS RuntimeV1 dynamic-main-thread feature route",
+  "ldso/Cargo.toml::x86_64-owned-dynamic-runtime selects x86_64-general-initial-lifecycle and x86_64-general-initial-tls-runtime-v1-dynamic-main-thread-interpreter for the selected initial graph",
+  "ldso/src/x86_64_general_initial_graph.rs::run_with_initial_tls is gated by the selected ldso feature route and its five emitted crabc cfg gates",
+  "libc/Cargo.toml::x86-owned-dynamic-runtime selects the x86 static ABI feature route, and libc/src/c_abi/x86_64/static_c_abi.rs selects fixed_graph_dlfcn from general_dlfcn.rs under that libc feature",
   "run selects parse_mapped for kernel entry and x86_64_direct_entry::prepare when the interpreter is invoked directly",
   "run enters run_with_initial_tls under crabc_general_initial_tls_materialization_v1",
   "run_with_initial_tls selects canonical initial libc after discovery and before TLS planning",
@@ -339,14 +343,33 @@ base_inventory_and_full_facts = "their public validators admit the exact same st
 recheck = "admit and compare every relation before commands, after commands, and during retained host replay"
 
 [selected_runtime]
-cfg = [
-  "feature=\"x86-owned-dynamic-runtime\"",
+
+# These feature spellings are crate-qualified. `ldso` owns the selected
+# interpreter graph, while `libc` owns the selected public dlfcn module; their
+# similarly named feature gates are not interchangeable source evidence.
+[selected_runtime.cfg.ldso]
+feature = "x86_64-owned-dynamic-runtime"
+feature_definition = "ldso/Cargo.toml"
+feature_route = [
+  "x86_64-general-initial-lifecycle",
+  "x86_64-general-initial-tls-runtime-v1-dynamic-main-thread-interpreter",
+]
+graph = "ldso/src/x86_64_general_initial_graph.rs::run_with_initial_tls"
+gates = [
   "crabc_general_initial_graph",
   "crabc_general_initial_lifecycle",
   "crabc_general_initial_tls_materialization_v1",
   "crabc_general_loader_libc_tls_runtime_v1",
   "crabc_dynamic_main_thread_runtime_v1",
 ]
+
+[selected_runtime.cfg.libc]
+feature = "x86-owned-dynamic-runtime"
+feature_definition = "libc/Cargo.toml"
+feature_route = ["x86-owned-static-runtime"]
+module = "libc/src/c_abi/x86_64/static_c_abi.rs::fixed_graph_dlfcn"
+selected_path = "general_dlfcn.rs"
+
 [selected_runtime.constructor_owner]
 graph = "ldso/src/x86_64_general_initial_lifecycle.rs::owned_dependency_constructors"
 handoff = "OwnedCrtHandoffV1.dependency_constructors"
