@@ -2458,6 +2458,37 @@ comparisons pass, including all thirteen bounded source anchors. The two
 components reuse one native build; bitmap's two logical evidence records share
 one execution. This does not qualify the remaining substrate components.
 
+The fault-injection component has one additional partial, current-source
+admission: `allocator-fault-seam-inventory` retains a fixed direct C profile
+and a private Rust `FaultPlan` trace for selected OS/page-map receiver rows.
+It records raw process streams, fixed source closures, source anchors, and one
+named M2 check, while retaining stopped metadata and `OsAligned` publication
+receivers. Deterministic primitive failures do not qualify hardware huge-page
+success or ambient NUMA placement. C output-warning control flow is observed
+only after the fixture enables the pinned source option. The private Rust
+`diagnostic_output` owner is source-mapped as partial; this C-only fault row
+does not qualify warning delivery through that owner. Its separate differential
+receipt cannot substitute for fault-receiver integration. The component and M2
+remain partial.
+
+Its C-only diagnostic controls are retained separately from that admission.
+They pin `stats.c`'s four-read clock calibration/start/elapsed shape and the
+typed-`mbind` placement warning's same-thread prefix plus source-formatted
+`0x01` body. The controls retain raw build/run records before interpretation
+and can diagnose a failed fixed source arm, but they do not add an M2 check or
+qualify hardware huge pages, ambient NUMA placement, or Rust output parity.
+
+The C placement profile derives a private direct include from exact pinned
+`src/prim/prim.c` and `src/prim/unix/prim.c` bytes. Its receipt retains the
+single `mi_prim_mbind` replacement and both derived files under an owned
+artifact directory. Replay reopens the regular non-symlink files, validates
+their `0600` modes and `0700` directory before/after the compiler, and binds
+the exact compiler macro argument to the retained `prim.c`. The focused
+boundary binary confirms that initialization's unrelated Unix syscalls do not
+enter the typed interceptor, while one direct `mi_prim_mbind` call records its
+fixed arguments and fails `EPERM`. This is deterministic primitive evidence,
+not an ambient NUMA-placement or hardware huge-page claim.
+
 The next integrated wave must:
 
 1. Preserve the executable containment contract in

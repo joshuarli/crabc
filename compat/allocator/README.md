@@ -2064,6 +2064,61 @@ differentials, lifecycle/stress coverage, public `mi_*` behavior, libc
 integration, or an x86 backend. Each named Rust test runs serially with
 `--locked` against an isolated disposable x86-64 target directory.
 
+The source-indexed OS/page-map fault receiver admission is separate:
+
+```sh
+./compat/allocator/run-x86_64.sh allocator-fault-seam-inventory
+./compat/allocator/run-x86_64.sh allocator-fault-seam-inventory --retry-helper-regression
+./compat/allocator/run-x86_64.sh allocator-fault-seam-inventory --timeout-clock-helper-regression
+./compat/allocator/run-x86_64.sh allocator-fault-seam-inventory --placement-warning-helper-regression
+./compat/allocator/run-x86_64.sh allocator-fault-seam-inventory --mbind-boundary-regression
+./compat/allocator/run-x86_64.sh allocator-fault-seam-inventory --huge-branch-diagnosis
+```
+
+It retains a fixed pinned-C direct profile and the private Rust
+`os::tests::emit_m2_fault_seam_inventory_c_rust_trace` stream. The finite rows
+cover the selected regular/aligned cleanup, range-transition retry, huge
+partial-prefix/timeout/noncontiguous/release, and best-effort `mbind` branches.
+The receipt reconstructs both streams from raw command, working-directory,
+stdout, stderr, status, fixture, source closure, and current-source records
+before its one partial-M2 check is admitted. Its C warning observation enables
+the source option and records the prefix/body callback order; no Rust
+diagnostic-output parity is claimed. Metadata and `OsAligned` publication,
+actual huge-page success, ambient NUMA placement, production callers, and M2
+completion remain outside this receipt.
+
+The focused retry-helper regression compiles and runs only the fixture's
+synthetic three-call predicate. It accepts `1GiB, 1GiB, 2MiB` with the second
+and third calls at one hint, and rejects the former premature two-MiB flag,
+the final wrong flag, and a changed retry hint.
+
+The timeout-clock helper is a pinned C-only regression for the exact
+`stats.c:_mi_clock_start` calibration/start/elapsed sequence. It rejects the
+former `0,2,2,2` fixture readings and accepts the fixed `0,1,1,4` readings,
+which make the source stop after one completed huge page. The placement-warning
+helper follows `_mi_prim_alloc_huge_os_pages` through the one typed `mbind`
+failure, `errno`, and the registered output callback. It retains the
+same-thread prefix and the source formatter's `0x01` error body. These helpers
+are fixture regressions only; neither claims hardware huge-page success,
+ambient placement, or Rust diagnostic-output parity.
+
+`--huge-branch-diagnosis` is a separate C-only failure-analysis control. It
+retains each fixed arm's Boolean conjunction, source map/statistics counts, and
+bounded hex bytes of the two placement callback fragments before interpretation.
+Its raw build/run receipt is persisted before parser admission. A diagnosis
+record is not a passed fault-inventory or M2 receipt.
+
+The focused mbind-boundary regression derives a direct include from the exact
+pinned `src/prim/prim.c` and `src/prim/unix/prim.c` bytes. It records the sole
+`mi_prim_mbind` expression replacement, then retains the derived
+`prim.c`/Unix include under the owned artifact root. The receipt reopens both
+regular, non-symlink `0600` files and their `0700` directory before replaying
+the exact compiler macro argument, pre-build records, and post-build records.
+The boundary then proves that process initialization does not enter the typed
+stub and that one explicit `mi_prim_mbind` call records the fixed six arguments
+and returns `EPERM`. Other pinned Unix `syscall` expressions remain in the
+source body and use their ordinary implementation.
+
 The separate ordinary reserved-medium on-demand differential is also native
 x86-64 only:
 

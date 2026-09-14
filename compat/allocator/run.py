@@ -318,12 +318,14 @@ M2_X86_64_SOURCE_MAP_REQUIRED_STATUSES = frozenset({"implemented", "partial"})
 M2_X86_64_BITMAP_FRAGMENT = ALLOCATOR_ROOT / "m2-bitmaps-x86_64-v3.5.0.fragment.json"
 M2_X86_64_VM_FRAGMENT = ALLOCATOR_ROOT / "m2-vm-x86_64-v3.5.0.fragment.json"
 M2_X86_64_INITIALIZATION_FRAGMENT = ALLOCATOR_ROOT / "m2-initialization-x86_64-v3.5.0.fragment.json"
+M2_X86_64_FAULT_FRAGMENT = ALLOCATOR_ROOT / "m2-fault-seam-inventory-x86_64-v3.5.0.fragment.json"
 # Pin the semantic inventory once instead of copying its source/failure/check
 # rows into both the aggregate manifest and Python. Source bytes are verified
 # separately against the upstream archive before any native check executes.
 M2_X86_64_BITMAP_FRAGMENT_DIGEST = "dbb2bc7d34762819f7ed76c3b50fd3d8599d46b0ba7b9f78fcc9310afe536300"
 M2_X86_64_VM_FRAGMENT_DIGEST = "670aea9205e60c550452b30a5686f2631cf017a99bf9642183914e55d04bd799"
 M2_X86_64_INITIALIZATION_FRAGMENT_DIGEST = "08c3cdd0c8625518350fcc6cf12cc4555943f0b3950f2c2f1545cd8622a885ef"
+M2_X86_64_FAULT_FRAGMENT_DIGEST = "fa7d560d6ed468eaf95ad4b2e985f3c12057e6c8d549d2dc82042f6d55f280d4"
 M2_X86_64_PAGE_MAP_CHECK_IDS = (
     "successful-page-map-lifecycle",
     "lazy-page-map-commit-failure",
@@ -10450,6 +10452,7 @@ def _x86_64_unit_test_program(
     if len(candidates) != 1 or not candidates[0].is_file():
         raise HarnessError(f"{gate_name} build did not produce exactly one library test binary")
     return {
+        "build": dict(result),
         "build_command": command,
         "cargo_target": str(cargo_target),
         "execution": dict(execution),
@@ -11819,6 +11822,19 @@ def _m2_x86_64_initialization_producer() -> Any:
     return producer
 
 
+def _m2_x86_64_fault_producer() -> Any:
+    """Load the fixed OS/page-map fault receiver inventory, not a generic hook."""
+
+    path = ALLOCATOR_ROOT / "x86_64_fault_seam_inventory.py"
+    spec = importlib.util.spec_from_file_location("crabc_m2_native_fault_inventory", path)
+    if spec is None or spec.loader is None:
+        raise HarnessError("native x86 M2 fault-inventory producer is absent")
+    producer = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = producer
+    spec.loader.exec_module(producer)
+    return producer
+
+
 def _m2_x86_64_initialization_component(
     raw_component: Mapping[str, Any], pin: Mapping[str, str]
 ) -> dict[str, Any]:
@@ -11841,6 +11857,33 @@ def _m2_x86_64_initialization_component(
         or fragment.get("target", {}).get("rust_target") != X86_64_RUST_TARGET
     ):
         raise HarnessError("native x86 M2 initialization fragment schema or provenance changed")
+    component = dict(fragment["component"])
+    component["native_status"] = component.pop("completion_status")
+    return component
+
+
+def _m2_x86_64_fault_component(
+    raw_component: Mapping[str, Any], pin: Mapping[str, str]
+) -> dict[str, Any]:
+    """Materialize the one current-source partial fault receiver inventory."""
+
+    reference = {
+        "path": relative(M2_X86_64_FAULT_FRAGMENT),
+        "inventory_sha256": M2_X86_64_FAULT_FRAGMENT_DIGEST,
+    }
+    if dict(raw_component) != {"id": "fault-injection", "evidence_fragment": reference}:
+        raise HarnessError("native x86 M2 fault-inventory fragment reference changed")
+    producer = _m2_x86_64_fault_producer()
+    fragment = producer.load_fragment(M2_X86_64_FAULT_FRAGMENT)
+    if _m1_inventory_digest(fragment) != M2_X86_64_FAULT_FRAGMENT_DIGEST:
+        raise HarnessError("native x86 M2 fault-inventory fragment changed")
+    if (
+        fragment.get("upstream") != {
+            "version": pin["version"], "revision": pin["revision"], "archive_sha256": pin["sha256"]
+        }
+        or fragment.get("target", {}).get("rust_target") != X86_64_RUST_TARGET
+    ):
+        raise HarnessError("native x86 M2 fault-inventory fragment schema or provenance changed")
     component = dict(fragment["component"])
     component["native_status"] = component.pop("completion_status")
     return component
@@ -11954,6 +11997,7 @@ def validate_x86_64_m2_memory_substrate_contract(
         "x86-64-vm-primitives-fixed-profile-c-rust-and-owner-evidence",
         "x86-64-runtime-source-environment-thp-configuration-admission",
         "x86-64-initialization-three-fixed-tld-and-worker-recovery-admission",
+        "x86-64-source-indexed-fault-seam-inventory-admission",
     ]:
         raise HarnessError("native x86 M2 global evidence inventory changed")
     expected_source_contracts = [
@@ -12018,8 +12062,13 @@ def validate_x86_64_m2_memory_substrate_contract(
         elif component_id == "initialization":
             fragment_reference = raw_component.get("evidence_fragment")
             raw_component = _m2_x86_64_initialization_component(raw_component, pin)
+        elif component_id == "fault-injection":
+            fragment_reference = raw_component.get("evidence_fragment")
+            raw_component = _m2_x86_64_fault_component(raw_component, pin)
         complete = component_id in {"bitmaps", "page-map"}
-        partial_evidence_component = component_id in {"vm-primitives", "initialization"}
+        partial_evidence_component = component_id in {
+            "vm-primitives", "initialization", "fault-injection"
+        }
         expected_component_keys = {
             "checks",
             "id",
@@ -12107,6 +12156,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                     "c-rust-runtime-thp-source-environment-admission",
                     "c-rust-initialization-tld-source-matrix",
                     "c-rust-init-recursion-lifecycle",
+                    "c-rust-fault-seam-inventory",
                 }
                 or not isinstance(raw_check.get("target"), str)
                 or type(raw_check.get("expected_passed_test_count")) is not int
@@ -12150,6 +12200,15 @@ def validate_x86_64_m2_memory_substrate_contract(
                     or not (ALLOCATOR_ROOT / "x86_64_initialization_tld_evidence.py").is_file()
                 ):
                     raise HarnessError("native x86 M2 initialization evidence target is absent")
+            elif raw_check.get("kind") == "c-rust-fault-seam-inventory":
+                if (
+                    component_id != "fault-injection"
+                    or raw_check.get("id") != "source-indexed-fault-seam-inventory"
+                    or raw_check.get("target")
+                    != "os::tests::emit_m2_fault_seam_inventory_c_rust_trace"
+                    or not (ALLOCATOR_ROOT / "x86_64_fault_seam_inventory.py").is_file()
+                ):
+                    raise HarnessError("native x86 M2 fault-inventory evidence target is absent")
             elif component_id != "bitmaps":
                 _m2_memory_substrate_source_test_exists(
                     str(raw_check["target"]), str(raw_check["id"])
@@ -12171,9 +12230,9 @@ def validate_x86_64_m2_memory_substrate_contract(
                 raw_component.get("failure_matrix"), checks, component_id=component_id
             )
         elif partial_evidence_component:
-            # `m2_vm_x86_64.load_fragment` already validates the full branch
-            # matrix and every open condition.  Retain its bounded definitions
-            # for source attestation while keeping the component partial.
+            # Each named producer validates its fixed branch matrix and open
+            # conditions. Retain bounded definitions for source attestation
+            # while keeping the component partial.
             component["bounded_source_definitions"] = _m2_x86_64_bounded_source_definitions(
                 raw_component.get("bounded_source_definitions"), checks, component_id=component_id
             )
@@ -12416,6 +12475,22 @@ def _run_m2_x86_64_initialization_evidence(*, offline: bool) -> dict[str, Any]:
     )
 
 
+def _run_m2_x86_64_fault_evidence(
+    *, offline: bool, test_program: Mapping[str, Any], vm_evidence: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Run the fixed fault profile while reusing the aggregate VM receipt."""
+
+    if not _m2_x86_64_vm_test_program_is_bound(test_program):
+        raise HarnessError("native x86 M2 fault Rust test-program provenance changed")
+    producer = _m2_x86_64_fault_producer()
+    return producer.run_evidence(
+        offline=offline,
+        test_program=test_program,
+        vm_evidence=vm_evidence,
+        report_path=ARTIFACT_ROOT / "x86_64/fault-seam-inventory.json",
+    )
+
+
 def _m2_x86_64_vm_command_path_matches(argument: str, expected: str) -> bool:
     """Match one report path without binding a Docker temporary directory."""
 
@@ -12489,12 +12564,19 @@ def _m2_x86_64_vm_test_program_is_bound(test_program: object) -> bool:
     """Require the aggregate's actual native Cargo product, not a substitute."""
 
     if not isinstance(test_program, Mapping) or set(test_program) != {
-        "build_command", "cargo_target", "execution", "path"
+        "build", "build_command", "cargo_target", "execution", "path"
     }:
         return False
     path = test_program.get("path")
+    build = test_program.get("build")
     return (
-        test_program.get("build_command") == _m2_x86_64_vm_rust_build_command()
+        isinstance(build, Mapping)
+        and set(build) == {"command", "status", "stderr", "stdout"}
+        and build.get("command") == _m2_x86_64_vm_rust_build_command()
+        and build.get("status") == 0
+        and isinstance(build.get("stderr"), str)
+        and isinstance(build.get("stdout"), str)
+        and test_program.get("build_command") == _m2_x86_64_vm_rust_build_command()
         and test_program.get("cargo_target") == str(M2_X86_64_MEMORY_SUBSTRATE_CARGO_TARGET)
         and test_program.get("execution") == _m2_x86_64_vm_rust_execution()
         and isinstance(path, Path)
@@ -12920,6 +13002,47 @@ def _m2_x86_64_initialization_check_records(
     ]
 
 
+def _m2_x86_64_fault_check_records(
+    summary: Mapping[str, Any], evidence: object
+) -> list[dict[str, Any]]:
+    """Bind the named partial fault component to retained process streams."""
+
+    component = next(item for item in summary["components"] if item["id"] == "fault-injection")
+    if len(component["checks"]) != 1:
+        raise HarnessError("native x86 M2 fault-inventory check roster is absent")
+    check = component["checks"][0]
+    producer = _m2_x86_64_fault_producer()
+    if not isinstance(evidence, Mapping):
+        raise HarnessError("native x86 M2 fault-inventory producer result is absent")
+    try:
+        producer.validate_report(evidence)
+    except (producer.EvidenceError, ValueError) as error:
+        raise HarnessError("native x86 M2 fault-inventory producer result is invalid") from error
+    receipt = evidence.get("huge_branch_receipt")
+    if not isinstance(receipt, Mapping) or not isinstance(receipt.get("rust_run"), Mapping):
+        raise HarnessError("native x86 M2 fault-inventory Rust receipt is absent")
+    command = receipt["rust_run"].get("command")
+    records = evidence.get("branch_records")
+    if (
+        not isinstance(command, list)
+        or not all(isinstance(argument, str) and argument for argument in command)
+        or not isinstance(records, list)
+        or len(records) != len(producer.BRANCH_ROWS)
+    ):
+        raise HarnessError("native x86 M2 fault-inventory executed receipt changed")
+    return [
+        {
+            "comparison_status": "source-specific-relation-verified",
+            "component": "fault-injection",
+            "command": list(command),
+            "evidence_scope": "fixed-pinned-c-branch-profile-and-private-rust-fault-plan",
+            "id": check["id"],
+            "passed_test_count": check["expected_passed_test_count"],
+            "target": check["target"],
+        }
+    ]
+
+
 def _m2_x86_64_bitmap_check_records(
     summary: Mapping[str, Any], evidence: object
 ) -> list[dict[str, Any]]:
@@ -12982,6 +13105,7 @@ def m2_x86_64_memory_substrate_report(
     vm_evidence: Mapping[str, Any] | None = None,
     runtime_thp_evidence: Mapping[str, Any] | None = None,
     initialization_evidence: Mapping[str, Any] | None = None,
+    fault_evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Render native M2 receipts while keeping every open component partial."""
 
@@ -12997,6 +13121,7 @@ def m2_x86_64_memory_substrate_report(
     expected_initialization_records = _m2_x86_64_initialization_check_records(
         summary, initialization_evidence
     )
+    expected_fault_records = _m2_x86_64_fault_check_records(summary, fault_evidence)
     expected_anchors = {
         (component["id"], definition["id"]): definition["source_anchor"]
         for component in summary["components"]
@@ -13081,6 +13206,10 @@ def m2_x86_64_memory_substrate_report(
             if checks != expected_initialization_records:
                 raise HarnessError("native x86 M2 initialization executed receipt inventory changed")
             unmet.append(component_id)
+        elif component_id == "fault-injection":
+            if checks != expected_fault_records:
+                raise HarnessError("native x86 M2 fault-inventory executed receipt inventory changed")
+            unmet.append(component_id)
         else:
             unmet.append(component_id)
         report_component: dict[str, Any] = {
@@ -13099,7 +13228,7 @@ def m2_x86_64_memory_substrate_report(
             report_component["failure_matrix"] = list(component["failure_matrix"])
             if "evidence_fragment" in component:
                 report_component["evidence_fragment"] = dict(component["evidence_fragment"])
-        elif component_id in {"vm-primitives", "initialization"}:
+        elif component_id in {"vm-primitives", "initialization", "fault-injection"}:
             report_component["bounded_source_definitions"] = list(
                 component["bounded_source_definitions"]
             )
@@ -13150,6 +13279,9 @@ def m2_x86_64_memory_substrate_report(
             "x86-64-initialization-three-fixed-tld-and-worker-recovery-admission": dict(
                 initialization_evidence
             ) if initialization_evidence is not None else {},
+            "x86-64-source-indexed-fault-seam-inventory-admission": dict(
+                fault_evidence
+            ) if fault_evidence is not None else {},
         },
         "source": dict(source_attestation),
         "target": dict(summary["target"]),
@@ -13222,15 +13354,20 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
     vm_evidence = _run_m2_x86_64_vm_evidence(offline=offline, test_program=test_program)
     runtime_thp_evidence = _run_m2_x86_64_runtime_thp_configuration_evidence()
     initialization_evidence = _run_m2_x86_64_initialization_evidence(offline=offline)
+    fault_evidence = _run_m2_x86_64_fault_evidence(
+        offline=offline, test_program=test_program, vm_evidence=vm_evidence
+    )
     vm_checks = _m2_x86_64_vm_check_records(
         summary, vm_evidence, runtime_thp_evidence
     )
     initialization_checks = _m2_x86_64_initialization_check_records(
         summary, initialization_evidence
     )
+    fault_checks = _m2_x86_64_fault_check_records(summary, fault_evidence)
     focused_checks = [
         *vm_checks,
         *initialization_checks,
+        *fault_checks,
         *bitmap_checks,
         _m2_x86_64_differential_check_record(success_component, success_check, success),
         _m2_x86_64_differential_check_record(lazy_component, lazy_check, lazy),
@@ -13245,6 +13382,7 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
                     cold_check["id"],
                     *(check["id"] for check in vm_checks),
                     *(check["id"] for check in initialization_checks),
+                    *(check["id"] for check in fault_checks),
                     *(check["id"] for check in bitmap_checks),
                 }
             ),
@@ -13264,6 +13402,7 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         vm_evidence=vm_evidence,
         runtime_thp_evidence=runtime_thp_evidence,
         initialization_evidence=initialization_evidence,
+        fault_evidence=fault_evidence,
     )
     write_json(M2_X86_64_MEMORY_SUBSTRATE_REPORT, report)
     return report
