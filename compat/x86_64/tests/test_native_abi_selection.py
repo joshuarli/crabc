@@ -37,6 +37,33 @@ def symbol(name, *, binding='GLOBAL', visibility='DEFAULT', section='1', kind='F
 
 
 class SelectionContractTests(unittest.TestCase):
+    def test_public_data_runtime_reader_report_bridges_only_the_fixed_receipt_name(self):
+        work = ROOT / '.work/x86_64/native-abi-selection-tests'
+        work.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=work) as temporary:
+            receipt = Path(temporary)
+            report = receipt / 'report.json'
+            report.write_bytes(b'{"component":"test"}\n')
+            physical = selection.file_identity(report)
+            reader_identity = {
+                'path': 'report.json',
+                'sha256': physical['sha256'],
+                'size': physical['size'],
+                'mode': physical['mode'],
+            }
+            self.assertNotEqual(reader_identity, physical)
+            self.assertEqual(
+                selection._public_data_declaration_runtime_reader_report(reader_identity, physical),
+                reader_identity,
+            )
+            for field, wrong in (('path', 'elsewhere.json'), ('sha256', '0' * 64),
+                                 ('size', physical['size'] + 1), ('mode', 0o600)):
+                with self.subTest(field=field):
+                    malformed = copy.deepcopy(reader_identity)
+                    malformed[field] = wrong
+                    with self.assertRaises(selection.SelectionError):
+                        selection._public_data_declaration_runtime_reader_report(malformed, physical)
+
     def test_policy_rejects_unknown_selection_rule_instead_of_prefix_expansion(self):
         contract = selection.load_contract()
         contract['owner_groups'][0]['selector'] = 'name-prefix'
@@ -134,6 +161,143 @@ class SelectionContractTests(unittest.TestCase):
         del contract['object_contracts'][0]['c_abi_type']
         with self.assertRaisesRegex(selection.SelectionError, 'fields'):
             selection.validate_contract(contract)
+
+
+class PublicDataDeclarationRuntimeAttachmentTests(unittest.TestCase):
+    """The runtime receipt may finish only the fixed declaration companion."""
+
+    @staticmethod
+    def _occurrence(index, name, artifact_key, metadata):
+        row = symbol(
+            name, kind=metadata['type'], binding=metadata['binding'],
+            visibility=metadata['visibility'], size=metadata['size_bytes'],
+            value='0000000000000000',
+        )
+        row['row_index'] = index + 1
+        return {
+            'index': index, 'artifact_key': artifact_key, 'member_index': None,
+            'member_occurrence': None, 'member_name': None, 'table': (
+                '.symtab' if artifact_key == 'candidate-static' else '.dynsym'
+            ), 'table_section_index': '1', 'row': row,
+            'definition_section': {'index': 1, 'name': '.data', 'alignment': metadata['alignment_bytes']},
+            'role': 'definition', 'accounting': {'disposition': 'public-provider', 'owner': 'object:' + name},
+        }
+
+    def _fixture(self):
+        objects = {
+            row['name']: row for row in selection.load_contract()['object_contracts']
+            if row['name'] in selection.public_data_variable_runtime.OBJECTS
+        }
+        self.assertEqual(set(objects), set(selection.public_data_variable_runtime.OBJECTS))
+        identities, placements, occurrences = [], [], []
+        requirements = []
+        index = 0
+        for name in selection.public_data_variable_runtime.OBJECTS:
+            object_contract = objects[name]
+            metadata = {
+                key: object_contract[key]
+                for key in ('type', 'binding', 'visibility', 'size_bytes', 'alignment_bytes')
+            }
+            identities.append({
+                'identity': identity(name), 'selection': {'owner': 'object:' + name},
+                'unresolved': [], 'expected_placements': [
+                    {'artifact_key': 'candidate-static', 'metadata': copy.deepcopy(metadata)},
+                    {'artifact_key': 'candidate-shared', 'metadata': copy.deepcopy(metadata)},
+                ],
+            })
+            requirements.append({
+                'identity': identity(name), 'kind': 'installed-variable',
+                'remaining': [selection.PUBLIC_DATA_DECLARATION_RUNTIME_VARIABLE_REQUIREMENT],
+            })
+            for artifact_key in ('candidate-static', 'candidate-shared'):
+                occurrence = self._occurrence(index, name, artifact_key, metadata)
+                occurrences.append(occurrence)
+                placements.append({
+                    'identity': identity(name), 'artifact_key': artifact_key,
+                    'expected_metadata': copy.deepcopy(metadata), 'placement_observed': True,
+                    'definition_count': 1, 'occurrence_indices': [index],
+                    'metadata_differences': [{'occurrence_index': index, 'fields': []}],
+                })
+                index += 1
+        h_errno = {
+            'identity': identity('h_errno'), 'kind': 'accessor-macro',
+            'remaining': [selection.PUBLIC_DATA_DECLARATION_RUNTIME_ACCESSOR_REQUIREMENT],
+        }
+        requirements.append(h_errno)
+        # This physical row is deliberately unrelated to the finite names. It
+        # proves the attachment does not reconstruct a logical account from a
+        # filtered occurrence roster.
+        unnamed = self._occurrence(index, '', 'candidate-static', {
+            'type': 'OBJECT', 'binding': 'LOCAL', 'visibility': 'HIDDEN', 'size_bytes': 0, 'alignment_bytes': 1,
+        })
+        unnamed['row']['name'] = ''
+        occurrences.append(unnamed)
+        accounting = {
+            'identities': identities,
+            'placement_joins': placements,
+            'occurrences': occurrences,
+            'blockers': [{'code': 'identity-unresolved', 'identity': identity('unrelated'), 'reason': 'unchanged'}],
+        }
+        declaration = {
+            'requirements': requirements, 'unresolved_selected_occurrences': [], 'complete': False,
+        }
+        companion = {
+            'status': 'public-data-declaration-runtime-observed-with-boundaries',
+            'reader': {'path': 'reader', 'sha256': '0' * 64, 'size': 1, 'mode': 0o644},
+            'report': {'path': '.work/runtime/report.json', 'sha256': '1' * 64, 'size': 1, 'mode': 0o644},
+            'source': {'revision': 'source', 'content_sha256': '2' * 64, 'clean': True},
+            'coverage': {
+                'objects': list(selection.public_data_variable_runtime.OBJECTS),
+                'groups': [group for group, _members in selection.public_data_variable_runtime.GROUPS],
+                'component_complete': True, 'family_completion': False,
+                'runtime_qualification': False, 'public_support': False,
+            },
+            'h_errno': selection.public_data_variable_runtime.h_errno_composition_contract(),
+            'companions': {}, 'limits': list(selection.PUBLIC_DATA_DECLARATION_RUNTIME_LIMITS),
+        }
+        errno_joins = [{
+            'public_identities': [{
+                'identity': identity('h_errno'), 'static_occurrence_index': 900,
+                'shared_occurrence_index': 901,
+            }],
+        }]
+        return declaration, accounting, companion, errno_joins
+
+    def test_exact_19_plus_h_errno_attachment_preserves_raw_rows_and_only_finishes_declaration(self):
+        declaration, accounting, companion, errno_joins = self._fixture()
+        before_occurrences = copy.deepcopy(accounting['occurrences'])
+        before_blockers = copy.deepcopy(accounting['blockers'])
+        joins = selection.attach_public_data_declaration_runtime(
+            declaration, accounting, companion, errno_joins,
+        )
+        self.assertTrue(declaration['complete'])
+        self.assertTrue(all(row['remaining'] == [] for row in declaration['requirements']))
+        self.assertEqual(accounting['occurrences'], before_occurrences)
+        self.assertEqual(accounting['blockers'], before_blockers)
+        self.assertEqual(len(joins), 1)
+        self.assertEqual(joins[0]['requirements_discharged'], ['declaration-companion-incomplete'])
+        self.assertEqual([row['identity']['name'] for row in joins[0]['variables']],
+                         list(selection.public_data_variable_runtime.OBJECTS))
+        self.assertEqual(joins[0]['h_errno']['static_occurrence_index'], 900)
+        self.assertEqual(joins[0]['h_errno']['shared_occurrence_index'], 901)
+
+    def test_wrong_shared_visibility_cannot_finish_the_declaration_companion(self):
+        declaration, accounting, companion, errno_joins = self._fixture()
+        shared = next(row for row in accounting['occurrences']
+                      if row['artifact_key'] == 'candidate-shared' and row['row']['name'] == 'timezone')
+        shared['row']['visibility'] = 'HIDDEN'
+        with self.assertRaisesRegex(selection.SelectionError, 'selected occurrence'):
+            selection.attach_public_data_declaration_runtime(
+                declaration, accounting, companion, errno_joins,
+            )
+
+    def test_incomplete_coverage_cannot_finish_the_declaration_companion(self):
+        declaration, accounting, companion, errno_joins = self._fixture()
+        companion['coverage']['objects'].pop()
+        with self.assertRaisesRegex(selection.SelectionError, 'scope differs'):
+            selection.attach_public_data_declaration_runtime(
+                declaration, accounting, companion, errno_joins,
+            )
 
 
 SOURCE_OWNER_NAMES = frozenset('''
@@ -521,6 +685,22 @@ class PathAndCommandTests(unittest.TestCase):
         self.assertEqual(
             build.call_args.kwargs['headers_layouts_aggregate_report'],
             Path('compat/x86_64/generated/headers_layouts_aggregate/report.json'),
+        )
+
+    def test_cli_threads_public_data_declaration_runtime_report(self):
+        arguments = ['build-report']
+        for flag in ('measurement-checkout', 'elf-facts', 'base-inventory', 'static-product', 'dynamic-product', 'static-preparation'):
+            arguments += ['--' + flag, '.work/not-present']
+        arguments += [
+            '--output', '.work/output',
+            '--public-data-declaration-runtime-report', '.work/public-data-declaration-runtime/report.json',
+        ]
+        report = {'identities': [], 'occurrences': [], 'closure': {'complete': False, 'blockers': []}}
+        with mock.patch.object(selection, 'build_report', return_value=report) as build:
+            self.assertEqual(selection.main(arguments), 0)
+        self.assertEqual(
+            build.call_args.kwargs['public_data_declaration_runtime_report'],
+            Path('.work/public-data-declaration-runtime/report.json'),
         )
 
     def test_cli_threads_the_ordinary_declaration_receipt_only_with_its_header_envelope(self):

@@ -49,8 +49,9 @@ import owned_errno_storage_lifecycle as errno_storage_evidence
 import native_c_allocator_boundary
 import owned_posix_product_evidence as product_evidence
 import headers_layouts_aggregate
+import owned_public_data_variable_runtime as public_data_variable_runtime
 
-SCHEMA = 'crabc.x86_64-native-abi-selection-report/v4'
+SCHEMA = 'crabc.x86_64-native-abi-selection-report/v5'
 CONTRACT_SCHEMA = 'crabc.x86_64-native-abi-selection/v1'
 TARGET = inventory.TARGET
 CONTRACT_PATH = MODULE_DIR / 'native-abi-selection.toml'
@@ -111,6 +112,14 @@ DECLARATION_ABI_LIMITS = [
     'Only _ns_flagdata element and in6_addr record facts are projected; FILE, table extent and h_errno storage semantics remain open.',
     'Runtime semantics, family completion, promotion and public support remain false.',
 ]
+PUBLIC_DATA_DECLARATION_RUNTIME_LIMITS = [
+    'Only the fixed nineteen installed-variable declaration rows and the existing h_errno accessor-to-storage composition are completed.',
+    'The receipt does not select a provider or close ABI-only data, FILE layout, broad TLS/TCB, family completion, promotion, qualification or public support.',
+]
+PUBLIC_DATA_DECLARATION_RUNTIME_VARIABLE_REQUIREMENT = 'selected object layout and runtime semantics remain unverified'
+PUBLIC_DATA_DECLARATION_RUNTIME_ACCESSOR_REQUIREMENT = (
+    'selected accessor callable linkage and runtime-to-storage semantics remain unverified'
+)
 RUNTIME_REGISTRY_LIMITS = [
     'Only the selected nine shared-libc source-dispatch imports are attached; no loader symbol is selected as an installed provider.',
     'RuntimeV1 worker protocol, CRT structure, general loader qualification, family completion and promotion remain open.',
@@ -863,6 +872,25 @@ def _recheck_headers_layouts_aggregate(companion: Mapping[str, Any] | None) -> N
     replayed = headers_layouts_aggregate_adapter(path)
     require(same(replayed, companion) and same(before, selecting_source_file_identity(path)),
             'headers/layouts aggregate changed during final recheck')
+
+
+def _recheck_public_data_declaration_runtime(
+        companion: Mapping[str, Any] | None, *, paths: Mapping[str, Path], source: Mapping[str, Any],
+        measurement: Mapping[str, Any], declaration_report: Path | None,
+        ordinary_declaration_abi_report: Path | None, ordinary_link_report: Path | None,
+        errno_storage_lifecycle_report: Path | None) -> None:
+    """Replay the finite declaration component after all selector joins."""
+    if companion is None:
+        return
+    report = companion.get('report')
+    require(type(report) is dict and type(report.get('path')) is str,
+            'public-data declaration runtime report identity differs during final recheck')
+    replayed = public_data_declaration_runtime_adapter(
+        ROOT / report['path'], paths=paths, source=source, measurement=measurement,
+        declaration_report=declaration_report, ordinary_declaration_abi_report=ordinary_declaration_abi_report,
+        ordinary_link_report=ordinary_link_report, errno_storage_lifecycle_report=errno_storage_lifecycle_report,
+    )
+    require(same(replayed, companion), 'public-data declaration runtime changed during final recheck')
 
 
 def _require_closed_report(report: Mapping[str, Any]) -> None:
@@ -2145,6 +2173,106 @@ def declaration_adapter(report_path: Path | None, *, selected_objects: Sequence[
             'current_selecting_source': source, 'physical_status': report['status'], **account}
 
 
+def _public_data_declaration_runtime_reader_report(
+        value: object, physical: Mapping[str, Any]) -> dict[str, Any]:
+    """Bridge the reader's receipt-relative report name to the selector file.
+
+    The component owns the retained receipt namespace, so its public reader
+    correctly calls the report ``report.json``. Selection owns the supplied
+    physical path under this checkout. Both names are fixed in their own
+    boundary; only the hash, size and mode cross the boundary.
+    """
+    result = exact(value, {'path', 'sha256', 'size', 'mode'},
+                   'public-data declaration runtime reader report identity')
+    require(result['path'] == 'report.json',
+            'public-data declaration runtime reader report path differs')
+    _require_same_identity_payload(result, physical,
+                                   'public-data declaration runtime reader report')
+    return result
+
+
+def public_data_declaration_runtime_adapter(
+        report_path: Path | None, *, paths: Mapping[str, Path], source: Mapping[str, Any],
+        measurement: Mapping[str, Any], declaration_report: Path | None,
+        ordinary_declaration_abi_report: Path | None, ordinary_link_report: Path | None,
+        errno_storage_lifecycle_report: Path | None) -> dict[str, Any] | None:
+    """Replay the fixed public-data runtime receipt against this source cohort.
+
+    The owning reader reconstructs all source, retained input, command and root
+    evidence. This adapter binds that public result to selection's own current
+    source/product account; it does not derive completion from a status bit.
+    """
+    if report_path is None:
+        return None
+    require(all(path is not None for path in (
+        declaration_report, ordinary_declaration_abi_report, ordinary_link_report, errno_storage_lifecycle_report,
+    )), 'public-data declaration runtime receipt requires all four current companions')
+    require(Path(public_data_variable_runtime.ROOT) == ROOT
+            and Path(public_data_variable_runtime.__file__).resolve().parent == MODULE_DIR
+            and public_data_variable_runtime.SCHEMA == 'crabc.x86_64-owned-public-data-variable-runtime/v1'
+            and public_data_variable_runtime.STATUS == 'component-verified'
+            and public_data_variable_runtime.COMPONENT == 'public-data-declaration-runtime',
+            'public-data declaration runtime reader is not the current v1 boundary')
+    report_path = physical_work_path(report_path, directory=False)
+    companions = {
+        'header_report': physical_work_path(declaration_report, directory=False),
+        'declaration_abi_report': physical_work_path(ordinary_declaration_abi_report, directory=False),
+        'ordinary_link_report': physical_work_path(ordinary_link_report, directory=False),
+        'errno_report': physical_work_path(errno_storage_lifecycle_report, directory=False),
+    }
+    before = file_identity(report_path)
+    try:
+        result = public_data_variable_runtime.validate_report(
+            report_path, root=ROOT, static_preparation=paths['static_preparation'],
+            static_product=paths['static_product'], dynamic_product=paths['dynamic_product'], **companions,
+        )
+    except (KeyError, TypeError, ValueError, OSError, public_data_variable_runtime.PublicDataVariableRuntimeError) as error:
+        raise SelectionError(f'public-data declaration runtime component rejected: {error}') from error
+    require(same(before, file_identity(report_path)), 'public-data declaration runtime report changed during replay')
+    source = exact(dict(source), {'revision', 'content_sha256', 'clean'}, 'public-data declaration runtime selection source')
+    require(source['clean'] is True, 'public-data declaration runtime selection source is not clean')
+    _measurement_source_matches(source, measurement, 'public-data declaration runtime')
+    report = read_json(report_path)
+    require(same(before, file_identity(report_path)), 'public-data declaration runtime report changed while reading its projection')
+    report = exact(report, {
+        'schema', 'status', 'component', 'collection', 'contract', 'inputs_before', 'inputs_after', 'sources',
+        'companions', 'oracle', 'oracle_static_inputs', 'tools', 'objects', 'links', 'commands', 'executions',
+        'runtime_matrix', 'h_errno', 'coverage',
+    }, 'public-data declaration runtime reader report')
+    collection = exact(report['collection'], {'image', 'source'}, 'public-data declaration runtime collection')
+    receipt_source = exact(collection['source'], {'revision', 'content_sha256'},
+                           'public-data declaration runtime collection source')
+    require(report['schema'] == public_data_variable_runtime.SCHEMA
+            and report['status'] == public_data_variable_runtime.STATUS
+            and report['component'] == public_data_variable_runtime.COMPONENT
+            and collection['image'] == public_data_variable_runtime.IMAGE
+            and receipt_source == {'revision': source['revision'], 'content_sha256': source['content_sha256']},
+            'public-data declaration runtime source differs from selection')
+    coverage = {
+        'objects': list(public_data_variable_runtime.OBJECTS),
+        'groups': [name for name, _objects in public_data_variable_runtime.GROUPS],
+        'component_complete': True, 'family_completion': False,
+        'runtime_qualification': False, 'public_support': False,
+    }
+    require(report['contract'] == public_data_variable_runtime.load_contract()
+            and report['runtime_matrix'] == public_data_variable_runtime.empty_runtime_matrix()
+            and report['h_errno'] == public_data_variable_runtime.h_errno_composition_contract()
+            and report['coverage'] == coverage,
+            'public-data declaration runtime receipt scope differs')
+    result = exact(result, {'report', 'coverage', 'h_errno'}, 'public-data declaration runtime replay result')
+    _public_data_declaration_runtime_reader_report(result['report'], before)
+    require(result['coverage'] == coverage and result['h_errno'] == report['h_errno'],
+            'public-data declaration runtime replay result differs')
+    return {
+        'status': 'public-data-declaration-runtime-observed-with-boundaries',
+        'reader': file_identity(Path(public_data_variable_runtime.__file__)),
+        'report': before, 'source': copy.deepcopy(source), 'coverage': copy.deepcopy(coverage),
+        'h_errno': copy.deepcopy(report['h_errno']),
+        'companions': {name: file_identity(path) for name, path in companions.items()},
+        'limits': list(PUBLIC_DATA_DECLARATION_RUNTIME_LIMITS),
+    }
+
+
 def public_data_linkage_adapter(ordinary_report_path: Path | None, loader_report_path: Path | None, *,
                                 contract: Mapping[str, Any], selected_objects: Sequence[Mapping[str, Any]], source: Mapping[str, Any],
                                 paths: Mapping[str, Path]) -> dict[str, Any] | None:
@@ -2357,6 +2485,94 @@ def attach_public_data_linkage(accounting: Mapping[str, Any], companion: Mapping
                     and blocker['reason'] == ORDINARY_IMPORT_REASON)
         ]
     return joins
+
+
+def attach_public_data_declaration_runtime(
+        declaration: Mapping[str, Any] | None, accounting: Mapping[str, Any],
+        companion: Mapping[str, Any] | None, errno_joins: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Complete only the 19-variable plus composed h_errno declaration rows."""
+    if companion is None:
+        return []
+    require(declaration is not None, 'public-data declaration runtime receipt requires the declaration companion')
+    companion = exact(companion, {'status', 'reader', 'report', 'source', 'coverage', 'h_errno', 'companions', 'limits'},
+                      'public-data declaration runtime companion')
+    require(companion['status'] == 'public-data-declaration-runtime-observed-with-boundaries'
+            and companion['limits'] == PUBLIC_DATA_DECLARATION_RUNTIME_LIMITS
+            and companion['coverage'] == {
+                'objects': list(public_data_variable_runtime.OBJECTS),
+                'groups': [name for name, _objects in public_data_variable_runtime.GROUPS],
+                'component_complete': True, 'family_completion': False,
+                'runtime_qualification': False, 'public_support': False,
+            }
+            and companion['h_errno'] == public_data_variable_runtime.h_errno_composition_contract(),
+            'public-data declaration runtime companion scope differs')
+    records, placements, occurrences = _accounting_indexes(
+        accounting, description='public-data declaration runtime attachment',
+    )
+    requirements = declaration.get('requirements')
+    require(type(requirements) is list, 'public-data declaration runtime requirements differ')
+    by_name = {identity_key(row['identity'])[0]: row for row in requirements if type(row) is dict and 'identity' in row}
+    require(len(by_name) == len(requirements), 'public-data declaration runtime requirements duplicate')
+    joins: list[dict[str, Any]] = []
+    for name in public_data_variable_runtime.OBJECTS:
+        requirement = by_name.get(name)
+        record = records.get((name, None, False))
+        require(requirement is not None and requirement.get('kind') == 'installed-variable'
+                and requirement.get('remaining') == [PUBLIC_DATA_DECLARATION_RUNTIME_VARIABLE_REQUIREMENT]
+                and record is not None and record.get('selection', {}).get('owner') == 'object:' + name,
+                f'public-data declaration runtime variable prerequisite differs: {name}')
+        expected = {row['artifact_key']: row['metadata'] for row in record.get('expected_placements', [])}
+        require(set(expected) == {'candidate-static', 'candidate-shared'}
+                and all(metadata.get('type') == 'OBJECT'
+                        and all(field in metadata for field in ('binding', 'visibility', 'size_bytes', 'alignment_bytes'))
+                        for metadata in expected.values()),
+                f'public-data declaration runtime selected object contract differs: {name}')
+        static, static_row = _selected_placement(
+            placements, occurrences, name=name, artifact_key='candidate-static', table='.symtab', role='definition',
+            metadata=expected['candidate-static'], description=f'public-data declaration runtime {name} static',
+        )
+        shared, shared_row = _selected_placement(
+            placements, occurrences, name=name, artifact_key='candidate-shared', table='.dynsym', role='definition',
+            metadata=expected['candidate-shared'], description=f'public-data declaration runtime {name} shared',
+        )
+        requirement['remaining'] = []
+        joins.append({
+            'identity': copy.deepcopy(requirement['identity']), 'group': next(
+                group for group, members in public_data_variable_runtime.GROUPS if name in members
+            ),
+            'static_occurrence_index': static_row['index'], 'shared_occurrence_index': shared_row['index'],
+            'static_metadata': copy.deepcopy(static['expected_metadata']),
+            'shared_metadata': copy.deepcopy(shared['expected_metadata']),
+        })
+    h_errno = by_name.get('h_errno')
+    require(h_errno is not None and h_errno.get('kind') == 'accessor-macro'
+            and h_errno.get('remaining') == [PUBLIC_DATA_DECLARATION_RUNTIME_ACCESSOR_REQUIREMENT],
+            'public-data declaration runtime h_errno header prerequisite differs')
+    lifecycle = [join for join in errno_joins if type(join) is dict and type(join.get('public_identities')) is list]
+    require(len(lifecycle) == 1, 'public-data declaration runtime h_errno lifecycle prerequisite differs')
+    h_rows = [row for row in lifecycle[0]['public_identities']
+              if type(row) is dict and row.get('identity') == identity('h_errno')]
+    require(len(h_rows) == 1 and type(h_rows[0].get('static_occurrence_index')) is int
+            and type(h_rows[0].get('shared_occurrence_index')) is int,
+            'public-data declaration runtime h_errno selected storage differs')
+    h_errno['remaining'] = []
+    require(not declaration.get('unresolved_selected_occurrences')
+            and all(row.get('remaining') == [] for row in requirements),
+            'public-data declaration runtime leaves a declaration row unresolved')
+    declaration['complete'] = True
+    return [{
+        'variables': joins,
+        'h_errno': {
+            'identity': copy.deepcopy(h_errno['identity']),
+            'accessor': public_data_variable_runtime.H_ERRNO['accessor'],
+            'header': public_data_variable_runtime.H_ERRNO['header'],
+            'static_occurrence_index': h_rows[0]['static_occurrence_index'],
+            'shared_occurrence_index': h_rows[0]['shared_occurrence_index'],
+            'runtime_owner': 'owned_errno_storage_lifecycle',
+        },
+        'requirements_discharged': ['declaration-companion-incomplete'],
+        'limits': list(PUBLIC_DATA_DECLARATION_RUNTIME_LIMITS),
+    }]
 
 
 def compiler_helper_adapter(report_path: Path | None, *, ordinary_report_path: Path | None,
@@ -7491,13 +7707,18 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
                   utmpx_receipt_report: Path | None = None,
                   pthread_timed_feature_report: Path | None = None,
                   resolver_alias_receipt_report: Path | None = None,
-                  headers_layouts_aggregate_report: Path | None = None) -> dict[str, Any]:
+                  headers_layouts_aggregate_report: Path | None = None,
+                  public_data_declaration_runtime_report: Path | None = None) -> dict[str, Any]:
     if pthread_timed_feature_report is not None:
         require(ordinary_link_report is not None and loader_debug_report is not None,
                 'pthread timed receipt requires the complete public-data loader-debug anchor pair')
     if resolver_alias_receipt_report is not None:
         require(loader_debug_report is not None,
                 'resolver alias receipt requires the current loader-debug product report')
+    if public_data_declaration_runtime_report is not None:
+        require(all(report is not None for report in (
+            declaration_report, ordinary_declaration_abi_report, ordinary_link_report, errno_storage_lifecycle_report,
+        )), 'public-data declaration runtime receipt requires its four current companion reports')
     source_before = selection_source()
     contract = load_contract(contract_path)
     inputs = load_source_inputs(contract, contract_path)
@@ -7559,6 +7780,11 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         ordinary_link_report, loader_debug_report, contract=contract,
         selected_objects=contract['object_contracts'], source=source_before, paths=paths,
     )
+    public_data_declaration_runtime_companion = public_data_declaration_runtime_adapter(
+        public_data_declaration_runtime_report, paths=paths, source=source_before, measurement=measurement,
+        declaration_report=declaration_report, ordinary_declaration_abi_report=ordinary_declaration_abi_report,
+        ordinary_link_report=ordinary_link_report, errno_storage_lifecycle_report=errno_storage_lifecycle_report,
+    )
     compiler_helper_companion = compiler_helper_adapter(
         compiler_helper_aggregate_report, ordinary_report_path=ordinary_link_report, paths=paths,
     )
@@ -7583,6 +7809,9 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     prepared_worker_tls_joins = attach_prepared_worker_tls(accounting, prepared_worker_tls_companion)
     errno_storage_lifecycle_joins = attach_errno_storage_lifecycle(
         accounting, errno_storage_lifecycle_companion, inputs,
+    )
+    public_data_declaration_runtime_joins = attach_public_data_declaration_runtime(
+        declaration, accounting, public_data_declaration_runtime_companion, errno_storage_lifecycle_joins,
     )
     native_c_allocator_boundary_joins = attach_native_c_allocator_boundary(
         accounting, native_c_allocator_boundary_companion,
@@ -7619,6 +7848,11 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         resolver_alias=resolver_alias_receipt_companion,
     )
     _recheck_headers_layouts_aggregate(headers_layouts_aggregate_companion)
+    _recheck_public_data_declaration_runtime(
+        public_data_declaration_runtime_companion, paths=paths, source=source_before, measurement=measurement,
+        declaration_report=declaration_report, ordinary_declaration_abi_report=ordinary_declaration_abi_report,
+        ordinary_link_report=ordinary_link_report, errno_storage_lifecycle_report=errno_storage_lifecycle_report,
+    )
     candidate = measurement['candidate_build']
     source_matches = source_before['clean'] is True and source_before['revision'] == candidate['revision'] and source_before['content_sha256'] == candidate['source_content_sha256']
     blockers = accounting.pop('blockers')
@@ -7633,6 +7867,8 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'fixed_c_producer_metadata_joins': fixed_c_producer_metadata_joins,
             'public_data_linkage_companion': public_data_linkage_companion,
             'public_data_linkage_joins': public_data_linkage_joins,
+            'public_data_declaration_runtime_companion': public_data_declaration_runtime_companion,
+            'public_data_declaration_runtime_joins': public_data_declaration_runtime_joins,
             'compiler_helper_companion': compiler_helper_companion,
             'compiler_helper_shared_placement_joins': compiler_helper_shared_placement_joins,
             'compiler_helper_import_joins': compiler_helper_import_joins,
@@ -7684,6 +7920,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                  pthread_timed_feature_report: Path | None = None,
                  resolver_alias_receipt_report: Path | None = None,
                  headers_layouts_aggregate_report: Path | None = None,
+                 public_data_declaration_runtime_report: Path | None = None,
                  **measurement_inputs: Path) -> dict[str, Any]:
     output = physical_work_path(output, directory=True, own=True, fresh=True)
     paths = validate_measurement_paths(**measurement_inputs)
@@ -7704,7 +7941,8 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                            utmpx_receipt_report=utmpx_receipt_report,
                            pthread_timed_feature_report=pthread_timed_feature_report,
                            resolver_alias_receipt_report=resolver_alias_receipt_report,
-                           headers_layouts_aggregate_report=headers_layouts_aggregate_report)
+                           headers_layouts_aggregate_report=headers_layouts_aggregate_report,
+                           public_data_declaration_runtime_report=public_data_declaration_runtime_report)
     output.mkdir()
     (output / 'report.json').write_bytes(inventory._stable_json(report))
     return report
@@ -7726,6 +7964,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                     pthread_timed_feature_report: Path | None = None,
                     resolver_alias_receipt_report: Path | None = None,
                     headers_layouts_aggregate_report: Path | None = None,
+                    public_data_declaration_runtime_report: Path | None = None,
                     **measurement_inputs: Path) -> dict[str, Any]:
     report_path = physical_work_path(report_path, directory=False, own=True)
     require(report_path.name == 'report.json', 'selection report has the wrong name')
@@ -7748,7 +7987,8 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                              utmpx_receipt_report=utmpx_receipt_report,
                              pthread_timed_feature_report=pthread_timed_feature_report,
                              resolver_alias_receipt_report=resolver_alias_receipt_report,
-                             headers_layouts_aggregate_report=headers_layouts_aggregate_report)
+                             headers_layouts_aggregate_report=headers_layouts_aggregate_report,
+                             public_data_declaration_runtime_report=public_data_declaration_runtime_report)
     require(same(report, expected), 'selection report does not reconstruct exactly from source inputs and public measurement replay')
     return report
 
@@ -7778,6 +8018,7 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument('--pthread-timed-feature-report', type=Path)
     parser.add_argument('--resolver-alias-receipt-report', type=Path)
     parser.add_argument('--headers-layouts-aggregate-report', type=Path)
+    parser.add_argument('--public-data-declaration-runtime-report', type=Path)
     options = [arg.split('=', 1)[0] for arg in argv if arg.startswith('--')]
     if len(options) != len(set(options)):
         parser.error('duplicate options are not accepted')
@@ -7795,7 +8036,8 @@ def main(argv: Sequence[str]) -> int:
                                                 'stdio_alias_contract_report', 'crt_startup_report',
                                                 'syscall_alias_contract_report', 'utmpx_receipt_report',
                                                 'pthread_timed_feature_report', 'resolver_alias_receipt_report',
-                                                'headers_layouts_aggregate_report')}
+                                                'headers_layouts_aggregate_report',
+                                                'public_data_declaration_runtime_report')}
     kwargs['ordinary_link_report'] = kwargs.pop('public_data_ordinary_link_report')
     kwargs['loader_debug_report'] = kwargs.pop('loader_debug_abi_report')
     kwargs.update(contract_path=args.contract, elf_report=args.elf_facts)
