@@ -140,7 +140,7 @@ static void inspect_runtime(struct worker *worker, int index)
     worker->runtime_count=(unsigned)index+1;
 }
 static void *entry(void *opaque);
-static void load_generation(const char *path, int index, int mutate_template);
+static void load_generation(const char *path, int index, int mutate_caller_tls);
 static void worker_fork(struct worker *worker)
 {
     pid_t child=fork();
@@ -234,7 +234,7 @@ static void *entry(void *opaque)
     if (worker->action==EXPLICIT) pthread_exit(worker);
     return worker;
 }
-static void load_generation(const char *path, int index, int mutate_template)
+static void load_generation(const char *path, int index, int mutate_caller_tls)
 {
     if (!dynamic) return;
     void *handle=dlopen(path,RTLD_NOW|RTLD_LOCAL);
@@ -248,7 +248,7 @@ static void load_generation(const char *path, int index, int mutate_template)
      * relocated ELF templates rather than a copied live TLS image. The
      * fork-surviving worker must retain generation 3's initial image until
      * inspect_runtime records its own independent mutation. */
-    if (mutate_template) {
+    if (mutate_caller_tls) {
         *image[index]()=900+index;
         tbss[index]()[256]=99;
     }

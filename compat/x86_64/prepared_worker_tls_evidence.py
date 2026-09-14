@@ -285,7 +285,7 @@ def check_post_fork_generation_source(probe: str, worker_owner: str) -> dict[str
     require('if (worker->already_loaded && active_generations==3) inspect_runtime(worker,2)' in entry,
             'fresh child worker does not inspect the third initial image')
     loader=_c_body(probe,'load_generation')
-    require('if (mutate_template) {' in loader,
+    require('if (mutate_caller_tls) {' in loader,
             'runtime generation loading no longer separates main-template mutation')
     main=_c_body(probe,'main')
     _ordered(main,(
