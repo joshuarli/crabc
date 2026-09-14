@@ -18,6 +18,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 #include <stdarg.h>
 #include <sys/mman.h>
 #include <sys/prctl.h>
@@ -149,10 +150,20 @@ static bool large_page_retry_wait_for_locked(
 static bool m2_large_page_retry_compare_exchange(
     _Atomic(size_t)* counter, size_t* expected, size_t desired);
 
+#if defined(CRABC_M2_FAULT_SEAM_INVENTORY_PROFILE)
+/* The selected source `mi_prim_mbind` call has one literal six-argument
+ * syscall shape. This profile-local redirect is defined below after the
+ * fixture state; unsupported source syscall numbers fail closed. */
+static long m2_fault_inventory_mbind_syscall(long number, ...);
+#define syscall m2_fault_inventory_mbind_syscall
+#endif
 #undef mi_atomic_cas_strong_acq_rel
 #define mi_atomic_cas_strong_acq_rel(p, expected, desired) \
   m2_large_page_retry_compare_exchange((p), (expected), (desired))
 #include "prim/prim.c"
+#if defined(CRABC_M2_FAULT_SEAM_INVENTORY_PROFILE)
+#undef syscall
+#endif
 #undef mi_atomic_cas_strong_acq_rel
 #define mi_atomic_cas_strong_acq_rel(p, exp, des) \
   mi_atomic_cas_strong((p), (exp), (des), mi_memory_order(acq_rel), mi_memory_order(acquire))
@@ -434,6 +445,135 @@ typedef struct large_only_failure_probe_s {
 
 static large_only_failure_probe_t large_only_failure_probe;
 
+/* This is a separate, fixed source-branch profile for `src/os.c:771-841`.
+ * It replaces only a selected raw MAP_HUGETLB result with an anonymous normal
+ * mapping at the source's exact claimed address.  That lets the included C
+ * body observe its partial-prefix, timeout, noncontiguous-adjustment, and
+ * per-page-free branches without claiming that this host provisioned huge
+ * pages.  The profile has five literal cases; it is not a programmable map
+ * script and remains inactive for the ordinary VM receipt. */
+typedef enum huge_branch_probe_case_e {
+  HUGE_BRANCH_PROBE_OFF = 0,
+  HUGE_BRANCH_PROBE_PARTIAL_PRIMITIVE_FAILURE,
+  HUGE_BRANCH_PROBE_TIMEOUT_AFTER_PROGRESS,
+  HUGE_BRANCH_PROBE_NONCONTIGUOUS_ADJUSTMENT,
+  HUGE_BRANCH_PROBE_PLACEMENT_FAILURE,
+  HUGE_BRANCH_PROBE_FREE_CONTINUES_AFTER_FAILURE,
+} huge_branch_probe_case_t;
+
+typedef struct huge_branch_probe_s {
+  bool active;
+  bool valid;
+  huge_branch_probe_case_t selected;
+  size_t mmap_calls;
+  void* hints[3];
+  size_t lengths[3];
+  int protections[3];
+  int flags[3];
+  void* fallback_addresses[3];
+  int fallback_flags[3];
+  size_t munmap_calls;
+  void* munmap_addresses[3];
+  size_t munmap_lengths[3];
+  size_t fail_munmap_ordinal;
+  size_t clock_calls;
+  size_t syscall_calls;
+  size_t diagnostic_calls;
+  bool diagnostic_prefix_first;
+  bool diagnostic_body_second;
+  void* mbind_start;
+  unsigned long mbind_length;
+  unsigned long mbind_mode;
+  bool mbind_mask_nonnull;
+  unsigned long mbind_mask_value;
+  unsigned long mbind_maxnode;
+  unsigned mbind_flags;
+} huge_branch_probe_t;
+
+static huge_branch_probe_t huge_branch_probe;
+static huge_branch_probe_case_t huge_branch_child_case;
+#if defined(CRABC_M2_FAULT_SEAM_INVENTORY_PROFILE)
+static size_t huge_branch_unexpected_syscall_calls;
+static long huge_branch_first_unexpected_syscall;
+#endif
+
+#if defined(CRABC_M2_FAULT_SEAM_INVENTORY_PROFILE)
+static size_t huge_branch_registration_callback_calls;
+
+static bool m2_fault_inventory_warning_prefix(const char* message) {
+  static const char prefix[] = "mimalloc: warning: thread 0x";
+  if (message == NULL || strncmp(message, prefix, sizeof(prefix) - 1) != 0) return false;
+  const char* cursor = message + sizeof(prefix) - 1;
+  const char* const first_digit = cursor;
+  while ((*cursor >= '0' && *cursor <= '9')
+      || (*cursor >= 'a' && *cursor <= 'f')
+      || (*cursor >= 'A' && *cursor <= 'F')) {
+    cursor++;
+  }
+  return cursor != first_digit && strcmp(cursor, ": ") == 0;
+}
+
+static void m2_fault_inventory_output(const char* message, void* argument) {
+  (void)argument;
+  if (!huge_branch_probe.active) {
+    huge_branch_registration_callback_calls++;
+    return;
+  }
+  const size_t index = huge_branch_probe.diagnostic_calls++;
+  if (index == 0) {
+    huge_branch_probe.diagnostic_prefix_first = m2_fault_inventory_warning_prefix(message);
+  }
+  else if (index == 1) {
+    huge_branch_probe.diagnostic_body_second = message != NULL && strcmp(message,
+        "failed to bind huge (1GiB) pages to numa node 0 (error: 1 (0x1))\n") == 0;
+  }
+}
+
+static long m2_fault_inventory_mbind_syscall(long number, ...) {
+#if defined(SYS_mbind)
+  if (!huge_branch_probe.active
+      || huge_branch_probe.selected != HUGE_BRANCH_PROBE_PLACEMENT_FAILURE
+      || number != SYS_mbind) {
+    huge_branch_unexpected_syscall_calls++;
+    if (huge_branch_unexpected_syscall_calls == 1) {
+      huge_branch_first_unexpected_syscall = number;
+    }
+    if (huge_branch_probe.active) huge_branch_probe.valid = false;
+    errno = ENOSYS;
+    return -1;
+  }
+  va_list arguments;
+  va_start(arguments, number);
+  void* const start = va_arg(arguments, void*);
+  const unsigned long length = va_arg(arguments, unsigned long);
+  const unsigned long mode = va_arg(arguments, unsigned long);
+  const unsigned long* const mask = va_arg(arguments, const unsigned long*);
+  const unsigned long maxnode = va_arg(arguments, unsigned long);
+  const unsigned flags = va_arg(arguments, unsigned);
+  va_end(arguments);
+  huge_branch_probe.syscall_calls++;
+  huge_branch_probe.mbind_start = start;
+  huge_branch_probe.mbind_length = length;
+  huge_branch_probe.mbind_mode = mode;
+  huge_branch_probe.mbind_mask_nonnull = mask != NULL;
+  huge_branch_probe.mbind_mask_value = mask == NULL ? 0 : *mask;
+  huge_branch_probe.mbind_maxnode = maxnode;
+  huge_branch_probe.mbind_flags = flags;
+  errno = EPERM;
+  return -1;
+#else
+  (void)number;
+  huge_branch_unexpected_syscall_calls++;
+  if (huge_branch_unexpected_syscall_calls == 1) {
+    huge_branch_first_unexpected_syscall = number;
+  }
+  if (huge_branch_probe.active) huge_branch_probe.valid = false;
+  errno = ENOSYS;
+  return -1;
+#endif
+}
+#endif
+
 /* This COW-child-only finite matrix receives only the two scalar forms used
  * by `_mi_prim_mem_init`: GET(0,0,0,0) and SET(1,0,0,0). It is deliberately
  * not a generic variadic forwarder or programmable script. The pinned source
@@ -518,6 +658,9 @@ void* __real_mmap(void* address, size_t length, int protection, int flags,
 int __real_madvise(void* address, size_t length, int advice);
 int __real_mprotect(void* address, size_t length, int protection);
 int __real_prctl(int option, ...);
+#if defined(CRABC_M2_FAULT_SEAM_INVENTORY_PROFILE)
+int __real_clock_gettime(clockid_t clock_id, struct timespec* time);
+#endif
 
 static int thp_direct_policy_error(int error) {
   errno = error;
@@ -618,6 +761,21 @@ int __wrap_prctl(int option, ...) {
 
 int __wrap_munmap(void* address, size_t length) {
   wrapped_munmap_calls++;
+  if (huge_branch_probe.active) {
+    const size_t index = huge_branch_probe.munmap_calls;
+    if (index < sizeof(huge_branch_probe.munmap_addresses)
+                    / sizeof(huge_branch_probe.munmap_addresses[0])) {
+      huge_branch_probe.munmap_addresses[index] = address;
+      huge_branch_probe.munmap_lengths[index] = length;
+    }
+    huge_branch_probe.munmap_calls++;
+    if (huge_branch_probe.fail_munmap_ordinal != 0
+        && huge_branch_probe.munmap_calls == huge_branch_probe.fail_munmap_ordinal) {
+      errno = ENOMEM;
+      return -1;
+    }
+    return __real_munmap(address, length);
+  }
   if (large_page_retry_probe.active
       && large_page_retry_probe.expected_release_address != NULL) {
     large_page_retry_probe.release_calls++;
@@ -677,6 +835,48 @@ void* __wrap_mmap(void* address, size_t length, int protection, int flags,
     large_only_failure_probe.mmap_calls++;
     errno = ENOMEM;
     return MAP_FAILED;
+  }
+  if (huge_branch_probe.active) {
+    const size_t index = huge_branch_probe.mmap_calls;
+    if (index < sizeof(huge_branch_probe.hints) / sizeof(huge_branch_probe.hints[0])) {
+      huge_branch_probe.hints[index] = address;
+      huge_branch_probe.lengths[index] = length;
+      huge_branch_probe.protections[index] = protection;
+      huge_branch_probe.flags[index] = flags;
+    }
+    huge_branch_probe.mmap_calls++;
+    if (length != MI_GiB || protection != (PROT_READ | PROT_WRITE)
+        || (flags & MAP_HUGETLB) == 0 || address == NULL) {
+      huge_branch_probe.valid = false;
+      errno = EINVAL;
+      return MAP_FAILED;
+    }
+    if (huge_branch_probe.selected == HUGE_BRANCH_PROBE_PARTIAL_PRIMITIVE_FAILURE
+        && huge_branch_probe.mmap_calls >= 2) {
+      errno = ENOMEM;
+      return MAP_FAILED;
+    }
+    const int ordinary_flags = (flags & ~(MAP_HUGETLB
+        | ((unsigned)MAP_HUGE_MASK << MAP_HUGE_SHIFT)))
+        | MAP_FIXED_NOREPLACE;
+    if (index < sizeof(huge_branch_probe.fallback_addresses)
+                    / sizeof(huge_branch_probe.fallback_addresses[0])) {
+      huge_branch_probe.fallback_addresses[index] = address;
+      huge_branch_probe.fallback_flags[index] = ordinary_flags;
+    }
+    if (huge_branch_probe.selected == HUGE_BRANCH_PROBE_NONCONTIGUOUS_ADJUSTMENT) {
+      if (index < sizeof(huge_branch_probe.fallback_addresses)
+                      / sizeof(huge_branch_probe.fallback_addresses[0])) {
+        huge_branch_probe.fallback_addresses[index] = NULL;
+        huge_branch_probe.fallback_flags[index] = flags & ~(MAP_HUGETLB
+            | ((unsigned)MAP_HUGE_MASK << MAP_HUGE_SHIFT));
+      }
+      return __real_mmap(
+          NULL, length, protection, flags & ~(MAP_HUGETLB
+              | ((unsigned)MAP_HUGE_MASK << MAP_HUGE_SHIFT)),
+          descriptor, offset);
+    }
+    return __real_mmap(address, length, protection, ordinary_flags, descriptor, offset);
   }
   if (aligned_overmap_probe.active) {
     if (aligned_overmap_probe.phase == ALIGNED_OVERMAP_DIRECT) {
@@ -822,6 +1022,23 @@ int __wrap_madvise(void* address, size_t length, int advice) {
   }
   return __real_madvise(address, length, advice);
 }
+
+#if defined(CRABC_M2_FAULT_SEAM_INVENTORY_PROFILE)
+/* `_mi_prim_clock_now` has a concrete two-field output ABI. Capture only the
+ * selected huge timeout child and return two literal millisecond readings;
+ * every other profile reaches the image's real clock_gettime unchanged. */
+int __wrap_clock_gettime(clockid_t clock_id, struct timespec* time) {
+  if (!huge_branch_probe.active) return __real_clock_gettime(clock_id, time);
+  if (time == NULL) {
+    errno = EINVAL;
+    return -1;
+  }
+  const size_t call = huge_branch_probe.clock_calls++;
+  time->tv_sec = 0;
+  time->tv_nsec = (call == 0 ? 0 : 2 * 1000 * 1000);
+  return 0;
+}
+#endif
 
 #define U(name, value) printf(name "=%zu\n", (size_t)(value))
 
@@ -2250,6 +2467,262 @@ static int run_large_only_failure_child(int record_descriptor) {
   return complete ? 0 : 3;
 }
 
+typedef struct huge_branch_matrix_record_s {
+  bool partial_primitive_failure_retains_one_os_huge_owner_and_stats;
+  bool timeout_after_progress_retains_one_os_huge_owner_and_stats;
+  bool placement_failure_is_best_effort_and_retains_one_os_huge_owner;
+  bool noncontiguous_adjustment_rejects_owner_after_source_cleanup;
+  bool free_continues_after_failed_page_and_applies_source_stats;
+} huge_branch_matrix_record_t;
+
+static bool huge_branch_huge_mmap_arguments(const huge_branch_probe_t* probe,
+                                            size_t count, bool second_and_later_two_mib) {
+  const int base_flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB;
+  if (!probe->valid || probe->mmap_calls != count) return false;
+  for (size_t index = 0; index < count; index++) {
+    const int page_flag = second_and_later_two_mib && index >= 1
+        ? MAP_HUGE_2MB : MAP_HUGE_1GB;
+    if (probe->hints[index] == NULL || probe->lengths[index] != MI_GiB
+        || probe->protections[index] != (PROT_READ | PROT_WRITE)
+        || probe->flags[index] != (base_flags | page_flag)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool huge_branch_anonymous_fallback_arguments(
+    const huge_branch_probe_t* probe, size_t count,
+    bool noncontiguous_adjustment) {
+  const int ordinary_flags = MAP_PRIVATE | MAP_ANONYMOUS;
+  for (size_t index = 0; index < count; index++) {
+    const int expected_flags = noncontiguous_adjustment
+        ? ordinary_flags : (ordinary_flags | MAP_FIXED_NOREPLACE);
+    const void* const expected_address = noncontiguous_adjustment
+        ? NULL : probe->hints[index];
+    if (probe->fallback_addresses[index] != expected_address
+        || probe->fallback_flags[index] != expected_flags) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/* The outer matrix child never initializes pinned source state.  It forks one
+ * exact inner child for each fixed arm so `unix_mmap`'s static one-GiB retry
+ * state is cold for every branch.  The syscall redirect rejects every raw
+ * source syscall before activation; no ENOSYS fallback can silently alter
+ * process initialization or an unrelated primitive. */
+static int run_huge_branch_case_child(int record_descriptor) {
+  bool complete = false;
+  huge_branch_probe = (huge_branch_probe_t){
+      .valid = true,
+      .selected = huge_branch_child_case,
+  };
+#if defined(CRABC_M2_FAULT_SEAM_INVENTORY_PROFILE)
+  huge_branch_unexpected_syscall_calls = 0;
+  huge_branch_first_unexpected_syscall = 0;
+#endif
+  mi_process_init();
+#if defined(CRABC_M2_FAULT_SEAM_INVENTORY_PROFILE)
+  if (huge_branch_unexpected_syscall_calls != 0) {
+    fprintf(stderr, "fault-seam profile rejected unexpected source syscall: count=%zu first=%ld\n",
+            huge_branch_unexpected_syscall_calls,
+            huge_branch_first_unexpected_syscall);
+    if (!write_all(record_descriptor, &complete, sizeof(complete))) return 2;
+    return 3;
+  }
+#endif
+  mi_subproc_t* const subproc = _mi_subproc_main();
+  if (subproc == NULL) {
+    if (!write_all(record_descriptor, &complete, sizeof(complete))) return 2;
+    return 3;
+  }
+  const int64_t reserved_before = current_reserved(subproc);
+  const int64_t committed_before = current_committed(subproc);
+#if defined(CRABC_M2_FAULT_SEAM_INVENTORY_PROFILE)
+  /* Registration flushes any delayed buffer while capture is inactive. Those
+   * fragments precede this selected fault and cannot count as its warning. */
+  huge_branch_registration_callback_calls = 0;
+  mi_register_output(m2_fault_inventory_output, NULL);
+#endif
+  if (huge_branch_child_case != HUGE_BRANCH_PROBE_PLACEMENT_FAILURE) {
+    huge_branch_probe.active = true;
+  }
+
+  if (huge_branch_child_case == HUGE_BRANCH_PROBE_PARTIAL_PRIMITIVE_FAILURE) {
+    size_t pages = SIZE_MAX;
+    size_t size = SIZE_MAX;
+    mi_memid_t memid = _mi_memid_none();
+    void* const partial = _mi_os_alloc_huge_os_pages(
+        subproc, 2, -1, 0, &pages, &size, &memid);
+    const huge_branch_probe_t probe = huge_branch_probe;
+    huge_branch_probe.active = false;
+    complete = partial != NULL && pages == 1 && size == MI_GiB
+        && memid.memkind == MI_MEM_OS_HUGE && memid.mem.os.base == partial
+        && memid.mem.os.size == MI_GiB
+        && huge_branch_huge_mmap_arguments(&probe, 3, true)
+        && probe.hints[0] != probe.hints[1] && probe.hints[1] == probe.hints[2]
+        && huge_branch_anonymous_fallback_arguments(&probe, 1, false)
+        && current_reserved(subproc) == reserved_before + (int64_t)MI_GiB
+        && current_committed(subproc) == committed_before + (int64_t)MI_GiB;
+    if (partial != NULL) _mi_os_free(subproc, partial, size, memid);
+  }
+  else if (huge_branch_child_case == HUGE_BRANCH_PROBE_TIMEOUT_AFTER_PROGRESS) {
+    size_t pages = SIZE_MAX;
+    size_t size = SIZE_MAX;
+    mi_memid_t memid = _mi_memid_none();
+    void* const timed = _mi_os_alloc_huge_os_pages(
+        subproc, 2, -1, 1, &pages, &size, &memid);
+    const huge_branch_probe_t probe = huge_branch_probe;
+    huge_branch_probe.active = false;
+    complete = timed != NULL && pages == 1 && size == MI_GiB
+        && memid.memkind == MI_MEM_OS_HUGE && probe.clock_calls >= 2
+        && huge_branch_huge_mmap_arguments(&probe, 1, false)
+        && huge_branch_anonymous_fallback_arguments(&probe, 1, false)
+        && current_reserved(subproc) == reserved_before + (int64_t)MI_GiB
+        && current_committed(subproc) == committed_before + (int64_t)MI_GiB;
+    if (timed != NULL) _mi_os_free(subproc, timed, size, memid);
+  }
+  else if (huge_branch_child_case == HUGE_BRANCH_PROBE_PLACEMENT_FAILURE) {
+    mi_option_set_enabled(mi_option_verbose, false);
+    mi_option_set_enabled(mi_option_show_errors, false);
+    const bool diagnostics_suppressed = !mi_option_is_enabled(mi_option_verbose)
+        && !mi_option_is_enabled(mi_option_show_errors);
+    huge_branch_probe.active = true;
+    size_t suppressed_pages = SIZE_MAX;
+    size_t suppressed_size = SIZE_MAX;
+    mi_memid_t suppressed_memid = _mi_memid_none();
+    void* const suppressed = _mi_os_alloc_huge_os_pages(
+        subproc, 1, 0, 0, &suppressed_pages, &suppressed_size, &suppressed_memid);
+    const huge_branch_probe_t suppressed_probe = huge_branch_probe;
+    huge_branch_probe.active = false;
+    const bool suppressed_relation = suppressed != NULL && suppressed_pages == 1
+        && suppressed_size == MI_GiB && suppressed_memid.memkind == MI_MEM_OS_HUGE
+        && huge_branch_huge_mmap_arguments(&suppressed_probe, 1, false)
+        && huge_branch_anonymous_fallback_arguments(&suppressed_probe, 1, false)
+        && suppressed_probe.syscall_calls == 1 && suppressed_probe.diagnostic_calls == 0;
+    if (suppressed != NULL) _mi_os_free(subproc, suppressed, suppressed_size, suppressed_memid);
+
+    mi_option_set_enabled(mi_option_show_errors, true);
+    const bool diagnostics_enabled = !mi_option_is_enabled(mi_option_verbose)
+        && mi_option_is_enabled(mi_option_show_errors);
+    huge_branch_probe = (huge_branch_probe_t){
+        .active = true,
+        .valid = true,
+        .selected = HUGE_BRANCH_PROBE_PLACEMENT_FAILURE,
+    };
+    size_t pages = SIZE_MAX;
+    size_t size = SIZE_MAX;
+    mi_memid_t memid = _mi_memid_none();
+    void* const placed = _mi_os_alloc_huge_os_pages(
+        subproc, 1, 0, 0, &pages, &size, &memid);
+    const huge_branch_probe_t probe = huge_branch_probe;
+    huge_branch_probe.active = false;
+    complete = diagnostics_suppressed && suppressed_relation && diagnostics_enabled
+        && placed != NULL && pages == 1 && size == MI_GiB
+        && memid.memkind == MI_MEM_OS_HUGE
+        && huge_branch_huge_mmap_arguments(&probe, 1, false)
+        && huge_branch_anonymous_fallback_arguments(&probe, 1, false)
+        && probe.syscall_calls == 1 && probe.mbind_start == placed
+        && probe.mbind_length == MI_GiB && probe.mbind_mode == MPOL_PREFERRED
+        && probe.mbind_mask_nonnull && probe.mbind_mask_value == 1UL
+        && probe.mbind_maxnode == 8 * MI_INTPTR_SIZE && probe.mbind_flags == 0
+        && probe.diagnostic_calls == 2 && probe.diagnostic_prefix_first
+        && probe.diagnostic_body_second
+        && current_reserved(subproc) == reserved_before + (int64_t)MI_GiB
+        && current_committed(subproc) == committed_before + (int64_t)MI_GiB;
+    if (placed != NULL) _mi_os_free(subproc, placed, size, memid);
+  }
+  else if (huge_branch_child_case == HUGE_BRANCH_PROBE_NONCONTIGUOUS_ADJUSTMENT) {
+    size_t pages = SIZE_MAX;
+    size_t size = SIZE_MAX;
+    mi_memid_t memid = _mi_memid_none();
+    void* const noncontiguous = _mi_os_alloc_huge_os_pages(
+        subproc, 1, -1, 0, &pages, &size, &memid);
+    const huge_branch_probe_t probe = huge_branch_probe;
+    huge_branch_probe.active = false;
+    complete = noncontiguous == NULL && pages == 0 && size == 0
+        && memid.memkind == MI_MEM_NONE
+        && huge_branch_huge_mmap_arguments(&probe, 1, false)
+        && huge_branch_anonymous_fallback_arguments(&probe, 1, true)
+        && probe.munmap_calls == 1
+        && probe.munmap_addresses[0] != probe.hints[0]
+        && probe.munmap_lengths[0] == MI_GiB
+        && current_reserved(subproc) == reserved_before - (int64_t)MI_GiB
+        && current_committed(subproc) == committed_before - (int64_t)MI_GiB;
+  }
+  else if (huge_branch_child_case == HUGE_BRANCH_PROBE_FREE_CONTINUES_AFTER_FAILURE) {
+    size_t pages = SIZE_MAX;
+    size_t size = SIZE_MAX;
+    mi_memid_t memid = _mi_memid_none();
+    void* const release = _mi_os_alloc_huge_os_pages(
+        subproc, 2, -1, 0, &pages, &size, &memid);
+    if (release != NULL && pages == 2 && size == 2 * MI_GiB
+        && memid.memkind == MI_MEM_OS_HUGE) {
+      huge_branch_probe.fail_munmap_ordinal = 1;
+      _mi_os_free(subproc, release, size, memid);
+    }
+    else {
+      huge_branch_probe.valid = false;
+    }
+    const huge_branch_probe_t probe = huge_branch_probe;
+    huge_branch_probe.active = false;
+    complete = huge_branch_huge_mmap_arguments(&probe, 2, false)
+        && huge_branch_anonymous_fallback_arguments(&probe, 2, false)
+        && probe.munmap_calls == 2 && probe.munmap_addresses[0] == release
+        && probe.munmap_addresses[1] == (uint8_t*)release + MI_GiB
+        && probe.munmap_lengths[0] == MI_GiB && probe.munmap_lengths[1] == MI_GiB
+        && current_reserved(subproc) == reserved_before
+        && current_committed(subproc) == committed_before;
+    if (release != NULL) (void)__real_munmap(release, MI_GiB);
+  }
+
+  if (!write_all(record_descriptor, &complete, sizeof(complete))) return 2;
+  return complete ? 0 : 3;
+}
+
+static bool capture_huge_branch_case(
+    huge_branch_probe_case_t selected, bool* result) {
+  huge_branch_child_case = selected;
+  return capture_large_page_retry_child(
+      "huge branch exact source child", run_huge_branch_case_child,
+      result, sizeof(*result));
+}
+
+static int run_huge_branch_matrix_child(int record_descriptor) {
+  huge_branch_matrix_record_t record = {0};
+  const bool partial = capture_huge_branch_case(
+      HUGE_BRANCH_PROBE_PARTIAL_PRIMITIVE_FAILURE,
+      &record.partial_primitive_failure_retains_one_os_huge_owner_and_stats);
+  const bool timeout = capture_huge_branch_case(
+      HUGE_BRANCH_PROBE_TIMEOUT_AFTER_PROGRESS,
+      &record.timeout_after_progress_retains_one_os_huge_owner_and_stats);
+  const bool placement = capture_huge_branch_case(
+      HUGE_BRANCH_PROBE_PLACEMENT_FAILURE,
+      &record.placement_failure_is_best_effort_and_retains_one_os_huge_owner);
+  const bool noncontiguous = capture_huge_branch_case(
+      HUGE_BRANCH_PROBE_NONCONTIGUOUS_ADJUSTMENT,
+      &record.noncontiguous_adjustment_rejects_owner_after_source_cleanup);
+  const bool free_continues = capture_huge_branch_case(
+      HUGE_BRANCH_PROBE_FREE_CONTINUES_AFTER_FAILURE,
+      &record.free_continues_after_failed_page_and_applies_source_stats);
+  const bool complete = partial && timeout && placement && noncontiguous && free_continues
+      && record.partial_primitive_failure_retains_one_os_huge_owner_and_stats
+      && record.timeout_after_progress_retains_one_os_huge_owner_and_stats
+      && record.placement_failure_is_best_effort_and_retains_one_os_huge_owner
+      && record.noncontiguous_adjustment_rejects_owner_after_source_cleanup
+      && record.free_continues_after_failed_page_and_applies_source_stats;
+  if (!write_all(record_descriptor, &record, sizeof(record))) return 2;
+  return complete ? 0 : 3;
+}
+
+static bool capture_huge_branch_matrix_child(huge_branch_matrix_record_t* record) {
+  return capture_large_page_retry_child(
+      "huge branch source matrix child", run_huge_branch_matrix_child,
+      record, sizeof(*record));
+}
+
 /* A fixture-ownership regression, deliberately separate from the upstream VM
  * trace: an empty child record must reject capture and still leave no waitable
  * exact child. With the old short-circuit this final wait consumes the zombie;
@@ -2603,7 +3076,32 @@ static bool capture_aligned_overmap_matrix_child(
   return captured;
 }
 
-#if defined(CRABC_M2_LARGE_PAGE_RETRY_CAPTURE_REAP_TEST)
+#if defined(CRABC_M2_FAULT_SEAM_INVENTORY_PROFILE)
+
+/* This output is intentionally distinct from the broad VM trace. It records
+ * only source branch relations which a normal anonymous mapping can simulate
+ * at the import boundary; no row represents a successful hardware hugepage
+ * or NUMA placement. The placement arm does register the pinned C output
+ * callback and requires its one selected source warning. */
+int main(void) {
+  huge_branch_matrix_record_t record = {0};
+  if (!capture_huge_branch_matrix_child(&record)) return 1;
+  puts("CRABC_MI_M2_FAULT_SEAM_INVENTORY_C_TRACE_BEGIN");
+  U("m2.fault.c.huge.partial_primitive_failure_retains_one_os_huge_owner_and_stats",
+      record.partial_primitive_failure_retains_one_os_huge_owner_and_stats);
+  U("m2.fault.c.huge.timeout_after_progress_retains_one_os_huge_owner_and_stats",
+      record.timeout_after_progress_retains_one_os_huge_owner_and_stats);
+  U("m2.fault.c.huge.noncontiguous_adjustment_rejects_owner_after_source_cleanup",
+      record.noncontiguous_adjustment_rejects_owner_after_source_cleanup);
+  U("m2.fault.c.huge.placement_failure_is_best_effort_and_retains_one_os_huge_owner",
+      record.placement_failure_is_best_effort_and_retains_one_os_huge_owner);
+  U("m2.fault.c.huge.free_continues_after_failed_page_and_applies_source_stats",
+      record.free_continues_after_failed_page_and_applies_source_stats);
+  puts("CRABC_MI_M2_FAULT_SEAM_INVENTORY_C_TRACE_END");
+  return 0;
+}
+
+#elif defined(CRABC_M2_LARGE_PAGE_RETRY_CAPTURE_REAP_TEST)
 
 int main(void) {
   return run_large_page_retry_empty_record_reap_test();

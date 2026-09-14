@@ -2458,6 +2458,17 @@ comparisons pass, including all thirteen bounded source anchors. The two
 components reuse one native build; bitmap's two logical evidence records share
 one execution. This does not qualify the remaining substrate components.
 
+The fault-injection component has one additional partial, current-source
+admission: `allocator-fault-seam-inventory` retains a fixed direct C profile
+and a private Rust `FaultPlan` trace for selected OS/page-map receiver rows.
+It records raw process streams, fixed source closures, source anchors, and one
+named M2 check, while retaining stopped metadata and `OsAligned` publication
+receivers. Deterministic primitive failures do not qualify hardware huge-page
+success or ambient NUMA placement. C output-warning control flow is observed
+only after the fixture enables the pinned source option; a Rust diagnostic
+output owner remains an explicit option-processing prerequisite. The component
+and M2 remain partial.
+
 The next integrated wave must:
 
 1. Preserve the executable containment contract in

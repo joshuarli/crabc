@@ -2064,6 +2064,24 @@ differentials, lifecycle/stress coverage, public `mi_*` behavior, libc
 integration, or an x86 backend. Each named Rust test runs serially with
 `--locked` against an isolated disposable x86-64 target directory.
 
+The source-indexed OS/page-map fault receiver admission is separate:
+
+```sh
+./compat/allocator/run-x86_64.sh allocator-fault-seam-inventory
+```
+
+It retains a fixed pinned-C direct profile and the private Rust
+`os::tests::emit_m2_fault_seam_inventory_c_rust_trace` stream. The finite rows
+cover the selected regular/aligned cleanup, range-transition retry, huge
+partial-prefix/timeout/noncontiguous/release, and best-effort `mbind` branches.
+The receipt reconstructs both streams from raw command, working-directory,
+stdout, stderr, status, fixture, source closure, and current-source records
+before its one partial-M2 check is admitted. Its C warning observation enables
+the source option and records the prefix/body callback order; no Rust
+diagnostic-output parity is claimed. Metadata and `OsAligned` publication,
+actual huge-page success, ambient NUMA placement, production callers, and M2
+completion remain outside this receipt.
+
 The separate ordinary reserved-medium on-demand differential is also native
 x86-64 only:
 
