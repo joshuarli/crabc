@@ -9,6 +9,7 @@
 #include "mimalloc.h"
 #include "mimalloc/internal.h"
 
+#include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -35,7 +36,7 @@ static void capture_output(const char* message, void* argument) {
   capture->lengths[index] = length;
 }
 
-static void print_capture(const char* scenario, const capture_t* capture) {
+static void print_capture(const char* scenario, const capture_t* capture, uintptr_t thread_identity) {
   printf("%s=", scenario);
   for (size_t index = 0; index < capture->count; index++) {
     if (index != 0) printf(":");
@@ -44,6 +45,8 @@ static void print_capture(const char* scenario, const capture_t* capture) {
     }
   }
   printf("\n");
+  /* Observe the same run's `_mi_thread_id()` independently of its prefix. */
+  printf("thread_identity=%" PRIxPTR "\n", thread_identity);
 }
 
 static void initialize_diagnostic_options(long show_errors, long verbose, long max_warnings) {
@@ -59,8 +62,9 @@ static int run_release(void) {
   capture_reset(&capture);
   mi_register_output(&capture_output, &capture);
   capture_reset(&capture);  /* source registration flushed its empty buffer */
+  const uintptr_t thread_identity = (uintptr_t)_mi_thread_id();
   _mi_warning_message("%s", "selected mbind failure\n");
-  print_capture("release", &capture);
+  print_capture("release", &capture, thread_identity);
   return 0;
 }
 
@@ -70,8 +74,9 @@ static int run_enabled(void) {
   capture_reset(&capture);
   mi_register_output(&capture_output, &capture);
   capture_reset(&capture);
+  const uintptr_t thread_identity = (uintptr_t)_mi_thread_id();
   _mi_warning_message("%s", "selected mbind failure\n");
-  print_capture("enabled", &capture);
+  print_capture("enabled", &capture, thread_identity);
   return 0;
 }
 
@@ -81,9 +86,10 @@ static int run_cap(void) {
   capture_reset(&capture);
   mi_register_output(&capture_output, &capture);
   capture_reset(&capture);
+  const uintptr_t thread_identity = (uintptr_t)_mi_thread_id();
   _mi_warning_message("%s", "first\n");
   _mi_warning_message("%s", "second\n");
-  print_capture("cap", &capture);
+  print_capture("cap", &capture, thread_identity);
   return 0;
 }
 
@@ -93,30 +99,33 @@ static int run_verbose(void) {
   capture_reset(&capture);
   mi_register_output(&capture_output, &capture);
   capture_reset(&capture);
+  const uintptr_t thread_identity = (uintptr_t)_mi_thread_id();
   _mi_warning_message("%s", "first\n");
   _mi_warning_message("%s", "second\n");
-  print_capture("verbose", &capture);
+  print_capture("verbose", &capture, thread_identity);
   return 0;
 }
 
 static int run_delayed(void) {
   capture_t capture;
   capture_reset(&capture);
+  const uintptr_t thread_identity = (uintptr_t)_mi_thread_id();
   _mi_raw_message("early\n");
   mi_register_output(&capture_output, &capture);
   _mi_raw_message("later\n");
-  print_capture("delayed", &capture);
+  print_capture("delayed", &capture, thread_identity);
   return 0;
 }
 
 static int run_null(void) {
   capture_t capture;
   capture_reset(&capture);
+  const uintptr_t thread_identity = (uintptr_t)_mi_thread_id();
   _mi_raw_message("early\n");
   mi_register_output(NULL, NULL);
   _mi_raw_message("stderr\n");
   mi_register_output(&capture_output, &capture);
-  print_capture("null", &capture);
+  print_capture("null", &capture, thread_identity);
   return 0;
 }
 
@@ -124,11 +133,12 @@ static int run_post_init(void) {
   capture_t capture;
   initialize_diagnostic_options(0, 0, 32);
   capture_reset(&capture);
+  const uintptr_t thread_identity = (uintptr_t)_mi_thread_id();
   _mi_raw_message("early\n");
   _mi_options_post_init();
   _mi_raw_message("later\n");
   mi_register_output(&capture_output, &capture);
-  print_capture("post_init", &capture);
+  print_capture("post_init", &capture, thread_identity);
   return 0;
 }
 

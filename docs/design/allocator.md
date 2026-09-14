@@ -331,10 +331,17 @@ outside this slice; a later M7 formatter must produce this bounded form before
 dispatching it.
 
 The owner preserves `_mi_fputs`' two deliveries: the selected warning calls a
-custom callback first with `mimalloc: warning: ` and then with the formatted
-body. With `verbose == 0`, disabled `show_errors` suppresses a warning; an
-enabled warning increments the count with AcqRel and is suppressed only after
-the count exceeds a nonnegative maximum. `verbose != 0` bypasses both gates.
+custom callback first with source `mi_vfprintf_thread`'s stack-bounded
+`mimalloc: warning: thread 0x<THREAD-POINTER>: ` prefix, then with the
+formatted body. Its selected `%tx` number route emits zero as `0` and all
+other values as minimal uppercase hexadecimal; the 19-byte warning stem meets
+the source's 32-byte predicate and its maximum 64-bit prefix is 47 bytes plus
+NUL within the pinned 64-byte `tprefix`. The private Linux/x86-64 owner reads
+`crabc_core::thread::thread_pointer_identity()` at that source boundary, which
+is the calling musl TCB self pointer (`%fs:0`), not `gettid`. With
+`verbose == 0`, disabled `show_errors` suppresses a warning; an enabled warning
+increments the count with AcqRel and is suppressed only after the count exceeds
+a nonnegative maximum. `verbose != 0` bypasses both gates.
 A custom registration flushes the delayed bytes exactly once while holding the
 buffer lock and terminally stops that buffer. A null registration selects
 stderr without flushing it. The source post-init transition instead flushes to
@@ -378,7 +385,11 @@ source closure (`crabc-mimalloc` module route/owner/lock and the selected
 `crabc-core` module route/error/futex/syscall files), the root Cargo
 configuration, selected Cargo manifests, and toolchain input, exact pinned C
 source roster, reconstructed collector commands/cwds, and every finite
-custom/default output stream. Before semantic validation, a separate
+custom/default output stream. Each C scenario and each Rust trace scenario
+also retains a separately observed same-process TLS identity; the reader
+reconstructs the exact dynamic prefix from that identity and rejects missing,
+mismatched, lower-case, or zero-padded values without comparing C and Rust
+process addresses. Before semantic validation, a separate
 `*.candidate.json` receipt retains the raw source inputs, physical extracted C
 source tree, compiler/scenario commands, statuses, streams, and Rust command;
 it stays `unvalidated` and cannot stand in for an admitted report. This commit

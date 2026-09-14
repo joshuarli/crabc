@@ -64,6 +64,8 @@ PINNED_UPSTREAM = {
 PROFILE = "linux-x86_64-private-mimalloc-diagnostic-output-owner"
 TRACE_BEGIN = "CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_TRACE_BEGIN"
 TRACE_END = "CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_TRACE_END"
+THREAD_IDENTITIES_BEGIN = "CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_THREAD_IDENTITIES_BEGIN"
+THREAD_IDENTITIES_END = "CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_THREAD_IDENTITIES_END"
 DEFAULT_STDERR_BEGIN = "CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_DEFAULT_STDERR_BEGIN"
 DEFAULT_STDERR_END = "CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_DEFAULT_STDERR_END"
 SCENARIOS = ("release", "enabled", "cap", "verbose", "delayed", "null", "post_init")
@@ -123,23 +125,31 @@ PINNED_C_SOURCE_IDENTITIES = (
     ("src/prim/unix/prim.c", "8efeac14a9952aa7c3117ce2d9d801f93692bda6cd80e09a51ddca398d7ac774"),
 )
 HEX = re.compile(r"(?:[0-9a-f]{2})*")
+CANONICAL_LOWER_HEX = re.compile(r"(?:0|[1-9a-f][0-9a-f]*)")
+WARNING_PREFIX_HEAD = b"mimalloc: warning: thread 0x"
+WARNING_PREFIX_TAIL = b": "
 
-PREFIX = "6d696d616c6c6f633a207761726e696e673a20"
 SELECTED_BODY = "73656c6563746564206d62696e64206661696c7572650a"
 FIRST = "66697273740a"
 SECOND = "7365636f6e640a"
 EARLY = "6561726c790a"
 LATER = "6c617465720a"
 POST_INIT = "6561726c790a0a6c617465720a"
-EXPECTED_TRACE = {
-    "release": [],
-    "enabled": [PREFIX, SELECTED_BODY],
-    "cap": [PREFIX, FIRST],
-    "verbose": [PREFIX, FIRST, PREFIX, SECOND],
-    "delayed": [EARLY, LATER],
-    "null": [EARLY],
-    "post_init": [POST_INIT],
-}
+def expected_trace_for_thread_identity(identity: int) -> dict[str, list[str]]:
+    """Return the selected two-delivery trace for one observed TLS identity."""
+
+    prefix = (WARNING_PREFIX_HEAD + f"{identity:X}".encode("ascii") + WARNING_PREFIX_TAIL).hex()
+    return {
+        "release": [],
+        "enabled": [prefix, SELECTED_BODY],
+        "cap": [prefix, FIRST],
+        "verbose": [prefix, FIRST, prefix, SECOND],
+        "delayed": [EARLY, LATER],
+        "null": [EARLY],
+        "post_init": [POST_INIT],
+    }
+
+
 EXPECTED_DEFAULT_STDERR_TRACE = {
     "release": [],
     "enabled": [],
@@ -289,18 +299,64 @@ def parse_trace(output: str, begin: str | None, end: str | None) -> dict[str, li
     return trace
 
 
-def parse_single_trace(output: str, scenario: str) -> list[str]:
+def parse_thread_identity(encoded: str, context: str) -> int:
+    """Read the fixture's canonical lower-case, minimal identity observation."""
+
+    if not CANONICAL_LOWER_HEX.fullmatch(encoded):
+        raise EvidenceError(f"{context} thread identity is not canonical lower-case minimal hex")
+    return int(encoded, 16)
+
+
+def parse_thread_identities(output: str) -> dict[str, int]:
+    """Read one independently observed Rust TLS identity for every scenario."""
+
     lines = output.splitlines()
-    if len(lines) != 1 or "=" not in lines[0]:
-        raise EvidenceError(f"C {scenario} trace does not retain one raw line")
+    try:
+        start = lines.index(THREAD_IDENTITIES_BEGIN) + 1
+        stop = lines.index(THREAD_IDENTITIES_END, start)
+    except ValueError as error:
+        raise EvidenceError("thread identity markers are missing or out of order") from error
+    identities: dict[str, int] = {}
+    for line in lines[start:stop]:
+        if "=" not in line:
+            raise EvidenceError(f"thread identity line lacks a key: {line!r}")
+        scenario, encoded = line.split("=", 1)
+        if scenario not in SCENARIOS or scenario in identities:
+            raise EvidenceError(f"thread identity scenario is invalid or duplicated: {scenario!r}")
+        identities[scenario] = parse_thread_identity(encoded, f"Rust {scenario}")
+    if tuple(identities) != SCENARIOS:
+        raise EvidenceError("thread identity scenario order or coverage drifted")
+    return identities
+
+
+def parse_single_trace(output: str, scenario: str) -> tuple[list[str], int]:
+    """Read one C callback trace and its separate same-process TLS snapshot."""
+
+    lines = output.splitlines()
+    if len(lines) != 2 or "=" not in lines[0] or "=" not in lines[1]:
+        raise EvidenceError(f"C {scenario} trace does not retain callback and thread-identity lines")
     name, encoded = lines[0].split("=", 1)
     if name != scenario:
         raise EvidenceError(f"C trace scenario drifted: {name!r}")
     fragments = [] if encoded == "" else encoded.split(":")
     if not all(HEX.fullmatch(fragment) for fragment in fragments):
         raise EvidenceError(f"C {scenario} trace has non-hex fragment")
-    return fragments
+    name, encoded = lines[1].split("=", 1)
+    if name != "thread_identity":
+        raise EvidenceError(f"C {scenario} thread identity label drifted: {name!r}")
+    return fragments, parse_thread_identity(encoded, f"C {scenario}")
 
+
+def validate_callback_trace(
+    trace: Mapping[str, list[str]], identities: Mapping[str, int], context: str
+) -> None:
+    """Bind each exact dynamic prefix to its own run's observed TLS identity."""
+
+    if tuple(trace) != SCENARIOS or tuple(identities) != SCENARIOS:
+        raise EvidenceError(f"{context} callback trace/identity coverage drifted")
+    for scenario in SCENARIOS:
+        if trace[scenario] != expected_trace_for_thread_identity(identities[scenario])[scenario]:
+            raise EvidenceError(f"{context} callback trace drifted")
 
 def expected_default_stderr_stream() -> str:
     return "\n".join(
@@ -548,6 +604,7 @@ def validate_report(report: object) -> None:
     if not isinstance(runs, Mapping) or tuple(runs) != SCENARIOS:
         raise EvidenceError("diagnostic-output C scenario roster drifted")
     c_trace: dict[str, list[str]] = {}
+    c_thread_identities: dict[str, int] = {}
     for scenario in SCENARIOS:
         run = require_record(runs[scenario], f"C {scenario}")
         if (
@@ -557,9 +614,8 @@ def validate_report(report: object) -> None:
             or run["stderr"] != EXPECTED_C_STDERR[scenario]
         ):
             raise EvidenceError(f"diagnostic-output C {scenario} command/status drifted")
-        c_trace[scenario] = parse_single_trace(run["stdout"], scenario)
-    if c_trace != EXPECTED_TRACE:
-        raise EvidenceError("pinned C diagnostic-output trace drifted")
+        c_trace[scenario], c_thread_identities[scenario] = parse_single_trace(run["stdout"], scenario)
+    validate_callback_trace(c_trace, c_thread_identities, "pinned C diagnostic-output")
     source_files = c_oracle["source_files"]
     if source_files != expected_pinned_c_source_records():
         raise EvidenceError("diagnostic-output C source identity drifted")
@@ -572,8 +628,8 @@ def validate_report(report: object) -> None:
     ):
         raise EvidenceError("diagnostic-output Rust command/status drifted")
     rust_trace = parse_trace(rust["stdout"], TRACE_BEGIN, TRACE_END)
-    if rust_trace != EXPECTED_TRACE or rust_trace != c_trace:
-        raise EvidenceError("diagnostic-output C/Rust trace reconstruction drifted")
+    rust_thread_identities = parse_thread_identities(rust["stdout"])
+    validate_callback_trace(rust_trace, rust_thread_identities, "Rust diagnostic-output")
     if rust["stderr"] != expected_default_stderr_stream():
         raise EvidenceError("diagnostic-output Rust default-stderr raw stream drifted")
     rust_default_stderr = parse_trace(rust["stderr"], DEFAULT_STDERR_BEGIN, DEFAULT_STDERR_END)

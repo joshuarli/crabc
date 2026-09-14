@@ -23,6 +23,9 @@ SPEC.loader.exec_module(EVIDENCE)
 
 
 class RetainedStreamReaderTests(unittest.TestCase):
+    C_THREAD_IDENTITY = 0x7F0A_C0DE
+    RUST_THREAD_IDENTITY = 0x7F0A_FACE
+
     @staticmethod
     def raw_record(
         command: list[str], cwd: Path, stdout: str = "", stderr: str = "",
@@ -35,24 +38,42 @@ class RetainedStreamReaderTests(unittest.TestCase):
             "stderr": stderr,
         }
 
+    @staticmethod
+    def trace_for_thread_identity(identity: int) -> dict[str, list[str]]:
+        prefix = f"mimalloc: warning: thread 0x{identity:X}: ".encode("ascii").hex()
+        return {
+            "release": [],
+            "enabled": [prefix, EVIDENCE.SELECTED_BODY],
+            "cap": [prefix, EVIDENCE.FIRST],
+            "verbose": [prefix, EVIDENCE.FIRST, prefix, EVIDENCE.SECOND],
+            "delayed": [EVIDENCE.EARLY, EVIDENCE.LATER],
+            "null": [EVIDENCE.EARLY],
+            "post_init": [EVIDENCE.POST_INIT],
+        }
+
     def complete_report(self) -> dict[str, object]:
         temporary = ROOT / ".work/allocator-x86_64/diagnostic-output-owner/synthetic-receipt"
         source = temporary / "source/mimalloc-3.5.0"
         binary = temporary / "diagnostic-output-owner-c-oracle"
         target = temporary / "rust-target"
+        c_trace = self.trace_for_thread_identity(self.C_THREAD_IDENTITY)
+        rust_trace = self.trace_for_thread_identity(self.RUST_THREAD_IDENTITY)
         c_runs = {
             scenario: self.raw_record(
                 [str(binary), scenario],
                 source,
-                f"{scenario}={':'.join(EVIDENCE.EXPECTED_TRACE[scenario])}\n",
+                f"{scenario}={':'.join(c_trace[scenario])}\n"
+                f"thread_identity={self.C_THREAD_IDENTITY:x}\n",
                 EVIDENCE.EXPECTED_C_STDERR[scenario],
             )
             for scenario in EVIDENCE.SCENARIOS
         }
         rust_stream = "\n".join(
             [EVIDENCE.TRACE_BEGIN]
-            + [f"{scenario}={':'.join(EVIDENCE.EXPECTED_TRACE[scenario])}" for scenario in EVIDENCE.SCENARIOS]
-            + [EVIDENCE.TRACE_END, ""]
+            + [f"{scenario}={':'.join(rust_trace[scenario])}" for scenario in EVIDENCE.SCENARIOS]
+            + [EVIDENCE.TRACE_END, EVIDENCE.THREAD_IDENTITIES_BEGIN]
+            + [f"{scenario}={self.RUST_THREAD_IDENTITY:x}" for scenario in EVIDENCE.SCENARIOS]
+            + [EVIDENCE.THREAD_IDENTITIES_END, ""]
         )
         default_stderr = "\n".join(
             [EVIDENCE.DEFAULT_STDERR_BEGIN]
@@ -101,10 +122,50 @@ class RetainedStreamReaderTests(unittest.TestCase):
 
     def test_reader_rejects_changed_raw_callback_order_without_running_a_process(self) -> None:
         report = self.complete_report()
+        prefix, body = self.trace_for_thread_identity(self.C_THREAD_IDENTITY)["enabled"]
         report["c_oracle"]["runs"]["enabled"]["stdout"] = (
-            f"enabled={EVIDENCE.SELECTED_BODY}:{EVIDENCE.PREFIX}\n"
+            f"enabled={body}:{prefix}\nthread_identity={self.C_THREAD_IDENTITY:x}\n"
         )
-        with self.assertRaisesRegex(EVIDENCE.EvidenceError, "pinned C diagnostic-output trace drifted"):
+        with self.assertRaisesRegex(EVIDENCE.EvidenceError, "pinned C diagnostic-output callback trace drifted"):
+            EVIDENCE.validate_report(report)
+
+    def test_reader_rejects_unbound_or_mismatched_thread_prefixes_without_running_a_process(self) -> None:
+        missing = self.complete_report()
+        prefix, body = self.trace_for_thread_identity(self.C_THREAD_IDENTITY)["enabled"]
+        missing["c_oracle"]["runs"]["enabled"]["stdout"] = f"enabled={prefix}:{body}\n"
+        with self.assertRaisesRegex(EVIDENCE.EvidenceError, "callback and thread-identity"):
+            EVIDENCE.validate_report(missing)
+
+        mismatched = self.complete_report()
+        mismatched["c_oracle"]["runs"]["enabled"]["stdout"] = (
+            f"enabled={prefix}:{body}\nthread_identity={self.C_THREAD_IDENTITY + 1:x}\n"
+        )
+        with self.assertRaisesRegex(EVIDENCE.EvidenceError, "pinned C diagnostic-output callback trace drifted"):
+            EVIDENCE.validate_report(mismatched)
+
+        rust_mismatched = self.complete_report()
+        rust_mismatched["rust"]["stdout"] = rust_mismatched["rust"]["stdout"].replace(
+            f"enabled={self.RUST_THREAD_IDENTITY:x}",
+            f"enabled={self.RUST_THREAD_IDENTITY + 1:x}",
+        )
+        with self.assertRaisesRegex(EVIDENCE.EvidenceError, "Rust diagnostic-output callback trace drifted"):
+            EVIDENCE.validate_report(rust_mismatched)
+
+    def test_reader_rejects_noncanonical_thread_prefix_or_observation_without_running_a_process(self) -> None:
+        report = self.complete_report()
+        canonical_prefix, body = self.trace_for_thread_identity(self.C_THREAD_IDENTITY)["enabled"]
+        lower_prefix = bytes.fromhex(canonical_prefix).replace(b"0x7F0AC0DE", b"0x7f0AC0DE").hex()
+        report["c_oracle"]["runs"]["enabled"]["stdout"] = (
+            f"enabled={lower_prefix}:{body}\nthread_identity={self.C_THREAD_IDENTITY:x}\n"
+        )
+        with self.assertRaisesRegex(EVIDENCE.EvidenceError, "pinned C diagnostic-output callback trace drifted"):
+            EVIDENCE.validate_report(report)
+
+        report = self.complete_report()
+        report["c_oracle"]["runs"]["enabled"]["stdout"] = (
+            f"enabled={canonical_prefix}:{body}\nthread_identity=0{self.C_THREAD_IDENTITY:x}\n"
+        )
+        with self.assertRaisesRegex(EVIDENCE.EvidenceError, "canonical lower-case minimal hex"):
             EVIDENCE.validate_report(report)
 
     def test_reader_rejects_missing_rust_stream_marker_without_running_a_process(self) -> None:

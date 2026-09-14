@@ -372,20 +372,26 @@
       },
       "rust_modules": [
         "crabc_mimalloc::compiler_tls",
+        "crabc_mimalloc::diagnostic_output",
         "crabc_mimalloc::dynamic_theap",
         "crabc_mimalloc::thread_local"
       ],
       "status": "partial",
-      "difference": "Five private roots and direct x86-64 fs-zero identity are mapped; generic TLS models, public APIs, and complete lifecycle hooks are not. One separate 18-value native C/Rust differential covers one arena-backed, same-origin, one-thread nonfull medium page: mapped abandonment retains its original Theap identity while publishing its heap-local bitmap/count. Pinned C reaches the exact bitmap claim through its next same-heap allocation; Rust explicitly invokes its test-only `adopt()` adapter before its matching third allocation and does not make generic allocation scan abandoned pages. It does not establish general or cross-thread abandonment/adoption, public `mi_*` behavior, libc integration, backend promotion, public x86 support, or evidence for another architecture.",
+      "difference": "Five private roots, direct x86-64 fs-zero identity, and the selected diagnostic owner thread-prefix consumer are mapped; generic TLS models, public APIs, and complete lifecycle hooks are not. One separate 18-value native C/Rust differential covers one arena-backed, same-origin, one-thread nonfull medium page: mapped abandonment retains its original Theap identity while publishing its heap-local bitmap/count. Pinned C reaches the exact bitmap claim through its next same-heap allocation; Rust explicitly invokes its test-only `adopt()` adapter before its matching third allocation and does not make generic allocation scan abandoned pages. It does not establish general or cross-thread abandonment/adoption, public `mi_*` behavior, libc integration, backend promotion, public x86 support, or evidence for another architecture.",
       "evidence": [
+        "compat/allocator/tests/test_x86_64_diagnostic_output_owner_evidence.py",
         "compat/allocator/tests/test_x86_64_direct_small_allocation_adoption_evidence.py",
         "compat/allocator/tests/test_x86_64_mapped_adoption_evidence.py",
         "compat/allocator/x86_64-direct-small-allocation-adoption-evidence-v3.5.0.json",
         "compat/allocator/x86_64-mapped-adoption-evidence-v3.5.0.json",
+        "compat/allocator/x86_64_diagnostic_output_owner_evidence.py",
+        "compat/allocator/x86_64_diagnostic_output_owner_oracle.c",
         "compat/allocator/x86_64_direct_small_allocation_adoption_evidence.py",
         "compat/allocator/x86_64_mapped_adoption_evidence.py",
         "crabc-mimalloc/src/compiler_tls.rs",
-        "crabc-mimalloc/src/thread_local.rs"
+        "crabc-mimalloc/src/diagnostic_output.rs",
+        "crabc-mimalloc/src/thread_local.rs",
+        "docs/design/allocator.md"
       ]
     },
     {
@@ -880,22 +886,28 @@
     },
     {
       "id": "c-support-and-once",
-      "source_scope": "Non-allocating byte or string support and once-related helpers.",
+      "source_scope": "Non-allocating byte/string support, selected diagnostic number formatting, and once-related helpers.",
       "source_anchor": {
         "member": "src/libc.c",
         "start_line": 65,
-        "end_line": 180,
-        "sha256": "6751ce44f4fe99b393a821764270eaf9763724aa0551a8766b733f2478af1484"
+        "end_line": 445,
+        "sha256": "ab071ee8ea5074638efe65faf20d2e94821619e154d916b49fd4ee72833b3f15"
       },
       "rust_modules": [
+        "crabc_mimalloc::diagnostic_output",
         "crabc_mimalloc::once",
         "crabc_mimalloc::support"
       ],
       "status": "partial",
-      "difference": "Rust maps selected allocation-free support operations and once state, not the complete C formatting and environment helper surface.",
+      "difference": "Rust maps selected allocation-free support and once state plus only the private diagnostic `%tx` route: the 64-byte warning prefix uses the selected zero/minimal uppercase base-16 output. It does not map complete C formatting, environment handling, or public diagnostic APIs.",
       "evidence": [
+        "compat/allocator/tests/test_x86_64_diagnostic_output_owner_evidence.py",
+        "compat/allocator/x86_64_diagnostic_output_owner_evidence.py",
+        "compat/allocator/x86_64_diagnostic_output_owner_oracle.c",
+        "crabc-mimalloc/src/diagnostic_output.rs",
         "crabc-mimalloc/src/once.rs",
-        "crabc-mimalloc/src/support.rs"
+        "crabc-mimalloc/src/support.rs",
+        "docs/design/allocator.md"
       ]
     },
     {
@@ -911,7 +923,7 @@
         "crabc_mimalloc::diagnostic_output"
       ],
       "status": "partial",
-      "difference": "Private `diagnostic_output` maps only the show_errors/verbose/max_warnings startup snapshot, 16 KiB delayed output state, stderr/default/custom sink transitions through a caller-supplied source-shaped fputs primitive, source prefix/body warning dispatch, and AcqRel warning gate. It does not establish FILE locking/buffering or short-write/error transport parity, parse environments, implement the remaining descriptor table, runtime option mutation, mi_option_* APIs, mi_register_output ABI, error/deferred-free callbacks, statistics, options printing, debug/secure/guarded modes, or runtime integration.",
+      "difference": "Private `diagnostic_output` maps only the show_errors/verbose/max_warnings startup snapshot, 16 KiB delayed output state, stderr/default/custom sink transitions through a caller-supplied source-shaped fputs primitive, and selected warning prefix/body dispatch. The 19-byte warning prefix satisfies `mi_vfprintf_thread` and produces its source-sized 64-byte `thread 0x%tx: ` prefix from an independently observed Linux TLS identity after that same AcqRel warning gate. It does not establish FILE locking/buffering or short-write/error transport parity, parse environments, implement the remaining descriptor table, runtime option mutation, mi_option_* APIs, mi_register_output ABI, error/deferred-free callbacks, statistics, options printing, debug/secure/guarded modes, or runtime integration.",
       "evidence": [
         "compat/allocator/tests/test_x86_64_diagnostic_output_owner_evidence.py",
         "compat/allocator/tests/test_x86_64_source_map.py",
@@ -1511,12 +1523,18 @@
         "sha256": "3df7d11ae0d7dda11d29aa15c2d92f32bd186f1124f6cc6bb0be2aecd22c7684"
       },
       "rust_modules": [
-        "crabc_mimalloc::compiler_tls"
+        "crabc_mimalloc::compiler_tls",
+        "crabc_mimalloc::diagnostic_output"
       ],
       "status": "partial",
-      "difference": "Rust retains private initial-exec evidence roots and selected stores, not source-compatible symbols or complete lifecycle integration.",
+      "difference": "Rust retains private initial-exec evidence roots and selected stores, plus the private diagnostic owner consumes the selected `_mi_thread_id()` result through crabc-core\u2019s direct x86-64 fs-zero read. It does not establish source-compatible symbols or complete lifecycle integration.",
       "evidence": [
-        "crabc-mimalloc/src/compiler_tls.rs"
+        "compat/allocator/tests/test_x86_64_diagnostic_output_owner_evidence.py",
+        "compat/allocator/x86_64_diagnostic_output_owner_evidence.py",
+        "compat/allocator/x86_64_diagnostic_output_owner_oracle.c",
+        "crabc-mimalloc/src/compiler_tls.rs",
+        "crabc-mimalloc/src/diagnostic_output.rs",
+        "docs/design/allocator.md"
       ]
     },
     {
@@ -1557,6 +1575,6 @@
     "unfinished_unit_count": 28,
     "unit_count": 34,
     "unit_ids_sha256": "dca679d8587cb38bcf6e6c62379284ed35a55d1b7991d07b0d30eac767670052",
-    "units_sha256": "dd0d914d77fa747cbbfe8ed16852d73d4efc1506e156535158b9e318d8888126"
+    "units_sha256": "c7b2f2ccf02cc7f2fe794e390be24cf92067bb6cee7817e92caacc8390520dd0"
   }
 }

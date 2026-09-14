@@ -4,8 +4,12 @@
 // "LICENSE" at the root of this distribution.
 // SPDX-License-Identifier: MIT
 //
-// Source map: pinned mimalloc v3.5.0 `src/options.c:15-16,111-178,347-549`
-// and the surrounding process ordering in `src/init.c:505-550`.
+// Source map: pinned mimalloc v3.5.0 `src/options.c:15-16,111-178,347-549`,
+// its `mi_vfprintf_thread` prefix at `src/options.c:498-507`, the selected
+// `%tx` formatter route at `src/libc.c:254-261,285-307,313-397`, and Linux
+// thread identity at `include/mimalloc/prim-tls.h:170-190` /
+// `src/prim/prim-tls.c:34-38`, plus surrounding process ordering in
+// `src/init.c:505-550`.
 //
 // The C source keeps one 16 KiB delayed byte buffer, one lock, independently
 // published output function/argument pointers, and an AcqRel warning counter.
@@ -19,6 +23,7 @@
 // descriptor write has FILE buffering, locking, or failure equivalence.
 
 use crate::lock::PrivateLock;
+use crabc_core::thread::thread_pointer_identity;
 use core::cell::UnsafeCell;
 use core::ffi::{c_char, c_void, CStr};
 use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicUsize, Ordering};
@@ -33,7 +38,9 @@ const DEFAULT_STDERR: u8 = 1;
 const DEFAULT_STDERR_AND_DELAYED: u8 = 2;
 const DEFAULT_CALLBACK: u8 = 3;
 
-const WARNING_PREFIX: &[u8] = b"mimalloc: warning: \0";
+const THREAD_WARNING_PREFIX_BYTES: usize = 64;
+const WARNING_PREFIX_HEAD: &[u8] = b"mimalloc: warning: thread 0x";
+const WARNING_PREFIX_TAIL: &[u8] = b": ";
 
 /// The three descriptors consumed by this intentionally partial M7 owner.
 ///
@@ -107,6 +114,59 @@ impl SourceFormattedMessage {
     fn as_c_str(&self) -> &CStr {
         // SAFETY: construction always places a zero byte immediately after
         // `length`, and only copies the NUL-free contents of a `CStr`.
+        unsafe { CStr::from_bytes_with_nul_unchecked(&self.bytes[..=self.length]) }
+    }
+}
+
+/// One source-sized `mi_vfprintf_thread` prefix for the selected warning.
+///
+/// Pinned `mi_vfprintf_thread` accepts the static 19-byte warning prefix,
+/// forms `char tprefix[64]` with `_mi_snprintf`, and uses `%tx` for
+/// `_mi_thread_id()`. `mi_out_num` writes zero as `0`, otherwise writes the
+/// shortest uppercase base-16 representation. This private stack image keeps
+/// exactly that selected valid-program boundary without general formatting.
+struct ThreadWarningPrefix {
+    bytes: [u8; THREAD_WARNING_PREFIX_BYTES],
+    length: usize,
+}
+
+impl ThreadWarningPrefix {
+    #[inline]
+    fn new(thread_identity: usize) -> Self {
+        let mut bytes = [0; THREAD_WARNING_PREFIX_BYTES];
+        let mut length = WARNING_PREFIX_HEAD.len();
+        bytes[..length].copy_from_slice(WARNING_PREFIX_HEAD);
+
+        if thread_identity == 0 {
+            bytes[length] = b'0';
+            length += 1;
+        } else {
+            let mut reversed = [0; core::mem::size_of::<usize>() * 2];
+            let mut value = thread_identity;
+            let mut digits = 0;
+            while value != 0 {
+                let digit = (value & 0x0f) as u8;
+                reversed[digits] = if digit < 10 { b'0' + digit } else { b'A' + digit - 10 };
+                digits += 1;
+                value >>= 4;
+            }
+            while digits != 0 {
+                digits -= 1;
+                bytes[length] = reversed[digits];
+                length += 1;
+            }
+        }
+
+        bytes[length..length + WARNING_PREFIX_TAIL.len()].copy_from_slice(WARNING_PREFIX_TAIL);
+        length += WARNING_PREFIX_TAIL.len();
+        debug_assert!(length < THREAD_WARNING_PREFIX_BYTES);
+        Self { bytes, length }
+    }
+
+    #[inline]
+    fn as_c_str(&self) -> &CStr {
+        // SAFETY: the zero-initialized final byte follows the complete prefix,
+        // whose source maximum is 47 bytes on the selected 64-bit targets.
         unsafe { CStr::from_bytes_with_nul_unchecked(&self.bytes[..=self.length]) }
     }
 }
@@ -302,10 +362,11 @@ impl OutputOwner {
             }
         }
 
-        // SAFETY: this static byte string has one terminal NUL and no interior
-        // NUL. It is the exact selected `_mi_warning_message` prefix.
-        let prefix = unsafe { CStr::from_bytes_with_nul_unchecked(WARNING_PREFIX) };
-        self.fputs_default(Some(prefix), message.as_c_str());
+        // The selected static warning prefix satisfies the source's 32-byte
+        // `mi_vfprintf_thread` predicate. Preserve its one stack prefix and
+        // separate prefix/body callback deliveries.
+        let prefix = ThreadWarningPrefix::new(thread_pointer_identity());
+        self.fputs_default(Some(prefix.as_c_str()), message.as_c_str());
     }
 
     fn fputs_default(&self, prefix: Option<&CStr>, message: &CStr) {
@@ -441,7 +502,9 @@ mod tests {
 
     use super::{
         DiagnosticOptionSnapshot, OutputCallback, OutputOwner, SourceFormattedMessage,
+        ThreadWarningPrefix,
     };
+    use crabc_core::thread::thread_pointer_identity;
     use core::cell::UnsafeCell;
     use core::ffi::{c_char, c_void, CStr};
     use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -513,6 +576,14 @@ mod tests {
 
     fn capture_argument(capture: &Capture) -> *mut c_void {
         capture as *const Capture as *mut c_void
+    }
+
+    fn assert_live_thread_warning_prefix(prefix: &[u8]) {
+        let expected = std::format!(
+            "mimalloc: warning: thread 0x{:X}: ",
+            thread_pointer_identity(),
+        );
+        assert_eq!(prefix, expected.as_bytes());
     }
 
     static DEFAULT_STDERR_CAPTURE: Capture = Capture::new();
@@ -682,6 +753,20 @@ mod tests {
     }
 
     #[test]
+    fn thread_warning_prefix_uses_source_zero_minimal_uppercase_and_64_byte_bounds() {
+        assert_eq!(ThreadWarningPrefix::new(0).as_c_str().to_bytes(), b"mimalloc: warning: thread 0x0: ");
+        assert_eq!(
+            ThreadWarningPrefix::new(0x00a_bC0d).as_c_str().to_bytes(),
+            b"mimalloc: warning: thread 0xABC0D: ",
+        );
+        assert_eq!(
+            ThreadWarningPrefix::new(usize::MAX).as_c_str().to_bytes(),
+            b"mimalloc: warning: thread 0xFFFFFFFFFFFFFFFF: ",
+        );
+        assert!(ThreadWarningPrefix::new(usize::MAX).length < 64);
+    }
+
+    #[test]
     fn enabled_warning_delivers_prefix_then_body() {
         let options = DiagnosticOptionSnapshot::new(1, 0, 1);
         let mut owner = output_owner();
@@ -697,7 +782,7 @@ mod tests {
         unsafe { owner.warning(options, source_message(b"selected mbind failure\n\0")) };
 
         assert_eq!(capture.count(), 2);
-        assert_eq!(capture.message(0), b"mimalloc: warning: ");
+        assert_live_thread_warning_prefix(capture.message(0));
         assert_eq!(capture.message(1), b"selected mbind failure\n");
     }
 
@@ -720,7 +805,7 @@ mod tests {
         }
 
         assert_eq!(capture.count(), 2);
-        assert_eq!(capture.message(0), b"mimalloc: warning: ");
+        assert_live_thread_warning_prefix(capture.message(0));
         assert_eq!(capture.message(1), b"first\n");
     }
 
@@ -743,9 +828,9 @@ mod tests {
         }
 
         assert_eq!(capture.count(), 4);
-        assert_eq!(capture.message(0), b"mimalloc: warning: ");
+        assert_live_thread_warning_prefix(capture.message(0));
         assert_eq!(capture.message(1), b"first\n");
-        assert_eq!(capture.message(2), b"mimalloc: warning: ");
+        assert_live_thread_warning_prefix(capture.message(2));
         assert_eq!(capture.message(3), b"second\n");
     }
 
@@ -768,9 +853,9 @@ mod tests {
         }
 
         assert_eq!(capture.count(), 4);
-        assert_eq!(capture.message(0), b"mimalloc: warning: ");
+        assert_live_thread_warning_prefix(capture.message(0));
         assert_eq!(capture.message(1), b"first\n");
-        assert_eq!(capture.message(2), b"mimalloc: warning: ");
+        assert_live_thread_warning_prefix(capture.message(2));
         assert_eq!(capture.message(3), b"second\n");
     }
 
@@ -922,6 +1007,10 @@ mod tests {
         std::println!();
     }
 
+    fn print_trace_thread_identity(name: &str, identity: usize) {
+        std::println!("{name}={identity:x}");
+    }
+
     fn print_default_stderr_line(name: &str, bytes: &[u8]) {
         std::eprint!("{name}=");
         for byte in bytes {
@@ -947,6 +1036,7 @@ mod tests {
         // serialized registration.
         unsafe { release_owner.register_output(Some(capture_output), capture_argument(&release_capture)) };
         release_capture.reset();
+        let release_thread_identity = thread_pointer_identity();
         // SAFETY: this fixture serializes dispatch with registration.
         unsafe { release_owner.warning(release, source_message(b"selected mbind failure\n\0")) };
         print_trace_capture("release", &release_capture);
@@ -959,6 +1049,7 @@ mod tests {
         // serialized registration.
         unsafe { enabled_owner.register_output(Some(capture_output), capture_argument(&enabled_capture)) };
         enabled_capture.reset();
+        let enabled_thread_identity = thread_pointer_identity();
         // SAFETY: this fixture serializes dispatch with registration.
         unsafe { enabled_owner.warning(enabled, source_message(b"selected mbind failure\n\0")) };
         print_trace_capture("enabled", &enabled_capture);
@@ -971,6 +1062,7 @@ mod tests {
         // serialized registration.
         unsafe { cap_owner.register_output(Some(capture_output), capture_argument(&cap_capture)) };
         cap_capture.reset();
+        let cap_thread_identity = thread_pointer_identity();
         // SAFETY: this fixture serializes dispatch with registration.
         unsafe {
             cap_owner.warning(cap, source_message(b"first\n\0"));
@@ -986,6 +1078,7 @@ mod tests {
         // serialized registration.
         unsafe { verbose_owner.register_output(Some(capture_output), capture_argument(&verbose_capture)) };
         verbose_capture.reset();
+        let verbose_thread_identity = thread_pointer_identity();
         // SAFETY: this fixture serializes dispatch with registration.
         unsafe {
             verbose_owner.warning(verbose, source_message(b"first\n\0"));
@@ -995,6 +1088,7 @@ mod tests {
 
         let delayed_owner = output_owner();
         let delayed_capture = Capture::new();
+        let delayed_thread_identity = thread_pointer_identity();
         // SAFETY: this fixture serializes dispatch with registration.
         unsafe { delayed_owner.raw_message(source_message(b"early\n\0")) };
         // SAFETY: this fixture retains the callback state and has one
@@ -1006,6 +1100,7 @@ mod tests {
 
         let null_owner = output_owner();
         let null_capture = Capture::new();
+        let null_thread_identity = thread_pointer_identity();
         // SAFETY: this fixture serializes dispatch with registration.
         unsafe { null_owner.raw_message(source_message(b"early\n\0")) };
         // SAFETY: both registrations are serialized; the null route's
@@ -1019,6 +1114,7 @@ mod tests {
 
         let post_owner = output_owner();
         let post_capture = Capture::new();
+        let post_init_thread_identity = thread_pointer_identity();
         // SAFETY: this fixture serializes dispatch with post-init.
         unsafe { post_owner.raw_message(source_message(b"early\n\0")) };
         // SAFETY: this follows source post-init before custom registration.
@@ -1031,6 +1127,15 @@ mod tests {
         print_trace_capture("post_init", &post_capture);
 
         std::println!("CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_TRACE_END");
+        std::println!("CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_THREAD_IDENTITIES_BEGIN");
+        print_trace_thread_identity("release", release_thread_identity);
+        print_trace_thread_identity("enabled", enabled_thread_identity);
+        print_trace_thread_identity("cap", cap_thread_identity);
+        print_trace_thread_identity("verbose", verbose_thread_identity);
+        print_trace_thread_identity("delayed", delayed_thread_identity);
+        print_trace_thread_identity("null", null_thread_identity);
+        print_trace_thread_identity("post_init", post_init_thread_identity);
+        std::println!("CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_THREAD_IDENTITIES_END");
         assert_eq!(DEFAULT_STDERR_CAPTURE.count(), 3);
         std::eprintln!("CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_DEFAULT_STDERR_BEGIN");
         print_default_stderr_line("release", b"");
