@@ -66,7 +66,11 @@ of its `.crabc-link.json` receipt. The sealed static driver records map and
 trace sidecars relative to that receipt, and the retained product reader
 resolves them from the receipt parent. Dynamic links derive their own sidecars
 from `-o` and retain the collection directory as their command working
-directory.
+directory. The shared ordinary command recorder receives exactly twenty-two
+label-to-directory admissions from this source's eleven-scenario plan: static
+and static PIE for each scenario. It preserves its root and receipt-root
+defaults and rejects any other label, scenario directory, or symlink before a
+command starts.
 `validate-report REPORT` takes the same supplied cohort and companion
 paths; it replays retained source, objects, link receipts, transcripts, roots,
 and source-specific expected streams without running a compiler, linker, target

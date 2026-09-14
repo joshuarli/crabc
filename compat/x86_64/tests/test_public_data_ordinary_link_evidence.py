@@ -254,6 +254,53 @@ class PublicDataOrdinaryLinkEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "command differs"):
             evidence.validate_command_records(self.root, work, inputs, tools, replayed)
 
+    def test_collector_admits_only_the_explicit_static_sidecar_directory(self) -> None:
+        """A nested cwd is available only to its named static link command."""
+        work = self.root / '.work/explicit-static-sidecar-cwd'
+        work.mkdir()
+        static_cwd = work / 'executables/ns-flagdata'
+        static_cwd.mkdir(parents=True)
+        collector = evidence.Collector(
+            self.root, work, self.preparation, self.static, self.dynamic,
+            command_cwds={'ns-flagdata-static-link': static_cwd},
+        )
+
+        with mock.patch.object(
+            evidence.subprocess, 'Popen',
+            return_value=mock.Mock(wait=mock.Mock(return_value=0)),
+        ) as started:
+            record = collector.run('ns-flagdata-static-link', ['/sealed/static'], cwd=static_cwd)
+        self.assertEqual(started.call_args.kwargs['cwd'], static_cwd)
+        self.assertEqual(record['cwd'], evidence.mounted(self.root, static_cwd))
+
+        with self.assertRaisesRegex(evidence.PublicDataEvidenceError, 'cwd differs'):
+            collector.run('ns-flagdata-static-pie-link', ['/sealed/static'], cwd=static_cwd)
+        wrong_work = self.root / '.work/wrong-static-sidecar-cwd'
+        wrong_work.mkdir()
+        expected = wrong_work / 'executables/ns-flagdata'
+        wrong = wrong_work / 'executables/math-sign'
+        wrong.mkdir(parents=True)
+        wrong_collector = evidence.Collector(
+            self.root, wrong_work, self.preparation, self.static, self.dynamic,
+            command_cwds={'ns-flagdata-static-link': expected},
+        )
+        with self.assertRaisesRegex(evidence.PublicDataEvidenceError, 'cwd differs'):
+            wrong_collector.run('ns-flagdata-static-link', ['/sealed/static'], cwd=wrong)
+
+        symlink_work = self.root / '.work/symlink-static-sidecar-cwd'
+        symlink_work.mkdir()
+        symlink_cwd = symlink_work / 'executables/ns-flagdata'
+        symlink_cwd.parent.mkdir()
+        target = symlink_work / 'target'
+        target.mkdir()
+        symlink_cwd.symlink_to(target, target_is_directory=True)
+        symlink_collector = evidence.Collector(
+            self.root, symlink_work, self.preparation, self.static, self.dynamic,
+            command_cwds={'ns-flagdata-static-link': symlink_cwd},
+        )
+        with self.assertRaisesRegex(evidence.PublicDataEvidenceError, 'traverses a symlink'):
+            symlink_collector.run('ns-flagdata-static-link', ['/sealed/static'], cwd=symlink_cwd)
+
     def test_chroot_commands_keep_the_sealed_multicall_invocation_spelling(self) -> None:
         inputs = self.admit()
         work = self.root / ".work/chroot-command"

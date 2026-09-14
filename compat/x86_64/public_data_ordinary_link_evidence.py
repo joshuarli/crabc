@@ -71,6 +71,7 @@ EXECUTION_LABELS = (
     "dynamic-non-pie-kernel",
     "dynamic-non-pie-direct",
 )
+STATIC_SIDECAR_CWD_LABEL = re.compile(r"(?P<scenario>[a-z0-9-]+)-(?P<mode>static|static-pie)-link")
 ABI_ONLY_NAMES = frozenset((
     "___environ", "__daylight", "__environ", "__optpos", "__optreset",
     "__progname", "__progname_full", "__signgam", "__stack_chk_guard",
@@ -791,12 +792,23 @@ def validate_execution_roots(root: Path, work: Path, dynamic_product: Path, reco
 
 class Collector:
     def __init__(self, root: Path, output: Path, static_preparation: Path,
-                 static_product: Path, dynamic_product: Path) -> None:
+                 static_product: Path, dynamic_product: Path,
+                 *, command_cwds: Mapping[str, Path] | None = None) -> None:
         self.root = Path(root).absolute()
         self.output = output
         self.static_preparation = static_preparation
         self.static_product = static_product
         self.dynamic_product = dynamic_product
+        command_cwds = {} if command_cwds is None else command_cwds
+        require(isinstance(command_cwds, Mapping), "ordinary-link extra command cwd roster differs")
+        self.command_cwds: dict[str, Path] = {}
+        for label, directory in command_cwds.items():
+            match = STATIC_SIDECAR_CWD_LABEL.fullmatch(label) if type(label) is str else None
+            require(match is not None and isinstance(directory, Path),
+                    "ordinary-link extra command cwd roster differs")
+            expected = self.output / "executables" / match.group("scenario")
+            require(directory == expected, "ordinary-link extra command cwd differs")
+            self.command_cwds[label] = directory
         self.commands: list[dict[str, Any]] = []
 
     @staticmethod
@@ -837,7 +849,10 @@ class Collector:
         status_path = raw_path(self.output, label, "status")
         write_new_json(command_path, command)
         working_directory = self.root if cwd is None else Path(cwd)
-        require(working_directory in {self.root, self.output}, "ordinary-link command cwd differs")
+        if working_directory not in {self.root, self.output}:
+            require(self.command_cwds.get(label) == working_directory,
+                    "ordinary-link command cwd differs")
+            physical_work_path(self.root, working_directory, "ordinary-link extra command cwd")
         require(type(timeout_seconds) in {int, float} and timeout_seconds > 0,
                 "ordinary-link command timeout differs")
         require(type(expected_status) is int, "ordinary-link expected status differs")

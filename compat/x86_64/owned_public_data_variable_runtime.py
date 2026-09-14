@@ -712,6 +712,26 @@ def runtime_probe_static_link_command(static_driver: str, mode: str, object_path
              str(object_path), '-o', str(executable)], receipt.parent)
 
 
+def runtime_probe_static_link_cwds(output: Path) -> dict[str, Path]:
+    """Name every non-default cwd this fixed source contract may use.
+
+    The ordinary command recorder continues to admit only the checkout root
+    and receipt root by default. These twenty-two entries are the exact two
+    static sidecar commands for each current source-owned scenario; the
+    recorder still rejects a different label, sibling scenario, or symlinked
+    directory before starting a process.
+    """
+    result: dict[str, Path] = {}
+    for scenario in execution_plan():
+        identifier = scenario['id']
+        directory = Path(output) / 'executables' / identifier
+        for mode in ('static', 'static-pie'):
+            result[identifier + '-' + mode + '-link'] = directory
+    require(len(result) == 2 * len(PROBE_SCENARIOS),
+            'public-data runtime static sidecar cwd roster differs')
+    return result
+
+
 class Collector:
     """Collect exactly the installed-variable runtime matrix once.
 
@@ -856,7 +876,8 @@ class Collector:
         oracle_static = ordinary_link.capture_oracle_static_inputs(self.output)
         self.tools = ordinary_link.capture_tool_roster(self.root, self.output, self.static_product, self.dynamic_product)
         self.runner = ordinary_link.Collector(self.root, self.output, self.static_preparation,
-                                              self.static_product, self.dynamic_product)
+                                              self.static_product, self.dynamic_product,
+                                              command_cwds=runtime_probe_static_link_cwds(self.output))
         objects: dict[str, Any] = {}
         for scenario in execution_plan():
             object_path = self._compile(scenario)

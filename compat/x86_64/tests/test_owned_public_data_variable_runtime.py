@@ -310,6 +310,100 @@ class PublicDataVariableRuntimeContractTests(unittest.TestCase):
                             checkout, '/workspace', stale['path'], receipt_path, 'static link map',
                         )
 
+    def test_static_links_reach_the_ordinary_command_recorder_at_their_exact_sidecar_cwd(self) -> None:
+        """Run the component link path through the real ordinary recorder.
+
+        ``Popen`` is the only mocked external boundary. Its text-only static
+        stand-in calls the real static receipt writer, and the retained
+        product-reader path resolver validates those resulting sidecars.
+        """
+        work = ROOT / '.work' / 'x86_64' / 'public-data-runtime-static-cwd-admission-tests'
+        work.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=work) as temporary:
+            root = Path(temporary) / 'checkout'
+            output = root / '.work/receipt'
+            output.mkdir(parents=True)
+            product = root / '.work/static-product'
+            for name in ('crt1.o', 'rcrt1.o', 'crti.o', 'crtn.o', 'libc.a', 'libcrabc-builtins.a'):
+                path = product / 'usr/lib' / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(('product:' + name).encode())
+            linker = root / '.work/tools/ld.lld'
+            linker.parent.mkdir(parents=True)
+            linker.write_bytes(b'linker')
+            scenario = next(item for item in reader.execution_plan() if item['id'] == 'ns-flagdata')
+            object_path = output / 'objects/ns-flagdata.o'
+            object_path.parent.mkdir()
+            object_path.write_bytes(b'ordinary source object')
+            collector = reader.Collector(root, output, root / '.work/preparation', product,
+                                         root / '.work/dynamic-product', {})
+            collector.tools = {
+                'static_driver': {'original': {'path': '/tools/static'}},
+                'dynamic_driver': {'original': {'path': '/tools/dynamic'}},
+                'oracle_wrapper': {'original': {'path': '/tools/oracle'}},
+            }
+            command_cwds = reader.runtime_probe_static_link_cwds(output)
+            self.assertEqual(len(command_cwds), 22)
+            collector.runner = reader.ordinary_link.Collector(
+                root, output, root / '.work/preparation', product, root / '.work/dynamic-product',
+                command_cwds=command_cwds,
+            )
+
+            def fake_popen(argv, **kwargs):
+                command = list(argv)
+                executable = Path(command[command.index('-o') + 1])
+                if '--link-receipt' in command:
+                    mode = 'static-pie' if command[1] == '-static-pie' else 'static'
+                    directory = output / 'executables/ns-flagdata'
+                    self.assertEqual(kwargs['cwd'], directory)
+                    receipt_argument = Path(command[command.index('--link-receipt') + 1])
+                    previous = Path.cwd()
+                    try:
+                        os.chdir(kwargs['cwd'])
+                        receipt, map_path, trace_path = static_driver.receipt_sidecars(product, receipt_argument)
+                        executable.write_bytes(('static output:' + mode).encode())
+                        map_path.write_bytes(('static map:' + mode).encode())
+                        trace_path.write_bytes(('static trace:' + mode).encode())
+                        static_driver.write_link_receipt(
+                            product,
+                            static_driver.STATIC_PIE if mode == 'static-pie' else static_driver.STATIC_ET_EXEC,
+                            [object_path], executable, linker, receipt, map_path, trace_path,
+                        )
+                    finally:
+                        os.chdir(previous)
+                elif command[0] == '/tools/oracle':
+                    executable.write_bytes(b'oracle static output')
+                else:
+                    self.assertEqual(kwargs['cwd'], output)
+                    executable.write_bytes(b'dynamic output')
+                    Path(str(executable) + '.crabc-link.json').write_bytes(b'dynamic receipt')
+                return mock.Mock(wait=mock.Mock(return_value=0))
+
+            def retained_link(_product, _object, executable, receipt, linkage):
+                if linkage in {'static', 'static-pie'}:
+                    record = json.loads(Path(receipt).read_text(encoding='utf-8'))
+                    resolved = product_evidence._retained_source_path(
+                        root, '/workspace', record['map']['path'], Path(receipt), 'retained static link map',
+                    )
+                    self.assertEqual(resolved, Path(receipt).with_suffix('.map'))
+                    return {'linkage': linkage, 'map': str(resolved)}
+                return {'linkage': linkage, 'dynamic': str(executable)}
+
+            with mock.patch.object(reader.ordinary_link.subprocess, 'Popen', side_effect=fake_popen), \
+                 mock.patch.object(reader.product_evidence, 'validate_link', side_effect=retained_link):
+                links = collector._link(scenario, object_path)
+            self.assertEqual(set(links), {'oracle-static', *reader.CANDIDATE_MODES})
+            rows = {row['label']: row for row in collector.runner.commands}
+            directory = output / 'executables/ns-flagdata'
+            for mode in ('static', 'static-pie'):
+                row = rows['ns-flagdata-' + mode + '-link']
+                self.assertEqual(row['cwd'], reader.ordinary_link.mounted(root, directory))
+                self.assertEqual(row['argv'][row['argv'].index('--link-receipt') + 1],
+                                 mode + '.crabc-link.json')
+            for mode in ('dynamic-pie', 'dynamic-non-pie'):
+                self.assertEqual(rows['ns-flagdata-' + mode + '-link']['cwd'],
+                                 reader.ordinary_link.mounted(root, output))
+
 
 class PublicDataVariableRuntimeExecutionRootTests(unittest.TestCase):
     """Execution roots are copies of named payloads, never self-authentication."""

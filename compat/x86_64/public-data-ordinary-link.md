@@ -96,6 +96,12 @@ alignment, source-declared aliases, oracle capture, and candidate links.
 Command records use `/workspace` for the checkout working directory and the
 exact mounted output path for static links. The collector and replay reader
 require those same spellings; replay does not normalize altered transcripts.
+`Collector` otherwise admits only those two directories. A consumer can name
+an additional cwd only as an exact static or static-PIE link label paired with
+its physical `OUTPUT/executables/SCENARIO` directory; a different label,
+scenario path, or symlink is rejected before a process starts. This preserves
+the ordinary receipt defaults while allowing a finite source-owned static
+sidecar boundary.
 owned_posix_product_evidence.validate_retained_link maps recorded /workspace
 paths through the producing checkout and rehashes products, workload,
 executable, receipt, sidecars, and the sealed linker identity. It does not
