@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -212,6 +214,64 @@ class RetainedStreamReaderTests(unittest.TestCase):
         report["rust"]["stderr"] = report["rust"]["stderr"].replace("6561726c790a", "77726f6e670a")
         with self.assertRaises(EVIDENCE.EvidenceError):
             EVIDENCE.validate_report(report)
+
+    def test_collect_retains_unvalidated_candidate_when_semantic_validation_fails(self) -> None:
+        candidate_parent = ROOT / ".work/allocator-x86_64/diagnostic-output-owner/candidate-test"
+        candidate_parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=candidate_parent) as temporary:
+            temporary_path = Path(temporary)
+            archive = temporary_path / "mimalloc-3.5.0.tar.gz"
+            archive.write_bytes(b"synthetic pinned archive")
+            report_path = temporary_path / "diagnostic-output-owner.json"
+            fake_source_records = [{"path": member, "sha256": "0" * 64} for member in EVIDENCE.C_SOURCE_FILES]
+
+            class FakeHarness:
+                WORK_ROOT = temporary_path / "collector-work"
+
+                @staticmethod
+                def require_tool(name: str) -> str:
+                    self.assertEqual(name, "musl-gcc")
+                    return name
+
+                @staticmethod
+                def temporary_directory(prefix: str) -> tempfile.TemporaryDirectory[str]:
+                    return tempfile.TemporaryDirectory(prefix=prefix, dir=temporary_path)
+
+                @staticmethod
+                def safe_extract(_archive: Path, destination: Path, archive_root: str) -> Path:
+                    source = destination / archive_root
+                    for member in EVIDENCE.C_SOURCE_FILES:
+                        path = source / member
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_bytes(member.encode("ascii"))
+                    return source
+
+            def fake_command_record(command: list[str], cwd: Path) -> dict[str, object]:
+                return self.raw_record(command, cwd)
+
+            pinned_upstream = dict(EVIDENCE.PINNED_UPSTREAM)
+            pinned_upstream["archive_sha256"] = EVIDENCE.hashlib.sha256(archive.read_bytes()).hexdigest()
+            with (
+                mock.patch.object(EVIDENCE, "PINNED_UPSTREAM", pinned_upstream),
+                mock.patch.object(EVIDENCE, "require_native_x86_64", return_value={"execution_mode": "native", "host_architecture": "x86_64"}),
+                mock.patch.object(EVIDENCE, "load_harness", return_value=FakeHarness),
+                mock.patch.object(EVIDENCE, "shutil_which", return_value="cargo"),
+                mock.patch.object(EVIDENCE, "source_records", return_value=fake_source_records),
+                mock.patch.object(EVIDENCE, "expected_pinned_c_source_records", return_value=fake_source_records),
+                mock.patch.object(EVIDENCE, "command_record", side_effect=fake_command_record),
+                mock.patch.object(EVIDENCE, "validate_report", side_effect=EVIDENCE.EvidenceError("forced semantic drift")),
+            ):
+                with self.assertRaisesRegex(EVIDENCE.EvidenceError, "forced semantic drift"):
+                    EVIDENCE.collect(archive, report_path)
+
+            candidate_path = EVIDENCE.candidate_report_path(report_path)
+            self.assertTrue(candidate_path.is_file())
+            self.assertFalse(report_path.exists())
+            candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+            self.assertEqual(candidate["status"], "unvalidated")
+            self.assertEqual(candidate["c_oracle"]["build"]["command"][0], "musl-gcc")
+            self.assertEqual(candidate["c_oracle"]["runs"]["release"]["command"][1], "release")
+            self.assertTrue(Path(candidate["c_oracle"]["source_root"]).is_dir())
 
     def test_collector_owned_paths_cannot_escape_the_checkout_work_tree(self) -> None:
         with self.assertRaisesRegex(EVIDENCE.EvidenceError, "must stay under this checkout's .work"):

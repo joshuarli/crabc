@@ -377,9 +377,12 @@ receiver. Its reader binds the current fixture, Cargo lock, the finite Rust
 source closure (`crabc-mimalloc` module route/owner/lock and the selected
 `crabc-core` module route/error/futex/syscall files), the root Cargo
 configuration, selected Cargo manifests, and toolchain input, exact pinned C
-source roster, reconstructed collector
-commands/cwds, and every finite custom/default output stream. This commit does
-not run native
+source roster, reconstructed collector commands/cwds, and every finite
+custom/default output stream. Before semantic validation, a separate
+`*.candidate.json` receipt retains the raw source inputs, physical extracted C
+source tree, compiler/scenario commands, statuses, streams, and Rust command;
+it stays `unvalidated` and cannot stand in for an admitted report. This commit
+does not run native
 collection: the concrete mapping-error body, source-order integration, and
 FILE transport receiver must first receive ordinary root review.
 

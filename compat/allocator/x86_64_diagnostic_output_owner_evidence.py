@@ -346,6 +346,63 @@ def rust_command(cargo: str, target: Path) -> list[str]:
     ]
 
 
+def candidate_report_path(report_path: Path) -> Path:
+    """Name the non-admitted raw candidate stored beside one requested report."""
+
+    return report_path.with_name(f"{report_path.stem}.candidate.json")
+
+
+def candidate_artifact_root(report_path: Path) -> Path:
+    """Name the retained physical C/Rust work tree for one raw candidate."""
+
+    return candidate_report_path(report_path).with_suffix("")
+
+
+def begin_candidate(report_path: Path) -> tuple[Path, Path, dict[str, Any]]:
+    """Persist source inputs before a native collection starts.
+
+    Candidates are diagnostics only: their status never becomes `passed`, and
+    they are not accepted by `validate_report`. The admitted receipt still
+    appears only after complete semantic validation succeeds.
+    """
+
+    candidate_path = require_checkout_work_path(candidate_report_path(report_path), "candidate receipt")
+    artifact_root = require_checkout_work_path(candidate_artifact_root(report_path), "candidate artifact root")
+    if candidate_path.exists() or artifact_root.exists():
+        raise EvidenceError("diagnostic-output candidate path already exists; choose a fresh report path")
+    artifact_root.mkdir(parents=True)
+    candidate: dict[str, Any] = {
+        "format": 1,
+        "kind": "mimalloc-x86_64-diagnostic-output-owner-candidate",
+        "status": "unvalidated",
+        "admitted_report_path": str(report_path),
+        "source_inputs": {
+            "cargo_lock": current_file_identity(LOCKFILE),
+            "fixture": current_file_identity(FIXTURE),
+            "rust_build_inputs": current_rust_build_input_records(),
+            "rust_source_files": current_rust_source_records(),
+        },
+        "upstream": PINNED_UPSTREAM,
+        "c_oracle": {
+            "binary": str(artifact_root / "diagnostic-output-owner-c-oracle"),
+            "runs": {},
+            "source_files": None,
+            "source_root": None,
+            "build": None,
+        },
+        "rust": None,
+        "rust_target": str(artifact_root / "rust-target"),
+    }
+    persist_candidate(candidate_path, candidate)
+    return candidate_path, artifact_root, candidate
+
+
+def persist_candidate(candidate_path: Path, candidate: Mapping[str, Any]) -> None:
+    """Atomically retain the raw collection state without admitting it."""
+
+    atomic_write_json(candidate_path, candidate)
+
+
 def collect(archive: Path, report_path: Path) -> dict[str, Any]:
     provenance = require_native_x86_64()
     require_checkout_work_path(report_path, "evidence report")
@@ -356,44 +413,61 @@ def collect(archive: Path, report_path: Path) -> dict[str, Any]:
     harness.require_tool("musl-gcc")
     if shutil_which("cargo") is None:
         raise EvidenceError("collector requires cargo")
-    with harness.temporary_directory(prefix="crabc-diagnostic-output-owner-") as temporary:
-        temporary_path = Path(temporary)
-        source = harness.safe_extract(archive, temporary_path / "source", "mimalloc-3.5.0")
-        binary = temporary_path / "diagnostic-output-owner-c-oracle"
-        compile_command = c_compile_command("musl-gcc", source, binary)
-        build = command_record(compile_command, source)
-        if build["status"] != 0:
-            raise EvidenceError("pinned diagnostic-output C oracle failed to build")
-        c_runs = {
-            scenario: command_record([str(binary), scenario], source) for scenario in SCENARIOS
-        }
-        if any(run["status"] != 0 for run in c_runs.values()):
-            raise EvidenceError("pinned diagnostic-output C oracle scenario failed")
-        target = temporary_path / "rust-target"
-        rust = command_record(rust_command("cargo", target), ROOT)
-        if rust["status"] != 0:
-            raise EvidenceError("private diagnostic-output Rust trace failed")
-        report = {
-            "cargo_lock": current_file_identity(LOCKFILE),
-            "c_oracle": {
-                "build": build,
-                "runs": c_runs,
-                "source_files": source_records(source),
-            },
-            "fixture": current_file_identity(FIXTURE),
-            "format": 1,
-            "kind": "mimalloc-x86_64-diagnostic-output-owner-evidence",
-            "native_execution_provenance": provenance,
-            "profile": PROFILE,
-            "rust": rust,
-            "rust_build_inputs": current_rust_build_input_records(),
-            "rust_source_files": current_rust_source_records(),
-            "scope": SCOPE,
-            "status": "passed",
-            "target": {"architecture": "x86_64", "endianness": "little", "rust_target": TARGET, "system": "linux"},
-            "upstream": PINNED_UPSTREAM,
-        }
-    if report["c_oracle"]["source_files"] != expected_pinned_c_source_records():
+
+    candidate_path, artifact_root, candidate = begin_candidate(report_path)
+    source = harness.safe_extract(archive, artifact_root / "source", "mimalloc-3.5.0")
+    c_oracle = candidate["c_oracle"]
+    assert isinstance(c_oracle, dict)
+    c_oracle["source_root"] = str(source)
+    c_oracle["source_files"] = source_records(source)
+    persist_candidate(candidate_path, candidate)
+
+    binary = artifact_root / "diagnostic-output-owner-c-oracle"
+    compile_command = c_compile_command("musl-gcc", source, binary)
+    c_oracle["build"] = command_record(compile_command, source)
+    persist_candidate(candidate_path, candidate)
+    build = c_oracle["build"]
+    assert isinstance(build, Mapping)
+    if build["status"] != 0:
+        raise EvidenceError("pinned diagnostic-output C oracle failed to build")
+
+    runs = c_oracle["runs"]
+    assert isinstance(runs, dict)
+    for scenario in SCENARIOS:
+        runs[scenario] = command_record([str(binary), scenario], source)
+        persist_candidate(candidate_path, candidate)
+    if any(run["status"] != 0 for run in runs.values()):
+        raise EvidenceError("pinned diagnostic-output C oracle scenario failed")
+
+    target = artifact_root / "rust-target"
+    candidate["rust"] = command_record(rust_command("cargo", target), ROOT)
+    persist_candidate(candidate_path, candidate)
+    rust = candidate["rust"]
+    assert isinstance(rust, Mapping)
+    if rust["status"] != 0:
+        raise EvidenceError("private diagnostic-output Rust trace failed")
+
+    report = {
+        "cargo_lock": current_file_identity(LOCKFILE),
+        "c_oracle": {
+            "build": build,
+            "runs": runs,
+            "source_files": c_oracle["source_files"],
+        },
+        "fixture": current_file_identity(FIXTURE),
+        "format": 1,
+        "kind": "mimalloc-x86_64-diagnostic-output-owner-evidence",
+        "native_execution_provenance": provenance,
+        "profile": PROFILE,
+        "rust": rust,
+        "rust_build_inputs": current_rust_build_input_records(),
+        "rust_source_files": current_rust_source_records(),
+        "scope": SCOPE,
+        "status": "passed",
+        "target": {"architecture": "x86_64", "endianness": "little", "rust_target": TARGET, "system": "linux"},
+        "upstream": PINNED_UPSTREAM,
+    }
+    if c_oracle["source_files"] != expected_pinned_c_source_records():
         raise EvidenceError("extracted C source closure differs from the admitted pinned archive")
     validate_report(report)
     atomic_write_json(report_path, report)
