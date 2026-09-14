@@ -16,6 +16,15 @@ Both dynamic modes retain kernel and direct-interpreter entries. The reader
 reconstructs those fixed source and product inputs from retained bytes without
 running a compiler, linker, or target executable.
 
+An execution-root record is not self-authentication. Static roots contain only
+the exact sealed consumer and any named empty fixture directory. Dynamic roots
+contain the current admitted dynamic-product tree plus that consumer and the
+same finite fixtures. Oracle roots contain only the retained musl interpreter
+copy at its fixed executable mode, the `libc.so` alias, the sealed oracle
+consumer, and fixtures. Replay compares every path, node kind, mode, bytes and
+symlink target, then re-admits current source, products, companions, tools and
+oracle inputs before it accepts the unchanged report bytes.
+
 The immutable group reads all sixteen `_ns_flagdata` records and both IPv6
 values. Environment retains caller-serialized initial publication, exact
 same-storage dependencies, replacement/removal/clear behavior and its borrowed
@@ -51,3 +60,8 @@ commands. `validate-report REPORT` takes the same supplied cohort and companion
 paths; it replays retained source, objects, link receipts, transcripts, roots,
 and source-specific expected streams without running a compiler, linker, target
 executable, or host oracle.
+
+Several probe sources also support historical freestanding runners. This runner
+does not invoke those starts: it compiles the ordinary `main` entry through the
+selected installed product drivers, so a legacy fixture does not transfer its
+startup or product assumptions into this receipt.

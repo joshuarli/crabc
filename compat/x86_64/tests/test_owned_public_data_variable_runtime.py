@@ -5,9 +5,11 @@ from __future__ import annotations
 import copy
 import os
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'compat/x86_64'))
@@ -160,6 +162,234 @@ class PublicDataVariableRuntimeContractTests(unittest.TestCase):
             os.symlink(target.name, alias)
             with self.assertRaisesRegex(reader.PublicDataVariableRuntimeError, 'symlink'):
                 reader._physical_file(alias, 'test retained input')
+
+
+class PublicDataVariableRuntimeExecutionRootTests(unittest.TestCase):
+    """Execution roots are copies of named payloads, never self-authentication."""
+
+    def setUp(self) -> None:
+        self.work = ROOT / '.work' / 'public-data-runtime-execution-root-tests'
+        self.work.mkdir(parents=True, exist_ok=True)
+        self.temporary = tempfile.TemporaryDirectory(dir=self.work)
+        self.addCleanup(self.temporary.cleanup)
+        self.directory = Path(self.temporary.name)
+        self.receipt = self.directory / 'receipt'
+        self.receipt.mkdir()
+        self.scenario = next(item for item in reader.execution_plan() if item['id'] == 'getdate')
+
+    @staticmethod
+    def _write(path: Path, payload: bytes, mode: int = 0o755) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+        os.chmod(path, mode)
+
+    def _identity(self, path: Path) -> dict[str, object]:
+        return reader._receipt_file_identity(self.receipt, path, 'test retained executable')
+
+    def _root_with_consumer(self, root: Path, executable: Path) -> None:
+        root.mkdir(parents=True)
+        shutil.copy2(executable, root / 'consumer')
+        (root / 'templates').mkdir()
+        os.chmod(root / 'templates', 0o755)
+
+    def test_root_projection_binds_static_dynamic_and_oracle_payloads(self) -> None:
+        static_executable = self.receipt / 'executables/static'
+        dynamic_executable = self.receipt / 'executables/dynamic-pie'
+        oracle_executable = self.receipt / 'executables/oracle-static'
+        for executable, payload in ((static_executable, b'static'), (dynamic_executable, b'dynamic'),
+                                    (oracle_executable, b'oracle')):
+            self._write(executable, payload)
+        static_root = self.receipt / 'roots/static'
+        self._root_with_consumer(static_root, static_executable)
+        dynamic_product = self.directory / 'dynamic-product'
+        self._write(dynamic_product / 'lib/ld-crabc-x86_64.so.1', b'loader')
+        self._write(dynamic_product / 'usr/lib/libc.so', b'libc', 0o644)
+        dynamic_root = self.receipt / 'roots/dynamic-pie'
+        shutil.copytree(dynamic_product, dynamic_root, symlinks=True)
+        shutil.copy2(dynamic_executable, dynamic_root / 'consumer')
+        (dynamic_root / 'templates').mkdir()
+        os.chmod(dynamic_root / 'templates', 0o755)
+        runtime = self.receipt / 'qualification-oracle/runtime'
+        self._write(runtime, b'musl-runtime', 0o644)
+        oracle_root = self.receipt / 'roots/oracle-static'
+        reader._oracle_root_setup(oracle_root, self.receipt, oracle_executable, ('templates',))
+
+        reader._validate_execution_root(
+            receipt_root=self.receipt, root=static_root, scenario=self.scenario, mode='static',
+            executable=self._identity(static_executable), dynamic_product=None,
+        )
+        reader._validate_execution_root(
+            receipt_root=self.receipt, root=dynamic_root, scenario=self.scenario, mode='dynamic-pie',
+            executable=self._identity(dynamic_executable), dynamic_product=dynamic_product,
+        )
+        reader._validate_execution_root(
+            receipt_root=self.receipt, root=oracle_root, scenario=self.scenario, mode='oracle-static',
+            executable=self._identity(oracle_executable), dynamic_product=None,
+        )
+
+    def test_root_projection_rejects_product_substitution_or_extra_payload(self) -> None:
+        executable = self.receipt / 'executables/dynamic-pie'
+        self._write(executable, b'dynamic')
+        dynamic_product = self.directory / 'dynamic-product'
+        self._write(dynamic_product / 'lib/ld-crabc-x86_64.so.1', b'loader')
+        dynamic_root = self.receipt / 'roots/dynamic-pie'
+        shutil.copytree(dynamic_product, dynamic_root, symlinks=True)
+        shutil.copy2(executable, dynamic_root / 'consumer')
+        (dynamic_root / 'templates').mkdir()
+        os.chmod(dynamic_root / 'templates', 0o755)
+        self._write(dynamic_root / 'lib/ld-crabc-x86_64.so.1', b'substituted')
+        with self.assertRaisesRegex(reader.PublicDataVariableRuntimeError, 'product copy'):
+            reader._validate_execution_root(
+                receipt_root=self.receipt, root=dynamic_root, scenario=self.scenario, mode='dynamic-pie',
+                executable=self._identity(executable), dynamic_product=dynamic_product,
+            )
+        self._write(dynamic_root / 'lib/ld-crabc-x86_64.so.1', b'loader')
+        self._write(dynamic_root / 'unexpected', b'extra')
+        with self.assertRaisesRegex(reader.PublicDataVariableRuntimeError, 'payload'):
+            reader._validate_execution_root(
+                receipt_root=self.receipt, root=dynamic_root, scenario=self.scenario, mode='dynamic-pie',
+                executable=self._identity(executable), dynamic_product=dynamic_product,
+            )
+
+    def test_oracle_root_setup_normalizes_the_inherited_lib_directory_mode(self) -> None:
+        runtime = self.receipt / 'qualification-oracle/runtime'
+        consumer = self.receipt / 'executables/oracle-static'
+        self._write(runtime, b'musl-runtime', 0o644)
+        self._write(consumer, b'oracle')
+        roots = self.receipt / 'roots'
+        roots.mkdir()
+        os.chmod(roots, 0o2755)
+        root = roots / 'oracle-static'
+        reader._oracle_root_setup(root, self.receipt, consumer, ('templates',))
+        self.assertEqual((root / 'lib').stat().st_mode & 0o7777, 0o755)
+
+    def test_retained_link_identity_and_execution_record_are_canonical(self) -> None:
+        executable = self.receipt / 'executables/getdate/static'
+        self._write(executable, b'static')
+        identity = self._identity(executable)
+        self.assertEqual(
+            reader._validate_retained_file_at(
+                self.receipt, identity, 'executables/getdate/static', 'test executable',
+            ),
+            identity,
+        )
+        wrong_path = copy.deepcopy(identity)
+        wrong_path['path'] = 'executables/getdate/other'
+        with self.assertRaisesRegex(reader.PublicDataVariableRuntimeError, 'identity differs'):
+            reader._validate_retained_file_at(
+                self.receipt, wrong_path, 'executables/getdate/static', 'test executable',
+            )
+        valid = {'root': 'roots/getdate/static', 'before': {}, 'after': {}, 'command': 'getdate-static-run'}
+        self.assertEqual(
+            reader._validate_execution_record(
+                valid, root='roots/getdate/static', command='getdate-static-run', description='test execution',
+            ),
+            valid,
+        )
+        wrong_root = copy.deepcopy(valid)
+        wrong_root['root'] = 'roots/other/static'
+        with self.assertRaisesRegex(reader.PublicDataVariableRuntimeError, 'root differs'):
+            reader._validate_execution_record(
+                wrong_root, root='roots/getdate/static', command='getdate-static-run', description='test execution',
+            )
+        wrong_command = copy.deepcopy(valid)
+        wrong_command['command'] = 'getdate-dynamic-pie-kernel-run'
+        with self.assertRaisesRegex(reader.PublicDataVariableRuntimeError, 'command differs'):
+            reader._validate_execution_record(
+                wrong_command, root='roots/getdate/static', command='getdate-static-run', description='test execution',
+            )
+
+    def test_every_execution_cell_requires_its_own_root_and_command_label(self) -> None:
+        records = {}
+        links = {}
+        commands = []
+        for scenario in reader.execution_plan():
+            identifier = scenario['id']
+            links[identifier] = {
+                'oracle-static': {'executable': {}},
+                **{
+                    mode: {'executable': {}, 'receipt': {}, 'identity': {}}
+                    for mode in reader.CANDIDATE_MODES
+                },
+            }
+            for cell in ('oracle-static', *[item['id'] for item in scenario['candidate_cells']]):
+                key = identifier + '/' + cell
+                root = self.receipt / 'roots' / identifier / cell
+                root.mkdir(parents=True)
+                command = identifier + '-' + cell + '-run'
+                records[key] = {
+                    'root': root.relative_to(self.receipt).as_posix(), 'before': {}, 'after': {}, 'command': command,
+                }
+                commands.append({'label': command})
+        with mock.patch.object(reader, '_validate_execution_root', return_value={}) as roots:
+            reader._validate_executions(self.receipt, records, commands, links, self.directory / 'dynamic-product')
+        self.assertEqual(roots.call_count, 77)
+        changed = copy.deepcopy(records)
+        changed['ns-flagdata/oracle-static']['command'] = 'math-sign-static-run'
+        with mock.patch.object(reader, '_validate_execution_root', return_value={}):
+            with self.assertRaisesRegex(reader.PublicDataVariableRuntimeError, 'command differs'):
+                reader._validate_executions(self.receipt, changed, commands, links, self.directory / 'dynamic-product')
+
+    def test_final_recheck_reopens_all_live_boundaries_and_rejects_report_replacement(self) -> None:
+        report = self.receipt / 'report.json'
+        report.write_text('{}\n', encoding='utf-8')
+        report_before = reader._receipt_file_identity(self.receipt, report, 'test report')
+        supplied = {}
+        originals = {}
+        for name in reader.COMPANION_NAMES:
+            path = self.directory / (name + '.json')
+            self._write(path, name.encode(), 0o644)
+            supplied[name] = path
+            originals[name] = {
+                'original': {
+                    'path': str(path), 'sha256': reader.digest(path), 'size': path.stat().st_size, 'mode': 0o644,
+                },
+            }
+        cohort = {'cohort': 'current'}
+        sources = {'captured': 'source'}
+        projection = {'joined': 'companions'}
+        tools = {'tool': 'current'}
+        collection = {'source': {'revision': 'current'}}
+        companions = {'inputs': {name: {} for name in reader.COMPANION_NAMES}, 'projection': projection}
+        with mock.patch.object(reader.ordinary_link, 'admit_inputs', return_value=cohort) as admitted, \
+             mock.patch.object(reader, '_validate_source_capture', return_value=sources) as source_capture, \
+             mock.patch.object(reader.static_products, 'source_identity', return_value=collection['source']), \
+             mock.patch.object(reader, '_validate_copied_input', side_effect=lambda _root, _value, description: originals[description.removeprefix('public-data runtime ')]), \
+             mock.patch.object(reader, '_current_companion_projection', return_value=projection) as companion_projection, \
+             mock.patch.object(reader.ordinary_link.qualification, 'validate_oracle'), \
+             mock.patch.object(reader.ordinary_link, 'validate_oracle_static_inputs'), \
+             mock.patch.object(reader.ordinary_link, 'validate_tool_roster', return_value=tools):
+            reader._recheck_live_collection_boundary(
+                receipt_root=self.receipt, report_path=report, report_before=report_before,
+                root=ROOT, static_preparation=self.directory / 'preparation', static_product=self.directory / 'static',
+                dynamic_product=self.directory / 'dynamic', actual_inputs=cohort, sources=sources,
+                collection=collection, companions=companions, supplied_companions=supplied,
+                oracle={}, oracle_static_inputs={}, tools=tools,
+            )
+        self.assertEqual(admitted.call_count, 1)
+        self.assertEqual(source_capture.call_count, 1)
+        self.assertEqual(companion_projection.call_count, 1)
+
+        def mutate_report(*_args: object, **_kwargs: object) -> dict[str, str]:
+            report.write_text('{"replaced":true}\n', encoding='utf-8')
+            return tools
+
+        with mock.patch.object(reader.ordinary_link, 'admit_inputs', return_value=cohort), \
+             mock.patch.object(reader, '_validate_source_capture', return_value=sources), \
+             mock.patch.object(reader.static_products, 'source_identity', return_value=collection['source']), \
+             mock.patch.object(reader, '_validate_copied_input', side_effect=lambda _root, _value, description: originals[description.removeprefix('public-data runtime ')]), \
+             mock.patch.object(reader, '_current_companion_projection', return_value=projection), \
+             mock.patch.object(reader.ordinary_link.qualification, 'validate_oracle'), \
+             mock.patch.object(reader.ordinary_link, 'validate_oracle_static_inputs'), \
+             mock.patch.object(reader.ordinary_link, 'validate_tool_roster', side_effect=mutate_report):
+            with self.assertRaisesRegex(reader.PublicDataVariableRuntimeError, 'report changed during replay'):
+                reader._recheck_live_collection_boundary(
+                    receipt_root=self.receipt, report_path=report, report_before=report_before,
+                    root=ROOT, static_preparation=self.directory / 'preparation', static_product=self.directory / 'static',
+                    dynamic_product=self.directory / 'dynamic', actual_inputs=cohort, sources=sources,
+                    collection=collection, companions=companions, supplied_companions=supplied,
+                    oracle={}, oracle_static_inputs={}, tools=tools,
+                )
 
 
 if __name__ == '__main__':

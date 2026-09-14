@@ -641,6 +641,10 @@ def prepare_oracle_execution_root(root: Path, work: Path, oracle_root: Path) -> 
     target = oracle_root / ORACLE_EXECUTION_INTERPRETER
     try:
         target.parent.mkdir(parents=True)
+        # A setgid work parent can propagate its special bit through mkdir.
+        # This isolated interpreter root has a fixed source-owned directory
+        # mode, so normalize it before the receipt seals the tree.
+        target.parent.chmod(0o755)
         shutil.copy2(runtime, target)
         target.chmod(ORACLE_EXECUTION_INTERPRETER_MODE)
         (oracle_root / "lib/libc.so").symlink_to("ld-musl-x86_64.so.1")

@@ -399,6 +399,30 @@ def _receipt_file_identity(receipt_root: Path, path: Path, description: str) -> 
     }
 
 
+def _validate_retained_file_at(receipt_root: Path, value: object, relative: str,
+                               description: str) -> dict[str, Any]:
+    """Bind one claimed retained file to its one source-owned receipt path."""
+    expected = receipt_root / relative
+    observed = _receipt_file_identity(receipt_root, expected, description)
+    require(value == observed, description + ' identity differs')
+    return observed
+
+
+def _execution_file_entry(identity: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        'kind': 'file', 'mode': identity['mode'], 'size': identity['size'], 'sha256': identity['sha256'],
+    }
+
+
+def _fixture_entries(scenario: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    directories = scenario['fixture_directories']
+    require(type(directories) is list and all(type(item) is str and item
+            and '/' not in item and item not in {'.', '..'} for item in directories),
+            'public-data runtime fixture directory roster differs')
+    require(len(directories) == len(set(directories)), 'public-data runtime fixture directories duplicate')
+    return {directory: {'kind': 'directory', 'mode': 0o755} for directory in directories}
+
+
 def _copy_input(receipt_root: Path, source: Path, retained: str, description: str) -> dict[str, Any]:
     """Copy one raw source/report/tool input before the first command.
 
@@ -596,6 +620,63 @@ def _validate_fixture_tree(tree: Mapping[str, Mapping[str, Any]], scenario: Mapp
         require('templates/mask' not in tree, description + ' getdate template remains after execution')
     if scenario['id'] == 'timezone-tzif-known-difference':
         require('fixture/zone.tzif' not in tree, description + ' TZif file remains after execution')
+
+
+def _validate_execution_root(*, receipt_root: Path, root: Path, scenario: Mapping[str, Any], mode: str,
+                             executable: object, dynamic_product: Path | None) -> dict[str, dict[str, Any]]:
+    """Require one root to be the named executable plus its admitted payload.
+
+    The before/after tree record only detects a change during a run.  This
+    projection instead establishes what was allowed to run: static roots have
+    no product payload, dynamic roots are exact copies of the selected dynamic
+    product, and the oracle root has just the retained interpreter and alias.
+    """
+    executable_record = exact(executable, {'path', 'sha256', 'size', 'mode'},
+                              'public-data runtime execution executable')
+    executable_identity = _validate_retained_file_at(
+        receipt_root, executable_record, executable_record['path'], 'public-data runtime execution executable',
+    )
+    expected: dict[str, dict[str, Any]] = {}
+    if mode in {'dynamic-pie', 'dynamic-non-pie'}:
+        require(dynamic_product is not None, 'public-data runtime dynamic root product is absent')
+        expected.update(ordinary_link.execution_tree(ROOT, dynamic_product, 'current dynamic execution product'))
+    elif mode == 'oracle-static':
+        require(dynamic_product is None, 'public-data runtime oracle root has a dynamic product')
+        runtime = _receipt_file_identity(receipt_root, receipt_root / 'qualification-oracle/runtime',
+                                         'retained oracle runtime')
+        expected.update({
+            'lib': {'kind': 'directory', 'mode': 0o755},
+            'lib/ld-musl-x86_64.so.1': {
+                'kind': 'file', 'mode': ordinary_link.ORACLE_EXECUTION_INTERPRETER_MODE,
+                'size': runtime['size'], 'sha256': runtime['sha256'],
+            },
+            'lib/libc.so': {'kind': 'symlink', 'mode': 0o777, 'target': 'ld-musl-x86_64.so.1'},
+        })
+    else:
+        require(mode in {'static', 'static-pie'} and dynamic_product is None,
+                'public-data runtime static execution root mode differs')
+    require('consumer' not in expected, 'public-data runtime execution root product has consumer')
+    expected['consumer'] = _execution_file_entry(executable_identity)
+    fixtures = _fixture_entries(scenario)
+    require(not (set(expected) & set(fixtures)), 'public-data runtime fixture overlaps execution payload')
+    expected.update(fixtures)
+    actual = ordinary_link.execution_tree(ROOT, root, 'retained execution root')
+    require(set(actual) == set(expected), 'public-data runtime execution root contains undeclared payload')
+    for relative, entry in expected.items():
+        require(actual[relative] == entry,
+                ('public-data runtime dynamic root product copy differs'
+                 if relative in expected and mode in {'dynamic-pie', 'dynamic-non-pie'} and relative != 'consumer'
+                 else 'public-data runtime execution root payload differs'))
+    _validate_fixture_tree(actual, scenario, 'retained execution root')
+    return actual
+
+
+def _validate_execution_record(value: object, *, root: str, command: str,
+                               description: str) -> dict[str, Any]:
+    record = exact(value, {'root', 'before', 'after', 'command'}, description)
+    require(record['root'] == root, description + ' root differs')
+    require(record['command'] == command, description + ' command differs')
+    return record
 
 
 def _safe_label(value: str) -> str:
@@ -896,13 +977,21 @@ def _validate_links(receipt_root: Path, value: object, *, origin_root: Path,
         identifier = scenario['id']
         links = exact(value[identifier], {'oracle-static', *CANDIDATE_MODES}, identifier + ' link roster')
         oracle = exact(links['oracle-static'], {'executable'}, identifier + ' oracle link')
-        _receipt_file_identity(receipt_root, receipt_root / oracle['executable']['path'], identifier + ' oracle executable')
+        _validate_retained_file_at(receipt_root, oracle['executable'],
+                                   'executables/' + identifier + '/oracle-static',
+                                   identifier + ' oracle executable')
         for mode in CANDIDATE_MODES:
             record = exact(links[mode], {'executable', 'receipt', 'identity'}, identifier + ' ' + mode + ' link')
-            executable = receipt_root / record['executable']['path']
-            receipt = receipt_root / record['receipt']['path']
-            _receipt_file_identity(receipt_root, executable, identifier + ' ' + mode + ' executable')
-            _receipt_file_identity(receipt_root, receipt, identifier + ' ' + mode + ' receipt')
+            executable_identity = _validate_retained_file_at(
+                receipt_root, record['executable'], 'executables/' + identifier + '/' + mode,
+                identifier + ' ' + mode + ' executable',
+            )
+            receipt_identity = _validate_retained_file_at(
+                receipt_root, record['receipt'], 'executables/' + identifier + '/' + mode + '.crabc-link.json',
+                identifier + ' ' + mode + ' receipt',
+            )
+            executable = receipt_root / executable_identity['path']
+            receipt = receipt_root / receipt_identity['path']
             object_path = receipt_root / 'objects' / (identifier + '.o')
             try:
                 actual = product_evidence.validate_retained_link(
@@ -920,23 +1009,73 @@ def _validate_links(receipt_root: Path, value: object, *, origin_root: Path,
             require(record['identity'] == expected, 'public-data runtime retained link identity differs')
 
 
-def _validate_executions(receipt_root: Path, value: object, commands: Sequence[Mapping[str, Any]]) -> None:
+def _validate_executions(receipt_root: Path, value: object, commands: Sequence[Mapping[str, Any]],
+                         links: Mapping[str, Any], dynamic_product: Path) -> None:
     expected = {scenario['id'] + '/oracle-static' for scenario in execution_plan()}
     expected.update(scenario['id'] + '/' + cell['id']
                     for scenario in execution_plan() for cell in scenario['candidate_cells'])
     require(type(value) is dict and set(value) == expected, 'public-data runtime execution roster differs')
     labels = {item['label'] for item in commands}
     for key in sorted(expected):
-        record = exact(value[key], {'root', 'before', 'after', 'command'}, 'public-data runtime execution ' + key)
-        root = receipt_root / record['root']
-        require(root.is_dir() and not root.is_symlink() and type(record['command']) is str
-                and record['command'] in labels, 'public-data runtime execution root differs')
-        actual = ordinary_link.execution_tree(ROOT, root, 'retained execution root ' + key)
+        identifier, cell = key.rsplit('/', 1)
+        scenario = next(item for item in execution_plan() if item['id'] == identifier)
+        command = identifier + '-' + cell + '-run'
+        root_relative = 'roots/' + identifier + '/' + cell
+        record = _validate_execution_record(
+            value[key], root=root_relative, command=command,
+            description='public-data runtime execution ' + key,
+        )
+        root = receipt_root / root_relative
+        require(root.is_dir() and not root.is_symlink() and command in labels,
+                'public-data runtime execution root differs')
+        if cell == 'oracle-static':
+            executable = exact(links[identifier]['oracle-static'], {'executable'},
+                               identifier + ' oracle execution link')['executable']
+            actual = _validate_execution_root(
+                receipt_root=receipt_root, root=root, scenario=scenario, mode='oracle-static',
+                executable=executable, dynamic_product=None,
+            )
+        else:
+            candidate = next(item for item in scenario['candidate_cells'] if item['id'] == cell)
+            link = exact(links[identifier][candidate['mode']], {'executable', 'receipt', 'identity'},
+                         identifier + ' ' + candidate['mode'] + ' execution link')
+            actual = _validate_execution_root(
+                receipt_root=receipt_root, root=root, scenario=scenario, mode=candidate['mode'],
+                executable=link['executable'],
+                dynamic_product=dynamic_product if candidate['mode'].startswith('dynamic-') else None,
+            )
         require(record['before'] == actual and record['after'] == actual,
                 'public-data runtime execution root changed outside its bounded fixture transition')
-        identifier = key.rsplit('/', 1)[0]
-        scenario = next(item for item in execution_plan() if item['id'] == identifier)
-        _validate_fixture_tree(actual, scenario, 'retained execution root ' + key)
+
+
+def _recheck_live_collection_boundary(*, receipt_root: Path, report_path: Path, report_before: Mapping[str, Any],
+                                      root: Path, static_preparation: Path, static_product: Path, dynamic_product: Path,
+                                      actual_inputs: Mapping[str, Any], sources: Mapping[str, Any],
+                                      collection: Mapping[str, Any], companions: Mapping[str, Any],
+                                      supplied_companions: Mapping[str, Path], oracle: Mapping[str, Any],
+                                      oracle_static_inputs: Mapping[str, Any], tools: Mapping[str, Any]) -> None:
+    """Re-admit every mutable supplied boundary after retained replay."""
+    final_inputs = ordinary_link.admit_inputs(root, static_preparation, static_product, dynamic_product)
+    require(final_inputs == actual_inputs, 'public-data runtime supplied product cohort changed during replay')
+    final_sources = _validate_source_capture(receipt_root, sources)
+    require(final_sources == sources and collection['source'] == static_products.source_identity(root),
+            'public-data runtime source changed during replay')
+    companion_inputs = companions['inputs']
+    for name in COMPANION_NAMES:
+        copied = _validate_copied_input(receipt_root, companion_inputs[name], 'public-data runtime ' + name)
+        current = _physical_file(supplied_companions[name], name + ' report')
+        original = copied['original']
+        require(digest(current) == original['sha256'] and current.stat().st_size == original['size']
+                and stat.S_IMODE(current.stat().st_mode) == original['mode'],
+                'public-data runtime companion changed during replay: ' + name)
+    require(companions['projection'] == _current_companion_projection(root, supplied_companions),
+            'public-data runtime companion projection changed during replay')
+    ordinary_link.qualification.validate_oracle(receipt_root, oracle)
+    ordinary_link.validate_oracle_static_inputs(receipt_root, oracle_static_inputs)
+    require(tools == ordinary_link.validate_tool_roster(root, receipt_root, final_inputs, tools),
+            'public-data runtime tool roster changed during replay')
+    require(report_before == _receipt_file_identity(receipt_root, report_path, 'public-data runtime report'),
+            'public-data runtime report changed during replay')
 
 
 def _validate_objects(receipt_root: Path, value: object) -> None:
@@ -959,6 +1098,7 @@ def validate_report(report_path: Path, *, root: Path = ROOT, static_preparation:
     require(report_path.name == 'report.json' and report_path.is_relative_to(root / '.work'),
             'public-data runtime report path differs')
     receipt_root = report_path.parent
+    report_before = _receipt_file_identity(receipt_root, report_path, 'public-data runtime report')
     try:
         report = json.loads(report_path.read_text(encoding='utf-8'), object_pairs_hook=_unique_json_object,
                             parse_constant=lambda value: (_ for _ in ()).throw(
@@ -1005,12 +1145,22 @@ def validate_report(report_path: Path, *, root: Path = ROOT, static_preparation:
     _validate_objects(receipt_root, report['objects'])
     _validate_links(receipt_root, report['links'], origin_root=origin_root, inputs=actual_inputs, tools=tools)
     _validate_commands(receipt_root, report['commands'], origin_output=origin_output, inputs=actual_inputs, tools=tools)
-    _validate_executions(receipt_root, report['executions'], report['commands'])
+    _validate_executions(receipt_root, report['executions'], report['commands'], report['links'], dynamic_product)
     require(report['coverage'] == {
         'objects': list(OBJECTS), 'groups': [name for name, _objects in GROUPS],
         'component_complete': True, 'family_completion': False,
         'runtime_qualification': False, 'public_support': False,
     }, 'public-data runtime scope differs')
+    # Validation is a transaction over supplied source, products and the
+    # retained receipt. Re-admit every live owner after the complete replay so
+    # a replacement cannot satisfy an early nested reader and a later join.
+    _recheck_live_collection_boundary(
+        receipt_root=receipt_root, report_path=report_path, report_before=report_before,
+        root=root, static_preparation=static_preparation, static_product=static_product,
+        dynamic_product=dynamic_product, actual_inputs=actual_inputs, sources=sources,
+        collection=collection, companions=companions, supplied_companions=supplied_companions,
+        oracle=report['oracle'], oracle_static_inputs=report['oracle_static_inputs'], tools=tools,
+    )
     return {
         'report': _receipt_file_identity(receipt_root, report_path, 'public-data runtime report'),
         'coverage': report['coverage'], 'h_errno': report['h_errno'],
