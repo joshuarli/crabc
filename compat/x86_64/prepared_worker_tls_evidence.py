@@ -279,7 +279,7 @@ def check_post_fork_generation_source(probe: str, worker_owner: str) -> dict[str
         'inspect_runtime(worker,2)',
         'REQUIRE(worker->runtime_addresses[0]==old0 && worker->runtime_addresses[1]==old1)',
         'pthread_create(&thread,0,entry,&fresh)',
-        'for (int n=0;n<active_generations;n++) REQUIRE(fresh.runtime_addresses[n]!=worker->runtime_addresses[n])',
+        'for (int n=0;dynamic && n<active_generations;n++) REQUIRE(fresh.runtime_addresses[n]!=worker->runtime_addresses[n])',
     ),'fork-worker third-generation observation')
     entry=_c_body(probe,'entry')
     require('if (worker->already_loaded && active_generations==3) inspect_runtime(worker,2)' in entry,

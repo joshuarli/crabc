@@ -172,7 +172,7 @@ static void worker_fork(struct worker *worker)
         wait_at_least(&fresh.ready,3);
         REQUIRE(fresh.tp!=worker->tp);
         check_live(&fresh);
-        for (int n=0;n<active_generations;n++) REQUIRE(fresh.runtime_addresses[n]!=worker->runtime_addresses[n]);
+        for (int n=0;dynamic && n<active_generations;n++) REQUIRE(fresh.runtime_addresses[n]!=worker->runtime_addresses[n]);
         atomic_store_explicit(&fresh.phase,3,memory_order_release);
         void *result=0;
         REQUIRE(pthread_join(thread,&result)==0 && result==&fresh);

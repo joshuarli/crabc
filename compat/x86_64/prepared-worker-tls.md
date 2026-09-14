@@ -57,7 +57,9 @@ worker loads a third generation after fork, retains its first two values and
 receives the new one, then a freshly created child worker receives the three
 fresh initial images. This makes the post-fork adopted main the target of the
 next all-thread TLS growth. A worker created after the ordinary two-generation
-case sees fresh initial images too. Musl is the oracle for these common C behaviors. Candidate
+case sees fresh initial images too. Static fork-worker cells retain their
+existing no-DSO behavior and pass a placeholder third path only. Musl is the
+oracle for these common C behaviors. Candidate
 checks additionally inspect the source-defined coherent view and use
 `mincore` on retained addresses to distinguish live mappings from joined or
 reaped mappings. No stale pointer is dereferenced, and no musl allocation

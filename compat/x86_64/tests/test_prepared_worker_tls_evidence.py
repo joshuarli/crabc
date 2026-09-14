@@ -316,6 +316,11 @@ class PreparedWorkerTlsEvidenceTests(unittest.TestCase):
             EVIDENCE.check_post_fork_generation_source(
                 probe,owner.replace('ADOPTED_MAIN.store(thread_pointer as usize, Ordering::Release);',''))
 
+        with self.assertRaises(EVIDENCE.PreparedWorkerTlsError):
+            EVIDENCE.check_post_fork_generation_source(
+                probe.replace('for (int n=0;dynamic && n<active_generations;n++)',
+                              'for (int n=0;n<active_generations;n++)'),owner)
+
     def test_source_account_requires_active_full_fork_loader_before_registry_reset(self):
         """Dynamic full fork keeps minimal child identity work before loader repair.
 
