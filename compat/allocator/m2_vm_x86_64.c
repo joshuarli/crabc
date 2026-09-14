@@ -2510,6 +2510,50 @@ static bool huge_branch_anonymous_fallback_arguments(
   return true;
 }
 
+/* The partial source arm makes one successful primitive mapping, then sees a
+ * second 1GiB failure and its same-hint 2MiB retry. Keep that raw sequence,
+ * its hint relationship, and its only normal fallback in one predicate so the
+ * focused profile regression can exercise the exact fixture behavior. */
+static bool huge_branch_partial_primitive_failure_relation(const huge_branch_probe_t* probe) {
+  return huge_branch_huge_mmap_arguments(probe, 3, true)
+      && probe->hints[0] != probe->hints[1] && probe->hints[1] == probe->hints[2]
+      && huge_branch_anonymous_fallback_arguments(probe, 1, false);
+}
+
+static int run_huge_branch_partial_retry_helper_test(void) {
+  const int huge_flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB;
+  huge_branch_probe_t probe = {
+      .valid = true,
+      .mmap_calls = 3,
+      .lengths = { MI_GiB, MI_GiB, MI_GiB },
+      .protections = { PROT_READ | PROT_WRITE, PROT_READ | PROT_WRITE,
+                       PROT_READ | PROT_WRITE },
+      .flags = { huge_flags | MAP_HUGE_1GB, huge_flags | MAP_HUGE_1GB,
+                 huge_flags | MAP_HUGE_2MB },
+      .fallback_flags = { MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE },
+  };
+  probe.hints[0] = (void*)(uintptr_t)0x100000000ULL;
+  probe.hints[1] = (void*)(uintptr_t)0x200000000ULL;
+  probe.hints[2] = probe.hints[1];
+  probe.fallback_addresses[0] = probe.hints[0];
+  const bool accepts_source_sequence = huge_branch_partial_primitive_failure_relation(&probe);
+
+  probe.flags[1] = huge_flags | MAP_HUGE_2MB;
+  const bool rejects_former_wrong_second_flag =
+      !huge_branch_partial_primitive_failure_relation(&probe);
+  probe.flags[1] = huge_flags | MAP_HUGE_1GB;
+
+  probe.flags[2] = huge_flags | MAP_HUGE_1GB;
+  const bool rejects_wrong_fallback_flag = !huge_branch_partial_primitive_failure_relation(&probe);
+  probe.flags[2] = huge_flags | MAP_HUGE_2MB;
+
+  probe.hints[2] = (void*)(uintptr_t)0x300000000ULL;
+  const bool rejects_wrong_same_hint = !huge_branch_partial_primitive_failure_relation(&probe);
+
+  return accepts_source_sequence && rejects_former_wrong_second_flag
+      && rejects_wrong_fallback_flag && rejects_wrong_same_hint ? 0 : 3;
+}
+
 /* The outer matrix child never initializes pinned source state.  It forks one
  * exact inner child for each fixed arm so `unix_mmap`'s static one-GiB retry
  * state is cold for every branch.  The syscall redirect rejects every raw
@@ -2563,9 +2607,7 @@ static int run_huge_branch_case_child(int record_descriptor) {
     complete = partial != NULL && pages == 1 && size == MI_GiB
         && memid.memkind == MI_MEM_OS_HUGE && memid.mem.os.base == partial
         && memid.mem.os.size == MI_GiB
-        && huge_branch_huge_mmap_arguments(&probe, 3, true)
-        && probe.hints[0] != probe.hints[1] && probe.hints[1] == probe.hints[2]
-        && huge_branch_anonymous_fallback_arguments(&probe, 1, false)
+        && huge_branch_partial_primitive_failure_relation(&probe)
         && current_reserved(subproc) == reserved_before + (int64_t)MI_GiB
         && current_committed(subproc) == committed_before + (int64_t)MI_GiB;
     if (partial != NULL) _mi_os_free(subproc, partial, size, memid);
@@ -3078,7 +3120,15 @@ static bool capture_aligned_overmap_matrix_child(
   return captured;
 }
 
-#if defined(CRABC_M2_FAULT_SEAM_INVENTORY_PROFILE)
+#if defined(CRABC_M2_FAULT_SEAM_RETRY_HELPER_TEST)
+
+int main(void) {
+  const int result = run_huge_branch_partial_retry_helper_test();
+  if (result == 0) puts("allocator fault seam partial huge retry helper: PASS");
+  return result;
+}
+
+#elif defined(CRABC_M2_FAULT_SEAM_INVENTORY_PROFILE)
 
 /* This output is intentionally distinct from the broad VM trace. It records
  * only source branch relations which a normal anonymous mapping can simulate

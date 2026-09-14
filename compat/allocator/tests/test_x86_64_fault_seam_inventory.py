@@ -106,19 +106,6 @@ def _valid_report() -> dict[str, object]:
 
 
 class FaultInventoryShapeTests(unittest.TestCase):
-    def test_partial_huge_retry_helper_keeps_second_one_gib_before_two_mib_fallback(self) -> None:
-        """The source only marks 1GiB unavailable after its second raw attempt."""
-
-        fixture = (ROOT / "compat/allocator/m2_vm_x86_64.c").read_text(encoding="utf-8")
-        start = fixture.index("static bool huge_branch_huge_mmap_arguments")
-        finish = fixture.index("static bool huge_branch_anonymous_fallback_arguments", start)
-        helper = fixture[start:finish]
-        self.assertIn(
-            "two_mib_after_one_gib_retry && index >= 2\n"
-            "        ? MAP_HUGE_2MB : MAP_HUGE_1GB;",
-            helper,
-        )
-
     def test_source_inventory_is_closed_and_retains_stopped_receivers(self) -> None:
         self.assertEqual(
             [row.identifier for row in INVENTORY.SOURCE_ROWS],

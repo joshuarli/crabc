@@ -28,6 +28,8 @@ ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "compat/allocator/m2_vm_x86_64.c"
 REPORT_DEFAULT = ROOT / "compat/reports/allocator/x86_64/fault-seam-inventory.json"
 FAULT_PROFILE_DEFINE = "-DCRABC_M2_FAULT_SEAM_INVENTORY_PROFILE=1"
+HUGE_RETRY_HELPER_TEST_DEFINE = "-DCRABC_M2_FAULT_SEAM_RETRY_HELPER_TEST=1"
+HUGE_RETRY_HELPER_SCHEMA = "crabc-mimalloc-x86_64-fault-seam-retry-helper-regression"
 C_TRACE_BEGIN = "CRABC_MI_M2_FAULT_SEAM_INVENTORY_C_TRACE_BEGIN"
 C_TRACE_END = "CRABC_MI_M2_FAULT_SEAM_INVENTORY_C_TRACE_END"
 RUST_TRACE_BEGIN = "CRABC_MI_M2_FAULT_SEAM_INVENTORY_RUST_TRACE_BEGIN"
@@ -858,6 +860,16 @@ def _huge_branch_c_command(runner: Any, compiler: str, source: Path, binary: Pat
     ]
 
 
+def _huge_retry_helper_c_command(
+    runner: Any, compiler: str, source: Path, binary: Path
+) -> list[str]:
+    """Build the fixture's finite partial-retry predicate as an isolated binary."""
+
+    command = _huge_branch_c_command(runner, compiler, source, binary)
+    command.insert(command.index(FAULT_PROFILE_DEFINE) + 1, HUGE_RETRY_HELPER_TEST_DEFINE)
+    return command
+
+
 def compile_huge_branch_profile(*, offline: bool) -> dict[str, Any]:
     """Compile the direct-included C profile without collecting a receipt."""
 
@@ -876,6 +888,47 @@ def compile_huge_branch_profile(*, offline: bool) -> dict[str, Any]:
             build = runner.command_record(command, cwd=source, timeout_seconds=300)
             runner.require_success(build, "pinned C native x86 fault-seam huge profile build")
             return {"command": command, "fixture": runner.artifact_record(FIXTURE)}
+    except runner.HarnessError as error:
+        raise EvidenceError(str(error)) from error
+
+
+def run_huge_retry_helper_regression(*, offline: bool) -> dict[str, Any]:
+    """Execute the fixture's exact 1GiB, 1GiB, 2MiB retry predicate once."""
+
+    runner = _load_runner()
+    try:
+        runner.require_native_x86_64()
+        pin = runner.load_pin()
+        archive = runner.fetch_archive(pin, offline)
+        compiler = runner.require_tool("musl-gcc")
+        artifacts = runner.ARTIFACT_ROOT / "x86_64/fault-seam-inventory"
+        artifacts.mkdir(parents=True, exist_ok=True)
+        with runner.temporary_directory(prefix="crabc-mimalloc-fault-seam-retry-helper-") as temporary:
+            source = runner.safe_extract(archive, Path(temporary), pin["archive_root"])
+            binary = artifacts / "m2-fault-seam-retry-helper"
+            build = runner.command_record(
+                _huge_retry_helper_c_command(runner, compiler, source, binary),
+                cwd=source,
+                timeout_seconds=300,
+            )
+            runner.require_success(build, "pinned C partial huge retry helper build")
+            run = runner.command_record([str(binary)], cwd=source, timeout_seconds=60)
+            runner.require_success(run, "pinned C partial huge retry helper")
+            if str(run["stdout"]) != "allocator fault seam partial huge retry helper: PASS\n" or run["stderr"]:
+                raise EvidenceError("pinned C partial huge retry helper output changed")
+            report = {
+                "build": {**build, "cwd": str(source)},
+                "fixture": runner.artifact_record(FIXTURE),
+                "format": 1,
+                "run": {**run, "cwd": str(source)},
+                "schema": HUGE_RETRY_HELPER_SCHEMA,
+                "upstream": {
+                    "archive_sha256": pin["sha256"],
+                    "revision": pin["revision"],
+                },
+            }
+            runner.write_json(artifacts / "partial-huge-retry-helper.json", report)
+            return report
     except runner.HarnessError as error:
         raise EvidenceError(str(error)) from error
 
@@ -1023,12 +1076,19 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--compile-only", action="store_true")
+    parser.add_argument("--retry-helper-regression", action="store_true")
     parser.add_argument("--report", type=Path, default=REPORT_DEFAULT)
     arguments = parser.parse_args()
     try:
+        if arguments.compile_only and arguments.retry_helper_regression:
+            raise EvidenceError("fault inventory accepts one focused mode")
         if arguments.compile_only:
             compile_huge_branch_profile(offline=arguments.offline)
             print("allocator x86-64 fault seam inventory: C profile compile PASS")
+            return 0
+        if arguments.retry_helper_regression:
+            run_huge_retry_helper_regression(offline=arguments.offline)
+            print("allocator x86-64 fault seam inventory: partial huge retry helper PASS")
             return 0
         report = run_evidence(offline=arguments.offline, report_path=arguments.report)
     except (EvidenceError, OSError, json.JSONDecodeError) as error:

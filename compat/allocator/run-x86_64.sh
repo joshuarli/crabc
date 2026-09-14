@@ -25,7 +25,7 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator --quick
   allocator-m1
   allocator-m2
-  allocator-tls | allocator-lifecycle [--only runtime-process-policy-first-arena] | allocator-startup-regular-arena [--reader-tests] | allocator-init-recursion | allocator-initialization-tld [--reader-tests] | allocator-fault | allocator-fault-seam-inventory [--compile-only|--reader-tests]
+  allocator-tls | allocator-lifecycle [--only runtime-process-policy-first-arena] | allocator-startup-regular-arena [--reader-tests] | allocator-init-recursion | allocator-initialization-tld [--reader-tests] | allocator-fault | allocator-fault-seam-inventory [--compile-only|--retry-helper-regression|--reader-tests]
   allocator-release-evidence | allocator-api-coverage | allocator-cmake-modes
   allocator-header-modes | allocator-static-modes
   allocator-remote-free | allocator-live-owner-full-medium-remote-release | allocator-live-owner-full-medium-one-remote-unfull-reuse | allocator-direct-remote | allocator-mapped-reclaim | allocator-mapped-adoption | allocator-regular-mapped-reclaim [--offline]
@@ -399,12 +399,14 @@ case "$command" in
             run_in_container python3 compat/allocator/x86_64_fault_seam_inventory.py --offline
         elif [ "$#" -eq 1 ] && [ "$1" = --compile-only ]; then
             run_in_container python3 compat/allocator/x86_64_fault_seam_inventory.py --offline --compile-only
+        elif [ "$#" -eq 1 ] && [ "$1" = --retry-helper-regression ]; then
+            run_in_container python3 compat/allocator/x86_64_fault_seam_inventory.py --offline --retry-helper-regression
         elif [ "$#" -eq 1 ] && [ "$1" = --reader-tests ]; then
             run_in_container python3 compat/allocator/tests/test_x86_64_fault_seam_inventory.py
             run_in_container python3 compat/allocator/tests/test_x86_64_m2_fault_seam_inventory.py
             run_in_container python3 compat/allocator/tests/test_x86_64_source_map.py
         else
-            fail "allocator-fault-seam-inventory accepts only --compile-only or --reader-tests"
+            fail "allocator-fault-seam-inventory accepts only --compile-only, --retry-helper-regression, or --reader-tests"
         fi
         ;;
     allocator-release-evidence)

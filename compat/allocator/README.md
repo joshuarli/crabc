@@ -2068,6 +2068,7 @@ The source-indexed OS/page-map fault receiver admission is separate:
 
 ```sh
 ./compat/allocator/run-x86_64.sh allocator-fault-seam-inventory
+./compat/allocator/run-x86_64.sh allocator-fault-seam-inventory --retry-helper-regression
 ```
 
 It retains a fixed pinned-C direct profile and the private Rust
@@ -2081,6 +2082,11 @@ the source option and records the prefix/body callback order; no Rust
 diagnostic-output parity is claimed. Metadata and `OsAligned` publication,
 actual huge-page success, ambient NUMA placement, production callers, and M2
 completion remain outside this receipt.
+
+The focused retry-helper regression compiles and runs only the fixture's
+synthetic three-call predicate. It accepts `1GiB, 1GiB, 2MiB` with the second
+and third calls at one hint, and rejects the former premature two-MiB flag,
+the final wrong flag, and a changed retry hint.
 
 The separate ordinary reserved-medium on-demand differential is also native
 x86-64 only:
