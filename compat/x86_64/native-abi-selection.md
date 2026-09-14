@@ -358,6 +358,23 @@ identities and every raw named or unnamed ELF occurrence remain in accounting.
 This finite selection does not establish resolver semantics, family completion,
 runtime qualification, promotion, or public support.
 
+`--headers-layouts-aggregate-report REPORT` is independently optional and
+accepts only the current physical tracked report at
+`compat/x86_64/generated/headers_layouts_aggregate/report.json`. Its owner
+reconstructs the parsed report from the exact current source-owned input roster
+and compares the normalized rendered value with the tracked report. The
+selector separately seals the physical report bytes, size, and mode before
+owner replay, binds every source-owned input identity that the aggregate uses,
+and repeats that replay and physical identity check after its accounting join.
+It replaces only the `libc.headers-layouts`
+`family-semantic-evidence-unavailable` blocker with one closed companion
+evidence row. The aggregate's finite installed-header assessment remains
+explicitly bounded: provider and archive extraction, selected provider
+linkage, runtime semantics, the complete family-receipt gate, promotion, and
+public support all remain unresolved. The other twenty-five family rows,
+global family and semantic receipt blockers, selected identities, declarations,
+and every raw ELF occurrence stay unchanged.
+
 These runtime attachments run before the one public declaration-envelope replay
 and are rechecked after their scoped joins. Their source/product/ELF cohort is
 therefore shared with the selection transaction without rereading the header
@@ -408,10 +425,11 @@ a retained runtime map, probe, source snapshot, or raw command output cannot
 change after the initial reader replay. A report with only one component stays
 independently optional and leaves both descriptor requirements unresolved.
 
-The selection report schema is `crabc.x86_64-native-abi-selection-report/v3`;
-v3 adds the closed `resolver_alias_receipt_companion` and
-`resolver_alias_receipt_joins` fields alongside the existing closed
-`runtimev1_descriptor_lifecycle_joins` field. A source-built omitted-
+The selection report schema is `crabc.x86_64-native-abi-selection-report/v4`;
+v4 adds the closed `headers_layouts_aggregate_companion` and
+`headers_layouts_aggregate_evidence` fields. v3 added the closed
+`resolver_alias_receipt_companion` and `resolver_alias_receipt_joins` fields
+alongside the existing closed `runtimev1_descriptor_lifecycle_joins` field. A source-built omitted-
 `ADOPTED_MAIN` control remains development regression sensitivity evidence, not
 a worker receipt field or selector input.
 
