@@ -373,9 +373,12 @@ open M7 work.
 `compat/allocator/x86_64_diagnostic_output_owner_oracle.c` and
 `compat/allocator/x86_64_diagnostic_output_owner_evidence.py` prepare the
 pinned C producer and process-free retained-stream reader for that later
-receiver. Its reader binds the current fixture, Cargo lock, Rust source, exact
-pinned C source roster, reconstructed collector commands/cwds, and every
-finite custom/default output stream. This commit does not run native
+receiver. Its reader binds the current fixture, Cargo lock, the finite Rust
+source closure (`crabc-mimalloc` module route/owner/lock and the selected
+`crabc-core` module route/error/futex/syscall files), Cargo manifests/toolchain
+input files, exact pinned C source roster, reconstructed collector
+commands/cwds, and every finite custom/default output stream. This commit does
+not run native
 collection: the concrete mapping-error body, source-order integration, and
 FILE transport receiver must first receive ordinary root review.
 

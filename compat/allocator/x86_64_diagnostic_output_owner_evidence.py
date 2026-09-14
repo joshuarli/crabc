@@ -27,9 +27,35 @@ from typing import Any, Mapping, Sequence
 ROOT = Path(__file__).resolve().parents[2]
 RUNNER_PATH = ROOT / "compat/allocator/run.py"
 FIXTURE = ROOT / "compat/allocator/x86_64_diagnostic_output_owner_oracle.c"
-RUST_SOURCE = ROOT / "crabc-mimalloc/src/diagnostic_output.rs"
 LOCKFILE = ROOT / "Cargo.lock"
 TARGET = "x86_64-unknown-linux-musl"
+
+# This is the finite source closure for the private owner trace, not a hash of
+# every crate compiled by Cargo. `crabc-mimalloc/src/lib.rs` routes the test to
+# `diagnostic_output`, which calls its private lock. The lock in turn requires
+# crabc-core's module route, Result/Errno definitions, futex wrapper, and the
+# selected x86-64 syscall boundary. The C/Rust receipt binds every one of those
+# participating Rust modules before it admits a retained trace.
+RUST_SOURCE_FILES = (
+    ROOT / "crabc-mimalloc/src/lib.rs",
+    ROOT / "crabc-mimalloc/src/diagnostic_output.rs",
+    ROOT / "crabc-mimalloc/src/lock.rs",
+    ROOT / "crabc-core/src/lib.rs",
+    ROOT / "crabc-core/src/error.rs",
+    ROOT / "crabc-core/src/thread.rs",
+    ROOT / "crabc-core/src/syscall_x86_64.rs",
+)
+
+# Cargo resolves the selected package/feature graph and target profile through
+# these tracked inputs. Cargo.lock remains a separately named receipt field
+# because `--locked` makes its exact resolved dependency graph a distinct
+# command precondition.
+RUST_BUILD_INPUT_FILES = (
+    ROOT / "Cargo.toml",
+    ROOT / "crabc-mimalloc/Cargo.toml",
+    ROOT / "crabc-core/Cargo.toml",
+    ROOT / "rust-toolchain.toml",
+)
 PINNED_UPSTREAM = {
     "archive_sha256": "1e432f0559a4ab512143b9bff7a700541a2c8d4712b26a72de3e0222790da305",
     "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
@@ -170,6 +196,14 @@ def sha256_file(path: Path) -> str:
 
 def current_file_identity(path: Path) -> dict[str, str]:
     return {"path": relative(path), "sha256": sha256_file(path)}
+
+
+def current_rust_source_records() -> list[dict[str, str]]:
+    return [current_file_identity(path) for path in RUST_SOURCE_FILES]
+
+
+def current_rust_build_input_records() -> list[dict[str, str]]:
+    return [current_file_identity(path) for path in RUST_BUILD_INPUT_FILES]
 
 
 def relative(path: Path) -> str:
@@ -351,7 +385,8 @@ def collect(archive: Path, report_path: Path) -> dict[str, Any]:
             "native_execution_provenance": provenance,
             "profile": PROFILE,
             "rust": rust,
-            "rust_source": current_file_identity(RUST_SOURCE),
+            "rust_build_inputs": current_rust_build_input_records(),
+            "rust_source_files": current_rust_source_records(),
             "scope": SCOPE,
             "status": "passed",
             "target": {"architecture": "x86_64", "endianness": "little", "rust_target": TARGET, "system": "linux"},
@@ -398,7 +433,7 @@ def collector_source_root(build: Mapping[str, Any]) -> Path:
 def validate_report(report: object) -> None:
     if not isinstance(report, Mapping) or set(report) != {
         "c_oracle", "cargo_lock", "fixture", "format", "kind", "native_execution_provenance", "profile",
-        "rust", "rust_source", "scope", "status", "target", "upstream",
+        "rust", "rust_build_inputs", "rust_source_files", "scope", "status", "target", "upstream",
     }:
         raise EvidenceError("diagnostic-output report schema drifted")
     if report["format"] != 1 or report["kind"] != "mimalloc-x86_64-diagnostic-output-owner-evidence":
@@ -416,8 +451,10 @@ def validate_report(report: object) -> None:
         raise EvidenceError("diagnostic-output fixture identity drifted")
     if report["cargo_lock"] != current_file_identity(LOCKFILE):
         raise EvidenceError("diagnostic-output Cargo.lock identity drifted")
-    if report["rust_source"] != current_file_identity(RUST_SOURCE):
-        raise EvidenceError("diagnostic-output Rust source identity drifted")
+    if report["rust_source_files"] != current_rust_source_records():
+        raise EvidenceError("diagnostic-output Rust source closure drifted")
+    if report["rust_build_inputs"] != current_rust_build_input_records():
+        raise EvidenceError("diagnostic-output Rust build-input closure drifted")
     c_oracle = report["c_oracle"]
     if not isinstance(c_oracle, Mapping) or set(c_oracle) != {"build", "runs", "source_files"}:
         raise EvidenceError("diagnostic-output C oracle schema drifted")

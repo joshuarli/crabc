@@ -8,6 +8,7 @@ import importlib.util
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -76,7 +77,8 @@ class RetainedStreamReaderTests(unittest.TestCase):
             "rust": self.raw_record(
                 EVIDENCE.rust_command("cargo", target), ROOT, rust_stream, default_stderr,
             ),
-            "rust_source": EVIDENCE.current_file_identity(EVIDENCE.RUST_SOURCE),
+            "rust_build_inputs": EVIDENCE.current_rust_build_input_records(),
+            "rust_source_files": EVIDENCE.current_rust_source_records(),
             "scope": EVIDENCE.SCOPE,
             "status": "passed",
             "target": {
@@ -110,18 +112,58 @@ class RetainedStreamReaderTests(unittest.TestCase):
             EVIDENCE.validate_report(report)
 
     def test_reader_rejects_each_changed_authenticated_identity(self) -> None:
+        report = self.complete_report()
         mutations = {
-            "fixture": lambda report: report["fixture"].__setitem__("sha256", "0" * 64),
-            "Cargo.lock": lambda report: report["cargo_lock"].__setitem__("sha256", "0" * 64),
-            "Rust source": lambda report: report["rust_source"].__setitem__("sha256", "0" * 64),
-            "pinned C source": lambda report: report["c_oracle"]["source_files"][0].__setitem__("sha256", "0" * 64),
+            "fixture": lambda value: value["fixture"].__setitem__("sha256", "0" * 64),
+            "Cargo.lock": lambda value: value["cargo_lock"].__setitem__("sha256", "0" * 64),
+            "pinned C source": lambda value: value["c_oracle"]["source_files"][0].__setitem__("sha256", "0" * 64),
         }
+        for index, source in enumerate(report["rust_source_files"]):
+            mutations[f"Rust source {source['path']}"] = (
+                lambda value, index=index: value["rust_source_files"][index].__setitem__("sha256", "0" * 64)
+            )
+        for index, source in enumerate(report["rust_build_inputs"]):
+            mutations[f"Rust build input {source['path']}"] = (
+                lambda value, index=index: value["rust_build_inputs"][index].__setitem__("sha256", "0" * 64)
+            )
         for name, mutate in mutations.items():
             with self.subTest(identity=name):
-                report = copy.deepcopy(self.complete_report())
-                mutate(report)
+                changed = copy.deepcopy(report)
+                mutate(changed)
                 with self.assertRaises(EVIDENCE.EvidenceError):
-                    EVIDENCE.validate_report(report)
+                    EVIDENCE.validate_report(changed)
+
+    def test_rust_source_roster_covers_owner_lock_and_x86_futex_dependency_chain(self) -> None:
+        self.assertEqual(
+            [record["path"] for record in EVIDENCE.current_rust_source_records()],
+            [
+                "crabc-mimalloc/src/lib.rs",
+                "crabc-mimalloc/src/diagnostic_output.rs",
+                "crabc-mimalloc/src/lock.rs",
+                "crabc-core/src/lib.rs",
+                "crabc-core/src/error.rs",
+                "crabc-core/src/thread.rs",
+                "crabc-core/src/syscall_x86_64.rs",
+            ],
+        )
+
+    def test_reader_rejects_changed_current_owner_route_and_private_lock_sources(self) -> None:
+        report = self.complete_report()
+        original_sha256_file = EVIDENCE.sha256_file
+        changed_paths = (
+            EVIDENCE.RUST_SOURCE_FILES[0],
+            EVIDENCE.RUST_SOURCE_FILES[2],
+        )
+        for changed_path in changed_paths:
+            with self.subTest(path=changed_path):
+                def changed_sha256_file(path: Path) -> str:
+                    if path.resolve() == changed_path.resolve():
+                        return "0" * 64
+                    return original_sha256_file(path)
+
+                with mock.patch.object(EVIDENCE, "sha256_file", side_effect=changed_sha256_file):
+                    with self.assertRaisesRegex(EVIDENCE.EvidenceError, "Rust source closure drifted"):
+                        EVIDENCE.validate_report(report)
 
     def test_reader_rejects_changed_c_and_rust_commands(self) -> None:
         changed_c = self.complete_report()
