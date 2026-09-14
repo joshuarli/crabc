@@ -29,6 +29,7 @@ import owned_posix_product_evidence as product_evidence
 import owned_posix_static_products as static_products
 
 SCHEMA = 'crabc.x86_64-owned-resolver-alias-contract/v1'
+COLLECTION_BEGIN_SCHEMA = 'crabc.x86_64-owned-resolver-alias-collection-begin/v1'
 STATUS = 'component-verified'
 COMPONENT = 'resolver-alias-private-bodies'
 IMAGE = 'crabc-core-evidence@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d'

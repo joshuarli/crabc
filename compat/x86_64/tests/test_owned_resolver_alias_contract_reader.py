@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 import tempfile
 import unittest
+from unittest import mock
 import hashlib
 import json
 import os
@@ -14,6 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'compat' / 'x86_64'))
 
+import owned_resolver_alias_contract_reader as resolver_reader  # noqa: E402
 from owned_resolver_alias_contract_reader import (  # noqa: E402
     ALIASES,
     PRIVATE_BODIES,
@@ -642,6 +644,43 @@ class ResolverAliasPreExecutionCaptureTests(unittest.TestCase):
         self.assertTrue(set(IMAGE_INPUTS.values()).issubset(manifest['files']))
         self.assertEqual(manifest['files']['/usr/bin/timeout']['path'], '/bin/coreutils')
         self.assertEqual(manifest['files']['/usr/sbin/chroot']['path'], '/bin/coreutils')
+
+
+class ResolverAliasCollectionLifecycleTests(unittest.TestCase):
+    def test_begin_collection_writes_and_reads_the_explicit_capture_schema(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / '.work' / 'x86_64' / 'test-tmp') as temporary:
+            work = Path(temporary) / 'receipt'
+            work.mkdir()
+            paths = {}
+            for name in INPUT_NAMES:
+                source = work.parent / 'inputs' / name
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_bytes(name.encode('ascii'))
+                source.chmod(0o644)
+                paths[name] = source
+            source = {'revision': 'a' * 40, 'tree': 'b' * 40, 'source_sha256': 'c' * 64}
+            with mock.patch.object(resolver_reader, '_admit_current_collection', return_value=(source, paths)), \
+                 mock.patch.dict(resolver_reader.IMAGE_INPUTS, {}, clear=True), \
+                 mock.patch.dict(os.environ, {resolver_reader.IMAGE_MARKER: resolver_reader.IMAGE}):
+                result = resolver_reader.begin_collection(
+                    root=ROOT, work=work,
+                    static_product=work / 'static', dynamic_product=work / 'dynamic',
+                    product_report=work / 'product-report.json', static_preparation=work / 'preparation.json',
+                    elf_facts=work / 'facts.json', base_inventory=work / 'inventory.json',
+                    image=resolver_reader.IMAGE,
+                )
+            begin, record = resolver_reader._collection_begin(work)
+            self.assertEqual(result, {
+                'status': 'captured',
+                'source_revision': source['revision'],
+                'input_count': len(INPUT_NAMES),
+                'record': record,
+            })
+            self.assertEqual(begin['schema'], 'crabc.x86_64-owned-resolver-alias-collection-begin/v1')
+            self.assertEqual(begin['selected_source'], source)
+            self.assertEqual(begin['inputs'].keys(), set(INPUT_NAMES))
+
+
 
 
 

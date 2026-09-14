@@ -80,7 +80,9 @@ product authority, and full facts/inventory cohort.
 Before its first compiler, linker, inspection, or runtime command, the runner
 admits the supplied source/product/measurement cohort and copies every finite
 input. Final sealing repeats that admission and requires the current bytes to
-equal the pre-execution copy. The pinned image marker and canonical invocation
+equal the pre-execution copy. The pre-execution record uses
+`crabc.x86_64-owned-resolver-alias-collection-begin/v1` and retains its selected
+source, finite inputs, and source-owned product-mode projection. The pinned image marker and canonical invocation
 paths bind the raw header compiler, `readelf`, `timeout`, `chroot`, and musl
 oracle inputs. During native collection, each invocation resolves only to its
 one manifest-declared physical file: the `timeout` and `chroot` aliases resolve
