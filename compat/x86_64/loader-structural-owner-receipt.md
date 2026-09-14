@@ -1,143 +1,154 @@
 # Native x86 loader structural-owner receipt design
 
-`loader-structural-owner-receipt.toml` is the finite design for eight current
-structural identities that each retain exactly one selector reason: `current
-source-bound owning component and consumer semantics receipt`. It is not a
-selector adapter, a family receipt, or a request to export any new symbol.
+`loader-structural-owner-receipt.toml` defines a finite design for eight current
+structural identities. Every one currently has exactly the selector reason
+`current source-bound owning component and consumer semantics receipt`. This is
+not a selector adapter, family receipt, export rule, or request to reproduce a
+historical symbol in an installed product.
 
-The design anchor is the clean `7dcafabe18a8ccea5bd73c6af49ae51be718c249`
-cohort. Its selector report has 2,531 identities, 30,667 raw occurrences, and
-1,365 unnamed raw occurrences; it has 339 blockers after the declaration
-companion removal. The anchor is inspection evidence only. A later component
-must collect fresh products from its own committed source and cannot relabel
-this cohort as current evidence.
+The design anchor is clean
+`7dcafabe18a8ccea5bd73c6af49ae51be718c249`. Its selector report contains
+2,531 identities, 30,667 raw occurrences, 1,365 unnamed raw occurrences, and
+339 blockers after the declaration-companion removal. The anchor is only for
+source and record-shape inspection. A later receipt must use products newly
+collected from its own committed clean source; it cannot relabel this cohort as
+current evidence.
 
-The TOML records the inspected 7dc selection, full-facts, inventory, static
-preparation, dynamic manifest, and current registry-report identities. They
-are development anchors for source and record-shape tests only. A future
-collector records the same categories for its own clean revision and rejects a
-receipt whose current source, products, manifests, or nested report differs.
+## Exact boundary and raw facts
 
-## Exact boundary
-
-The receipt covers these eight names and nothing selected by prefix:
-
-| Group | Identities | Current selector disposition | What is being established |
+| Group | Identities | Current disposition | Replacement boundary |
 | --- | --- | --- | --- |
-| `loader-entry-stages` | `__dls2b`, `__dls3`, `_dlstart` | structural replacement | The selected interpreter's real initial load, relocation, TLS, debugger publication, and entry-transfer path replaces musl's named internal stages. |
-| `loader-registration-operations` | `__ldso_register_dlopen`, `__ldso_register_dlsym`, `__ldso_register_dlclose`, `__ldso_register_dlerror` | structural replacement | The selected x86 direct runtime dlfcn operations and their per-thread diagnostics replace the old mutable registration protocol. |
-| `loader-always-atomic-guard` | `__ldso_register_mark_multithreaded` | structural replacement | The selected loader lock and worker/TLS path supply the one-way before-first-worker synchronization boundary. |
+| `loader-entry-stages` | `__dls2b`, `__dls3`, `_dlstart` | structural replacement | Selected x86 initial graph, TLS, relocation, registry publication, and entry transfer. |
+| `loader-registration-operations` | `__ldso_register_dlopen`, `__ldso_register_dlsym`, `__ldso_register_dlclose`, `__ldso_register_dlerror` | structural replacement | Selected x86 direct runtime operations and per-thread `dlerror` state. |
+| `loader-always-atomic-guard` | `__ldso_register_mark_multithreaded` | structural replacement | An always-atomic loader graph lock from the first transaction, plus a separately proved worker-TLS-token-before-clone relation. |
 
-None has an `expected_placement`. The component must not turn a structural
-replacement into a `libc.a`, `libc.so`, or loader `dynsym` provider rule.
+None has an expected placement. The future component must not invent a
+candidate archive, shared-library, loader `dynsym`, private provider, or
+current-occurrence rule for these structural dispositions.
 
-At the 7dc anchor, the frozen startup names have exactly six raw source
-observations: each is `FUNC GLOBAL DEFAULT` once in `reference-shared`
-`.dynsym` and once in `.symtab`. The five registration names have only
-`frozen-project-dynamic` and native-structural-contract origins; they have no
-invented reference row. These facts preserve the frozen identity origins, but
-they do not prove current behavior.
+At the anchor, `__dls2b`, `__dls3`, and `_dlstart` each have one
+`reference-shared` `FUNC GLOBAL DEFAULT` definition in `.dynsym` and one in
+`.symtab`: six reference rows total. The five registration spellings have
+`frozen-project-dynamic` and native-structural-contract origins, with no
+invented reference occurrence. The receipt retains all supplied raw rows,
+including unnamed rows. It filters only non-null names in this exact eight-name
+set before logical identity construction. The report and eventual selector join
+compare complete and unnamed counts before and after the join; no unowned row
+is discarded.
 
-The reader must retain every raw fact row, including all unnamed rows. It first
-filters only rows whose `name` is a string in the exact eight-name set, then
-constructs logical identities. A `null` row name never becomes an identity.
-The report records the full and unnamed counts and the finite startup-reference
-projection, and the later adapter compares those counts to its pre-join
-accounting. Candidate rows are retained as raw observations, not silently
-promoted to proof because this contract has no placement rule.
+## Selected x86 source and legacy context
 
-## Current source mapping
+The selected x86 route is distinct from legacy source context. The reader must
+validate both relationships, without treating a final successful application as
+proof of startup order.
 
-The current sources split the legacy spellings from the selected x86 behavior.
-That distinction is a requirement, not an inconsistency to hide.
-
-| Requirement | Source algorithm proof | Normal consumer observation | It does not prove |
+| Requirement | Selected source proof | Ordinary public observation | Explicit limit |
 | --- | --- | --- | --- |
-| `__dls2b`, `__dls3`, `_dlstart` | The selected x86 `x86_64_general_initial_graph.rs::run_with_initial_tls` discovers the graph, plans TLS, relocates/protects and seals it, prepares and publishes the registry, then dispatches the preflighted constructor plan or jumps to entry. `x86_64_initial_graph.rs` and `x86_64_direct_entry.rs` close kernel/direct entry. `loader_startup_exports.rs` documents compatibility forwarding helpers, but is not the selected x86 entry owner. | A constructor and main in a normal dynamic C application reach the selected interpreter by PIE/non-PIE kernel and direct entry, then complete public dlfcn work. | No test calls `__dls2b`, `__dls3`, or `_dlstart`; success only shows that the selected entry route ran. The exact internal order comes from the isolated selected x86 graph source proof. |
-| Four `__ldso_register_*` dlfcn names | The generic callback setters in `libc/src/c_abi.rs` are frozen-origin context. Separately, x86 `static_c_abi.rs` selects `general_dlfcn.rs` under `x86-owned-dynamic-runtime`; that leaf imports the closed runtime-operation table in `x86_64_runtime_registry.rs`. The selected x86 initial graph prepares and publishes that registry before a dependency constructor or application entry can use the public leaf. | A public installed-header C probe performs `dlopen`, `dlsym`, failed lookup plus one non-null/one-null `dlerror`, and `dlclose` against a known plugin. | A passing `dlopen` alone does not prove the source publication order or turn legacy callback slots into the selected x86 route. The source proof establishes the order; the runtime probe establishes the replacement's public behavior. |
-| `__ldso_register_mark_multithreaded` | `dynamic_tls.rs::allocate_thread` asks the loader for a worker TLS token; `x86_64_initial_worker_tls.rs::allocate` takes `RuntimeGuard` before materializing and registering that token; `pthread_create_join.rs::create_selected_worker_with_attributes` obtains it before its clone seam. `__ldso_mark_multithreaded` and the generic registration slot remain legacy source context, not the selected x86 pthread call chain. | After its dlfcn sequence, the same C probe performs its first application `pthread_create`; the worker performs a defined public dlfcn lookup and joins. | A joined worker cannot establish global first-clone ordering. The exact token-before-clone and guard relation comes from this selected source path; the probe only observes its public consequence. |
+| `__dls2b`, `__dls3`, `_dlstart` | `ldso/src/x86_64_general_initial_graph.rs::run` chooses kernel `parse_mapped` or `x86_64_direct_entry.rs::prepare`, then enters `run_with_initial_tls`. That function discovers and selects canonical libc, plans TLS, relocates/protects and seals RELRO, prepares the registry and reservations, materializes then commits TLS, and publishes the registry. | Constructor and main reach the selected interpreter in all four candidate entry cells and complete normal public dlfcn work. | Internal stages are never called. The exact order comes from isolated selected source proof, not a passing application. |
+| Four dlfcn registration spellings | `static_c_abi.rs` selects `general_dlfcn.rs`; its closed imports map through `x86_64_runtime_registry.rs::runtime_function`. The selected initial graph publishes the prepared registry before constructor or application entry can use that leaf. | A known plugin completes `dlopen`, `dlsym`, failed lookup, one non-null then one null `dlerror`, and `dlclose`. | Generic setters in `libc/src/c_abi.rs` are frozen source context. A passing `dlopen` does not prove their installation or make them the selected x86 route. |
+| `__ldso_register_mark_multithreaded` | `x86_64_runtime_lock.rs` owns one `AtomicI32` graph lock. Every `RuntimeGuard` acquisition uses its atomic CAS and every drop releases it. Separately, `dynamic_tls.rs::allocate_thread` requests the loader token; `x86_64_initial_worker_tls.rs::allocate` acquires `RuntimeGuard` before materializing/registering it; `pthread_create_join.rs::create_selected_worker_with_attributes` obtains it before clone. | After normal public dlfcn work, a probe creates and joins its first application worker; the worker performs a defined public lookup. | There is no selected enabled-state or one-time lock transition. Worker success does not prove scheduling order; source proves the guard/token-before-clone relation. |
 
-The existing `loader_runtime_registry_evidence.py` is useful only as a nested
-current receipt for its different nine-name private runtime-operation protocol.
-Its contract explicitly leaves `crt_structural_leaves=false`; it cannot be
-relabelled as proof of these eight names. The existing loader-debug component
-likewise supplies retained selected-entry/debugger product context but is
-component evidence, not this receipt.
+`__dls2b` and `__dls3` remain legacy helper context in
+`libc/src/loader_startup_exports.rs`. `_dlstart` has its own legacy context:
+`libc/src/c_abi.rs` contains the old libc-side route, while
+`libc/src/dynamic_loader_introspection_exports.rs` documents its trampoline to
+`__ldso_dlstart`. `libc/src/lib.rs` selects `static_c_abi` for x86, so neither
+is the selected x86 entry owner. The TOML records these contexts separately so
+the two helper names cannot appear to stand for all three historical stages.
 
-## Planned receipt and replay schema
+The existing `loader_runtime_registry_evidence.py` remains a nested receipt for
+its different nine-name private protocol; its `crt_structural_leaves=false`
+limit prevents it from discharging this component. The loader-debug component
+supplies selected entry/debugger product context only.
 
-The future report schema is
-`crabc.x86_64-loader-structural-owner-receipt/v1`. Its top-level fields are
-listed exactly in the TOML: current `selected_source` and `collector`, finite
-input identities, selected products and static preparation, base inventory,
-complete facts, source algorithm projection, normal-consumer executions,
-commands/runtime/artifacts, coverage, and false limits.
+## Exact startup and constructor tail
 
-`coverage` names the exact eight identities, three groups, exact source
-functions, dynamic execution cells, and a fact-filter record with complete and
-unnamed counts. The report is valid only with `component-verified` and all
-family/promotion/public/qualification flags false.
+The selected cfg set is fixed in the TOML:
+`x86-owned-dynamic-runtime`, `crabc_general_initial_graph`,
+`crabc_general_initial_lifecycle`,
+`crabc_general_initial_tls_materialization_v1`,
+`crabc_general_loader_libc_tls_runtime_v1`, and
+`crabc_dynamic_main_thread_runtime_v1`.
 
-Collection first admits the clean current source, static preparation, dynamic
-product, base inventory, full facts, and nested loader-debug and runtime-registry
-reports. It obtains the six static and seven dynamic link-input modes from
-`owned_posix_product_evidence.link_input_mode_projection()`, then retains all
-source/probe/runner/tool/product/link/root bytes and modes before compiling. It then runs the prescribed normal C probes, captures
-commands and roots, re-admits every input and source condition, and seals the
-report. Public host replay reconstructs the source and supplied-product joins
-from retained bytes and must not invoke an ambient compiler, linker, target
-loader, or ELF tool. It performs the same final recheck and verifies report
-bytes unchanged.
+`run_with_initial_tls` must retain this order: discovery; canonical-libc
+selection; TLS planning; debugger/relocation; protection and RELRO; initializer
+preflight and registry preparation; lifecycle/publication reservations; TLS
+materialization; RuntimeV1 commit; registry publication; conventional-startup
+publication when applicable. The reader rejects materialization moved before
+relocation or RELRO, and after registry publication.
 
-Static preparation is an authenticated cohort input even though this component
-has no static interpreter-entry execution cell. A static execution must not be
-presented as evidence for `_dlstart` or dynamic dlfcn registration.
+For all four candidate cells, the tail is fixed to the owned CRT handoff, never
+an unconstrained `dispatch or jump` choice. Under the selected lifecycle plus
+dynamic-main-thread cfg, the graph retains the dependency plan;
+`x86_64_general_initial_lifecycle.rs::owned_dependency_constructors` exposes
+it through `OwnedCrtHandoffV1`. After libc state and executable preinit,
+`crt/src/x86_64_dynamic_startup.rs::__crabc_x86_64_dynamic_executable_init`
+runs the retained dependency constructors, then `_init` and the executable init
+array. Kernel cells use `run`'s mapped-main branch; direct cells use its
+`x86_64_direct_entry::prepare` branch. The report records that named branch and
+owned-CRT tail per candidate cell.
 
-## Probe design
+## Cohort, source and replay relation
 
-Two new source-compiled C consumers use installed `dlfcn.h` and `pthread.h`
-only. They never declare or call an internal stage/registration spelling.
-Their common object bytes are linked first to the pinned musl 1.2.6 lane and
-then to each candidate dynamic cell.
+The component has one permitted epoch: one clean current canonical source
+identity `{revision, tree, source_sha256}`. `collector`, `selected_source`, and
+each retained source-contract/collector Git blob equal that identity and its
+recorded mode. Static preparation must expose the same revision/content hash;
+the dynamic state must expose its source hash; loader-debug must expose the
+same source commit/hash; and loader-runtime-registry must expose the same
+revision/content hash. Public base-inventory and full-facts replay validates the
+same static preparation and dynamic root. A future multi-epoch contract would
+need a separately named and authenticated relation; this design has no waiver.
 
-`loader_structural_owner_startup_probe.c` has a constructor that completes a
-known-plugin dlfcn transaction before `main`; `main` repeats it and emits an
-exact transcript. `loader_structural_owner_registration_probe.c` performs the
-same complete dlfcn transaction, then creates and joins its first application
-worker; the worker performs a defined lookup. Both run dynamic PIE and dynamic
-non-PIE by ordinary kernel entry and direct interpreter entry. The pinned lane
-is a behavioral comparator for the public dlfcn surface, never an oracle for
-calling musl's internal stage names.
+The report schema is
+`crabc.x86_64-loader-structural-owner-receipt/v1`. Alongside current source,
+products, preparation, facts, source algorithms, commands, roots and coverage,
+it records `source_cohort`, `selected_runtime`, and
+`normal_consumer_matrix`. The matrix records exact cells, pairings, shared
+object identities, and candidate entry/tail references. Collection admits the
+whole cohort before compiling, repeats the admission after commands, and host
+replay repeats it from retained bytes without ambient compiler, linker, target
+loader, or ELF tool. It also rechecks report bytes unchanged.
 
-The component source guard isolates the selected x86 `run_with_initial_tls`
-function body and verifies the fixed ordering of discovery, initial-TLS planning,
-relocation, protection/RELRO, initializer preflight, registry preparation,
-publication, and dispatch or jump. It separately verifies the selected x86
-`general_dlfcn` module choice, its exact closed runtime imports, the matching
-registry map, and the selected before-clone worker-TLS lock relation. It rejects
-reordered, missing, duplicate, or widened transitions; it does not use an
-arbitrary whole-file substring search.
+The product input projection is complete, not counts: the six static roles
+`crt1.o`, `rcrt1.o`, `crti.o`, `crtn.o`, `libc.a`, and
+`libcrabc-builtins.a` are each `0644`; the seven dynamic roles `crt1.o`,
+`Scrt1.o`, `crti.o`, `crtn.o`, `libcrabc-builtins.a`, and
+`crabc-dynamic-attach.o` are `0644`, while `libc.so` is `0755`. The reader
+compares this exact role/path/mode map to
+`owned_posix_product_evidence.link_input_mode_projection()` and validates raw
+current modes before trusting retained copies or manifests.
 
-## Tests before collection
+## Ordinary normal-consumer matrix
 
-The implementation starts with focused contract/reader tests that reject a
-missing, duplicate, reordered, or extra identity; stale source/product/nested
-receipt; changed source-algorithm order; altered command/root/object; and a
-changed full/unnamed fact count. A fixture with unnamed and unrelated named
-rows confirms name filtering happens before strict identity construction and
-that unrelated rows survive the proposed join.
+Each of the two new installed-header C probes has exactly eight retained
+executions: four pinned-musl-1.2.6 comparator cells and four candidate cells:
+`dynamic-pie-kernel`, `dynamic-pie-direct`, `dynamic-non-pie-kernel`, and
+`dynamic-non-pie-direct`. Each candidate cell has exactly one same-mode pinned
+comparator. The consumer and plugin object bytes are identical within every
+pair; a missing, substituted, duplicate, unpaired, or extra cell rejects.
 
-Normal source fixtures must retain the expected public references before link,
-use the same object bytes in their compared lanes, and preserve all four
-candidate dynamic cells. No dummy stage callable, static fallback, ELF/binary
-mutation, dynamic-ELF authority review, AArch64 execution, family admission,
-or selector discharge is part of this component.
+`loader_structural_owner_startup_probe.c` requires a constructor dlfcn
+transaction before main and a second exact main transaction.
+`loader_structural_owner_registration_probe.c` requires its public dlfcn
+transaction before first application `pthread_create`, then a worker lookup and
+join. Both use only installed `dlfcn.h` and `pthread.h`; no source fixture
+names an internal stage, callback registration spelling, or private registry
+function. Pinned musl compares this public surface; it is never an oracle for
+calling historical internal stages.
 
-## Limits
+## Tests and limits before collection
 
-The stopped action is the separate private pthread dynamic-ELF authority review
-with final-only mutation controls. It remains stopped. This contract is limited
-to source/product/normal-runtime/retained-replay evidence and must stop rather
-than widen into that route. It does not claim arbitrary DSO search, mapping,
-relocation authority, a full loader family, campaign completion, qualification,
-promotion, or public x86 support.
+Focused reader/contract tests begin with missing, duplicate, reordered and
+extra identities; missing/changed raw counts; null/unknown rows; stale or
+cross-epoch source/products/nested reports; a changed link-input role/path/mode;
+a changed cfg, entry branch, canonical-libc selection, reservation/materialize/
+publish ordering, or owned-CRT tail; and missing/substituted/unpaired matrix
+cells. Source fixtures retain expected public references before link. Every
+candidate dynamic mode and its paired pinned comparator remains required.
+
+This design neither implements nor selects a receipt. It contains no native
+collection, selector admission, family/campaign/promotion/public-support claim,
+AArch64 execution, ELF or binary mutation control, or dynamic-ELF authority
+review. The stopped private pthread dynamic-ELF authority review with
+final-only mutation controls remains stopped and is not reframed here.
