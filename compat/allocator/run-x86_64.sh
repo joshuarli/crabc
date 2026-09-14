@@ -25,7 +25,7 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator --quick
   allocator-m1
   allocator-m2
-  allocator-tls | allocator-lifecycle [--only runtime-process-policy-first-arena] | allocator-startup-regular-arena [--reader-tests] | allocator-init-recursion | allocator-initialization-tld [--reader-tests] | allocator-fault | allocator-fault-seam-inventory [--compile-only|--retry-helper-regression|--mbind-boundary-regression|--reader-tests]
+  allocator-tls | allocator-lifecycle [--only runtime-process-policy-first-arena] | allocator-startup-regular-arena [--reader-tests] | allocator-init-recursion | allocator-initialization-tld [--reader-tests] | allocator-fault | allocator-fault-seam-inventory [--compile-only|--retry-helper-regression|--timeout-clock-helper-regression|--placement-warning-helper-regression|--mbind-boundary-regression|--huge-branch-diagnosis|--reader-tests]
   allocator-release-evidence | allocator-api-coverage | allocator-cmake-modes
   allocator-header-modes | allocator-static-modes
   allocator-remote-free | allocator-live-owner-full-medium-remote-release | allocator-live-owner-full-medium-one-remote-unfull-reuse | allocator-direct-remote | allocator-mapped-reclaim | allocator-mapped-adoption | allocator-regular-mapped-reclaim [--offline]
@@ -401,14 +401,20 @@ case "$command" in
             run_in_container python3 compat/allocator/x86_64_fault_seam_inventory.py --offline --compile-only
         elif [ "$#" -eq 1 ] && [ "$1" = --retry-helper-regression ]; then
             run_in_container python3 compat/allocator/x86_64_fault_seam_inventory.py --offline --retry-helper-regression
+        elif [ "$#" -eq 1 ] && [ "$1" = --timeout-clock-helper-regression ]; then
+            run_in_container python3 compat/allocator/x86_64_fault_seam_inventory.py --offline --timeout-clock-helper-regression
+        elif [ "$#" -eq 1 ] && [ "$1" = --placement-warning-helper-regression ]; then
+            run_in_container python3 compat/allocator/x86_64_fault_seam_inventory.py --offline --placement-warning-helper-regression
         elif [ "$#" -eq 1 ] && [ "$1" = --mbind-boundary-regression ]; then
             run_in_container python3 compat/allocator/x86_64_fault_seam_inventory.py --offline --mbind-boundary-regression
+        elif [ "$#" -eq 1 ] && [ "$1" = --huge-branch-diagnosis ]; then
+            run_in_container python3 compat/allocator/x86_64_fault_seam_inventory.py --offline --huge-branch-diagnosis
         elif [ "$#" -eq 1 ] && [ "$1" = --reader-tests ]; then
             run_in_container python3 compat/allocator/tests/test_x86_64_fault_seam_inventory.py
             run_in_container python3 compat/allocator/tests/test_x86_64_m2_fault_seam_inventory.py
             run_in_container python3 compat/allocator/tests/test_x86_64_source_map.py
         else
-            fail "allocator-fault-seam-inventory accepts only --compile-only, --retry-helper-regression, --mbind-boundary-regression, or --reader-tests"
+            fail "allocator-fault-seam-inventory accepts only --compile-only, --retry-helper-regression, --timeout-clock-helper-regression, --placement-warning-helper-regression, --mbind-boundary-regression, --huge-branch-diagnosis, or --reader-tests"
         fi
         ;;
     allocator-release-evidence)

@@ -180,6 +180,68 @@ def _valid_mbind_boundary_report(runner: object, profile: dict[str, object]) -> 
 
 
 class FaultInventoryShapeTests(unittest.TestCase):
+    def test_huge_branch_diagnosis_retains_raw_run_before_parser_admission(self) -> None:
+        """A malformed diagnosis stream keeps command/stdout/status without a passed receipt."""
+
+        class RecordingRunner:
+            def __init__(self) -> None:
+                self.writes: list[tuple[Path, dict[str, object]]] = []
+
+            def write_json(self, path: Path, value: dict[str, object]) -> None:
+                self.writes.append((path, value))
+
+        runner = RecordingRunner()
+        attempt = {
+            "build": {"command": ["musl-gcc"], "status": 0, "stdout": "", "stderr": ""},
+            "fixture": {"path": "compat/allocator/m2_vm_x86_64.c"},
+            "format": 1,
+            "mbind_direct_include_profile": {"directory": {"path": "owned"}},
+            "schema": INVENTORY.HUGE_BRANCH_DIAGNOSTIC_SCHEMA,
+            "upstream": {"revision": "pinned"},
+        }
+        run = {
+            "command": ["/evidence/huge-diagnosis"], "cwd": "/evidence", "status": 0,
+            "stdout": "malformed source control\n", "stderr": "",
+        }
+        with self.assertRaisesRegex(ValueError, "markers"):
+            INVENTORY._admit_huge_branch_diagnosis_run(runner, Path("/evidence"), attempt, run)
+        self.assertEqual([path.name for path, _ in runner.writes], ["huge-branch-diagnosis.raw.json"])
+        raw = runner.writes[0][1]
+        self.assertEqual(raw["status"], "unadmitted")
+        self.assertEqual(raw["run"], run)
+        self.assertNotIn("observations", raw)
+
+    def test_huge_branch_diagnosis_retains_each_fixed_case_and_conjunct(self) -> None:
+        """The native control must name, rather than collapse, a failed source arm."""
+
+        lines = ["CRABC_MI_M2_FAULT_SEAM_HUGE_DIAG_BEGIN"]
+        for name, selected in (
+            ("partial", 1), ("timeout", 2), ("placement", 4), ("noncontiguous", 3), ("free", 5),
+        ):
+            lines.append(
+                f"case={name} selected={selected} captured=1 exit_status=3 complete=0 "
+                "returned=1 page_size=1 memid=1 huge_mmap=1 fallback_mmap=1 "
+                "reserved_stats=1 committed_stats=1 clock=1 suppressed_options=1 "
+                "suppressed_relation=1 enabled_options=1 mbind_tuple=1 diagnostics=1 "
+                "cleanup=1 free_initial_owner=1 free_tuple=1 mmap_calls=1 "
+                "munmap_calls=0 clock_calls=0 syscall_calls=0 diagnostic_calls=0 "
+                "reserved_delta=1073741824 committed_delta=1073741824 pages=1 "
+                "size=1073741824 memkind=3 diagnostic_first_length=1 "
+                "diagnostic_second_length=0 diagnostic_first_hex=61 diagnostic_second_hex=-"
+            )
+        lines.append("CRABC_MI_M2_FAULT_SEAM_HUGE_DIAG_END")
+        parsed = INVENTORY._parse_huge_branch_diagnosis("\n".join(lines) + "\n")
+        self.assertEqual([row["case"] for row in parsed], [
+            "partial", "timeout", "placement", "noncontiguous", "free",
+        ])
+        self.assertEqual(parsed[0]["complete"], 0)
+        self.assertEqual(parsed[3]["memkind"], 3)
+
+        with self.assertRaisesRegex(ValueError, "case roster"):
+            INVENTORY._parse_huge_branch_diagnosis(
+                "\n".join(lines[:-2] + [lines[-1]]) + "\n"
+            )
+
     def test_mbind_profile_derivation_records_the_pinned_two_file_bytes(self) -> None:
         self.assertEqual(
             INVENTORY.MBIND_PROFILE_DERIVED_FILES,

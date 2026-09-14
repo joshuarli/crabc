@@ -2069,7 +2069,10 @@ The source-indexed OS/page-map fault receiver admission is separate:
 ```sh
 ./compat/allocator/run-x86_64.sh allocator-fault-seam-inventory
 ./compat/allocator/run-x86_64.sh allocator-fault-seam-inventory --retry-helper-regression
+./compat/allocator/run-x86_64.sh allocator-fault-seam-inventory --timeout-clock-helper-regression
+./compat/allocator/run-x86_64.sh allocator-fault-seam-inventory --placement-warning-helper-regression
 ./compat/allocator/run-x86_64.sh allocator-fault-seam-inventory --mbind-boundary-regression
+./compat/allocator/run-x86_64.sh allocator-fault-seam-inventory --huge-branch-diagnosis
 ```
 
 It retains a fixed pinned-C direct profile and the private Rust
@@ -2088,6 +2091,22 @@ The focused retry-helper regression compiles and runs only the fixture's
 synthetic three-call predicate. It accepts `1GiB, 1GiB, 2MiB` with the second
 and third calls at one hint, and rejects the former premature two-MiB flag,
 the final wrong flag, and a changed retry hint.
+
+The timeout-clock helper is a pinned C-only regression for the exact
+`stats.c:_mi_clock_start` calibration/start/elapsed sequence. It rejects the
+former `0,2,2,2` fixture readings and accepts the fixed `0,1,1,4` readings,
+which make the source stop after one completed huge page. The placement-warning
+helper follows `_mi_prim_alloc_huge_os_pages` through the one typed `mbind`
+failure, `errno`, and the registered output callback. It retains the
+same-thread prefix and the source formatter's `0x01` error body. These helpers
+are fixture regressions only; neither claims hardware huge-page success,
+ambient placement, or Rust diagnostic-output parity.
+
+`--huge-branch-diagnosis` is a separate C-only failure-analysis control. It
+retains each fixed arm's Boolean conjunction, source map/statistics counts, and
+bounded hex bytes of the two placement callback fragments before interpretation.
+Its raw build/run receipt is persisted before parser admission. A diagnosis
+record is not a passed fault-inventory or M2 receipt.
 
 The focused mbind-boundary regression derives a direct include from the exact
 pinned `src/prim/prim.c` and `src/prim/unix/prim.c` bytes. It records the sole

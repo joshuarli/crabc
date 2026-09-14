@@ -31,9 +31,15 @@ FIXTURE = ROOT / "compat/allocator/m2_vm_x86_64.c"
 REPORT_DEFAULT = ROOT / "compat/reports/allocator/x86_64/fault-seam-inventory.json"
 FAULT_PROFILE_DEFINE = "-DCRABC_M2_FAULT_SEAM_INVENTORY_PROFILE=1"
 HUGE_RETRY_HELPER_TEST_DEFINE = "-DCRABC_M2_FAULT_SEAM_RETRY_HELPER_TEST=1"
+HUGE_TIMEOUT_CLOCK_HELPER_TEST_DEFINE = "-DCRABC_M2_FAULT_SEAM_TIMEOUT_CLOCK_HELPER_TEST=1"
+HUGE_PLACEMENT_WARNING_HELPER_TEST_DEFINE = "-DCRABC_M2_FAULT_SEAM_PLACEMENT_WARNING_HELPER_TEST=1"
 MBIND_BOUNDARY_TEST_DEFINE = "-DCRABC_M2_FAULT_SEAM_MBIND_BOUNDARY_TEST=1"
+HUGE_BRANCH_DIAGNOSTIC_TEST_DEFINE = "-DCRABC_M2_FAULT_SEAM_HUGE_DIAGNOSTIC_TEST=1"
 HUGE_RETRY_HELPER_SCHEMA = "crabc-mimalloc-x86_64-fault-seam-retry-helper-regression"
+HUGE_TIMEOUT_CLOCK_HELPER_SCHEMA = "crabc-mimalloc-x86_64-fault-seam-timeout-clock-helper-regression"
+HUGE_PLACEMENT_WARNING_HELPER_SCHEMA = "crabc-mimalloc-x86_64-fault-seam-placement-warning-helper-regression"
 MBIND_BOUNDARY_SCHEMA = "crabc-mimalloc-x86_64-fault-seam-mbind-boundary-regression"
+HUGE_BRANCH_DIAGNOSTIC_SCHEMA = "crabc-mimalloc-x86_64-fault-seam-huge-branch-diagnosis"
 C_TRACE_BEGIN = "CRABC_MI_M2_FAULT_SEAM_INVENTORY_C_TRACE_BEGIN"
 C_TRACE_END = "CRABC_MI_M2_FAULT_SEAM_INVENTORY_C_TRACE_END"
 RUST_TRACE_BEGIN = "CRABC_MI_M2_FAULT_SEAM_INVENTORY_RUST_TRACE_BEGIN"
@@ -51,6 +57,34 @@ RUST_TRACE_KEYS = (
     "m2.fault.rust.huge.noncontiguous_adjustment_retains_rejected_cleanup_owner",
     "m2.fault.rust.huge.placement_failure_is_best_effort_and_retains_mapping_owner",
     "m2.fault.rust.huge.free_continues_after_failed_page_and_records_retry_bits",
+)
+HUGE_BRANCH_DIAGNOSTIC_BEGIN = "CRABC_MI_M2_FAULT_SEAM_HUGE_DIAG_BEGIN"
+HUGE_BRANCH_DIAGNOSTIC_END = "CRABC_MI_M2_FAULT_SEAM_HUGE_DIAG_END"
+HUGE_BRANCH_DIAGNOSTIC_CASES = (
+    "partial", "timeout", "placement", "noncontiguous", "free",
+)
+HUGE_BRANCH_DIAGNOSTIC_SELECTED = {
+    "partial": 1,
+    "timeout": 2,
+    "placement": 4,
+    "noncontiguous": 3,
+    "free": 5,
+}
+HUGE_BRANCH_DIAGNOSTIC_BOOLEAN_FIELDS = (
+    "captured", "complete", "returned", "page_size", "memid", "huge_mmap", "fallback_mmap",
+    "reserved_stats", "committed_stats", "clock", "suppressed_options", "suppressed_relation",
+    "enabled_options", "mbind_tuple", "diagnostics", "cleanup", "free_initial_owner", "free_tuple",
+)
+HUGE_BRANCH_DIAGNOSTIC_COUNT_FIELDS = (
+    "mmap_calls", "munmap_calls", "clock_calls", "syscall_calls", "diagnostic_calls",
+    "diagnostic_first_length", "diagnostic_second_length", "pages", "size",
+)
+HUGE_BRANCH_DIAGNOSTIC_FRAGMENT_FIELDS = (
+    "diagnostic_first_hex", "diagnostic_second_hex",
+)
+HUGE_BRANCH_DIAGNOSTIC_FIELDS = (
+    "case", "selected", *HUGE_BRANCH_DIAGNOSTIC_BOOLEAN_FIELDS, *HUGE_BRANCH_DIAGNOSTIC_COUNT_FIELDS,
+    "reserved_delta", "committed_delta", "memkind", "exit_status", *HUGE_BRANCH_DIAGNOSTIC_FRAGMENT_FIELDS,
 )
 RUST_TARGET = "os::tests::emit_m2_fault_seam_inventory_c_rust_trace"
 SOURCE_UNITS = (
@@ -842,6 +876,93 @@ def _parse_fixed_trace(output: str, *, begin: str, end: str, keys: Sequence[str]
     return values
 
 
+def _parse_huge_branch_diagnosis(output: str) -> list[dict[str, int | str]]:
+    """Read the finite C-only failed-conjunction control without inferring success."""
+
+    lines = output.splitlines()
+    if not lines or lines[0] != HUGE_BRANCH_DIAGNOSTIC_BEGIN or lines[-1] != HUGE_BRANCH_DIAGNOSTIC_END:
+        raise ValueError("huge branch diagnosis markers changed")
+    if len(lines) != len(HUGE_BRANCH_DIAGNOSTIC_CASES) + 2:
+        raise ValueError("huge branch diagnosis case roster changed")
+    rows: list[dict[str, int | str]] = []
+    expected_fields = set(HUGE_BRANCH_DIAGNOSTIC_FIELDS)
+    for expected_case, line in zip(HUGE_BRANCH_DIAGNOSTIC_CASES, lines[1:-1]):
+        values: dict[str, str] = {}
+        for token in line.split(" "):
+            if token.count("=") != 1:
+                raise ValueError("huge branch diagnosis observation is malformed")
+            key, value = token.split("=", 1)
+            if not key or not value or key in values:
+                raise ValueError("huge branch diagnosis observation is malformed")
+            values[key] = value
+        if set(values) != expected_fields or values.get("case") != expected_case:
+            raise ValueError("huge branch diagnosis case roster changed")
+        row: dict[str, int | str] = {"case": expected_case}
+        for key in expected_fields - {"case", *HUGE_BRANCH_DIAGNOSTIC_FRAGMENT_FIELDS}:
+            try:
+                parsed = int(values[key], 10)
+            except ValueError as error:
+                raise ValueError("huge branch diagnosis integer changed") from error
+            row[key] = parsed
+        for key in HUGE_BRANCH_DIAGNOSTIC_FRAGMENT_FIELDS:
+            fragment = values[key]
+            if fragment != "-" and (
+                len(fragment) % 2 != 0 or any(character not in "0123456789abcdef" for character in fragment)
+            ):
+                raise ValueError("huge branch diagnosis fragment changed")
+            row[key] = fragment
+        if row["selected"] != HUGE_BRANCH_DIAGNOSTIC_SELECTED[expected_case]:
+            raise ValueError("huge branch diagnosis selected arm changed")
+        if any(row[key] not in (0, 1) for key in HUGE_BRANCH_DIAGNOSTIC_BOOLEAN_FIELDS):
+            raise ValueError("huge branch diagnosis Boolean changed")
+        if row["captured"] != 1 or row["exit_status"] not in (0, 3):
+            raise ValueError("huge branch diagnosis child capture changed")
+        if any(row[key] < 0 for key in HUGE_BRANCH_DIAGNOSTIC_COUNT_FIELDS):
+            raise ValueError("huge branch diagnosis count changed")
+        for length_key, fragment_key in (
+            ("diagnostic_first_length", "diagnostic_first_hex"),
+            ("diagnostic_second_length", "diagnostic_second_hex"),
+        ):
+            fragment = str(row[fragment_key])
+            if (row[length_key] == 0 and fragment != "-") or (
+                row[length_key] != 0 and len(fragment) != row[length_key] * 2
+            ):
+                raise ValueError("huge branch diagnosis fragment length changed")
+        rows.append(row)
+    if len(rows) != len(HUGE_BRANCH_DIAGNOSTIC_CASES):
+        raise ValueError("huge branch diagnosis case roster changed")
+    return rows
+
+
+def _write_huge_branch_diagnosis_raw(
+    runner: Any, artifacts: Path, attempt: Mapping[str, Any], run: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Persist the direct C execution before any diagnostic-output interpretation."""
+
+    raw = {**attempt, "run": dict(run), "status": "unadmitted"}
+    runner.write_json(artifacts / "huge-branch-diagnosis.raw.json", raw)
+    return raw
+
+
+def _admit_huge_branch_diagnosis_run(
+    runner: Any, artifacts: Path, attempt: Mapping[str, Any], run: Mapping[str, Any], *,
+    raw_already_retained: bool = False,
+) -> dict[str, Any]:
+    """Parse a retained C-only control; this never marks the fault inventory passed."""
+
+    if not raw_already_retained:
+        _write_huge_branch_diagnosis_raw(runner, artifacts, attempt, run)
+    observations = _parse_huge_branch_diagnosis(str(run["stdout"]))
+    report = {
+        **attempt,
+        "observations": observations,
+        "run": dict(run),
+        "status": "diagnostic-observations",
+    }
+    runner.write_json(artifacts / "huge-branch-diagnosis.json", report)
+    return report
+
+
 def _digest_trace(trace: Mapping[str, int]) -> str:
     return hashlib.sha256(
         json.dumps(dict(trace), separators=(",", ":"), sort_keys=True).encode("utf-8")
@@ -1210,6 +1331,42 @@ def _huge_retry_helper_c_command(
     return command
 
 
+def _huge_branch_diagnostic_c_command(
+    runner: Any, compiler: str, source: Path, binary: Path, *, direct_include: Path
+) -> list[str]:
+    """Build the isolated C control that retains each fixed huge-arm conjunction."""
+
+    command = _huge_branch_c_command(
+        runner, compiler, source, binary, direct_include=direct_include
+    )
+    command.insert(command.index(FAULT_PROFILE_DEFINE) + 1, HUGE_BRANCH_DIAGNOSTIC_TEST_DEFINE)
+    return command
+
+
+def _huge_timeout_clock_helper_c_command(
+    runner: Any, compiler: str, source: Path, binary: Path, *, direct_include: Path
+) -> list[str]:
+    """Build the isolated source-calibrated huge-timeout clock regression."""
+
+    command = _huge_branch_c_command(
+        runner, compiler, source, binary, direct_include=direct_include
+    )
+    command.insert(command.index(FAULT_PROFILE_DEFINE) + 1, HUGE_TIMEOUT_CLOCK_HELPER_TEST_DEFINE)
+    return command
+
+
+def _huge_placement_warning_helper_c_command(
+    runner: Any, compiler: str, source: Path, binary: Path, *, direct_include: Path
+) -> list[str]:
+    """Build the isolated pinned primitive placement-warning regression."""
+
+    command = _huge_branch_c_command(
+        runner, compiler, source, binary, direct_include=direct_include
+    )
+    command.insert(command.index(FAULT_PROFILE_DEFINE) + 1, HUGE_PLACEMENT_WARNING_HELPER_TEST_DEFINE)
+    return command
+
+
 def _mbind_boundary_c_command(
     runner: Any, compiler: str, source: Path, binary: Path, *, direct_include: Path,
     fixture: Path = FIXTURE,
@@ -1309,6 +1466,171 @@ def run_huge_retry_helper_regression(*, offline: bool) -> dict[str, Any]:
             }
             runner.write_json(artifacts / "partial-huge-retry-helper.json", report)
             return report
+    except runner.HarnessError as error:
+        raise EvidenceError(str(error)) from error
+
+
+def run_huge_timeout_clock_helper_regression(*, offline: bool) -> dict[str, Any]:
+    """Execute only the four-read source-calibrated C timeout helper."""
+
+    runner = _load_runner()
+    try:
+        runner.require_native_x86_64()
+        pin = runner.load_pin()
+        archive = runner.fetch_archive(pin, offline)
+        compiler = runner.require_tool("musl-gcc")
+        artifacts = runner.ARTIFACT_ROOT / "x86_64/fault-seam-inventory"
+        artifacts.mkdir(parents=True, exist_ok=True)
+        with runner.temporary_directory(prefix="crabc-mimalloc-fault-seam-timeout-clock-") as temporary:
+            source = runner.safe_extract(archive, Path(temporary), pin["archive_root"])
+            _source_files(runner, source)
+            profile, direct_include = _new_retained_mbind_profile(
+                runner, source, artifacts, artifact_name="timeout-clock-helper-mbind-direct-include"
+            )
+            pre_compile_files = _retained_profile_file_records(runner, profile)
+            binary = artifacts / "m2-fault-seam-timeout-clock-helper"
+            build = runner.command_record(
+                _huge_timeout_clock_helper_c_command(
+                    runner, compiler, source, binary, direct_include=direct_include
+                ),
+                cwd=source,
+                timeout_seconds=300,
+            )
+            post_compile_files = _retained_profile_file_records(runner, profile)
+            attempt = {
+                "build": {**build, "cwd": str(source)},
+                "fixture": runner.artifact_record(FIXTURE),
+                "format": 1,
+                "mbind_direct_include_profile": _mbind_profile_record(
+                    runner, profile, direct_include,
+                    pre_compile_files=pre_compile_files, post_compile_files=post_compile_files,
+                ),
+                "schema": HUGE_TIMEOUT_CLOCK_HELPER_SCHEMA,
+                "upstream": {
+                    "archive_sha256": pin["sha256"],
+                    "revision": pin["revision"],
+                },
+            }
+            runner.write_json(artifacts / "huge-timeout-clock-helper.build.json", attempt)
+            runner.require_success(build, "pinned C huge timeout clock helper build")
+            run = {**runner.command_record([str(binary)], cwd=source, timeout_seconds=60), "cwd": str(source)}
+            raw = {**attempt, "run": run, "status": "unadmitted"}
+            runner.write_json(artifacts / "huge-timeout-clock-helper.raw.json", raw)
+            runner.require_success(run, "pinned C huge timeout clock helper")
+            if str(run["stdout"]) != "allocator fault seam timeout clock helper: PASS\n" or run["stderr"]:
+                raise EvidenceError("pinned C huge timeout clock helper output changed")
+            report = {**attempt, "run": run, "status": "passed"}
+            runner.write_json(artifacts / "huge-timeout-clock-helper.json", report)
+            return report
+    except runner.HarnessError as error:
+        raise EvidenceError(str(error)) from error
+
+
+def run_huge_placement_warning_helper_regression(*, offline: bool) -> dict[str, Any]:
+    """Execute only the typed-mbind pinned C placement warning helper."""
+
+    runner = _load_runner()
+    try:
+        runner.require_native_x86_64()
+        pin = runner.load_pin()
+        archive = runner.fetch_archive(pin, offline)
+        compiler = runner.require_tool("musl-gcc")
+        artifacts = runner.ARTIFACT_ROOT / "x86_64/fault-seam-inventory"
+        artifacts.mkdir(parents=True, exist_ok=True)
+        with runner.temporary_directory(prefix="crabc-mimalloc-fault-seam-placement-warning-") as temporary:
+            source = runner.safe_extract(archive, Path(temporary), pin["archive_root"])
+            _source_files(runner, source)
+            profile, direct_include = _new_retained_mbind_profile(
+                runner, source, artifacts, artifact_name="placement-warning-helper-mbind-direct-include"
+            )
+            pre_compile_files = _retained_profile_file_records(runner, profile)
+            binary = artifacts / "m2-fault-seam-placement-warning-helper"
+            build = runner.command_record(
+                _huge_placement_warning_helper_c_command(
+                    runner, compiler, source, binary, direct_include=direct_include
+                ),
+                cwd=source,
+                timeout_seconds=300,
+            )
+            post_compile_files = _retained_profile_file_records(runner, profile)
+            attempt = {
+                "build": {**build, "cwd": str(source)},
+                "fixture": runner.artifact_record(FIXTURE),
+                "format": 1,
+                "mbind_direct_include_profile": _mbind_profile_record(
+                    runner, profile, direct_include,
+                    pre_compile_files=pre_compile_files, post_compile_files=post_compile_files,
+                ),
+                "schema": HUGE_PLACEMENT_WARNING_HELPER_SCHEMA,
+                "upstream": {
+                    "archive_sha256": pin["sha256"],
+                    "revision": pin["revision"],
+                },
+            }
+            runner.write_json(artifacts / "huge-placement-warning-helper.build.json", attempt)
+            runner.require_success(build, "pinned C huge placement warning helper build")
+            run = {**runner.command_record([str(binary)], cwd=source, timeout_seconds=60), "cwd": str(source)}
+            raw = {**attempt, "run": run, "status": "unadmitted"}
+            runner.write_json(artifacts / "huge-placement-warning-helper.raw.json", raw)
+            runner.require_success(run, "pinned C huge placement warning helper")
+            if str(run["stdout"]) != "allocator fault seam placement warning helper: PASS\n" or run["stderr"]:
+                raise EvidenceError("pinned C huge placement warning helper output changed")
+            report = {**attempt, "run": run, "status": "passed"}
+            runner.write_json(artifacts / "huge-placement-warning-helper.json", report)
+            return report
+    except runner.HarnessError as error:
+        raise EvidenceError(str(error)) from error
+
+
+def run_huge_branch_diagnosis(*, offline: bool) -> dict[str, Any]:
+    """Run the C-only diagnostic control after a failed fixed huge-arm matrix."""
+
+    runner = _load_runner()
+    try:
+        runner.require_native_x86_64()
+        pin = runner.load_pin()
+        archive = runner.fetch_archive(pin, offline)
+        compiler = runner.require_tool("musl-gcc")
+        artifacts = runner.ARTIFACT_ROOT / "x86_64/fault-seam-inventory"
+        artifacts.mkdir(parents=True, exist_ok=True)
+        with runner.temporary_directory(prefix="crabc-mimalloc-fault-seam-huge-diagnosis-") as temporary:
+            source = runner.safe_extract(archive, Path(temporary), pin["archive_root"])
+            _source_files(runner, source)
+            profile, direct_include = _new_retained_mbind_profile(
+                runner, source, artifacts, artifact_name="huge-branch-diagnosis-mbind-direct-include"
+            )
+            pre_compile_files = _retained_profile_file_records(runner, profile)
+            binary = artifacts / "m2-fault-seam-huge-branch-diagnosis"
+            build = runner.command_record(
+                _huge_branch_diagnostic_c_command(
+                    runner, compiler, source, binary, direct_include=direct_include
+                ),
+                cwd=source,
+                timeout_seconds=300,
+            )
+            post_compile_files = _retained_profile_file_records(runner, profile)
+            attempt = {
+                "build": {**build, "cwd": str(source)},
+                "fixture": runner.artifact_record(FIXTURE),
+                "format": 1,
+                "mbind_direct_include_profile": _mbind_profile_record(
+                    runner, profile, direct_include,
+                    pre_compile_files=pre_compile_files, post_compile_files=post_compile_files,
+                ),
+                "schema": HUGE_BRANCH_DIAGNOSTIC_SCHEMA,
+                "upstream": {
+                    "archive_sha256": pin["sha256"],
+                    "revision": pin["revision"],
+                },
+            }
+            runner.write_json(artifacts / "huge-branch-diagnosis.build.json", attempt)
+            runner.require_success(build, "pinned C huge branch diagnosis build")
+            run = {**runner.command_record([str(binary)], cwd=source, timeout_seconds=60), "cwd": str(source)}
+            _write_huge_branch_diagnosis_raw(runner, artifacts, attempt, run)
+            runner.require_success(run, "pinned C huge branch diagnosis")
+            return _admit_huge_branch_diagnosis_run(
+                runner, artifacts, attempt, run, raw_already_retained=True
+            )
     except runner.HarnessError as error:
         raise EvidenceError(str(error)) from error
 
@@ -1572,14 +1894,20 @@ def main() -> int:
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--compile-only", action="store_true")
     parser.add_argument("--retry-helper-regression", action="store_true")
+    parser.add_argument("--timeout-clock-helper-regression", action="store_true")
+    parser.add_argument("--placement-warning-helper-regression", action="store_true")
     parser.add_argument("--mbind-boundary-regression", action="store_true")
+    parser.add_argument("--huge-branch-diagnosis", action="store_true")
     parser.add_argument("--report", type=Path, default=REPORT_DEFAULT)
     arguments = parser.parse_args()
     try:
         selected_modes = sum((
             arguments.compile_only,
             arguments.retry_helper_regression,
+            arguments.timeout_clock_helper_regression,
+            arguments.placement_warning_helper_regression,
             arguments.mbind_boundary_regression,
+            arguments.huge_branch_diagnosis,
         ))
         if selected_modes > 1:
             raise EvidenceError("fault inventory accepts one focused mode")
@@ -1591,9 +1919,24 @@ def main() -> int:
             run_huge_retry_helper_regression(offline=arguments.offline)
             print("allocator x86-64 fault seam inventory: partial huge retry helper PASS")
             return 0
+        if arguments.timeout_clock_helper_regression:
+            run_huge_timeout_clock_helper_regression(offline=arguments.offline)
+            print("allocator x86-64 fault seam inventory: huge timeout clock helper PASS")
+            return 0
+        if arguments.placement_warning_helper_regression:
+            run_huge_placement_warning_helper_regression(offline=arguments.offline)
+            print("allocator x86-64 fault seam inventory: huge placement warning helper PASS")
+            return 0
         if arguments.mbind_boundary_regression:
             run_mbind_boundary_regression(offline=arguments.offline)
             print("allocator x86-64 fault seam inventory: typed mbind boundary PASS")
+            return 0
+        if arguments.huge_branch_diagnosis:
+            report = run_huge_branch_diagnosis(offline=arguments.offline)
+            print(
+                "allocator x86-64 fault seam inventory: huge branch diagnosis PASS "
+                f"({len(report['observations'])} fixed C arms)"
+            )
             return 0
         report = run_evidence(offline=arguments.offline, report_path=arguments.report)
     except (EvidenceError, OSError, json.JSONDecodeError) as error:

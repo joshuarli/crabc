@@ -2469,6 +2469,13 @@ only after the fixture enables the pinned source option; a Rust diagnostic
 output owner remains an explicit option-processing prerequisite. The component
 and M2 remain partial.
 
+Its C-only diagnostic controls are retained separately from that admission.
+They pin `stats.c`'s four-read clock calibration/start/elapsed shape and the
+typed-`mbind` placement warning's same-thread prefix plus source-formatted
+`0x01` body. The controls retain raw build/run records before interpretation
+and can diagnose a failed fixed source arm, but they do not add an M2 check or
+qualify hardware huge pages, ambient NUMA placement, or Rust output parity.
+
 The C placement profile derives a private direct include from exact pinned
 `src/prim/prim.c` and `src/prim/unix/prim.c` bytes. Its receipt retains the
 single `mi_prim_mbind` replacement and both derived files under an owned
