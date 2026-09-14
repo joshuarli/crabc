@@ -818,12 +818,14 @@ def _input_paths(root: Path, *, static_product: Path, dynamic_product: Path, sta
         "image_manifest": root / IMAGE_MANIFEST_SOURCE,
         "oracle_compiler": oracle_compiler, "musl_shared": musl_shared,
         "timeout": Path(IMAGE_INPUT_PATHS["timeout"]), "chroot": Path(IMAGE_INPUT_PATHS["chroot"]),
-        "static_preparation": static_preparation, "base_inventory": base_inventory,
-        "full_facts": full_facts, "loader_debug_report": loader_debug_report,
-        "loader_runtime_registry_report": loader_runtime_registry_report,
     }
     values.update({name: static_product / relative for name, relative in STATIC_ROLES.items()})
     values.update({name: dynamic_product / relative for name, relative in DYNAMIC_ROLES.items()})
+    values.update({
+        "static_preparation": static_preparation, "base_inventory": base_inventory,
+        "full_facts": full_facts, "loader_debug_report": loader_debug_report,
+        "loader_runtime_registry_report": loader_runtime_registry_report,
+    })
     require(tuple(values) == INPUT_NAMES, "component input roster differs")
     return values
 

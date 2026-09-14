@@ -205,6 +205,61 @@ class LoaderStructuralOwnerFactsTests(unittest.TestCase):
 
 
 class LoaderStructuralOwnerLifecycleTests(unittest.TestCase):
+    def test_input_paths_and_begin_collection_preserve_the_canonical_role_roster(self) -> None:
+        """Exercise the actual begin entry through its ordered product-role map."""
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            root = Path(temporary)
+            static, dynamic = root / "static", root / "dynamic"
+            static.mkdir()
+            dynamic.mkdir()
+            reports = {}
+            for name in ("static_preparation", "base_inventory", "full_facts",
+                         "loader_debug_report", "loader_runtime_registry_report"):
+                reports[name] = root / f"{name}.json"
+                reports[name].write_text("{}\n", encoding="utf-8")
+            arguments = {
+                "static_product": static, "dynamic_product": dynamic, **reports,
+                "oracle_compiler": Path(reader.IMAGE_INPUT_PATHS["oracle_compiler"]),
+                "musl_shared": Path(reader.IMAGE_INPUT_PATHS["musl_shared"]),
+            }
+            captured: dict[str, object] = {}
+
+            def capture_inputs(_root: Path, _output: Path, **paths: Path) -> dict[str, object]:
+                self.assertEqual(tuple(paths), reader.INPUT_NAMES)
+                self.assertEqual(paths["static_libc"], static / reader.STATIC_ROLES["static_libc"])
+                self.assertEqual(paths["dynamic_loader"], dynamic / reader.DYNAMIC_ROLES["dynamic_loader"])
+                for name in reader.INPUT_NAMES:
+                    if name in reader.STATIC_ROLES:
+                        mode = 0o755 if name == "static_driver" else reader.product_evidence.STATIC_LINK_INPUT_MODES[
+                            reader.STATIC_ROLES[name]]
+                    elif name in reader.DYNAMIC_ROLES:
+                        mode = 0o755 if name in {"dynamic_driver", "dynamic_loader"} else reader.product_evidence.DYNAMIC_LINK_INPUT_MODES[
+                            reader.DYNAMIC_ROLES[name]]
+                    else:
+                        mode = 0o644
+                    captured[name] = {"path": f"fixture/{name}", "sha256": "0" * 64,
+                                      "size": 0, "mode": mode, "retained": f"retained/inputs/{name}"}
+                return captured
+
+            source = {"revision": "fixture", "tree": "tree", "source_sha256": "source"}
+            algorithm, upstream = {"algorithm": "fixture"}, {"upstream": "fixture"}
+            output = root / "receipt"
+            with mock.patch.object(reader, "current_source_identity", return_value=source), \
+                 mock.patch.object(reader, "validate_source_algorithms", return_value=algorithm), \
+                 mock.patch.object(reader, "_validate_upstream", return_value=upstream), \
+                 mock.patch.object(reader, "_capture_inputs", side_effect=capture_inputs):
+                begin = reader.begin_collection(root=ROOT, output=output, image=reader.PINNED_IMAGE, **arguments)
+            self.assertEqual(tuple(begin["inputs"]), reader.INPUT_NAMES)
+            self.assertEqual(begin["inputs"], captured)
+            self.assertEqual(reader._read_json(output / "begin.json", "fixture begin"), begin)
+            self.assertEqual(set(begin["source_contract"]), set(reader.SOURCE_CONTRACT_PATHS))
+            reader._validate_begin_record(
+                begin, source=source, contract=reader._contract(), collector_output=begin["output"],
+                inputs=captured, source_contract=begin["source_contract"], source_algorithm=algorithm,
+                upstream=upstream)
+
     def test_begin_record_requires_every_preexecution_cohort_join(self) -> None:
         source = {"revision": "r", "tree": "t", "source_sha256": "s"}
         contract = {"schema": "contract", "id": "owner"}
