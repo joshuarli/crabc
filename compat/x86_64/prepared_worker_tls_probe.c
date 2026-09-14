@@ -27,12 +27,15 @@
 #define REQUIRE(c) do { if (!(c)) { dprintf(2, "prepared-worker failure line=%d\n", __LINE__); _Exit(91); } } while (0)
 #define INITIAL 0x51a7
 #define MAX_VIEWS 8
+#define WORKER_GENERATIONS 3
 static _Thread_local _Alignas(64) int initialized = INITIAL;
 static _Thread_local unsigned char zero[513];
 static pthread_key_t key;
 static int owned, dynamic;
-static int *(*image[2])(void);
-static unsigned char *(*tbss[2])(void);
+static int active_generations=2;
+static const char *generation3_path;
+static int *(*image[WORKER_GENERATIONS])(void);
+static unsigned char *(*tbss[WORKER_GENERATIONS])(void);
 
 /* Exact source-owned observer layout from x86_64_runtime_tls_view.rs.
  * A view is borrowed only while this worker remains live and the loader has
@@ -57,7 +60,8 @@ struct worker {
     uintptr_t initial_dtv, initial_count;
     uintptr_t view_addresses[MAX_VIEWS];
     unsigned view_count;
-    uintptr_t runtime_addresses[2];
+    uintptr_t runtime_addresses[WORKER_GENERATIONS];
+    unsigned runtime_count;
 };
 
 static void wait_at_least(atomic_int *value, int wanted)
@@ -106,9 +110,10 @@ static void check_live(struct worker *worker)
     REQUIRE(*(unsigned char *)worker->zero_address==(unsigned char)worker->role);
     require_mapped(worker->tp,1);
     if (dynamic) {
-        for (int n=0;n<2;n++) {
+        REQUIRE(worker->runtime_count==active_generations);
+        for (unsigned n=0;n<worker->runtime_count;n++) {
             REQUIRE(worker->runtime_addresses[n]);
-            REQUIRE(*(int *)worker->runtime_addresses[n]==700+10*worker->role+n);
+            REQUIRE(*(int *)worker->runtime_addresses[n]==700+10*worker->role+(int)n);
             require_mapped(worker->runtime_addresses[n],1);
         }
     }
@@ -122,6 +127,8 @@ static void destructor(void *opaque)
 }
 static void inspect_runtime(struct worker *worker, int index)
 {
+    REQUIRE(index>=0 && index<WORKER_GENERATIONS);
+    REQUIRE((unsigned)index==worker->runtime_count);
     REQUIRE(image[index] && tbss[index]);
     int *cell=image[index]();
     unsigned char *bytes=tbss[index]();
@@ -130,8 +137,10 @@ static void inspect_runtime(struct worker *worker, int index)
     *cell=700+10*worker->role+index;
     bytes[256]=(unsigned char)worker->role;
     worker->runtime_addresses[index]=(uintptr_t)cell;
+    worker->runtime_count=(unsigned)index+1;
 }
 static void *entry(void *opaque);
+static void load_generation(const char *path, int index);
 static void worker_fork(struct worker *worker)
 {
     pid_t child=fork();
@@ -139,12 +148,31 @@ static void worker_fork(struct worker *worker)
     if (!child) {
         REQUIRE(thread_pointer()==worker->tp);
         check_live(worker);
+        if (dynamic) {
+            uintptr_t old0=worker->runtime_addresses[0],old1=worker->runtime_addresses[1];
+            struct runtime_view *before=owned ? current_view(worker->tp) : 0;
+            load_generation(generation3_path,2);
+            active_generations=3;
+            inspect_runtime(worker,2);
+            REQUIRE(worker->runtime_addresses[0]==old0 && worker->runtime_addresses[1]==old1);
+            REQUIRE(*(int *)old0==700+10*worker->role && *(int *)old1==701+10*worker->role);
+            if (owned) {
+                struct runtime_view *after=current_view(worker->tp);
+                REQUIRE(before && after && after!=before && after->previous==before);
+                REQUIRE(after->module_count==before->module_count+1);
+                REQUIRE(worker->view_count<MAX_VIEWS);
+                worker->view_addresses[worker->view_count++]=(uintptr_t)after;
+                require_mapped((uintptr_t)after,1);
+            }
+            check_live(worker);
+        }
         struct worker fresh={.role=4,.action=NORMAL,.already_loaded=1};
         pthread_t thread;
         REQUIRE(pthread_create(&thread,0,entry,&fresh)==0);
         wait_at_least(&fresh.ready,3);
         REQUIRE(fresh.tp!=worker->tp);
         check_live(&fresh);
+        for (int n=0;n<active_generations;n++) REQUIRE(fresh.runtime_addresses[n]!=worker->runtime_addresses[n]);
         atomic_store_explicit(&fresh.phase,3,memory_order_release);
         void *result=0;
         REQUIRE(pthread_join(thread,&result)==0 && result==&fresh);
@@ -188,6 +216,7 @@ static void *entry(void *opaque)
         REQUIRE((uintptr_t)image[0]()==worker->runtime_addresses[0]);
         REQUIRE(*image[0]()==700+10*worker->role);
         inspect_runtime(worker,1);
+        if (worker->already_loaded && active_generations==3) inspect_runtime(worker,2);
         if (owned && !worker->already_loaded) {
             struct runtime_view *last=current_view(worker->tp);
             REQUIRE(first && last && first!=last && last->module_count==first->module_count+1);
@@ -227,10 +256,12 @@ static void released(struct worker *worker)
 }
 int main(int argc,char **argv)
 {
-    REQUIRE(argc==5);
+    REQUIRE(argc==6);
     owned=!strcmp(argv[2],"owned");
     REQUIRE(owned || !strcmp(argv[2],"portable"));
     dynamic=strcmp(argv[3],"-")!=0;
+    generation3_path=argv[5];
+    REQUIRE(!dynamic || strcmp(generation3_path,"-"));
     enum action action;
     if (!strcmp(argv[1],"normal")) action=NORMAL;
     else if (!strcmp(argv[1],"explicit")) action=EXPLICIT;
@@ -258,7 +289,7 @@ int main(int argc,char **argv)
     wait_at_least(&fresh.ready,3);
     REQUIRE(fresh.tp!=first.tp && fresh.initialized_address!=first.initialized_address);
     check_live(&fresh);
-    for (int n=0;dynamic && n<2;n++) REQUIRE(fresh.runtime_addresses[n]!=first.runtime_addresses[n]);
+    for (int n=0;dynamic && n<active_generations;n++) REQUIRE(fresh.runtime_addresses[n]!=first.runtime_addresses[n]);
     if (action==CANCELLED) REQUIRE(pthread_cancel(first_thread)==0);
     else atomic_store_explicit(&first.phase,3,memory_order_release);
     if (action==DETACHED) {
@@ -286,7 +317,7 @@ int main(int argc,char **argv)
     released(&fresh);
     if (action==DETACHED) released(&first);
     REQUIRE(initialized==INITIAL+99 && zero[0]==99);
-    for (int n=0;dynamic && n<2;n++) REQUIRE(*image[n]()==900+n && tbss[n]()[256]==99);
+    for (int n=0;dynamic && n<active_generations;n++) REQUIRE(*image[n]()==900+n && tbss[n]()[256]==99);
     REQUIRE(pthread_key_delete(key)==0);
     printf("prepared-worker-tls case=%s initial=ready distinct=1 retained=1 cleanup=1 reclaimed=%s fork=%d\n",
            argv[1],owned?"owned":"unspecified",action==FORK_WORKER);

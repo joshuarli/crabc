@@ -8,6 +8,11 @@ They are registry operations, with no same-name loader dynamic export.
 The seven frozen `__rc_*` spellings are accounted by named native source
 replacements. They do not imply separate allocation or offset-query exports.
 
+The current receipt is `crabc.x86_64-prepared-worker-tls-evidence/v2`.
+It requires the active full-dynamic-fork source order and post-fork third
+TLS-generation account below; an older v1 receipt lacks those mandatory fields
+and cannot be replayed as this observation.
+
 The loader token is four native words: mapping, mapping size, thread pointer,
 and allocation ID. The ID distinguishes a live allocation from a stale token
 whose address might later be reused. The installed pthread owner initializes
@@ -29,9 +34,10 @@ contract and current source define growth and prepared worker ownership here.
 ## Finite observations
 
 One ordinary C object is compiled once and passed to all four candidate and
-three musl executable links. Two additional PIC objects instantiate explicit
-TLS generations 1 and 2; each identical object is passed to the owned and musl
-DSO links. The installed candidate drivers produce their actual retained link
+three musl executable links. Three additional PIC objects instantiate explicit TLS generations 1, 2,
+and 3. The ordinary normal/exit/cancellation cells load generations 1 and 2;
+the dynamic fork-worker child alone loads generation 3 after fork. Each
+identical object is passed to the owned and musl DSO links. The installed candidate drivers produce their actual retained link
 receipts. No supplied product tree receives fixture files.
 
 The five cases are normal callback return, explicit `pthread_exit`, detached
@@ -46,8 +52,12 @@ static-PIE comparison.
 The C boundary verifies initialized TLS, zero TBSS, independent thread
 addresses and values, callback/TSD lifetime, and fork ownership. In dynamic
 modes, an existing worker observes two later `dlopen` TLS generations while
-retaining its old addresses/values; a worker created afterward sees fresh
-initial images. Musl is the oracle for these common C behaviors. Candidate
+retaining its old addresses/values. In the fork-worker child, that surviving
+worker loads a third generation after fork, retains its first two values and
+receives the new one, then a freshly created child worker receives the three
+fresh initial images. This makes the post-fork adopted main the target of the
+next all-thread TLS growth. A worker created after the ordinary two-generation
+case sees fresh initial images too. Musl is the oracle for these common C behaviors. Candidate
 checks additionally inspect the source-defined coherent view and use
 `mincore` on retained addresses to distinguish live mappings from joined or
 reaped mappings. No stale pointer is dereferenced, and no musl allocation

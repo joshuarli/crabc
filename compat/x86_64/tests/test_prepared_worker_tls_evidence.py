@@ -29,6 +29,10 @@ class PreparedWorkerTlsEvidenceTests(unittest.TestCase):
                 'artifacts': {'candidate-shared': {'identity': {'sha256': 'a'*64}},
                               'candidate-loader': {'identity': {'sha256': 'b'*64}}}}
 
+    def test_report_schema_requires_the_fork_order_and_growth_receipt_shape(self):
+        self.assertEqual(EVIDENCE.SCHEMA,'crabc.x86_64-prepared-worker-tls-evidence/v2')
+        self.assertEqual(EVIDENCE.load_contract()['schema'],'crabc.x86_64-prepared-worker-tls-contract/v1')
+
     def test_contract_keeps_loader_token_and_frozen_replacements_distinct(self):
         contract = EVIDENCE.load_contract()
         self.assertEqual(len(contract['legacy_replacement']), 7)
@@ -298,6 +302,19 @@ class PreparedWorkerTlsEvidenceTests(unittest.TestCase):
         self.assertEqual(account['worker_token']['producer_fields'],account['worker_token']['consumer_fields'])
         self.assertIn('before-clone',account['ordering'])
         self.assertIn('after-clear-child-tid-and-withdrawal',account['ordering'])
+
+    def test_source_account_requires_adopted_main_for_post_fork_third_generation(self):
+        probe=(ROOT/'compat/x86_64/prepared_worker_tls_probe.c').read_text()
+        owner=(ROOT/EVIDENCE.WORKER_OWNER).read_text()
+        account=EVIDENCE.account_source(ROOT)
+        self.assertEqual(account['post_fork_generation']['fresh_worker'],
+                         'three fresh initial images after adopted-main growth')
+        with self.assertRaises(EVIDENCE.PreparedWorkerTlsError):
+            EVIDENCE.check_post_fork_generation_source(
+                probe.replace('load_generation(generation3_path,2);',''),owner)
+        with self.assertRaises(EVIDENCE.PreparedWorkerTlsError):
+            EVIDENCE.check_post_fork_generation_source(
+                probe,owner.replace('ADOPTED_MAIN.store(thread_pointer as usize, Ordering::Release);',''))
 
     def test_source_account_requires_active_full_fork_loader_before_registry_reset(self):
         """Dynamic full fork keeps minimal child identity work before loader repair.

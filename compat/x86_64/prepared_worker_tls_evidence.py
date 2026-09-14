@@ -202,6 +202,20 @@ def _body(source: str, name: str) -> str:
     return source[start:cursor]
 
 
+def _c_body(source: str, name: str) -> str:
+    match=re.search(r'\b(?:static\s+)?(?:void|int)\s*\*?\s*'+re.escape(name)+r'\s*\([^;{}]*\)\s*\{',source)
+    require(match is not None,'C source function absent: '+name)
+    start=match.end()-1
+    depth=1
+    cursor=start+1
+    while depth and cursor<len(source):
+        if source[cursor]=='{':depth+=1
+        elif source[cursor]=='}':depth-=1
+        cursor+=1
+    require(depth==0,'C source function is truncated: '+name)
+    return source[start:cursor]
+
+
 def _ordered(source: str, fragments: tuple[str,...], label: str) -> list[str]:
     cursor=0
     for fragment in fragments:
@@ -252,6 +266,33 @@ def check_full_dynamic_fork_order(cargo: str, atfork: str) -> dict[str, Any]:
             'loader-child-complete-before-selected-worker-registry-reset',
         ],
         '_Fork':'no-loader-fork-transaction',
+    }
+
+
+def check_post_fork_generation_source(probe: str, worker_owner: str) -> dict[str, Any]:
+    """Bind the fork-worker third generation to the adopted loader main."""
+    fork=_c_body(probe,'worker_fork')
+    _ordered(fork,(
+        'REQUIRE(thread_pointer()==worker->tp)',
+        'load_generation(generation3_path,2)',
+        'active_generations=3',
+        'inspect_runtime(worker,2)',
+        'REQUIRE(worker->runtime_addresses[0]==old0 && worker->runtime_addresses[1]==old1)',
+        'pthread_create(&thread,0,entry,&fresh)',
+        'for (int n=0;n<active_generations;n++) REQUIRE(fresh.runtime_addresses[n]!=worker->runtime_addresses[n])',
+    ),'fork-worker third-generation observation')
+    entry=_c_body(probe,'entry')
+    require('if (worker->already_loaded && active_generations==3) inspect_runtime(worker,2)' in entry,
+            'fresh child worker does not inspect the third initial image')
+    adoption=_body(worker_owner,'adopt_after_fork')
+    _ordered(adoption,(
+        'ADOPTED_MAIN.store(thread_pointer as usize, Ordering::Release)',
+        'unsafe { *REGISTRY.0.get() = core::ptr::null_mut(); }',
+    ),'adopted main publication')
+    return {
+        'surviving_worker':'post-fork third generation preserves first-two addresses and values',
+        'fresh_worker':'three fresh initial images after adopted-main growth',
+        'adopted_main':'published before inherited loader registry withdrawal',
     }
 
 
@@ -319,10 +360,12 @@ def account_source(root: Path = ROOT) -> dict[str, Any]:
             and '#[cfg_attr(feature = "x86-owned-dynamic-runtime", path = "dynamic_tls.rs")]' in graph,
             'static/dynamic TLS owners lost their explicit feature split')
     fork_order=check_full_dynamic_fork_order(sources['libc/Cargo.toml'],sources[PTHREAD_ATFORK])
+    fork_generation=check_post_fork_generation_source(sources['compat/x86_64/prepared_worker_tls_probe.c'],sources[WORKER_OWNER])
     return {'source_files':{name:inventory.file_record(root/name,logical_path=name) for name in SOURCE_PATHS},
             'operations':copy.deepcopy(OPERATIONS),'source_signatures':signatures,'legacy_replacement':copy.deepcopy(expected_contract()['legacy_replacement']),
             'worker_token':{'producer_fields':producer,'consumer_fields':consumer,'size_bytes':32,'alignment_bytes':8},
             'ordering':{'before-clone':before,'after-clear-child-tid-and-withdrawal':after,**fork_order},
+            'post_fork_generation':fork_generation,
             'descriptor':copy.deepcopy(runtime['owned_runtime']),'descriptor_source_fields':descriptor_fields,
             'scope':'Source selection and lexical ordering; native execution/compiled unit receipts remain separate.'}
 
@@ -341,7 +384,7 @@ import owned_dynamic_fork_evidence as dynamic_links
 import owned_dynamic_receipt as dynamic_receipt
 from loader_debug_abi_evidence import Elf
 
-SCHEMA='crabc.x86_64-prepared-worker-tls-evidence/v1'
+SCHEMA='crabc.x86_64-prepared-worker-tls-evidence/v2'
 SCENARIOS=('normal','explicit','detached','cancelled','fork-worker')
 PROBE='prepared_worker_tls_probe.c'
 DEPENDENCY='prepared_worker_tls_dependency.c'
@@ -430,7 +473,7 @@ def command_plan(root: Path, work: Path, inputs: Mapping[str,Any], tools: Mappin
     def add(label,argv):
         require(label not in result,'duplicate command label '+label)
         result[label]={'cwd':'/workspace','argv':argv}
-    for generation in (1,2):
+    for generation in (1,2,3):
         obj=f'dso-{generation}.o'
         add(f'dso-{generation}-compile',[tool('dynamic_driver'),'--dynamic-shared-object','-std=c11',
             '-DWORKER_TLS_GENERATION='+str(generation),'-c',output(DEPENDENCY),'-o',output(obj)])
@@ -450,7 +493,7 @@ def command_plan(root: Path, work: Path, inputs: Mapping[str,Any], tools: Mappin
     for cell in runtime_cells():
         if cell['mode'] in ('oracle-static','static','static-pie'):
             argv=[tool('env'),'-i',output(cell['mode']),cell['scenario'],
-                  'owned' if cell['owner']=='candidate' else 'portable','-','-']
+                  'owned' if cell['owner']=='candidate' else 'portable','-','-','-']
         else:
             owner=cell['owner']; mode='non-pie' if cell['mode'].endswith('non-pie') else 'pie'
             argv=[tool('env'),'-i',ordinary.validate_chroot_invocation(tools['chroot']['invocation'],
@@ -458,7 +501,7 @@ def command_plan(root: Path, work: Path, inputs: Mapping[str,Any], tools: Mappin
             if cell['entry']=='direct':
                 argv.append('/lib/ld-crabc-x86_64.so.1' if owner=='candidate' else '/lib/ld-musl-x86_64.so.1')
             argv+=['/consumer-'+mode,cell['scenario'],'owned' if owner=='candidate' else 'portable',
-                   '/worker-1.so','/worker-2.so']
+                   '/worker-1.so','/worker-2.so','/worker-3.so']
         add(cell['label'],argv)
     return {'rustc-discover':result.pop('rustc-discover'),**result}
 
@@ -548,7 +591,7 @@ def execution_roots(root: Path, work: Path, dynamic_product: Path) -> dict[str,A
                 'lib/libc.so':{'kind':'symlink','mode':0o777,'target':'ld-musl-x86_64.so.1'}}
         copied={}
         for destination,source in [(f'consumer-{mode}',('dynamic-' if owner=='candidate' else 'oracle-dynamic-')+mode)
-                                  for mode in ('pie','non-pie')]+[(f'worker-{generation}.so',f'{owner}-worker-{generation}.so') for generation in (1,2)]:
+                                  for mode in ('pie','non-pie')]+[(f'worker-{generation}.so',f'{owner}-worker-{generation}.so') for generation in (1,2,3)]:
             require(destination not in expected,'execution fixture collides with product payload')
             copied[destination]=ordinary.execution_copy(root,work/source,directory/destination,owner+' '+destination)
             file=work/source
@@ -578,7 +621,7 @@ def dso_observations(root: Path, work: Path, inputs: Mapping[str,Any], tools: Ma
     result={}; product=root/inputs['dynamic_product']['path']
     linker={key:tools['linker']['original'][key] for key in ('path','sha256')}
     for owner in ('candidate','oracle'):
-        for generation in (1,2):
+        for generation in (1,2,3):
             label=f'{owner}-worker-{generation}';binary=work/(label+'.so');obj=work/f'dso-{generation}.o'
             text=lambda suffix:raw_stdout(work,label+'-'+suffix).decode('utf-8')
             facts=inventory.parse_elf_facts(text('header'),text('sections'),text('symbols'),expected_type='DYN')
@@ -646,11 +689,11 @@ def worker_relocations(elf: Elf) -> dict[str, Any]:
 
 
 def retained_artifacts(root: Path, work: Path) -> dict[str,Any]:
-    names=(PROBE,DEPENDENCY,'probe.o','dso-1.o','dso-2.o','loader-tests')
+    names=(PROBE,DEPENDENCY,'probe.o','dso-1.o','dso-2.o','dso-3.o','loader-tests')
     result={name:ordinary.work_file_identity(root,work/name,name) for name in names}
     for name in (PROBE,DEPENDENCY):
         require((work/name).read_bytes()==(root/'compat/x86_64'/name).read_bytes(),name+' source substitution')
-    for label in ('object-symbols','dso-1-symbols','dso-2-symbols'):
+    for label in ('object-symbols','dso-1-symbols','dso-2-symbols','dso-3-symbols'):
         result[label]=inventory.parse_elf_symbol_tables(raw_stdout(work,label).decode('utf-8'))
     return result
 
@@ -781,7 +824,7 @@ def collect(root: Path, output: Path, **paths: Path) -> Path:
         for mode in ('pie','non-pie'):
             prefix='dynamic-' if owner=='candidate' else 'oracle-dynamic-'
             shutil.copy2(output/(prefix+mode),execution/('consumer-'+mode))
-        for generation in (1,2):
+        for generation in (1,2,3):
             shutil.copy2(output/f'{owner}-worker-{generation}.so',execution/f'worker-{generation}.so')
     for cell in runtime_cells():
         collector.run(cell['label'],plan[cell['label']]['argv'],stdout=runtime_stdout(cell))
