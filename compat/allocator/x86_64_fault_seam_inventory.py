@@ -102,6 +102,7 @@ MBIND_PROFILE_DERIVED_FILES = (
 )
 MBIND_PROFILE_DIRECTORY_MODE = 0o700
 MBIND_PROFILE_FILE_MODE = 0o600
+CONTAINER_CHECKOUT_ROOT = Path("/workspace")
 CONTAINER_WORK_ROOT = Path("/workspace/.work/allocator-x86_64")
 DIRECT_FIXTURE_SOURCE_UNITS = (
     "src/os.c", "src/arena.c", "src/init.c", "src/page.c", "src/prim/prim.c",
@@ -672,9 +673,10 @@ def _validate_huge_branch_receipt(receipt: object, runner: Any) -> dict[str, Any
     ):
         raise ValueError("fault inventory C profile tool or working directory changed")
     binary = Path(command[-1])
-    if command != _huge_branch_c_command(
-        runner, command[0], source, binary, direct_include=direct_include
-    ):
+    expected_command = _bound_huge_branch_c_command(
+        runner, command, source, binary, direct_include
+    )
+    if command != expected_command:
         raise ValueError("fault inventory C command or source closure changed")
     if c_run["cwd"] != c_build["cwd"] or c_run["command"] != [str(binary)]:
         raise ValueError("fault inventory C run command changed")
@@ -1132,7 +1134,8 @@ def _branch_records() -> list[dict[str, Any]]:
 
 
 def _huge_branch_c_command(
-    runner: Any, compiler: str, source: Path, binary: Path, *, direct_include: Path
+    runner: Any, compiler: str, source: Path, binary: Path, *, direct_include: Path,
+    fixture: Path = FIXTURE,
 ) -> list[str]:
     """Compile the fixed profile with its recorded typed-mbind include only."""
 
@@ -1152,7 +1155,7 @@ def _huge_branch_c_command(
         "-I",
         str(source / "src"),
         *runner.CONFIGURATION_PROFILES["release"],
-        str(FIXTURE),
+        str(fixture),
         *(str(source / item) for item in runner.M2_X86_64_VM_C_ORACLE_SOURCES),
         "-Wl,--wrap=munmap",
         "-Wl,--wrap=mmap",
@@ -1164,6 +1167,35 @@ def _huge_branch_c_command(
         "-o",
         str(binary),
     ]
+
+
+def _fixture_command_argument_is_bound(argument: str) -> bool:
+    """Accept the local or fixed Docker spelling of this one tracked fixture."""
+
+    return argument in {
+        str(FIXTURE),
+        str(CONTAINER_CHECKOUT_ROOT / FIXTURE.relative_to(ROOT)),
+    }
+
+
+def _bound_huge_branch_c_command(
+    runner: Any, command: Sequence[str], source: Path, binary: Path, direct_include: Path,
+    *, mbind_boundary: bool = False,
+) -> list[str] | None:
+    """Reconstruct one C argv while preserving its fixed host/container fixture path."""
+
+    builder = _mbind_boundary_c_command if mbind_boundary else _huge_branch_c_command
+    expected_local = builder(runner, command[0], source, binary, direct_include=direct_include)
+    try:
+        fixture_index = expected_local.index(str(FIXTURE))
+    except ValueError as error:
+        raise EvidenceError("fault inventory C command lost its fixture position") from error
+    if len(command) != len(expected_local) or not _fixture_command_argument_is_bound(command[fixture_index]):
+        return None
+    return builder(
+        runner, command[0], source, binary, direct_include=direct_include,
+        fixture=Path(command[fixture_index]),
+    )
 
 
 def _huge_retry_helper_c_command(
@@ -1179,12 +1211,13 @@ def _huge_retry_helper_c_command(
 
 
 def _mbind_boundary_c_command(
-    runner: Any, compiler: str, source: Path, binary: Path, *, direct_include: Path
+    runner: Any, compiler: str, source: Path, binary: Path, *, direct_include: Path,
+    fixture: Path = FIXTURE,
 ) -> list[str]:
     """Compile the isolated `mi_prim_mbind` boundary regression."""
 
     command = _huge_branch_c_command(
-        runner, compiler, source, binary, direct_include=direct_include
+        runner, compiler, source, binary, direct_include=direct_include, fixture=fixture
     )
     command.insert(command.index(FAULT_PROFILE_DEFINE) + 1, MBIND_BOUNDARY_TEST_DEFINE)
     return command
@@ -1357,9 +1390,10 @@ def validate_mbind_boundary_report(report: Mapping[str, Any]) -> dict[str, Any]:
     ):
         raise ValueError("mbind boundary C build tool or working directory changed")
     binary = Path(command[-1])
-    if command != _mbind_boundary_c_command(
-        runner, command[0], source, binary, direct_include=profile
-    ):
+    expected_command = _bound_huge_branch_c_command(
+        runner, command, source, binary, profile, mbind_boundary=True
+    )
+    if command != expected_command:
         raise ValueError("mbind boundary C build command changed")
     run = _validate_process_record(report.get("run"), label="mbind boundary C run")
     if (

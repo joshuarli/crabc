@@ -477,6 +477,16 @@ class FaultInventoryShapeTests(unittest.TestCase):
             report = _valid_mbind_boundary_report(runner, retained_profile)
             self.assertEqual(INVENTORY.validate_mbind_boundary_report(report), report)
 
+    def test_mbind_boundary_report_replays_the_fixed_container_fixture_argument(self) -> None:
+        """Host replay admits the same pinned fixture path the Docker build recorded."""
+
+        with _retained_profile_contract() as (runner, retained_profile):
+            report = _valid_mbind_boundary_report(runner, retained_profile)
+            command = report["build"]["command"]
+            fixture = command.index(str(INVENTORY.FIXTURE))
+            command[fixture] = str(Path("/workspace") / INVENTORY.FIXTURE.relative_to(INVENTORY.ROOT))
+            self.assertEqual(INVENTORY.validate_mbind_boundary_report(report), report)
+
     def test_mbind_boundary_report_rejects_profile_command_and_output_changes(self) -> None:
         """The boundary receipt is independently replayable after collection."""
 
