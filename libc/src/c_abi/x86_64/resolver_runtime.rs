@@ -700,6 +700,17 @@ core::arch::global_asm!(
 );
 
 /// Encode one selected recursive Internet DNS question in caller storage.
+///
+/// # Safety
+///
+/// On the accepted `QUERY`/`CLASS_IN` path, `name` must point to a readable
+/// NUL-terminated DNS name of one through 255 bytes. When `answer_length` is
+/// at least 12, `answer` must point to an exclusively writable
+/// `answer_length`-byte range. The implementation copies `name` into a local
+/// 256-byte scratch array before it forms the output slice, so the two ranges
+/// may overlap. `_data` and `_new_record` are ignored by this selected ABI and
+/// need not designate readable storage. Invalid operation, class, type, or
+/// output arguments return the existing `EINVAL` result before `name` is read.
 #[inline(never)]
 #[no_mangle]
 pub unsafe extern "C" fn __res_mkquery(
