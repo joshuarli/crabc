@@ -81,6 +81,7 @@ class NativeAbiSelectionDispatcherTests(unittest.TestCase):
             "--crt-startup-report", ".work/x86_64/crt startup/report.json",
             "--pthread-timed-feature-report", ".work/x86_64/pthread timed/report.json",
             "--resolver-alias-receipt-report", ".work/x86_64/resolver aliases/report.json",
+            "--headers-layouts-aggregate-report", "compat/x86_64/generated/headers_layouts_aggregate/report.json",
         ]
         for mode in ("build-report", "validate-report", "require-closure"):
             with self.subTest(mode=mode):

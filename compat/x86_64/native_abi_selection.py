@@ -48,8 +48,9 @@ import prepared_worker_tls_evidence as prepared_worker_evidence
 import owned_errno_storage_lifecycle as errno_storage_evidence
 import native_c_allocator_boundary
 import owned_posix_product_evidence as product_evidence
+import headers_layouts_aggregate
 
-SCHEMA = 'crabc.x86_64-native-abi-selection-report/v3'
+SCHEMA = 'crabc.x86_64-native-abi-selection-report/v4'
 CONTRACT_SCHEMA = 'crabc.x86_64-native-abi-selection/v1'
 TARGET = inventory.TARGET
 CONTRACT_PATH = MODULE_DIR / 'native-abi-selection.toml'
@@ -64,6 +65,11 @@ INPUT_PATHS = {
     'parity': 'compat/x86_64/parity.toml',
 }
 STATUS = {'family_completion': False, 'promotion_ready': False, 'public_support': False}
+HEADERS_LAYOUTS_FAMILY = 'libc.headers-layouts'
+HEADERS_LAYOUTS_LIMITS = [
+    'Only the finite libc.headers-layouts installed-header assessment is admitted.',
+    'The aggregate does not select a provider, close archive extraction or runtime semantics, satisfy the complete family-receipt gate, promote a family, or establish public support.',
+]
 SELECTORS = {'header-providers', 'feature-abi-only', 'exact-file-members', 'explicit'}
 DISPOSITIONS = {'public-provider', 'private-provider', 'unresolved'}
 SUPPORTED_TYPES = {'NOTYPE', 'OBJECT', 'FUNC', 'SECTION', 'FILE', 'COMMON', 'TLS', 'IFUNC'}
@@ -719,6 +725,144 @@ def evidence_blockers(*, declaration: Any, semantic_receipts: Sequence[Any], fam
     if not source_matches:
         blockers.append({'code': 'selection-product-source-mismatch', 'subject': 'selected source and measured product build'})
     return blockers
+
+
+def headers_layouts_aggregate_adapter(report_path: Path | None) -> dict[str, Any] | None:
+    """Admit the one current header-only aggregate without widening family evidence."""
+    if report_path is None:
+        return None
+    expected_path = Path(headers_layouts_aggregate.REPORT_PATH).resolve()
+    supplied = Path(os.path.abspath(report_path))
+    require(supplied == expected_path and supplied.is_file() and not supplied.is_symlink(),
+            'headers/layouts aggregate report is not the current physical source report')
+    before = selecting_source_file_identity(supplied)
+    try:
+        report = headers_layouts_aggregate.load_json(supplied)
+        headers_layouts_aggregate.validate_report(report)
+        expected = headers_layouts_aggregate.build_report()
+        headers_layouts_aggregate.check_output(expected, supplied)
+    except (headers_layouts_aggregate.AggregateError, OSError, TypeError, ValueError) as error:
+        raise SelectionError(f'headers/layouts aggregate rejected: {error}') from error
+    require(same(report, expected), 'headers/layouts aggregate does not reconstruct from current source inputs')
+    require(same(before, selecting_source_file_identity(supplied)),
+            'headers/layouts aggregate report changed during validation')
+    inputs = headers_layouts_aggregate.input_records()
+    require(report.get('inputs') == inputs, 'headers/layouts aggregate retained input roster differs')
+    source_inputs = {
+        record['path']: selecting_source_file_identity(ROOT / record['path'])
+        for record in inputs
+    }
+    completion = exact(report.get('header_completion'), {
+        'algorithm', 'blockers', 'complete', 'explicit_nonrequirements', 'requirements',
+    }, 'headers/layouts aggregate header completion')
+    require(report.get('schema') == headers_layouts_aggregate.REPORT_SCHEMA
+            and report.get('family') == HEADERS_LAYOUTS_FAMILY
+            and report.get('target') == TARGET
+            and report.get('accounting_complete') is True
+            and report.get('family_completion') is True
+            and report.get('promotion_ready') is False
+            and report.get('public_support') is False
+            and completion['algorithm'] == headers_layouts_aggregate.HEADER_COMPLETION_ALGORITHM
+            and completion['blockers'] == [] and completion['complete'] is True
+            and completion['explicit_nonrequirements']
+                == list(headers_layouts_aggregate.HEADER_COMPLETION_NONREQUIREMENTS),
+            'headers/layouts aggregate completion boundary differs')
+    downstream = exact(report.get('downstream_provider_archive_obligations'), {
+        'archive_extraction_is_header_completion_requirement', 'deferred_callable_count',
+        'deferred_owner_group_count', 'final_provider_archive_closure_available',
+        'final_provider_archive_closure_complete', 'linkage_owner_family',
+        'linkage_owner_obligation', 'provider_archive_evidence_state', 'routing_exact',
+        'runtime_semantics_are_header_completion_requirement',
+        'selected_provider_linkage_audit_available', 'selected_provider_linkage_audit_complete',
+        'static_export_complement_is_header_completion_requirement',
+        'unprovided_callable_count_is_header_completion_requirement',
+    }, 'headers/layouts aggregate downstream provider boundary')
+    require(downstream['archive_extraction_is_header_completion_requirement'] is False
+            and downstream['final_provider_archive_closure_complete'] is False
+            and downstream['provider_archive_evidence_state'] == 'incomplete'
+            and downstream['runtime_semantics_are_header_completion_requirement'] is False
+            and downstream['selected_provider_linkage_audit_complete'] is False
+            and downstream['static_export_complement_is_header_completion_requirement'] is False
+            and downstream['unprovided_callable_count_is_header_completion_requirement'] is False,
+            'headers/layouts aggregate exceeds its header-only scope')
+    return {
+        'status': 'headers-layouts-aggregate-observed-with-boundaries',
+        'report': before,
+        'source_inputs': source_inputs,
+        'result': {
+            'schema': report['schema'], 'family': report['family'], 'target': report['target'],
+            'accounting_complete': report['accounting_complete'],
+            'family_completion': report['family_completion'],
+            'promotion_ready': report['promotion_ready'], 'public_support': report['public_support'],
+            'header_completion': copy.deepcopy(completion),
+            'explicit_nonrequirements': copy.deepcopy(completion['explicit_nonrequirements']),
+            'downstream_provider_archive_obligations': copy.deepcopy(downstream),
+        },
+        'limits': list(HEADERS_LAYOUTS_LIMITS),
+    }
+
+
+def headers_layouts_family_evidence(families: Sequence[Mapping[str, Any]],
+                                    companion: Mapping[str, Any] | None) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
+    """Replace only the headers unavailable row after the exact aggregate admission."""
+    ids = [family.get('id') for family in families]
+    require(ids.count(HEADERS_LAYOUTS_FAMILY) == 1 and len(ids) == len(set(ids)),
+            'headers/layouts family roster differs')
+    evidence: list[dict[str, Any]] = []
+    if companion is not None:
+        companion = exact(companion, {'status', 'report', 'source_inputs', 'result', 'limits'},
+                          'headers/layouts aggregate companion')
+        report = exact(companion['report'], {'path', 'sha256', 'size', 'mode'},
+                       'headers/layouts aggregate companion report')
+        require(companion['status'] == 'headers-layouts-aggregate-observed-with-boundaries'
+                and companion['limits'] == HEADERS_LAYOUTS_LIMITS
+                and report['path'] == headers_layouts_aggregate.REPORT_PATH.relative_to(ROOT).as_posix()
+                and same(report, selecting_source_file_identity(headers_layouts_aggregate.REPORT_PATH)),
+                'headers/layouts aggregate companion report differs')
+        expected_inputs = {
+            record['path']: selecting_source_file_identity(ROOT / record['path'])
+            for record in headers_layouts_aggregate.input_records()
+        }
+        require(same(companion['source_inputs'], expected_inputs),
+                'headers/layouts aggregate companion source inputs differ')
+        result = exact(companion['result'], {
+            'schema', 'family', 'target', 'accounting_complete', 'family_completion',
+            'promotion_ready', 'public_support', 'header_completion', 'explicit_nonrequirements',
+            'downstream_provider_archive_obligations',
+        }, 'headers/layouts aggregate companion result')
+        require(result['schema'] == headers_layouts_aggregate.REPORT_SCHEMA
+                and result['family'] == HEADERS_LAYOUTS_FAMILY and result['target'] == TARGET
+                and result['accounting_complete'] is True and result['family_completion'] is True
+                and result['promotion_ready'] is False and result['public_support'] is False
+                and result['explicit_nonrequirements']
+                    == list(headers_layouts_aggregate.HEADER_COMPLETION_NONREQUIREMENTS),
+                'headers/layouts aggregate companion result differs')
+        evidence.append({
+            'family': HEADERS_LAYOUTS_FAMILY,
+            'status': 'headers-layouts-aggregate-attached',
+            'requirements_discharged': ['family-semantic-evidence-unavailable'],
+        })
+    blockers = [
+        {'code': 'family-semantic-evidence-unavailable', 'family': family['id'], 'ledger_status': family['status']}
+        for family in families
+        if not (companion is not None and family['id'] == HEADERS_LAYOUTS_FAMILY)
+    ]
+    return blockers, evidence
+
+
+def _recheck_headers_layouts_aggregate(companion: Mapping[str, Any] | None) -> None:
+    """Replay the source-bound header aggregate after every selection join."""
+    if companion is None:
+        return
+    report = companion.get('report')
+    require(type(report) is dict and report.get('path')
+            == headers_layouts_aggregate.REPORT_PATH.relative_to(ROOT).as_posix(),
+            'headers/layouts aggregate report identity differs during final recheck')
+    path = headers_layouts_aggregate.REPORT_PATH
+    before = selecting_source_file_identity(path)
+    replayed = headers_layouts_aggregate_adapter(path)
+    require(same(replayed, companion) and same(before, selecting_source_file_identity(path)),
+            'headers/layouts aggregate changed during final recheck')
 
 
 def _require_closed_report(report: Mapping[str, Any]) -> None:
@@ -7346,7 +7490,8 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
                   syscall_alias_contract_report: Path | None = None,
                   utmpx_receipt_report: Path | None = None,
                   pthread_timed_feature_report: Path | None = None,
-                  resolver_alias_receipt_report: Path | None = None) -> dict[str, Any]:
+                  resolver_alias_receipt_report: Path | None = None,
+                  headers_layouts_aggregate_report: Path | None = None) -> dict[str, Any]:
     if pthread_timed_feature_report is not None:
         require(ordinary_link_report is not None and loader_debug_report is not None,
                 'pthread timed receipt requires the complete public-data loader-debug anchor pair')
@@ -7400,6 +7545,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         resolver_alias_receipt_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
         product_report=loader_debug_report,
     )
+    headers_layouts_aggregate_companion = headers_layouts_aggregate_adapter(headers_layouts_aggregate_report)
     declaration = declaration_adapter(
         declaration_report,
         selected_objects=contract['object_contracts'],
@@ -7458,6 +7604,9 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     utmpx_receipt_joins = attach_native_utmpx(accounting, utmpx_receipt_companion)
     pthread_timed_feature_joins = attach_native_pthread_timed_feature(accounting, pthread_timed_feature_companion)
     resolver_alias_receipt_joins = attach_native_resolver_alias(accounting, resolver_alias_receipt_companion)
+    family_evidence_blockers, headers_layouts_aggregate_evidence = headers_layouts_family_evidence(
+        inputs['families'], headers_layouts_aggregate_companion,
+    )
     _recheck_runtime_receipt_cohort(
         paths=paths, facts=facts, measurement=measurement, source=source_before,
         registry=loader_runtime_registry_companion, pthread=pthread_alias_contract_companion,
@@ -7469,12 +7618,12 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         pthread_timed=pthread_timed_feature_companion,
         resolver_alias=resolver_alias_receipt_companion,
     )
+    _recheck_headers_layouts_aggregate(headers_layouts_aggregate_companion)
     candidate = measurement['candidate_build']
     source_matches = source_before['clean'] is True and source_before['revision'] == candidate['revision'] and source_before['content_sha256'] == candidate['source_content_sha256']
     blockers = accounting.pop('blockers')
     blockers.extend(evidence_blockers(declaration=declaration, semantic_receipts=[], family_receipts=[], source_matches=source_matches))
-    for family in inputs['families']:
-        blockers.append({'code': 'family-semantic-evidence-unavailable', 'family': family['id'], 'ledger_status': family['status']})
+    blockers.extend(family_evidence_blockers)
     require(same(source_before, selection_source()), 'selection source changed while building report')
     require(same(inputs['bindings'], load_source_inputs(contract, contract_path)['bindings']), 'selection input bytes changed during report')
     blockers = sorted(blockers, key=lambda item: json.dumps(item, sort_keys=True))
@@ -7511,6 +7660,8 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'pthread_timed_feature_joins': pthread_timed_feature_joins,
             'resolver_alias_receipt_companion': resolver_alias_receipt_companion,
             'resolver_alias_receipt_joins': resolver_alias_receipt_joins,
+            'headers_layouts_aggregate_companion': headers_layouts_aggregate_companion,
+            'headers_layouts_aggregate_evidence': headers_layouts_aggregate_evidence,
             **accounting, 'closure': {'complete': not blockers, 'blockers': blockers}, 'status': dict(STATUS),
             'limits': ['selection audit is not qualification', 'complete raw ELF observations stay with the publicly replayed supplement',
                        'no allocator metadata or unwinder investigation', 'no imported AArch64 execution proof',
@@ -7532,6 +7683,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                  utmpx_receipt_report: Path | None = None,
                  pthread_timed_feature_report: Path | None = None,
                  resolver_alias_receipt_report: Path | None = None,
+                 headers_layouts_aggregate_report: Path | None = None,
                  **measurement_inputs: Path) -> dict[str, Any]:
     output = physical_work_path(output, directory=True, own=True, fresh=True)
     paths = validate_measurement_paths(**measurement_inputs)
@@ -7551,7 +7703,8 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                            syscall_alias_contract_report=syscall_alias_contract_report,
                            utmpx_receipt_report=utmpx_receipt_report,
                            pthread_timed_feature_report=pthread_timed_feature_report,
-                           resolver_alias_receipt_report=resolver_alias_receipt_report)
+                           resolver_alias_receipt_report=resolver_alias_receipt_report,
+                           headers_layouts_aggregate_report=headers_layouts_aggregate_report)
     output.mkdir()
     (output / 'report.json').write_bytes(inventory._stable_json(report))
     return report
@@ -7572,6 +7725,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                     utmpx_receipt_report: Path | None = None,
                     pthread_timed_feature_report: Path | None = None,
                     resolver_alias_receipt_report: Path | None = None,
+                    headers_layouts_aggregate_report: Path | None = None,
                     **measurement_inputs: Path) -> dict[str, Any]:
     report_path = physical_work_path(report_path, directory=False, own=True)
     require(report_path.name == 'report.json', 'selection report has the wrong name')
@@ -7593,7 +7747,8 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                              syscall_alias_contract_report=syscall_alias_contract_report,
                              utmpx_receipt_report=utmpx_receipt_report,
                              pthread_timed_feature_report=pthread_timed_feature_report,
-                             resolver_alias_receipt_report=resolver_alias_receipt_report)
+                             resolver_alias_receipt_report=resolver_alias_receipt_report,
+                             headers_layouts_aggregate_report=headers_layouts_aggregate_report)
     require(same(report, expected), 'selection report does not reconstruct exactly from source inputs and public measurement replay')
     return report
 
@@ -7622,6 +7777,7 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument('--utmpx-receipt-report', type=Path)
     parser.add_argument('--pthread-timed-feature-report', type=Path)
     parser.add_argument('--resolver-alias-receipt-report', type=Path)
+    parser.add_argument('--headers-layouts-aggregate-report', type=Path)
     options = [arg.split('=', 1)[0] for arg in argv if arg.startswith('--')]
     if len(options) != len(set(options)):
         parser.error('duplicate options are not accepted')
@@ -7638,7 +7794,8 @@ def main(argv: Sequence[str]) -> int:
                                                 'errno_storage_lifecycle_report', 'native_c_allocator_boundary_report',
                                                 'stdio_alias_contract_report', 'crt_startup_report',
                                                 'syscall_alias_contract_report', 'utmpx_receipt_report',
-                                                'pthread_timed_feature_report', 'resolver_alias_receipt_report')}
+                                                'pthread_timed_feature_report', 'resolver_alias_receipt_report',
+                                                'headers_layouts_aggregate_report')}
     kwargs['ordinary_link_report'] = kwargs.pop('public_data_ordinary_link_report')
     kwargs['loader_debug_report'] = kwargs.pop('loader_debug_abi_report')
     kwargs.update(contract_path=args.contract, elf_report=args.elf_facts)
