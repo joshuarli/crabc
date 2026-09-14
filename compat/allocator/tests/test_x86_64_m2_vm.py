@@ -15,7 +15,7 @@ EXPECTED_VM_CHECK_IDS = (
     "normal-release-aligned-hint-cursor-random-and-cas-matrix",
     "normal-release-large-page-retry-suppression-and-ordinary-fallback",
     "large-only-one-gib-failure-no-regular-owner",
-    "thp-disable-set-perm-keeps-configuration-disabled",
+    "thp-direct-policy-outcome-matrix",
     "aligned-hint-source-profile-and-direct-caller-matrix",
     "aligned-overmap-cleanup-c-rust-boundary-matrix",
     "process-policy-first-arena-clean-primary-fallback",
@@ -264,14 +264,19 @@ class NativeVmAssemblyTests(unittest.TestCase):
             with self.subTest(key=key):
                 self.assertIn(key, producer.TRACE_KEYS)
 
-    def test_thp_disable_failure_trace_requires_the_exact_prctl_tuple_and_configuration(self):
-        """Keep the selected allow_thp=0 failure branch finite and explicit."""
+    def test_thp_direct_policy_trace_requires_the_complete_finite_case_roster(self):
+        """Keep every selected direct allow_thp control-flow case explicit."""
 
         producer = RUNNER._m2_x86_64_vm_producer()
         for key in (
-            "m2.vm.thp_disable.get_zero_then_set_perm_exact_arguments",
-            "m2.vm.thp_disable.set_perm_leaves_configuration_disabled",
-            "m2.vm.thp_disable.set_perm_failure_returns_from_policy_transition",
+            "m2.vm.thp_direct.allow_enabled_zero_calls_and_continues",
+            "m2.vm.thp_direct.query_perm_get_only_disabled_and_continues",
+            "m2.vm.thp_direct.query_inval_get_only_disabled_and_continues",
+            "m2.vm.thp_direct.query_nonzero_one_get_only_disabled_and_continues",
+            "m2.vm.thp_direct.query_nonzero_three_get_only_disabled_and_continues",
+            "m2.vm.thp_direct.set_success_exact_get_set_disabled_and_continues",
+            "m2.vm.thp_direct.set_perm_exact_get_set_disabled_and_continues",
+            "m2.vm.thp_direct.set_inval_exact_get_set_disabled_and_continues",
         ):
             with self.subTest(key=key):
                 self.assertIn(key, producer.TRACE_KEYS)

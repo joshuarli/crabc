@@ -38,7 +38,7 @@ EXPECTED_RUST_TEST_COUNT = 1
 LARGE_PAGE_RETRY_CAPTURE_REAP_TEST_DEFINE = (
     "-DCRABC_M2_LARGE_PAGE_RETRY_CAPTURE_REAP_TEST=1"
 )
-EVIDENCE_PROFILE = "release-no-default-features-process-paired-regular-vm-reset-eagain-fallback-state-external-page-extension-child-policy-thp-disable-set-perm-large-page-retry-suppression-large-only-one-gib-terminal-aligned-hint-and-aligned-overmap-cleanup-boundary-fault"
+EVIDENCE_PROFILE = "release-no-default-features-process-paired-regular-vm-reset-eagain-fallback-state-external-page-extension-child-policy-thp-direct-policy-outcome-matrix-large-page-retry-suppression-large-only-one-gib-terminal-aligned-hint-and-aligned-overmap-cleanup-boundary-fault"
 
 CHECKS = (
     (
@@ -67,9 +67,9 @@ CHECKS = (
         "os::tests::large_only_one_gib_failure_retries_two_mib_once_then_stays_terminal",
     ),
     (
-        "thp-disable-set-perm-keeps-configuration-disabled",
+        "thp-direct-policy-outcome-matrix",
         "rust-unit",
-        "os::tests::thp_disable_set_failure_keeps_configuration_disabled",
+        "os::tests::thp_direct_policy_outcome_matrix",
     ),
     (
         "aligned-hint-source-profile-and-direct-caller-matrix",
@@ -210,9 +210,14 @@ TRACE_KEYS = (
     "m2.vm.config.has_virtual_reserve",
     "m2.vm.config.has_transparent_huge_pages",
     "m2.vm.thp.process_disabled",
-    "m2.vm.thp_disable.get_zero_then_set_perm_exact_arguments",
-    "m2.vm.thp_disable.set_perm_leaves_configuration_disabled",
-    "m2.vm.thp_disable.set_perm_failure_returns_from_policy_transition",
+    "m2.vm.thp_direct.allow_enabled_zero_calls_and_continues",
+    "m2.vm.thp_direct.query_perm_get_only_disabled_and_continues",
+    "m2.vm.thp_direct.query_inval_get_only_disabled_and_continues",
+    "m2.vm.thp_direct.query_nonzero_one_get_only_disabled_and_continues",
+    "m2.vm.thp_direct.query_nonzero_three_get_only_disabled_and_continues",
+    "m2.vm.thp_direct.set_success_exact_get_set_disabled_and_continues",
+    "m2.vm.thp_direct.set_perm_exact_get_set_disabled_and_continues",
+    "m2.vm.thp_direct.set_inval_exact_get_set_disabled_and_continues",
     "m2.vm.reserved.initially_zero",
     "m2.vm.reserved.initially_committed",
     "m2.vm.reserved.commit.failure_returns_false",
@@ -603,10 +608,14 @@ def load_fragment(path: Path) -> dict[str, Any]:
     if (
         thp_branch["disposition"] != "partial-fixed-profile"
         or TRACE_CHECK_ID not in thp_branch["evidence_check_ids"]
-        or "thp-disable-set-perm-keeps-configuration-disabled"
+        or "thp-direct-policy-outcome-matrix"
         not in thp_branch["evidence_check_ids"]
+        or "finite direct matrix" not in thp_branch["source_scope"].lower()
+        or "raw nonzero 3" not in thp_branch["source_scope"].lower()
         or not any("ambient" in condition.lower() for condition in thp_branch["missing_conditions"])
-        or not any("child-isolated" in condition.lower() for condition in thp_branch["missing_conditions"])
+        or not any("production policy caller" in condition.lower() for condition in thp_branch["missing_conditions"])
+        or any("diagnostic" in condition.lower() and "no diagnostics" not in condition.lower()
+               for condition in thp_branch["missing_conditions"])
     ):
         raise _error("THP process-policy branch lost its bounded native evidence or open frontier")
     thp_definition = next(
@@ -624,10 +633,10 @@ def load_fragment(path: Path) -> dict[str, Any]:
         or thp_definition["evidence_check_ids"]
         != [
             TRACE_CHECK_ID,
-            "thp-disable-set-perm-keeps-configuration-disabled",
+            "thp-direct-policy-outcome-matrix",
         ]
     ):
-        raise _error("THP disable failure source definition lost its exact evidence binding")
+        raise _error("THP direct-policy matrix source definition lost its exact evidence binding")
 
     large_route_branch = branches[8]
     if (

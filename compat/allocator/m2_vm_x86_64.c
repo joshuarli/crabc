@@ -434,23 +434,56 @@ typedef struct large_only_failure_probe_s {
 
 static large_only_failure_probe_t large_only_failure_probe;
 
-/* This COW-child-only script receives precisely the two scalar forms used by
- * `_mi_prim_mem_init`: GET(0,0,0,0), then SET(1,0,0,0).  It is deliberately
- * not a generic variadic forwarder.  The pinned source also names one VMA
- * annotation form, so the inactive wrapper forwards that separately with its
- * concrete int/pointer/size_t/pointer tuple; every other prctl operation is
- * rejected rather than being read through an unchecked va_list shape. */
-#define THP_DISABLE_PRCTL_CAPTURE_CAPACITY 2
-typedef struct thp_disable_prctl_probe_s {
+/* This COW-child-only finite matrix receives only the two scalar forms used
+ * by `_mi_prim_mem_init`: GET(0,0,0,0) and SET(1,0,0,0). It is deliberately
+ * not a generic variadic forwarder or programmable script. The pinned source
+ * also names one VMA annotation form, so the inactive wrapper forwards that
+ * separately with its concrete int/pointer/size_t/pointer tuple; every other
+ * prctl operation is rejected rather than being read through an unchecked
+ * va_list shape. */
+#define THP_DIRECT_POLICY_CAPTURE_CAPACITY 2
+
+typedef enum thp_direct_policy_case_e {
+  THP_DIRECT_POLICY_CASE_OFF = 0,
+  THP_DIRECT_POLICY_CASE_ALLOW_ENABLED,
+  THP_DIRECT_POLICY_CASE_QUERY_PERM,
+  THP_DIRECT_POLICY_CASE_QUERY_INVAL,
+  THP_DIRECT_POLICY_CASE_QUERY_NONZERO_ONE,
+  THP_DIRECT_POLICY_CASE_QUERY_NONZERO_THREE,
+  THP_DIRECT_POLICY_CASE_SET_SUCCESS,
+  THP_DIRECT_POLICY_CASE_SET_PERM,
+  THP_DIRECT_POLICY_CASE_SET_INVAL,
+} thp_direct_policy_case_t;
+
+typedef struct thp_direct_policy_probe_s {
   bool active;
   bool valid;
+  thp_direct_policy_case_t selected_case;
   size_t calls;
-  int options[THP_DISABLE_PRCTL_CAPTURE_CAPACITY];
-  int arguments[THP_DISABLE_PRCTL_CAPTURE_CAPACITY][4];
-  int errors[THP_DISABLE_PRCTL_CAPTURE_CAPACITY];
-} thp_disable_prctl_probe_t;
+  int options[THP_DIRECT_POLICY_CAPTURE_CAPACITY];
+  int arguments[THP_DIRECT_POLICY_CAPTURE_CAPACITY][4];
+} thp_direct_policy_probe_t;
 
-static thp_disable_prctl_probe_t thp_disable_prctl_probe;
+static thp_direct_policy_probe_t thp_direct_policy_probe;
+
+static size_t thp_direct_policy_expected_calls(thp_direct_policy_case_t selected_case) {
+  switch (selected_case) {
+    case THP_DIRECT_POLICY_CASE_ALLOW_ENABLED:
+      return 0;
+    case THP_DIRECT_POLICY_CASE_QUERY_PERM:
+    case THP_DIRECT_POLICY_CASE_QUERY_INVAL:
+    case THP_DIRECT_POLICY_CASE_QUERY_NONZERO_ONE:
+    case THP_DIRECT_POLICY_CASE_QUERY_NONZERO_THREE:
+      return 1;
+    case THP_DIRECT_POLICY_CASE_SET_SUCCESS:
+    case THP_DIRECT_POLICY_CASE_SET_PERM:
+    case THP_DIRECT_POLICY_CASE_SET_INVAL:
+      return 2;
+    case THP_DIRECT_POLICY_CASE_OFF:
+      return SIZE_MAX;
+  }
+  return SIZE_MAX;
+}
 
 /* The pinned `mi_os_prim_alloc_aligned` body is included above. This tiny
  * fixture state controls only its imported mmap/munmap results while a COW
@@ -486,6 +519,11 @@ int __real_madvise(void* address, size_t length, int advice);
 int __real_mprotect(void* address, size_t length, int protection);
 int __real_prctl(int option, ...);
 
+static int thp_direct_policy_error(int error) {
+  errno = error;
+  return -1;
+}
+
 int __wrap_prctl(int option, ...) {
   va_list arguments;
   va_start(arguments, option);
@@ -498,31 +536,61 @@ int __wrap_prctl(int option, ...) {
     const int argument3 = va_arg(arguments, int);
     va_end(arguments);
 
-    if (!thp_disable_prctl_probe.active) {
+    if (!thp_direct_policy_probe.active) {
       return __real_prctl(option, argument0, argument1, argument2, argument3);
     }
 
-    const size_t index = thp_disable_prctl_probe.calls++;
-    if (index < THP_DISABLE_PRCTL_CAPTURE_CAPACITY) {
-      thp_disable_prctl_probe.options[index] = option;
-      thp_disable_prctl_probe.arguments[index][0] = argument0;
-      thp_disable_prctl_probe.arguments[index][1] = argument1;
-      thp_disable_prctl_probe.arguments[index][2] = argument2;
-      thp_disable_prctl_probe.arguments[index][3] = argument3;
+    const size_t index = thp_direct_policy_probe.calls++;
+    if (index < THP_DIRECT_POLICY_CAPTURE_CAPACITY) {
+      thp_direct_policy_probe.options[index] = option;
+      thp_direct_policy_probe.arguments[index][0] = argument0;
+      thp_direct_policy_probe.arguments[index][1] = argument1;
+      thp_direct_policy_probe.arguments[index][2] = argument2;
+      thp_direct_policy_probe.arguments[index][3] = argument3;
     }
-    if (index == 0 && option == PR_GET_THP_DISABLE && argument0 == 0
-        && argument1 == 0 && argument2 == 0 && argument3 == 0) {
-      return 0;
+
+    const bool get_tuple = option == PR_GET_THP_DISABLE && argument0 == 0
+        && argument1 == 0 && argument2 == 0 && argument3 == 0;
+    const bool set_tuple = option == PR_SET_THP_DISABLE && argument0 == 1
+        && argument1 == 0 && argument2 == 0 && argument3 == 0;
+    if (index == 0 && get_tuple) {
+      switch (thp_direct_policy_probe.selected_case) {
+        case THP_DIRECT_POLICY_CASE_QUERY_PERM:
+          return thp_direct_policy_error(EPERM);
+        case THP_DIRECT_POLICY_CASE_QUERY_INVAL:
+          return thp_direct_policy_error(EINVAL);
+        case THP_DIRECT_POLICY_CASE_QUERY_NONZERO_ONE:
+          return 1;
+        case THP_DIRECT_POLICY_CASE_QUERY_NONZERO_THREE:
+          return 3;
+        case THP_DIRECT_POLICY_CASE_SET_SUCCESS:
+        case THP_DIRECT_POLICY_CASE_SET_PERM:
+        case THP_DIRECT_POLICY_CASE_SET_INVAL:
+          return 0;
+        case THP_DIRECT_POLICY_CASE_OFF:
+        case THP_DIRECT_POLICY_CASE_ALLOW_ENABLED:
+          break;
+      }
     }
-    if (index == 1 && option == PR_SET_THP_DISABLE && argument0 == 1
-        && argument1 == 0 && argument2 == 0 && argument3 == 0) {
-      thp_disable_prctl_probe.errors[index] = EPERM;
-      errno = EPERM;
-      return -1;
+    if (index == 1 && set_tuple) {
+      switch (thp_direct_policy_probe.selected_case) {
+        case THP_DIRECT_POLICY_CASE_SET_SUCCESS:
+          return 0;
+        case THP_DIRECT_POLICY_CASE_SET_PERM:
+          return thp_direct_policy_error(EPERM);
+        case THP_DIRECT_POLICY_CASE_SET_INVAL:
+          return thp_direct_policy_error(EINVAL);
+        case THP_DIRECT_POLICY_CASE_OFF:
+        case THP_DIRECT_POLICY_CASE_ALLOW_ENABLED:
+        case THP_DIRECT_POLICY_CASE_QUERY_PERM:
+        case THP_DIRECT_POLICY_CASE_QUERY_INVAL:
+        case THP_DIRECT_POLICY_CASE_QUERY_NONZERO_ONE:
+        case THP_DIRECT_POLICY_CASE_QUERY_NONZERO_THREE:
+          break;
+      }
     }
-    thp_disable_prctl_probe.valid = false;
-    errno = EINVAL;
-    return -1;
+    thp_direct_policy_probe.valid = false;
+    return thp_direct_policy_error(EINVAL);
   }
 
 #if defined(PR_SET_VMA)
@@ -533,21 +601,19 @@ int __wrap_prctl(int option, ...) {
     const size_t length = va_arg(arguments, size_t);
     char* const name = va_arg(arguments, char*);
     va_end(arguments);
-    if (thp_disable_prctl_probe.active) {
-      thp_disable_prctl_probe.valid = false;
-      errno = EINVAL;
-      return -1;
+    if (thp_direct_policy_probe.active) {
+      thp_direct_policy_probe.valid = false;
+      return thp_direct_policy_error(EINVAL);
     }
     return __real_prctl(option, suboption, address, length, name);
   }
 #endif
 
   va_end(arguments);
-  if (thp_disable_prctl_probe.active) {
-    thp_disable_prctl_probe.valid = false;
+  if (thp_direct_policy_probe.active) {
+    thp_direct_policy_probe.valid = false;
   }
-  errno = EINVAL;
-  return -1;
+  return thp_direct_policy_error(EINVAL);
 }
 
 int __wrap_munmap(void* address, size_t length) {
@@ -1632,54 +1698,58 @@ static bool capture_policy_child(policy_child_record_t* record) {
   return captured;
 }
 
-/* The process-wide THP setting is not touched by this fixture parent.  This
- * child calls the directly included `_mi_prim_mem_init` body with the selected
- * source option, while the narrowly typed `prctl` import script returns
- * GET=0 then SET=-1/EPERM.  The source function is void: returning from it is
- * the C continuation observation, not an errno-valued allocator contract. */
-typedef struct thp_disable_failure_record_s {
-  bool get_zero_then_set_perm_exact_arguments;
-  bool set_perm_leaves_configuration_disabled;
-  bool set_perm_failure_returns_from_policy_transition;
-} thp_disable_failure_record_t;
+/* The process-wide THP setting is not touched by this fixture parent. Every
+ * COW child calls the directly included void `_mi_prim_mem_init` with one
+ * finite allow_thp case and a concrete PRCTL import result. C records only
+ * exact count/tuple control flow, forced disabled configuration for allow=0,
+ * and continuation after the void initializer. It does not manufacture a
+ * typed error return or compare the allow-enabled ambient detection result. */
+typedef struct thp_direct_policy_record_s {
+  bool exact_tuple_count;
+  bool disabled_configuration;
+  bool void_continuation;
+} thp_direct_policy_record_t;
 
-static int run_thp_disable_failure_child(int record_descriptor) {
-  thp_disable_failure_record_t record = {0};
-  mi_os_mem_config_t config = {0};
-  _mi_options_init();
-  mi_option_set(mi_option_allow_thp, 0);
-  thp_disable_prctl_probe = (thp_disable_prctl_probe_t){
-      .active = true,
-      .valid = true,
-  };
-  _mi_prim_mem_init(&config);
-  thp_disable_prctl_probe.active = false;
-
-  record.get_zero_then_set_perm_exact_arguments =
-      thp_disable_prctl_probe.valid
-      && thp_disable_prctl_probe.calls == THP_DISABLE_PRCTL_CAPTURE_CAPACITY
-      && thp_disable_prctl_probe.options[0] == PR_GET_THP_DISABLE
-      && thp_disable_prctl_probe.arguments[0][0] == 0
-      && thp_disable_prctl_probe.arguments[0][1] == 0
-      && thp_disable_prctl_probe.arguments[0][2] == 0
-      && thp_disable_prctl_probe.arguments[0][3] == 0
-      && thp_disable_prctl_probe.options[1] == PR_SET_THP_DISABLE
-      && thp_disable_prctl_probe.arguments[1][0] == 1
-      && thp_disable_prctl_probe.arguments[1][1] == 0
-      && thp_disable_prctl_probe.arguments[1][2] == 0
-      && thp_disable_prctl_probe.arguments[1][3] == 0
-      && thp_disable_prctl_probe.errors[0] == 0
-      && thp_disable_prctl_probe.errors[1] == EPERM;
-  record.set_perm_leaves_configuration_disabled =
-      !config.has_transparent_huge_pages;
-  record.set_perm_failure_returns_from_policy_transition = true;
-  if (!write_all(record_descriptor, &record, sizeof(record))) return 1;
-  return record.get_zero_then_set_perm_exact_arguments
-      && record.set_perm_leaves_configuration_disabled
-      && record.set_perm_failure_returns_from_policy_transition ? 0 : 2;
+static bool thp_direct_policy_case_requires_disabled_configuration(
+    thp_direct_policy_case_t selected_case) {
+  return selected_case != THP_DIRECT_POLICY_CASE_ALLOW_ENABLED;
 }
 
-static bool capture_thp_disable_failure_child(thp_disable_failure_record_t* record) {
+static bool thp_direct_policy_record_passes(
+    thp_direct_policy_case_t selected_case,
+    const thp_direct_policy_record_t* record) {
+  return record->exact_tuple_count && record->void_continuation
+      && (!thp_direct_policy_case_requires_disabled_configuration(selected_case)
+          || record->disabled_configuration);
+}
+
+static int run_thp_direct_policy_child(
+    thp_direct_policy_case_t selected_case, int record_descriptor) {
+  thp_direct_policy_record_t record = {0};
+  mi_os_mem_config_t config = {0};
+  _mi_options_init();
+  mi_option_set(
+      mi_option_allow_thp,
+      selected_case == THP_DIRECT_POLICY_CASE_ALLOW_ENABLED ? 1 : 0);
+  thp_direct_policy_probe = (thp_direct_policy_probe_t){
+      .active = true,
+      .valid = true,
+      .selected_case = selected_case,
+  };
+  _mi_prim_mem_init(&config);
+  thp_direct_policy_probe.active = false;
+
+  record.exact_tuple_count = thp_direct_policy_probe.valid
+      && thp_direct_policy_probe.calls
+          == thp_direct_policy_expected_calls(selected_case);
+  record.disabled_configuration = !config.has_transparent_huge_pages;
+  record.void_continuation = true;
+  if (!write_all(record_descriptor, &record, sizeof(record))) return 1;
+  return thp_direct_policy_record_passes(selected_case, &record) ? 0 : 2;
+}
+
+static bool capture_thp_direct_policy_child(
+    thp_direct_policy_case_t selected_case, thp_direct_policy_record_t* record) {
   int descriptors[2];
   if (pipe(descriptors) != 0) return false;
   const pid_t child = fork();
@@ -1690,7 +1760,7 @@ static bool capture_thp_disable_failure_child(thp_disable_failure_record_t* reco
   }
   if (child == 0) {
     close(descriptors[0]);
-    const int result = run_thp_disable_failure_child(descriptors[1]);
+    const int result = run_thp_direct_policy_child(selected_case, descriptors[1]);
     close(descriptors[1]);
     _exit(result);
   }
@@ -1706,14 +1776,15 @@ static bool capture_thp_disable_failure_child(thp_disable_failure_record_t* reco
       && waited == child && WIFEXITED(status) && WEXITSTATUS(status) == 0;
   if (!captured) {
     fprintf(stderr,
-            "THP disable failure child failed: bytes=%zu expected=%zu waited=%ld "
-            "expected_pid=%ld errno=%d exited=%d status=%d get_set=%d config=%d return=%d\\n",
-            record_bytes, sizeof(*record), (long)waited, (long)child,
-            waited < 0 ? errno : 0, waited == child && WIFEXITED(status),
+            "THP direct policy child failed: case=%d bytes=%zu expected=%zu "
+            "waited=%ld expected_pid=%ld errno=%d exited=%d status=%d "
+            "tuple_count=%d config_disabled=%d void_continuation=%d\\n",
+            selected_case, record_bytes, sizeof(*record), (long)waited,
+            (long)child, waited < 0 ? errno : 0,
+            waited == child && WIFEXITED(status),
             waited == child && WIFEXITED(status) ? WEXITSTATUS(status) : -1,
-            record->get_zero_then_set_perm_exact_arguments,
-            record->set_perm_leaves_configuration_disabled,
-            record->set_perm_failure_returns_from_policy_transition);
+            record->exact_tuple_count, record->disabled_configuration,
+            record->void_continuation);
   }
   return captured;
 }
@@ -2739,8 +2810,23 @@ int main(void) {
   if (!aligned_hint_cold_missing_default_advances) return 38;
   policy_child_record_t policy_record = {0};
   if (!capture_policy_child(&policy_record)) return 8;
-  thp_disable_failure_record_t thp_disable_failure_record = {0};
-  if (!capture_thp_disable_failure_child(&thp_disable_failure_record)) return 44;
+  thp_direct_policy_record_t thp_direct_policy_records[8] = {{0}};
+  if (!capture_thp_direct_policy_child(
+          THP_DIRECT_POLICY_CASE_ALLOW_ENABLED, &thp_direct_policy_records[0])) return 44;
+  if (!capture_thp_direct_policy_child(
+          THP_DIRECT_POLICY_CASE_QUERY_PERM, &thp_direct_policy_records[1])) return 44;
+  if (!capture_thp_direct_policy_child(
+          THP_DIRECT_POLICY_CASE_QUERY_INVAL, &thp_direct_policy_records[2])) return 44;
+  if (!capture_thp_direct_policy_child(
+          THP_DIRECT_POLICY_CASE_QUERY_NONZERO_ONE, &thp_direct_policy_records[3])) return 44;
+  if (!capture_thp_direct_policy_child(
+          THP_DIRECT_POLICY_CASE_QUERY_NONZERO_THREE, &thp_direct_policy_records[4])) return 44;
+  if (!capture_thp_direct_policy_child(
+          THP_DIRECT_POLICY_CASE_SET_SUCCESS, &thp_direct_policy_records[5])) return 44;
+  if (!capture_thp_direct_policy_child(
+          THP_DIRECT_POLICY_CASE_SET_PERM, &thp_direct_policy_records[6])) return 44;
+  if (!capture_thp_direct_policy_child(
+          THP_DIRECT_POLICY_CASE_SET_INVAL, &thp_direct_policy_records[7])) return 44;
   /* The direct external callback receiver requires the same complete source
    * process and main-theap owner as `mi_manage_memory`, rather than only the
    * low-level OS statistics image used by the fixed primitive records. */
@@ -3171,12 +3257,30 @@ int main(void) {
   U("m2.vm.config.has_virtual_reserve", mi_os_mem_config.has_virtual_reserve);
   U("m2.vm.config.has_transparent_huge_pages", mi_os_mem_config.has_transparent_huge_pages);
   U("m2.vm.thp.process_disabled", thp_process_disabled);
-  U("m2.vm.thp_disable.get_zero_then_set_perm_exact_arguments",
-      thp_disable_failure_record.get_zero_then_set_perm_exact_arguments);
-  U("m2.vm.thp_disable.set_perm_leaves_configuration_disabled",
-      thp_disable_failure_record.set_perm_leaves_configuration_disabled);
-  U("m2.vm.thp_disable.set_perm_failure_returns_from_policy_transition",
-      thp_disable_failure_record.set_perm_failure_returns_from_policy_transition);
+  U("m2.vm.thp_direct.allow_enabled_zero_calls_and_continues",
+      thp_direct_policy_record_passes(
+          THP_DIRECT_POLICY_CASE_ALLOW_ENABLED, &thp_direct_policy_records[0]));
+  U("m2.vm.thp_direct.query_perm_get_only_disabled_and_continues",
+      thp_direct_policy_record_passes(
+          THP_DIRECT_POLICY_CASE_QUERY_PERM, &thp_direct_policy_records[1]));
+  U("m2.vm.thp_direct.query_inval_get_only_disabled_and_continues",
+      thp_direct_policy_record_passes(
+          THP_DIRECT_POLICY_CASE_QUERY_INVAL, &thp_direct_policy_records[2]));
+  U("m2.vm.thp_direct.query_nonzero_one_get_only_disabled_and_continues",
+      thp_direct_policy_record_passes(
+          THP_DIRECT_POLICY_CASE_QUERY_NONZERO_ONE, &thp_direct_policy_records[3]));
+  U("m2.vm.thp_direct.query_nonzero_three_get_only_disabled_and_continues",
+      thp_direct_policy_record_passes(
+          THP_DIRECT_POLICY_CASE_QUERY_NONZERO_THREE, &thp_direct_policy_records[4]));
+  U("m2.vm.thp_direct.set_success_exact_get_set_disabled_and_continues",
+      thp_direct_policy_record_passes(
+          THP_DIRECT_POLICY_CASE_SET_SUCCESS, &thp_direct_policy_records[5]));
+  U("m2.vm.thp_direct.set_perm_exact_get_set_disabled_and_continues",
+      thp_direct_policy_record_passes(
+          THP_DIRECT_POLICY_CASE_SET_PERM, &thp_direct_policy_records[6]));
+  U("m2.vm.thp_direct.set_inval_exact_get_set_disabled_and_continues",
+      thp_direct_policy_record_passes(
+          THP_DIRECT_POLICY_CASE_SET_INVAL, &thp_direct_policy_records[7]));
   U("m2.vm.reserved.initially_zero", reserved_id.initially_zero);
   U("m2.vm.reserved.initially_committed", reserved_id.initially_committed);
   U("m2.vm.reserved.commit.failure_returns_false", commit_failure_returns_false);
