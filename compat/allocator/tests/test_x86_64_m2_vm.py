@@ -544,6 +544,20 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 "target": runtime_check["target"],
             }
         )
+        initialization_records = [
+            {
+                "comparison_status": "matched",
+                "component": "initialization",
+                "command": ["<fixed-direct-tld-matrix>"],
+                "evidence_scope": "three-fixed-direct-pinned-c-rust-tld-source-matrix",
+                "id": check["id"],
+                "passed_test_count": check["expected_passed_test_count"],
+                "target": check["target"],
+            }
+            for component in summary["components"]
+            if component["id"] == "initialization"
+            for check in component["checks"]
+        ]
         observed = {}
 
         def focused_checks(_summary, _program, *, already_executed_check_ids, gate_name):
@@ -585,6 +599,8 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 return_value={},
             ) as runtime_thp_producer,
             mock.patch.object(RUNNER, "_m2_x86_64_vm_check_records", return_value=vm_records),
+            mock.patch.object(RUNNER, "_run_m2_x86_64_initialization_evidence", return_value={}) as initialization_producer,
+            mock.patch.object(RUNNER, "_m2_x86_64_initialization_check_records", return_value=initialization_records),
             mock.patch.object(RUNNER, "_m2_x86_64_differential_check_record", return_value={}),
             mock.patch.object(
                 RUNNER, "m2_memory_substrate_source_attestation", return_value={"status": "clean"}
@@ -603,8 +619,12 @@ class NativeVmAssemblyTests(unittest.TestCase):
 
         self.assertEqual(observed["gate_name"], "native x86 M2 focused source evidence")
         runtime_thp_producer.assert_called_once_with()
+        initialization_producer.assert_called_once_with(offline=True)
         self.assertTrue(
             {record["id"] for record in vm_records}.issubset(observed["ids"])
+        )
+        self.assertTrue(
+            {record["id"] for record in initialization_records}.issubset(observed["ids"])
         )
         owner_check = next(
             check

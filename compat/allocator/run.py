@@ -317,11 +317,13 @@ M2_X86_64_MEMORY_SUBSTRATE_COMPONENT_STATUSES = frozenset({"partial", "complete"
 M2_X86_64_SOURCE_MAP_REQUIRED_STATUSES = frozenset({"implemented", "partial"})
 M2_X86_64_BITMAP_FRAGMENT = ALLOCATOR_ROOT / "m2-bitmaps-x86_64-v3.5.0.fragment.json"
 M2_X86_64_VM_FRAGMENT = ALLOCATOR_ROOT / "m2-vm-x86_64-v3.5.0.fragment.json"
+M2_X86_64_INITIALIZATION_FRAGMENT = ALLOCATOR_ROOT / "m2-initialization-x86_64-v3.5.0.fragment.json"
 # Pin the semantic inventory once instead of copying its source/failure/check
 # rows into both the aggregate manifest and Python. Source bytes are verified
 # separately against the upstream archive before any native check executes.
 M2_X86_64_BITMAP_FRAGMENT_DIGEST = "dbb2bc7d34762819f7ed76c3b50fd3d8599d46b0ba7b9f78fcc9310afe536300"
 M2_X86_64_VM_FRAGMENT_DIGEST = "670aea9205e60c550452b30a5686f2631cf017a99bf9642183914e55d04bd799"
+M2_X86_64_INITIALIZATION_FRAGMENT_DIGEST = "08c3cdd0c8625518350fcc6cf12cc4555943f0b3950f2c2f1545cd8622a885ef"
 M2_X86_64_PAGE_MAP_CHECK_IDS = (
     "successful-page-map-lifecycle",
     "lazy-page-map-commit-failure",
@@ -11805,6 +11807,45 @@ def _m2_x86_64_bitmap_component(raw_component: Mapping[str, Any], pin: Mapping[s
     return component
 
 
+def _m2_x86_64_initialization_producer() -> Any:
+    """Load the fixed initialization producer without creating a generic component hook."""
+
+    path = ALLOCATOR_ROOT / "x86_64_initialization_tld_evidence.py"
+    spec = importlib.util.spec_from_file_location("crabc_m2_native_initialization", path)
+    if spec is None or spec.loader is None:
+        raise HarnessError("native x86 M2 initialization producer is absent")
+    producer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(producer)
+    return producer
+
+
+def _m2_x86_64_initialization_component(
+    raw_component: Mapping[str, Any], pin: Mapping[str, str]
+) -> dict[str, Any]:
+    """Materialize only the retained direct-TLD/worker initialization fragment."""
+
+    reference = {
+        "path": relative(M2_X86_64_INITIALIZATION_FRAGMENT),
+        "inventory_sha256": M2_X86_64_INITIALIZATION_FRAGMENT_DIGEST,
+    }
+    if dict(raw_component) != {"id": "initialization", "evidence_fragment": reference}:
+        raise HarnessError("native x86 M2 initialization fragment reference changed")
+    producer = _m2_x86_64_initialization_producer()
+    fragment = producer.load_fragment(M2_X86_64_INITIALIZATION_FRAGMENT)
+    if _m1_inventory_digest(fragment) != M2_X86_64_INITIALIZATION_FRAGMENT_DIGEST:
+        raise HarnessError("native x86 M2 initialization fragment inventory changed")
+    if (
+        fragment.get("upstream") != {
+            "version": pin["version"], "revision": pin["revision"], "archive_sha256": pin["sha256"]
+        }
+        or fragment.get("target", {}).get("rust_target") != X86_64_RUST_TARGET
+    ):
+        raise HarnessError("native x86 M2 initialization fragment schema or provenance changed")
+    component = dict(fragment["component"])
+    component["native_status"] = component.pop("completion_status")
+    return component
+
+
 def _m2_x86_64_vm_producer() -> Any:
     """Load the VM producer once for its immutable fragment validator and runner."""
 
@@ -11912,6 +11953,7 @@ def validate_x86_64_m2_memory_substrate_contract(
         "x86-64-bitmap-source-and-native-evidence",
         "x86-64-vm-primitives-fixed-profile-c-rust-and-owner-evidence",
         "x86-64-runtime-source-environment-thp-configuration-admission",
+        "x86-64-initialization-three-fixed-tld-and-worker-recovery-admission",
     ]:
         raise HarnessError("native x86 M2 global evidence inventory changed")
     expected_source_contracts = [
@@ -11973,8 +12015,11 @@ def validate_x86_64_m2_memory_substrate_contract(
         elif component_id == "bitmaps":
             fragment_reference = raw_component.get("evidence_fragment")
             raw_component = _m2_x86_64_bitmap_component(raw_component, pin)
+        elif component_id == "initialization":
+            fragment_reference = raw_component.get("evidence_fragment")
+            raw_component = _m2_x86_64_initialization_component(raw_component, pin)
         complete = component_id in {"bitmaps", "page-map"}
-        partial_evidence_component = component_id == "vm-primitives"
+        partial_evidence_component = component_id in {"vm-primitives", "initialization"}
         expected_component_keys = {
             "checks",
             "id",
@@ -12060,10 +12105,16 @@ def validate_x86_64_m2_memory_substrate_contract(
                     "c-rust-vm-primitives-source-profile-matrix",
                     "c-rust-aligned-overmap-cleanup-boundary-matrix",
                     "c-rust-runtime-thp-source-environment-admission",
+                    "c-rust-initialization-tld-source-matrix",
+                    "c-rust-init-recursion-lifecycle",
                 }
                 or not isinstance(raw_check.get("target"), str)
                 or type(raw_check.get("expected_passed_test_count")) is not int
-                or raw_check.get("expected_passed_test_count") != (41 if component_id == "bitmaps" else 1)
+                or raw_check.get("expected_passed_test_count") != (
+                    41 if component_id == "bitmaps" else (
+                        3 if raw_check.get("kind") == "c-rust-initialization-tld-source-matrix" else 1
+                    )
+                )
             ):
                 raise HarnessError(f"native x86 M2 component {component_id} has an invalid check")
             if raw_check.get("kind") == "c-rust-runtime-thp-source-environment-admission":
@@ -12081,6 +12132,24 @@ def validate_x86_64_m2_memory_substrate_contract(
                     raise HarnessError(
                         "native x86 M2 runtime THP configuration test target is absent"
                     )
+            elif raw_check.get("kind") in {
+                "c-rust-initialization-tld-source-matrix",
+                "c-rust-init-recursion-lifecycle",
+            }:
+                expected_initialization_targets = {
+                    "initialization-tld-direct-source-matrix": (
+                        "x86_64_initialization_tld_evidence::three_fixed_direct_tld_branches"
+                    ),
+                    "initialization-explicit-worker-recovery-lifecycle": (
+                        "main_heap_thread::tests::emit_x86_64_init_recursion_teardown_c_rust_trace"
+                    ),
+                }
+                if (
+                    component_id != "initialization"
+                    or raw_check.get("target") != expected_initialization_targets.get(raw_check.get("id"))
+                    or not (ALLOCATOR_ROOT / "x86_64_initialization_tld_evidence.py").is_file()
+                ):
+                    raise HarnessError("native x86 M2 initialization evidence target is absent")
             elif component_id != "bitmaps":
                 _m2_memory_substrate_source_test_exists(
                     str(raw_check["target"]), str(raw_check["id"])
@@ -12334,6 +12403,16 @@ def _run_m2_x86_64_runtime_thp_configuration_evidence() -> dict[str, Any]:
     producer = _m2_x86_64_runtime_thp_configuration_producer()
     return producer.run_runtime_first_arena_policy_evidence(
         producer.RUNTIME_FIRST_ARENA_REPORT
+    )
+
+
+def _run_m2_x86_64_initialization_evidence(*, offline: bool) -> dict[str, Any]:
+    """Run the retained x86 direct-TLD matrix and embedded worker receipt once."""
+
+    producer = _m2_x86_64_initialization_producer()
+    return producer.run_evidence(
+        offline=offline,
+        report_path=ARTIFACT_ROOT / "x86_64/initialization-tld-matrix.json",
     )
 
 
@@ -12786,6 +12865,61 @@ def _m2_x86_64_vm_check_records(
     return records
 
 
+def _m2_x86_64_initialization_check_records(
+    summary: Mapping[str, Any], evidence: object
+) -> list[dict[str, Any]]:
+    """Bind the two initialization M2 checks to one closed native receipt."""
+
+    component = next(item for item in summary["components"] if item["id"] == "initialization")
+    checks = {check["id"]: check for check in component["checks"]}
+    matrix = checks.get("initialization-tld-direct-source-matrix")
+    worker = checks.get("initialization-explicit-worker-recovery-lifecycle")
+    if matrix is None or worker is None:
+        raise HarnessError("native x86 M2 initialization check roster is absent")
+    producer = _m2_x86_64_initialization_producer()
+    if not isinstance(evidence, Mapping):
+        raise HarnessError("native x86 M2 initialization producer result is absent")
+    try:
+        producer.validate_report(evidence)
+    except producer.EvidenceError as error:
+        raise HarnessError("native x86 M2 initialization producer result is invalid") from error
+    rows = evidence.get("branch_rows")
+    rust_probes = evidence.get("rust_probes")
+    recursion = evidence.get("init_recursion")
+    if (
+        not isinstance(rows, list)
+        or len(rows) != matrix["expected_passed_test_count"]
+        or not isinstance(rust_probes, list)
+        or len(rust_probes) != len(rows)
+        or not isinstance(recursion, Mapping)
+        or not isinstance(recursion.get("rust_probe"), Mapping)
+        or not isinstance(recursion["rust_probe"].get("cargo_command"), list)
+        or not isinstance(rust_probes[0], Mapping)
+        or not isinstance(rust_probes[0].get("command"), list)
+    ):
+        raise HarnessError("native x86 M2 initialization receipt inventory changed")
+    return [
+        {
+            "comparison_status": "matched",
+            "component": "initialization",
+            "command": list(rust_probes[0]["command"]),
+            "evidence_scope": "three-fixed-direct-pinned-c-rust-tld-source-matrix",
+            "id": matrix["id"],
+            "passed_test_count": matrix["expected_passed_test_count"],
+            "target": matrix["target"],
+        },
+        {
+            "comparison_status": "matched",
+            "component": "initialization",
+            "command": list(recursion["rust_probe"]["cargo_command"]),
+            "evidence_scope": "embedded-current-native-explicit-worker-recovery-and-seven-lifecycle-filters",
+            "id": worker["id"],
+            "passed_test_count": worker["expected_passed_test_count"],
+            "target": worker["target"],
+        },
+    ]
+
+
 def _m2_x86_64_bitmap_check_records(
     summary: Mapping[str, Any], evidence: object
 ) -> list[dict[str, Any]]:
@@ -12847,6 +12981,7 @@ def m2_x86_64_memory_substrate_report(
     bitmap_evidence: Mapping[str, Any] | None = None,
     vm_evidence: Mapping[str, Any] | None = None,
     runtime_thp_evidence: Mapping[str, Any] | None = None,
+    initialization_evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Render native M2 receipts while keeping every open component partial."""
 
@@ -12858,6 +12993,9 @@ def m2_x86_64_memory_substrate_report(
     expected_bitmap_records = _m2_x86_64_bitmap_check_records(summary, bitmap_evidence)
     expected_vm_records = _m2_x86_64_vm_check_records(
         summary, vm_evidence, runtime_thp_evidence
+    )
+    expected_initialization_records = _m2_x86_64_initialization_check_records(
+        summary, initialization_evidence
     )
     expected_anchors = {
         (component["id"], definition["id"]): definition["source_anchor"]
@@ -12939,6 +13077,10 @@ def m2_x86_64_memory_substrate_report(
             ]:
                 raise HarnessError("native x86 M2 VM executed receipt inventory changed")
             unmet.append(component_id)
+        elif component_id == "initialization":
+            if checks != expected_initialization_records:
+                raise HarnessError("native x86 M2 initialization executed receipt inventory changed")
+            unmet.append(component_id)
         else:
             unmet.append(component_id)
         report_component: dict[str, Any] = {
@@ -12957,7 +13099,7 @@ def m2_x86_64_memory_substrate_report(
             report_component["failure_matrix"] = list(component["failure_matrix"])
             if "evidence_fragment" in component:
                 report_component["evidence_fragment"] = dict(component["evidence_fragment"])
-        elif component_id == "vm-primitives":
+        elif component_id in {"vm-primitives", "initialization"}:
             report_component["bounded_source_definitions"] = list(
                 component["bounded_source_definitions"]
             )
@@ -13005,6 +13147,9 @@ def m2_x86_64_memory_substrate_report(
             "x86-64-runtime-source-environment-thp-configuration-admission": dict(
                 runtime_thp_evidence
             ) if runtime_thp_evidence is not None else {},
+            "x86-64-initialization-three-fixed-tld-and-worker-recovery-admission": dict(
+                initialization_evidence
+            ) if initialization_evidence is not None else {},
         },
         "source": dict(source_attestation),
         "target": dict(summary["target"]),
@@ -13076,11 +13221,16 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
     bitmap_checks = _m2_x86_64_bitmap_check_records(summary, bitmap_evidence)
     vm_evidence = _run_m2_x86_64_vm_evidence(offline=offline, test_program=test_program)
     runtime_thp_evidence = _run_m2_x86_64_runtime_thp_configuration_evidence()
+    initialization_evidence = _run_m2_x86_64_initialization_evidence(offline=offline)
     vm_checks = _m2_x86_64_vm_check_records(
         summary, vm_evidence, runtime_thp_evidence
     )
+    initialization_checks = _m2_x86_64_initialization_check_records(
+        summary, initialization_evidence
+    )
     focused_checks = [
         *vm_checks,
+        *initialization_checks,
         *bitmap_checks,
         _m2_x86_64_differential_check_record(success_component, success_check, success),
         _m2_x86_64_differential_check_record(lazy_component, lazy_check, lazy),
@@ -13094,6 +13244,7 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
                     lazy_check["id"],
                     cold_check["id"],
                     *(check["id"] for check in vm_checks),
+                    *(check["id"] for check in initialization_checks),
                     *(check["id"] for check in bitmap_checks),
                 }
             ),
@@ -13112,6 +13263,7 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         bitmap_evidence=bitmap_evidence,
         vm_evidence=vm_evidence,
         runtime_thp_evidence=runtime_thp_evidence,
+        initialization_evidence=initialization_evidence,
     )
     write_json(M2_X86_64_MEMORY_SUBSTRATE_REPORT, report)
     return report

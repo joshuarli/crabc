@@ -2027,6 +2027,29 @@ pthread teardown, public `mi_*` behavior, runtime `AlreadyAttached` handling,
 complete process shutdown, metadata completion, public x86 runtime support,
 or AArch64 status.
 
+The initialization TLD admission is a separate native x86-64 receipt:
+
+```sh
+./compat/allocator/run-x86_64.sh allocator-initialization-tld
+```
+
+It compiles the existing pinned-C direct fixtures with the release
+initial-exec musl profile and compares their complete address-independent
+records with the three exact Rust emitters. The fixed rows are the detached
+static preimage, a caller-owned normal direct `mi_tld_init` image, and the
+first-main static `mi_tld_create` arm. The same receipt embeds the explicit
+worker init/repeat-init/done/repeat-done/recovery sequence and its seven fixed
+Rust ownership and failure filters. In particular, the retained PageMap filter
+is `process_main_binds_metadata_before_global_page_map_failure`; it is a
+Rust lifecycle guarantee and is not claimed as a selected pinned-C fault
+equivalence. The report is
+`compat/reports/allocator/x86_64/initialization-tld-matrix.json`.
+
+This finite source matrix does not cover generic or later TLD creation,
+metadata or `OsAligned` publication, automatic pthread teardown or process
+shutdown, allocator-recursion completion, public/runtime integration, or
+AArch64 status. It admits the initialization component as partial M2 evidence.
+
 The separate bounded fault-injection judge is also native x86-only:
 
 ```sh
@@ -2335,6 +2358,7 @@ snapshot after review; the normal gate never updates its own baseline.
 | `x86_64_dynamic_arena_singleton_post_exit_evidence.py` and `x86_64-dynamic-arena-singleton-post-exit-evidence-v3.5.0.json` | Native x86-64-only private 21-value pinned-C/Rust differential for one full arena singleton (request 524289, 589824-byte block size, capacity/reserved 1, nine arena slices): a real C worker runs `mi_thread_done()` and joins before the sole terminal consumer `mi_free`; the trace records teardown/join, unmapped/unowned/detached state, all-nine-slice PageMap/arena-bitmap preconditions, and terminal PageMap/bitmap/slice cleanup. Rust observes a scoped test worker and join while comparing only common typed private owner-exit facts, distinct from its Rust-only route. It is dispatched by `allocator-dynamic-arena-singleton-post-exit`; it does not claim pthread/TLS callback parity, general lifecycle/routing/concurrency, public x86/crabc API/runtime, backend promotion, or AArch64 evidence. |
 | `x86_64_lifecycle_evidence.py` | Native x86-only fixed private lifecycle/concurrency selections. Its ten lanes are deliberately narrower than general allocator lifecycle or stress qualification; the separately selectable first-arena witness pairs one direct pinned-C initial-TLD NUMA policy observation with one ordinary Rust child. |
 | `x86_64_init_recursion_evidence.py` and `x86_64-init-recursion-evidence-v3.5.0.json` | Native x86-64-only private seven-value pinned-C/Rust differential for the explicit process-init, worker init/repeat-init, explicit teardown/repeat-teardown, and recovery-init route. C returns its existing default Theap while Rust refuses a second mutable `MainHeapThreadAttachment`; both traces require one current owner, empty roots after teardown, and successful recovery. Its fixed native Rust batch also records once/process reentry and racer behavior, preflight retry, post-claim PageMap failure retention, persistent TLS recovery, and rejection of every nonpristine later-worker root before ticket/metadata/list mutation. It is dispatched by `allocator-init-recursion` and does not claim callback/runtime integration, metadata completion, public API/runtime, public x86 support, or AArch64 evidence. |
+| `x86_64_initialization_tld_evidence.py` and `m2-initialization-x86_64-v3.5.0.fragment.json` | Native x86-64-only three-row direct pinned-C/Rust initialization matrix for detached static preimage, direct normal TLD init, and first-main static TLD create. It freezes fixture bytes, direct include and translation-unit closure, release initial-exec command, complete trace schemas, and the source-current embedded explicit-worker recovery receipt with seven fixed Rust lifecycle filters. It is dispatched by `allocator-initialization-tld`, admits only partial M2 initialization evidence, and excludes generic/later TLD creation, metadata or `OsAligned` publication, automatic teardown, allocator-recursion completion, public/runtime integration, and AArch64 evidence. |
 | `x86_64_fault_evidence.py` | Native x86-only fixed crate-private fault-injection state-preservation selections. Its five lanes are deliberately narrower than general fault/misuse, lifecycle, or stress qualification. |
 | `perf_x86_64.py` and `perf-x86_64/` | Native x86-only private-adapter C/Rust timing and post-init live-memory measurement harness. Its reports are not the public-runtime `compat/perf/` matrix. |
 | `known-differences.md` | Sole register for observed, pending, accepted, or rejected Rust/C differences; every entry must identify its architecture profile. |

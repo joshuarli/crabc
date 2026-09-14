@@ -114,25 +114,11 @@
       ]
     },
     {
-      "checks": [],
       "id": "initialization",
-      "native_status": "partial",
-      "remaining_conditions": [
-        "Qualify process, thread, detached-TLD, and teardown initialization routes with native source and lifecycle evidence."
-      ],
-      "source_map_records": [
-        { "required_status": "partial", "unit_id": "process-and-thread-initialization" },
-        { "required_status": "partial", "unit_id": "c-support-and-once" },
-        { "required_status": "partial", "unit_id": "tls-interface-and-thread-identity" }
-      ],
-      "source_units": ["src/init.c", "src/prim/prim.c"],
-      "unqualified_failure_matrix": [
-        {
-          "id": "process-thread-and-detached-tld-images",
-          "required_evidence": ["native static-image source witnesses", "process and thread initialization lifecycle tests"],
-          "source_scope": "src/init.c process once, thread-local, detached TLD, and teardown image transitions"
-        }
-      ]
+      "evidence_fragment": {
+        "path": "compat/allocator/m2-initialization-x86_64-v3.5.0.fragment.json",
+        "inventory_sha256": "08c3cdd0c8625518350fcc6cf12cc4555943f0b3950f2c2f1545cd8622a885ef"
+      }
     },
     {
       "checks": [],
@@ -199,7 +185,8 @@
     "x86-64-page-map-focused-source-test-batch",
     "x86-64-bitmap-source-and-native-evidence",
     "x86-64-vm-primitives-fixed-profile-c-rust-and-owner-evidence",
-    "x86-64-runtime-source-environment-thp-configuration-admission"
+    "x86-64-runtime-source-environment-thp-configuration-admission",
+    "x86-64-initialization-three-fixed-tld-and-worker-recovery-admission"
   ],
   "milestone": {
     "completion_rule": "M2 is complete only when all eight native x86-64 components have complete target-local source boundaries, closed failure matrices, and their declared native C/Rust and Rust evidence.",
