@@ -684,6 +684,18 @@ def _safe_label(value: str) -> str:
     return value
 
 
+def runtime_probe_compile_argv(dynamic_driver: str, source: Path, destination: Path) -> list[str]:
+    """Build the one caller-owned compile command for every runtime probe.
+
+    The installed dynamic driver owns the target header root and PIE code
+    generation. Callers retain only ordinary language and source behavior
+    flags, so they cannot replace the selected installed runtime with an
+    ambient include tree or alter the selected compilation mode.
+    """
+    return [dynamic_driver, '--dynamic-pie', '-std=c11', '-D_GNU_SOURCE=1', '-fno-builtin',
+            '-fno-stack-protector', '-c', str(source), '-o', str(destination)]
+
+
 class Collector:
     """Collect exactly the installed-variable runtime matrix once.
 
@@ -727,11 +739,9 @@ class Collector:
         destination = self.output / 'objects' / (identifier + '.o')
         destination.parent.mkdir(exist_ok=True)
         source = self.root / scenario['source']
-        include = self.dynamic_product / 'usr/include'
-        self._run(identifier + '-compile', [self.tools['dynamic_driver']['original']['path'], '--dynamic-pie',
-                                            '-std=c11', '-D_GNU_SOURCE=1', '-fno-builtin',
-                                            '-fno-stack-protector', '-nostdinc', '-isystem', str(include),
-                                            '-c', str(source), '-o', str(destination)])
+        self._run(identifier + '-compile', runtime_probe_compile_argv(
+            self.tools['dynamic_driver']['original']['path'], source, destination,
+        ))
         require(destination.is_file() and not destination.is_symlink(),
                 'ordinary probe compile did not produce an object: ' + identifier)
         return destination
@@ -890,7 +900,7 @@ def _recorded_command_path(receipt_root: Path, label: str, suffix: str) -> Path:
 
 
 def _validate_commands(receipt_root: Path, records: object, *, origin_output: Path,
-                       inputs: Mapping[str, Any], tools: Mapping[str, Any]) -> None:
+                       tools: Mapping[str, Any]) -> None:
     require(type(records) is list and [item.get('label') if type(item) is dict else None for item in records]
             == _expected_labels(), 'public-data runtime command roster differs')
     expected_paths = {
@@ -904,7 +914,6 @@ def _validate_commands(receipt_root: Path, records: object, *, origin_output: Pa
     origin_root = origin_output
     for _ in receipt_root.relative_to(ROOT).parts:
         origin_root = origin_root.parent
-    dynamic_root = origin_root / inputs['dynamic_product']['path']
     for record in records:
         row = exact(record, {'label', 'argv', 'cwd', 'outcome', 'command', 'stdout', 'stderr', 'status'},
                     'public-data runtime command')
@@ -928,9 +937,9 @@ def _validate_commands(receipt_root: Path, records: object, *, origin_output: Pa
         object_path = str(origin_output / 'objects' / (identifier + '.o'))
         executable_dir = origin_output / 'executables' / identifier
         if label == identifier + '-compile':
-            require(row['argv'] == [expected_paths['dynamic_driver'], '--dynamic-pie', '-std=c11', '-D_GNU_SOURCE=1',
-                                    '-fno-builtin', '-fno-stack-protector', '-nostdinc', '-isystem',
-                                    str(dynamic_root / 'usr/include'), '-c', source, '-o', object_path],
+            require(row['argv'] == runtime_probe_compile_argv(
+                expected_paths['dynamic_driver'], Path(source), Path(object_path),
+            ),
                     'public-data runtime compile argv differs')
         elif label == identifier + '-oracle-static-link':
             require(row['argv'] == [expected_paths['oracle_wrapper'], '-static', '-fno-pie', '-no-pie', object_path,
@@ -1144,7 +1153,7 @@ def validate_report(report_path: Path, *, root: Path = ROOT, static_preparation:
     tools = ordinary_link.validate_tool_roster(root, receipt_root, actual_inputs, report['tools'])
     _validate_objects(receipt_root, report['objects'])
     _validate_links(receipt_root, report['links'], origin_root=origin_root, inputs=actual_inputs, tools=tools)
-    _validate_commands(receipt_root, report['commands'], origin_output=origin_output, inputs=actual_inputs, tools=tools)
+    _validate_commands(receipt_root, report['commands'], origin_output=origin_output, tools=tools)
     _validate_executions(receipt_root, report['executions'], report['commands'], report['links'], dynamic_product)
     require(report['coverage'] == {
         'objects': list(OBJECTS), 'groups': [name for name, _objects in GROUPS],

@@ -56,7 +56,12 @@ preflight. `collect` requires the selected static preparation and static/dynamic
 products plus the four current public companions: header declarations, ordinary
 declaration ABI, public-data ordinary link, and errno storage lifecycle. It
 first admits and snapshots that exact cohort, then records the ordinary C
-commands. `validate-report REPORT` takes the same supplied cohort and companion
+commands. Every probe compile calls the selected dynamic driver with only
+`--dynamic-pie -std=c11 -D_GNU_SOURCE=1 -fno-builtin
+-fno-stack-protector -c SOURCE -o OBJECT`. The installed driver itself fixes
+the installed header root and selected PIE code generation; a caller cannot
+pass `-nostdinc`, `-isystem`, or an explicit PIC/PIE mode into this receipt.
+`validate-report REPORT` takes the same supplied cohort and companion
 paths; it replays retained source, objects, link receipts, transcripts, roots,
 and source-specific expected streams without running a compiler, linker, target
 executable, or host oracle.

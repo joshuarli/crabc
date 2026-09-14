@@ -16,6 +16,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'compat/x86_64'))
 import owned_public_data_variable_runtime as reader
+import crabc_cc_owned_dynamic as dynamic_driver
 
 
 class PublicDataVariableRuntimeContractTests(unittest.TestCase):
@@ -164,6 +165,58 @@ class PublicDataVariableRuntimeContractTests(unittest.TestCase):
             os.symlink(target.name, alias)
             with self.assertRaisesRegex(reader.PublicDataVariableRuntimeError, 'symlink'):
                 reader._physical_file(alias, 'test retained input')
+
+    def test_all_runtime_probe_compile_commands_are_admitted_by_the_installed_dynamic_driver(self) -> None:
+        """The caller supplies no header or code-generation runtime authority.
+
+        The materialized dynamic wrapper parses the compile invocation and
+        then adds its own installed-header and selected-PIE flags. This uses
+        every source-owned scenario before any one command becomes receipt
+        authority.
+        """
+        work = ROOT / '.work' / 'x86_64' / 'public-data-runtime-compile-command-tests'
+        work.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=work) as temporary:
+            directory = Path(temporary)
+            output = directory / 'receipt'
+            output.mkdir()
+            installed = directory / 'installed-dynamic'
+            installed.mkdir()
+
+            class Capture:
+                def __init__(self) -> None:
+                    self.commands: list[list[str]] = []
+
+                def run(self, _label, argv, **_kwargs):
+                    self.commands.append(list(argv))
+                    destination = Path(argv[argv.index('-o') + 1])
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_bytes(b'compiled probe')
+                    return {'label': _label}
+
+            collector = reader.Collector(ROOT, output, directory / 'preparation', directory / 'static',
+                                         directory / 'dynamic', {})
+            collector.tools = {'dynamic_driver': {'original': {'path': str(installed / 'bin/crabc-cc-dynamic')}}}
+            capture = Capture()
+            collector.runner = capture
+            for scenario in reader.execution_plan():
+                collector._compile(scenario)
+            self.assertEqual(len(capture.commands), len(reader.execution_plan()))
+            for scenario, command in zip(reader.execution_plan(), capture.commands):
+                with self.subTest(scenario=scenario['id']), \
+                     mock.patch.object(dynamic_driver, 'validate'), \
+                     mock.patch.object(dynamic_driver, 'run', return_value='') as run:
+                    dynamic_driver.execute(installed, command[1:])
+                    self.assertNotIn('-nostdinc', command)
+                    self.assertNotIn('-isystem', command)
+                    self.assertNotIn('-fPIE', command)
+                    self.assertNotIn('-fPIC', command)
+                    compiler_command = run.call_args.args[0]
+                    self.assertIn('-nostdinc', compiler_command)
+                    self.assertIn(str(installed / 'usr/include'), compiler_command)
+                    self.assertIn('-fPIE', compiler_command)
+                    self.assertNotIn('-fPIC', compiler_command)
+                    self.assertNotIn('-fno-pie', compiler_command)
 
 
 class PublicDataVariableRuntimeExecutionRootTests(unittest.TestCase):
@@ -459,7 +512,6 @@ class PublicDataVariableRuntimePublicReplayTests(unittest.TestCase):
     def _command_rows(self) -> list[dict[str, object]]:
         rows = []
         invocation = '/tools/chroot'
-        dynamic_root = ROOT / self.cohort['dynamic_product']['path']
         for scenario in reader.execution_plan():
             identifier = scenario['id']
             source = str(ROOT / scenario['source'])
@@ -467,9 +519,7 @@ class PublicDataVariableRuntimePublicReplayTests(unittest.TestCase):
             executable_dir = self.receipt / 'executables' / identifier
             rows.append(self._raw_record(
                 identifier + '-compile',
-                ['/tools/dynamic', '--dynamic-pie', '-std=c11', '-D_GNU_SOURCE=1', '-fno-builtin',
-                 '-fno-stack-protector', '-nostdinc', '-isystem', str(dynamic_root / 'usr/include'),
-                 '-c', source, '-o', object_path],
+                reader.runtime_probe_compile_argv('/tools/dynamic', Path(source), Path(object_path)),
             ))
             rows.append(self._raw_record(
                 identifier + '-oracle-static-link',
