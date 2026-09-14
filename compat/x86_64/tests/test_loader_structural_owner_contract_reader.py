@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 import json
 import hashlib
+import shlex
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -205,6 +207,71 @@ class LoaderStructuralOwnerFactsTests(unittest.TestCase):
 
 
 class LoaderStructuralOwnerLifecycleTests(unittest.TestCase):
+    def test_runner_prepares_all_nested_candidate_and_pinned_roots_for_runtime_replay(self) -> None:
+        """Run the retained shell root functions against plain bytes and validate all cells."""
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work = Path(temporary)
+            dynamic, output = work / "dynamic-product", work / "output"
+            for directory in (dynamic, dynamic / "bin", dynamic / "lib", dynamic / "usr",
+                              dynamic / "usr/lib", dynamic / "share", dynamic / "share/crabc"):
+                directory.mkdir(parents=True, exist_ok=True)
+                directory.chmod(0o2755)
+
+            def write(path: Path, data: bytes, mode: int) -> None:
+                path.write_bytes(data)
+                path.chmod(mode)
+
+            write(dynamic / "bin/crabc-cc-dynamic", b"driver", 0o755)
+            write(dynamic / "lib/ld-crabc-x86_64.so.1", b"loader", 0o755)
+            write(dynamic / "usr/lib/libc.so", b"libc", 0o755)
+            write(dynamic / "share/crabc/manifest.json", b"manifest", 0o644)
+            consumer, plugin, musl = work / "consumer", work / "plugin.so", work / "musl.so"
+            write(consumer, b"consumer", 0o600)
+            write(plugin, b"plugin", 0o600)
+            write(musl, b"musl", 0o600)
+
+            runner = (ROOT / reader.RUNNER_PATH).read_text(encoding="utf-8")
+            functions = runner[runner.index("normalize_root()") : runner.index("\nrecord compile-")]
+            calls = []
+            for probe in reader.PROBES:
+                for mode in reader.MODES:
+                    calls.extend((
+                        f"prepare_candidate_root {shlex.quote(str(output / 'roots' / probe / 'candidate' / mode))} "
+                        f"{shlex.quote(str(consumer))} {shlex.quote(str(plugin))}",
+                        f"prepare_pinned_root {shlex.quote(str(output / 'roots' / probe / 'pinned-musl-1.2.6' / mode))} "
+                        f"{shlex.quote(str(consumer))} {shlex.quote(str(plugin))}",
+                    ))
+            completed = subprocess.run(
+                ["bash", "-c", "set -euo pipefail\n"
+                 f"DYNAMIC_PRODUCT={shlex.quote(str(dynamic))}\nMUSL_SHARED={shlex.quote(str(musl))}\n"
+                 f"{functions}\n" + "\n".join(calls)],
+                check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+
+            def source_identity(path: Path, mode: int) -> dict[str, object]:
+                return {"mode": mode, "size": path.stat().st_size, "sha256": reader._sha256(path)}
+
+            executable, plugin_dso = source_identity(consumer, 0o755), source_identity(plugin, 0o644)
+            matrix: dict[str, object] = {}
+            for probe in reader.PROBES:
+                cells: dict[str, object] = {}
+                for lane in reader.LANES:
+                    for mode in reader.MODES:
+                        root = output / "roots" / probe / lane / mode
+                        reader.capture_runtime_root(output=output, root=root, probe=probe, lane=lane, mode=mode, phase="before")
+                        reader.capture_runtime_root(output=output, root=root, probe=probe, lane=lane, mode=mode, phase="after")
+                        cells[f"{lane}/{mode}"] = {
+                            "consumer_object": {}, "plugin_object": {}, "plugin_dso": plugin_dso,
+                            "executable": executable, "link_command": {}, "runtime_command": {},
+                        }
+                matrix[probe] = {"objects": {"consumer": {}, "plugin": {}}, "cells": cells}
+            inputs = {"musl_shared": {"path": "musl", **source_identity(musl, 0o600), "retained": "retained/inputs/musl_shared"}}
+            result = reader._validate_runtime(output, dynamic, matrix, inputs)
+            self.assertEqual(set(result), {f"{probe}/{lane}/{mode}" for probe in reader.PROBES
+                                          for lane in reader.LANES for mode in reader.MODES})
+
     def test_input_paths_and_begin_collection_preserve_the_canonical_role_roster(self) -> None:
         """Exercise the actual begin entry through its ordered product-role map."""
         scratch = ROOT / ".work/x86_64/tmp"

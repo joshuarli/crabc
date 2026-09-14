@@ -98,10 +98,14 @@ PY
 
 prepare_candidate_root() {
     local root="$1" executable="$2" plugin="$3"
+    mkdir -p "$(dirname "$root")"
     cp -a "$DYNAMIC_PRODUCT" "$root"
     cp "$executable" "$root/consumer"
     cp "$plugin" "$root/usr/lib/libloader-structural-owner-plugin.so"
-    normalize_root "$root"
+    # The copied selected product is already mode-sealed. Only these two
+    # component additions have the receipt's explicit runtime-root modes.
+    chmod 0755 "$root/consumer"
+    chmod 0644 "$root/usr/lib/libloader-structural-owner-plugin.so"
 }
 
 prepare_pinned_root() {
