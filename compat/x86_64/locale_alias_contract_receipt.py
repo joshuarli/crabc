@@ -37,6 +37,15 @@ IMAGE_MANIFEST_PATH = "compat/x86_64/locale-alias-contract-image-inputs.json"
 PINNED_IMAGE = "crabc-core-evidence@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d"
 COMMAND_PATH = "/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 COMMAND_ENVIRONMENT = {"LC_ALL": "C", "PATH": COMMAND_PATH}
+# The product builders re-open the mounted Git checkout after the collector
+# intentionally uses ``env -i``. Retain this one literal safe-directory entry
+# inside every collector command; outer Docker environment cannot cross that
+# closed process boundary, and a wildcard would weaken source admission.
+COLLECTOR_GIT_SAFE_DIRECTORY = {
+    "GIT_CONFIG_COUNT": "1",
+    "GIT_CONFIG_KEY_0": "safe.directory",
+    "GIT_CONFIG_VALUE_0": SOURCE_MOUNT,
+}
 RUNNER_TIMEOUT_SECONDS = 20
 COLLECTOR_TIMEOUT_SECONDS = 1200
 COMMAND_LAUNCHER_PREFIX = ("/usr/bin/env", "-i")
@@ -68,7 +77,8 @@ MODE_POLICY = {
 }
 
 def _collector_environment(output_relative: str) -> dict[str, str]:
-    return {**COMMAND_ENVIRONMENT, "TMPDIR": _mount(f"{output_relative}/tmp"), "TZ": "UTC", "PYTHONDONTWRITEBYTECODE": "1"}
+    return {**COMMAND_ENVIRONMENT, "TMPDIR": _mount(f"{output_relative}/tmp"), "TZ": "UTC", "PYTHONDONTWRITEBYTECODE": "1",
+            **COLLECTOR_GIT_SAFE_DIRECTORY}
 
 
 def _collector_launcher(output_relative: str) -> list[str]:
@@ -1402,7 +1412,8 @@ def _run(root: Path, receipt_root: Path, role: str, argv: list[str], *, env: Map
     output_relative = _output_relative(root, receipt_root)
     environment = _collector_environment(output_relative)
     launcher = _collector_launcher(output_relative)
-    if dict(env) != {**COMMAND_ENVIRONMENT, "TMPDIR": str(receipt_root / "tmp"), "TZ": "UTC", "PYTHONDONTWRITEBYTECODE": "1"}:
+    if dict(env) != {**COMMAND_ENVIRONMENT, "TMPDIR": str(receipt_root / "tmp"), "TZ": "UTC", "PYTHONDONTWRITEBYTECODE": "1",
+                     **COLLECTOR_GIT_SAFE_DIRECTORY}:
         _fail("collector environment differs from its closed contract")
     raw = receipt_root / "collector" / role
     raw.parent.mkdir(parents=True, exist_ok=True)
@@ -1475,6 +1486,7 @@ def collect(root: Path, output: Path) -> dict[str, object]:
         env = {
             "PATH": COMMAND_PATH,
             "TMPDIR": str(output / "tmp"), "LC_ALL": "C", "TZ": "UTC", "PYTHONDONTWRITEBYTECODE": "1",
+            **COLLECTOR_GIT_SAFE_DIRECTORY,
         }
         (output / "tmp").mkdir(mode=0o700)
         collector_commands = []

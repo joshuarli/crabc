@@ -204,6 +204,41 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
         self.assertEqual(plan[0][1][-2:], ["-o", "/workspace/.work/x86_64/locale-alias-contract-receipt/tmp/runner/probe.o"])
         self.assertNotIn("wcsftime_l", "\n".join(argument for _role, argv in plan for argument in argv))
 
+    def test_static_preparation_safe_directory_is_inside_its_closed_environment(self) -> None:
+        output = self.root / ".work/x86_64/collector"
+        relative = ".work/x86_64/collector"
+        environment = {
+            **receipt.COMMAND_ENVIRONMENT,
+            "TMPDIR": str(output / "tmp"),
+            "TZ": "UTC",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "safe.directory",
+            "GIT_CONFIG_VALUE_0": "/workspace",
+        }
+        observed: list[dict[str, object]] = []
+
+        def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+            observed.append({"argv": argv, "env": kwargs["env"]})
+            return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+        expected = receipt._collector_environment(relative)
+        with mock.patch("subprocess.run", side_effect=run):
+            for role, argv in receipt._expected_collector_commands(relative):
+                receipt._run(self.root, output, role, argv, env=environment)
+
+        reconstructed = receipt._raw_collector_commands(output, relative)
+        self.assertEqual([record["environment"] for record in reconstructed], [expected] * 3)
+        self.assertEqual([record["launcher"] for record in reconstructed], [receipt._collector_launcher(relative)] * 3)
+        self.assertEqual([record["env"] for record in observed], [environment] * 3)
+        self.assertEqual(
+            [record["argv"] for record in observed],
+            [[*receipt._collector_launcher(relative), *argv]
+             for _role, argv in receipt._expected_collector_commands(relative)],
+        )
+        self.assertIn("GIT_CONFIG_KEY_0=safe.directory", receipt._collector_launcher(relative))
+        self.assertIn("GIT_CONFIG_VALUE_0=/workspace", receipt._collector_launcher(relative))
+
     def test_collector_uses_the_established_static_preparation_primary(self) -> None:
         output = ".work/x86_64/locale-alias-contract-receipt"
         commands = receipt._expected_collector_commands(output)
