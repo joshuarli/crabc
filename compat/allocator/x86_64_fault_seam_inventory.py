@@ -968,9 +968,11 @@ def run_evidence(
         execution = runner._m2_x86_64_vm_rust_execution()
         artifacts = runner.ARTIFACT_ROOT / "x86_64/fault-seam-inventory"
         if test_program is None:
+            # The standalone path hands this product to the fixed VM producer,
+            # whose provenance contract accepts only the canonical M2 target.
             test_program = runner._x86_64_unit_test_program(
                 execution,
-                artifacts / "cargo-target",
+                runner.M2_X86_64_MEMORY_SUBSTRATE_CARGO_TARGET,
                 gate_name="native x86 fault seam inventory",
             )
         elif not runner._m2_x86_64_vm_test_program_is_bound(test_program):

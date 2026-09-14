@@ -10,6 +10,7 @@ import json
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -106,6 +107,54 @@ def _valid_report() -> dict[str, object]:
 
 
 class FaultInventoryShapeTests(unittest.TestCase):
+    def test_standalone_producer_builds_the_vm_validator_canonical_cargo_target(self) -> None:
+        """The standalone producer must feed the same target the VM reader admits."""
+
+        runner = INVENTORY._load_runner()
+        observed: dict[str, object] = {}
+
+        class StopAfterVmProvenance(Exception):
+            pass
+
+        def capture_target(execution: object, cargo_target: Path, *, gate_name: str) -> dict[str, object]:
+            observed["execution"] = execution
+            observed["cargo_target"] = cargo_target
+            observed["gate_name"] = gate_name
+            path = cargo_target / runner.X86_64_RUST_TARGET / "debug/deps/crabc_mimalloc-deadbeef"
+            command = runner._m2_x86_64_vm_rust_build_command()
+            return {
+                "build": {"command": command, "status": 0, "stdout": "", "stderr": ""},
+                "build_command": command,
+                "cargo_target": str(cargo_target),
+                "execution": runner._m2_x86_64_vm_rust_execution(),
+                "path": path,
+            }
+
+        def capture_vm(*, offline: bool, test_program: object) -> object:
+            del offline
+            observed["vm_provenance_bound"] = runner._m2_x86_64_vm_test_program_is_bound(test_program)
+            if not observed["vm_provenance_bound"]:
+                raise AssertionError("standalone producer gave the VM validator an unbound test program")
+            raise StopAfterVmProvenance
+
+        with (
+            mock.patch.object(INVENTORY, "_load_runner", return_value=runner),
+            mock.patch.object(runner, "require_native_x86_64"),
+            mock.patch.object(runner, "m2_memory_substrate_source_state", return_value={}),
+            mock.patch.object(runner, "load_pin", return_value={}),
+            mock.patch.object(runner, "fetch_archive", return_value=Path("/archive")),
+            mock.patch.object(runner, "require_tool", return_value="/usr/bin/musl-gcc"),
+            mock.patch.object(runner, "_x86_64_unit_test_program", side_effect=capture_target),
+            mock.patch.object(runner, "_run_m2_x86_64_vm_evidence", side_effect=capture_vm),
+            mock.patch.object(Path, "is_file", return_value=True),
+        ):
+            with self.assertRaises(StopAfterVmProvenance):
+                INVENTORY.run_evidence(offline=True)
+
+        self.assertEqual(observed["cargo_target"], runner.M2_X86_64_MEMORY_SUBSTRATE_CARGO_TARGET)
+        self.assertEqual(observed["gate_name"], "native x86 fault seam inventory")
+        self.assertTrue(observed["vm_provenance_bound"])
+
     def test_source_inventory_is_closed_and_retains_stopped_receivers(self) -> None:
         self.assertEqual(
             [row.identifier for row in INVENTORY.SOURCE_ROWS],
