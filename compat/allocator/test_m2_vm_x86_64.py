@@ -36,10 +36,15 @@ LARGE_ONLY_TRACE_KEYS = (
     "m2.vm.large_only.terminal_failures_leave_statistics_and_owners_unpublished",
 )
 
-THP_DISABLE_FAILURE_TRACE_KEYS = (
-    "m2.vm.thp_disable.get_zero_then_set_perm_exact_arguments",
-    "m2.vm.thp_disable.set_perm_leaves_configuration_disabled",
-    "m2.vm.thp_disable.set_perm_failure_returns_from_policy_transition",
+THP_DIRECT_POLICY_TRACE_KEYS = (
+    "m2.vm.thp_direct.allow_enabled_zero_calls_and_continues",
+    "m2.vm.thp_direct.query_perm_get_only_disabled_and_continues",
+    "m2.vm.thp_direct.query_inval_get_only_disabled_and_continues",
+    "m2.vm.thp_direct.query_nonzero_one_get_only_disabled_and_continues",
+    "m2.vm.thp_direct.query_nonzero_three_get_only_disabled_and_continues",
+    "m2.vm.thp_direct.set_success_exact_get_set_disabled_and_continues",
+    "m2.vm.thp_direct.set_perm_exact_get_set_disabled_and_continues",
+    "m2.vm.thp_direct.set_inval_exact_get_set_disabled_and_continues",
 )
 
 
@@ -49,7 +54,7 @@ EXPECTED_CHECK_IDS = (
     "normal-release-aligned-hint-cursor-random-and-cas-matrix",
     "normal-release-large-page-retry-suppression-and-ordinary-fallback",
     "large-only-one-gib-failure-no-regular-owner",
-    "thp-disable-set-perm-keeps-configuration-disabled",
+    "thp-direct-policy-outcome-matrix",
     "aligned-hint-source-profile-and-direct-caller-matrix",
     "aligned-overmap-cleanup-c-rust-boundary-matrix",
     "process-policy-first-arena-clean-primary-fallback",
@@ -138,24 +143,25 @@ class NativeM2VmTraceTests(unittest.TestCase):
             with self.subTest(malformed=malformed), self.assertRaises(ValueError):
                 parse_trace(malformed, source="test")
 
-    def test_thp_disable_failure_record_is_finite_and_fail_closed(self) -> None:
+    def test_thp_direct_policy_matrix_is_finite_and_fail_closed(self) -> None:
         good = valid_trace()
-        for malformed in (
-            good.replace(f"{THP_DISABLE_FAILURE_TRACE_KEYS[0]}=1\n", "", 1),
+        malformed = []
+        for key in THP_DIRECT_POLICY_TRACE_KEYS:
+            malformed.extend((
+                good.replace(f"{key}=1\n", "", 1),
+                good.replace(f"{key}=1", f"{key}=1\n{key}=1", 1),
+                good.replace(f"{key}=1", f"{key}=0", 1),
+            ))
+        malformed.append(
             good.replace(
-                f"{THP_DISABLE_FAILURE_TRACE_KEYS[0]}=1",
-                f"{THP_DISABLE_FAILURE_TRACE_KEYS[0]}=1\n{THP_DISABLE_FAILURE_TRACE_KEYS[0]}=1",
+                f"{THP_DIRECT_POLICY_TRACE_KEYS[0]}=1\n{THP_DIRECT_POLICY_TRACE_KEYS[1]}=1",
+                f"{THP_DIRECT_POLICY_TRACE_KEYS[1]}=1\n{THP_DIRECT_POLICY_TRACE_KEYS[0]}=1",
                 1,
-            ),
-            good.replace(
-                f"{THP_DISABLE_FAILURE_TRACE_KEYS[0]}=1\n{THP_DISABLE_FAILURE_TRACE_KEYS[1]}=1",
-                f"{THP_DISABLE_FAILURE_TRACE_KEYS[1]}=1\n{THP_DISABLE_FAILURE_TRACE_KEYS[0]}=1",
-                1,
-            ),
-            good.replace(f"{THP_DISABLE_FAILURE_TRACE_KEYS[2]}=1", f"{THP_DISABLE_FAILURE_TRACE_KEYS[2]}=0", 1),
-        ):
-            with self.subTest(malformed=malformed), self.assertRaises(ValueError):
-                parse_trace(malformed, source="test")
+            )
+        )
+        for output in malformed:
+            with self.subTest(malformed=output), self.assertRaises(ValueError):
+                parse_trace(output, source="test")
 
     def test_aligned_overmap_sides_remain_separate_and_fail_closed(self) -> None:
         c_trace = valid_aligned_overmap_trace(ALIGNED_OVERMAP_C_TRACE_KEYS)
@@ -277,7 +283,7 @@ class NativeM2VmFragmentTests(unittest.TestCase):
             with self.subTest(fragment=fragment), self.assertRaisesRegex(ValueError, "THP"):
                 load_fragment(self.write_fragment(fragment))
 
-    def test_thp_disable_failure_definition_and_check_cannot_be_dropped(self) -> None:
+    def test_thp_direct_policy_definition_and_check_cannot_be_dropped(self) -> None:
         dropped_definition = copy.deepcopy(self.fragment)
         definitions = dropped_definition["component"]["bounded_source_definitions"]
         definitions[:] = [
@@ -290,9 +296,19 @@ class NativeM2VmFragmentTests(unittest.TestCase):
         checks[:] = [
             check
             for check in checks
-            if check["id"] != "thp-disable-set-perm-keeps-configuration-disabled"
+            if check["id"] != "thp-direct-policy-outcome-matrix"
         ]
-        for fragment in (dropped_definition, dropped_check):
+        raw_nonzero_removed = copy.deepcopy(self.fragment)
+        thp_branch = raw_nonzero_removed["component"]["branch_matrix"][2]
+        thp_branch["source_scope"] = thp_branch["source_scope"].replace(
+            "raw nonzero 3", "removed raw nonzero representative"
+        )
+        phantom_diagnostics = copy.deepcopy(self.fragment)
+        thp_branch = phantom_diagnostics["component"]["branch_matrix"][2]
+        thp_branch["missing_conditions"] = [
+            "Diagnostics remain unqualified despite the selected source branch"
+        ]
+        for fragment in (dropped_definition, dropped_check, raw_nonzero_removed, phantom_diagnostics):
             with self.subTest(fragment=fragment), self.assertRaises(ValueError):
                 load_fragment(self.write_fragment(fragment))
 

@@ -1521,7 +1521,7 @@
         "crabc_mimalloc::os_page"
       ],
       "status": "partial",
-      "difference": "Rust uses direct fixed Linux syscalls and records selected fallback policy, not the full Unix portability implementation. A child-isolated C/Rust record proves only the failure-only `unix_mmap` large-only route: the first explicit one-GiB map fails with ENOMEM, its same hint retries as two MiB and fails, then the sticky unavailable state makes the next claimed request attempt only two MiB. The record captures exact huge-map length/protection/flags, avoids a regular fallback, and leaves no terminal owner or statistics. Separately, a child-isolated direct C `_mi_prim_mem_init` call and a private Rust capture select only `allow_thp=0`, GET `(0,0,0,0)` returning zero, and SET `(1,0,0,0)` failing EPERM while the configuration remains disabled. C continues through its void initializer; Rust exposes `DisabledSetFailed(PERM)` before the unqualified process caller discards it. Neither record qualifies successful huge mappings, THP advice, GET errors/nonzero values, successful or other failing SET outcomes, diagnostics, timeout/partial progress, or callers.",
+      "difference": "Rust uses direct fixed Linux syscalls and records selected fallback policy, not the full Unix portability implementation. A child-isolated C/Rust record proves only the failure-only `unix_mmap` large-only route: the first explicit one-GiB map fails with ENOMEM, its same hint retries as two MiB and fails, then the sticky unavailable state makes the next claimed request attempt only two MiB. The record captures exact huge-map length/protection/flags, avoids a regular fallback, and leaves no terminal owner or statistics. Separately, a child-isolated direct C `_mi_prim_mem_init` call and a private Rust capture cover a finite `allow_thp` direct policy matrix: enabled bypass, GET EPERM/EINVAL, GET raw nonzero 1/3, and GET zero followed by SET success/EPERM/EINVAL. They accept only the exact GET `(0,0,0,0)` and SET `(1,0,0,0)` tuples. C records its void continuation and forced disabled configuration only when allow is false; it does not compare ambient enabled detection. Rust separately preserves synthetic enabled configuration states and exposes the selected typed outcomes/payloads before the unqualified process caller discards them. Raw nonzero 3 is only a return-class representative, not a Linux kernel result claim. Neither record qualifies hardware huge mappings, ambient source discovery or C detection, process callers, timeout/partial progress, or allocator integration.",
       "evidence": [
         "compat/allocator/m2-vm-x86_64-v3.5.0.fragment.json",
         "compat/allocator/m2_vm_x86_64.c",
@@ -1545,6 +1545,6 @@
     "unfinished_unit_count": 28,
     "unit_count": 34,
     "unit_ids_sha256": "dca679d8587cb38bcf6e6c62379284ed35a55d1b7991d07b0d30eac767670052",
-    "units_sha256": "a9beda1fcc95c3cceb42fb8fa16bd75ae7e3b2ca009d60619a52c5288f744055"
+    "units_sha256": "dca52be1143dfcd0ba7ac2cc9d8f05709da54b8afa7b8361b374d467e903bedb"
   }
 }

@@ -4748,20 +4748,21 @@ pub(crate) mod fault {
         AtomicUsize::new(0),
         AtomicUsize::new(0),
     ];
-    // The THP process-policy failure witness is intentionally narrower than
-    // the generic fault plan: it scripts only the two scalar prctl tuples
-    // emitted by `_mi_prim_mem_init` after `allow_thp=0`.  It remains within
-    // this serial test module and falls through to the real raw primitive
-    // unless a capture token explicitly selects it.
-    const THP_DISABLE_PRCTL_CAPTURE_CAPACITY: usize = 2;
-    static THP_DISABLE_PRCTL_CAPTURE_ACTIVE: AtomicBool = AtomicBool::new(false);
-    static THP_DISABLE_PRCTL_CAPTURE_VALID: AtomicBool = AtomicBool::new(false);
-    static THP_DISABLE_PRCTL_CAPTURE_COUNT: AtomicUsize = AtomicUsize::new(0);
-    static THP_DISABLE_PRCTL_CAPTURE_OPTIONS: [AtomicI32; THP_DISABLE_PRCTL_CAPTURE_CAPACITY] = [
+    // The THP process-policy matrix is intentionally narrower than the generic
+    // fault plan. It selects one named direct source case at a time, accepts
+    // only GET(0,0,0,0)/SET(1,0,0,0), and otherwise falls through to the real
+    // primitive when no token is active. It is test-only evidence, not a
+    // programmable production policy receiver.
+    const THP_DIRECT_POLICY_CAPTURE_CAPACITY: usize = 2;
+    static THP_DIRECT_POLICY_CAPTURE_ACTIVE: AtomicBool = AtomicBool::new(false);
+    static THP_DIRECT_POLICY_CAPTURE_VALID: AtomicBool = AtomicBool::new(false);
+    static THP_DIRECT_POLICY_CAPTURE_CASE: AtomicUsize = AtomicUsize::new(0);
+    static THP_DIRECT_POLICY_CAPTURE_COUNT: AtomicUsize = AtomicUsize::new(0);
+    static THP_DIRECT_POLICY_CAPTURE_OPTIONS: [AtomicI32; THP_DIRECT_POLICY_CAPTURE_CAPACITY] = [
         AtomicI32::new(0),
         AtomicI32::new(0),
     ];
-    static THP_DISABLE_PRCTL_CAPTURE_ARGUMENTS: [AtomicUsize; THP_DISABLE_PRCTL_CAPTURE_CAPACITY * 4] = [
+    static THP_DIRECT_POLICY_CAPTURE_ARGUMENTS: [AtomicUsize; THP_DIRECT_POLICY_CAPTURE_CAPACITY * 4] = [
         AtomicUsize::new(0),
         AtomicUsize::new(0),
         AtomicUsize::new(0),
@@ -4771,6 +4772,56 @@ pub(crate) mod fault {
         AtomicUsize::new(0),
         AtomicUsize::new(0),
     ];
+
+    /// The finite direct control-flow cases from `prim.c:267-274`.
+    ///
+    /// `QueryNonzeroThree` is deliberately a raw nonzero return-class witness,
+    /// not a claim that Linux 5.10 documents `3` as a kernel result. The two
+    /// fixed errno variants prove Rust's typed payload preservation while the
+    /// C source itself only branches on query success versus nonzero/error.
+    #[repr(usize)]
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub(crate) enum ThpDirectPolicyCase {
+        AllowEnabled = 1,
+        QueryPerm,
+        QueryInval,
+        QueryNonzeroOne,
+        QueryNonzeroThree,
+        SetSuccess,
+        SetPerm,
+        SetInval,
+    }
+
+    impl ThpDirectPolicyCase {
+        #[inline]
+        const fn expected_calls(self) -> usize {
+            match self {
+                Self::AllowEnabled => 0,
+                Self::QueryPerm | Self::QueryInval | Self::QueryNonzeroOne | Self::QueryNonzeroThree => 1,
+                Self::SetSuccess | Self::SetPerm | Self::SetInval => 2,
+            }
+        }
+
+        #[inline]
+        pub(crate) const fn allow_enabled(self) -> bool {
+            matches!(self, Self::AllowEnabled)
+        }
+
+        #[inline]
+        fn from_raw(raw: usize) -> Option<Self> {
+            match raw {
+                raw if raw == Self::AllowEnabled as usize => Some(Self::AllowEnabled),
+                raw if raw == Self::QueryPerm as usize => Some(Self::QueryPerm),
+                raw if raw == Self::QueryInval as usize => Some(Self::QueryInval),
+                raw if raw == Self::QueryNonzeroOne as usize => Some(Self::QueryNonzeroOne),
+                raw if raw == Self::QueryNonzeroThree as usize => Some(Self::QueryNonzeroThree),
+                raw if raw == Self::SetSuccess as usize => Some(Self::SetSuccess),
+                raw if raw == Self::SetPerm as usize => Some(Self::SetPerm),
+                raw if raw == Self::SetInval as usize => Some(Self::SetInval),
+                _ => None,
+            }
+        }
+    }
 
     /// An allocation-free deterministic failure plan for one serial test.
     #[derive(Clone, Copy)]
@@ -4981,8 +5032,9 @@ pub(crate) mod fault {
         _guard: core::marker::PhantomData<&'guard Guard>,
     }
 
-    /// A serial exact capture of the allow_thp=0 GET/SET pair.
-    pub(crate) struct ThpDisablePrctlCapture<'guard> {
+    /// A serial capture of one named direct THP policy case.
+    pub(crate) struct ThpDirectPolicyCapture<'guard> {
+        selected_case: ThpDirectPolicyCase,
         _guard: core::marker::PhantomData<&'guard Guard>,
     }
 
@@ -5079,21 +5131,24 @@ pub(crate) mod fault {
             }
         }
 
-        /// Scripts GET_THP_DISABLE=0 then SET_THP_DISABLE=EPERM and records
-        /// both concrete source argument tuples. More, fewer, or different
-        /// calls invalidate the witness instead of being treated as a prefix.
-        pub(crate) fn capture_thp_disable_set_failure(&self) -> ThpDisablePrctlCapture<'_> {
-            THP_DISABLE_PRCTL_CAPTURE_ACTIVE.store(false, Ordering::Release);
-            THP_DISABLE_PRCTL_CAPTURE_VALID.store(true, Ordering::Release);
-            THP_DISABLE_PRCTL_CAPTURE_COUNT.store(0, Ordering::Release);
-            for option in &THP_DISABLE_PRCTL_CAPTURE_OPTIONS {
+        /// Selects one exact source case. More, fewer, or different calls
+        /// invalidate this fixed witness instead of becoming a prefix.
+        pub(crate) fn capture_thp_direct_policy_case(
+            &self, selected_case: ThpDirectPolicyCase,
+        ) -> ThpDirectPolicyCapture<'_> {
+            THP_DIRECT_POLICY_CAPTURE_ACTIVE.store(false, Ordering::Release);
+            THP_DIRECT_POLICY_CAPTURE_VALID.store(true, Ordering::Release);
+            THP_DIRECT_POLICY_CAPTURE_CASE.store(selected_case as usize, Ordering::Release);
+            THP_DIRECT_POLICY_CAPTURE_COUNT.store(0, Ordering::Release);
+            for option in &THP_DIRECT_POLICY_CAPTURE_OPTIONS {
                 option.store(0, Ordering::Release);
             }
-            for argument in &THP_DISABLE_PRCTL_CAPTURE_ARGUMENTS {
+            for argument in &THP_DIRECT_POLICY_CAPTURE_ARGUMENTS {
                 argument.store(0, Ordering::Release);
             }
-            THP_DISABLE_PRCTL_CAPTURE_ACTIVE.store(true, Ordering::Release);
-            ThpDisablePrctlCapture {
+            THP_DIRECT_POLICY_CAPTURE_ACTIVE.store(true, Ordering::Release);
+            ThpDirectPolicyCapture {
+                selected_case,
                 _guard: core::marker::PhantomData,
             }
         }
@@ -5196,25 +5251,29 @@ pub(crate) mod fault {
         }
     }
 
-    impl ThpDisablePrctlCapture<'_> {
-        /// Returns the selected pair only when both source calls matched the
-        /// fixed tuple and no third call reached this capture.
-        pub(crate) fn attempts(&self) -> Option<[(i32, [usize; 4]); THP_DISABLE_PRCTL_CAPTURE_CAPACITY]> {
-            if !THP_DISABLE_PRCTL_CAPTURE_VALID.load(Ordering::Acquire)
-                || THP_DISABLE_PRCTL_CAPTURE_COUNT.load(Ordering::Acquire)
-                    != THP_DISABLE_PRCTL_CAPTURE_CAPACITY
+    impl ThpDirectPolicyCapture<'_> {
+        /// Returns the fixed two-slot record and its exact selected count.
+        pub(crate) fn attempts(
+            &self,
+        ) -> Option<([(i32, [usize; 4]); THP_DIRECT_POLICY_CAPTURE_CAPACITY], usize)> {
+            let count = THP_DIRECT_POLICY_CAPTURE_COUNT.load(Ordering::Acquire);
+            if !THP_DIRECT_POLICY_CAPTURE_VALID.load(Ordering::Acquire)
+                || count != self.selected_case.expected_calls()
             {
                 return None;
             }
-            Some(core::array::from_fn(|index| {
-                (
-                    THP_DISABLE_PRCTL_CAPTURE_OPTIONS[index].load(Ordering::Acquire),
-                    core::array::from_fn(|argument| {
-                        THP_DISABLE_PRCTL_CAPTURE_ARGUMENTS[index * 4 + argument]
-                            .load(Ordering::Acquire)
-                    }),
-                )
-            }))
+            Some((
+                core::array::from_fn(|index| {
+                    (
+                        THP_DIRECT_POLICY_CAPTURE_OPTIONS[index].load(Ordering::Acquire),
+                        core::array::from_fn(|argument| {
+                            THP_DIRECT_POLICY_CAPTURE_ARGUMENTS[index * 4 + argument]
+                                .load(Ordering::Acquire)
+                        }),
+                    )
+                }),
+                count,
+            ))
         }
     }
 
@@ -5224,9 +5283,10 @@ pub(crate) mod fault {
         }
     }
 
-    impl Drop for ThpDisablePrctlCapture<'_> {
+    impl Drop for ThpDirectPolicyCapture<'_> {
         fn drop(&mut self) {
-            THP_DISABLE_PRCTL_CAPTURE_ACTIVE.store(false, Ordering::Release);
+            THP_DIRECT_POLICY_CAPTURE_ACTIVE.store(false, Ordering::Release);
+            THP_DIRECT_POLICY_CAPTURE_CASE.store(0, Ordering::Release);
         }
     }
 
@@ -5235,7 +5295,8 @@ pub(crate) mod fault {
             UNMAP_RANGE_CAPTURE_ACTIVE.store(false, Ordering::Release);
             ADVICE_RANGE_CAPTURE_ACTIVE.store(false, Ordering::Release);
             POLICY_MMAP_CAPTURE_ACTIVE.store(false, Ordering::Release);
-            THP_DISABLE_PRCTL_CAPTURE_ACTIVE.store(false, Ordering::Release);
+            THP_DIRECT_POLICY_CAPTURE_ACTIVE.store(false, Ordering::Release);
+            THP_DIRECT_POLICY_CAPTURE_CASE.store(0, Ordering::Release);
             set(Plan::disabled());
             LOCKED.store(false, Ordering::Release);
         }
@@ -5357,15 +5418,14 @@ pub(crate) mod fault {
         }
     }
 
-    /// Test-only raw THP policy receiver. It injects the one selected GET/SET
-    /// failure sequence or directly invokes the native primitive when no
-    /// capture is active, so unrelated child-isolation tests retain their
-    /// process-local kernel observation.
+    /// Test-only raw THP policy receiver for the finite direct source matrix.
+    /// It uses no generic answer callback: each case accepts only its literal
+    /// GET/SET tuple and directly returns the one fixed result.
     #[inline]
     pub(crate) fn thp_policy_prctl_raw(
         option: i32, argument0: usize, argument1: usize, argument2: usize, argument3: usize,
     ) -> Result<usize> {
-        if !THP_DISABLE_PRCTL_CAPTURE_ACTIVE.load(Ordering::Acquire) {
+        if !THP_DIRECT_POLICY_CAPTURE_ACTIVE.load(Ordering::Acquire) {
             // SAFETY: callers use only the two Linux THP constants with their
             // source scalar zero/one arguments.
             return unsafe {
@@ -5373,35 +5433,38 @@ pub(crate) mod fault {
             };
         }
 
-        let index = THP_DISABLE_PRCTL_CAPTURE_COUNT.fetch_add(1, Ordering::AcqRel);
-        if index < THP_DISABLE_PRCTL_CAPTURE_CAPACITY {
-            THP_DISABLE_PRCTL_CAPTURE_OPTIONS[index].store(option, Ordering::Release);
+        let selected_case = ThpDirectPolicyCase::from_raw(
+            THP_DIRECT_POLICY_CAPTURE_CASE.load(Ordering::Acquire),
+        );
+        let index = THP_DIRECT_POLICY_CAPTURE_COUNT.fetch_add(1, Ordering::AcqRel);
+        if index < THP_DIRECT_POLICY_CAPTURE_CAPACITY {
+            THP_DIRECT_POLICY_CAPTURE_OPTIONS[index].store(option, Ordering::Release);
             let arguments = [argument0, argument1, argument2, argument3];
             for (argument_index, argument) in arguments.into_iter().enumerate() {
-                THP_DISABLE_PRCTL_CAPTURE_ARGUMENTS[index * 4 + argument_index]
+                THP_DIRECT_POLICY_CAPTURE_ARGUMENTS[index * 4 + argument_index]
                     .store(argument, Ordering::Release);
             }
         }
-        if index == 0
-            && option == super::PR_GET_THP_DISABLE
-            && argument0 == 0
-            && argument1 == 0
-            && argument2 == 0
-            && argument3 == 0
-        {
-            return Ok(0);
+        let get_tuple = option == super::PR_GET_THP_DISABLE
+            && argument0 == 0 && argument1 == 0 && argument2 == 0 && argument3 == 0;
+        let set_tuple = option == super::PR_SET_THP_DISABLE
+            && argument0 == 1 && argument1 == 0 && argument2 == 0 && argument3 == 0;
+        match (selected_case, index, get_tuple, set_tuple) {
+            (Some(ThpDirectPolicyCase::QueryPerm), 0, true, _) => Err(Errno::PERM),
+            (Some(ThpDirectPolicyCase::QueryInval), 0, true, _) => Err(Errno::INVAL),
+            (Some(ThpDirectPolicyCase::QueryNonzeroOne), 0, true, _) => Ok(1),
+            (Some(ThpDirectPolicyCase::QueryNonzeroThree), 0, true, _) => Ok(3),
+            (Some(ThpDirectPolicyCase::SetSuccess), 0, true, _) => Ok(0),
+            (Some(ThpDirectPolicyCase::SetPerm), 0, true, _) => Ok(0),
+            (Some(ThpDirectPolicyCase::SetInval), 0, true, _) => Ok(0),
+            (Some(ThpDirectPolicyCase::SetSuccess), 1, _, true) => Ok(0),
+            (Some(ThpDirectPolicyCase::SetPerm), 1, _, true) => Err(Errno::PERM),
+            (Some(ThpDirectPolicyCase::SetInval), 1, _, true) => Err(Errno::INVAL),
+            _ => {
+                THP_DIRECT_POLICY_CAPTURE_VALID.store(false, Ordering::Release);
+                Err(Errno::INVAL)
+            }
         }
-        if index == 1
-            && option == super::PR_SET_THP_DISABLE
-            && argument0 == 1
-            && argument1 == 0
-            && argument2 == 0
-            && argument3 == 0
-        {
-            return Err(Errno::PERM);
-        }
-        THP_DISABLE_PRCTL_CAPTURE_VALID.store(false, Ordering::Release);
-        Err(Errno::INVAL)
     }
 }
 
@@ -5573,41 +5636,136 @@ mod tests {
         );
     }
 
-    /// Exercises the selected source failure without issuing a real process
-    /// mutation. The C oracle observes its void `_mi_prim_mem_init` return;
-    /// this Rust boundary instead exposes `DisabledSetFailed(PERM)` before
-    /// its process owner elects to discard that typed outcome.
-    fn thp_disable_set_failure_matrix() -> [bool; 3] {
+    /// Executes one finite direct source case without mutating the test process.
+    /// C observes continuation from void `_mi_prim_mem_init`; Rust separately
+    /// exposes its typed outcome before the production owner discards it.
+    fn thp_direct_policy_case_witness(
+        selected_case: fault::ThpDirectPolicyCase, initial_thp: bool,
+    ) -> bool {
         let fault = fault::install(fault::Plan::disabled());
         let mut options = VmOptions::uninitialized();
-        options.set(VmOption::AllowThp, 0);
+        options.set(
+            VmOption::AllowThp,
+            if selected_case.allow_enabled() { 1 } else { 0 },
+        );
         options.initialize_all(|_| VmOptionEnvironment::Absent);
         let policy = VmPolicy::new(options).expect("the selected source option image resolves");
         let mut config = MemoryConfig::from_observations(
             PageSize::new(4 * 1024).expect("four KiB is the selected Linux page size"),
             0,
             true,
-            true,
+            initial_thp,
         );
-        let capture = fault.capture_thp_disable_set_failure();
+        let capture = fault.capture_thp_direct_policy_case(selected_case);
         let outcome = policy.apply_thp_process_policy(&mut config);
         let attempts = capture.attempts();
         drop(capture);
-        let typed_set_failure = matches!(outcome, ThpPolicyOutcome::DisabledSetFailed(Errno::PERM));
+
+        let exact_attempts = match (selected_case, attempts) {
+            (fault::ThpDirectPolicyCase::AllowEnabled, Some((_, 0))) => true,
+            (fault::ThpDirectPolicyCase::QueryPerm, Some((attempts, 1)))
+            | (fault::ThpDirectPolicyCase::QueryInval, Some((attempts, 1)))
+            | (fault::ThpDirectPolicyCase::QueryNonzeroOne, Some((attempts, 1)))
+            | (fault::ThpDirectPolicyCase::QueryNonzeroThree, Some((attempts, 1))) => {
+                attempts[0] == (PR_GET_THP_DISABLE, [0, 0, 0, 0])
+            }
+            (fault::ThpDirectPolicyCase::SetSuccess, Some((attempts, 2)))
+            | (fault::ThpDirectPolicyCase::SetPerm, Some((attempts, 2)))
+            | (fault::ThpDirectPolicyCase::SetInval, Some((attempts, 2))) => {
+                attempts
+                    == [
+                        (PR_GET_THP_DISABLE, [0, 0, 0, 0]),
+                        (PR_SET_THP_DISABLE, [1, 0, 0, 0]),
+                    ]
+            }
+            _ => false,
+        };
+        let exact_outcome = matches!(
+            (selected_case, outcome),
+            (fault::ThpDirectPolicyCase::AllowEnabled, ThpPolicyOutcome::Allowed)
+                | (fault::ThpDirectPolicyCase::QueryPerm, ThpPolicyOutcome::DisabledQueryFailed(Errno::PERM))
+                | (fault::ThpDirectPolicyCase::QueryInval, ThpPolicyOutcome::DisabledQueryFailed(Errno::INVAL))
+                | (fault::ThpDirectPolicyCase::QueryNonzeroOne, ThpPolicyOutcome::DisabledAlready(1))
+                | (fault::ThpDirectPolicyCase::QueryNonzeroThree, ThpPolicyOutcome::DisabledAlready(3))
+                | (fault::ThpDirectPolicyCase::SetSuccess, ThpPolicyOutcome::DisabledSet)
+                | (fault::ThpDirectPolicyCase::SetPerm, ThpPolicyOutcome::DisabledSetFailed(Errno::PERM))
+                | (fault::ThpDirectPolicyCase::SetInval, ThpPolicyOutcome::DisabledSetFailed(Errno::INVAL))
+        );
+        exact_attempts
+            && exact_outcome
+            && if selected_case.allow_enabled() {
+                config.has_transparent_huge_pages() == initial_thp
+            } else {
+                !config.has_transparent_huge_pages()
+            }
+    }
+
+    fn thp_direct_policy_outcome_trace() -> [bool; 8] {
+        use fault::ThpDirectPolicyCase as Case;
         [
-            attempts
-                == Some([
-                    (PR_GET_THP_DISABLE, [0, 0, 0, 0]),
-                    (PR_SET_THP_DISABLE, [1, 0, 0, 0]),
-                ]),
-            typed_set_failure && !config.has_transparent_huge_pages(),
-            typed_set_failure,
+            thp_direct_policy_case_witness(Case::AllowEnabled, true)
+                && thp_direct_policy_case_witness(Case::AllowEnabled, false),
+            thp_direct_policy_case_witness(Case::QueryPerm, true),
+            thp_direct_policy_case_witness(Case::QueryInval, true),
+            thp_direct_policy_case_witness(Case::QueryNonzeroOne, true),
+            thp_direct_policy_case_witness(Case::QueryNonzeroThree, true),
+            thp_direct_policy_case_witness(Case::SetSuccess, true),
+            thp_direct_policy_case_witness(Case::SetPerm, true),
+            thp_direct_policy_case_witness(Case::SetInval, true),
         ]
     }
 
     #[test]
-    fn thp_disable_set_failure_keeps_configuration_disabled() {
-        assert_eq!(thp_disable_set_failure_matrix(), [true; 3]);
+    fn thp_direct_policy_outcome_matrix() {
+        assert_eq!(thp_direct_policy_outcome_trace(), [true; 8]);
+    }
+
+    #[test]
+    fn thp_direct_policy_allow_enabled_preserves_both_synthetic_configurations() {
+        use fault::ThpDirectPolicyCase as Case;
+        assert!(thp_direct_policy_case_witness(Case::AllowEnabled, true));
+        assert!(thp_direct_policy_case_witness(Case::AllowEnabled, false));
+    }
+
+    #[test]
+    fn thp_direct_policy_query_perm_has_no_set_and_preserves_errno() {
+        assert!(thp_direct_policy_case_witness(fault::ThpDirectPolicyCase::QueryPerm, true));
+    }
+
+    #[test]
+    fn thp_direct_policy_query_inval_has_no_set_and_preserves_errno() {
+        assert!(thp_direct_policy_case_witness(fault::ThpDirectPolicyCase::QueryInval, true));
+    }
+
+    #[test]
+    fn thp_direct_policy_query_nonzero_one_has_no_set() {
+        assert!(thp_direct_policy_case_witness(
+            fault::ThpDirectPolicyCase::QueryNonzeroOne,
+            true,
+        ));
+    }
+
+    #[test]
+    fn thp_direct_policy_query_nonzero_three_is_raw_return_class_only() {
+        assert!(thp_direct_policy_case_witness(
+            fault::ThpDirectPolicyCase::QueryNonzeroThree,
+            true,
+        ));
+    }
+
+    #[test]
+    fn thp_direct_policy_set_success_uses_exact_get_set_pair() {
+        assert!(thp_direct_policy_case_witness(fault::ThpDirectPolicyCase::SetSuccess, true));
+    }
+
+    #[test]
+    fn thp_direct_policy_set_perm_preserves_errno() {
+        assert!(thp_direct_policy_case_witness(fault::ThpDirectPolicyCase::SetPerm, true));
+    }
+
+    #[test]
+    fn thp_direct_policy_set_inval_preserves_errno() {
+        assert!(thp_direct_policy_case_witness(fault::ThpDirectPolicyCase::SetInval, true));
     }
 
     #[test]
@@ -9617,11 +9775,11 @@ mod tests {
         drop(failed_release_unmap_ranges);
         let external_callback_trace = crate::arena::m2_external_callback_trace(&fault);
         drop(fault);
-        let thp_disable_failure_trace = thp_disable_set_failure_matrix();
+        let thp_direct_policy_trace = thp_direct_policy_outcome_trace();
         let large_page_retry_trace = normal_release_large_page_retry_suppression_matrix();
         let large_page_retry_cas_trace = normal_release_large_page_retry_competing_cas_matrix();
         let large_only_trace = large_only_one_gib_failure_terminal_matrix();
-        assert_eq!(thp_disable_failure_trace, [true; 3]);
+        assert_eq!(thp_direct_policy_trace, [true; 8]);
         assert_eq!(large_page_retry_trace, [true; 6]);
         assert_eq!(large_page_retry_cas_trace, [true; 2]);
         assert_eq!(large_only_trace, [true; 4]);
@@ -9646,16 +9804,36 @@ mod tests {
         );
         emit!("m2.vm.thp.process_disabled", u8::from(thp_process_disabled));
         emit!(
-            "m2.vm.thp_disable.get_zero_then_set_perm_exact_arguments",
-            u8::from(thp_disable_failure_trace[0])
+            "m2.vm.thp_direct.allow_enabled_zero_calls_and_continues",
+            u8::from(thp_direct_policy_trace[0])
         );
         emit!(
-            "m2.vm.thp_disable.set_perm_leaves_configuration_disabled",
-            u8::from(thp_disable_failure_trace[1])
+            "m2.vm.thp_direct.query_perm_get_only_disabled_and_continues",
+            u8::from(thp_direct_policy_trace[1])
         );
         emit!(
-            "m2.vm.thp_disable.set_perm_failure_returns_from_policy_transition",
-            u8::from(thp_disable_failure_trace[2])
+            "m2.vm.thp_direct.query_inval_get_only_disabled_and_continues",
+            u8::from(thp_direct_policy_trace[2])
+        );
+        emit!(
+            "m2.vm.thp_direct.query_nonzero_one_get_only_disabled_and_continues",
+            u8::from(thp_direct_policy_trace[3])
+        );
+        emit!(
+            "m2.vm.thp_direct.query_nonzero_three_get_only_disabled_and_continues",
+            u8::from(thp_direct_policy_trace[4])
+        );
+        emit!(
+            "m2.vm.thp_direct.set_success_exact_get_set_disabled_and_continues",
+            u8::from(thp_direct_policy_trace[5])
+        );
+        emit!(
+            "m2.vm.thp_direct.set_perm_exact_get_set_disabled_and_continues",
+            u8::from(thp_direct_policy_trace[6])
+        );
+        emit!(
+            "m2.vm.thp_direct.set_inval_exact_get_set_disabled_and_continues",
+            u8::from(thp_direct_policy_trace[7])
         );
         emit!("m2.vm.reserved.initially_zero", u8::from(reserved_initially_zero));
         emit!(

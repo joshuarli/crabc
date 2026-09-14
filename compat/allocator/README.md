@@ -2607,16 +2607,27 @@ ordinary fallback owner remains valid. This is direct VM-policy evidence only:
 it does not qualify successful hardware huge pages, ambient diagnostics, or an
 allocator/runtime caller.
 
-### Native M2 THP disable SET failure
+### Native M2 direct THP policy outcome matrix
 
-`allocator-m2` also compares one child-isolated direct pinned-C
-`_mi_prim_mem_init` call with a private Rust `VmPolicy` capture. With
-`allow_thp=0`, both records require `PR_GET_THP_DISABLE(0,0,0,0)` to return
-zero, then require `PR_SET_THP_DISABLE(1,0,0,0)` to fail with EPERM, while the
-memory configuration remains THP-disabled. The C source returns from its void
-initializer after discarding the SET result. Rust records
-`ThpPolicyOutcome::DisabledSetFailed(Errno::PERM)`; its process initializer's
-discarding caller is not executed or qualified by this record.
+`allocator-m2` compares one finite child-isolated direct pinned-C
+`_mi_prim_mem_init` matrix with a private Rust `VmPolicy` capture. The named
+cases are `allow_thp=1` with no PRCTL calls; `allow_thp=0` with
+`PR_GET_THP_DISABLE(0,0,0,0)` returning EPERM, EINVAL, raw nonzero `1`, raw
+nonzero `3`, or zero; and GET-zero followed by the exact
+`PR_SET_THP_DISABLE(1,0,0,0)` returning zero, EPERM, or EINVAL. The raw `3`
+case is a selected nonzero control-flow representative, not a Linux kernel
+result claim. C records only exact tuple/count control flow, its void
+continuation, and the forced disabled configuration for `allow_thp=0`; it does
+not compare its ambient allow-enabled THP detection. Rust separately proves
+that `Allowed` preserves both synthetic configuration states and records the
+fixed `DisabledQueryFailed`, `DisabledAlready`, `DisabledSet`, and
+`DisabledSetFailed` typed outcomes. The process initializer discards that
+outcome and is not executed or qualified here.
+
+This finite direct matrix does not qualify ambient source-option discovery or C
+THP detection/configuration, production process policy callers, hardware
+THP/huge-page mapping or arena behavior, or VM/M2 completion. The pinned
+branch itself emits no diagnostics.
 
 This does not cover GET errors or nonzero results, successful or other failing
 SET outcomes, diagnostics, ambient source option discovery, or production

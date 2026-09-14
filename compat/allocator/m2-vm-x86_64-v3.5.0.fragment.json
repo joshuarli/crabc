@@ -115,7 +115,7 @@
         ],
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential",
-          "thp-disable-set-perm-keeps-configuration-disabled"
+          "thp-direct-policy-outcome-matrix"
         ]
       },
       {
@@ -473,7 +473,7 @@
       {
         "id": "unix-configuration-and-thp-process-policy",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/prim/unix/prim.c:250-277 host observations and the mi_option_allow_thp PR_GET_THP_DISABLE/PR_SET_THP_DISABLE process-policy branch; child-isolated C and private Rust captures select allow_thp=0, GET(0,0,0,0)=0, and SET(1,0,0,0)=EPERM. C observes its void continuation while Rust records DisabledSetFailed(PERM); the process owner remains outside this witness.",
+        "source_scope": "src/prim/unix/prim.c:250-277 host observations and the mi_option_allow_thp PR_GET_THP_DISABLE/PR_SET_THP_DISABLE process-policy branch. Child-isolated C and private Rust captures cover one finite direct matrix: allow_thp=1 bypasses both calls; allow_thp=0 selects GET(0,0,0,0) as EPERM, EINVAL, raw nonzero 1, raw nonzero 3, or zero followed by SET(1,0,0,0) success, EPERM, or EINVAL. C records concrete tuple/count, forced disabled configuration only for allow_thp=0, and continuation through its void initializer; it does not compare the ambient allow-enabled detection result. Rust separately records Allowed while preserving synthetic true and false configurations, DisabledQueryFailed(PERM/INVAL), DisabledAlready(1/3), DisabledSet, and DisabledSetFailed(PERM/INVAL). The process owner remains outside this direct witness; raw nonzero 3 is a return-class representative, not a Linux kernel claim.",
         "source_anchors": [
           {
             "member": "src/prim/unix/prim.c",
@@ -485,11 +485,11 @@
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential",
           "source-policy-lazy-environment-retry",
-          "thp-disable-set-perm-keeps-configuration-disabled",
+          "thp-direct-policy-outcome-matrix",
           "process-policy-ticket-zero-live-random"
         ],
         "missing_conditions": [
-          "Ambient source-option discovery beyond the selected source reader, PR_GET nonzero/query-failure behavior, successful and non-EPERM PR_SET outcomes, diagnostics, and every production policy caller remain unqualified; the selected allow_thp=0 failure is only child-isolated evidence."
+          "Ambient source-option discovery and C THP detection/configuration, ProcessMainStorage and every other production policy caller, real hardware THP/huge-page mapping and arena behavior, and full VM/M2 qualification remain unqualified; this is only child-isolated finite direct branch evidence. The exact pinned THP branch emits no diagnostics."
         ]
       },
       {
@@ -846,9 +846,9 @@
         "expected_passed_test_count": 1
       },
       {
-        "id": "thp-disable-set-perm-keeps-configuration-disabled",
+        "id": "thp-direct-policy-outcome-matrix",
         "kind": "rust-unit",
-        "target": "os::tests::thp_disable_set_failure_keeps_configuration_disabled",
+        "target": "os::tests::thp_direct_policy_outcome_matrix",
         "expected_passed_test_count": 1
       },
       {
