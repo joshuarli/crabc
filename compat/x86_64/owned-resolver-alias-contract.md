@@ -8,10 +8,11 @@ change target or policy.
 
 The component is not a resolver-family qualification, a DNS feature expansion,
 a dynamic-loader receipt, or a public-support claim. Its status is
-`component-verified` only after a current collector and process-free reader
-validate the same selected source, static preparation, static and dynamic
-products, complete facts, base inventory, product anchor, source-bound link
-input modes, and retained command evidence.
+`component-verified` only after a current collector and retained replay without
+a compiler, linker, or target-product tool validate the same selected source,
+static preparation, static and dynamic products, complete facts, base
+inventory, product anchor, source-bound link input modes, and retained command
+evidence. Git object admission is part of selected-source validation.
 
 ## Source route
 
@@ -75,6 +76,23 @@ its no-allocator/no-dynamic-TLS purity tests. A selected runtime product may
 legitimately compose those existing owners. The receipt instead authenticates
 its exact manifests, product state, current raw mode policy, selected runtime
 product authority, and full facts/inventory cohort.
+
+Before its first compiler, linker, inspection, or runtime command, the runner
+admits the supplied source/product/measurement cohort and copies every finite
+input. Final sealing repeats that admission and requires the current bytes to
+equal the pre-execution copy. The pinned image marker and canonical invocation
+paths bind the raw header compiler, `readelf`, `timeout`, `chroot`, and musl
+oracle inputs; header C/C++ checks intentionally use the raw pinned compiler
+with selected installed headers because the selected dynamic driver admits only
+its narrow link grammar.
+
+Each runtime root has a retained before and after tree record. Loader, libc,
+linked contract, directories, and `hosts` stay byte-identical. The normal
+resolver probe alone may rewrite `resolv.conf` from the supplied fixture to its
+documented `0600` PID-derived `127.128.0.0/9` nameserver configuration. Replay
+binds that transition to the retained probe source and accepts only its exact
+three-line configuration grammar; dynamic override roots remain wholly
+immutable.
 
 `owned_resolver_alias_contract_reader.py --validate-report` uses retained bytes
 and supplied current paths. It does not invoke a compiler, linker, or ambient

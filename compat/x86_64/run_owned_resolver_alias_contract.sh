@@ -13,6 +13,11 @@ readonly OVERRIDE_PROBE="$ROOT/compat/x86_64/owned_resolver_alias_override_probe
 readonly OVERRIDE_CALLER="$ROOT/compat/x86_64/owned_resolver_alias_override_caller.c"
 readonly HEADER_C="$ROOT/compat/x86_64/resolver_runtime_header_abi_probe.c"
 readonly HEADER_CPP="$ROOT/compat/x86_64/resolver_runtime_header_abi_probe.cpp"
+readonly RAW_HEADER_COMPILER=/usr/bin/gcc
+readonly HEADER_BUILTIN_INCLUDE=/usr/lib/gcc/x86_64-alpine-linux-musl/15.2.0/include
+readonly READELF=/usr/bin/readelf
+readonly TIMEOUT=/usr/bin/timeout
+readonly CHROOT=/usr/sbin/chroot
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly MUSL_ARCHIVE=/opt/musl-1.2.6/lib/libc.a
 readonly MUSL_SHARED=/opt/musl-1.2.6/lib/libc.so
@@ -91,7 +96,12 @@ PY
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "refuses emulation on $(uname -m)" ;; esac
 [ "$(id -u)" -eq 0 ] || fail 'requires root for the local resolver fixture chroot'
 for tool in chroot cp mkdir python3 readelf rm timeout; do command -v "$tool" >/dev/null || fail "missing tool: $tool"; done
-[ -x "$ORACLE_CC" ] || fail 'missing pinned musl oracle compiler'
+[ "${CRABC_RESOLVER_ALIAS_IMAGE_ID:-}" = "$IMAGE" ] ||
+    fail 'collector is not bound to the pinned core evidence image'
+for tool in "$RAW_HEADER_COMPILER" "$READELF" "$TIMEOUT" "$CHROOT" "$ORACLE_CC"; do
+    [ -x "$tool" ] || fail "missing pinned command program: $tool"
+done
+[ -d "$HEADER_BUILTIN_INCLUDE" ] || fail 'missing pinned compiler builtin include directory'
 [ -f "$MUSL_ARCHIVE" ] && [ -f "$MUSL_SHARED" ] || fail 'missing pinned musl oracle files'
 
 readonly STATIC_PRODUCT="$(realpath -e "$STATIC_PRODUCT")"
@@ -110,6 +120,14 @@ readonly WORK="$RECEIPT_DIR"
 mkdir -p "$WORK/commands" "$WORK/objects" "$WORK/outputs" "$WORK/runtime" "$WORK/roots"
 chmod 0755 "$WORK" "$WORK/commands" "$WORK/objects" "$WORK/outputs" "$WORK/runtime" "$WORK/roots"
 cd "$WORK"
+
+# Admission and retained input capture happen before the first compiler,
+# linker, inspection, or runtime command. Final sealing rejects any later
+# source/product/measurement change rather than copying a later cohort.
+python3 -B "$READER" --begin-collection --root "$ROOT" --work "$WORK" \
+    --static-product "$STATIC_PRODUCT" --dynamic-product "$DYNAMIC_PRODUCT" \
+    --static-preparation "$STATIC_PREPARATION" --product-report "$PRODUCT_REPORT" \
+    --elf-facts "$ELF_FACTS" --base-inventory "$BASE_INVENTORY" --image "$IMAGE"
 
 record() {
     local name="$1"; shift
@@ -130,34 +148,45 @@ PY
     [ "$status" -eq 0 ] || fail "command failed: $name (status $status; retained at $WORK/commands)"
 }
 
+capture_runtime_root() {
+    local name="$1" phase="$2" root="$3"
+    python3 -B "$READER" --capture-runtime-root --work "$WORK" \
+        --runtime-root-name "$name" --runtime-root-phase "$phase" --runtime-root "$root" >/dev/null
+}
+
 prepare_fixture() {
     local fixture="$1"
     mkdir -p "$fixture/etc"
+    chmod 0755 "$fixture" "$fixture/etc"
     printf '%s\n' '192.0.2.44 host.fixture host-alias' >"$fixture/etc/hosts"
     printf '%s\n' 'nameserver 127.0.0.1' 'search fixture.test' 'options ndots:1 timeout:1 attempts:1' >"$fixture/etc/resolv.conf"
+    chmod 0644 "$fixture/etc/hosts" "$fixture/etc/resolv.conf"
 }
 
 prepare_dynamic_root() {
     local root="$1" executable="$2"
     mkdir -p "$root/lib" "$root/usr/lib" "$root/fixture"
+    chmod 0755 "$root" "$root/lib" "$root/usr" "$root/usr/lib" "$root/fixture"
     cp "$DYNAMIC_PRODUCT/lib/ld-crabc-x86_64.so.1" "$root/lib/ld-crabc-x86_64.so.1"
     cp "$DYNAMIC_PRODUCT/usr/lib/libc.so" "$root/usr/lib/libc.so"
     cp "$executable" "$root/contract"
     prepare_fixture "$root/fixture"
 }
 
-# Keep public C and C++ declaration checks explicit through the supplied
-# dynamic driver, whose installed include path is part of the selected product.
-record header-c "$DYNAMIC_DRIVER" --dynamic-pie -x c -std=c11 -D_GNU_SOURCE -fno-builtin \
+# Header ABI is a source check through the pinned raw compiler. It names
+# only the selected dynamic installed headers and the pinned compiler builtin
+# include; the sealed dynamic driver deliberately remains link-only.
+record header-c "$RAW_HEADER_COMPILER" -x c -std=c11 -nostdinc -I "$DYNAMIC_PRODUCT/usr/include" \
+    -isystem "$HEADER_BUILTIN_INCLUDE" -U_GNU_SOURCE -D_GNU_SOURCE -fno-builtin \
     -fsyntax-only "$HEADER_C"
-record header-cpp "$DYNAMIC_DRIVER" --dynamic-pie -x c++ -std=c++17 -D_GNU_SOURCE -fno-builtin \
-    -c -o "$WORK/objects/header.cpp.o" "$HEADER_CPP"
-
+record header-cpp "$RAW_HEADER_COMPILER" -x c++ -std=c++17 -nostdinc -nostdinc++ \
+    -I "$DYNAMIC_PRODUCT/usr/include" -isystem "$HEADER_BUILTIN_INCLUDE" \
+    -U_GNU_SOURCE -D_GNU_SOURCE -fno-builtin -c -o "$WORK/objects/header.cpp.o" "$HEADER_CPP"
 # Compile this public-caller object once. Every normal oracle/static/dynamic
 # link consumes these exact bytes; no lane silently recompiles it.
 record compile-public-probe "$DYNAMIC_DRIVER" --dynamic-pie -std=c11 -D_GNU_SOURCE -pthread -fno-builtin \
     -fno-stack-protector -c "$PROBE" -o "$WORK/objects/public-probe.o"
-record public-probe-relocations readelf --relocs --wide "$WORK/objects/public-probe.o"
+record public-probe-relocations "$READELF" --relocs --wide "$WORK/objects/public-probe.o"
 # Keep the public caller and the strong replacement in separate translation
 # units. The relocation streams below therefore prove the compiler emitted a
 # public call before the supplied product links resolve it.
@@ -167,49 +196,60 @@ record compile-override-mkquery "$DYNAMIC_DRIVER" --dynamic-pie -std=c11 -D_GNU_
 record compile-override-mkquery-caller "$DYNAMIC_DRIVER" --dynamic-pie -std=c11 -D_GNU_SOURCE -pthread -fno-builtin \
     -fno-stack-protector -DCRABC_RESOLVER_ALIAS_OVERRIDE=1 \
     -c "$OVERRIDE_CALLER" -o "$WORK/objects/override-mkquery-caller.o"
-record override-mkquery-public-relocation readelf --relocs --wide "$WORK/objects/override-mkquery-caller.o"
+record override-mkquery-public-relocation "$READELF" --relocs --wide "$WORK/objects/override-mkquery-caller.o"
 record compile-override-send "$DYNAMIC_DRIVER" --dynamic-pie -std=c11 -D_GNU_SOURCE -pthread -fno-builtin \
     -fno-stack-protector -DCRABC_RESOLVER_ALIAS_OVERRIDE=2 \
     -c "$OVERRIDE_PROBE" -o "$WORK/objects/override-send-definition.o"
 record compile-override-send-caller "$DYNAMIC_DRIVER" --dynamic-pie -std=c11 -D_GNU_SOURCE -pthread -fno-builtin \
     -fno-stack-protector -DCRABC_RESOLVER_ALIAS_OVERRIDE=2 \
     -c "$OVERRIDE_CALLER" -o "$WORK/objects/override-send-caller.o"
-record override-send-public-relocation readelf --relocs --wide "$WORK/objects/override-send-caller.o"
+record override-send-public-relocation "$READELF" --relocs --wide "$WORK/objects/override-send-caller.o"
 record compile-override-search "$DYNAMIC_DRIVER" --dynamic-pie -std=c11 -D_GNU_SOURCE -pthread -fno-builtin \
     -fno-stack-protector -DCRABC_RESOLVER_ALIAS_OVERRIDE=3 \
     -c "$OVERRIDE_PROBE" -o "$WORK/objects/override-search-definition.o"
 record compile-override-search-caller "$DYNAMIC_DRIVER" --dynamic-pie -std=c11 -D_GNU_SOURCE -pthread -fno-builtin \
     -fno-stack-protector -DCRABC_RESOLVER_ALIAS_OVERRIDE=3 \
     -c "$OVERRIDE_CALLER" -o "$WORK/objects/override-search-caller.o"
-record override-search-public-relocation readelf --relocs --wide "$WORK/objects/override-search-caller.o"
+record override-search-public-relocation "$READELF" --relocs --wide "$WORK/objects/override-search-caller.o"
 
-record oracle-symbols readelf --symbols --wide "$MUSL_ARCHIVE"
+record oracle-symbols "$READELF" --symbols --wide "$MUSL_ARCHIVE"
 record oracle-runtime-link "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin -fno-stack-protector -I "$ROOT/include" \
     "$WORK/objects/public-probe.o" -o "$WORK/outputs/oracle-contract"
 prepare_fixture "$WORK/runtime/oracle-root"
-record oracle-runtime-run timeout 15 "$WORK/outputs/oracle-contract" "$WORK/runtime/oracle-root"
+capture_runtime_root oracle before "$WORK/runtime/oracle-root"
+record oracle-runtime-run "$TIMEOUT" 15 "$WORK/outputs/oracle-contract" "$WORK/runtime/oracle-root"
+capture_runtime_root oracle after "$WORK/runtime/oracle-root"
 
-record static-symbols readelf --symbols --wide "$STATIC_PRODUCT/usr/lib/libc.a"
-record static-private-calls readelf --relocs --wide "$STATIC_PRODUCT/usr/lib/libc.a"
+record static-symbols "$READELF" --symbols --wide "$STATIC_PRODUCT/usr/lib/libc.a"
+record static-private-calls "$READELF" --relocs --wide "$STATIC_PRODUCT/usr/lib/libc.a"
 prepare_fixture "$WORK/runtime/static-root"
 record static-normal-et-exec-link "$STATIC_DRIVER" -static -pthread "$WORK/objects/public-probe.o" \
     --link-receipt static-contract.link.json -o "$WORK/outputs/static-contract"
-record static-normal-et-exec-runtime timeout 15 "$WORK/outputs/static-contract" "$WORK/runtime/static-root"
+capture_runtime_root static-et-exec before "$WORK/runtime/static-root"
+record static-normal-et-exec-runtime "$TIMEOUT" 15 "$WORK/outputs/static-contract" "$WORK/runtime/static-root"
+capture_runtime_root static-et-exec after "$WORK/runtime/static-root"
 record static-normal-pie-link "$STATIC_DRIVER" -static-pie -pthread "$WORK/objects/public-probe.o" \
     --link-receipt static-pie-contract.link.json -o "$WORK/outputs/static-pie-contract"
-record static-normal-pie-runtime timeout 15 "$WORK/outputs/static-pie-contract" "$WORK/runtime/static-root"
+prepare_fixture "$WORK/runtime/static-pie-root"
+capture_runtime_root static-pie before "$WORK/runtime/static-pie-root"
+record static-normal-pie-runtime "$TIMEOUT" 15 "$WORK/outputs/static-pie-contract" "$WORK/runtime/static-pie-root"
+capture_runtime_root static-pie after "$WORK/runtime/static-pie-root"
 
-record dynamic-symbols readelf --symbols --wide "$DYNAMIC_PRODUCT/usr/lib/libc.so"
+record dynamic-symbols "$READELF" --symbols --wide "$DYNAMIC_PRODUCT/usr/lib/libc.so"
 record dynamic-normal-pie-link "$DYNAMIC_DRIVER" --dynamic-pie -pthread -rdynamic "$WORK/objects/public-probe.o" \
     -o "$WORK/outputs/dynamic-pie-contract"
-record dynamic-normal-pie-dynsym readelf --dyn-syms --wide "$WORK/outputs/dynamic-pie-contract"
+record dynamic-normal-pie-dynsym "$READELF" --dyn-syms --wide "$WORK/outputs/dynamic-pie-contract"
 prepare_dynamic_root "$WORK/roots/dynamic-pie" "$WORK/outputs/dynamic-pie-contract"
-record dynamic-normal-pie-runtime chroot "$WORK/roots/dynamic-pie" /contract /fixture
+capture_runtime_root dynamic-pie before "$WORK/roots/dynamic-pie"
+record dynamic-normal-pie-runtime "$CHROOT" "$WORK/roots/dynamic-pie" /contract /fixture
+capture_runtime_root dynamic-pie after "$WORK/roots/dynamic-pie"
 record dynamic-normal-nopie-link "$DYNAMIC_DRIVER" --dynamic-non-pie -pthread -rdynamic "$WORK/objects/public-probe.o" \
     -o "$WORK/outputs/dynamic-non-pie-contract"
-record dynamic-normal-nopie-dynsym readelf --dyn-syms --wide "$WORK/outputs/dynamic-non-pie-contract"
+record dynamic-normal-nopie-dynsym "$READELF" --dyn-syms --wide "$WORK/outputs/dynamic-non-pie-contract"
 prepare_dynamic_root "$WORK/roots/dynamic-non-pie" "$WORK/outputs/dynamic-non-pie-contract"
-record dynamic-normal-nopie-runtime chroot "$WORK/roots/dynamic-non-pie" "$DYNAMIC_LOADER" /contract /fixture
+capture_runtime_root dynamic-non-pie before "$WORK/roots/dynamic-non-pie"
+record dynamic-normal-nopie-runtime "$CHROOT" "$WORK/roots/dynamic-non-pie" "$DYNAMIC_LOADER" /contract /fixture
+capture_runtime_root dynamic-non-pie after "$WORK/roots/dynamic-non-pie"
 
 for name in mkquery send search; do
     record "static-override-$name" "$STATIC_DRIVER" -static -pthread \
@@ -219,13 +259,15 @@ for name in mkquery send search; do
     record "dynamic-override-$name" "$DYNAMIC_DRIVER" --dynamic-pie -pthread -rdynamic \
         "$WORK/objects/override-$name-caller.o" "$WORK/objects/override-$name-definition.o" \
         -o "$WORK/outputs/dynamic-override-$name"
-    record "dynamic-override-$name-dynsym" readelf --dyn-syms --wide "$WORK/outputs/dynamic-override-$name"
+    record "dynamic-override-$name-dynsym" "$READELF" --dyn-syms --wide "$WORK/outputs/dynamic-override-$name"
     prepare_dynamic_root "$WORK/roots/dynamic-override-$name" "$WORK/outputs/dynamic-override-$name"
-    record "dynamic-override-$name-runtime" chroot "$WORK/roots/dynamic-override-$name" /contract
+    capture_runtime_root "dynamic-override-$name" before "$WORK/roots/dynamic-override-$name"
+    record "dynamic-override-$name-runtime" "$CHROOT" "$WORK/roots/dynamic-override-$name" /contract
+    capture_runtime_root "dynamic-override-$name" after "$WORK/roots/dynamic-override-$name"
 done
 
-# The reader copies and binds all component, product, source, and raw-command
-# inputs before it writes report.json, then immediately performs public replay.
+# The reader seals the pre-execution component/product/source capture only if
+# every selected current input still matches, then immediately performs replay.
 python3 -B "$READER" --collect-report --root "$ROOT" --work "$WORK" \
     --static-product "$STATIC_PRODUCT" --dynamic-product "$DYNAMIC_PRODUCT" \
     --static-preparation "$STATIC_PREPARATION" --product-report "$PRODUCT_REPORT" \

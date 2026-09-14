@@ -27,6 +27,14 @@ from owned_resolver_alias_contract_reader import (  # noqa: E402
     _git_file,
     _copy_input,
     _source_paths,
+    _record_in_work,
+    _capture_input_identities,
+    _validate_captured_input_identities,
+    _validate_runtime_roots,
+    _validate_runtime,
+    capture_runtime_root,
+    FIXTURE_FILES,
+    RUNTIME_ROOT_SPECS,
     ReceiptError,
     validate_candidate_occurrences,
 )
@@ -255,13 +263,17 @@ class ResolverAliasRunnerInterfaceTests(unittest.TestCase):
             'override_caller': {'path': '/workspace/compat/x86_64/owned_resolver_alias_override_caller.c'},
             'header_c_probe': {'path': '/workspace/compat/x86_64/resolver_runtime_header_abi_probe.c'},
             'header_cpp_probe': {'path': '/workspace/compat/x86_64/resolver_runtime_header_abi_probe.cpp'},
+            'header_compiler': {'path': '/usr/bin/gcc'},
+            'readelf': {'path': '/usr/bin/readelf'},
+            'timeout': {'path': '/usr/bin/timeout'},
+            'chroot': {'path': '/usr/sbin/chroot'},
         })
         expected = _expected_command_argvs(inputs, Path('/workspace'), Path('/workspace/.work/receipt'))
         self.assertEqual(expected['compile-public-probe'][0], '/workspace/.work/dynamic/bin/crabc-cc-dynamic')
         self.assertEqual(expected['static-normal-et-exec-link'][-3:],
                          ['static-contract.link.json', '-o', '/workspace/.work/receipt/outputs/static-contract'])
         self.assertEqual(expected['dynamic-normal-nopie-runtime'],
-                         ['chroot', '/workspace/.work/receipt/roots/dynamic-non-pie',
+                         ['/usr/sbin/chroot', '/workspace/.work/receipt/roots/dynamic-non-pie',
                           '/lib/ld-crabc-x86_64.so.1', '/contract', '/fixture'])
 
 
@@ -310,6 +322,188 @@ class ResolverAliasReceiptFilesystemTests(unittest.TestCase):
             input_path.symlink_to(target.name)
             with self.assertRaisesRegex(ReceiptError, 'input is not a physical file'):
                 _copy_input(work, 'input', input_path)
+
+
+class ResolverAliasOrdinaryBoundaryRegressionTests(unittest.TestCase):
+    def test_selected_source_requires_getaddrinfo_cfg_attached_to_the_definition(self) -> None:
+        from owned_resolver_alias_contract_reader import _validate_selected_source_text
+
+        source = (ROOT / 'libc/src/c_abi/x86_64/resolver_runtime.rs').read_text(encoding='utf-8')
+        _validate_selected_source_text(source)
+        marker = '#[cfg(not(feature = "x86-owned-static-runtime"))]\n#[no_mangle]\npub unsafe extern "C" fn getaddrinfo('
+        self.assertIn(marker, source)
+        with self.assertRaisesRegex(ReceiptError, 'legacy getaddrinfo caller is not excluded'):
+            _validate_selected_source_text(source.replace(marker, '#[no_mangle]\npub unsafe extern "C" fn getaddrinfo(', 1))
+
+    def test_header_commands_use_pinned_raw_compiler_and_selected_headers(self) -> None:
+        from owned_resolver_alias_contract_reader import HEADER_BUILTIN_INCLUDE
+
+        runner = (ROOT / 'compat/x86_64/run_owned_resolver_alias_contract.sh').read_text(encoding='utf-8')
+        self.assertIn('readonly RAW_HEADER_COMPILER=/usr/bin/gcc', runner)
+        self.assertIn('readonly HEADER_BUILTIN_INCLUDE=', runner)
+        header_commands = runner[runner.index('# Header ABI is a source check'):runner.index('record compile-public-probe')]
+        self.assertIn('"$RAW_HEADER_COMPILER"', header_commands)
+        self.assertIn('-nostdinc -I "$DYNAMIC_PRODUCT/usr/include"', header_commands)
+        self.assertIn('-isystem "$HEADER_BUILTIN_INCLUDE"', header_commands)
+        self.assertNotIn('"$DYNAMIC_DRIVER" --dynamic-pie -x', header_commands)
+        self.assertEqual(HEADER_BUILTIN_INCLUDE,
+                         '/usr/lib/gcc/x86_64-alpine-linux-musl/15.2.0/include')
+
+
+
+
+class ResolverAliasRuntimeRootTransitionTests(unittest.TestCase):
+    def _write(self, path: Path, content: bytes, mode: int = 0o644) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+        path.chmod(mode)
+
+    def _fixture(self, root: Path) -> None:
+        for relative, content in FIXTURE_FILES.items():
+            self._write(root / relative, content)
+
+    def _generated_resolv(self, identity: int = 42) -> bytes:
+        return (f'nameserver 127.{128 + (identity >> 16)}.{(identity >> 8) & 0xff}.{identity & 0xff}\n'
+                'search fixture.test\noptions ndots:1 timeout:1 attempts:1\n').encode('ascii')
+
+    def test_runtime_roots_retain_exact_before_and_bounded_resolver_after(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            artifacts = {'normal': {}, 'overrides': {}}
+            inputs: dict[str, dict[str, object]] = {}
+            loader = work / 'inputs/dynamic-loader'
+            libc = work / 'inputs/dynamic-libc'
+            self._write(loader, b'loader', 0o755)
+            self._write(libc, b'libc', 0o755)
+            for name, path in (('dynamic_loader', loader), ('dynamic_libc', libc)):
+                inputs[name] = {key: value for key, value in _record_in_work(work, path).items()
+                                if key in {'sha256', 'size', 'mode'}}
+            legacy = ROOT / 'compat/x86_64/libc_resolver_runtime_probe.c'
+            retained_legacy = work / 'retained/inputs/legacy_probe'
+            self._write(retained_legacy, legacy.read_bytes())
+            inputs['legacy_probe'] = _record_in_work(work, retained_legacy)
+
+            for name, (relative, _command, artifact_name) in RUNTIME_ROOT_SPECS.items():
+                root = work / relative
+                root.mkdir(parents=True)
+                root.chmod(0o755)
+                if artifact_name == 'fixture':
+                    self._fixture(root)
+                else:
+                    self._write(root / 'lib/ld-crabc-x86_64.so.1', loader.read_bytes(), 0o755)
+                    self._write(root / 'usr/lib/libc.so', libc.read_bytes(), 0o755)
+                    contract = work / f'outputs/{name}'
+                    self._write(contract, name.encode('ascii'), 0o755)
+                    record = _record_in_work(work, contract)
+                    if artifact_name in {'dynamic_pie', 'dynamic_non_pie'}:
+                        artifacts['normal'][artifact_name] = record
+                    else:
+                        artifacts['overrides'][artifact_name] = record
+                    self._write(root / 'contract', contract.read_bytes(), 0o755)
+                    self._fixture(root / 'fixture')
+                capture_runtime_root(work=work, name=name, root=root, phase='before')
+
+                if artifact_name in {'fixture', 'dynamic_pie', 'dynamic_non_pie'}:
+                    resolv = root / ('etc/resolv.conf' if artifact_name == 'fixture' else 'fixture/etc/resolv.conf')
+                    self._write(resolv, self._generated_resolv(), 0o600)
+                capture_runtime_root(work=work, name=name, root=root, phase='after')
+
+            value = {
+                name: {
+                    'command': command,
+                    'before': _record_in_work(work, work / f'runtime-roots/{name}-before.json'),
+                    'after': _record_in_work(work, work / f'runtime-roots/{name}-after.json'),
+                }
+                for name, (_relative, command, _artifact) in RUNTIME_ROOT_SPECS.items()
+            }
+            _validate_runtime_roots(value, work, inputs, artifacts)
+
+            dynamic_after = work / 'runtime-roots/dynamic-pie-after.json'
+            dynamic_contract = work / 'roots/dynamic-pie/contract'
+            dynamic_contract.write_bytes(b'wrong contract')
+            dynamic_after.unlink()
+            capture_runtime_root(work=work, name='dynamic-pie', root=work / 'roots/dynamic-pie', phase='after')
+            value['dynamic-pie']['after'] = _record_in_work(work, dynamic_after)
+            with self.assertRaisesRegex(ReceiptError, 'immutable payload differs: dynamic-pie'):
+                _validate_runtime_roots(value, work, inputs, artifacts)
+
+            dynamic_contract.write_bytes(b'dynamic-pie')
+            dynamic_after.unlink()
+            self._write(work / 'roots/dynamic-pie/fixture/etc/resolv.conf', b'nameserver 192.0.2.1\n', 0o600)
+            capture_runtime_root(work=work, name='dynamic-pie', root=work / 'roots/dynamic-pie', phase='after')
+            value['dynamic-pie']['after'] = _record_in_work(work, dynamic_after)
+            with self.assertRaisesRegex(ReceiptError, 'generated resolv.conf differs'):
+                _validate_runtime_roots(value, work, inputs, artifacts)
+
+
+
+class ResolverAliasPreExecutionCaptureTests(unittest.TestCase):
+    def _paths(self, root: Path) -> dict[str, Path]:
+        paths: dict[str, Path] = {}
+        for name in INPUT_NAMES:
+            path = root / 'current' / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(name.encode('ascii'))
+            path.chmod(0o644)
+            paths[name] = path
+        return paths
+
+    def test_final_seal_rejects_source_and_measurement_bytes_changed_after_capture(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            work = root / 'receipt'
+            work.mkdir()
+            paths = self._paths(root)
+            inputs = _capture_input_identities(work, paths, {'files': {}}, image_inputs={})
+            _validate_captured_input_identities(work, inputs, paths, {'files': {}}, image_inputs={})
+
+            paths['resolver_source'].write_bytes(b'changed selected source')
+            with self.assertRaisesRegex(ReceiptError, 'pre-execution capture: resolver_source'):
+                _validate_captured_input_identities(work, inputs, paths, {'files': {}}, image_inputs={})
+            paths['resolver_source'].write_bytes(b'resolver_source')
+            paths['elf_facts'].write_bytes(b'changed measurement')
+            with self.assertRaisesRegex(ReceiptError, 'pre-execution capture: elf_facts'):
+                _validate_captured_input_identities(work, inputs, paths, {'files': {}}, image_inputs={})
+
+    def test_image_invocation_path_is_bound_to_the_retained_pinned_program(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            work = root / 'receipt'
+            work.mkdir()
+            paths = self._paths(root)
+            image_inputs = {'readelf': '/usr/bin/readelf'}
+            record = file_identity(paths['readelf'], root=root)
+            manifest = {'files': {'/usr/bin/readelf': {key: record[key] for key in ('sha256', 'size', 'mode')}}}
+            inputs = _capture_input_identities(work, paths, manifest, image_inputs=image_inputs)
+            _validate_captured_input_identities(work, inputs, paths, manifest, image_inputs=image_inputs)
+            inputs['readelf'] = dict(inputs['readelf'], path='/usr/bin/other')
+            with self.assertRaisesRegex(ReceiptError, 'pinned image input differs: readelf'):
+                _validate_captured_input_identities(work, inputs, paths, manifest, image_inputs=image_inputs)
+
+
+
+class ResolverAliasRuntimeStatusTests(unittest.TestCase):
+    def test_runtime_status_must_be_the_matching_command_status_record(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            commands: dict[str, dict[str, object]] = {}
+            expected = {
+                'oracle': 'oracle-runtime-run',
+                'static-et-exec': 'static-normal-et-exec-runtime',
+                'static-pie': 'static-normal-pie-runtime',
+                'dynamic-pie': 'dynamic-normal-pie-runtime',
+                'dynamic-non-pie': 'dynamic-normal-nopie-runtime',
+            }
+            for index, command in enumerate(expected.values()):
+                status = root / f'{index}.status'
+                status.write_text('0\n', encoding='ascii')
+                commands[command] = {'status': _record_in_work(root, status)}
+            runtime = {name: {'command': command, 'status': commands[command]['status']}
+                       for name, command in expected.items()}
+            _validate_runtime(runtime, root, commands)
+            runtime['oracle'] = dict(runtime['oracle'], status=commands['static-normal-et-exec-runtime']['status'])
+            with self.assertRaisesRegex(ReceiptError, 'command status binding differs: oracle'):
+                _validate_runtime(runtime, root, commands)
 
 
 if __name__ == '__main__':

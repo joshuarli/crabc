@@ -34,6 +34,17 @@ COMPONENT = 'resolver-alias-private-bodies'
 IMAGE = 'crabc-core-evidence@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d'
 IMAGE_MANIFEST = MODULE_DIR / 'owned-resolver-alias-image-inputs.json'
 MUSL_SOURCE_COMMIT = '9fa28ece75d8a2191de7c5bb53bed224c5947417'
+IMAGE_MARKER = 'CRABC_RESOLVER_ALIAS_IMAGE_ID'
+HEADER_BUILTIN_INCLUDE = '/usr/lib/gcc/x86_64-alpine-linux-musl/15.2.0/include'
+IMAGE_INPUTS = {
+    'header_compiler': '/usr/bin/gcc',
+    'readelf': '/usr/bin/readelf',
+    'timeout': '/usr/bin/timeout',
+    'chroot': '/usr/sbin/chroot',
+    'oracle_compiler': '/usr/local/bin/crabc-x86_64-musl-gcc',
+    'oracle_archive': '/opt/musl-1.2.6/lib/libc.a',
+    'oracle_shared': '/opt/musl-1.2.6/lib/libc.so',
+}
 
 ALIASES = (
     ('res_mkquery', '__res_mkquery'),
@@ -88,6 +99,7 @@ INPUT_NAMES = (
     'resolv_header', 'feature_roster', 'parity_contract', 'cancellation_contract',
     'header_c_probe', 'header_cpp_probe', 'header_runner', 'legacy_probe', 'legacy_runner',
     'static_authority', 'elf_reader', 'product_authority', 'image_manifest',
+    'header_compiler', 'readelf', 'timeout', 'chroot',
     'oracle_compiler', 'oracle_archive', 'oracle_shared',
     'static_driver', 'static_manifest', 'static_libc', 'static_crt1', 'static_rcrt1', 'static_crti', 'static_crtn', 'static_builtins',
     'dynamic_driver', 'dynamic_libc', 'dynamic_loader', 'dynamic_crt1', 'dynamic_scrt1',
@@ -115,6 +127,28 @@ COMMAND_NAMES = (
     'dynamic-override-send', 'dynamic-override-send-dynsym', 'dynamic-override-send-runtime',
     'dynamic-override-search', 'dynamic-override-search-dynsym', 'dynamic-override-search-runtime',
 )
+
+# The normal resolver probe intentionally replaces only ``resolv.conf`` after
+# it enters a fixture root: it chooses a loopback address from its own PID so
+# concurrently-running normal controls do not share port 53.  Everything else
+# in a runtime root remains an exact pre-execution input.
+FIXTURE_FILES = {
+    'etc/hosts': b'192.0.2.44 host.fixture host-alias\n',
+    'etc/resolv.conf': b'nameserver 127.0.0.1\nsearch fixture.test\noptions ndots:1 timeout:1 attempts:1\n',
+}
+RUNTIME_ROOT_SPECS = {
+    'oracle': ('runtime/oracle-root', 'oracle-runtime-run', 'fixture'),
+    'static-et-exec': ('runtime/static-root', 'static-normal-et-exec-runtime', 'fixture'),
+    'static-pie': ('runtime/static-pie-root', 'static-normal-pie-runtime', 'fixture'),
+    'dynamic-pie': ('roots/dynamic-pie', 'dynamic-normal-pie-runtime', 'dynamic_pie'),
+    'dynamic-non-pie': ('roots/dynamic-non-pie', 'dynamic-normal-nopie-runtime', 'dynamic_non_pie'),
+    'dynamic-override-mkquery': ('roots/dynamic-override-mkquery', 'dynamic-override-mkquery-runtime', 'dynamic_mkquery'),
+    'dynamic-override-send': ('roots/dynamic-override-send', 'dynamic-override-send-runtime', 'dynamic_send'),
+    'dynamic-override-search': ('roots/dynamic-override-search', 'dynamic-override-search-runtime', 'dynamic_search'),
+}
+RESOLVER_RUNTIME_ROOTS = frozenset({
+    'oracle', 'static-et-exec', 'static-pie', 'dynamic-pie', 'dynamic-non-pie',
+})
 
 LINK_INPUT_MODES = product_evidence.link_input_mode_projection()
 
@@ -349,6 +383,59 @@ def _copy_input(work: Path, name: str, source: Path) -> dict[str, Any]:
     return {**original, 'retained': retained['path']}
 
 
+def _copy_image_input(work: Path, name: str, source: Path, invocation: str,
+                      image_manifest: Mapping[str, Any]) -> dict[str, Any]:
+    """Copy one invoked image program while preserving its canonical argv path."""
+    expected = image_manifest.get('files', {}).get(invocation)
+    current = _identity(source)
+    require(type(expected) is dict and all(current[key] == expected.get(key) for key in ('sha256', 'size', 'mode')),
+            f'resolver pinned image program differs: {name}')
+    record = _copy_input(work, name, source)
+    record['path'] = invocation
+    return record
+
+
+def _capture_input_identities(work: Path, paths: Mapping[str, Path], image_manifest: Mapping[str, Any],
+                              *, image_inputs: Mapping[str, str] = IMAGE_INPUTS) -> dict[str, Any]:
+    """Copy the complete selected cohort before any measurement command runs."""
+    require(set(paths) == set(INPUT_NAMES), 'resolver current input roster differs')
+    require(type(image_manifest.get('files')) is dict, 'resolver image manifest file roster differs')
+    captured: dict[str, Any] = {}
+    for name in INPUT_NAMES:
+        source = paths[name]
+        if name in image_inputs:
+            captured[name] = _copy_image_input(work, name, source, image_inputs[name], image_manifest)
+        else:
+            captured[name] = _copy_input(work, name, source)
+    return captured
+
+
+def _validate_captured_input_identities(receipt_root: Path, inputs: Any, paths: Mapping[str, Path],
+                                        image_manifest: Mapping[str, Any],
+                                        *, image_inputs: Mapping[str, str] = IMAGE_INPUTS) -> dict[str, Any]:
+    """Require the final seal to use the exact pre-execution input bytes again."""
+    inputs = exact(inputs, set(INPUT_NAMES), 'resolver input roster')
+    require(set(paths) == set(INPUT_NAMES) and type(image_manifest.get('files')) is dict,
+            'resolver current input roster differs')
+    for name in INPUT_NAMES:
+        record = _validate_identity_record(inputs[name], f'resolver input {name}')
+        retained = _retained_record(receipt_root, record, f'resolver input {name}')
+        retained_identity = file_identity(retained, root=receipt_root)
+        if name in image_inputs:
+            invocation = image_inputs[name]
+            expected = image_manifest['files'].get(invocation)
+            require(record['path'] == invocation and type(expected) is dict
+                    and all(record[key] == expected.get(key) for key in ('sha256', 'size', 'mode'))
+                    and all(retained_identity[key] == expected.get(key) for key in ('sha256', 'size', 'mode')),
+                    f'resolver retained pinned image input differs: {name}')
+            continue
+        current = _identity(paths[name])
+        require(all(record[key] == current[key] and retained_identity[key] == current[key]
+                    for key in ('sha256', 'size', 'mode')),
+                f'resolver current input differs from pre-execution capture: {name}')
+    return inputs
+
+
 def _git(root: Path, *arguments: str) -> str:
     completed = subprocess.run(['git', '-C', str(root), *arguments], stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, check=False, text=True)
@@ -416,7 +503,11 @@ def _source_paths(root: Path) -> dict[str, Path]:
 def _product_paths(static_product: Path, dynamic_product: Path, product_report: Path,
                    static_preparation: Path, elf_facts: Path, base_inventory: Path) -> dict[str, Path]:
     return {
-        'oracle_compiler': Path('/usr/local/bin/crabc-x86_64-musl-gcc'),
+        'header_compiler': Path(IMAGE_INPUTS['header_compiler']),
+        'readelf': Path(IMAGE_INPUTS['readelf']),
+        'timeout': Path(IMAGE_INPUTS['timeout']),
+        'chroot': Path(IMAGE_INPUTS['chroot']),
+        'oracle_compiler': Path(IMAGE_INPUTS['oracle_compiler']),
         'oracle_archive': Path('/opt/musl-1.2.6/lib/libc.a'),
         'oracle_shared': Path('/opt/musl-1.2.6/lib/libc.so'),
         'static_driver': static_product / 'bin/crabc-cc',
@@ -576,39 +667,48 @@ def _expected_command_argvs(inputs: Mapping[str, Any], origin_root: Path, origin
     roots = f'{work}/roots'
     dynamic = path['dynamic_driver']
     static = path['static_driver']
+    dynamic_include = str(Path(dynamic).parent.parent / 'usr/include')
     expected = {
-        'header-c': [dynamic, '--dynamic-pie', '-x', 'c', '-std=c11', '-D_GNU_SOURCE', '-fno-builtin', '-fsyntax-only', path['header_c_probe']],
-        'header-cpp': [dynamic, '--dynamic-pie', '-x', 'c++', '-std=c++17', '-D_GNU_SOURCE', '-fno-builtin', '-c', '-o', f'{objects}/header.cpp.o', path['header_cpp_probe']],
+        # The sealed dynamic driver intentionally accepts only its narrow link
+        # grammar. Header ABI is a separate raw-compiler source check against
+        # selected installed headers and the pinned compiler builtin include.
+        'header-c': [path['header_compiler'], '-x', 'c', '-std=c11', '-nostdinc', '-I', dynamic_include,
+                     '-isystem', HEADER_BUILTIN_INCLUDE, '-U_GNU_SOURCE', '-D_GNU_SOURCE',
+                     '-fno-builtin', '-fsyntax-only', path['header_c_probe']],
+        'header-cpp': [path['header_compiler'], '-x', 'c++', '-std=c++17', '-nostdinc', '-nostdinc++',
+                       '-I', dynamic_include, '-isystem', HEADER_BUILTIN_INCLUDE, '-U_GNU_SOURCE',
+                       '-D_GNU_SOURCE', '-fno-builtin', '-c', '-o', f'{objects}/header.cpp.o',
+                       path['header_cpp_probe']],
         'compile-public-probe': [dynamic, '--dynamic-pie', '-std=c11', '-D_GNU_SOURCE', '-pthread', '-fno-builtin', '-fno-stack-protector', '-c', path['probe'], '-o', f'{objects}/public-probe.o'],
-        'public-probe-relocations': ['readelf', '--relocs', '--wide', f'{objects}/public-probe.o'],
-        'oracle-symbols': ['readelf', '--symbols', '--wide', path['oracle_archive']],
+        'public-probe-relocations': [path['readelf'], '--relocs', '--wide', f'{objects}/public-probe.o'],
+        'oracle-symbols': [path['readelf'], '--symbols', '--wide', path['oracle_archive']],
         'oracle-runtime-link': [path['oracle_compiler'], '-std=c11', '-D_GNU_SOURCE', '-pthread', '-fno-builtin', '-fno-stack-protector', '-I', str(origin_root / 'include'), f'{objects}/public-probe.o', '-o', f'{outputs}/oracle-contract'],
-        'oracle-runtime-run': ['timeout', '15', f'{outputs}/oracle-contract', f'{runtime}/oracle-root'],
-        'static-symbols': ['readelf', '--symbols', '--wide', path['static_libc']],
-        'static-private-calls': ['readelf', '--relocs', '--wide', path['static_libc']],
+        'oracle-runtime-run': [path['timeout'], '15', f'{outputs}/oracle-contract', f'{runtime}/oracle-root'],
+        'static-symbols': [path['readelf'], '--symbols', '--wide', path['static_libc']],
+        'static-private-calls': [path['readelf'], '--relocs', '--wide', path['static_libc']],
         'static-normal-et-exec-link': [static, '-static', '-pthread', f'{objects}/public-probe.o', '--link-receipt', 'static-contract.link.json', '-o', f'{outputs}/static-contract'],
-        'static-normal-et-exec-runtime': ['timeout', '15', f'{outputs}/static-contract', f'{runtime}/static-root'],
+        'static-normal-et-exec-runtime': [path['timeout'], '15', f'{outputs}/static-contract', f'{runtime}/static-root'],
         'static-normal-pie-link': [static, '-static-pie', '-pthread', f'{objects}/public-probe.o', '--link-receipt', 'static-pie-contract.link.json', '-o', f'{outputs}/static-pie-contract'],
-        'static-normal-pie-runtime': ['timeout', '15', f'{outputs}/static-pie-contract', f'{runtime}/static-root'],
-        'dynamic-symbols': ['readelf', '--symbols', '--wide', path['dynamic_libc']],
+        'static-normal-pie-runtime': [path['timeout'], '15', f'{outputs}/static-pie-contract', f'{runtime}/static-pie-root'],
+        'dynamic-symbols': [path['readelf'], '--symbols', '--wide', path['dynamic_libc']],
         'dynamic-normal-pie-link': [dynamic, '--dynamic-pie', '-pthread', '-rdynamic', f'{objects}/public-probe.o', '-o', f'{outputs}/dynamic-pie-contract'],
-        'dynamic-normal-pie-dynsym': ['readelf', '--dyn-syms', '--wide', f'{outputs}/dynamic-pie-contract'],
-        'dynamic-normal-pie-runtime': ['chroot', f'{roots}/dynamic-pie', '/contract', '/fixture'],
+        'dynamic-normal-pie-dynsym': [path['readelf'], '--dyn-syms', '--wide', f'{outputs}/dynamic-pie-contract'],
+        'dynamic-normal-pie-runtime': [path['chroot'], f'{roots}/dynamic-pie', '/contract', '/fixture'],
         'dynamic-normal-nopie-link': [dynamic, '--dynamic-non-pie', '-pthread', '-rdynamic', f'{objects}/public-probe.o', '-o', f'{outputs}/dynamic-non-pie-contract'],
-        'dynamic-normal-nopie-dynsym': ['readelf', '--dyn-syms', '--wide', f'{outputs}/dynamic-non-pie-contract'],
-        'dynamic-normal-nopie-runtime': ['chroot', f'{roots}/dynamic-non-pie', '/lib/ld-crabc-x86_64.so.1', '/contract', '/fixture'],
+        'dynamic-normal-nopie-dynsym': [path['readelf'], '--dyn-syms', '--wide', f'{outputs}/dynamic-non-pie-contract'],
+        'dynamic-normal-nopie-runtime': [path['chroot'], f'{roots}/dynamic-non-pie', '/lib/ld-crabc-x86_64.so.1', '/contract', '/fixture'],
     }
     for alias, number, public in (('mkquery', '1', 'res_mkquery'), ('send', '2', 'res_send'), ('search', '3', 'res_search')):
         definition = f'{objects}/override-{alias}-definition.o'
         caller = f'{objects}/override-{alias}-caller.o'
         expected[f'compile-override-{alias}'] = [dynamic, '--dynamic-pie', '-std=c11', '-D_GNU_SOURCE', '-pthread', '-fno-builtin', '-fno-stack-protector', f'-DCRABC_RESOLVER_ALIAS_OVERRIDE={number}', '-c', path['override_probe'], '-o', definition]
         expected[f'compile-override-{alias}-caller'] = [dynamic, '--dynamic-pie', '-std=c11', '-D_GNU_SOURCE', '-pthread', '-fno-builtin', '-fno-stack-protector', f'-DCRABC_RESOLVER_ALIAS_OVERRIDE={number}', '-c', path['override_caller'], '-o', caller]
-        expected[f'override-{alias}-public-relocation'] = ['readelf', '--relocs', '--wide', caller]
+        expected[f'override-{alias}-public-relocation'] = [path['readelf'], '--relocs', '--wide', caller]
         expected[f'static-override-{alias}'] = [static, '-static', '-pthread', caller, definition, '--link-receipt', f'static-override-{alias}.link.json', '-o', f'{outputs}/static-override-{alias}']
         expected[f'static-override-{alias}-runtime'] = [f'{outputs}/static-override-{alias}']
         expected[f'dynamic-override-{alias}'] = [dynamic, '--dynamic-pie', '-pthread', '-rdynamic', caller, definition, '-o', f'{outputs}/dynamic-override-{alias}']
-        expected[f'dynamic-override-{alias}-dynsym'] = ['readelf', '--dyn-syms', '--wide', f'{outputs}/dynamic-override-{alias}']
-        expected[f'dynamic-override-{alias}-runtime'] = ['chroot', f'{roots}/dynamic-override-{alias}', '/contract']
+        expected[f'dynamic-override-{alias}-dynsym'] = [path['readelf'], '--dyn-syms', '--wide', f'{outputs}/dynamic-override-{alias}']
+        expected[f'dynamic-override-{alias}-runtime'] = [path['chroot'], f'{roots}/dynamic-override-{alias}', '/contract']
     require(set(expected) == set(COMMAND_NAMES), 'resolver expected command roster differs')
     return expected
 
@@ -658,11 +758,148 @@ def _validate_commands(commands: Any, receipt_root: Path, inputs: Mapping[str, A
     return commands
 
 
-def _validate_runtime(runtime: Any, receipt_root: Path) -> dict[str, Any]:
-    runtime = exact(runtime, {'oracle', 'static-et-exec', 'static-pie', 'dynamic-pie', 'dynamic-non-pie'},
-                    'resolver runtime root roster')
-    for name, value in runtime.items():
-        transcript = _retained_record(receipt_root, value, f'resolver runtime {name}')
+def _runtime_tree_record(work: Path, root: Path) -> dict[str, Any]:
+    """Record one physical execution root before its runtime command runs."""
+    work = work.resolve(strict=True)
+    require(not root.is_symlink(), f'resolver runtime root is not physical: {root}')
+    root = root.resolve(strict=True)
+    require(root.is_relative_to(work) and root.is_dir(), f'resolver runtime root escapes receipt: {root}')
+    directories: dict[str, int] = {}
+    files: dict[str, dict[str, Any]] = {}
+    for item in sorted(root.rglob('*')):
+        relative = item.relative_to(root).as_posix()
+        mode = item.lstat().st_mode
+        require(not stat.S_ISLNK(mode), f'resolver runtime root has symlink: {relative}')
+        if stat.S_ISDIR(mode):
+            directories[relative] = stat.S_IMODE(mode)
+        else:
+            require(stat.S_ISREG(mode), f'resolver runtime root has non-regular entry: {relative}')
+            files[relative] = {'sha256': hashlib.sha256(item.read_bytes()).hexdigest(),
+                               'size': item.stat().st_size, 'mode': stat.S_IMODE(mode)}
+    return {'root': root.relative_to(work).as_posix(), 'mode': stat.S_IMODE(root.stat().st_mode),
+            'directories': directories, 'files': files}
+
+
+def capture_runtime_root(*, work: Path, name: str, root: Path, phase: str) -> dict[str, Any]:
+    """Persist one exact runtime-root phase record; execution stays in the runner."""
+    require(name in RUNTIME_ROOT_SPECS, 'resolver runtime root name differs')
+    require(phase in {'before', 'after'}, 'resolver runtime root phase differs')
+    work = work.resolve(strict=True)
+    expected, _command, _kind = RUNTIME_ROOT_SPECS[name]
+    root = root.resolve(strict=True)
+    require(root == work / expected, 'resolver runtime root placement differs')
+    destination = work / 'runtime-roots' / f'{name}-{phase}.json'
+    if phase == 'after':
+        before = work / 'runtime-roots' / f'{name}-before.json'
+        require(before.is_file() and not before.is_symlink(), 'resolver runtime root pre-execution record is absent')
+    require(not destination.exists() and not destination.is_symlink(), 'resolver runtime root record already exists')
+    destination.parent.mkdir(parents=True, exist_ok=False) if not destination.parent.exists() else None
+    destination.write_text(json.dumps(_runtime_tree_record(work, root), sort_keys=True) + '\n', encoding='utf-8')
+    return {'name': name, 'phase': phase, 'record': _record_in_work(work, destination)}
+
+
+def _fixture_tree_files(prefix: str = '') -> dict[str, dict[str, Any]]:
+    return {(prefix + name): {'sha256': hashlib.sha256(value).hexdigest(), 'size': len(value), 'mode': 0o644}
+            for name, value in FIXTURE_FILES.items()}
+
+
+def _validate_probe_loopback_source(receipt_root: Path, inputs: Mapping[str, Any]) -> None:
+    """Bind the only permitted fixture mutation to the retained normal probe."""
+    source = _retained_record(receipt_root, inputs['legacy_probe'], 'resolver normal runtime probe').read_text(encoding='utf-8')
+    for text in (
+        'loopback.s_addr = htonl(0x7f800000u | (unsigned)process);',
+        '"nameserver %s\\nsearch fixture.test\\noptions ndots:1 timeout:1 attempts:1\\n",',
+        'open("/etc/resolv.conf", O_WRONLY | O_CREAT | O_TRUNC, 0600)',
+    ):
+        require(text in source, 'resolver normal runtime fixture transition source differs')
+
+
+def _validate_generated_resolv_conf(path: Path) -> None:
+    """Accept the selected probe's PID-to-loopback configuration bytes only."""
+    require(not path.is_symlink() and path.is_file(), 'resolver generated resolv.conf is not physical')
+    status = path.stat()
+    require(stat.S_IMODE(status.st_mode) == 0o600, 'resolver generated resolv.conf mode differs')
+    match = re.fullmatch(
+        rb'nameserver 127\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\n'
+        rb'search fixture\.test\noptions ndots:1 timeout:1 attempts:1\n', path.read_bytes())
+    require(match is not None, 'resolver generated resolv.conf differs')
+    second, third, fourth = (int(value) for value in match.groups())
+    require(128 <= second <= 255 and 0 <= third <= 255 and 0 <= fourth <= 255,
+            'resolver generated nameserver is not the selected PID loopback')
+    process = ((second - 128) << 16) | (third << 8) | fourth
+    require(0 < process <= 0x7fffff, 'resolver generated nameserver PID relation differs')
+
+
+def _validate_before_runtime_tree(name: str, tree: Mapping[str, Any], inputs: Mapping[str, Any],
+                                  artifacts: Mapping[str, Any]) -> None:
+    """Authenticate every immutable runtime-root byte before execution."""
+    relative, _command, artifact_name = RUNTIME_ROOT_SPECS[name]
+    tree = exact(tree, {'root', 'mode', 'directories', 'files'}, f'resolver runtime root {name} tree')
+    require(tree['root'] == relative and tree['mode'] == 0o755
+            and type(tree['directories']) is dict and type(tree['files']) is dict,
+            f'resolver runtime root shape differs: {name}')
+    if artifact_name == 'fixture':
+        require(tree['directories'] == {'etc': 0o755}
+                and tree['files'] == _fixture_tree_files(),
+                f'resolver direct runtime fixture differs: {name}')
+        return
+    artifact = (artifacts['normal'][artifact_name] if artifact_name in {'dynamic_pie', 'dynamic_non_pie'}
+                else artifacts['overrides'][artifact_name])
+    expected_files = {
+        'lib/ld-crabc-x86_64.so.1': {key: inputs['dynamic_loader'][key] for key in ('sha256', 'size', 'mode')},
+        'usr/lib/libc.so': {key: inputs['dynamic_libc'][key] for key in ('sha256', 'size', 'mode')},
+        'contract': {key: artifact[key] for key in ('sha256', 'size', 'mode')},
+        **_fixture_tree_files('fixture/'),
+    }
+    require(tree['directories'] == {'lib': 0o755, 'usr': 0o755, 'usr/lib': 0o755,
+                                    'fixture': 0o755, 'fixture/etc': 0o755},
+            f'resolver dynamic runtime directories differ: {name}')
+    require(tree['files'] == expected_files, f'resolver dynamic runtime payload differs: {name}')
+
+
+def _validate_runtime_roots(value: Any, receipt_root: Path, inputs: Mapping[str, Any],
+                            artifacts: Mapping[str, Any]) -> None:
+    roots = exact(value, set(RUNTIME_ROOT_SPECS), 'resolver runtime root roster')
+    for name, (relative, command, artifact_name) in RUNTIME_ROOT_SPECS.items():
+        entry = exact(roots[name], {'command', 'before', 'after'}, f'resolver runtime root {name}')
+        require(entry['command'] == command, f'resolver runtime root command differs: {name}')
+        before_path = _retained_record(receipt_root, entry['before'], f'resolver runtime root {name} pre-execution record')
+        after_path = _retained_record(receipt_root, entry['after'], f'resolver runtime root {name} post-execution record')
+        before = read_json(before_path, f'resolver runtime root {name} pre-execution record')
+        after = read_json(after_path, f'resolver runtime root {name} post-execution record')
+        expected_root = receipt_root / relative
+        require(after == _runtime_tree_record(receipt_root, expected_root),
+                f'resolver runtime root changed after capture: {name}')
+        _validate_before_runtime_tree(name, before, inputs, artifacts)
+        if name not in RESOLVER_RUNTIME_ROOTS:
+            require(after == before, f'resolver non-resolver runtime root changed: {name}')
+            continue
+        _validate_probe_loopback_source(receipt_root, inputs)
+        mutable = 'etc/resolv.conf' if artifact_name == 'fixture' else 'fixture/etc/resolv.conf'
+        require(type(after) is dict and after.get('root') == before['root'] and after.get('mode') == before['mode']
+                and after.get('directories') == before['directories'] and type(after.get('files')) is dict,
+                f'resolver runtime root transition shape differs: {name}')
+        require(set(after['files']) == set(before['files'])
+                and all(after['files'][path] == before['files'][path] for path in before['files'] if path != mutable),
+                f'resolver runtime root immutable payload differs: {name}')
+        require(mutable in after['files'], f'resolver runtime root mutable fixture differs: {name}')
+        _validate_generated_resolv_conf(expected_root / mutable)
+
+
+def _validate_runtime(runtime: Any, receipt_root: Path, commands: Mapping[str, Any]) -> dict[str, Any]:
+    expected = {
+        'oracle': 'oracle-runtime-run',
+        'static-et-exec': 'static-normal-et-exec-runtime',
+        'static-pie': 'static-normal-pie-runtime',
+        'dynamic-pie': 'dynamic-normal-pie-runtime',
+        'dynamic-non-pie': 'dynamic-normal-nopie-runtime',
+    }
+    runtime = exact(runtime, set(expected), 'resolver runtime root roster')
+    for name, command_name in expected.items():
+        value = exact(runtime[name], {'command', 'status'}, f'resolver runtime {name}')
+        require(value['command'] == command_name and same(value['status'], commands[command_name]['status']),
+                f'resolver runtime command status binding differs: {name}')
+        transcript = _retained_record(receipt_root, value['status'], f'resolver runtime {name}')
         require(transcript.read_text(encoding='ascii') == '0\n', f'resolver runtime {name} differs')
     return runtime
 
@@ -741,9 +978,8 @@ def _validate_linked_public_symbol_domains(receipt_root: Path, artifacts: Mappin
                 f'{public} dynamic strong override definition differs')
 
 
-def _validate_selected_source_routes(receipt_root: Path, inputs: Mapping[str, Any]) -> None:
-    """Derive the finite selected and legacy caller distinction from source bytes."""
-    source = _retained_record(receipt_root, inputs['resolver_source'], 'resolver source').read_text(encoding='utf-8')
+def _validate_selected_source_text(source: str) -> None:
+    """Bind the selected private callers without treating legacy DNS as live."""
     assembly = source[source.index('core::arch::global_asm!('):source.index('/// Encode one selected recursive Internet DNS question')]
     for line in ('.hidden __res_mkquery', '.weak res_mkquery', '.set res_mkquery, __res_mkquery',
                  '.hidden __res_send', '.weak res_send', '.set res_send, __res_send',
@@ -753,11 +989,26 @@ def _validate_selected_source_routes(receipt_root: Path, inputs: Mapping[str, An
     require('__res_mkquery(' in query and '__res_send(' in query,
             'resolver selected query-response private caller route differs')
     legacy_start = source.index('unsafe fn lookup_dns_records(')
-    legacy_end = source.index('pub unsafe extern "C" fn getaddrinfo(', legacy_start)
-    require('__res_send(' in source[legacy_start:legacy_end], 'resolver legacy source caller differs')
-    cfg_start = source.rfind('#[cfg(not(feature = "x86-owned-static-runtime"))]', 0, legacy_start)
-    require(cfg_start >= 0 and cfg_start < legacy_start,
-            'resolver legacy source caller is not excluded from the selected runtime')
+    getaddrinfo = 'pub unsafe extern "C" fn getaddrinfo('
+    getaddrinfo_start = source.index(getaddrinfo, legacy_start)
+    require('__res_send(' in source[legacy_start:getaddrinfo_start], 'resolver legacy source caller differs')
+    attached_cfg = '#[cfg(not(feature = "x86-owned-static-runtime"))]\n#[no_mangle]\n' + getaddrinfo
+    require(attached_cfg in source,
+            'resolver legacy getaddrinfo caller is not excluded from the selected runtime')
+    getaddrinfo_end = source.index('\n}', getaddrinfo_start) + 2
+    getaddrinfo_body = source[getaddrinfo_start:getaddrinfo_end]
+    require('resolve_symbolic(' in getaddrinfo_body,
+            'resolver legacy getaddrinfo caller chain differs')
+    symbolic_start = source.index('unsafe fn resolve_symbolic(')
+    symbolic_end = source.index('\nunsafe fn join_domain(', symbolic_start)
+    require('lookup_dns_records(' in source[symbolic_start:symbolic_end],
+            'resolver legacy lookup caller chain differs')
+
+
+def _validate_selected_source_routes(receipt_root: Path, inputs: Mapping[str, Any]) -> None:
+    """Derive the finite selected and legacy caller distinction from source bytes."""
+    source = _retained_record(receipt_root, inputs['resolver_source'], 'resolver source').read_text(encoding='utf-8')
+    _validate_selected_source_text(source)
 
 
 def _origin_root(inputs: Mapping[str, Any]) -> Path:
@@ -773,35 +1024,20 @@ def _origin_root(inputs: Mapping[str, Any]) -> Path:
 def _validate_inputs(report: Mapping[str, Any], receipt_root: Path, root: Path,
                      static_product: Path, dynamic_product: Path, product_report: Path,
                      static_preparation: Path, elf_facts: Path, base_inventory: Path) -> Path:
+    """Compare the pre-execution retained input capture to the current cohort."""
     expected_paths = _all_input_paths(root, static_product, dynamic_product, product_report,
                                       static_preparation, elf_facts, base_inventory)
     _validate_current_source_inputs(root, report['selected_source']['revision'], expected_paths)
     inputs = exact(report['inputs'], set(INPUT_NAMES), 'resolver input roster')
     origin_root = _origin_root(inputs)
     image_manifest = read_json(_source_paths(root)['image_manifest'], 'resolver image manifest')
-    require(type(image_manifest.get('files')) is dict, 'resolver image manifest file roster differs')
+    _validate_captured_input_identities(receipt_root, inputs, expected_paths, image_manifest)
     for name, source in expected_paths.items():
-        if name in {'oracle_compiler', 'oracle_archive', 'oracle_shared'}:
+        if name in IMAGE_INPUTS:
             continue
-        require(not source.is_symlink(), f'resolver current input is not physical: {name}')
         record = _validate_identity_record(inputs[name], f'resolver input {name}')
         require(record['path'] == str(origin_root / source.resolve(strict=True).relative_to(root)),
                 f'resolver input path differs: {name}')
-        current = _identity(source.resolve(strict=True))
-        require(all(record[key] == current[key] for key in ('sha256', 'size', 'mode')),
-                f'resolver current input differs: {name}')
-        retained = _retained_record(receipt_root, record, f'resolver input {name}')
-        retained_identity = file_identity(retained, root=receipt_root)
-        require(all(retained_identity[key] == current[key] for key in ('sha256', 'size', 'mode')),
-                f'resolver retained/current input differs: {name}')
-    for name, invocation in (('oracle_compiler', '/usr/local/bin/crabc-x86_64-musl-gcc'),
-                             ('oracle_archive', '/opt/musl-1.2.6/lib/libc.a'),
-                             ('oracle_shared', '/opt/musl-1.2.6/lib/libc.so')):
-        record = _validate_identity_record(inputs[name], f'resolver input {name}')
-        expected = image_manifest['files'].get(invocation)
-        require(type(expected) is dict and all(record[key] == expected.get(key) for key in ('sha256', 'size', 'mode')),
-                f'resolver retained pinned image input differs: {name}')
-        _retained_record(receipt_root, record, f'resolver input {name}')
     try:
         product_evidence._validate_static_product(static_product)
         product_evidence._validate_dynamic_product(dynamic_product)
@@ -1004,15 +1240,24 @@ def validate_report(report_path: Path, *, root: Path = ROOT, static_product: Pat
     receipt_root = report_path.parent
     report = read_json(report_path, 'resolver alias report')
     report = exact(report, {
-        'schema', 'status', 'component', 'collection', 'selected_source', 'collector', 'inputs',
+        'schema', 'status', 'component', 'collection', 'collection_begin', 'selected_source', 'collector', 'inputs',
         'selected_products', 'static_preparation', 'product_input_modes', 'measurement_reports',
-        'source_alias_routes', 'observations', 'artifacts', 'commands', 'execution', 'runtime', 'coverage',
+        'source_alias_routes', 'observations', 'artifacts', 'commands', 'execution', 'runtime', 'runtime_roots', 'coverage',
     }, 'resolver alias report')
     require(report['schema'] == SCHEMA and report['status'] == STATUS and report['component'] == COMPONENT,
             'resolver alias report identity differs')
     collection = exact(report['collection'], {'image', 'source_revision'}, 'resolver collection')
     require(collection['image'] == IMAGE, 'resolver collection image differs')
     source = _source_identity(root, Path(static_preparation))
+    begin_path = _retained_record(receipt_root, report['collection_begin'], 'resolver pre-execution input capture')
+    begin = exact(read_json(begin_path, 'resolver pre-execution input capture'),
+                  {'schema', 'collection', 'selected_source', 'inputs', 'product_input_modes'},
+                  'resolver pre-execution input capture')
+    require(begin['schema'] == COLLECTION_BEGIN_SCHEMA and same(begin['collection'], collection)
+            and same(begin['selected_source'], report['selected_source'])
+            and same(begin['inputs'], report['inputs'])
+            and same(begin['product_input_modes'], report['product_input_modes']),
+            'resolver pre-execution input capture differs')
     require(collection['source_revision'] == source['revision'] and same(report['selected_source'], source)
             and same(report['collector'], source), 'resolver selected/collector source differs')
     origin_root = _validate_inputs(report, receipt_root, root, Path(static_product), Path(dynamic_product), Path(product_report),
@@ -1058,11 +1303,12 @@ def validate_report(report_path: Path, *, root: Path = ROOT, static_product: Pat
     _validate_linked_public_symbol_domains(receipt_root, report['artifacts'])
     _validate_static_link_authority(receipt_root, origin_work, report['artifacts'], report['inputs'])
     _validate_selected_source_routes(receipt_root, report['inputs'])
-    _validate_commands(report['commands'], receipt_root, report['inputs'], origin_root, origin_work)
+    commands = _validate_commands(report['commands'], receipt_root, report['inputs'], origin_root, origin_work)
+    _validate_runtime_roots(report['runtime_roots'], receipt_root, report['inputs'], report['artifacts'])
     execution = exact(report['execution'], {'image', 'stdin', 'environment'}, 'resolver execution')
     require(execution == {'image': IMAGE, 'stdin': '/dev/null', 'environment': {'LC_ALL': 'C', 'PATH': '/opt/cargo/bin:/usr/bin:/bin'}},
             'resolver execution boundary differs')
-    _validate_runtime(report['runtime'], receipt_root)
+    _validate_runtime(report['runtime'], receipt_root, commands)
     require(same(report, read_json(report_path, 'resolver alias report final recheck')),
             'resolver alias report changed during replay')
     return {'status': STATUS, 'coverage': coverage_projection(),
@@ -1072,32 +1318,102 @@ def validate_report(report_path: Path, *, root: Path = ROOT, static_product: Pat
             'source_alias_routes': list(SOURCE_ALIAS_ROUTES)}
 
 
-def collect_report(*, root: Path, work: Path, static_product: Path, dynamic_product: Path,
-                   product_report: Path, static_preparation: Path, elf_facts: Path,
-                   base_inventory: Path, image: str) -> dict[str, Any]:
-    """Seal a completed normal-source runner into a finite replay receipt."""
-    root = root.resolve(strict=True)
-    work = work.resolve(strict=True)
-    require(root == ROOT and work.is_relative_to(root / '.work') and image == IMAGE,
-            'resolver collector boundary differs')
-    require(not (work / 'report.json').exists(), 'resolver receipt report already exists')
+def _admit_current_collection(root: Path, static_product: Path, dynamic_product: Path,
+                              product_report: Path, static_preparation: Path,
+                              elf_facts: Path, base_inventory: Path) -> tuple[dict[str, str], dict[str, Path]]:
+    """Admit the complete selected cohort at one point in collector time."""
     source = _source_identity(root, static_preparation)
-    paths = _all_input_paths(root, static_product, dynamic_product, product_report, static_preparation, elf_facts, base_inventory)
+    paths = _all_input_paths(root, static_product, dynamic_product, product_report,
+                             static_preparation, elf_facts, base_inventory)
     _validate_current_source_inputs(root, source['revision'], paths)
     try:
         product_evidence._validate_static_product(static_product)
         product_evidence._validate_dynamic_product(dynamic_product)
     except product_evidence.ProductEvidenceError as error:
         raise ReceiptError(f'supplied product contract differs: {error}') from error
-    inputs = {name: _copy_input(work, name, path) for name, path in paths.items()}
+    _validate_product_cohort_links(root, root, source, static_product, dynamic_product,
+                                   product_report, static_preparation)
+    _validate_measurement_cohort(elf_facts, base_inventory, static_product,
+                                 dynamic_product, static_preparation)
+    return source, paths
+
+
+def begin_collection(*, root: Path, work: Path, static_product: Path, dynamic_product: Path,
+                     product_report: Path, static_preparation: Path, elf_facts: Path,
+                     base_inventory: Path, image: str) -> dict[str, Any]:
+    """Capture the complete input cohort before the runner's first command."""
+    root = root.resolve(strict=True)
+    work = work.resolve(strict=True)
+    require(root == ROOT and work.is_relative_to(root / '.work') and image == IMAGE
+            and os.environ.get(IMAGE_MARKER) == IMAGE,
+            'resolver collector is not bound to the pinned core evidence image')
+    begin_path = work / 'collection-begin.json'
+    require(work.is_dir() and not work.is_symlink() and not begin_path.exists() and not begin_path.is_symlink(),
+            'resolver collection begin path differs')
+    source, paths = _admit_current_collection(root, static_product, dynamic_product,
+                                               product_report, static_preparation, elf_facts, base_inventory)
+    image_manifest = read_json(_source_paths(root)['image_manifest'], 'resolver image manifest')
+    require(type(image_manifest.get('files')) is dict, 'resolver image manifest file roster differs')
+    inputs = _capture_input_identities(work, paths, image_manifest)
+    begin = {'schema': COLLECTION_BEGIN_SCHEMA, 'collection': {'image': image, 'source_revision': source['revision']},
+             'selected_source': source, 'inputs': inputs, 'product_input_modes': LINK_INPUT_MODES}
+    begin_path.write_text(json.dumps(begin, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+    return {'status': 'captured', 'source_revision': source['revision'],
+            'input_count': len(inputs), 'record': _record_in_work(work, begin_path)}
+
+
+def _collection_begin(work: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    path = work / 'collection-begin.json'
+    require(path.is_file() and not path.is_symlink(), 'resolver pre-execution input capture is absent')
+    record = _record_in_work(work, path)
+    begin = read_json(path, 'resolver pre-execution input capture')
+    begin = exact(begin, {'schema', 'collection', 'selected_source', 'inputs', 'product_input_modes'},
+                  'resolver pre-execution input capture')
+    require(begin['schema'] == COLLECTION_BEGIN_SCHEMA, 'resolver pre-execution capture schema differs')
+    return begin, record
+
+
+def collect_report(*, root: Path, work: Path, static_product: Path, dynamic_product: Path,
+                   product_report: Path, static_preparation: Path, elf_facts: Path,
+                   base_inventory: Path, image: str) -> dict[str, Any]:
+    """Seal a normal-source runner from its pre-execution captured cohort."""
+    root = root.resolve(strict=True)
+    work = work.resolve(strict=True)
+    require(root == ROOT and work.is_relative_to(root / '.work') and image == IMAGE
+            and os.environ.get(IMAGE_MARKER) == IMAGE,
+            'resolver collector is not bound to the pinned core evidence image')
+    require(not (work / 'report.json').exists(), 'resolver receipt report already exists')
+    begin, begin_record = _collection_begin(work)
+    source, _paths = _admit_current_collection(root, static_product, dynamic_product,
+                                                product_report, static_preparation, elf_facts, base_inventory)
+    require(same(begin['collection'], {'image': image, 'source_revision': source['revision']})
+            and same(begin['selected_source'], source) and same(begin['product_input_modes'], LINK_INPUT_MODES),
+            'resolver selected cohort changed after command execution')
+    origin_root = _validate_inputs({'selected_source': source, 'inputs': begin['inputs']}, work, root,
+                                   static_product, dynamic_product, product_report,
+                                   static_preparation, elf_facts, base_inventory)
+    _validate_product_cohort_links(root, origin_root, source, static_product, dynamic_product,
+                                   product_report, static_preparation)
+    _validate_measurement_cohort(elf_facts, base_inventory, static_product,
+                                 dynamic_product, static_preparation)
+    inputs = begin['inputs']
     occurrences = _fact_occurrences(elf_facts)
     selected_rows = [row for row in occurrences if row['artifact_key'] in {'candidate-static', 'candidate-shared'}
                      and type(row.get('row')) is dict and row['row'].get('name') in KNOWN_NAMES]
     projection = validate_candidate_occurrences(selected_rows)
     commands = _command_records(work)
+    artifacts = _artifact_records(work)
+    runtime_roots = {
+        name: {
+            'command': command,
+            'before': _record_in_work(work, work / 'runtime-roots' / f'{name}-before.json'),
+            'after': _record_in_work(work, work / 'runtime-roots' / f'{name}-after.json'),
+        }
+        for name, (_root, command, _artifact) in RUNTIME_ROOT_SPECS.items()
+    }
     report = {
         'schema': SCHEMA, 'status': STATUS, 'component': COMPONENT,
-        'collection': {'image': image, 'source_revision': source['revision']},
+        'collection': begin['collection'], 'collection_begin': begin_record,
         'selected_source': source, 'collector': source, 'inputs': inputs,
         'selected_products': {'static': ['static_driver', 'static_manifest', 'static_libc'],
                               'dynamic': ['dynamic_driver', 'dynamic_manifest', 'dynamic_state', 'dynamic_libc', 'dynamic_loader'],
@@ -1114,15 +1430,17 @@ def collect_report(*, root: Path, work: Path, static_product: Path, dynamic_prod
             'private_calls': {'__res_mkquery': ['query_response'], '__res_send': ['query_response']},
             'overrides': ['res_mkquery', 'res_send', 'res_search'],
         },
-        'artifacts': _artifact_records(work), 'commands': commands,
-        'execution': {'image': IMAGE, 'stdin': '/dev/null', 'environment': {'LC_ALL': 'C', 'PATH': '/opt/cargo/bin:/usr/bin:/bin'}},
+        'artifacts': artifacts, 'commands': commands,
+        'execution': {'image': IMAGE, 'stdin': '/dev/null',
+                      'environment': {'LC_ALL': 'C', 'PATH': '/opt/cargo/bin:/usr/bin:/bin'}},
         'runtime': {
-            'oracle': commands['oracle-runtime-run']['status'],
-            'static-et-exec': commands['static-normal-et-exec-runtime']['status'],
-            'static-pie': commands['static-normal-pie-runtime']['status'],
-            'dynamic-pie': commands['dynamic-normal-pie-runtime']['status'],
-            'dynamic-non-pie': commands['dynamic-normal-nopie-runtime']['status'],
+            'oracle': {'command': 'oracle-runtime-run', 'status': commands['oracle-runtime-run']['status']},
+            'static-et-exec': {'command': 'static-normal-et-exec-runtime', 'status': commands['static-normal-et-exec-runtime']['status']},
+            'static-pie': {'command': 'static-normal-pie-runtime', 'status': commands['static-normal-pie-runtime']['status']},
+            'dynamic-pie': {'command': 'dynamic-normal-pie-runtime', 'status': commands['dynamic-normal-pie-runtime']['status']},
+            'dynamic-non-pie': {'command': 'dynamic-normal-nopie-runtime', 'status': commands['dynamic-normal-nopie-runtime']['status']},
         },
+        'runtime_roots': runtime_roots,
         'coverage': coverage_projection(),
     }
     output = work / 'report.json'
@@ -1135,6 +1453,8 @@ def collect_report(*, root: Path, work: Path, static_product: Path, dynamic_prod
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     action = parser.add_mutually_exclusive_group(required=True)
+    action.add_argument('--begin-collection', action='store_true')
+    action.add_argument('--capture-runtime-root', action='store_true')
     action.add_argument('--collect-report', action='store_true')
     action.add_argument('--validate-report', type=Path)
     parser.add_argument('--root', type=Path)
@@ -1146,26 +1466,44 @@ def main() -> None:
     parser.add_argument('--elf-facts', type=Path)
     parser.add_argument('--base-inventory', type=Path)
     parser.add_argument('--image')
+    parser.add_argument('--runtime-root-name')
+    parser.add_argument('--runtime-root-phase')
+    parser.add_argument('--runtime-root', type=Path)
     arguments = parser.parse_args()
     try:
-        complete = (arguments.static_product, arguments.dynamic_product, arguments.product_report,
-                    arguments.static_preparation, arguments.elf_facts, arguments.base_inventory)
-        require(all(value is not None for value in complete),
-                'resolver receipt action requires the complete selected product cohort')
-        if arguments.collect_report:
-            require(arguments.root is not None and arguments.work is not None and arguments.image is not None,
-                    '--collect-report requires --root, --work, and --image')
-            result = collect_report(root=arguments.root, work=arguments.work,
-                                    static_product=arguments.static_product, dynamic_product=arguments.dynamic_product,
-                                    product_report=arguments.product_report, static_preparation=arguments.static_preparation,
-                                    elf_facts=arguments.elf_facts, base_inventory=arguments.base_inventory,
-                                    image=arguments.image)
+        if arguments.capture_runtime_root:
+            require(arguments.work is not None and arguments.runtime_root_name is not None
+                    and arguments.runtime_root_phase is not None and arguments.runtime_root is not None,
+                    '--capture-runtime-root requires --work, --runtime-root-name, --runtime-root-phase, and --runtime-root')
+            result = capture_runtime_root(work=arguments.work, name=arguments.runtime_root_name,
+                                          phase=arguments.runtime_root_phase, root=arguments.runtime_root)
         else:
-            require(arguments.root is not None, '--validate-report requires --root')
-            result = validate_report(arguments.validate_report, root=arguments.root,
-                                     static_product=arguments.static_product, dynamic_product=arguments.dynamic_product,
-                                     product_report=arguments.product_report, static_preparation=arguments.static_preparation,
-                                     elf_facts=arguments.elf_facts, base_inventory=arguments.base_inventory)
+            complete = (arguments.static_product, arguments.dynamic_product, arguments.product_report,
+                        arguments.static_preparation, arguments.elf_facts, arguments.base_inventory)
+            require(all(value is not None for value in complete),
+                    'resolver receipt action requires the complete selected product cohort')
+            if arguments.begin_collection:
+                require(arguments.root is not None and arguments.work is not None and arguments.image is not None,
+                        '--begin-collection requires --root, --work, and --image')
+                result = begin_collection(root=arguments.root, work=arguments.work,
+                                          static_product=arguments.static_product, dynamic_product=arguments.dynamic_product,
+                                          product_report=arguments.product_report, static_preparation=arguments.static_preparation,
+                                          elf_facts=arguments.elf_facts, base_inventory=arguments.base_inventory,
+                                          image=arguments.image)
+            elif arguments.collect_report:
+                require(arguments.root is not None and arguments.work is not None and arguments.image is not None,
+                        '--collect-report requires --root, --work, and --image')
+                result = collect_report(root=arguments.root, work=arguments.work,
+                                        static_product=arguments.static_product, dynamic_product=arguments.dynamic_product,
+                                        product_report=arguments.product_report, static_preparation=arguments.static_preparation,
+                                        elf_facts=arguments.elf_facts, base_inventory=arguments.base_inventory,
+                                        image=arguments.image)
+            else:
+                require(arguments.root is not None, '--validate-report requires --root')
+                result = validate_report(arguments.validate_report, root=arguments.root,
+                                         static_product=arguments.static_product, dynamic_product=arguments.dynamic_product,
+                                         product_report=arguments.product_report, static_preparation=arguments.static_preparation,
+                                         elf_facts=arguments.elf_facts, base_inventory=arguments.base_inventory)
         print(json.dumps(result, sort_keys=True))
     except (OSError, ReceiptError, ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
         parser.error(str(error))
