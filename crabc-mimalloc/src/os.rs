@@ -3472,10 +3472,10 @@ fn apply_huge_page_numa_preference(address: *mut u8, numa_node: i32) {
     }
     let mask = 1usize << numa_node as u32;
     // The caller owns this full primitive mapping. Pinned C emits its output
-    // callback warning before it ignores a failed `mbind`; the current Rust
-    // port has no allocator-output owner, so this boundary preserves only the
-    // ignored-result and retained-owner behavior. Diagnostic parity stays
-    // explicitly unadmitted.
+    // callback warning before it ignores a failed `mbind`. The private Rust
+    // diagnostic_output owner is not connected to this receiver, so this
+    // boundary preserves only ignored-result and retained-owner behavior.
+    // Its diagnostic delivery relation remains explicitly unqualified.
     let _ = huge_page_numa_bind(address, &mask);
 }
 
