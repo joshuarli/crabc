@@ -230,6 +230,11 @@ class ResolverAliasRunnerInterfaceTests(unittest.TestCase):
             with self.subTest(required=required):
                 self.assertIn(required, runner)
 
+    def test_chroot_preflight_uses_the_canonical_path_outside_the_recorded_path(self) -> None:
+        runner = (ROOT / 'compat/x86_64/run_owned_resolver_alias_contract.sh').read_text(encoding='utf-8')
+        self.assertNotIn('for tool in chroot cp mkdir python3 readelf rm timeout;', runner)
+        self.assertIn('for tool in "$RAW_HEADER_COMPILER" "$READELF" "$TIMEOUT" "$CHROOT" "$ORACLE_CC";', runner)
+
     def test_selected_driver_compiles_use_installed_headers_and_static_sidecars_are_relative(self) -> None:
         runner = (ROOT / 'compat/x86_64/run_owned_resolver_alias_contract.sh').read_text(encoding='utf-8')
         selected_compile = runner[runner.index('record compile-public-probe'):runner.index('record oracle-symbols')]

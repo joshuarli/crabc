@@ -94,7 +94,7 @@ PY
 [ "$(uname -s)" = Linux ] || fail 'requires native Linux'
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "refuses emulation on $(uname -m)" ;; esac
 [ "$(id -u)" -eq 0 ] || fail 'requires root for the local resolver fixture chroot'
-for tool in chroot cp mkdir python3 readelf rm timeout; do command -v "$tool" >/dev/null || fail "missing tool: $tool"; done
+for tool in cp mkdir python3 rm; do command -v "$tool" >/dev/null || fail "missing tool: $tool"; done
 [ "${CRABC_RESOLVER_ALIAS_IMAGE_ID:-}" = "$IMAGE" ] ||
     fail 'collector is not bound to the pinned core evidence image'
 for tool in "$RAW_HEADER_COMPILER" "$READELF" "$TIMEOUT" "$CHROOT" "$ORACLE_CC"; do
