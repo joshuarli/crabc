@@ -216,9 +216,9 @@ class RetainedStreamReaderTests(unittest.TestCase):
             EVIDENCE.validate_report(report)
 
     def test_collect_retains_unvalidated_candidate_when_semantic_validation_fails(self) -> None:
-        candidate_parent = ROOT / ".work/allocator-x86_64/diagnostic-output-owner/candidate-test"
-        candidate_parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=candidate_parent) as temporary:
+        with tempfile.TemporaryDirectory(
+            prefix="diagnostic-output-candidate-test-", dir=ROOT / ".work"
+        ) as temporary:
             temporary_path = Path(temporary)
             archive = temporary_path / "mimalloc-3.5.0.tar.gz"
             archive.write_bytes(b"synthetic pinned archive")
