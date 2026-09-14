@@ -2469,6 +2469,14 @@ only after the fixture enables the pinned source option; a Rust diagnostic
 output owner remains an explicit option-processing prerequisite. The component
 and M2 remain partial.
 
+The C placement profile derives a private direct include from exact pinned
+`src/prim/prim.c` and `src/prim/unix/prim.c` bytes. Its receipt retains the
+single `mi_prim_mbind` replacement and both derived-file hashes. The focused
+boundary binary confirms that initialization's unrelated Unix syscalls do not
+enter the typed interceptor, while one direct `mi_prim_mbind` call records its
+fixed arguments and fails `EPERM`. This is deterministic primitive evidence,
+not an ambient NUMA-placement or hardware huge-page claim.
+
 The next integrated wave must:
 
 1. Preserve the executable containment contract in

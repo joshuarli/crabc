@@ -151,18 +151,24 @@ static bool m2_large_page_retry_compare_exchange(
     _Atomic(size_t)* counter, size_t* expected, size_t desired);
 
 #if defined(CRABC_M2_FAULT_SEAM_INVENTORY_PROFILE)
-/* The selected source `mi_prim_mbind` call has one literal six-argument
- * syscall shape. This profile-local redirect is defined below after the
- * fixture state; unsupported source syscall numbers fail closed. */
-static long m2_fault_inventory_mbind_syscall(long number, ...);
-#define syscall m2_fault_inventory_mbind_syscall
+/* The generated direct-include profile keeps every upstream raw syscall
+ * intact except the one typed `mi_prim_mbind` body. It calls this exact
+ * six-argument stub, so source initialization never enters a generic syscall
+ * shim while the selected placement branch remains observable. */
+#ifndef CRABC_M2_FAULT_SEAM_PRIM_PROFILE
+#error "fault seam profile requires its fixed mi_prim_mbind direct-include overlay"
+#endif
+static long m2_fault_inventory_mbind_syscall(
+    void* start, unsigned long length, unsigned long mode,
+    const unsigned long* mask, unsigned long maxnode, unsigned flags);
 #endif
 #undef mi_atomic_cas_strong_acq_rel
 #define mi_atomic_cas_strong_acq_rel(p, expected, desired) \
   m2_large_page_retry_compare_exchange((p), (expected), (desired))
-#include "prim/prim.c"
 #if defined(CRABC_M2_FAULT_SEAM_INVENTORY_PROFILE)
-#undef syscall
+#include CRABC_M2_FAULT_SEAM_PRIM_PROFILE
+#else
+#include "prim/prim.c"
 #endif
 #undef mi_atomic_cas_strong_acq_rel
 #define mi_atomic_cas_strong_acq_rel(p, exp, des) \
@@ -492,10 +498,6 @@ typedef struct huge_branch_probe_s {
 
 static huge_branch_probe_t huge_branch_probe;
 static huge_branch_probe_case_t huge_branch_child_case;
-#if defined(CRABC_M2_FAULT_SEAM_INVENTORY_PROFILE)
-static size_t huge_branch_unexpected_syscall_calls;
-static long huge_branch_first_unexpected_syscall;
-#endif
 
 #if defined(CRABC_M2_FAULT_SEAM_INVENTORY_PROFILE)
 static size_t huge_branch_registration_callback_calls;
@@ -529,28 +531,15 @@ static void m2_fault_inventory_output(const char* message, void* argument) {
   }
 }
 
-static long m2_fault_inventory_mbind_syscall(long number, ...) {
-#if defined(SYS_mbind)
+static long m2_fault_inventory_mbind_syscall(
+    void* start, unsigned long length, unsigned long mode,
+    const unsigned long* mask, unsigned long maxnode, unsigned flags) {
   if (!huge_branch_probe.active
-      || huge_branch_probe.selected != HUGE_BRANCH_PROBE_PLACEMENT_FAILURE
-      || number != SYS_mbind) {
-    huge_branch_unexpected_syscall_calls++;
-    if (huge_branch_unexpected_syscall_calls == 1) {
-      huge_branch_first_unexpected_syscall = number;
-    }
-    if (huge_branch_probe.active) huge_branch_probe.valid = false;
-    errno = ENOSYS;
+      || huge_branch_probe.selected != HUGE_BRANCH_PROBE_PLACEMENT_FAILURE) {
+    huge_branch_probe.valid = false;
+    errno = EINVAL;
     return -1;
   }
-  va_list arguments;
-  va_start(arguments, number);
-  void* const start = va_arg(arguments, void*);
-  const unsigned long length = va_arg(arguments, unsigned long);
-  const unsigned long mode = va_arg(arguments, unsigned long);
-  const unsigned long* const mask = va_arg(arguments, const unsigned long*);
-  const unsigned long maxnode = va_arg(arguments, unsigned long);
-  const unsigned flags = va_arg(arguments, unsigned);
-  va_end(arguments);
   huge_branch_probe.syscall_calls++;
   huge_branch_probe.mbind_start = start;
   huge_branch_probe.mbind_length = length;
@@ -561,16 +550,6 @@ static long m2_fault_inventory_mbind_syscall(long number, ...) {
   huge_branch_probe.mbind_flags = flags;
   errno = EPERM;
   return -1;
-#else
-  (void)number;
-  huge_branch_unexpected_syscall_calls++;
-  if (huge_branch_unexpected_syscall_calls == 1) {
-    huge_branch_first_unexpected_syscall = number;
-  }
-  if (huge_branch_probe.active) huge_branch_probe.valid = false;
-  errno = ENOSYS;
-  return -1;
-#endif
 }
 #endif
 
@@ -2556,29 +2535,15 @@ static int run_huge_branch_partial_retry_helper_test(void) {
 
 /* The outer matrix child never initializes pinned source state.  It forks one
  * exact inner child for each fixed arm so `unix_mmap`'s static one-GiB retry
- * state is cold for every branch.  The syscall redirect rejects every raw
- * source syscall before activation; no ENOSYS fallback can silently alter
- * process initialization or an unrelated primitive. */
+ * state is cold for every branch. The direct-include profile rewrites only
+ * `mi_prim_mbind`; process initialization keeps its pinned raw syscalls. */
 static int run_huge_branch_case_child(int record_descriptor) {
   bool complete = false;
   huge_branch_probe = (huge_branch_probe_t){
       .valid = true,
       .selected = huge_branch_child_case,
   };
-#if defined(CRABC_M2_FAULT_SEAM_INVENTORY_PROFILE)
-  huge_branch_unexpected_syscall_calls = 0;
-  huge_branch_first_unexpected_syscall = 0;
-#endif
   mi_process_init();
-#if defined(CRABC_M2_FAULT_SEAM_INVENTORY_PROFILE)
-  if (huge_branch_unexpected_syscall_calls != 0) {
-    fprintf(stderr, "fault-seam profile rejected unexpected source syscall: count=%zu first=%ld\n",
-            huge_branch_unexpected_syscall_calls,
-            huge_branch_first_unexpected_syscall);
-    if (!write_all(record_descriptor, &complete, sizeof(complete))) return 2;
-    return 3;
-  }
-#endif
   mi_subproc_t* const subproc = _mi_subproc_main();
   if (subproc == NULL) {
     if (!write_all(record_descriptor, &complete, sizeof(complete))) return 2;
@@ -3120,7 +3085,35 @@ static bool capture_aligned_overmap_matrix_child(
   return captured;
 }
 
-#if defined(CRABC_M2_FAULT_SEAM_RETRY_HELPER_TEST)
+#if defined(CRABC_M2_FAULT_SEAM_MBIND_BOUNDARY_TEST)
+
+int main(void) {
+  huge_branch_probe = (huge_branch_probe_t){
+      .valid = true,
+      .selected = HUGE_BRANCH_PROBE_PLACEMENT_FAILURE,
+  };
+  mi_process_init();
+  const bool initialization_skipped_mbind_capture = huge_branch_probe.syscall_calls == 0;
+  const unsigned long mask = 1;
+  void* const address = (void*)(uintptr_t)0x100000000ULL;
+  huge_branch_probe.active = true;
+  errno = 0;
+  const long result = mi_prim_mbind(
+      address, MI_GiB, MPOL_PREFERRED, &mask, 8 * MI_INTPTR_SIZE, 0);
+  const bool complete = initialization_skipped_mbind_capture
+      && result == -1 && errno == EPERM && huge_branch_probe.valid
+      && huge_branch_probe.syscall_calls == 1
+      && huge_branch_probe.mbind_start == address
+      && huge_branch_probe.mbind_length == MI_GiB
+      && huge_branch_probe.mbind_mode == MPOL_PREFERRED
+      && huge_branch_probe.mbind_mask_nonnull && huge_branch_probe.mbind_mask_value == 1UL
+      && huge_branch_probe.mbind_maxnode == 8 * MI_INTPTR_SIZE
+      && huge_branch_probe.mbind_flags == 0;
+  if (complete) puts("allocator fault seam mbind boundary: PASS");
+  return complete ? 0 : 3;
+}
+
+#elif defined(CRABC_M2_FAULT_SEAM_RETRY_HELPER_TEST)
 
 int main(void) {
   const int result = run_huge_branch_partial_retry_helper_test();

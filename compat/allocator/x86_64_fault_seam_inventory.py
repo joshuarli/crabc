@@ -30,7 +30,9 @@ FIXTURE = ROOT / "compat/allocator/m2_vm_x86_64.c"
 REPORT_DEFAULT = ROOT / "compat/reports/allocator/x86_64/fault-seam-inventory.json"
 FAULT_PROFILE_DEFINE = "-DCRABC_M2_FAULT_SEAM_INVENTORY_PROFILE=1"
 HUGE_RETRY_HELPER_TEST_DEFINE = "-DCRABC_M2_FAULT_SEAM_RETRY_HELPER_TEST=1"
+MBIND_BOUNDARY_TEST_DEFINE = "-DCRABC_M2_FAULT_SEAM_MBIND_BOUNDARY_TEST=1"
 HUGE_RETRY_HELPER_SCHEMA = "crabc-mimalloc-x86_64-fault-seam-retry-helper-regression"
+MBIND_BOUNDARY_SCHEMA = "crabc-mimalloc-x86_64-fault-seam-mbind-boundary-regression"
 C_TRACE_BEGIN = "CRABC_MI_M2_FAULT_SEAM_INVENTORY_C_TRACE_BEGIN"
 C_TRACE_END = "CRABC_MI_M2_FAULT_SEAM_INVENTORY_C_TRACE_END"
 RUST_TRACE_BEGIN = "CRABC_MI_M2_FAULT_SEAM_INVENTORY_RUST_TRACE_BEGIN"
@@ -68,6 +70,34 @@ PINNED_C_SOURCE_FILES = (
     {"path": "src/page.c", "bytes": 44473, "sha256": "f7b1c3c0725b425516e22cf49d3ff7e03b708732fdba4bd1f4c759484d52593c"},
     {"path": "src/prim/prim.c", "bytes": 2449, "sha256": "241b1087a0e22609de71b2deba6c771135dd37e756ea89ba79b5900165b4f229"},
     {"path": "src/prim/unix/prim.c", "bytes": 36822, "sha256": "8efeac14a9952aa7c3117ce2d9d801f93692bda6cd80e09a51ddca398d7ac774"},
+)
+MBIND_PROFILE_SOURCE_UNITS = (
+    "src/prim/prim.c",
+    "src/prim/unix/prim.c",
+)
+MBIND_PROFILE_ORIGINAL_EXPRESSION = (
+    "return syscall(SYS_mbind, start, len, mode, nmask, maxnode, flags);"
+)
+MBIND_PROFILE_REPLACEMENT_EXPRESSION = (
+    "return m2_fault_inventory_mbind_syscall(start, len, mode, nmask, maxnode, flags);"
+)
+MBIND_PROFILE_SINGLE_REPLACEMENT = {
+    "source_member": "src/prim/unix/prim.c",
+    "source_expression": MBIND_PROFILE_ORIGINAL_EXPRESSION,
+    "replacement_expression": MBIND_PROFILE_REPLACEMENT_EXPRESSION,
+    "match_count": 1,
+}
+MBIND_PROFILE_DERIVED_FILES = (
+    {
+        "path": "prim.c",
+        "bytes": 2449,
+        "sha256": "241b1087a0e22609de71b2deba6c771135dd37e756ea89ba79b5900165b4f229",
+    },
+    {
+        "path": "unix/prim.c",
+        "bytes": 36836,
+        "sha256": "7748ea6e69890f2b8e7f81fa9411ae19c4862f2fc7ad1d87d63df5d39e41fa00",
+    },
 )
 DIRECT_FIXTURE_SOURCE_UNITS = (
     "src/os.c", "src/arena.c", "src/init.c", "src/page.c", "src/prim/prim.c",
@@ -617,7 +647,7 @@ def _validate_huge_branch_receipt(receipt: object, runner: Any) -> dict[str, Any
     """Reconstruct the two traces from retained fixed-profile process streams."""
 
     expected_keys = {
-        "c_build", "c_compiled_source_closure", "c_run", "c_source_files",
+        "c_build", "c_compiled_source_closure", "c_mbind_direct_include_profile", "c_run", "c_source_files",
         "fixture", "rust_build", "rust_passed_test_count", "rust_run",
         "rust_source_files",
     }
@@ -625,6 +655,7 @@ def _validate_huge_branch_receipt(receipt: object, runner: Any) -> dict[str, Any
         raise ValueError("fault inventory huge branch receipt changed")
     c_build = _validate_process_record(receipt.get("c_build"), label="fault inventory C build")
     c_run = _validate_process_record(receipt.get("c_run"), label="fault inventory C run")
+    direct_include = _validate_mbind_profile_record(receipt.get("c_mbind_direct_include_profile"))
     source = Path(c_build["cwd"])
     command = c_build["command"]
     if (
@@ -635,7 +666,9 @@ def _validate_huge_branch_receipt(receipt: object, runner: Any) -> dict[str, Any
     ):
         raise ValueError("fault inventory C profile tool or working directory changed")
     binary = Path(command[-1])
-    if command != _huge_branch_c_command(runner, command[0], source, binary):
+    if command != _huge_branch_c_command(
+        runner, command[0], source, binary, direct_include=direct_include
+    ):
         raise ValueError("fault inventory C command or source closure changed")
     if c_run["cwd"] != c_build["cwd"] or c_run["command"] != [str(binary)]:
         raise ValueError("fault inventory C run command changed")
@@ -643,6 +676,7 @@ def _validate_huge_branch_receipt(receipt: object, runner: Any) -> dict[str, Any
         raise ValueError("fault inventory C source-file provenance changed")
     if receipt.get("c_compiled_source_closure") != {
         "direct_fixture_source_units": list(DIRECT_FIXTURE_SOURCE_UNITS),
+        "mbind_direct_include_profile": _mbind_profile_record(direct_include),
         "resolved_direct_primitive": RESOLVED_DIRECT_PRIMITIVE,
         "translation_units": list(runner.M2_X86_64_VM_C_ORACLE_SOURCES),
     }:
@@ -819,6 +853,108 @@ def _source_files(runner: Any, source: Path) -> list[dict[str, Any]]:
     return records
 
 
+MBIND_PROFILE_PINNED_SOURCE_FILES = tuple(
+    record for record in PINNED_C_SOURCE_FILES if record["path"] in MBIND_PROFILE_SOURCE_UNITS
+)
+
+
+def _profile_file_record(profile: Path, relative: str) -> dict[str, Any]:
+    """Record generated direct-include bytes relative to their one profile root."""
+
+    payload = (profile / relative).read_bytes()
+    return {
+        "bytes": len(payload),
+        "path": relative,
+        "sha256": hashlib.sha256(payload).hexdigest(),
+    }
+
+
+def _pinned_mbind_profile_source_files(source: Path) -> list[dict[str, Any]]:
+    """Fail closed before deriving the sole substituted primitive body."""
+
+    records = []
+    for expected in MBIND_PROFILE_PINNED_SOURCE_FILES:
+        try:
+            payload = (source / expected["path"]).read_bytes()
+        except OSError as error:
+            raise EvidenceError("fault inventory mbind direct-include source is missing") from error
+        records.append({
+            "bytes": len(payload),
+            "path": expected["path"],
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        })
+    if records != list(MBIND_PROFILE_PINNED_SOURCE_FILES):
+        raise EvidenceError("fault inventory mbind direct-include source bytes changed")
+    return records
+
+
+def _render_mbind_profile_unix_body(source: bytes) -> bytes:
+    """Derive one typed mbind body while preserving every other Unix primitive byte."""
+
+    original = MBIND_PROFILE_ORIGINAL_EXPRESSION.encode("utf-8")
+    replacement = MBIND_PROFILE_REPLACEMENT_EXPRESSION.encode("utf-8")
+    if source.count(original) != 1 or replacement in source:
+        raise EvidenceError("fault inventory mbind direct-include replacement changed")
+    derived = source.replace(original, replacement)
+    if derived.count(replacement) != 1 or original in derived:
+        raise EvidenceError("fault inventory mbind direct-include derivation changed")
+    return derived
+
+
+def _write_mbind_profile(source: Path, profile: Path) -> Path:
+    """Write the pinned direct include with one source-indexed substitution.
+
+    The generator verifies both input members against the fixed archive bytes
+    before it copies `prim.c` and substitutes the single `mi_prim_mbind`
+    expression in its Unix include.  It never intercepts the other upstream
+    `syscall` expressions that process initialization uses.
+    """
+
+    _pinned_mbind_profile_source_files(source)
+    primitive = source / "src/prim/prim.c"
+    unix = source / "src/prim/unix/prim.c"
+    direct = profile / "prim.c"
+    derived_unix = profile / "unix/prim.c"
+    derived_unix.parent.mkdir(parents=True, exist_ok=False)
+    direct.write_bytes(primitive.read_bytes())
+    derived_unix.write_bytes(_render_mbind_profile_unix_body(unix.read_bytes()))
+    records = [_profile_file_record(profile, "prim.c"), _profile_file_record(profile, "unix/prim.c")]
+    if records != list(MBIND_PROFILE_DERIVED_FILES):
+        raise EvidenceError("fault inventory mbind direct-include derived bytes changed")
+    return direct
+
+
+def _mbind_profile_record(direct_include: Path) -> dict[str, Any]:
+    """Retain the source binding and exact generated bytes for reader replay."""
+
+    return {
+        "derived_files": [dict(record) for record in MBIND_PROFILE_DERIVED_FILES],
+        "direct_include": str(direct_include),
+        "input_source_files": [dict(record) for record in MBIND_PROFILE_PINNED_SOURCE_FILES],
+        "single_replacement": dict(MBIND_PROFILE_SINGLE_REPLACEMENT),
+    }
+
+
+def _validate_mbind_profile_record(value: object) -> Path:
+    """Reject a receipt whose direct include is not the one fixed derivation."""
+
+    if not isinstance(value, Mapping) or set(value) != {
+        "derived_files", "direct_include", "input_source_files", "single_replacement",
+    }:
+        raise ValueError("fault inventory mbind direct-include profile changed")
+    direct = value.get("direct_include")
+    if (
+        not isinstance(direct, str)
+        or not direct
+        or Path(direct).name != "prim.c"
+        or value.get("input_source_files") != list(MBIND_PROFILE_PINNED_SOURCE_FILES)
+        or value.get("single_replacement") != MBIND_PROFILE_SINGLE_REPLACEMENT
+        or value.get("derived_files") != list(MBIND_PROFILE_DERIVED_FILES)
+    ):
+        raise ValueError("fault inventory mbind direct-include profile bytes changed")
+    return Path(direct)
+
+
 def _branch_records() -> list[dict[str, Any]]:
     return [
         {
@@ -837,7 +973,11 @@ def _branch_records() -> list[dict[str, Any]]:
     ]
 
 
-def _huge_branch_c_command(runner: Any, compiler: str, source: Path, binary: Path) -> list[str]:
+def _huge_branch_c_command(
+    runner: Any, compiler: str, source: Path, binary: Path, *, direct_include: Path
+) -> list[str]:
+    """Compile the fixed profile with its recorded typed-mbind include only."""
+
     return [
         compiler,
         "-std=c11",
@@ -848,6 +988,7 @@ def _huge_branch_c_command(runner: Any, compiler: str, source: Path, binary: Pat
         "-DMI_LIBC_MUSL=1",
         "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
         FAULT_PROFILE_DEFINE,
+        f'-DCRABC_M2_FAULT_SEAM_PRIM_PROFILE="{direct_include}"',
         "-I",
         str(source / "include"),
         "-I",
@@ -868,12 +1009,26 @@ def _huge_branch_c_command(runner: Any, compiler: str, source: Path, binary: Pat
 
 
 def _huge_retry_helper_c_command(
-    runner: Any, compiler: str, source: Path, binary: Path
+    runner: Any, compiler: str, source: Path, binary: Path, *, direct_include: Path
 ) -> list[str]:
     """Build the fixture's finite partial-retry predicate as an isolated binary."""
 
-    command = _huge_branch_c_command(runner, compiler, source, binary)
+    command = _huge_branch_c_command(
+        runner, compiler, source, binary, direct_include=direct_include
+    )
     command.insert(command.index(FAULT_PROFILE_DEFINE) + 1, HUGE_RETRY_HELPER_TEST_DEFINE)
+    return command
+
+
+def _mbind_boundary_c_command(
+    runner: Any, compiler: str, source: Path, binary: Path, *, direct_include: Path
+) -> list[str]:
+    """Compile the isolated `mi_prim_mbind` boundary regression."""
+
+    command = _huge_branch_c_command(
+        runner, compiler, source, binary, direct_include=direct_include
+    )
+    command.insert(command.index(FAULT_PROFILE_DEFINE) + 1, MBIND_BOUNDARY_TEST_DEFINE)
     return command
 
 
@@ -890,11 +1045,19 @@ def compile_huge_branch_profile(*, offline: bool) -> dict[str, Any]:
         artifacts.mkdir(parents=True, exist_ok=True)
         with runner.temporary_directory(prefix="crabc-mimalloc-fault-seam-compile-") as temporary:
             source = runner.safe_extract(archive, Path(temporary), pin["archive_root"])
+            _source_files(runner, source)
+            direct_include = _write_mbind_profile(source, Path(temporary) / "mbind-direct-include")
             binary = artifacts / "m2-fault-seam-inventory-huge-oracle"
-            command = _huge_branch_c_command(runner, compiler, source, binary)
+            command = _huge_branch_c_command(
+                runner, compiler, source, binary, direct_include=direct_include
+            )
             build = runner.command_record(command, cwd=source, timeout_seconds=300)
             runner.require_success(build, "pinned C native x86 fault-seam huge profile build")
-            return {"command": command, "fixture": runner.artifact_record(FIXTURE)}
+            return {
+                "command": command,
+                "fixture": runner.artifact_record(FIXTURE),
+                "mbind_direct_include_profile": _mbind_profile_record(direct_include),
+            }
     except runner.HarnessError as error:
         raise EvidenceError(str(error)) from error
 
@@ -912,9 +1075,13 @@ def run_huge_retry_helper_regression(*, offline: bool) -> dict[str, Any]:
         artifacts.mkdir(parents=True, exist_ok=True)
         with runner.temporary_directory(prefix="crabc-mimalloc-fault-seam-retry-helper-") as temporary:
             source = runner.safe_extract(archive, Path(temporary), pin["archive_root"])
+            _source_files(runner, source)
+            direct_include = _write_mbind_profile(source, Path(temporary) / "mbind-direct-include")
             binary = artifacts / "m2-fault-seam-retry-helper"
             build = runner.command_record(
-                _huge_retry_helper_c_command(runner, compiler, source, binary),
+                _huge_retry_helper_c_command(
+                    runner, compiler, source, binary, direct_include=direct_include
+                ),
                 cwd=source,
                 timeout_seconds=300,
             )
@@ -927,6 +1094,7 @@ def run_huge_retry_helper_regression(*, offline: bool) -> dict[str, Any]:
                 "build": {**build, "cwd": str(source)},
                 "fixture": runner.artifact_record(FIXTURE),
                 "format": 1,
+                "mbind_direct_include_profile": _mbind_profile_record(direct_include),
                 "run": {**run, "cwd": str(source)},
                 "schema": HUGE_RETRY_HELPER_SCHEMA,
                 "upstream": {
@@ -935,6 +1103,52 @@ def run_huge_retry_helper_regression(*, offline: bool) -> dict[str, Any]:
                 },
             }
             runner.write_json(artifacts / "partial-huge-retry-helper.json", report)
+            return report
+    except runner.HarnessError as error:
+        raise EvidenceError(str(error)) from error
+
+
+def run_mbind_boundary_regression(*, offline: bool) -> dict[str, Any]:
+    """Prove initialization stays outside the one typed mbind substitution."""
+
+    runner = _load_runner()
+    try:
+        runner.require_native_x86_64()
+        pin = runner.load_pin()
+        archive = runner.fetch_archive(pin, offline)
+        compiler = runner.require_tool("musl-gcc")
+        artifacts = runner.ARTIFACT_ROOT / "x86_64/fault-seam-inventory"
+        artifacts.mkdir(parents=True, exist_ok=True)
+        with runner.temporary_directory(prefix="crabc-mimalloc-fault-seam-mbind-boundary-") as temporary:
+            source = runner.safe_extract(archive, Path(temporary), pin["archive_root"])
+            _source_files(runner, source)
+            direct_include = _write_mbind_profile(source, Path(temporary) / "mbind-direct-include")
+            binary = artifacts / "m2-fault-seam-mbind-boundary"
+            build = runner.command_record(
+                _mbind_boundary_c_command(
+                    runner, compiler, source, binary, direct_include=direct_include
+                ),
+                cwd=source,
+                timeout_seconds=300,
+            )
+            runner.require_success(build, "pinned C typed mbind boundary build")
+            run = runner.command_record([str(binary)], cwd=source, timeout_seconds=60)
+            runner.require_success(run, "pinned C typed mbind boundary")
+            if str(run["stdout"]) != "allocator fault seam mbind boundary: PASS\n" or run["stderr"]:
+                raise EvidenceError("pinned C typed mbind boundary output changed")
+            report = {
+                "build": {**build, "cwd": str(source)},
+                "fixture": runner.artifact_record(FIXTURE),
+                "format": 1,
+                "mbind_direct_include_profile": _mbind_profile_record(direct_include),
+                "run": {**run, "cwd": str(source)},
+                "schema": MBIND_BOUNDARY_SCHEMA,
+                "upstream": {
+                    "archive_sha256": pin["sha256"],
+                    "revision": pin["revision"],
+                },
+            }
+            runner.write_json(artifacts / "mbind-boundary.json", report)
             return report
     except runner.HarnessError as error:
         raise EvidenceError(str(error)) from error
@@ -995,8 +1209,12 @@ def run_evidence(
     try:
         with runner.temporary_directory(prefix="crabc-mimalloc-fault-seam-source-") as temporary:
             source = runner.safe_extract(archive, Path(temporary), pin["archive_root"])
+            c_files = _source_files(runner, source)
+            direct_include = _write_mbind_profile(source, Path(temporary) / "mbind-direct-include")
             binary = artifacts / "m2-fault-seam-inventory-huge-oracle"
-            c_command = _huge_branch_c_command(runner, compiler, source, binary)
+            c_command = _huge_branch_c_command(
+                runner, compiler, source, binary, direct_include=direct_include
+            )
             c_build = runner.command_record(c_command, cwd=source, timeout_seconds=300)
             runner.require_success(c_build, "pinned C native x86 fault-seam huge profile build")
             c_run = runner.command_record([str(binary)], cwd=source, timeout_seconds=180)
@@ -1005,7 +1223,7 @@ def run_evidence(
                 str(c_run["stdout"]), begin=C_TRACE_BEGIN, end=C_TRACE_END,
                 keys=C_TRACE_KEYS, source="pinned C",
             )
-            c_files = _source_files(runner, source)
+            c_mbind_direct_include_profile = _mbind_profile_record(direct_include)
     except runner.HarnessError as error:
         raise EvidenceError(str(error)) from error
 
@@ -1043,9 +1261,11 @@ def run_evidence(
             "c_build": {**c_build, "cwd": str(source)},
             "c_compiled_source_closure": {
                 "direct_fixture_source_units": list(DIRECT_FIXTURE_SOURCE_UNITS),
+                "mbind_direct_include_profile": c_mbind_direct_include_profile,
                 "resolved_direct_primitive": RESOLVED_DIRECT_PRIMITIVE,
                 "translation_units": list(runner.M2_X86_64_VM_C_ORACLE_SOURCES),
             },
+            "c_mbind_direct_include_profile": c_mbind_direct_include_profile,
             "c_run": {**c_run, "cwd": str(source)},
             "c_source_files": c_files,
             "fixture": runner.artifact_record(FIXTURE),
@@ -1086,10 +1306,16 @@ def main() -> int:
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--compile-only", action="store_true")
     parser.add_argument("--retry-helper-regression", action="store_true")
+    parser.add_argument("--mbind-boundary-regression", action="store_true")
     parser.add_argument("--report", type=Path, default=REPORT_DEFAULT)
     arguments = parser.parse_args()
     try:
-        if arguments.compile_only and arguments.retry_helper_regression:
+        selected_modes = sum((
+            arguments.compile_only,
+            arguments.retry_helper_regression,
+            arguments.mbind_boundary_regression,
+        ))
+        if selected_modes > 1:
             raise EvidenceError("fault inventory accepts one focused mode")
         if arguments.compile_only:
             compile_huge_branch_profile(offline=arguments.offline)
@@ -1098,6 +1324,10 @@ def main() -> int:
         if arguments.retry_helper_regression:
             run_huge_retry_helper_regression(offline=arguments.offline)
             print("allocator x86-64 fault seam inventory: partial huge retry helper PASS")
+            return 0
+        if arguments.mbind_boundary_regression:
+            run_mbind_boundary_regression(offline=arguments.offline)
+            print("allocator x86-64 fault seam inventory: typed mbind boundary PASS")
             return 0
         report = run_evidence(offline=arguments.offline, report_path=arguments.report)
     except (EvidenceError, OSError, json.JSONDecodeError) as error:

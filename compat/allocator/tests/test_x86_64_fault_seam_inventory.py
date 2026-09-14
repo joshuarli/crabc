@@ -44,7 +44,10 @@ def _valid_report() -> dict[str, object]:
     runner = INVENTORY._load_runner()
     source = Path("/evidence/mimalloc-3.5.0")
     c_binary = Path("/evidence/fault-profile")
-    c_command = INVENTORY._huge_branch_c_command(runner, "/usr/bin/musl-gcc", source, c_binary)
+    direct_include = Path("/evidence/mbind-direct-include/prim.c")
+    c_command = INVENTORY._huge_branch_c_command(
+        runner, "/usr/bin/musl-gcc", source, c_binary, direct_include=direct_include
+    )
     rust_binary = (
         runner.M2_X86_64_MEMORY_SUBSTRATE_CARGO_TARGET
         / runner.X86_64_RUST_TARGET
@@ -77,9 +80,11 @@ def _valid_report() -> dict[str, object]:
             "c_build": c_build,
             "c_compiled_source_closure": {
                 "direct_fixture_source_units": list(INVENTORY.DIRECT_FIXTURE_SOURCE_UNITS),
+                "mbind_direct_include_profile": INVENTORY._mbind_profile_record(direct_include),
                 "resolved_direct_primitive": INVENTORY.RESOLVED_DIRECT_PRIMITIVE,
                 "translation_units": list(runner.M2_X86_64_VM_C_ORACLE_SOURCES),
             },
+            "c_mbind_direct_include_profile": INVENTORY._mbind_profile_record(direct_include),
             "c_run": c_run,
             "c_source_files": list(INVENTORY.PINNED_C_SOURCE_FILES),
             "fixture": INVENTORY._local_file_record(INVENTORY.FIXTURE),
@@ -107,6 +112,49 @@ def _valid_report() -> dict[str, object]:
 
 
 class FaultInventoryShapeTests(unittest.TestCase):
+    def test_mbind_profile_render_keeps_unrelated_raw_syscalls(self) -> None:
+        """Only the fixed `mi_prim_mbind` expression is rewritten in its body."""
+
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/allocator-x86_64") as temporary:
+            source = Path(temporary) / "source"
+            primitive = source / "src/prim"
+            unix = primitive / "unix"
+            unix.mkdir(parents=True)
+            prim = '#include "unix/prim.c"\n'
+            mbind = "return syscall(SYS_mbind, start, len, mode, nmask, maxnode, flags);"
+            raw_open = "return syscall(SYS_open, fpath, flags, 0);"
+            (primitive / "prim.c").write_text(prim, encoding="utf-8")
+            (unix / "prim.c").write_text(f"{raw_open}\n{mbind}\n", encoding="utf-8")
+
+            transformed = INVENTORY._render_mbind_profile_unix_body(
+                (unix / "prim.c").read_bytes()
+            ).decode("utf-8")
+            self.assertIn(raw_open, transformed)
+            self.assertEqual(
+                transformed.count(
+                    "return m2_fault_inventory_mbind_syscall(start, len, mode, nmask, maxnode, flags);"
+                ),
+                1,
+            )
+            self.assertNotIn(mbind, transformed)
+
+    def test_mbind_profile_rejects_a_body_with_the_right_stub_but_wrong_bytes(self) -> None:
+        """Expected mbind tokens cannot substitute for the pinned primitive source bytes."""
+
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/allocator-x86_64") as temporary:
+            source = Path(temporary) / "source"
+            primitive = source / "src/prim"
+            unix = primitive / "unix"
+            unix.mkdir(parents=True)
+            (primitive / "prim.c").write_text('#include "unix/prim.c"\n', encoding="utf-8")
+            (unix / "prim.c").write_text(
+                "return syscall(SYS_open, fpath, flags, 0);\n"
+                "return syscall(SYS_mbind, start, len, mode, nmask, maxnode, flags);\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(INVENTORY.EvidenceError, "source bytes changed"):
+                INVENTORY._write_mbind_profile(source, Path(temporary) / "profile")
+
     def test_runner_loader_registers_the_module_for_its_vm_producer(self) -> None:
         """The dynamically loaded runner names itself while invoking its producer."""
 
@@ -282,6 +330,15 @@ class FaultInventoryShapeTests(unittest.TestCase):
         report = _valid_report()
         report["huge_branch_receipt"]["c_build"]["command"].insert(-2, "/evidence/mimalloc-3.5.0/src/os.c")
         with self.assertRaisesRegex(ValueError, "C command or source closure"):
+            INVENTORY.validate_report(report)
+
+    def test_report_rejects_a_mbind_profile_with_rewritten_derived_bytes(self) -> None:
+        """The receipt binds its direct include to the one pinned derivation."""
+
+        report = _valid_report()
+        profile = report["huge_branch_receipt"]["c_mbind_direct_include_profile"]
+        profile["derived_files"][1]["sha256"] = "0" * 64
+        with self.assertRaisesRegex(ValueError, "direct-include profile bytes changed"):
             INVENTORY.validate_report(report)
 
 

@@ -2069,6 +2069,7 @@ The source-indexed OS/page-map fault receiver admission is separate:
 ```sh
 ./compat/allocator/run-x86_64.sh allocator-fault-seam-inventory
 ./compat/allocator/run-x86_64.sh allocator-fault-seam-inventory --retry-helper-regression
+./compat/allocator/run-x86_64.sh allocator-fault-seam-inventory --mbind-boundary-regression
 ```
 
 It retains a fixed pinned-C direct profile and the private Rust
@@ -2087,6 +2088,14 @@ The focused retry-helper regression compiles and runs only the fixture's
 synthetic three-call predicate. It accepts `1GiB, 1GiB, 2MiB` with the second
 and third calls at one hint, and rejects the former premature two-MiB flag,
 the final wrong flag, and a changed retry hint.
+
+The focused mbind-boundary regression derives a direct include from the exact
+pinned `src/prim/prim.c` and `src/prim/unix/prim.c` bytes. It records the sole
+`mi_prim_mbind` expression replacement and the derived `prim.c`/Unix include
+hashes, then proves that process initialization does not enter the typed stub
+and that one explicit `mi_prim_mbind` call records the fixed six arguments and
+returns `EPERM`. Other pinned Unix `syscall` expressions remain in the source
+body and use their ordinary implementation.
 
 The separate ordinary reserved-medium on-demand differential is also native
 x86-64 only:
