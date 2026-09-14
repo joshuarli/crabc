@@ -55,6 +55,7 @@ EXPECTED_CHECK_IDS = (
     "normal-release-large-page-retry-suppression-and-ordinary-fallback",
     "large-only-one-gib-failure-no-regular-owner",
     "thp-direct-policy-outcome-matrix",
+    "process-main-thp-policy-owner-traversal",
     "aligned-hint-source-profile-and-direct-caller-matrix",
     "aligned-overmap-cleanup-c-rust-boundary-matrix",
     "process-policy-first-arena-clean-primary-fallback",
@@ -298,6 +299,13 @@ class NativeM2VmFragmentTests(unittest.TestCase):
             for check in checks
             if check["id"] != "thp-direct-policy-outcome-matrix"
         ]
+        dropped_owner_check = copy.deepcopy(self.fragment)
+        checks = dropped_owner_check["component"]["checks"]
+        checks[:] = [
+            check
+            for check in checks
+            if check["id"] != "process-main-thp-policy-owner-traversal"
+        ]
         raw_nonzero_removed = copy.deepcopy(self.fragment)
         thp_branch = raw_nonzero_removed["component"]["branch_matrix"][2]
         thp_branch["source_scope"] = thp_branch["source_scope"].replace(
@@ -308,7 +316,13 @@ class NativeM2VmFragmentTests(unittest.TestCase):
         thp_branch["missing_conditions"] = [
             "Diagnostics remain unqualified despite the selected source branch"
         ]
-        for fragment in (dropped_definition, dropped_check, raw_nonzero_removed, phantom_diagnostics):
+        for fragment in (
+            dropped_definition,
+            dropped_check,
+            dropped_owner_check,
+            raw_nonzero_removed,
+            phantom_diagnostics,
+        ):
             with self.subTest(fragment=fragment), self.assertRaises(ValueError):
                 load_fragment(self.write_fragment(fragment))
 

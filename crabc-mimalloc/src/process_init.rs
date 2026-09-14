@@ -1392,7 +1392,9 @@ mod tests {
     use std::thread;
     use std::time::{Duration, Instant};
 
-    // Linux's process-local THP query used by the child-only startup test.
+    // Linux's process-local THP query/set selectors used only by child-isolated
+    // ProcessMain policy witnesses.
+    const PR_SET_THP_DISABLE: i32 = 41;
     const PR_GET_THP_DISABLE: i32 = 42;
 
     fn memory_config() -> MemoryConfig {
@@ -1626,6 +1628,125 @@ mod tests {
             storage.ready_lease(config, subprocess),
             Err(ProcessMainInitError::Retained)
         ));
+    }
+
+    /// Runs one exact direct policy case through the bounded ProcessMain owner.
+    ///
+    /// Every owner, completed option/configuration image, serial guard, and
+    /// finite capture is constructed before the raw fork. The child performs
+    /// only the existing isolated owner transition and fixed witness checks;
+    /// the parent compares real THP queries before capture and after dropping
+    /// the inherited capture.
+    #[cfg(not(miri))]
+    fn process_main_thp_policy_owner_case_witness(
+        selected_case: fault::ThpDirectPolicyCase,
+        expected_transparent_huge_pages: bool,
+    ) -> bool {
+        let (storage, main_static, subprocess, metadata, page_map_storage) = fixture();
+        let mut options = VmOptions::uninitialized();
+        options.set(
+            crate::config::VmOption::AllowThp,
+            if selected_case.allow_enabled() { 1 } else { 0 },
+        );
+        options.initialize_all(|_| crate::config::VmOptionEnvironment::Absent);
+        let config = MemoryConfig::from_observations(
+            PageSize::new(4096).expect("the selected native page size is valid"),
+            1024 * 1024,
+            false,
+            true,
+        );
+        let parent_before = unsafe {
+            crabc_core::process::prctl_raw(PR_GET_THP_DISABLE, 0, 0, 0, 0)
+        };
+        let guard = fault::install(fault::Plan::disabled());
+        let capture = guard.capture_thp_direct_policy_case(selected_case);
+
+        let child = crabc_core::process::fork_raw().expect("fork isolated ProcessMain policy");
+        if child == 0 {
+            let result = unsafe {
+                storage.initialize_with_test_components_and_process_memory_policy(
+                    config,
+                    options,
+                    main_static,
+                    subprocess,
+                    metadata,
+                    page_map_storage,
+                )
+            };
+            let status = match result {
+                Ok(owner) => {
+                    let ready = owner.ready();
+                    let ready_witnesses_match = match (
+                        ready.and_then(ProcessMainReadyLease::memory_config),
+                        ready.and_then(ProcessMainReadyLease::vm_process),
+                        ready.and_then(ProcessMainReadyLease::process_backing),
+                    ) {
+                        (Ok(ready_config), Ok(process), Ok(backing)) => {
+                            ready_config.has_transparent_huge_pages()
+                                == expected_transparent_huge_pages
+                                && backing.is_active()
+                                && core::ptr::eq(process.subprocess(), subprocess)
+                                && core::ptr::eq(backing.process().subprocess(), process.subprocess())
+                                && core::ptr::eq(backing.process().policy(), process.policy())
+                                && matches!(
+                                    backing.page_map().subprocess(),
+                                    Ok(backing_subprocess)
+                                        if core::ptr::eq(backing_subprocess, process.subprocess())
+                                )
+                        }
+                        _ => false,
+                    };
+                    let calls_match = match (selected_case, capture.attempts()) {
+                        (fault::ThpDirectPolicyCase::AllowEnabled, Some((_, 0))) => true,
+                        (
+                            fault::ThpDirectPolicyCase::QueryNonzeroOne,
+                            Some((attempts, 1)),
+                        ) => attempts[0] == (PR_GET_THP_DISABLE, [0, 0, 0, 0]),
+                        (fault::ThpDirectPolicyCase::SetPerm, Some((attempts, 2))) => {
+                            attempts
+                                == [
+                                    (PR_GET_THP_DISABLE, [0, 0, 0, 0]),
+                                    (PR_SET_THP_DISABLE, [1, 0, 0, 0]),
+                                ]
+                        }
+                        _ => false,
+                    };
+                    if ready_witnesses_match && calls_match { 0 } else { 1 }
+                }
+                Err(_) => 1,
+            };
+            crabc_core::process::exit_immediately(status);
+        }
+
+        let mut status = 0;
+        let reaped = unsafe { crabc_core::process::wait4_raw(child, &mut status, 0) }
+            == Ok(child)
+            && status == 0;
+        drop(capture);
+        drop(guard);
+        let parent_after = unsafe {
+            crabc_core::process::prctl_raw(PR_GET_THP_DISABLE, 0, 0, 0, 0)
+        };
+        reaped && parent_after == parent_before
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn process_main_thp_policy_owner_traversal() {
+        use fault::ThpDirectPolicyCase as Case;
+
+        assert!(
+            process_main_thp_policy_owner_case_witness(Case::AllowEnabled, true),
+            "the enabled source option bypasses PRCTL while retaining a ready VM/backing pair"
+        );
+        assert!(
+            process_main_thp_policy_owner_case_witness(Case::QueryNonzeroOne, false),
+            "a nonzero GET disables ready configuration without issuing SET"
+        );
+        assert!(
+            process_main_thp_policy_owner_case_witness(Case::SetPerm, false),
+            "a failed best-effort SET still reaches READY with the retained VM/backing pair"
+        );
     }
 
     #[cfg(not(miri))]

@@ -2621,17 +2621,24 @@ continuation, and the forced disabled configuration for `allow_thp=0`; it does
 not compare its ambient allow-enabled THP detection. Rust separately proves
 that `Allowed` preserves both synthetic configuration states and records the
 fixed `DisabledQueryFailed`, `DisabledAlready`, `DisabledSet`, and
-`DisabledSetFailed` typed outcomes. The process initializer discards that
-outcome and is not executed or qualified here.
+`DisabledSetFailed` typed outcomes. The direct C/Rust matrix ends before
+the process owner; that owner discards the typed Rust result when it is
+separately exercised below.
 
-This finite direct matrix does not qualify ambient source-option discovery or C
-THP detection/configuration, production process policy callers, hardware
-THP/huge-page mapping or arena behavior, or VM/M2 completion. The pinned
-branch itself emits no diagnostics.
+A separate `process-main-thp-policy-owner-traversal` Rust-unit check starts
+the existing explicit `ProcessMainInitializationStorage` test owners only in
+raw-fork children. Its fixed `AllowEnabled`, `QueryNonzeroOne`, and `SetPerm`
+cases cover the owner-visible zero-call, GET-only, and GET-then-SET shapes.
+Each child checks the final READY configuration plus its retained
+`VmProcess` and matching `ProcessMainBackingBinding`; the SET-permission
+failure continues to READY. This is Rust owner traversal evidence, not a C
+owner comparison: the pinned C initializer remains a void-continuation record,
+while Rust's typed direct result is discarded by this owner.
 
-This does not cover GET errors or nonzero results, successful or other failing
-SET outcomes, diagnostics, ambient source option discovery, or production
-policy callers. The M2 VM component remains partial.
+These checks do not qualify ambient source-option discovery or C THP
+detection/configuration, runtime-lifecycle environment/detection integration,
+other production policy callers, hardware THP/huge-page mapping or arena
+behavior, or VM/M2 completion. The pinned branch itself emits no diagnostics.
 
 ### Native M2 large-only one-GiB terminal failure
 
