@@ -321,7 +321,7 @@ M2_X86_64_VM_FRAGMENT = ALLOCATOR_ROOT / "m2-vm-x86_64-v3.5.0.fragment.json"
 # rows into both the aggregate manifest and Python. Source bytes are verified
 # separately against the upstream archive before any native check executes.
 M2_X86_64_BITMAP_FRAGMENT_DIGEST = "dbb2bc7d34762819f7ed76c3b50fd3d8599d46b0ba7b9f78fcc9310afe536300"
-M2_X86_64_VM_FRAGMENT_DIGEST = "a7cc24661dc816ef8733ce8c3233e5c7228071e513cedf9802f31e750dbcc701"
+M2_X86_64_VM_FRAGMENT_DIGEST = "670aea9205e60c550452b30a5686f2631cf017a99bf9642183914e55d04bd799"
 M2_X86_64_PAGE_MAP_CHECK_IDS = (
     "successful-page-map-lifecycle",
     "lazy-page-map-commit-failure",
@@ -11817,6 +11817,18 @@ def _m2_x86_64_vm_producer() -> Any:
     return producer
 
 
+def _m2_x86_64_runtime_thp_configuration_producer() -> Any:
+    """Load the focused lifecycle owner for the retained THP admission receipt."""
+
+    path = ALLOCATOR_ROOT / "x86_64_lifecycle_evidence.py"
+    spec = importlib.util.spec_from_file_location("crabc_m2_runtime_thp_configuration", path)
+    if spec is None or spec.loader is None:
+        raise HarnessError("native x86 runtime THP configuration producer is absent")
+    producer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(producer)
+    return producer
+
+
 def _m2_x86_64_vm_component(raw_component: Mapping[str, Any], pin: Mapping[str, str]) -> dict[str, Any]:
     """Materialize bounded VM evidence without promoting its open source routes."""
 
@@ -11899,6 +11911,7 @@ def validate_x86_64_m2_memory_substrate_contract(
         "x86-64-page-map-focused-source-test-batch",
         "x86-64-bitmap-source-and-native-evidence",
         "x86-64-vm-primitives-fixed-profile-c-rust-and-owner-evidence",
+        "x86-64-runtime-source-environment-thp-configuration-admission",
     ]:
         raise HarnessError("native x86 M2 global evidence inventory changed")
     expected_source_contracts = [
@@ -12046,13 +12059,29 @@ def validate_x86_64_m2_memory_substrate_contract(
                     "c-rust-vm-primitives-fixed-lifecycle",
                     "c-rust-vm-primitives-source-profile-matrix",
                     "c-rust-aligned-overmap-cleanup-boundary-matrix",
+                    "c-rust-runtime-thp-source-environment-admission",
                 }
                 or not isinstance(raw_check.get("target"), str)
                 or type(raw_check.get("expected_passed_test_count")) is not int
                 or raw_check.get("expected_passed_test_count") != (41 if component_id == "bitmaps" else 1)
             ):
                 raise HarnessError(f"native x86 M2 component {component_id} has an invalid check")
-            if component_id != "bitmaps":
+            if raw_check.get("kind") == "c-rust-runtime-thp-source-environment-admission":
+                expected_target = (
+                    "native_runtime_first_arena_policy::"
+                    "runtime_process_admits_source_allow_thp_images_with_retained_ready_configuration"
+                )
+                source = ROOT / "crabc-mimalloc/tests/native_runtime_first_arena_policy.rs"
+                if (
+                    raw_check.get("target") != expected_target
+                    or not source.is_file()
+                    or "fn runtime_process_admits_source_allow_thp_images_with_retained_ready_configuration()"
+                    not in source.read_text(encoding="utf-8")
+                ):
+                    raise HarnessError(
+                        "native x86 M2 runtime THP configuration test target is absent"
+                    )
+            elif component_id != "bitmaps":
                 _m2_memory_substrate_source_test_exists(
                     str(raw_check["target"]), str(raw_check["id"])
                 )
@@ -12299,6 +12328,15 @@ def _run_m2_x86_64_vm_evidence(*, offline: bool, test_program: Mapping[str, Any]
     )
 
 
+def _run_m2_x86_64_runtime_thp_configuration_evidence() -> dict[str, Any]:
+    """Run the one focused lifecycle producer required by its named M2 check."""
+
+    producer = _m2_x86_64_runtime_thp_configuration_producer()
+    return producer.run_runtime_first_arena_policy_evidence(
+        producer.RUNTIME_FIRST_ARENA_REPORT
+    )
+
+
 def _m2_x86_64_vm_command_path_matches(argument: str, expected: str) -> bool:
     """Match one report path without binding a Docker temporary directory."""
 
@@ -12533,15 +12571,16 @@ def _m2_x86_64_vm_aligned_hint_profile_c_commands_are_bound(
 
 
 def _m2_x86_64_vm_check_records(
-    summary: Mapping[str, Any], evidence: object
+    summary: Mapping[str, Any], evidence: object, runtime_thp_evidence: object | None = None
 ) -> list[dict[str, Any]]:
-    """Turn the three real native C/Rust VM boundaries into their receipts.
+    """Turn the four real native C/Rust VM boundaries into their receipts.
 
     The remaining VM receipts are emitted by the aggregate's exact source
     test batch. This validator binds the lifecycle, source-profile, and
-    named aligned-overmap ownership boundary to the immutable fragment, all
-    pinned-C branch anchors, and the component's explicit open frontier so a
-    trace count alone can never stand in for VM qualification.
+    named aligned-overmap ownership boundary, and retained runtime THP
+    configuration admission to the immutable fragment, all pinned-C branch
+    anchors, and the component's explicit open frontier so a trace count alone
+    can never stand in for VM qualification.
     """
 
     component = next(item for item in summary["components"] if item["id"] == "vm-primitives")
@@ -12557,6 +12596,10 @@ def _m2_x86_64_vm_check_records(
     aligned_overmap_check = next(
         check for check in component["checks"]
         if check["id"] == "aligned-overmap-cleanup-c-rust-boundary-matrix"
+    )
+    runtime_thp_check = next(
+        check for check in component["checks"]
+        if check["id"] == "runtime-source-environment-thp-ready-configuration-admission"
     )
     expected_anchor_rows: list[Mapping[str, Any]] = []
     seen_anchors: set[tuple[object, object, object]] = set()
@@ -12683,7 +12726,7 @@ def _m2_x86_64_vm_check_records(
             or observed.get("bytes", 0) <= 0
         ):
             raise HarnessError("native x86 M2 VM source-anchor result changed")
-    return [
+    records = [
         {
             "comparison_status": "matched",
             "component": "vm-primitives",
@@ -12712,6 +12755,35 @@ def _m2_x86_64_vm_check_records(
             "target": aligned_overmap_check["target"],
         },
     ]
+    if runtime_thp_evidence is None:
+        return records
+    runtime_thp_producer = _m2_x86_64_runtime_thp_configuration_producer()
+    try:
+        runtime_thp_producer.validate_runtime_first_arena_policy_report(runtime_thp_evidence)
+    except runtime_thp_producer.EvidenceError as error:
+        raise HarnessError("native x86 M2 runtime THP configuration receipt is invalid") from error
+    if not isinstance(runtime_thp_evidence, Mapping):
+        raise HarnessError("native x86 M2 runtime THP configuration receipt is invalid")
+    runtime_thp = runtime_thp_evidence.get("runtime_thp_configuration")
+    if not isinstance(runtime_thp, Mapping) or not isinstance(runtime_thp.get("lane"), Mapping):
+        raise HarnessError("native x86 M2 runtime THP configuration lane is absent")
+    runtime_thp_command = runtime_thp["lane"].get("cargo_command")
+    if not isinstance(runtime_thp_command, list) or not all(
+        isinstance(argument, str) and argument for argument in runtime_thp_command
+    ):
+        raise HarnessError("native x86 M2 runtime THP configuration command is invalid")
+    records.append(
+        {
+            "comparison_status": "matched",
+            "component": "vm-primitives",
+            "command": list(runtime_thp_command),
+            "evidence_scope": "bounded-c-rust-runtime-source-environment-thp-configuration-admission",
+            "id": runtime_thp_check["id"],
+            "passed_test_count": runtime_thp_check["expected_passed_test_count"],
+            "target": runtime_thp_check["target"],
+        }
+    )
+    return records
 
 
 def _m2_x86_64_bitmap_check_records(
@@ -12774,6 +12846,7 @@ def m2_x86_64_memory_substrate_report(
     focused_checks: Sequence[Mapping[str, Any]],
     bitmap_evidence: Mapping[str, Any] | None = None,
     vm_evidence: Mapping[str, Any] | None = None,
+    runtime_thp_evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Render native M2 receipts while keeping every open component partial."""
 
@@ -12783,7 +12856,9 @@ def m2_x86_64_memory_substrate_report(
     ):
         raise HarnessError("native x86 M2 source evidence did not pass")
     expected_bitmap_records = _m2_x86_64_bitmap_check_records(summary, bitmap_evidence)
-    expected_vm_records = _m2_x86_64_vm_check_records(summary, vm_evidence)
+    expected_vm_records = _m2_x86_64_vm_check_records(
+        summary, vm_evidence, runtime_thp_evidence
+    )
     expected_anchors = {
         (component["id"], definition["id"]): definition["source_anchor"]
         for component in summary["components"]
@@ -12927,6 +13002,9 @@ def m2_x86_64_memory_substrate_report(
             "x86-64-source-contract-inventories": dict(source_contract_evidence),
             "x86-64-bitmap-source-and-native-evidence": dict(bitmap_evidence),
             "x86-64-vm-primitives-fixed-profile-c-rust-and-owner-evidence": dict(vm_evidence),
+            "x86-64-runtime-source-environment-thp-configuration-admission": dict(
+                runtime_thp_evidence
+            ) if runtime_thp_evidence is not None else {},
         },
         "source": dict(source_attestation),
         "target": dict(summary["target"]),
@@ -12997,7 +13075,10 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
     bitmap_evidence = _run_m2_x86_64_bitmap_evidence(offline=offline, test_program=test_program)
     bitmap_checks = _m2_x86_64_bitmap_check_records(summary, bitmap_evidence)
     vm_evidence = _run_m2_x86_64_vm_evidence(offline=offline, test_program=test_program)
-    vm_checks = _m2_x86_64_vm_check_records(summary, vm_evidence)
+    runtime_thp_evidence = _run_m2_x86_64_runtime_thp_configuration_evidence()
+    vm_checks = _m2_x86_64_vm_check_records(
+        summary, vm_evidence, runtime_thp_evidence
+    )
     focused_checks = [
         *vm_checks,
         *bitmap_checks,
@@ -13030,6 +13111,7 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         focused_checks=focused_checks,
         bitmap_evidence=bitmap_evidence,
         vm_evidence=vm_evidence,
+        runtime_thp_evidence=runtime_thp_evidence,
     )
     write_json(M2_X86_64_MEMORY_SUBSTRATE_REPORT, report)
     return report

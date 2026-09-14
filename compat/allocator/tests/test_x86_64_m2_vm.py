@@ -17,6 +17,7 @@ EXPECTED_VM_CHECK_IDS = (
     "large-only-one-gib-failure-no-regular-owner",
     "thp-direct-policy-outcome-matrix",
     "process-main-thp-policy-owner-traversal",
+    "runtime-source-environment-thp-ready-configuration-admission",
     "aligned-hint-source-profile-and-direct-caller-matrix",
     "aligned-overmap-cleanup-c-rust-boundary-matrix",
     "process-policy-first-arena-clean-primary-fallback",
@@ -448,7 +449,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
         self.assertEqual(vm["id"], "vm-primitives")
         self.assertEqual(vm["native_status"], "partial")
         self.assertEqual(tuple(check["id"] for check in vm["checks"]), EXPECTED_VM_CHECK_IDS)
-        self.assertEqual(len(vm["checks"]), 32)
+        self.assertEqual(len(vm["checks"]), 33)
         self.assertEqual(len(vm["bounded_source_definitions"]), 20)
         callback_definitions = {
             definition["id"]: definition["source_anchor"]
@@ -526,6 +527,23 @@ class NativeVmAssemblyTests(unittest.TestCase):
         vm_records = RUNNER._m2_x86_64_vm_check_records(
             summary, self.vm_evidence(summary)
         )
+        runtime_check = next(
+            check
+            for component in summary["components"]
+            for check in component["checks"]
+            if check["id"] == "runtime-source-environment-thp-ready-configuration-admission"
+        )
+        vm_records.append(
+            {
+                "comparison_status": "matched",
+                "component": "vm-primitives",
+                "command": ["<focused-runtime-thp-configuration-producer>"],
+                "evidence_scope": "bounded-c-rust-runtime-source-environment-thp-configuration-admission",
+                "id": runtime_check["id"],
+                "passed_test_count": runtime_check["expected_passed_test_count"],
+                "target": runtime_check["target"],
+            }
+        )
         observed = {}
 
         def focused_checks(_summary, _program, *, already_executed_check_ids, gate_name):
@@ -561,6 +579,11 @@ class NativeVmAssemblyTests(unittest.TestCase):
             mock.patch.object(RUNNER, "_run_m2_x86_64_bitmap_evidence", return_value={}),
             mock.patch.object(RUNNER, "_m2_x86_64_bitmap_check_records", return_value=[]),
             mock.patch.object(RUNNER, "_run_m2_x86_64_vm_evidence", return_value={}),
+            mock.patch.object(
+                RUNNER,
+                "_run_m2_x86_64_runtime_thp_configuration_evidence",
+                return_value={},
+            ) as runtime_thp_producer,
             mock.patch.object(RUNNER, "_m2_x86_64_vm_check_records", return_value=vm_records),
             mock.patch.object(RUNNER, "_m2_x86_64_differential_check_record", return_value={}),
             mock.patch.object(
@@ -579,6 +602,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
             )
 
         self.assertEqual(observed["gate_name"], "native x86 M2 focused source evidence")
+        runtime_thp_producer.assert_called_once_with()
         self.assertTrue(
             {record["id"] for record in vm_records}.issubset(observed["ids"])
         )
@@ -602,6 +626,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 "native-vm-fixed-lifecycle-differential",
                 "aligned-hint-source-profile-and-direct-caller-matrix",
                 "aligned-overmap-cleanup-c-rust-boundary-matrix",
+                "runtime-source-environment-thp-ready-configuration-admission",
             },
             {record["id"] for record in vm_records},
         )

@@ -56,6 +56,7 @@ EXPECTED_CHECK_IDS = (
     "large-only-one-gib-failure-no-regular-owner",
     "thp-direct-policy-outcome-matrix",
     "process-main-thp-policy-owner-traversal",
+    "runtime-source-environment-thp-ready-configuration-admission",
     "aligned-hint-source-profile-and-direct-caller-matrix",
     "aligned-overmap-cleanup-c-rust-boundary-matrix",
     "process-policy-first-arena-clean-primary-fallback",
@@ -306,10 +307,20 @@ class NativeM2VmFragmentTests(unittest.TestCase):
             for check in checks
             if check["id"] != "process-main-thp-policy-owner-traversal"
         ]
+        dropped_runtime_environment_check = copy.deepcopy(self.fragment)
+        checks = dropped_runtime_environment_check["component"]["checks"]
+        checks[:] = [
+            check
+            for check in checks
+            if check["id"] != "runtime-source-environment-thp-ready-configuration-admission"
+        ]
         raw_nonzero_removed = copy.deepcopy(self.fragment)
         thp_branch = raw_nonzero_removed["component"]["branch_matrix"][2]
         thp_branch["source_scope"] = thp_branch["source_scope"].replace(
             "raw nonzero 3", "removed raw nonzero representative"
+        )
+        thp_branch["source_scope"] = thp_branch["source_scope"].replace(
+            "Raw nonzero 3", "Removed raw nonzero representative"
         )
         phantom_diagnostics = copy.deepcopy(self.fragment)
         thp_branch = phantom_diagnostics["component"]["branch_matrix"][2]
@@ -320,6 +331,7 @@ class NativeM2VmFragmentTests(unittest.TestCase):
             dropped_definition,
             dropped_check,
             dropped_owner_check,
+            dropped_runtime_environment_check,
             raw_nonzero_removed,
             phantom_diagnostics,
         ):

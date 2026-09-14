@@ -1905,7 +1905,7 @@ The separate bounded lifecycle/concurrency judge is also native x86-only:
 ./compat/allocator/run-x86_64.sh allocator-lifecycle
 ```
 
-It records ten named private Rust lanes (14 selected tests, including five
+It records eleven named private Rust lanes (15 selected tests, including five
 finite Loom head-protocol models) in
 `compat/reports/allocator/x86_64/lifecycle-concurrency.json`. It is evidence
 for only those listed compiler-TLS, private-key, and remote-head transitions;
@@ -1932,6 +1932,18 @@ registered; the Rust child proves the same retained arena relation after its
 exact client free. It does not compare a raw host-node identity, qualify
 hardware multi-node placement or huge pages, or expand the first-arena route
 into general lifecycle parity.
+
+The same focused receipt also runs two fresh, clean source-environment THP
+images. Pinned C directly includes `src/os.c` and `src/init.c` before normal
+`mi_process_init()`, while Rust starts `RuntimeProcessStorage`, makes one
+ticket-zero allocation, and reads its retained READY audit. The fixed
+`mimalloc_allow_thp=0` image must retain raw zero, the existing false boolean
+projection, and a false configuration bit. The fixed `mimalloc_allow_thp=2`
+image must retain raw two and the true projection; its configuration bit is a
+same-run C/Rust observation that may be zero or one. The audit does not run a
+new detector or infer that bit from minimum-purge behavior. These two images
+do not establish ambient THP hardware state, arbitrary source-option handling,
+detector parity beyond the recorded relation, or other production callers.
 
 The separate source-start regular-arena differential is available through:
 
@@ -2635,10 +2647,12 @@ failure continues to READY. This is Rust owner traversal evidence, not a C
 owner comparison: the pinned C initializer remains a void-continuation record,
 while Rust's typed direct result is discarded by this owner.
 
-These checks do not qualify ambient source-option discovery or C THP
-detection/configuration, runtime-lifecycle environment/detection integration,
-other production policy callers, hardware THP/huge-page mapping or arena
-behavior, or VM/M2 completion. The pinned branch itself emits no diagnostics.
+The two named clean source images add bounded runtime admission evidence only;
+they do not qualify arbitrary source-option syntax or mutation, C/Rust
+detector implementation parity beyond their retained observations, other
+production policy callers, hardware THP/huge-page mapping or arena behavior,
+or VM/M2 completion. The pinned THP branch itself emits no diagnostics. Actual
+OS and large-page diagnostic paths remain open VM evidence.
 
 ### Native M2 large-only one-GiB terminal failure
 
