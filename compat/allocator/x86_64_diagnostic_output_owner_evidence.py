@@ -94,6 +94,9 @@ C_SOURCE_FILES = (
     "include/mimalloc.h",
     "include/mimalloc/internal.h",
     "include/mimalloc/prim.h",
+    # Directly included by compiled `src/prim/prim-tls.c`; its inline
+    # `_mi_prim_thread_id` supplies the selected `_mi_thread_id` route.
+    "include/mimalloc/prim-tls.h",
     *C_LINK_SOURCES,
     # `src/prim/prim.c` includes this platform primitive in the same C
     # translation unit; retain its separate identity without compiling it twice.
@@ -103,6 +106,7 @@ PINNED_C_SOURCE_IDENTITIES = (
     ("include/mimalloc.h", "af34f215cb6fe9e4e97bf08d78bfda877ab4cdd63c9222640c483d7d6a4488a5"),
     ("include/mimalloc/internal.h", "4fd7b1dd450989b1a8a5b4cb54e163a36d932bbf7e341abcd882763251252852"),
     ("include/mimalloc/prim.h", "1987e8e2eedc07bb181bf2a11a27bec80a5309c32cfa66a56900fb4cbb64b172"),
+    ("include/mimalloc/prim-tls.h", "46d871923b38c9463da985c54503cd5cb64bb2c91008f3d35bcbaae2a11c31c2"),
     ("src/alloc.c", "fd4b4a86af93754227137a43c84e84f846d0ff0fd7046a264396a80c95e5c1a9"),
     ("src/alloc-aligned.c", "3546ff6046c384f050cde21e9f3f314b6dc7d4ba1f1b462960a5a38672b898ba"),
     ("src/alloc-posix.c", "a6dcdef4694964c972e6cf37f197f93c95f321566a3b5ccc1761129257255e93"),

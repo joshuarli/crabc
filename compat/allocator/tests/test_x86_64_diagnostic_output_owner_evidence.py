@@ -210,6 +210,24 @@ class RetainedStreamReaderTests(unittest.TestCase):
             ],
         )
 
+    def test_c_source_roster_binds_the_compiled_thread_identity_header(self) -> None:
+        header = "include/mimalloc/prim-tls.h"
+        source_paths = [record["path"] for record in EVIDENCE.expected_pinned_c_source_records()]
+        self.assertIn(header, source_paths)
+
+        report = self.complete_report()
+        index = source_paths.index(header)
+        report["c_oracle"]["source_files"][index]["sha256"] = "0" * 64
+        with self.assertRaisesRegex(EVIDENCE.EvidenceError, "C source identity drifted"):
+            EVIDENCE.validate_report(report)
+
+        current_report = self.complete_report()
+        current_pin = list(EVIDENCE.PINNED_C_SOURCE_IDENTITIES)
+        current_pin[index] = (header, "0" * 64)
+        with mock.patch.object(EVIDENCE, "PINNED_C_SOURCE_IDENTITIES", tuple(current_pin)):
+            with self.assertRaisesRegex(EVIDENCE.EvidenceError, "C source identity drifted"):
+                EVIDENCE.validate_report(current_report)
+
     def test_reader_rejects_changed_current_owner_route_and_private_lock_sources(self) -> None:
         report = self.complete_report()
         original_sha256_file = EVIDENCE.sha256_file

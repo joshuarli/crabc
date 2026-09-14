@@ -165,8 +165,8 @@ impl ThreadWarningPrefix {
 
     #[inline]
     fn as_c_str(&self) -> &CStr {
-        // SAFETY: the zero-initialized final byte follows the complete prefix,
-        // whose source maximum is 47 bytes on the selected 64-bit targets.
+        // SAFETY: the zero-initialized final byte follows the 46-byte visible
+        // maximum, so the selected 64-bit C string occupies 47 bytes.
         unsafe { CStr::from_bytes_with_nul_unchecked(&self.bytes[..=self.length]) }
     }
 }
@@ -759,11 +759,14 @@ mod tests {
             ThreadWarningPrefix::new(0x00a_bC0d).as_c_str().to_bytes(),
             b"mimalloc: warning: thread 0xABC0D: ",
         );
+        let maximum = ThreadWarningPrefix::new(usize::MAX);
         assert_eq!(
-            ThreadWarningPrefix::new(usize::MAX).as_c_str().to_bytes(),
+            maximum.as_c_str().to_bytes(),
             b"mimalloc: warning: thread 0xFFFFFFFFFFFFFFFF: ",
         );
-        assert!(ThreadWarningPrefix::new(usize::MAX).length < 64);
+        assert_eq!(maximum.length, 46);
+        assert_eq!(maximum.as_c_str().to_bytes_with_nul().len(), 47);
+        assert!(maximum.length < 64);
     }
 
     #[test]

@@ -335,9 +335,10 @@ custom callback first with source `mi_vfprintf_thread`'s stack-bounded
 `mimalloc: warning: thread 0x<THREAD-POINTER>: ` prefix, then with the
 formatted body. Its selected `%tx` number route emits zero as `0` and all
 other values as minimal uppercase hexadecimal; the 19-byte warning stem meets
-the source's 32-byte predicate and its maximum 64-bit prefix is 47 bytes plus
-NUL within the pinned 64-byte `tprefix`. The private Linux/x86-64 owner reads
-`crabc_core::thread::thread_pointer_identity()` at that source boundary, which
+the source's 32-byte predicate and its maximum 64-bit visible prefix is 46
+bytes, occupying 47 bytes including NUL within the pinned 64-byte `tprefix`.
+The private Linux/x86-64 owner reads `crabc_core::thread::thread_pointer_identity()`
+at that source boundary, which
 is the calling musl TCB self pointer (`%fs:0`), not `gettid`. With
 `verbose == 0`, disabled `show_errors` suppresses a warning; an enabled warning
 increments the count with AcqRel and is suppressed only after the count exceeds
