@@ -26,6 +26,7 @@ TOKEN_FIELDS = ['mapping:*mut u8', 'mapping_size:usize', 'thread_pointer:*mut u8
 WORKER_OWNER = 'ldso/src/x86_64_initial_worker_tls.rs'
 ADAPTER = 'libc/src/c_abi/x86_64/dynamic_tls.rs'
 PTHREAD = 'libc/src/c_abi/x86_64/pthread_create_join.rs'
+PTHREAD_ATFORK = 'libc/src/c_abi/x86_64/pthread_atfork.rs'
 OPERATIONS = {
     '__crabc_x86_64_initial_tls_allocate': {
         'producer': WORKER_OWNER+':allocate',
@@ -60,7 +61,7 @@ SOURCE_PATHS = (
     'compat/x86_64/loader_debug_abi_evidence.py',
     'compat/x86_64/prepared_worker_tls_probe.c', 'compat/x86_64/prepared_worker_tls_dependency.c',
     'compat/x86_64/loader-libc-tls-runtime-v1.toml', 'compat/x86_64/validate_loader_libc_tls_runtime_v1.py',
-    WORKER_OWNER, ADAPTER, PTHREAD, 'libc/src/c_abi/x86_64/static_c_abi.rs',
+    WORKER_OWNER, ADAPTER, PTHREAD, PTHREAD_ATFORK, 'libc/src/c_abi/x86_64/static_c_abi.rs',
     'libc/src/c_abi/x86_64/static_tls.rs', 'libc/src/c_abi/x86_64/loader_tls_runtime_v1.rs',
     'libc/src/c_abi/x86_64/owned_dynamic_attachment.rs',
     'ldso/src/x86_64_general_initial_tls_state.rs', 'ldso/src/x86_64_initial_graph.rs',
@@ -216,6 +217,44 @@ def _fields(source: str, name: str) -> list[str]:
     return [re.sub(r'\s+',' ',field.strip()).replace(': ',':') for field in match.group(1).split(',') if field.strip()]
 
 
+def check_full_dynamic_fork_order(cargo: str, atfork: str) -> dict[str, Any]:
+    """Keep the active dynamic feature and its child ownership handoff explicit."""
+    require('x86-owned-dynamic-runtime = ["x86-owned-static-runtime"]' in cargo,
+            'dynamic runtime no longer selects the static fork leaf')
+    immediate=_body(atfork,'fork_without_handlers')
+    _ordered(immediate,(
+        'pthread_create_join::adopt_process_child_caller(caller)',
+        'super::owned_process_lock::pthread_fork_child()',
+        'super::owned_aio::atfork(1)',
+    ),'_Fork immediate child transaction')
+    deferred=_body(atfork,'fork_without_handlers_deferred_registry_reset')
+    _ordered(deferred,(
+        'pthread_create_join::prepare_process_child_caller(caller)',
+        'super::owned_process_lock::pthread_fork_child()',
+        'super::owned_aio::atfork(1)',
+    ),'dynamic inner child transaction')
+    fork=_body(atfork,'fork')
+    _ordered(fork,(
+        'fork_without_handlers_deferred_registry_reset()',
+        'loader_fork.complete(true)',
+        'let Some(reset) = deferred_child_registry_reset else',
+        'reset.complete()',
+    ),'active full dynamic fork')
+    bare=_body(atfork,'_Fork')
+    require('fork_without_handlers()' in bare,'_Fork no longer uses its immediate child transaction')
+    require('prepare_fork' not in bare and 'loader_fork.complete' not in bare
+            and 'fork_without_handlers_deferred_registry_reset' not in bare,
+            '_Fork gained a loader or deferred-registry transaction')
+    return {
+        'active_feature':'x86-owned-dynamic-runtime-includes-x86-owned-static-runtime',
+        'full-dynamic-fork':[
+            'child-tid-tsd-main-pointer-before-loader',
+            'loader-child-complete-before-selected-worker-registry-reset',
+        ],
+        '_Fork':'no-loader-fork-transaction',
+    }
+
+
 def check_operation_signatures(root: Path, consumer: str) -> dict[str, Any]:
     """Compare the named source declarations; opaque pointees stay distinct."""
     blocks=re.findall(r'unsafe\s+extern\s+"C"\s*\{([^}]+)\}',consumer)
@@ -279,10 +318,11 @@ def account_source(root: Path = ROOT) -> dict[str, Any]:
     require('#[cfg_attr(not(feature = "x86-owned-dynamic-runtime"), path = "static_tls.rs")]' in graph
             and '#[cfg_attr(feature = "x86-owned-dynamic-runtime", path = "dynamic_tls.rs")]' in graph,
             'static/dynamic TLS owners lost their explicit feature split')
+    fork_order=check_full_dynamic_fork_order(sources['libc/Cargo.toml'],sources[PTHREAD_ATFORK])
     return {'source_files':{name:inventory.file_record(root/name,logical_path=name) for name in SOURCE_PATHS},
             'operations':copy.deepcopy(OPERATIONS),'source_signatures':signatures,'legacy_replacement':copy.deepcopy(expected_contract()['legacy_replacement']),
             'worker_token':{'producer_fields':producer,'consumer_fields':consumer,'size_bytes':32,'alignment_bytes':8},
-            'ordering':{'before-clone':before,'after-clear-child-tid-and-withdrawal':after},
+            'ordering':{'before-clone':before,'after-clear-child-tid-and-withdrawal':after,**fork_order},
             'descriptor':copy.deepcopy(runtime['owned_runtime']),'descriptor_source_fields':descriptor_fields,
             'scope':'Source selection and lexical ordering; native execution/compiled unit receipts remain separate.'}
 

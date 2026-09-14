@@ -929,10 +929,40 @@ pub(super) unsafe fn pthread_fork_child(child_tid: c_int) {
     unsafe { adopt_process_child(child_tid, inherited_worker) };
 }
 
+/// The final selected-worker registry/task reset for one sole process child.
+///
+/// All caller identity, robust-list, and signal-target repair already happened
+/// before this value is returned.  A full dynamic `fork` may hold it only
+/// across the paired loader child completion, so the loader can withdraw its
+/// inherited worker-token registry before libc makes its copied worker list
+/// unreachable. `_Fork`, static `fork`, and clone complete it immediately.
+#[must_use]
+pub(super) struct DeferredProcessChildRegistryReset(());
+
+impl DeferredProcessChildRegistryReset {
+    /// # Safety
+    ///
+    /// The caller is the sole child and consumes this capability exactly once.
+    /// It is valid without a copied registry lock for the established `_Fork`
+    /// and clone paths; the full dynamic `fork` caller additionally completes
+    /// its paired loader child repair before consuming it.
+    pub(super) unsafe fn complete(self) {
+        SELECTED_WORKER_REGISTRY_HEAD.store(0, Ordering::Release);
+        SELECTED_INITIAL_THREAD_TASK_STATE.store(SelectedRuntimeTaskState::ACTIVE, Ordering::Release);
+        SELECTED_WORKER_REGISTRY_LOCK.store(0, Ordering::Release);
+    }
+}
+
 // A sole child may forget the inherited registry without reading its links.
 // A fork caller supplies its locked lookup; clone supplies only its own pinned
-// control, so unrelated partially updated links are never traversed.
-unsafe fn adopt_process_child(child_tid: c_int, inherited_worker: Option<*mut ThreadControl>) {
+// control, so unrelated partially updated links are never traversed. The
+// returned reset is deliberately separate from the robust/signal repairs: the
+// active dynamic full-fork path must let the loader re-root inherited worker
+// TLS before it drops the libc selected-worker registry.
+unsafe fn prepare_process_child(
+    child_tid: c_int,
+    inherited_worker: Option<*mut ThreadControl>,
+) -> DeferredProcessChildRegistryReset {
     let thread_pointer = pthread_identity::current_thread_pointer();
     if let Some(control) = inherited_worker {
         // SAFETY: fork's locked lookup or clone's caller-owned snapshot
@@ -966,9 +996,12 @@ unsafe fn adopt_process_child(child_tid: c_int, inherited_worker: Option<*mut Th
         Ordering::Relaxed,
     );
     INITIAL_SIGNAL_TARGET_TID.store(child_tid, Ordering::Release);
-    SELECTED_WORKER_REGISTRY_HEAD.store(0, Ordering::Release);
-    SELECTED_INITIAL_THREAD_TASK_STATE.store(SelectedRuntimeTaskState::ACTIVE, Ordering::Release);
-    SELECTED_WORKER_REGISTRY_LOCK.store(0, Ordering::Release);
+    DeferredProcessChildRegistryReset(())
+}
+
+unsafe fn adopt_process_child(child_tid: c_int, inherited_worker: Option<*mut ThreadControl>) {
+    let reset = unsafe { prepare_process_child(child_tid, inherited_worker) };
+    unsafe { reset.complete() };
 }
 
 /// The calling task's control is pinned by its own execution, independently
@@ -998,18 +1031,37 @@ pub(super) unsafe fn capture_process_child_caller() -> ProcessChildCaller {
     }
 }
 
+/// Prepare one sole child through the identity, TSD, robust-list, and signal
+/// repairs that must precede abort-lock/AIO completion. The returned value
+/// defers only selected-worker registry/task reset for a paired loader repair.
+///
 /// # Safety
-/// Call once in a sole process child, with every signal still blocked
-/// and the copied caller control mapped, before restoring signals or callbacks.
+/// Call once in a sole process child, with every signal still blocked and the
+/// copied caller control mapped, before restoring signals or callbacks.
 #[cfg(feature = "x86-owned-static-runtime")]
-pub(super) unsafe fn adopt_process_child_caller(caller: ProcessChildCaller) {
+pub(super) unsafe fn prepare_process_child_caller(
+    caller: ProcessChildCaller,
+) -> DeferredProcessChildRegistryReset {
     let tid = unsafe { register_fork_child_kernel_tid() };
     let values = caller.0.map(|control| unsafe { core::ptr::addr_of!((*control).tsd) });
     unsafe { pthread_tsd::adopt_process_child_values(values) };
     if !static_tls::adopt_current_thread_after_fork() {
         super::immediate_termination::_Exit(127);
     }
-    unsafe { adopt_process_child(tid, caller.0) };
+    unsafe { prepare_process_child(tid, caller.0) }
+}
+
+/// Preserve the established immediate-completion path for `_Fork`, static
+/// `fork`, and clone callers. Full dynamic `fork` uses the paired preparation
+/// and completion functions around its loader child repair instead.
+///
+/// # Safety
+///
+/// The caller meets [`prepare_process_child_caller`]'s sole-child conditions.
+#[cfg(feature = "x86-owned-static-runtime")]
+pub(super) unsafe fn adopt_process_child_caller(caller: ProcessChildCaller) {
+    let reset = unsafe { prepare_process_child_caller(caller) };
+    unsafe { reset.complete() };
 }
 
 /// Return an inherited worker's TSD table during a child fork reset.

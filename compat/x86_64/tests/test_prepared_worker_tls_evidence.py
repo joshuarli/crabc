@@ -299,6 +299,31 @@ class PreparedWorkerTlsEvidenceTests(unittest.TestCase):
         self.assertIn('before-clone',account['ordering'])
         self.assertIn('after-clear-child-tid-and-withdrawal',account['ordering'])
 
+    def test_source_account_requires_active_full_fork_loader_before_registry_reset(self):
+        """Dynamic full fork keeps minimal child identity work before loader repair.
+
+        The active dynamic feature includes the static leaf, so this proves the
+        real `fork_without_handlers` route rather than the excluded non-static
+        branch.  `_Fork` remains the existing no-loader minimal transaction.
+        """
+        cargo=(ROOT/'libc/Cargo.toml').read_text()
+        atfork=(ROOT/EVIDENCE.PTHREAD_ATFORK).read_text()
+        account=EVIDENCE.account_source(ROOT)
+        self.assertEqual(account['ordering']['full-dynamic-fork'],[
+            'child-tid-tsd-main-pointer-before-loader',
+            'loader-child-complete-before-selected-worker-registry-reset',
+        ])
+        self.assertEqual(account['ordering']['_Fork'],'no-loader-fork-transaction')
+        with self.assertRaises(EVIDENCE.PreparedWorkerTlsError):
+            EVIDENCE.check_full_dynamic_fork_order(
+                cargo.replace('x86-owned-dynamic-runtime = ["x86-owned-static-runtime"]',
+                              'x86-owned-dynamic-runtime = []'),atfork)
+        child='loader_fork.complete(true);\n            let Some(reset) = deferred_child_registry_reset else {\n                super::immediate_termination::_Exit(127)\n            };\n            reset.complete();'
+        reordered='let Some(reset) = deferred_child_registry_reset else {\n                super::immediate_termination::_Exit(127)\n            };\n            reset.complete();\n            loader_fork.complete(true);'
+        self.assertIn(child,atfork)
+        with self.assertRaises(EVIDENCE.PreparedWorkerTlsError):
+            EVIDENCE.check_full_dynamic_fork_order(cargo,atfork.replace(child,reordered))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -99,7 +99,10 @@ pub(super) struct PreparedLoaderFork {
 
 impl PreparedLoaderFork {
     /// Complete this exact preparation after libc's internal owners are
-    /// callable again. Child completion re-roots loader TLS and constructors.
+    /// callable again. In a full dynamic child, its minimal TID/TSD/main,
+    /// robust-list, and signal-target adoption remains earlier; this loader
+    /// completion re-roots TLS and constructors before libc discards its
+    /// copied selected-worker registry. `_Fork` never prepares this token.
     pub(super) unsafe fn complete(self, child: bool) {
         unsafe { __crabc_x86_64_runtime_fork_complete(
             self.parent_tid.get(), child as i32, self.callback_lock as i32,

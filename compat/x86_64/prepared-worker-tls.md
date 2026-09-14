@@ -53,6 +53,16 @@ checks additionally inspect the source-defined coherent view and use
 reaped mappings. No stale pointer is dereferenced, and no musl allocation
 layout or reclamation timing is assumed.
 
+For a full dynamic `fork`, the child first retains its existing minimal
+TID/TSD/main-pointer adoption, robust-list registration, and signal-target
+repair inside the all-signal/abort/AIO transaction. The paired loader child
+completion then re-roots inherited loader ownership before libc clears the
+selected-worker registry, task state, and copied registry lock. `_Fork` keeps
+its original immediate no-loader transaction; static full `fork` and clone
+also complete their registry reset immediately. The source account names
+`pthread_atfork.rs`, the active Cargo feature inclusion, and this finite order;
+it does not turn `_Fork` into loader-lifecycle evidence.
+
 Seven exact existing loader source tests independently cover initialized
 worker materialization, stale/malformed/double-release tokens, abandoned and
 malformed view preparation, live readers across publication, preserved TLS

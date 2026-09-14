@@ -320,10 +320,13 @@ may be passed to `CLONE_SETTLS`. In static mode, the independent static owner
 does that work. The two branches must be selected before the clone boundary,
 not inferred from a cached `%fs` value.
 
-At fork, the dynamic child repair order is loader state first and libc's
-thread registry second. Cancellation remains libc state, but it is attached to
-the one RuntimeV1-created thread context rather than becoming another TCB
-owner.
+At full dynamic `fork`, the child first retains the minimal libc TID/TSD/main
+identity, robust-list, and signal-target repairs needed inside the existing
+all-signal/abort/AIO transaction. Loader state is then repaired before libc
+clears its selected-worker thread registry, task state, and copied registry
+lock. Cancellation remains libc state, but it is attached to the one
+RuntimeV1-created thread context rather than becoming another TCB owner.
+`_Fork` remains the separate minimal no-loader transaction.
 
 ## Linux/x86-64 Variant II
 

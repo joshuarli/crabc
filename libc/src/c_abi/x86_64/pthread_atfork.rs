@@ -294,6 +294,35 @@ unsafe fn fork_without_handlers() -> i64 {
     result
 }
 
+/// Dynamic full `fork` keeps the same inner signal/abort/AIO transaction as
+/// `_Fork`, but returns exactly one private registry-reset capability to its
+/// already-prepared loader transaction. The child still repairs its TID, TSD,
+/// main pointer, robust list, and signal target before abort unlock and AIO;
+/// only the selected-worker registry/task reset waits for loader completion.
+#[cfg(all(feature = "x86-owned-static-runtime", feature = "x86-owned-dynamic-runtime"))]
+unsafe fn fork_without_handlers_deferred_registry_reset(
+) -> (i64, Option<pthread_create_join::DeferredProcessChildRegistryReset>) {
+    let mut saved = 0_u64;
+    unsafe { signal_execution::block_all_signals(&mut saved) };
+    let caller = unsafe { pthread_create_join::capture_process_child_caller() };
+    unsafe { super::owned_process_lock::pthread_fork_prepare() };
+    let result = unsafe { raw_selected_fork() };
+    let mut deferred = None;
+    if result == 0 {
+        unsafe {
+            deferred = Some(pthread_create_join::prepare_process_child_caller(caller));
+            super::owned_process_lock::pthread_fork_child();
+            // Source __post_Fork calls AIO after thread repair and abort
+            // unlock, before restoring the nested all-signal mask.
+            super::owned_aio::atfork(1);
+        }
+    } else {
+        unsafe { super::owned_process_lock::pthread_fork_parent() };
+    }
+    unsafe { signal_execution::restore_application_signals(&saved) };
+    (result, deferred)
+}
+
 /// Fork the initialized owned task without invoking pthread_atfork handlers.
 ///
 /// This is musl's minimal async-signal-safe process transition. It preserves
@@ -436,7 +465,11 @@ pub unsafe extern "C" fn fork() -> c_int {
         super::owned_timezone::pthread_fork_prepare();
     }
     pthread_create_join::pthread_fork_prepare();
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(all(feature = "x86-owned-static-runtime", feature = "x86-owned-dynamic-runtime"))]
+    let (result, deferred_child_registry_reset) = unsafe {
+        fork_without_handlers_deferred_registry_reset()
+    };
+    #[cfg(all(feature = "x86-owned-static-runtime", not(feature = "x86-owned-dynamic-runtime")))]
     let result = unsafe { fork_without_handlers() };
     #[cfg(not(feature = "x86-owned-static-runtime"))]
     let result = unsafe { raw_selected_fork() };
@@ -470,6 +503,18 @@ pub unsafe extern "C" fn fork() -> c_int {
             // after owned locks and before the loader, as in musl fork.c.
             pthread_tsd::pthread_fork_child();
         }
+        #[cfg(feature = "x86-owned-dynamic-runtime")]
+        unsafe {
+            // The inner transaction already repaired only caller identity,
+            // TSD, robust-list, and signal targets. Re-root loader ownership
+            // while the copied selected-worker registry remains locked, then
+            // make that libc registry unreachable in the sole child.
+            loader_fork.complete(true);
+            let Some(reset) = deferred_child_registry_reset else {
+                super::immediate_termination::_Exit(127)
+            };
+            reset.complete();
+        }
     } else {
         // SAFETY: this completes the parent side of the exact list-lock pair
         // on both a successful parent return and a raw fork failure.
@@ -489,9 +534,9 @@ pub unsafe extern "C" fn fork() -> c_int {
         #[cfg(feature = "x86-owned-static-runtime")]
         unsafe { super::owned_aio::atfork(0) };
         unsafe { pthread_tsd::pthread_fork_parent() };
+        #[cfg(feature = "x86-owned-dynamic-runtime")]
+        unsafe { loader_fork.complete(false) };
     }
-    #[cfg(feature = "x86-owned-dynamic-runtime")]
-    unsafe { loader_fork.complete(result == 0) };
     // SAFETY: this restores the caller's saved application mask after all
     // child or parent internal state has reached a callable form.
     unsafe { signal_execution::restore_application_signals(&saved_signal_mask) };
