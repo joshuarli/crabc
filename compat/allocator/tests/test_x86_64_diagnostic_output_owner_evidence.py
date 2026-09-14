@@ -165,6 +165,20 @@ class RetainedStreamReaderTests(unittest.TestCase):
                     with self.assertRaisesRegex(EVIDENCE.EvidenceError, "Rust source closure drifted"):
                         EVIDENCE.validate_report(report)
 
+    def test_reader_rejects_changed_current_cargo_config(self) -> None:
+        report = self.complete_report()
+        original_sha256_file = EVIDENCE.sha256_file
+        cargo_config = ROOT / ".cargo/config.toml"
+
+        def changed_sha256_file(path: Path) -> str:
+            if path.resolve() == cargo_config.resolve():
+                return "0" * 64
+            return original_sha256_file(path)
+
+        with mock.patch.object(EVIDENCE, "sha256_file", side_effect=changed_sha256_file):
+            with self.assertRaisesRegex(EVIDENCE.EvidenceError, "Rust build-input closure drifted"):
+                EVIDENCE.validate_report(report)
+
     def test_reader_rejects_changed_c_and_rust_commands(self) -> None:
         changed_c = self.complete_report()
         changed_c["c_oracle"]["build"]["command"][0] = "/wrong/musl-gcc"

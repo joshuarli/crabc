@@ -52,6 +52,7 @@ RUST_SOURCE_FILES = (
 # command precondition.
 RUST_BUILD_INPUT_FILES = (
     ROOT / "Cargo.toml",
+    ROOT / ".cargo/config.toml",
     ROOT / "crabc-mimalloc/Cargo.toml",
     ROOT / "crabc-core/Cargo.toml",
     ROOT / "rust-toolchain.toml",
