@@ -2525,6 +2525,39 @@ and selected pthread TSD destructors before
 `finish_current_thread_native_after_user_destructors`; a non-finished native
 owner terminates rather than reaching ELF TLS release.
 
+#### Final selected-worker ordinary-exit reinitialization
+
+Pinned `src/prim/unix/prim.c` invokes `src/init.c::_mi_thread_done` from
+mimalloc's private pthread-key destructor. That source finish occurs before
+crabc libc's selected-pthread registry makes its final-task decision. Its
+finished default Theap is empty, so a later `atexit` callback on that same
+final task can lazily initialize a new TLD/Theap and allocate or free an
+allocation that survived the prior thread-done collection/abandon transition.
+The selected Rust worker keeps the completed worker finish at the
+after-user-destructor boundary. Only after the libc pthread registry has
+selected that worker as the final ordinary-exit task, and after that finish has
+returned, it may create a fresh logical native owner for `static_startup::exit`
+callbacks.
+
+That reinitialization has a deliberately narrow proof.  The compiler-TLS slot
+must be exactly `Finished`, with no prior attachment, admission claim, native
+owner-installed flag, or test-only page/route projection.  Its persistent cell
+is either vacant because the worker never allocated, or was successfully
+source-torn-down and dropped.  The latter cell first changes from its terminal
+post-drop state back to vacant; it never exposes the old payload.  Pin keeps
+the backing address stable until the old payload's `Drop` completes, after
+which `MaybeUninit` may hold a distinct new owner at that address.  A retained,
+active, borrowed, exiting, or otherwise inconsistent cell never reopens.  The
+fresh owner obtains a new later-thread admission and a fresh
+`MainHeapThreadAttachment`; ordinary `attach_current_thread` continues to
+reject `Finished` and cannot be used as a general reattach route.
+
+This is not process allocator teardown.  The reinitialized owner can remain
+live through `_exit`, and an ordinary-exit callback can create a new worker
+after the final-task decision.  No default process shutdown claim, live
+allocation release claim, dynamic ownership claim, or internal dynamic TLS-key
+registry shutdown claim follows from this seam.
+
 This maps the upstream v3.5.0 Unix automatic route deliberately: pinned
 `src/prim/unix/prim.c` invokes `_mi_thread_done` from mimalloc's private
 pthread-key destructor, while `src/init.c::_mi_thread_done` collects and
@@ -2546,6 +2579,14 @@ through libc's direct native internal helper. The selected static aggregate
 still carries its existing incidental `libmimalloc-sys`/C mimalloc build
 dependency, so this receipt makes no C-free graph, default-backend, promotion,
 dynamic-runtime, or process-shutdown claim.
+
+After the bootstrapped task calls `pthread_exit`, the same fixture releases its
+remaining worker twice through the existing pipe handshake: once for normal
+return and once for explicit `pthread_exit`. Each final-worker `atexit`
+callback allocates a new block and frees a block that the same worker left live
+before its completed native thread finish. This proves the fresh callback owner
+and the abandoned PageMap free route for that old pointer; it does not claim
+general main-thread or process allocator teardown.
 
 The next integrated wave must:
 

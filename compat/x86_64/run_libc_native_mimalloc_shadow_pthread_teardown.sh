@@ -10,7 +10,10 @@ set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
-readonly EXECUTION_TIMEOUT=20s
+# The focused runner regression overrides only this private bound so its
+# deliberate post-release stall completes quickly. Production evidence keeps
+# the existing twenty-second budget.
+readonly EXECUTION_TIMEOUT="${CRABC_NATIVE_MIMALLOC_SHADOW_PROBE_TIMEOUT:-20s}"
 
 fail() {
     printf 'ERROR: x86 selected native-mimalloc pthread teardown: %s\n' "$*" >&2
@@ -30,7 +33,7 @@ require_tool() {
 }
 
 require_native_linux_x86_64
-for tool in cargo grep mkdir mktemp nm readelf timeout; do
+for tool in cargo chmod grep mkdir mkfifo mktemp nm readelf rm sleep timeout; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -53,6 +56,165 @@ cleanup() {
     exit "$status"
 }
 trap cleanup EXIT
+
+# The fixture's final worker must not return until the bootstrapped task has
+# actually become a zombie. An in-process release flag would race the selected
+# pthread list transition and could make the main task the ordinary-exit
+# allocator caller instead. This adopts the existing last-thread evidence
+# handshake while keeping the exercised candidate static and native-selected.
+run_final_worker_atexit_probe_inner() {
+    local executable="$1"
+    local label="$2"
+    local release="$3"
+    local probe_work_dir="$4"
+    local fifo="$probe_work_dir/final-worker-release"
+    local release_fd
+    local process
+    local status
+    local final_worker_present
+    local task
+
+    rm -f -- "$fifo"
+    mkfifo "$fifo" || return 1
+    # Keep one read/write endpoint open before the child starts, so neither
+    # side blocks opening the FIFO before the runner observes the zombie.
+    exec {release_fd}<>"$fifo"
+    "$executable" <"$fifo" &
+    process=$!
+    while :; do
+        if grep -Eq '^State:[[:space:]]+Z' "/proc/$process/task/$process/status" 2>/dev/null; then
+            # A process leader can be a zombie only because the initial task
+            # called pthread_exit while another task remains. A whole process
+            # that simply exited must not be accepted as that observation.
+            final_worker_present=0
+            for task in "/proc/$process/task/"*; do
+                [ -e "$task/status" ] || continue
+                if [ "${task##*/}" != "$process" ]; then
+                    final_worker_present=1
+                    break
+                fi
+            done
+            if [ "$final_worker_present" -eq 0 ]; then
+                if wait "$process"; then
+                    status=0
+                else
+                    status=$?
+                fi
+                exec {release_fd}>&-
+                rm -f -- "$fifo"
+                printf '%s ended after its initial task retired without a final worker (status %s)\n' \
+                    "$label" "$status" >&2
+                return 1
+            fi
+            printf '%s' "$release" >&"$release_fd"
+            if wait "$process"; then
+                status=0
+            else
+                status=$?
+            fi
+            exec {release_fd}>&-
+            rm -f -- "$fifo"
+            if [ "$status" -ne 0 ]; then
+                printf '%s final-worker atexit status: %s\n' "$label" "$status" >&2
+            fi
+            return "$status"
+        fi
+        if ! kill -0 "$process" 2>/dev/null; then
+            if wait "$process"; then
+                status=0
+            else
+                status=$?
+            fi
+            exec {release_fd}>&-
+            rm -f -- "$fifo"
+            printf '%s ended before the bootstrapped task became a zombie (status %s)\n' \
+                "$label" "$status" >&2
+            return 1
+        fi
+        sleep 0.01
+    done
+}
+
+export -f run_final_worker_atexit_probe_inner
+
+run_final_worker_atexit_probe() {
+    # `timeout` owns the whole parent/child handshake, including the wait after
+    # FIFO release. It signals the inner process group, so it never races a
+    # later PID reuse by separately killing a raw child PID.
+    timeout "$EXECUTION_TIMEOUT" bash -c \
+        'run_final_worker_atexit_probe_inner "$@"' \
+        run_final_worker_atexit_probe_inner "$1" "$2" "$3" "$work_dir"
+}
+
+run_final_worker_atexit_probe_regressions() {
+    local early_zero="$work_dir/final-worker-early-zero"
+    local post_release_stall="$work_dir/final-worker-post-release-stall"
+    local status
+
+    cat >"$early_zero" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+    chmod 700 "$early_zero"
+    if run_final_worker_atexit_probe "$early_zero" "early-zero regression" R; then
+        printf 'early-zero regression unexpectedly passed\n' >&2
+        return 1
+    else
+        status=$?
+    fi
+    if [ "$status" -ne 1 ]; then
+        printf 'early-zero regression returned %s, expected handshake rejection 1\n' \
+            "$status" >&2
+        return 1
+    fi
+
+    cat >"$work_dir/final-worker-post-release-stall.c" <<'EOF'
+#include <pthread.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+static void *worker(void *opaque)
+{
+    char release;
+
+    (void)opaque;
+    if (read(STDIN_FILENO, &release, 1) != 1)
+        _Exit(61);
+    for (;;)
+        pause();
+}
+
+int main(void)
+{
+    pthread_t thread;
+
+    if (pthread_create(&thread, 0, worker, 0) != 0)
+        return 62;
+    pthread_exit(0);
+}
+EOF
+    "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread \
+        "$work_dir/final-worker-post-release-stall.c" -o "$post_release_stall"
+    if run_final_worker_atexit_probe "$post_release_stall" "post-release-stall regression" R; then
+        printf 'post-release-stall regression unexpectedly passed\n' >&2
+        return 1
+    else
+        status=$?
+    fi
+    if [ "$status" -ne 124 ]; then
+        printf 'post-release-stall regression returned %s, expected timeout 124\n' \
+            "$status" >&2
+        return 1
+    fi
+    printf 'x86 selected native-mimalloc pthread teardown probe regressions: PASS\n'
+}
+
+if [ "${1:-}" = "--probe-regressions" ]; then
+    [ "$#" -eq 1 ] || fail "--probe-regressions takes no additional arguments"
+    run_final_worker_atexit_probe_regressions
+    exit 0
+fi
+[ "$#" -eq 0 ] || fail "run_libc_native_mimalloc_shadow_pthread_teardown.sh takes no arguments"
 
 cargo_target="$work_dir/cargo-target"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
@@ -77,7 +239,10 @@ cd "$ROOT_DIR"
     -fno-stack-protector -I"$ROOT_DIR/include" \
     compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_probe.c \
     -o "$reference"
-if ! timeout "$EXECUTION_TIMEOUT" "$reference"; then
+if ! run_final_worker_atexit_probe "$reference" "pinned-musl reference normal-return" R; then
+    fail "pinned-musl reference execution failed"
+fi
+if ! run_final_worker_atexit_probe "$reference" "pinned-musl reference explicit-exit" E; then
     fail "pinned-musl reference execution failed"
 fi
 
@@ -157,7 +322,10 @@ if grep -Eq '[[:space:]](mi_(malloc|free|calloc|realloc)|_mi_malloc_generic)$' \
     fail "candidate extracted a C mimalloc allocation entry"
 fi
 
-if ! timeout "$EXECUTION_TIMEOUT" "$candidate"; then
+if ! run_final_worker_atexit_probe "$candidate" "selected native candidate normal-return" R; then
+    fail "selected native candidate execution failed"
+fi
+if ! run_final_worker_atexit_probe "$candidate" "selected native candidate explicit-exit" E; then
     fail "selected native candidate execution failed"
 fi
 if ! timeout "$EXECUTION_TIMEOUT" "$internal_allocator_override_candidate"; then

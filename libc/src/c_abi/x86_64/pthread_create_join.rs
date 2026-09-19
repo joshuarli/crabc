@@ -2129,6 +2129,10 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
             unsafe { super::signal_execution::restore_application_signals(&saved_signal_mask) };
             // SAFETY: the initial selected task already called pthread_exit
             // and this locked task-state transition is uniquely final.
+            #[cfg(feature = "native-mimalloc-shadow")]
+            unsafe {
+                super::native_mimalloc_lifecycle::reinitialize_selected_final_worker_for_ordinary_exit()
+            };
             unsafe { exit_selected_final_runtime_task() }
         }
     }
@@ -2595,6 +2599,10 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
                 // SAFETY: only the unique final task restores this mask before
                 // ordinary process exit and its atexit callbacks.
                 unsafe { super::signal_execution::restore_application_signals(&saved_signal_mask) };
+                #[cfg(feature = "native-mimalloc-shadow")]
+                unsafe {
+                    super::native_mimalloc_lifecycle::reinitialize_selected_final_worker_for_ordinary_exit()
+                };
                 unsafe { exit_selected_final_runtime_task() }
             }
         }

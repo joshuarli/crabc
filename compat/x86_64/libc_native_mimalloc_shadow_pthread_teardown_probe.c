@@ -6,9 +6,11 @@
  * receives EAGAIN without invoking user code, then starts libc normally.
  * Normal return, pthread_exit, and deferred pthread cancellation each make a
  * user TSD destructor allocate and free before the selected native owner is
- * finished. It does not qualify main-thread/process shutdown, dynamic loader
- * ownership, cross-worker pointer transfer, allocator promotion, or public
- * x86 support.
+ * finished. A final worker also reaches ordinary `atexit` only after the
+ * bootstrapped thread called `pthread_exit`; that callback allocates and frees
+ * after the final worker's normal-return or explicit-exit native finish. It
+ * does not qualify main-thread or process shutdown, dynamic loader ownership,
+ * cross-worker pointer transfer, allocator promotion, or public x86 support.
  */
 
 #if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
@@ -21,6 +23,7 @@
 #include <pthread.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 #define CRABC_TYPE_IS(actual, expected) \
     __builtin_types_compatible_p(actual, expected)
@@ -58,6 +61,14 @@ struct teardown_round {
 
 static pthread_key_t teardown_key;
 static volatile int prestart_callback_count;
+static void *final_worker_pre_teardown_allocation;
+
+/* The runner writes only after `/proc` reports the bootstrapped task as a
+ * zombie. Releasing a worker from an application flag before `pthread_exit`
+ * has withdrawn the initial task would race the final-task decision. This
+ * private test pipe adopts the existing last-thread evidence convention; it
+ * does not select a public task-ID API or a dynamic runtime path. */
+static volatile int final_worker_ready;
 
 #ifdef CRABC_NATIVE_MIMALLOC_SHADOW_TEST_AUDIT
 extern size_t __crabc_x86_native_mimalloc_active_later_thread_count_test_audit(void);
@@ -168,6 +179,50 @@ static void *deferred_cancel_worker(void *opaque)
     __atomic_store_n(&round->ready, 1, __ATOMIC_RELEASE);
     for (;;)
         pthread_testcancel();
+}
+
+/* Pinned mimalloc's private pthread-key destructor runs `_mi_thread_done`
+ * before libc's selected-pthread registry decides that this is the final
+ * task. A later ordinary-exit callback may call malloc: the source sees the
+ * now-empty default Theap and lazily creates a new one for this still-running
+ * final task. This callback makes that post-finish allocation observable. It
+ * also frees a live block allocated by the same worker before `_mi_thread_done`.
+ * Source collection abandons that old page, so its PageMap record must no
+ * longer classify the reused Linux/TLS identity as the new owner. */
+static void final_worker_atexit_allocation(void)
+{
+    void *allocation = malloc(257);
+    void *pre_teardown_allocation = final_worker_pre_teardown_allocation;
+
+    if (allocation == 0)
+        _Exit(51);
+    ((volatile unsigned char *)allocation)[0] = 0x3c;
+    free(allocation);
+    if (pre_teardown_allocation == 0)
+        _Exit(53);
+    free(pre_teardown_allocation);
+    final_worker_pre_teardown_allocation = 0;
+}
+
+static void *final_worker_after_initial_pthread_exit(void *opaque)
+{
+    char release;
+    void *allocation;
+
+    (void)opaque;
+    allocation = malloc(193);
+    if (allocation == 0)
+        _Exit(54);
+    ((volatile unsigned char *)allocation)[0] = 0xc3;
+    final_worker_pre_teardown_allocation = allocation;
+    __atomic_store_n(&final_worker_ready, 1, __ATOMIC_RELEASE);
+    if (read(STDIN_FILENO, &release, 1) != 1)
+        _Exit(52);
+    if (release == 'E')
+        pthread_exit(0);
+    if (release != 'R')
+        _Exit(52);
+    return 0;
 }
 
 static int run_return_round(
@@ -292,6 +347,24 @@ int main(void)
             baseline_later_thread_count)
         return 38;
 #endif
-    return pthread_key_delete(teardown_key) == 0 ? 0 : 40;
+    if (pthread_key_delete(teardown_key) != 0)
+        return 40;
+
+    /* Main pthread_exit must leave this worker as the final ordinary-exit
+     * owner. Its native worker finish therefore precedes this callback.
+     * The task-ID handshake above prevents the worker returning too early. */
+    {
+        pthread_t final_worker;
+
+        __atomic_store_n(&final_worker_ready, 0, __ATOMIC_RELEASE);
+        if (atexit(final_worker_atexit_allocation) != 0)
+            return 41;
+        if (pthread_create(&final_worker, 0,
+                final_worker_after_initial_pthread_exit, 0) != 0)
+            return 42;
+        if (wait_for_nonzero(&final_worker_ready) != 0)
+            return 43;
+    }
+    pthread_exit(0);
 #endif
 }
