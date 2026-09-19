@@ -658,6 +658,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   consumer-static-pie-lto  run the private no-std crabc-rs O3/full-LTO owned-runtime consumer
   consumer-native-facade-lto  run the private filesystem/pipe/eventfd crabc-rs full-LTO consumer
   libc-pthread-create-join-tls  run the static x86 crabc-libc private create/exit/join TLS slice
+  libc-native-mimalloc-shadow-pthread-teardown  run selected-native x86 worker attach/teardown evidence
   libc-pthread-identity  run the static x86 crabc-libc pthread/C11 identity alias slice
   libc-c11-lifecycle  run the static x86 crabc-libc bounded C11 lifecycle slice
   libc-c11-plain-sync  run the static x86 crabc-libc C11 plain synchronization slice
@@ -5864,6 +5865,10 @@ run_libc_pthread_create_join_tls_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_create_join_tls.sh
 }
 
+run_libc_native_mimalloc_shadow_pthread_teardown_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_native_mimalloc_shadow_pthread_teardown.sh
+}
+
 run_libc_pthread_identity_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_identity.sh
 }
@@ -6682,6 +6687,7 @@ case "$command" in
         ensure_image
         run_in_container python3 /workspace/compat/x86_64/generate_c_abi_evidence_matrix.py --run-family "$1"
         ;;
+    libc-native-mimalloc-shadow-pthread-teardown) ;;
     getloadavg-header-abi) ;;
     libc-getloadavg) ;;
     sleep-header-abi) ;;
@@ -8812,6 +8818,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-pthread-create-join-tls takes no arguments"
         ensure_image
         run_libc_pthread_create_join_tls_probe
+        ;;
+    libc-native-mimalloc-shadow-pthread-teardown)
+        [ "$#" -eq 0 ] || fail "libc-native-mimalloc-shadow-pthread-teardown takes no arguments"
+        ensure_image
+        run_libc_native_mimalloc_shadow_pthread_teardown_probe
         ;;
     libc-pthread-identity)
         [ "$#" -eq 0 ] || fail "libc-pthread-identity takes no arguments"

@@ -484,6 +484,10 @@ struct ThreadControl {
     // the record visible with this release flag before clone. The child first
     // acquires it, rather than treating clone as a Rust memory-ordering edge.
     start_ready: AtomicU8,
+    // Native Rust allocator attachment is a child-to-parent creation
+    // handshake. The callback stays closed until the child reports Attached.
+    #[cfg(feature = "native-mimalloc-shadow")]
+    native_mimalloc_attach: AtomicI32,
     #[cfg(feature = "x86-owned-static-runtime")]
     startup_signal_mask: Option<u64>,
     #[cfg(feature = "x86-owned-static-runtime")]
@@ -582,6 +586,23 @@ struct ThreadControl {
     cancellation: pthread_cancel::SelectedWorkerCancellation,
     start: SelectedWorkerStart,
     argument: *mut c_void,
+}
+
+#[cfg(feature = "native-mimalloc-shadow")]
+const NATIVE_MIMALLOC_ATTACH_PENDING: i32 = 0;
+#[cfg(feature = "native-mimalloc-shadow")]
+const NATIVE_MIMALLOC_ATTACH_ATTACHED: i32 = 1;
+#[cfg(feature = "native-mimalloc-shadow")]
+const NATIVE_MIMALLOC_ATTACH_REJECTED: i32 = 2;
+#[cfg(feature = "native-mimalloc-shadow")]
+const NATIVE_MIMALLOC_ATTACH_FATAL: i32 = 3;
+
+#[cfg(feature = "native-mimalloc-shadow")]
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum NativeMimallocAttachWait {
+    Attached,
+    Rejected,
+    Fatal,
 }
 
 // The head changes only while the registry lock is held. It is atomic solely
@@ -1927,6 +1948,75 @@ unsafe fn exit_selected_linux_task() -> ! {
     }
 }
 
+/// Attach the native allocator before a selected worker can run user code.
+///
+/// This release/wake publishes only the child result. The parent retains the
+/// control and TLS mappings until it observes the result and, on rejection,
+/// the kernel's clear-child-tid lifecycle confirms the child has stopped.
+#[cfg(feature = "native-mimalloc-shadow")]
+unsafe fn attach_selected_worker_native_mimalloc(control: *mut ThreadControl) -> bool {
+    let result = super::native_mimalloc_lifecycle::attach_selected_worker();
+    let state = match result {
+        super::native_mimalloc_lifecycle::SelectedWorkerNativeAttach::Attached => {
+            NATIVE_MIMALLOC_ATTACH_ATTACHED
+        }
+        super::native_mimalloc_lifecycle::SelectedWorkerNativeAttach::Rejected => {
+            NATIVE_MIMALLOC_ATTACH_REJECTED
+        }
+        super::native_mimalloc_lifecycle::SelectedWorkerNativeAttach::Fatal => {
+            NATIVE_MIMALLOC_ATTACH_FATAL
+        }
+    };
+    unsafe {
+        (*control).native_mimalloc_attach.store(state, Ordering::Release);
+        raw_syscall::syscall3(
+            raw_syscall::SYS_FUTEX,
+            core::ptr::addr_of!((*control).native_mimalloc_attach) as i64,
+            129,
+            1,
+        );
+    }
+    match result {
+        super::native_mimalloc_lifecycle::SelectedWorkerNativeAttach::Attached => true,
+        super::native_mimalloc_lifecycle::SelectedWorkerNativeAttach::Rejected => false,
+        super::native_mimalloc_lifecycle::SelectedWorkerNativeAttach::Fatal => {
+            // The native runtime may retain an attachment/admission in this
+            // compiler-TLS image. Do not return toward clone/TLS cleanup.
+            super::immediate_termination::_Exit(134)
+        }
+    }
+}
+
+/// Wait for the child-side native attachment preceding callback admission.
+///
+/// The child is the sole writer of a terminal state. This is a narrow create
+/// handoff, not allocator locking or a second pthread lifecycle registry.
+#[cfg(feature = "native-mimalloc-shadow")]
+unsafe fn selected_worker_native_mimalloc_attached(
+    control: *mut ThreadControl,
+) -> NativeMimallocAttachWait {
+    loop {
+        let observed = unsafe { (*control).native_mimalloc_attach.load(Ordering::Acquire) };
+        match observed {
+            NATIVE_MIMALLOC_ATTACH_ATTACHED => return NativeMimallocAttachWait::Attached,
+            NATIVE_MIMALLOC_ATTACH_REJECTED => return NativeMimallocAttachWait::Rejected,
+            NATIVE_MIMALLOC_ATTACH_FATAL => return NativeMimallocAttachWait::Fatal,
+            NATIVE_MIMALLOC_ATTACH_PENDING => unsafe {
+                raw_syscall::syscall6(
+                    raw_syscall::SYS_FUTEX,
+                    core::ptr::addr_of!((*control).native_mimalloc_attach) as i64,
+                    128,
+                    NATIVE_MIMALLOC_ATTACH_PENDING as i64,
+                    0,
+                    0,
+                    0,
+                );
+            },
+            _ => return NativeMimallocAttachWait::Fatal,
+        }
+    }
+}
+
 /// Run the one selected C callback, then publish its result before exit.
 unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
     let control = opaque.cast::<ThreadControl>();
@@ -1973,6 +2063,13 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
             core::ptr::addr_of!((*control).cancellation),
         )
     };
+    #[cfg(feature = "native-mimalloc-shadow")]
+    if !unsafe { attach_selected_worker_native_mimalloc(control) } {
+        // The parent observes this terminal rejection before it exposes the
+        // pthread handle. No callback, user cleanup, or TSD destructor can
+        // exist on this path, so the clone tail may end the child directly.
+        return 0;
+    }
     // Musl pthread_create.c::start clears SIGCANCEL (33, not SIGTIMER
     // 32) in the inherited mask; start_c11 instead retains the blocked
     // application mask. Publish FS+32 first: restoring can deliver signals
@@ -2014,6 +2111,8 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
         // the helper leaves C11 state untouched.
         pthread_cancel::disable_current_selected_pthread_cancellation_for_exit();
         pthread_tsd::run_selected_worker_tsd_destructors(core::ptr::addr_of!((*control).tsd));
+        #[cfg(feature = "native-mimalloc-shadow")]
+        super::native_mimalloc_lifecycle::finish_selected_worker_after_user_destructors();
         pthread_mutex::mark_current_selected_robust_mutexes_owner_dead();
         publish_selected_worker_result(control, result);
     }
@@ -2196,6 +2295,8 @@ unsafe fn create_selected_worker_with_attributes(
             ThreadControl {
                 child_tid: AtomicI32::new(0),
                 start_ready: AtomicU8::new(0),
+                #[cfg(feature = "native-mimalloc-shadow")]
+                native_mimalloc_attach: AtomicI32::new(NATIVE_MIMALLOC_ATTACH_PENDING),
                 #[cfg(feature = "x86-owned-static-runtime")]
                 startup_signal_mask: None,
                 #[cfg(feature = "x86-owned-static-runtime")]
@@ -2352,6 +2453,46 @@ unsafe fn create_selected_worker_with_attributes(
         return EAGAIN;
     }
 
+    #[cfg(feature = "native-mimalloc-shadow")]
+    match unsafe { selected_worker_native_mimalloc_attached(control) } {
+        NativeMimallocAttachWait::Attached => {}
+        NativeMimallocAttachWait::Fatal => {
+            // A retained/contradictory child owner must not reach parent-side
+            // TLS reclamation. The child already took the same fail-stop route
+            // after publishing this wake state; this closes the observation
+            // race without interpreting it as recoverable EAGAIN.
+            super::immediate_termination::_Exit(134);
+        }
+        NativeMimallocAttachWait::Rejected => {
+            // The child published a terminal attachment rejection before it
+            // could reach user code. Wait for clear-child-tid before
+            // withdrawing the registry node and unmapping its full
+            // TLS/control/stack ownership; no failed native attach can escape
+            // as a joinable pthread handle.
+            loop {
+                let tid = unsafe { (*control).child_tid.load(Ordering::Acquire) };
+                if tid == 0 {
+                    break;
+                }
+                unsafe {
+                    raw_syscall::syscall6(
+                        raw_syscall::SYS_FUTEX,
+                        child_tid as i64,
+                        0,
+                        tid as i64,
+                        0,
+                        0,
+                        0,
+                    );
+                }
+            }
+            if release_selected_worker(control) {
+                let _ = unsafe { reclaim_withdrawn_selected_worker(control) };
+            }
+            return EAGAIN;
+        }
+    }
+
     // SAFETY: clone succeeded, so the selected child's complete Static Initial
     // TLS v1 TP stays live until the one admitted join reclaims it. On x86
     // musl this TP is the opaque pthread_t returned by pthread_self, and the
@@ -2439,6 +2580,8 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
                 pthread_cancel::run_current_selected_pthread_cleanup_handlers();
             }
             pthread_tsd::run_selected_worker_tsd_destructors(core::ptr::addr_of!((*control).tsd));
+            #[cfg(feature = "native-mimalloc-shadow")]
+            super::native_mimalloc_lifecycle::finish_selected_worker_after_user_destructors();
             pthread_mutex::mark_current_selected_robust_mutexes_owner_dead();
             publish_selected_worker_result(control, result);
         }

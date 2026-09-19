@@ -211,6 +211,25 @@ pub unsafe extern "C" fn __libc_start_main(
     // a general dynamic loader or process-environment lifecycle.
     unsafe { environment::install_initial(vectors.envp) };
 
+    // The native shadow uses the same initial TLS, validated environment, and
+    // startup-published `AT_PAGESZ` as its source process owner. Keep this
+    // before every constructor or user callback: a selected native worker may
+    // only attach after the main owner prepared its dormant first arena. A
+    // Failed selected setup cannot continue into constructors with a partly
+    // active process owner: `initialize_process` publishes that owner before
+    // later-arena preparation, and failed preparation retains its page owner.
+    // Reject before user code instead of treating that state as a recoverable
+    // C fallback or admitting a native worker without its source-dormant pair.
+    #[cfg(feature = "native-mimalloc-shadow")]
+    let native_mimalloc_lifecycle_ready = auxv_observation::initial_page_size()
+        .is_some_and(|page_size| unsafe {
+            super::native_mimalloc_lifecycle::initialize_selected_process(page_size)
+        });
+    #[cfg(feature = "native-mimalloc-shadow")]
+    if !native_mimalloc_lifecycle_ready {
+        startup_reject();
+    }
+
     // All delimiter validation completed above. Publish the process-global
     // aliases before constructors, matching musl's startup ordering without
     // selecting an environment owner or dynamic-loader bridge.

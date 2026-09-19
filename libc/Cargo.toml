@@ -184,8 +184,17 @@ x86-netdb-setent = []
 x86-pthread-spin-operations = []
 # Selects the bounded Rust ticket-zero allocator for explicit M5 shadow
 # evidence. The C mimalloc backend remains the default; this feature has no
-# runtime selection or fallback and is not promotion evidence.
-native-mimalloc-shadow = []
+# runtime selection or fallback and is not promotion evidence. On x86 this
+# additionally selects the private engine dependency; the target-local source
+# root rejects use without the owned static runtime and rejects the dynamic
+# product until its allocator-owner audit exists.
+native-mimalloc-shadow = ["dep:crabc-mimalloc"]
+# Test-only x86 native-worker lifecycle observation. The bridge stays absent
+# from ordinary selected-native archives and exposes no public C ABI.
+native-mimalloc-shadow-test-audit = [
+    "native-mimalloc-shadow",
+    "crabc-mimalloc/native-runtime-test-audit",
+]
 
 [target.'cfg(all(target_os = "linux", target_arch = "aarch64", target_endian = "little"))'.dependencies]
 crabc-core = { path = "../crabc-core" }
@@ -200,6 +209,7 @@ sha-crypt = { version = "0.6", default-features = false, features = ["alloc", "p
 
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64", target_endian = "little"))'.dependencies]
 crabc-core = { path = "../crabc-core", optional = true }
+crabc-mimalloc = { path = "../crabc-mimalloc", optional = true }
 libmimalloc-sys = { version = "0.1.49", default-features = false, features = ["extended"], optional = true }
 # These are the same approved RustCrypto packages used by the active AArch64
 # crypt profile. Keeping them optional confines their alloc-enabled MCF path

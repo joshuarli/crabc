@@ -6637,8 +6637,11 @@ fn with_current_thread_native_persistent_pointer<R>(
 }
 
 /// Initializes the retained ticket-zero process owner from libc's validated
-/// `AT_PAGESZ` value. A false result means the shadow lifecycle is unavailable
-/// for this process; the existing C mimalloc backend remains selected.
+/// `AT_PAGESZ` value. A false result means this private lifecycle is
+/// unavailable for the process. The embedding libc owns backend selection: its
+/// default C-backed build may remain selected, while an explicitly selected
+/// native-shadow build must fail its native allocation boundary without
+/// sending a native pointer to that C backend.
 #[doc(hidden)]
 #[inline]
 #[cfg(target_arch = "x86_64")]

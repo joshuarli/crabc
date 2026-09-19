@@ -1841,6 +1841,30 @@ x86 support, libc integration, backend promotion, or AArch64 evidence. Its
 report is
 `compat/reports/allocator/x86_64/cancellation-pthread-destructor.json`.
 
+The separate feature-gated x86 owned-static integration receipt is:
+
+```sh
+./scripts/dev-x86_64.sh libc-native-mimalloc-shadow-pthread-teardown
+```
+
+It runs a real `__libc_start_main` candidate with
+`native-mimalloc-shadow,x86-owned-static-runtime`. A failed process-owner or
+later-arena setup rejects selected startup before constructors, so it cannot
+continue with a partly active native owner. Before startup installs that owner,
+its child attach returns only recoverable `Inactive`; the parent reclaims that
+child and returns `EAGAIN` without running the user callback. After startup,
+normal return, `pthread_exit`, and deferred `pthread_cancel` all run a user TSD
+destructor that allocates and frees through the selected native adapter before
+native after-user-destructor finish. The existing test-only admission audit
+starts at zero after the pre-start rejection and returns to zero after each
+join. A strong application `malloc` replacement also proves that
+`pthread_atfork` uses libc's direct native private-allocation helper. A
+retained or contradictory fresh-TLS attachment fails closed rather than taking
+that recoverable cleanup path. This does not qualify C-free dependency purity
+(the owned-static aggregate retains its incidental C mimalloc dependency),
+default selection, dynamic loader ownership, main/process teardown, promotion,
+public x86 support, or AArch64 behavior.
+
 A separate dynamic OS-aligned singleton owner-exit route is available on native
 x86-64:
 
