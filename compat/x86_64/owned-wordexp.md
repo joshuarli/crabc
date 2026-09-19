@@ -213,7 +213,7 @@ match. The outer collector can therefore repeat retention without changing
 the component's sealed evidence. Version 4 required the execution mode during
 replay and could not survive the outer collector's permission normalization.
 
-Run `python3 -B compat/x86_64/owned_wordexp_evidence.py capture-expected-inputs DYNAMIC_SYSROOT` in the pinned native image, adding `--static-sysroot STATIC_SYSROOT` when both product modes are selected. It retains a separate expected native tool/oracle seal; supplied products are validated but never rebuilt. A host replay must provide that independently captured file:
+Run `python3 -B compat/x86_64/owned_wordexp_evidence.py capture-expected-inputs DYNAMIC_SYSROOT` in the pinned native image, adding `--static-sysroot STATIC_SYSROOT` when both product modes are selected. It retains a separate expected native tool/oracle seal; supplied products are validated but never rebuilt. Before printing its path, capture makes that seal and its exact evidence directory host-readable; this adds only read/traverse permission bits after the JSON bytes are sealed. A host replay must provide that independently captured file:
 `python3 -B compat/x86_64/owned_wordexp_evidence.py validate --report REPORT
 --expected-inputs EXPECTED_INPUTS`. It reconstructs a retained receipt on the
 host and requires the fixed

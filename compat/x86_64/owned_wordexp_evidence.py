@@ -1132,6 +1132,13 @@ def _publish_report(report_path: Path, report: dict, expected_native_inputs: dic
     print(report_path)
 
 
+def _publish_expected_native_inputs(path: Path, expected: dict) -> None:
+    """Publish the independently captured seal after host-readable retention."""
+    _write_json(path, expected)
+    qualification.make_retained_evidence_readable(path.parent)
+    print(path)
+
+
 def collect(dynamic: Path | None, static: Path | None) -> Path:
     _native_requirements()
     work = _work_directory()
@@ -1248,8 +1255,7 @@ def capture_expected_native_inputs(dynamic: Path, static: Path | None) -> Path:
         if expected != expected_native_input_seal(_installed_tool_roster(dynamic, static), oracle):
             fail("native tool or oracle input changed during expected input capture")
         path = work / "expected-native-inputs.json"
-        _write_json(path, expected)
-        print(path)
+        _publish_expected_native_inputs(path, expected)
         return path
     except Exception:
         print(f"owned wordexp expected inputs: retained failure evidence at {work}", file=sys.stderr)

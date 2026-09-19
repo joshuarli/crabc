@@ -29,6 +29,60 @@ def load_module():
 
 
 class OwnedWordexpPublicationTests(unittest.TestCase):
+    def test_expected_native_input_publication_is_host_readable(self) -> None:
+        module = load_module()
+        root = TMP_ROOT / self.id().replace(".", "-")
+        root.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(shutil.rmtree, root)
+        work = root / "expected-inputs"
+        previous_umask = os.umask(0o077)
+        try:
+            work.mkdir()
+        finally:
+            os.umask(previous_umask)
+        path = work / "expected-native-inputs.json"
+        output = io.StringIO()
+        dynamic = root / "supplied-dynamic"
+        dynamic.mkdir()
+        expected = {"sealed": "inputs"}
+        expected_bytes = b'{"sealed":"inputs"}\n'
+        oracle = {
+            "qualification": {"oracle": "fixture"},
+            "loader": {"identity": {"tool": "loader"}},
+            "static_libc": {"native": {"tool": "static-libc"}},
+        }
+        sealed: list[bytes] = []
+        retain = module.qualification.make_retained_evidence_readable
+
+        def make_readable(directory):
+            self.assertEqual(directory, work)
+            sealed.append(path.read_bytes())
+            retain(directory)
+            self.assertEqual(path.read_bytes(), sealed[-1])
+
+        with contextlib.redirect_stdout(output), contextlib.ExitStack() as patches:
+            patches.enter_context(unittest.mock.patch.object(module, "_native_requirements"))
+            patches.enter_context(unittest.mock.patch.object(module, "_work_directory", return_value=work))
+            patches.enter_context(unittest.mock.patch.object(module, "_products", return_value=(dynamic, None, False)))
+            patches.enter_context(unittest.mock.patch.object(module, "_installed_tool_roster", return_value={"tools": "fixture"}))
+            patches.enter_context(unittest.mock.patch.object(module, "_capture_oracle_inputs", return_value=oracle))
+            patches.enter_context(unittest.mock.patch.object(module, "expected_native_input_seal", return_value=expected))
+            patches.enter_context(unittest.mock.patch.object(module.qualification, "require_live_oracle"))
+            patches.enter_context(unittest.mock.patch.object(
+                module, "_tool_identity", side_effect=(oracle["static_libc"]["native"], oracle["loader"]["identity"])))
+            patches.enter_context(unittest.mock.patch.object(
+                module.qualification, "make_retained_evidence_readable", side_effect=make_readable))
+            self.assertEqual(module.capture_expected_native_inputs(dynamic, None), path)
+
+        self.assertEqual(path.read_bytes(), expected_bytes)
+        self.assertEqual(path.stat().st_mode & 0o777, 0o644,
+                         "expected native-input seal must be host-readable after capture")
+        self.assertEqual(work.stat().st_mode & 0o777, 0o755,
+                         "expected native-input directory must be host-traversable after capture")
+        self.assertEqual(output.getvalue().splitlines(), [str(path)])
+        self.assertEqual(sealed, [expected_bytes])
+        self.assertEqual(path.read_bytes(), sealed[-1])
+
     def test_validated_report_is_discoverable_by_dynamic_qualification(self) -> None:
         module = load_module()
         root = TMP_ROOT / self.id().replace(".", "-")
