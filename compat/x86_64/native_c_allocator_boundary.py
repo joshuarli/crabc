@@ -465,6 +465,26 @@ def _c_runtime_import_bindings(facts: Mapping[str, Any], account: Mapping[str, A
     }
 
 
+def _validate_default_c_allocator_selection(static_root: str) -> None:
+    """Keep each C owner behind its existing gate and the native-shadow exclusion."""
+    for gate, declaration in (
+        ("crabc_owned_mimalloc_lifecycle", '#[path = "allocator_mimalloc_lifecycle.rs"]\nmod allocator_mimalloc_lifecycle;'),
+        ('feature = "x86-allocator-runtime"', "mod allocator {"),
+        ('feature = "x86-allocator-observability"', "mod allocator_observability {"),
+    ):
+        selection = (
+            "#[cfg(all(\n"
+            f"    {gate},\n"
+            '    not(feature = "native-mimalloc-shadow"),\n'
+            "))]\n" + declaration
+        )
+        require(static_root.count(selection) == 1,
+                f"x86 static C allocator selection differs for {gate}")
+    for fragment in ('include!("../../allocator_mimalloc.rs")',
+                     'include!("../../allocator_observability_mimalloc.rs")'):
+        require(fragment in static_root, f"x86 static root omits {fragment}")
+
+
 def source_resolution(root: Path, product_revision: str) -> dict[str, object]:
     """Check C call sites and prove their blobs still equal the product epoch."""
     require(REVISION.fullmatch(product_revision) is not None, "product source revision is invalid")
@@ -475,10 +495,7 @@ def source_resolution(root: Path, product_revision: str) -> dict[str, object]:
     for name in ("errno::get_errno", "errno::set_errno"):
         require(name in lifecycle, f"allocator lifecycle source omits {name}")
     static_root = texts["libc/src/c_abi/x86_64/static_c_abi.rs"]
-    for fragment in ('#[cfg(crabc_owned_mimalloc_lifecycle)]', 'allocator_mimalloc_lifecycle.rs',
-                     '#[cfg(feature = "x86-allocator-runtime")]', 'include!("../../allocator_mimalloc.rs")',
-                     '#[cfg(feature = "x86-allocator-observability")]', 'allocator_observability_mimalloc.rs'):
-        require(fragment in static_root, f"x86 static root omits {fragment}")
+    _validate_default_c_allocator_selection(static_root)
     crypt = texts["libc/src/crypt_impl.rs"]
     require("struct CrabcRustAllocator" in crypt and "mi_malloc_aligned" in crypt and "mi_free" in crypt,
             "crypt allocator source does not use the selected C backend")

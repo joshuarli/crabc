@@ -23,6 +23,34 @@ SPEC.loader.exec_module(BOUNDARY)
 
 
 class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
+    def test_source_resolution_accepts_default_c_with_native_shadow_selection(self) -> None:
+        revision = BOUNDARY.subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True,
+        ).strip()
+
+        resolution = BOUNDARY.source_resolution(ROOT, revision)
+
+        self.assertEqual(resolution["product_revision"], revision)
+        self.assertEqual(set(resolution["runtime_source_sha256"]), set(BOUNDARY.RUNTIME_SOURCES))
+
+    def test_c_selection_rejects_missing_or_inverted_native_exclusion(self) -> None:
+        static_root = (ROOT / "libc/src/c_abi/x86_64/static_c_abi.rs").read_text(encoding="utf-8")
+        exclusion = '    not(feature = "native-mimalloc-shadow"),\n'
+        for gate in (
+            "crabc_owned_mimalloc_lifecycle",
+            'feature = "x86-allocator-runtime"',
+            'feature = "x86-allocator-observability"',
+        ):
+            selection = f"#[cfg(all(\n    {gate},\n" + exclusion
+            self.assertEqual(static_root.count(selection), 1)
+            for replacement in ("", '    feature = "native-mimalloc-shadow",\n'):
+                with self.subTest(gate=gate, replacement=replacement):
+                    changed = static_root.replace(
+                        selection, f"#[cfg(all(\n    {gate},\n" + replacement,
+                    )
+                    with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "C allocator selection differs"):
+                        BOUNDARY._validate_default_c_allocator_selection(changed)
+
     def test_contract_declares_the_finite_inverse_c_runtime_import_roster(self) -> None:
         contract = BOUNDARY.load_contract(ROOT)
 
@@ -289,10 +317,9 @@ class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
         with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "signature differs for malloc"):
             BOUNDARY._c_abi_bindings(wrapper.replace("size: SizeT", "size: u32", 1), observation)
 
-    def test_current_wrapper_and_lifecycle_sources_match_the_supplied_b525_epoch(self) -> None:
-        resolution = BOUNDARY.source_resolution(ROOT, "b52538c57e07958a1d31ef5321dd5c6e2dedc258")
-        self.assertEqual(resolution["product_revision"], "b52538c57e07958a1d31ef5321dd5c6e2dedc258")
-        self.assertEqual(set(resolution["runtime_source_sha256"]), set(BOUNDARY.RUNTIME_SOURCES))
+    def test_current_source_rejects_the_pre_native_selection_product_epoch(self) -> None:
+        with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "product source differs"):
+            BOUNDARY.source_resolution(ROOT, "b52538c57e07958a1d31ef5321dd5c6e2dedc258")
 
     def test_host_replay_uses_the_retained_workspace_link_reader_and_sealed_linker(self) -> None:
         scratch = ROOT / ".work/x86_64/native-c-allocator-boundary-tests"
@@ -375,7 +402,10 @@ class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
         self.assertEqual(contract["scope"]["global_entries"], [
             "calloc", "realloc", "reallocarray", "free", "aligned_alloc", "posix_memalign", "memalign", "valloc", "malloc_usable_size",
         ])
-        resolution = BOUNDARY.source_resolution(ROOT, "b52538c57e07958a1d31ef5321dd5c6e2dedc258")
+        revision = BOUNDARY.subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True,
+        ).strip()
+        resolution = BOUNDARY.source_resolution(ROOT, revision)
         self.assertEqual(resolution["c_abi_bindings"]["malloc"], {
             "binding": "WEAK", "signature": "pub unsafe extern \"C\" fn malloc(size: SizeT) -> *mut c_void",
             "callee": "mi_malloc_aligned",

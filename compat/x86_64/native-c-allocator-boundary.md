@@ -48,6 +48,13 @@ declarations, the corresponding zero-argument callbacks, and the typed
 `unsafe extern "C" fn()` `.init_array`/`.fini_array` entries. It does not make
 either upstream name a public C ABI symbol.
 
+The source check binds the C lifecycle, allocation, and observation modules
+to their existing feature gates together with `not(feature =
+"native-mimalloc-shadow")`. The default-off native provider therefore leaves
+this C product boundary available without allowing both providers into the
+same selected module. `source_resolution` still requires all runtime source
+blobs to equal the supplied product revision.
+
 The collector runs only two existing installed-product workloads:
 
 - `run_owned_mimalloc_startup_errno.sh --static-sysroot STATIC DYNAMIC` keeps
