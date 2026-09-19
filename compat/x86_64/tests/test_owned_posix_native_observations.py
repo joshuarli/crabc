@@ -533,8 +533,10 @@ class NativeObservationsTests(unittest.TestCase):
             for phase in ('before', 'after'):
                 integrity[phase] = artifact(self.leaf / 'records' / (suite + '.dynamic-product-payload-' + phase + '.json'),
                     {'schema': 'crabc.x86_64-owned-os-test-product-payload/v1', 'phase': phase + '-execution', 'entries': baseline})
+            compiler_payload = artifact(self.leaf / 'records' / (suite + '.compiler-product-payload.json'),
+                {'schema': 'crabc.x86_64-owned-os-test-product-payload/v1', 'phase': 'compiler-and-linker', 'entries': baseline})
             control = {'root': self.recorded(runtime), 'compiler_product': {'root': self.recorded(product), 'identity': product_identity(product),
-                       'copy_difference': {'missing': [], 'unexpected': [], 'changed': []}}, 'product': product_identity(runtime),
+                       'copy_difference': {'missing': [], 'unexpected': [], 'changed': []}, 'payload': compiler_payload}, 'product': product_identity(runtime),
                        'product_copy_difference': {'missing': [], 'unexpected': [], 'changed': []},
                        'product_manifest_sha256': self.binding(manifest)['sha256'], 'candidate_loader_sha256': self.binding(self.product / 'lib/ld-crabc-x86_64.so.1')['sha256'],
                        'product_payload': integrity, 'control_additions': artifact(self.leaf / 'records' / (suite + '.execution-control-additions.json'),
@@ -591,7 +593,6 @@ class NativeObservationsTests(unittest.TestCase):
                     for name in expected if name.startswith('stdatomic/')])
                 report['passed'] = False
             report['suites'].append(row)
-            contract.freeze_tree(product)
         report['musl_oracle'] = {'unchanged': True}
         for phase in ('before', 'after'):
             identity = {'root': '/opt/musl-1.2.6', 'include': {'path': '/opt/musl-1.2.6/include', 'entry_count': 0,
@@ -676,6 +677,12 @@ class NativeObservationsTests(unittest.TestCase):
         with self.assertRaises(native.NativeObservationError, msg='the installed shell must retain its executable mode'):
             self.collect('os-test')
         launcher.chmod(0o755)
+        compiler_crt = self.leaf / 'products/malloc/usr/lib/Scrt1.o'
+        compiler_mode = compiler_crt.stat().st_mode & 0o7777
+        compiler_crt.chmod(0o444)
+        with self.assertRaises(native.NativeObservationError, msg='the collector must retain source-bound compiler input modes'):
+            self.collect('os-test')
+        compiler_crt.chmod(compiler_mode)
 
     def test_os_test_retains_matching_failed_feature_probes_without_inventing_objects(self):
         import owned_os_test as contract

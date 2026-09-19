@@ -1158,7 +1158,15 @@ def install_control_character_devices(destination: Path) -> None:
 
 
 def prepare_compile_product(product: Path, destination: Path, product_roster: list[dict[str, Any]]) -> dict[str, Any]:
-    """Seal one per-suite compiler/linker product before Make can invoke it."""
+    """Copy and bind one per-suite compiler/linker product before Make invokes it.
+
+    Unlike the frozen source stage, an installed product has source-bound file
+    modes. In particular, the dynamic link validator requires its CRT objects
+    and archives to remain ``0644`` and its shared libc to remain ``0755``.
+    The copied product is bound to the supplied roster before use and retained
+    for the collector's exact post-run comparison; do not relabel those roles
+    merely to make this disposable copy read-only.
+    """
     copied_tree(product, destination)
     copied_payload = tree_roster(destination)
     difference = roster_difference(product_roster, copied_payload)
@@ -1166,7 +1174,6 @@ def prepare_compile_product(product: Path, destination: Path, product_roster: li
         raise FixtureError("per-suite compiler product differs from the sealed supplied-product roster",
                            {"product_copy_difference": difference})
     identity = validate_dynamic_product(destination)
-    freeze_tree(destination)
     return {"root": str(destination), "identity": identity, "payload": copied_payload,
             "copy_difference": difference}
 
@@ -1180,9 +1187,10 @@ def prepare_execution_root(product: Path, source: Path, destination: Path, suite
     copied_difference = roster_difference(product_roster, copied_payload)
     if not roster_matches(product_roster, copied_payload):
         raise RunnerError("per-suite product copy differs from the sealed supplied-product roster")
-    # The immutable per-suite compiler product is the source of this runtime
-    # copy. Its roster was already bound to the initially validated supplied
-    # product before Make began, and runtime controls live outside that payload.
+    # The per-suite compiler product is the source of this runtime copy. Its
+    # original source-bound roster was recorded before Make began; the
+    # collector compares the retained compiler copy to that roster after the
+    # suite, and runtime controls live outside this payload.
     copied_identity = validate_dynamic_product(destination)
     busybox = Path("/bin/busybox")
     loader = Path("/lib/ld-musl-x86_64.so.1")

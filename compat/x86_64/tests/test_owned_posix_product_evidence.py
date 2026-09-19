@@ -25,6 +25,13 @@ evidence = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = evidence
 SPEC.loader.exec_module(evidence)
 
+OS_TEST_MODULE_PATH = ROOT / "compat" / "x86_64" / "owned_os_test.py"
+OS_TEST_SPEC = importlib.util.spec_from_file_location("owned_os_test_product_mode_test", OS_TEST_MODULE_PATH)
+assert OS_TEST_SPEC is not None and OS_TEST_SPEC.loader is not None
+os_test = importlib.util.module_from_spec(OS_TEST_SPEC)
+sys.modules[OS_TEST_SPEC.name] = os_test
+OS_TEST_SPEC.loader.exec_module(os_test)
+
 
 def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -620,6 +627,36 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
                             self.validate(linkage)
                     finally:
                         path.chmod(original_mode)
+
+    def test_os_test_compile_product_preserves_source_bound_dynamic_link_modes(self) -> None:
+        """The adapter copy must remain an admissible input to link validation."""
+        copied = self.root / "os-test-compiler-product"
+        baseline = os_test.tree_roster(self.dynamic)
+        source_modes = {
+            relative: (self.dynamic / relative).stat().st_mode & 0o7777
+            for relative in evidence.DYNAMIC_LINK_INPUT_MODES
+        }
+        control = os_test.prepare_compile_product(self.dynamic, copied, baseline)
+
+        self.assertEqual(
+            {
+                relative: (self.dynamic / relative).stat().st_mode & 0o7777
+                for relative in evidence.DYNAMIC_LINK_INPUT_MODES
+            },
+            source_modes,
+        )
+        original_dynamic = self.dynamic
+        self.dynamic = copied
+        try:
+            receipt = self.dynamic_receipt()
+            with mock.patch.object(evidence, "_readelf", return_value=self.readelf("pie")):
+                identity = evidence.validate_link(copied, self.workload, self.executable, receipt, "pie")
+        finally:
+            self.dynamic = original_dynamic
+
+        self.assertEqual(identity["linkage"], "pie")
+        self.assertEqual(os_test.tree_roster(copied), baseline)
+        self.assertEqual(control["payload"], baseline)
 
     def test_tampered_workload_object_fails(self) -> None:
         receipt = self.dynamic_receipt()

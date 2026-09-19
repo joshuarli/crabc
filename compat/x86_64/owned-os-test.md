@@ -38,11 +38,16 @@ checkout's `.work` boundary. Before either oracle runs, the runner checks the
 clean source revision and fixed Git tree, clones a pristine `source-stage`,
 records every Git-tracked path with its mode/type/content identity, and removes
 write permission from that reconstruction. It similarly records the complete
-supplied-product payload roster. Each suite first receives a sealed compiler
-and linker product copy that must match that roster path-for-path, then a
-separate execution-root copy. The runtime's control shell, source tree,
-devices, resolver fixtures, and private devpts mount live outside the product
-payload; post-execution product rosters must still match exactly.
+supplied-product payload roster, including installed modes. Each suite first
+receives a compiler and linker product copy that must match that roster
+path-for-path and keeps those source-bound modes: dynamic CRT objects and
+archives remain `0644`, while `usr/lib/libc.so` remains `0755` for its link
+contract. The retained compiler copy is compared to the original roster after
+the suite; its integrity comes from that exact snapshot comparison, not from
+changing the product's role modes. A separate execution-root copy carries the
+runtime controls. Its control shell, source tree, devices, resolver fixtures,
+and private devpts mount live outside the product payload; post-execution
+product rosters must still match exactly.
 
 The runner creates one `owned-os-test.*` directory directly under `TMPDIR`.
 Its `os-test.json` contains every Make status record, raw stream artifact,

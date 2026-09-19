@@ -1529,8 +1529,12 @@ def _os_product_copy(reader, suite, control, baseline, contract):
     runtime = reader.leaf / 'runtime' / suite
     same(control['compiler_product']['root'], reader.recorded(compile_product), 'os-test compiler product copy root')
     same(control['compiler_product']['copy_difference'], empty, 'os-test compiler product copy equality')
-    frozen = [{**entry, 'mode': entry['mode'] if entry['type'] == 'symlink' else entry['mode'] & ~0o222} for entry in baseline]
-    same(contract.tree_roster(compile_product), frozen, 'os-test immutable compiler product payload')
+    compiler_payload = reader.leaf / 'records' / (suite + '.compiler-product-payload.json')
+    reader.relative_artifact(control['compiler_product']['payload'], compiler_payload)
+    same(read_json(compiler_payload), {'schema': 'crabc.x86_64-owned-os-test-product-payload/v1',
+                                       'phase': 'compiler-and-linker', 'entries': baseline},
+         'os-test recorded compiler product payload')
+    same(contract.tree_roster(compile_product), baseline, 'os-test source-bound compiler product payload')
     for root, identity in ((compile_product, control['compiler_product']['identity']), (runtime, control['product'])):
         same(identity, {'root': reader.recorded(root), 'manifest': reader.recorded(root / 'share/crabc/manifest.json'),
                         'manifest_sha256': digest(reader.manifest), 'driver': reader.recorded(root / 'bin/crabc-cc-dynamic'),
