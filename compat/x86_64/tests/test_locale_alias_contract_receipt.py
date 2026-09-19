@@ -116,7 +116,7 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
              mock.patch.object(receipt, "_validate_execution_tools"), \
              mock.patch.object(receipt, "_validate_artifacts", return_value={"artifacts": "deferred"}), \
              mock.patch.object(receipt, "_validate_dynamic_executable_link_sidecars", return_value={"links": "deferred"}), \
-             mock.patch.object(receipt, "_validate_snapshot", side_effect=lambda _root, value, _name: value), \
+             mock.patch.object(receipt, "_validate_snapshot", side_effect=lambda _root, _output_relative, value, _name: value), \
              mock.patch.object(receipt, "_validate_runtime_and_headers", side_effect=runtime_side_effect or (lambda _root: runtime)), \
              mock.patch.object(receipt, "_validate_symbol_observation", return_value={"symbols": "deferred"}):
             return receipt.validate_report(trusted, report_path)
@@ -204,6 +204,39 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
         self.assertEqual(len(plan), 35)
         self.assertEqual(plan[0][1][-2:], ["-o", "/workspace/.work/x86_64/locale-alias-contract-receipt/tmp/runner/probe.o"])
         self.assertNotIn("wcsftime_l", "\n".join(argument for _role, argv in plan for argument in argv))
+
+    def test_runner_snapshot_keeps_producer_paths_and_receipt_relative_identities(self) -> None:
+        """The runner hashes supplied products at their mounted producer paths."""
+
+        output_relative = ".work/x86_64/locale-alias-contract-receipt"
+        receipt_root = self.root / output_relative
+        raw = receipt_root / receipt.RUNNER_DIRECTORY
+        raw.mkdir(parents=True)
+        source_paths = (receipt.PROBE_PATH, receipt.CONTRACT_PATH, receipt.SYMBOL_READER_PATH)
+        product_paths = (
+            receipt.STATIC_PRODUCT_DIRECTORY + "/usr/lib/libc.a",
+            receipt.DYNAMIC_PRODUCT_DIRECTORY + "/usr/lib/libc.so",
+        )
+        runner_paths = [
+            *(receipt._mount(path) for path in source_paths),
+            *(receipt._mount(f"{output_relative}/{path}") for path in product_paths),
+        ]
+        snapshot = "".join(f"{'a' * 64}  {path}\n" for path in runner_paths)
+        (raw / "before.sha256").write_text(snapshot, encoding="ascii")
+
+        observed = receipt._snapshot(receipt_root, output_relative, "before")
+
+        self.assertEqual(
+            observed["records"],
+            [{"path": path, "sha256": "a" * 64} for path in (*source_paths, *product_paths)],
+        )
+
+        wrong_paths = [*runner_paths[:3], *(receipt._mount(path) for path in product_paths)]
+        (raw / "before.sha256").write_text(
+            "".join(f"{'a' * 64}  {path}\n" for path in wrong_paths), encoding="ascii"
+        )
+        with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "snapshot path changed"):
+            receipt._snapshot(receipt_root, output_relative, "before")
 
     def test_static_preparation_safe_directory_is_inside_its_closed_environment(self) -> None:
         output = self.root / ".work/x86_64/collector"
@@ -598,7 +631,7 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
              mock.patch.object(receipt, "_validate_execution_tools") as tools, \
              mock.patch.object(receipt, "_validate_artifacts", return_value={"object": "ok"}) as artifacts, \
              mock.patch.object(receipt, "_validate_dynamic_executable_link_sidecars", return_value={"links": "ok"}) as dynamic_links, \
-             mock.patch.object(receipt, "_validate_snapshot", side_effect=lambda _root, value, _name: value) as snapshots, \
+             mock.patch.object(receipt, "_validate_snapshot", side_effect=lambda _root, _output_relative, value, _name: value) as snapshots, \
              mock.patch.object(receipt, "_validate_runtime_and_headers", return_value={"runtime": "ok"}) as runtime, \
              mock.patch.object(receipt, "_validate_symbol_observation", return_value={"symbols": "ok"}) as symbols:
             admitted = receipt.validate_report(ROOT, report_path)

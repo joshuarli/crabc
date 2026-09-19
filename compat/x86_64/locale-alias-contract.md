@@ -112,6 +112,12 @@ product root, so receipt schema v3 records the physical static and dynamic
 root modes separately. This preserves a dynamic setgid root such as `02755`
 without inventing a root mode from descendants.
 
+The retained snapshot stream keeps the runner's exact mounted producer paths:
+source inputs are rooted at `/workspace`, while supplied products are rooted
+at the checkout-relative output directory. Its reconstructed records use the
+receipt-relative product paths used by the retained product trees, so replay
+checks both the runner invocation identity and the receipt's product identity.
+
 The host-side `validate-report` path only reads the receipt. It reconstructs
 the fixed 35-command runner roster and its paths, authenticates the retained
 complete Git source tree, rechecks the trusted checkout's recorded HEAD and

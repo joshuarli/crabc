@@ -625,36 +625,46 @@ def _raw_runner_records(root: Path, output_relative: str) -> list[dict[str, obje
     return records
 
 
-def _snapshot(root: Path, name: str) -> dict[str, object]:
+def _snapshot(root: Path, output_relative: str, name: str) -> dict[str, object]:
+    """Bind runner snapshot producer paths to receipt-relative identities.
+
+    The runner receives supplied products below its checkout-relative output
+    directory, so its raw ``sha256sum`` stream names those mounted producer
+    paths. The receipt owns the product trees below ``root``; its reconstructed
+    record therefore keeps the same product identity without that output prefix.
+    """
+
     path = _relative_file(root, f"{RUNNER_DIRECTORY}/{name}.sha256", f"runner {name} snapshot")
     try:
         lines = path.read_text(encoding="ascii").splitlines()
     except (OSError, UnicodeDecodeError) as error:
         raise LocaleAliasReceiptError(f"runner {name} snapshot is invalid") from error
-    expected_names = (
-        PROBE_PATH,
-        CONTRACT_PATH,
-        SYMBOL_READER_PATH,
-        f"{STATIC_PRODUCT_DIRECTORY}/usr/lib/libc.a",
-        f"{DYNAMIC_PRODUCT_DIRECTORY}/usr/lib/libc.so",
+    expected_paths = (
+        (_mount(PROBE_PATH), PROBE_PATH),
+        (_mount(CONTRACT_PATH), CONTRACT_PATH),
+        (_mount(SYMBOL_READER_PATH), SYMBOL_READER_PATH),
+        (_mount(f"{output_relative}/{STATIC_PRODUCT_DIRECTORY}/usr/lib/libc.a"),
+         f"{STATIC_PRODUCT_DIRECTORY}/usr/lib/libc.a"),
+        (_mount(f"{output_relative}/{DYNAMIC_PRODUCT_DIRECTORY}/usr/lib/libc.so"),
+         f"{DYNAMIC_PRODUCT_DIRECTORY}/usr/lib/libc.so"),
     )
-    if len(lines) != len(expected_names):
+    if len(lines) != len(expected_paths):
         _fail(f"runner {name} snapshot roster changed")
     records: list[dict[str, str]] = []
-    for line, expected in zip(lines, expected_names):
+    for line, (producer_path, receipt_path) in zip(lines, expected_paths):
         try:
             digest, filename = line.split("  ", 1)
         except ValueError as error:
             raise LocaleAliasReceiptError(f"runner {name} snapshot row is malformed") from error
-        if len(digest) != 64 or filename != _mount(expected):
+        if len(digest) != 64 or filename != producer_path:
             _fail(f"runner {name} snapshot path changed")
-        records.append({"path": expected, "sha256": digest})
+        records.append({"path": receipt_path, "sha256": digest})
     return {"stream": _identity(root, path), "records": records}
 
 
-def _validate_snapshot(root: Path, value: object, name: str) -> dict[str, object]:
+def _validate_snapshot(root: Path, output_relative: str, value: object, name: str) -> dict[str, object]:
     record = _exact_mapping(value, {"stream", "records"}, f"runner {name} snapshot")
-    current = _snapshot(root, name)
+    current = _snapshot(root, output_relative, name)
     if record != current:
         _fail(f"runner {name} snapshot bytes changed")
     return current
@@ -1397,7 +1407,7 @@ def validate_report(root: Path, report_path: Path) -> dict[str, object]:
     _validate_execution_tools(receipt_root, output_relative, source, image, products, collector_commands, runner_commands)
     artifacts = _validate_artifacts(receipt_root, record["artifacts"])
     dynamic_links = _validate_dynamic_executable_link_sidecars(root, receipt_root, image)
-    snapshots = {name: _validate_snapshot(receipt_root, record["snapshots"].get(name) if isinstance(record["snapshots"], Mapping) else None, name)
+    snapshots = {name: _validate_snapshot(receipt_root, output_relative, record["snapshots"].get(name) if isinstance(record["snapshots"], Mapping) else None, name)
                  for name in ("before", "after")}
     if snapshots["before"]["records"] != snapshots["after"]["records"]:
         _fail("runner input snapshots differ")
@@ -1463,7 +1473,7 @@ def _public_replay_exit_recheck(
     _validate_execution_tools(receipt_root, output_relative, source_again, image_again, products_again, collector_again, runner_again)
     artifacts_again = _validate_artifacts(receipt_root, record["artifacts"])
     dynamic_links_again = _validate_dynamic_executable_link_sidecars(checkout_root, receipt_root, image_again)
-    snapshots_again = {name: _validate_snapshot(receipt_root, record["snapshots"].get(name) if isinstance(record["snapshots"], Mapping) else None, name)
+    snapshots_again = {name: _validate_snapshot(receipt_root, output_relative, record["snapshots"].get(name) if isinstance(record["snapshots"], Mapping) else None, name)
                        for name in ("before", "after")}
     runtime_again = _validate_runtime_and_headers(receipt_root)
     symbols_again = _validate_symbol_observation(receipt_root)
@@ -1620,7 +1630,7 @@ def collect(root: Path, output: Path) -> dict[str, object]:
             "products": product_records,
             "collector_commands": collector_commands,
             "runner_commands": raw_commands,
-            "snapshots": {name: _snapshot(output, name) for name in ("before", "after")},
+            "snapshots": {name: _snapshot(output, output_relative, name) for name in ("before", "after")},
             "artifacts": _artifacts(output),
             "runtime": _validate_runtime_and_headers(output),
             "symbols": _validate_symbol_observation(output),
