@@ -2580,6 +2580,21 @@ key registry as a pthread TSD registry. It does not qualify main-thread or
 process shutdown and never assumes default process teardown frees live
 allocations.
 
+The selected Linux source defines `MI_USE_PTHREADS` even when the default and
+cached Theap values use local compiler TLS. Consequently,
+`mi_process_done_once` deletes a distinct Unix private automatic-done key;
+this is neither the local TLS slot mechanism nor Rust's
+`OwnedThreadLocalKeyRegistry`. The pinned-C-only
+`allocator-process-done-pthread-key` receipt records the relevant late-worker
+effect: after explicit `mi_process_done()`, a newly created worker can still
+initialize a Theap and allocate, but its natural return has no source
+pthread-key destructor. Its joined page/owner remains live and later frees are
+remote publications. The existing Rust bridge cannot emulate that by skipping
+its explicit worker finish: its pinned compiler-TLS owner and later-thread
+admission must be released before libc unmaps worker TLS. Process-shutdown
+integration remains unimplemented until it has a typed retained-lifetime
+mapping for that observable source boundary.
+
 Run `./scripts/dev-x86_64.sh libc-native-mimalloc-shadow-pthread-teardown` for the source-led pinned-musl
 reference plus the real static candidate. The fixture covers normal return,
 explicit exit, and deferred cancellation; each user TSD destructor allocates

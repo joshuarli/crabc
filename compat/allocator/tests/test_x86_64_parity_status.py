@@ -60,6 +60,9 @@ AUTOMATIC_PTHREAD_DESTRUCTOR_SCHEMA = (
 CANCELLATION_PTHREAD_DESTRUCTOR_SCHEMA = (
     ROOT / "compat/allocator/x86_64-cancellation-pthread-destructor-evidence-v3.5.0.json"
 )
+PROCESS_DONE_PTHREAD_KEY_SCHEMA = (
+    ROOT / "compat/allocator/x86_64-process-done-pthread-key-evidence-v3.5.0.json"
+)
 DYNAMIC_ARENA_SINGLETON_POST_EXIT_SCHEMA = (
     ROOT
     / "compat/allocator/x86_64-dynamic-arena-singleton-post-exit-evidence-v3.5.0.json"
@@ -276,6 +279,15 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "linux-x86_64-private-c-automatic-pthread-destructor",
         )
 
+    def test_process_done_pthread_key_schema_profile_is_exact(self) -> None:
+        schema = json.loads(PROCESS_DONE_PTHREAD_KEY_SCHEMA.read_text(encoding="utf-8"))
+        self.assertEqual(
+            schema["profile"],
+            "linux-x86_64-private-c-process-done-pthread-key",
+        )
+        self.assertTrue(schema["scope"]["automatic_destructor_absence_observed"])
+        self.assertEqual(len(schema["trace"]["expected_values"]), 31)
+
     def test_cancellation_pthread_destructor_schema_profile_is_exact(self) -> None:
         schema = json.loads(CANCELLATION_PTHREAD_DESTRUCTOR_SCHEMA.read_text(encoding="utf-8"))
         self.assertEqual(
@@ -348,6 +360,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-full-non-direct-small-force-collect-post-exit-differential",
                 "native-full-direct-small-force-collect-post-exit-differential",
                 "native-pinned-c-automatic-pthread-destructor",
+                "native-pinned-c-process-done-pthread-key",
                 "native-pinned-c-cancel-testcancel-automatic-destructor",
                 "native-mapped-post-theap-teardown-failed-reclaim-differential",
                 "native-retired-page-prepass-before-live-post-exit-differential",
@@ -555,6 +568,14 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertEqual(
             gates["native-pinned-c-automatic-pthread-destructor"]["report"],
             "compat/reports/allocator/x86_64/automatic-pthread-destructor.json",
+        )
+        self.assertEqual(
+            gates["native-pinned-c-process-done-pthread-key"]["command"],
+            "./compat/allocator/run-x86_64.sh allocator-process-done-pthread-key",
+        )
+        self.assertEqual(
+            gates["native-pinned-c-process-done-pthread-key"]["report"],
+            "compat/reports/allocator/x86_64/process-done-pthread-key.json",
         )
         self.assertEqual(
             gates["native-pinned-c-cancel-testcancel-automatic-destructor"]["command"],
@@ -876,6 +897,23 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "AArch64 evidence",
         ):
             self.assertIn(fragment, automatic_destructor)
+        process_done_key = gates["native-pinned-c-process-done-pthread-key"]["claim"]
+        for fragment in (
+            "31-address-independent-value",
+            "calls public mi_process_done()",
+            "MI_USE_PTHREADS independently of local compiler TLS",
+            "invalid key",
+            "without explicit mi_thread_done or pthread_exit",
+            "Theap, TLD identity, and page remain owned",
+            "remote frees",
+            "C-oracle-only source behavior evidence",
+            "does not compare Rust",
+            "Rust process-done implementation",
+            "post-shutdown worker policy",
+            "dynamic TLS-key registry shutdown",
+            "AArch64 evidence",
+        ):
+            self.assertIn(fragment, process_done_key)
         cancellation_destructor = gates[
             "native-pinned-c-cancel-testcancel-automatic-destructor"
         ]["claim"]
@@ -1711,6 +1749,10 @@ class X86_64ParityStatusTests(unittest.TestCase):
         )
         self.assertIn(
             "46-field pinned-C cancellation-triggered automatic pthread-destructor probe",
+            lanes["general-thread-lifecycle-and-stress"]["reason"],
+        )
+        self.assertIn(
+            "31-field pinned-C after-process-done worker pthread-key probe",
             lanes["general-thread-lifecycle-and-stress"]["reason"],
         )
         self.assertIn(

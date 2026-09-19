@@ -2192,6 +2192,44 @@ without an irreversible speculative claim. A resulting aggregate-free or sole-ad
   pthread callback, a `Send` detached attachment, general lifecycle or
   destructor-ordering claims, public x86 support, or backend promotion.
 
+### `CRABC-MI-PROCESS-DONE-PTHREAD-KEY-C-ORACLE-ONLY` — observed late-worker boundary
+
+- **Upstream/Rust:** pinned `include/mimalloc/atomic.h:18-20`,
+  `src/prim/unix/prim.c:1011-1040`, `src/init.c:305-360,595-648`,
+  `src/prim/prim-tls.c:211-250`, and `src/free.c:223-255`, contrasted with
+  the selected x86 bridge in
+  `libc/src/c_abi/x86_64/native_mimalloc_lifecycle.rs` and its compiler-TLS
+  persistent owner.
+- **Category:** native Linux/x86-64 private C-oracle evidence only. It uses
+  the declared `mi_process_done()` entry in one controlled source fixture but
+  makes no public API or crabc runtime claim.
+- **Difference:** Linux enables source `MI_USE_PTHREADS` independently of
+  `MI_TLS_MODEL_LOCAL`. `mi_process_done()` resets the cached Theap and deletes
+  the private auto-done key. A worker created afterwards still runs
+  `_mi_thread_init`, creates its default Theap, and allocates two medium
+  clients, but `_mi_prim_thread_associate_default_theap` sees the invalid key.
+  Natural return therefore does not invoke `_mi_thread_done`: after join the
+  page remains owned by the worker Theap and its TLD identity remains live.
+  Two main-thread `mi_free` calls publish remote frees while the page remains
+  owned and mapped with its `used` count unchanged. This proves why merely
+  skipping the Rust bridge's explicit finish after a logical process-done flag
+  cannot be source-faithful or memory-safe: libc will reclaim that worker's
+  compiler TLS while the existing Rust owner and admission still require an
+  explicit teardown.
+- **Evidence:**
+  `x86_64_process_done_pthread_key_evidence.py`,
+  `x86_64-process-done-pthread-key-evidence-v3.5.0.json`, their focused
+  static contracts, and the
+  `native-pinned-c-process-done-pthread-key` x86 gate record 31
+  address-independent values for this one after-process-done create/join and
+  late-free sequence.
+- **Decision/removal:** retain until a native process-shutdown owner has a
+  typed, lifetime-safe mapping for late workers. It must neither drop a
+  still-pinned compiler-TLS owner nor invent a post-shutdown worker rejection
+  policy. This result does not prove general process shutdown, later-worker
+  support, a Rust process-done implementation, dynamic TLS-key registry
+  shutdown, public x86 support, backend promotion, or AArch64 behavior.
+
 ### `CRABC-MI-DYNAMIC-THEAP-INVALID-OWNER` — accepted private lifecycle boundary
 
 - **Upstream/Rust:** `src/threadlocal.c:23-214`, `src/init.c:236-360,377-421,448-481`,
