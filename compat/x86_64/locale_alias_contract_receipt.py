@@ -1334,7 +1334,12 @@ def _validate_execution_tools(
             relative = program[len(SOURCE_MOUNT) + 1:]
             if relative in {STATIC_PREPARATION_OWNER_PATH, STATIC_BUILDER_PATH, DYNAMIC_BUILDER_PATH, RUNNER_PATH}:
                 retained = _identity(root, root / "inputs/source" / relative)
-                if source_entries.get(relative) != retained:
+                # Source-seal records are named relative to ``inputs/source``;
+                # ``_identity`` is relative to the receipt root. Compare the
+                # source record in its own logical namespace while retaining
+                # the copied file's bytes and mode as the authority.
+                source_identity = {"path": relative, **{key: retained[key] for key in ("bytes", "sha256", "mode")}}
+                if source_entries.get(relative) != source_identity:
                     _fail(f"{label} source tool differs from retained source")
                 return
             product_name = next((name for name, prefix in product_prefixes.items() if program.startswith(prefix)), None)

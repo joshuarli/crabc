@@ -117,6 +117,9 @@ source inputs are rooted at `/workspace`, while supplied products are rooted
 at the checkout-relative output directory. Its reconstructed records use the
 receipt-relative product paths used by the retained product trees, so replay
 checks both the runner invocation identity and the receipt's product identity.
+Source-tool records likewise keep their logical source-relative paths while
+their copied bytes and modes remain under `inputs/source`; the reader compares
+those paths in the source namespace without losing the retained-file check.
 
 The host-side `validate-report` path only reads the receipt. It reconstructs
 the fixed 35-command runner roster and its paths, authenticates the retained

@@ -273,6 +273,26 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
         self.assertIn("GIT_CONFIG_KEY_0=safe.directory", receipt._collector_launcher(relative))
         self.assertIn("GIT_CONFIG_VALUE_0=/workspace", receipt._collector_launcher(relative))
 
+    def test_execution_tools_joins_source_tool_by_logical_source_path(self) -> None:
+        """A mounted source tool and its retained copy have distinct root paths."""
+
+        source_copy = self.write(f"inputs/source/{receipt.RUNNER_PATH}", b"runner source\n")
+        source = {"paths": [{**source_copy, "path": receipt.RUNNER_PATH}]}
+        image_files: dict[str, object] = {}
+        for index, program in enumerate(("/bin/bash", "/bin/sh", "/usr/bin/gcc", "/usr/bin/env", "/usr/bin/timeout")):
+            retained = self.write(f"inputs/image/{index}", program.encode())
+            image_files[program] = {
+                "image": {"path": program, "sha256": self.digest(program.encode()), "size": len(program), "mode": 0o644},
+                "retained": retained,
+            }
+        command = {"argv": [receipt._mount(receipt.RUNNER_PATH)], "launcher": receipt.RUNNER_LAUNCHER}
+
+        receipt._validate_execution_tools(self.root, ".work/x86_64/receipt", source, {"files": image_files}, {}, [command], [])
+
+        forged = {"paths": [{**source["paths"][0], "sha256": "0" * 64}]}
+        with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "source tool differs"):
+            receipt._validate_execution_tools(self.root, ".work/x86_64/receipt", forged, {"files": image_files}, {}, [command], [])
+
     def test_collector_uses_the_established_static_preparation_primary(self) -> None:
         output = ".work/x86_64/locale-alias-contract-receipt"
         commands = receipt._expected_collector_commands(output)
