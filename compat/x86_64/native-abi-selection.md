@@ -448,9 +448,10 @@ v7 adds the optional closed `locale_alias_contract_companion` and
 `locale_alias_contract_joins` fields. It admits the locale reader only after
 its complete 98-name source contract, all 35 normal consumer commands, and
 the receipt-local static/dynamic product trees match the selector's supplied
-cohort by relative bytes, modes, and links. Its retained source snapshot must
-also match the reader projection as the complete five-field record, including
-the ordered per-path byte and mode identities. The static preparation keeps its
+cohort by relative bytes, modes, and links. Its retained top-level and dynamic
+product source snapshots must also match the reader projection as complete
+five-field records, including the ordered per-path byte and mode identities.
+The static preparation keeps its
 own path-bearing transaction and is revalidated by its owner; only its
 authenticated primary tree is compared to the selected static product. v6 adds the closed `loader_structural_owner_companion` and
 `loader_structural_owner_joins` fields. v5 added the closed

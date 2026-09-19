@@ -7884,6 +7884,8 @@ def _locale_alias_product_join(reader: Any, validated: Mapping[str, Any], raw: M
     products = exact(validated.get('products'), {'static', 'dynamic'}, 'locale reader products')
     receipt_products = exact(raw.get('products'), {'static', 'dynamic'}, 'locale receipt products')
     require(same(products, receipt_products), 'locale reader product reconstruction differs from receipt')
+    reader_source = exact(validated.get('source'), {'revision', 'tree', 'content_sha256', 'clean', 'paths'},
+                          'locale reader source')
     static = exact(products['static'], {'root_mode', 'tree', 'manifest', 'preparation'}, 'locale static receipt product')
     dynamic = exact(products['dynamic'], {'root_mode', 'tree', 'manifest', 'source_before', 'source_after', 'state'},
                     'locale dynamic receipt product')
@@ -7915,9 +7917,9 @@ def _locale_alias_product_join(reader: Any, validated: Mapping[str, Any], raw: M
             'selector static preparation primary differs from supplied static product')
 
     for field in ('source_before', 'source_after'):
-        source_state = exact(dynamic[field], {'revision', 'tree', 'content_sha256', 'clean'},
-                             f'locale dynamic receipt {field}')
-        require(source_state == {key: validated['source'][key] for key in ('revision', 'tree', 'content_sha256', 'clean')},
+        source_snapshot = exact(dynamic[field], {'revision', 'tree', 'content_sha256', 'clean', 'paths'},
+                                f'locale dynamic receipt {field}')
+        require(source_snapshot == reader_source,
                 f'locale dynamic receipt {field} differs from its source transaction')
     dynamic_state_path = paths['dynamic_product'] / inventory.DYNAMIC_STATE_RELATIVE
     dynamic_state = read_json(dynamic_state_path)

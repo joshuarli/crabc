@@ -92,8 +92,9 @@ path, bytes, and mode. Both static and dynamic product metadata must name those
 same three retained LLVM inputs. Collection requires a clean Git checkout
 including no untracked inputs, captures the complete HEAD/tree Git bytes and
 modes, and copies the selected source files both before and after the native
-work. The dynamic product is joined to that source transaction through its
-source digest. Static source authority instead remains with the established
+work. The dynamic product retains that complete source transaction, including
+the selected path byte and mode identities. Static source authority instead
+remains with the established
 `owned_posix_static_products.py` preparation: the receipt retains its complete
 primary/reproduction/extracted product, archive, source-seal, and command
 transaction, and the normal runner receives only that preparation's `primary`

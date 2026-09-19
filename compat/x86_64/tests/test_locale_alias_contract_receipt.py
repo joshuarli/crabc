@@ -472,7 +472,11 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
         dynamic.chmod(0o2755)
         state = dynamic / "share/crabc/dynamic-product-state.json"
         state.write_text('{"source_sha256":"' + "c" * 64 + '"}\n', encoding="utf-8")
-        source = {"revision": "a" * 40, "tree": "b" * 40, "content_sha256": "c" * 64, "clean": True}
+        source = {
+            "revision": "a" * 40, "tree": "b" * 40, "content_sha256": "c" * 64, "clean": True,
+            "paths": [{"path": "compat/x86_64/locale_alias_contract.json", "bytes": 2071,
+                       "sha256": "d" * 64, "mode": 0o644}],
+        }
         products = {
             "static": {
                 "root_mode": 0o2755, "tree": receipt._tree_records(self.root, receipt.STATIC_PRODUCT_DIRECTORY),
@@ -503,6 +507,10 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
             forged = json.loads(json.dumps(products))
             forged["dynamic"].pop("root_mode")
             with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "dynamic retained product fields changed"):
+                receipt._validate_products(self.root, self.root, forged, source, {"files": {}})
+            forged = json.loads(json.dumps(products))
+            forged["dynamic"]["source_before"]["paths"][0]["sha256"] = "0" * 64
+            with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "dynamic product source transaction changed"):
                 receipt._validate_products(self.root, self.root, forged, source, {"files": {}})
 
     def test_retained_image_input_binds_manifest_bytes_and_mode(self) -> None:

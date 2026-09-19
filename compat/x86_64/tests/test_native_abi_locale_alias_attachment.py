@@ -233,8 +233,8 @@ class LocaleAliasAdapterTests(unittest.TestCase):
                     'root_mode': selection._locale_alias_product_root_mode(self.dynamic, 'test dynamic product'),
                     'tree': self._receipt_tree(dynamic_tree, locale_reader.DYNAMIC_PRODUCT_DIRECTORY),
                     'manifest': selection.file_identity(self.dynamic / 'share/crabc/manifest.json'),
-                    'source_before': {key: source[key] for key in ('revision', 'tree', 'content_sha256', 'clean')},
-                    'source_after': {key: source[key] for key in ('revision', 'tree', 'content_sha256', 'clean')},
+                    'source_before': copy.deepcopy(source),
+                    'source_after': copy.deepcopy(source),
                     'state': selection.file_identity(self.dynamic / 'share/crabc/dynamic-product-state.json'),
                 },
             },
@@ -272,6 +272,19 @@ class LocaleAliasAdapterTests(unittest.TestCase):
         report.write_text(__import__('json').dumps(raw, sort_keys=True), encoding='utf-8')
         with mock.patch.object(selection, '_locale_alias_reader', return_value=reader), \
              self.assertRaisesRegex(selection.SelectionError, 'locale alias selected or collector source differs'):
+            selection.native_locale_alias_adapter(
+                report, facts=self.facts, measurement=self.measurement, paths=self.paths, source=self.source,
+            )
+
+    def test_adapter_rejects_a_dynamic_receipt_source_path_mismatch(self) -> None:
+        report, reader = self._receipt()
+        raw = __import__('json').loads(report.read_text(encoding='utf-8'))
+        for name in ('source_before', 'source_after'):
+            raw['products']['dynamic'][name]['paths'][0]['sha256'] = '0' * 64
+        report.write_text(__import__('json').dumps(raw, sort_keys=True), encoding='utf-8')
+        reader.validated['products'] = raw['products']
+        with mock.patch.object(selection, '_locale_alias_reader', return_value=reader), \
+             self.assertRaisesRegex(selection.SelectionError, 'locale dynamic receipt source_before differs'):
             selection.native_locale_alias_adapter(
                 report, facts=self.facts, measurement=self.measurement, paths=self.paths, source=self.source,
             )
