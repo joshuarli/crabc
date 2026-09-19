@@ -1841,6 +1841,27 @@ x86 support, libc integration, backend promotion, or AArch64 evidence. Its
 report is
 `compat/reports/allocator/x86_64/cancellation-pthread-destructor.json`.
 
+A separate pinned-C process-done pthread-key lane records the intentionally
+different late-worker boundary:
+
+```sh
+./compat/allocator/run-x86_64.sh allocator-process-done-pthread-key
+```
+
+This private 31-value C-oracle-only probe initializes mimalloc, calls public
+`mi_process_done()`, then creates and joins one new worker. Linux selects
+`MI_USE_PTHREADS` even with local compiler TLS, so source deletes the private
+automatic thread-done key during process done. The worker still initializes a
+default Theap and allocates two same-page medium clients, but has no key
+association on natural return. After join, its Theap, TLD identity, and page
+ownership remain live; two later `mi_free` calls publish remote frees without
+collecting or releasing the page. This records the source behavior that a
+native process-shutdown owner must account for. It does not establish a Rust
+process-done implementation, a source-supported general post-shutdown worker
+policy, general lifecycle or routing, public `mi_*` behavior, public x86
+support, libc integration, backend promotion, or AArch64 evidence. Its report
+is `compat/reports/allocator/x86_64/process-done-pthread-key.json`.
+
 The separate feature-gated x86 owned-static integration receipt is:
 
 ```sh
