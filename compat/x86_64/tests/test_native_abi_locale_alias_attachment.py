@@ -201,7 +201,16 @@ class LocaleAliasAdapterTests(unittest.TestCase):
     def _receipt(self) -> tuple[Path, _FakeLocaleReader]:
         static_tree = selection._locale_alias_tree(self.static, 'test static product')
         dynamic_tree = selection._locale_alias_tree(self.dynamic, 'test dynamic product')
-        source = {**self.source, 'tree': 'c' * 64, 'paths': {}}
+        source = {
+            **self.source,
+            'tree': 'c' * 40,
+            'paths': [{
+                'path': 'compat/x86_64/locale_alias_contract.json',
+                'bytes': 2071,
+                'sha256': 'd' * 64,
+                'mode': 0o644,
+            }],
+        }
         commands = [
             {'role': role, 'status': 0, 'argv': [role]}
             for role in locale_reader.RUNNER_STEMS
@@ -210,8 +219,8 @@ class LocaleAliasAdapterTests(unittest.TestCase):
         raw = {
             'schema': locale_reader.SCHEMA, 'status': locale_reader.STATUS,
             'mode_policy': locale_reader.MODE_POLICY, 'image_inputs': {'image': 'test'},
-            'source_before': {key: source[key] for key in ('revision', 'tree', 'content_sha256', 'clean')},
-            'source_after': {key: source[key] for key in ('revision', 'tree', 'content_sha256', 'clean')},
+            'source_before': copy.deepcopy(source),
+            'source_after': copy.deepcopy(source),
             'source_contract': locale_reader.validate_source_contract(ROOT),
             'products': {
                 'static': {
@@ -254,6 +263,18 @@ class LocaleAliasAdapterTests(unittest.TestCase):
         self.assertEqual(companion['products']['static_tree'], selection._locale_alias_tree(self.static, 'static'))
         self.assertEqual(companion['products']['dynamic_tree'], selection._locale_alias_tree(self.dynamic, 'dynamic'))
         self.assertEqual(companion['products']['dynamic_root_mode'], 0o2755)
+
+    def test_adapter_rejects_a_receipt_source_path_mismatch(self) -> None:
+        report, reader = self._receipt()
+        raw = __import__('json').loads(report.read_text(encoding='utf-8'))
+        for name in ('source_before', 'source_after'):
+            raw[name]['paths'][0]['sha256'] = '0' * 64
+        report.write_text(__import__('json').dumps(raw, sort_keys=True), encoding='utf-8')
+        with mock.patch.object(selection, '_locale_alias_reader', return_value=reader), \
+             self.assertRaisesRegex(selection.SelectionError, 'locale alias selected or collector source differs'):
+            selection.native_locale_alias_adapter(
+                report, facts=self.facts, measurement=self.measurement, paths=self.paths, source=self.source,
+            )
 
     def test_adapter_rejects_a_receipt_tree_that_only_matches_source_revision(self) -> None:
         report, reader = self._receipt()

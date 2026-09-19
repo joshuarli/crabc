@@ -8002,9 +8002,12 @@ def native_locale_alias_adapter(report_path: Path | None, *, facts: Mapping[str,
             'locale alias receipt schema or status differs')
     receipt_source = exact(validated.get('source'), {'revision', 'tree', 'content_sha256', 'clean', 'paths'},
                            'locale reader source')
+    source_before = exact(raw['source_before'], {'revision', 'tree', 'content_sha256', 'clean', 'paths'},
+                          'locale receipt source before')
+    source_after = exact(raw['source_after'], {'revision', 'tree', 'content_sha256', 'clean', 'paths'},
+                         'locale receipt source after')
     require(receipt_source['clean'] is True
-            and {key: receipt_source[key] for key in ('revision', 'tree', 'content_sha256', 'clean')}
-                == raw['source_before'] == raw['source_after']
+            and receipt_source == source_before == source_after
             and source['clean'] is True
             and all(receipt_source[key] == source[key] for key in ('revision', 'content_sha256')),
             'locale alias selected or collector source differs from selection')

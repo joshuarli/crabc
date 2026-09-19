@@ -583,6 +583,16 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
         admitted = self.admit_public_entry(trusted, report_path)
         self.assertEqual(admitted["source"], report["source_before"])
 
+    def test_validate_report_rejects_a_forged_selected_source_path_identity(self) -> None:
+        """The source seal includes its path records, not only its Git digest."""
+
+        trusted, report_path, report = self.public_entry_fixture()
+        for name in ("source_before", "source_after"):
+            report[name]["paths"][0]["sha256"] = "0" * 64
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+        with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "retained source bytes changed"):
+            self.admit_public_entry(trusted, report_path)
+
     def test_validate_report_rejects_the_v2_product_root_omission_schema(self) -> None:
         trusted, report_path, report = self.public_entry_fixture()
         report["schema"] = "crabc.x86_64-locale-alias-contract-receipt/v2"
