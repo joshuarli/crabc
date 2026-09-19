@@ -1,6 +1,56 @@
 # Combined native x86-64 completion goal
 
-## Active integration — 2026-09-12
+## Current evidence and implementation frontier — 2026-09-19
+
+The combined goal remains incomplete. Main through `0158c312` includes the
+locale source/product identity repairs, executable `libc.so` package mode,
+host-readable wordexp expected-input capture, and preservation of compiler
+product modes in OS-test. These fixes do not transfer qualification between
+source revisions. The latest complete product checkpoint below is frozen at
+`26dfb153`; subsequent changes still require fresh ordered qualification.
+
+Paths in this paragraph are relative to
+`.work/worktrees/runtime_component_batch_current_26dfb153/`. The 70-case
+dynamic gate passed all 210 runs across two independent builds and extraction,
+with identical manifests and packages; its retained producer receipt remains
+`qualified-pending-review` at
+`.work/x86_64/tmp/materialized-dynamic.JzRbWN/qualification.json`.
+The eighteen-workload POSIX matrix passed all three product pairs at
+`.work/x86_64/posix-family-26dfb153/execution.json`. The ten-behavior loader
+component and fifteen-behavior pthread component passed at
+`.work/x86_64/loader-family-26dfb153/receipt.json` and
+`.work/x86_64/pthread-family-26dfb153/receipt.json`. These receipts retain
+false family and promotion flags.
+
+The same checkpoint's ordered native aggregate stopped in OS-test after its
+differential stage passed. Its unchanged failure is
+`.work/x86_64/posix-native-26dfb153/incomplete.json` beneath that worktree.
+OS-test had removed write bits from its copied compiler product, violating
+the existing exact-mode link contract. `0158c312` fixes the copy and adds
+collector authentication of that payload. Focused regression tests and a
+real supplied-product compile/link replay pass; the full native aggregate
+has not been rerun. Signal/process, pthread-stress, and libc-test were not
+reached by that aggregate.
+
+A separate full libc-test measurement at `26dfb153` completed all 434 units:
+427 raw passes, one candidate link failure, and six runtime comparisons
+reported as failures. All 199 math candidates passed. The existing public
+classifiers reproduce the three fixed musl math defects and the exact crypt,
+strptime, and wordexp dispositions; the missing BSD random quartet remains
+unresolved. The retained report and reproducible host classifier replay are
+under `.work/x86_64/libc-test-measurement-26dfb153/` in that worktree, with
+the latter bound by `classifier-replay-receipt.json`. This standalone
+measurement does not replace the ordered aggregate.
+
+The later `f1b18e01` checkpoint passed all 47 selected component jobs and the
+final selection audit, but closure correctly exited incomplete. Its report is
+`.work/worktrees/runtime_component_batch_current_f1b18e01/.work/x86_64/native-abi-selection/clean-f1b18e01/report.json`.
+Installed math/fenv composition and fixed-mimalloc process-done/retained-worker
+free integration are still under implementation and review. Full runtime
+family closure, allocator milestones, performance qualification, and the
+same-final-revision promotion gates remain required.
+
+## Earlier integration checkpoints — 2026-09-12
 
 At `5328cb94`, the complete 70-case dynamic product gate passed across two
 independent builds and the extracted package: 210 case receipts, identical
