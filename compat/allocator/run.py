@@ -323,7 +323,10 @@ M2_X86_64_FAULT_FRAGMENT = ALLOCATOR_ROOT / "m2-fault-seam-inventory-x86_64-v3.5
 # rows into both the aggregate manifest and Python. Source bytes are verified
 # separately against the upstream archive before any native check executes.
 M2_X86_64_BITMAP_FRAGMENT_DIGEST = "dbb2bc7d34762819f7ed76c3b50fd3d8599d46b0ba7b9f78fcc9310afe536300"
-M2_X86_64_VM_FRAGMENT_DIGEST = "670aea9205e60c550452b30a5686f2631cf017a99bf9642183914e55d04bd799"
+# `ef723d8f` admitted the selected pinned arena statistics and the explicit
+# auto-process-init source context.  That integrated source-inventory change
+# deliberately changes this normalized JSON digest; it does not promote M2.
+M2_X86_64_VM_FRAGMENT_DIGEST = "aefd83528076c482b5a79b4320ab1b7a4e95170258074f67139a8318b95ad82b"
 M2_X86_64_INITIALIZATION_FRAGMENT_DIGEST = "08c3cdd0c8625518350fcc6cf12cc4555943f0b3950f2c2f1545cd8622a885ef"
 M2_X86_64_FAULT_FRAGMENT_DIGEST = "f475d677ac853bbb91b02edf75e7739f312b85e2da31a51ec864a3b41693a529"
 M2_X86_64_PAGE_MAP_CHECK_IDS = (
@@ -343,6 +346,7 @@ M2_X86_64_SOURCE_MAP_REFERENCES: Mapping[str, tuple[dict[str, str], ...]] = {
     "vm-primitives": (
         {"unit_id": "os-allocation-policy", "required_status": "partial"},
         {"unit_id": "arena-lifecycle", "required_status": "partial"},
+        {"unit_id": "statistics-collection", "required_status": "partial"},
         {"unit_id": "linux-unix-primitives", "required_status": "partial"},
         {"unit_id": "primitive-interface", "required_status": "partial"},
     ),
@@ -459,6 +463,14 @@ M2_X86_64_PAGE_MAP_CHECKS = (
         "id": "process-page-map-cold-terminal-owner",
         "kind": "rust-unit",
         "target": "process_init::tests::rejected_page_map_after_heap_and_metadata_retains_ticket_zero_without_tls_publication",
+    },
+)
+M2_X86_64_ARENA_CHECKS = (
+    {
+        "expected_passed_test_count": 1,
+        "id": "process-wide-arena-purge-c-rust-differential",
+        "kind": "c-rust-process-arena-purge-differential",
+        "target": "arena::owned::tests::emit_native_owned_arena_purge_trace",
     },
 )
 # This direct C/Rust record covers only src/init.c's detached static-preimage
@@ -12128,6 +12140,9 @@ def validate_x86_64_m2_memory_substrate_contract(
         if component_id == "page-map":
             if raw_checks != list(M2_X86_64_PAGE_MAP_CHECKS):
                 raise HarnessError("native x86 M2 PageMap check inventory changed")
+        elif component_id == "arenas":
+            if raw_checks != list(M2_X86_64_ARENA_CHECKS):
+                raise HarnessError("native x86 M2 process-arena check inventory changed")
         elif not complete and not partial_evidence_component and raw_checks:
             raise HarnessError(
                 f"native x86 M2 incomplete component {component_id} cannot record unqualified checks"
@@ -12153,6 +12168,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                     "c-rust-vm-primitives-fixed-lifecycle",
                     "c-rust-vm-primitives-source-profile-matrix",
                     "c-rust-aligned-overmap-cleanup-boundary-matrix",
+                    "c-rust-process-arena-purge-differential",
                     "c-rust-runtime-thp-source-environment-admission",
                     "c-rust-initialization-tld-source-matrix",
                     "c-rust-init-recursion-lifecycle",
@@ -12209,6 +12225,16 @@ def validate_x86_64_m2_memory_substrate_contract(
                     or not (ALLOCATOR_ROOT / "x86_64_fault_seam_inventory.py").is_file()
                 ):
                     raise HarnessError("native x86 M2 fault-inventory evidence target is absent")
+            elif raw_check.get("kind") == "c-rust-process-arena-purge-differential":
+                source = ROOT / "crabc-mimalloc/src/arena_owned.rs"
+                if (
+                    component_id != "arenas"
+                    or raw_check.get("target")
+                    != "arena::owned::tests::emit_native_owned_arena_purge_trace"
+                    or not source.is_file()
+                    or "fn emit_native_owned_arena_purge_trace()" not in source.read_text(encoding="utf-8")
+                ):
+                    raise HarnessError("native x86 M2 process-arena evidence target is absent")
             elif component_id != "bitmaps":
                 _m2_memory_substrate_source_test_exists(
                     str(raw_check["target"]), str(raw_check["id"])
@@ -12442,7 +12468,9 @@ def _run_m2_x86_64_bitmap_evidence(*, offline: bool, test_program: Mapping[str, 
     )
 
 
-def _run_m2_x86_64_vm_evidence(*, offline: bool, test_program: Mapping[str, Any]) -> dict[str, Any]:
+def _run_m2_x86_64_vm_evidence(
+    *, offline: bool, test_program: Mapping[str, Any], arena_owned_check: Mapping[str, Any],
+) -> dict[str, Any]:
     """Run the VM producer against the aggregate's already-built native binary."""
 
     if not _m2_x86_64_vm_test_program_is_bound(test_program):
@@ -12453,6 +12481,7 @@ def _run_m2_x86_64_vm_evidence(*, offline: bool, test_program: Mapping[str, Any]
         offline=offline,
         test_program=test_program,
         contract_fragment=M2_X86_64_VM_FRAGMENT,
+        arena_owned_check=arena_owned_check,
     )
 
 
@@ -12587,13 +12616,16 @@ def _m2_x86_64_vm_test_program_is_bound(test_program: object) -> bool:
 
 def _m2_x86_64_vm_c_command_is_bound(
     command: object, producer: Any, *, aligned_hint_profile: str | None = None,
+    arena_owned: bool = False,
 ) -> bool:
     """Require one direct-source VM C oracle's complete positional command.
 
-    The M2 fixture directly includes pinned `src/os.c`, `src/arena.c`,
+    The M2 VM fixture directly includes pinned `src/os.c`, `src/arena.c`,
     `src/init.c`, `src/page.c`, and `src/prim/prim.c`, so its ordinary source
     input list must omit all five while retaining the complete raw primitive
-    closure. Every
+    closure. The process-arena fixture instead includes pinned `src/static.c`,
+    whose single translation unit already contains every allocator definition,
+    so it links no separate source input. Every
     position is fixed apart from the resolved
     compiler, the extracted-source root, the checkout fixture root, and the
     runner-owned output root. This rejects injected preprocessor, object,
@@ -12620,9 +12652,21 @@ def _m2_x86_64_vm_c_command_is_bound(
         # the explicit source startup sequence in main.
         "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
     )
-    if aligned_hint_profile is None:
+    if arena_owned:
+        if aligned_hint_profile is not None:
+            return False
+        configuration = CONFIGURATION_PROFILES["release"]
+        output_name = "m2-arena-owned-oracle"
+        fixture = relative(producer.ARENA_OWNED_FIXTURE)
+        link_wraps: tuple[str, ...] = ()
+    elif aligned_hint_profile is None:
         configuration = CONFIGURATION_PROFILES["release"]
         output_name = "m2-vm-primitives-oracle"
+        fixture = relative(producer.FIXTURE)
+        link_wraps = (
+            "-Wl,--wrap=munmap", "-Wl,--wrap=mmap", "-Wl,--wrap=madvise",
+            "-Wl,--wrap=mprotect", "-Wl,--wrap=prctl",
+        )
     else:
         profiles = {
             profile_id: tuple(flags)
@@ -12632,23 +12676,42 @@ def _m2_x86_64_vm_c_command_is_bound(
         if configuration is None:
             return False
         output_name = f"m2-vm-primitives-{aligned_hint_profile}-oracle"
+        fixture = relative(producer.FIXTURE)
+        link_wraps = (
+            "-Wl,--wrap=munmap", "-Wl,--wrap=mmap", "-Wl,--wrap=madvise",
+            "-Wl,--wrap=mprotect", "-Wl,--wrap=prctl",
+        )
 
-    fixture = relative(producer.FIXTURE)
-    expected_sources = tuple(M2_X86_64_VM_C_ORACLE_SOURCES)
     fixture_position = 1 + len(fixed_prefix) + 4 + len(configuration)
-    first_source_position = fixture_position + 1
-    if len(command) <= first_source_position:
+    fixture_argument = command[fixture_position] if len(command) > fixture_position else None
+    if not isinstance(fixture_argument, str) or not _m2_x86_64_vm_command_path_matches(
+        fixture_argument, fixture
+    ):
         return False
-    fixture_argument = command[fixture_position]
-    if not _m2_x86_64_vm_command_path_matches(fixture_argument, fixture):
+
+    include_position = 1 + len(fixed_prefix)
+    if (
+        len(command) <= include_position + 3
+        or command[include_position] != "-I"
+        or command[include_position + 2] != "-I"
+    ):
         return False
-    first_source = command[first_source_position].replace("\\", "/").rstrip("/")
-    source_suffix = "/" + expected_sources[0]
-    if not first_source.endswith(source_suffix):
+    include_path = command[include_position + 1].replace("\\", "/").rstrip("/")
+    include_suffix = "/include"
+    if not include_path.endswith(include_suffix):
         return False
-    source_root = first_source[: -len(source_suffix)].rstrip("/")
-    if not source_root:
+    source_root = include_path[: -len(include_suffix)].rstrip("/")
+    if not source_root or command[include_position + 3].replace("\\", "/").rstrip("/") != f"{source_root}/src":
         return False
+
+    expected_sources = () if arena_owned else tuple(M2_X86_64_VM_C_ORACLE_SOURCES)
+    if not arena_owned:
+        first_source_position = fixture_position + 1
+        if len(command) <= first_source_position:
+            return False
+        first_source = command[first_source_position].replace("\\", "/").rstrip("/")
+        if first_source != f"{source_root}/{expected_sources[0]}":
+            return False
     output = command[-1]
     expected_output = relative(
         ARTIFACT_ROOT / "x86_64/m2-vm-primitives" / output_name
@@ -12666,11 +12729,7 @@ def _m2_x86_64_vm_c_command_is_bound(
         *configuration,
         fixture_argument,
         *(f"{source_root}/{source}" for source in expected_sources),
-        "-Wl,--wrap=munmap",
-        "-Wl,--wrap=mmap",
-        "-Wl,--wrap=madvise",
-        "-Wl,--wrap=mprotect",
-        "-Wl,--wrap=prctl",
+        *link_wraps,
         "-pthread",
         "-o",
         output,
@@ -12945,6 +13004,64 @@ def _m2_x86_64_vm_check_records(
         }
     )
     return records
+
+
+def _m2_x86_64_process_arena_collect_check_records(
+    summary: Mapping[str, Any], evidence: object,
+) -> list[dict[str, Any]]:
+    """Bind the finite process-wide arena purge relation to its two sources."""
+
+    component = next(item for item in summary["components"] if item["id"] == "arenas")
+    check = next(
+        (item for item in component["checks"]
+         if item["id"] == "process-wide-arena-purge-c-rust-differential"),
+        None,
+    )
+    producer = _m2_x86_64_vm_producer()
+    if (
+        check is None
+        or check.get("target") != producer.ARENA_OWNED_TRACE_TARGET
+        or check.get("expected_passed_test_count") != 1
+        or not isinstance(evidence, Mapping)
+        or evidence.get("arena_owned_comparison") != {
+            "compared_value_count": producer.ARENA_OWNED_EVENT_FIELD_COUNT,
+            "status": "matched",
+        }
+        or evidence.get("arena_owned_rust_passed_test_count")
+        != check["expected_passed_test_count"]
+        or not isinstance(evidence.get("arena_owned_trace_sha256"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", str(evidence.get("arena_owned_trace_sha256"))) is None
+        or not _m2_x86_64_vm_c_command_is_bound(
+            evidence.get("arena_owned_c_command"), producer, arena_owned=True
+        )
+        or not _m2_x86_64_vm_rust_receipt_is_bound(
+            evidence.get("rust_build_command"),
+            evidence.get("rust_execution"),
+            evidence.get("arena_owned_rust_command"),
+            evidence.get("rust_test_binary"),
+            target=check["target"],
+        )
+    ):
+        raise HarnessError("native x86 M2 process-arena purge receipt is invalid")
+    fixture = evidence.get("arena_owned_fixture")
+    if (
+        not isinstance(fixture, Mapping)
+        or fixture.get("path") != relative(ALLOCATOR_ROOT / "m2_arena_owned_x86_64.c")
+        or type(fixture.get("bytes")) is not int
+        or fixture.get("bytes", 0) <= 0
+        or not isinstance(fixture.get("sha256"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", str(fixture.get("sha256"))) is None
+    ):
+        raise HarnessError("native x86 M2 process-arena purge fixture provenance is invalid")
+    return [{
+        "comparison_status": "matched",
+        "component": "arenas",
+        "command": list(evidence["arena_owned_rust_command"]),
+        "evidence_scope": "bounded-three-regular-arena-pinned-c-rust-process-purge-relation",
+        "id": check["id"],
+        "passed_test_count": check["expected_passed_test_count"],
+        "target": check["target"],
+    }]
 
 
 def _m2_x86_64_initialization_check_records(
@@ -13351,7 +13468,12 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
     )
     bitmap_evidence = _run_m2_x86_64_bitmap_evidence(offline=offline, test_program=test_program)
     bitmap_checks = _m2_x86_64_bitmap_check_records(summary, bitmap_evidence)
-    vm_evidence = _run_m2_x86_64_vm_evidence(offline=offline, test_program=test_program)
+    _, arena_owned_check = _m2_x86_64_check_by_id(
+        summary, "process-wide-arena-purge-c-rust-differential"
+    )
+    vm_evidence = _run_m2_x86_64_vm_evidence(
+        offline=offline, test_program=test_program, arena_owned_check=arena_owned_check
+    )
     runtime_thp_evidence = _run_m2_x86_64_runtime_thp_configuration_evidence()
     initialization_evidence = _run_m2_x86_64_initialization_evidence(offline=offline)
     fault_evidence = _run_m2_x86_64_fault_evidence(
@@ -13360,6 +13482,7 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
     vm_checks = _m2_x86_64_vm_check_records(
         summary, vm_evidence, runtime_thp_evidence
     )
+    arena_owned_checks = _m2_x86_64_process_arena_collect_check_records(summary, vm_evidence)
     initialization_checks = _m2_x86_64_initialization_check_records(
         summary, initialization_evidence
     )
@@ -13369,6 +13492,7 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         *initialization_checks,
         *fault_checks,
         *bitmap_checks,
+        *arena_owned_checks,
         _m2_x86_64_differential_check_record(success_component, success_check, success),
         _m2_x86_64_differential_check_record(lazy_component, lazy_check, lazy),
         _m2_x86_64_differential_check_record(cold_component, cold_check, cold),
@@ -13384,6 +13508,7 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
                     *(check["id"] for check in initialization_checks),
                     *(check["id"] for check in fault_checks),
                     *(check["id"] for check in bitmap_checks),
+                    *(check["id"] for check in arena_owned_checks),
                 }
             ),
             gate_name="native x86 M2 focused source evidence",

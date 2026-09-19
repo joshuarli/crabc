@@ -1,6 +1,7 @@
 /* Copyright (c) 2026 crabc contributors. SPDX-License-Identifier: MIT */
 /* Direct pinned v3.5.0 arena algorithms and real OS backing, no substitutes. */
 #include "static.c"
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -42,6 +43,180 @@ static void emit_purge(int64_t value) {
   printf("m2.arena.purge.%zu=%lld\n", purge_field++, (long long)value);
 }
 
+/*
+  `_mi_arenas_collect` reaches the static `mi_arenas_try_purge` process-wide
+  traversal. Record that relation before the earlier local traces add their
+  own arenas, then append the observations after their established 32 fields.
+  The forced future expiration avoids a clock/sleep race; emitted fields are
+  source-state relations rather than timestamps.
+*/
+static int64_t process_collect_trace[48];
+static size_t process_collect_field;
+
+static void record_process_collect(int64_t value) {
+  require(process_collect_field < 48);
+  process_collect_trace[process_collect_field++] = value;
+}
+
+static int64_t process_collect_expiry_zero_mask(mi_arena_t* owners[3]) {
+  int64_t mask = 0;
+  for (size_t index = 0; index < 3; index++) {
+    if (mi_atomic_loadi64_relaxed(&owners[index]->purge_expire) == 0) {
+      mask |= ((int64_t)1 << index);
+    }
+  }
+  return mask;
+}
+
+static int64_t process_collect_bitmap_mask(mi_arena_t* owners[3], size_t starts[3], int kind) {
+  int64_t mask = 0;
+  for (size_t index = 0; index < 3; index++) {
+    bool set;
+    if (kind == 0) {
+      set = mi_bbitmap_is_setN(owners[index]->slices_free, starts[index], 1);
+    }
+    else if (kind == 1) {
+      set = mi_bitmap_is_setN(owners[index]->slices_committed, starts[index], 1);
+    }
+    else {
+      set = mi_bitmap_is_setN(owners[index]->slices_purge, starts[index], 1);
+    }
+    if (set) mask |= ((int64_t)1 << index);
+  }
+  return mask;
+}
+
+/* 1=future, 2=finite positive rebased/scheduled, 0=cleared. */
+static int64_t process_collect_global_state(mi_msecs_t future) {
+  const mi_msecs_t value = mi_atomic_loadi64_relaxed(&subprocess->purge_expire);
+  if (value == future) return 1;
+  if (value == 0) return 0;
+  require(value > 0 && value < future);
+  return 2;
+}
+
+static void record_process_collect_stage(
+    mi_arena_t* owners[3], size_t starts[3], mi_msecs_t future,
+    int64_t before_arena_purges, int64_t before_purge_calls, int64_t before_purged) {
+  record_process_collect(subprocess->stats.arena_purges.total - before_arena_purges);
+  record_process_collect(subprocess->stats.purge_calls.total - before_purge_calls);
+  record_process_collect(subprocess->stats.purged.total - before_purged);
+  record_process_collect((int64_t)mi_arenas_get_count(subprocess));
+  record_process_collect(process_collect_global_state(future));
+  record_process_collect(process_collect_expiry_zero_mask(owners));
+  record_process_collect(process_collect_bitmap_mask(owners, starts, 2));
+  record_process_collect(process_collect_bitmap_mask(owners, starts, 0));
+  record_process_collect(process_collect_bitmap_mask(owners, starts, 1));
+}
+
+static void trace_process_arena_collect(void) {
+  mi_arena_t* owners[3];
+  mi_memid_t memories[3];
+  size_t starts[3];
+  const mi_msecs_t future = (mi_msecs_t)INT64_MAX;
+  // `src/init.c` keeps the first main-thread TLD in file-static storage;
+  // main invokes `_mi_auto_process_init` before calling this trace.
+  mi_tld_t* const main_tld = &mi_process_tld_main;
+  const size_t saved_thread_seq = main_tld->thread_seq;
+
+  mi_option_set(mi_option_purge_delay, 100000);
+  mi_option_set(mi_option_purge_decommits, true);
+  for (size_t index = 0; index < 3; index++) {
+    owners[index] = arena(false);
+    void* p = mi_arena_try_alloc_at(owners[index], 1, true, 0, &memories[index]);
+    require(p != NULL);
+    starts[index] = memories[index].mem.arena.slice_index;
+    _mi_arenas_free(subprocess, p, MI_ARENA_SLICE_SIZE, memories[index]);
+    mi_atomic_storei64_release(&owners[index]->purge_expire, future);
+  }
+  mi_atomic_storei64_release(&subprocess->purge_expire, future);
+  require(mi_arenas_get_count(subprocess) == 3);
+  require(process_collect_global_state(future) == 1);
+  require(process_collect_expiry_zero_mask(owners) == 0);
+  require(process_collect_bitmap_mask(owners, starts, 2) == 7);
+  require(process_collect_bitmap_mask(owners, starts, 0) == 7);
+  require(process_collect_bitmap_mask(owners, starts, 1) == 7);
+  record_process_collect((int64_t)mi_arenas_get_count(subprocess));
+  record_process_collect(process_collect_bitmap_mask(owners, starts, 0));
+  record_process_collect(process_collect_bitmap_mask(owners, starts, 1));
+
+  int64_t before_arena_purges = subprocess->stats.arena_purges.total;
+  int64_t before_purge_calls = subprocess->stats.purge_calls.total;
+  int64_t before_purged = subprocess->stats.purged.total;
+  _mi_arenas_collect(false, false, main_tld);
+  require(subprocess->stats.arena_purges.total == before_arena_purges);
+  require(subprocess->stats.purge_calls.total == before_purge_calls);
+  require(subprocess->stats.purged.total == before_purged);
+  require(process_collect_global_state(future) == 1);
+  require(process_collect_expiry_zero_mask(owners) == 0);
+  require(process_collect_bitmap_mask(owners, starts, 2) == 7);
+  require(process_collect_bitmap_mask(owners, starts, 0) == 7);
+  require(process_collect_bitmap_mask(owners, starts, 1) == 7);
+  record_process_collect_stage(owners, starts, future, before_arena_purges, before_purge_calls, before_purged);
+
+  before_arena_purges = subprocess->stats.arena_purges.total;
+  before_purge_calls = subprocess->stats.purge_calls.total;
+  before_purged = subprocess->stats.purged.total;
+  _mi_arenas_collect(false, true, main_tld);
+  require(subprocess->stats.arena_purges.total == before_arena_purges);
+  require(subprocess->stats.purge_calls.total == before_purge_calls);
+  require(subprocess->stats.purged.total == before_purged);
+  require(process_collect_global_state(future) == 2);
+  require(process_collect_expiry_zero_mask(owners) == 0);
+  require(process_collect_bitmap_mask(owners, starts, 2) == 7);
+  require(process_collect_bitmap_mask(owners, starts, 0) == 7);
+  require(process_collect_bitmap_mask(owners, starts, 1) == 7);
+  record_process_collect_stage(owners, starts, future, before_arena_purges, before_purge_calls, before_purged);
+
+  main_tld->thread_seq = 1;
+  before_arena_purges = subprocess->stats.arena_purges.total;
+  before_purge_calls = subprocess->stats.purge_calls.total;
+  before_purged = subprocess->stats.purged.total;
+  _mi_arenas_collect(true, false, main_tld);
+  require(subprocess->stats.arena_purges.total == before_arena_purges + 1);
+  require(subprocess->stats.purge_calls.total > before_purge_calls);
+  require(subprocess->stats.purged.total > before_purged);
+  require(process_collect_global_state(future) == 2);
+  require(process_collect_expiry_zero_mask(owners) == 2);
+  require(process_collect_bitmap_mask(owners, starts, 2) == 5);
+  require(process_collect_bitmap_mask(owners, starts, 0) == 7);
+  // Pinned Linux release MADV_DONTNEED keeps needs_recommit false here.
+  require(process_collect_bitmap_mask(owners, starts, 1) == 7);
+  record_process_collect_stage(owners, starts, future, before_arena_purges, before_purge_calls, before_purged);
+
+  main_tld->thread_seq = 2;
+  before_arena_purges = subprocess->stats.arena_purges.total;
+  before_purge_calls = subprocess->stats.purge_calls.total;
+  before_purged = subprocess->stats.purged.total;
+  _mi_arenas_collect(true, true, main_tld);
+  require(subprocess->stats.arena_purges.total == before_arena_purges + 2);
+  require(subprocess->stats.purge_calls.total > before_purge_calls);
+  require(subprocess->stats.purged.total > before_purged);
+  require(process_collect_global_state(future) == 2);
+  require(process_collect_expiry_zero_mask(owners) == 7);
+  require(process_collect_bitmap_mask(owners, starts, 2) == 0);
+  require(process_collect_bitmap_mask(owners, starts, 0) == 7);
+  require(process_collect_bitmap_mask(owners, starts, 1) == 7);
+  record_process_collect_stage(owners, starts, future, before_arena_purges, before_purge_calls, before_purged);
+
+  before_arena_purges = subprocess->stats.arena_purges.total;
+  before_purge_calls = subprocess->stats.purge_calls.total;
+  before_purged = subprocess->stats.purged.total;
+  _mi_arenas_collect(true, true, main_tld);
+  require(subprocess->stats.arena_purges.total == before_arena_purges);
+  require(subprocess->stats.purge_calls.total == before_purge_calls);
+  require(subprocess->stats.purged.total == before_purged);
+  require(process_collect_global_state(future) == 0);
+  require(process_collect_expiry_zero_mask(owners) == 7);
+  require(process_collect_bitmap_mask(owners, starts, 2) == 0);
+  require(process_collect_bitmap_mask(owners, starts, 0) == 7);
+  require(process_collect_bitmap_mask(owners, starts, 1) == 7);
+  record_process_collect_stage(owners, starts, future, before_arena_purges, before_purge_calls, before_purged);
+
+  require(process_collect_field == 48);
+  main_tld->thread_seq = saved_thread_seq;
+}
+
 static void trace_purge(long delay, bool decommit, bool mixed) {
   mi_option_set(mi_option_purge_delay, delay);
   mi_option_set(mi_option_purge_decommits, decommit);
@@ -80,6 +255,7 @@ int main(void) {
   _mi_auto_process_init();
   subprocess = _mi_subproc_main();
   require(_mi_os_has_overcommit());
+  trace_process_arena_collect();
   mi_arena_t* eager = arena(true);
   trace_claim(eager, true);
   trace_claim(eager, true);
@@ -99,5 +275,9 @@ int main(void) {
   trace_purge(0, false, true);
   trace_purge(1000, true, false);
   require(purge_field == 32);
+  for (size_t index = 0; index < process_collect_field; index++) {
+    emit_purge(process_collect_trace[index]);
+  }
+  require(purge_field == 80);
   return 0;
 }

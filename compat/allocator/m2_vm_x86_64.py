@@ -27,6 +27,7 @@ from typing import Any, Mapping, Sequence
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = Path(__file__).with_suffix(".c")
+ARENA_OWNED_FIXTURE = ROOT / "compat/allocator/m2_arena_owned_x86_64.c"
 SCHEMA = "crabc-mimalloc-x86_64-m2-component-evidence"
 TRACE_BEGIN = "CRABC_MI_M2_VM_TRACE_BEGIN"
 TRACE_END = "CRABC_MI_M2_VM_TRACE_END"
@@ -34,16 +35,18 @@ ALIGNED_HINT_PROFILE_TRACE_BEGIN = "CRABC_MI_M2_ALIGNED_HINT_SOURCE_PROFILE_TRAC
 ALIGNED_HINT_PROFILE_TRACE_END = "CRABC_MI_M2_ALIGNED_HINT_SOURCE_PROFILE_TRACE_END"
 ALIGNED_OVERMAP_TRACE_BEGIN = "CRABC_MI_M2_ALIGNED_OVERMAP_TRACE_BEGIN"
 ALIGNED_OVERMAP_TRACE_END = "CRABC_MI_M2_ALIGNED_OVERMAP_TRACE_END"
-ARENA_OWNED_EVENT_FIELD_COUNT = 32
+ARENA_OWNED_EVENT_FIELD_COUNT = 80
 ARENA_OWNED_EVENT_PREFIX = "m2.arena.purge."
 ARENA_OWNED_RUST_INLINE_PREFIX = (
     "test arena::owned::tests::emit_native_owned_arena_purge_trace ... "
 )
 EXPECTED_RUST_TEST_COUNT = 1
+ARENA_OWNED_TRACE_ID = "process-wide-arena-purge-c-rust-differential"
+ARENA_OWNED_TRACE_TARGET = "arena::owned::tests::emit_native_owned_arena_purge_trace"
 LARGE_PAGE_RETRY_CAPTURE_REAP_TEST_DEFINE = (
     "-DCRABC_M2_LARGE_PAGE_RETRY_CAPTURE_REAP_TEST=1"
 )
-EVIDENCE_PROFILE = "release-no-default-features-process-paired-regular-vm-reset-eagain-fallback-state-external-page-extension-child-policy-thp-direct-policy-outcome-matrix-large-page-retry-suppression-large-only-one-gib-terminal-aligned-hint-and-aligned-overmap-cleanup-boundary-fault"
+EVIDENCE_PROFILE = "release-no-default-features-process-paired-regular-vm-reset-eagain-fallback-state-external-page-extension-child-policy-thp-direct-policy-outcome-matrix-large-page-retry-suppression-large-only-one-gib-terminal-aligned-hint-aligned-overmap-and-process-arena-collect-boundary-fault"
 
 CHECKS = (
     (
@@ -786,7 +789,7 @@ def parse_arena_owned_purge_trace(output: str, *, source: str) -> tuple[int, ...
 
     The pinned C producer emits every `m2.arena.purge.N=V` field at a line
     start. Rust libtest writes only field zero after this exact test-name
-    delimiter and puts fields one through 31 at line starts. No other prefix,
+    delimiter and puts fields one through 79 at line starts. No other prefix,
     separator, field order, or integer spelling is accepted.
     """
 
@@ -953,6 +956,38 @@ def _compare(c_trace: Mapping[str, int], rust_trace: Mapping[str, int], harness:
     return {"compared_value_count": len(TRACE_KEYS), "status": "matched"}
 
 
+def _compare_arena_owned_purge_trace(
+    c_trace: tuple[int, ...], rust_trace: tuple[int, ...], harness: Any,
+) -> dict[str, Any]:
+    if len(c_trace) != ARENA_OWNED_EVENT_FIELD_COUNT or len(rust_trace) != ARENA_OWNED_EVENT_FIELD_COUNT:
+        raise harness.HarnessError("native x86 M2 process-arena trace schema is incomplete")
+    mismatches = [
+        f"{index}: C={c_value}, Rust={rust_value}"
+        for index, (c_value, rust_value) in enumerate(zip(c_trace, rust_trace))
+        if c_value != rust_value
+    ]
+    if mismatches:
+        raise harness.HarnessError(
+            "native x86 M2 process-arena purge differs from pinned C: " + "; ".join(mismatches)
+        )
+    return {"compared_value_count": ARENA_OWNED_EVENT_FIELD_COUNT, "status": "matched"}
+
+
+def _arena_owned_trace_check(
+    check: Mapping[str, Any], test_program: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    if not isinstance(test_program, Mapping) or not isinstance(test_program.get("path"), Path):
+        raise _error("aggregate did not supply its prepared native Rust test program")
+    if (
+        not isinstance(check, Mapping)
+        or check.get("id") != ARENA_OWNED_TRACE_ID
+        or check.get("target") != ARENA_OWNED_TRACE_TARGET
+        or check.get("expected_passed_test_count") != EXPECTED_RUST_TEST_COUNT
+    ):
+        raise _error("process-arena purge trace check changed")
+    return check
+
+
 def _trace_check(fragment: Mapping[str, Any], test_program: Mapping[str, Any]) -> Mapping[str, Any]:
     if not isinstance(test_program, Mapping) or not isinstance(test_program.get("path"), Path):
         raise _error("aggregate did not supply its prepared native Rust test program")
@@ -1045,6 +1080,7 @@ def run_evidence(
     offline: bool,
     test_program: Mapping[str, Any],
     contract_fragment: Path,
+    arena_owned_check: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Run the bounded native VM C/Rust differential from the aggregate gate.
 
@@ -1060,6 +1096,7 @@ def run_evidence(
     check = _trace_check(fragment, test_program)
     profile_check = _aligned_hint_profile_check(fragment, test_program)
     aligned_overmap_check = _aligned_overmap_cleanup_check(fragment, test_program)
+    arena_owned_check = _arena_owned_trace_check(arena_owned_check, test_program)
     pin = harness.load_pin()
     upstream = fragment["upstream"]
     if upstream["revision"] != pin["revision"] or upstream["archive_sha256"] != pin["sha256"]:
@@ -1102,6 +1139,44 @@ def run_evidence(
         c_run = harness.command_record([str(binary)], cwd=source, timeout_seconds=180)
         harness.require_success(c_run, "pinned C native x86 M2 VM oracle")
         c_trace = parse_trace(str(c_run["stdout"]), source="pinned C")
+
+        arena_owned_binary = artifacts / "m2-arena-owned-oracle"
+        arena_owned_command = [
+            compiler,
+            "-std=c11",
+            "-fPIC",
+            "-ftls-model=initial-exec",
+            "-DMI_SHARED_LIB",
+            "-DMI_SHARED_LIB_EXPORT",
+            "-DMI_LIBC_MUSL=1",
+            "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
+            "-I",
+            str(source / "include"),
+            "-I",
+            str(source / "src"),
+            *harness.CONFIGURATION_PROFILES["release"],
+            # `static.c` is included by this fixture and is the single pinned
+            # translation unit for every allocator definition it exercises.
+            str(ARENA_OWNED_FIXTURE),
+            "-pthread",
+            "-o",
+            str(arena_owned_binary),
+        ]
+        arena_owned_build = harness.command_record(
+            arena_owned_command, cwd=source, timeout_seconds=300
+        )
+        harness.require_success(
+            arena_owned_build, "pinned C native x86 M2 process-arena purge oracle build"
+        )
+        arena_owned_run = harness.command_record(
+            [str(arena_owned_binary)], cwd=source, timeout_seconds=180
+        )
+        harness.require_success(
+            arena_owned_run, "pinned C native x86 M2 process-arena purge oracle"
+        )
+        c_arena_owned_trace = parse_arena_owned_purge_trace(
+            str(arena_owned_run["stdout"]), source="pinned C"
+        )
 
         # This child-reaping regression is intentionally a separate fixture
         # harness, not another upstream VM trace value. Its empty record must
@@ -1211,6 +1286,24 @@ def run_evidence(
         raise harness.HarnessError("native x86 M2 VM Rust witness binary changed during execution")
     rust_trace = parse_trace(rust_output, source="Rust")
     comparison = _compare(c_trace, rust_trace, harness)
+    arena_owned_rust, arena_owned_rust_output = harness._x86_64_run_exact_program_check(
+        test_program,
+        arena_owned_check,
+        nocapture=True,
+        gate_name="native x86 M2 process-arena purge",
+    )
+    arena_owned_rust_command = arena_owned_rust["command"]
+    arena_owned_rust_count = arena_owned_rust["passed_test_count"]
+    if arena_owned_rust_command[0] != str(rust_binary):
+        raise harness.HarnessError(
+            "native x86 M2 process-arena Rust witness binary changed during execution"
+        )
+    rust_arena_owned_trace = parse_arena_owned_purge_trace(
+        arena_owned_rust_output, source="Rust"
+    )
+    arena_owned_comparison = _compare_arena_owned_purge_trace(
+        c_arena_owned_trace, rust_arena_owned_trace, harness
+    )
     profile_rust, profile_rust_output = harness._x86_64_run_exact_program_check(
         test_program,
         profile_check,
@@ -1260,6 +1353,14 @@ def run_evidence(
         "aligned_overmap_rust_passed_test_count": aligned_overmap_rust_count,
         "aligned_overmap_rust_trace_sha256": hashlib.sha256(
             json.dumps(rust_aligned_overmap_trace, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        ).hexdigest(),
+        "arena_owned_c_command": arena_owned_command,
+        "arena_owned_comparison": arena_owned_comparison,
+        "arena_owned_fixture": harness.artifact_record(ARENA_OWNED_FIXTURE),
+        "arena_owned_rust_command": arena_owned_rust_command,
+        "arena_owned_rust_passed_test_count": arena_owned_rust_count,
+        "arena_owned_trace_sha256": hashlib.sha256(
+            json.dumps(c_arena_owned_trace, separators=(",", ":")).encode("utf-8")
         ).hexdigest(),
         "aligned_hint_profile_c_commands": profile_commands,
         "aligned_hint_profile_comparison": profile_comparison,

@@ -165,6 +165,8 @@ class NativeVmAssemblyTests(unittest.TestCase):
             "c_source_files": [
                 {"path": path, "sha256": "a" * 64, "bytes": 1}
                 for path in sorted((
+                    "include/mimalloc-stats.h",
+                    "include/mimalloc/internal.h",
                     "include/mimalloc/prim.h",
                     "src/arena.c",
                     "src/init.c",
@@ -172,6 +174,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
                     "src/page.c",
                     "src/prim/prim.c",
                     "src/prim/unix/prim.c",
+                    "src/stats.c",
                 ))
             ],
             "compared_value_count": len(producer.TRACE_KEYS),
@@ -213,6 +216,57 @@ class NativeVmAssemblyTests(unittest.TestCase):
             "upstream": {"revision": pin["revision"], "archive_sha256": pin["sha256"]},
             "nonclaims": list(vm["remaining_conditions"]),
         }
+
+    @staticmethod
+    def arena_owned_evidence(summary):
+        evidence = NativeVmAssemblyTests.vm_evidence(summary)
+        producer = RUNNER._m2_x86_64_vm_producer()
+        rust_binary = evidence["rust_command"][0]
+        evidence.update(
+            {
+                "arena_owned_c_command": [
+                    "musl-gcc",
+                    "-std=c11",
+                    "-fPIC",
+                    "-ftls-model=initial-exec",
+                    "-DMI_SHARED_LIB",
+                    "-DMI_SHARED_LIB_EXPORT",
+                    "-DMI_LIBC_MUSL=1",
+                    "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
+                    "-I",
+                    "/pinned/include",
+                    "-I",
+                    "/pinned/src",
+                    *RUNNER.CONFIGURATION_PROFILES["release"],
+                    str(RUNNER.ALLOCATOR_ROOT / "m2_arena_owned_x86_64.c"),
+                    "-pthread",
+                    "-o",
+                    str(
+                        RUNNER.ARTIFACT_ROOT
+                        / "x86_64/m2-vm-primitives/m2-arena-owned-oracle"
+                    ),
+                ],
+                "arena_owned_comparison": {
+                    "compared_value_count": producer.ARENA_OWNED_EVENT_FIELD_COUNT,
+                    "status": "matched",
+                },
+                "arena_owned_fixture": {
+                    "path": "compat/allocator/m2_arena_owned_x86_64.c",
+                    "sha256": "9" * 64,
+                    "bytes": 1,
+                },
+                "arena_owned_rust_command": [
+                    rust_binary,
+                    producer.ARENA_OWNED_TRACE_TARGET,
+                    "--exact",
+                    "--test-threads=1",
+                    "--nocapture",
+                ],
+                "arena_owned_rust_passed_test_count": 1,
+                "arena_owned_trace_sha256": "8" * 64,
+            }
+        )
+        return evidence
 
     def test_release_fault_trace_schema_requires_the_retained_owner_and_retry(self):
         producer = RUNNER._m2_x86_64_vm_producer()
@@ -522,6 +576,58 @@ class NativeVmAssemblyTests(unittest.TestCase):
         self.assertEqual(records[2]["id"], "aligned-overmap-cleanup-c-rust-boundary-matrix")
         self.assertEqual(records[2]["comparison_status"], "expected-divergence-verified")
 
+    def test_process_arena_collect_receipt_binds_its_c_rust_pair(self):
+        summary = self.summary()
+        records = RUNNER._m2_x86_64_process_arena_collect_check_records(
+            summary, self.arena_owned_evidence(summary)
+        )
+        self.assertEqual(
+            records,
+            [{
+                "comparison_status": "matched",
+                "component": "arenas",
+                "command": self.arena_owned_evidence(summary)["arena_owned_rust_command"],
+                "evidence_scope": "bounded-three-regular-arena-pinned-c-rust-process-purge-relation",
+                "id": "process-wide-arena-purge-c-rust-differential",
+                "passed_test_count": 1,
+                "target": "arena::owned::tests::emit_native_owned_arena_purge_trace",
+            }],
+        )
+
+    def test_process_arena_collect_receipt_rejects_altered_or_missing_binding(self):
+        summary = self.summary()
+        producer = RUNNER._m2_x86_64_vm_producer()
+        cases = {
+            "altered-c-fixture-command": lambda evidence: evidence["arena_owned_c_command"].__setitem__(
+                evidence["arena_owned_c_command"].index(
+                    str(RUNNER.ALLOCATOR_ROOT / "m2_arena_owned_x86_64.c")
+                ),
+                str(RUNNER.ALLOCATOR_ROOT / "m2_vm_x86_64.c"),
+            ),
+            "altered-fixture-receipt": lambda evidence: evidence["arena_owned_fixture"].__setitem__(
+                "path", "compat/allocator/m2_vm_x86_64.c"
+            ),
+            "altered-rust-target": lambda evidence: evidence["arena_owned_rust_command"].__setitem__(
+                1, "os::tests::emit_m2_vm_primitives_c_rust_trace"
+            ),
+            "duplicated-static-source": lambda evidence: evidence["arena_owned_c_command"].insert(
+                evidence["arena_owned_c_command"].index("-pthread"), "/pinned/src/arena.c"
+            ),
+            "altered-comparison-count": lambda evidence: evidence["arena_owned_comparison"].__setitem__(
+                "compared_value_count", producer.ARENA_OWNED_EVENT_FIELD_COUNT - 1
+            ),
+            "missing-command": lambda evidence: evidence.pop("arena_owned_c_command"),
+            "missing-fixture": lambda evidence: evidence.pop("arena_owned_fixture"),
+            "missing-trace-digest": lambda evidence: evidence.pop("arena_owned_trace_sha256"),
+            "missing-rust-count": lambda evidence: evidence.pop("arena_owned_rust_passed_test_count"),
+        }
+        for name, mutate in cases.items():
+            with self.subTest(name=name):
+                evidence = self.arena_owned_evidence(summary)
+                mutate(evidence)
+                with self.assertRaises(RUNNER.HarnessError):
+                    RUNNER._m2_x86_64_process_arena_collect_check_records(summary, evidence)
+
     def test_m2_runner_excludes_every_custom_vm_receipt_from_focused_batch(self):
         summary = self.summary()
         vm_records = RUNNER._m2_x86_64_vm_check_records(
@@ -572,6 +678,26 @@ class NativeVmAssemblyTests(unittest.TestCase):
             if component["id"] == "fault-injection"
             for check in component["checks"]
         ]
+        arena_check = next(
+            check
+            for component in summary["components"]
+            if component["id"] == "arenas"
+            for check in component["checks"]
+            if check["id"] == "process-wide-arena-purge-c-rust-differential"
+        )
+        arena_records = [
+            {
+                "comparison_status": "matched",
+                "component": "arenas",
+                "command": ["<process-arena-purge-producer>"],
+                "evidence_scope": "bounded-three-regular-arena-pinned-c-rust-process-purge-relation",
+                "id": arena_check["id"],
+                "passed_test_count": arena_check["expected_passed_test_count"],
+                "target": arena_check["target"],
+            }
+        ]
+        vm_check_records_producer = mock.Mock(return_value=vm_records)
+        arena_records_producer = mock.Mock(return_value=arena_records)
         observed = {}
 
         def focused_checks(_summary, _program, *, already_executed_check_ids, gate_name):
@@ -607,13 +733,19 @@ class NativeVmAssemblyTests(unittest.TestCase):
             ),
             mock.patch.object(RUNNER, "_run_m2_x86_64_bitmap_evidence", return_value={}),
             mock.patch.object(RUNNER, "_m2_x86_64_bitmap_check_records", return_value=[]),
-            mock.patch.object(RUNNER, "_run_m2_x86_64_vm_evidence", return_value={}),
+            mock.patch.object(
+                RUNNER, "_run_m2_x86_64_vm_evidence", return_value={}
+            ) as vm_producer,
             mock.patch.object(
                 RUNNER,
                 "_run_m2_x86_64_runtime_thp_configuration_evidence",
                 return_value={},
             ) as runtime_thp_producer,
-            mock.patch.object(RUNNER, "_m2_x86_64_vm_check_records", return_value=vm_records),
+            mock.patch.multiple(
+                RUNNER,
+                _m2_x86_64_vm_check_records=vm_check_records_producer,
+                _m2_x86_64_process_arena_collect_check_records=arena_records_producer,
+            ),
             mock.patch.object(RUNNER, "_run_m2_x86_64_initialization_evidence", return_value={}) as initialization_producer,
             mock.patch.object(RUNNER, "_m2_x86_64_initialization_check_records", return_value=initialization_records),
             mock.patch.object(RUNNER, "_run_m2_x86_64_fault_evidence", return_value={}) as fault_producer,
@@ -635,6 +767,11 @@ class NativeVmAssemblyTests(unittest.TestCase):
             )
 
         self.assertEqual(observed["gate_name"], "native x86 M2 focused source evidence")
+        vm_producer.assert_called_once_with(
+            offline=True, test_program={}, arena_owned_check=arena_check
+        )
+        vm_check_records_producer.assert_called_once_with(summary, {}, {})
+        arena_records_producer.assert_called_once_with(summary, {})
         runtime_thp_producer.assert_called_once_with()
         initialization_producer.assert_called_once_with(offline=True)
         fault_producer.assert_called_once_with(offline=True, test_program={}, vm_evidence={})
@@ -645,6 +782,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
             {record["id"] for record in initialization_records}.issubset(observed["ids"])
         )
         self.assertTrue({record["id"] for record in fault_records}.issubset(observed["ids"]))
+        self.assertTrue({record["id"] for record in arena_records}.issubset(observed["ids"]))
         owner_check = next(
             check
             for component in summary["components"]
