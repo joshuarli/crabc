@@ -198,6 +198,18 @@ class LocaleAliasAdapterTests(unittest.TestCase):
             result.append(copied)
         return result
 
+    @staticmethod
+    def _receipt_identity(path: Path, relative: str) -> dict[str, object]:
+        """Render the receipt's relative byte identity from a selected file."""
+
+        selected = selection.file_identity(path)
+        return {
+            'path': relative,
+            'bytes': selected['size'],
+            'sha256': selected['sha256'],
+            'mode': selected['mode'],
+        }
+
     def _receipt(self) -> tuple[Path, _FakeLocaleReader]:
         static_tree = selection._locale_alias_tree(self.static, 'test static product')
         dynamic_tree = selection._locale_alias_tree(self.dynamic, 'test dynamic product')
@@ -226,16 +238,32 @@ class LocaleAliasAdapterTests(unittest.TestCase):
                 'static': {
                     'root_mode': selection._locale_alias_product_root_mode(self.static, 'test static product'),
                     'tree': self._receipt_tree(static_tree, locale_reader.STATIC_PRODUCT_DIRECTORY),
-                    'manifest': selection.file_identity(self.static / 'share/crabc/manifest.json'),
-                    'preparation': {},
+                    'manifest': self._receipt_identity(
+                        self.static / 'share/crabc/manifest.json',
+                        locale_reader.STATIC_PRODUCT_DIRECTORY + '/share/crabc/manifest.json',
+                    ),
+                    'preparation': {
+                        'directory': locale_reader.STATIC_PREPARATION_DIRECTORY,
+                        'tree': self._receipt_tree(static_tree, locale_reader.STATIC_PRODUCT_DIRECTORY),
+                        'record': self._receipt_identity(
+                            self.preparation,
+                            locale_reader.STATIC_PREPARATION_DIRECTORY + '/preparation.json',
+                        ),
+                    },
                 },
                 'dynamic': {
                     'root_mode': selection._locale_alias_product_root_mode(self.dynamic, 'test dynamic product'),
                     'tree': self._receipt_tree(dynamic_tree, locale_reader.DYNAMIC_PRODUCT_DIRECTORY),
-                    'manifest': selection.file_identity(self.dynamic / 'share/crabc/manifest.json'),
+                    'manifest': self._receipt_identity(
+                        self.dynamic / 'share/crabc/manifest.json',
+                        locale_reader.DYNAMIC_PRODUCT_DIRECTORY + '/share/crabc/manifest.json',
+                    ),
                     'source_before': copy.deepcopy(source),
                     'source_after': copy.deepcopy(source),
-                    'state': selection.file_identity(self.dynamic / 'share/crabc/dynamic-product-state.json'),
+                    'state': self._receipt_identity(
+                        self.dynamic / 'share/crabc/dynamic-product-state.json',
+                        locale_reader.DYNAMIC_PRODUCT_DIRECTORY + '/share/crabc/dynamic-product-state.json',
+                    ),
                 },
             },
             'collector_commands': [], 'runner_commands': commands, 'snapshots': {}, 'artifacts': artifacts,
@@ -252,6 +280,8 @@ class LocaleAliasAdapterTests(unittest.TestCase):
         return report, _FakeLocaleReader(validated)
 
     def test_adapter_calls_the_public_reader_and_requires_full_tree_identity(self) -> None:
+        """Use the receipt-local source, product, and file-identity schemas together."""
+
         report, reader = self._receipt()
         with mock.patch.object(selection, '_locale_alias_reader', return_value=reader):
             companion = selection.native_locale_alias_adapter(
@@ -263,6 +293,38 @@ class LocaleAliasAdapterTests(unittest.TestCase):
         self.assertEqual(companion['products']['static_tree'], selection._locale_alias_tree(self.static, 'static'))
         self.assertEqual(companion['products']['dynamic_tree'], selection._locale_alias_tree(self.dynamic, 'dynamic'))
         self.assertEqual(companion['products']['dynamic_root_mode'], 0o2755)
+        for name in ('selector_static_preparation', 'selector_static_manifest',
+                     'selector_dynamic_manifest', 'selector_dynamic_state'):
+            self.assertEqual(set(companion['products'][name]), {'path', 'sha256', 'size', 'mode'})
+
+    def test_adapter_rejects_receipt_product_file_identity_mismatches(self) -> None:
+        for product, field, description in (
+            ('static', 'manifest', 'locale static manifest'),
+            ('dynamic', 'manifest', 'locale dynamic manifest'),
+            ('dynamic', 'state', 'locale dynamic state'),
+        ):
+            with self.subTest(product=product, field=field):
+                report, reader = self._receipt()
+                raw = __import__('json').loads(report.read_text(encoding='utf-8'))
+                raw['products'][product][field]['bytes'] += 1
+                report.write_text(__import__('json').dumps(raw, sort_keys=True), encoding='utf-8')
+                reader.validated['products'] = raw['products']
+                with mock.patch.object(selection, '_locale_alias_reader', return_value=reader), \
+                     self.assertRaisesRegex(selection.SelectionError, description + ' bytes or mode differ'):
+                    selection.native_locale_alias_adapter(
+                        report, facts=self.facts, measurement=self.measurement, paths=self.paths, source=self.source,
+                    )
+
+    def test_adapter_rejects_a_raw_static_preparation_identity_not_returned_by_the_reader(self) -> None:
+        report, reader = self._receipt()
+        raw = __import__('json').loads(report.read_text(encoding='utf-8'))
+        raw['products']['static']['preparation']['record']['bytes'] += 1
+        report.write_text(__import__('json').dumps(raw, sort_keys=True), encoding='utf-8')
+        with mock.patch.object(selection, '_locale_alias_reader', return_value=reader), \
+             self.assertRaisesRegex(selection.SelectionError, 'locale reader product reconstruction differs from receipt'):
+            selection.native_locale_alias_adapter(
+                report, facts=self.facts, measurement=self.measurement, paths=self.paths, source=self.source,
+            )
 
     def test_adapter_rejects_a_receipt_source_path_mismatch(self) -> None:
         report, reader = self._receipt()
