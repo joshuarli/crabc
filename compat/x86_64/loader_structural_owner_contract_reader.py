@@ -117,7 +117,7 @@ REVIEWED_FUNCTION_FINGERPRINTS = {
     "lock_runtime_acquire": "bba026a7267826ec2cb081217ee6d493ba3586a330b047d0c8b5c01e377b95be",
     "lock_runtime_drop": "6e5de7aff25767e3a28ed117c8ed37d13cc3a94ac1d8b8a928749bd2f7b91f46",
     "worker_tls_allocate": "28bd02edb866ccf4967b0b9088714ddbac5a2bc8125a0ca9f2da68a799265ade",
-    "pthread_creator": "0169ccadaaf7ac40820a3938551b18fd238514ee50d27ce4069327d585458c17",
+    "pthread_creator": "bd5e3c65105a1a20c158bd90cca9bd4244783aec5e983e66c362540bea2f2cee",
     "registry_runtime_function": "65032fa5c8f30985477192262e23cf77cff3b84b5a9ebf8a0dfbd0df70ecbf4d",
     "dlfcn_dlopen": "490cf95c67cec7a8c8197d7a9cef2309888f4d02349f0170f1edb57e33db488c",
     "dlfcn_dlsym": "4614bddb7798e9fbf0073bea8f13d7f94dc56ef60b99311ad9d71e41072083ed",
@@ -126,6 +126,20 @@ REVIEWED_FUNCTION_FINGERPRINTS = {
     "dlfcn_dlinfo": "0dd91517c082f16c322a5893f66006ddae008485c8545b336f05cd18d52816e5",
     "dlfcn_dl_iterate_phdr": "ee4cd3492be18dbc908d0d7668915a11ee92a4c46b96c3fa882539ef87a33156",
 }
+# `pthread_creator` remains this receipt's token-before-clone algorithm.  The
+# native shadow additions reviewed in 795440db are a control-record field and
+# a parent-side post-clone handshake, both gated by `native-mimalloc-shadow`.
+# `static_c_abi.rs` rejects that feature with x86-owned-dynamic-runtime, so
+# they do not change the selected dynamic route.  Worker entry and exit own
+# allocator lifecycle behavior and are deliberately outside this receipt.
+NATIVE_MIMALLOC_SHADOW_CONTROL_FIELD = (
+    '#[cfg(feature = "native-mimalloc-shadow")]\n'
+    '                native_mimalloc_attach: AtomicI32::new(NATIVE_MIMALLOC_ATTACH_PENDING),'
+)
+NATIVE_MIMALLOC_SHADOW_POST_CLONE_HANDSHAKE = (
+    '#[cfg(feature = "native-mimalloc-shadow")]\n'
+    '    match unsafe { selected_worker_native_mimalloc_attached(control) } {'
+)
 STATIC_ROLES = {
     "static_driver": "bin/crabc-cc",
     "static_crt1": "usr/lib/crt1.o",
@@ -540,6 +554,21 @@ def validate_runtime_lock_source(lock: str) -> None:
     _reviewed_body("lock_runtime_drop", drop)
 
 
+def validate_native_shadow_creator_handoff(body: str) -> None:
+    """Keep the optional native-shadow handoff out of the selected dynamic route."""
+    # Unlike `_rust_code`, this preserves cfg string literals for the exact
+    # feature spelling while still excluding comments from the source proof.
+    code = _rust_without_comments(body)
+    require(code.count(NATIVE_MIMALLOC_SHADOW_CONTROL_FIELD) == 1,
+            "native shadow control field guard differs")
+    require(code.count(NATIVE_MIMALLOC_SHADOW_POST_CLONE_HANDSHAKE) == 1,
+            "native shadow post-clone handshake guard differs")
+    _ordered(body, (
+        "__crabc_x86_pthread_clone(",
+        "selected_worker_native_mimalloc_attached(control)",
+    ), "native shadow post-clone handshake")
+
+
 def validate_registry_body(body: str) -> None:
     expected = runtime_registry.RESOLVERS
     found = dict(re.findall(r'b"([^"]+)"\s*=>\s*Some\((\w+)\s+as\s+\*const\s*\(\)', _rust_without_comments(body)))
@@ -658,6 +687,7 @@ def validate_source_algorithms(root: Path = ROOT) -> dict[str, object]:
     pthread = _source(root, "libc/src/c_abi/x86_64/pthread_create_join.rs")
     creator = rust_function_body(pthread, "unsafe fn create_selected_worker_with_attributes")
     _ordered(creator, ("static_tls::allocate_thread()", "__crabc_x86_pthread_clone("), "selected worker clone")
+    validate_native_shadow_creator_handoff(creator)
     _reviewed_body("pthread_creator", creator)
     dlfcn = _source(root, "libc/src/c_abi/x86_64/general_dlfcn.rs")
     registry = _source(root, "ldso/src/x86_64_runtime_registry.rs")

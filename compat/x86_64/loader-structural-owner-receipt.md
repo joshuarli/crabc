@@ -50,6 +50,13 @@ proof of startup order.
 | Four dlfcn registration spellings | `static_c_abi.rs` selects `general_dlfcn.rs`; its closed imports map through `x86_64_runtime_registry.rs::runtime_function`. The selected initial graph publishes the prepared registry before constructor or application entry can use that leaf. | A known plugin completes `dlopen`, `dlsym`, failed lookup, one non-null then one null `dlerror`, and `dlclose`. | Generic setters in `libc/src/c_abi.rs` are frozen source context. A passing `dlopen` does not prove their installation or make them the selected x86 route. |
 | `__ldso_register_mark_multithreaded` | `x86_64_runtime_lock.rs` owns one `AtomicI32` graph lock. Every `RuntimeGuard` acquisition uses its atomic CAS and every drop releases it. Separately, `dynamic_tls.rs::allocate_thread` requests the loader token; `x86_64_initial_worker_tls.rs::allocate` acquires `RuntimeGuard` before materializing/registering it; `pthread_create_join.rs::create_selected_worker_with_attributes` obtains it before clone. | After normal public dlfcn work, a probe creates and joins its first application worker; the worker performs a defined public lookup. | There is no selected enabled-state or one-time lock transition. Worker success does not prove scheduling order; source proves the guard/token-before-clone relation. |
 
+The reviewed `pthread_creator` body also retains its native-shadow control
+field and parent post-clone handoff under exactly
+`native-mimalloc-shadow`. `static_c_abi.rs` rejects that feature combined with
+`x86-owned-dynamic-runtime`, so the selected dynamic route keeps the same
+token-before-clone relation. Worker entry and exit lifecycle algorithms remain
+allocator evidence and are not added to this structural-owner receipt.
+
 `__dls2b` and `__dls3` remain legacy helper context in
 `libc/src/loader_startup_exports.rs`. `_dlstart` has its own legacy context:
 `libc/src/c_abi.rs` contains the old libc-side route, while

@@ -42,6 +42,26 @@ class LoaderStructuralOwnerSourceTests(unittest.TestCase):
         self.assertEqual(source["selected_graph"],
                          "ldso/src/x86_64_general_initial_graph.rs::run_with_initial_tls")
 
+    def test_native_shadow_creator_handoff_requires_feature_guards(self) -> None:
+        pthread = (ROOT / "libc/src/c_abi/x86_64/pthread_create_join.rs").read_text(encoding="utf-8")
+        creator = reader.rust_function_body(pthread, "unsafe fn create_selected_worker_with_attributes")
+        reader.validate_native_shadow_creator_handoff(creator)
+        field = reader.NATIVE_MIMALLOC_SHADOW_CONTROL_FIELD
+        handshake = reader.NATIVE_MIMALLOC_SHADOW_POST_CLONE_HANDSHAKE
+        inverted_guard = '#[cfg(not(feature = "native-mimalloc-shadow"))]'
+        mutations = {
+            "control field": creator.replace(field, field.split("\n", 1)[1], 1),
+            "post-clone handshake": creator.replace(handshake, handshake.split("\n", 1)[1], 1),
+            "inverted control field": creator.replace(
+                field, field.replace('#[cfg(feature = "native-mimalloc-shadow")]', inverted_guard, 1), 1),
+            "inverted post-clone handshake": creator.replace(
+                handshake, handshake.replace('#[cfg(feature = "native-mimalloc-shadow")]', inverted_guard, 1), 1),
+        }
+        for label, changed in mutations.items():
+            with self.subTest(label=label), \
+                 self.assertRaisesRegex(reader.LoaderStructuralOwnerError, "native shadow .* guard"):
+                reader.validate_native_shadow_creator_handoff(changed)
+
     def test_reordered_graph_transition_rejects_within_the_selected_function(self) -> None:
         graph = (ROOT / "ldso/src/x86_64_general_initial_graph.rs").read_text(encoding="utf-8")
         body = reader.rust_function_body(graph, "unsafe fn run_with_initial_tls")
