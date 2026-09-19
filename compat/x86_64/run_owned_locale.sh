@@ -7,6 +7,7 @@ readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly PROBE="$ROOT/compat/x86_64/owned_locale_probe.c"
 readonly RUNNER="$ROOT/compat/x86_64/run_owned_locale.sh"
+readonly RECEIPT_READER="$ROOT/compat/x86_64/owned_locale_component_receipt.py"
 readonly COPIES="$ROOT/compat/x86_64/owned_crypt_runtime_evidence.py"
 readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
 
@@ -70,8 +71,8 @@ PY
 if [ -n "$provided_static" ]; then provided_static="$(realpath -e "$provided_static")"; fi
 if [ -n "$provided_dynamic" ]; then provided_dynamic="$(realpath -e "$provided_dynamic")"; fi
 [ -x "$ORACLE_CC" ] || fail 'missing pinned musl compiler'
-[ -f "$PROBE" ] && [ -f "$RUNNER" ] && [ -f "$COPIES" ] ||
-    fail 'missing owned locale source, runner, or payload auditor'
+[ -f "$PROBE" ] && [ -f "$RUNNER" ] && [ -f "$RECEIPT_READER" ] && [ -f "$COPIES" ] ||
+    fail 'missing owned locale source, runner, receipt reader, or payload auditor'
 command -v chroot >/dev/null || fail 'missing chroot'
 command -v timeout >/dev/null || fail 'missing timeout'
 
@@ -156,13 +157,13 @@ PY
 
 capture_seal() {
     local point="$1"
-    python3 -B - "$ROOT" "$PROBE" "$RUNNER" "$STATIC_PRODUCT" "$DYNAMIC_PRODUCT" "$WORK/$point.json" <<'PY'
+    python3 -B - "$ROOT" "$PROBE" "$RUNNER" "$RECEIPT_READER" "$STATIC_PRODUCT" "$DYNAMIC_PRODUCT" "$WORK/$point.json" <<'PY'
 import json
 from pathlib import Path
 import stat
 import sys
 
-root, source, runner, static_text, dynamic, output = map(Path, sys.argv[1:])
+root, source, runner, reader, static_text, dynamic, output = map(Path, sys.argv[1:])
 sys.path.insert(0, str(root / 'compat/x86_64'))
 import owned_posix_family_execution as family
 import owned_posix_product_evidence as products
@@ -172,7 +173,7 @@ def source_identity(path):
     if path.is_symlink() or not path.is_file():
         raise SystemExit('owned locale source is not physical')
     return {'path': path.relative_to(root).as_posix(), 'sha256': family.digest(path),
-            'mode': stat.S_IMODE(path.stat().st_mode)}
+            'size': path.stat().st_size, 'mode': stat.S_IMODE(path.stat().st_mode)}
 
 def product_identity(path, kind):
     path = path.resolve(strict=True)
@@ -181,7 +182,8 @@ def product_identity(path, kind):
     return {'path': path.relative_to(root).as_posix(),
             'manifest': family.file_identity(root, manifest), 'tree': family.snapshot(path)}
 
-record = {'sources': {'probe': source_identity(source), 'runner': source_identity(runner)},
+record = {'sources': {'probe': source_identity(source), 'runner': source_identity(runner),
+                      'reader': source_identity(reader)},
           'dynamic': product_identity(dynamic, 'dynamic')}
 if str(static_text) != '.':
     record['static'] = product_identity(static_text, 'static')
@@ -242,7 +244,7 @@ for header in errno.h iconv.h langinfo.h limits.h locale.h pthread.h stddef.h st
 done
 capture compile "$DYNAMIC_PRODUCT/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -D_XOPEN_SOURCE=700 \
     -fno-builtin -fno-stack-protector -c "$PROBE" -o "$WORK/workload.o"
-sha256sum "$PROBE" "$RUNNER" "$WORK/workload.o" >"$WORK/source-object-before.sha256"
+sha256sum "$PROBE" "$RUNNER" "$RECEIPT_READER" "$WORK/workload.o" >"$WORK/source-object-before.sha256"
 
 capture oracle-link "$ORACLE_CC" -std=c11 -pthread "$WORK/workload.o" -o "$WORK/oracle"
 capture oracle-run env -i LC_ALL=C LANG=C TZ=UTC "$WORK/oracle"
@@ -330,13 +332,19 @@ payloads = {name: {
     'after': identity(work / f'dynamic-{name}-copy-audit-after.stdout'),
 } for name in ('pie', 'non-pie')}
 record = {
-    'schema': 'crabc.x86_64-owned-locale-products/v1',
+    'schema': 'crabc.x86_64-owned-locale-products/v2',
+    'source_mount': '/workspace',
+    'execution_mode': ('full-six-mode' if str(static_text) != '.' else
+                       'dynamic-only-four-cell-development'),
     'scope': ['locale.core', 'text.wide-multibyte', 'text.iconv'],
-    'source': identity(source), 'workload': identity(work / 'workload.o'),
+    'sources': json.loads((work / 'source-product-before.json').read_text(encoding='utf-8'))['sources'],
+    'workload': identity(work / 'workload.o'),
     'products': {'dynamic': dynamic.relative_to(root).as_posix()},
     'seals': {name: identity(work / f'{name}.json') for name in
               ('source-product-before', 'source-product-after', 'tools-before', 'tools-after')},
     'commands': commands, 'links': links, 'execution_payloads': payloads,
+    'source_object_checks': {'before': identity(work / 'source-object-before.sha256'),
+                             'after': identity(work / 'source-object-after.txt')},
     'family_completion': False, 'promotion_ready': False, 'public_support': False,
 }
 if str(static_text) != '.':
@@ -345,8 +353,11 @@ if str(static_text) != '.':
     json.dumps(record, sort_keys=True, separators=(',', ':')) + '\n', encoding='utf-8')
 PY
 
+python3 -B "$RECEIPT_READER" validate-report --root "$ROOT" \
+    --report "$WORK/owned-locale-products.json"
+
 if [ -n "$STATIC_PRODUCT" ]; then
     printf 'owned locale products: PASS (one selected-header object; pinned musl, static/static-PIE, dynamic PIE/non-PIE kernel/direct; fixed C/POSIX/C.UTF-8 and UTF/ASCII only); evidence: %s\n' "$WORK"
 else
-    printf 'owned locale products: PASS (one selected-header object; pinned musl and supplied dynamic PIE/non-PIE kernel/direct; fixed C/POSIX/C.UTF-8 and UTF/ASCII only); evidence: %s\n' "$WORK"
+    printf 'owned locale products: PASS (development-only dynamic replay; one selected-header object; pinned musl and supplied dynamic PIE/non-PIE kernel/direct; fixed C/POSIX/C.UTF-8 and UTF/ASCII only); evidence: %s\n' "$WORK"
 fi
