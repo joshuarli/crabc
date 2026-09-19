@@ -2336,6 +2336,23 @@ pub enum ThreadFinishResult {
     Retained,
 }
 
+/// Result of the private final-worker ordinary-exit owner transition.
+///
+/// This is Rust-only control flow for `crabc-libc`, after its selected pthread
+/// registry has already chosen this worker to run ordinary process exit.  It
+/// does not reopen [`ThreadAttachResult::Finished`] for normal worker entry.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ThreadFinalProcessExitOwnerResult {
+    /// A completed worker received a distinct later-thread admission and owner
+    /// for its ordinary-exit callbacks.
+    Reinitialized,
+    /// The caller did not present the exact completed worker lifecycle.
+    Invalid,
+    /// An old or partially created owner remains terminally retained.
+    Retained,
+}
+
 /// Process-lifetime slots for the ticket-zero owner and its Heap witness.
 ///
 /// Both values are written once before `PROCESS_ACTIVE` is Release-published
@@ -12641,6 +12658,88 @@ pub fn attach_current_thread() -> ThreadAttachResult {
             slot.state = ThreadLifecycleState::Retained;
             RUNTIME_PROCESS.retain();
             ThreadAttachResult::Retained
+        }
+    }
+}
+
+/// Creates the one fresh native owner permitted for selected ordinary-exit
+/// callbacks after an attached worker completed its source finish.
+///
+/// This is not a second worker-entry attach.  Libc calls it only after its
+/// locked final-task decision and after
+/// [`finish_current_thread_native_after_user_destructors`] returned
+/// [`ThreadFinishResult::Finished`].  The completed slot must contain no old
+/// attachment, admission, installed owner, or test-only page/route projection.
+/// The persistent cell is then either already vacant (the old worker never
+/// allocated) or rearmed only after its old owner was torn down and dropped.
+/// Reusing the stable backing address establishes a new logical owner and a
+/// new admission; it never makes ordinary [`attach_current_thread`] accept a
+/// finished worker.
+#[doc(hidden)]
+pub fn reinitialize_current_thread_native_owner_for_final_process_exit(
+) -> ThreadFinalProcessExitOwnerResult {
+    {
+        let slot = current_thread_slot();
+        match slot.state {
+            ThreadLifecycleState::Finished => {}
+            ThreadLifecycleState::Fresh | ThreadLifecycleState::Attached => {
+                return ThreadFinalProcessExitOwnerResult::Invalid;
+            }
+            ThreadLifecycleState::Retained => {
+                return ThreadFinalProcessExitOwnerResult::Retained;
+            }
+        }
+        if slot.admission.is_some()
+            || slot.attachment.is_some()
+            || slot.native_persistent_owner_installed
+        {
+            // A supposedly completed slot still carries source authority. Do
+            // not erase it merely to make ordinary exit look recoverable.
+            retain_current_thread_native_persistent_owner_for_teardown();
+            RUNTIME_PROCESS.retain();
+            return ThreadFinalProcessExitOwnerResult::Retained;
+        }
+        #[cfg(test)]
+        if slot.page_owner.is_some() || slot.has_pending_post_exit_route_completions() {
+            retain_current_thread_native_persistent_owner_for_teardown();
+            RUNTIME_PROCESS.retain();
+            return ThreadFinalProcessExitOwnerResult::Retained;
+        }
+    }
+
+    if current_thread_native_persistent_owner_cell()
+        .prepare_for_reinitialization_after_completed_teardown()
+        .is_err()
+    {
+        // The cell still protects an active, exiting, or retained payload.
+        // Preserve that exact state and let libc fail-stop before it could
+        // release compiler TLS or run callbacks through a mixed owner image.
+        retain_current_thread_native_persistent_owner_for_teardown();
+        RUNTIME_PROCESS.retain();
+        return ThreadFinalProcessExitOwnerResult::Retained;
+    }
+
+    #[cfg(test)]
+    {
+        let slot = current_thread_slot();
+        // A completed test-only route identity belongs to the old attachment.
+        // Its zero pending count was validated above; erase it before the
+        // ordinary attach path mints the fresh attachment's generation.
+        slot.post_exit_route_completion_generation = 0;
+        slot.pending_post_exit_route_completion_count = 0;
+    }
+    current_thread_slot().state = ThreadLifecycleState::Fresh;
+    match attach_current_thread() {
+        ThreadAttachResult::Attached => ThreadFinalProcessExitOwnerResult::Reinitialized,
+        ThreadAttachResult::Inactive => ThreadFinalProcessExitOwnerResult::Invalid,
+        ThreadAttachResult::Retained => ThreadFinalProcessExitOwnerResult::Retained,
+        ThreadAttachResult::AlreadyAttached | ThreadAttachResult::Finished => {
+            // The direct `Fresh -> attach` call has no user-code or allocator
+            // boundary. A different result would mean the current TLS image
+            // changed while this exact lifecycle transition was in progress.
+            retain_current_thread_native_persistent_owner_for_teardown();
+            RUNTIME_PROCESS.retain();
+            ThreadFinalProcessExitOwnerResult::Retained
         }
     }
 }

@@ -725,10 +725,13 @@ impl<T> PersistentCompilerTlsOwnerCell<T> {
     /// `teardown` receives the same pinned payload after every ordinary
     /// operation has ended. It must release or transfer every page authority,
     /// detach the source Theap/TLD in source order, and return success only
-    /// when dropping the now-torn-down shell is valid. Success first publishes
-    /// `TornDown` and then drops `T` in place. Failure or unwind publishes
-    /// `Retained`, keeps the exact payload pinned, and permits only a later
-    /// teardown retry—not ordinary allocator work.
+    /// when dropping the now-torn-down shell is valid. Success leaves the cell
+    /// `Exiting` while it drops `T` in place, then publishes `TornDown` only
+    /// after that drop completed. A failing or unwinding teardown closure
+    /// publishes `Retained`, keeps the exact payload pinned, and permits only
+    /// a later teardown retry—not ordinary allocator work. If the subsequent
+    /// payload `Drop` unwinds, `Exiting` remains terminal: a partly dropped
+    /// payload cannot be retried or reinitialized.
     pub(crate) fn teardown<E>(
         self: Pin<&Self>,
         teardown: impl for<'owner> FnOnce(Pin<&'owner mut T>) -> Result<(), E>,
@@ -755,15 +758,19 @@ impl<T> PersistentCompilerTlsOwnerCell<T> {
         // closure result cannot retain this projection lifetime.
         match teardown(unsafe { Pin::new_unchecked(&mut *cell.owner_pointer()) }) {
             Ok(()) => {
-                // Publish the terminal state before Drop so a destructor that
-                // reenters this cell cannot project the payload being dropped.
-                cell.state.set(PersistentCompilerTlsOwnerState::TornDown);
+                // `Exiting` remains published while Drop runs, so a destructor
+                // that reenters this cell cannot project or overwrite the
+                // payload being dropped.  Only a completed Drop can make the
+                // backing MaybeUninit storage available for a distinct logical
+                // owner at a later explicit lifecycle boundary.
                 cell.thread.set(None);
                 transition.disarm();
                 // SAFETY: successful source teardown guarantees the pinned
                 // payload may now be destroyed. It is dropped at its stable
-                // address exactly once; `TornDown` forbids every later access.
+                // address exactly once; `Exiting` forbids every later access
+                // until the drop has completed.
                 unsafe { core::ptr::drop_in_place(cell.owner_pointer()) };
+                cell.state.set(PersistentCompilerTlsOwnerState::TornDown);
                 Ok(())
             }
             Err(error) => {
@@ -771,6 +778,37 @@ impl<T> PersistentCompilerTlsOwnerCell<T> {
                 transition.disarm();
                 Err(PersistentCompilerTlsOwnerTeardownError::Owner(error))
             }
+        }
+    }
+
+    /// Makes a completed compiler-TLS owner cell available for one explicitly
+    /// proved fresh logical owner.
+    ///
+    /// This is narrower than ordinary initialization.  `TornDown` means the
+    /// old source teardown and payload `Drop` both completed; its stable pinned
+    /// backing address can therefore hold a distinct `T`.  `Vacant` covers an
+    /// attached lifecycle that never promoted an owner.  Every live, borrowed,
+    /// exiting, or retained payload remains unavailable, so a failed source
+    /// teardown can never become ordinary allocator work.
+    ///
+    /// The embedding lifecycle must separately prove that its outer slot has
+    /// completed the prior owner and has no stale attachment, admission, or
+    /// projection before it invokes this method.
+    pub(crate) fn prepare_for_reinitialization_after_completed_teardown(
+        self: Pin<&Self>,
+    ) -> Result<(), PersistentCompilerTlsOwnerError> {
+        let cell = self.get_ref();
+        match cell.state.get() {
+            PersistentCompilerTlsOwnerState::Vacant => Ok(()),
+            PersistentCompilerTlsOwnerState::TornDown => {
+                debug_assert!(cell.thread.get().is_none());
+                if cell.thread.get().is_some() {
+                    return Err(PersistentCompilerTlsOwnerError::TornDown);
+                }
+                cell.state.set(PersistentCompilerTlsOwnerState::Vacant);
+                Ok(())
+            }
+            state => Err(Self::access_error_for_state(state)),
         }
     }
 
@@ -2558,5 +2596,132 @@ mod tests {
         })
         .join()
         .expect("the retained-initialization compiler-TLS owner test completes");
+    }
+
+    #[test]
+    fn persistent_compiler_tls_owner_reuses_storage_only_after_completed_teardown() {
+        struct Owner {
+            generation: usize,
+            drops: Arc<AtomicUsize>,
+        }
+
+        impl Drop for Owner {
+            fn drop(&mut self) {
+                self.drops.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        thread::spawn(|| {
+            let first_drops = Arc::new(AtomicUsize::new(0));
+            let second_drops = Arc::new(AtomicUsize::new(0));
+            let first_address = core::cell::Cell::new(0);
+            let second_address = core::cell::Cell::new(0);
+            let cell = core::pin::pin!(PersistentCompilerTlsOwnerCell::new());
+            let cell = cell.as_ref();
+
+            assert!(cell
+                .initialize(
+                    Owner {
+                        generation: 1,
+                        drops: Arc::clone(&first_drops),
+                    },
+                    |owner| {
+                        first_address.set(owner.as_ref().get_ref() as *const Owner as usize);
+                        Ok::<(), ()>(())
+                    },
+                )
+                .is_ok());
+            assert_eq!(
+                cell.prepare_for_reinitialization_after_completed_teardown(),
+                Err(PersistentCompilerTlsOwnerError::AlreadyActive),
+                "a live owner cannot be replaced"
+            );
+            assert_eq!(
+                cell.teardown(|_| Err::<(), _>("source teardown retained")),
+                Err(PersistentCompilerTlsOwnerTeardownError::Owner(
+                    "source teardown retained"
+                ))
+            );
+            assert_eq!(
+                cell.prepare_for_reinitialization_after_completed_teardown(),
+                Err(PersistentCompilerTlsOwnerError::Retained),
+                "a retained source owner cannot become a fresh logical owner"
+            );
+            assert!(cell.teardown(|_| Ok::<(), ()>(())).is_ok());
+            assert_eq!(first_drops.load(Ordering::Relaxed), 1);
+            assert_eq!(cell.state_for_test(), PersistentCompilerTlsOwnerState::TornDown);
+
+            assert!(cell
+                .prepare_for_reinitialization_after_completed_teardown()
+                .is_ok());
+            assert_eq!(cell.state_for_test(), PersistentCompilerTlsOwnerState::Vacant);
+            assert!(cell
+                .initialize(
+                    Owner {
+                        generation: 2,
+                        drops: Arc::clone(&second_drops),
+                    },
+                    |owner| {
+                        let owner = owner.as_ref().get_ref();
+                        assert_eq!(owner.generation, 2);
+                        second_address.set(owner as *const Owner as usize);
+                        Ok::<(), ()>(())
+                    },
+                )
+                .is_ok());
+            assert_eq!(
+                second_address.get(),
+                first_address.get(),
+                "the new logical owner uses the same pinned backing storage only after the first Drop"
+            );
+            assert_eq!(first_drops.load(Ordering::Relaxed), 1);
+            assert!(cell.teardown(|_| Ok::<(), ()>(())).is_ok());
+            assert_eq!(second_drops.load(Ordering::Relaxed), 1);
+        })
+        .join()
+        .expect("the completed compiler-TLS owner reinitialization test completes");
+    }
+
+    #[test]
+    fn persistent_compiler_tls_owner_rejects_rearm_while_payload_drop_runs() {
+        struct Owner {
+            cell: *const PersistentCompilerTlsOwnerCell<Owner>,
+            observed_exiting: Arc<AtomicUsize>,
+        }
+
+        impl Drop for Owner {
+            fn drop(&mut self) {
+                // SAFETY: this test pins `cell` for the complete Owner
+                // lifetime and invokes Drop only on this same test thread.
+                let cell = unsafe { Pin::new_unchecked(&*self.cell) };
+                if cell.prepare_for_reinitialization_after_completed_teardown()
+                    == Err(PersistentCompilerTlsOwnerError::Exiting)
+                {
+                    self.observed_exiting.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        }
+
+        thread::spawn(|| {
+            let observed_exiting = Arc::new(AtomicUsize::new(0));
+            let cell = core::pin::pin!(PersistentCompilerTlsOwnerCell::new());
+            let cell = cell.as_ref();
+            let cell_pointer = cell.get_ref() as *const PersistentCompilerTlsOwnerCell<Owner>;
+
+            assert!(cell
+                .initialize(
+                    Owner {
+                        cell: cell_pointer,
+                        observed_exiting: Arc::clone(&observed_exiting),
+                    },
+                    |_| Ok::<(), ()>(()),
+                )
+                .is_ok());
+            assert!(cell.teardown(|_| Ok::<(), ()>(())).is_ok());
+            assert_eq!(observed_exiting.load(Ordering::Relaxed), 1);
+            assert_eq!(cell.state_for_test(), PersistentCompilerTlsOwnerState::TornDown);
+        })
+        .join()
+        .expect("the compiler-TLS payload-drop rearm test completes");
     }
 }

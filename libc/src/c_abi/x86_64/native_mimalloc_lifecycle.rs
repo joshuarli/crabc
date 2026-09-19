@@ -11,9 +11,10 @@
 use core::ffi::c_char;
 
 use crabc_mimalloc::__crabc_runtime::{
-    RuntimeStderrOutput, ThreadAttachResult, ThreadFinishResult,
+    RuntimeStderrOutput, ThreadAttachResult, ThreadFinalProcessExitOwnerResult, ThreadFinishResult,
     attach_current_thread, finish_current_thread_native_after_user_destructors,
     initialize_process, prepare_native_later_thread_arena, process_is_active,
+    reinitialize_current_thread_native_owner_for_final_process_exit,
 };
 
 /// Child-side native attachment result for the create handshake.
@@ -88,6 +89,22 @@ pub(super) fn attach_selected_worker() -> SelectedWorkerNativeAttach {
 /// already fail-stopped, and every other contradiction terminates here too.
 pub(super) unsafe fn finish_selected_worker_after_user_destructors() {
     if finish_current_thread_native_after_user_destructors() != ThreadFinishResult::Finished {
+        super::immediate_termination::_Exit(134);
+    }
+}
+
+/// Recreate the final selected worker's native owner for ordinary-exit
+/// callbacks after its completed source finish.
+///
+/// The caller has already made the locked final-task decision, restored its
+/// application signal mask, and has not yet entered `static_startup::exit`.
+/// Any other result preserves a contradictory or retained TLS image and must
+/// fail-stop instead of letting a callback reach the native adapter without a
+/// source owner.
+pub(super) unsafe fn reinitialize_selected_final_worker_for_ordinary_exit() {
+    if reinitialize_current_thread_native_owner_for_final_process_exit()
+        != ThreadFinalProcessExitOwnerResult::Reinitialized
+    {
         super::immediate_termination::_Exit(134);
     }
 }
