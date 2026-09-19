@@ -7871,6 +7871,26 @@ def _locale_alias_static_owner_tree(value: object) -> list[dict[str, Any]]:
     return sorted(records, key=lambda item: item['path'])
 
 
+def _locale_alias_receipt_identity_payload(record: object, description: str) -> dict[str, Any]:
+    """Normalize one reader-validated receipt file without erasing its schema."""
+
+    row = exact(record, {'path', 'bytes', 'sha256', 'mode'}, description)
+    require(type(row['path']) is str and row['path']
+            and type(row['bytes']) is int and not isinstance(row['bytes'], bool) and row['bytes'] >= 0
+            and type(row['sha256']) is str and re.fullmatch(r'[0-9a-f]{64}', row['sha256']) is not None
+            and type(row['mode']) is int and not isinstance(row['mode'], bool) and row['mode'] >= 0,
+            f'{description} identity values differ')
+    return {'sha256': row['sha256'], 'size': row['bytes'], 'mode': row['mode']}
+
+
+def _require_locale_alias_receipt_identity(receipt: object, selected: object, description: str) -> None:
+    """Join the receipt's `bytes` identity to the selector's `size` identity."""
+
+    require(same(_locale_alias_receipt_identity_payload(receipt, description + ' receipt'),
+                 _identity_payload(selected, description + ' selected')),
+            f'{description} bytes or mode differ')
+
+
 def _locale_alias_product_join(reader: Any, validated: Mapping[str, Any], raw: Mapping[str, Any],
                                paths: Mapping[str, Path], source: Mapping[str, Any]) -> dict[str, Any]:
     """Join receipt-local products to the supplied selector product cohort.
@@ -7925,11 +7945,15 @@ def _locale_alias_product_join(reader: Any, validated: Mapping[str, Any], raw: M
     dynamic_state = read_json(dynamic_state_path)
     require(dynamic_state.get('source_sha256') == source['content_sha256'],
             'selector dynamic product source differs from locale receipt source')
-    _require_same_identity_payload(static['manifest'], file_identity(paths['static_product'] / 'share/crabc/manifest.json'),
-                                   'locale static manifest')
-    _require_same_identity_payload(dynamic['manifest'], file_identity(paths['dynamic_product'] / 'share/crabc/manifest.json'),
-                                   'locale dynamic manifest')
-    _require_same_identity_payload(dynamic['state'], file_identity(dynamic_state_path), 'locale dynamic state')
+    _require_locale_alias_receipt_identity(
+        static['manifest'], file_identity(paths['static_product'] / 'share/crabc/manifest.json'),
+        'locale static manifest',
+    )
+    _require_locale_alias_receipt_identity(
+        dynamic['manifest'], file_identity(paths['dynamic_product'] / 'share/crabc/manifest.json'),
+        'locale dynamic manifest',
+    )
+    _require_locale_alias_receipt_identity(dynamic['state'], file_identity(dynamic_state_path), 'locale dynamic state')
     return {
         'static_tree': static_current_tree,
         'dynamic_tree': dynamic_current_tree,
