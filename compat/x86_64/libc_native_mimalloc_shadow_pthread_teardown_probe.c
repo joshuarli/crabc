@@ -181,11 +181,12 @@ static void *deferred_cancel_worker(void *opaque)
         pthread_testcancel();
 }
 
-/* Pinned `_mi_thread_done` runs before its final-thread decision. A later
- * ordinary-exit callback may call malloc: the source sees the now-empty
- * default Theap and lazily creates a new one for this still-running final
- * task. This callback makes that post-finish allocation observable.  It also
- * frees a live block allocated by the same worker before `_mi_thread_done`.
+/* Pinned mimalloc's private pthread-key destructor runs `_mi_thread_done`
+ * before libc's selected-pthread registry decides that this is the final
+ * task. A later ordinary-exit callback may call malloc: the source sees the
+ * now-empty default Theap and lazily creates a new one for this still-running
+ * final task. This callback makes that post-finish allocation observable. It
+ * also frees a live block allocated by the same worker before `_mi_thread_done`.
  * Source collection abandons that old page, so its PageMap record must no
  * longer classify the reused Linux/TLS identity as the new owner. */
 static void final_worker_atexit_allocation(void)

@@ -2527,14 +2527,17 @@ owner terminates rather than reaching ELF TLS release.
 
 #### Final selected-worker ordinary-exit reinitialization
 
-Pinned `src/init.c::_mi_thread_done` runs before mimalloc's final-task
-decision.  Its finished default Theap is empty, so a later `atexit` callback
-on that same final task can lazily initialize a new TLD/Theap and allocate or
-free an allocation that survived the prior thread-done collection/abandon
-transition.  The selected Rust worker keeps the completed worker finish at the
-after-user-destructor boundary.  Only after the pthread registry has selected
-that worker as the final ordinary-exit task, and after that finish has returned,
-it may create a fresh logical native owner for `static_startup::exit` callbacks.
+Pinned `src/prim/unix/prim.c` invokes `src/init.c::_mi_thread_done` from
+mimalloc's private pthread-key destructor. That source finish occurs before
+crabc libc's selected-pthread registry makes its final-task decision. Its
+finished default Theap is empty, so a later `atexit` callback on that same
+final task can lazily initialize a new TLD/Theap and allocate or free an
+allocation that survived the prior thread-done collection/abandon transition.
+The selected Rust worker keeps the completed worker finish at the
+after-user-destructor boundary. Only after the libc pthread registry has
+selected that worker as the final ordinary-exit task, and after that finish has
+returned, it may create a fresh logical native owner for `static_startup::exit`
+callbacks.
 
 That reinitialization has a deliberately narrow proof.  The compiler-TLS slot
 must be exactly `Finished`, with no prior attachment, admission claim, native
