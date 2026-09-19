@@ -155,8 +155,8 @@ class X86_64SourceMapTests(unittest.TestCase):
             {
                 "implemented": 3,
                 "inapplicable": 3,
-                "not-started": 4,
-                "partial": 24,
+                "not-started": 3,
+                "partial": 25,
             },
         )
         implemented = [
@@ -263,6 +263,51 @@ class X86_64SourceMapTests(unittest.TestCase):
         unit["status"] = "implemented"
         with self.assertRaisesRegex(SOURCE_MAP.SourceMapError, "reviewed ratchet expansion"):
             SOURCE_MAP.validate_units(changed, self.sources)
+
+    def test_statistics_collection_maps_only_the_selected_private_arena_events(self) -> None:
+        statistics = next(
+            unit for unit in self.contract["units"] if unit["id"] == "statistics-collection"
+        )
+        self.assertEqual(statistics["status"], "partial")
+        self.assertEqual(
+            statistics["rust_modules"],
+            [
+                "crabc_mimalloc::arena",
+                "crabc_mimalloc::arena_owned",
+                "crabc_mimalloc::statistics",
+                "crabc_mimalloc::subproc",
+            ],
+        )
+        for fragment in (
+            "arena_count",
+            "arena_purges",
+            "fresh high-water",
+            "eligible delayed-purge expiry",
+            "No `mi_stats_t` layout, aggregation, collection, reporting, public statistics API",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, statistics["difference"])
+        for evidence in (
+            "compat/allocator/m2-vm-x86_64-v3.5.0.fragment.json",
+            "compat/allocator/m2_arena_owned_x86_64.c",
+            "compat/allocator/m2_vm_x86_64.py",
+            "compat/allocator/test_m2_vm_x86_64.py",
+            "crabc-mimalloc/src/arena.rs",
+            "crabc-mimalloc/src/arena_owned.rs",
+            "crabc-mimalloc/src/arena_purge.rs",
+            "crabc-mimalloc/src/statistics.rs",
+            "crabc-mimalloc/src/subproc.rs",
+        ):
+            with self.subTest(evidence=evidence):
+                self.assertIn(evidence, statistics["evidence"])
+        counter = b"void __mi_stat_counter_increase_mt(mi_stat_counter_t* stat, size_t amount)"
+        self.assertIn(counter, self.sources["src/stats.c"])
+        changed_sources = dict(self.sources)
+        changed_sources["src/stats.c"] = changed_sources["src/stats.c"].replace(
+            counter, b"source-counter-drift", 1
+        )
+        with self.assertRaisesRegex(SOURCE_MAP.SourceMapError, "source anchor drifted"):
+            SOURCE_MAP.validate_units(self.contract, changed_sources)
 
     def test_aligned_allocation_scope_records_bounded_overalloc_realloc_evidence(self) -> None:
         aligned = next(

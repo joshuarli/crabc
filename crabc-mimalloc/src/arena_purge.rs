@@ -149,7 +149,16 @@ impl ProcessArenaBacking {
         if expire == 0 { return Some(-1); }
         if !force && expire > now { return Some(0); }
         i64_store_release(&arena.purge_expire, 0);
-        self.arena_purges.increase(1);
+        // Pinned `mi_arena_try_purge` updates `arena->subproc->stats` after
+        // the Release expiry clear and before inspecting any purge range.
+        // `owner` is the same process-bound source arena allocation selected
+        // for this traversal, so its subprocess owns this event rather than
+        // the backing-local state.
+        owner
+            .process
+            .subprocess()
+            .arena_statistics()
+            .arena_purge_expiry_consumed();
         let purge = unsafe { view.slices_purge() }?;
         let minimum = invariants::slice_count_of_size(owner.process.policy().minimal_purge_size(owner.config))?;
         let mut any_purged = false;

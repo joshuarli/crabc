@@ -17,16 +17,20 @@ from m2_vm_x86_64 import (
     ALIGNED_OVERMAP_RUST_TRACE_KEYS,
     ALIGNED_OVERMAP_TRACE_BEGIN,
     ALIGNED_OVERMAP_TRACE_END,
+    ARENA_OWNED_EVENT_FIELD_COUNT,
+    ARENA_OWNED_RUST_INLINE_PREFIX,
     CHECK_IDS,
     TRACE_KEYS,
     load_fragment,
     parse_aligned_overmap_trace,
+    parse_arena_owned_purge_trace,
     parse_trace,
 )
 
 
 ROOT = Path(__file__).resolve().parents[2]
 FRAGMENT = ROOT / "compat/allocator/m2-vm-x86_64-v3.5.0.fragment.json"
+ARENA_OWNED_FIXTURE = ROOT / "compat/allocator/m2_arena_owned_x86_64.c"
 
 
 LARGE_ONLY_TRACE_KEYS = (
@@ -215,6 +219,33 @@ class NativeM2VmTraceTests(unittest.TestCase):
         for output in malformed:
             with self.subTest(output=output), self.assertRaises(ValueError):
                 parse_trace(output, source="test")
+
+
+class NativeM2ArenaEventFixtureTests(unittest.TestCase):
+    def test_delayed_purge_fixture_leaves_source_preloading_before_free(self) -> None:
+        fixture = ARENA_OWNED_FIXTURE.read_text(encoding="utf-8")
+        self.assertIn("  _mi_auto_process_init();\n", fixture)
+        self.assertNotIn("  mi_process_init();\n", fixture)
+
+    def test_arena_event_reader_accepts_only_exact_inline_libtest_first_field(self) -> None:
+        values = tuple(range(ARENA_OWNED_EVENT_FIELD_COUNT))
+        rust_stream = "\n".join(
+            ["running 1 test", f"{ARENA_OWNED_RUST_INLINE_PREFIX}m2.arena.purge.0=0"]
+            + [f"m2.arena.purge.{index}={index}" for index in range(1, len(values))]
+            + ["ok"]
+        )
+        self.assertEqual(
+            parse_arena_owned_purge_trace(rust_stream, source="Rust"), values
+        )
+        for malformed in (
+            rust_stream.replace(ARENA_OWNED_RUST_INLINE_PREFIX, "test other ... ", 1),
+            rust_stream.replace("m2.arena.purge.1=1", "m2.arena.purge.2=1", 1),
+            rust_stream.replace("m2.arena.purge.0=0", "m2.arena.purge.0=0x0", 1),
+            rust_stream.replace("m2.arena.purge.0=0", "m2.arena.purge.0=00", 1),
+            rust_stream.replace("m2.arena.purge.0=0", "m2.arena.purge.0=-0", 1),
+        ):
+            with self.subTest(malformed=malformed), self.assertRaises(ValueError):
+                parse_arena_owned_purge_trace(malformed, source="Rust")
 
 
 class NativeM2VmFragmentTests(unittest.TestCase):

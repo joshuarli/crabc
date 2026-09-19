@@ -882,6 +882,21 @@ backing skips the path, and a frozen-Linux default-decommit advisory error
 leaves the mapping accessible and committed while restoring availability and
 consuming the already-cleared purge work. Only the external owner may unmap
 the complete mapping.
+
+`MainSubprocess` also privately owns the two unconditional arena event
+counters used by that bounded lifecycle. `ArenaRegistry::insert` increments
+`arena_count` only after its Release publication of a fresh high-water slot;
+reused NULL slots and every failed preparation/publication leave it unchanged.
+`ProcessArenaBacking` no longer retains a second local purge counter:
+`try_purge_arena` clears an eligible expiry with Release ordering and then
+increments the same process owner's `arena_purges` before it visits any range.
+Those updates use the pinned relaxed `mi_subproc_stat_counter_increase` route.
+They are private source-event observations for focused C/Rust evidence, not a
+`mi_stats_t` layout, statistics collection/reporting API, general arena
+lifecycle qualification, or M2 completion. The pinned C fixture invokes
+`_mi_auto_process_init` only to reproduce `src/init.c`'s source-loader
+preloading transition before delayed-purge scheduling; that direct fixture is
+not evidence of an installed CRT or loader integration.
 This is bounded engine evidence, not an exported production allocator. The
 feature-only libc shadow described above is an explicit test lane, not a
 general libc integration: general thread teardown, general remote-free
