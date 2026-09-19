@@ -14,6 +14,15 @@ import crabc_cc_owned_dynamic as driver
 import owned_static_sysroot_package as shared_package
 
 
+# The source-bound product roles below are executable after package extraction.
+# All remaining manifested payloads stay ordinary regular files.
+EXECUTABLE_PAYLOADS = frozenset({
+    "bin/crabc-cc-dynamic",
+    "lib/ld-crabc-x86_64.so.1",
+    "usr/lib/libc.so",
+})
+
+
 def package(root: Path, output: Path) -> None:
     root = shared_package.require_safe_directory(root, "dynamic package source")
     output = shared_package.prospective_path(output, "dynamic package output")
@@ -42,7 +51,7 @@ def write_archive(root: Path, output: Path, record: dict, entries: list[str]) ->
             else:
                 payload = (root / relative).read_bytes()
                 entry.size = len(payload)
-                entry.mode = 0o755 if relative.startswith("bin/") or relative == "lib/ld-crabc-x86_64.so.1" else 0o644
+                entry.mode = 0o755 if relative in EXECUTABLE_PAYLOADS else 0o644
                 archive.addfile(entry, io.BytesIO(payload))
 
 

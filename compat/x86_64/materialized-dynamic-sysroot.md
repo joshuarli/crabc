@@ -153,6 +153,10 @@ build or a competing publisher cannot expose or replace a partial install.
 The manifest covers the exact regular-file roster and the one permitted
 relative alias. `owned_dynamic_package.py` creates deterministic archives and
 validates names, sizes, types, hashes and roster before extraction publication.
+Its archive preserves the source-bound executable roles of
+`bin/crabc-cc-dynamic`, `lib/ld-crabc-x86_64.so.1`, and
+`usr/lib/libc.so` at `0755`; the dynamic CRT/archive/attachment link inputs
+remain regular files at `0644`.
 Traversal, absolute names, duplicate entries, unexpected links and replacement
 of an existing output are rejected. Package extraction never follows archive
 links. All build, extraction and private-chroot state stays under `.work`.
