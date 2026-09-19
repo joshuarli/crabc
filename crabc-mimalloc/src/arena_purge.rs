@@ -1,6 +1,6 @@
 // Copyright (c) 2018-2026 Microsoft Research, Daan Leijen
 // SPDX-License-Identifier: MIT
-// Source: pinned mimalloc v3.5.0 src/arena.c:1433-1483,2238-2447.
+// Source: pinned mimalloc v3.5.0 src/arena.c:1430-1494,2242-2435.
 
 //! Source policy-aware release, delayed purge and subprocess purge traversal.
 //! The arena owner retains both the bitmap range and its exact VM pair; it

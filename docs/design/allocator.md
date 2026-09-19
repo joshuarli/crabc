@@ -897,6 +897,20 @@ lifecycle qualification, or M2 completion. The pinned C fixture invokes
 `_mi_auto_process_init` only to reproduce `src/init.c`'s source-loader
 preloading transition before delayed-purge scheduling; that direct fixture is
 not evidence of an installed CRT or loader integration.
+
+The native x86 M2 producer compares a further bounded process-wide purge
+relation. Three regular process-owned arenas begin with future per-arena and
+global expiries. Its 80-value C/Rust trace retains 32 established local purge
+fields and adds 48 process-wide observations: current registry count,
+per-arena free/committed/purge and expiry-zero masks, and each stage's
+`arena_purges`, VM `purge_calls`, and VM `purged` deltas. Ordinary collection
+skips; `visit_all` rebases only the global expiry; the rotated normal budget
+purges one arena and clears its purge bit while preserving its fully
+committed bit on Linux's no-recommit path; `visit_all` drains the remaining
+two; and a final no-pending visit clears the global expiry with no VM purge
+work. The trace
+excludes guard contention, registry mutation, pinned or external arenas, and
+wall-clock behavior; it keeps the arenas component partial.
 This is bounded engine evidence, not an exported production allocator. The
 feature-only libc shadow described above is an explicit test lane, not a
 general libc integration: general thread teardown, general remote-free

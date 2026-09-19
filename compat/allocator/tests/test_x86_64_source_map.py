@@ -1920,10 +1920,13 @@ class X86_64SourceMapTests(unittest.TestCase):
             {
                 "member": "src/arena.c",
                 "start_line": 631,
-                "end_line": 1409,
-                "sha256": "27e3cbe3f8b7e6f8ed2a2986776c2b403d9cfcaf9585092aaea5afd7fabdcaf8",
+                "end_line": 2435,
+                "sha256": "9a3d4edd89fca65274c667af01d8cd2bb60f2913562765347ffee740e3a55397",
             },
         )
+        self.assertIn("80-value native C/Rust differential", units["arena-lifecycle"]["difference"])
+        self.assertIn("crabc_mimalloc::arena_purge", units["arena-lifecycle"]["rust_modules"])
+        self.assertIn("compat/allocator/m2_arena_owned_x86_64.c", units["arena-lifecycle"]["evidence"])
         self.assertEqual(
             units["tls-interface-and-thread-identity"]["source_anchor"],
             {

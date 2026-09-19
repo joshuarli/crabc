@@ -2458,6 +2458,19 @@ comparisons pass, including all thirteen bounded source anchors. The two
 components reuse one native build; bitmap's two logical evidence records share
 one execution. This does not qualify the remaining substrate components.
 
+The partial arenas component has one x86-only C/Rust differential for the
+pinned process-wide delayed-purge traversal. It creates three regular arenas
+with deterministic future expiries and scheduled free/committed slices. Its
+80-value trace retains 32 established local fields and adds 48 process-wide
+observations: current registry count, per-arena free/committed/purge and
+expiry-zero masks, plus every stage's `arena_purges` and VM
+`purge_calls`/`purged` deltas. It checks the ordinary skip, `visit_all`
+global-expiry rebase, thread-sequence rotation with the normal budget and one
+purge bit cleared while the fully committed bit remains set on Linux's
+no-recommit path, full drain, and final no-pending expiry clear without VM
+work. It excludes concurrent guard contention, registry mutation,
+pinned/external arenas, real clock behavior, and arena lifecycle completion.
+
 The fault-injection component has one additional partial, current-source
 admission: `allocator-fault-seam-inventory` retains a fixed direct C profile
 and a private Rust `FaultPlan` trace for selected OS/page-map receiver rows.

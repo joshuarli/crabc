@@ -2567,7 +2567,163 @@ mod tests {
                 std::println!("m2.arena.purge.{field}={value}"); field += 1;
             }
         }
-        assert_eq!(field, 32);
+
+        // This is the exact finite three-regular-arena relation of pinned
+        // `mi_arenas_try_purge`: `_mi_arenas_collect` selects a start from
+        // the caller's thread sequence, limits ordinary collection to
+        // `count / 4 + 1`, visits every arena on request, then clears the
+        // subprocess expiry only after a fully visited no-pending pass. The
+        // seeded future deadline makes those state transitions independent
+        // of scheduler time; emitted values are relations, never clocks.
+        let process = purge_process(100_000, true);
+        let backing = backing();
+        let mut arenas: std::vec::Vec<(ArenaId, usize)> = std::vec::Vec::new();
+        for _ in 0..3 {
+            let id = install(backing, process, MapAccess::Reserved);
+            let claim = unsafe { backing.try_find_free(search(id), 1, ARENA_SLICE_SIZE, true) }.unwrap();
+            let start = claim.slice_index();
+            assert!(claim.release());
+            crate::atomic::i64_store_release(
+                unsafe { &(*id.as_ptr()).purge_expire }, i64::MAX,
+            );
+            arenas.push((id, start));
+        }
+        crate::atomic::i64_store_release(&backing.purge_expire, i64::MAX);
+        let registry_count = || backing.registry().count() as i64;
+        let expiry_zero_mask = || arenas.iter().enumerate().fold(0i64, |mask, (index, (id, _))| {
+            if crate::atomic::i64_load_relaxed(unsafe { &(*id.as_ptr()).purge_expire }) == 0 {
+                mask | (1i64 << index)
+            } else {
+                mask
+            }
+        });
+        let bitmap_mask = |kind| arenas.iter().enumerate().fold(0i64, |mask, (index, (id, start))| {
+            let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+            let bit = match kind {
+                0 => unsafe { view.slices_free() }.unwrap().is_set_range(*start, 1),
+                1 => unsafe { view.slices_committed() }.unwrap().is_set_range(*start, 1),
+                _ => unsafe { view.slices_purge() }.unwrap().is_set_range(*start, 1),
+            };
+            if bit == Some(true) { mask | (1i64 << index) } else { mask }
+        });
+        let global_state = || {
+            let global = crate::atomic::i64_load_relaxed(&backing.purge_expire);
+            if global == i64::MAX {
+                1
+            } else if global == 0 {
+                0
+            } else {
+                assert!(global > 0 && global < i64::MAX);
+                2
+            }
+        };
+        assert_eq!(registry_count(), 3);
+        assert_eq!(global_state(), 1);
+        assert_eq!(expiry_zero_mask(), 0);
+        assert_eq!(bitmap_mask(2), 7);
+        assert_eq!(bitmap_mask(0), 7);
+        assert_eq!(bitmap_mask(1), 7);
+        for value in [registry_count(), bitmap_mask(0), bitmap_mask(1)] {
+            std::println!("m2.arena.purge.{field}={value}"); field += 1;
+        }
+
+        let mut record_stage = |before_arena_purges: i64, before_purge_calls: i64, before_purged: i64| {
+            let arena_events = process.subprocess().arena_statistics().snapshot();
+            let vm_events = process.subprocess().vm_statistics().snapshot();
+            for value in [
+                arena_events.arena_purges - before_arena_purges,
+                vm_events.purge_calls - before_purge_calls,
+                vm_events.purged - before_purged,
+                registry_count(),
+                global_state(),
+                expiry_zero_mask(),
+                bitmap_mask(2),
+                bitmap_mask(0),
+                bitmap_mask(1),
+            ] {
+                std::println!("m2.arena.purge.{field}={value}"); field += 1;
+            }
+        };
+
+        let before_arena = process.subprocess().arena_statistics().snapshot();
+        let before_vm = process.subprocess().vm_statistics().snapshot();
+        assert!(unsafe { backing.collect_purge(process, config(), false, false, 0) });
+        let after_arena = process.subprocess().arena_statistics().snapshot();
+        let after_vm = process.subprocess().vm_statistics().snapshot();
+        assert_eq!(after_arena.arena_purges - before_arena.arena_purges, 0);
+        assert_eq!(after_vm.purge_calls - before_vm.purge_calls, 0);
+        assert_eq!(after_vm.purged - before_vm.purged, 0);
+        assert_eq!(global_state(), 1);
+        assert_eq!(expiry_zero_mask(), 0);
+        assert_eq!(bitmap_mask(2), 7);
+        assert_eq!(bitmap_mask(0), 7);
+        assert_eq!(bitmap_mask(1), 7);
+        record_stage(before_arena.arena_purges, before_vm.purge_calls, before_vm.purged);
+
+        let before_arena = process.subprocess().arena_statistics().snapshot();
+        let before_vm = process.subprocess().vm_statistics().snapshot();
+        assert!(unsafe { backing.collect_purge(process, config(), false, true, 0) });
+        let after_arena = process.subprocess().arena_statistics().snapshot();
+        let after_vm = process.subprocess().vm_statistics().snapshot();
+        assert_eq!(after_arena.arena_purges - before_arena.arena_purges, 0);
+        assert_eq!(after_vm.purge_calls - before_vm.purge_calls, 0);
+        assert_eq!(after_vm.purged - before_vm.purged, 0);
+        assert_eq!(global_state(), 2);
+        assert_eq!(expiry_zero_mask(), 0);
+        assert_eq!(bitmap_mask(2), 7);
+        assert_eq!(bitmap_mask(0), 7);
+        assert_eq!(bitmap_mask(1), 7);
+        record_stage(before_arena.arena_purges, before_vm.purge_calls, before_vm.purged);
+
+        let before_arena = process.subprocess().arena_statistics().snapshot();
+        let before_vm = process.subprocess().vm_statistics().snapshot();
+        assert!(unsafe { backing.collect_purge(process, config(), true, false, 1) });
+        let after_arena = process.subprocess().arena_statistics().snapshot();
+        let after_vm = process.subprocess().vm_statistics().snapshot();
+        assert_eq!(after_arena.arena_purges - before_arena.arena_purges, 1);
+        assert!(after_vm.purge_calls - before_vm.purge_calls > 0);
+        assert!(after_vm.purged - before_vm.purged > 0);
+        assert_eq!(registry_count(), 3);
+        assert_eq!(global_state(), 2);
+        assert_eq!(expiry_zero_mask(), 2);
+        assert_eq!(bitmap_mask(2), 5);
+        assert_eq!(bitmap_mask(0), 7);
+        // Pinned Linux release MADV_DONTNEED keeps needs_recommit false here.
+        assert_eq!(bitmap_mask(1), 7);
+        record_stage(before_arena.arena_purges, before_vm.purge_calls, before_vm.purged);
+
+        let before_arena = process.subprocess().arena_statistics().snapshot();
+        let before_vm = process.subprocess().vm_statistics().snapshot();
+        assert!(unsafe { backing.collect_purge(process, config(), true, true, 2) });
+        let after_arena = process.subprocess().arena_statistics().snapshot();
+        let after_vm = process.subprocess().vm_statistics().snapshot();
+        assert_eq!(after_arena.arena_purges - before_arena.arena_purges, 2);
+        assert!(after_vm.purge_calls - before_vm.purge_calls > 0);
+        assert!(after_vm.purged - before_vm.purged > 0);
+        assert_eq!(registry_count(), 3);
+        assert_eq!(global_state(), 2);
+        assert_eq!(expiry_zero_mask(), 7);
+        assert_eq!(bitmap_mask(2), 0);
+        assert_eq!(bitmap_mask(0), 7);
+        assert_eq!(bitmap_mask(1), 7);
+        record_stage(before_arena.arena_purges, before_vm.purge_calls, before_vm.purged);
+
+        let before_arena = process.subprocess().arena_statistics().snapshot();
+        let before_vm = process.subprocess().vm_statistics().snapshot();
+        assert!(unsafe { backing.collect_purge(process, config(), true, true, 0) });
+        let after_arena = process.subprocess().arena_statistics().snapshot();
+        let after_vm = process.subprocess().vm_statistics().snapshot();
+        assert_eq!(after_arena.arena_purges - before_arena.arena_purges, 0);
+        assert_eq!(after_vm.purge_calls - before_vm.purge_calls, 0);
+        assert_eq!(after_vm.purged - before_vm.purged, 0);
+        assert_eq!(registry_count(), 3);
+        assert_eq!(global_state(), 0);
+        assert_eq!(expiry_zero_mask(), 7);
+        assert_eq!(bitmap_mask(2), 0);
+        assert_eq!(bitmap_mask(0), 7);
+        assert_eq!(bitmap_mask(1), 7);
+        record_stage(before_arena.arena_purges, before_vm.purge_calls, before_vm.purged);
+        assert_eq!(field, 80);
     }
 
     #[test]

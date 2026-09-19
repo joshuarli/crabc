@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+import importlib.util
 import json
 import sys
 import tempfile
@@ -31,6 +32,17 @@ from m2_vm_x86_64 import (
 ROOT = Path(__file__).resolve().parents[2]
 FRAGMENT = ROOT / "compat/allocator/m2-vm-x86_64-v3.5.0.fragment.json"
 ARENA_OWNED_FIXTURE = ROOT / "compat/allocator/m2_arena_owned_x86_64.c"
+
+
+def load_allocator_runner():
+    spec = importlib.util.spec_from_file_location(
+        "crabc_allocator_runner_for_m2_vm_test", ROOT / "compat/allocator/run.py"
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("allocator runner is absent")
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+    return runner
 
 
 LARGE_ONLY_TRACE_KEYS = (
@@ -122,6 +134,18 @@ def valid_trace() -> str:
 
 
 class NativeM2VmTraceTests(unittest.TestCase):
+    def test_x86_vm_fragment_inventory_matches_the_ef723d8f_statistics_admission(self) -> None:
+        runner = load_allocator_runner()
+        fragment = load_fragment(FRAGMENT)
+        contract = json.loads(
+            (ROOT / "compat/allocator/m2-memory-substrate-x86_64-v3.5.0.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        declared = contract["components"][0]["evidence_fragment"]["inventory_sha256"]
+        self.assertEqual(runner._m1_inventory_digest(fragment), runner.M2_X86_64_VM_FRAGMENT_DIGEST)
+        self.assertEqual(declared, runner.M2_X86_64_VM_FRAGMENT_DIGEST)
+
     def test_complete_address_free_trace_is_accepted(self) -> None:
         trace = parse_trace(valid_trace(), source="test")
         self.assertEqual(tuple(trace), TRACE_KEYS)
@@ -227,6 +251,22 @@ class NativeM2ArenaEventFixtureTests(unittest.TestCase):
         self.assertIn("  _mi_auto_process_init();\n", fixture)
         self.assertNotIn("  mi_process_init();\n", fixture)
 
+    def test_process_wide_purge_trace_calls_the_public_internal_collector(self) -> None:
+        fixture = ARENA_OWNED_FIXTURE.read_text(encoding="utf-8")
+        self.assertIn('#include "static.c"', fixture)
+        self.assertIn("static void trace_process_arena_collect(void)", fixture)
+        self.assertIn("mi_tld_t* const main_tld = &mi_process_tld_main;", fixture)
+        self.assertIn("_mi_arenas_collect(false, false, main_tld);", fixture)
+        self.assertIn("_mi_arenas_collect(false, true, main_tld);", fixture)
+        self.assertIn("_mi_arenas_collect(true, false, main_tld);", fixture)
+        self.assertIn("_mi_arenas_collect(true, true, main_tld);", fixture)
+        self.assertIn("require(mi_arenas_get_count(subprocess) == 3);", fixture)
+        self.assertIn("process_collect_trace[48]", fixture)
+        self.assertIn("record_process_collect((int64_t)mi_arenas_get_count(subprocess));", fixture)
+        self.assertIn("record_process_collect(process_collect_bitmap_mask(owners, starts, 0));", fixture)
+        self.assertIn("record_process_collect(process_collect_bitmap_mask(owners, starts, 1));", fixture)
+        self.assertIn("require(purge_field == 80);", fixture)
+
     def test_arena_event_reader_accepts_only_exact_inline_libtest_first_field(self) -> None:
         values = tuple(range(ARENA_OWNED_EVENT_FIELD_COUNT))
         rust_stream = "\n".join(
@@ -240,6 +280,7 @@ class NativeM2ArenaEventFixtureTests(unittest.TestCase):
         for malformed in (
             rust_stream.replace(ARENA_OWNED_RUST_INLINE_PREFIX, "test other ... ", 1),
             rust_stream.replace("m2.arena.purge.1=1", "m2.arena.purge.2=1", 1),
+            rust_stream.replace("m2.arena.purge.79=79", "m2.arena.purge.80=79", 1),
             rust_stream.replace("m2.arena.purge.0=0", "m2.arena.purge.0=0x0", 1),
             rust_stream.replace("m2.arena.purge.0=0", "m2.arena.purge.0=00", 1),
             rust_stream.replace("m2.arena.purge.0=0", "m2.arena.purge.0=-0", 1),

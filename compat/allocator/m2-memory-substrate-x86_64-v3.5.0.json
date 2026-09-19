@@ -4,7 +4,7 @@
       "id": "vm-primitives",
       "evidence_fragment": {
         "path": "compat/allocator/m2-vm-x86_64-v3.5.0.fragment.json",
-        "inventory_sha256": "670aea9205e60c550452b30a5686f2631cf017a99bf9642183914e55d04bd799"
+        "inventory_sha256": "aefd83528076c482b5a79b4320ab1b7a4e95170258074f67139a8318b95ad82b"
       }
     },
     {
@@ -94,11 +94,18 @@
       "source_units": ["include/mimalloc/internal.h", "src/page-map.c"]
     },
     {
-      "checks": [],
+      "checks": [
+        {
+          "expected_passed_test_count": 1,
+          "id": "process-wide-arena-purge-c-rust-differential",
+          "kind": "c-rust-process-arena-purge-differential",
+          "target": "arena::owned::tests::emit_native_owned_arena_purge_trace"
+        }
+      ],
       "id": "arenas",
       "native_status": "partial",
       "remaining_conditions": [
-        "Qualify arena creation, OS reservation, abandonment, and cross-thread reclamation through native lifecycle and failure evidence."
+        "Qualify arena creation, OS reservation, abandonment, and cross-thread reclamation through native lifecycle and failure evidence beyond the finite three-regular-arena process-wide delayed-purge relation."
       ],
       "source_map_records": [
         { "required_status": "partial", "unit_id": "arena-lifecycle" },
