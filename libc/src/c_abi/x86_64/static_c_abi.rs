@@ -643,6 +643,27 @@ mod posix_spawnattr_getschedparam;
 #[cfg(not(feature = "x86-owned-dynamic-runtime"))]
 #[path = "static_startup.rs"]
 mod static_startup;
+// The x86 native shadow is a selected owned-static worker lifecycle slice.
+// Its dynamic composition still needs a separate loader/libc allocator-owner
+// audit; rejecting it here prevents a feature combination from silently
+// mixing native allocations with unreviewed loader-owned allocation paths.
+#[cfg(all(
+    feature = "native-mimalloc-shadow",
+    not(feature = "x86-owned-static-runtime"),
+))]
+compile_error!(
+    "native-mimalloc-shadow on Linux/x86-64 requires x86-owned-static-runtime"
+);
+#[cfg(all(
+    feature = "native-mimalloc-shadow",
+    feature = "x86-owned-dynamic-runtime",
+))]
+compile_error!(
+    "native-mimalloc-shadow on Linux/x86-64 does not yet admit x86-owned-dynamic-runtime; loader/libc allocator ownership is not qualified"
+);
+#[cfg(feature = "native-mimalloc-shadow")]
+#[path = "native_mimalloc_lifecycle.rs"]
+mod native_mimalloc_lifecycle;
 #[cfg(feature = "x86-owned-dynamic-runtime")]
 #[path = "owned_dynamic_runtime.rs"]
 mod owned_dynamic_runtime;
@@ -1026,14 +1047,20 @@ mod fixed_graph_dlfcn;
 
 // The installed-product builders pair this cfg with the C define that
 // suppresses mimalloc's compiler callbacks, then verify both artifact halves.
-#[cfg(crabc_owned_mimalloc_lifecycle)]
+#[cfg(all(
+    crabc_owned_mimalloc_lifecycle,
+    not(feature = "native-mimalloc-shadow"),
+))]
 #[path = "allocator_mimalloc_lifecycle.rs"]
 mod allocator_mimalloc_lifecycle;
 
 // The allocator is opt-in until the complete x86 runtime can own its bundled
 // backend and lifecycle. Its C contract is shared verbatim with AArch64; only
 // the target-local errno accessor differs.
-#[cfg(feature = "x86-allocator-runtime")]
+#[cfg(all(
+    feature = "x86-allocator-runtime",
+    not(feature = "native-mimalloc-shadow"),
+))]
 mod allocator {
     use core::ffi::{c_int, c_void};
     use core::ptr::null_mut;
@@ -1115,6 +1142,14 @@ mod allocator {
         1
     }
 }
+
+// The selected native adapter retains the same private internal allocation
+// seam as the C provider. Its individual public entries use the Rust engine
+// exclusively, so this feature combination cannot free or query a native
+// pointer through libmimalloc-sys.
+#[cfg(feature = "native-mimalloc-shadow")]
+#[path = "allocator_native_mimalloc.rs"]
+mod allocator;
 
 // POSIX string duplication is an allocation client, not another allocator
 // entry point. Keep its object and feature separate so the completed wrapper
@@ -1293,11 +1328,37 @@ mod pthread_mutex_prioceiling_query;
 // The sole AArch64 allocator-observability capability is a separate strong
 // C entry, not part of the weak allocation family. Its private witness keeps
 // archive ownership independently auditable in the feature-built x86 image.
-#[cfg(feature = "x86-allocator-observability")]
+#[cfg(all(
+    feature = "x86-allocator-observability",
+    not(feature = "native-mimalloc-shadow"),
+))]
 mod allocator_observability {
     use core::ffi::c_void;
 
     include!("../../allocator_observability_mimalloc.rs");
+
+    #[no_mangle]
+    pub extern "C" fn __crabc_x86_allocator_observability_v1() -> usize {
+        1
+    }
+}
+
+#[cfg(all(
+    feature = "x86-allocator-observability",
+    feature = "native-mimalloc-shadow",
+))]
+mod allocator_observability {
+    use core::ffi::c_void;
+
+    /// Observe the selected native engine only; an x86 native pointer never
+    /// enters the bundled C backend's `mi_usable_size` route.
+    #[no_mangle]
+    pub unsafe extern "C" fn malloc_usable_size(pointer: *mut c_void) -> usize {
+        let Some(block) = core::ptr::NonNull::new(pointer.cast::<u8>()) else {
+            return 0;
+        };
+        unsafe { crabc_mimalloc::__crabc_runtime::native_usable_size(block) }.unwrap_or(0)
+    }
 
     #[no_mangle]
     pub extern "C" fn __crabc_x86_allocator_observability_v1() -> usize {

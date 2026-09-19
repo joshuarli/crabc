@@ -30,6 +30,7 @@ use super::errno;
 
 const MAX_AUXV_ENTRIES: usize = 4096;
 const AT_NULL: usize = 0;
+const AT_PAGESZ: usize = 6;
 const ENOENT: core::ffi::c_int = 2;
 
 // A dynamic loader normally owns this hidden process field. The selected
@@ -69,6 +70,33 @@ pub(super) unsafe fn install_initial(auxv: *const usize) {
 pub(super) fn initial_stack_anchor() -> Option<usize> {
     let address = INITIAL_AUXV.load(Ordering::Acquire);
     (address != 0).then_some(address)
+}
+
+/// Return the startup-published `AT_PAGESZ` value without calling the public
+/// `__getauxval` ABI or changing the initial thread's errno.
+///
+/// The native allocator startup consumes this only after `install_initial`.
+/// It is intentionally a private startup fact, not another general auxv
+/// consumer or an allocator/process-lifecycle owner.
+#[cfg(feature = "native-mimalloc-shadow")]
+pub(super) fn initial_page_size() -> Option<usize> {
+    let auxv = INITIAL_AUXV.load(Ordering::Acquire) as *const usize;
+    if auxv.is_null() {
+        return None;
+    }
+    for index in 0..MAX_AUXV_ENTRIES {
+        // SAFETY: `install_initial` accepts the same bounded AT_NULL-
+        // terminated kernel vector validated by selected x86 startup.
+        let tag = unsafe { core::ptr::read(auxv.add(index * 2)) };
+        if tag == AT_NULL {
+            return None;
+        }
+        if tag == AT_PAGESZ {
+            let page_size = unsafe { core::ptr::read(auxv.add(index * 2 + 1)) };
+            return (page_size != 0).then_some(page_size);
+        }
+    }
+    None
 }
 
 /// Return one raw value from the validated Linux initial auxiliary vector.

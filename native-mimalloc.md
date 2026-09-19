@@ -2499,6 +2499,54 @@ enter the typed interceptor, while one direct `mi_prim_mbind` call records its
 fixed arguments and fails `EPERM`. This is deterministic primitive evidence,
 not an ambient NUMA-placement or hardware huge-page claim.
 
+### Selected x86 worker automatic teardown — 2026-09-19
+
+The default x86 allocator remains the existing C mimalloc provider. The
+default-off `crabc-libc` feature `native-mimalloc-shadow` now selects the Rust
+allocation adapter only with `x86-owned-static-runtime`; selecting it without
+that owned runtime, or with `x86-owned-dynamic-runtime`, is a compile-time
+error. The dynamic product stays rejected until a loader/libc descriptor and
+internal-allocation ownership audit can prove that no pointer crosses backend
+ownership. This is x86-only selection policy and does not change the paused
+AArch64 lifecycle or its existing sidecar behavior.
+
+For that selected static product, `static_startup` reads its already-validated
+`AT_PAGESZ`, initializes the private native process owner and prepares the
+later-worker arena before constructors. If either step fails, selected static
+startup exits before constructors; it cannot continue with a partly active
+process owner. `pthread_create_join` then performs a parent/child attach
+handshake before admitting a user callback. `Inactive` is the only recoverable
+child result: the callback is never entered, the parent waits for clear-child-
+tid, reclaims the child TLS/control/stack mappings, and returns `EAGAIN`.
+`Retained`, `AlreadyAttached`, and `Finished` are contradictions for fresh
+worker TLS and terminate before either side can release that image. An attached
+normal return, `pthread_exit`, or deferred `pthread_cancel` runs user cleanup
+and selected pthread TSD destructors before
+`finish_current_thread_native_after_user_destructors`; a non-finished native
+owner terminates rather than reaching ELF TLS release.
+
+This maps the upstream v3.5.0 Unix automatic route deliberately: pinned
+`src/prim/unix/prim.c` invokes `_mi_thread_done` from mimalloc's private
+pthread-key destructor, while `src/init.c::_mi_thread_done` collects and
+detaches the default thread heap. libc's selected TSD seam supplies the same
+after-user-destructor point without treating mimalloc's internal dynamic TLS
+key registry as a pthread TSD registry. It does not qualify main-thread or
+process shutdown and never assumes default process teardown frees live
+allocations.
+
+Run `./scripts/dev-x86_64.sh libc-native-mimalloc-shadow-pthread-teardown` for the source-led pinned-musl
+reference plus the real static candidate. The fixture covers normal return,
+explicit exit, and deferred cancellation; each user TSD destructor allocates
+and frees through the selected native adapter, proving the common
+after-user-destructor seam. Its test-only audit checks that the existing
+`active_later_thread_count` begins at zero after the rejected pre-start child
+and returns to zero after every join. Its strong application `malloc`
+replacement also proves an ordinary private client, `pthread_atfork`, allocates
+through libc's direct native internal helper. The selected static aggregate
+still carries its existing incidental `libmimalloc-sys`/C mimalloc build
+dependency, so this receipt makes no C-free graph, default-backend, promotion,
+dynamic-runtime, or process-shutdown claim.
+
 The next integrated wave must:
 
 1. Preserve the executable containment contract in
