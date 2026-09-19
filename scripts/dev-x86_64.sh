@@ -620,6 +620,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   wordexp-result-private  test wordexp partial-result ownership with result allocation failures
   owned-stdio [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed byte/wide streams, positioning and format/scan
   owned-numeric-calendar [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed numeric conversions and clock/calendar behavior
+  owned-math-fenv-all-entry [--static-sysroot STATIC_SYSROOT] DYNAMIC_SYSROOT  test the bounded installed C math/fenv all-entry component
   owned-package-corpus --dynamic-sysroot DYNAMIC_SYSROOT [OPTIONS]  run the frozen native Alpine workloads with supplied package inputs
   owned-loader-synthetic DYNAMIC_SYSROOT  run all 21 frozen loader workloads through the supplied installed product
   owned-loader-inventory DYNAMIC_SYSROOT OUTPUT_JSON  retain compiler-selected source and native loader ELF inventory
@@ -3423,7 +3424,7 @@ prepare_owned_posix_replay_arguments() {
     local static_product=''
     local dynamic_product=''
     local expected="usage: ./scripts/dev-x86_64.sh $selected_command [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]"
-    if [ "$selected_command" = owned-pthread-signal ]; then
+    if [ "$selected_command" = owned-pthread-signal ] || [ "$selected_command" = owned-math-fenv-all-entry ]; then
         expected="usage: ./scripts/dev-x86_64.sh $selected_command [--static-sysroot STATIC_SYSROOT] DYNAMIC_SYSROOT"
     fi
     if [ "${1:-}" = --static-sysroot ]; then
@@ -3436,10 +3437,10 @@ prepare_owned_posix_replay_arguments() {
         [ -n "$1" ] && [[ "$1" != -* ]] || fail "$expected"
         dynamic_product="$1"
     fi
-    if [ "$selected_command" = owned-pthread-signal ] && [ -z "$dynamic_product" ]; then
+    if { [ "$selected_command" = owned-pthread-signal ] || [ "$selected_command" = owned-math-fenv-all-entry ]; } && [ -z "$dynamic_product" ]; then
         fail "$expected"
     fi
-    if { [ "$selected_command" = owned-locale ] || [ "$selected_command" = owned-wordexp ] || [ "$selected_command" = owned-stdio ] || [ "$selected_command" = owned-numeric-calendar ] || [ "$selected_command" = owned-aio ]; } && [ -n "$static_product" ] && [ -z "$dynamic_product" ]; then
+    if { [ "$selected_command" = owned-locale ] || [ "$selected_command" = owned-wordexp ] || [ "$selected_command" = owned-stdio ] || [ "$selected_command" = owned-numeric-calendar ] || [ "$selected_command" = owned-math-fenv-all-entry ] || [ "$selected_command" = owned-aio ]; } && [ -n "$static_product" ] && [ -z "$dynamic_product" ]; then
         fail "$expected"
     fi
     POSIX_REPLAY_ARGUMENTS=()
@@ -6780,7 +6781,7 @@ case "$command" in
     native-thread-signal-abi) ;;
     owned-system-cancellation) ;;
     owned-rand) ;;
-    owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-fmtmsg|owned-utmpx|owned-process-trio|owned-underscore-fork|owned-aio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-account-files|owned-locale|owned-wordexp|owned-stdio|owned-numeric-calendar|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition) ;;
+    owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-fmtmsg|owned-utmpx|owned-process-trio|owned-underscore-fork|owned-aio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-account-files|owned-locale|owned-wordexp|owned-stdio|owned-numeric-calendar|owned-math-fenv-all-entry|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition) ;;
     owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern|owned-wcsftime|owned-regex|owned-strfmon) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
@@ -6995,7 +6996,7 @@ case "$command" in
         prepare_owned_posix_replay_arguments "$command" "$@"
         set -- "${POSIX_REPLAY_ARGUMENTS[@]}"
         ;;
-    owned-rand|owned-aio|owned-posix-filesystem|owned-process-control|owned-posix-signals|owned-posix-composition|owned-credentials-profile|owned-environment-lifecycle|owned-kernel-residual|owned-linux-control|owned-dynamic-spawn|owned-fmtmsg|owned-utmpx|owned-account-files|owned-locale|owned-wordexp|owned-stdio|owned-numeric-calendar|owned-process-trio|owned-underscore-fork|owned-syslog|owned-crypt-runtime|owned-system-cancellation|owned-signal-helpers|owned-pthread-signal|owned-posix-timers|owned-dynamic-io-cancellation|project-header-extension-policy)
+    owned-rand|owned-aio|owned-posix-filesystem|owned-process-control|owned-posix-signals|owned-posix-composition|owned-credentials-profile|owned-environment-lifecycle|owned-kernel-residual|owned-linux-control|owned-dynamic-spawn|owned-fmtmsg|owned-utmpx|owned-account-files|owned-locale|owned-wordexp|owned-stdio|owned-numeric-calendar|owned-math-fenv-all-entry|owned-process-trio|owned-underscore-fork|owned-syslog|owned-crypt-runtime|owned-system-cancellation|owned-signal-helpers|owned-pthread-signal|owned-posix-timers|owned-dynamic-io-cancellation|project-header-extension-policy)
         prepare_owned_posix_replay_arguments "$command" "$@"
         set -- "${POSIX_REPLAY_ARGUMENTS[@]}"
         ;;
@@ -9102,6 +9103,10 @@ case "$command" in
     owned-numeric-calendar)
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_numeric_calendar.sh "$@"
+        ;;
+    owned-math-fenv-all-entry)
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_math_fenv_all_entry.sh "$@"
         ;;
     owned-package-corpus)
         [ "$#" -ge 2 ] || [ "${1:-}" = --help ] || fail "owned-package-corpus requires --dynamic-sysroot PATH"

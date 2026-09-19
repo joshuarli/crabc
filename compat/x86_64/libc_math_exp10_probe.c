@@ -43,6 +43,14 @@ static double_unary_function volatile direct_pow10 = (pow10);
 /* The freestanding start object writes these exact 8,192 bytes with syscall. */
 uint64_t crabc_x86_64_math_exp10_records[EXP10_RECORD_STORAGE_WORDS];
 
+/* Keep the record extent with the producer; composed probes do not guess it. */
+const uint64_t *crabc_x86_64_math_exp10_record_data(size_t *length)
+{
+	if (length != NULL)
+		*length = sizeof(crabc_x86_64_math_exp10_records);
+	return crabc_x86_64_math_exp10_records;
+}
+
 static const uint64_t binary64_inputs[EXP10_F64_CASES] = {
 	UINT64_C(0x0000000000000000), UINT64_C(0x8000000000000000),
 	UINT64_C(0x0000000000000001), UINT64_C(0x8000000000000001),
