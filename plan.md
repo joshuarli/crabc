@@ -23,6 +23,14 @@ the completed `fopen64` component still needs current-source aggregate binding.
 These are evidence gaps against the frozen family
 scope, not new APIs or permission to replace behavior with symbol counts.
 
+The full calendar component also needs explicitly pinned test-only timezone
+fixtures. The current pinned core image lacks the named zone files used by
+`owned_calendar_probe.c`; that older probe compares records without asserting
+that those files were loaded. Its historical pass therefore does not prove
+real-zone transitions. Preserve those records, supply authenticated fixtures,
+and require known offset/transition checks as well as oracle comparison. This
+does not authorize bundling timezone data into the runtime.
+
 The full OS-test development replay with the compiler-mode fix completed all
 ten suites using frozen `26dfb153` products and consumer `69f547a5`. Eight
 suites match; the raw report retains nineteen differences: six atomic
