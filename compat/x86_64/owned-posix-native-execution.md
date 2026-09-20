@@ -83,6 +83,54 @@ A validated `native-execution.json` sets only `native_aggregate_complete`.
 The focused coordinator regressions use explicit prerequisite/native judge
 seams and five actual subprocesses; they do not claim real runtime qualification.
 
+## Family-admission receipt
+
+After a clean native aggregate exists, `admit` is the one host-readable
+consumer that can turn the already validated matrix plus native aggregate into
+family evidence. It reruns neither producer nor target program. Instead it
+physically reconstructs `native-execution.json`, follows and reconstructs its
+exact `execution.json`, requires their current source seals to agree, and
+checks the catalog's complete nine-capability/149-spelling roster. Every
+spelling must retain its exact six static and twelve dynamic matrix receipt
+cells; the zero-spelling composition workload and all named closure workloads
+remain independently required. The five native components and the eighteen
+I/O replacement cells must also remain complete.
+
+```sh
+python3 -B compat/x86_64/owned_posix_native_execution.py admit \
+  --native-execution .work/x86_64/posix-native/native-execution.json \
+  --output .work/x86_64/posix-family-admission
+python3 -B compat/x86_64/owned_posix_native_execution.py validate-admission \
+  .work/x86_64/posix-family-admission/family-admission.json
+```
+
+The resulting `family-admission.json` sets `family_completion=true` and keeps
+`campaign_complete`, `promotion_ready`, and `public_support` false. It is not
+a ledger transition. A receipt made from a planned source revision is useful
+preflight evidence only: changing any tracked ledger row afterward changes the
+source seal, so it cannot be attached to a later transition.
+
+The only transition bootstrap is a clean, unpublished candidate revision. Its
+POSIX row names the intended physical `.work` receipt and the eventual
+`foundation-verified` native-evidence state, but it is not accepted or reported
+as foundation while that receipt is absent. On that exact clean revision, run
+the family matrix, the native aggregate, and `admit` at the named path; then
+run `validate-admission` and the parity-ledger validator in the same checkout.
+Only those successful reconstructions make the candidate an admissible ledger
+state. If any tracked source changes, restart from a fresh clean candidate—do
+not carry a prior receipt forward or exclude ledger/source files from its
+identity. Existing private leaf artifacts remain non-promoting evidence until
+that condition is met.
+
+The producer path has no circular ledger gate: `owned-posix-static-products`
+builds the static preparation, `materialized-dynamic-sysroot` produces the
+unqualified dynamic receipt, and `owned-posix-family` consumes only those two
+receipts before `owned-posix-native` consumes the matrix. These entrypoints
+require their own clean/source/product identities and retain non-promoting
+flags; none validates the parity ledger or branches on the POSIX family
+status. The parity-ledger validator runs only after the admission receipt is
+present.
+
 The finite credential-alias, address-taken atomic, crypt, strptime, and wordexp
 differences retain upstream reports, counts and raw failures. The separately
 bounded corrected-math entries retain their candidate-pass/pinned-musl-oracle-

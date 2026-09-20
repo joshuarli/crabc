@@ -255,7 +255,22 @@ Measurements may run before dependent compatibility families are promoted.
 Requiring `compat.posix-process` or `libc.pthread-tls` completion to execute
 this aggregate would create a dependency cycle with `libc.posix-runtime`.
 
-Only after the family receipt and the native aggregate succeed may the ledger
-owner consider changing `libc.posix-runtime` from `planned`. That transition
-still depends on all of `parity.toml`'s declared prerequisites and leaves the
-campaign's broader promotion and public-support predicates unchanged.
+The native aggregate and family matrix can be sealed with
+`owned_posix_native_execution.py admit --native-execution FILE --output NEW_DIR`.
+That receipt reconstructs the two owners, the catalog's nine capabilities and
+149 spellings, every six-static/twelve-dynamic spelling cell, each named
+closure workload, and the native aggregate's five components/eighteen I/O
+cells. It sets family completion only inside the receipt; campaign, promotion,
+and public-support predicates remain false.
+
+A receipt from the present `planned` revision cannot be used to change the
+ledger later: the source seal deliberately includes `parity.toml`. The only
+valid transition is an unpublished clean candidate revision that names the
+physical `.work` receipt and intended native-evidence state. Build its matrix,
+native aggregate, and admission receipt on that exact revision, then validate
+the receipt and parity ledger before treating the candidate as
+`foundation-verified`. A missing or stale receipt leaves that candidate invalid
+and must not be reported as foundation. This does not exclude ledger/source
+files from identity, and any tracked change restarts the sequence. The
+transition still depends on all declared prerequisites and leaves campaign-wide
+promotion and public-support predicates unchanged.

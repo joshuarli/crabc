@@ -8,6 +8,8 @@ The wordexp full-receipt validator is an explicit external judge seam here;
 these tests cover coordinator wiring, never a real wordexp qualification.
 """
 import base64
+import copy
+import dataclasses
 import hashlib
 import json
 import os
@@ -15,6 +17,7 @@ from pathlib import Path
 import shutil
 import sys
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
 
@@ -23,6 +26,7 @@ sys.path.insert(0, str(ROOT / 'compat/x86_64'))
 import owned_posix_native_execution as execution
 import owned_posix_family_execution as family
 import owned_posix_family_observations as family_observations
+import owned_posix_family_workloads as workloads
 import owned_posix_native_observations as native
 
 
@@ -466,6 +470,207 @@ class NativeExecutionTests(unittest.TestCase):
              patch.object(execution, 'require_live_oracle', side_effect=AssertionError('host consulted live target oracle')):
             record = execution.validate_receipt(self.root, path)
         self.assertEqual(list(record['components']), [component.id for component in execution.COMPONENTS])
+
+
+class NativeFamilyAdmissionTests(unittest.TestCase):
+    """The admission layer must consume, never synthesize, matrix evidence."""
+
+    def setUp(self):
+        self.source = {'revision': 'a' * 40, 'content_sha256': 'b' * 64}
+        self.matrix = self.matrix_receipt()
+        self.native = {
+            'schema': execution.SCHEMA,
+            'status': 'native-aggregate-verified',
+            'inputs': {'source': self.source},
+            'components': {component.id: {} for component in execution.COMPONENTS},
+            'io_cancellation_replacement': {
+                'required_operations': ['READ_FILE', 'ASYNC_LOOP'],
+                'cells': {str(index): {} for index in range(18)},
+            },
+            'native_aggregate_complete': True,
+            'campaign_complete': False,
+            'family_completion': False,
+            'public_support': False,
+        }
+
+    def matrix_receipt(self):
+        roster = workloads.validate_workloads(root=ROOT)
+        by_workload = {workload.id: workload for workload in roster}
+        runs = {
+            label: {
+                workload.id: {'receipt': {
+                    'path': f'.work/fixture/{label}/{workload.id}/receipt.json',
+                    'sha256': (label[0] + workload.id[0]) * 32,
+                    'size': 1,
+                }}
+                for workload in roster
+            }
+            for label in family.PAIRS
+        }
+        catalog = execution.admission_catalog(ROOT)
+        owners = workloads.EXPECTED_PRIMARY_OWNERS
+        spelling_evidence = {'static': {}, 'dynamic': {}}
+        for symbol in owners:
+            dynamic_owner = owners[symbol]
+            static_owner = workloads.STATIC_SUPPLEMENTAL_OWNERS.get(symbol, dynamic_owner)
+            spelling_evidence['static'][symbol] = {
+                'workload': static_owner,
+                'cells': {
+                    f'{label}:{mode}': runs[label][static_owner]['receipt']
+                    for label in family.PAIRS for mode in workloads.STATIC_LINKAGES
+                },
+            }
+            spelling_evidence['dynamic'][symbol] = {
+                'workload': dynamic_owner,
+                'case': by_workload[dynamic_owner].dynamic_case,
+                'cells': {
+                    f'{family.PAIRS[label]}:{mode}:{entry}': runs[label][dynamic_owner]['receipt']
+                    for label in family.PAIRS for mode in workloads.DYNAMIC_LINKAGES
+                    for entry in workloads.DYNAMIC_ENTRIES
+                },
+            }
+        self.assertEqual(sum(len(capability.symbols) for capability in catalog.capabilities.values()), 149)
+        return {
+            'workloads': [dataclasses.asdict(workload) for workload in roster],
+            'runs': runs,
+            'spelling_evidence': spelling_evidence,
+        }
+
+    def test_admission_proves_every_frozen_capability_spelling_and_product_cell(self):
+        proof = execution.admission_proof(ROOT, self.native, self.matrix)
+        self.assertEqual(proof['capability_count'], 9)
+        self.assertEqual(proof['symbol_count'], 149)
+        self.assertEqual(proof['static_spelling_cell_count'], 149 * 6)
+        self.assertEqual(proof['dynamic_spelling_cell_count'], 149 * 12)
+        self.assertEqual(set(proof['capability_symbols']), {
+            'filesystem.lchmod-unsupported', 'filesystem.stat-compat', 'filesystem.directory',
+            'filesystem.extensions', 'process.control', 'process.credentials',
+            'process.environment-mutation', 'process.signal', 'system.kernel-admin',
+        })
+        self.assertEqual(set(proof['symbol_workloads']),
+                         set(workloads.EXPECTED_PRIMARY_OWNERS))
+        self.assertEqual(
+            proof['ledger_dependencies']['direct_dependencies'],
+            [
+                {'id': 'oracle.musl-toolchain', 'status': 'foundation-verified'},
+                {'id': 'libc.headers-layouts', 'status': 'foundation-verified'},
+                {'id': 'libc.raw-syscall', 'status': 'foundation-verified'},
+            ],
+        )
+
+    def test_admission_rejects_one_missing_spelling_or_one_substituted_cell(self):
+        self.matrix['spelling_evidence']['dynamic'].pop('fork')
+        with self.assertRaisesRegex(RuntimeError, 'spelling'):
+            execution.admission_proof(ROOT, self.native, self.matrix)
+
+        self.matrix = self.matrix_receipt()
+        self.matrix['spelling_evidence']['static']['fork']['cells']['primary:pie'] = {
+            'path': '.work/substituted.json', 'sha256': '0' * 64, 'size': 1,
+        }
+        with self.assertRaisesRegex(RuntimeError, 'static spelling receipt'):
+            execution.admission_proof(ROOT, self.native, self.matrix)
+
+    def test_admission_rejects_a_planned_direct_ledger_dependency(self):
+        document = tomllib.loads((ROOT / 'compat/x86_64/parity.toml').read_text(encoding='utf-8'))
+        for entry in document['family']:
+            if entry['id'] == 'libc.raw-syscall':
+                entry['status'] = 'planned'
+                break
+        else:
+            self.fail('fixture ledger lacks libc.raw-syscall')
+        with patch.object(execution.tomllib, 'load', return_value=document):
+            with self.assertRaisesRegex(RuntimeError, 'depends on unverified ledger family: libc.raw-syscall'):
+                execution.admission_dependency_closure(ROOT)
+
+    def test_dependency_closure_allows_a_clean_candidate_transition_revision(self):
+        document = tomllib.loads((ROOT / 'compat/x86_64/parity.toml').read_text(encoding='utf-8'))
+        for entry in document['family']:
+            if entry['id'] == 'libc.posix-runtime':
+                entry['status'] = 'foundation-verified'
+                break
+        else:
+            self.fail('fixture ledger lacks libc.posix-runtime')
+        with patch.object(execution.tomllib, 'load', return_value=document):
+            closure = execution.admission_dependency_closure(ROOT)
+        self.assertEqual(closure['direct_dependencies'], [
+            {'id': 'oracle.musl-toolchain', 'status': 'foundation-verified'},
+            {'id': 'libc.headers-layouts', 'status': 'foundation-verified'},
+            {'id': 'libc.raw-syscall', 'status': 'foundation-verified'},
+        ])
+
+    def test_physical_admission_revalidates_both_inputs_and_cannot_claim_promotion(self):
+        scratch = ROOT / '.work/x86_64/test-posix-family-admission'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work = Path(temporary)
+            matrix_path = work / 'matrix/execution.json'
+            native_path = work / 'native/native-execution.json'
+            matrix_path.parent.mkdir(parents=True)
+            native_path.parent.mkdir(parents=True)
+            matrix = copy.deepcopy(self.matrix)
+            matrix.update({
+                'schema': family.SCHEMA,
+                'status': 'workload-matrix-verified',
+                'family': 'libc.posix-runtime',
+                'inputs': {'source': self.source},
+                'native_aggregate_complete': False,
+                'family_completion': False,
+                'public_support': False,
+            })
+            # This is deliberately a disk JSON round trip: dataclass tuples
+            # in the workload contract become JSON arrays in the real matrix.
+            matrix = json.loads(json.dumps(matrix))
+            self.assertIsInstance(matrix['workloads'][0]['source_object_roles'], list)
+            matrix_path.write_text(json.dumps(matrix), encoding='utf-8')
+            native = copy.deepcopy(self.native)
+            native['inputs']['family_execution'] = family.file_identity(ROOT, matrix_path)
+            native_path.write_text(json.dumps(native), encoding='utf-8')
+
+            def native_receipt(root, path):
+                self.assertEqual(path, native_path)
+                return json.loads(native_path.read_text(encoding='utf-8'))
+
+            def matrix_receipt(root, path):
+                self.assertEqual(path, matrix_path)
+                return json.loads(matrix_path.read_text(encoding='utf-8'))
+
+            with patch.object(execution, 'source_identity', return_value=self.source) as current_source, \
+                 patch.object(execution, 'validate_receipt', side_effect=native_receipt), \
+                 patch.object(family, 'validate_receipt', side_effect=matrix_receipt):
+                original_proof = execution.admission_proof
+                proof_calls = 0
+
+                def mutate_matrix_after_first_proof(root, observed_native, observed_matrix):
+                    nonlocal proof_calls
+                    result = original_proof(root, observed_native, observed_matrix)
+                    proof_calls += 1
+                    if proof_calls == 1:
+                        changed_matrix = json.loads(matrix_path.read_text(encoding='utf-8'))
+                        changed_matrix['workloads'][0]['id'] = 'swapped-after-proof'
+                        matrix_path.write_text(json.dumps(changed_matrix), encoding='utf-8')
+                    return result
+
+                with patch.object(execution, 'admission_proof', side_effect=mutate_matrix_after_first_proof):
+                    with self.assertRaisesRegex(RuntimeError, 'family matrix receipt changed'):
+                        execution.admit(ROOT, (work / 'mutated').relative_to(ROOT), native_path.relative_to(ROOT))
+
+                matrix_path.write_text(json.dumps(matrix), encoding='utf-8')
+                output = work / 'admission'
+                receipt = execution.admit(ROOT, output.relative_to(ROOT), native_path.relative_to(ROOT))
+                record = execution.validate_admission_receipt(ROOT, receipt)
+                self.assertTrue(record['family_completion'])
+                self.assertTrue(record['native_aggregate_complete'])
+                for flag in ('campaign_complete', 'promotion_ready', 'public_support'):
+                    self.assertIs(record[flag], False)
+                current_source.return_value = {**self.source, 'revision': 'c' * 40}
+                with self.assertRaisesRegex(RuntimeError, 'do not share current source'):
+                    execution.validate_admission_receipt(ROOT, receipt)
+                current_source.return_value = self.source
+                changed = json.loads(receipt.read_text())
+                changed['proof']['symbol_count'] = 148
+                receipt.write_text(json.dumps(changed), encoding='utf-8')
+                with self.assertRaisesRegex(RuntimeError, 'admission receipt changed'):
+                    execution.validate_admission_receipt(ROOT, receipt)
 
 
 if __name__ == '__main__':

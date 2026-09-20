@@ -8340,7 +8340,8 @@ def require_posix_native_profile_companions(family: Mapping[str, Any]) -> None:
     evidence = family["native_evidence"]
     require(
         isinstance(evidence, list) and len(evidence) == 1 and isinstance(evidence[0], Mapping)
-        and evidence[0].get("state") == "required"
+        and evidence[0].get("state")
+            == ("required" if family.get("status") == "planned" else "verified")
         and evidence[0].get("command") == "./scripts/dev-x86_64.sh owned-posix-native --family-execution FILE --crypt-profile FILE --atomic-addressable-profile FILE --wordexp-profile FILE --wordexp-expected-native-inputs FILE --output NEW_DIR",
         "libc.posix-runtime must use the finite native profile command",
     )
@@ -8371,6 +8372,79 @@ def require_posix_native_profile_companions(family: Mapping[str, Any]) -> None:
         and "--wordexp-expected-native-inputs" in execution and "wordexp_expected_native_inputs" in execution,
         "libc.posix-runtime finite wordexp profile collector is incomplete",
     )
+
+
+def require_posix_runtime_family_admission(family: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """Admit POSIX only from a current physical aggregate-and-matrix receipt.
+
+    The 97 older POSIX artifact checks below intentionally remain narrow leaf
+    ratchets. They may stop requiring a planned owner only after this receipt
+    reconstructs all nine frozen capabilities and all 149 spellings from the
+    same current source. A changed status or a hand-written evidence state is
+    never a substitute for that proof.
+    """
+    require(family.get("id") == "libc.posix-runtime", "wrong family for POSIX runtime admission")
+    status = family.get("status")
+    require(status in ALLOWED_STATUSES, "POSIX runtime admission family status is invalid")
+    evidence = family.get("native_evidence")
+    require(isinstance(evidence, list) and len(evidence) == 1 and isinstance(evidence[0], Mapping),
+            "POSIX runtime admission evidence roster differs")
+    if status == "planned":
+        require("receipt" not in evidence[0], "planned POSIX runtime must not attach a family admission receipt")
+        return None
+
+    receipt_value = evidence[0].get("receipt")
+    require(isinstance(receipt_value, str) and receipt_value,
+            "foundation-verified libc.posix-runtime needs a family admission receipt")
+    receipt_path = Path(receipt_value)
+    require(not receipt_path.is_absolute() and ".." not in receipt_path.parts,
+            "POSIX family admission receipt must be checkout-relative")
+    physical = ROOT / receipt_path
+    require(physical.is_file() and not physical.is_symlink() and physical.resolve() == physical
+            and physical.is_relative_to(ROOT / ".work"),
+            "POSIX family admission receipt must be a physical checkout .work file")
+    try:
+        import owned_posix_native_execution as posix_native
+
+        admission = posix_native.validate_admission_receipt(ROOT, physical)
+    except (RuntimeError, OSError, ValueError, TypeError) as error:
+        raise LedgerError(f"POSIX family admission receipt rejected: {error}") from error
+    require(
+        admission.get("schema") == posix_native.ADMISSION_SCHEMA
+        and admission.get("status") == "family-admission-verified"
+        and admission.get("family") == "libc.posix-runtime"
+        and admission.get("family_completion") is True
+        and admission.get("native_aggregate_complete") is True
+        and admission.get("campaign_complete") is False
+        and admission.get("promotion_ready") is False
+        and admission.get("public_support") is False,
+        "POSIX family admission completion boundary differs",
+    )
+    proof = admission.get("proof")
+    require(isinstance(proof, Mapping)
+            and proof.get("capability_count") == 9
+            and proof.get("symbol_count") == 149
+            and proof.get("static_spelling_cell_count") == 894
+            and proof.get("dynamic_spelling_cell_count") == 1788,
+            "POSIX family admission frozen capability/spelling proof differs")
+    return admission
+
+
+def posix_runtime_private_artifact_view(
+    family: Mapping[str, Any], admission: Mapping[str, Any] | None
+) -> Mapping[str, Any]:
+    """Keep legacy leaf ratchets narrow until the complete family is admitted."""
+    if family.get("status") == "planned":
+        require(admission is None, "planned POSIX runtime cannot have an admission receipt")
+        return family
+    require(admission is not None, "POSIX runtime leaf ratchets need actual family admission")
+    # Existing leaf validators correctly reject an isolated artifact as a
+    # promotion. Their ``planned`` check is a local non-promotion boundary,
+    # not a claim that an independently reconstructed full-family receipt is
+    # absent. Preserve the source data and substitute only that local view.
+    view = dict(family)
+    view["status"] = "planned"
+    return view
 
 
 def require_uio_cxx_archive_linkage_artifact(family: Mapping[str, Any]) -> None:
@@ -79958,6 +80032,14 @@ def _validate_ledger(
     require(tuple(entry["id"] for entry in families) == EXPECTED_FAMILIES, "family table order must equal promotion dependency order")
     require(orders == sorted(orders) and len(orders) == len(set(orders)), "family order values must be unique and ascending")
     require(ids == set(EXPECTED_FAMILIES), "family coverage does not match promotion roster")
+    for identifier, entry in by_id.items():
+        if entry["status"] != "foundation-verified":
+            continue
+        dependencies = entry["depends_on"]
+        assert isinstance(dependencies, list)
+        for dependency in dependencies:
+            require(by_id[dependency]["status"] == "foundation-verified",
+                    f"foundation-verified family {identifier} depends on planned {dependency}")
 
     if header_layout_manifest is None:
         header_layout_manifest = load_toml(HEADER_LAYOUT_MANIFEST_PATH)
@@ -79996,7 +80078,16 @@ def _validate_ledger(
     require_stdlib_header_profile_matrix_artifact(by_id["libc.headers-layouts"])
     require_header_layouts_baseline_artifact(by_id["libc.headers-layouts"])
     require_addressable_stdatomic_artifact(by_id["libc.headers-layouts"])
-    require_posix_native_profile_companions(by_id["libc.posix-runtime"])
+    posix_runtime = by_id["libc.posix-runtime"]
+    require_posix_native_profile_companions(posix_runtime)
+    posix_runtime_admission = require_posix_runtime_family_admission(posix_runtime)
+    # The following retained artifacts have explicit ``planned`` ratchets.
+    # They remain strict while this family is planned; after, and only after,
+    # the full physical admission above, they preserve their leaf boundary
+    # without contradicting the admitted family status.
+    posix_runtime_leaf = posix_runtime_private_artifact_view(
+        posix_runtime, posix_runtime_admission
+    )
     require_uio_cxx_archive_linkage_artifact(by_id["libc.headers-layouts"])
     require_memory_sync_header_evidence(by_id["libc.headers-layouts"])
     require_memory_locking_header_evidence(by_id["libc.headers-layouts"])
@@ -80178,11 +80269,11 @@ def _validate_ledger(
     )
     require_static_thrd_yield_artifact(by_id["libc.pthread-tls"])
     require_byte_string_artifact(by_id["libc.posix-runtime"])
-    require_legacy_memory_artifact(by_id["libc.posix-runtime"])
-    require_memccpy_artifact(by_id["libc.posix-runtime"])
-    require_mempcpy_artifact(by_id["libc.posix-runtime"])
-    require_strsep_artifact(by_id["libc.posix-runtime"])
-    require_strtok_artifact(by_id["libc.posix-runtime"])
+    require_legacy_memory_artifact(posix_runtime_leaf)
+    require_memccpy_artifact(posix_runtime_leaf)
+    require_mempcpy_artifact(posix_runtime_leaf)
+    require_strsep_artifact(posix_runtime_leaf)
+    require_strtok_artifact(posix_runtime_leaf)
     require_closed_static_leaf_artifacts(
         by_id["libc.posix-runtime"],
         (
@@ -80216,16 +80307,16 @@ def _validate_ledger(
             ),
         ),
     )
-    require_posix_spawnattr_init_artifact(by_id["libc.posix-runtime"])
-    require_posix_spawn_file_actions_artifact(by_id["libc.posix-runtime"])
+    require_posix_spawnattr_init_artifact(posix_runtime_leaf)
+    require_posix_spawn_file_actions_artifact(posix_runtime_leaf)
     require_process_exec_artifact(by_id["libc.posix-runtime"])
-    require_posix_spawnattr_getpgroup_artifact(by_id["libc.posix-runtime"])
-    require_posix_spawnattr_signal_fields_artifact(by_id["libc.posix-runtime"])
-    require_posix_spawnattr_getschedparam_artifact(by_id["libc.posix-runtime"])
-    require_posix_spawnattr_getschedpolicy_artifact(by_id["libc.posix-runtime"])
+    require_posix_spawnattr_getpgroup_artifact(posix_runtime_leaf)
+    require_posix_spawnattr_signal_fields_artifact(posix_runtime_leaf)
+    require_posix_spawnattr_getschedparam_artifact(posix_runtime_leaf)
+    require_posix_spawnattr_getschedpolicy_artifact(posix_runtime_leaf)
     require_random_entropy_artifact(by_id["libc.posix-runtime"])
     require_memory_search_artifact(by_id["libc.posix-runtime"])
-    require_aio_error_artifact(by_id["libc.posix-runtime"])
+    require_aio_error_artifact(posix_runtime_leaf)
     require_string_copy_artifact(by_id["libc.posix-runtime"])
     require_error_strings_artifact(by_id["libc.c-abi-compat"])
     require_posix_spawnattr_setschedparam_artifact(by_id["libc.c-abi-compat"])
@@ -80236,55 +80327,55 @@ def _validate_ledger(
     require_integer_arithmetic_artifact(by_id["libc.posix-runtime"])
     require_integer_parse_artifact(by_id["libc.posix-runtime"])
     require_intmax_arithmetic_artifact(by_id["libc.posix-runtime"])
-    require_personality_artifact(by_id["libc.posix-runtime"])
-    require_setfsgid_artifact(by_id["libc.posix-runtime"])
-    require_setfsuid_artifact(by_id["libc.posix-runtime"])
+    require_personality_artifact(posix_runtime_leaf)
+    require_setfsgid_artifact(posix_runtime_leaf)
+    require_setfsuid_artifact(posix_runtime_leaf)
     require_credential_observation_artifact(by_id["libc.posix-runtime"])
-    require_process_environment_mutation_slice(by_id["libc.posix-runtime"])
-    require_process_signal_slice(by_id["libc.posix-runtime"])
-    require_static_secure_environment_artifact(by_id["libc.posix-runtime"])
-    require_static_login_name_artifact(by_id["libc.posix-runtime"])
-    require_ctermid_artifact(by_id["libc.posix-runtime"])
-    require_grantpt_artifact(by_id["libc.posix-runtime"])
-    require_unlockpt_artifact(by_id["libc.posix-runtime"])
-    require_isatty_artifact(by_id["libc.posix-runtime"])
-    require_ttyname_r_artifact(by_id["libc.posix-runtime"])
-    require_tcgetpgrp_artifact(by_id["libc.posix-runtime"])
-    require_tcsetpgrp_artifact(by_id["libc.posix-runtime"])
-    require_getpass_artifact(by_id["libc.posix-runtime"])
-    require_mktemp_artifact(by_id["libc.posix-runtime"])
-    require_temporary_names_artifact(by_id["libc.posix-runtime"])
+    require_process_environment_mutation_slice(posix_runtime_leaf)
+    require_process_signal_slice(posix_runtime_leaf)
+    require_static_secure_environment_artifact(posix_runtime_leaf)
+    require_static_login_name_artifact(posix_runtime_leaf)
+    require_ctermid_artifact(posix_runtime_leaf)
+    require_grantpt_artifact(posix_runtime_leaf)
+    require_unlockpt_artifact(posix_runtime_leaf)
+    require_isatty_artifact(posix_runtime_leaf)
+    require_ttyname_r_artifact(posix_runtime_leaf)
+    require_tcgetpgrp_artifact(posix_runtime_leaf)
+    require_tcsetpgrp_artifact(posix_runtime_leaf)
+    require_getpass_artifact(posix_runtime_leaf)
+    require_mktemp_artifact(posix_runtime_leaf)
+    require_temporary_names_artifact(posix_runtime_leaf)
     require_child_reaping_artifact(by_id["libc.posix-runtime"])
-    require_wait_extensions_artifact(by_id["libc.posix-runtime"])
-    require_signal_legacy_aliases_artifact(by_id["libc.posix-runtime"])
-    require_sysv_signal_helpers_artifact(by_id["libc.posix-runtime"])
+    require_wait_extensions_artifact(posix_runtime_leaf)
+    require_signal_legacy_aliases_artifact(posix_runtime_leaf)
+    require_sysv_signal_helpers_artifact(posix_runtime_leaf)
     require_immediate_termination_artifact(by_id["libc.posix-runtime"])
     require_static_posix_exit_artifact(by_id["libc.posix-runtime"])
-    require_static_sched_yield_artifact(by_id["libc.posix-runtime"])
-    require_static_sched_getcpu_artifact(by_id["libc.posix-runtime"])
-    require_static_sched_cpucount_artifact(by_id["libc.posix-runtime"])
-    require_static_sched_priority_bounds_artifact(by_id["libc.posix-runtime"])
-    require_readlinkat_artifact(by_id["libc.posix-runtime"])
-    require_linkat_artifact(by_id["libc.posix-runtime"])
-    require_renameat2_artifact(by_id["libc.posix-runtime"])
-    require_lchown_artifact(by_id["libc.posix-runtime"])
-    require_hasmntopt_artifact(by_id["libc.posix-runtime"])
+    require_static_sched_yield_artifact(posix_runtime_leaf)
+    require_static_sched_getcpu_artifact(posix_runtime_leaf)
+    require_static_sched_cpucount_artifact(posix_runtime_leaf)
+    require_static_sched_priority_bounds_artifact(posix_runtime_leaf)
+    require_readlinkat_artifact(posix_runtime_leaf)
+    require_linkat_artifact(posix_runtime_leaf)
+    require_renameat2_artifact(posix_runtime_leaf)
+    require_lchown_artifact(posix_runtime_leaf)
+    require_hasmntopt_artifact(posix_runtime_leaf)
     require_callback_algorithms_artifact(by_id["libc.posix-runtime"])
     require_clock_gettime_artifact(by_id["libc.posix-runtime"])
-    require_clock_adjtime_error_abi_artifact(by_id["libc.posix-runtime"])
-    require_clock_settime_error_abi_artifact(by_id["libc.posix-runtime"])
-    require_timer_getoverrun_error_abi_artifact(by_id["libc.posix-runtime"])
-    require_timer_delete_raw_error_abi_artifact(by_id["libc.posix-runtime"])
-    require_timer_gettime_error_abi_artifact(by_id["libc.posix-runtime"])
-    require_timer_settime_error_abi_artifact(by_id["libc.posix-runtime"])
+    require_clock_adjtime_error_abi_artifact(posix_runtime_leaf)
+    require_clock_settime_error_abi_artifact(posix_runtime_leaf)
+    require_timer_getoverrun_error_abi_artifact(posix_runtime_leaf)
+    require_timer_delete_raw_error_abi_artifact(posix_runtime_leaf)
+    require_timer_gettime_error_abi_artifact(posix_runtime_leaf)
+    require_timer_settime_error_abi_artifact(posix_runtime_leaf)
     require_time_observation_artifact(by_id["libc.posix-runtime"])
-    require_difftime_binary64_artifact(by_id["libc.posix-runtime"])
-    require_timegm_utc_artifact(by_id["libc.posix-runtime"])
-    require_gmtime_r_utc_artifact(by_id["libc.posix-runtime"])
+    require_difftime_binary64_artifact(posix_runtime_leaf)
+    require_timegm_utc_artifact(posix_runtime_leaf)
+    require_gmtime_r_utc_artifact(posix_runtime_leaf)
     require_system_configuration_artifact(by_id["libc.posix-runtime"])
-    require_getpagesize_artifact(by_id["libc.posix-runtime"])
+    require_getpagesize_artifact(posix_runtime_leaf)
     require_system_information_artifact(by_id["libc.posix-runtime"])
-    require_getloadavg_artifact(by_id["libc.posix-runtime"])
+    require_getloadavg_artifact(posix_runtime_leaf)
     require_mapping_core_artifact(by_id["libc.posix-runtime"])
     require_memory_sync_artifact(by_id["libc.posix-runtime"])
     require_memory_locking_artifact(by_id["libc.posix-runtime"])
@@ -80292,34 +80383,34 @@ def _validate_ledger(
     require_signal_altstack_artifact(by_id["libc.posix-runtime"])
     require_signal_execution_artifact(by_id["libc.posix-runtime"])
     require_timerfd_artifact(by_id["libc.posix-runtime"])
-    require_signalfd_artifact(by_id["libc.posix-runtime"])
-    require_sigpause_artifact(by_id["libc.posix-runtime"])
-    require_sigisemptyset_artifact(by_id["libc.posix-runtime"])
-    require_sigandset_sigorset_artifact(by_id["libc.posix-runtime"])
-    require_sigpending_artifact(by_id["libc.posix-runtime"])
-    require_sigrtmax_artifact(by_id["libc.posix-runtime"])
-    require_sigrtmin_artifact(by_id["libc.posix-runtime"])
-    require_sched_getscheduler_artifact(by_id["libc.posix-runtime"])
-    require_sched_getparam_artifact(by_id["libc.posix-runtime"])
-    require_sched_setparam_artifact(by_id["libc.posix-runtime"])
-    require_sched_setscheduler_artifact(by_id["libc.posix-runtime"])
-    require_sched_getaffinity_artifact(by_id["libc.posix-runtime"])
-    require_sched_setaffinity_artifact(by_id["libc.posix-runtime"])
-    require_alarm_artifact(by_id["libc.posix-runtime"])
-    require_ualarm_artifact(by_id["libc.posix-runtime"])
-    require_sigset_mutation_artifact(by_id["libc.posix-runtime"])
+    require_signalfd_artifact(posix_runtime_leaf)
+    require_sigpause_artifact(posix_runtime_leaf)
+    require_sigisemptyset_artifact(posix_runtime_leaf)
+    require_sigandset_sigorset_artifact(posix_runtime_leaf)
+    require_sigpending_artifact(posix_runtime_leaf)
+    require_sigrtmax_artifact(posix_runtime_leaf)
+    require_sigrtmin_artifact(posix_runtime_leaf)
+    require_sched_getscheduler_artifact(posix_runtime_leaf)
+    require_sched_getparam_artifact(posix_runtime_leaf)
+    require_sched_setparam_artifact(posix_runtime_leaf)
+    require_sched_setscheduler_artifact(posix_runtime_leaf)
+    require_sched_getaffinity_artifact(posix_runtime_leaf)
+    require_sched_setaffinity_artifact(posix_runtime_leaf)
+    require_alarm_artifact(posix_runtime_leaf)
+    require_ualarm_artifact(posix_runtime_leaf)
+    require_sigset_mutation_artifact(posix_runtime_leaf)
     require_clock_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_nanosleep_artifact(by_id["libc.posix-runtime"])
-    require_usleep_artifact(by_id["libc.posix-runtime"])
-    require_sleep_artifact(by_id["libc.posix-runtime"])
+    require_usleep_artifact(posix_runtime_leaf)
+    require_sleep_artifact(posix_runtime_leaf)
     require_signal_header_trace_ownership(by_id["libc.posix-runtime"])
     require_unistd_header_trace_ownership(by_id["libc.posix-runtime"])
     require_descriptor_entry_artifact(by_id["libc.posix-runtime"])
-    require_lchmod_unsupported_slice(by_id["libc.posix-runtime"])
-    require_file_handles_artifact(by_id["libc.posix-runtime"])
-    require_mkfifo_artifact(by_id["libc.posix-runtime"])
-    require_mkfifoat_artifact(by_id["libc.posix-runtime"])
-    require_mkdirat_artifact(by_id["libc.posix-runtime"])
+    require_lchmod_unsupported_slice(posix_runtime_leaf)
+    require_file_handles_artifact(posix_runtime_leaf)
+    require_mkfifo_artifact(posix_runtime_leaf)
+    require_mkfifoat_artifact(posix_runtime_leaf)
+    require_mkdirat_artifact(posix_runtime_leaf)
     require_filesystem_access_artifact(by_id["libc.posix-runtime"])
     require_fcntl_status_control_artifact(by_id["libc.posix-runtime"])
     require_fcntl_record_locks_artifact(by_id["libc.posix-runtime"])
@@ -80331,25 +80422,25 @@ def _validate_ledger(
     require_posix_fallocate_artifact(by_id["libc.posix-runtime"])
     require_descriptor_advice_artifact(by_id["libc.posix-runtime"])
     require_generic_ioctl_artifact(by_id["libc.posix-runtime"])
-    require_network_byte_order_artifact(by_id["libc.posix-runtime"])
-    require_in6addr_any_artifact(by_id["libc.posix-runtime"])
-    require_in6addr_loopback_artifact(by_id["libc.posix-runtime"])
-    require_interface_discovery_artifact(by_id["libc.posix-runtime"])
-    require_socket_messages_artifact(by_id["libc.posix-runtime"])
-    require_sysv_semaphore_artifact(by_id["libc.posix-runtime"])
-    require_posix_semaphore_artifact(by_id["libc.posix-runtime"])
-    require_mq_setattr_artifact(by_id["libc.posix-runtime"])
-    require_sysv_message_shared_memory_artifact(by_id["libc.posix-runtime"])
-    require_event_descriptors_artifact(by_id["libc.posix-runtime"])
-    require_pathname_lifecycle_artifact(by_id["libc.posix-runtime"])
-    require_fchdir_artifact(by_id["libc.posix-runtime"])
-    require_ulimit_artifact(by_id["libc.posix-runtime"])
-    require_directory_streams_artifact(by_id["libc.posix-runtime"])
-    require_scandir_allocation_client_artifact(by_id["libc.posix-runtime"])
-    require_filesystem_traversal_artifact(by_id["libc.posix-runtime"])
-    require_filesystem_extensions_slice(by_id["libc.posix-runtime"])
-    require_filesystem_directory_slice(by_id["libc.posix-runtime"])
-    require_extended_attributes_artifact(by_id["libc.posix-runtime"])
+    require_network_byte_order_artifact(posix_runtime_leaf)
+    require_in6addr_any_artifact(posix_runtime_leaf)
+    require_in6addr_loopback_artifact(posix_runtime_leaf)
+    require_interface_discovery_artifact(posix_runtime_leaf)
+    require_socket_messages_artifact(posix_runtime_leaf)
+    require_sysv_semaphore_artifact(posix_runtime_leaf)
+    require_posix_semaphore_artifact(posix_runtime_leaf)
+    require_mq_setattr_artifact(posix_runtime_leaf)
+    require_sysv_message_shared_memory_artifact(posix_runtime_leaf)
+    require_event_descriptors_artifact(posix_runtime_leaf)
+    require_pathname_lifecycle_artifact(posix_runtime_leaf)
+    require_fchdir_artifact(posix_runtime_leaf)
+    require_ulimit_artifact(posix_runtime_leaf)
+    require_directory_streams_artifact(posix_runtime_leaf)
+    require_scandir_allocation_client_artifact(posix_runtime_leaf)
+    require_filesystem_traversal_artifact(posix_runtime_leaf)
+    require_filesystem_extensions_slice(posix_runtime_leaf)
+    require_filesystem_directory_slice(posix_runtime_leaf)
+    require_extended_attributes_artifact(posix_runtime_leaf)
     require_inet_address_artifact(by_id["libc.resolver"])
     require_inet_ntoa_artifact(by_id["libc.resolver"])
     require_inet_classful_artifact(by_id["libc.resolver"])
@@ -80406,9 +80497,9 @@ def _validate_ledger(
     require_search_hash_table_slice(by_id["libc.c-abi-compat"])
     require_catalog_gettext_slice(by_id["libc.c-abi-compat"])
     require_numeric_qsort_helper_slice(by_id["libc.c-abi-compat"])
-    require_descriptor_lifecycle_artifact(by_id["libc.posix-runtime"])
-    require_descriptor_pipeline_artifact(by_id["libc.posix-runtime"])
-    require_timestamp_updates_artifact(by_id["libc.posix-runtime"])
+    require_descriptor_lifecycle_artifact(posix_runtime_leaf)
+    require_descriptor_pipeline_artifact(posix_runtime_leaf)
+    require_timestamp_updates_artifact(posix_runtime_leaf)
     require_ffs_artifact(by_id["libc.posix-runtime"])
     require_allocator_wrapper_artifact(by_id["libc.posix-runtime"])
     require_allocator_string_duplication_artifact(by_id["libc.posix-runtime"])

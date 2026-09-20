@@ -11,12 +11,15 @@ from __future__ import annotations
 import argparse
 import base64
 from dataclasses import dataclass
+import dataclasses
+import json
 import os
 from pathlib import Path
 import platform
 import re
 import stat
 import sys
+import tomllib
 
 import owned_posix_family_execution as family
 import owned_posix_family_observations as family_observations
@@ -29,6 +32,7 @@ import owned_wordexp_upstream_policy as wordexp_policy
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = 'crabc.x86_64-owned-posix-native-execution/v2'
+ADMISSION_SCHEMA = 'crabc.x86_64-owned-posix-runtime-admission/v1'
 IO_SOURCE = 'compat/x86_64/owned_io_cancellation_probe.c'
 
 
@@ -76,6 +80,20 @@ SHARED_SOURCES = (*crypt.SOURCES, *atomic.SOURCES, *wordexp_policy.wordexp.SOURC
     'compat/x86_64/owned_posix_static_products.py',
     'compat/x86_64/owned_dynamic_qualification.py',
     'compat/upstreams.toml', 'rust-toolchain.toml', 'docker/Dockerfile.x86_64',
+)
+# Family admission is deliberately a consuming phase over the two existing
+# execution receipts. It does not rerun either producer and cannot turn a
+# catalog proposal into evidence: both receipts are reconstructed first.
+ADMISSION_SOURCES = (
+    'compat/x86_64/owned_posix_native_execution.py',
+    'compat/x86_64/owned_posix_family_execution.py',
+    'compat/x86_64/owned_posix_family_workloads.py',
+    'compat/x86_64/owned_posix_runtime_catalog.py',
+    'compat/x86_64/owned-posix-runtime-catalog.toml',
+    'compat/x86_64/owned-posix-runtime.md',
+    'compat/x86_64/owned-posix-native-execution.md',
+    'compat/x86_64/validate_parity_ledger.py',
+    'compat/x86_64/parity.toml',
 )
 require = family.require
 read = family.read
@@ -236,6 +254,292 @@ def input_matrix(root, request):
               'source_files': source_files(root), 'product': product_binding(root, product),
               'matrix_inputs': matrix['inputs'], 'io_cancellation_replacement': io_replacement(root, matrix)}
     return inputs, product
+
+
+def admission_catalog(root):
+    """Load the frozen POSIX spelling contract from this receipt's checkout."""
+    import owned_posix_runtime_catalog as catalog
+
+    require(root == ROOT, 'POSIX family admission must use the coordinator checkout')
+    require(catalog.CATALOG_PATH == root / 'compat/x86_64/owned-posix-runtime-catalog.toml',
+            'POSIX family catalog path differs')
+    with catalog.CATALOG_PATH.open('rb') as source:
+        document = tomllib.load(source)
+    try:
+        return catalog.validate_catalog(document, catalog.frozen_family_symbols(), root=root)
+    except (catalog.CatalogError, OSError, ValueError) as error:
+        raise family.ExecutionError(f'POSIX family catalog rejected: {error}') from error
+
+
+def admission_dependency_closure(root):
+    """Require the current ledger prerequisites before consuming evidence.
+
+    The catalog freezes spelling scope, but it is not an alternate promotion
+    ledger.  Read the same current ledger here and retain the concrete direct
+    prerequisite statuses in the receipt so a complete matrix cannot bypass a
+    planned header, syscall, or musl-oracle foundation.
+    """
+    ledger_path = root / 'compat/x86_64/parity.toml'
+    try:
+        with ledger_path.open('rb') as source:
+            document = tomllib.load(source)
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        raise family.ExecutionError(f'cannot read POSIX admission ledger: {error}') from error
+    families = document.get('family') if isinstance(document, dict) else None
+    require(isinstance(families, list), 'POSIX admission ledger family roster differs')
+    by_id = {}
+    for entry in families:
+        require(isinstance(entry, dict) and isinstance(entry.get('id'), str),
+                'POSIX admission ledger family entry differs')
+        require(entry['id'] not in by_id, 'POSIX admission ledger family identifier duplicates')
+        by_id[entry['id']] = entry
+    selected = by_id.get('libc.posix-runtime')
+    require(isinstance(selected, dict), 'POSIX admission ledger family is missing')
+    dependencies = selected.get('depends_on')
+    require(dependencies == ['oracle.musl-toolchain', 'libc.headers-layouts', 'libc.raw-syscall'],
+            'POSIX admission ledger dependency closure differs')
+    closure = []
+    for identifier in dependencies:
+        dependency = by_id.get(identifier)
+        require(isinstance(dependency, dict) and dependency.get('status') == 'foundation-verified',
+                f'POSIX admission depends on unverified ledger family: {identifier}')
+        closure.append({'id': identifier, 'status': dependency['status']})
+    return {
+        'ledger': family.source_file(root, 'compat/x86_64/parity.toml'),
+        'direct_dependencies': closure,
+    }
+
+
+def admission_proof(root, native_execution, matrix):
+    """Bind every frozen spelling to its exact reconstructed matrix cells.
+
+    ``owned_posix_family_execution`` owns product execution and raw receipts;
+    this function intentionally verifies references to those receipts instead
+    of copying or normalizing their observations. The native aggregate then
+    proves the required five component sequence against the matrix's installed
+    dynamic product. Together those two independent validators are the only
+    inputs a family admission may consume.
+    """
+    import owned_posix_family_workloads as workloads
+
+    catalog = admission_catalog(root)
+    roster = workloads.validate_workloads(root=root)
+    by_workload = {workload.id: workload for workload in roster}
+    require(len(by_workload) == len(roster), 'POSIX admission workload roster duplicates an identifier')
+    # The family matrix is decoded from JSON, while ``Workload`` retains its
+    # immutable tuple fields.  Compare canonical JSON values, not Python's
+    # tuple/list representation, so this validates the physical receipt.
+    expected_workloads = json.loads(json.dumps([dataclasses.asdict(workload) for workload in roster]))
+    require(same_json(matrix['workloads'], expected_workloads),
+            'POSIX family matrix workload map differs from admission contract')
+    require(set(matrix['runs']) == set(family.PAIRS), 'POSIX family matrix product labels differ')
+    for label in family.PAIRS:
+        require(set(matrix['runs'][label]) == set(by_workload),
+                f'POSIX family matrix workload runs differ: {label}')
+
+    evidence = matrix['spelling_evidence']
+    require(isinstance(evidence, dict) and set(evidence) == {'static', 'dynamic'},
+            'POSIX family matrix spelling evidence sections differ')
+    owners = workloads.EXPECTED_PRIMARY_OWNERS
+    expected_symbols = [symbol for capability in catalog.capabilities.values() for symbol in capability.symbols]
+    require(set(expected_symbols) == set(owners) and len(expected_symbols) == len(owners),
+            'POSIX admission primary spelling roster differs')
+    require(set(evidence['static']) == set(expected_symbols)
+            and set(evidence['dynamic']) == set(expected_symbols),
+            'POSIX family matrix omits or adds a frozen spelling')
+
+    capability_symbols = {}
+    symbol_workloads = {}
+    for capability_id, capability in catalog.capabilities.items():
+        capability_symbols[capability_id] = list(capability.symbols)
+        for symbol in capability.symbols:
+            dynamic_owner = owners[symbol]
+            dynamic_workload = by_workload[dynamic_owner]
+            static_owner = workloads.STATIC_SUPPLEMENTAL_OWNERS.get(symbol, dynamic_owner)
+            static_workload = by_workload[static_owner]
+            require(static_workload.product_scope in ('static', 'both')
+                    and dynamic_workload.product_scope in ('dynamic', 'both'),
+                    f'POSIX admission spelling has no required product owner: {symbol}')
+            expected_static_cells = {
+                f'{label}:{mode}': matrix['runs'][label][static_owner]['receipt']
+                for label in family.PAIRS for mode in workloads.STATIC_LINKAGES
+            }
+            expected_dynamic_cells = {
+                f'{family.PAIRS[label]}:{mode}:{entry}': matrix['runs'][label][dynamic_owner]['receipt']
+                for label in family.PAIRS for mode in workloads.DYNAMIC_LINKAGES
+                for entry in workloads.DYNAMIC_ENTRIES
+            }
+            observed_static = evidence['static'][symbol]
+            observed_dynamic = evidence['dynamic'][symbol]
+            require(observed_static == {'workload': static_owner, 'cells': expected_static_cells},
+                    f'POSIX family static spelling receipt differs: {symbol}')
+            require(observed_dynamic == {
+                'workload': dynamic_owner, 'case': dynamic_workload.dynamic_case,
+                'cells': expected_dynamic_cells,
+            }, f'POSIX family dynamic spelling receipt differs: {symbol}')
+            symbol_workloads[symbol] = {
+                'static': static_owner,
+                'dynamic': dynamic_owner,
+                'dynamic_case': dynamic_workload.dynamic_case,
+            }
+
+    required_workloads = set()
+    for capability in catalog.capabilities.values():
+        required_workloads.update(capability.closure_workloads)
+    import owned_posix_runtime_catalog as catalog_module
+    require(required_workloads == set(catalog_module.WORKLOADS),
+            'POSIX catalog closure workload set differs')
+    for workload in required_workloads:
+        require(workload in by_workload and all(workload in matrix['runs'][label] for label in family.PAIRS),
+                f'POSIX family matrix omits closure workload: {workload}')
+
+    require(native_execution['schema'] == SCHEMA
+            and native_execution['status'] == 'native-aggregate-verified'
+            and native_execution['native_aggregate_complete'] is True
+            and native_execution['campaign_complete'] is False
+            and native_execution['family_completion'] is False
+            and native_execution['public_support'] is False,
+            'native aggregate does not retain its non-promoting completion boundary')
+    require(set(native_execution['components']) == {component.id for component in COMPONENTS},
+            'native aggregate component roster differs')
+    replacement = native_execution['io_cancellation_replacement']
+    require(replacement['required_operations'] == ['READ_FILE', 'ASYNC_LOOP']
+            and len(replacement['cells']) == 18,
+            'native aggregate I/O replacement proof differs')
+
+    return {
+        'catalog': family.source_file(root, 'compat/x86_64/owned-posix-runtime-catalog.toml'),
+        'catalog_schema': 'crabc.x86_64-owned-posix-runtime-catalog/v1',
+        'ledger_dependencies': admission_dependency_closure(root),
+        'capability_count': len(catalog.capabilities),
+        'symbol_count': len(expected_symbols),
+        'capability_symbols': capability_symbols,
+        'symbol_workloads': symbol_workloads,
+        'closure_workloads': sorted(required_workloads),
+        'static_cells': list(catalog.static_cells),
+        'dynamic_cells': list(catalog.dynamic_cells),
+        'static_spelling_cell_count': len(expected_symbols) * len(catalog.static_cells),
+        'dynamic_spelling_cell_count': len(expected_symbols) * len(catalog.dynamic_cells),
+        'native_components': [component.id for component in COMPONENTS],
+        'native_io_cancellation_cells': len(replacement['cells']),
+    }
+
+
+def admission_inputs(root, native_path):
+    """Reconstruct the two current receipts and their common selected source."""
+    native_path = family.physical(root, native_path)
+    require(native_path.name == 'native-execution.json', 'expected native-execution.json for family admission')
+    native_execution = validate_receipt(root, native_path)
+    matrix_identity = native_execution['inputs']['family_execution']
+    require(isinstance(matrix_identity, dict) and set(matrix_identity) == {'path', 'sha256', 'size'},
+            'native aggregate family matrix identity differs')
+    matrix_path = family.physical(root, root / matrix_identity['path'])
+    require(same_json(family.file_identity(root, matrix_path), matrix_identity),
+            'native aggregate family matrix receipt changed')
+    matrix = family.validate_receipt(root, matrix_path)
+    require(matrix['schema'] == family.SCHEMA and matrix['status'] == 'workload-matrix-verified'
+            and matrix['family'] == 'libc.posix-runtime'
+            and matrix['native_aggregate_complete'] is False
+            and matrix['family_completion'] is False
+            and matrix['public_support'] is False,
+            'POSIX family matrix completion boundary differs')
+    source = source_identity(root)
+    require(same_json(native_execution['inputs']['source'], source)
+            and same_json(matrix['inputs']['source'], source),
+            'native aggregate and POSIX matrix do not share current source')
+    return native_execution, matrix, source, matrix_path
+
+
+def collect_admission(root, work):
+    """Rebuild one physical family-admission receipt without target execution."""
+    work = family.physical(root, work)
+    request = read(work / 'request.json')
+    require(isinstance(request, dict) and set(request) == {'schema', 'native_execution'}
+            and request['schema'] == ADMISSION_SCHEMA,
+            'POSIX family admission request fields differ')
+    value = request['native_execution']
+    require(isinstance(value, str) and value and not Path(value).is_absolute(),
+            'POSIX family admission native receipt must be checkout-relative')
+    native_execution, matrix, source, matrix_path = admission_inputs(root, root / value)
+    expected = {'request.json', 'source-before.json', 'source-after.json', 'family-admission.json'}
+    require({path.name for path in work.iterdir()} in (expected - {'family-admission.json'}, expected),
+            'POSIX family admission output roster differs')
+    for phase in ('before', 'after'):
+        require(same_json(read(work / f'source-{phase}.json'), source),
+                f'POSIX family admission source seal differs: {phase}')
+    proof = admission_proof(root, native_execution, matrix)
+    # Reconstruct both receipts after traversing every spelling/cell.  Their
+    # validators recheck the selected installed products and all retained
+    # product snapshots; exact receipt equality prevents a mutable input from
+    # being swapped between collection and admission.
+    native_after, matrix_after, source_after, matrix_path_after = admission_inputs(root, root / value)
+    require(matrix_path_after == matrix_path
+            and same_json(native_after, native_execution)
+            and same_json(matrix_after, matrix)
+            and same_json(source_after, source),
+            'POSIX family admission input or product snapshot changed during proof collection')
+    proof_after = admission_proof(root, native_after, matrix_after)
+    require(same_json(proof_after, proof),
+            'POSIX family admission proof inputs changed during collection')
+    require(same_json(read(work / 'source-after.json'), source_identity(root)),
+            'POSIX family admission final source seal differs')
+    return {
+        'schema': ADMISSION_SCHEMA,
+        'status': 'family-admission-verified',
+        'family': 'libc.posix-runtime',
+        'inputs': {
+            'native_execution': family.file_identity(root, root / value),
+            'family_execution': family.file_identity(root, matrix_path),
+            'source': source,
+            'source_files': {path: family.source_file(root, path) for path in ADMISSION_SOURCES},
+        },
+        'request': family.file_identity(root, work / 'request.json'),
+        'source_seals': {phase: family.file_identity(root, work / f'source-{phase}.json')
+                         for phase in ('before', 'after')},
+        'proof': proof,
+        # This is a complete family evidence receipt. It deliberately does
+        # not claim campaign/promotion/public-support completion.
+        'family_completion': True,
+        'native_aggregate_complete': True,
+        'campaign_complete': False,
+        'promotion_ready': False,
+        'public_support': False,
+    }
+
+
+def admit(root, work, native_path):
+    """Seal a fresh admission from already validated native family evidence."""
+    root = root.resolve(strict=True)
+    work = family.physical(root, root / work)
+    native_path = family.physical(root, root / native_path)
+    require(not work.exists(), 'POSIX family admission requires fresh output')
+    require(work.is_relative_to(root / '.work'), 'POSIX family admission output must stay under checkout .work')
+    require(not work.is_relative_to(native_path.parent) and not native_path.parent.is_relative_to(work),
+            'POSIX family admission output overlaps native aggregate input')
+    # Validate inputs before creating output, so a bad matrix/native receipt
+    # cannot leave a plausible-looking family admission directory behind.
+    _, _, source, _ = admission_inputs(root, native_path)
+    work.mkdir(parents=True)
+    try:
+        request = {'schema': ADMISSION_SCHEMA,
+                   'native_execution': native_path.relative_to(root).as_posix()}
+        write_new(work / 'request.json', request)
+        write_new(work / 'source-before.json', source)
+        write_new(work / 'source-after.json', source_identity(root))
+        result = collect_admission(root, work)
+        path = work / 'family-admission.json'
+        write_new(path, result)
+        return path
+    finally:
+        family.static_products.make_retained_evidence_readable(work)
+
+
+def validate_admission_receipt(root, path):
+    path = family.physical(root, path)
+    require(path.name == 'family-admission.json', 'expected family-admission.json receipt')
+    observed = collect_admission(root, path.parent)
+    require(same_json(read(path), observed), 'POSIX family admission receipt changed')
+    return observed
 
 
 def component_command(root, component, product, source_mount):
@@ -469,17 +773,27 @@ def main():
     run.add_argument('--atomic-addressable-profile', type=Path, required=True)
     run.add_argument('--wordexp-profile', type=Path, required=True)
     run.add_argument('--wordexp-expected-native-inputs', type=Path, required=True)
+    admission = sub.add_parser('admit')
+    admission.add_argument('--native-execution', type=Path, required=True)
+    admission.add_argument('--output', type=Path, required=True)
     check = sub.add_parser('validate')
     check.add_argument('receipt', type=Path)
+    check_admission = sub.add_parser('validate-admission')
+    check_admission.add_argument('receipt', type=Path)
     args = parser.parse_args()
     try:
         if args.action == 'run':
             print(execute(ROOT, args.output, args.family_execution, args.crypt_profile,
                           args.atomic_addressable_profile, args.wordexp_profile,
                           args.wordexp_expected_native_inputs))
-        else:
+        elif args.action == 'admit':
+            print(admit(ROOT, args.output, args.native_execution))
+        elif args.action == 'validate':
             validate_receipt(ROOT, args.receipt)
             print('native POSIX aggregate receipt: PASS')
+        else:
+            validate_admission_receipt(ROOT, args.receipt)
+            print('native POSIX family admission receipt: PASS')
     except (RuntimeError, OSError, ValueError, KeyError, TypeError) as error:
         print(str(error), file=sys.stderr)
         return 1

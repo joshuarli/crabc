@@ -6040,6 +6040,20 @@ class X86ParityLedgerTests(unittest.TestCase):
             with self.subTest(owner=owner), self.assertRaisesRegex(ledger.LedgerError, "must own"):
                 ledger.require_posix_native_profile_companions(changed_family)
 
+    def test_posix_foundation_status_needs_a_physical_family_admission_receipt(self) -> None:
+        changed = self.data()
+        family = self.family(changed, "libc.posix-runtime")
+        family["status"] = "foundation-verified"
+        evidence = family["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["state"] = "verified"
+        with self.assertRaisesRegex(ledger.LedgerError, "needs a family admission receipt"):
+            ledger.require_posix_runtime_family_admission(family)
+
+        evidence[0]["receipt"] = ".work/x86_64/nonphysical-family-admission.json"
+        with self.assertRaisesRegex(ledger.LedgerError, "physical checkout .work file"):
+            ledger.require_posix_runtime_family_admission(family)
+
     def test_uio_cxx_archive_linkage_stays_a_closed_cxx_consumer_artifact(self) -> None:
         data = self.data()
         headers_layouts = self.family(data, "libc.headers-layouts")
