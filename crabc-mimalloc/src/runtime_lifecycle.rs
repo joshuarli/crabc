@@ -47,13 +47,14 @@ use core::sync::atomic::AtomicPtr;
 use core::sync::atomic::AtomicI32;
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
-use crate::compiler_tls::current_thread_identity;
+use crate::compiler_tls::{current_thread_identity, set_cached_theap};
+use crate::bootstrap::empty_default_theap;
 use crate::config::{
     LARGE_MAX_OBJ_SIZE, MEDIUM_MAX_OBJ_SIZE, MEDIUM_PAGE_SIZE, SMALL_MAX_OBJ_SIZE,
     SMALL_PAGE_SIZE, SMALL_SIZE_MAX, VmOptions,
 };
 #[cfg(feature = "native-runtime-test-audit")]
-use crate::config::{ARENA_SLICE_SIZE, VmOption};
+use crate::config::{ARENA_SLICE_SIZE, BIN_FULL, VmOption};
 use crate::main_heap_thread::{
     MainHeapThreadAttachment, MainHeapThreadAttachmentBeginError,
     MainHeapThreadAttachmentError, MainHeapThreadPageSessionError,
@@ -106,12 +107,17 @@ use crate::process_page_map::{
 use crate::remote_free;
 use crate::single_thread::{
     ProcessPostOwnerExitPointerFreeDisposition, ProcessPostOwnerExitPointerFreeRejection,
-    RemoteFreeProducer, RemoteFreeProducerPair,
+    RemoteFreeProducer, RemoteFreeProducerPair, SourceRetainedTheapSession,
+    SourceRetainedTheapSessionError,
 };
 #[cfg(feature = "native-runtime-test-audit")]
 use crate::arena::ArenaView;
 #[cfg(feature = "native-runtime-test-audit")]
 use crate::single_thread::arena_page_map_size;
+#[cfg(feature = "native-runtime-test-audit")]
+use crate::types::page_queue::{page_is_in_full, page_queue_has_member_link_coherence};
+#[cfg(feature = "native-runtime-test-audit")]
+use crate::size_class;
 #[cfg(test)]
 use crate::single_thread::{
     ThreadExitMappedRegularPagesPostExitRemoteFreeProducer,
@@ -127,6 +133,13 @@ const PROCESS_COLD: u8 = 0;
 const PROCESS_INITIALIZING: u8 = 1;
 const PROCESS_ACTIVE: u8 = 2;
 const PROCESS_RETAINED: u8 = 3;
+/// Private selected-native process-finalizer state. This does not replace the
+/// source process owner state: it records only that libc has mapped pinned
+/// `mi_process_done_once`'s automatic-thread-done-key deletion into its
+/// explicit worker-finish bridge.
+const PROCESS_DONE_OPEN: u8 = 0;
+const PROCESS_DONE_TRANSITION: u8 = 1;
+const PROCESS_DONE_COMPLETE: u8 = 2;
 /// Test-audit sentinel for a process that did not expose its initialized TLD.
 ///
 /// A live source ticket-zero TLD has a nonnegative NUMA node, so this cannot
@@ -2055,6 +2068,25 @@ impl<'main> TicketZeroOwnerExitFreeRoute<'main> {
                     TicketZeroOwnerExitFreeOutcome::Poisoned(poisoned)
                 }
             },
+            ThreadFinishResult::ProcessDoneFinalTaskDecisionPending => match outcome {
+                // The source route may have released its own data, but libc
+                // still owns the current worker's final-task decision and
+                // active source owner. Do not convert that pending state into
+                // a completed B-side route.
+                TicketZeroOwnerExitFreeOutcome::Finished(proof) => {
+                    TicketZeroOwnerExitFreeOutcome::Poisoned(
+                        TicketZeroOwnerExitRoutePoisoned {
+                            admission: proof.into_admission(),
+                        },
+                    )
+                }
+                TicketZeroOwnerExitFreeOutcome::Retained(route) => {
+                    TicketZeroOwnerExitFreeOutcome::Retained(route)
+                }
+                TicketZeroOwnerExitFreeOutcome::Poisoned(poisoned) => {
+                    TicketZeroOwnerExitFreeOutcome::Poisoned(poisoned)
+                }
+            },
         }
     }
 }
@@ -2216,6 +2248,15 @@ impl TicketZeroOwnerExitReclaimRoute {
                     },
                 )
             }
+            ThreadFinishResult::ProcessDoneFinalTaskDecisionPending => {
+                // No B-side completion may consume this admission before
+                // libc decides whether the still-active worker is final.
+                TicketZeroOwnerExitReclaimOutcome::Poisoned(
+                    TicketZeroOwnerExitRoutePoisoned {
+                        admission,
+                    },
+                )
+            }
         }
     }
 }
@@ -2334,6 +2375,28 @@ pub enum ThreadFinishResult {
     AlreadyFinished,
     /// An incomplete owner remains retained; no completed teardown is claimed.
     Retained,
+    /// Pinned process shutdown already disabled the Unix automatic thread-done
+    /// key. Libc must first make its locked final-task decision: a nonfinal
+    /// worker then abandons only Rust's TLS wrapper and releases its runtime
+    /// admission, while a final worker retains this same owner for atexit.
+    ProcessDoneFinalTaskDecisionPending,
+}
+
+/// Result of the selected default-release logical process finalizer.
+///
+/// This private Rust-only result describes the source-tail effects mapped by
+/// the owned static libc. It never claims physical destruction of the process
+/// owner or of live allocation state.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SelectedProcessDoneResult {
+    /// The one logical source process-done transition completed.
+    Completed,
+    /// A prior process-done transition already completed; pinned source makes
+    /// this a no-op rather than a second teardown.
+    AlreadyCompleted,
+    /// Existing source or Rust state was not eligible for this transition.
+    Retained,
 }
 
 /// Result of the private final-worker ordinary-exit owner transition.
@@ -2367,6 +2430,10 @@ pub enum ThreadFinalProcessExitOwnerResult {
 /// members.
 struct RuntimeProcessStorage {
     state: AtomicU8,
+    /// One-way logical mapping of pinned `mi_process_done_once`. The permanent
+    /// process owner itself remains physically live so late frees and a
+    /// source-valid post-done worker continue to use its PageMap/metadata.
+    logical_process_done: AtomicU8,
     /// The ticket-zero Linux/AArch64 TPIDR_EL0 identity. A copied process
     /// foundation can be preserved only when `fork` runs on this same TLS
     /// image; a foreign caller has no authority to treat the static TLD as
@@ -2377,6 +2444,15 @@ struct RuntimeProcessStorage {
     /// a TLD pointer nor an ownership capability.
     #[cfg(feature = "native-runtime-test-audit")]
     initial_tld_numa_node: AtomicI32,
+    /// The most recently retained post-process-done worker identity. This is
+    /// a feature-gated scalar fixture observation, never an owner lookup or a
+    /// reusable TLS capability.
+    #[cfg(feature = "native-runtime-test-audit")]
+    process_done_retained_worker_identity: AtomicUsize,
+    /// Counts successful nonfinal process-done wrapper-retention transitions.
+    /// It has no production lifecycle meaning and is sampled only after join.
+    #[cfg(feature = "native-runtime-test-audit")]
+    process_done_retained_worker_count: AtomicUsize,
     owner: UnsafeCell<MaybeUninit<ProcessMainThread>>,
     main_heap: UnsafeCell<MaybeUninit<MainStaticHeapLease<'static>>>,
     /// The ticket-zero staging owner is absent until the private native seam
@@ -3101,9 +3177,14 @@ impl RuntimeProcessStorage {
     const fn new() -> Self {
         Self {
             state: AtomicU8::new(PROCESS_COLD),
+            logical_process_done: AtomicU8::new(PROCESS_DONE_OPEN),
             initial_thread_identity: AtomicUsize::new(0),
             #[cfg(feature = "native-runtime-test-audit")]
             initial_tld_numa_node: AtomicI32::new(INITIAL_TLD_NUMA_NODE_UNAVAILABLE),
+            #[cfg(feature = "native-runtime-test-audit")]
+            process_done_retained_worker_identity: AtomicUsize::new(0),
+            #[cfg(feature = "native-runtime-test-audit")]
+            process_done_retained_worker_count: AtomicUsize::new(0),
             owner: UnsafeCell::new(MaybeUninit::uninit()),
             main_heap: UnsafeCell::new(MaybeUninit::uninit()),
             page_owner_state: AtomicUsize::new(PAGE_OWNER_COLD),
@@ -3248,6 +3329,88 @@ impl RuntimeProcessStorage {
     #[inline]
     fn is_active(&self) -> bool {
         self.state.load(Ordering::Acquire) == PROCESS_ACTIVE
+    }
+
+    #[inline]
+    fn logical_process_done_is_complete(&self) -> bool {
+        self.logical_process_done.load(Ordering::Acquire) == PROCESS_DONE_COMPLETE
+    }
+
+    #[cfg(feature = "native-runtime-test-audit")]
+    #[inline]
+    fn note_process_done_retained_worker(&self, identity: LiveThreadId) {
+        self.process_done_retained_worker_identity
+            .store(identity.get(), Ordering::Release);
+        self.process_done_retained_worker_count
+            .fetch_add(1, Ordering::AcqRel);
+    }
+
+    #[cfg(feature = "native-runtime-test-audit")]
+    #[inline]
+    fn process_done_retained_worker_identity(&self) -> Option<LiveThreadId> {
+        LiveThreadId::new(
+            self.process_done_retained_worker_identity
+                .load(Ordering::Acquire),
+        )
+    }
+
+    /// Applies the selected default-release subset of pinned
+    /// `mi_process_done_once` that current Rust owners can prove.
+    ///
+    /// The permanent process owner and all source allocation metadata remain
+    /// physically live. In particular this does not call source destruction,
+    /// collect live allocations, or reset a later worker's TLD/Theap. It
+    /// maps the one process-wide automatic-thread-done-key deletion into the
+    /// explicit libc finish bridge, clears the current cached Theap as
+    /// `src/init.c:605` does, and records the one-way logical boundary. The
+    /// selected release profile has `MI_SHARED_LIB`, so source lines 610-614
+    /// do not force collection.
+    fn finish_selected_default_release_process_after_user_atexit(
+        &self,
+    ) -> SelectedProcessDoneResult {
+        if !self.is_active()
+            || self.state.load(Ordering::Acquire) == PROCESS_RETAINED
+            || self.page_owner_state.load(Ordering::Acquire) == PAGE_OWNER_RETAINED
+            || self.has_active_post_exit_route()
+            || self.has_pending_post_exit_completion()
+            || self.has_retained_post_exit_route()
+        {
+            return SelectedProcessDoneResult::Retained;
+        }
+
+        // No partial page-engine or process scheduler transition may be
+        // renamed source retention. C's process-done path runs only after
+        // libc selected the unique final task; a BUSY or parked Rust owner
+        // would require a missing explicit transition owner instead.
+        match self.page_owner_state.load(Ordering::Acquire) {
+            PAGE_OWNER_COLD | PAGE_OWNER_READY | PAGE_OWNER_INITIAL_PERSISTENT => {}
+            PAGE_OWNER_STARTING | PAGE_OWNER_BUSY | PAGE_OWNER_RETAINED | _ => {
+                return SelectedProcessDoneResult::Retained;
+            }
+        }
+
+        match self.logical_process_done.compare_exchange(
+            PROCESS_DONE_OPEN,
+            PROCESS_DONE_TRANSITION,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => {}
+            Err(PROCESS_DONE_COMPLETE) => return SelectedProcessDoneResult::AlreadyCompleted,
+            Err(PROCESS_DONE_OPEN | PROCESS_DONE_TRANSITION | _) => {
+                return SelectedProcessDoneResult::Retained;
+            }
+        }
+
+        // Pinned `mi_process_done_once` decrements the current cached Theap
+        // to the immutable empty root before it disables automatic cleanup.
+        // The Rust cache has no separate refcount owner in this selected
+        // branch; changing only the root preserves the source-visible cache
+        // effect without claiming dynamic-cache teardown.
+        set_cached_theap(core::ptr::NonNull::from(empty_default_theap()));
+        self.logical_process_done
+            .store(PROCESS_DONE_COMPLETE, Ordering::Release);
+        SelectedProcessDoneResult::Completed
     }
 
     /// Whether the process is active on the same TPIDR_EL0 image that minted
@@ -4490,6 +4653,27 @@ pub struct NativeRuntimeForkAdmissionAudit {
     pub active_later_thread_count: usize,
 }
 
+/// One exact live retained old-Theap page's source queue image.
+///
+/// This is a fixture-only scalar observation used to prove the selected
+/// post-process-done same-TP free path. It never returns a page, queue, Theap,
+/// allocator, or release capability. The caller keeps `live_sibling` live and
+/// serializes the observation against every page and queue mutation.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeRuntimeProcessDoneRetainedLocalPageAudit {
+    pub in_full: usize,
+    pub has_interior_pointers: usize,
+    pub used: usize,
+    pub capacity: usize,
+    pub reserved: usize,
+    pub regular_queue_count: usize,
+    pub full_queue_count: usize,
+    pub theap_page_count: usize,
+    pub member_link_coherent: usize,
+}
+
 /// Direct-test guard for one `MI_ABANDON` persistent-owner remote collection.
 ///
 /// This feature-gated witness can observe and release the existing source
@@ -5558,6 +5742,416 @@ pub fn native_runtime_fork_admission_test_audit() -> NativeRuntimeForkAdmissionA
     }
 }
 
+/// Reports whether the current worker's raw TLS identity equals the retained
+/// post-process-done source owner identity.
+///
+/// This fixture-only scalar establishes the pinned `xthread_id ^ TP == 0`
+/// dispatch condition before the sequential-worker regression frees an old
+/// client. It exposes no owner pointer, generation, or reusable attachment.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub fn native_runtime_process_done_retained_worker_matches_current_thread_test_audit() -> bool {
+    RUNTIME_PROCESS.logical_process_done_is_complete()
+        && current_thread_identity().is_some_and(|current| {
+            RUNTIME_PROCESS.process_done_retained_worker_identity() == Some(current)
+        })
+}
+
+/// Preflights the bounded retained-source local-free view for one exact
+/// fixture client without mutating a page, queue, allocation, or lifecycle.
+///
+/// The integer is deliberately diagnostic-only: `1` means the source Theap
+/// view is available; negative values distinguish the rejected preconditions
+/// in the native regression. It never yields a capability or replaces the
+/// production pointer-first free.
+///
+/// # Safety
+///
+/// `block` must be one exact still-live native client of the current worker.
+/// The caller must serialize the complete observation against source
+/// PageMap registration, unregistration, queue, owner, and free mutation.
+/// It must not retain any fact returned by this audit across the matched
+/// ordinary free or another allocation operation.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub unsafe fn native_runtime_process_done_retained_local_preflight_test_audit(
+    block: core::ptr::NonNull<u8>,
+) -> i32 {
+    let Some(page_map) = RUNTIME_PROCESS.page_map_for_live_native_allocation() else {
+        return -1;
+    };
+    // SAFETY: the fixture supplies one exact still-live client at a quiescent
+    // point before the matched free; this copies only its PageMap facts.
+    let allocation = match unsafe { page_map.lookup_live_allocation(block) } {
+        Ok(Some(allocation)) => allocation,
+        Ok(None) | Err(_) => return -2,
+    };
+    let Some(current) = current_thread_identity() else {
+        return -3;
+    };
+    // SAFETY: the check only reads the held allocation's retained source
+    // metadata and queue links; it performs no engine activation or mutation.
+    match unsafe { SourceRetainedTheapSession::from_live_local_allocation(&allocation, current) } {
+        Ok(_) => 1,
+        Err(SourceRetainedTheapSessionError::NotLiveAssociated) => -4,
+        Err(SourceRetainedTheapSessionError::MissingTheap) => -5,
+        Err(SourceRetainedTheapSessionError::InvalidTheap) => -6,
+        Err(SourceRetainedTheapSessionError::FullTheapCanAbandon) => -7,
+        Err(SourceRetainedTheapSessionError::MissingQueue) => -8,
+        Err(SourceRetainedTheapSessionError::QueueLinkIncoherent) => -9,
+    }
+}
+
+/// Snapshots one retained old-Theap local-free page without mutating it.
+///
+/// This fixture-only audit is narrower than a general page inspection API.
+/// `live_sibling` remains live while the caller serializes every source
+/// page/queue mutation. It records the exact full, regular, and final-release
+/// boundary without returning a page, queue, Theap, allocator, or capability.
+///
+/// # Safety
+///
+/// `live_sibling` must name one exact still-live client in the retained page.
+/// The fixture serializes this read against every source page/queue mutation.
+#[cfg(feature = "native-runtime-test-audit")]
+unsafe fn native_runtime_local_page_test_audit_for_owner(
+    live_sibling: core::ptr::NonNull<u8>,
+    owner: LiveThreadId,
+) -> Result<NativeRuntimeProcessDoneRetainedLocalPageAudit, i32> {
+    let Some(page_map) = RUNTIME_PROCESS.page_map_for_live_native_allocation() else {
+        return Err(-4);
+    };
+    // SAFETY: the documented live sibling keeps its page registered and
+    // initialized while this audit copies its source ownership facts.
+    let allocation = match unsafe { page_map.lookup_live_allocation(live_sibling) } {
+        Ok(Some(allocation)) => allocation,
+        Ok(None) | Err(_) => return Err(-5),
+    };
+    if allocation.page_state() != LiveAllocationPageState::LiveOwnerAssociated
+        || !allocation.is_associated_with(owner)
+    {
+        return Err(-6);
+    }
+    let page = allocation.page();
+    // SAFETY: the live sibling keeps these retained source metadata fields
+    // initialized; the fixture owns the corresponding ordinary queue epoch.
+    let page_ref = unsafe { page.as_ref() };
+    let in_full = page_is_in_full(page_ref);
+    // SAFETY: source process-done retention keeps this Theap allocation live
+    // while the associated live page keeps its raw owner pointer initialized.
+    let Some(theap) = (unsafe { page_ref.theap().as_ref() }) else {
+        return Err(-12);
+    };
+    if !theap.is_initialized() || !theap.matches_thread(owner) {
+        return Err(-13);
+    }
+    let Some(regular_bin) = size_class::bin(page_ref.block_size()) else {
+        return Err(-14);
+    };
+    let Some(regular_queue) = theap.queue(regular_bin) else {
+        return Err(-15);
+    };
+    let Some(full_queue) = theap.queue(BIN_FULL) else {
+        return Err(-15);
+    };
+    let member_queue = if in_full { full_queue } else { regular_queue };
+    // SAFETY: the retained transition inherits the complete source queue
+    // invariant. This O(1) check records local link coherence; it does not
+    // claim to reconstruct membership from arbitrary corrupted links.
+    let member_link_coherent =
+        unsafe { page_queue_has_member_link_coherence(member_queue, page) };
+    Ok(NativeRuntimeProcessDoneRetainedLocalPageAudit {
+        in_full: usize::from(in_full),
+        has_interior_pointers: usize::from(page_ref.has_interior_pointers()),
+        used: page_ref.used(),
+        capacity: usize::from(page_ref.capacity()),
+        reserved: usize::from(page_ref.reserved()),
+        regular_queue_count: regular_queue.count(),
+        full_queue_count: full_queue.count(),
+        theap_page_count: theap.page_count(),
+        member_link_coherent: usize::from(member_link_coherent),
+    })
+}
+
+/// Snapshots one current worker's exact live local page without mutating it.
+///
+/// This is a test-only producer-side counterpart to the retained-source
+/// snapshot below. It exists so the fixture fills the actual source reserved
+/// count rather than hard-coding a capacity that on-demand extension may
+/// change. The current compiler-TLS owner must remain active for the complete
+/// scalar copy; no page, queue, Theap, allocator, or capability is returned.
+///
+/// # Safety
+///
+/// `live_sibling` must name one exact still-live allocation of the calling
+/// attached worker. The caller serializes the observation against every
+/// source page/queue mutation.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub unsafe fn native_runtime_current_local_page_test_audit(
+    live_sibling: core::ptr::NonNull<u8>,
+) -> Result<NativeRuntimeProcessDoneRetainedLocalPageAudit, i32> {
+    let Some(owner) = current_thread_identity() else {
+        return Err(-2);
+    };
+    if !current_thread_has_native_persistent_owner() {
+        return Err(-3);
+    }
+    // SAFETY: the stated active-owner and exact-live-client requirements
+    // establish the same scalar source facts used by the retained snapshot.
+    unsafe { native_runtime_local_page_test_audit_for_owner(live_sibling, owner) }
+}
+
+/// Reports whether two exact current-worker clients share one source page.
+///
+/// This test-only predicate supplies no page identity or ownership capability.
+/// The process-done fixture uses it only to prove that its one extra source
+/// selection did not silently extend the filled page it will retain.
+///
+/// # Safety
+///
+/// Both clients must be exact still-live allocations of the calling attached
+/// worker. The caller serializes this observation against page-map mutation.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub unsafe fn native_runtime_current_local_page_same_test_audit(
+    first: core::ptr::NonNull<u8>,
+    second: core::ptr::NonNull<u8>,
+) -> Result<bool, i32> {
+    let Some(owner) = current_thread_identity() else {
+        return Err(-2);
+    };
+    if !current_thread_has_native_persistent_owner() {
+        return Err(-3);
+    }
+    let Some(page_map) = RUNTIME_PROCESS.page_map_for_live_native_allocation() else {
+        return Err(-4);
+    };
+    // SAFETY: the caller proves both exact live clients and excludes a source
+    // page-map mutation while these two pointer-only observations are copied.
+    let first = match unsafe { page_map.lookup_live_allocation(first) } {
+        Ok(Some(allocation)) => allocation,
+        Ok(None) | Err(_) => return Err(-5),
+    };
+    // SAFETY: same contract as the first exact-live allocation above.
+    let second = match unsafe { page_map.lookup_live_allocation(second) } {
+        Ok(Some(allocation)) => allocation,
+        Ok(None) | Err(_) => return Err(-5),
+    };
+    if first.page_state() != LiveAllocationPageState::LiveOwnerAssociated
+        || second.page_state() != LiveAllocationPageState::LiveOwnerAssociated
+        || !first.is_associated_with(owner)
+        || !second.is_associated_with(owner)
+    {
+        return Err(-6);
+    }
+    Ok(first.page() == second.page())
+}
+
+/// Snapshots one retained old-Theap local-free page without mutating it.
+///
+/// This fixture-only audit is narrower than a general page inspection API.
+/// `live_sibling` remains live while the caller serializes every source
+/// page/queue mutation. It records the exact full, regular, and final-release
+/// boundary without returning a page, queue, Theap, allocator, or capability.
+///
+/// # Safety
+///
+/// `live_sibling` must name one exact still-live client in the retained page.
+/// The fixture serializes this read against every source page/queue mutation.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub unsafe fn native_runtime_process_done_retained_local_page_test_audit(
+    live_sibling: core::ptr::NonNull<u8>,
+) -> Result<NativeRuntimeProcessDoneRetainedLocalPageAudit, i32> {
+    if !RUNTIME_PROCESS.logical_process_done_is_complete() {
+        return Err(-2);
+    }
+    let Some(owner) = RUNTIME_PROCESS.process_done_retained_worker_identity() else {
+        return Err(-3);
+    };
+    // SAFETY: the retained-worker identity and exact-live sibling select the
+    // source owner still held by the process-done transition.
+    unsafe { native_runtime_local_page_test_audit_for_owner(live_sibling, owner) }
+}
+
+/// Confirms the exact source retirement tail after both clients of the one
+/// retained regular medium page have been locally freed.
+///
+/// Pinned `src/free.c:28-56` calls `_mi_page_retire` at `used == 0`; with one
+/// ordinary regular medium page, `src/page.c:424-456` keeps its PageMap entry,
+/// queue membership, and metadata, and assigns `MI_RETIRE_CYCLES / 4`. This
+/// accepts the former client solely as stable PageMap geometry. It first
+/// checks that the entry remains registered and only then reads the retained
+/// source page. The fixture serializes this observation before another source
+/// operation can allocate from or collect the retired page.
+///
+/// # Safety
+///
+/// `former_client` must be the exact former client from the immediately
+/// preceding final local free of the retained page. `expected_reserved` must
+/// be the pinned-C release geometry: 42 for the normal/256-byte pair or 25
+/// for the adjusted interior pair. The caller must exclude allocation,
+/// collection, PageMap registration or unregistration, page reuse, and source
+/// queue/owner mutation
+/// until this check completes. The pointer is PageMap geometry only and must
+/// never be dereferenced by the caller after its free.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub unsafe fn native_runtime_process_done_retained_page_retired_test_audit(
+    former_client: core::ptr::NonNull<u8>,
+    expected_reserved: usize,
+) -> bool {
+    if !matches!(expected_reserved, 25 | 42)
+        || !RUNTIME_PROCESS.logical_process_done_is_complete()
+        || RUNTIME_PROCESS
+            .process_done_retained_worker_count
+            .load(Ordering::Acquire)
+            == 0
+    {
+        return false;
+    }
+    let Some(owner) = RUNTIME_PROCESS.process_done_retained_worker_identity() else {
+        return false;
+    };
+    let Some(page_map) = RUNTIME_PROCESS.page_map_for_live_native_allocation() else {
+        return false;
+    };
+    let Ok(page_map) = page_map.page_map() else {
+        return false;
+    };
+    // SAFETY: the fixture excludes register/unregister mutation and uses the
+    // former client only as source PageMap index geometry. A null result is
+    // rejected before any metadata dereference.
+    let Some(page) = core::ptr::NonNull::new(unsafe {
+        page_map.checked_lookup(former_client.as_ptr())
+    }) else {
+        return false;
+    };
+    // SAFETY: the still-registered PageMap entry and the fixture's retained
+    // process-done source boundary keep this metadata initialized and stable.
+    let page_ref = unsafe { page.as_ref() };
+    // SAFETY: the retained source owner identity must still be the exact
+    // live owner of this retired ordinary page; this reads only its atomic
+    // owner projection before the ordinary queue fields below.
+    if !unsafe { Page::is_live_owner_for_thread_at(page, owner) } {
+        return false;
+    }
+    // SAFETY: the owner projection above keeps the source Theap pointer
+    // initialized, and process-done retention keeps its backing allocation.
+    let Some(theap) = (unsafe { page_ref.theap().as_ref() }) else {
+        return false;
+    };
+    if !theap.is_initialized() || !theap.matches_thread(owner) {
+        return false;
+    }
+    let Some(bin) = size_class::bin(page_ref.block_size()) else {
+        return false;
+    };
+    let Some(regular_queue) = theap.queue(bin) else {
+        return false;
+    };
+    let Some(full_queue) = theap.queue(BIN_FULL) else {
+        return false;
+    };
+    // SAFETY: source process-done retention inherits the complete initialized
+    // queue invariant. This constant-time check rejects local link
+    // incoherence but deliberately does not attempt a queue reconstruction.
+    let member_link_coherent = unsafe { page_queue_has_member_link_coherence(regular_queue, page) };
+    page_ref.used() == 0
+        && page_ref.capacity() == 2
+        && usize::from(page_ref.reserved()) == expected_reserved
+        && !page_ref.has_interior_pointers()
+        && !page_is_in_full(page_ref)
+        && page_ref.retire_expire() == 4
+        && regular_queue.count() == 1
+        && full_queue.count() == 0
+        && theap.page_count() == 1
+        && member_link_coherent
+}
+
+/// Observes one retained post-process-done worker page after its natural
+/// return, or after its first pointer-first remote free.
+///
+/// This is a fixture-only source-state check for the selected Unix automatic
+/// thread-done-key boundary. `second` is a live native allocation from one
+/// already-joined nonfinal worker. `first` names its same-page sibling before
+/// that sibling's free, or is absent afterward. No thread may mutate their
+/// page while this function samples it. `remote_free_published` selects the
+/// expected state after zero or one of those clients has been freed by another
+/// thread. It reports only a boolean and exposes no page, TLD, Theap, or
+/// identity capability.
+///
+/// # Safety
+///
+/// `second`, and `first` when present, must be exact live native clients of
+/// the retained worker page. The caller must serialize their PageMap, owner,
+/// queue, and remote-publication state with free, allocation, collection,
+/// registration, and worker teardown for the complete observation.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub unsafe fn native_runtime_process_done_retained_live_page_test_audit(
+    first: Option<core::ptr::NonNull<u8>>,
+    second: core::ptr::NonNull<u8>,
+    remote_free_published: bool,
+) -> bool {
+    if !RUNTIME_PROCESS.logical_process_done_is_complete()
+        || RUNTIME_PROCESS
+            .process_done_retained_worker_count
+            .load(Ordering::Acquire)
+            == 0
+    {
+        return false;
+    }
+    let Some(owner) = RUNTIME_PROCESS.process_done_retained_worker_identity() else {
+        return false;
+    };
+    let Some(page_map) = RUNTIME_PROCESS.page_map_for_live_native_allocation() else {
+        return false;
+    };
+    // SAFETY: the caller supplies the exact live second client and the
+    // documented joined-worker quiescent boundary. This observation copies
+    // source dispatch fields only; it does not form a release capability.
+    let second = match unsafe { page_map.lookup_live_allocation(second) } {
+        Ok(Some(allocation)) => allocation,
+        Ok(None) | Err(_) => return false,
+    };
+    if second.page_state() != LiveAllocationPageState::LiveOwnerAssociated
+        || !second.is_associated_with(owner)
+        || second.block_size() != 12_288
+    {
+        return false;
+    }
+    if let Some(first) = first {
+        // SAFETY: the optional first client remains live only before its
+        // matched free and shares this joined worker's quiescent boundary.
+        let first = match unsafe { page_map.lookup_live_allocation(first) } {
+            Ok(Some(allocation)) => allocation,
+            Ok(None) | Err(_) => return false,
+        };
+        if first.page() != second.page()
+            || first.page_state() != LiveAllocationPageState::LiveOwnerAssociated
+            || !first.is_associated_with(owner)
+            || first.block_size() != 12_288
+        {
+            return false;
+        }
+    }
+    // SAFETY: the live second client keeps this source page and its metadata
+    // initialized. The caller's quiescent boundary excludes owner-side page
+    // mutation while the fixture copies these retained source fields.
+    let page = unsafe { second.page().as_ref() };
+    let Some(theap) = (unsafe { page.theap().as_ref() }) else {
+        return false;
+    };
+    page.used() == 2
+        && page.capacity() == 2
+        && page.reserved() == 42
+        && theap.is_initialized()
+        && theap.matches_thread(owner)
+        && page.has_published_remote_free() == remote_free_published
+}
+
 /// Arms one direct-test rendezvous at the existing `MI_ABANDON` owner-side
 /// remote-head detach boundary.
 ///
@@ -5642,6 +6236,10 @@ enum ThreadLifecycleState {
     Attached,
     Finished,
     Retained,
+    /// A nonfinal worker ended after process shutdown disabled automatic
+    /// thread cleanup. Its Rust TLS wrapper was abandoned while source
+    /// TLD/Theap/PageMap state stayed process-live.
+    ProcessDoneRetained,
 }
 
 /// The source-shaped owner retained for ordinary later-thread native calls.
@@ -5746,6 +6344,19 @@ impl NativePersistentThreadOwner {
                 error => Err(error),
             })
             .map_err(|_| ())
+    }
+
+    /// Proves that this owner can remain represented solely by its source
+    /// TLD/Theap/PageMap state after the pinned process-done boundary deletes
+    /// automatic thread cleanup. It neither drains nor drops the owner.
+    fn permits_process_done_source_retention(&self) -> bool {
+        match &self.state {
+            NativePersistentThreadOwnerExitState::PreDrain(engine) => {
+                engine.permits_process_done_source_retention(&self.attachment)
+            }
+            NativePersistentThreadOwnerExitState::RetainedTerminalEngine(_)
+            | NativePersistentThreadOwnerExitState::AttachmentOnly => false,
+        }
     }
 }
 
@@ -6302,7 +6913,8 @@ fn with_pointer_associated_initial_persistent_owner<R>(
             | PersistentCompilerTlsOwnerError::AlreadyActive
             | PersistentCompilerTlsOwnerError::Exiting
             | PersistentCompilerTlsOwnerError::Retained
-            | PersistentCompilerTlsOwnerError::TornDown,
+            | PersistentCompilerTlsOwnerError::TornDown
+            | PersistentCompilerTlsOwnerError::SourceRetainedAfterProcessDone,
         ) => {
             RUNTIME_PROCESS.retain_page_owner();
             Err(NativeInitialPersistentThreadOwnerAccessError::Retained)
@@ -6480,7 +7092,7 @@ fn with_current_thread_native_persistent_owner<R>(
 ) -> Result<R, NativePersistentThreadOwnerAccessError> {
     match current_thread_slot().state {
         ThreadLifecycleState::Attached => {}
-        ThreadLifecycleState::Retained => {
+        ThreadLifecycleState::Retained | ThreadLifecycleState::ProcessDoneRetained => {
             return Err(NativePersistentThreadOwnerAccessError::Retained);
         }
         ThreadLifecycleState::Fresh | ThreadLifecycleState::Finished => {
@@ -6504,7 +7116,8 @@ fn with_current_thread_native_persistent_owner<R>(
             | PersistentCompilerTlsOwnerError::AlreadyActive
             | PersistentCompilerTlsOwnerError::Exiting
             | PersistentCompilerTlsOwnerError::Retained
-            | PersistentCompilerTlsOwnerError::TornDown,
+            | PersistentCompilerTlsOwnerError::TornDown
+            | PersistentCompilerTlsOwnerError::SourceRetainedAfterProcessDone,
         ) => {
             retain_current_thread_native_persistent_owner_for_teardown();
             Err(NativePersistentThreadOwnerAccessError::Retained)
@@ -6676,6 +7289,41 @@ pub fn initialize_process(page_size_bytes: usize) -> bool {
 #[inline]
 pub fn process_is_active() -> bool {
     RUNTIME_PROCESS.is_active()
+}
+
+/// Applies the selected default-release logical process finalizer after libc
+/// has dispatched user `atexit` callbacks.
+///
+/// This is deliberately not `ProcessMainThread::teardown`: the permanent
+/// process owner, PageMap, metadata, and live allocations remain physically
+/// retained so source-valid late frees and post-done workers are not made
+/// dangling. It currently maps only the pinned cached-Theap and automatic
+/// thread-done-key effects that current static owners can prove. Dynamic TLS
+/// slots, stats, destroy-on-exit, and general nonempty-cache destruction stay
+/// outside this bounded selected-native slice.
+#[doc(hidden)]
+pub fn finish_selected_default_release_process_after_user_atexit() -> SelectedProcessDoneResult {
+    let slot = current_thread_slot();
+    let current_owner_is_safe = match slot.state {
+        ThreadLifecycleState::Fresh | ThreadLifecycleState::Finished => true,
+        ThreadLifecycleState::Attached if slot.native_persistent_owner_installed => {
+            match current_thread_native_persistent_owner_cell()
+                .with_owner(|owner| owner.get_mut().permits_process_done_source_retention())
+            {
+                Ok(allowed) => allowed,
+                Err(_) => false,
+            }
+        }
+        ThreadLifecycleState::Attached => slot
+            .attachment
+            .as_ref()
+            .is_some_and(MainHeapThreadAttachment::permits_process_done_source_retention),
+        ThreadLifecycleState::Retained | ThreadLifecycleState::ProcessDoneRetained => false,
+    };
+    if !current_owner_is_safe {
+        return SelectedProcessDoneResult::Retained;
+    }
+    RUNTIME_PROCESS.finish_selected_default_release_process_after_user_atexit()
 }
 
 /// Attempts one ordinary allocation through the private permanent ticket-zero
@@ -7638,12 +8286,93 @@ unsafe fn native_free_pointer_first_live_initial_foreign_page(
     }
 }
 
+/// Consumes one post-process-done local allocation through its retained source
+/// Theap without reusing either compiler-TLS owner wrapper.
+///
+/// Pinned `free.c:223-247` picks this local branch from the one captured
+/// `xthread_id ^ TP` result. A reused pthread TLS address can therefore make a
+/// new worker source-local to a page whose original Rust owner wrapper was
+/// discarded after `mi_process_done_once` deleted the automatic destructor
+/// key. The held [`LiveAllocationPointer`] remains the sole page/block proof;
+/// this path never performs a second lookup, selects W03, or substitutes the
+/// new worker's Theap.
+fn native_free_pointer_first_process_done_local(
+    allocation: LiveAllocationPointer,
+    current: LiveThreadId,
+) -> NativePageFreeResult {
+    let Some(pair) = current_native_process_page_arena_pair() else {
+        RUNTIME_PROCESS.retain_page_owner();
+        return NativePageFreeResult::Retained;
+    };
+    let arena = match pair.arena() {
+        Ok(arena) => arena,
+        Err(_) => {
+            RUNTIME_PROCESS.retain_page_owner();
+            return NativePageFreeResult::Retained;
+        }
+    };
+    // SAFETY: the held live allocation is the exact owned-range witness for
+    // this synchronous source-local operation. A terminal all-free release
+    // unregisters that same page before returning its matched arena backing.
+    let page_map = match unsafe { pair.page_map_for_owned_ranges() } {
+        Ok(page_map) => page_map,
+        Err(_) => {
+            RUNTIME_PROCESS.retain_page_owner();
+            return NativePageFreeResult::Retained;
+        }
+    };
+    // SAFETY: the captured allocation stays live through the whole preflight;
+    // source process-done retention keeps its old metadata Theap/TLD alive,
+    // and the caller already made the one pointer-first local comparison.
+    let session = match unsafe {
+        SourceRetainedTheapSession::from_live_local_allocation(&allocation, current)
+    } {
+        Ok(session) => session,
+        Err(_) => {
+            RUNTIME_PROCESS.retain_page_owner();
+            return NativePageFreeResult::Retained;
+        }
+    };
+    // SAFETY: `session`, `arena`, and `page_map` were formed from the same
+    // process-published source image. The activation has no fresh allocation
+    // path and consumes the held allocation immediately below.
+    let Some(mut engine) = (unsafe {
+        crate::single_thread::PageAllocatorEngine::activate_source_retained_local_free(
+            session,
+            arena,
+            crate::arena::ArenaId::none(),
+            page_map,
+        )
+    }) else {
+        RUNTIME_PROCESS.retain_page_owner();
+        return NativePageFreeResult::Retained;
+    };
+    // SAFETY: this consumes precisely the prior PageMap snapshot and its
+    // canonical source block. It does not reclassify the page or consult a
+    // current TLS allocator.
+    if unsafe { engine.free_captured_live_allocation(allocation) }.is_err() {
+        RUNTIME_PROCESS.retain_page_owner();
+        return NativePageFreeResult::Retained;
+    }
+    match engine.finish_source_retained_local_free() {
+        Ok(()) => NativePageFreeResult::Freed,
+        Err(_engine) => {
+            // The engine has no TLS wrapper to retain. Its failed source
+            // transition remains physically present, while the process gate
+            // prevents another allocator operation from guessing a recovery.
+            RUNTIME_PROCESS.retain_page_owner();
+            NativePageFreeResult::Retained
+        }
+    }
+}
+
 /// Consumes one PageMap-derived allocation through its current source owner.
 ///
-/// The caller already compared the captured `xthread_id` against its own
-/// identity. This helper deliberately performs no second PageMap lookup and
-/// never inspects a route, registry, or client ledger to recover local
-/// ownership.
+/// A later worker reaches this helper with its one held PageMap observation;
+/// its owner-local engine consumes that observation without reopening the map.
+/// The initial-thread branch below preserves its older dedicated initial-owner
+/// primitive, which still performs its own lookup and is not part of this
+/// held-observation contract.
 fn native_free_pointer_first_local(
     allocation: LiveAllocationPointer,
     current: LiveThreadId,
@@ -7657,17 +8386,45 @@ fn native_free_pointer_first_local(
         return result;
     }
 
-    // The worker's continuously stored owner is already current. Its short
-    // local allocator borrow is the only local source operation; unlike the
-    // historical helper it does not reclassify the pointer or consult a
-    // session handle on a miss.
+    if RUNTIME_PROCESS.logical_process_done_is_complete() {
+        // Pinned `mi_free_nonnull` makes its local decision from raw TP
+        // identity, but this integration must still choose the Rust
+        // capability that owns ordinary page fields. An active current worker
+        // whose page already belongs to its persistent owner keeps the
+        // ordinary engine; only a same-TP page from a discarded
+        // post-process-done wrapper uses the old source-Theap adapter. This
+        // comparison is post-done-only, preserving the existing ordinary
+        // worker free cost and one-borrow path before process shutdown.
+        let current_owns_source = match with_current_thread_native_persistent_allocator(false, |allocator| {
+            allocator.owns_captured_live_allocation(&allocation)
+        }) {
+            Ok(owns) => owns,
+            Err(_) => {
+                RUNTIME_PROCESS.retain_page_owner();
+                return NativePageFreeResult::Retained;
+            }
+        };
+        if !current_owns_source {
+            return native_free_pointer_first_process_done_local(allocation, current);
+        }
+    }
+
+    // The worker's continuously stored owner owns this source page. Consume
+    // the held pointer-first observation through that owner rather than
+    // reopening PageMap inside `allocator.free`.
+    let mut held_allocation = Some(allocation);
     let result = with_current_thread_native_persistent_allocator(false, |allocator| {
-        // SAFETY: the caller's PageMap observation associated `client` with
-        // this exact current owner, and the observation remains live through
-        // this one consuming local source free.
-        unsafe { allocator.free(client) }
+        let allocation = held_allocation
+            .take()
+            .expect("the owner-local captured free is invoked once");
+        // SAFETY: the caller's held PageMap observation associated this exact
+        // allocation with the current owner, which consumes it through one
+        // local source free without a second PageMap lookup.
+        unsafe { allocator.free_captured_live_allocation(allocation) }
     });
-    drop(allocation);
+    // An owner access error leaves the held observation unconsumed. Dropping
+    // it releases only the read guard; it never changes source page state.
+    drop(held_allocation);
     match result {
         Ok(Ok(())) => NativePageFreeResult::Freed,
         Ok(Err(_)) | Err(_) => {
@@ -8503,7 +9260,8 @@ fn finish_current_thread_after_detached_process_page_route(
     match slot.state {
         ThreadLifecycleState::Fresh
         | ThreadLifecycleState::Finished
-        | ThreadLifecycleState::Retained => {
+        | ThreadLifecycleState::Retained
+        | ThreadLifecycleState::ProcessDoneRetained => {
             // A terminal proof on any other lifecycle state is an invalid
             // private transition. Preserve its exact claim rather than
             // dropping the proof and leaving an unrepresented gate count.
@@ -11332,6 +12090,10 @@ pub fn ticket_zero_later_thread_mapped_regular_owner_exit_through_normal_finish(
             match finish_current_thread_after_user_destructors() {
                 ThreadFinishResult::Finished => TicketZeroLaterThreadPageResult::Completed,
                 ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+                ThreadFinishResult::ProcessDoneFinalTaskDecisionPending => {
+                    // Libc has not yet selected nonfinal disposal or final callbacks.
+                    TicketZeroLaterThreadPageResult::Retained
+                },
                 ThreadFinishResult::NotAttached | ThreadFinishResult::AlreadyFinished => {
                     TicketZeroLaterThreadPageResult::Unavailable
                 }
@@ -11341,6 +12103,10 @@ pub fn ticket_zero_later_thread_mapped_regular_owner_exit_through_normal_finish(
             match finish_current_thread_after_user_destructors() {
                 ThreadFinishResult::Finished => TicketZeroLaterThreadPageResult::AllocationFailed,
                 ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+                ThreadFinishResult::ProcessDoneFinalTaskDecisionPending => {
+                    // Libc has not yet selected nonfinal disposal or final callbacks.
+                    TicketZeroLaterThreadPageResult::Retained
+                },
                 ThreadFinishResult::NotAttached | ThreadFinishResult::AlreadyFinished => {
                     TicketZeroLaterThreadPageResult::Unavailable
                 }
@@ -11350,6 +12116,10 @@ pub fn ticket_zero_later_thread_mapped_regular_owner_exit_through_normal_finish(
             match finish_current_thread_after_user_destructors() {
                 ThreadFinishResult::Finished => TicketZeroLaterThreadPageResult::Unavailable,
                 ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+                ThreadFinishResult::ProcessDoneFinalTaskDecisionPending => {
+                    // Libc has not yet selected nonfinal disposal or final callbacks.
+                    TicketZeroLaterThreadPageResult::Retained
+                },
                 ThreadFinishResult::NotAttached | ThreadFinishResult::AlreadyFinished => {
                     TicketZeroLaterThreadPageResult::Unavailable
                 }
@@ -11581,6 +12351,10 @@ fn ticket_zero_later_thread_session_owner_exit_through_normal_finish_with_post_e
         Ok(()) => match finish_current_thread_after_user_destructors() {
             ThreadFinishResult::Finished => TicketZeroLaterThreadPageResult::Completed,
             ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+            ThreadFinishResult::ProcessDoneFinalTaskDecisionPending => {
+                // Libc has not yet selected nonfinal disposal or final callbacks.
+                TicketZeroLaterThreadPageResult::Retained
+            },
             ThreadFinishResult::NotAttached | ThreadFinishResult::AlreadyFinished => {
                 TicketZeroLaterThreadPageResult::Unavailable
             }
@@ -11657,6 +12431,10 @@ pub fn ticket_zero_later_thread_retired_then_live_session_owner_exit_through_nor
         Ok(()) => match finish_current_thread_after_user_destructors() {
             ThreadFinishResult::Finished => TicketZeroLaterThreadPageResult::Completed,
             ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+            ThreadFinishResult::ProcessDoneFinalTaskDecisionPending => {
+                // Libc has not yet selected nonfinal disposal or final callbacks.
+                TicketZeroLaterThreadPageResult::Retained
+            },
             ThreadFinishResult::NotAttached | ThreadFinishResult::AlreadyFinished => {
                 TicketZeroLaterThreadPageResult::Unavailable
             }
@@ -11720,6 +12498,10 @@ pub fn ticket_zero_later_thread_all_free_session_through_normal_finish(
     match finish_current_thread_after_user_destructors() {
         ThreadFinishResult::Finished => TicketZeroLaterThreadPageResult::Completed,
         ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+        ThreadFinishResult::ProcessDoneFinalTaskDecisionPending => {
+            // Libc has not yet selected nonfinal disposal or final callbacks.
+            TicketZeroLaterThreadPageResult::Retained
+        },
         ThreadFinishResult::NotAttached | ThreadFinishResult::AlreadyFinished => {
             TicketZeroLaterThreadPageResult::Unavailable
         }
@@ -11791,6 +12573,10 @@ pub fn ticket_zero_later_thread_source_published_session_through_normal_finish(
     match finish_current_thread_after_user_destructors() {
         ThreadFinishResult::Finished => TicketZeroLaterThreadPageResult::Completed,
         ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+        ThreadFinishResult::ProcessDoneFinalTaskDecisionPending => {
+            // Libc has not yet selected nonfinal disposal or final callbacks.
+            TicketZeroLaterThreadPageResult::Retained
+        },
         ThreadFinishResult::NotAttached | ThreadFinishResult::AlreadyFinished => {
             TicketZeroLaterThreadPageResult::Unavailable
         }
@@ -11859,6 +12645,10 @@ pub fn ticket_zero_later_thread_single_source_published_session_through_normal_f
     match finish_current_thread_after_user_destructors() {
         ThreadFinishResult::Finished => TicketZeroLaterThreadPageResult::Completed,
         ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+        ThreadFinishResult::ProcessDoneFinalTaskDecisionPending => {
+            // Libc has not yet selected nonfinal disposal or final callbacks.
+            TicketZeroLaterThreadPageResult::Retained
+        },
         ThreadFinishResult::NotAttached | ThreadFinishResult::AlreadyFinished => {
             TicketZeroLaterThreadPageResult::Unavailable
         }
@@ -11907,6 +12697,11 @@ pub fn ticket_zero_later_thread_active_session_rejects_normal_finish(
 
     match finish_current_thread_after_user_destructors() {
         ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+        ThreadFinishResult::ProcessDoneFinalTaskDecisionPending => {
+            // This test seam cannot make libc's registry decision, so the
+            // still-attached source owner remains explicitly incomplete.
+            TicketZeroLaterThreadPageResult::Retained
+        }
         ThreadFinishResult::Finished
         | ThreadFinishResult::NotAttached
         | ThreadFinishResult::AlreadyFinished => TicketZeroLaterThreadPageResult::Unavailable,
@@ -11970,6 +12765,10 @@ fn ticket_zero_later_thread_owner_exit_reclaim_through_normal_finish(
             match finish_current_thread_after_user_destructors() {
                 ThreadFinishResult::Finished => TicketZeroLaterThreadPageResult::Completed,
                 ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+                ThreadFinishResult::ProcessDoneFinalTaskDecisionPending => {
+                    // Libc has not yet selected nonfinal disposal or final callbacks.
+                    TicketZeroLaterThreadPageResult::Retained
+                },
                 ThreadFinishResult::NotAttached | ThreadFinishResult::AlreadyFinished => {
                     TicketZeroLaterThreadPageResult::Unavailable
                 }
@@ -11979,6 +12778,10 @@ fn ticket_zero_later_thread_owner_exit_reclaim_through_normal_finish(
             match finish_current_thread_after_user_destructors() {
                 ThreadFinishResult::Finished => TicketZeroLaterThreadPageResult::AllocationFailed,
                 ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+                ThreadFinishResult::ProcessDoneFinalTaskDecisionPending => {
+                    // Libc has not yet selected nonfinal disposal or final callbacks.
+                    TicketZeroLaterThreadPageResult::Retained
+                },
                 ThreadFinishResult::NotAttached | ThreadFinishResult::AlreadyFinished => {
                     TicketZeroLaterThreadPageResult::Unavailable
                 }
@@ -11991,6 +12794,10 @@ fn ticket_zero_later_thread_owner_exit_reclaim_through_normal_finish(
             match finish_current_thread_after_user_destructors() {
                 ThreadFinishResult::Finished => TicketZeroLaterThreadPageResult::Unavailable,
                 ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+                ThreadFinishResult::ProcessDoneFinalTaskDecisionPending => {
+                    // Libc has not yet selected nonfinal disposal or final callbacks.
+                    TicketZeroLaterThreadPageResult::Retained
+                },
                 ThreadFinishResult::NotAttached | ThreadFinishResult::AlreadyFinished => {
                     TicketZeroLaterThreadPageResult::Unavailable
                 }
@@ -12169,6 +12976,10 @@ pub fn ticket_zero_later_thread_mapped_regular_owner_exit(
             match finish_current_thread_after_detached_process_page_route(proof) {
                 ThreadFinishResult::Finished => TicketZeroLaterThreadPageResult::Completed,
                 ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+                ThreadFinishResult::ProcessDoneFinalTaskDecisionPending => {
+                    // Libc has not yet selected nonfinal disposal or final callbacks.
+                    TicketZeroLaterThreadPageResult::Retained
+                },
                 ThreadFinishResult::NotAttached | ThreadFinishResult::AlreadyFinished => {
                     TicketZeroLaterThreadPageResult::Unavailable
                 }
@@ -12180,6 +12991,10 @@ pub fn ticket_zero_later_thread_mapped_regular_owner_exit(
         ) => match finish_current_thread_after_user_destructors() {
             ThreadFinishResult::Finished => TicketZeroLaterThreadPageResult::AllocationFailed,
             ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+            ThreadFinishResult::ProcessDoneFinalTaskDecisionPending => {
+                // Libc has not yet selected nonfinal disposal or final callbacks.
+                TicketZeroLaterThreadPageResult::Retained
+            },
             ThreadFinishResult::NotAttached | ThreadFinishResult::AlreadyFinished => {
                 TicketZeroLaterThreadPageResult::Unavailable
             }
@@ -12324,6 +13139,10 @@ pub fn ticket_zero_later_thread_mapped_regular_owner_exit_reclaim(
             match finish_current_thread_after_detached_process_page_route(proof) {
                 ThreadFinishResult::Finished => TicketZeroLaterThreadPageResult::Completed,
                 ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+                ThreadFinishResult::ProcessDoneFinalTaskDecisionPending => {
+                    // Libc has not yet selected nonfinal disposal or final callbacks.
+                    TicketZeroLaterThreadPageResult::Retained
+                },
                 ThreadFinishResult::NotAttached | ThreadFinishResult::AlreadyFinished => {
                     TicketZeroLaterThreadPageResult::Unavailable
                 }
@@ -12333,6 +13152,10 @@ pub fn ticket_zero_later_thread_mapped_regular_owner_exit_reclaim(
             match finish_current_thread_after_user_destructors() {
                 ThreadFinishResult::Finished => TicketZeroLaterThreadPageResult::AllocationFailed,
                 ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+                ThreadFinishResult::ProcessDoneFinalTaskDecisionPending => {
+                    // Libc has not yet selected nonfinal disposal or final callbacks.
+                    TicketZeroLaterThreadPageResult::Retained
+                },
                 ThreadFinishResult::NotAttached | ThreadFinishResult::AlreadyFinished => {
                     TicketZeroLaterThreadPageResult::Unavailable
                 }
@@ -12565,7 +13388,9 @@ pub fn attach_current_thread() -> ThreadAttachResult {
     match slot.state {
         ThreadLifecycleState::Attached => return ThreadAttachResult::AlreadyAttached,
         ThreadLifecycleState::Finished => return ThreadAttachResult::Finished,
-        ThreadLifecycleState::Retained => return ThreadAttachResult::Retained,
+        ThreadLifecycleState::Retained | ThreadLifecycleState::ProcessDoneRetained => {
+            return ThreadAttachResult::Retained;
+        }
         ThreadLifecycleState::Fresh => {}
     }
 
@@ -12685,7 +13510,7 @@ pub fn reinitialize_current_thread_native_owner_for_final_process_exit(
             ThreadLifecycleState::Fresh | ThreadLifecycleState::Attached => {
                 return ThreadFinalProcessExitOwnerResult::Invalid;
             }
-            ThreadLifecycleState::Retained => {
+            ThreadLifecycleState::Retained | ThreadLifecycleState::ProcessDoneRetained => {
                 return ThreadFinalProcessExitOwnerResult::Retained;
             }
         }
@@ -12752,6 +13577,22 @@ pub fn reinitialize_current_thread_native_owner_for_final_process_exit(
 #[doc(hidden)]
 #[cfg(not(test))]
 pub fn finish_current_thread_after_user_destructors() -> ThreadFinishResult {
+    if RUNTIME_PROCESS.logical_process_done_is_complete() {
+        let slot = current_thread_slot();
+        return match slot.state {
+            ThreadLifecycleState::Attached
+                if slot.native_persistent_owner_installed || slot.attachment.is_some() =>
+            {
+                ThreadFinishResult::ProcessDoneFinalTaskDecisionPending
+            }
+            ThreadLifecycleState::Fresh => ThreadFinishResult::NotAttached,
+            ThreadLifecycleState::Finished => ThreadFinishResult::AlreadyFinished,
+            ThreadLifecycleState::Retained | ThreadLifecycleState::ProcessDoneRetained => {
+                ThreadFinishResult::Retained
+            }
+            ThreadLifecycleState::Attached => ThreadFinishResult::Retained,
+        };
+    }
     if current_thread_has_native_persistent_owner() {
         return finish_current_thread_native_persistent_owner_after_user_destructors();
     }
@@ -12762,6 +13603,22 @@ pub fn finish_current_thread_after_user_destructors() -> ThreadFinishResult {
 #[doc(hidden)]
 #[cfg(test)]
 pub fn finish_current_thread_after_user_destructors() -> ThreadFinishResult {
+    if RUNTIME_PROCESS.logical_process_done_is_complete() {
+        let slot = current_thread_slot();
+        return match slot.state {
+            ThreadLifecycleState::Attached
+                if slot.native_persistent_owner_installed || slot.attachment.is_some() =>
+            {
+                ThreadFinishResult::ProcessDoneFinalTaskDecisionPending
+            }
+            ThreadLifecycleState::Fresh => ThreadFinishResult::NotAttached,
+            ThreadLifecycleState::Finished => ThreadFinishResult::AlreadyFinished,
+            ThreadLifecycleState::Retained | ThreadLifecycleState::ProcessDoneRetained => {
+                ThreadFinishResult::Retained
+            }
+            ThreadLifecycleState::Attached => ThreadFinishResult::Retained,
+        };
+    }
     if current_thread_has_native_persistent_owner() {
         return finish_current_thread_native_persistent_owner_after_user_destructors();
     }
@@ -12771,7 +13628,9 @@ pub fn finish_current_thread_after_user_destructors() -> ThreadFinishResult {
         match slot.state {
             ThreadLifecycleState::Fresh => return ThreadFinishResult::NotAttached,
             ThreadLifecycleState::Finished => return ThreadFinishResult::AlreadyFinished,
-            ThreadLifecycleState::Retained => return ThreadFinishResult::Retained,
+            ThreadLifecycleState::Retained | ThreadLifecycleState::ProcessDoneRetained => {
+                return ThreadFinishResult::Retained;
+            }
             ThreadLifecycleState::Attached => slot.page_owner.take(),
         }
     };
@@ -12790,6 +13649,97 @@ pub fn finish_current_thread_after_user_destructors() -> ThreadFinishResult {
 #[doc(hidden)]
 pub fn finish_current_thread_native_after_user_destructors() -> ThreadFinishResult {
     finish_current_thread_after_user_destructors()
+}
+
+/// Completes the nonfinal half of a selected post-process-done worker exit.
+///
+/// Libc calls this only after its locked task registry proved that another
+/// task remains. The cell transition deliberately leaves the source
+/// TLD/Theap/PageMap/metadata and `ThreadRegistrationLease` intact in the
+/// departing ELF TLS image; it releases only this runtime's admission claim.
+/// A final task must not call this: it keeps the same active owner through
+/// ordinary-exit callbacks and `_exit`.
+#[doc(hidden)]
+pub fn retain_current_thread_native_owner_after_process_done_nonfinal() -> bool {
+    if !RUNTIME_PROCESS.logical_process_done_is_complete() {
+        return false;
+    }
+    #[cfg(feature = "native-runtime-test-audit")]
+    let source_retained_identity = match current_thread_identity() {
+        Some(identity) => identity,
+        None => return false,
+    };
+    let native_owner_installed = {
+        let slot = current_thread_slot();
+        if slot.state != ThreadLifecycleState::Attached || slot.admission.is_none() {
+            return false;
+        }
+        if slot.native_persistent_owner_installed {
+            if slot.attachment.is_some() {
+                return false;
+            }
+            true
+        } else {
+            slot.attachment
+                .as_ref()
+                .is_some_and(MainHeapThreadAttachment::permits_process_done_source_retention)
+        }
+    };
+
+    if native_owner_installed {
+        let permitted = match current_thread_native_persistent_owner_cell()
+            .with_owner(|owner| owner.get_mut().permits_process_done_source_retention())
+        {
+            Ok(permitted) => permitted,
+            Err(_) => false,
+        };
+        if !permitted {
+            return false;
+        }
+        if current_thread_native_persistent_owner_cell()
+            .retain_source_state_after_process_done()
+            .is_err()
+        {
+            return false;
+        }
+    } else {
+        let attachment = current_thread_slot()
+            .attachment
+            .take()
+            .expect("the checked post-process-done attachment remains installed");
+        // `MainHeapThreadAttachment` intentionally has no destructor that
+        // clears roots, list membership, or metadata. Do not run a generic
+        // Rust Drop here: pinned C leaves the source image live after deleting
+        // its automatic pthread key.
+        core::mem::forget(attachment);
+    }
+
+    let admission = current_thread_slot()
+        .admission
+        .take()
+        .expect("the checked post-process-done worker retains its admission");
+    match RUNTIME_FORK_ADMISSION.release_later_thread(admission) {
+        Ok(()) => {
+            let slot = current_thread_slot();
+            slot.native_persistent_owner_installed = false;
+            slot.state = ThreadLifecycleState::ProcessDoneRetained;
+            #[cfg(feature = "native-runtime-test-audit")]
+            RUNTIME_PROCESS.note_process_done_retained_worker(source_retained_identity);
+            true
+        }
+        Err(admission) => {
+            // The source state has intentionally outlived Rust's wrapper, so
+            // this impossible accounting failure cannot recreate a normal
+            // attachment. Keep the global lifecycle terminal and retain the
+            // unmatched linear claim rather than describing a false finish.
+            core::mem::forget(admission);
+            let slot = current_thread_slot();
+            slot.native_persistent_owner_installed = false;
+            slot.state = ThreadLifecycleState::Retained;
+            RUNTIME_PROCESS.retain();
+            false
+        }
+    }
 }
 /// Consumes the continuously stored native owner at the source destructor
 /// boundary. No client ledger participates: the lower engine follows source
@@ -12843,7 +13793,9 @@ fn finish_current_thread_no_page_after_user_destructors() -> ThreadFinishResult 
     match slot.state {
         ThreadLifecycleState::Fresh => return ThreadFinishResult::NotAttached,
         ThreadLifecycleState::Finished => return ThreadFinishResult::AlreadyFinished,
-        ThreadLifecycleState::Retained => return ThreadFinishResult::Retained,
+        ThreadLifecycleState::Retained | ThreadLifecycleState::ProcessDoneRetained => {
+            return ThreadFinishResult::Retained;
+        }
         ThreadLifecycleState::Attached => {}
     }
     let Some(admission) = slot.admission.take() else {

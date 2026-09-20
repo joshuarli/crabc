@@ -2588,12 +2588,47 @@ this is neither the local TLS slot mechanism nor Rust's
 `allocator-process-done-pthread-key` receipt records the relevant late-worker
 effect: after explicit `mi_process_done()`, a newly created worker can still
 initialize a Theap and allocate, but its natural return has no source
-pthread-key destructor. Its joined page/owner remains live and later frees are
-remote publications. The existing Rust bridge cannot emulate that by skipping
-its explicit worker finish: its pinned compiler-TLS owner and later-thread
-admission must be released before libc unmaps worker TLS. Process-shutdown
-integration remains unimplemented until it has a typed retained-lifetime
-mapping for that observable source boundary.
+pthread-key destructor. Its joined page/owner remains live and a later thread
+can publish a foreign free. The existing Rust bridge cannot emulate that by
+skipping its explicit worker finish: its pinned compiler-TLS owner and
+later-thread admission must be released before libc unmaps worker TLS. The
+selected owned-static bridge now gives that source boundary a deliberately
+narrow logical mapping: its private `.fini_array` entry calls
+`finish_selected_default_release_process_after_user_atexit` after ordinary
+`atexit` and before the later executable-destructor observation, clears the
+cached default Theap, and records process-done once. It retains physical
+process backing, PageMap routing, and live allocations. A post-done nonfinal
+worker releases only its runtime admission while retaining its source
+TLD/Theap/page metadata; a final worker retains its active owner through its
+ordinary-exit callbacks. The native-shadow probe makes this local-free contract
+observable under a recycled raw TP: a normal two-client 12288-byte pair and a
+256-byte aligned pair both retain a clear interior marker (`reserved == 42`),
+while a separate two-client `posix_memalign(8192, 10240)` pair has a 20480-byte
+source block, `reserved == 25`, and an adjusted second client with the
+page-wide interior marker set. It frees that adjusted client through the old
+retained Theap first, then checks the surviving sibling and source retirement
+tail. The pinned release-C diagnostic uses the same request pairs and
+`src/alloc-aligned.c:69-155` control path; the clear 256-byte case is therefore
+not accepted as interior-pointer coverage. The full-page source oracle remains
+a separate ordinary `allow_page_abandon` observation. This is not physical
+allocator destruction, dynamic TLS-key shutdown, a claim about source
+stats/destroy/general nonempty-cache branches, or a default-backend or
+public-support claim.
+
+The same selected x86 static slice now maps pinned
+`src/page.c:359-388` and `src/arena.c:1304-1355` for a source-default normal
+Theap (`allow_page_abandon == true`, `page_full_retain == 2`).
+`PageAllocatorEngine::move_regular_to_full` separates that source-policy arm
+from the private page/arena capability validation: an invalid selected shape
+is retained as a lifecycle failure and never changes policy to the
+non-abandoning `BIN_FULL` algorithm. After the source false collection, an
+all-free page uses the existing linked release tail, a partial page becomes
+mapped-abandoned, and an initially full page becomes unmapped-abandoned. The
+unown loop may consume a late remote free; it does not reinterpret an
+initially full page as mapped. Focused initial and later static-owner tests
+cover those three outcomes and the late-publication boundary. Nonselected,
+dynamic, intentionally non-abandoning, and paused AArch64 sessions retain
+their prior transition.
 
 Run `./scripts/dev-x86_64.sh libc-native-mimalloc-shadow-pthread-teardown` for the source-led pinned-musl
 reference plus the real static candidate. The fixture covers normal return,
@@ -2610,11 +2645,12 @@ dynamic-runtime, or process-shutdown claim.
 
 After the bootstrapped task calls `pthread_exit`, the same fixture releases its
 remaining worker twice through the existing pipe handshake: once for normal
-return and once for explicit `pthread_exit`. Each final-worker `atexit`
-callback allocates a new block and frees a block that the same worker left live
-before its completed native thread finish. This proves the fresh callback owner
-and the abandoned PageMap free route for that old pointer; it does not claim
-general main-thread or process allocator teardown.
+return and once for explicit `pthread_exit`. Before logical process done, each
+final-worker `atexit` callback proves the fresh callback owner by allocating a
+new block and freeing the block its worker left live. After logical process
+done, the distinct pending-final-task path instead preserves that same active
+owner through the callback. Neither path claims general main-thread or process
+allocator teardown.
 
 The next integrated wave must:
 

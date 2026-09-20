@@ -33,7 +33,7 @@ require_tool() {
 }
 
 require_native_linux_x86_64
-for tool in cargo chmod grep mkdir mkfifo mktemp nm readelf rm sleep timeout; do
+for tool in cargo chmod cmp grep mkdir mkfifo mktemp nm objcopy python3 readelf rm rustup sleep timeout; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -146,6 +146,31 @@ run_final_worker_atexit_probe() {
         run_final_worker_atexit_probe_inner "$1" "$2" "$3" "$work_dir"
 }
 
+run_normal_main_return_process_done_probe() {
+    local executable="$1"
+    local label="$2"
+    local expected_trace="$3"
+    local stderr_log="$4"
+    local expected_log="$stderr_log.expected"
+    local status
+
+    if timeout "$EXECUTION_TIMEOUT" "$executable" 2>"$stderr_log"; then
+        status=0
+    else
+        status=$?
+    fi
+    if [ "$status" -ne 0 ]; then
+        printf '%s normal-main-return status: %s\n' "$label" "$status" >&2
+        return "$status"
+    fi
+    printf '%s' "$expected_trace" >"$expected_log"
+    if ! cmp -s "$expected_log" "$stderr_log"; then
+        printf '%s normal-main-return trace mismatch (expected %s)\n' \
+            "$label" "$expected_trace" >&2
+        return 1
+    fi
+}
+
 run_final_worker_atexit_probe_regressions() {
     local early_zero="$work_dir/final-worker-early-zero"
     local post_release_stall="$work_dir/final-worker-post-release-stall"
@@ -221,11 +246,16 @@ archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-reference"
 candidate="$work_dir/native-shadow-candidate"
 internal_allocator_override_candidate="$work_dir/native-shadow-internal-allocator-override-candidate"
+normal_main_reference="$work_dir/musl-normal-main-return-reference"
+normal_main_candidate="$work_dir/native-shadow-normal-main-return-candidate"
 archive_symbols="$work_dir/archive-symbols"
 candidate_symbols="$work_dir/candidate-symbols"
 candidate_dynamic="$work_dir/candidate-dynamic"
 candidate_program_headers="$work_dir/candidate-program-headers"
 candidate_relocations="$work_dir/candidate-relocations"
+normal_main_archive_symbols="$work_dir/normal-main-archive-symbols"
+crt_output="$work_dir/owned-crt"
+fixture_crt1="$work_dir/fixture-crt1.o"
 
 # `cargo rustc -- -Ztls-model=initial-exec` would reach only crabc-libc, while
 # this selected archive also links crabc-mimalloc. Keep the model target-wide
@@ -235,6 +265,25 @@ candidate_relocations="$work_dir/candidate-relocations"
 readonly NATIVE_ENCODED_RUSTFLAGS='-Ztls-model=initial-exec'
 
 cd "$ROOT_DIR"
+# The native Docker image need not expose LLVM utilities globally. Use the
+# pinned Rust toolchain component selected by the ordinary CRT evidence lane,
+# so this fixture verifies the same owned executable init/fini bridge.
+if command -v llvm-objdump >/dev/null 2>&1; then
+    crt_llvm_objdump="$(command -v llvm-objdump)"
+else
+    crt_rust_sysroot="$(rustup run nightly-2026-07-24 rustc --print sysroot)"
+    crt_llvm_objdump="$crt_rust_sysroot/lib/rustlib/x86_64-unknown-linux-musl/bin/llvm-objdump"
+fi
+[ -x "$crt_llvm_objdump" ] || fail "requires the pinned Rust llvm-objdump component"
+python3 crt/build_x86_64.py --out-dir "$crt_output" --llvm-objdump "$crt_llvm_objdump"
+[ -f "$crt_output/crt1.o" ] && [ -f "$crt_output/crti.o" ] && [ -f "$crt_output/crtn.o" ] ||
+    fail "owned CRT builder did not emit the executable lifecycle bridge"
+# Keep the fixture's pre-start rejection `_start`, but link the actual owned
+# CRT's init/fini array walkers. Renaming only the CRT entry leaves its
+# executable lifecycle symbols and linker-boundary adapters unchanged.
+objcopy --redefine-sym _start=__crabc_x86_fixture_unused_owned_crt_start \
+    "$crt_output/crt1.o" "$fixture_crt1"
+
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin \
     -fno-stack-protector -I"$ROOT_DIR/include" \
     compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_probe.c \
@@ -256,6 +305,13 @@ CARGO_ENCODED_RUSTFLAGS="$NATIVE_ENCODED_RUSTFLAGS" CARGO_TARGET_DIR="$cargo_tar
 nm -A --defined-only "$archive" >"$archive_symbols"
 for symbol in __crabc_x86_native_mimalloc_shadow_v1 \
     __crabc_x86_native_mimalloc_active_later_thread_count_test_audit \
+    __crabc_x86_native_mimalloc_process_done_test_audit \
+    __crabc_x86_native_mimalloc_process_done_retained_worker_matches_current_thread_test_audit \
+    __crabc_x86_native_mimalloc_process_done_retained_local_preflight_test_audit \
+    __crabc_x86_native_mimalloc_current_local_page_test_audit \
+    __crabc_x86_native_mimalloc_current_local_page_same_test_audit \
+    __crabc_x86_native_mimalloc_process_done_retained_local_page_test_audit \
+    __crabc_x86_native_mimalloc_process_done_retained_page_retired_test_audit \
     __crabc_x86_static_tls_bootstrap __libc_start_main \
     pthread_create pthread_exit pthread_join pthread_cancel pthread_testcancel \
     pthread_key_create pthread_key_delete pthread_getspecific pthread_setspecific \
@@ -269,9 +325,10 @@ done
     -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin \
     -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined -Wl,--gc-sections \
     -Wl,-u,__crabc_x86_native_mimalloc_shadow_v1 \
+    "$fixture_crt1" "$crt_output/crti.o" \
     compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_probe.c \
     compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_start.S \
-    "$archive" -o "$candidate"
+    "$archive" "$crt_output/crtn.o" -o "$candidate"
 
 # A caller-owned strong malloc returns null. `pthread_atfork` is an existing
 # private allocator client, so successful registration proves its node uses
@@ -282,9 +339,10 @@ done
     -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start \
     -Wl,--no-undefined -Wl,--gc-sections \
     -Wl,-u,__crabc_x86_native_mimalloc_shadow_v1 \
+    "$fixture_crt1" "$crt_output/crti.o" \
     compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_probe.c \
     compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_start.S \
-    "$archive" -o "$internal_allocator_override_candidate"
+    "$archive" "$crt_output/crtn.o" -o "$internal_allocator_override_candidate"
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
@@ -292,6 +350,13 @@ readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 for symbol in __crabc_x86_native_mimalloc_shadow_v1 \
     __crabc_x86_native_mimalloc_active_later_thread_count_test_audit \
+    __crabc_x86_native_mimalloc_process_done_test_audit \
+    __crabc_x86_native_mimalloc_process_done_retained_worker_matches_current_thread_test_audit \
+    __crabc_x86_native_mimalloc_process_done_retained_local_preflight_test_audit \
+    __crabc_x86_native_mimalloc_current_local_page_test_audit \
+    __crabc_x86_native_mimalloc_current_local_page_same_test_audit \
+    __crabc_x86_native_mimalloc_process_done_retained_local_page_test_audit \
+    __crabc_x86_native_mimalloc_process_done_retained_page_retired_test_audit \
     __crabc_x86_static_tls_bootstrap __libc_start_main \
     pthread_create pthread_exit pthread_join pthread_cancel pthread_testcancel \
     pthread_key_create pthread_key_delete pthread_getspecific pthread_setspecific \
@@ -330,6 +395,52 @@ if ! run_final_worker_atexit_probe "$candidate" "selected native candidate expli
 fi
 if ! timeout "$EXECUTION_TIMEOUT" "$internal_allocator_override_candidate"; then
     fail "native internal allocation selected a strong public malloc replacement"
+fi
+
+# `main` return takes static_startup::exit rather than the final-worker path.
+# The reference records application `atexit` then application fini (`AD`). The
+# selected candidate inserts the suppressed pinned process destructor in the
+# same CRT-owned fini-array walk, so its feature-only receipt is `AMD`: user
+# atexit, native logical process-done bridge, then a later app destructor. All
+# three callbacks allocate and free; the initial task's fatal TSD destructor
+# remains uncalled on ordinary process exit.
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
+    -DCRABC_NATIVE_MIMALLOC_SHADOW_NORMAL_MAIN_RETURN_PROBE \
+    -pthread -fno-builtin -fno-stack-protector -I"$ROOT_DIR/include" \
+    compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_probe.c \
+    -o "$normal_main_reference"
+if ! run_normal_main_return_process_done_probe "$normal_main_reference" \
+    "pinned-musl normal-main-return reference" AD \
+    "$work_dir/normal-main-reference.stderr"; then
+    fail "pinned-musl normal-main-return execution failed"
+fi
+
+CARGO_ENCODED_RUSTFLAGS="$NATIVE_ENCODED_RUSTFLAGS" CARGO_TARGET_DIR="$cargo_target" \
+    cargo rustc --locked -p crabc-libc --lib \
+    --target x86_64-unknown-linux-musl \
+    --features x86-owned-static-runtime,native-mimalloc-shadow,native-mimalloc-shadow-process-done-exit-test-audit -- \
+    -C relocation-model=static -C code-model=small -C panic=abort
+[ -f "$archive" ] || fail "cargo did not emit the normal-main selected static libc archive"
+nm -A --defined-only "$archive" >"$normal_main_archive_symbols"
+grep -Eq "[[:space:]][TW][[:space:]]__crabc_x86_native_mimalloc_process_done_fini_array_test_audit$" \
+    "$normal_main_archive_symbols" ||
+    fail "normal-main selected archive lacks its fini-array receipt"
+
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
+    -DCRABC_NATIVE_MIMALLOC_SHADOW_NORMAL_MAIN_RETURN_PROBE \
+    -DCRABC_NATIVE_MIMALLOC_SHADOW_PROCESS_DONE_EXIT_TEST_AUDIT \
+    -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie \
+    -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start \
+    -Wl,--no-undefined -Wl,--gc-sections \
+    -Wl,-u,__crabc_x86_native_mimalloc_shadow_v1 \
+    "$fixture_crt1" "$crt_output/crti.o" \
+    compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_probe.c \
+    compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_start.S \
+    "$archive" "$crt_output/crtn.o" -o "$normal_main_candidate"
+if ! run_normal_main_return_process_done_probe "$normal_main_candidate" \
+    "selected native normal-main-return candidate" AMD \
+    "$work_dir/normal-main-candidate.stderr"; then
+    fail "selected native normal-main-return execution failed"
 fi
 
 printf 'x86 selected native-mimalloc pthread teardown: PASS\n'

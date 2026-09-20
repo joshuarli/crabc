@@ -195,6 +195,12 @@ native-mimalloc-shadow-test-audit = [
     "native-mimalloc-shadow",
     "crabc-mimalloc/native-runtime-test-audit",
 ]
+# Private normal-main process-finalization order receipt. This is limited to
+# the selected owned-static fixture and stays absent from ordinary native
+# shadow archives.
+native-mimalloc-shadow-process-done-exit-test-audit = [
+    "native-mimalloc-shadow-test-audit",
+]
 
 [target.'cfg(all(target_os = "linux", target_arch = "aarch64", target_endian = "little"))'.dependencies]
 crabc-core = { path = "../crabc-core" }

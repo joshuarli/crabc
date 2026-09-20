@@ -350,6 +350,32 @@ pub(crate) unsafe trait TheapPageSession: theap_page_session_sealed::Sealed {
     /// Static and completed drain sessions remain ordinary engine owners.
     #[inline]
     fn permits_ordinary_page_operations(&self) -> bool { true }
+    /// Authorizes only a captured pointer-first local free over a source
+    /// Theap retained after process shutdown. This does not authorize fresh
+    /// allocation, collection, attachment, or a general ordinary engine
+    /// operation. The sealed default is false so a session must opt in to
+    /// that one narrowed source transition explicitly.
+    #[inline]
+    fn permits_retained_source_local_free(&self) -> bool { false }
+    /// Selects the pinned selected-x86 static-main source full-page branch.
+    ///
+    /// This is policy, not a safety proof: once selected, an invalid page or
+    /// unavailable static-main capability must terminally retain the current
+    /// transition instead of silently taking the non-abandoning `BIN_FULL`
+    /// algorithm. The sealed default keeps paused and intentionally
+    /// non-abandoning sessions on their existing source transition.
+    #[inline]
+    fn selects_selected_main_arena_source_full_abandonment(&self) -> bool { false }
+    /// Authorizes mutation of the selected x86 static-main source
+    /// full-page-abandonment branch after it was selected by
+    /// [`Self::selects_selected_main_arena_source_full_abandonment`].
+    ///
+    /// The caller still validates the pinned default-release Theap options,
+    /// regular arena page shape, and matching static-main bitmap/count
+    /// capability. A false result is a terminal retained failure, never an
+    /// alternate source policy.
+    #[inline]
+    fn permits_selected_main_arena_ordinary_full_abandonment(&self) -> bool { false }
     fn queue(&self, bin: usize) -> Option<&PageQueue>;
     fn queue_mut(&mut self, bin: usize) -> Option<&mut PageQueue>;
     fn direct_page(&self, index: usize) -> Option<*mut Page>;

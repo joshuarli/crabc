@@ -8,12 +8,17 @@
 //! registry, and it does not touch mimalloc's internal dynamic TLS-key
 //! registry or process shutdown.
 
-use core::ffi::c_char;
+use core::ffi::{c_char, c_int, c_void};
+#[cfg(feature = "native-mimalloc-shadow-process-done-exit-test-audit")]
+use core::sync::atomic::{AtomicU8, Ordering};
 
 use crabc_mimalloc::__crabc_runtime::{
-    RuntimeStderrOutput, ThreadAttachResult, ThreadFinalProcessExitOwnerResult, ThreadFinishResult,
+    RuntimeStderrOutput, SelectedProcessDoneResult, ThreadAttachResult,
+    ThreadFinalProcessExitOwnerResult, ThreadFinishResult,
     attach_current_thread, finish_current_thread_native_after_user_destructors,
+    finish_selected_default_release_process_after_user_atexit,
     initialize_process, prepare_native_later_thread_arena, process_is_active,
+    retain_current_thread_native_owner_after_process_done_nonfinal,
     reinitialize_current_thread_native_owner_for_final_process_exit,
 };
 
@@ -28,6 +33,20 @@ pub(super) enum SelectedWorkerNativeAttach {
     Attached,
     Rejected,
     Fatal,
+}
+
+/// Result retained by libc from the source-ordered worker finish to its
+/// locked final-task decision.
+///
+/// Pinned Unix process shutdown deletes mimalloc's private automatic-done key.
+/// A post-done worker therefore cannot run the ordinary Rust source teardown
+/// before libc knows whether that same task will execute `atexit`: a nonfinal
+/// task discards only its Rust wrapper before ELF TLS release, while a final
+/// task keeps this active owner for the callbacks and `_exit` path.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(super) enum SelectedWorkerNativeFinish {
+    Finished,
+    ProcessDoneFinalTaskDecisionPending,
 }
 
 /// Send a source diagnostic fragment to the selected permanent `stderr`.
@@ -87,8 +106,22 @@ pub(super) fn attach_selected_worker() -> SelectedWorkerNativeAttach {
 /// contradicts the creation handshake. Do not return toward ELF TLS release
 /// with that unresolved state: the runtime's retained native-owner path has
 /// already fail-stopped, and every other contradiction terminates here too.
-pub(super) unsafe fn finish_selected_worker_after_user_destructors() {
-    if finish_current_thread_native_after_user_destructors() != ThreadFinishResult::Finished {
+pub(super) unsafe fn finish_selected_worker_after_user_destructors() -> SelectedWorkerNativeFinish {
+    match finish_current_thread_native_after_user_destructors() {
+        ThreadFinishResult::Finished => SelectedWorkerNativeFinish::Finished,
+        ThreadFinishResult::ProcessDoneFinalTaskDecisionPending => {
+            SelectedWorkerNativeFinish::ProcessDoneFinalTaskDecisionPending
+        }
+        ThreadFinishResult::NotAttached
+        | ThreadFinishResult::AlreadyFinished
+        | ThreadFinishResult::Retained => super::immediate_termination::_Exit(134),
+    }
+}
+
+/// Retire one post-process-done worker only after libc's final-task decision
+/// proved another task remains.
+pub(super) unsafe fn retain_selected_nonfinal_worker_after_process_done() {
+    if !retain_current_thread_native_owner_after_process_done_nonfinal() {
         super::immediate_termination::_Exit(134);
     }
 }
@@ -109,6 +142,65 @@ pub(super) unsafe fn reinitialize_selected_final_worker_for_ordinary_exit() {
     }
 }
 
+/// Runs the selected default-release logical process finalizer from the
+/// replacement `.fini_array` entry.
+///
+/// Pinned `src/prim/prim.c:30-46` installs `_mi_auto_process_done` through a
+/// compiler destructor. The selected C producer defines
+/// `MI_PRIM_HAS_PROCESS_ATTACH=1`, suppressing that exact entry. This bridge
+/// is its owned-static replacement: the CRT first drains ordinary `atexit`,
+/// then its already-registered executable `fini` walks `.fini_array` in
+/// reverse. The bridge leaves physical process backing and live-allocation
+/// routing intact; the following `_exit` owns process termination.
+unsafe extern "C" fn finish_selected_process_in_fini_array() {
+    #[cfg(feature = "native-mimalloc-shadow-process-done-exit-test-audit")]
+    if unsafe { crabc_x86_64_native_mimalloc_shadow_normal_main_user_atexit_observed() } != 1 {
+        super::immediate_termination::_Exit(134);
+    }
+    match finish_selected_default_release_process_after_user_atexit() {
+        SelectedProcessDoneResult::Completed => {
+            #[cfg(feature = "native-mimalloc-shadow-process-done-exit-test-audit")]
+            {
+                PROCESS_DONE_FINI_ARRAY_TEST_AUDIT.store(1, Ordering::Release);
+                unsafe { crabc_x86_64_native_mimalloc_shadow_normal_main_process_done_fini_observed() };
+            }
+        }
+        SelectedProcessDoneResult::AlreadyCompleted => {}
+        SelectedProcessDoneResult::Retained => super::immediate_termination::_Exit(134),
+    }
+}
+
+// This module is pulled into the selected static archive by startup and worker
+// lifecycle calls. `#[used]` preserves the private replacement entry through
+// that archive member until the CRT-owned executable fini walk reaches it.
+// It has no public ABI spelling and is absent with the default C allocator.
+#[used]
+#[linkage = "internal"]
+#[link_section = ".fini_array"]
+static SELECTED_PROCESS_DONE_FINI_ARRAY: unsafe extern "C" fn() =
+    finish_selected_process_in_fini_array;
+
+/// Test-only receipt for the selected `.fini_array` process finalizer.
+///
+/// The normal-main fixture's application destructor reads only this scalar
+/// after it has allocated and freed a block. The feature-gated symbol proves
+/// that user `atexit` preceded this bridge and this bridge preceded that
+/// later application destructor without publishing allocator state.
+#[cfg(feature = "native-mimalloc-shadow-process-done-exit-test-audit")]
+static PROCESS_DONE_FINI_ARRAY_TEST_AUDIT: AtomicU8 = AtomicU8::new(0);
+
+#[cfg(feature = "native-mimalloc-shadow-process-done-exit-test-audit")]
+unsafe extern "C" {
+    fn crabc_x86_64_native_mimalloc_shadow_normal_main_user_atexit_observed() -> c_int;
+    fn crabc_x86_64_native_mimalloc_shadow_normal_main_process_done_fini_observed();
+}
+
+#[cfg(feature = "native-mimalloc-shadow-process-done-exit-test-audit")]
+#[no_mangle]
+pub extern "C" fn __crabc_x86_native_mimalloc_process_done_fini_array_test_audit() -> c_int {
+    c_int::from(PROCESS_DONE_FINI_ARRAY_TEST_AUDIT.load(Ordering::Acquire))
+}
+
 /// Test-only observation of the engine's active later-worker admission count.
 ///
 /// This is a fixture bridge, not a libc interface. It stays absent from an
@@ -119,4 +211,277 @@ pub(super) unsafe fn reinitialize_selected_final_worker_for_ordinary_exit() {
 pub extern "C" fn __crabc_x86_native_mimalloc_active_later_thread_count_test_audit() -> usize {
     crabc_mimalloc::__crabc_runtime::native_runtime_fork_admission_test_audit()
         .active_later_thread_count
+}
+
+/// Fixture-only scalar for the raw same-TP local-free dispatch condition.
+#[cfg(feature = "native-mimalloc-shadow-test-audit")]
+#[no_mangle]
+pub extern "C" fn __crabc_x86_native_mimalloc_process_done_retained_worker_matches_current_thread_test_audit(
+) -> i32 {
+    i32::from(
+        crabc_mimalloc::__crabc_runtime::native_runtime_process_done_retained_worker_matches_current_thread_test_audit(),
+    )
+}
+
+/// Fixture-only nonmutating retained-source local-free preflight.
+///
+/// It returns a diagnostic scalar only; the C fixture still calls ordinary
+/// `free`, which is the production pointer-first adapter under test.
+///
+/// # Safety
+///
+/// `block` must be one exact, still-live native client of the attached worker.
+/// The caller must serialize this scalar read with free, allocation,
+/// collection, PageMap, queue, and owner mutation.
+#[cfg(feature = "native-mimalloc-shadow-test-audit")]
+#[no_mangle]
+pub unsafe extern "C" fn __crabc_x86_native_mimalloc_process_done_retained_local_preflight_test_audit(
+    block: *mut c_void,
+) -> i32 {
+    let Some(block) = core::ptr::NonNull::new(block.cast::<u8>()) else {
+        return -1;
+    };
+    // SAFETY: the fixture passes one exact still-live native client before
+    // its ordinary `free`; the crabc-mimalloc hook observes it without
+    // mutating its source PageMap, Theap, queue, or free-list state.
+    unsafe {
+        crabc_mimalloc::__crabc_runtime::native_runtime_process_done_retained_local_preflight_test_audit(block)
+    }
+}
+
+/// Fixture-only phase observation for one live retained old-Theap sibling.
+///
+/// The C layout deliberately contains scalar facts only. It neither exposes
+/// the source page, its queue, nor the retained Theap address.
+#[cfg(feature = "native-mimalloc-shadow-test-audit")]
+#[repr(C)]
+pub struct ProcessDoneRetainedLocalPageAudit {
+    pub in_full: usize,
+    pub has_interior_pointers: usize,
+    pub used: usize,
+    pub capacity: usize,
+    pub reserved: usize,
+    pub regular_queue_count: usize,
+    pub full_queue_count: usize,
+    pub theap_page_count: usize,
+    pub member_link_coherent: usize,
+}
+
+/// Fixture-only scalar snapshot of the attached worker's current local page.
+///
+/// It lets the C probe fill the source-reserved count before it retains the
+/// worker, so an on-demand capacity extension cannot be mistaken for a full
+/// page. The output has the same scalar-only layout as the retained snapshot.
+///
+/// # Safety
+///
+/// `block` must be an exact live native client of the attached worker and
+/// `output` must name writable `ProcessDoneRetainedLocalPageAudit` storage.
+/// The caller must serialize the copy with source page, queue, and owner
+/// mutation and must not retain any source-derived state from its scalar fields.
+#[cfg(feature = "native-mimalloc-shadow-test-audit")]
+#[no_mangle]
+pub unsafe extern "C" fn __crabc_x86_native_mimalloc_current_local_page_test_audit(
+    block: *mut c_void,
+    output: *mut ProcessDoneRetainedLocalPageAudit,
+) -> i32 {
+    let Some(block) = core::ptr::NonNull::new(block.cast::<u8>()) else {
+        return -1;
+    };
+    let Some(output) = core::ptr::NonNull::new(output) else {
+        return -1;
+    };
+    // SAFETY: the fixture's attached worker owns this exact live client and
+    // serializes the scalar read against every source page/queue mutation.
+    let audit = match unsafe {
+        crabc_mimalloc::__crabc_runtime::native_runtime_current_local_page_test_audit(block)
+    } {
+        Ok(audit) => audit,
+        Err(error) => return error,
+    };
+    // SAFETY: `output` is the C fixture's writable stack object and this
+    // scalar copy retains no Rust projection or source capability.
+    unsafe {
+        output.as_ptr().write(ProcessDoneRetainedLocalPageAudit {
+            in_full: audit.in_full,
+            has_interior_pointers: audit.has_interior_pointers,
+            used: audit.used,
+            capacity: audit.capacity,
+            reserved: audit.reserved,
+            regular_queue_count: audit.regular_queue_count,
+            full_queue_count: audit.full_queue_count,
+            theap_page_count: audit.theap_page_count,
+            member_link_coherent: audit.member_link_coherent,
+        });
+    }
+    1
+}
+
+/// Fixture-only same-page predicate for two current attached-worker clients.
+///
+/// It returns only a scalar relation: one means the source page is the same,
+/// zero means distinct, and negatives reject the exact-live/current-owner
+/// preconditions. No page identity or allocator capability crosses this C
+/// test boundary.
+///
+/// # Safety
+///
+/// Both pointers must be exact, still-live native clients of the current
+/// attached worker. The caller must serialize the PageMap/owner relation with
+/// frees, allocation, collection, and worker teardown for the whole call.
+#[cfg(feature = "native-mimalloc-shadow-test-audit")]
+#[no_mangle]
+pub unsafe extern "C" fn __crabc_x86_native_mimalloc_current_local_page_same_test_audit(
+    first: *mut c_void,
+    second: *mut c_void,
+) -> i32 {
+    let Some(first) = core::ptr::NonNull::new(first.cast::<u8>()) else {
+        return -1;
+    };
+    let Some(second) = core::ptr::NonNull::new(second.cast::<u8>()) else {
+        return -1;
+    };
+    // SAFETY: the fixture passes two exact live current-worker clients and
+    // serializes the source PageMap while the relation is copied.
+    match unsafe {
+        crabc_mimalloc::__crabc_runtime::native_runtime_current_local_page_same_test_audit(
+            first, second,
+        )
+    } {
+        Ok(same) => i32::from(same),
+        Err(error) => error,
+    }
+}
+
+/// Fixture-only scalar snapshot for the exact retained local-free page.
+///
+/// The output pointer is written only after all live-client, retained-owner,
+/// and source queue prerequisites were checked. The fixture owns the
+/// quiescent boundary and uses the fields only to compare pinned source state.
+///
+/// # Safety
+///
+/// `block` must be one exact still-live client of the retained old-Theap page
+/// and `output` must name writable scalar-audit storage. The caller must hold
+/// the fixture's quiescent boundary against free, allocation, collection,
+/// PageMap, queue, and retained-owner mutation for the complete copy.
+#[cfg(feature = "native-mimalloc-shadow-test-audit")]
+#[no_mangle]
+pub unsafe extern "C" fn __crabc_x86_native_mimalloc_process_done_retained_local_page_test_audit(
+    block: *mut c_void,
+    output: *mut ProcessDoneRetainedLocalPageAudit,
+) -> i32 {
+    let Some(block) = core::ptr::NonNull::new(block.cast::<u8>()) else {
+        return -1;
+    };
+    let Some(output) = core::ptr::NonNull::new(output) else {
+        return -1;
+    };
+    // SAFETY: the fixture supplies one exact still-live client and serializes
+    // this copy against source page/queue mutation. The returned structure is
+    // scalar-only and cannot act as a retained source capability.
+    let audit = match unsafe {
+        crabc_mimalloc::__crabc_runtime::native_runtime_process_done_retained_local_page_test_audit(block)
+    } {
+        Ok(audit) => audit,
+        Err(error) => return error,
+    };
+    // SAFETY: the nonnull output names the C fixture's writable stack object;
+    // no Rust reference escapes this one scalar copy.
+    unsafe {
+        output.as_ptr().write(ProcessDoneRetainedLocalPageAudit {
+            in_full: audit.in_full,
+            has_interior_pointers: audit.has_interior_pointers,
+            used: audit.used,
+            capacity: audit.capacity,
+            reserved: audit.reserved,
+            regular_queue_count: audit.regular_queue_count,
+            full_queue_count: audit.full_queue_count,
+            theap_page_count: audit.theap_page_count,
+            member_link_coherent: audit.member_link_coherent,
+        });
+    }
+    1
+}
+
+/// Fixture-only source-retirement observation after a retained page's final
+/// local free.
+///
+/// # Safety
+///
+/// `former_client` must be the exact former client from the immediately
+/// preceding retained local free. `expected_reserved` must be the pinned-C
+/// release geometry: 42 for the normal/256-byte pair or 25 for the interior
+/// pair. The caller must exclude allocation, collection, PageMap registration
+/// or unregistration, queue/owner mutation, and page reuse until this check
+/// completes; the pointer is geometry only and must never be dereferenced.
+#[cfg(feature = "native-mimalloc-shadow-test-audit")]
+#[no_mangle]
+pub unsafe extern "C" fn __crabc_x86_native_mimalloc_process_done_retained_page_retired_test_audit(
+    former_client: *mut c_void,
+    expected_reserved: usize,
+) -> i32 {
+    let Some(former_client) = core::ptr::NonNull::new(former_client.cast::<u8>()) else {
+        return 0;
+    };
+    // SAFETY: the fixture uses this former client solely as PageMap geometry
+    // immediately after its final local free, before a source collection or
+    // allocation can reuse its retired page.
+    i32::from(unsafe {
+        crabc_mimalloc::__crabc_runtime::native_runtime_process_done_retained_page_retired_test_audit(
+            former_client,
+            expected_reserved,
+        )
+    })
+}
+
+/// Fixture-only request for the selected logical process-done boundary.
+///
+/// The native-shadow pthread probe invokes this while its initial task is
+/// still alive, then creates sequential workers and observes source-retained
+/// page/free behavior. This is absent from ordinary selected archives and is
+/// not a public `mi_process_done` replacement.
+#[cfg(feature = "native-mimalloc-shadow-test-audit")]
+#[no_mangle]
+pub extern "C" fn __crabc_x86_native_mimalloc_process_done_test_audit() -> i32 {
+    match finish_selected_default_release_process_after_user_atexit() {
+        SelectedProcessDoneResult::Completed => 0,
+        SelectedProcessDoneResult::AlreadyCompleted => 1,
+        SelectedProcessDoneResult::Retained => -1,
+    }
+}
+
+/// Fixture-only retained-source observation for the post-process-done worker.
+///
+/// The C probe supplies its exact still-live native clients after `join`; the
+/// Rust audit returns only a pass/fail scalar for the retained TLD/Theap/page
+/// relation and pointer-first remote publication. No address or allocator
+/// capability crosses this bridge.
+///
+/// # Safety
+///
+/// `second`, and `first` when nonnull, must be exact live native clients from
+/// the retained worker page. The caller must serialize the audited PageMap,
+/// owner, queue, and remote-publication state with frees, allocation,
+/// collection, registration, and worker teardown for the complete call.
+#[cfg(feature = "native-mimalloc-shadow-test-audit")]
+#[no_mangle]
+pub unsafe extern "C" fn __crabc_x86_native_mimalloc_process_done_retained_page_test_audit(
+    first: *mut c_void,
+    second: *mut c_void,
+    remote_free_published: i32,
+) -> i32 {
+    let first = core::ptr::NonNull::new(first.cast::<u8>());
+    let Some(second) = core::ptr::NonNull::new(second.cast::<u8>()) else {
+        return 0;
+    };
+    // SAFETY: the fixture documents that `second`, and `first` when present,
+    // are exact live native clients at a joined-worker quiescent boundary.
+    i32::from(unsafe {
+        crabc_mimalloc::__crabc_runtime::native_runtime_process_done_retained_live_page_test_audit(
+            first,
+            second,
+            remote_free_published != 0,
+        )
+    })
 }

@@ -3,6 +3,9 @@
  * libc owns the real initial TLS setup and the normal process startup. The
  * one pre-start call deliberately happens after that TLS setup but before
  * __libc_start_main so the fixture can exercise Inactive attach rejection.
+ * The fixture links the owned CRT's real executable init/fini bridges and
+ * passes both to libc; this preserves the ordinary application array order
+ * while keeping the fixture's own `_start` for that pre-start check.
  */
 
     .text
@@ -25,8 +28,8 @@ _start:
     lea main(%rip), %rdi
     mov (%r12), %esi
     lea 8(%r12), %rdx
-    xor %ecx, %ecx
-    xor %r8d, %r8d
+    lea __crabc_x86_64_executable_init(%rip), %rcx
+    lea __crabc_x86_64_executable_fini(%rip), %r8
     xor %r9d, %r9d
     call __libc_start_main
     ud2

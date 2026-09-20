@@ -547,6 +547,9 @@ pub(crate) enum PersistentCompilerTlsOwnerError {
     Retained,
     /// The owner completed its one-way compiler-TLS teardown transition.
     TornDown,
+    /// Process shutdown retained source state after discarding only its Rust
+    /// wrapper. This terminal state is not a completed teardown.
+    SourceRetainedAfterProcessDone,
 }
 
 /// Failure to install and initialize one inline compiler-TLS owner payload.
@@ -591,7 +594,10 @@ pub(crate) enum PersistentCompilerTlsOwnerTeardownError<E> {
 /// stay mechanically owned by this cell instead of being destroyed at ELF TLS
 /// reclamation without source teardown. The runtime must therefore resolve a
 /// retained payload through teardown before the native thread returns; this
-/// generic cell cannot make thread return safe by itself.
+/// generic cell cannot make thread return safe by itself. Its narrowly named
+/// process-done transition is different: the integrating owner must prove
+/// that it retains the source state and abandons this wrapper in the departing
+/// TLS image without running its destructor.
 #[must_use = "a persistent compiler-TLS owner cell must complete source teardown or retain its exact payload"]
 pub(crate) struct PersistentCompilerTlsOwnerCell<T> {
     state: Cell<PersistentCompilerTlsOwnerState>,
@@ -781,6 +787,40 @@ impl<T> PersistentCompilerTlsOwnerCell<T> {
         }
     }
 
+    /// Abandons a Rust wrapper after source process shutdown disabled its
+    /// automatic per-thread destructor.
+    ///
+    /// This deliberately does **not** execute the source teardown represented
+    /// by [`Self::teardown`]. The caller must prove that the selected process
+    /// shutdown retains the TLD/Theap/PageMap/metadata state for the process
+    /// lifetime, and that this nonfinal worker is about to lose its ELF TLS
+    /// image. It deliberately does not run `T`'s `Drop`: an unfinished page
+    /// engine's Drop would latch a Rust terminal state even though pinned C
+    /// retained this source owner after deleting its automatic pthread key.
+    /// The cell remains pinned and terminal; the selected owner payload is
+    /// `Unpin`, but this `!Unpin` cell is never moved or made reusable.
+    ///
+    /// A borrowed, exiting, retained, or already torn-down cell is rejected
+    /// before mutation. No payload destructor runs, so there is no post-state
+    /// recovery path that could falsely publish `TornDown`.
+    pub(crate) fn retain_source_state_after_process_done(
+        self: Pin<&Self>,
+    ) -> Result<(), PersistentCompilerTlsOwnerError> {
+        let cell = self.get_ref();
+        if cell.state.get() != PersistentCompilerTlsOwnerState::Active {
+            return Err(Self::access_error_for_state(cell.state.get()));
+        }
+        cell.ensure_current_thread()?;
+        cell.state.set(PersistentCompilerTlsOwnerState::Exiting);
+        // No source state or Rust wrapper may be dropped here. The concrete
+        // owner remains initialized in the departing TLS allocation, but its
+        // terminal cell state prevents every later projection or destructor.
+        cell.thread.set(None);
+        cell.state
+            .set(PersistentCompilerTlsOwnerState::SourceRetainedAfterProcessDone);
+        Ok(())
+    }
+
     /// Makes a completed compiler-TLS owner cell available for one explicitly
     /// proved fresh logical owner.
     ///
@@ -846,6 +886,9 @@ impl<T> PersistentCompilerTlsOwnerCell<T> {
             PersistentCompilerTlsOwnerState::TornDown => {
                 PersistentCompilerTlsOwnerError::TornDown
             }
+            PersistentCompilerTlsOwnerState::SourceRetainedAfterProcessDone => {
+                PersistentCompilerTlsOwnerError::SourceRetainedAfterProcessDone
+            }
         }
     }
 
@@ -874,6 +917,9 @@ impl<T> PersistentCompilerTlsOwnerCell<T> {
             }
             PersistentCompilerTlsOwnerState::TornDown => {
                 PersistentCompilerTlsOwnerError::TornDown
+            }
+            PersistentCompilerTlsOwnerState::SourceRetainedAfterProcessDone => {
+                PersistentCompilerTlsOwnerError::SourceRetainedAfterProcessDone
             }
         }
     }
@@ -2680,6 +2726,60 @@ mod tests {
         })
         .join()
         .expect("the completed compiler-TLS owner reinitialization test completes");
+    }
+
+    #[test]
+    fn persistent_compiler_tls_owner_process_done_retains_source_payload_without_drop_or_rearm() {
+        struct Owner {
+            drops: Arc<AtomicUsize>,
+        }
+
+        impl Drop for Owner {
+            fn drop(&mut self) {
+                self.drops.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        thread::spawn(|| {
+            let drops = Arc::new(AtomicUsize::new(0));
+            let cell = core::pin::pin!(PersistentCompilerTlsOwnerCell::new());
+            let cell = cell.as_ref();
+            assert!(cell
+                .initialize(
+                    Owner {
+                        drops: Arc::clone(&drops),
+                    },
+                    |_| Ok::<(), ()>(()),
+                )
+                .is_ok());
+
+            assert_eq!(cell.retain_source_state_after_process_done(), Ok(()));
+            assert_eq!(
+                cell.state_for_test(),
+                PersistentCompilerTlsOwnerState::SourceRetainedAfterProcessDone
+            );
+            assert_eq!(drops.load(Ordering::Relaxed), 0);
+            assert_eq!(
+                cell.with_owner(|_| ()),
+                Err(PersistentCompilerTlsOwnerError::SourceRetainedAfterProcessDone),
+                "process-done retention never republishes the departed owner"
+            );
+            assert_eq!(
+                cell.teardown(|_| Ok::<(), ()>(())),
+                Err(PersistentCompilerTlsOwnerTeardownError::State(
+                    PersistentCompilerTlsOwnerError::SourceRetainedAfterProcessDone
+                )),
+                "the source-retained image cannot be reclassified as ordinary teardown"
+            );
+            assert_eq!(
+                cell.prepare_for_reinitialization_after_completed_teardown(),
+                Err(PersistentCompilerTlsOwnerError::SourceRetainedAfterProcessDone),
+                "only a completed Drop permits a new logical owner at this cell address"
+            );
+            assert_eq!(drops.load(Ordering::Relaxed), 0);
+        })
+        .join()
+        .expect("the process-done compiler-TLS owner retention test completes");
     }
 
     #[test]

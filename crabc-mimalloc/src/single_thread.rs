@@ -174,7 +174,7 @@ use crate::os_page::{
 use crate::page;
 use crate::page_map::PageMap;
 use crate::process_page_map::{
-    LiveAllocationPointer, MappedAbandonedClaimCompletion, MappedAbandonedClaimedRange,
+    LiveAllocationPageState, LiveAllocationPointer, MappedAbandonedClaimCompletion, MappedAbandonedClaimedRange,
     MappedAbandonedClaimOutcome, MappedAbandonedClaimRetainedRange,
     ProcessPageMapMutationLease,
 };
@@ -197,7 +197,7 @@ use crate::types::page_queue::{
     page_queue_enqueue_from_full_metadata,
     page_queue_enqueue_from_metadata, page_queue_push_metadata,
     page_queue_move_to_front_metadata, page_queue_push_at_end_metadata,
-    page_queue_remove_metadata,
+    page_queue_has_member_link_coherence, page_queue_remove_metadata,
 };
 
 const RETIRE_CYCLES: u8 = 16;
@@ -2155,6 +2155,28 @@ impl<'owner> RemoteFreeProducer<'owner> {
     pub(crate) fn cancel(self) -> NonNull<u8> {
         self.client_block
     }
+
+    /// Defers this one test producer until the source abandoned-owner unown
+    /// loop has observed its empty remote head.
+    ///
+    /// This consumes the same linear client transfer as [`Self::publish`],
+    /// but the existing `abandoned` test seam performs the publication at its
+    /// one C-visible interleaving point. The surrounding test must keep the
+    /// source engine and page live until it runs that transition.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn defer_to_owner_exit_unown(
+        self,
+    ) -> remote_free::OwnerExitUnownRemoteFreeInjection {
+        // SAFETY: this consumes the exact current producer/block pair. The
+        // receiving test seam owns the sole later source publication.
+        unsafe {
+            remote_free::OwnerExitUnownRemoteFreeInjection::from_live_producer(
+                self.producer,
+                self.canonical_block,
+            )
+        }
+    }
 }
 
 /// Two distinct linear remote-free transfers sharing one stopped owner. This
@@ -2893,6 +2915,290 @@ pub(crate) struct OwnerLocalMainHeapPageSession {
     _not_send_or_sync: PhantomData<*mut ()>,
 }
 
+/// A one-operation local source view after pinned process shutdown deleted the
+/// Unix automatic thread-done key.
+///
+/// A departing worker's compiler-TLS wrapper is gone at this point, but the
+/// selected C process-done branch deliberately leaves its metadata TLD, Theap
+/// queues, page registrations, and live clients process-resident.  Pinned
+/// `free.c` still chooses local free solely from `page->xthread_id ^ TP`; it
+/// does not compare that page's Theap with a fresh worker's default Theap.
+/// This session therefore borrows the *page's retained source Theap* for one
+/// pointer-first free and cannot allocate, attach, drain, or resurrect the
+/// former TLS owner.
+///
+/// Its raw Theap projection is valid only while the held
+/// [`LiveAllocationPointer`] keeps the page and its source metadata live. The
+/// complete source-queue invariant is inherited from that live publication
+/// through the nonfinal no-teardown transition; the constructor checks only
+/// the exact page's queue selection and immediate links before ordinary field
+/// changes. A failed consistency check is a pre-mutation refusal.
+pub(crate) struct SourceRetainedTheapSession {
+    theap: NonNull<Theap>,
+    thread: LiveThreadId,
+    _not_send_or_sync: PhantomData<*mut ()>,
+}
+
+/// Why a pointer-first retained-source local operation cannot start.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SourceRetainedTheapSessionError {
+    NotLiveAssociated,
+    MissingTheap,
+    InvalidTheap,
+    FullTheapCanAbandon,
+    MissingQueue,
+    QueueLinkIncoherent,
+}
+
+impl SourceRetainedTheapSession {
+    /// Forms the sole retained source view from one already-captured local
+    /// allocation classification.
+    ///
+    /// # Safety
+    ///
+    /// `allocation` must be the still-live PageMap observation for the
+    /// current exact client. The selected process-done boundary must have
+    /// retained the page's metadata allocation after the old compiler TLS
+    /// image became unavailable. The live allocation carries the complete
+    /// initialized source-queue invariant established at page publication,
+    /// and the nonfinal process-done transition changes neither queue links
+    /// nor ownership. No old owner, new owner, or collector may concurrently
+    /// mutate this source Theap's ordinary queue/page fields.
+    pub(crate) unsafe fn from_live_local_allocation(
+        allocation: &LiveAllocationPointer,
+        current: LiveThreadId,
+    ) -> Result<Self, SourceRetainedTheapSessionError> {
+        if allocation.page_state() != LiveAllocationPageState::LiveOwnerAssociated
+            || !allocation.is_associated_with(current)
+        {
+            return Err(SourceRetainedTheapSessionError::NotLiveAssociated);
+        }
+        let page = allocation.page();
+        // SAFETY: the live allocation holds this page and its immutable
+        // source owner pointer stable through the following preflight.
+        let page_ref = unsafe { page.as_ref() };
+        let theap = NonNull::new(page_ref.theap())
+            .ok_or(SourceRetainedTheapSessionError::MissingTheap)?;
+        // SAFETY: source process-done retention deliberately keeps this
+        // metadata allocation alive; the caller's one-operation exclusion
+        // prevents an aliasing mutable projection while this validates it.
+        let theap_ref = unsafe { theap.as_ref() };
+        if !theap_ref.is_initialized() || !theap_ref.matches_thread(current) {
+            return Err(SourceRetainedTheapSessionError::InvalidTheap);
+        }
+        if page_is_in_full(page_ref) && theap_ref.allows_page_abandon() {
+            // `_mi_page_unfull` is valid only in the source's non-abandoning
+            // mode. A full retained page with a different mode needs its own
+            // lifecycle owner rather than a speculative local queue move.
+            return Err(SourceRetainedTheapSessionError::FullTheapCanAbandon);
+        }
+        let bin = page_queue_bin(page_ref).ok_or(SourceRetainedTheapSessionError::MissingQueue)?;
+        let queue = theap_ref
+            .queue(bin)
+            .ok_or(SourceRetainedTheapSessionError::MissingQueue)?;
+        // SAFETY: the inherited complete source-queue invariant proves
+        // membership. This constant-time endpoint/neighbor observation only
+        // rejects immediate incoherence before mutation; it is not a scan or
+        // a standalone reconstruction of that invariant.
+        if !unsafe { page_queue_has_member_link_coherence(queue, page) } {
+            return Err(SourceRetainedTheapSessionError::QueueLinkIncoherent);
+        }
+        Ok(Self {
+            theap,
+            thread: current,
+            _not_send_or_sync: PhantomData,
+        })
+    }
+
+    #[inline]
+    fn theap(&self) -> &Theap {
+        // SAFETY: construction proved the retained metadata allocation and
+        // its matching live page owner; this private session is synchronous.
+        unsafe { self.theap.as_ref() }
+    }
+
+    #[inline]
+    fn theap_mut(&mut self) -> &mut Theap {
+        // SAFETY: the constructor's retained-source exclusion gives this
+        // session the one ordinary mutable Theap projection for the call.
+        unsafe { self.theap.as_mut() }
+    }
+
+    #[inline]
+    fn thread_sequence(&self) -> Option<usize> { self.theap().thread_sequence() }
+}
+
+impl theap_page_session_sealed::Sealed for SourceRetainedTheapSession {}
+
+// SAFETY: construction validates one retained initialized Theap, its matching
+// current TP identity, and membership of the captured page in that Theap's
+// queue before any ordinary mutation. This free-only session has no fresh
+// publication operation and survives only one synchronous engine call.
+unsafe impl TheapPageSession for SourceRetainedTheapSession {
+    #[inline]
+    fn theap(&self) -> &Theap { Self::theap(self) }
+
+    #[inline]
+    fn thread_id(&self) -> Option<LiveThreadId> { Some(self.thread) }
+
+    #[inline]
+    fn permits_ordinary_page_operations(&self) -> bool { false }
+
+    #[inline]
+    fn permits_retained_source_local_free(&self) -> bool { true }
+
+    #[inline]
+    fn queue(&self, bin: usize) -> Option<&crate::types::PageQueue> {
+        self.theap().queue(bin)
+    }
+
+    #[inline]
+    fn queue_mut(&mut self, bin: usize) -> Option<&mut crate::types::PageQueue> {
+        self.theap_mut().queue_mut(bin)
+    }
+
+    #[inline]
+    fn direct_page(&self, index: usize) -> Option<*mut Page> {
+        self.theap().direct_page(index)
+    }
+
+    #[inline]
+    fn set_direct_page(&mut self, index: usize, page: *mut Page) -> bool {
+        self.theap_mut().set_direct_page(index, page)
+    }
+
+    #[inline]
+    fn note_page_added(&mut self) { self.theap_mut().note_page_added() }
+
+    #[inline]
+    fn note_page_removed(&mut self) -> bool { self.theap_mut().note_page_removed() }
+
+    #[inline]
+    fn ensure_arena_pages(&mut self, _arena: &ArenaView<'_>, _config: crate::os::MemoryConfig) -> bool {
+        false
+    }
+
+    #[inline]
+    fn set_arena_page(&mut self, _arena: &ArenaView<'_>, _memory: MemoryId) -> bool { false }
+
+    #[inline]
+    fn clear_arena_page(&mut self, arena: &ArenaView<'_>, memory: MemoryId) -> bool {
+        let Some(arena_memory) = memory.arena_memory() else {
+            return false;
+        };
+        if arena_memory.arena != core::ptr::from_ref(arena.arena()).cast_mut() {
+            return false;
+        }
+        // The generic source release has already removed the exact PageMap
+        // span before this old-Theap `pages_main` clear.
+        unsafe { arena.pages() }
+            .and_then(|pages| pages.clear_range(arena_memory.slice_index as usize, 1))
+            == Some(true)
+    }
+
+    #[inline]
+    unsafe fn publish_fresh_page(
+        &mut self,
+        _metadata: NonNull<Page>,
+        _block_size: usize,
+        _page_offset: usize,
+        _reserved: u16,
+        _slice_pcommitted: u16,
+        _free_is_zero: bool,
+        _memid: MemoryId,
+    ) -> Option<NonNull<Page>> {
+        None
+    }
+
+    #[inline]
+    fn retire_page(&mut self, page: &mut Page) -> Option<MemoryId> { page.retire_exclusive() }
+
+    #[inline]
+    fn retired_bounds(&self) -> (usize, usize) { self.theap().retired_bounds() }
+
+    #[inline]
+    fn note_retired_bin(&mut self, bin: usize) -> bool {
+        self.theap_mut().note_retired_bin(bin)
+    }
+
+    #[inline]
+    fn reset_retired_bounds(&mut self) { self.theap_mut().reset_retired_bounds() }
+
+    #[inline]
+    fn retain_unfinished_os_release(
+        &mut self,
+        owner: OsAlignedPageOwner,
+    ) -> Result<(), OsAlignedPageOwner> {
+        Err(owner)
+    }
+
+    #[inline]
+    fn latch_unfinished_page_engine(&mut self) {
+        // A failed retained-source free is terminalized by the caller's
+        // process owner. There is deliberately no TLS wrapper or attachment
+        // here to poison, drop, or detach.
+    }
+}
+
+impl<'arena, 'map> PageAllocatorEngine<'arena, 'map, SourceRetainedTheapSession> {
+    /// Activates a free-only engine over one retained source Theap.
+    ///
+    /// # Safety
+    ///
+    /// `session` must have been formed from the same held live allocation
+    /// that the caller will consume immediately. `arena` and `page_map` must
+    /// be the process-published pair for that allocation. No fresh page,
+    /// source attachment, or owner-wrapper operation is valid through this
+    /// engine.
+    pub(crate) unsafe fn activate_source_retained_local_free(
+        session: SourceRetainedTheapSession,
+        arena: ArenaView<'arena>,
+        requested_arena: ArenaId,
+        page_map: &'map PageMap,
+    ) -> Option<Self> {
+        let thread_sequence = session.thread_sequence()?;
+        Some(Self {
+            session,
+            arena,
+            arena_lifetime: PhantomData,
+            requested_arena,
+            page_map,
+            thread_sequence,
+            pending_os_release: None,
+            collection_poison: None,
+            page_commit_poison: false,
+            #[cfg(test)]
+            forced_collect_retired_call_count: 0,
+            #[cfg(test)]
+            page_free_collect_failure_once: PageCollectFailureInjection::None,
+            #[cfg(test)]
+            page_release_after_page_map_unregister_failure_once: false,
+            #[cfg(test)]
+            aggregate_abandon_after_queue_detach_failure_once: false,
+            #[cfg(test)]
+            last_page_to_full: None,
+            #[cfg(test)]
+            page_commit_on_demand: false,
+            #[cfg(test)]
+            page_area_commit_lease: None,
+            shutdown_complete: false,
+        })
+    }
+
+    /// Disarms a successfully completed retained-source local free.
+    ///
+    /// This only suppresses the temporary engine's conservative Rust `Drop`;
+    /// it does not release the retained TLD, Theap, registration, or a source
+    /// queue. A failed free leaves its process boundary terminal instead.
+    pub(crate) fn finish_source_retained_local_free(mut self) -> Result<(), Self> {
+        if self.is_captured_local_free_unavailable() || self.pending_os_release.is_some() {
+            return Err(self);
+        }
+        self.shutdown_complete = true;
+        Ok(())
+    }
+}
+
 impl OwnerLocalMainHeapPageSession {
     fn new(session: &MainHeapThreadPageSession<'_, '_>) -> Self {
         Self {
@@ -3054,6 +3360,18 @@ unsafe impl TheapPageSession for OwnerLocalMainHeapPageSession {
     fn theap(&self) -> &Theap { self.active().theap() }
     #[inline]
     fn thread_id(&self) -> Option<LiveThreadId> { self.active().thread_id() }
+    #[cfg(target_arch = "x86_64")]
+    #[inline]
+    fn selects_selected_main_arena_source_full_abandonment(&self) -> bool {
+        self.active()
+            .selects_selected_main_arena_source_full_abandonment()
+    }
+    #[cfg(target_arch = "x86_64")]
+    #[inline]
+    fn permits_selected_main_arena_ordinary_full_abandonment(&self) -> bool {
+        self.active()
+            .permits_selected_main_arena_ordinary_full_abandonment()
+    }
     #[inline]
     fn queue(&self, bin: usize) -> Option<&crate::types::PageQueue> {
         self.active().queue(bin)
@@ -36954,6 +37272,73 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let base = unsafe { Page::canonical_remote_block_for_live_client_at(page, block) }
             .ok_or(FreeError::InvalidBlock(FreeListError::InvalidBlock))?;
 
+        // SAFETY: the checked PageMap lookup and canonical recovery above
+        // retain this exact current page/client through the local transition.
+        unsafe { self.free_captured_local_page(page, base) }
+    }
+
+    /// Consumes one already captured local PageMap classification without a
+    /// second lookup.
+    ///
+    /// The post-process-done same-TP path uses this to preserve pinned
+    /// `mi_free_nonnull` ordering: it captured the page, canonical block,
+    /// `xthread_id`, and flags once, then selected its retained source Theap.
+    /// It must not replace that proof with a fresh current-owner lookup.
+    ///
+    /// # Safety
+    ///
+    /// `allocation` must remain the exact live local source classification
+    /// through this call. The session must already prove that its Theap is the
+    /// allocation page's source Theap and exclusively owns its ordinary page
+    /// and queue fields.
+    pub(crate) unsafe fn free_captured_live_allocation(
+        &mut self,
+        allocation: LiveAllocationPointer,
+    ) -> Result<(), FreeError> {
+        if self.is_captured_local_free_unavailable() {
+            return Err(FreeError::CollectionPoisoned);
+        }
+        let page = allocation.page();
+        // SAFETY: the held allocation keeps this metadata initialized for the
+        // one source free operation.
+        let page_ref = unsafe { page.as_ref() };
+        if !self.owns_page(page_ref)
+            || allocation.block_size() != page_ref.block_size()
+            || allocation.has_interior_pointers() != page_ref.has_interior_pointers()
+        {
+            return Err(FreeError::ForeignPage);
+        }
+        // SAFETY: the allocation's single PageMap observation froze this
+        // exact canonical block before the source local dispatch.
+        unsafe { self.free_captured_local_page(page, allocation.canonical_block()) }
+    }
+
+    /// Whether one held pointer-first classification belongs to this active
+    /// source session.
+    ///
+    /// The post-process-done dispatch uses this before it selects the
+    /// retained-old-Theap adapter. An active initial or final worker keeps
+    /// its ordinary session whenever its page already belongs to it; raw TP
+    /// reuse alone is not permission to bypass that owner.
+    #[inline]
+    pub(crate) fn owns_captured_live_allocation(
+        &self,
+        allocation: &LiveAllocationPointer,
+    ) -> bool {
+        // SAFETY: the held pointer-first observation keeps the page metadata
+        // initialized for this comparison and gives no mutable projection.
+        self.owns_page(unsafe { allocation.page().as_ref() })
+    }
+
+    /// Applies the source local free after its page and canonical block have
+    /// already been validated by either ordinary PageMap lookup or one held
+    /// pointer-first allocation classification.
+    unsafe fn free_captured_local_page(
+        &mut self,
+        page: NonNull<Page>,
+        base: NonNull<u8>,
+    ) -> Result<(), FreeError> {
+
         let (in_full, queue_bin, regular_bin) = {
             // SAFETY: this read-only fact snapshot ends before the owner raw-
             // mutates ordinary local-list fields. Live producer accesses are
@@ -37463,6 +37848,30 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // from crossing the already-cleared regular heap-key boundary.
         self.has_retained_collection_poison()
             || !self.session.permits_ordinary_page_operations()
+    }
+
+    /// The retained process-done session may perform exactly one captured
+    /// source local free, but it intentionally remains unavailable to the
+    /// general allocation/collection/attach engine surface. Other sessions
+    /// use their ordinary authorization unchanged.
+    #[inline]
+    fn is_captured_local_free_unavailable(&self) -> bool {
+        self.has_retained_collection_poison()
+            || !(self.session.permits_ordinary_page_operations()
+                || self.session.permits_retained_source_local_free())
+    }
+
+    /// Checks whether process shutdown may retain this live engine without
+    /// invoking its ordinary collect-abandon destructor path.
+    ///
+    /// This is not a teardown or recovery operation. Pinned
+    /// `mi_process_done_once` may delete the automatic pthread destructor
+    /// while a worker owns pages, but it cannot make a poisoned collection or
+    /// pending OS release disappear. The caller leaves this engine in the
+    /// departing compiler-TLS image without running `Drop`.
+    #[inline]
+    pub(crate) fn permits_process_done_source_retention(&self) -> bool {
+        !self.is_collection_poisoned() && self.pending_os_release.is_none()
     }
 
     /// Records the first owner-side collection failure before its caller can
@@ -38185,19 +38594,30 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         self.update_direct_cache(bin);
     }
 
-    /// Ports the non-abandoning `mi_page_to_full` branch.
+    /// Ports the selected regular-page full transition.
     ///
-    /// After enqueue it must run a second false-force collection immediately,
-    /// even though a prior generic scan may already have collected. The source
-    /// permits a producer between those points. Post-enqueue collection errors
-    /// retain the full-queue page and popped block in permanent allocator
-    /// poison; callers must not retry as OOM or select a fresh page.
+    /// A selected x86 static-main arena owner follows the source abandoning
+    /// branch. Its validation is intentionally inside that selected branch:
+    /// an unavailable static-main capability or invalid page image terminally
+    /// retains the transition instead of changing source policy to
+    /// non-abandoning `BIN_FULL`. False collection precedes the all-free
+    /// decision and queue detach; a nonempty page is then mapped-abandoned or
+    /// left unmapped while full. Every unselected session keeps the existing
+    /// non-abandoning full-queue branch, including its second false collection
+    /// after enqueue.
     fn move_regular_to_full(
         &mut self,
         bin: usize,
         page: *mut Page,
         popped_block: Option<NonNull<u8>>,
     ) -> Result<(), PageToFullError> {
+        let page = NonNull::new(page).ok_or(PageToFullError::Lifecycle)?;
+        if self
+            .session
+            .selects_selected_main_arena_source_full_abandonment()
+        {
+            return self.abandon_selected_main_arena_regular_page_from_full(bin, page, popped_block);
+        }
         let regular = match self.session.queue_mut(bin) {
             Some(queue) => queue as *mut _,
             None => return Err(PageToFullError::Lifecycle),
@@ -38206,7 +38626,6 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             Some(queue) => queue as *mut _,
             None => return Err(PageToFullError::Lifecycle),
         };
-        let page = NonNull::new(page).ok_or(PageToFullError::Lifecycle)?;
         // SAFETY: `page` is one exhausted selected regular page and the
         // session exclusively owns both disjoint queue records and its links.
         unsafe { page_queue_enqueue_from_metadata(&mut *full, &mut *regular, page.as_ptr()) };
@@ -38218,6 +38637,160 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         match self.page_free_collect_false(page) {
             Ok(()) => Ok(()),
             Err(error) => {
+                self.retain_page_collect_poison(page, error, popped_block);
+                Err(PageToFullError::Collection(error))
+            }
+        }
+    }
+
+    /// Exercises one already-selected regular full-page transition in a
+    /// focused source test.
+    ///
+    /// The caller must have reached the exact `mi_page_queue_find_free_ex`
+    /// point after its retain-count policy selected this regular page: it is
+    /// queue-linked, nonexpandable, and has no immediate local block. A
+    /// joined producer may already have published remote blocks; the normal
+    /// transition performs its first false collection itself. This is not an
+    /// allocation escape hatch and exists only to make the selected initial
+    /// and later owner seams prove C's partial/all-free outcomes without
+    /// changing their option image.
+    #[cfg(test)]
+    pub(crate) fn test_move_selected_regular_full_after_source_scan(
+        &mut self,
+        bin: usize,
+        page: NonNull<Page>,
+    ) -> bool {
+        self.move_regular_to_full(bin, page.as_ptr(), None).is_ok()
+    }
+
+    /// Validates the selected static-main ordinary source full-page form.
+    ///
+    /// Policy has already selected `page.c:mi_page_to_full`'s abandoning arm.
+    /// This only proves that the present Rust page/arena capability can carry
+    /// that arm. It must never choose the non-abandoning arm on false: callers
+    /// retain the transition before returning its explicit lifecycle failure.
+    fn selected_main_arena_regular_page_can_abandon_from_full(
+        &self,
+        bin: usize,
+        page: NonNull<Page>,
+    ) -> bool {
+        if !self
+            .session
+            .permits_selected_main_arena_ordinary_full_abandonment()
+            || !self.session.theap().allows_page_abandon()
+            || self.session.theap().page_full_retain() != 2
+            || bin >= ARENA_BIN_COUNT
+        {
+            return false;
+        }
+        // SAFETY: callers hold the unique live page-engine borrow and this
+        // is the pre-transition read of one queue-linked page. A producer can
+        // touch only the disjoint atomic remote-free projection.
+        let page = unsafe { page.as_ref() };
+        page.memid().kind() == MemoryKind::Arena
+            && matches!(
+                size_class::page_kind_for_block_size(page.block_size()),
+                Some(PageKind::Small | PageKind::Medium | PageKind::Large)
+            )
+            && !page_is_in_full(page)
+            && page.theap() == self.session.theap() as *const _ as *mut _
+    }
+
+    /// Ports the ordinary selected-main arena part of page.c full-page
+    /// abandonment. It consumes no new allocator capability: the existing
+    /// engine owns the queue/direct/count state, while
+    /// main_heap_abandoned_page mints the exact static-main arena
+    /// bitmap/count capability only for a nonfull detached page.
+    fn abandon_selected_main_arena_regular_page_from_full(
+        &mut self,
+        bin: usize,
+        page: NonNull<Page>,
+        popped_block: Option<NonNull<u8>>,
+    ) -> Result<(), PageToFullError> {
+        if !self.selected_main_arena_regular_page_can_abandon_from_full(bin, page) {
+            self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
+            return Err(PageToFullError::Collection(PageCollectError::Lifecycle));
+        }
+        if let Err(error) = self.page_free_collect_false(page) {
+            self.retain_page_collect_poison(page, error, popped_block);
+            return Err(PageToFullError::Collection(error));
+        }
+
+        // Source checks all-free before removing its current regular member.
+        // That path retains the existing queue-linked terminal release,
+        // including PageMap and selected pages_main ordering.
+        let used = unsafe { Page::owner_used_at(page) };
+        if used == 0 {
+            if self.release_page(bin, page.as_ptr()) {
+                return Ok(());
+            }
+            self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
+            return Err(PageToFullError::Collection(PageCollectError::Lifecycle));
+        }
+        let reserved = unsafe { page.as_ref() }.reserved() as usize;
+        if used > reserved {
+            self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
+            return Err(PageToFullError::Collection(PageCollectError::Lifecycle));
+        }
+
+        let regular = match self.session.queue_mut(bin) {
+            Some(queue) => queue as *mut _,
+            None => {
+                self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
+                return Err(PageToFullError::Collection(PageCollectError::Lifecycle));
+            }
+        };
+        // SAFETY: false collection above retains this source-live queue
+        // member. The engine still owns its ordinary links and source direct
+        // cache before this exact detach.
+        unsafe { page_queue_remove_metadata(&mut *regular, page.as_ptr()) };
+        self.update_direct_cache(bin);
+        if !self.session.note_page_removed() {
+            self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
+            return Err(PageToFullError::Collection(PageCollectError::Lifecycle));
+        }
+
+        let Some(map) = self.main_heap_abandoned_page(bin) else {
+            self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
+            return Err(PageToFullError::Collection(PageCollectError::Lifecycle));
+        };
+        // Pinned `_mi_arenas_page_abandon` decides mapped versus unmapped
+        // after the initial false collection, then `mi_abandoned_page_unown`
+        // may collect a late remote publication before releasing the owner
+        // bit. `abandon_after_collect` makes that same current-state decision
+        // while holding the exact map capability: an initially partial page
+        // may become Empty during unown, while an initially full page remains
+        // source-unmapped even if a late free makes it partial. Do not use a
+        // second `used` read to reinterpret that already-selected source arm.
+        // SAFETY: false collection, regular queue/direct/count detachment,
+        // and this exact static-main bitmap/count capability establish the
+        // pinned `page.c` then `arena.c` abandonment order.
+        let result = unsafe { abandoned::abandon_after_collect(page, Some(&map)) };
+        match result {
+            Ok(AbandonResult::UnownedMapped) if used < reserved => Ok(()),
+            Ok(AbandonResult::UnownedUnmapped) if used == reserved => Ok(()),
+            Ok(AbandonResult::Empty) => {
+                // A concurrent remote free may make a detached page empty
+                // in the abandoned-owner unown loop. It no longer has a
+                // queue/direct/count owner, so use the existing detached
+                // terminal tail rather than re-entering release_page.
+                if self.release_queue_detached_abandoned_arena_page(page) {
+                    Ok(())
+                } else {
+                    self.retain_page_collect_poison(
+                        page,
+                        PageCollectError::Lifecycle,
+                        popped_block,
+                    );
+                    Err(PageToFullError::Collection(PageCollectError::Lifecycle))
+                }
+            }
+            Ok(_) => {
+                self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
+                Err(PageToFullError::Collection(PageCollectError::Lifecycle))
+            }
+            Err(error) => {
+                let error = PageCollectError::Abandon(error);
                 self.retain_page_collect_poison(page, error, popped_block);
                 Err(PageToFullError::Collection(error))
             }

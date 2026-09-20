@@ -5697,6 +5697,16 @@ impl Theap {
         Some(unsafe { self.tld.as_ref()? }.numa_node())
     }
 
+    /// Copies the source `mi_tld_t::thread_seq` from this initialized Theap.
+    ///
+    /// This is an observation only.  The retained-process-done local-free
+    /// adapter uses it to preserve the old Theap's arena-release accounting;
+    /// it never turns the TLD pointer into a reusable thread owner.
+    #[inline]
+    pub(crate) fn thread_sequence(&self) -> Option<usize> {
+        Some(unsafe { self.tld.as_ref()? }.thread_sequence().get())
+    }
+
     #[inline]
     fn matches_owner(&self, owner: TheapOwner) -> bool {
         // The only constructors use `DETACHED_THREAD_LOCAL` or a pinned
