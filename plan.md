@@ -142,8 +142,16 @@ it as inline producer request contents. The original failure is retained in
 `.work/x86_64/text-family-coordination-e44d771b/execution/`. `c00d71de`
 authenticates and reads that request before product replay; both new
 regressions fail before the fix and all 17 coordinator tests pass afterward.
-The frozen checkpoint remains unchanged. A repaired-reader development replay
-does not transfer its products or receipts to the later source revision.
+The next replay exposed rich-text mapping and calendar row/mode adapter
+mismatches. `5222bff6` and `0d1f97db` repair those contracts; regressions use
+the actual public component readers, with 35 focused tests passing after the
+final repair. A full development replay now passes at
+`.work/x86_64/text-family-all-repairs-development/replay/`, retaining command,
+streams, terminal status, and an unchanged frozen source identity. It overlays
+only the repaired reader functions and writes no qualification receipt.
+The frozen checkpoint remains unchanged; this development result does not
+transfer its products or receipts to the later source revision. A new clean
+combined checkpoint and genuine family admission remain required.
 
 The checkpoint exposed a FILE-engine dispatcher argument mismatch before its
 workloads ran. `da149adf` fixes the public command's translation to the runner's
