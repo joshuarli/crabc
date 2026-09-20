@@ -233,9 +233,24 @@ each of the installed, independently rebuilt, and extracted products. Parent
 review authenticates every case receipt and log hash. The producer exits zero
 with clean, unchanged source; its qualification receipt is
 `.work/worktrees/runtime_combined_0ff8e77e/.work/x86_64/tmp/materialized-dynamic.qZe2zD/qualification.json`.
-This proves the repaired fixture through the full product gate. Same-source
-text coordination, family admission, and the remaining combined-plan gates
-are still required; family and promotion flags remain false.
+This proves the repaired fixture through the full product gate. The same clean
+checkpoint also passes the 54-cell POSIX matrix, pthread component reader,
+three-pair text component workloads, and rich text aggregate. The text
+coordinator writer and its separate public-reader replay both exit zero with
+unchanged source and authenticated raw streams. Its nine-component,
+16-capability receipt is
+`.work/worktrees/runtime_combined_0ff8e77e/.work/x86_64/text-family-coordination-0ff8e77e/receipt.json`
+(SHA-256 `dd0f2afaeaf9c0ca08b393be4f747ea0edb37ecd3ec109232fc92320d39ba1fb`).
+Writer/replay evidence is retained beneath that checkout's
+`.work/x86_64/text-family-pipeline-0ff8e77e/`, in
+`coordinator-write-prepared-output/` and `coordinator-replay/`. The earlier
+writer attempt remains recorded as a failure before collection because its
+required output parent directory was missing; creating that directory enabled
+the separately recorded successful attempt. This qualifies the text reader's
+relative-request repair against real same-source products. It establishes
+immutable component coordination only: component/family completion, promotion,
+and public-support flags remain false. Native aggregate completion, dependency
+family admission, and the remaining combined-plan gates are still required.
 
 The earlier clean `e44d771b` checkpoint has a 71-case dynamic receipt covering all
 213 executions across two independent builds and extraction, with identical
