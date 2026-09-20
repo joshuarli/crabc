@@ -10,10 +10,10 @@ complex baseline by `owned_math_fenv_all_entry_contract.py`. It includes
 fenv probe.
 
 The component reuses the existing long-double, fenv, `fdim`, decimal-exponent,
-special, and complex C observations. The two decimal producers expose their
-own record pointer and byte extent, so
-`owned_math_fenv_all_entry_driver.c` neither assumes a duplicate array bound
-nor separates an accessor call from the extent it writes. Before every probe,
+special, and complex C observations. The two decimal producers own their
+record pointers and byte extents; `owned_math_fenv_all_entry_driver.c` calls an
+accessor, retains its returned extent, and then emits that exact byte range.
+Before every probe,
 the driver sets FE_UPWARD with exactly FE_DIVBYZERO and FE_INEXACT; each ordered
 stage records a zero status and that caller environment both before and after
 the probe. `validate_owned_math_fenv_all_entry.py` requires the fixed stage
@@ -41,7 +41,8 @@ provider tool output, and objects under `.work/x86_64`.
 primary, reproduction, and extracted product pairs. It first authenticates the
 current product-preparation and dynamic-qualification inputs, then reconstructs
 all source/product/tool seals, commands, header traces, imports/providers,
-public link records, payload audits, and raw oracle comparisons. It compares
+public link records and validator stdout, payload audits, and raw oracle
+comparisons. It compares
 the ten role-object bytes across all pairs. A report from a different source
 transaction, or a single development product pair, cannot satisfy that
 three-pair receipt. Neither the runner nor the adapter completes a math family,

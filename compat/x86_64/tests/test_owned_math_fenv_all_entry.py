@@ -325,6 +325,48 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
             with self.assertRaises(receipt.ReceiptError):
                 receipt.validate_link(ROOT, {}, {"static": identity}, work, static, dynamic, "static")
 
+    def test_receipt_replays_link_validate_stdout_after_identity_rehash(self) -> None:
+        root = ROOT / ".work/x86_64/owned-math-fenv-link-validate-fixture"
+        root.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        work = root / "work"
+        work.mkdir()
+        static, dynamic = root / "static", root / "dynamic"
+        static.mkdir()
+        dynamic.mkdir()
+        expected = {"linkage": "static", "product": "replayed"}
+        link = work / "static.product-link.json"
+        link.write_text(json.dumps(expected, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+
+        def identity(path: Path) -> dict[str, object]:
+            data = path.read_bytes()
+            return {
+                "path": path.relative_to(ROOT).as_posix(),
+                "sha256": hashlib.sha256(data).hexdigest(),
+                "size": len(data),
+            }
+
+        validate_stdout = work / "static-validate.stdout"
+        validate_stdout.write_text(
+            json.dumps(expected, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8"
+        )
+        paths = {"static-validate": {"stdout": validate_stdout}}
+        with mock.patch.object(receipt.product_evidence, "validate_link", return_value=expected):
+            receipt.validate_link(ROOT, paths, {"static": identity(link)}, work, static, dynamic, "static")
+
+            # The report's command identity can be recomputed over changed
+            # bytes, but that cannot replace replay of the public reader.
+            altered = {"linkage": "static", "product": "altered"}
+            validate_stdout.write_text(
+                json.dumps(altered, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8"
+            )
+            self.assertEqual(
+                receipt.validate_identity(ROOT, identity(validate_stdout), "static validate stdout"),
+                validate_stdout,
+            )
+            with self.assertRaises(receipt.ReceiptError):
+                receipt.validate_link(ROOT, paths, {"static": identity(link)}, work, static, dynamic, "static")
+
     def test_receipt_maps_dynamic_report_linkages_to_the_public_reader(self) -> None:
         root = ROOT / ".work/x86_64/owned-math-fenv-dynamic-linkage-fixture"
         root.mkdir(parents=True, exist_ok=True)
@@ -343,8 +385,15 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
             "sha256": hashlib.sha256(data).hexdigest(),
             "size": len(data),
         }
+        validate_stdout = work / "dynamic-pie-validate.stdout"
+        validate_stdout.write_text(
+            json.dumps(expected, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8"
+        )
         with mock.patch.object(receipt.product_evidence, "validate_link", return_value=expected) as validate:
-            receipt.validate_link(ROOT, {}, {"dynamic-pie": identity}, work, static, dynamic, "dynamic-pie")
+            receipt.validate_link(
+                ROOT, {"dynamic-pie-validate": {"stdout": validate_stdout}},
+                {"dynamic-pie": identity}, work, static, dynamic, "dynamic-pie",
+            )
         validate.assert_called_once_with(
             dynamic, work / "workload.o", work / "dynamic-pie",
             Path(str(work / "dynamic-pie") + ".crabc-link.json"), "pie",

@@ -276,6 +276,12 @@ def validate_link(root: Path, paths: dict[str, dict[str, Path]], links: dict[str
         product, work / "workload.o", executable, receipt, public_linkage
     )
     require(family.same_json(read(link_record), expected_record), f"{linkage} public link evidence differs")
+    encoded = json.dumps(expected_record, sort_keys=True, separators=(",", ":")) + "\n"
+    try:
+        validate_stdout = paths[f"{linkage}-validate"]["stdout"].read_text(encoding="utf-8")
+    except (KeyError, OSError) as error:
+        raise ReceiptError(f"{linkage} retained link validation stdout is unavailable") from error
+    require(validate_stdout == encoded, f"{linkage} retained link validation stdout differs")
 
 
 def payload_arguments(action: str, root: Path, dynamic: Path, execution_root: Path,
