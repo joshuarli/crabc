@@ -221,6 +221,13 @@ interposition. Its [component record](owned-stdio-allocator-interposition.md)
 binds the retained upstream `flockfile-list` order to the installed PLT
 allocator boundary and stale-lock storage check.
 
+`./scripts/dev-x86_64.sh owned-math-fenv-all-entry` composes four already
+selected C math/fenv surfaces through supplied installed products. Its
+[component record](owned-math-fenv-all-entry.md) fixes the 206-name roster,
+ordered caller-fenv framing, installed-header/provider route, six execution
+modes, and the separate three-pair receipt boundary without completing a math
+family or claiming public support.
+
 [owned-syscall-alias-contract.md](owned-syscall-alias-contract.md) records the
 focused musl-shaped weak syscall alias and interposition proof for supplied
 native static and dynamic products. It checks exact archive/shared ELF
