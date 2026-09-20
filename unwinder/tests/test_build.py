@@ -35,6 +35,13 @@ class DependencyBoundary(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'dependency graph'):
             builder.audit_graph(self.metadata, self.lock)
 
+    def test_duplicate_package_name_cannot_hide_a_second_graph_member(self):
+        duplicate = copy.deepcopy(self.metadata['packages'][0])
+        duplicate['id'] = 'unwinding duplicate package'
+        self.metadata['packages'].append(duplicate)
+        with self.assertRaisesRegex(ValueError, 'duplicate package'):
+            builder.audit_graph(self.metadata, self.lock)
+
     def test_only_reviewed_libc_cfg_build_script_is_admitted(self):
         for package in self.metadata['packages']:
             if package['name'] == 'gimli':

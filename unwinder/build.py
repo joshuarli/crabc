@@ -38,7 +38,11 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 def audit_graph(metadata, lock):
-    packages = {p['name']: p for p in metadata['packages']}
+    package_records = metadata['packages']
+    package_names = [p['name'] for p in package_records]
+    if len(package_names) != len(set(package_names)):
+        raise ValueError('duplicate package name in resolved dependency graph')
+    packages = {p['name']: p for p in package_records}
     if set(packages) != set(FEATURES):
         raise ValueError('unapproved dependency graph')
     locked = {p['name']: p for p in lock['package']}
