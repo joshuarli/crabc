@@ -122,15 +122,20 @@ platform/security owner approve the source's exact
 do not use an unconfined policy or another tool to evade the retained denial.
 Ordinary compiler/runtime capacity is additional and its numeric RAM floor is
 not measured; the observed `RLIMIT_AS`/`RLIMIT_DATA` and ordinary-memory cgroup
-are unlimited, with an 8-MiB memlock limit. The composed simulated prerequisite
-also represents a 17-GiB virtual span, not 17 GiB of physical huge-page demand.
+are unlimited, with an 8-MiB memlock limit. Retain `RLIMIT_AS=unlimited`:
+the composed simulated prerequisites can transiently map **36 GiB + 96 MiB**
+(38,755,368,960 bytes) in one Rust test process, before the variable executable,
+loader and compiler baseline. This is virtual-address space, not physical
+huge-page demand. The runner records the source-derived envelope separately
+from the additional, unmeasured ordinary resident-memory requirement.
 
 The original current-host diagnostic is retained in
 `.work/worktrees/qualification_resources_resume/.work/allocator-x86_64/reports/allocator/x86_64/huge-numa-hardware-qualification-runs/legacy-pending-2e18daef/receipt.json`
 (SHA-256 `f34bc7e81b3e9a46f9e304a44e7aa580ac50dc5558d42269107cfbb145d71f44`).
-The runnable job is integrated through `94d80c24`; future runs retain separate
+The runnable job and its source-derived address-space requirement are integrated;
+future runs retain separate
 full receipts and actual executed binaries, with only a hash pointer at the
-stable report path. Host tests pass (10 job tests, 52 launcher tests); no native
+stable report path. Host tests pass (11 job tests, 52 launcher tests); no native
 probe was repeated after the actual denial.
 
 Once provisioned, use a clean committed checkout, retain its exact revision,
