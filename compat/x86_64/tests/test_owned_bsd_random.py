@@ -31,8 +31,10 @@ class OwnedBsdRandomContracts(unittest.TestCase):
             "crabc-x86_64-musl-gcc", "owned_posix_product_evidence",
             "--static-sysroot", "static-et-exec", "static-pie", "--dynamic-$mode",
             "ORACLE_SCENARIOS=(core state fork-active)",
-            "CANDIDATE_ONLY_SCENARIOS=(concurrent-random concurrent-state)",
+            "INVARIANT_SCENARIOS=(concurrent-random concurrent-state)",
             "--extracted", "source/oracle/installed", "link-receipt",
+            "source-before.json", "source-after.json", "product-inputs.json",
+            "extracted_provenance", "supplied roles",
         ):
             self.assertIn(boundary, source)
 

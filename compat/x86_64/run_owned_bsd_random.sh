@@ -14,11 +14,10 @@ readonly PROBE="$ROOT/compat/x86_64/owned_bsd_random_probe.c"
 readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
 readonly -a BSD_RANDOM_SYMBOLS=(random srandom initstate setstate)
 readonly -a ORACLE_SCENARIOS=(core state fork-active)
-# Kept as a named class because these are invariant witnesses rather than an
-# ordered trace.  Unlike the old candidate-only rand witness, musl executes
+# These are invariant witnesses rather than ordered traces. Musl executes
 # them too: each reports a scheduler-independent pass record.
-readonly -a CANDIDATE_ONLY_SCENARIOS=(concurrent-random concurrent-state)
-readonly -a ALL_SCENARIOS=("${ORACLE_SCENARIOS[@]}" "${CANDIDATE_ONLY_SCENARIOS[@]}")
+readonly -a INVARIANT_SCENARIOS=(concurrent-random concurrent-state)
+readonly -a ALL_SCENARIOS=("${ORACLE_SCENARIOS[@]}" "${INVARIANT_SCENARIOS[@]}")
 
 usage() {
     printf 'usage: %s [--extracted] --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT\n' "$0" >&2
@@ -114,6 +113,85 @@ validate_product "$dynamic_product" dynamic
 
 readonly work="$(mktemp -d "$TMPDIR/owned-bsd-random.XXXXXX")"
 chmod a+rx "$work"
+
+snapshot_source() {
+    local destination="$1"
+
+    python3 -B - "$destination" "$ROOT" <<'PY'
+import hashlib
+import os
+from pathlib import Path
+import stat
+import subprocess
+import sys
+
+destination, root = map(Path, sys.argv[1:])
+def git(*arguments):
+    return subprocess.check_output(['git', '-C', str(root), *arguments])
+def digest(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+names = sorted(set(git('ls-files', '-z', '--cached', '--others', '--exclude-standard').split(b'\0')) - {b''})
+whole_tree = hashlib.sha256()
+for raw_name in names:
+    path = root / os.fsdecode(raw_name)
+    mode = path.lstat().st_mode
+    data = os.fsencode(os.readlink(path)) if stat.S_ISLNK(mode) else path.read_bytes()
+    whole_tree.update(raw_name + b'\0' + str(stat.S_IMODE(mode)).encode() + b'\0')
+    whole_tree.update(hashlib.sha256(data).digest())
+selected = [
+    'compat/x86_64/owned_bsd_random_probe.c',
+    'compat/x86_64/run_owned_bsd_random.sh',
+    'include/stdlib.h',
+    'libc/src/c_abi/x86_64/bsd_random.rs',
+]
+record = {
+    'schema': 'crabc.x86_64-owned-bsd-random-source-snapshot/v1',
+    'revision': git('rev-parse', 'HEAD').decode().strip(),
+    'status': git('status', '--porcelain=v1', '--untracked-files=all').decode(),
+    'tree_sha256': whole_tree.hexdigest(),
+    'selected_files': {name: digest(root / name) for name in selected},
+}
+destination.write_text(json.dumps(record, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+PY
+}
+
+write_product_input_receipt() {
+    local destination="$work/product-inputs.json"
+    local static_role=provided-static dynamic_role=provided-dynamic
+    if [ "$extracted" -eq 1 ]; then
+        static_role=extracted-static
+        dynamic_role=extracted-dynamic
+    fi
+    python3 -B - "$destination" "$static_product" "$dynamic_product" "$static_role" "$dynamic_role" <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import sys
+
+destination, static, dynamic = map(Path, sys.argv[1:4])
+static_role, dynamic_role = sys.argv[4:]
+def digest(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+destination.write_text(json.dumps({
+    'schema': 'crabc.x86_64-owned-bsd-random-product-inputs/v1',
+    'roles': {'static': static_role, 'dynamic': dynamic_role},
+    'products': {
+        'static': {'path': str(static), 'manifest_sha256': digest(static / 'share/crabc/manifest.json')},
+        'dynamic': {'path': str(dynamic), 'manifest_sha256': digest(dynamic / 'share/crabc/manifest.json')},
+    },
+    'extracted_provenance': (
+        'caller-selected roots; the aggregate owner must bind these exact paths to '
+        'the extracted static-preparation and dynamic-qualification products'
+        if static_role == 'extracted-static' else None
+    ),
+}, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+PY
+}
+
+snapshot_source "$work/source-before.json"
+write_product_input_receipt
 
 run_capture() {
     local label="$1" status
@@ -284,17 +362,32 @@ for mode in pie non-pie; do
     run_dynamic_scenarios "dynamic-$mode" "$candidate"
 done
 
-python3 -B - "$work/source-receipt.json" "$ROOT" "$PROBE" "$static_product" "$dynamic_product" "$work/workload.o" <<'PY'
+snapshot_source "$work/source-after.json"
+cmp "$work/source-before.json" "$work/source-after.json" ||
+    fail 'source revision, content, or worktree status changed during evidence'
+
+python3 -B - "$work/source-receipt.json" "$ROOT" "$PROBE" "$work/workload.o" \
+    "$work/source-before.json" "$work/source-after.json" "$work/product-inputs.json" <<'PY'
 import hashlib
 import json
 from pathlib import Path
 import sys
 
-output, root, probe, static, dynamic, workload = map(Path, sys.argv[1:])
+output, root, probe, workload, before_path, after_path, product_inputs_path = map(Path, sys.argv[1:])
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+before = json.loads(before_path.read_text(encoding='utf-8'))
+after = json.loads(after_path.read_text(encoding='utf-8'))
+products = json.loads(product_inputs_path.read_text(encoding='utf-8'))
+if before != after:
+    raise SystemExit('owned BSD random source snapshots differ')
 output.write_text(json.dumps({
     'schema': 'crabc.x86_64-owned-bsd-random-source/v1',
+    'root_source': {
+        'before': before,
+        'after': after,
+        'unchanged': True,
+    },
     'inputs': {
         'probe': {'path': str(probe), 'sha256': digest(probe)},
         'runner': {'path': str(root / 'compat/x86_64/run_owned_bsd_random.sh'),
@@ -303,17 +396,12 @@ output.write_text(json.dumps({
                  'sha256': digest(root / 'libc/src/c_abi/x86_64/bsd_random.rs')},
         'installed_object': {'path': str(workload), 'sha256': digest(workload)},
     },
-    'products': {
-        'static_manifest_sha256': digest(static / 'share/crabc/manifest.json'),
-        'dynamic_manifest_sha256': digest(dynamic / 'share/crabc/manifest.json'),
-    },
+    'products': products,
 }, indent=2, sort_keys=True) + '\n', encoding='utf-8')
 PY
 sha256sum "$PROBE" "$ROOT/compat/x86_64/run_owned_bsd_random.sh" \
     "$ROOT/libc/src/c_abi/x86_64/bsd_random.rs" >"$work/source-input.sha256"
 matrix='static-et-exec/static-pie plus dynamic-pie-kernel/direct and dynamic-non-pie-kernel/direct'
-if [ "$extracted" -eq 1 ]; then
-    matrix="$matrix; extracted product route"
-fi
-printf 'owned BSD random: PASS (same installed-header object through pinned musl; %s; source/oracle/installed headers, reseed/default/state classes through 272 bytes, errno 0..7, pointer/buffer restoration, invariant concurrency, active-worker fork repair, provider symbols, link-receipt identities, and source receipt); evidence: %s\n' \
-    "$matrix" "$work"
+printf 'owned BSD random: PASS (same installed-header object through pinned musl; %s; source/oracle/installed headers, reseed/default/state classes through 272 bytes, errno 0..7, pointer/buffer restoration, invariant concurrency, active-worker fork repair, provider symbols, link-receipt identities, and source receipt; supplied roles: static=%s dynamic=%s); evidence: %s\n' \
+    "$matrix" "$(python3 -B -c 'import json,sys; print(json.load(open(sys.argv[1]))["roles"]["static"])' "$work/product-inputs.json")" \
+    "$(python3 -B -c 'import json,sys; print(json.load(open(sys.argv[1]))["roles"]["dynamic"])' "$work/product-inputs.json")" "$work"
