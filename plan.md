@@ -1,5 +1,49 @@
 # Combined native x86-64 completion goal
 
+## Active continuation decisions — 2026-09-20
+
+This section supersedes conflicting historical scheduling and policy text.
+The owning document is `plan.md`; no separate `goal.md` is required. Preserve
+local changes, historical worktrees, implementations and exact-revision evidence.
+Native Linux/x86-64 remains active; AArch64 implementation and emulation remain
+paused. The exact joint completion predicate below is unchanged.
+
+The user authorizes the narrowly enumerated pinned-musl 1.2.6 Rust semantic
+port of `random`, `srandom`, `initstate`, and `setstate` now recorded in
+`AGENTS.md`, `SCOPE.md`, and `COMPATIBILITY-PROFILE.md`. Implement their actual
+behavior, source attribution and differential tests, then prove installed
+static, dynamic and extracted products and rerun `owned-posix-native` at a
+clean integration checkpoint. Missing providers must not become dispositions.
+
+Allocator metadata/arena/lifecycle, ordinary ELF loader/runtime work and the
+already approved `docs/design/x86-rust-unwinder-proposal.md` integration have
+project authorization. Historical project pauses do not prohibit these
+subjects. Actual tool denials remain binding for their exact operations:
+retain the original diagnostic, affected gates and required external review;
+do not retry unchanged denials or reroute them through workers or tools.
+Assess preserved implementations before replacing them. Preserve the pinned
+unwinder dependency/features unless a concrete finding justifies a change.
+
+Schedule implementation by actual dependencies, independently of family
+admission and final promotion. Use isolated checkout-local workers and freeze
+clean committed qualification checkouts while jobs run. Keep C mimalloc
+selected until native promotion requirements pass. Final qualification still
+requires the joint same-revision evidence; old receipts remain historical.
+
+### Current dependency blockers
+
+| Category | Behavior/gates and evidence | Clearing action | Independent executable work |
+| --- | --- | --- | --- |
+| Implementation | BSD-random quartet missing; `owned-posix-native` at `deac7ae7` stops on `include/stdlib/initstate.out` (receipt below). Policy decision is resolved. | Implement pinned source semantics and differential/product proof, then rerun the owning aggregate. | Allocator ordinary-page work and other runtime components. |
+| Tool restriction, historical diagnostic recovery pending | Historical review rejection recorded below for `rust_std_unwinder` and `allocator_m2_metadata`; the record does not identify an exact command. It does not establish a blanket subsystem prohibition. | Recover original diagnostics and identify exact operations and dependent gates before attempting affected work; use supported review where available. | Source inspection and genuinely independent permitted implementation/qualification. |
+| Qualification pending: external resources | Native huge-page success and multi-NUMA placement remain unqualified; historical host observations below are not current measurements. | Inspect the host once, finish the existing runnable job, and derive one concrete provisioning request from its workloads. | Ordinary-page/single-node behavior, deterministic failures and concurrency tests. |
+| Family admission / final promotion | ABI checkpoint below retains 266 unresolved identity requirements and 25 unavailable family-semantic records; component passes do not close these. | Bind each requirement to its actual owner and complete current-source family evidence, then ordered same-revision promotion. | Existing implementation and focused checks need not wait for family admission. |
+
+Update this table as blockers change; do not add repeated unchanged-blocker
+audits. Resource simulations remain development evidence, never native huge-page
+or multi-node PASS/N/A. Do not change shared-host configuration, rent resources
+or reboot without separate authorization.
+
 ## Current evidence and implementation frontier — 2026-09-20
 
 Main through `ca817bae` adds independently reconstructable locale,

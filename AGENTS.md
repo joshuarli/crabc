@@ -121,6 +121,13 @@ does not replace the pinned native evidence environment.
   Entropy syscalls and domain-specific state machines are in scope; every
   cryptographic algorithm or PRNG/DRBG core requires a reviewed focused Rust
   dependency or the feature remains explicitly limited.
+  The sole legacy PRNG exception is a provenance-preserving Rust semantic port
+  of pinned musl 1.2.6 `random`, `srandom`, `initstate`, and `setstate`, including
+  their recurrence, seeding, state representation and switching. Its exact C
+  source is the oracle; preserve attribution and licensing. Never use this
+  non-cryptographic generator for entropy, secrets, allocator hardening, or
+  other security-sensitive purposes. All cryptographic prohibitions and
+  approved entropy/dependency boundaries remain unchanged.
 - Locale support is `C`, `POSIX`, and `C.UTF-8`; Rust-facing text is UTF-8.
   Do not add general locale/legacy-encoding databases.
 - Parse conventional system files. Do not build NSS, plugin/provider systems,

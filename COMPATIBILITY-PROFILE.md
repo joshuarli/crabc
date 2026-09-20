@@ -85,6 +85,14 @@ capability**, not a Rust wrapper for every exported C symbol.
   limited; cryptography is never hand-rolled here. The bounded C `crypt`
   compatibility decision and RustCrypto dependency review are recorded in
   [`compat/crabc-rs/crypt-profile.md`](compat/crabc-rs/crypt-profile.md).
+- The sole legacy PRNG exception is a provenance-preserving Rust semantic port
+  of pinned musl 1.2.6 `random`, `srandom`, `initstate`, and `setstate`, including
+  recurrence, seeding, state representation and switching, with the exact C
+  implementation as oracle and attribution/licensing retained. These are
+  non-cryptographic C ABI interfaces, never entropy, secrets, allocator
+  hardening, or other security-sensitive randomness. This exception permits
+  no new RNG design or cryptographic primitive and leaves the approved entropy
+  and cryptographic dependency boundaries unchanged.
 
 ## Deliberate non-framework boundaries
 

@@ -178,6 +178,15 @@ round function, hash, cipher, MAC, password primitive, and PRNG/DRBG core from
 a reviewed focused dependency. Source fidelity is never permission to
 translate or maintain the cryptographic algorithm locally.
 
+The sole legacy PRNG exception is a provenance-preserving Rust semantic port
+of pinned musl 1.2.6 `random`, `srandom`, `initstate`, and `setstate`, including
+their recurrence, seeding, state representation and switching. The exact C
+implementation is the compatibility oracle; preserve attribution and licensing.
+This is non-cryptographic C ABI machinery, never a source of entropy, secrets,
+allocator hardening, or other security-sensitive randomness. It authorizes no
+new RNG design or cryptographic primitive and leaves the approved entropy and
+cryptographic dependency boundaries unchanged.
+
 ---
 
 ## 5. A fixed allocator port is compatibility work, not research
