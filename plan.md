@@ -79,6 +79,18 @@ or close M2. Parent source-map and evidence checks pass all 52 tests. The clean
 native receipt is under
 `.work/worktrees/allocator_processdone_native_finalizer/.work/x86_64/processdone-finalizer-native-20260920T015100Z-clean/`.
 
+The terminal process-done preloading update is integrated in `3cd6d77e`,
+with an unused-import cleanup in `11b50787`. It restores the pinned source's
+reset-purge branch after logical finalization while retaining the permanent
+VM owner. The selected-static destructor fixture passes; omitting only this
+update makes that same fixture fail with candidate status 81. The isolated
+source is restored byte-for-byte afterward. A pinned C oracle independently
+observes the reset branch, no recommit requirement, retained mapping, and
+successful release. Evidence is retained in
+`.work/worktrees/allocator_processdone_preloading/.work/`; the merged tree
+passes 73 focused evidence, parity-status, and source-map tests. This does not
+change startup/publication, qualify the merged runtime, or close allocator M2.
+
 Empty-name locale selection is implemented in `22647dd0` for the owned x86
 runtime. Isolated failing regressions for both `setlocale` and `newlocale`
 precede the repair; they remain under
