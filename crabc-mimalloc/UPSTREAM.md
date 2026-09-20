@@ -106,6 +106,21 @@ direct-small route, or an exhausted fully committed scalar-extension
 direct-small route. Non-direct-small, direct-small page-area-commit and other
 no-immediate shapes, and full-origin routes remain client-free-only.
 
+The selected native x86 static initial and later-owner full-page transition
+maps pinned `src/page.c:359-388` and `src/arena.c:1304-1355` to
+`single_thread::PageAllocatorEngine::move_regular_to_full`,
+`abandoned::abandon_after_collect`, `main_static_page`, and
+`main_heap_page`. It is limited to the source-default normal-Theap policy
+(`allow_page_abandon == true`, `page_full_retain == 2`) and a validated
+regular arena page. Source selection and Rust capability validation are
+separate: a selected but unsupported page retains its lifecycle transition;
+it never substitutes the non-abandoning `BIN_FULL` branch. Its false
+collection yields the source all-free linked release, partial mapped-abandoned,
+or full unmapped-abandoned result, and preserves the `unown` late-remote-free
+ordering. Focused x86 unit tests cover each result in both owner seams. This
+does not broaden dynamic, non-abandoning, public/default, or paused-AArch64
+coverage.
+
 > **Later-main direct-small adoption correction.** The broad later-main table
 > rows below predate the source-specific
 > `later-main-one-member-immediate-direct-small-post-exit-allocation-adoption`

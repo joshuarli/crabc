@@ -39,6 +39,14 @@ DRIVER = load_module("dynamic_product_driver_test", DRIVER_PATH)
 
 
 class DynamicProductContractTests(unittest.TestCase):
+    def test_checked_in_qualification_roster_matches_executable_catalog(self) -> None:
+        import owned_dynamic_qualification as qualification
+
+        self.assertEqual(
+            self.contract_data()["qualification"]["required_cases"],
+            list(qualification.CASES),
+        )
+
     def contract_data(self) -> dict[str, object]:
         return copy.deepcopy(PRODUCT.load_toml(CONTRACT_PATH))
 
@@ -126,6 +134,7 @@ class DynamicProductContractTests(unittest.TestCase):
                 "locale",
                 "stdio",
                 "numeric-calendar",
+                "math-fenv-all-entry",
                 "rand",
                 "pattern",
                 "regex",

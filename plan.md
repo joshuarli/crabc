@@ -12,6 +12,9 @@ report replay in the pinned image. These are mixed-source development checks,
 not current-source qualification or family closure. The new math component
 extends the dynamic catalog to 71 cases; the historical 210-run result below
 still describes its original 70-case catalog.
+The checked-in dynamic product contract and its non-promoting state digest now
+include the same 71-case roster; an isolated catalog regression and all ten
+dynamic product contract tests pass after repairing that integration mismatch.
 
 Reconstructable component receipts are not complete capability coverage by
 themselves. The family aggregate must also bind the existing numeric, locale,
@@ -20,8 +23,14 @@ The FILE engine needs its memory/cookie/process, wide formatting/scanning,
 extended stream-helper, and ordinary-exit observations in addition to the
 bounded path/buffering probe. Full calendar rows remain required as well;
 the completed `fopen64` component still needs current-source aggregate binding.
-These are evidence gaps against the frozen family
-scope, not new APIs or permission to replace behavior with symbol counts.
+The rich text component (`3a09dde0`), seven-row FILE-engine component
+(`9ae2b5bd`), and five-row calendar component (`3ce8031b`) are now integrated.
+Their six-mode frozen-product development replays and post-run readers pass.
+Parent checks pass 6 text contract tests, 18 FILE-engine reader/dispatcher
+tests, 16 calendar reader tests, and 23 combined coordinator/dispatch/contract
+tests after integration. Full current-source three-pair binding remains open.
+These are evidence requirements against the frozen family scope, not new APIs
+or permission to replace behavior with symbol counts.
 
 The full calendar component also needs explicitly pinned test-only timezone
 fixtures. The current pinned core image lacks the named zone files used by
@@ -29,13 +38,17 @@ fixtures. The current pinned core image lacks the named zone files used by
 that those files were loaded. Its historical pass therefore does not prove
 real-zone transitions. Preserve those records, supply authenticated fixtures,
 and require known offset/transition checks as well as oracle comparison. This
-does not authorize bundling timezone data into the runtime.
+does not authorize bundling timezone data into the runtime. The new component
+pins test-only IANA 2025b archive hashes and independently fixed output hashes
+for New York, Berlin, Lord Howe, and localtime. Known civil-time/offset checks
+and a missing-fixture control pass; clock guards retain five capability-set
+proofs excluding `CAP_SYS_TIME` and the existing syscall-denial tests.
 
 The immutable family coordinator is integrated through `87f08e9b` in
 `owned_text_math_locale_stdio_family.py`. Its fifteen focused tests cover
 missing rows and modes, product/source substitution, mutation during
 collection and output construction, and physical fresh-output handling.
-It rejects missing rich text, full FILE-engine, and calendar readers; these
+It rejects missing rich text, full FILE-engine, and calendar receipts; these
 tests do not establish real aggregate admission. Its snapshots include the
 rich text aggregate's three declared pair-evidence roots, with direct-child
 report hashes and exact execution-cell binding.
@@ -55,13 +68,27 @@ warning and feature flags retained. This does not identify the old faulting
 instruction or close the ordered native aggregate; its full current-source
 OS-test replay remains required.
 
-Native allocator teardown work must preserve the pinned ordinary heap policy:
-an exhausted page is abandoned rather than retained in `BIN_FULL`. The fixed
-C observation and focused initial/later-owner tests establish that transition;
-the native teardown fixture still needs its old full-queue assumption repaired.
-Use a source-valid nonfull page for retained-owner local-free coverage, while
-keeping full-page abandonment as separate evidence. The final native teardown
-gate remains unqualified until that corrected fixture passes.
+Native allocator teardown commit `edddee58` is integrated. Its clean pinned
+native replay passes with source-valid nonfull pages for retained-owner local
+frees, including separate naturally aligned and interior-pointer cases. The
+pinned C observations and eight focused initial/later-owner tests separately
+cover full-page abandonment, partial-page mapping, all-free release, and late
+remote frees. The process-finalizer bridge preserves source metadata after
+automatic thread teardown is disabled; it does not promote the Rust allocator
+or close M2. Parent source-map and evidence checks pass all 52 tests. The clean
+native receipt is under
+`.work/worktrees/allocator_processdone_native_finalizer/.work/x86_64/processdone-finalizer-native-20260920T015100Z-clean/`.
+
+Empty-name locale selection remains a concrete parity gap. The current x86
+`setlocale` and `newlocale` leaves reject environment selection; that bounded
+implementation choice is not a profile exclusion. With `LC_ALL=C`, the same
+installed-header object passes pinned musl and fails the frozen candidate at
+`setlocale(LC_ALL, "")`. The isolated regression and raw development receipt
+are in `.work/worktrees/locale_environment_parity/` and
+`.work/x86_64/locale-environment-regression/red-v2/`. Supported-name environment
+selection, category precedence, object/base semantics, and failure-state
+preservation need implementation and direct evidence before locale closure.
+General locale databases remain excluded.
 
 The combined goal remains incomplete. Main through `0158c312` includes the
 locale source/product identity repairs, executable `libc.so` package mode,

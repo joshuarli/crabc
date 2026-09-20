@@ -64,6 +64,7 @@ EXPECTED_SCOPE = {
     "explicit_public_mi_process_done_fixture_only": True,
     "late_free_remote_publication_only": True,
     "mi_tls_model_local_required": True,
+    "ordinary_medium_full_abandonment_observed": True,
     "process_done_pthread_key_only": True,
     "emulation_accepted": False,
     "general_abandonment_or_adoption_claimed": False,
@@ -98,6 +99,8 @@ EXPECTED_SOURCE_ANCHORS = (
     ("src/init.c", 595, 648, "18bc636a2f41434dc59cb34b0505242d1762e3a7f5d6717c5bb906012d25a869"),
     ("src/prim/prim-tls.c", 211, 250, "79dbeedce267f8671d082fad73bb141404192decb5d1191670fa6341aa75619b"),
     ("src/free.c", 223, 255, "53e59015c42883dfe56d1b920e5b2907a61df09c5da49b4abe3035db5dc76ff4"),
+    ("src/page.c", 291, 388, "164b52805d60011e009131354a48e0a032843b2ed064865f75c8cb904ae1ebea"),
+    ("src/arena.c", 1304, 1355, "d7328658d88aa8c24dabcd1a093e5857b6bc699b03677eb4e8ab3c7d160c6dbb"),
 )
 EXPECTED_TRACE_VALUES = {
     "trace.process_done_pthread_key.request_size": 10241,
@@ -130,6 +133,21 @@ EXPECTED_TRACE_VALUES = {
     "trace.process_done_pthread_key.page_owner_retained_after_final_late_free": 1,
     "trace.process_done_pthread_key.page_abandoned_after_final_late_free": 0,
     "trace.process_done_pthread_key.page_mapping_retained_after_final_late_free": 1,
+    "trace.process_done_pthread_key.full_page_join_completed": 1,
+    "trace.process_done_pthread_key.full_page_ordinary_abandoning_options": 1,
+    "trace.process_done_pthread_key.full_page_worker_auto_key_invalid": 1,
+    "trace.process_done_pthread_key.full_page_worker_returned_naturally": 1,
+    "trace.process_done_pthread_key.full_page_client_count": 42,
+    "trace.process_done_pthread_key.full_page_capacity": 42,
+    "trace.process_done_pthread_key.full_page_reserved": 42,
+    "trace.process_done_pthread_key.full_page_used": 42,
+    "trace.process_done_pthread_key.full_page_regular_queue_count": 1,
+    "trace.process_done_pthread_key.full_page_full_queue_count": 0,
+    "trace.process_done_pthread_key.full_page_pressure_uses_different_page": 1,
+    "trace.process_done_pthread_key.full_page_abandoned": 1,
+    "trace.process_done_pthread_key.full_page_mapped_abandoned": 0,
+    "trace.process_done_pthread_key.full_page_owned": 0,
+    "trace.process_done_pthread_key.full_page_full": 1,
     "trace.process_done_pthread_key.valid": 1,
 }
 
@@ -178,6 +196,33 @@ typedef struct worker_context_s {
   size_t reserved;
   int failure_stage;
 } worker_context_t;
+
+// The source `mi_page_to_full` branch is selected only after a medium page
+// has reached its reservation and the next generic search sees it exhausted.
+// Keep every client live while the worker observes that transition: freeing
+// one here would turn this into a different abandoned-free experiment.
+enum { FULL_PAGE_MAX_CLIENTS = 64 };
+
+typedef struct full_page_context_s {
+  void* clients[FULL_PAGE_MAX_CLIENTS];
+  void* pressure;
+  size_t client_count;
+  size_t capacity;
+  size_t reserved;
+  size_t used;
+  size_t regular_queue_count;
+  size_t full_queue_count;
+  bool setup_valid;
+  bool ordinary_abandoning_options;
+  bool worker_auto_key_invalid;
+  bool worker_returned_naturally;
+  bool pressure_uses_different_page;
+  bool page_abandoned;
+  bool page_mapped_abandoned;
+  bool page_owned;
+  bool page_full;
+  int failure_stage;
+} full_page_context_t;
 
 static const size_t request_size = MI_SMALL_MAX_OBJ_SIZE + 1;
 
@@ -245,15 +290,109 @@ failed:
   return NULL;
 }
 
+static void* full_page_worker_main(void* argument) {
+  full_page_context_t* const context = (full_page_context_t*)argument;
+  mi_theap_t* theap = NULL;
+  mi_page_t* page = NULL;
+  mi_page_t* pressure_page = NULL;
+  size_t bin = 0;
+
+  mi_thread_init();
+  theap = _mi_theap_default();
+  if (theap == NULL || !mi_theap_is_initialized(theap)) {
+    context->failure_stage = 1;
+    return NULL;
+  }
+  context->ordinary_abandoning_options =
+      (theap->allow_page_abandon && theap->page_full_retain == 2);
+  context->worker_auto_key_invalid = (_mi_heap_default_key == MI_PTHREAD_KEY_INVALID);
+  if (!context->ordinary_abandoning_options || !context->worker_auto_key_invalid) {
+    context->failure_stage = 2;
+    return NULL;
+  }
+
+  context->clients[0] = mi_malloc(request_size);
+  page = _mi_safe_ptr_page(context->clients[0]);
+  if (context->clients[0] == NULL || page == NULL
+      || page->block_size <= MI_SMALL_MAX_OBJ_SIZE
+      || page->block_size > MI_MEDIUM_MAX_OBJ_SIZE
+      || page->theap != theap) {
+    context->failure_stage = 3;
+    return NULL;
+  }
+  bin = _mi_bin(page->block_size);
+  if (bin >= MI_BIN_FULL || page->reserved == 0 || page->reserved > FULL_PAGE_MAX_CLIENTS) {
+    context->failure_stage = 4;
+    return NULL;
+  }
+  context->client_count = 1;
+  while (page->used < page->reserved) {
+    if (context->client_count == FULL_PAGE_MAX_CLIENTS) {
+      context->failure_stage = 5;
+      return NULL;
+    }
+    context->clients[context->client_count] = mi_malloc(request_size);
+    if (context->clients[context->client_count] == NULL
+        || _mi_safe_ptr_page(context->clients[context->client_count]) != page) {
+      context->failure_stage = 6;
+      return NULL;
+    }
+    context->client_count++;
+  }
+  if (page->capacity != page->reserved || page->used != page->reserved) {
+    context->failure_stage = 7;
+    return NULL;
+  }
+
+  // The next allocation performs source `mi_find_page`'s exhausted-page
+  // transition. Under the ordinary option image `mi_page_to_full` calls
+  // `_mi_page_abandon`; it must not leave the old page in BIN_FULL.
+  context->pressure = mi_malloc(request_size);
+  pressure_page = _mi_safe_ptr_page(context->pressure);
+  if (context->pressure == NULL || pressure_page == NULL || pressure_page == page) {
+    context->failure_stage = 8;
+    return NULL;
+  }
+  context->capacity = page->capacity;
+  context->reserved = page->reserved;
+  context->used = page->used;
+  context->regular_queue_count = theap->pages[bin].count;
+  context->full_queue_count = theap->pages[MI_BIN_FULL].count;
+  context->pressure_uses_different_page = (pressure_page != page);
+  context->page_abandoned = mi_page_is_abandoned(page);
+  context->page_mapped_abandoned = mi_page_is_abandoned_mapped(page);
+  context->page_owned = mi_page_is_owned(page);
+  context->page_full = mi_page_is_full(page);
+  context->setup_valid = (context->client_count == context->reserved
+                          && context->capacity == context->reserved
+                          && context->used == context->reserved
+                          && context->regular_queue_count == 1
+                          && context->full_queue_count == 0
+                          && context->pressure_uses_different_page
+                          && context->page_abandoned
+                          && !context->page_mapped_abandoned
+                          && !context->page_owned
+                          && context->page_full);
+  if (!context->setup_valid) {
+    context->failure_stage = 9;
+    return NULL;
+  }
+  context->worker_returned_naturally = true;
+  return NULL;
+}
+
 int main(void) {
   worker_context_t context = { 0 };
   pthread_t worker;
+  full_page_context_t full_page = { 0 };
+  pthread_t full_page_worker;
   mi_theap_t* main_theap = NULL;
   mi_page_t* page = NULL;
   const void* page_start = NULL;
   void* block = NULL;
   void* survivor = NULL;
   bool worker_started = false;
+  bool full_page_worker_started = false;
   bool valid = false;
   int stage = 0;
 
@@ -286,6 +425,7 @@ int main(void) {
   int page_owner_retained_after_final_late_free = 0;
   int page_abandoned_after_final_late_free = 0;
   int page_mapping_retained_after_final_late_free = 0;
+  int full_page_join_completed = 0;
 
   mi_thread_init();
   main_theap = _mi_theap_default();
@@ -345,6 +485,17 @@ int main(void) {
   if (!worker_theap_initialized_after_join || !worker_tld_thread_id_retained_after_join) goto output;
   stage = 5;
 
+  if (pthread_create(&full_page_worker, NULL, full_page_worker_main, &full_page) != 0) goto output;
+  full_page_worker_started = true;
+  if (pthread_join(full_page_worker, NULL) != 0) goto output;
+  full_page_worker_started = false;
+  full_page_join_completed = 1;
+  if (!full_page.setup_valid || !full_page.worker_returned_naturally) {
+    stage = 50 + full_page.failure_stage;
+    goto output;
+  }
+  stage = 6;
+
   mi_free(block);
   block = NULL;
   page = _mi_safe_ptr_page(survivor);
@@ -354,7 +505,7 @@ int main(void) {
   page_used_after_first_late_free = page->used;
   if (!survivor_live_after_first_late_free || !remote_free_published_after_first
       || page_used_after_first_late_free != 2) goto output;
-  stage = 6;
+  stage = 7;
 
   mi_free(survivor);
   survivor = NULL;
@@ -370,6 +521,14 @@ int main(void) {
            && cached_empty_after_done && auto_key_invalid_after_done
            && main_theap_initialized_after_done && worker_theap_initialized_before_return
            && worker_auto_key_invalid && worker_returned_naturally && join_completed
+           && full_page_join_completed && full_page.setup_valid
+           && full_page.ordinary_abandoning_options && full_page.worker_auto_key_invalid
+           && full_page.worker_returned_naturally
+           && full_page.client_count == full_page.reserved
+           && full_page.capacity == full_page.reserved && full_page.used == full_page.reserved
+           && full_page.regular_queue_count == 1 && full_page.full_queue_count == 0
+           && full_page.pressure_uses_different_page && full_page.page_abandoned
+           && !full_page.page_mapped_abandoned && !full_page.page_owned && full_page.page_full
            && same_page && page_owner_matches_worker_after_join
            && worker_theap_initialized_after_join && worker_tld_thread_id_retained_after_join
            && page_owned_after_join && !page_abandoned_after_join
@@ -382,6 +541,7 @@ int main(void) {
 
 output:
   if (worker_started) (void)pthread_join(worker, NULL);
+  if (full_page_worker_started) (void)pthread_join(full_page_worker, NULL);
   printf("CRABC_MI_PROCESS_DONE_PTHREAD_KEY_TRACE_BEGIN\n");
 #define OUT_N(k,v) printf("trace.process_done_pthread_key.%s=%zu\n", k, (size_t)(v))
 #define OUT_B(k,v) printf("trace.process_done_pthread_key.%s=%d\n", k, (v) ? 1 : 0)
@@ -415,6 +575,21 @@ output:
   OUT_B("page_owner_retained_after_final_late_free", page_owner_retained_after_final_late_free);
   OUT_B("page_abandoned_after_final_late_free", page_abandoned_after_final_late_free);
   OUT_B("page_mapping_retained_after_final_late_free", page_mapping_retained_after_final_late_free);
+  OUT_B("full_page_join_completed", full_page_join_completed);
+  OUT_B("full_page_ordinary_abandoning_options", full_page.ordinary_abandoning_options);
+  OUT_B("full_page_worker_auto_key_invalid", full_page.worker_auto_key_invalid);
+  OUT_B("full_page_worker_returned_naturally", full_page.worker_returned_naturally);
+  OUT_N("full_page_client_count", full_page.client_count);
+  OUT_N("full_page_capacity", full_page.capacity);
+  OUT_N("full_page_reserved", full_page.reserved);
+  OUT_N("full_page_used", full_page.used);
+  OUT_N("full_page_regular_queue_count", full_page.regular_queue_count);
+  OUT_N("full_page_full_queue_count", full_page.full_queue_count);
+  OUT_B("full_page_pressure_uses_different_page", full_page.pressure_uses_different_page);
+  OUT_B("full_page_abandoned", full_page.page_abandoned);
+  OUT_B("full_page_mapped_abandoned", full_page.page_mapped_abandoned);
+  OUT_B("full_page_owned", full_page.page_owned);
+  OUT_B("full_page_full", full_page.page_full);
   OUT_B("valid", valid);
 #undef OUT_B
 #undef OUT_N
@@ -484,6 +659,9 @@ def validate_probe_source(probe: str = C_TRACE_PROBE) -> None:
         "context->worker_returned_naturally = true;",
         "pthread_join(worker, NULL)",
         "mi_page_thread_free(page) != NULL",
+        "theap->allow_page_abandon && theap->page_full_retain == 2",
+        "context->full_queue_count == 0",
+        "context->page_abandoned",
         "#if !defined(MI_USE_PTHREADS)",
         "#if !MI_TLS_MODEL_LOCAL",
     )

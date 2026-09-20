@@ -20,6 +20,7 @@
     "explicit_public_mi_process_done_fixture_only": true,
     "late_free_remote_publication_only": true,
     "mi_tls_model_local_required": true,
+    "ordinary_medium_full_abandonment_observed": true,
     "process_done_pthread_key_only": true,
     "emulation_accepted": false,
     "general_abandonment_or_adoption_claimed": false,
@@ -108,9 +109,21 @@
       "start_line": 223,
       "end_line": 255,
       "sha256": "53e59015c42883dfe56d1b920e5b2907a61df09c5da49b4abe3035db5dc76ff4"
+    },
+    {
+      "member": "src/page.c",
+      "start_line": 291,
+      "end_line": 388,
+      "sha256": "164b52805d60011e009131354a48e0a032843b2ed064865f75c8cb904ae1ebea"
+    },
+    {
+      "member": "src/arena.c",
+      "start_line": 1304,
+      "end_line": 1355,
+      "sha256": "d7328658d88aa8c24dabcd1a093e5857b6bc699b03677eb4e8ab3c7d160c6dbb"
     }
   ],
-  "c_probe_sha256": "bf242053d93c0b26a236b6a685a3175a506fc2b68c702b70fcfd1bb798966f06",
+  "c_probe_sha256": "f1b34dfb7c4095da7c892c8165bd95d9ff9271ee1ba3fafd24046f0828f275f2",
   "trace": {
     "begin": "CRABC_MI_PROCESS_DONE_PTHREAD_KEY_TRACE_BEGIN",
     "end": "CRABC_MI_PROCESS_DONE_PTHREAD_KEY_TRACE_END",
@@ -145,6 +158,21 @@
       "trace.process_done_pthread_key.page_owner_retained_after_final_late_free": 1,
       "trace.process_done_pthread_key.page_abandoned_after_final_late_free": 0,
       "trace.process_done_pthread_key.page_mapping_retained_after_final_late_free": 1,
+      "trace.process_done_pthread_key.full_page_join_completed": 1,
+      "trace.process_done_pthread_key.full_page_ordinary_abandoning_options": 1,
+      "trace.process_done_pthread_key.full_page_worker_auto_key_invalid": 1,
+      "trace.process_done_pthread_key.full_page_worker_returned_naturally": 1,
+      "trace.process_done_pthread_key.full_page_client_count": 42,
+      "trace.process_done_pthread_key.full_page_capacity": 42,
+      "trace.process_done_pthread_key.full_page_reserved": 42,
+      "trace.process_done_pthread_key.full_page_used": 42,
+      "trace.process_done_pthread_key.full_page_regular_queue_count": 1,
+      "trace.process_done_pthread_key.full_page_full_queue_count": 0,
+      "trace.process_done_pthread_key.full_page_pressure_uses_different_page": 1,
+      "trace.process_done_pthread_key.full_page_abandoned": 1,
+      "trace.process_done_pthread_key.full_page_mapped_abandoned": 0,
+      "trace.process_done_pthread_key.full_page_owned": 0,
+      "trace.process_done_pthread_key.full_page_full": 1,
       "trace.process_done_pthread_key.valid": 1
     }
   }

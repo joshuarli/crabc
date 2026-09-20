@@ -2105,6 +2105,8 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
     // SAFETY: this current worker owns its control/TSD mapping until the
     // assembly tail calls SYS_exit. Destructors must finish before its result
     // becomes join-observable.
+    #[cfg(feature = "native-mimalloc-shadow")]
+    let native_finish;
     unsafe {
         // A normal callback return commits this task to retirement too. Disable
         // its selected cancellation state before any later exit transition;
@@ -2112,7 +2114,10 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
         pthread_cancel::disable_current_selected_pthread_cancellation_for_exit();
         pthread_tsd::run_selected_worker_tsd_destructors(core::ptr::addr_of!((*control).tsd));
         #[cfg(feature = "native-mimalloc-shadow")]
-        super::native_mimalloc_lifecycle::finish_selected_worker_after_user_destructors();
+        {
+            native_finish =
+                super::native_mimalloc_lifecycle::finish_selected_worker_after_user_destructors();
+        }
         pthread_mutex::mark_current_selected_robust_mutexes_owner_dead();
         publish_selected_worker_result(control, result);
     }
@@ -2130,11 +2135,27 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
             // SAFETY: the initial selected task already called pthread_exit
             // and this locked task-state transition is uniquely final.
             #[cfg(feature = "native-mimalloc-shadow")]
-            unsafe {
-                super::native_mimalloc_lifecycle::reinitialize_selected_final_worker_for_ordinary_exit()
+            if native_finish
+                == super::native_mimalloc_lifecycle::SelectedWorkerNativeFinish::Finished
+            {
+                unsafe {
+                    super::native_mimalloc_lifecycle::reinitialize_selected_final_worker_for_ordinary_exit()
+                }
             };
             unsafe { exit_selected_final_runtime_task() }
         }
+    }
+    #[cfg(feature = "native-mimalloc-shadow")]
+    if native_finish
+        == super::native_mimalloc_lifecycle::SelectedWorkerNativeFinish::ProcessDoneFinalTaskDecisionPending
+    {
+        // SAFETY: libc's locked task decision just proved this worker is not
+        // final. Only now may its Rust wrapper leave before ELF TLS release;
+        // the source TLD/Theap/PageMap image remains retained after process
+        // shutdown disabled the automatic pthread destructor.
+        unsafe {
+            super::native_mimalloc_lifecycle::retain_selected_nonfinal_worker_after_process_done()
+        };
     }
     unsafe { retire_selected_worker_signal_target(control) };
     // SAFETY: a non-final worker has completed its selected state users and
@@ -2573,6 +2594,8 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
         // path invokes SYS_exit. Preserve musl's cleanup-before-TSD-before-
         // result ordering without holding the worker-registry lock across user
         // destructors.
+        #[cfg(feature = "native-mimalloc-shadow")]
+        let native_finish;
         unsafe {
             // Pthread cancellation and pthread_exit unwind active cleanup
             // records before the already-selected TSD destructor phase. The
@@ -2585,7 +2608,10 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
             }
             pthread_tsd::run_selected_worker_tsd_destructors(core::ptr::addr_of!((*control).tsd));
             #[cfg(feature = "native-mimalloc-shadow")]
-            super::native_mimalloc_lifecycle::finish_selected_worker_after_user_destructors();
+            {
+                native_finish =
+                    super::native_mimalloc_lifecycle::finish_selected_worker_after_user_destructors();
+            }
             pthread_mutex::mark_current_selected_robust_mutexes_owner_dead();
             publish_selected_worker_result(control, result);
         }
@@ -2600,11 +2626,26 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
                 // ordinary process exit and its atexit callbacks.
                 unsafe { super::signal_execution::restore_application_signals(&saved_signal_mask) };
                 #[cfg(feature = "native-mimalloc-shadow")]
-                unsafe {
-                    super::native_mimalloc_lifecycle::reinitialize_selected_final_worker_for_ordinary_exit()
+                if native_finish
+                    == super::native_mimalloc_lifecycle::SelectedWorkerNativeFinish::Finished
+                {
+                    unsafe {
+                        super::native_mimalloc_lifecycle::reinitialize_selected_final_worker_for_ordinary_exit()
+                    }
                 };
                 unsafe { exit_selected_final_runtime_task() }
             }
+        }
+        #[cfg(feature = "native-mimalloc-shadow")]
+        if native_finish
+            == super::native_mimalloc_lifecycle::SelectedWorkerNativeFinish::ProcessDoneFinalTaskDecisionPending
+        {
+            // SAFETY: the locked registry proved another selected task
+            // remains, so the source-retained nonfinal boundary may now
+            // discard only Rust TLS bookkeeping before SYS_exit.
+            unsafe {
+                super::native_mimalloc_lifecycle::retain_selected_nonfinal_worker_after_process_done()
+            };
         }
         unsafe { retire_selected_worker_signal_target(control) };
     }

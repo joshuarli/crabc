@@ -214,6 +214,10 @@ pub(crate) enum PersistentCompilerTlsOwnerState {
     Retained,
     /// Teardown succeeded, the payload was dropped in place, and reuse is forbidden.
     TornDown,
+    /// Process shutdown dropped only a Rust wrapper after disabling automatic
+    /// thread teardown. The source TLD/Theap/PageMap state stays process-live,
+    /// so this is neither an ordinary completed teardown nor reusable storage.
+    SourceRetainedAfterProcessDone,
 }
 
 /// Peeks at the regular dynamically allocated TLS image.
