@@ -39,8 +39,23 @@ pinned musl through the extracted native provider; retained evidence is
 high-bit seeds, invalid sizes 0–7, class boundaries, repeated ring wraparound,
 returned pointers and restoration. The initial pre-port regression proved
 musl execution and missing archive symbols; the subsequently strengthened
-unresolved-link red mode was not executed against that old source. Installed
-product, concurrency/fork and owning-aggregate qualification remain pending.
+unresolved-link red mode was not executed against that old source.
+
+Fresh products are being qualified at frozen clean
+`3aaee6350f52c5fb89a2f4fa0fd4a0e1e6563698` in
+`.work/worktrees/runtime_combined_3aaee635/`; its source must not change during
+execution. Static preparation passes at
+`.work/x86_64/public-data-products/static-3aaee635/preparation.json` there.
+Installed BSD behavior passes all five scenarios across six execution modes
+and three product pairs (90 candidate executions, plus pinned-musl runs),
+including concurrency and active-worker fork. The retained roots are
+`.work/x86_64/tmp/owned-bsd-random.AwOjEx` (primary),
+`owned-bsd-random.NRM380` (reproduction), and `owned-bsd-random.NunJjU`
+(extracted). Extraction is bound by the static preparation and dynamic
+`materialized-dynamic.qpNz70/qualification-prepare.json`, not by the runner's
+`--extracted` label alone. The full dynamic qualification and subsequent
+owning native aggregate remain pending; no missing-provider disposition was
+added. Main may advance independently without altering this frozen checkout.
 
 Allocator `5c4e2746` removes the private test-only direct-commit failure-path
 divergence without changing the already-fallback-eligible production mapping
@@ -48,6 +63,11 @@ path. Its new native regression passes at that clean revision, retained in
 `.work/x86_64/allocator-direct-commit-main.log`; eight on-demand reader tests
 also pass. The worker's existing 23-value C/Rust successful-commit differential
 passes; it does not claim C fault-injection parity or backend promotion.
+The real selected-native-shadow TSD-first-allocation/teardown case also passes
+at clean worker `7b35111a4acebd29eadd076892358825df3ea7c0`; its revision-stamped
+log is `.work/worktrees/allocator_resume/.work/allocator_resume-evidence/native-shadow-pthread-teardown-7b35111a4acebd29eadd076892358825df3ea7c0.log`.
+This includes first-request rejection and later success, not a complete TLD
+failure matrix or selection of the native backend by default.
 
 The preserved approved standalone unwinder provider is now present on main
 (`fbf8837e`, from `d3ca0e79`), without selecting it in runtime products. At
@@ -60,21 +80,72 @@ the exact approved dependency/features audit and eleven host regression tests
 pass. Duplicate/missing graph identities fail closed, and fresh build outputs
 preserve prior evidence. This is standalone producer evidence only:
 `qualified` remains false. The original dirty integration worktree is untouched.
+The existing full Rust cleanup fixture additionally passes at clean worker
+`c1f35f8b14e20cc362fb0ccfb4a7e7eebe5b7feb`, with the selected Rust archive and
+no ambient unwind runtime. The retained receipt is
+`.work/worktrees/unwinder_resume/.work/x86_64/unwinder-cleanup-runs/run-f6o9gmrq/receipt.json`;
+twenty-one focused Python tests pass. This is standalone pinned-musl
+valid-frame consumer evidence (`qualified: false`), not owned runtime,
+malformed-metadata, DSO, build-std or cross-runtime LTO qualification.
+
+Family admission machinery (`6110739d`) now reconstructs the existing matrix
+and native aggregate, all 9 capabilities / 149 spellings, actual ledger
+dependencies and post-proof source/product snapshots. Its 32 coordinator
+tests pass; the real ledger remains planned. The text-family and `fopen64`
+ABI joins require physical source/product-bound component receipts; they do
+not discharge anything using old-source receipts or promote the text family.
 
 ### Current dependency blockers
 
 | Category | Behavior/gates and evidence | Clearing action | Independent executable work |
 | --- | --- | --- | --- |
-| Product / aggregate qualification | BSD quartet implementation and extracted-provider differential now pass. Historical `owned-posix-native` at `deac7ae7` stopped on `include/stdlib/initstate.out`; installed synchronization and aggregate evidence are not yet supplied. | Complete installed static/dynamic/extracted behavior and concurrency/fork tests, then rerun the owning aggregate from a clean frozen checkpoint. | Allocator ordinary-page work and other runtime components. |
+| Aggregate qualification | BSD quartet behavior, installed/extracted synchronization and fork tests now pass at frozen `3aaee635`. Historical `owned-posix-native` at `deac7ae7` stopped on its missing provider; the new owning aggregate has not yet run. | Finish current dynamic qualification, then run the existing native aggregate and address its next genuine failure. | Allocator ordinary-page work and other runtime components. |
 | Historical tool-denial record; exact operation unavailable | The retained rejection record names `rust_std_unwinder` and `allocator_m2_metadata`, but no original diagnostic or rejected command was recovered from repository history or preserved files. An exact prohibited action and its dependent gates cannot be inferred from those task names. | Obtain the original review transcript/tool-owner diagnostic to identify any denied operation before retrying it; use supported review where available. Preserve the historical record without inventing a blanket subsystem ban. | Approved standalone unwinder source/dependency/archive checks now pass; independent runtime and ordinary-page allocator work continues. |
 | Technical correctness / unwinder qualification | The approved design and preserved provider README identify unbounded upstream unwind-metadata slices/indirect pointers; installed/extracted stock-std, build-std, DSO, LTO and malformed-metadata qualification remain open. Standalone archive production does not prove them. | Assess the preserved implementation and finish bounds/failure behavior and real owned-product consumer evidence with the approved dependency/features boundary. | Standalone build/provenance tests and unrelated runtime implementation. |
-| Qualification pending: external resources | Native huge-page success and multi-NUMA placement remain unqualified; historical host observations below are not current measurements. | Inspect the host once, finish the existing runnable job, and derive one concrete provisioning request from its workloads. | Ordinary-page/single-node behavior, deterministic failures and concurrency tests. |
+| Qualification pending: external resources; exact container syscall denial | Clean `2e18daef` observes only memory node 0, zero 1-GiB pages, and `mbind(MPOL_PREFERRED, flags=0)` returning `-1/EPERM` on a private 4096-byte mapping; unmap succeeds. This is the kernel/container execution boundary, not a repository pause. The precise policy origin is not inferred from seccomp mode. | Provision the resources and obtain platform/security-owner review for that exact syscall as requested below. Do not repeat it unchanged or route it through another container/tool. | Ordinary-page/single-node allocation paths not requiring that denied operation, deterministic failures and concurrency tests. |
 | Family admission / final promotion | ABI checkpoint below retains 266 unresolved identity requirements and 25 unavailable family-semantic records; component passes do not close these. | Bind each requirement to its actual owner and complete current-source family evidence, then ordered same-revision promotion. | Existing implementation and focused checks need not wait for family admission. |
 
 Update this table as blockers change; do not add repeated unchanged-blocker
 audits. Resource simulations remain development evidence, never native huge-page
 or multi-node PASS/N/A. Do not change shared-host configuration, rent resources
 or reboot without separate authorization.
+
+### One external provisioning request
+
+Provide a native Linux/x86-64 runner exposing two distinct online memory nodes
+with IDs at most 62 in both `Mems_allowed_list` and `cpuset.mems.effective`,
+with one free **1-GiB hugetlb page per node** and at least **2 GiB of hugetlb
+cgroup headroom**. Keep `/proc/self/numa_maps` readable and the canonical
+launcher's `CAP_IPC_LOCK`; both already work on the observed host. Have the
+platform/security owner approve the source's exact
+`mbind(MPOL_PREFERRED, flags=0)` operation while retaining other controls;
+do not use an unconfined policy or another tool to evade the retained denial.
+Ordinary compiler/runtime capacity is additional and its numeric RAM floor is
+not measured; the observed `RLIMIT_AS`/`RLIMIT_DATA` and ordinary-memory cgroup
+are unlimited, with an 8-MiB memlock limit. The composed simulated prerequisite
+also represents a 17-GiB virtual span, not 17 GiB of physical huge-page demand.
+
+The original current-host diagnostic is retained in
+`.work/worktrees/qualification_resources_resume/.work/allocator-x86_64/reports/allocator/x86_64/huge-numa-hardware-qualification-runs/legacy-pending-2e18daef/receipt.json`
+(SHA-256 `f34bc7e81b3e9a46f9e304a44e7aa580ac50dc5558d42269107cfbb145d71f44`).
+The runnable job is integrated through `94d80c24`; future runs retain separate
+full receipts and actual executed binaries, with only a hash pointer at the
+stable report path. Host tests pass (10 job tests, 52 launcher tests); no native
+probe was repeated after the actual denial.
+
+Once provisioned, use a clean committed checkout, retain its exact revision,
+and execute with the pinned allocator image:
+
+```bash
+test "$(docker image inspect --format '{{.Id}}' crabc-allocator-evidence:x86_64)" = sha256:bd74f39c3f4c7ff3e9f31293a991ec1baa4d495d4962dc860e2b9abbac830c8d
+./compat/allocator/run-x86_64.sh allocator-huge-numa-qualification
+```
+
+These runs close the bounded native 1-GiB allocation and physical two-node
+placement gates, composed with existing source-policy/registry prerequisites.
+They do not alone close M2, arena lifecycle, runtime integration, performance,
+or native-backend promotion. Until then those hardware gates remain
+**qualification pending: external resources**, never PASS or N/A.
 
 ## Current evidence and implementation frontier — 2026-09-20
 
