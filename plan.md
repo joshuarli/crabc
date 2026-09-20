@@ -215,6 +215,18 @@ and authenticated partial case records under
 receipt. Dependent text, POSIX, and pthread successor plans remain unlaunched;
 the repaired text reader still requires full same-source qualification.
 
+The resolver fixture now preserves the original stimuli while admitting only
+`{ECANCELED, EAGAIN}` for the exact `modern-dual` /
+`masked-dual-mixed-tcp` pair. Pinned musl reproduces the later nonblocking UDP
+receive's `EAGAIN`; a dedicated post-TCP scenario requires that residue exactly.
+All lifecycle fields and stderr still match, and other consumed-cancellation
+cells retain exact errno checks. Seven focused tests pass. A supplied-product
+development replay passes all 605 musl and dynamic entry cases, with parent
+review of every raw stream and status, under
+`.work/worktrees/resolver_cancellation_failure/.work/x86_64/resolver-cancellation-replay-tmp/owned-resolver-cancellation.2F1RSt/`.
+That replay combines the repaired fixture with frozen products; it neither
+qualifies the repaired revision nor changes the failed checkpoint's status.
+
 The earlier clean `e44d771b` checkpoint has a 71-case dynamic receipt covering all
 213 executions across two independent builds and extraction, with identical
 manifests and archives. Its worktree is

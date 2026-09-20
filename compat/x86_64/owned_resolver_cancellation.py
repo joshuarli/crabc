@@ -2,6 +2,7 @@
 """Same installed-header object through owned DNS cancellation entry modes."""
 from __future__ import annotations
 import argparse
+import errno
 import fcntl
 import json
 import os
@@ -23,10 +24,20 @@ SCENARIOS = ('udp', 'tcp', 'pending', 'disabled', 'masked',
              'masked-tcp-socket-failure', 'normal-udp', 'normal-tcp',
              'retry-udp', 'retry-cancel-udp', 'reuse-cancel-udp',
              'normal-dual-mixed-tcp', 'masked-dual-mixed-tcp')
+POST_TCP_LATER_EAGAIN_CASE = ('modern-dual', 'masked-dual-post-tcp-later-eagain')
+CASES = tuple((api, scenario) for api in APIS for scenario in SCENARIOS) + (POST_TCP_LATER_EAGAIN_CASE,)
 # Preserve raw observations. Only these ordinary, non-consumed-cancellation
 # errno differences are outside this slice; lifecycle and success still match.
 ORDINARY_ERRNO_DIFFERENCES = frozenset(('disabled', 'disabled-udp', 'disabled-tcp',
                                       'kernel-canceled', 'normal-tcp'))
+# This one source-specific cell has a scheduler-dependent final syscall
+# residue. `res_msend.c` can consume MASKED cancellation, then hit a later
+# empty nonblocking UDP recvmsg. It is deliberately not an ordinary errno
+# exclusion: both oracle and owned values must stay in this exact finite set,
+# while every non-errno observation remains identical.
+SOURCE_LATER_ERRNOS = {
+    ('modern-dual', 'masked-dual-mixed-tcp'): frozenset((errno.ECANCELED, errno.EAGAIN)),
+}
 PROVIDERS = frozenset(('res_query', 'res_send', 'gethostbyname_r', 'getaddrinfo', 'getnameinfo'))
 
 
@@ -55,6 +66,27 @@ def observation(stdout: bytes) -> dict[str, int]:
     if set(fields) != expected:
         raise RuntimeError(f'incomplete DNS cancellation observation: {fields}')
     return {key: int(value) for key, value in fields.items()}
+
+
+def compare_observation(api: str, scenario: str, expected: dict[str, int], oracle_stderr: bytes,
+                        current: dict[str, int], stderr: bytes) -> str | None:
+    """Require lifecycle parity and return the narrowly admitted errno drift kind."""
+    if stderr != oracle_stderr:
+        raise RuntimeError(f'DNS cancellation stderr differs: {api}-{scenario}')
+    if any(current[key] != expected[key] for key in expected.keys()-{'errno'}):
+        raise RuntimeError(f'DNS cancellation observation differs: {api}-{scenario}: {current} != {expected}')
+    source_later = SOURCE_LATER_ERRNOS.get((api, scenario))
+    if source_later is not None:
+        if expected['errno'] not in source_later:
+            raise RuntimeError(f'DNS cancellation oracle errno is outside source contract: {api}-{scenario}: {expected}')
+        if current['errno'] not in source_later:
+            raise RuntimeError(f'DNS cancellation errno is outside source contract: {api}-{scenario}: {current}')
+        return 'source-later-syscall' if current['errno'] != expected['errno'] else None
+    if scenario in ORDINARY_ERRNO_DIFFERENCES:
+        return 'ordinary' if current['errno'] != expected['errno'] else None
+    if current['errno'] != expected['errno']:
+        raise RuntimeError(f'DNS cancellation observation differs: {api}-{scenario}: {current} != {expected}')
+    return None
 
 
 def run(work: Path, static: Path | None, dynamic: Path | None) -> None:
@@ -86,38 +118,39 @@ def run(work: Path, static: Path | None, dynamic: Path | None) -> None:
     witness = ROOT / 'compat/x86_64/run_pthread_wait_witness.py'
     outcomes = []
     oracle = {}
-    differences = []
+    ordinary_differences = []
+    source_later_differences = []
     audits = {'source_sha256': source_sha256, 'source': fixture.artifact_record(source),
               'object': object_record, 'products': products, 'artifacts': {}}
 
     def execute(label: str, entry: list[str]) -> None:
-        for api in APIS:
-            for scenario in SCENARIOS:
-                name = f'{label}-{api}-{scenario}'
-                command = [sys.executable, '-B', str(witness), str(execution), *entry, scenario, api]
-                try:
-                    result = subprocess.run(command, capture_output=True, timeout=10)
-                    status, stdout, stderr = result.returncode, result.stdout, result.stderr
-                except subprocess.TimeoutExpired as error:
-                    status, stdout, stderr = 124, error.stdout or b'', error.stderr or b''
-                (work / (name+'.stdout')).write_bytes(stdout)
-                (work / (name+'.stderr')).write_bytes(stderr)
-                outcomes.append({'entry': label, 'api': api, 'scenario': scenario, 'exit_status': status})
-                (work / 'execution-status.json').write_text(json.dumps(outcomes, indent=2)+'\n')
-                if status:
-                    raise RuntimeError(f'{name} exited {status}: {stderr.decode(errors="replace")}')
-                current = observation(stdout)
-                if label == 'oracle':
-                    oracle[(api, scenario)] = (current, stderr)
-                else:
-                    expected, oracle_stderr = oracle[(api, scenario)]
-                    excluded = {'errno'} if scenario in ORDINARY_ERRNO_DIFFERENCES else set()
-                    if stderr != oracle_stderr or any(current[key] != expected[key] for key in expected.keys()-excluded):
-                        raise RuntimeError(f'DNS cancellation observation differs: {name}: {current} != {expected}')
-                    if current != expected:
-                        differences.append({'entry': label, 'api': api, 'scenario': scenario,
-                                            'oracle_errno': expected['errno'], 'owned_errno': current['errno']})
-                print(f'{name}: PASS', flush=True)
+        for api, scenario in CASES:
+            name = f'{label}-{api}-{scenario}'
+            command = [sys.executable, '-B', str(witness), str(execution), *entry, scenario, api]
+            try:
+                result = subprocess.run(command, capture_output=True, timeout=10)
+                status, stdout, stderr = result.returncode, result.stdout, result.stderr
+            except subprocess.TimeoutExpired as error:
+                status, stdout, stderr = 124, error.stdout or b'', error.stderr or b''
+            (work / (name+'.stdout')).write_bytes(stdout)
+            (work / (name+'.stderr')).write_bytes(stderr)
+            outcomes.append({'entry': label, 'api': api, 'scenario': scenario, 'exit_status': status})
+            (work / 'execution-status.json').write_text(json.dumps(outcomes, indent=2)+'\n')
+            if status:
+                raise RuntimeError(f'{name} exited {status}: {stderr.decode(errors="replace")}')
+            current = observation(stdout)
+            if label == 'oracle':
+                oracle[(api, scenario)] = (current, stderr)
+            else:
+                expected, oracle_stderr = oracle[(api, scenario)]
+                difference = compare_observation(api, scenario, expected, oracle_stderr, current, stderr)
+                if difference == 'ordinary':
+                    ordinary_differences.append({'entry': label, 'api': api, 'scenario': scenario,
+                                                 'oracle_errno': expected['errno'], 'owned_errno': current['errno']})
+                elif difference == 'source-later-syscall':
+                    source_later_differences.append({'entry': label, 'api': api, 'scenario': scenario,
+                                                     'oracle_errno': expected['errno'], 'owned_errno': current['errno']})
+            print(f'{name}: PASS', flush=True)
 
     # Separate oracle-only wrappers observe the real disabled fast-open and
     # fallback-connect phases. No owned consumer links these wrapper objects.
@@ -167,10 +200,11 @@ def run(work: Path, static: Path | None, dynamic: Path | None) -> None:
     for kind, path in (('static', static), ('dynamic', dynamic)):
         if path is not None and fixture.tree_identity(path) != products[kind]:
             raise RuntimeError(f'supplied {kind} product changed during execution')
-    expected_count = len(APIS)*len(SCENARIOS)*(1+(2 if static is not None else 0)+(4 if dynamic is not None else 0))
+    expected_count = len(CASES)*(1+(2 if static is not None else 0)+(4 if dynamic is not None else 0))
     if len(outcomes) != expected_count:
         raise RuntimeError('incomplete DNS cancellation entry matrix')
-    (work / 'ordinary-errno-differences.json').write_text(json.dumps(differences, indent=2)+'\n')
+    (work / 'ordinary-errno-differences.json').write_text(json.dumps(ordinary_differences, indent=2)+'\n')
+    (work / 'masked-later-errno-differences.json').write_text(json.dumps(source_later_differences, indent=2)+'\n')
     (work / 'artifact-audits.json').write_text(json.dumps(audits, indent=2, sort_keys=True)+'\n')
     print(f'owned resolver cancellation: PASS ({len(outcomes)} same-object cases); evidence: {work}', flush=True)
 

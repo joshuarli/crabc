@@ -52,10 +52,12 @@ disables cancellation for cleanup-pop, executes the three-cell cleanup, then
 restores the saved actual post-CP state. Strict core/native and AArch callers
 retain their existing one-descriptor exchange contract.
 
-The installed matrix now has 24 scenarios across six APIs and seven entry arms:
-840 same-object musl/owned executions. It includes dual A/AAAA mixed TCP and
-MASKED cancellation, all descriptor cleanup, and source last-errno residue;
-there are no ordinary-errno exclusions for this batch evidence.
+The installed matrix has 120 regular API/scenario pairs plus one dedicated
+`modern-dual` post-TCP pair across seven entry arms: 847 same-object musl/owned
+executions. It includes dual A/AAAA mixed TCP and MASKED cancellation, all
+descriptor cleanup, and source last-errno residue. Historical ordinary errno
+differences remain separately recorded. The one consumed-MASKED source-residue
+cell has its own finite contract below; it is not an ordinary errno exclusion.
 
 ## Legacy strict-core adapter reference
 
@@ -247,6 +249,26 @@ Pending-entry tests queue cancellation while disabled, set the requested
 state, call the API, join, and inspect the UDP socket for a transmitted packet.
 No client sleep or scheduler-sensitive delay determines cancellation timing.
 
+The original `modern-dual` / `masked-dual-mixed-tcp` stimulus remains unchanged:
+the server requests cancellation at a witnessed blocked poll, then sends the
+truncated A and paired AAAA replies. In musl `__res_msend_rc`, a consumed MASKED
+request can be followed by a later nonblocking UDP `recvmsg` from the same
+drain. If that later receive finds no packet, its `EAGAIN` remains the raw final
+errno; otherwise `ECANCELED` remains visible. Independent oracle and owned
+runs therefore admit only `{ECANCELED, EAGAIN}` for this exact API/scenario
+pair. They still require byte-identical stderr and exact equality of canceled,
+returned, cleanup, cleanup-fd, leak, cancellation-state, transmission, and
+success observations. No other consumed-MASKED cell receives this exception.
+
+`masked-dual-post-tcp-later-eagain` is the dedicated deterministic counterpart,
+paired only with `modern-dual`. After the truncated A starts TCP, its server
+waits for the complete TCP query, witnesses the following poll, requests
+cancellation, and wakes that poll with the retired A identifier. The remaining
+AAAA slot ignores that datagram and the source drain makes one later empty UDP
+receive. Both musl and owned must report `EAGAIN` exactly, with the same
+descriptor and cancellation-state checks. This proves the finite alternate
+residue without weakening the original stimulus.
+
 | Initial same-object case (`res_query`) | Musl | Existing owned product |
 | --- | --- | --- |
 | Blocked UDP or TCP cancellation | Canceled; cleanup once; no live resolver fd | Normal timeout return; cleanup not invoked |
@@ -263,16 +285,18 @@ kept in `owned_resolver_cancellation_probe.c`.
 Run `./scripts/dev-x86_64.sh owned-resolver-cancellation [DYNAMIC_SYSROOT]`.
 Without an argument it constructs static and dynamic products before entering
 a network-none container. With a product argument it compiles against that
-supplied tree and does not build a replacement. The standalone matrix is 24
-scenarios across six APIs and seven musl/owned entry arms (840 runs): static
-ET_EXEC/static-PIE, and dynamic PIE/non-PIE through both kernel and direct
-interpreter entry. The supplied dynamic matrix has five arms (450 runs).
+supplied tree and does not build a replacement. The standalone matrix is 120
+regular API/scenario pairs plus the dedicated post-TCP pair across seven
+musl/owned entry arms (847 runs): static ET_EXEC/static-PIE, and dynamic
+PIE/non-PIE through both kernel and direct interpreter entry. The supplied
+dynamic matrix has five arms (605 runs).
 
 Scenarios cover pending enabled/disabled/MASKED entry; witnessed blocked UDP
 and TCP cancellation in all states; MASKED UDP-to-TCP restoration and failed
 TCP acquisition; pending initial setup failure; ordinary injected ECANCELED;
 successful UDP/TCP, retry, cancellation after retry, and a successful lookup
-followed by cancellation on the next lookup. Every retirement checks the
+followed by cancellation on the next lookup. The extra dedicated pair forces
+the source's post-TCP later-`EAGAIN` residue. Every retirement checks the
 descriptor set and the caller's cleanup order. Separate safe-core tests reject
 oversized callback counts, advance every initial TCP frame boundary, and prove
 close-before-failed-start-wait ordering.
@@ -281,8 +305,10 @@ Raw stdout/stderr, statuses, source/object/product hashes, installed-driver
 receipts, ELF/provider audits and namespace proof are retained. Lifecycle and
 success observations match musl. Ordinary errno differences for disabled waits,
 unconsumed injected ECANCELED, and successful TCP are recorded separately in
-`ordinary-errno-differences.json`; they do not waive any consumed-MASKED errno
-assertion. The `resolver-cancellation` dynamic qualification leaf additionally
-requires its exact newly created user/network namespace and supplied product
-path. The fixed classic-netdb namespace entry remains supported through the
-shared finite DNS helper. No resolver-family or public-support status changes.
+`ordinary-errno-differences.json`. The finite source-residue variation is
+recorded separately in `masked-later-errno-differences.json`; it does not waive
+any other consumed-MASKED errno assertion. The `resolver-cancellation` dynamic
+qualification leaf additionally requires its exact newly created user/network
+namespace and supplied product path. The fixed classic-netdb namespace entry
+remains supported through the shared finite DNS helper. No resolver-family or
+public-support status changes.

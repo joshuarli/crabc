@@ -24,7 +24,7 @@ static atomic_int extra_fds;
 static atomic_int worker_tid;
 static const char *scenario, *api;
 static int uses_server, tcp_case, initial_state, cancel_before_tcp, socket_failure, kernel_canceled;
-static int normal_case, retry_case, reuse_case;
+static int normal_case, retry_case, reuse_case, dual_mixed_later_errno_case, post_tcp_later_eagain_case;
 static int descriptor_count(void) {
     int count=0;
     for(int fd=0;fd<512;fd++) {
@@ -145,6 +145,13 @@ int main(int argc,char **argv) {
     initial_state=!strncmp(scenario,"masked",6)?PTHREAD_CANCEL_MASKED:
                   !strncmp(scenario,"disabled",8)?PTHREAD_CANCEL_DISABLE:PTHREAD_CANCEL_ENABLE;
     cancel_before_tcp=!strcmp(scenario,"masked-udp-to-tcp") || !strcmp(scenario,"masked-tcp-socket-failure") || !strcmp(scenario,"masked-dual-mixed-tcp");
+    dual_mixed_later_errno_case=!strcmp(scenario,"masked-dual-mixed-tcp") && !strcmp(api,"modern-dual");
+    /* This dedicated source-shaped cell proves that a consumed MASKED request
+       need not retain ECANCELED if a later nonblocking UDP drain finds the
+       socket empty. It is intentionally admitted only for the two-request
+       batch, whose first A slot has already moved to TCP. */
+    post_tcp_later_eagain_case=!strcmp(scenario,"masked-dual-post-tcp-later-eagain");
+    if(post_tcp_later_eagain_case) CHECK(!strcmp(api,"modern-dual"));
     socket_failure=!strcmp(scenario,"setup-pending")?1:!strcmp(scenario,"masked-tcp-socket-failure")?2:0;
     kernel_canceled=!strcmp(scenario,"kernel-canceled");
     if(kernel_canceled) initial_state=PTHREAD_CANCEL_MASKED;
@@ -173,13 +180,24 @@ int main(int argc,char **argv) {
         if(tcp_case) {
             packet[0][2]|=0x82;packet[0][3]|=0x80;
             CHECK(sendto(udp,packet[0],(size_t)n[0],0,(void *)&peer[0],size[0])==n[0]);
-            /* The paired AAAA remains UDP while the first A slot follows TCP. */
-            for(int i=1;i<packets;i++) { size_t length=dns_answer(packet[i],(size_t)n[i]);CHECK(sendto(udp,packet[i],length,0,(void *)&peer[i],size[i])==(ssize_t)length); }
+            if(!post_tcp_later_eagain_case) {
+                /* The paired AAAA remains UDP while the first A slot follows TCP. */
+                for(int i=1;i<packets;i++) { size_t length=dns_answer(packet[i],(size_t)n[i]);CHECK(sendto(udp,packet[i],length,0,(void *)&peer[i],size[i])==(ssize_t)length); }
+            }
             if(!socket_failure) {
                 accepted=accept(tcp,0,0);CHECK(accepted>=0);atomic_store(&extra_fds,1);
                 unsigned char length[2];read_exact(accepted,length,2);
                 unsigned amount=((unsigned)length[0]<<8)|length[1];CHECK(amount<=sizeof packet[0]);
                 read_exact(accepted,packet[0],amount);n[0]=amount;
+            }
+            if(post_tcp_later_eagain_case) {
+                /* The first TC reply has started TCP and the second UDP
+                   receive already found no packet. Cancel the next witnessed
+                   poll, then wake it with the retired A ID. The source drain
+                   ignores that datagram for the pending AAAA slot and makes
+                   one later empty recvmsg, whose EAGAIN is the final residue. */
+                witness_blocked_wait();CHECK(!pthread_cancel(thread));
+                CHECK(sendto(udp,packet[0],(size_t)n[0],0,(void *)&peer[0],size[0])==n[0]);
             }
         }
         if(normal_case) {
@@ -191,7 +209,7 @@ int main(int argc,char **argv) {
                 CHECK(sendto(udp,packet[0],length,0,(void *)&peer[0],size[0])==(ssize_t)length);
                 for(int i=1;i<packets;i++) { length=dns_answer(packet[i],(size_t)n[i]);CHECK(sendto(udp,packet[i],length,0,(void *)&peer[i],size[i])==(ssize_t)length); }
             }
-        } else if(!cancel_before_tcp) { witness_blocked_wait();CHECK(!pthread_cancel(thread)); }
+        } else if(!cancel_before_tcp && !post_tcp_later_eagain_case) { witness_blocked_wait();CHECK(!pthread_cancel(thread)); }
     }
     void *joined=0;CHECK(!pthread_join(thread,&joined));
     int leaked=descriptor_count()-baseline-atomic_load(&extra_fds);
@@ -210,7 +228,9 @@ int main(int argc,char **argv) {
            source slot can then transmit. */
         int expected_transmitted=!uses_server && (initial_state==PTHREAD_CANCEL_DISABLE || !kernel_canceled && !strcmp(api,"modern-dual") && initial_state==PTHREAD_CANCEL_MASKED);
         CHECK(transmitted==expected_transmitted);
-        if(initial_state==PTHREAD_CANCEL_MASKED && !kernel_canceled) CHECK(result_errno==ECANCELED);
+        if(post_tcp_later_eagain_case) CHECK(result_errno==EAGAIN);
+        else if(dual_mixed_later_errno_case) CHECK(result_errno==ECANCELED || result_errno==EAGAIN);
+        else if(initial_state==PTHREAD_CANCEL_MASKED && !kernel_canceled) CHECK(result_errno==ECANCELED);
         if(socket_failure==1) CHECK(result_errno==EMFILE);
         CHECK(successful==normal_case);
     }
