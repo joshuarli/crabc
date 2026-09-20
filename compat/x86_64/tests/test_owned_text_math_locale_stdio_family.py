@@ -53,6 +53,12 @@ class FamilyFixture:
         self.pthread_path = self.write(".work/pthread/receipt.json", "{}\n")
         self.static_preparation = self.write(".work/static/preparation.json", "{}\n")
         self.dynamic_qualification = self.write(".work/dynamic/qualification.json", "{}\n")
+        self.matrix_request = self.write(".work/family/request.json", json.dumps({
+            "schema": coordinator.family.SCHEMA,
+            "source_mount": str(self.root),
+            "static_preparation": self.relative(self.static_preparation),
+            "dynamic_qualification": self.relative(self.dynamic_qualification),
+        }) + "\n")
         self.products: dict[str, dict[str, Path]] = {}
         for pair in coordinator.PAIRS:
             static = self.root / ".work/products" / pair / "static"
@@ -158,7 +164,7 @@ class FamilyFixture:
             "native_aggregate_complete": False,
             "family_completion": False,
             "public_support": False,
-            "request": {"fixture": "matrix"},
+            "request": coordinator.family.file_identity(self.root, self.matrix_request),
             "inputs": {
                 "source": SOURCE,
                 "static_preparation": coordinator.family.file_identity(self.root, self.static_preparation),
@@ -230,13 +236,20 @@ class FamilyFixture:
 
     def patches(self, adapters: dict[str, object]):
         matrix = self.matrix()
+
+        def input_products(root: Path, request: dict):
+            # Keep the real request parser at this boundary: a matrix seals
+            # its request file identity rather than embedding its contents.
+            coordinator.family._request_paths(root, request)
+            return matrix["inputs"], self.products
+
         return mock.patch.multiple(
             coordinator,
             ROSTER_PATH=self.roster,
             current_source_identity=mock.Mock(return_value=SOURCE),
             _reader_adapters=mock.Mock(return_value=adapters),
         ), mock.patch.object(coordinator.family, "validate_receipt", return_value=matrix), mock.patch.object(
-            coordinator.family, "input_products", return_value=(matrix["inputs"], self.products)
+            coordinator.family, "input_products", side_effect=input_products
         ), mock.patch.object(coordinator.pthread, "validate_receipt", return_value=self.pthread())
 
 
@@ -250,6 +263,21 @@ class TextMathLocaleStdioFamilyTests(unittest.TestCase):
         patches = self.fixture.patches(adapters)
         with patches[0], patches[1], patches[2], patches[3]:
             return coordinator.collect(self.fixture.root, self.fixture.relative(self.fixture.request_path))
+
+    def test_product_pairs_load_the_sealed_matrix_request(self) -> None:
+        patches = self.fixture.patches(self.fixture.adapter_results())
+        with patches[2]:
+            inputs, products = coordinator._product_pairs(self.fixture.root, self.fixture.matrix())
+        self.assertEqual(inputs, self.fixture.matrix()["inputs"])
+        self.assertEqual(products, self.fixture.products)
+
+    def test_product_pairs_reject_changed_matrix_request_before_product_replay(self) -> None:
+        matrix = self.fixture.matrix()
+        self.fixture.matrix_request.write_text("{}\n", encoding="utf-8")
+        with mock.patch.object(coordinator.family, "input_products") as replay:
+            with self.assertRaisesRegex(coordinator.FamilyError, "request receipt changed"):
+                coordinator._product_pairs(self.fixture.root, matrix)
+        replay.assert_not_called()
 
     def test_roster_keeps_the_exact_sixteen_capabilities_and_eighteen_cells(self) -> None:
         roster = coordinator.load_roster(ROOT / "compat/x86_64/text-math-locale-stdio-family.toml")

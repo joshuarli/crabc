@@ -477,8 +477,12 @@ def _require_matrix(value: object) -> dict[str, Any]:
 
 
 def _product_pairs(root: Path, matrix: dict[str, Any]) -> tuple[dict[str, Any], dict[str, dict[str, Path]]]:
+    # The matrix seals its producer request as a file identity, not inline
+    # request fields. Authenticate that file before replaying its products.
+    request_path = _input_receipt(root, matrix, "request")
+    request = _strict_json(request_path, "POSIX matrix request")
     try:
-        inputs, pairs = family.input_products(root, matrix["request"])
+        inputs, pairs = family.input_products(root, request)
     except (family.ExecutionError, OSError, ValueError) as error:
         raise FamilyError(f"POSIX product receipt rejected: {error}") from error
     require(same(inputs, matrix["inputs"]), "POSIX matrix product inputs differ")

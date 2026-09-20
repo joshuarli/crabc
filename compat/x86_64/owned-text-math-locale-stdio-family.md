@@ -8,6 +8,11 @@ pthread component receipt. It then gives each declared component input to that
 component's public reader. The coordinator never invokes a producer, compiler,
 or native workload.
 
+The POSIX matrix's `request` field identifies a retained file; it does not
+contain the producer request itself. `_product_pairs` authenticates that file
+against the matrix identity before passing its contents to `input_products`.
+A changed request fails before product replay.
+
 The fixed roster in `text-math-locale-stdio-family.toml` has the sixteen
 capabilities from `compat/x86_64/parity.toml`. Every admitted component must
 bind the current product-owner source identity and the same three non-reused
