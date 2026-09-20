@@ -271,6 +271,18 @@ class TextMathLocaleStdioFamilyTests(unittest.TestCase):
         self.assertEqual(inputs, self.fixture.matrix()["inputs"])
         self.assertEqual(products, self.fixture.products)
 
+    def test_written_receipt_replays_its_checkout_relative_request(self) -> None:
+        fixture = self.fixture
+        patches = fixture.patches(fixture.adapter_results())
+        output = Path(".work/coordinator/receipt.json")
+        (fixture.root / output.parent).mkdir()
+        with patches[0], patches[1], patches[2], patches[3]:
+            receipt = coordinator.execute(fixture.root, fixture.relative(fixture.request_path), output)
+            retained = json.loads(receipt.read_text(encoding="utf-8"))
+            replayed = coordinator.validate_receipt(fixture.root, output)
+        self.assertEqual(replayed, retained)
+        self.assertFalse(replayed["family_completion"])
+
     def test_product_pairs_reject_changed_matrix_request_before_product_replay(self) -> None:
         matrix = self.fixture.matrix()
         self.fixture.matrix_request.write_text("{}\n", encoding="utf-8")

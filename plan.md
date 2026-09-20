@@ -161,8 +161,13 @@ to it:
 Parent review authenticates all 213 case logs. The nine text component groups
 also pass all three product pairs. The public dynamic publisher independently
 replays the qualification and publishes the local frozen-checkout pointer.
-Full text coordination remains unfinished under
-`.work/x86_64/text-family-pipeline-deac7ae7/`.
+Text coordination writes its immutable receipt, but independent replay fails
+because the public reader passes an absolute request path to the collector's
+checkout-relative interface. The writer-to-reader regression reproduces the
+failure; the reader now restores the validated relative path and all 19
+coordinator tests pass. The frozen failed replay remains under
+`.work/x86_64/text-family-pipeline-deac7ae7/`; qualification with the repaired
+reader remains required.
 The ordered native aggregate passes differential and stops at OS-test's exact
 raw outcome comparison for `include/stdlib/initstate.out`. All ten OS-test
 suites finish with successful make exits on both sides; eight match, while

@@ -1109,7 +1109,8 @@ def validate_receipt(root: Path, receipt: Path) -> dict[str, Any]:
     require(isinstance(request_identity.get("path"), str), "family receipt request path differs")
     request = _physical(root, request_identity["path"], "family receipt request", below_work=True)
     require(same(_identity(root, request), request_identity), "family receipt request changed")
-    observed = collect(root, request)
+    # The collector accepts checkout-relative requests, just like the writer.
+    observed = collect(root, request.relative_to(root))
     require(same(retained, observed), "family receipt differs from reconstructed evidence")
     return observed
 
