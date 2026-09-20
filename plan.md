@@ -30,12 +30,24 @@ clean committed qualification checkouts while jobs run. Keep C mimalloc
 selected until native promotion requirements pass. Final qualification still
 requires the joint same-revision evidence; old receipts remain historical.
 
+The preserved approved standalone unwinder provider is now present on main
+(`fbf8837e`, from `d3ca0e79`), without selecting it in runtime products. At
+clean `1ccef617`, `./scripts/dev-x86_64.sh unwinder-build` passes in the pinned
+native image, retaining `.work/x86_64/unwinder-builds/run-ty446s2i/provenance.json`
+and `.work/x86_64/unwinder-host-readable-build.log`. Its 17-symbol archive is
+SHA-256 `c89cda364237e6c2efa71137351381ca73600dcd8c0143d03032e3f8e49d5ac9`;
+the exact approved dependency/features audit and eleven host regression tests
+pass. Duplicate/missing graph identities fail closed, and fresh build outputs
+preserve prior evidence. This is standalone producer evidence only:
+`qualified` remains false. The original dirty integration worktree is untouched.
+
 ### Current dependency blockers
 
 | Category | Behavior/gates and evidence | Clearing action | Independent executable work |
 | --- | --- | --- | --- |
 | Implementation | BSD-random quartet missing; `owned-posix-native` at `deac7ae7` stops on `include/stdlib/initstate.out` (receipt below). Policy decision is resolved. | Implement pinned source semantics and differential/product proof, then rerun the owning aggregate. | Allocator ordinary-page work and other runtime components. |
-| Tool restriction, historical diagnostic recovery pending | Historical review rejection recorded below for `rust_std_unwinder` and `allocator_m2_metadata`; the record does not identify an exact command. It does not establish a blanket subsystem prohibition. | Recover original diagnostics and identify exact operations and dependent gates before attempting affected work; use supported review where available. | Source inspection and genuinely independent permitted implementation/qualification. |
+| Historical tool-denial record; exact operation unavailable | The retained rejection record names `rust_std_unwinder` and `allocator_m2_metadata`, but no original diagnostic or rejected command was recovered from repository history or preserved files. An exact prohibited action and its dependent gates cannot be inferred from those task names. | Obtain the original review transcript/tool-owner diagnostic to identify any denied operation before retrying it; use supported review where available. Preserve the historical record without inventing a blanket subsystem ban. | Approved standalone unwinder source/dependency/archive checks now pass; independent runtime and ordinary-page allocator work continues. |
+| Technical correctness / unwinder qualification | The approved design and preserved provider README identify unbounded upstream unwind-metadata slices/indirect pointers; installed/extracted stock-std, build-std, DSO, LTO and malformed-metadata qualification remain open. Standalone archive production does not prove them. | Assess the preserved implementation and finish bounds/failure behavior and real owned-product consumer evidence with the approved dependency/features boundary. | Standalone build/provenance tests and unrelated runtime implementation. |
 | Qualification pending: external resources | Native huge-page success and multi-NUMA placement remain unqualified; historical host observations below are not current measurements. | Inspect the host once, finish the existing runnable job, and derive one concrete provisioning request from its workloads. | Ordinary-page/single-node behavior, deterministic failures and concurrency tests. |
 | Family admission / final promotion | ABI checkpoint below retains 266 unresolved identity requirements and 25 unavailable family-semantic records; component passes do not close these. | Bind each requirement to its actual owner and complete current-source family evidence, then ordered same-revision promotion. | Existing implementation and focused checks need not wait for family admission. |
 
