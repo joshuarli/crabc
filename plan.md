@@ -55,13 +55,27 @@ warning and feature flags retained. This does not identify the old faulting
 instruction or close the ordered native aggregate; its full current-source
 OS-test replay remains required.
 
-Native allocator teardown work must preserve the pinned ordinary heap policy:
-an exhausted page is abandoned rather than retained in `BIN_FULL`. The fixed
-C observation and focused initial/later-owner tests establish that transition;
-the native teardown fixture still needs its old full-queue assumption repaired.
-Use a source-valid nonfull page for retained-owner local-free coverage, while
-keeping full-page abandonment as separate evidence. The final native teardown
-gate remains unqualified until that corrected fixture passes.
+Native allocator teardown commit `edddee58` is integrated. Its clean pinned
+native replay passes with source-valid nonfull pages for retained-owner local
+frees, including separate naturally aligned and interior-pointer cases. The
+pinned C observations and eight focused initial/later-owner tests separately
+cover full-page abandonment, partial-page mapping, all-free release, and late
+remote frees. The process-finalizer bridge preserves source metadata after
+automatic thread teardown is disabled; it does not promote the Rust allocator
+or close M2. Parent source-map and evidence checks pass all 52 tests. The clean
+native receipt is under
+`.work/worktrees/allocator_processdone_native_finalizer/.work/x86_64/processdone-finalizer-native-20260920T015100Z-clean/`.
+
+Empty-name locale selection remains a concrete parity gap. The current x86
+`setlocale` and `newlocale` leaves reject environment selection; that bounded
+implementation choice is not a profile exclusion. With `LC_ALL=C`, the same
+installed-header object passes pinned musl and fails the frozen candidate at
+`setlocale(LC_ALL, "")`. The isolated regression and raw development receipt
+are in `.work/worktrees/locale_environment_parity/` and
+`.work/x86_64/locale-environment-regression/red-v2/`. Supported-name environment
+selection, category precedence, object/base semantics, and failure-state
+preservation need implementation and direct evidence before locale closure.
+General locale databases remain excluded.
 
 The combined goal remains incomplete. Main through `0158c312` includes the
 locale source/product identity repairs, executable `libc.so` package mode,
