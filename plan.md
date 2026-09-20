@@ -1,6 +1,26 @@
 # Combined native x86-64 completion goal
 
-## Current evidence and implementation frontier — 2026-09-19
+## Current evidence and implementation frontier — 2026-09-20
+
+Main through `6bae6f5e` adds independently reconstructable locale and
+numeric/calendar component receipts and the installed 206-entry math/fenv
+component. Focused reader tests and six-mode development replays pass using
+the frozen `26dfb153` products. The math reader also passes a separate retained
+report replay in the pinned image. These are mixed-source development checks,
+not current-source qualification or family closure. The new math component
+extends the dynamic catalog to 71 cases; the historical 210-run result below
+still describes its original 70-case catalog.
+
+The full OS-test development replay with the compiler-mode fix completed all
+ten suites using frozen `26dfb153` products and consumer `69f547a5`. Eight
+suites match; the raw report retains nineteen differences: six atomic
+addressability observations, four credential-profile observations, eight
+missing BSD random observations, and an `aio_suspend` crash. Its report is
+`.work/worktrees/os_test_mode_fix_full_replay/.work/x86_64/tmp/owned-os-test.dkxfi_6t/os-test.json`.
+The AIO investigation observed that the upstream fixture can return while its
+second stack-backed request is still active. An explicitly attributed fixture
+repair for both oracle and candidate remains under development; neither this
+observation nor the development replay closes the ordered native aggregate.
 
 The combined goal remains incomplete. Main through `0158c312` includes the
 locale source/product identity repairs, executable `libc.so` package mode,
