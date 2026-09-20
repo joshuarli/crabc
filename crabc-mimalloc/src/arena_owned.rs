@@ -2241,6 +2241,192 @@ mod tests {
     }
 
     #[test]
+    fn emit_x86_64_automatic_arena_reservation_trace() {
+        // Pinned `mi_arenas_try_alloc` starts with a free-range search, then
+        // rejects a clean automatic-reservation miss while OS allocation is
+        // disallowed.  These direct private owners deliberately bypass the
+        // stopped ticket-zero/bootstrap bridge; the paired C oracle validates
+        // the actual initialized Heap/TLD source roots for every worker.
+        let _fault = fault::install(fault::Plan::disabled());
+        let options = |disallow_os_alloc| {
+            let mut options = VmOptions::uninitialized();
+            options.initialize_all(|_| VmOptionEnvironment::Absent);
+            options.set(VmOption::ArenaReserve, (ARENA_MIN_SIZE / KIB) as i64);
+            options.set(VmOption::ArenaEagerCommit, 0);
+            options.set(VmOption::DisallowOsAlloc, i64::from(disallow_os_alloc));
+            options
+        };
+        let mut trace: std::vec::Vec<(&str, i64)> = std::vec::Vec::new();
+
+        let disallow_process = process_with_options(options(true));
+        let disallow_backing = backing();
+        let before = disallow_process.subprocess().arena_statistics().snapshot();
+        assert_eq!(disallow_backing.registry().count(), 0);
+        assert_eq!(before.arena_count, 0);
+        assert!(unsafe {
+            disallow_backing.try_allocate_slices(disallow_process, config(), search(ArenaId::none()),
+                256, ARENA_SLICE_SIZE, true)
+        }.is_none());
+        assert_eq!(disallow_backing.registry().count(), 0);
+        assert_eq!(disallow_process.subprocess().arena_statistics().snapshot(), before);
+        trace.extend([
+            ("trace.automatic_arena.disallow.request_owner_inputs_valid", 1),
+            ("trace.automatic_arena.disallow.initial_registry_empty", 1),
+            ("trace.automatic_arena.disallow.initial_high_water_zero", 1),
+            ("trace.automatic_arena.disallow.miss_rejected", 1),
+            ("trace.automatic_arena.disallow.registry_unchanged", 1),
+            ("trace.automatic_arena.disallow.high_water_unchanged", 1),
+        ]);
+
+        let sequential_process = process_with_options(options(false));
+        let sequential_backing = backing();
+        let before = sequential_process.subprocess().arena_statistics().snapshot();
+        let mut claims = std::vec::Vec::new();
+        for _ in 0..4 {
+            claims.push(unsafe {
+                sequential_backing.try_allocate_slices(sequential_process, config(), search(ArenaId::none()),
+                    256, ARENA_SLICE_SIZE, true)
+            }.expect("four 256-slice claims must reserve two source regular arenas"));
+        }
+        assert_eq!(sequential_backing.registry().count(), 2);
+        assert_eq!(sequential_process.subprocess().arena_statistics().snapshot().arena_count - before.arena_count, 2);
+        let first = claims.first().unwrap().memory_id().arena_memory().unwrap();
+        let last = claims.last().unwrap().memory_id().arena_memory().unwrap();
+        assert_ne!(first.arena, last.arena);
+        for (index, claim) in claims.iter().enumerate() {
+            for other in claims.iter().skip(index + 1) {
+                let memory = claim.memory_id().arena_memory().unwrap();
+                let compared = other.memory_id().arena_memory().unwrap();
+                assert!(memory.arena != compared.arena
+                    || (memory.slice_index as usize + 256 <= compared.slice_index as usize
+                        || compared.slice_index as usize + 256 <= memory.slice_index as usize),
+                    "same-arena live claims retain disjoint half-open source slice ranges");
+            }
+        }
+        let released: std::vec::Vec<_> = claims.iter().map(|claim| {
+            let memory = claim.memory_id().arena_memory().unwrap();
+            (unsafe { ArenaId::from_arena(memory.arena) }.unwrap(), memory.slice_index as usize)
+        }).collect();
+        for claim in claims { assert!(claim.release()); }
+        for (arena, start) in released {
+            let view = unsafe { ArenaView::from_ptr(arena.as_ptr()) }.unwrap();
+            assert_eq!(unsafe { view.slices_free() }.unwrap().is_set_range(start, 256), Some(true));
+        }
+        trace.extend([
+            ("trace.automatic_arena.sequential.request_owner_inputs_valid", 1),
+            ("trace.automatic_arena.sequential.four_claims_live", 1),
+            ("trace.automatic_arena.sequential.second_arena_created", 1),
+            ("trace.automatic_arena.sequential.high_water_delta", 2),
+            ("trace.automatic_arena.sequential.first_last_arena_distinct", 1),
+            ("trace.automatic_arena.sequential.ranges_distinct", 1),
+            ("trace.automatic_arena.sequential.released_ranges_free", 1),
+        ]);
+
+        // This private fixture supplies distinct `ArenaSearch` inputs and
+        // never manufactures a Rust Heap/TLD; C proves those physical roots.
+        // It installs one private regular owner, retains every range returned
+        // by the real source-shaped existing-arena search, and makes every
+        // worker observe that exhaustion before actual `try_allocate_slices`
+        // calls. The paired C setup reaches the equivalent state after its
+        // worker TLD/Theap metadata allocation. The gates retain all new
+        // claims for the parent observation but do not claim a simultaneous
+        // internal reserve-lock miss or lock coalescing.
+        let concurrent_process = process_with_options(options(false));
+        let shared: &'static ProcessArenaBacking = backing();
+        let existing = install(shared, concurrent_process, MapAccess::Reserved);
+        assert_eq!(shared.registry().count(), 1);
+        assert_eq!(concurrent_process.subprocess().arena_statistics().snapshot().arena_count, 1);
+        let mut fillers = std::vec::Vec::new();
+        let mut filler_ranges = std::vec::Vec::new();
+        while let Some(claim) = unsafe {
+            shared.try_find_free(search(ArenaId::none()), 1, ARENA_SLICE_SIZE, true)
+        } {
+            let memory = claim.memory_id().arena_memory().unwrap();
+            assert_eq!(memory.arena, existing.as_ptr());
+            filler_ranges.push(memory.slice_index as usize);
+            fillers.push(claim);
+            assert!(fillers.len() < 2048, "source regular arena geometry must be finite");
+        }
+        assert!(!fillers.is_empty());
+        assert!(unsafe {
+            shared.try_find_free(search(ArenaId::none()), 1, ARENA_SLICE_SIZE, true)
+        }.is_none());
+        let before = concurrent_process.subprocess().arena_statistics().snapshot();
+        let inputs_ready = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let calls_start = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let claims_ready = std::sync::Arc::new(std::sync::Barrier::new(9));
+        let releases_start = std::sync::Arc::new(std::sync::Barrier::new(9));
+        let mut workers = std::vec::Vec::new();
+        for worker in 0..8 {
+            let inputs_ready = inputs_ready.clone();
+            let calls_start = calls_start.clone();
+            let claims_ready = claims_ready.clone();
+            let releases_start = releases_start.clone();
+            workers.push(std::thread::spawn(move || {
+                let source_input = ArenaSearch {
+                    heap_sequence: 0,
+                    heap_count: 1,
+                    thread_sequence: worker,
+                    numa_node: -1,
+                    requested: ArenaId::none(),
+                    allow_pinned: false,
+                };
+                inputs_ready.wait();
+                let preclaim_miss = unsafe {
+                    shared.try_find_free(source_input, 1, ARENA_SLICE_SIZE, true)
+                }.is_none();
+                calls_start.wait();
+                let claim = unsafe {
+                    shared.try_allocate_slices(concurrent_process, config(), source_input,
+                        1, ARENA_SLICE_SIZE, true)
+                }.expect("exhausted existing arena forces one source-shaped reservation");
+                let memory = claim.memory_id().arena_memory().unwrap();
+                claims_ready.wait();
+                releases_start.wait();
+                assert!(claim.release());
+                (preclaim_miss, memory.arena as usize, memory.slice_index as usize)
+            }));
+        }
+        claims_ready.wait();
+        let workers: std::vec::Vec<_> = workers;
+        assert_eq!(shared.registry().count(), 2);
+        assert_eq!(concurrent_process.subprocess().arena_statistics().snapshot().arena_count - before.arena_count, 1);
+        releases_start.wait();
+        let workers: std::vec::Vec<_> = workers.into_iter().map(|worker| worker.join().unwrap()).collect();
+        assert!(workers.iter().all(|worker| worker.0));
+        assert!(workers.iter().all(|worker| worker.1 == workers[0].1));
+        assert_ne!(workers[0].1, existing.as_ptr() as usize);
+        for (index, worker) in workers.iter().enumerate() {
+            assert!(workers.iter().skip(index + 1).all(|other| {
+                worker.1 != other.1 || worker.2 + 1 <= other.2 || other.2 + 1 <= worker.2
+            }), "new-arena live claims retain disjoint half-open source slice ranges");
+        }
+        let new_arena = unsafe { ArenaId::from_arena(workers[0].1 as *mut Arena) }.unwrap();
+        let new_view = unsafe { ArenaView::from_ptr(new_arena.as_ptr()) }.unwrap();
+        for (_, _, start) in &workers {
+            assert_eq!(unsafe { new_view.slices_free() }.unwrap().is_set_range(*start, 1), Some(true));
+        }
+        for filler in fillers { assert!(filler.release()); }
+        let existing_view = unsafe { ArenaView::from_ptr(existing.as_ptr()) }.unwrap();
+        for start in filler_ranges {
+            assert_eq!(unsafe { existing_view.slices_free() }.unwrap().is_set_range(start, 1), Some(true));
+        }
+        trace.extend([
+            ("trace.automatic_arena.concurrent.workers_ready_with_distinct_request_inputs", 8),
+            ("trace.automatic_arena.concurrent.workers_observed_exhausted_existing_ranges", 1),
+            ("trace.automatic_arena.concurrent.eight_new_arena_claims_live", 1),
+            ("trace.automatic_arena.concurrent.one_new_arena_reserved", 1),
+            ("trace.automatic_arena.concurrent.new_ranges_distinct", 1),
+            ("trace.automatic_arena.concurrent.retained_live_ranges_released", 1),
+            ("trace.automatic_arena.concurrent.released_ranges_free", 1),
+            ("trace.automatic_arena.valid", 1),
+        ]);
+        std::println!("CRABC_MI_AUTOMATIC_ARENA_RESERVATION_TRACE_BEGIN");
+        for (key, value) in trace { std::println!("{key}={value}"); }
+        std::println!("CRABC_MI_AUTOMATIC_ARENA_RESERVATION_TRACE_END");
+    }
+
+    #[test]
     fn automatic_reservation_outgrows_its_first_arena_and_serializes_concurrent_first_use() {
         let _fault = fault::install(fault::Plan::disabled());
         let mut options = VmOptions::uninitialized();

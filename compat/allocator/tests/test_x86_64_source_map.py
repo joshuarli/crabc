@@ -1919,14 +1919,17 @@ class X86_64SourceMapTests(unittest.TestCase):
             units["arena-lifecycle"]["source_anchor"],
             {
                 "member": "src/arena.c",
-                "start_line": 631,
+                "start_line": 240,
                 "end_line": 2435,
-                "sha256": "9a3d4edd89fca65274c667af01d8cd2bb60f2913562765347ffee740e3a55397",
+                "sha256": "3788b80c8dc13476b8f749089ba916f731d79633b96db33dfed859970400f36c",
             },
         )
-        self.assertIn("80-value native C/Rust differential", units["arena-lifecycle"]["difference"])
+        self.assertIn("99-value native C/Rust differential", units["arena-lifecycle"]["difference"])
+        self.assertIn("21-value native C/Rust differential starts from an OS-disallow clean miss", units["arena-lifecycle"]["difference"])
         self.assertIn("crabc_mimalloc::arena_purge", units["arena-lifecycle"]["rust_modules"])
         self.assertIn("compat/allocator/m2_arena_owned_x86_64.c", units["arena-lifecycle"]["evidence"])
+        self.assertIn("compat/allocator/x86_64_automatic_arena_reservation_evidence.py", units["arena-lifecycle"]["evidence"])
+        self.assertIn("compat/allocator/x86_64-automatic-arena-reservation-evidence-v3.5.0.json", units["arena-lifecycle"]["evidence"])
         self.assertEqual(
             units["tls-interface-and-thread-identity"]["source_anchor"],
             {

@@ -91,6 +91,16 @@ successful release. Evidence is retained in
 passes 73 focused evidence, parity-status, and source-map tests. This does not
 change startup/publication, qualify the merged runtime, or close allocator M2.
 
+Automatic regular-arena reservation now has a separate 21-value native C/Rust
+comparison at clean worker `43a2ddf3`: an OS-disallow miss, sequential growth
+to two arenas, and concurrent fresh reservation after exhausting an existing
+arena. Raw C build/ELF/run and Rust test records replay successfully; parent
+review verifies the pinned source ranges, clean source, image, and report
+hashes. Evidence is under
+`.work/worktrees/allocator_automatic_arena_reservation/.work/allocator-x86_64/automatic-arena-reservation-final-43a2ddf3/`.
+This leaves M2 partial and does not qualify bootstrap, runtime first-arena
+publication, or simultaneous reservation-lock misses.
+
 Empty-name locale selection is implemented in `22647dd0` for the owned x86
 runtime. Isolated failing regressions for both `setlocale` and `newlocale`
 precede the repair; they remain under

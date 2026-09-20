@@ -105,7 +105,7 @@
       "id": "arenas",
       "native_status": "partial",
       "remaining_conditions": [
-        "Qualify arena creation, OS reservation, abandonment, and cross-thread reclamation through native lifecycle and failure evidence beyond the finite three-regular-arena delayed-purge and two-slice whole-range-claim-fallback relations."
+        "Qualify general arena creation, OS reservation, abandonment, and cross-thread reclamation through native lifecycle and failure evidence beyond the finite OS-disallow miss, four-256-slice/two-regular-arena reservation, exhausted-existing-arena eight-worker fresh-reservation, three-regular-arena delayed-purge, and two-slice whole-range-claim-fallback relations."
       ],
       "source_map_records": [
         { "required_status": "partial", "unit_id": "arena-lifecycle" },

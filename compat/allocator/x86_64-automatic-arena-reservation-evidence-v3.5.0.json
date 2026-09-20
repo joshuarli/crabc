@@ -1,0 +1,135 @@
+{
+  "c_probe_sha256": "479e520d9c0231008e7c6cf8243d8110c7c4c6509c43eb78d94b22e2383559fa",
+  "compile_definitions": [
+    "-DMI_SHARED_LIB",
+    "-DMI_SHARED_LIB_EXPORT",
+    "-DMI_LIBC_MUSL=1",
+    "-DMI_PRIM_HAS_PROCESS_ATTACH=1"
+  ],
+  "format": 1,
+  "profile": "linux-x86_64-private-automatic-regular-arena-reservation",
+  "release_flags": [
+    "-O3",
+    "-DNDEBUG",
+    "-DMI_BUILD_RELEASE=1",
+    "-DMI_DEBUG=0",
+    "-DMI_STAT=0",
+    "-DMI_SECURE=0",
+    "-DMI_GUARDED=0"
+  ],
+  "rust_test": {
+    "path": "crabc-mimalloc/src/arena_owned.rs",
+    "target_arch": "x86_64",
+    "test_filter": "arena::owned::tests::emit_x86_64_automatic_arena_reservation_trace"
+  },
+  "schema": "crabc-mimalloc-x86_64-automatic-arena-reservation-evidence",
+  "scope": {
+    "aarch64_status_reused": false,
+    "automatic_reserve_lock_coalescing_claimed": false,
+    "bootstrap_or_ready_path_changed": false,
+    "concurrent_fresh_regular_arena_reservation_claimed": true,
+    "default_backend_changed": false,
+    "emulation_accepted": false,
+    "metadata_or_os_aligned_publication_claimed": false,
+    "native_linux_x86_64_required": true,
+    "private_engine_evidence_only": true,
+    "public_crabc_support": false,
+    "public_mi_api_claimed": false,
+    "runtime_first_arena_claimed": false,
+    "simultaneous_reserve_lock_miss_or_coalescing_claimed": false
+  },
+  "source_anchors": [
+    {
+      "end_line": 20,
+      "member": "include/mimalloc/atomic.h",
+      "sha256": "c0235bb455ffc28e3bb83afcfd5946fe44aa652808a892435f13a67efa232f52",
+      "start_line": 18
+    },
+    {
+      "end_line": 335,
+      "member": "src/arena.c",
+      "sha256": "d7f4fe71718bd3baebb7c31b63a07d867a73eddab2f8efadd976bf940efa175f",
+      "start_line": 240
+    },
+    {
+      "end_line": 406,
+      "member": "src/arena.c",
+      "sha256": "52181aaf7f41b28c1da4c6ac7bd6cc4f25a77738fd79a2cabd6522533257ec62",
+      "start_line": 341
+    },
+    {
+      "end_line": 569,
+      "member": "src/arena.c",
+      "sha256": "c3ccfc5061f9fb83f48dd6e92133c59ec65bbd89dd7f1c6531dcf48e66686bd8",
+      "start_line": 497
+    },
+    {
+      "end_line": 1610,
+      "member": "src/arena.c",
+      "sha256": "e87fb778eb17439ab7dd21f0e6d53c3779802553c2b4310965bd9341b95a7946",
+      "start_line": 1573
+    },
+    {
+      "end_line": 250,
+      "member": "src/init.c",
+      "sha256": "25b55becf855281d82750d46dcd93ab6e8786453295b7eb34b4648ace45fc455",
+      "start_line": 236
+    },
+    {
+      "end_line": 360,
+      "member": "src/init.c",
+      "sha256": "8b5a6af8d90da7f2cb33cf5c6211c9325234840d57a54c25be891e49e4d354e5",
+      "start_line": 305
+    },
+    {
+      "end_line": 533,
+      "member": "src/init.c",
+      "sha256": "8eadfa1134c837f8a2e13ab433b20e2ef00d5c9895afc7232638f05c656ce6d8",
+      "start_line": 505
+    },
+    {
+      "end_line": 1040,
+      "member": "src/prim/unix/prim.c",
+      "sha256": "eef3c9b9715fec9a271f8a966febe73d3ff3113165c5bc9c930fa46c657aa87a",
+      "start_line": 1011
+    }
+  ],
+  "target": {
+    "architecture": "x86_64",
+    "endianness": "little",
+    "rust_target": "x86_64-unknown-linux-musl",
+    "system": "linux"
+  },
+  "trace": {
+    "begin": "CRABC_MI_AUTOMATIC_ARENA_RESERVATION_TRACE_BEGIN",
+    "end": "CRABC_MI_AUTOMATIC_ARENA_RESERVATION_TRACE_END",
+    "expected_values": {
+      "trace.automatic_arena.concurrent.eight_new_arena_claims_live": 1,
+      "trace.automatic_arena.concurrent.new_ranges_distinct": 1,
+      "trace.automatic_arena.concurrent.one_new_arena_reserved": 1,
+      "trace.automatic_arena.concurrent.released_ranges_free": 1,
+      "trace.automatic_arena.concurrent.retained_live_ranges_released": 1,
+      "trace.automatic_arena.concurrent.workers_observed_exhausted_existing_ranges": 1,
+      "trace.automatic_arena.concurrent.workers_ready_with_distinct_request_inputs": 8,
+      "trace.automatic_arena.disallow.high_water_unchanged": 1,
+      "trace.automatic_arena.disallow.initial_high_water_zero": 1,
+      "trace.automatic_arena.disallow.initial_registry_empty": 1,
+      "trace.automatic_arena.disallow.miss_rejected": 1,
+      "trace.automatic_arena.disallow.registry_unchanged": 1,
+      "trace.automatic_arena.disallow.request_owner_inputs_valid": 1,
+      "trace.automatic_arena.sequential.first_last_arena_distinct": 1,
+      "trace.automatic_arena.sequential.four_claims_live": 1,
+      "trace.automatic_arena.sequential.high_water_delta": 2,
+      "trace.automatic_arena.sequential.ranges_distinct": 1,
+      "trace.automatic_arena.sequential.released_ranges_free": 1,
+      "trace.automatic_arena.sequential.request_owner_inputs_valid": 1,
+      "trace.automatic_arena.sequential.second_arena_created": 1,
+      "trace.automatic_arena.valid": 1
+    }
+  },
+  "upstream": {
+    "archive_root": "mimalloc-3.5.0",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "version": "3.5.0"
+  }
+}
