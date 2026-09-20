@@ -4,7 +4,7 @@
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`,
 //! `src/prng/random.c` (SHA-256
 //! `3a47a757115e2a2ea7b1242a0000100ad802c27c2a398b4d8b8360d768780209`).
-//! Copyright © 2005-2024 Rich Felker, et al.
+//! Copyright © 2005-2020 Rich Felker, et al.
 //!
 //! Permission is hereby granted, free of charge, to any person obtaining a
 //! copy of this software and associated documentation files (the "Software"),
