@@ -124,7 +124,7 @@ Run `./scripts/dev-x86_64.sh owned-classic-netdb [DYNAMIC_SYSROOT]`. Without an
 argument, pinned product preparation precedes network isolation. One ordinary
 installed-header application object links to pinned musl and owned static,
 static-PIE, dynamic PIE and dynamic non-PIE; both dynamic artifacts run through
-kernel and direct interpreter entry. Twenty-two cases run in disposable private
+kernel and direct interpreter entry. Twenty-three cases run in disposable private
 chroots with fixture-owned `/etc`, in a loopback-only network namespace. They
 cover numeric/local/DNS lookup, ordered DNS callback records, buffer bounds,
 large host records, search and mixed-family failure precedence, reverse
@@ -134,6 +134,62 @@ fork owner isolation and heap exhaustion. Every process exit, raw stdout/stderr
 comparison, ELF provider, DNS event and ordinary installed-driver receipt is
 retained. Standalone
 execution requires Docker network-none plus SYS_CHROOT.
+
+## Reconstructable component receipt
+
+`owned_classic_netdb.py` retains `classic-netdb-products.json` beside the
+matrix artifacts. Its component is `classic-netdb`, its sole scope is
+`libc.resolver`, and its closed 23-case roster is exactly `CASES` in
+`owned_classic_netdb_component_receipt.py`: classic host/service results,
+public resolver errors, result and
+owner lifetime, thread/fork isolation, exhaustion, local-file failures, and
+the controlled DNS paths. It deliberately leaves `family_completion`,
+`promotion_ready`, and `public_support` false. It does not select a
+`network.resolver-*` Rust-foundation capability or promote the resolver family.
+
+The receipt seals the producer, runner, installed-header probe, namespace
+helper, DNS fixture, qualification/product/payload helpers, reader and pinned
+image-input manifest; static and dynamic product trees and manifests; the
+compiler/linker/symbol-reader identities; installed-header trace; one ET_REL
+workload; every link receipt and ELF audit; each copied dynamic execution
+payload; loopback and namespace identities; DNS readiness and events; and
+every command argv, process status, stdout and stderr. The reader uses the
+pinned `readelf` against physical retained ELF bytes for provider claims. It
+does not treat a retained or rehashed symbol listing as authority.
+
+The ordinary one-product spelling remains a development-only four-cell replay:
+
+```sh
+./scripts/dev-x86_64.sh owned-classic-netdb DYNAMIC_SYSROOT
+```
+
+It emits `dynamic-only-four-cell-development` and cannot satisfy a static
+receipt requirement. Supply both existing products to replay the six-cell
+development matrix without rebuilding either product:
+
+```sh
+bash compat/x86_64/run_owned_classic_netdb.sh \
+  --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT
+```
+
+Both supplied directories must be physical directories below the invoking
+checkout's `.work`. The frozen `26dfb153` products are therefore mounted or
+copied as a whole read-only checkout beneath `.work/frozen-26df`; hard links
+are not an admissible substitute. These are development replays only and do
+not qualify current source or admit a family.
+
+Read a retained receipt inside the pinned native evidence image, whose exact
+identity is `crabc-core-evidence@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d`:
+
+```sh
+python3 -B compat/x86_64/owned_classic_netdb_component_receipt.py validate \
+  --root /workspace --report /workspace/.work/PATH/classic-netdb-products.json \
+  --require-static
+```
+
+Validation is read-only. The one named `dns-batch` exact-question association
+difference is retained as its own pinned musl/candidate transcript for every
+candidate cell; no other output mismatch is accepted.
 
 The `classic-netdb` dynamic qualification case accepts a supplied installed,
 relocated or extracted product. Its exact command alone is prefixed with

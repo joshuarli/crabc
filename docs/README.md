@@ -46,7 +46,8 @@ them; this router should explain ownership, not duplicate command contracts.
   — checked frozen scope, product matrix, and remaining behavior obligations.
 - [Owned classic host and service lookup](../compat/x86_64/owned-classic-netdb.md)
   — conventional local files and bounded DNS through owned products, with
-  explicit remaining resolver cancellation and parser-order obligations.
+  a reconstructable non-promoting `classic-netdb` receipt; explicit remaining
+  resolver cancellation and parser-order obligations remain.
 - [Owned TRE regex evidence](evidence/x86-owned-regex.md)
 - [`evidence/x86-owned-strfmon.md`](evidence/x86-owned-strfmon.md): fixed-profile monetary formatting and installed-product evidence.
 - [Owned wide calendar evidence](evidence/x86-owned-wcsftime.md)
