@@ -244,15 +244,16 @@ For one ordinary selected reserved medium page,
 `PageAllocatorEngine::page_make_immediate` performs the direct mapping before
 `Page::set_slice_pcommitted_after_commit` and
 `LocalFreeList::extend_count`, so the second allocation reuses the same page
-only after its prefix grows. A mapping failure returns no allocation with the
-selected page unchanged, and the test explicitly retries that same page.
-Pinned C may instead retire and fall through to fresh allocation at
-`src/page.c:845-863`; that intentional fixture-only divergence is recorded in
-[`known-differences.md`](../../compat/allocator/known-differences.md), not
-claimed as C fault-injection parity. The C oracle sets
-`mi_option_page_commit_on_demand` only for its own successful branch. Its
-23-field native trace establishes neither a public allocator control nor a
-general lifecycle/fresh-fallback claim.
+only after its prefix grows. On the exact direct mapping/commit miss, the
+selected page remains unchanged while the false collection falls through to a
+distinct fresh page, as in pinned `src/page.c:845-863`.
+`main_heap_page::tests::ordinary_reserved_medium_on_demand_direct_commit_failure_falls_through_to_fresh_page`
+proves both PageMap-published pages, the original prefix/capacity/free-list and
+payload, and normal release of both pages. The C oracle sets
+`mi_option_page_commit_on_demand` only for its own successful branch; its
+23-field native trace and the Rust fault regression are not C fault-injection
+parity, a public allocator control, or a general lifecycle/fresh-fallback
+claim.
 
 The separately bounded native x86-64 `ProcessMetadataPageBacking` route now
 uses the resolved process `page_commit_on_demand` policy for regular metadata
@@ -1793,10 +1794,11 @@ until B exits.
 This consuming post-exit route is distinct from the ordinary native x86-64
 test fixture above. The latter begins with a fresh reserved medium page,
 exhausts its callback-committed prefix, and runs the ordinary
-`page_make_immediate` path. Its direct mapping failure deliberately preserves
-that queue member for an explicit test retry; this is narrower than the source
-failure route and is not a production page-on-demand policy, a fresh fallback,
-or a C fault-injection differential.
+`page_make_immediate` path. Its direct mapping failure preserves that queue
+member's prefix, capacity, free list, PageMap identity, arena bit, and live
+payload while the source false collection falls through to a distinct fresh
+page at pinned `src/page.c:845-863`. This private test seam is not a production
+page-on-demand policy or a C fault-injection differential.
 
 The separate native x86-64 `allocator-direct-on-demand` differential uses the
 same private `cfg(test)` seam on one fresh reserved 1024-byte small

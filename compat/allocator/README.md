@@ -872,12 +872,11 @@ prefix, then its second allocation commits the selected page area before
 free-list extension and reuses that same page. It compares 23
 address-independent success-path values with pinned C. Only the C probe sets
 `mi_option_page_commit_on_demand`; Rust uses a private `cfg(test)` seam. Its
-Rust-only failed-direct-commit assertion returns no allocation and explicitly
-retries the unchanged selected page, whereas C may retire/fall through to a
-fresh allocation at `src/page.c:845-863`. That deliberate test-only divergence
-is recorded in [`known-differences.md`](known-differences.md); this lane makes
-no C fault-injection parity, production option/API/policy, fresh-fallback,
-public x86-runtime, libc-integration, backend, or AArch64 claim. The
+Rust-only failed-direct-commit assertion leaves the selected page unchanged,
+false-collects, and selects a distinct fresh page at `src/page.c:845-863`'s
+source boundary. It proves no C fault-injection parity, production
+option/API/policy, public x86-runtime, libc-integration, backend, or AArch64
+claim. The
 separate native x86-64 `allocator-direct-on-demand` lane exercises the matching
 small direct-cache success path without widening that seam: a fresh 1024-byte
 page starts at capacity 8 with a four-OS-page prefix, allocation nine falls
@@ -2174,13 +2173,10 @@ x86-64 only:
 It writes `compat/reports/allocator/x86_64/on-demand.json` after comparing 23
 address-independent success-path values. The C oracle alone sets
 `mi_option_page_commit_on_demand`; the Rust side uses only a private
-`cfg(test)` seam. Its Rust fault assertion deliberately preserves the selected
-page and asks the next test allocation to retry it, while pinned C may retire
-and fall through to fresh allocation. That limitation is recorded in
-[`known-differences.md`](known-differences.md), so this command does not claim
-C fault-injection parity, a production option/API/policy, fresh fallback,
-public x86 runtime support, libc integration, backend promotion, or AArch64
-evidence.
+`cfg(test)` seam. Its Rust fault assertion preserves the selected page while
+the source false-collection path selects a distinct fresh page. This command
+does not claim C fault-injection parity, a production option/API/policy, public
+x86 runtime support, libc integration, backend promotion, or AArch64 evidence.
 
 The separate reserved-small direct-cache on-demand differential is also native
 x86-64 only:
@@ -2430,7 +2426,7 @@ snapshot after review; the normal gate never updates its own baseline.
 | `x86_64_mapped_adoption_evidence.py` and `x86_64-mapped-adoption-evidence-v3.5.0.json` | Native x86-64-only private 18-value pinned-C/Rust differential for one arena-backed, same-origin, one-thread nonfull medium page: the C next same-heap allocation claims, reassociates, and queue-tail requeues that exact PageMap/ordinary-arena-bitmap-preserved page, while Rust explicitly consumes its test-only `adopt()` adapter before its matching third allocation. It is dispatched by `allocator-mapped-adoption`; it does not claim general or cross-thread abandonment/adoption, public API/runtime, backend, public x86 support, or AArch64 evidence. |
 | `x86_64_direct_small_allocation_adoption_evidence.py` and `x86_64-direct-small-allocation-adoption-evidence-v3.5.0.json` | Native x86-64-only private 32-value pinned-C/Rust differential for one same-origin, same-thread/same-Theap, arena-backed 1024-byte direct-small page with two live blocks: abandonment clears its complete rounded direct-cache range while retaining PageMap/ordinary-arena-bitmap state, and the next C `mi_heap_malloc_small` claims, reassociates, queue-tail requeues, restores that range, and allocates the third block while Rust explicitly consumes its test-only `adopt()` handoff before its matching third allocation. It is dispatched by `allocator-direct-small-allocation-adoption`; it does not claim general/cross-thread adoption, generic Rust abandoned-page scanning, remote routing, lifecycle, public API/runtime, backend, public x86 support, or AArch64 evidence. |
 | `x86_64_unmapped_reabandon_evidence.py` and `x86_64-unmapped-reabandon-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one full medium arena page's unmapped-abandonment to threshold-triggered mapped reabandon. It is dispatched by `allocator-unmapped-reabandon`; Rust exercises one bounded real post-Theap-teardown full-medium route and it does not claim general routing, lifecycle, public API, or AArch64 evidence. |
-| `x86_64_on_demand_evidence.py` and `x86_64-on-demand-evidence-v3.5.0.json` | Native x86-64-only private 23-field pinned-C/Rust differential for one ordinary reserved medium page whose first allocation exhausts the fixed four-OS-page prefix and whose second allocation directly commits before free-list extension and same-page reuse. It is dispatched by `allocator-on-demand`; only C sets `mi_option_page_commit_on_demand`, Rust uses a `cfg(test)` seam, and its deliberate Rust failed-commit same-page retry is not C fault-injection parity or a production option/API/policy, fresh-fallback, public-runtime, backend, or AArch64 claim. |
+| `x86_64_on_demand_evidence.py` and `x86_64-on-demand-evidence-v3.5.0.json` | Native x86-64-only private 23-field pinned-C/Rust differential for one ordinary reserved medium page whose first allocation exhausts the fixed four-OS-page prefix and whose second allocation directly commits before free-list extension and same-page reuse. It is dispatched by `allocator-on-demand`; only C sets `mi_option_page_commit_on_demand`, Rust uses a `cfg(test)` seam, and the separate Rust regression proves an injected direct-commit miss leaves its original page unchanged before source-shaped false collection selects a distinct fresh page. Neither test establishes C fault-injection parity, a production option/API/policy, public runtime, backend, or AArch64 support. |
 | `x86_64_direct_on_demand_evidence.py` and `x86_64-direct-on-demand-evidence-v3.5.0.json` | Native x86-64-only private 44-field pinned-C/Rust differential for one reserved 1024-byte small direct-cache page: direct exhaustion at eight objects, generic zero-commit extension at allocation nine, and direct prefix growth before the allocation-seventeen extension. It is dispatched by `allocator-direct-on-demand`; C alone sets `mi_option_page_commit_on_demand`, Rust uses a `cfg(test)` seam, and its source-anchored poststate trace does not claim C fault-injection parity, a production option/API/policy, fresh fallback, public runtime, backend, or AArch64 evidence. |
 | `x86_64_regular_small_evidence.py` and `x86_64-regular-small-evidence-v3.5.0.json` | Native x86-64-only private 40-field pinned-C/Rust differential for one 1025-byte ordinary regular-small arena page: a 1280-byte 51-block one-slice class locally retires at 16, the next same-Theap generic allocation quick-collects/reuses a just-freed same-page block, and forced collection verifies queue/PageMap/ordinary arena bitmap/exact slice release. It is dispatched by `allocator-regular-small`; it does not claim general retirement/lifecycle, remote or concurrent collection, public API/runtime, backend, public x86 support, or AArch64 evidence. |
 | `x86_64_direct_small_full_retire_evidence.py` and `x86_64-direct-small-full-retire-evidence-v3.5.0.json` | Native x86-64-only private 38-field pinned-C/Rust differential for one same-thread/same-Theap 1024-byte direct-small arena page (1024-byte blocks, capacity 64, one slice): when full it remains in its ordinary regular bin with its complete rounded direct-cache range, never enters `BIN_FULL` or takes an unfull transition, then owner-local frees retire it at 16 while that range remains populated. Forced retired collection restores the source empty-page cache image and releases queue/PageMap/ordinary arena bitmap/slice. It is dispatched by `allocator-direct-small-full-retire`; it does not claim general retirement/lifecycle, remote or concurrent collection, thread exit, abandonment/adoption, public API/runtime, backend, public x86 support, or AArch64 evidence. |

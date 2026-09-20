@@ -8,11 +8,9 @@ The source pin is defined in
 ## Current status
 
 No successful ordinary pinned-mimalloc engine allocation-trace difference is
-recorded. One public-C ABI backend known red and one test-only native x86-64
-on-demand failed-direct-commit divergence are recorded below. The former are
-not pinned-engine parity claims; they are deliberately visible in the paired
-ordinary/native libc artifact report. The latter is deliberately excluded from
-the C/Rust trace equivalence. The current Rust crate contains source-mapped
+recorded. One public-C ABI backend known red is recorded below. It is not a
+pinned-engine parity claim; it is deliberately visible in the paired
+ordinary/native libc artifact report. The current Rust crate contains source-mapped
 foundations plus a private, explicit single-thread ordinary-allocation
 lifecycle across small, medium, large, and singleton pages. Its small path has
 exact address-independent trace parity with pinned C v3.5.0, and the AArch64
@@ -1771,38 +1769,28 @@ transfer capability.
   authorize concurrent later-thread allocation routing, a public thread
   attachment API, process shutdown, or default backend use.
 
-### `CRABC-MI-TEST-ONLY-ON-DEMAND-FAILED-COMMIT` — accepted test-only fault-path divergence
+### `CRABC-MI-TEST-ONLY-ON-DEMAND-FAILED-COMMIT` — resolved private fixture gap
 
-- **Upstream/Rust:** the direct-extension failure branch at
-  `src/page.c:845-863`, represented only by
-  `single_thread::PageAllocatorEngine::extend_on_demand_page_before_allocation`
-  and
-  `main_heap_page::tests::ordinary_reserved_medium_on_demand_commit_before_reuse`.
-- **Category:** private native x86-64 test seam only. It has no C ABI surface
-  or public Rust API, and does not describe the separately bounded
-  process-metadata policy path below.
-- **Difference:** after a failed direct extension, pinned C may retire the
-  selected page and fall through to a fresh allocation path. The Rust test seam
-  instead returns `None` without changing the selected page's committed prefix,
-  capacity, free-list, queue membership, PageMap registration, or arena bit;
-  its next test allocation explicitly retries that same page. This intentional
-  divergence isolates failure-state preservation and avoids claiming a fresh
-  fallback. The pinned C probe sets `mi_option_page_commit_on_demand` only to
-  select its successful ordinary branch; the 23-field C/Rust differential does
-  not inject a C commit fault and therefore does not establish fault-path
-  parity.
-- **Evidence:**
-  `main_heap_page::tests::ordinary_reserved_medium_on_demand_commit_before_reuse`
-  injects the Rust direct-commit failure, proves the unchanged selected-page
-  witnesses, then proves same-page retry. The checked-in
-  `x86_64-on-demand-evidence-v3.5.0.json` contract and
-  `x86_64_on_demand_evidence.py` compare only the successful ordinary C/Rust
-  trace with native x86-64 provenance.
-- **Decision/removal:** accepted solely for the private test fixture until a
-  separately reviewed source-shaped failed-extension lane proves the C retire
-  and any fresh-selection behavior, or the fixture is removed. It does not
-  authorize a public allocator control, a general lifecycle policy, or backend
-  promotion.
+- **Former behavior:** the bounded `cfg(test)` ordinary reserved-medium seam
+  represented `src/page.c:845-863` by returning `None` after its paired-lease
+  direct mapping failure and requiring a later explicit retry of the unchanged
+  selected page. It was never a production allocation path or a C
+  fault-injection result.
+- **Resolved mapping:**
+  `PageAllocatorEngine::direct_page_commit_mapping_miss` now recognizes that
+  paired-lease `Mapping(Arena(Mapping))` error as the same direct mapping miss
+  as the already-fallback-eligible `ProcessMapping` error. The ordinary queue
+  keeps the failed selected page unchanged, runs false collection, and selects
+  a distinct fresh page; prefix publication and free-list extension failures
+  remain terminal. The distinct mapped-abandoned claim route still reabandons
+  and takes its one same-candidate false-mode retry.
+- **Evidence/scope:**
+  `main_heap_page::tests::ordinary_reserved_medium_on_demand_direct_commit_failure_falls_through_to_fresh_page`
+  injects the private Rust mapping failure and proves the two page identities,
+  original-page state/payload preservation, and normal release. The native
+  `allocator-on-demand` 23-field C/Rust differential remains a successful
+  direct-commit/reuse trace only; this record does not claim C fault-injection
+  equivalence, a production option/API/policy, or backend promotion.
 
 ### `CRABC-MI-HUGE-FREE-TRACKING-OWNERSHIP` — retained cleanup bookkeeping
 

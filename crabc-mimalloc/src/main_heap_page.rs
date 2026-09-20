@@ -15414,7 +15414,7 @@ mod tests {
     #[test]
     fn ordinary_reserved_medium_on_demand_commit_before_reuse() {
         thread::spawn(|| {
-            let fault = fault::install(fault::Plan::disabled());
+            let _fault = fault::install(fault::Plan::disabled());
             let config = memory_config();
             let storage = MainStaticAttachmentStorage::test_static_owner();
             let subprocess = MainSubprocess::test_static_owner();
@@ -15509,41 +15509,13 @@ mod tests {
                         "the ordinary source page owns its arena bitmap member"
                     );
 
-                    fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
-                    let failed_allocation_none = allocator.allocate(request, false).is_none();
-                    assert!(
-                        failed_allocation_none,
-                        "find-generic propagates a failed page_make_immediate commit"
-                    );
-                    let failed_capacity_preserved =
-                        unsafe { page.as_ref().capacity() } == source_capacity;
-                    let failed_prefix_preserved =
-                        unsafe { page.as_ref().slice_pcommitted() } == source_pcommitted;
-                    let failed_used_preserved = unsafe { page.as_ref().used() } == source_used;
-                    let failed_free_preserved =
-                        unsafe { page.as_ref().free_list_head() } == source_free;
-                    let failed_queue_preserved = allocator.test_queue_count(bin) == Some(1);
-                    let failed_page_map_preserved =
-                        unsafe { page_map.page_map().unwrap().checked_lookup(first.as_ptr()) }
-                            == page.as_ptr();
-                    let failed_arena_bit_preserved =
-                        unsafe { arena.pages() }.unwrap().is_clear_range(slice, 1) == Some(false);
-                    assert!(failed_capacity_preserved);
-                    assert!(failed_prefix_preserved);
-                    assert!(failed_used_preserved);
-                    assert!(failed_free_preserved);
-                    assert!(failed_queue_preserved);
-                    assert!(failed_page_map_preserved);
-                    assert!(failed_arena_bit_preserved);
-
-                    fault.set(fault::Plan::disabled());
                     let reused = allocator
                         .allocate(request, false)
-                        .expect("the fault-free ordinary retry commits before extending the page");
+                        .expect("the ordinary source path commits before extending the page");
                     assert_eq!(
                         unsafe { allocator.test_page_for_block(reused) },
                         page.as_ptr(),
-                        "the ordinary retry reuses the same page rather than taking a fresh page"
+                        "the ordinary source path reuses the selected page rather than taking a fresh page"
                     );
                     let retry_same_page = unsafe { allocator.test_page_for_block(reused) } == page.as_ptr();
                     let retry_capacity = unsafe { page.as_ref().capacity() };
@@ -15651,6 +15623,174 @@ mod tests {
         })
         .join()
         .expect("ordinary reserved medium on-demand fixture remains current-thread local");
+    }
+
+    #[test]
+    fn ordinary_reserved_medium_on_demand_direct_commit_failure_falls_through_to_fresh_page() {
+        thread::spawn(|| {
+            let fault = fault::install(fault::Plan::disabled());
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let (page_map, process_arena) = paired_reserved_process_owner(config, subprocess);
+            let pair = ProcessPageArenaLease::join(page_map, process_arena)
+                .expect("the reserved process map and arena form one source image");
+            let main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the source-static main images");
+            let main_heap = main.shared_main_heap_lease().unwrap();
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let arena = process_arena
+                        .arena()
+                        .expect("the reserved paired arena remains published for the ordinary owner");
+                    let mut attachment = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("ordinary on-demand attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("ordinary on-demand attachment retained: {error:?}")
+                        }
+                    };
+                    let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut attachment, pair)
+                        .expect("the reserved attachment admits one ordinary medium page");
+                    allocator.test_enable_page_commit_on_demand();
+
+                    let request = SMALL_MAX_OBJ_SIZE + 1;
+                    let first = allocator
+                        .allocate(request, false)
+                        .expect("the fresh source page commits its initial medium prefix");
+                    let page = NonNull::new(unsafe { allocator.test_page_for_block(first) })
+                        .expect("the first medium block is PageMap-published");
+                    let page_ref = unsafe { page.as_ref() };
+                    assert_eq!(
+                        crate::size_class::page_kind_for_block_size(page_ref.block_size()),
+                        Some(PageKind::Medium),
+                        "the ordinary fixture selects the bounded medium page class"
+                    );
+                    assert!(
+                        page_ref.free_list_head().is_null()
+                            && page_ref.used() > 0
+                            && page_ref.used() < usize::from(page_ref.reserved()),
+                        "the selected source page is nonfull but needs a direct extension"
+                    );
+                    let source_capacity = page_ref.capacity();
+                    let source_pcommitted = page_ref.slice_pcommitted();
+                    let source_used = page_ref.used();
+                    let source_free = page_ref.free_list_head();
+                    let bin = crate::size_class::bin(page_ref.block_size())
+                        .expect("the medium source page has one regular queue bin");
+                    let source_slice = page_ref
+                        .memid()
+                        .arena_memory()
+                        .expect("the source page belongs to the paired reserved arena")
+                        .slice_index as usize;
+                    // SAFETY: `first` remains a live client block until its
+                    // matching local free below; direct extension cannot alter it.
+                    unsafe { first.as_ptr().write(0xA5) };
+
+                    fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
+                    let fallback = allocator
+                        .allocate(request, false)
+                        .expect("a source-shaped direct mapping miss falls through to fresh selection");
+                    let fallback_page = NonNull::new(unsafe { allocator.test_page_for_block(fallback) })
+                        .expect("the fresh fallback block is PageMap-published");
+                    assert_ne!(
+                        fallback_page, page,
+                        "the failed selected-page extension must not publish a free block on that page"
+                    );
+                    assert_eq!(
+                        unsafe { page.as_ref().capacity() },
+                        source_capacity,
+                        "the failed direct mapping leaves the original capacity unchanged"
+                    );
+                    assert_eq!(
+                        unsafe { page.as_ref().slice_pcommitted() },
+                        source_pcommitted,
+                        "the failed direct mapping leaves the original prefix unchanged"
+                    );
+                    assert_eq!(
+                        unsafe { page.as_ref().used() },
+                        source_used,
+                        "the failed direct mapping leaves the original client count unchanged"
+                    );
+                    assert_eq!(
+                        unsafe { page.as_ref().free_list_head() },
+                        source_free,
+                        "the failed direct mapping leaves the original free list unchanged"
+                    );
+                    assert_eq!(
+                        allocator.test_queue_count(bin),
+                        Some(2),
+                        "fresh fallback keeps the failed candidate and queues its distinct fresh page"
+                    );
+                    assert_eq!(
+                        unsafe { page_map.page_map().unwrap().checked_lookup(first.as_ptr()) },
+                        page.as_ptr(),
+                        "the failed candidate remains PageMap-published while its client is live"
+                    );
+                    assert_eq!(
+                        unsafe { page_map.page_map().unwrap().checked_lookup(fallback.as_ptr()) },
+                        fallback_page.as_ptr(),
+                        "the fresh fallback page is independently PageMap-published"
+                    );
+                    assert_eq!(
+                        unsafe { arena.pages() }.unwrap().is_clear_range(source_slice, 1),
+                        Some(false),
+                        "the failed candidate retains its arena bitmap membership"
+                    );
+                    assert_eq!(
+                        unsafe { first.as_ptr().read() },
+                        0xA5,
+                        "the failed extension cannot corrupt the existing client payload"
+                    );
+
+                    fault.set(fault::Plan::disabled());
+                    unsafe {
+                        allocator
+                            .free(first)
+                            .expect("the original medium block remains normally freeable");
+                        allocator
+                            .free(fallback)
+                            .expect("the fresh fallback block remains normally freeable");
+                    }
+                    match allocator.finish() {
+                        Ok(()) => {}
+                        Err(_) => {
+                            panic!("both ordinary pages release during normal allocator finish")
+                        }
+                    }
+                    attachment
+                        .finish_after_user_destructors()
+                        .expect("the ordinary attachment tears down after both pages release");
+                    assert!(
+                        unsafe { page_map.page_map().unwrap().checked_lookup(first.as_ptr()) }.is_null()
+                            && unsafe {
+                                page_map.page_map().unwrap().checked_lookup(fallback.as_ptr())
+                            }
+                            .is_null(),
+                        "normal cleanup unregisters both the original and fallback pages"
+                    );
+                    assert_eq!(
+                        page_map.begin_page_lifecycle().unwrap().finish(),
+                        Ok(()),
+                        "ordinary fresh fallback cleanup reopens the process-map lifecycle"
+                    );
+                });
+                worker
+                    .join()
+                    .expect("ordinary fresh fallback remains current-thread local");
+            });
+            core::mem::forget(main);
+        })
+        .join()
+        .expect("ordinary fresh fallback fixture remains current-thread local");
     }
 
     #[test]

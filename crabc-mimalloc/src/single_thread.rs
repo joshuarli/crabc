@@ -308,13 +308,11 @@ enum PageToFullError {
 
 /// One result from the bounded test-only direct page-area extension seam.
 ///
-/// This private seam keeps the selected page in place when its direct mapping
-/// commit fails, so the fixture may make one explicit same-page retry. That is
-/// intentionally narrower than the pinned C failure route, which may retire
-/// and fall through to fresh selection. Once a mapping commit has succeeded,
-/// however, a rejected prefix publication or free-list extension cannot be
-/// reclassified as OOM: it permanently poisons this private allocator before
-/// the error reaches the generic allocation path.
+/// An exact direct mapping/commit miss leaves its selected candidate unchanged
+/// and follows the pinned C false-collection -> fresh-selection route. Once a
+/// mapping commit has succeeded, however, a rejected prefix publication or
+/// free-list extension cannot be reclassified as OOM: it permanently poisons
+/// this private allocator before the error reaches the generic allocation path.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PageCommitError {
     MissingTestLease,
@@ -35979,7 +35977,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         if let Some(candidate) = NonNull::new(candidate) {
             let immediate = match self.page_make_immediate(candidate) {
                 Ok(true) => true,
-                Err(GenericPathError::PageCommit(PageCommitError::ProcessMapping(_))) => false,
+                Err(error) if Self::direct_page_commit_mapping_miss(error) => false,
                 Ok(false) => return Err(GenericPathError::Lifecycle),
                 Err(error) => return Err(error),
             };
@@ -36289,7 +36287,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 page,
                 GenericPathError::Lifecycle,
             )),
-            Err(error) if Self::selected_mapped_regular_reabandonable_mapping_failure(error) => {
+            Err(error) if Self::direct_page_commit_mapping_miss(error) => {
                 match self.reabandon_reclaimed_regular_page(source, bin, page, map) {
                     Ok(
                         ReabandonReclaimedRegularOutcome::Reabandoned
@@ -36304,13 +36302,15 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
     }
 
-    /// Returns whether this exact post-claim extension failure is the source
-    /// direct mapping/commit miss which may take `_mi_page_abandon` and one
-    /// false-mode queue retry. Every local, lifecycle, prefix, plan, or
-    /// post-commit free-list failure remains terminal after the A-to-B range
-    /// transfer and must not select a fresh page.
+    /// Returns whether this is the exact source direct mapping/commit miss.
+    ///
+    /// A normal queue candidate may retain itself unchanged, false-collect,
+    /// and fall through to fresh selection. A mapped-abandoned claim instead
+    /// must first reabandon and take its one false-mode queue retry. Every
+    /// local, lifecycle, prefix, plan, or post-commit free-list failure stays
+    /// terminal after its respective ownership transition.
     #[inline]
-    fn selected_mapped_regular_reabandonable_mapping_failure(error: GenericPathError) -> bool {
+    fn direct_page_commit_mapping_miss(error: GenericPathError) -> bool {
         matches!(
             error,
             GenericPathError::PageCommit(PageCommitError::ProcessMapping(_))

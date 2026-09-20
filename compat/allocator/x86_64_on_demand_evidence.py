@@ -7,17 +7,17 @@ crate-private Rust test
 ``main_heap_page::tests::ordinary_reserved_medium_on_demand_commit_before_reuse``.
 Both sides allocate the first medium block from a reserved arena, exhaust its
 initial prefix, and allocate a second block from that same page after the
-source direct commit-before-extension order. The Rust test separately injects
-and checks a failed direct commit before its successful retry; that failure
-path is deliberately not claimed as C fault-injection parity. In particular,
-the private Rust seam returns no allocation and requires an explicit retry of
-the same selected page; it does not model the pinned C source's separate
-retire/fresh-fallback behavior after a failed direct extension.
+source direct commit-before-extension order. The separate Rust regression
+``main_heap_page::tests::ordinary_reserved_medium_on_demand_direct_commit_failure_falls_through_to_fresh_page``
+injects the equivalent direct mapping miss: it preserves the selected page's
+prefix, capacity, free list, PageMap entry, arena bit, and live payload while
+the source false-collection path selects a distinct fresh page. That
+private-seam regression is not C fault-injection parity.
 
 This is private allocator-engine evidence only. It does not establish a
-production page-on-demand policy, fresh fallback, public x86 crabc support,
-public ``mi_*`` behavior, or AArch64 evidence. The C option setup is oracle
-configuration only; Rust retains no production option parser or API.
+production page-on-demand policy, public x86 crabc support, public ``mi_*``
+behavior, or AArch64 evidence. The C option setup is oracle configuration
+only; Rust retains no production option parser or API.
 """
 
 from __future__ import annotations
