@@ -159,11 +159,27 @@ to it:
 | Text/locale/numeric aggregate | `.work/x86_64/text-family-inputs-deac7ae7/text-locale-numeric-aggregate.json` |
 
 Parent review authenticates all 213 case logs. The nine text component groups
-also pass all three product pairs. Full text coordination and the ordered
-native aggregate remain unfinished: their retained runs are under
-`.work/x86_64/text-family-pipeline-deac7ae7/` and
-`.work/x86_64/native-aggregate-pipeline-deac7ae7/`. The latter has passed
-differential and started OS-test. None of these receipts completes a family
+also pass all three product pairs. The public dynamic publisher independently
+replays the qualification and publishes the local frozen-checkout pointer.
+Full text coordination remains unfinished under
+`.work/x86_64/text-family-pipeline-deac7ae7/`.
+The ordered native aggregate passes differential and stops at OS-test's exact
+raw outcome comparison for `include/stdlib/initstate.out`. All ten OS-test
+suites finish with successful make exits on both sides; eight match, while
+include and basic retain the same 18 differences as the earlier checkpoint.
+Atomic addressability and credential differences have bounded dispositions;
+the missing BSD random quartet does not. Signal/process, pthread stress, and
+libc-test were not launched. The retained incomplete receipt is
+`.work/x86_64/posix-native-deac7ae7/incomplete.json`, with outer logs under
+`.work/x86_64/native-aggregate-pipeline-deac7ae7/`.
+
+The separate clean checkout
+`.work/worktrees/runtime_component_batch_current_deac7ae7/` passes all 47
+sealed ABI batch nodes and their finalizer without retries or imported pass
+receipts. Its finalizer authenticates the saved receipts and derives the
+selection audit and closure commands; selection remains unfinished under
+`.work/x86_64/abi-selection-execution-deac7ae7/` in that checkout.
+None of these receipts completes a family
 or promotes x86 support. Later allocator harness commits do not inherit this
 checkpoint's source-qualified evidence.
 
