@@ -184,6 +184,7 @@ class ComponentRequest:
     reports: Mapping[str, Path]
     expected_inputs: Mapping[str, Path] | None = None
     receipt: Path | None = None
+    evidence_roots: Mapping[str, Path] | None = None
 
 
 @dataclass(frozen=True)
@@ -243,6 +244,41 @@ def _strict_json(path: Path, description: str) -> dict[str, Any]:
         raise FamilyError(f"cannot read {description}: {error}") from error
     require(isinstance(value, dict), f"{description} must be a JSON object")
     return value
+
+
+def _aggregate_pair_evidence_roots(root: Path, receipt: Path) -> dict[str, Path]:
+    """Resolve the finite raw roots that an aggregate reader must authenticate."""
+
+    aggregate = _strict_json(receipt, "text-locale-numeric aggregate receipt")
+    roots = aggregate.get("pair_evidence_roots")
+    pairs = aggregate.get("pairs")
+    require(isinstance(roots, Mapping) and set(roots) == set(PAIRS)
+            and isinstance(pairs, Mapping) and set(pairs) == set(PAIRS),
+            "text-locale-numeric aggregate pair-evidence roster differs")
+    resolved: dict[str, Path] = {}
+    for pair in PAIRS:
+        root_value = roots[pair]
+        require(isinstance(root_value, str), f"text-locale-numeric {pair} evidence root differs")
+        evidence_root = _physical(
+            root, root_value, f"text-locale-numeric {pair} evidence root", directory=True, below_work=True,
+        )
+        require(evidence_root != root / ".work", "aggregate evidence root cannot cover the whole .work tree")
+        record = pairs[pair]
+        require(isinstance(record, Mapping) and set(record) == {
+            "report", "report_sha256", "execution_cells",
+        } and isinstance(record.get("report"), str)
+                and isinstance(record.get("report_sha256"), str)
+                and len(record["report_sha256"]) == 64
+                and all(character in "0123456789abcdef" for character in record["report_sha256"])
+                and isinstance(record.get("execution_cells"), list)
+                and tuple(record["execution_cells"]) == TEXT_COMPONENT_MODES,
+                f"text-locale-numeric {pair} aggregate report record differs")
+        report = _physical(root, record["report"], f"text-locale-numeric {pair} aggregate report", below_work=True)
+        require(report.parent == evidence_root
+                and hashlib.sha256(report.read_bytes()).hexdigest() == record["report_sha256"],
+                f"text-locale-numeric {pair} aggregate report differs")
+        resolved[pair] = evidence_root
+    return resolved
 
 
 def _physical(root: Path, value: Path | str, description: str, *, directory: bool = False,
@@ -404,8 +440,9 @@ def _request(root: Path, path: Path) -> tuple[dict[str, Any], Path, Path, dict[s
         if specification.request_kind == "aggregate":
             require(isinstance(value, dict) and set(value) == {"receipt"},
                     f"{name} aggregate request fields differ")
+            receipt = _physical(root, value["receipt"], f"{name} aggregate receipt", below_work=True)
             parsed[name] = ComponentRequest(
-                reports={}, receipt=_physical(root, value["receipt"], f"{name} aggregate receipt", below_work=True),
+                reports={}, receipt=receipt, evidence_roots=_aggregate_pair_evidence_roots(root, receipt),
             )
             continue
         require(isinstance(value, dict) and set(value) == set(PAIRS), f"{name} product-pair roster differs")
@@ -657,13 +694,39 @@ def _text_locale_numeric_adapter(root: Path, request: ComponentRequest, context:
     rows = report.get("rows")
     require(isinstance(rows, Mapping) and set(rows) == set(TEXT_LOCALE_NUMERIC_ROWS),
             "text-locale-numeric required behavior rows differ")
+    require(request.evidence_roots is not None and set(request.evidence_roots) == set(PAIRS),
+            "text-locale-numeric aggregate evidence roots are missing")
+    raw_roots = report.get("pair_evidence_roots")
+    pair_records = report.get("pairs")
+    require(isinstance(raw_roots, Mapping) and set(raw_roots) == set(PAIRS)
+            and isinstance(pair_records, Mapping) and set(pair_records) == set(PAIRS),
+            "text-locale-numeric aggregate pair-evidence roster differs")
     products = report.get("products")
     cells = report.get("execution_cells")
     require(isinstance(products, Mapping) and set(products) == set(PAIRS)
             and isinstance(cells, Mapping) and set(cells) == set(PAIRS),
-            "text-locale-numeric aggregate pair roster differs")
+            "text-locale-numeric aggregate product/cell roster differs")
     result: dict[str, ComponentEvidence] = {}
     for pair in PAIRS:
+        require(isinstance(raw_roots[pair], str)
+                and _physical(root, raw_roots[pair], f"text-locale-numeric {pair} evidence root",
+                              directory=True, below_work=True) == request.evidence_roots[pair],
+                f"text-locale-numeric {pair} evidence root differs")
+        pair_record = pair_records[pair]
+        require(isinstance(pair_record, Mapping) and set(pair_record) == {
+            "report", "report_sha256", "execution_cells",
+        } and isinstance(pair_record.get("report"), str)
+                and isinstance(pair_record.get("report_sha256"), str)
+                and len(pair_record["report_sha256"]) == 64
+                and all(character in "0123456789abcdef" for character in pair_record["report_sha256"])
+                and isinstance(pair_record.get("execution_cells"), list)
+                and tuple(pair_record["execution_cells"]) == TEXT_COMPONENT_MODES,
+                f"text-locale-numeric {pair} aggregate report record differs")
+        report_path = _physical(root, pair_record["report"], f"text-locale-numeric {pair} aggregate report",
+                                below_work=True)
+        require(report_path.parent == request.evidence_roots[pair]
+                and hashlib.sha256(report_path.read_bytes()).hexdigest() == pair_record["report_sha256"],
+                f"text-locale-numeric {pair} aggregate report differs")
         raw_cells = cells[pair]
         require(isinstance(raw_cells, list) and tuple(raw_cells) == TEXT_COMPONENT_MODES,
                 f"text-locale-numeric {pair} mode roster differs")
@@ -847,6 +910,8 @@ def _pair_record(root: Path, request: ComponentRequest, pair: str, evidence: Com
         "products": {kind: _snapshot_identity(root, path) for kind, path in evidence.products.items()},
         "rows": dict(evidence.rows),
     }
+    if request.evidence_roots is not None:
+        record["evidence_root"] = _snapshot_identity(root, request.evidence_roots[pair])
     if request.expected_inputs is not None:
         record["expected_inputs"] = _identity(root, request.expected_inputs[pair])
     return record
@@ -863,6 +928,11 @@ def _input_snapshots(root: Path, request_path: Path, matrix_path: Path, pthread_
     for name, request in requests.items():
         if request.receipt is not None:
             directory_inputs.append((f"{name} aggregate evidence", request.receipt.parent))
+            require(request.evidence_roots is not None and set(request.evidence_roots) == set(PAIRS),
+                    f"{name} aggregate evidence roots are missing")
+            directory_inputs.extend(
+                (f"{name} {pair} aggregate pair evidence", request.evidence_roots[pair]) for pair in PAIRS
+            )
         else:
             directory_inputs.extend(
                 (f"{name} {pair} component evidence", request.reports[pair].parent) for pair in PAIRS
