@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import copy
 from pathlib import Path
 import sys
 import tempfile
@@ -84,6 +85,21 @@ class TextFamilySemanticAttachmentTests(unittest.TestCase):
             "source": {key: self.source[key] for key in ("revision", "content_sha256")},
         }
 
+    @staticmethod
+    def _fopen64_row() -> dict[str, object]:
+        profiles = {
+            "c11-base": "hidden", "c11-gnu": "hidden",
+            "c11-file-offset-bits-64": "hidden", "c11-largefile-source": "hidden",
+            "c11-largefile64": "fopen", "cxx17-base": "hidden",
+            "cxx17-gnu": "hidden", "cxx17-file-offset-bits-64": "hidden",
+            "cxx17-largefile-source": "hidden", "cxx17-largefile64": "fopen",
+        }
+        return {
+            "feature": "_LARGEFILE64_SOURCE=1", "macro": "fopen64", "target": "fopen",
+            "pointer_equality": True, "object_import": "fopen", "header_profiles": profiles,
+            "runtime_cells": list(text_family.STDIO_COMPONENT_CELLS),
+        }
+
     def _record(self) -> dict[str, object]:
         coordinator_source = {key: self.source[key] for key in ("revision", "content_sha256")}
         components = {}
@@ -92,7 +108,10 @@ class TextFamilySemanticAttachmentTests(unittest.TestCase):
                 "scope": list(specification.scope),
                 "credits": list(specification.credits),
                 "pairs": {
-                    pair: {"modes": list(text_family.PAIR_MODES), "rows": {row: {} for row in specification.rows}}
+                    pair: {"modes": list(text_family.PAIR_MODES), "rows": {
+                        row: (self._fopen64_row() if row == "stdio.fopen64-alias" else {})
+                        for row in specification.rows
+                    }}
                     for pair in text_family.PAIRS
                 },
             }
@@ -157,6 +176,7 @@ class TextFamilySemanticAttachmentTests(unittest.TestCase):
             COMPONENTS=text_family.COMPONENTS,
             PAIRS=text_family.PAIRS,
             PAIR_MODES=text_family.PAIR_MODES,
+            STDIO_COMPONENT_CELLS=text_family.STDIO_COMPONENT_CELLS,
             ROSTER_PATH=text_family.ROSTER_PATH,
             validate_receipt=validate_receipt,
             family=family,
@@ -183,6 +203,9 @@ class TextFamilySemanticAttachmentTests(unittest.TestCase):
                          self.static_product.relative_to(ROOT).as_posix())
         self.assertEqual(companion["product_cohort"]["primary"]["dynamic"]["path"],
                          self.dynamic_product.relative_to(ROOT).as_posix())
+        self.assertEqual(companion["result"]["fopen64_structural"], {
+            "pairs": list(text_family.PAIRS), "row": self._fopen64_row(),
+        })
 
         contract = selection.load_contract(selection.CONTRACT_PATH)
         inputs = selection.load_source_inputs(contract, selection.CONTRACT_PATH)
@@ -200,6 +223,45 @@ class TextFamilySemanticAttachmentTests(unittest.TestCase):
         }])
         family = next(row for row in inputs["families"] if row["id"] == text_family.FAMILY)
         self.assertEqual(family["status"], "planned")
+
+    def _fopen64_accounting(self) -> dict[str, object]:
+        contract = selection.load_contract(selection.CONTRACT_PATH)
+        inputs = selection.load_source_inputs(contract, selection.CONTRACT_PATH)
+        record = next(copy.deepcopy(row) for row in selection.expand_obligations(contract, inputs)
+                      if row["identity"]["name"] == "fopen64")
+        return {
+            "identities": [record], "placement_joins": [], "occurrences": [],
+            "blockers": [{
+                "code": "identity-unresolved", "identity": copy.deepcopy(record["identity"]),
+                "reason": selection.TEXT_FOPEN64_STRUCTURAL_REQUIREMENT,
+            }],
+        }
+
+    def test_component_receipt_discharges_only_fopen64_structural_requirement(self) -> None:
+        accounting = self._fopen64_accounting()
+        self.assertEqual(selection.attach_text_family_fopen64_structural(accounting, None, paths=self.paths), [])
+        self.assertEqual(accounting["identities"][0]["unresolved"], [selection.TEXT_FOPEN64_STRUCTURAL_REQUIREMENT])
+
+        companion = self._adapter()
+        joins = selection.attach_text_family_fopen64_structural(accounting, companion, paths=self.paths)
+        self.assertEqual(joins, [{
+            "identity": {"name": "fopen64", "version": None, "version_default": False},
+            "component": "owned-stdio-component-receipt", "product_pairs": list(text_family.PAIRS),
+            "row": self._fopen64_row(),
+            "requirements_discharged": [selection.TEXT_FOPEN64_STRUCTURAL_REQUIREMENT],
+            "limits": list(selection.TEXT_FOPEN64_STRUCTURAL_LIMITS),
+        }])
+        self.assertEqual(accounting["identities"][0]["unresolved"], [])
+        self.assertEqual(accounting["blockers"], [])
+
+    def test_fopen64_structural_attachment_rejects_a_weakened_macro_component(self) -> None:
+        companion = self._adapter()
+        weakened = copy.deepcopy(companion)
+        weakened["result"]["fopen64_structural"]["row"]["object_import"] = "fopen64"
+        with self.assertRaisesRegex(selection.SelectionError, "fopen64 structural"):
+            selection.attach_text_family_fopen64_structural(
+                self._fopen64_accounting(), weakened, paths=self.paths,
+            )
 
     def test_receipt_rejects_completion_or_roster_substitution(self) -> None:
         cases = (

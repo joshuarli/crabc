@@ -78,6 +78,13 @@ TEXT_FAMILY_LIMITS = [
     'Its sixteen covered capabilities remain component evidence while the ledger family stays planned.',
     'The attachment does not complete the family, its required aggregate admission, qualification, promotion, or public support.',
 ]
+TEXT_FOPEN64_STRUCTURAL_REQUIREMENT = 'current source-bound owning component and consumer semantics receipt'
+TEXT_FOPEN64_STRUCTURAL_GROUP = 'largefile-fopen-macro'
+TEXT_FOPEN64_STRUCTURAL_LIMITS = [
+    'Only the source-only fopen64 structural replacement is discharged.',
+    'The attached stdio component retains the _LARGEFILE64_SOURCE macro-to-fopen route; it does not select an x86 fopen64 ELF provider.',
+    'This join does not complete text/math/locale/stdio, runtime qualification, promotion, or public support.',
+]
 SELECTORS = {'header-providers', 'feature-abi-only', 'exact-file-members', 'explicit'}
 DISPOSITIONS = {'public-provider', 'private-provider', 'unresolved'}
 SUPPORTED_TYPES = {'NOTYPE', 'OBJECT', 'FUNC', 'SECTION', 'FILE', 'COMMON', 'TLS', 'IFUNC'}
@@ -884,6 +891,57 @@ def _text_family_source(source: Mapping[str, Any]) -> dict[str, str]:
     }
 
 
+def _text_fopen64_row_projection(value: object, reader: Any) -> dict[str, Any]:
+    """Keep the stdio component's source-only large-file alias exact.
+
+    ``owned_stdio_component_receipt`` validates the full header/profile,
+    object-import, link and runtime evidence.  This projection names the one
+    property a structural selection may consume: all three supplied product
+    pairs agree that ``fopen64`` is the LFS64 macro spelling of ``fopen``.
+    """
+    row = exact(value, {
+        'feature', 'macro', 'target', 'pointer_equality', 'object_import', 'header_profiles', 'runtime_cells',
+    }, 'text family stdio fopen64 row')
+    profiles = exact(row['header_profiles'], {
+        'c11-base', 'c11-gnu', 'c11-file-offset-bits-64', 'c11-largefile-source', 'c11-largefile64',
+        'cxx17-base', 'cxx17-gnu', 'cxx17-file-offset-bits-64', 'cxx17-largefile-source', 'cxx17-largefile64',
+    }, 'text family stdio fopen64 header profile roster')
+    require(row['feature'] == '_LARGEFILE64_SOURCE=1' and row['macro'] == 'fopen64'
+            and row['target'] == 'fopen' and row['pointer_equality'] is True
+            and row['object_import'] == 'fopen'
+            and all(profiles[name] == ('fopen' if name.endswith('largefile64') else 'hidden') for name in profiles)
+            and row['runtime_cells'] == list(reader.STDIO_COMPONENT_CELLS),
+            'text family stdio fopen64 structural boundary differs')
+    return copy.deepcopy(row)
+
+
+def _text_family_fopen64_component(reader: Any, components: Mapping[str, Any]) -> dict[str, Any]:
+    """Extract the already replayed three-pair stdio macro evidence."""
+    component = exact(components.get('stdio'), {'scope', 'credits', 'pairs'}, 'text family stdio component')
+    pairs = component['pairs']
+    require(isinstance(pairs, Mapping) and set(pairs) == set(reader.PAIRS),
+            'text family stdio pair roster differs')
+    rows = []
+    for pair in reader.PAIRS:
+        pair_record = pairs[pair]
+        require(isinstance(pair_record, Mapping) and isinstance(pair_record.get('rows'), Mapping),
+                f'text family stdio {pair} component record differs')
+        pair_rows = pair_record['rows']
+        require(set(pair_rows) == {'stdio.fopen64-alias'},
+                f'text family stdio {pair} row roster differs')
+        rows.append(_text_fopen64_row_projection(pair_rows['stdio.fopen64-alias'], reader))
+    require(all(same(row, rows[0]) for row in rows[1:]),
+            'text family stdio fopen64 rows differ across product pairs')
+    return {'pairs': list(reader.PAIRS), 'row': rows[0]}
+
+
+def _text_family_fopen64_component_result(reader: Any, value: object) -> dict[str, Any]:
+    """Validate the stored structural projection without reopening component files."""
+    result = exact(value, {'pairs', 'row'}, 'text family stdio fopen64 component projection')
+    require(result['pairs'] == list(reader.PAIRS), 'text family stdio fopen64 product-pair roster differs')
+    return {'pairs': list(reader.PAIRS), 'row': _text_fopen64_row_projection(result['row'], reader)}
+
+
 def _text_family_selected_product_cohort(reader: Any, paths: Mapping[str, Path]) -> dict[str, Any]:
     """Describe the ABI transaction's selected primary POSIX products.
 
@@ -1027,6 +1085,7 @@ def text_family_semantic_adapter(report_path: Path | None, *, paths: Mapping[str
             'scope': list(specification.scope), 'credits': list(specification.credits),
             'rows': list(specification.rows), 'pair_modes': list(reader.PAIR_MODES),
         }
+    fopen64_component = _text_family_fopen64_component(reader, components)
     return {
         'status': 'text-family-component-semantics-attached',
         'report': before,
@@ -1036,6 +1095,7 @@ def text_family_semantic_adapter(report_path: Path | None, *, paths: Mapping[str
         'result': {
             'schema': reader.SCHEMA, 'family': reader.FAMILY,
             'capabilities': list(reader.CAPABILITIES), 'components': component_projection,
+            'fopen64_structural': fopen64_component,
             'component_complete': False, 'family_completion': False,
             'promotion_ready': False, 'public_support': False,
         },
@@ -1063,7 +1123,7 @@ def _text_family_semantic_evidence(companion: Mapping[str, Any], *, paths: Mappi
     }
     result = exact(companion['result'], {
         'schema', 'family', 'capabilities', 'components', 'component_complete', 'family_completion',
-        'promotion_ready', 'public_support',
+        'fopen64_structural', 'promotion_ready', 'public_support',
     }, 'text family semantic result')
     require(companion['status'] == 'text-family-component-semantics-attached'
             and report['path'].startswith(str(ROOT / '.work') + os.sep)
@@ -1073,6 +1133,8 @@ def _text_family_semantic_evidence(companion: Mapping[str, Any], *, paths: Mappi
             and result['schema'] == reader.SCHEMA and result['family'] == TEXT_FAMILY
             and result['capabilities'] == list(reader.CAPABILITIES)
             and same(result['components'], expected_components)
+            and same(result['fopen64_structural'],
+                     _text_family_fopen64_component_result(reader, result['fopen64_structural']))
             and result['component_complete'] is False and result['family_completion'] is False
             and result['promotion_ready'] is False and result['public_support'] is False
             and companion['limits'] == TEXT_FAMILY_LIMITS,
@@ -1084,6 +1146,50 @@ def _text_family_semantic_evidence(companion: Mapping[str, Any], *, paths: Mappi
         'requirements_discharged': ['family-semantic-evidence-unavailable'],
         'family_completion': False,
     }
+
+
+def attach_text_family_fopen64_structural(accounting: Mapping[str, Any],
+                                          companion: Mapping[str, Any] | None, *,
+                                          paths: Mapping[str, Path]) -> list[dict[str, Any]]:
+    """Discharge only the source-only ``fopen64`` structural requirement.
+
+    The text coordinator's physical stdio reader already reconstructs the
+    three supplied-product reports.  This join consumes its exact LFS64 macro
+    row for the one structural replacement; it does not infer an ELF provider
+    or turn the coordinator's non-promoting component receipt into family
+    admission.
+    """
+    if companion is None:
+        return []
+    _text_family_semantic_evidence(companion, paths=paths)
+    result = exact(companion['result'], {
+        'schema', 'family', 'capabilities', 'components', 'fopen64_structural', 'component_complete',
+        'family_completion', 'promotion_ready', 'public_support',
+    }, 'text family semantic result')
+    reader = _text_family_reader()
+    fopen64 = _text_family_fopen64_component_result(reader, result['fopen64_structural'])
+    records, placements, occurrences = _accounting_indexes(
+        accounting, description='text family fopen64 structural attachment',
+    )
+    placement_count, occurrence_count = len(placements), len(occurrences)
+    record = records.get(('fopen64', None, False))
+    require(record is not None and record.get('selection', {}).get('disposition') == 'structural-replacement'
+            and record['selection'].get('owner') == TEXT_FOPEN64_STRUCTURAL_GROUP
+            and record.get('expected_placements') == []
+            and record.get('unresolved') == [TEXT_FOPEN64_STRUCTURAL_REQUIREMENT],
+            'text family fopen64 selected structural requirement differs')
+    _remove_identity_requirements(
+        accounting, record, (TEXT_FOPEN64_STRUCTURAL_REQUIREMENT,),
+        description='text family fopen64 structural requirement',
+    )
+    require(len(placements) == placement_count and len(occurrences) == occurrence_count,
+            'text family fopen64 structural attachment changed complete ELF accounting')
+    return [{
+        'identity': copy.deepcopy(record['identity']), 'component': 'owned-stdio-component-receipt',
+        'product_pairs': copy.deepcopy(fopen64['pairs']), 'row': copy.deepcopy(fopen64['row']),
+        'requirements_discharged': [TEXT_FOPEN64_STRUCTURAL_REQUIREMENT],
+        'limits': list(TEXT_FOPEN64_STRUCTURAL_LIMITS),
+    }]
 
 
 def headers_layouts_family_evidence(families: Sequence[Mapping[str, Any]],
@@ -9176,6 +9282,9 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     resolver_alias_receipt_joins = attach_native_resolver_alias(accounting, resolver_alias_receipt_companion)
     locale_alias_contract_joins = attach_native_locale_alias(accounting, locale_alias_contract_companion)
     loader_structural_owner_joins = attach_loader_structural_owner(accounting, loader_structural_owner_companion)
+    text_fopen64_structural_joins = attach_text_family_fopen64_structural(
+        accounting, text_family_semantic_companion, paths=paths,
+    )
     family_evidence_blockers, family_semantic_receipts = family_semantic_evidence(
         inputs['families'], headers_layouts_companion=headers_layouts_aggregate_companion,
         text_family_companion=text_family_semantic_companion, paths=paths,
@@ -9260,11 +9369,12 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'headers_layouts_aggregate_companion': headers_layouts_aggregate_companion,
             'headers_layouts_aggregate_evidence': headers_layouts_aggregate_evidence,
             'text_family_semantic_companion': text_family_semantic_companion,
+            'text_fopen64_structural_joins': text_fopen64_structural_joins,
             'family_semantic_receipts': family_semantic_receipts,
             **accounting, 'closure': {'complete': not blockers, 'blockers': blockers}, 'status': dict(STATUS),
             'limits': ['selection audit is not qualification', 'complete raw ELF observations stay with the publicly replayed supplement',
                        'no allocator metadata or unwinder investigation', 'no imported AArch64 execution proof',
-                       'public-data linkage is scoped evidence; only the text component-semantic receipt is attached while aggregate family admission remains unavailable']}
+                       'public-data linkage is scoped evidence; the text component attaches only its semantic roster and source-only fopen64 structural row while aggregate family admission remains unavailable']}
 
 
 def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declaration_report: Path | None = None,

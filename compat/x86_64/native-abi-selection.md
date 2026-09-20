@@ -407,6 +407,12 @@ receipt from another configured product cohort is therefore rejected. It then
 replays the owner after its ABI joins and rejects any changed receipt. This replaces only
 `libc.text-math-locale-stdio`'s
 `family-semantic-evidence-unavailable` row with component-semantic evidence.
+The same already-replayed stdio component can additionally discharge the one
+structural `fopen64` requirement: it records the exact
+`_LARGEFILE64_SOURCE` macro spelling of `fopen`, no distinct `fopen64` object
+import, the fixed header-profile roster, and all three supplied product pairs.
+That is source-only alias evidence, not an x86 `fopen64` ELF provider or a
+stdio-family admission.
 The receipt explicitly retains `component_complete = false`,
 `family_completion = false`, and both promotion flags false; the planned
 ledger family's required aggregate admission and the global family-receipt
