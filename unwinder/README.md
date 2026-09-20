@@ -7,12 +7,17 @@ the consuming Rust standard library supplies its own personality, panic runtime
 and matching Rust core. The archive is not a standalone C unwinder: core
 references must resolve from the Rust consumer graph.
 
-Run inside the pinned native image:
+Build from the checkout through the pinned native dispatcher:
 
 ```sh
-python3 unwinder/build.py --output /workspace/.work/x86_64/unwinder
+./scripts/dev-x86_64.sh unwinder-build
 python3 -B -m unittest discover -s unwinder/tests
 ```
+
+The build uses checkout-local `.work/x86_64/unwinder` for artifacts and the
+dispatcher's contained Cargo and temporary state. It does not install or select
+the archive in either runtime product. The Python dependency-audit tests can
+also run on the host without compiling target code.
 
 `provenance.json` records the exact source-file digests, licenses, enabled
 features, compiler identity, archive members and archive digest. `cargo.jsonl`
