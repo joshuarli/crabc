@@ -156,6 +156,18 @@ class FamilyFixture:
             "components": components,
         }
 
+    def assembly_reports(self) -> dict[str, dict[str, str]]:
+        """The assembler receives raw text reports, before their aggregate exists."""
+
+        reports = {
+            name: {pair: self.relative(path) for pair, path in entries.items()}
+            for name, entries in self.reports.items()
+        }
+        reports["text-locale-numeric"] = {
+            pair: self.relative(path) for pair, path in self.aggregate_pair_reports.items()
+        }
+        return reports
+
     def matrix(self) -> dict[str, object]:
         return {
             "schema": coordinator.family.SCHEMA,
@@ -320,6 +332,94 @@ class TextMathLocaleStdioFamilyTests(unittest.TestCase):
             self.assertEqual(evidence.modes, coordinator.PAIR_MODES)
             self.assertEqual(evidence.scope, coordinator.COMPONENTS["text-locale-numeric"].scope)
             self.assertEqual(set(evidence.rows), set(coordinator.TEXT_LOCALE_NUMERIC_ROWS))
+
+    def test_assembly_requires_all_three_pairs_and_writes_a_replayable_request(self) -> None:
+        """The runnable hand-off has no implicit report discovery or promotion."""
+
+        import owned_text_locale_numeric_component_receipt as component
+
+        fixture = self.fixture
+        reports = fixture.assembly_reports()
+        expected_inputs = {pair: fixture.relative(path) for pair, path in fixture.expected_inputs.items()}
+        output = Path(".work/assembly")
+        patches = fixture.patches(fixture.adapter_results())
+        with patches[0], patches[1], patches[2], patches[3], \
+                mock.patch.object(component.static_products, "source_identity", return_value=SOURCE), \
+                mock.patch.object(component, "validate_report", return_value=(
+                    {"execution_cells": list(component.EXECUTION_CELLS)}, {"fixture": b"same object"},
+                )):
+            receipt = coordinator.assemble(
+                fixture.root,
+                fixture.relative(fixture.matrix_path),
+                fixture.relative(fixture.pthread_path),
+                reports,
+                expected_inputs,
+                output,
+            )
+
+        request_path = fixture.root / output / "request.json"
+        aggregate_path = fixture.root / output / "text-locale-numeric-receipt.json"
+        self.assertEqual(receipt, fixture.root / output / "receipt.json")
+        self.assertTrue(request_path.is_file())
+        self.assertTrue(aggregate_path.is_file())
+        request = json.loads(request_path.read_text(encoding="utf-8"))
+        self.assertEqual(set(request["components"]), set(coordinator.COMPONENTS))
+        self.assertEqual(request["components"]["text-locale-numeric"], {
+            "receipt": fixture.relative(aggregate_path),
+        })
+        retained = json.loads(receipt.read_text(encoding="utf-8"))
+        self.assertEqual(tuple(retained["capabilities"]), coordinator.CAPABILITIES)
+        self.assertFalse(retained["component_complete"])
+        self.assertFalse(retained["family_completion"])
+        self.assertFalse(retained["promotion_ready"])
+        self.assertFalse(retained["public_support"])
+
+    def test_assembly_rejects_a_missing_wordexp_expected_input_before_writing(self) -> None:
+        reports = self.fixture.assembly_reports()
+        expected = {pair: self.fixture.relative(path) for pair, path in self.fixture.expected_inputs.items()}
+        del expected["extracted"]
+        output = Path(".work/missing-expected-input")
+
+        with self.assertRaisesRegex(coordinator.FamilyError, "wordexp expected input pair roster differs"):
+            coordinator.assemble(
+                self.fixture.root,
+                self.fixture.relative(self.fixture.matrix_path),
+                self.fixture.relative(self.fixture.pthread_path),
+                reports,
+                expected,
+                output,
+            )
+        self.assertFalse((self.fixture.root / output).exists())
+
+    def test_assembly_rejects_duplicate_report_arguments_before_writing(self) -> None:
+        reports = [("locale", "primary", Path(".work/evidence/locale/primary/report.json"))] * 2
+        with self.assertRaisesRegex(coordinator.FamilyError, "assembly report is duplicated: locale primary"):
+            coordinator._assembly_reports(self.fixture.root, reports)
+
+    def test_assembly_rejects_duplicate_wordexp_expected_input_arguments(self) -> None:
+        expected = [("primary", Path(".work/evidence/wordexp/primary/expected-inputs.json"))] * 2
+        with self.assertRaisesRegex(coordinator.FamilyError, "wordexp expected input is duplicated: primary"):
+            coordinator._assembly_expected_input_entries(expected)
+
+    def test_assembly_rejects_reused_matrix_product_pairs_before_writing(self) -> None:
+        fixture = self.fixture
+        reused = dict(fixture.products)
+        reused["primary"] = fixture.products["reproduction"]
+        reports = fixture.assembly_reports()
+        expected_inputs = {pair: fixture.relative(path) for pair, path in fixture.expected_inputs.items()}
+        patches = fixture.patches(fixture.adapter_results())
+        with patches[0], patches[1], patches[3], \
+                mock.patch.object(coordinator.family, "input_products", return_value=(fixture.matrix()["inputs"], reused)):
+            with self.assertRaisesRegex(coordinator.FamilyError, "POSIX matrix reuses a product pair"):
+                coordinator.assemble(
+                    fixture.root,
+                    fixture.relative(fixture.matrix_path),
+                    fixture.relative(fixture.pthread_path),
+                    reports,
+                    expected_inputs,
+                    Path(".work/reused-products"),
+                )
+        self.assertFalse((fixture.root / ".work/reused-products").exists())
 
     def test_roster_keeps_the_exact_sixteen_capabilities_and_eighteen_cells(self) -> None:
         roster = coordinator.load_roster(ROOT / "compat/x86_64/text-math-locale-stdio-family.toml")

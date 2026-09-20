@@ -1097,6 +1097,199 @@ def execute(root: Path, request_path: Path, output: Path) -> Path:
     return receipt
 
 
+def _assembly_reports(root: Path, values: list[tuple[str, str, Path]]) -> dict[str, dict[str, Path]]:
+    """Resolve one explicitly named report for every component/product pair."""
+
+    reports: dict[str, dict[str, Path]] = {name: {} for name in COMPONENTS}
+    for component, pair, value in values:
+        require(component in COMPONENTS and pair in PAIRS, "assembly report name differs")
+        require(pair not in reports[component], f"assembly report is duplicated: {component} {pair}")
+        reports[component][pair] = _physical(
+            root, value, f"assembly {component} {pair} report", below_work=True,
+        )
+    require(set(reports) == set(COMPONENTS)
+            and all(set(values) == set(PAIRS) for values in reports.values()),
+            "assembly report product-pair roster differs")
+    return reports
+
+
+def _assembly_report_mapping(root: Path, values: Mapping[str, Mapping[str, Path | str]]) -> dict[str, dict[str, Path]]:
+    require(isinstance(values, Mapping) and set(values) == set(COMPONENTS),
+            "assembly report component roster differs")
+    entries: list[tuple[str, str, Path]] = []
+    for component in COMPONENTS:
+        pairs = values[component]
+        require(isinstance(pairs, Mapping) and set(pairs) == set(PAIRS),
+                f"assembly {component} report product-pair roster differs")
+        for pair in PAIRS:
+            path = Path(pairs[pair])
+            if path.is_absolute():
+                root = root.resolve(strict=True)
+                require(path.is_relative_to(root), f"assembly {component} {pair} report path escapes checkout")
+                path = path.relative_to(root)
+            entries.append((component, pair, path))
+    return _assembly_reports(root, entries)
+
+
+def _assembly_expected_inputs(root: Path, values: Mapping[str, Path | str]) -> dict[str, Path]:
+    require(isinstance(values, Mapping) and set(values) == set(PAIRS),
+            "wordexp expected input pair roster differs")
+    resolved: dict[str, Path] = {}
+    for pair in PAIRS:
+        path = Path(values[pair])
+        if path.is_absolute():
+            root = root.resolve(strict=True)
+            require(path.is_relative_to(root), f"wordexp {pair} expected inputs path escapes checkout")
+            path = path.relative_to(root)
+        resolved[pair] = _physical(root, path, f"wordexp {pair} expected inputs", below_work=True)
+    return resolved
+
+
+def _assembly_expected_input_entries(values: list[tuple[str, Path]]) -> dict[str, Path]:
+    expected: dict[str, Path] = {}
+    for pair, path in values:
+        require(pair not in expected, f"wordexp expected input is duplicated: {pair}")
+        expected[pair] = path
+    require(set(expected) == set(PAIRS), "wordexp expected input pair roster differs")
+    return expected
+
+
+def _fresh_assembly_directory(root: Path, path: Path) -> Path:
+    """Create one exclusive `.work` directory for an assembled immutable receipt."""
+
+    require(not path.is_absolute() and path.parts and ".." not in path.parts,
+            "assembly output path escapes checkout")
+    root = root.resolve(strict=True)
+    output = root / path
+    require(output.is_relative_to(root / ".work"), "assembly output must stay below checkout .work")
+    current = root
+    for part in path.parts[:-1]:
+        current /= part
+        try:
+            metadata = current.lstat()
+        except OSError as error:
+            raise FamilyError("assembly output parent is unreadable") from error
+        require(stat.S_ISDIR(metadata.st_mode) and not current.is_symlink(),
+                "assembly output parent traverses a symbolic link")
+    try:
+        output.mkdir(mode=0o755)
+    except FileExistsError as error:
+        raise FamilyError("assembly output must be a fresh directory") from error
+    except OSError as error:
+        raise FamilyError("assembly output directory is unreadable") from error
+    return output
+
+
+def _write_assembly_json(path: Path, value: object, description: str) -> None:
+    try:
+        with path.open("x", encoding="utf-8") as stream:
+            stream.write(json.dumps(value, indent=2, sort_keys=True, allow_nan=False) + "\n")
+    except FileExistsError as error:
+        raise FamilyError(f"assembly {description} is no longer fresh") from error
+    path.chmod(0o444)
+
+
+def _assembly_matrix_context(root: Path, family_execution: Path | str,
+                             pthread_family: Path | str) -> tuple[Path, Path, MatrixContext]:
+    """Authenticate the supplied matrix before an aggregate writer reads its pairs."""
+
+    matrix_path = _physical(root, family_execution, "assembly family execution receipt", below_work=True)
+    pthread_path = _physical(root, pthread_family, "assembly pthread family receipt", below_work=True)
+    source = current_source_identity(root)
+    matrix_identity = _identity(root, matrix_path)
+    try:
+        matrix = _require_matrix(family.validate_receipt(root, matrix_path))
+    except (family.ExecutionError, OSError, ValueError) as error:
+        raise FamilyError(f"assembly POSIX family receipt rejected: {error}") from error
+    require(same(matrix["inputs"].get("source"), source), "assembly current source differs from POSIX matrix")
+    inputs, products = _product_pairs(root, matrix)
+    static_preparation = _input_receipt(root, inputs, "static_preparation")
+    dynamic_qualification = _input_receipt(root, inputs, "dynamic_qualification")
+    _require_pthread(root, pthread_path, matrix_identity, source)
+    return matrix_path, pthread_path, MatrixContext(
+        source, inputs, products, static_preparation, dynamic_qualification,
+    )
+
+
+def assemble(root: Path, family_execution: Path | str, pthread_family: Path | str,
+             reports: Mapping[str, Mapping[str, Path | str]],
+             wordexp_expected_inputs: Mapping[str, Path | str], output: Path) -> Path:
+    """Assemble and replay one complete component input set without native execution.
+
+    Callers name every retained report and every wordexp native-input seal.
+    The only derived file is the existing text/locale/numeric aggregate; the
+    normal coordinator then invokes every public reader before writing its
+    ordinary non-promoting receipt.  This remains an input assembly boundary,
+    never a product producer, workload runner, or family promotion mechanism.
+    """
+
+    root = root.resolve(strict=True)
+    resolved_reports = _assembly_report_mapping(root, reports)
+    expected_inputs = _assembly_expected_inputs(root, wordexp_expected_inputs)
+    matrix_path, pthread_path, context = _assembly_matrix_context(root, family_execution, pthread_family)
+    try:
+        text_component = importlib.import_module("owned_text_locale_numeric_component_receipt")
+    except ImportError as error:
+        raise FamilyError(f"text-locale-numeric public aggregate is unavailable: {error}") from error
+    try:
+        aggregate = text_component.collect(
+            root, context.static_preparation, context.dynamic_qualification,
+            resolved_reports["text-locale-numeric"],
+        )
+    except (OSError, ValueError, family.ExecutionError, text_component.product_evidence.ProductEvidenceError,
+            text_component.payload_evidence.CryptRuntimeEvidenceError,
+            text_component.static_products.PreparationError) as error:
+        raise FamilyError(f"text-locale-numeric public aggregate rejected: {error}") from error
+
+    assembly = _fresh_assembly_directory(root, output)
+    aggregate_path = assembly / "text-locale-numeric-receipt.json"
+    _write_assembly_json(aggregate_path, aggregate, "text-locale-numeric aggregate")
+    request = {
+        "schema": SCHEMA,
+        "family_execution": matrix_path.relative_to(root).as_posix(),
+        "pthread_family": pthread_path.relative_to(root).as_posix(),
+        "components": {
+            name: (
+                {"receipt": aggregate_path.relative_to(root).as_posix()}
+                if name == "text-locale-numeric"
+                else {
+                    pair: (
+                        {
+                            "report": resolved_reports[name][pair].relative_to(root).as_posix(),
+                            "expected_inputs": expected_inputs[pair].relative_to(root).as_posix(),
+                        }
+                        if COMPONENTS[name].request_kind == "wordexp-pairs"
+                        else resolved_reports[name][pair].relative_to(root).as_posix()
+                    )
+                    for pair in PAIRS
+                }
+            )
+            for name in COMPONENTS
+        },
+    }
+    request_path = assembly / "request.json"
+    _write_assembly_json(request_path, request, "request")
+    # `execute` is the public-reader gate.  It reconstructs every physical
+    # component report (including the aggregate just written) and snapshots
+    # the whole declared closure before its immutable `receipt.json` exists.
+    return execute(root, request_path.relative_to(root), (assembly / "receipt.json").relative_to(root))
+
+
+def _assembly_report_argument(value: str) -> tuple[str, str, Path]:
+    component, separator, pair_value = value.partition(":")
+    pair, equals, path = pair_value.partition("=")
+    if not separator or not equals or component not in COMPONENTS or pair not in PAIRS or not path:
+        raise argparse.ArgumentTypeError("report must be COMPONENT:PAIR=CHECKOUT_RELATIVE_PATH")
+    return component, pair, Path(path)
+
+
+def _assembly_expected_input_argument(value: str) -> tuple[str, Path]:
+    pair, separator, path = value.partition("=")
+    if not separator or pair not in PAIRS or not path:
+        raise argparse.ArgumentTypeError("expected input must be PAIR=CHECKOUT_RELATIVE_PATH")
+    return pair, Path(path)
+
+
 def validate_receipt(root: Path, receipt: Path) -> dict[str, Any]:
     root = root.resolve(strict=True)
     receipt = _physical(root, receipt, "family receipt", below_work=True)
@@ -1123,6 +1316,21 @@ def main() -> int:
     write_parser = commands.add_parser("write", help="write one immutable non-promoting coordinator receipt")
     write_parser.add_argument("--request", type=Path, required=True)
     write_parser.add_argument("--output", type=Path, required=True)
+    assemble_parser = commands.add_parser(
+        "assemble", help="assemble explicit three-pair component inputs and replay every public reader",
+    )
+    assemble_parser.add_argument("--family-execution", type=Path, required=True)
+    assemble_parser.add_argument("--pthread-family", type=Path, required=True)
+    assemble_parser.add_argument(
+        "--report", type=_assembly_report_argument, action="append", required=True,
+        help="COMPONENT:PAIR=CHECKOUT_RELATIVE_PATH; name all 27 component reports",
+    )
+    assemble_parser.add_argument(
+        "--wordexp-expected-input", type=_assembly_expected_input_argument, action="append", required=True,
+        help="PAIR=CHECKOUT_RELATIVE_PATH; name all three independently captured wordexp input seals",
+    )
+    assemble_parser.add_argument("--output", type=Path, required=True,
+                                help="fresh checkout-relative .work directory for request and receipt")
     validate_parser = commands.add_parser("validate", help="reconstruct one coordinator receipt")
     validate_parser.add_argument("--receipt", type=Path, required=True)
     values = parser.parse_args()
@@ -1131,6 +1339,16 @@ def main() -> int:
             print(json.dumps(collect(ROOT, values.request), sort_keys=True, separators=(",", ":")))
         elif values.command == "write":
             print(execute(ROOT, values.request, values.output))
+        elif values.command == "assemble":
+            report_entries = values.report
+            reports = _assembly_reports(ROOT, report_entries)
+            expected_inputs = _assembly_expected_input_entries(values.wordexp_expected_input)
+            # `assemble` accepts the same strict, physical paths as the
+            # programmatic boundary; recover its mapping only after duplicate
+            # CLI spelling has been rejected.
+            print(assemble(
+                ROOT, values.family_execution, values.pthread_family, reports, expected_inputs, values.output,
+            ))
         else:
             validate_receipt(ROOT, values.receipt)
             print("immutable text/math/locale/stdio component coordination valid; family and promotion remain pending")
