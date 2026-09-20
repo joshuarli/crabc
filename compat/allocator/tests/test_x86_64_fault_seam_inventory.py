@@ -441,14 +441,18 @@ class FaultInventoryShapeTests(unittest.TestCase):
             }],
         )
 
-    def test_fragment_rejects_rewritten_anchor_scope_and_open_receiver(self) -> None:
+    def test_fragment_rejects_rewritten_anchor_definition_scope_and_open_receiver(self) -> None:
         original = json.loads(INVENTORY.FRAGMENT_PATH.read_text(encoding="utf-8"))
         scratch = INVENTORY.ROOT / ".work/allocator-x86_64/fault-seam-inventory-host-fragment"
         scratch.mkdir(parents=True, exist_ok=True)
-        for mutation in ("anchor", "scope", "unqualified"):
+        for mutation in ("anchor", "definition", "scope", "unqualified"):
             changed = copy.deepcopy(original)
             if mutation == "anchor":
                 changed["component"]["bounded_source_definitions"][0]["source_anchor"]["start_line"] += 1
+            elif mutation == "definition":
+                changed["component"]["bounded_source_definitions"][1]["required_definitions"][0] = (
+                    "static int mi_os_prim_alloc_at"
+                )
             elif mutation == "scope":
                 changed["component"]["branch_matrix"][0]["source_scope"] = "rewritten scope"
             else:

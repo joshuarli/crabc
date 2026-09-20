@@ -93,6 +93,19 @@ EXPECTED_ANCHORS = (
     ("src/init.c", 236, 250, "25b55becf855281d82750d46dcd93ab6e8786453295b7eb34b4648ace45fc455"),
     ("src/init.c", 253, 272, "077d0451e7d7a572cdb1cfd6ff9b95bd43e06c22345679faf1c8e7e16f70b9d8"),
 )
+EXPECTED_REQUIRED_DEFINITIONS = (
+    ("mi_tld_detached.memid = memid_static",),
+    (
+        "static mi_tld_t* mi_tld_init",
+        "mi_lock_init(&tld->theaps_lock)",
+        "mi_atomic_increment_relaxed(&tld->subproc->thread_count)",
+    ),
+    (
+        "static mi_tld_t* mi_tld_create",
+        "mi_atomic_increment_relaxed(&subproc->thread_total_count)",
+        "return mi_tld_init(tld,tseq,subproc)",
+    ),
+)
 EXPECTED_SCOPE = {
     "aarch64_status_reused": False,
     "allocator_recursion_completion_claimed": False,
@@ -541,9 +554,9 @@ def load_fragment(path: Path = FRAGMENT_PATH) -> dict[str, Any]:
         raise EvidenceError("initialization M2 fixed check roster changed")
     anchors = component.get("bounded_source_definitions")
     if not isinstance(anchors, list) or [
-        (item.get("source_anchor", {}).get("member"), item.get("source_anchor", {}).get("start_line"), item.get("source_anchor", {}).get("end_line"), item.get("source_anchor", {}).get("sha256"))
+        (item.get("source_anchor", {}).get("member"), item.get("source_anchor", {}).get("start_line"), item.get("source_anchor", {}).get("end_line"), item.get("source_anchor", {}).get("sha256"), tuple(item.get("required_definitions", ())))
         for item in anchors if isinstance(item, Mapping)
-    ] != list(EXPECTED_ANCHORS):
+    ] != [(*anchor, required_definitions) for anchor, required_definitions in zip(EXPECTED_ANCHORS, EXPECTED_REQUIRED_DEFINITIONS)]:
         raise EvidenceError("initialization M2 source anchors changed")
     branches = component.get("branch_matrix")
     expected_branch_anchors = (

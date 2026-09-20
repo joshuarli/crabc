@@ -49,9 +49,9 @@
           "sha256": "25b55becf855281d82750d46dcd93ab6e8786453295b7eb34b4648ace45fc455"
         },
         "required_definitions": [
-          "static void mi_tld_init",
-          "mi_atomic_init(&tld->tld_lock, 0)",
-          "mi_atomic_increment_relaxed(&subproc->threads)"
+          "static mi_tld_t* mi_tld_init",
+          "mi_lock_init(&tld->theaps_lock)",
+          "mi_atomic_increment_relaxed(&tld->subproc->thread_count)"
         ],
         "evidence_check_ids": ["initialization-tld-direct-source-matrix"]
       },
@@ -65,8 +65,8 @@
         },
         "required_definitions": [
           "static mi_tld_t* mi_tld_create",
-          "mi_tld_init(tld, subproc, theap, true)",
-          "mi_atomic_increment_relaxed(&subproc->threads_total)"
+          "mi_atomic_increment_relaxed(&subproc->thread_total_count)",
+          "return mi_tld_init(tld,tseq,subproc)"
         ],
         "evidence_check_ids": ["initialization-tld-direct-source-matrix"]
       }

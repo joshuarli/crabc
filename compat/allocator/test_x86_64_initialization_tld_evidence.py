@@ -166,14 +166,18 @@ class InitializationM2FragmentReaderTests(unittest.TestCase):
             [3, 1],
         )
 
-    def test_fragment_rejects_changed_anchor_or_missing_direct_branch(self) -> None:
+    def test_fragment_rejects_changed_anchor_definition_or_missing_direct_branch(self) -> None:
         altered_anchor = copy.deepcopy(self.fragment)
         altered_anchor["component"]["bounded_source_definitions"][0]["source_anchor"]["end_line"] = 193
+        altered_definition = copy.deepcopy(self.fragment)
+        altered_definition["component"]["bounded_source_definitions"][1]["required_definitions"][0] = (
+            "static void mi_tld_init"
+        )
         missing_branch = copy.deepcopy(self.fragment)
         del missing_branch["component"]["branch_matrix"][-1]
         altered_branch_anchor = copy.deepcopy(self.fragment)
         altered_branch_anchor["component"]["branch_matrix"][0]["source_anchors"][0]["end_line"] = 191
-        for malformed in (altered_anchor, missing_branch, altered_branch_anchor):
+        for malformed in (altered_anchor, altered_definition, missing_branch, altered_branch_anchor):
             with self.subTest(fragment=malformed), self.assertRaises(EvidenceError):
                 load_fragment(self.write_fragment(malformed))
 

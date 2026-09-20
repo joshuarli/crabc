@@ -65,6 +65,55 @@ class NativeFaultInventoryM2AssemblyTests(unittest.TestCase):
             with self.assertRaisesRegex(RUNNER.HarnessError, "fault-inventory producer result is invalid"):
                 RUNNER._m2_x86_64_fault_check_records(self.summary(), report)
 
+    def test_regular_aligned_anchor_uses_the_pinned_v350_pointer_return_definitions(self) -> None:
+        """The fixed map/cleanup receiver owns v3.5's pointer-returning helpers."""
+
+        component = next(item for item in self.summary()["components"] if item["id"] == "fault-injection")
+        definition = next(
+            item for item in component["bounded_source_definitions"]
+            if item["id"] == "os-regular-aligned-map-and-cleanup"
+        )
+        self.assertEqual(
+            definition["required_definitions"],
+            ["static void* mi_os_prim_alloc_at", "static void* mi_os_prim_alloc_aligned"],
+        )
+
+    def test_range_transition_anchor_uses_the_pinned_v350_boolean_commit_definition(self) -> None:
+        """The selected range receiver begins with the v3.5 boolean commit owner."""
+
+        component = next(item for item in self.summary()["components"] if item["id"] == "fault-injection")
+        definition = next(
+            item for item in component["bounded_source_definitions"]
+            if item["id"] == "os-range-transition-fault-owners"
+        )
+        self.assertEqual(
+            definition["required_definitions"],
+            [
+                "bool _mi_os_commit_ex",
+                "bool _mi_os_decommit",
+                "bool _mi_os_purge_ex",
+                "bool _mi_os_protect",
+            ],
+        )
+
+    def test_huge_branch_anchor_contains_the_pinned_v350_per_page_free_owner(self) -> None:
+        """The huge-page branch includes both allocation and its paired source cleanup."""
+
+        component = next(item for item in self.summary()["components"] if item["id"] == "fault-injection")
+        definition = next(
+            item for item in component["bounded_source_definitions"]
+            if item["id"] == "os-huge-branch-fault-owners"
+        )
+        self.assertEqual(
+            definition["source_anchor"],
+            {
+                "member": "src/os.c",
+                "start_line": 771,
+                "end_line": 853,
+                "sha256": "89affd5d917f2f40f32764001c58d52f72bf9e3faa23cdaa965f49bf322c05c2",
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

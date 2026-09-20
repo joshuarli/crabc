@@ -224,14 +224,14 @@ SOURCE_ANCHORS = (
     {"member": "src/os.c", "start_line": 303, "end_line": 430, "sha256": "e5ba5306a96cc2ccc54041ef1b7158b93cf6ae6db10e2d4bcecbc62741e6225b"},
     {"member": "src/os.c", "start_line": 438, "end_line": 527, "sha256": "fc4e177b6d6c35be7372e641d8d0209f03cdc84f2f87099dfcf1a00eb0ad1b89"},
     {"member": "src/os.c", "start_line": 534, "end_line": 712, "sha256": "dc9c44664aa3348206cdfe456b3a1eff19ffed26192d64ad314baf0b4d014feb"},
-    {"member": "src/os.c", "start_line": 771, "end_line": 841, "sha256": "7b83053ca4b7d273cb420e60ab993b9bc54d933f87774485caf86ec877024b70"},
+    {"member": "src/os.c", "start_line": 771, "end_line": 853, "sha256": "89affd5d917f2f40f32764001c58d52f72bf9e3faa23cdaa965f49bf322c05c2"},
     {"member": "src/page-map.c", "start_line": 214, "end_line": 515, "sha256": "b0218dd17e7a38ed3018fcb3f2941f5421fd72afb05c02023ce49bf21734edd3"},
 )
 SOURCE_REQUIRED_DEFINITIONS = (
     ("void mi_os_prim_free", "void _mi_os_free_ex", "void _mi_os_free"),
-    ("static int mi_os_prim_alloc_at", "static int mi_os_prim_alloc_aligned"),
+    ("static void* mi_os_prim_alloc_at", "static void* mi_os_prim_alloc_aligned"),
     ("void* _mi_os_alloc", "void* _mi_os_alloc_aligned_at_offset"),
-    ("int _mi_os_commit_ex", "bool _mi_os_decommit", "bool _mi_os_purge_ex", "bool _mi_os_protect"),
+    ("bool _mi_os_commit_ex", "bool _mi_os_decommit", "bool _mi_os_purge_ex", "bool _mi_os_protect"),
     ("void* _mi_os_alloc_huge_os_pages", "static void mi_os_free_huge_os_pages"),
     ("static bool mi_page_map_init_once", "bool _mi_page_map_register"),
 )
@@ -332,7 +332,7 @@ SOURCE_ROWS = (
     ),
     SourceRow(
         "os-huge-branch-fault-owners",
-        "src/os.c:771-841",
+        "src/os.c:771-853",
         ("os.rs:2013-2057 and huge allocation/release owners",),
         (
             "huge-terminal-large-map-failure",
