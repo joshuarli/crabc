@@ -202,6 +202,19 @@ None of these receipts completes a family
 or promotes x86 support. Later allocator harness commits do not inherit this
 checkpoint's source-qualified evidence.
 
+The clean replacement checkpoint `bf33fe6d`, containing the text reader repair,
+passes static preparation but fails dynamic qualification after 210 successful
+case receipts. In the extracted product's `resolver-cancellation` case,
+`pie-direct-modern-dual-masked-dual-mixed-tcp` exits 77: its raw final errno is
+`EAGAIN`, while the fixture requires `ECANCELED`. The oracle run in that matrix
+retains `ECANCELED`; the lifecycle observations otherwise match. The unchanged
+failed checkout is `.work/worktrees/runtime_combined_bf33fe6d/`, with producer
+streams and terminal status under `.work/x86_64/qualification-start/dynamic/`
+and authenticated partial case records under
+`.work/x86_64/dynamic-parent-review-bf33fe6d/`. It has no dynamic qualification
+receipt. Dependent text, POSIX, and pthread successor plans remain unlaunched;
+the repaired text reader still requires full same-source qualification.
+
 The earlier clean `e44d771b` checkpoint has a 71-case dynamic receipt covering all
 213 executions across two independent builds and extraction, with identical
 manifests and archives. Its worktree is
