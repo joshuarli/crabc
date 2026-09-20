@@ -18,7 +18,10 @@ import native_abi_selection as selection
 
 
 REPORT = ROOT / 'compat/x86_64/generated/headers_layouts_aggregate/report.json'
-REPORT_SHA256 = '69dcd6c706ecdd1d05e6281b149506f65fc1d3e68f0b90cbe3f4e7ec3d9b168e'
+# 22647dd0 regenerated this source-bound report for environment locale
+# selection. Keep the fixture pin exact; the adapter still reconstructs its
+# inputs and rejects stale or modified reports below.
+REPORT_SHA256 = '1306fb368cb189ee2af44964c73ba877b3eab0263dd4fda5b447dd8a9913c81d'
 FAMILY = 'libc.headers-layouts'
 BASE_REPORT = (ROOT.parent / 'resolver_alias_selector_integration/.work/x86_64/native-abi-selection/'
                'clean-36642df1/report.json')
