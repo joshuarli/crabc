@@ -11,6 +11,15 @@ not current-source qualification or family closure. The new math component
 extends the dynamic catalog to 71 cases; the historical 210-run result below
 still describes its original 70-case catalog.
 
+Reconstructable component receipts are not complete capability coverage by
+themselves. The family aggregate must also bind the existing numeric, locale,
+ctype, wide-string, and UTF conversion observations to installed products.
+The FILE engine needs its memory/cookie/process, wide formatting/scanning,
+extended stream-helper, and ordinary-exit observations in addition to the
+bounded path/buffering probe. Full calendar and `fopen64` source-alias rows
+remain required as well. These are evidence gaps against the frozen family
+scope, not new APIs or permission to replace behavior with symbol counts.
+
 The full OS-test development replay with the compiler-mode fix completed all
 ten suites using frozen `26dfb153` products and consumer `69f547a5`. Eight
 suites match; the raw report retains nineteen differences: six atomic
