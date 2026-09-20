@@ -111,6 +111,8 @@ class HugeNumaQualificationTests(unittest.TestCase):
         self.assertIn("mi_reserve_huge_os_pages_at(1", huge)
         self.assertIn("numa_maps itself is address-sorted", huge)
         self.assertNotIn("MAP_HUGETLB", permission[permission.index("int main"):])
+        self.assertNotIn("#include <linux/mempolicy.h>", permission)
+        self.assertIn("enum { MPOL_PREFERRED = 1 };", permission)
         self.assertIn("MPOL_PREFERRED", permission)
         self.assertIn("SYS_mbind", permission)
         self.assertIn("munmap", permission)

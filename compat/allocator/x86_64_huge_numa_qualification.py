@@ -176,7 +176,7 @@ def cgroup_hugetlb_headroom() -> dict[str, Any]:
         limit_path = CGROUP_ROOT / name
         if not limit_path.is_file():
             continue
-        current_path = limit_path.with_name(limit_path.name[:-4] + "current")
+        current_path = limit_path.with_name(limit_path.name.removesuffix("max") + "current")
         raw_limit = limit_path.read_text(encoding="utf-8").strip()
         raw_current = current_path.read_text(encoding="utf-8").strip() if current_path.is_file() else None
         if raw_limit == "max":

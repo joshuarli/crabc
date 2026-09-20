@@ -10,12 +10,16 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <limits.h>
-#include <linux/mempolicy.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <unistd.h>
+
+/* Linux 5.10's stable mbind ABI value.  This is the same source constant as
+ * `crabc-mimalloc/src/os.rs`; the pinned musl image intentionally does not
+ * ship Linux UAPI headers. */
+enum { MPOL_PREFERRED = 1 };
 
 int main(int argc, char** argv) {
   if (argc != 2) return 64;
