@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import platform
 import subprocess
+import tempfile
 import tomllib
 
 ROOT = Path(__file__).resolve().parent
@@ -67,6 +68,8 @@ def build(output):
     output = output.resolve()
     if not output.is_relative_to(ROOT.parent / '.work'):
         raise ValueError('build output must remain inside checkout .work')
+    if output.exists() and (not output.is_dir() or any(output.iterdir())):
+        raise ValueError('build output is nonempty; preserve its existing evidence')
     output.mkdir(parents=True, exist_ok=True)
     temporary = output / 'tmp'
     temporary.mkdir(exist_ok=True)
@@ -145,5 +148,10 @@ def build(output):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--output', type=Path, default=ROOT.parent / '.work/x86_64/unwinder')
-    build(parser.parse_args().output)
+    parser.add_argument('--output', type=Path, help='fresh or empty checkout-local output directory')
+    output = parser.parse_args().output
+    if output is None:
+        runs = ROOT.parent / '.work/x86_64/unwinder-builds'
+        runs.mkdir(parents=True, exist_ok=True)
+        output = Path(tempfile.mkdtemp(prefix='run-', dir=runs))
+    build(output)

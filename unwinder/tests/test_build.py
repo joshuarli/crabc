@@ -3,6 +3,8 @@ import copy
 import importlib.util
 from pathlib import Path
 import unittest
+import unittest.mock
+import tempfile
 
 spec = importlib.util.spec_from_file_location('unwinder_build', Path(__file__).parents[1] / 'build.py')
 builder = importlib.util.module_from_spec(spec)
@@ -48,6 +50,19 @@ class DependencyBoundary(unittest.TestCase):
                 package['targets'].append({'kind': ['custom-build']})
         with self.assertRaisesRegex(ValueError, 'build executable'):
             builder.audit_graph(self.metadata, self.lock)
+
+    def test_existing_build_evidence_is_rejected_before_any_tool_runs(self):
+        scratch = builder.ROOT.parent / '.work/x86_64/unwinder-output-tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            output = Path(temporary)
+            receipt = output / 'provenance.json'
+            receipt.write_text('historical evidence\n')
+            with unittest.mock.patch.object(builder, 'run') as run:
+                with self.assertRaisesRegex(ValueError, 'nonempty'):
+                    builder.build(output)
+                run.assert_not_called()
+            self.assertEqual(receipt.read_text(), 'historical evidence\n')
 
 if __name__ == '__main__':
     unittest.main()

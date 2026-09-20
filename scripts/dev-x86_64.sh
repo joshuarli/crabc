@@ -9451,7 +9451,7 @@ PY
     unwinder-build)
         [ "$#" -eq 0 ] || fail "unwinder-build takes no arguments"
         ensure_image
-        run_in_container python3 -B /workspace/unwinder/build.py --output /workspace/.work/x86_64/unwinder
+        run_in_container python3 -B /workspace/unwinder/build.py
         ;;
     crt-object-bundle)
         [ "$#" -eq 0 ] || fail "crt-object-bundle takes no arguments"

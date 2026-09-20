@@ -14,8 +14,10 @@ Build from the checkout through the pinned native dispatcher:
 python3 -B -m unittest discover -s unwinder/tests
 ```
 
-The build uses checkout-local `.work/x86_64/unwinder` for artifacts and the
-dispatcher's contained Cargo and temporary state. It does not install or select
+Each build uses a fresh checkout-local `.work/x86_64/unwinder-builds/run-*`
+directory and the dispatcher's contained Cargo and temporary state. Explicit
+nonempty output directories are rejected before running tools, preserving old
+receipts and artifacts. It does not install or select
 the archive in either runtime product. The Python dependency-audit tests can
 also run on the host without compiling target code.
 
