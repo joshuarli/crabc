@@ -2483,10 +2483,12 @@ Both native arms and their raw streams are retained under
 with prefix `arena-purge-fallback-final-fa2884bc`; the sibling comparison
 record binds all values. Subsequent harness repairs (`3a8145f0`, `8eeb3ac7`)
 correct stale pinned-source ranges and declaration spellings. Independent
-archive replay verifies all 42 M2 anchors, but this is source evidence only:
-the clean aggregate at `9a625b75` stops before producing a report because its
-Python producer loader omits module registration required by dataclasses.
-That failure is retained under
+archive replay verifies all 42 M2 anchors, but this is source evidence only.
+At the historical clean revision `9a625b75`, the aggregate stopped before
+producing a report because its Python producer loader omitted the module
+registration required by dataclasses. Current `compat/allocator/run.py`
+registers that producer before execution, so the retained failure is historical
+evidence rather than a current M2 blocker. Its old-revision receipt remains at
 `.work/worktrees/allocator_m2_anchor_preflight/.work/allocator-x86_64/m2-anchor-preflight-9a625b75/`.
 M2 remains partial; neither the bounded trace nor repaired anchors qualify its
 remaining components.

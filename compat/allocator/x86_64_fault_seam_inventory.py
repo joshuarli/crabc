@@ -22,6 +22,7 @@ from pathlib import Path
 import re
 import stat
 import sys
+import tempfile
 from typing import Any, Mapping, Sequence
 
 
@@ -1349,21 +1350,26 @@ def _write_mbind_profile(source: Path, profile: Path) -> Path:
 def _new_retained_mbind_profile(
     runner: Any, source: Path, artifacts: Path, *, artifact_name: str
 ) -> tuple[Path, Path]:
-    """Materialize the one overlay below a physical artifact root, never tmp."""
+    """Materialize one immutable overlay below the evidence root, never tmp.
+
+    A failed compile or run deliberately retains its direct include for later
+    inspection.  The next same-mode collection must therefore allocate a new
+    owned directory rather than overwriting or requiring deletion of that
+    partial evidence.
+    """
 
     artifacts.mkdir(parents=True, exist_ok=True)
     if artifacts.is_symlink() or not artifacts.is_dir():
         raise EvidenceError("fault inventory artifact root changed type")
-    profile = artifacts / artifact_name
+    if not re.fullmatch(r"[a-z][a-z0-9-]*", artifact_name):
+        raise EvidenceError("fault inventory retained profile name is invalid")
+    profile = Path(tempfile.mkdtemp(prefix=f"{artifact_name}-", dir=artifacts))
     try:
         profile.relative_to(artifacts)
         profile.resolve().parent.relative_to(artifacts.resolve())
         artifacts.resolve().relative_to((ROOT / ".work").resolve())
     except ValueError as error:
         raise EvidenceError("fault inventory retained profile root escapes checkout work") from error
-    if profile.exists() or profile.is_symlink():
-        raise EvidenceError("fault inventory retained profile root already exists")
-    profile.mkdir(mode=MBIND_PROFILE_DIRECTORY_MODE)
     profile.chmod(MBIND_PROFILE_DIRECTORY_MODE)
     _retained_profile_directory_record(runner, profile)
     return profile, _write_mbind_profile(source, profile)

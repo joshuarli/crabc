@@ -327,6 +327,39 @@ class FaultInventoryShapeTests(unittest.TestCase):
             )
             self.assertNotIn(mbind, transformed)
 
+    def test_retained_mbind_profile_uses_a_fresh_directory_after_an_interrupted_run(self) -> None:
+        """A preserved partial overlay cannot block the next same-mode receipt."""
+
+        runner = INVENTORY._load_runner()
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/allocator-x86_64") as temporary:
+            artifacts = Path(temporary) / "artifacts"
+
+            def write_profile(_source: Path, profile: Path) -> Path:
+                direct = profile / "prim.c"
+                unix = profile / "unix/prim.c"
+                unix.parent.mkdir()
+                direct.write_bytes(b"direct profile\n")
+                unix.write_bytes(b"typed mbind profile\n")
+                direct.chmod(INVENTORY.MBIND_PROFILE_FILE_MODE)
+                unix.chmod(INVENTORY.MBIND_PROFILE_FILE_MODE)
+                return direct
+
+            with mock.patch.object(INVENTORY, "_write_mbind_profile", side_effect=write_profile):
+                first, first_direct = INVENTORY._new_retained_mbind_profile(
+                    runner, Path(temporary) / "source", artifacts, artifact_name="same-mode"
+                )
+                second, second_direct = INVENTORY._new_retained_mbind_profile(
+                    runner, Path(temporary) / "source", artifacts, artifact_name="same-mode"
+                )
+
+            self.assertNotEqual(first, second)
+            self.assertTrue(first.is_dir())
+            self.assertTrue(second.is_dir())
+            self.assertTrue(first_direct.is_file())
+            self.assertTrue(second_direct.is_file())
+            self.assertEqual(first.stat().st_mode & 0o777, INVENTORY.MBIND_PROFILE_DIRECTORY_MODE)
+            self.assertEqual(second.stat().st_mode & 0o777, INVENTORY.MBIND_PROFILE_DIRECTORY_MODE)
+
     def test_mbind_profile_rejects_a_body_with_the_right_stub_but_wrong_bytes(self) -> None:
         """Expected mbind tokens cannot substitute for the pinned primitive source bytes."""
 
@@ -443,32 +476,35 @@ class FaultInventoryShapeTests(unittest.TestCase):
 
     def test_fragment_rejects_rewritten_anchor_definition_scope_and_open_receiver(self) -> None:
         original = json.loads(INVENTORY.FRAGMENT_PATH.read_text(encoding="utf-8"))
-        scratch = INVENTORY.ROOT / ".work/allocator-x86_64/fault-seam-inventory-host-fragment"
-        scratch.mkdir(parents=True, exist_ok=True)
-        for mutation in ("anchor", "definition", "scope", "unqualified"):
-            changed = copy.deepcopy(original)
-            if mutation == "anchor":
-                changed["component"]["bounded_source_definitions"][0]["source_anchor"]["start_line"] += 1
-            elif mutation == "definition":
-                changed["component"]["bounded_source_definitions"][1]["required_definitions"][0] = (
-                    "static int mi_os_prim_alloc_at"
-                )
-            elif mutation == "scope":
-                changed["component"]["branch_matrix"][0]["source_scope"] = "rewritten scope"
-            else:
-                changed["component"]["unqualified_failure_matrix"].pop()
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".json", dir=scratch, delete=False, encoding="utf-8"
-            ) as stream:
-                json.dump(changed, stream)
-                candidate = Path(stream.name)
-            try:
-                with self.subTest(mutation=mutation), self.assertRaisesRegex(
-                    INVENTORY.EvidenceError, "fault inventory M2"
-                ):
-                    INVENTORY.load_fragment(candidate)
-            finally:
-                candidate.unlink()
+        with tempfile.TemporaryDirectory(
+            prefix="fault-seam-inventory-host-fragment-",
+            dir=INVENTORY.ROOT / ".work/allocator-x86_64",
+        ) as temporary:
+            scratch = Path(temporary)
+            for mutation in ("anchor", "definition", "scope", "unqualified"):
+                changed = copy.deepcopy(original)
+                if mutation == "anchor":
+                    changed["component"]["bounded_source_definitions"][0]["source_anchor"]["start_line"] += 1
+                elif mutation == "definition":
+                    changed["component"]["bounded_source_definitions"][1]["required_definitions"][0] = (
+                        "static int mi_os_prim_alloc_at"
+                    )
+                elif mutation == "scope":
+                    changed["component"]["branch_matrix"][0]["source_scope"] = "rewritten scope"
+                else:
+                    changed["component"]["unqualified_failure_matrix"].pop()
+                with tempfile.NamedTemporaryFile(
+                    mode="w", suffix=".json", dir=scratch, delete=False, encoding="utf-8"
+                ) as stream:
+                    json.dump(changed, stream)
+                    candidate = Path(stream.name)
+                try:
+                    with self.subTest(mutation=mutation), self.assertRaisesRegex(
+                        INVENTORY.EvidenceError, "fault inventory M2"
+                    ):
+                        INVENTORY.load_fragment(candidate)
+                finally:
+                    candidate.unlink()
     def test_definition_rejects_a_same_length_renamed_branch(self) -> None:
         definition = INVENTORY.inventory_definition()
         definition["branch_rows"][3] = "purge-replaced-by-a-same-length-name"
