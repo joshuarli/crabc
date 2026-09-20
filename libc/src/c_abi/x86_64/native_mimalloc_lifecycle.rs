@@ -23,7 +23,6 @@ use crabc_mimalloc::__crabc_runtime::{
 };
 #[cfg(feature = "native-mimalloc-shadow-process-done-exit-test-audit")]
 use crabc_mimalloc::__crabc_runtime::{
-    NativeRuntimeProcessDoneTerminalPurgeAudit,
     native_runtime_process_done_terminal_purge_test_audit,
 };
 
