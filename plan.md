@@ -12,6 +12,9 @@ report replay in the pinned image. These are mixed-source development checks,
 not current-source qualification or family closure. The new math component
 extends the dynamic catalog to 71 cases; the historical 210-run result below
 still describes its original 70-case catalog.
+The checked-in dynamic product contract and its non-promoting state digest now
+include the same 71-case roster; an isolated catalog regression and all ten
+dynamic product contract tests pass after repairing that integration mismatch.
 
 Reconstructable component receipts are not complete capability coverage by
 themselves. The family aggregate must also bind the existing numeric, locale,
