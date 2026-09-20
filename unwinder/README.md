@@ -11,6 +11,7 @@ Build from the checkout through the pinned native dispatcher:
 
 ```sh
 ./scripts/dev-x86_64.sh unwinder-build
+./scripts/dev-x86_64.sh unwinder-metadata-bounds
 python3 -B -m unittest discover -s unwinder/tests
 ```
 
@@ -26,6 +27,30 @@ features, compiler identity, archive members and archive digest. `cargo.jsonl`
 and the defined/undefined symbol inventories retain build evidence.
 The artifact embeds LLVM bitcode, uses PIC and preserves unwind tables. This
 alone does not prove consumer or cross-runtime LTO qualification.
+
+Before compiling, `build.py` verifies the normal checked-in registry lock and
+the complete cached `unwinding 0.2.10` source tree. It creates or reuses only
+an exact content-addressed input beneath `.work/x86_64/unwinder-source-inputs/`,
+copies that verified source, and replaces
+`src/unwinder/find_fde/phdr.rs` with the checked-in MIT OR Apache-2.0 bounds
+overlay. Cargo resolves the same version/features from that local staged source
+only for this producer input. The original registry source is never modified.
+`provenance.json` separately records the pristine-tree and patched-tree hashes,
+overlay/license/digests, staged input identity, and the actual compiled source
+file inventory.
+
+`unwinder-metadata-bounds` links the selected provider into a guard-page
+fixture with a one-byte `PT_GNU_EH_FRAME` header. Its declared readable
+`PT_LOAD` deliberately extends into the guard page, proving that the header's
+own `p_memsz`, not the remaining load range, bounds the header read. The overlay
+requires checked program-header arithmetic, a nonempty non-null header no
+larger than Rust's slice limit, and complete containment in a readable
+`PT_LOAD`; the fixture then proves that lookup returns no FDE instead of
+faulting. Header-slice formation remains explicitly unsafe because only the
+loader can guarantee the mapping's lifetime and actual readability. This is one
+malformed-header behavior only. It does not bound the `PT_DYNAMIC` scan,
+indirect `eh_frame_ptr` dereference, later DWARF/LSDA references, callback
+reentrancy, or runtime DSO mapping lifetime.
 
 ## Standalone cleanup regression
 
@@ -89,8 +114,9 @@ backtrace capture as observable requirements.
 Build-std requires matching core linkage. Initial/runtime DSO unwind,
 installed/extracted PIE/non-PIE, consumer LTO and malformed metadata checks
 remain required by the approved design before qualification is complete.
-Upstream phdr discovery constructs unbounded metadata slices and does not
-validate every indirect DWARF pointer. Source pinning does not establish safe
-failure for malicious or truncated mapped unwind metadata. That boundary must
-be fixed and tested before this provider is promoted. Enumeration is not
-claimed async-signal-safe.
+The local overlay bounds only the declared `PT_GNU_EH_FRAME` header; it does
+not validate every indirect DWARF pointer or later metadata read. Source
+pinning and the guarded-header regression do not establish safe failure for
+malicious/truncated mapped unwind metadata generally. Those boundaries must be
+fixed and tested before this provider is promoted. Enumeration is not claimed
+async-signal-safe.

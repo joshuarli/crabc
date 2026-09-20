@@ -35,6 +35,55 @@ class DependencyBoundary(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'source pin'):
             builder.audit_graph(self.metadata, self.lock)
 
+    def test_patched_unwinding_requires_a_local_lock_entry(self):
+        with self.assertRaisesRegex(ValueError, 'patched source pin'):
+            builder.audit_graph(self.metadata, self.lock, patched_unwinding=True)
+        patched_lock = copy.deepcopy(self.lock)
+        next(package for package in patched_lock['package'] if package['name'] == 'unwinding').pop('checksum')
+        self.assertEqual(
+            set(builder.audit_graph(self.metadata, patched_lock, patched_unwinding=True)),
+            set(builder.FEATURES),
+        )
+
+    def test_tree_digest_requires_declared_overlay_target_and_records_its_content(self):
+        scratch = builder.ROOT.parent / '.work/x86_64/unwinder-output-tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            root = Path(temporary) / 'source'
+            root.mkdir()
+            (root / 'target.rs').write_text('unpatched\n')
+            overlay = Path(temporary) / 'overlay.rs'
+            overlay.write_text('patched\n')
+            baseline = builder.tree_digest(root)
+            self.assertNotEqual(
+                baseline,
+                builder.tree_digest(root, {'target.rs': overlay}),
+            )
+            with self.assertRaisesRegex(ValueError, 'overlay target'):
+                builder.tree_digest(root, {'missing.rs': overlay})
+
+    def test_staged_overlay_drift_is_rejected_before_provenance(self):
+        scratch = builder.ROOT.parent / '.work/x86_64/unwinder-output-tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            staged_source = Path(temporary) / 'unwinding-0.2.10'
+            target = staged_source / builder.PATCH_TARGET
+            target.parent.mkdir(parents=True)
+            target.write_bytes(builder.PATCH_OVERLAY.read_bytes())
+            staged = {
+                'staged': staged_source,
+                'patched_tree_sha256': builder.tree_digest(staged_source),
+                'patch': {
+                    'sha256': builder.digest(builder.PATCH_OVERLAY),
+                    'target': builder.PATCH_TARGET,
+                    'compiled_sha256': builder.digest(target),
+                },
+            }
+            builder.verify_staged_patched_unwinding(staged)
+            target.write_text('source changed while compiling\n')
+            with self.assertRaisesRegex(ValueError, 'compiled unwinding source'):
+                builder.verify_staged_patched_unwinding(staged)
+
     def test_new_dependency_cannot_enter_normal_graph(self):
         self.metadata['packages'].append({
             'id': 'cc', 'name': 'cc', 'version': '1.0.0', 'targets': [{'kind': ['lib']}],

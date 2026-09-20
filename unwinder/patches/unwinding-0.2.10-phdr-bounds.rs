@@ -1,0 +1,203 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Derived from unwinding 0.2.10, src/unwinder/find_fde/phdr.rs.
+//
+// The PT_GNU_EH_FRAME input is only readable within its declared p_memsz and
+// a containing readable PT_LOAD segment. This overlay intentionally does not
+// establish bounds for indirect DWARF pointers or the PT_DYNAMIC scan.
+use super::FDESearchResult;
+use crate::util::*;
+
+use core::convert::TryFrom;
+use core::mem;
+use core::ops::Range;
+use core::slice;
+use gimli::{BaseAddresses, EhFrame, EhFrameHdr, NativeEndian, UnwindSection};
+use libc::{PF_R, PT_DYNAMIC, PT_GNU_EH_FRAME, PT_LOAD};
+
+#[cfg(target_pointer_width = "32")]
+use libc::Elf32_Phdr as Elf_Phdr;
+#[cfg(target_pointer_width = "64")]
+use libc::Elf64_Phdr as Elf_Phdr;
+
+pub struct PhdrFinder(());
+
+pub fn get_finder() -> &'static PhdrFinder {
+    &PhdrFinder(())
+}
+
+impl super::FDEFinder for PhdrFinder {
+    fn find_fde(&self, pc: usize) -> Option<FDESearchResult> {
+        #[cfg(feature = "fde-phdr-aux")]
+        if let Some(v) = search_aux_phdr(pc) {
+            return Some(v);
+        }
+        #[cfg(feature = "fde-phdr-dl")]
+        if let Some(v) = search_dl_phdr(pc) {
+            return Some(v);
+        }
+        None
+    }
+}
+
+#[cfg(feature = "fde-phdr-aux")]
+fn search_aux_phdr(pc: usize) -> Option<FDESearchResult> {
+    use libc::{AT_PHDR, AT_PHNUM, PT_PHDR, getauxval};
+
+    unsafe {
+        let phdr = getauxval(AT_PHDR) as *const Elf_Phdr;
+        let phnum = getauxval(AT_PHNUM) as usize;
+        let phdrs = slice::from_raw_parts(phdr, phnum);
+        // With known address of PHDR, we can calculate the base address in reverse.
+        let base = phdrs.as_ptr() as usize
+            - usize::try_from(phdrs.iter().find(|x| x.p_type == PT_PHDR)?.p_vaddr).ok()?;
+        search_phdr(phdrs, base, pc)
+    }
+}
+
+#[cfg(feature = "fde-phdr-dl")]
+fn search_dl_phdr(pc: usize) -> Option<FDESearchResult> {
+    use core::ffi::c_void;
+    use libc::{dl_iterate_phdr, dl_phdr_info};
+
+    struct CallbackData {
+        pc: usize,
+        result: Option<FDESearchResult>,
+    }
+
+    unsafe extern "C" fn phdr_callback(
+        info: *mut dl_phdr_info,
+        _size: usize,
+        data: *mut c_void,
+    ) -> c_int {
+        unsafe {
+            let data = &mut *(data as *mut CallbackData);
+            let phdrs = slice::from_raw_parts((*info).dlpi_phdr, (*info).dlpi_phnum as usize);
+            if let Some(v) = search_phdr(phdrs, (*info).dlpi_addr as _, data.pc) {
+                data.result = Some(v);
+                return 1;
+            }
+            0
+        }
+    }
+
+    let mut data = CallbackData { pc, result: None };
+    unsafe { dl_iterate_phdr(Some(phdr_callback), &mut data as *mut CallbackData as _) };
+    data.result
+}
+
+fn phdr_range(base: usize, phdr: &Elf_Phdr) -> Option<Range<usize>> {
+    let start = base.checked_add(usize::try_from(phdr.p_vaddr).ok()?)?;
+    let end = start.checked_add(usize::try_from(phdr.p_memsz).ok()?)?;
+    Some(start..end)
+}
+
+fn contains_range(container: &Range<usize>, candidate: &Range<usize>) -> bool {
+    container.start <= candidate.start && candidate.end <= container.end
+}
+
+/// # Safety
+///
+/// `header` must describe bytes that remain mapped and readable for the
+/// returned slice lifetime. Program-header containment is only metadata; the
+/// caller owns the loader mapping-lifetime guarantee.
+unsafe fn bounded_eh_frame_header(
+    phdrs: &[Elf_Phdr],
+    base: usize,
+    header: &Range<usize>,
+) -> Option<&'static [u8]> {
+    if header.is_empty() || header.start == 0 || header.len() > isize::MAX as usize {
+        return None;
+    }
+    let contained_in_readable_load = phdrs.iter().any(|phdr| {
+        phdr.p_type == PT_LOAD
+            && phdr.p_flags & PF_R != 0
+            && phdr_range(base, phdr).is_some_and(|load| contains_range(&load, header))
+    });
+    if !contained_in_readable_load {
+        return None;
+    }
+    Some(unsafe { slice::from_raw_parts(header.start as *const u8, header.len()) })
+}
+
+fn search_phdr(phdrs: &[Elf_Phdr], base: usize, pc: usize) -> Option<FDESearchResult> {
+    unsafe {
+        let mut text = None;
+        let mut eh_frame_hdr = None;
+        let mut dynamic = None;
+
+        for phdr in phdrs {
+            let range = phdr_range(base, phdr)?;
+            match phdr.p_type {
+                PT_LOAD => {
+                    if range.contains(&pc) {
+                        text = Some(range);
+                    }
+                }
+                PT_GNU_EH_FRAME => {
+                    eh_frame_hdr = Some(range);
+                }
+                PT_DYNAMIC => {
+                    dynamic = Some(range.start);
+                }
+                _ => (),
+            }
+        }
+
+        let text = text?;
+        let eh_frame_hdr = eh_frame_hdr?;
+        let eh_frame_hdr_bytes = bounded_eh_frame_header(phdrs, base, &eh_frame_hdr)?;
+
+        let mut bases = BaseAddresses::default()
+            .set_eh_frame_hdr(eh_frame_hdr.start as _)
+            .set_text(text.start as _);
+
+        // Find the GOT section.
+        if let Some(start) = dynamic {
+            const DT_NULL: usize = 0;
+            const DT_PLTGOT: usize = 3;
+
+            let mut tags = start as *const [usize; 2];
+            let mut tag = *tags;
+            while tag[0] != DT_NULL {
+                if tag[0] == DT_PLTGOT {
+                    bases = bases.set_got(tag[1] as _);
+                    break;
+                }
+                tags = tags.add(1);
+                tag = *tags;
+            }
+        }
+
+        // Parse only the declared .eh_frame_hdr bytes.
+        let eh_frame_hdr = EhFrameHdr::new(eh_frame_hdr_bytes, NativeEndian)
+            .parse(&bases, mem::size_of::<usize>() as _)
+            .ok()?;
+
+        let eh_frame = deref_pointer(eh_frame_hdr.eh_frame_ptr());
+        bases = bases.set_eh_frame(eh_frame as _);
+        let eh_frame = EhFrame::new(get_unlimited_slice(eh_frame as usize as _), NativeEndian);
+
+        // Use binary search table for address if available.
+        if let Some(table) = eh_frame_hdr.table()
+            && let Ok(fde) =
+                table.fde_for_address(&eh_frame, &bases, pc as _, EhFrame::cie_from_offset)
+        {
+            return Some(FDESearchResult {
+                fde,
+                bases,
+                eh_frame,
+            });
+        }
+
+        // Otherwise do the linear search.
+        if let Ok(fde) = eh_frame.fde_for_address(&bases, pc as _, EhFrame::cie_from_offset) {
+            return Some(FDESearchResult {
+                fde,
+                bases,
+                eh_frame,
+            });
+        }
+
+        None
+    }
+}

@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import shutil
 import subprocess
 import tempfile
 import tomllib
@@ -31,6 +32,13 @@ UNWIND_ABI = {
     '_Unwind_FindEnclosingFunction', '_Unwind_RaiseException', '_Unwind_ForcedUnwind',
     '_Unwind_Resume', '_Unwind_Resume_or_Rethrow', '_Unwind_DeleteException', '_Unwind_Backtrace',
 }
+PATCHED_UNWINDING = 'unwinding'
+PATCH_TARGET = 'src/unwinder/find_fde/phdr.rs'
+PATCH_OVERLAY = ROOT / 'patches/unwinding-0.2.10-phdr-bounds.rs'
+PATCHED_UNWINDING_ORIGINAL_SHA256 = '5c462a8ea77cd67c8cd2c248671b74ac3df475ea134f7ff578a79a0ab0398a68'
+PATCHED_UNWINDING_UPSTREAM_TREE_SHA256 = '8ce98e8ae23314ff1312aec0c3f6c627df256a61e212923a6cd70fd53a0990d9'
+PATCHED_UNWINDING_LICENSE = 'MIT OR Apache-2.0'
+CRATES_IO_REGISTRY = 'registry+https://github.com/rust-lang/crates.io-index'
 
 def run(args, **kwargs):
     return subprocess.check_output([str(a) for a in args], text=True, **kwargs)
@@ -38,7 +46,34 @@ def run(args, **kwargs):
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
-def audit_graph(metadata, lock):
+
+def source_files(root):
+    files = []
+    for path in sorted(root.rglob('*')):
+        if path.is_symlink():
+            raise ValueError(f'symlink in audited source tree: {path}')
+        if path.is_file():
+            files.append(path)
+    return files
+
+
+def tree_digest(root, overlays=None):
+    overlays = overlays or {}
+    identity = hashlib.sha256()
+    paths = source_files(root)
+    names = {path.relative_to(root).as_posix() for path in paths}
+    if not set(overlays) <= names:
+        raise ValueError('source overlay target is absent from the pinned tree')
+    for path in paths:
+        relative = path.relative_to(root).as_posix()
+        identity.update(relative.encode())
+        identity.update(b'\0')
+        identity.update(digest(overlays.get(relative, path)).encode())
+        identity.update(b'\0')
+    return identity.hexdigest()
+
+
+def audit_graph(metadata, lock, patched_unwinding=False):
     package_records = metadata['packages']
     package_names = [p['name'] for p in package_records]
     if len(package_names) != len(set(package_names)):
@@ -64,7 +99,11 @@ def audit_graph(metadata, lock):
             or 'source' in root or 'checksum' in root):
         raise ValueError('unapproved root lock package')
     for name, (version, checksum) in PINS.items():
-        if (locked[name]['version'], locked[name]['checksum']) != (version, checksum):
+        if patched_unwinding and name == PATCHED_UNWINDING:
+            if (locked[name]['version'] != version
+                    or 'source' in locked[name] or 'checksum' in locked[name]):
+                raise ValueError('unapproved patched source pin')
+        elif (locked[name]['version'], locked[name]['checksum']) != (version, checksum):
             raise ValueError(f'unapproved source pin: {name}')
         if packages[name]['version'] != version:
             raise ValueError(f'unapproved resolved version: {name}')
@@ -89,6 +128,88 @@ def audit_graph(metadata, lock):
                 raise ValueError(f'unapproved build executable in {name}')
     return packages
 
+
+def staged_manifest_text():
+    return (
+        f'{(ROOT / "Cargo.toml").read_text()}\n'
+        f'[patch.crates-io]\n{PATCHED_UNWINDING} = {{ path = "../{PATCHED_UNWINDING}-0.2.10" }}\n'
+    )
+
+
+def stage_patched_unwinding(packages):
+    package = packages[PATCHED_UNWINDING]
+    if package.get('source') != CRATES_IO_REGISTRY:
+        raise ValueError('unwinding source is not the pinned crates.io registry package')
+    upstream = Path(package['manifest_path']).parent
+    source = upstream / PATCH_TARGET
+    if source.is_symlink() or not source.is_file() or digest(source) != PATCHED_UNWINDING_ORIGINAL_SHA256:
+        raise ValueError('unwinding patch target differs from the pinned upstream source')
+    upstream_tree_sha256 = tree_digest(upstream)
+    if upstream_tree_sha256 != PATCHED_UNWINDING_UPSTREAM_TREE_SHA256:
+        raise ValueError('unwinding source tree differs from the pinned upstream identity')
+    if PATCH_OVERLAY.is_symlink() or not PATCH_OVERLAY.is_file():
+        raise ValueError('unwinding bounds overlay is not a regular checked-in source')
+    patched_tree_sha256 = tree_digest(upstream, {PATCH_TARGET: PATCH_OVERLAY})
+    input_identity = hashlib.sha256()
+    for value in (
+        upstream_tree_sha256,
+        patched_tree_sha256,
+        digest(ROOT / 'Cargo.toml'),
+        digest(ROOT / 'Cargo.lock'),
+        tree_digest(ROOT / 'src'),
+    ):
+        input_identity.update(value.encode())
+        input_identity.update(b'\0')
+    source_root = ROOT.parent / '.work/x86_64/unwinder-source-inputs' / input_identity.hexdigest()
+    staged_unwinding = source_root / f'{PATCHED_UNWINDING}-0.2.10'
+    staged_root = source_root / 'crabc-unwinder'
+    if source_root.exists():
+        if source_root.is_symlink() or not source_root.is_dir():
+            raise ValueError('unwinding source input is not a regular directory')
+        if tree_digest(staged_unwinding) != patched_tree_sha256:
+            raise ValueError('existing unwinding source input differs from the reviewed overlay')
+        if tree_digest(staged_root / 'src') != tree_digest(ROOT / 'src'):
+            raise ValueError('existing crabc-unwinder source input is stale')
+        if (staged_root / 'Cargo.toml').read_text() != staged_manifest_text():
+            raise ValueError('existing crabc-unwinder manifest is stale')
+    else:
+        source_root.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(upstream, staged_unwinding)
+        shutil.copytree(ROOT / 'src', staged_root / 'src')
+        (staged_root / 'Cargo.toml').write_text(staged_manifest_text())
+        shutil.copy2(ROOT / 'Cargo.lock', staged_root / 'Cargo.lock')
+        patched_target = staged_unwinding / PATCH_TARGET
+        shutil.copyfile(PATCH_OVERLAY, patched_target)
+        if tree_digest(staged_unwinding) != patched_tree_sha256:
+            raise ValueError('unwinding bounds overlay was not staged exactly')
+    return {
+        'manifest': staged_root / 'Cargo.toml',
+        'upstream': upstream,
+        'staged': staged_unwinding,
+        'source_input': source_root,
+        'upstream_tree_sha256': upstream_tree_sha256,
+        'patched_tree_sha256': patched_tree_sha256,
+        'patch': {
+            'path': str(PATCH_OVERLAY.relative_to(ROOT.parent)),
+            'sha256': digest(PATCH_OVERLAY),
+            'target': PATCH_TARGET,
+            'upstream_sha256': PATCHED_UNWINDING_ORIGINAL_SHA256,
+            'compiled_sha256': digest(staged_unwinding / PATCH_TARGET),
+            'license': PATCHED_UNWINDING_LICENSE,
+        },
+    }
+
+
+def verify_staged_patched_unwinding(staged):
+    """Reject provenance if the staged source changes before it is recorded."""
+    if tree_digest(staged['staged']) != staged['patched_tree_sha256']:
+        raise ValueError('compiled unwinding source differs from the reviewed overlay')
+    patch = staged['patch']
+    if digest(PATCH_OVERLAY) != patch['sha256']:
+        raise ValueError('checked-in unwinding overlay differs from the staged patch record')
+    if digest(staged['staged'] / patch['target']) != patch['compiled_sha256']:
+        raise ValueError('compiled unwinding overlay differs from the staged patch record')
+
 def build(output):
     if (platform.system(), platform.machine()) != ('Linux', 'x86_64'):
         raise ValueError('native Linux/x86-64 required')
@@ -110,10 +231,19 @@ def build(output):
             '-Cforce-unwind-tables=yes', '--remap-path-prefix', f'{ROOT.parent}=/crabc']),
         SOURCE_DATE_EPOCH='0', CARGO_INCREMENTAL='0')
     kwargs = {'cwd': ROOT, 'env': environment}
-    manifest = ['--manifest-path', str(ROOT / 'Cargo.toml'), '--locked']
-    metadata = json.loads(run([*cargo, 'metadata', *manifest, '--format-version=1', '--filter-platform', TARGET], **kwargs))
+    source_manifest = ['--manifest-path', str(ROOT / 'Cargo.toml'), '--locked']
+    metadata = json.loads(run([*cargo, 'metadata', *source_manifest, '--format-version=1', '--filter-platform', TARGET], **kwargs))
     packages = audit_graph(metadata, tomllib.loads((ROOT / 'Cargo.lock').read_text()))
-    log = run([*cargo, 'build', *manifest, '--release', '--target', TARGET, '--message-format=json'], **kwargs)
+    staged = stage_patched_unwinding(packages)
+    staged_kwargs = {'cwd': staged['manifest'].parent, 'env': environment}
+    run([*cargo, 'generate-lockfile', '--offline', '--manifest-path', staged['manifest']], **staged_kwargs)
+    manifest = ['--manifest-path', str(staged['manifest']), '--locked']
+    patched_metadata = json.loads(run([*cargo, 'metadata', *manifest, '--format-version=1', '--filter-platform', TARGET], **staged_kwargs))
+    packages = audit_graph(patched_metadata, tomllib.loads((staged['manifest'].parent / 'Cargo.lock').read_text()), patched_unwinding=True)
+    if Path(packages[PATCHED_UNWINDING]['manifest_path']).parent != staged['staged']:
+        raise ValueError('Cargo did not compile the staged unwinding source')
+    log = run([*cargo, 'build', *manifest, '--release', '--target', TARGET, '--message-format=json'], **staged_kwargs)
+    verify_staged_patched_unwinding(staged)
     (output / 'cargo.jsonl').write_text(log)
     sysroot = Path(run([*rustc, '--print', 'sysroot'], **kwargs).strip())
     llvm = sysroot / 'lib/rustlib/x86_64-unknown-linux-musl/bin'
@@ -127,10 +257,10 @@ def build(output):
     for name in sorted(PINS):
         package = packages[name]
         source = Path(package['manifest_path']).parent
-        source_files = sorted(p for p in source.rglob('*') if p.is_file())
+        package_files = source_files(source)
         sources.append({'name': name, 'version': package['version'], 'license': package['license'],
             'features': sorted(FEATURES[name]), 'files': [
-                {'path': str(p.relative_to(source)), 'sha256': digest(p)} for p in source_files]})
+                {'path': str(p.relative_to(source)), 'sha256': digest(p)} for p in package_files]})
         artifacts = [json.loads(line) for line in log.splitlines() if line.startswith('{')]
         matching = [a for a in artifacts if a.get('reason') == 'compiler-artifact' and a['package_id'] == package['id'] and 'lib' in a['target']['kind']]
         archives = [Path(f) for a in matching for f in a['filenames'] if f.endswith('.rlib')]
@@ -167,6 +297,12 @@ def build(output):
     provenance = {'schema': 1, 'target': TARGET, 'toolchain': run([*rustc, '-Vv'], **kwargs),
         'upstream_commit': '0e2de8fb536b1ca42066024609f58d708cf80e69',
         'archive': {'name': archive.name, 'sha256': digest(archive)}, 'dependencies': sources,
+        'patched_unwinding': {
+            'source_input': str(staged['source_input'].relative_to(ROOT.parent)),
+            'upstream_tree_sha256': staged['upstream_tree_sha256'],
+            'patched_tree_sha256': staged['patched_tree_sha256'],
+            'patches': [staged['patch']],
+        },
         'unwind_abi': sorted(UNWIND_ABI), 'members': [{'name': p.name, 'sha256': digest(p)} for p in members],
         'native_build_products': False, 'personality_owner': 'consumer Rust std',
         'qualified': False}
