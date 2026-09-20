@@ -418,6 +418,23 @@ The receipt explicitly retains `component_complete = false`,
 ledger family's required aggregate admission and the global family-receipt
 gate remain open.
 
+`--posix-sysv-signal-admission-report RECEIPT` is independently optional and
+accepts only a current-checkout immutable `family-admission.json` below
+`.work/`, replayed by `owned_posix_native_execution.py`. The owner first
+reconstructs the complete POSIX admission and its physical native/family
+receipts; the selector then projects only the `__sysv_signal` route. It
+requires the exact selected `x86-signal-legacy-aliases` weak same-address
+feature contract, the source-selected static and shared alias placements, and
+the `signal-helpers` consumer's six static and twelve dynamic matrix cells.
+The physical family reader must also recover the receipt's primary static
+preparation and static/dynamic manifests as the ABI transaction's selected
+products, so a same-source admission from another product cohort is rejected.
+The selector replays the admission owner after the scoped join. It removes only
+`__sysv_signal`'s feature archive/component receipt reason. Although the
+owner's receipt records complete POSIX family evidence, this projection does
+not feed `family_semantic_receipts`, alter a family ledger status, or satisfy
+qualification, promotion, or public-support gates.
+
 These runtime attachments run before the one public declaration-envelope replay
 and are rechecked after their scoped joins. Their source/product/ELF cohort is
 therefore shared with the selection transaction without rereading the header
@@ -468,9 +485,11 @@ a retained runtime map, probe, source snapshot, or raw command output cannot
 change after the initial reader replay. A report with only one component stays
 independently optional and leaves both descriptor requirements unresolved.
 
-The selection report schema is `crabc.x86_64-native-abi-selection-report/v7`;
-v7 adds the optional closed `locale_alias_contract_companion` and
-`locale_alias_contract_joins` fields. The current selector also records the
+The selection report schema is `crabc.x86_64-native-abi-selection-report/v8`;
+v8 adds the optional closed `posix_sysv_signal_admission_companion` and
+`posix_sysv_signal_admission_joins` fields. v7 added the optional closed
+`locale_alias_contract_companion` and `locale_alias_contract_joins` fields.
+The current selector also records the
 non-promoting `text_family_semantic_companion` and multi-family
 `family_semantic_receipts` projection; it does not alter the planned text
 family's ledger status. It admits the locale reader only after

@@ -52,7 +52,7 @@ import headers_layouts_aggregate
 import owned_public_data_variable_runtime as public_data_variable_runtime
 import loader_structural_owner_contract_reader as loader_structural_owner_evidence
 
-SCHEMA = 'crabc.x86_64-native-abi-selection-report/v7'
+SCHEMA = 'crabc.x86_64-native-abi-selection-report/v8'
 CONTRACT_SCHEMA = 'crabc.x86_64-native-abi-selection/v1'
 TARGET = inventory.TARGET
 CONTRACT_PATH = MODULE_DIR / 'native-abi-selection.toml'
@@ -84,6 +84,26 @@ TEXT_FOPEN64_STRUCTURAL_LIMITS = [
     'Only the source-only fopen64 structural replacement is discharged.',
     'The attached stdio component retains the _LARGEFILE64_SOURCE macro-to-fopen route; it does not select an x86 fopen64 ELF provider.',
     'This join does not complete text/math/locale/stdio, runtime qualification, promotion, or public support.',
+]
+POSIX_SYSV_SIGNAL_REQUIREMENT = 'source-selected alias requires exact feature archive selection and component receipt'
+POSIX_SYSV_SIGNAL_OWNER = 'x86-sysv-signal-alias'
+POSIX_SYSV_SIGNAL_GROUP = 'source-owned-sysv-signal-alias'
+POSIX_SYSV_SIGNAL_FEATURE_OWNER = 'x86-signal-legacy-aliases'
+POSIX_SYSV_SIGNAL_WORKLOAD = 'signal-helpers'
+POSIX_SYSV_SIGNAL_STATIC_CELLS = [
+    'primary:et-exec', 'primary:pie', 'reproduction:et-exec',
+    'reproduction:pie', 'extracted:et-exec', 'extracted:pie',
+]
+POSIX_SYSV_SIGNAL_DYNAMIC_CELLS = [
+    'installed:pie:kernel', 'installed:pie:direct', 'installed:non-pie:kernel',
+    'installed:non-pie:direct', 'second:pie:kernel', 'second:pie:direct',
+    'second:non-pie:kernel', 'second:non-pie:direct', 'extracted:pie:kernel',
+    'extracted:pie:direct', 'extracted:non-pie:kernel', 'extracted:non-pie:direct',
+]
+POSIX_SYSV_SIGNAL_LIMITS = [
+    'Only the __sysv_signal source-selected weak same-address alias requirement is discharged.',
+    'The attached signal-helpers cells remain the admission reader’s current source-bound static and dynamic consumer evidence.',
+    'This join does not consume POSIX family completion, qualification, promotion, or public-support gates.',
 ]
 SELECTORS = {'header-providers', 'feature-abi-only', 'exact-file-members', 'explicit'}
 DISPOSITIONS = {'public-provider', 'private-provider', 'unresolved'}
@@ -1192,6 +1212,376 @@ def attach_text_family_fopen64_structural(accounting: Mapping[str, Any],
     }]
 
 
+def _posix_sysv_signal_reader():
+    """Load the POSIX admission owner without making it a family selector."""
+    try:
+        return importlib.import_module('owned_posix_native_execution')
+    except (ImportError, OSError, ValueError) as error:
+        raise SelectionError(f'cannot load POSIX admission reader: {error}') from error
+
+
+def _posix_sysv_signal_identity(value: object, *, description: str) -> dict[str, Any]:
+    """Read one POSIX owner identity and keep it below this checkout's work tree."""
+    result = exact(value, {'path', 'sha256', 'size'}, description)
+    path = Path(string(result['path'], description + ' path'))
+    require(not path.is_absolute() and '..' not in path.parts,
+            f'{description} path escapes the selecting checkout')
+    physical = ROOT / path
+    require(physical.is_relative_to(ROOT / '.work'),
+            f'{description} must remain below the selecting checkout .work')
+    return result
+
+
+def _posix_sysv_signal_selected_product_cohort(reader: Any, paths: Mapping[str, Path]) -> dict[str, Any]:
+    """Identify the transaction's selected primary POSIX products exactly."""
+    required = ('static_preparation', 'static_product', 'dynamic_product')
+    require(all(name in paths and isinstance(paths[name], Path) for name in required),
+            'POSIX signal evidence lacks the selected product cohort')
+    static_preparation = paths['static_preparation']
+    static_product = paths['static_product']
+    dynamic_product = paths['dynamic_product']
+    for description, path, directory in (
+            ('selected static preparation', static_preparation, False),
+            ('selected static product', static_product, True),
+            ('selected dynamic product', dynamic_product, True)):
+        require(path.is_relative_to(ROOT) and path.exists() and not path.is_symlink()
+                and (path.is_dir() if directory else path.is_file()),
+                f'POSIX signal {description} is not in the selecting checkout')
+    try:
+        products = {
+            kind: {
+                'path': product.relative_to(ROOT).as_posix(),
+                'manifest': reader.family.file_identity(ROOT, product / 'share/crabc/manifest.json'),
+            }
+            for kind, product in (('static', static_product), ('dynamic', dynamic_product))
+        }
+        return {
+            'static_preparation': reader.family.file_identity(ROOT, static_preparation),
+            'primary': products,
+        }
+    except (OSError, RuntimeError, ValueError) as error:
+        raise SelectionError(f'POSIX signal selected product cohort rejected: {error}') from error
+
+
+def _posix_sysv_signal_receipt_product_cohort(reader: Any, matrix: Mapping[str, Any], *,
+                                              paths: Mapping[str, Path]) -> dict[str, Any]:
+    """Replay the physical family matrix before accepting its product paths."""
+    try:
+        matrix_inputs = matrix.get('inputs') if isinstance(matrix, Mapping) else None
+        request_identity = exact(matrix.get('request') if isinstance(matrix, Mapping) else None,
+                                 {'path', 'sha256', 'size'}, 'POSIX signal matrix request identity')
+        request_relative = Path(string(request_identity['path'], 'POSIX signal matrix request path'))
+        require(not request_relative.is_absolute() and '..' not in request_relative.parts,
+                'POSIX signal matrix request path escapes the selecting checkout')
+        request_path = ROOT / request_relative
+        require(request_path.is_relative_to(ROOT / '.work')
+                and same(reader.family.file_identity(ROOT, request_path), request_identity),
+                'POSIX signal matrix request changed during replay')
+        matrix_request = reader.family.read(request_path)
+        matrix_product_inputs, products = reader.family.input_products(ROOT, matrix_request)
+    except (OSError, RuntimeError, ValueError) as error:
+        raise SelectionError(f'POSIX signal product receipt rejected: {error}') from error
+    require(isinstance(matrix_inputs, Mapping) and same(matrix_inputs, matrix_product_inputs),
+            'POSIX signal matrix product inputs differ')
+    require(isinstance(products, Mapping) and isinstance(products.get('primary'), Mapping),
+            'POSIX signal matrix primary product is absent')
+    expected = _posix_sysv_signal_selected_product_cohort(reader, paths)
+    require(same(matrix_product_inputs.get('static_preparation'), expected['static_preparation']),
+            'POSIX signal static preparation differs from the selected ABI preparation')
+    primary = products['primary']
+    for kind, selected in (('static', paths['static_product']), ('dynamic', paths['dynamic_product'])):
+        product = primary.get(kind)
+        require(isinstance(product, Path) and product == selected,
+                f'POSIX signal primary {kind} product differs from the selected ABI product')
+        require(same(reader.family.file_identity(ROOT, product / 'share/crabc/manifest.json'),
+                     expected['primary'][kind]['manifest']),
+                f'POSIX signal primary {kind} manifest differs from the selected ABI product')
+    return expected
+
+
+def _posix_sysv_signal_cells(value: object, *, dynamic: bool) -> dict[str, Any]:
+    """Project the one signal-helper workload over its immutable cell roster."""
+    result = exact(value, {'workload', 'cells'}, 'POSIX __sysv_signal workload evidence')
+    expected = POSIX_SYSV_SIGNAL_DYNAMIC_CELLS if dynamic else POSIX_SYSV_SIGNAL_STATIC_CELLS
+    require(result['workload'] == POSIX_SYSV_SIGNAL_WORKLOAD and isinstance(result['cells'], Mapping)
+            and set(result['cells']) == set(expected),
+            'POSIX __sysv_signal workload/cell roster differs')
+    cells = {
+        label: _posix_sysv_signal_identity(result['cells'][label], description=f'POSIX __sysv_signal {label} cell')
+        for label in expected
+    }
+    return {'workload': POSIX_SYSV_SIGNAL_WORKLOAD, 'cells': cells}
+
+
+def _posix_sysv_signal_feature_requirement() -> dict[str, Any]:
+    """Reconstruct the one full selected feature route from its source contract."""
+    contract = load_contract(CONTRACT_PATH)
+    inputs = load_source_inputs(contract, CONTRACT_PATH)
+    expanded = expand_obligations(contract, inputs)
+    record = next((row for row in expanded if row['identity'] == identity('__sysv_signal')), None)
+    require(record is not None and type(record.get('function_alias_requirements')) is list
+            and len(record['function_alias_requirements']) == 1,
+            'POSIX __sysv_signal selected feature requirement differs')
+    fields = {
+        'name', 'target', 'binding', 'owner', 'state', 'evidence_record', 'runner',
+        'feature_selection_source', 'sources', 'baseline_features', 'enabled_features',
+    }
+    feature = exact(record['function_alias_requirements'][0], fields,
+                    'POSIX __sysv_signal selected feature requirement')
+    require(feature == {
+        'name': '__sysv_signal', 'target': 'signal', 'binding': 'weak-same-address',
+        'owner': POSIX_SYSV_SIGNAL_FEATURE_OWNER, 'state': 'verified',
+        'evidence_record': 'static-c-signal-legacy-aliases',
+        'runner': 'compat/x86_64/run_libc_signal_legacy_aliases.sh',
+        'feature_selection_source': None,
+        'sources': ['compat/x86_64/feature_archive_roster.py', 'compat/x86_64/parity.toml'],
+        'baseline_features': [], 'enabled_features': ['x86-signal-legacy-aliases'],
+    }, 'POSIX __sysv_signal selected feature route differs')
+    return copy.deepcopy(feature)
+
+
+def posix_sysv_signal_admission_adapter(report_path: Path | None, *, paths: Mapping[str, Path],
+                                        source: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Attach one physical POSIX consumer receipt without consuming its family state.
+
+    The admission owner validates the whole POSIX spelling matrix.  This
+    adapter deliberately projects only the source-selected ``__sysv_signal``
+    alias's signal-helper component and requires the matrix's primary products
+    to be the exact ABI transaction products.  The owner report's completed
+    family state is preserved as a limit, never passed to family evidence.
+    """
+    if report_path is None:
+        return None
+    reader = _posix_sysv_signal_reader()
+    path = physical_work_path(report_path, directory=False)
+    require(path.is_relative_to(ROOT / '.work'), 'POSIX signal receipt belongs to another checkout')
+    before = file_identity(path)
+    relative = path.relative_to(ROOT)
+    try:
+        report = reader.validate_admission_receipt(ROOT, relative)
+    except (OSError, RuntimeError, ValueError) as error:
+        raise SelectionError(f'POSIX signal admission receipt rejected: {error}') from error
+    require(same(before, file_identity(path)), 'POSIX signal admission receipt changed during validation')
+    report = exact(report, {
+        'schema', 'status', 'family', 'inputs', 'request', 'source_seals', 'proof',
+        'family_completion', 'native_aggregate_complete', 'campaign_complete',
+        'promotion_ready', 'public_support',
+    }, 'POSIX signal admission receipt')
+    expected_source = _text_family_source(source)
+    inputs = exact(report['inputs'], {'native_execution', 'family_execution', 'source', 'source_files'},
+                   'POSIX signal admission receipt inputs')
+    native_identity = _posix_sysv_signal_identity(inputs['native_execution'],
+                                                  description='POSIX signal native execution identity')
+    matrix_identity = _posix_sysv_signal_identity(inputs['family_execution'],
+                                                  description='POSIX signal family execution identity')
+    require(report['schema'] == reader.ADMISSION_SCHEMA
+            and report['status'] == 'family-admission-verified'
+            and report['family'] == 'libc.posix-runtime'
+            and inputs['source'] == expected_source
+            and report['family_completion'] is True and report['native_aggregate_complete'] is True
+            and report['campaign_complete'] is False and report['promotion_ready'] is False
+            and report['public_support'] is False,
+            'POSIX signal admission completion or source boundary differs')
+    source_files = inputs['source_files']
+    require(isinstance(source_files, Mapping) and set(source_files) == set(reader.ADMISSION_SOURCES)
+            and all(same(source_files[name], reader.family.source_file(ROOT, name)) for name in reader.ADMISSION_SOURCES),
+            'POSIX signal admission source-file roster differs')
+    native_relative = Path(native_identity['path'])
+    try:
+        native_execution, matrix, replay_source, matrix_path = reader.admission_inputs(ROOT, ROOT / native_relative)
+    except (OSError, RuntimeError, ValueError) as error:
+        raise SelectionError(f'POSIX signal admission inputs rejected: {error}') from error
+    require(same(reader.family.file_identity(ROOT, ROOT / native_relative), native_identity)
+            and same(reader.family.file_identity(ROOT, matrix_path), matrix_identity)
+            and same(replay_source, expected_source),
+            'POSIX signal admission input identities differ')
+    product_cohort = _posix_sysv_signal_receipt_product_cohort(reader, matrix, paths=paths)
+    proof = exact(report['proof'], {
+        'catalog', 'catalog_schema', 'ledger_dependencies', 'capability_count', 'symbol_count',
+        'capability_symbols', 'symbol_workloads', 'closure_workloads', 'static_cells', 'dynamic_cells',
+        'static_spelling_cell_count', 'dynamic_spelling_cell_count', 'native_components',
+        'native_io_cancellation_cells',
+    }, 'POSIX signal admission proof')
+    require(proof['catalog_schema'] == 'crabc.x86_64-owned-posix-runtime-catalog/v1'
+            and proof['static_cells'] == POSIX_SYSV_SIGNAL_STATIC_CELLS
+            and proof['dynamic_cells'] == POSIX_SYSV_SIGNAL_DYNAMIC_CELLS
+            and isinstance(proof['symbol_workloads'], Mapping)
+            and set(proof['symbol_workloads']) >= {'__sysv_signal'},
+            'POSIX signal admission proof roster differs')
+    workload = exact(proof['symbol_workloads']['__sysv_signal'], {'static', 'dynamic', 'dynamic_case'},
+                     'POSIX __sysv_signal workload route')
+    require(workload == {'static': POSIX_SYSV_SIGNAL_WORKLOAD, 'dynamic': POSIX_SYSV_SIGNAL_WORKLOAD,
+                         'dynamic_case': POSIX_SYSV_SIGNAL_WORKLOAD},
+            'POSIX __sysv_signal workload route differs')
+    spelling_evidence = exact(matrix.get('spelling_evidence') if isinstance(matrix, Mapping) else None,
+                              {'static', 'dynamic'}, 'POSIX signal matrix spelling evidence')
+    require(isinstance(spelling_evidence['static'], Mapping)
+            and isinstance(spelling_evidence['dynamic'], Mapping),
+            'POSIX signal matrix spelling sections differ')
+    static = _posix_sysv_signal_cells(
+        spelling_evidence['static'].get('__sysv_signal'), dynamic=False,
+    )
+    dynamic = _posix_sysv_signal_cells(
+        spelling_evidence['dynamic'].get('__sysv_signal'), dynamic=True,
+    )
+    return {
+        'status': 'posix-sysv-signal-component-attached', 'report': before,
+        'source': expected_source, 'source_files': copy.deepcopy(source_files),
+        'receipt_inputs': {
+            'native_execution': native_identity, 'family_execution': matrix_identity,
+            'request': _posix_sysv_signal_identity(report['request'], description='POSIX signal admission request identity'),
+            'source_seals': copy.deepcopy(report['source_seals']),
+        },
+        'product_cohort': product_cohort,
+        'result': {
+            'schema': reader.ADMISSION_SCHEMA, 'family': 'libc.posix-runtime',
+            'workload': workload, 'static': static, 'dynamic': dynamic,
+            'family_completion': True, 'native_aggregate_complete': True,
+            'campaign_complete': False, 'promotion_ready': False, 'public_support': False,
+        },
+        'limits': list(POSIX_SYSV_SIGNAL_LIMITS),
+    }
+
+
+def _posix_sysv_signal_evidence(companion: Mapping[str, Any], *, paths: Mapping[str, Path]) -> dict[str, Any]:
+    """Validate the stored finite projection before discharging its one reason."""
+    reader = _posix_sysv_signal_reader()
+    companion = exact(companion, {
+        'status', 'report', 'source', 'source_files', 'receipt_inputs', 'product_cohort', 'result', 'limits',
+    }, 'POSIX __sysv_signal companion')
+    report = exact(companion['report'], {'path', 'sha256', 'size', 'mode'}, 'POSIX __sysv_signal report')
+    source = exact(companion['source'], {'revision', 'content_sha256'}, 'POSIX __sysv_signal source')
+    require(companion['status'] == 'posix-sysv-signal-component-attached'
+            and report['path'].startswith(str(ROOT / '.work') + os.sep)
+            and isinstance(companion['source_files'], Mapping)
+            and set(companion['source_files']) == set(reader.ADMISSION_SOURCES)
+            and all(same(companion['source_files'][name], reader.family.source_file(ROOT, name))
+                    for name in reader.ADMISSION_SOURCES)
+            and same(companion['product_cohort'], _posix_sysv_signal_selected_product_cohort(reader, paths))
+            and companion['limits'] == POSIX_SYSV_SIGNAL_LIMITS,
+            'POSIX __sysv_signal companion boundary differs')
+    receipt_inputs = exact(companion['receipt_inputs'], {
+        'native_execution', 'family_execution', 'request', 'source_seals',
+    }, 'POSIX __sysv_signal receipt inputs')
+    _posix_sysv_signal_identity(receipt_inputs['native_execution'], description='POSIX __sysv_signal native input')
+    _posix_sysv_signal_identity(receipt_inputs['family_execution'], description='POSIX __sysv_signal family input')
+    _posix_sysv_signal_identity(receipt_inputs['request'], description='POSIX __sysv_signal request input')
+    require(isinstance(receipt_inputs['source_seals'], Mapping)
+            and set(receipt_inputs['source_seals']) == {'before', 'after'},
+            'POSIX __sysv_signal source seals differ')
+    result = exact(companion['result'], {
+        'schema', 'family', 'workload', 'static', 'dynamic', 'family_completion',
+        'native_aggregate_complete', 'campaign_complete', 'promotion_ready', 'public_support',
+    }, 'POSIX __sysv_signal result')
+    require(result['schema'] == reader.ADMISSION_SCHEMA and result['family'] == 'libc.posix-runtime'
+            and result['workload'] == {
+                'static': POSIX_SYSV_SIGNAL_WORKLOAD, 'dynamic': POSIX_SYSV_SIGNAL_WORKLOAD,
+                'dynamic_case': POSIX_SYSV_SIGNAL_WORKLOAD,
+            }
+            and result['family_completion'] is True and result['native_aggregate_complete'] is True
+            and result['campaign_complete'] is False and result['promotion_ready'] is False
+            and result['public_support'] is False,
+            'POSIX __sysv_signal completion boundary differs')
+    return {
+        'source': {'revision': string(source['revision'], 'POSIX __sysv_signal source revision'),
+                   'content_sha256': string(source['content_sha256'], 'POSIX __sysv_signal source digest')},
+        'static': _posix_sysv_signal_cells(result['static'], dynamic=False),
+        'dynamic': _posix_sysv_signal_cells(result['dynamic'], dynamic=True),
+    }
+
+
+def attach_posix_sysv_signal_admission(accounting: Mapping[str, Any],
+                                       companion: Mapping[str, Any] | None, *,
+                                       paths: Mapping[str, Path]) -> list[dict[str, Any]]:
+    """Discharge precisely the selected ``__sysv_signal`` feature requirement."""
+    if companion is None:
+        return []
+    evidence = _posix_sysv_signal_evidence(companion, paths=paths)
+    feature_contract = _posix_sysv_signal_feature_requirement()
+    records, placements, occurrences = _accounting_indexes(
+        accounting, description='POSIX __sysv_signal admission attachment',
+    )
+    occurrence_count = len(occurrences)
+    record = records.get(('__sysv_signal', None, False))
+    require(record is not None and record.get('selection', {}).get('disposition') == 'public-provider'
+            and record['selection'].get('owner') == POSIX_SYSV_SIGNAL_OWNER
+            and record['selection'].get('group') == POSIX_SYSV_SIGNAL_GROUP
+            and record.get('unresolved') == [POSIX_SYSV_SIGNAL_REQUIREMENT]
+            and record.get('function_alias_requirements') == [feature_contract],
+            'POSIX __sysv_signal selected feature requirement differs')
+    static_placement, static_alias = _selected_placement(
+        placements, occurrences, name='__sysv_signal', artifact_key='candidate-static',
+        table='.symtab', role='definition', metadata={'type': 'FUNC', 'binding': 'WEAK', 'visibility': 'DEFAULT'},
+        description='POSIX __sysv_signal selected static alias',
+    )
+    shared_placement, shared_alias = _selected_placement(
+        placements, occurrences, name='__sysv_signal', artifact_key='candidate-shared',
+        table='.dynsym', role='definition', metadata={'type': 'FUNC', 'binding': 'WEAK', 'visibility': 'DEFAULT'},
+        description='POSIX __sysv_signal selected shared alias',
+    )
+    observations = accounting.get('function_alias_observations')
+    require(type(observations) is list, 'POSIX __sysv_signal function alias observations differ')
+    matching = [row for row in observations
+                if type(row) is dict and same(row.get('identity'), record['identity'])
+                and same(row.get('target'), identity('signal'))]
+    require(len(matching) == 1 and matching[0].get('artifact_key') == 'candidate-static'
+            and same(matching[0].get('feature_contract'), feature_contract)
+            and matching[0].get('feature_archive_receipt_proven') is False
+            and matching[0].get('runtime_semantics_proven') is False,
+            'POSIX __sysv_signal feature archive observation differs')
+    pairs = matching[0].get('same_domain_pairs')
+    require(type(pairs) is list and len(pairs) == 1 and pairs[0][0] == static_alias['index']
+            and isinstance(pairs[0][1], int) and pairs[0][1] in occurrences,
+            'POSIX __sysv_signal static definition-domain observation differs')
+    static_target = occurrences[pairs[0][1]]
+    require(static_target.get('artifact_key') == 'candidate-static'
+            and static_target.get('table') == '.symtab' and static_target.get('role') == 'definition'
+            and same(row_identity(static_target['row']), identity('signal'))
+            and static_target['row'].get('type') == 'FUNC'
+            and static_target['row'].get('binding') == 'GLOBAL'
+            and static_target['row'].get('visibility') == 'DEFAULT'
+            and same_definition_domain(static_alias, static_target),
+            'POSIX __sysv_signal selected static target differs')
+    # The physical signal-helper owner checks ``libc.so`` with ``--dyn-syms``
+    # in run_owned_signal_helpers.sh::assert_signal_aliases.  Keep the
+    # selector's own complete-ELF join equally explicit: a weak shared export
+    # with the right metadata but another body cannot inherit that receipt.
+    shared_targets = [row for row in occurrences.values()
+                      if row.get('artifact_key') == 'candidate-shared'
+                      and row.get('table') == '.dynsym' and row.get('role') == 'definition'
+                      and isinstance(row.get('row'), Mapping)
+                      and same(row_identity(row['row']), identity('signal'))]
+    require(len(shared_targets) == 1, 'POSIX __sysv_signal selected shared target differs')
+    shared_target = shared_targets[0]
+    require(shared_target['row'].get('type') == 'FUNC'
+            and shared_target['row'].get('binding') == 'GLOBAL'
+            and shared_target['row'].get('visibility') == 'DEFAULT'
+            and same_definition_domain(shared_alias, shared_target),
+            'POSIX __sysv_signal selected shared target differs')
+    matching[0]['feature_archive_receipt_proven'] = True
+    matching[0]['runtime_semantics_proven'] = True
+    _remove_identity_requirements(
+        accounting, record, (POSIX_SYSV_SIGNAL_REQUIREMENT,),
+        description='POSIX __sysv_signal feature requirement',
+    )
+    require(len(occurrences) == occurrence_count,
+            'POSIX __sysv_signal attachment changed complete ELF accounting')
+    return [{
+        'identity': copy.deepcopy(record['identity']), 'target': identity('signal'),
+        'static_alias_occurrence_index': static_alias['index'],
+        'shared_alias_occurrence_index': shared_alias['index'],
+        'static_target_occurrence_index': static_target['index'],
+        'shared_target_occurrence_index': shared_target['index'],
+        'static_placement_metadata': copy.deepcopy(static_placement['expected_metadata']),
+        'shared_placement_metadata': copy.deepcopy(shared_placement['expected_metadata']),
+        'signal_helper_static_cells': copy.deepcopy(evidence['static']['cells']),
+        'signal_helper_dynamic_cells': copy.deepcopy(evidence['dynamic']['cells']),
+        'feature_archive_receipt_proven': True, 'runtime_semantics_proven': True,
+        'requirements_discharged': [POSIX_SYSV_SIGNAL_REQUIREMENT],
+        'limits': list(POSIX_SYSV_SIGNAL_LIMITS),
+    }]
+
+
 def headers_layouts_family_evidence(families: Sequence[Mapping[str, Any]],
                                     companion: Mapping[str, Any] | None,
                                     text_family_companion: Mapping[str, Any] | None = None, *,
@@ -1290,6 +1680,21 @@ def _recheck_text_family_semantics(companion: Mapping[str, Any] | None, *, paths
     replayed = text_family_semantic_adapter(path, paths=paths, source=source)
     require(same(replayed, companion) and same(before, file_identity(path)),
             'text family semantic receipt changed during final recheck')
+
+
+def _recheck_posix_sysv_signal_admission(companion: Mapping[str, Any] | None, *, paths: Mapping[str, Path],
+                                         source: Mapping[str, Any]) -> None:
+    """Replay the physical POSIX owner after its one scoped ABI join."""
+    if companion is None:
+        return
+    report = companion.get('report')
+    require(type(report) is dict and type(report.get('path')) is str,
+            'POSIX __sysv_signal report identity differs during final recheck')
+    path = physical_work_path(Path(report['path']), directory=False)
+    before = file_identity(path)
+    replayed = posix_sysv_signal_admission_adapter(path, paths=paths, source=source)
+    require(same(replayed, companion) and same(before, file_identity(path)),
+            'POSIX __sysv_signal receipt changed during final recheck')
 
 
 def _recheck_public_data_declaration_runtime(
@@ -9138,6 +9543,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
                   locale_alias_contract_report: Path | None = None,
                   headers_layouts_aggregate_report: Path | None = None,
                   text_family_semantic_report: Path | None = None,
+                  posix_sysv_signal_admission_report: Path | None = None,
                   public_data_declaration_runtime_report: Path | None = None,
                   loader_structural_owner_receipt_report: Path | None = None) -> dict[str, Any]:
     if pthread_timed_feature_report is not None:
@@ -9210,6 +9616,9 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     headers_layouts_aggregate_companion = headers_layouts_aggregate_adapter(headers_layouts_aggregate_report)
     text_family_semantic_companion = text_family_semantic_adapter(
         text_family_semantic_report, paths=paths, source=source_before,
+    )
+    posix_sysv_signal_admission_companion = posix_sysv_signal_admission_adapter(
+        posix_sysv_signal_admission_report, paths=paths, source=source_before,
     )
     declaration = declaration_adapter(
         declaration_report,
@@ -9285,6 +9694,9 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     text_fopen64_structural_joins = attach_text_family_fopen64_structural(
         accounting, text_family_semantic_companion, paths=paths,
     )
+    posix_sysv_signal_admission_joins = attach_posix_sysv_signal_admission(
+        accounting, posix_sysv_signal_admission_companion, paths=paths,
+    )
     family_evidence_blockers, family_semantic_receipts = family_semantic_evidence(
         inputs['families'], headers_layouts_companion=headers_layouts_aggregate_companion,
         text_family_companion=text_family_semantic_companion, paths=paths,
@@ -9313,6 +9725,9 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     )
     _recheck_headers_layouts_aggregate(headers_layouts_aggregate_companion)
     _recheck_text_family_semantics(text_family_semantic_companion, paths=paths, source=source_before)
+    _recheck_posix_sysv_signal_admission(
+        posix_sysv_signal_admission_companion, paths=paths, source=source_before,
+    )
     _recheck_public_data_declaration_runtime(
         public_data_declaration_runtime_companion, paths=paths, source=source_before, measurement=measurement,
         declaration_report=declaration_report, ordinary_declaration_abi_report=ordinary_declaration_abi_report,
@@ -9370,11 +9785,14 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'headers_layouts_aggregate_evidence': headers_layouts_aggregate_evidence,
             'text_family_semantic_companion': text_family_semantic_companion,
             'text_fopen64_structural_joins': text_fopen64_structural_joins,
+            'posix_sysv_signal_admission_companion': posix_sysv_signal_admission_companion,
+            'posix_sysv_signal_admission_joins': posix_sysv_signal_admission_joins,
             'family_semantic_receipts': family_semantic_receipts,
             **accounting, 'closure': {'complete': not blockers, 'blockers': blockers}, 'status': dict(STATUS),
             'limits': ['selection audit is not qualification', 'complete raw ELF observations stay with the publicly replayed supplement',
                        'no allocator metadata or unwinder investigation', 'no imported AArch64 execution proof',
-                       'public-data linkage is scoped evidence; the text component attaches only its semantic roster and source-only fopen64 structural row while aggregate family admission remains unavailable']}
+                       'public-data linkage is scoped evidence; the text component attaches only its semantic roster and source-only fopen64 structural row while aggregate family admission remains unavailable',
+                       'the POSIX admission reader may discharge only the selected __sysv_signal feature alias route; its family-complete state is not a selector family or promotion receipt']}
 
 
 def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declaration_report: Path | None = None,
@@ -9395,6 +9813,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                  locale_alias_contract_report: Path | None = None,
                  headers_layouts_aggregate_report: Path | None = None,
                  text_family_semantic_report: Path | None = None,
+                 posix_sysv_signal_admission_report: Path | None = None,
                  public_data_declaration_runtime_report: Path | None = None,
                  loader_structural_owner_receipt_report: Path | None = None,
                  **measurement_inputs: Path) -> dict[str, Any]:
@@ -9420,6 +9839,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                            locale_alias_contract_report=locale_alias_contract_report,
                            headers_layouts_aggregate_report=headers_layouts_aggregate_report,
                            text_family_semantic_report=text_family_semantic_report,
+                           posix_sysv_signal_admission_report=posix_sysv_signal_admission_report,
                            public_data_declaration_runtime_report=public_data_declaration_runtime_report,
                            loader_structural_owner_receipt_report=loader_structural_owner_receipt_report)
     output.mkdir()
@@ -9445,6 +9865,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                     locale_alias_contract_report: Path | None = None,
                     headers_layouts_aggregate_report: Path | None = None,
                     text_family_semantic_report: Path | None = None,
+                    posix_sysv_signal_admission_report: Path | None = None,
                     public_data_declaration_runtime_report: Path | None = None,
                     loader_structural_owner_receipt_report: Path | None = None,
                     **measurement_inputs: Path) -> dict[str, Any]:
@@ -9472,6 +9893,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                              locale_alias_contract_report=locale_alias_contract_report,
                              headers_layouts_aggregate_report=headers_layouts_aggregate_report,
                              text_family_semantic_report=text_family_semantic_report,
+                             posix_sysv_signal_admission_report=posix_sysv_signal_admission_report,
                              public_data_declaration_runtime_report=public_data_declaration_runtime_report,
                              loader_structural_owner_receipt_report=loader_structural_owner_receipt_report)
     require(same(report, expected), 'selection report does not reconstruct exactly from source inputs and public measurement replay')
@@ -9505,6 +9927,7 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument('--locale-alias-contract-report', type=Path)
     parser.add_argument('--headers-layouts-aggregate-report', type=Path)
     parser.add_argument('--text-family-semantic-report', type=Path)
+    parser.add_argument('--posix-sysv-signal-admission-report', type=Path)
     parser.add_argument('--public-data-declaration-runtime-report', type=Path)
     parser.add_argument('--loader-structural-owner-receipt-report', type=Path)
     options = [arg.split('=', 1)[0] for arg in argv if arg.startswith('--')]
@@ -9527,6 +9950,7 @@ def main(argv: Sequence[str]) -> int:
                                                 'locale_alias_contract_report',
                                                 'headers_layouts_aggregate_report',
                                                 'text_family_semantic_report',
+                                                'posix_sysv_signal_admission_report',
                                                 'public_data_declaration_runtime_report',
                                                 'loader_structural_owner_receipt_report')}
     kwargs['ordinary_link_report'] = kwargs.pop('public_data_ordinary_link_report')
