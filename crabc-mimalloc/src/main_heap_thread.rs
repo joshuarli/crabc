@@ -424,6 +424,29 @@ impl<'main> MainHeapThreadAttachment<'main> {
         MainHeapThreadPageSession::begin_owner_local(self)
     }
 
+    /// Checks the attachment half of the selected post-process-done retain
+    /// boundary. It performs no source teardown: the pinned Unix automatic
+    /// thread-done key has already been deleted, so a nonfinal worker may
+    /// leave its TLD/Theap/list membership live. A suspended engine or pending
+    /// OS release has an independent Rust owner and remains fail-closed.
+    #[inline]
+    pub(crate) fn permits_process_done_source_retention(&self) -> bool {
+        let tld_matches = self
+            .tld
+            .as_ref()
+            .is_some_and(|tld| tld.thread() == self.thread);
+        let theap_matches = self
+            .theap
+            .as_ref()
+            .and_then(MetaAllocation::dynamic_theap)
+            .is_some_and(|theap| theap.is_initialized() && theap.matches_thread(self.thread));
+        self.ensure_attached_current().is_ok()
+            && self.terminal_os_release.is_none()
+            && !self.page_engine_suspended
+            && tld_matches
+            && theap_matches
+    }
+
     /// Installs one attachment-local deferred-free observer for a focused
     /// source-order regression.
     ///
@@ -1470,6 +1493,16 @@ unsafe impl TheapPageSession for MainHeapThreadPageSession<'_, '_> {
     #[inline]
     fn thread_id(&self) -> Option<crate::types::LiveThreadId> {
         Some(self.attachment.thread)
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[inline]
+    fn selects_selected_main_arena_source_full_abandonment(&self) -> bool { true }
+
+    #[cfg(target_arch = "x86_64")]
+    #[inline]
+    fn permits_selected_main_arena_ordinary_full_abandonment(&self) -> bool {
+        self.attachment.ensure_attached_current().is_ok()
     }
 
     #[inline]

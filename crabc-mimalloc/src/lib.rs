@@ -119,12 +119,20 @@ pub mod __crabc_runtime {
     pub use crate::runtime_lifecycle::{
         NativeRuntimeFirstArenaPolicyAudit, NativeRuntimeForkAdmissionAudit, NativeRuntimeLifecycleAudit,
         NativeRuntimeLiveClientPageAudit, NativeRuntimeLiveClientPageMapSpanAudit,
+        NativeRuntimeProcessDoneRetainedLocalPageAudit,
         NativeRuntimeOwnerExitCollectionRendezvous,
         native_runtime_first_arena_policy_test_audit, native_runtime_fork_admission_test_audit,
+        native_runtime_current_local_page_test_audit,
+        native_runtime_current_local_page_same_test_audit,
         native_runtime_lifecycle_test_audit,
         native_runtime_live_client_uses_startup_regular_arena_test_audit,
         native_runtime_live_client_page_map_span_test_audit,
         native_runtime_live_client_page_test_audit,
+        native_runtime_process_done_retained_live_page_test_audit,
+        native_runtime_process_done_retained_local_page_test_audit,
+        native_runtime_process_done_retained_local_preflight_test_audit,
+        native_runtime_process_done_retained_page_retired_test_audit,
+        native_runtime_process_done_retained_worker_matches_current_thread_test_audit,
         native_runtime_test_arm_owner_exit_collection_rendezvous,
     };
 
@@ -134,7 +142,8 @@ pub mod __crabc_runtime {
     };
 
     pub use crate::runtime_lifecycle::{
-        ThreadAttachResult, ThreadFinalProcessExitOwnerResult, ThreadFinishResult,
+        SelectedProcessDoneResult, ThreadAttachResult, ThreadFinalProcessExitOwnerResult,
+        ThreadFinishResult,
         TicketZeroLaterThreadPageResult,
         TicketZeroPageAllocationResult, TicketZeroPageFreeResult,
         NativePageAllocationResult, NativePageFreeResult,
@@ -144,7 +153,9 @@ pub mod __crabc_runtime {
         attach_current_thread, before_fork,
         finish_current_thread_after_user_destructors,
         finish_current_thread_native_after_user_destructors, initialize_process,
+        finish_selected_default_release_process_after_user_atexit,
         process_is_active, prepare_native_later_thread_arena,
+        retain_current_thread_native_owner_after_process_done_nonfinal,
         reinitialize_current_thread_native_owner_for_final_process_exit,
         native_allocate_aligned, native_free, native_reallocate, native_usable_size,
         ticket_zero_allocate, ticket_zero_free,

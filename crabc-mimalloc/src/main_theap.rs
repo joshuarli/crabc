@@ -3031,6 +3031,16 @@ unsafe impl TheapPageSession for MainStaticPageSession<'_> {
         Some(self.attachment.thread)
     }
 
+    #[cfg(target_arch = "x86_64")]
+    #[inline]
+    fn selects_selected_main_arena_source_full_abandonment(&self) -> bool { true }
+
+    #[cfg(target_arch = "x86_64")]
+    #[inline]
+    fn permits_selected_main_arena_ordinary_full_abandonment(&self) -> bool {
+        true
+    }
+
     #[inline]
     fn queue(&self, bin: usize) -> Option<&PageQueue> { self.theap().queue(bin) }
 
@@ -3183,6 +3193,20 @@ unsafe impl TheapPageSession for MainStaticProcessPageSession {
 
     #[inline]
     fn permits_ordinary_page_operations(&self) -> bool {
+        self.is_current()
+            && !matches!(
+                &self.static_main_mapped_regular_claim,
+                StaticMainMappedRegularClaimSlot::Bound
+            )
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[inline]
+    fn selects_selected_main_arena_source_full_abandonment(&self) -> bool { true }
+
+    #[cfg(target_arch = "x86_64")]
+    #[inline]
+    fn permits_selected_main_arena_ordinary_full_abandonment(&self) -> bool {
         self.is_current()
             && !matches!(
                 &self.static_main_mapped_regular_claim,

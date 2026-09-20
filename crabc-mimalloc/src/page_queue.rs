@@ -960,6 +960,52 @@ pub(crate) unsafe fn page_queue_remove_metadata(queue: &mut PageQueue, page: *mu
     unsafe { page_set_in_full_membership(page, false) };
 }
 
+/// Checks the immediate link coherence of one member in its claimed queue.
+///
+/// This is deliberately narrower than the test-only whole-queue validator:
+/// the retained-process-done local-free boundary needs one constant-time
+/// pre-mutation consistency check that `page->theap` and the queue selected
+/// from its flags still describe the same old source owner. It follows the
+/// source queue helpers by checking only the page's endpoints and immediate
+/// neighbor links. It deliberately does not reconstruct arbitrary queue
+/// membership: the caller inherits the complete initialized source-queue
+/// invariant from page publication and its retained no-teardown transition.
+/// Whole-queue tests validate that inductive invariant without adding a scan
+/// to every production free.
+///
+/// # Safety
+///
+/// `queue`, `page`, and its non-null immediate neighbors must remain
+/// initialized and exclusively stable for this observation. The caller must
+/// separately uphold the established complete queue invariant and prove that
+/// only atomic remote-free fields can be accessed concurrently.
+pub(crate) unsafe fn page_queue_has_member_link_coherence(
+    queue: &PageQueue,
+    page: NonNull<Page>,
+) -> bool {
+    if queue.count == 0 || queue.first.is_null() || queue.last.is_null() {
+        return false;
+    }
+
+    // SAFETY: the caller supplies the page and its immediate neighbors as
+    // initialized stable queue members for this constant-time observation.
+    let previous = unsafe { page_prev(page.as_ptr()) };
+    // SAFETY: same immediate-neighbor proof as above.
+    let next = unsafe { page_next(page.as_ptr()) };
+    if previous.is_null() {
+        if queue.first != page.as_ptr() {
+            return false;
+        }
+    } else if unsafe { page_next(previous) } != page.as_ptr() {
+        return false;
+    }
+    if next.is_null() {
+        queue.last == page.as_ptr()
+    } else {
+        (unsafe { page_prev(next) }) == page.as_ptr()
+    }
+}
+
 /// Port of `mi_page_queue_push`'s intrusive membership transition.
 ///
 /// # Safety

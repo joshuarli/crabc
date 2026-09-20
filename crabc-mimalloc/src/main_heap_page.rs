@@ -108,7 +108,7 @@ use crate::main_heap_thread::{
 };
 use crate::process_arena::{ProcessPageArenaLease, ProcessPageArenaLeaseError};
 use crate::process_page_map::{
-    ProcessPageMapError, ProcessPageMapMutationLease, ProcessPageMapPostExitAccess,
+    LiveAllocationPointer, ProcessPageMapError, ProcessPageMapMutationLease, ProcessPageMapPostExitAccess,
     ProcessPageMapSuspendedEngineAccess,
 };
 use crate::single_thread::{
@@ -2134,6 +2134,24 @@ pub(crate) enum MainHeapThreadProcessPageExitMappedRegularPagesAdoptFailure<
 }
 
 impl<'main> MainHeapThreadOwnerLocalPageEngine<'main> {
+    /// Checks the non-destructive process-done retain boundary before its
+    /// compiler-TLS wrapper is abandoned. The engine remains live in the
+    /// departing TLS image; this merely rejects a borrowed, terminal, poisoned,
+    /// or pending-OS state that cannot safely be described as pinned source
+    /// retention.
+    #[inline]
+    pub(crate) fn permits_process_done_source_retention(
+        &self,
+        attachment: &MainHeapThreadAttachment<'main>,
+    ) -> bool {
+        self.lifecycle.precheck_access().is_ok()
+            && attachment.permits_process_done_source_retention()
+            && !self.mapped_abandoned_claim.is_terminal()
+            && self.engine.as_ref().is_some_and(
+                OwnerLocalMainHeapPageAllocator::permits_process_done_source_retention,
+            )
+    }
+
     /// Promotes one attached later-thread owner into its persistent local page
     /// engine. The paired process capability is consumed once; only its
     /// stable arena view and exact-owned-ranges PageMap reference remain.
@@ -2403,6 +2421,34 @@ impl MainHeapThreadOwnerLocalAllocator<'_> {
     #[inline]
     pub(crate) fn allocate(&mut self, request: usize, zero: bool) -> Option<NonNull<u8>> {
         self.engine.allocate(request, zero)
+    }
+
+    /// Checks whether one held pointer-first source classification belongs to
+    /// this active owner-local engine without performing another PageMap
+    /// lookup or any page mutation.
+    #[inline]
+    pub(crate) fn owns_captured_live_allocation(
+        &self,
+        allocation: &LiveAllocationPointer,
+    ) -> bool {
+        self.engine.owns_captured_live_allocation(allocation)
+    }
+
+    /// Consumes the caller's one held PageMap classification through this
+    /// active owner-local engine.
+    ///
+    /// # Safety
+    ///
+    /// `allocation` must still describe one live allocation of this exact
+    /// owner. The caller must retain this owner's exclusive source-Theap
+    /// mutation capability for the complete local-free transition.
+    #[inline]
+    pub(crate) unsafe fn free_captured_live_allocation(
+        &mut self,
+        allocation: LiveAllocationPointer,
+    ) -> Result<(), FreeError> {
+        // SAFETY: forwarded unchanged from this wrapper's caller contract.
+        unsafe { self.engine.free_captured_live_allocation(allocation) }
     }
 
     /// Injects one page-collection failure through the exact stored engine for
@@ -8312,6 +8358,294 @@ mod tests {
         })
         .join()
         .expect("the repeated owner-local fixture remains current-thread local");
+    }
+
+    /// The selected later persistent owner publishes the same default-release
+    /// Theap option image as ticket zero. Pinned page.c:mi_page_to_full
+    /// therefore abandons its exhausted medium arena page instead of linking
+    /// that page in BIN_FULL. Keep this separate from the ticket-zero
+    /// regression: native workers use OwnerLocalMainHeapPageAllocator, whose
+    /// short attachment bind must not substitute the old non-abandoning test
+    /// session behavior.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_owner_local_ordinary_medium_full_page_is_unowned_unmapped() {
+        with_owner_local_fixture(false, |attachment, mut owner, _pair| {
+            let theap = attachment
+                .test_theap_pointer()
+                .expect("the selected later owner retains its metadata Theap");
+            // SAFETY: this fresh attached owner remains current, and no
+            // allocator session is bound while the immutable option image is
+            // observed.
+            let theap = unsafe { &*theap };
+            assert!(
+                theap.allows_page_abandon() && theap.page_full_retain() == 2,
+                "the selected later owner uses the pinned ordinary release option image"
+            );
+
+            owner
+                .with_local_allocator(attachment, |allocator| {
+                    let request = SMALL_MAX_OBJ_SIZE + 1;
+                    let first = allocator
+                        .allocate(request, false)
+                        .expect("the first ordinary medium client allocates");
+                    let page = NonNull::new(
+                        // SAFETY: first is current while this exact
+                        // owner-local session stays bound.
+                        unsafe { allocator.test_page_for_block(first) },
+                    )
+                    .expect("the first medium page remains PageMap-published");
+                    let reserved = unsafe { page.as_ref().reserved() as usize };
+                    assert!(reserved > 1 && reserved <= 64);
+                    let mut clients = std::vec::Vec::with_capacity(reserved);
+                    clients.push(first);
+                    while clients.len() < reserved {
+                        let client = allocator
+                            .allocate(request, false)
+                            .expect("the ordinary medium page extends through its reservation");
+                        assert_eq!(
+                            unsafe { allocator.test_page_for_block(client) },
+                            page.as_ptr(),
+                            "the selected worker fills one source page before pressure"
+                        );
+                        clients.push(client);
+                    }
+                    let pressure = allocator
+                        .allocate(request, false)
+                        .expect("the full page forces an ordinary pressure allocation");
+                    assert_ne!(
+                        unsafe { allocator.test_page_for_block(pressure) },
+                        page.as_ptr(),
+                        "pressure does not replace the exhausted worker page"
+                    );
+                    assert_eq!(
+                        unsafe { page.as_ref() }.abandoned_test_thread_id(),
+                        THREAD_ID_ABANDONED,
+                        "page.c:mi_page_to_full must unown the selected worker full medium page"
+                    );
+                    let _ = clients;
+                })
+                .expect("the owner-local operation remains source-bound");
+
+            // The source-unowned full page still has live clients. Keep this
+            // focused allocation-transition fixture out of the separate
+            // abandoned-client continuation instead of manufacturing an
+            // ordinary owner cleanup.
+            core::mem::forget(owner);
+        });
+    }
+
+    /// The persistent later owner takes the same selected full-page branch.
+    /// A test-only producer publication at abandoned-owner unown proves that
+    /// a late remote decrement does not turn this already-full source arm
+    /// into a mapped partial page.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_owner_local_full_unown_late_remote_stays_unmapped() {
+        with_owner_local_fixture(false, |attachment, mut owner, _pair| {
+            owner
+                .with_local_allocator(attachment, |allocator| {
+                    let request = SMALL_MAX_OBJ_SIZE + 1;
+                    let first = allocator
+                        .allocate(request, false)
+                        .expect("the first selected later medium client allocates");
+                    let page = NonNull::new(unsafe { allocator.test_page_for_block(first) })
+                        .expect("the selected later medium page remains PageMap-published");
+                    let reserved = unsafe { page.as_ref().reserved() as usize };
+                    assert!(reserved > 1 && reserved <= 64);
+                    let mut clients = std::vec::Vec::with_capacity(reserved);
+                    clients.push(first);
+                    while clients.len() + 1 < reserved {
+                        let client = allocator
+                            .allocate(request, false)
+                            .expect("the selected later medium page extends before its final client");
+                        assert_eq!(unsafe { allocator.test_page_for_block(client) }, page.as_ptr());
+                        clients.push(client);
+                    }
+                    // SAFETY: `first` is current on the source-owned regular
+                    // page. The test token publishes only after unown has
+                    // observed its empty producer head.
+                    let producer = unsafe { allocator.engine.begin_remote_free(first) }
+                        .expect("the selected later near-full page admits the deferred producer");
+                    assert!(unsafe {
+                        crate::abandoned::test_inject_owner_exit_remote_free_before_unown(
+                            producer.defer_to_owner_exit_unown(),
+                        )
+                    });
+                    let final_client = allocator
+                        .allocate(request, false)
+                        .expect("the final later medium client enters the selected full transition");
+                    assert_eq!(unsafe { allocator.test_page_for_block(final_client) }, page.as_ptr());
+                    assert_eq!(
+                        unsafe { page.as_ref() }.abandoned_test_thread_id(),
+                        THREAD_ID_ABANDONED,
+                        "a late remote free cannot retroactively map the later full page"
+                    );
+                    assert_eq!(
+                        unsafe { page.as_ref().used() },
+                        reserved - 1,
+                        "later unown collects the deferred block after retaining the full branch"
+                    );
+                    let _ = clients;
+                })
+                .expect("the selected later late-unown transition remains source-bound");
+            core::mem::forget(owner);
+        });
+    }
+
+    /// The later selected owner has a distinct persistent attachment/session
+    /// capability from ticket zero. Its small-page queue scan must still map
+    /// a page made partial by a joined remote publication: false collection
+    /// moves that block into `local_free`, so there is no immediate block to
+    /// bypass `mi_page_to_full`.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_owner_local_selected_small_full_scan_maps_partial_page() {
+        with_owner_local_fixture(false, |attachment, mut owner, _pair| {
+            owner
+                .with_local_allocator(attachment, |allocator| {
+                    let request = SMALL_MAX_OBJ_SIZE;
+                    let bin = crate::size_class::bin(request)
+                        .expect("the selected small request has one bin");
+                    let first = allocator
+                        .allocate(request, false)
+                        .expect("the first selected later small client allocates");
+                    let page = NonNull::new(unsafe { allocator.test_page_for_block(first) })
+                        .expect("the selected later small page remains PageMap-published");
+                    let reserved = unsafe { page.as_ref().reserved() as usize };
+                    assert!(reserved > 1 && reserved <= 64);
+                    assert_eq!(
+                        crate::size_class::page_kind_for_block_size(
+                            unsafe { page.as_ref().block_size() },
+                        ),
+                        Some(PageKind::Small),
+                        "the later source scan transition uses a small page"
+                    );
+                    let mut clients = std::vec::Vec::with_capacity(reserved);
+                    clients.push(first);
+                    while clients.len() < reserved {
+                        let client = allocator
+                            .allocate(request, false)
+                            .expect("the selected later small page extends through its reservation");
+                        assert_eq!(unsafe { allocator.test_page_for_block(client) }, page.as_ptr());
+                        clients.push(client);
+                    }
+                    assert_eq!(unsafe { page.as_ref().used() }, reserved);
+                    assert_eq!(unsafe { page.as_ref().capacity() as usize }, reserved);
+
+                    // SAFETY: `first` is current on the retained regular
+                    // source page. The scoped producer resolves before this
+                    // owner resumes its selected generic queue transition.
+                    let producer = unsafe { allocator.engine.begin_remote_free(first) }
+                        .expect("the full selected later small page admits one producer");
+                    thread::scope(|scope| {
+                        match scope
+                            .spawn(move || producer.publish())
+                            .join()
+                            .expect("the selected later producer remains live")
+                        {
+                            Ok(()) => {}
+                            Err((producer, error)) => {
+                                let block = producer.cancel();
+                                panic!("the selected later partial producer rejected {block:?}: {error:?}");
+                            }
+                        }
+                    });
+
+                    assert!(
+                        allocator
+                            .engine
+                            .test_move_selected_regular_full_after_source_scan(bin, page),
+                        "the selected later source scan maps its partial page"
+                    );
+                    assert_eq!(
+                        unsafe { page.as_ref() }.abandoned_test_thread_id(),
+                        THREAD_ID_ABANDONED_MAPPED,
+                        "the later partial page publishes the exact static-main arena bitmap/count pair"
+                    );
+                    assert_eq!(unsafe { allocator.test_page_for_block(clients[1]) }, page.as_ptr());
+                })
+                .expect("the selected later partial transition remains source-bound");
+
+            // The mapped partial page has live sibling clients and needs the
+            // existing abandoned-client continuation. This unit proves the
+            // prior allocation transition only and does not forge that owner.
+            core::mem::forget(owner);
+        });
+    }
+
+    /// All selected later small clients may be remotely published before the
+    /// same queue-scan transition. The first false collection then makes the
+    /// page all-free, so `page.c:_mi_page_abandon` takes its queue-linked
+    /// release path before any abandoned bitmap publication.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_owner_local_selected_small_full_scan_releases_all_free_page() {
+        with_owner_local_fixture(true, |attachment, mut owner, _pair| {
+            owner
+                .with_local_allocator(attachment, |allocator| {
+                    let request = SMALL_MAX_OBJ_SIZE;
+                    let bin = crate::size_class::bin(request)
+                        .expect("the selected small request has one bin");
+                    let first = allocator
+                        .allocate(request, false)
+                        .expect("the first selected later small client allocates");
+                    let page = NonNull::new(unsafe { allocator.test_page_for_block(first) })
+                        .expect("the selected later small page remains PageMap-published");
+                    let reserved = unsafe { page.as_ref().reserved() as usize };
+                    assert!(reserved > 1 && reserved <= 64);
+                    let mut clients = std::vec::Vec::with_capacity(reserved);
+                    clients.push(first);
+                    while clients.len() < reserved {
+                        let client = allocator
+                            .allocate(request, false)
+                            .expect("the selected later small page extends through its reservation");
+                        assert_eq!(unsafe { allocator.test_page_for_block(client) }, page.as_ptr());
+                        clients.push(client);
+                    }
+                    assert_eq!(unsafe { page.as_ref().used() }, reserved);
+                    assert_eq!(unsafe { page.as_ref().capacity() as usize }, reserved);
+
+                    for client in clients.iter().copied() {
+                        // SAFETY: each client is distinct and current on the
+                        // same selected page; each producer joins before the
+                        // owner performs another source operation.
+                        let producer = unsafe { allocator.engine.begin_remote_free(client) }
+                            .expect("each selected later full client admits one producer");
+                        thread::scope(|scope| {
+                            match scope
+                                .spawn(move || producer.publish())
+                                .join()
+                                .expect("the selected later producer remains live")
+                            {
+                                Ok(()) => {}
+                                Err((producer, error)) => {
+                                    let block = producer.cancel();
+                                    panic!("the selected later all-free producer rejected {block:?}: {error:?}");
+                                }
+                            }
+                        });
+                    }
+
+                    assert!(
+                        allocator
+                            .engine
+                            .test_move_selected_regular_full_after_source_scan(bin, page),
+                        "the selected later source scan releases its empty page"
+                    );
+                    assert!(
+                        unsafe { allocator.test_page_for_block(first) }.is_null(),
+                        "the all-free later page is unregistered before its arena release"
+                    );
+                })
+                .expect("the selected later all-free transition remains source-bound");
+            owner
+                .finish(attachment)
+                .expect("the all-free selected later engine returns to its attachment");
+            attachment
+                .finish_after_user_destructors()
+                .expect("the all-free selected later attachment tears down");
+        });
     }
 
     #[test]

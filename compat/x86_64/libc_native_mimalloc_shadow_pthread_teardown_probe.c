@@ -7,8 +7,10 @@
  * Normal return, pthread_exit, and deferred pthread cancellation each make a
  * user TSD destructor allocate and free before the selected native owner is
  * finished. A final worker also reaches ordinary `atexit` only after the
- * bootstrapped thread called `pthread_exit`; that callback allocates and frees
- * after the final worker's normal-return or explicit-exit native finish. It
+ * bootstrapped thread called `pthread_exit`; before logical process done its
+ * completed owner is reinitialized, while after logical process done the
+ * final-task decision preserves its same active source owner for callbacks.
+ * That callback allocates and frees in the selected post-done case. It
  * does not qualify main-thread or process shutdown, dynamic loader ownership,
  * cross-worker pointer transfer, allocator promotion, or public x86 support.
  */
@@ -32,6 +34,7 @@ enum {
     CRABC_WAIT_LIMIT = 100000000u,
     CRABC_NORMAL_MARKER = 0x13579bdfu,
     CRABC_EXPLICIT_MARKER = 0x2468ace0u,
+    CRABC_PROCESS_DONE_CLIENT_COUNT = 2u,
 };
 
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_create),
@@ -63,6 +66,34 @@ static pthread_key_t teardown_key;
 static volatile int prestart_callback_count;
 static void *final_worker_pre_teardown_allocation;
 
+/* This candidate-only round mirrors the pinned process-done source probe.
+ * A private test seam transitions the selected process into the source's
+ * post-`mi_process_done` shape while the initial task remains alive. The
+ * producer retains two ordinary medium clients from one nonfull page. Its
+ * consumer first creates a distinct current owner, then frees that former
+ * page under a recycled raw TP scalar. This is separate from the pinned-C
+ * full-page observation, where ordinary `allow_page_abandon` transitions the
+ * exhausted page to unmapped abandonment before process-done retention.
+ * Neither result permits a Rust-only generation rejection. */
+enum process_done_allocation_kind {
+    PROCESS_DONE_ALLOCATION_NORMAL,
+    PROCESS_DONE_ALLOCATION_ALIGNED_FAST,
+    PROCESS_DONE_ALLOCATION_ALIGNED_INTERIOR,
+};
+
+struct process_done_client_page {
+    void *clients[CRABC_PROCESS_DONE_CLIENT_COUNT];
+    size_t client_count;
+    enum process_done_allocation_kind allocation_kind;
+};
+
+struct process_done_round {
+    const struct process_done_client_page *previous;
+    struct process_done_client_page current;
+    int retain_current;
+    volatile int failure;
+};
+
 /* The runner writes only after `/proc` reports the bootstrapped task as a
  * zombie. Releasing a worker from an application flag before `pthread_exit`
  * has withdrawn the initial task would race the final-task decision. This
@@ -72,6 +103,30 @@ static volatile int final_worker_ready;
 
 #ifdef CRABC_NATIVE_MIMALLOC_SHADOW_TEST_AUDIT
 extern size_t __crabc_x86_native_mimalloc_active_later_thread_count_test_audit(void);
+extern int __crabc_x86_native_mimalloc_process_done_retained_worker_matches_current_thread_test_audit(void);
+extern int __crabc_x86_native_mimalloc_process_done_retained_local_preflight_test_audit(void *block);
+struct process_done_local_page_audit {
+    size_t in_full;
+    size_t has_interior_pointers;
+    size_t used;
+    size_t capacity;
+    size_t reserved;
+    size_t regular_queue_count;
+    size_t full_queue_count;
+    size_t theap_page_count;
+    size_t member_link_coherent;
+};
+extern int __crabc_x86_native_mimalloc_current_local_page_test_audit(
+    void *block, struct process_done_local_page_audit *output);
+extern int __crabc_x86_native_mimalloc_current_local_page_same_test_audit(
+    void *first, void *second);
+extern int __crabc_x86_native_mimalloc_process_done_retained_local_page_test_audit(
+    void *block, struct process_done_local_page_audit *output);
+extern int __crabc_x86_native_mimalloc_process_done_retained_page_retired_test_audit(
+    void *former_client, size_t expected_reserved);
+extern int __crabc_x86_native_mimalloc_process_done_test_audit(void);
+extern int __crabc_x86_native_mimalloc_process_done_retained_page_test_audit(
+    void *first, void *second, int remote_free_published);
 #endif
 
 #ifdef CRABC_NATIVE_INTERNAL_MALLOC_OVERRIDE
@@ -181,14 +236,266 @@ static void *deferred_cancel_worker(void *opaque)
         pthread_testcancel();
 }
 
-/* Pinned mimalloc's private pthread-key destructor runs `_mi_thread_done`
- * before libc's selected-pthread registry decides that this is the final
- * task. A later ordinary-exit callback may call malloc: the source sees the
- * now-empty default Theap and lazily creates a new one for this still-running
- * final task. This callback makes that post-finish allocation observable. It
- * also frees a live block allocated by the same worker before `_mi_thread_done`.
- * Source collection abandons that old page, so its PageMap record must no
- * longer classify the reused Linux/TLS identity as the new owner. */
+#ifdef CRABC_NATIVE_MIMALLOC_SHADOW_TEST_AUDIT
+static void *process_done_allocate(enum process_done_allocation_kind kind)
+{
+    void *client;
+
+    switch (kind) {
+    case PROCESS_DONE_ALLOCATION_NORMAL:
+        return malloc(10241);
+    case PROCESS_DONE_ALLOCATION_ALIGNED_FAST:
+        return aligned_alloc(256, 10240);
+    case PROCESS_DONE_ALLOCATION_ALIGNED_INTERIOR:
+        /* `posix_memalign` has no size-multiple restriction. With this
+         * source-shaped pair, the second 8192-aligned client adjusts a
+         * 20480-byte base block and sets the page-wide interior marker. */
+        client = 0;
+        return posix_memalign(&client, 8192, 10240) == 0 ? client : 0;
+    }
+    return 0;
+}
+
+static int process_done_is_interior(
+    enum process_done_allocation_kind kind)
+{
+    return kind == PROCESS_DONE_ALLOCATION_ALIGNED_INTERIOR;
+}
+
+static size_t process_done_expected_reserved(
+    enum process_done_allocation_kind kind)
+{
+    return process_done_is_interior(kind) ? 25u : 42u;
+}
+
+static int process_done_expected_interior_after_allocation(
+    enum process_done_allocation_kind kind, size_t client_count)
+{
+    return process_done_is_interior(kind)
+        && client_count == CRABC_PROCESS_DONE_CLIENT_COUNT;
+}
+
+static int process_done_current_page_snapshot(
+    void *client, struct process_done_local_page_audit *audit)
+{
+    return __crabc_x86_native_mimalloc_current_local_page_test_audit(client, audit);
+}
+
+static int process_done_retained_page_snapshot(
+    void *client, struct process_done_local_page_audit *audit)
+{
+    return __crabc_x86_native_mimalloc_process_done_retained_local_page_test_audit(
+        client, audit);
+}
+
+static int process_done_allocate_nonfull_page(struct process_done_client_page *page)
+{
+    struct process_done_local_page_audit audit;
+    void *client;
+    int result;
+
+    page->client_count = 0;
+    while (page->client_count != CRABC_PROCESS_DONE_CLIENT_COUNT) {
+        client = process_done_allocate(page->allocation_kind);
+        if (client == 0)
+            return 11;
+        if (page->allocation_kind == PROCESS_DONE_ALLOCATION_ALIGNED_FAST
+                && ((uintptr_t)client & 255u) != 0)
+            return 12;
+        if (page->allocation_kind == PROCESS_DONE_ALLOCATION_ALIGNED_INTERIOR
+                && ((uintptr_t)client & 8191u) != 0)
+            return 13;
+        page->clients[page->client_count++] = client;
+        ((volatile unsigned char *)client)[0] = 0x6d;
+        result = process_done_current_page_snapshot(page->clients[0], &audit);
+        if (result != 1)
+            return 20 - result;
+        if (audit.has_interior_pointers != process_done_expected_interior_after_allocation(
+                    page->allocation_kind, page->client_count)
+                || audit.member_link_coherent != 1
+                || audit.used != page->client_count
+                || audit.capacity < audit.used
+                || audit.reserved < audit.used)
+            return 30;
+    }
+
+    if (__crabc_x86_native_mimalloc_current_local_page_same_test_audit(
+            page->clients[0], page->clients[1]) != 1)
+        return 32;
+    result = process_done_current_page_snapshot(page->clients[0], &audit);
+    if (result != 1)
+        return 40 - result;
+    /* Pinned release C observes two distinct aligned outcomes. The public
+     * 256-byte request reaches `src/alloc-aligned.c`'s overallocate helper
+     * but needs no pointer adjustment, so its page marker remains clear.
+     * The separate 8192-byte `posix_memalign` pair has a second base at a
+     * 4096-byte offset: `aligned_p != p` sets the page-wide interior marker
+     * in `mi_theap_malloc_zero_aligned_at_overalloc`. Each pair stays
+     * nonfull on one regular page. The C source oracle separately observes
+     * the ordinary full-page `src/page.c:mi_page_to_full` abandonment branch.
+     */
+    if (audit.in_full != 0
+            || audit.has_interior_pointers != process_done_is_interior(
+                page->allocation_kind)
+            || audit.used != CRABC_PROCESS_DONE_CLIENT_COUNT
+            || audit.capacity != 2
+            || audit.reserved != process_done_expected_reserved(
+                page->allocation_kind)
+            || audit.regular_queue_count != 1
+            || audit.full_queue_count != 0
+            || audit.theap_page_count != 1
+            || audit.member_link_coherent != 1) {
+        return 50;
+    }
+    return 0;
+}
+
+static int process_done_free_retained_source_page(
+    const struct process_done_client_page *previous)
+{
+    struct process_done_local_page_audit audit;
+    size_t first_index = process_done_is_interior(previous->allocation_kind) ? 1u : 0u;
+    size_t sibling_index = first_index ^ 1u;
+    int result;
+
+    if (previous->client_count != CRABC_PROCESS_DONE_CLIENT_COUNT)
+        return 80;
+    if (__crabc_x86_native_mimalloc_process_done_retained_worker_matches_current_thread_test_audit() != 1)
+        return 81;
+    /* The interior case frees the adjusted second client first. Pinned
+     * `src/free.c:148-166,223-247` must recover its canonical base from the
+     * old retained page, rather than substitute the new worker's Theap. */
+    if (__crabc_x86_native_mimalloc_process_done_retained_local_preflight_test_audit(
+            previous->clients[first_index]) != 1)
+        return 82;
+    free(previous->clients[first_index]);
+    result = process_done_retained_page_snapshot(
+        previous->clients[sibling_index], &audit);
+    if (result != 1)
+        return 90 - result;
+    if (audit.in_full != 0
+            || audit.has_interior_pointers != process_done_is_interior(
+                previous->allocation_kind)
+            || audit.used != 1
+            || audit.capacity != 2
+            || audit.reserved != process_done_expected_reserved(
+                previous->allocation_kind)
+            || audit.regular_queue_count != 1
+            || audit.full_queue_count != 0
+            || audit.theap_page_count != 1
+            || audit.member_link_coherent != 1)
+        return 100;
+    free(previous->clients[sibling_index]);
+    /* `src/free.c:28-56` reaches `_mi_page_retire`; with this sole regular
+     * medium page, `src/page.c:424-456` keeps PageMap publication and sets
+     * the release countdown to `MI_RETIRE_CYCLES / 4`, rather than releasing
+     * the page on this local free. */
+    if (__crabc_x86_native_mimalloc_process_done_retained_page_retired_test_audit(
+            previous->clients[sibling_index],
+            process_done_expected_reserved(previous->allocation_kind)) != 1)
+        return 101;
+    return 0;
+}
+
+static int process_done_free_current_page(struct process_done_client_page *current)
+{
+    size_t index;
+
+    if (current->client_count != CRABC_PROCESS_DONE_CLIENT_COUNT)
+        return 102;
+    for (index = 0; index < current->client_count; ++index)
+        free(current->clients[index]);
+    current->client_count = 0;
+    return 0;
+}
+
+static void *process_done_worker(void *opaque)
+{
+    struct process_done_round *round = opaque;
+    int result;
+
+    result = process_done_allocate_nonfull_page(&round->current);
+    if (result != 0) {
+        __atomic_store_n(&round->failure, result, __ATOMIC_RELEASE);
+        return 0;
+    }
+    if (round->previous != 0) {
+        result = process_done_free_retained_source_page(round->previous);
+        if (result == 0)
+            result = process_done_free_current_page(&round->current);
+        if (result != 0) {
+            __atomic_store_n(&round->failure, result, __ATOMIC_RELEASE);
+            return 0;
+        }
+    } else if (!round->retain_current) {
+        __atomic_store_n(&round->failure, 103, __ATOMIC_RELEASE);
+    }
+    return 0;
+}
+
+static int run_process_done_worker_round(
+    const struct process_done_client_page *previous,
+    struct process_done_client_page *current,
+    size_t baseline_later_thread_count,
+    enum process_done_allocation_kind allocation_kind, int retain_current)
+{
+    pthread_t thread;
+    struct process_done_round round = {
+        .previous = previous,
+        .current = {
+            .clients = {0},
+            .client_count = 0,
+            .allocation_kind = allocation_kind,
+        },
+        .retain_current = retain_current,
+        .failure = 0,
+    };
+
+    if (pthread_create(&thread, 0, process_done_worker, &round) != 0)
+        return 1;
+    if (pthread_join(thread, 0) != 0)
+        return 2;
+    if (__atomic_load_n(&round.failure, __ATOMIC_ACQUIRE) != 0)
+        return __atomic_load_n(&round.failure, __ATOMIC_ACQUIRE);
+    if (__crabc_x86_native_mimalloc_active_later_thread_count_test_audit() !=
+            baseline_later_thread_count)
+        return 3;
+    if (retain_current) {
+        struct process_done_local_page_audit audit;
+        int result;
+
+        if (round.current.client_count != CRABC_PROCESS_DONE_CLIENT_COUNT)
+            return 4;
+        result = process_done_retained_page_snapshot(round.current.clients[0], &audit);
+        if (result != 1)
+            return 110 - result;
+        if (audit.in_full != 0
+                || audit.has_interior_pointers != process_done_is_interior(
+                    round.current.allocation_kind)
+                || audit.used != round.current.client_count
+                || audit.capacity != 2
+                || audit.reserved != process_done_expected_reserved(
+                    round.current.allocation_kind)
+                || audit.regular_queue_count != 1
+                || audit.full_queue_count != 0
+                || audit.theap_page_count != 1
+                || audit.member_link_coherent != 1)
+            return 120;
+        *current = round.current;
+    } else if (round.current.client_count != 0) {
+        return 5;
+    }
+    return 0;
+}
+#endif
+
+/* Before process done, the selected R/E paths finish `_mi_thread_done` before
+ * libc's locked final-task decision and reinitialize a completed owner for
+ * ordinary-exit callbacks. This probe also exercises the distinct post-done
+ * branch: the deleted private automatic key makes finish return pending, and
+ * the final-task decision deliberately preserves this same active owner
+ * through atexit. The callback allocates and frees both a new block and its
+ * worker-created live block under that retained source Theap. */
 static void final_worker_atexit_allocation(void)
 {
     void *allocation = malloc(257);
@@ -302,6 +609,90 @@ int crabc_x86_64_native_mimalloc_shadow_prestart_rejection(void)
         ? 0 : 2;
 }
 
+#ifdef CRABC_NATIVE_MIMALLOC_SHADOW_NORMAL_MAIN_RETURN_PROBE
+/* The ordinary static-startup return path registers executable fini before
+ * application code. A later application `atexit` therefore runs first; the
+ * CRT then walks fini-array entries in reverse. Pinned `src/prim/prim.c`
+ * puts its automatic process-done destructor in that same array before
+ * regular application destructors. This separate small main records the
+ * resulting `A` (atexit), `M` (selected replacement), `D` (application fini)
+ * order while every callback allocates and frees. Its initial-task TSD
+ * destructor is deliberately fatal: ordinary process exit must not run it. */
+static pthread_key_t normal_main_return_key;
+static volatile int normal_main_user_atexit_seen;
+
+#ifdef CRABC_NATIVE_MIMALLOC_SHADOW_PROCESS_DONE_EXIT_TEST_AUDIT
+extern int __crabc_x86_native_mimalloc_process_done_fini_array_test_audit(void);
+#endif
+
+int crabc_x86_64_native_mimalloc_shadow_normal_main_user_atexit_observed(void)
+{
+    return __atomic_load_n(&normal_main_user_atexit_seen, __ATOMIC_ACQUIRE);
+}
+
+void crabc_x86_64_native_mimalloc_shadow_normal_main_process_done_fini_observed(void)
+{
+    const char marker = 'M';
+
+    if (write(STDERR_FILENO, &marker, 1) != 1)
+        _Exit(72);
+}
+
+static void normal_main_return_tsd_destructor(void *opaque)
+{
+    (void)opaque;
+    _Exit(71);
+}
+
+static void normal_main_return_atexit(void)
+{
+    const char marker = 'A';
+    void *allocation = malloc(353);
+
+    if (allocation == 0)
+        _Exit(73);
+    ((volatile unsigned char *)allocation)[0] = 0x3d;
+    free(allocation);
+    __atomic_store_n(&normal_main_user_atexit_seen, 1, __ATOMIC_RELEASE);
+    if (write(STDERR_FILENO, &marker, 1) != 1)
+        _Exit(74);
+}
+
+__attribute__((destructor))
+static void normal_main_return_application_fini(void)
+{
+    const char marker = 'D';
+    void *allocation;
+
+    allocation = malloc(359);
+    if (allocation == 0)
+        _Exit(76);
+    ((volatile unsigned char *)allocation)[0] = 0xe3;
+    free(allocation);
+#ifdef CRABC_NATIVE_MIMALLOC_SHADOW_PROCESS_DONE_EXIT_TEST_AUDIT
+    /* The allocation/free itself must remain valid after the selected fini
+     * bridge; the receipt then proves the bridge ran before this app fini. */
+    if (__crabc_x86_native_mimalloc_process_done_fini_array_test_audit() != 1)
+        _Exit(75);
+#endif
+    if (write(STDERR_FILENO, &marker, 1) != 1)
+        _Exit(77);
+}
+
+int main(void)
+{
+    int token = 1;
+
+    if (pthread_key_create(&normal_main_return_key,
+            normal_main_return_tsd_destructor) != 0)
+        return 78;
+    if (pthread_setspecific(normal_main_return_key, &token) != 0)
+        return 79;
+    if (atexit(normal_main_return_atexit) != 0)
+        return 80;
+    return 0;
+}
+#else
 int main(void)
 {
     int result;
@@ -315,6 +706,10 @@ int main(void)
 #ifdef CRABC_NATIVE_MIMALLOC_SHADOW_TEST_AUDIT
     const size_t baseline_later_thread_count =
         __crabc_x86_native_mimalloc_active_later_thread_count_test_audit();
+    struct process_done_client_page normal_source_page;
+    struct process_done_client_page aligned_fast_source_page;
+    struct process_done_client_page aligned_interior_source_page;
+    struct process_done_client_page discarded_current_page;
 
     /* The rejected pre-start worker never installed an admission; ordinary
      * startup must therefore begin these three attached rounds at zero. */
@@ -350,9 +745,53 @@ int main(void)
     if (pthread_key_delete(teardown_key) != 0)
         return 40;
 
+#ifdef CRABC_NATIVE_MIMALLOC_SHADOW_TEST_AUDIT
+    /* The test-only process finalizer has no public C spelling.  It models
+     * pinned `mi_process_done_once` only for this selected-native fixture;
+     * the ordinary product route reaches its replacement `.fini_array` entry
+     * after the executable's user `atexit` dispatch. */
+    if (__crabc_x86_native_mimalloc_process_done_test_audit() != 0)
+        return 44;
+    result = run_process_done_worker_round(0, &normal_source_page,
+        baseline_later_thread_count, PROCESS_DONE_ALLOCATION_NORMAL, 1);
+    if (result != 0)
+        return 45 + result;
+    /* The second worker establishes its own page owner before it frees both
+     * clients of the first worker's retained regular page. This takes pinned
+     * pointer-first local free under an actually recycled TLS/TCB TP, without
+     * treating that scalar reuse as a Rust lifetime generation. */
+    result = run_process_done_worker_round(
+        &normal_source_page, &discarded_current_page,
+        baseline_later_thread_count, PROCESS_DONE_ALLOCATION_NORMAL, 0);
+    if (result != 0)
+        return 55 + result;
+    result = run_process_done_worker_round(0, &aligned_fast_source_page,
+        baseline_later_thread_count, PROCESS_DONE_ALLOCATION_ALIGNED_FAST, 1);
+    if (result != 0)
+        return 67 + result;
+    result = run_process_done_worker_round(
+        &aligned_fast_source_page, &discarded_current_page,
+        baseline_later_thread_count, PROCESS_DONE_ALLOCATION_ALIGNED_FAST, 0);
+    if (result != 0)
+        return 77 + result;
+    result = run_process_done_worker_round(0, &aligned_interior_source_page,
+        baseline_later_thread_count, PROCESS_DONE_ALLOCATION_ALIGNED_INTERIOR, 1);
+    if (result != 0)
+        return 89 + result;
+    result = run_process_done_worker_round(
+        &aligned_interior_source_page, &discarded_current_page,
+        baseline_later_thread_count, PROCESS_DONE_ALLOCATION_ALIGNED_INTERIOR, 0);
+    if (result != 0)
+        return 99 + result;
+    if (__crabc_x86_native_mimalloc_active_later_thread_count_test_audit() !=
+            baseline_later_thread_count)
+        return 110;
+#endif
+
     /* Main pthread_exit must leave this worker as the final ordinary-exit
-     * owner. Its native worker finish therefore precedes this callback.
-     * The task-ID handshake above prevents the worker returning too early. */
+     * owner. Because this fixture already crossed logical process done, its
+     * finish is pending until the locked decision preserves the same owner
+     * for the callback. The task-ID handshake prevents an early return. */
     {
         pthread_t final_worker;
 
@@ -368,3 +807,4 @@ int main(void)
     pthread_exit(0);
 #endif
 }
+#endif
