@@ -37,6 +37,23 @@ roster, selected manifests and trees before and after execution, keeps the one
 object identity, validates every product link receipt, and records/audits each
 copied dynamic execution payload before and after both entries.
 
+`owned_numeric_calendar_component_receipt.py validate-report --root ROOT
+--report PATH` reconstructs that retained report. It rehashes the physical
+sources, object, raw command streams, products, manifests, tool roster, link
+receipts, and copied payloads; replays the exact argv roster; requires an
+x86-64 ELF relocatable installed-header object; and compares every candidate
+raw transcript with the retained pinned-musl transcript. Recomputing a report
+hash after changing an argv or a candidate transcript therefore does not make
+the receipt valid. The report schema is
+`crabc.x86_64-owned-numeric-calendar-products/v2` and records one of two
+explicit modes: `full-six-mode` includes static ET_EXEC, static PIE, dynamic
+PIE kernel/direct, and dynamic non-PIE kernel/direct;
+`dynamic-only-four-cell-development` includes only the four dynamic entries.
+The reader validates both shapes, while callers that need a complete component
+pass `--require-static` and reject the dynamic development shape. Historical
+`v1` JSON lacks this reconstructable command, raw-stream, and link-validation
+interface and is not admitted by the `v2` reader.
+
 Run it in the pinned native environment:
 
 ```sh
@@ -46,9 +63,18 @@ Run it in the pinned native environment:
 ```
 
 Its interface is `[--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]`. With
-supplied products it never builds replacements. With neither argument it
-builds disposable products below checkout-local `.work`. Inputs must be
-physical directories below that tree.
+both supplied products it never builds replacements. A supplied dynamic product
+alone runs the musl and four dynamic entries and publishes only the explicit
+development mode; it is still reconstructable, but cannot satisfy a
+complete-component caller. With neither argument it builds disposable products
+below checkout-local `.work`. Inputs must be physical directories below that
+tree.
+
+The reader is a pinned-native-container interface: invoke it with the checkout
+mounted at `/workspace`, as the runner does. It stores checkout-contained tool
+paths with that fixed mount spelling while retaining their physical hashes, so
+the same report can be reconstructed after a host checkout path changes without
+mistaking host path text for a different compiler or driver.
 
 This receipt is evidence for these two finite components only. It does not
 close the text/math/locale/stdio family, alter a disposition, claim broad math
