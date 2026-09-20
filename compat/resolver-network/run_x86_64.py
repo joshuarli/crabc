@@ -881,7 +881,13 @@ def run_chroot_raw(root: Path, argv: Sequence[str], timeout: float) -> tuple[int
         return f"EXEC_ERROR:{error.errno or 'unknown'}", b"", str(error).encode("utf-8")
 
 
-def start_server(events_path: Path, ready_path: Path) -> tuple[subprocess.Popen[bytes], dict[str, object]]:
+def start_server(events_path: Path, ready_path: Path | None = None) -> tuple[subprocess.Popen[bytes], dict[str, object]]:
+    """Start the shared DNS fixture, optionally retaining its raw readiness.
+
+    Classic-netdb uses the original one-argument interface and consumes the
+    returned readiness mapping. The physical resolver receipt supplies an
+    explicit output path to retain the exact bytes as well.
+    """
     process = subprocess.Popen([sys.executable, "-B", str(DNS_SERVER), "--events", str(events_path)], cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     assert process.stdout is not None
     selector = selectors.DefaultSelector()
@@ -890,7 +896,8 @@ def start_server(events_path: Path, ready_path: Path) -> tuple[subprocess.Popen[
         if not selector.select(timeout=5.0):
             raise RunnerError("loopback DNS server did not publish readiness")
         line = process.stdout.readline()
-        retained_artifact(ready_path, line)
+        if ready_path is not None:
+            retained_artifact(ready_path, line)
         try:
             ready = json.loads(line.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as error:

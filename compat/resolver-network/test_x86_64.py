@@ -29,6 +29,36 @@ runner = load_runner()
 
 
 class NativeResolverNetworkRunnerTests(unittest.TestCase):
+    def test_shared_dns_startup_keeps_classic_netdb_call_and_explicit_raw_readiness(self) -> None:
+        ready = {
+            "protocol": "resolver-network-dns-v1",
+            "endpoints": {
+                role: {"ipv4": address, "port": runner.DNS_PORT,
+                       "udp4_port": runner.DNS_PORT, "tcp4_port": runner.DNS_PORT}
+                for role, address in runner.ROLE_ADDRESSES.items()
+            },
+        }
+        raw = json.dumps(ready).encode("utf-8") + b"\n"
+        with tempfile.TemporaryDirectory(dir=runner.ROOT / ".work") as directory:
+            root = Path(directory)
+            for retain in (False, True):
+                with self.subTest(retain=retain):
+                    process = mock.Mock(stdout=io.BytesIO(raw))
+                    selector = mock.Mock()
+                    selector.select.return_value = [(object(), 1)]
+                    with mock.patch.object(runner.subprocess, "Popen", return_value=process), \
+                            mock.patch.object(runner.selectors, "DefaultSelector", return_value=selector):
+                        arguments = [root / "dns-events.json"]
+                        if retain:
+                            arguments.append(root / "receipt/dns-ready.json")
+                        observed_process, observed_ready = runner.start_server(*arguments)
+                    self.assertIs(observed_process, process)
+                    self.assertEqual(observed_ready, ready)
+                    self.assertEqual((root / "receipt/dns-ready.json").exists(), retain)
+                    if retain:
+                        self.assertEqual((root / "receipt/dns-ready.json").read_bytes(), raw)
+                    selector.close.assert_called_once()
+
     def test_private_work_root_rejects_a_path_outside_checkout_work(self) -> None:
         with self.assertRaisesRegex(runner.RunnerError, "must stay below"):
             runner.private_work_root(Path("/var/tmp/resolver-network"))
