@@ -54,8 +54,10 @@ class OwnedStdioFileEngineDispatchTests(unittest.TestCase):
         self.assertIn("--cap-add=SYS_ADMIN", argv)
         self.assertIn("--security-opt=apparmor=unconfined", argv)
         self.assertNotIn("--privileged", argv)
-        self.assertEqual(argv[-5:], [
-            "bash", "/workspace/compat/x86_64/run_owned_stdio_file_engine.sh", "--static-sysroot",
+        # The public dispatcher accepts a flag; the component runner's
+        # supplied-product contract is exactly two positional paths.
+        self.assertEqual(argv[-4:], [
+            "bash", "/workspace/compat/x86_64/run_owned_stdio_file_engine.sh",
             "/workspace/.work/x86_64/static-product", "/workspace/.work/x86_64/dynamic-product",
         ])
 

@@ -9125,7 +9125,7 @@ case "$command" in
         ;;
     owned-stdio-file-engine)
         ensure_image
-        run_in_dynamic_loader_mount_container bash /workspace/compat/x86_64/run_owned_stdio_file_engine.sh "$@"
+        run_in_dynamic_loader_mount_container bash /workspace/compat/x86_64/run_owned_stdio_file_engine.sh "$2" "$3"
         ;;
     owned-numeric-calendar)
         ensure_image
