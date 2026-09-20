@@ -61,7 +61,7 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator-retired-prepass | allocator-aggregate-post-exit
   allocator-aggregate-still-live | allocator-aggregate-same-bin-still-live
   allocator-perf --smoke|--full [options]
-  allocator-huge-registry | allocator-huge-reservation
+  allocator-huge-registry | allocator-huge-reservation | allocator-huge-numa-qualification [--reader-tests]
   allocator-unit [--filter module::tests::exact_test_name] | allocator-core-unit
 
 This launcher rejects emulation and does not provide x86 crabc runtime,
@@ -268,7 +268,25 @@ run_in_container() {
     mkdir -p "$WORK_DIR/target" "$WORK_DIR/cargo" "$WORK_DIR/tmp" \
         "$WORK_DIR/reports" "$WORK_DIR/allocator-cache"
     linked_worktree_git_mounts
-    docker run --rm --init \
+    local -a capability_args=()
+    local -a qualification_identity_args=()
+    local execution_image="$IMAGE"
+    # Only the hardware huge-page job needs this mmap permission.  Retain the
+    # default seccomp and every other Docker control; its one-page preflight
+    # records whether the active policy actually permits mbind.
+    if [ "${1:-}" = --with-ipc-lock ]; then
+        capability_args=(--cap-add=IPC_LOCK)
+        shift
+        local image_id
+        image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE")" \
+            || fail "cannot resolve immutable image identity for $IMAGE"
+        [ -n "$image_id" ] || fail "$IMAGE did not provide an immutable image identity"
+        # The hardware qualification must execute exactly the inspected image,
+        # not a tag that can be retargeted between inspection and docker run.
+        execution_image="$image_id"
+        qualification_identity_args=(--env CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID="$image_id")
+    fi
+    docker run --rm --init "${capability_args[@]}" \
         --platform "$PLATFORM" \
         --workdir /workspace \
         --env CARGO_HOME=/workspace/.work/allocator-x86_64/cargo \
@@ -278,6 +296,7 @@ run_in_container() {
         --env CRABC_ALLOCATOR_EVIDENCE_ARCH=x86_64 \
         --env CRABC_EXECUTION_MODE=native \
         --env CRABC_HOST_ARCH=x86_64 \
+        "${qualification_identity_args[@]}" \
         --env MUSL_REFERENCE_LIBDIR=/opt/musl-1.2.6/lib \
         --env PYTHONDONTWRITEBYTECODE=1 \
         --env GIT_CONFIG_COUNT=1 \
@@ -290,7 +309,7 @@ run_in_container() {
         --volume "$WORK_DIR/allocator-cache:/workspace/compat/allocator/.cache" \
         --volume "$WORK_DIR/tmp:/tmp" \
         "${GIT_METADATA_MOUNTS[@]}" \
-        "$IMAGE" "$@"
+        "$execution_image" "$@"
 }
 
 if [ "$#" -eq 0 ]; then
@@ -312,7 +331,7 @@ case "$command" in
         usage
         exit 0
         ;;
-    allocator-dynamic-full-direct-small-unmapped-reabandon|image|allocator|allocator-m1|allocator-m2|allocator-tls|allocator-lifecycle|allocator-startup-regular-arena|allocator-initialization-tld|allocator-fault|allocator-fault-seam-inventory|allocator-release-evidence|allocator-api-coverage|allocator-cmake-modes|allocator-header-modes|allocator-static-modes|allocator-remote-free|allocator-live-owner-full-medium-remote-release|allocator-live-owner-full-medium-one-remote-unfull-reuse|allocator-direct-remote|allocator-mapped-reclaim|allocator-mapped-adoption|allocator-regular-mapped-reclaim|allocator-direct-small-allocation-adoption|allocator-unmapped-reabandon|allocator-on-demand|allocator-direct-on-demand|allocator-aligned-overalloc-realloc|allocator-regular-small|allocator-direct-small-full-retire|allocator-medium-full-retire|allocator-full-non-direct-small-force-collect-post-exit|allocator-full-direct-small-force-collect-post-exit|allocator-dynamic-full-direct-small-one-remote-force-collect-to-mapped|allocator-dynamic-full-direct-small-unmapped-reabandon|allocator-dynamic-full-non-direct-small-one-remote-force-collect-to-mapped|allocator-dynamic-full-non-direct-small-unmapped-reabandon|allocator-dynamic-full-medium-one-remote-force-collect-to-mapped|allocator-dynamic-full-medium-unmapped-reabandon|allocator-dynamic-full-large-one-remote-force-collect-to-mapped|allocator-dynamic-full-large-unmapped-reabandon|allocator-dynamic-full-large-homogeneous-aggregate|allocator-dynamic-full-medium-homogeneous-aggregate|allocator-dynamic-full-singleton-homogeneous-aggregate|allocator-dynamic-full-non-direct-small-homogeneous-aggregate|allocator-later-thread-exit-full-direct-small-pages|allocator-dynamic-nonfull-regular-pages-distinct-bin-aggregate|allocator-automatic-pthread-destructor|allocator-cancellation-pthread-destructor|allocator-process-done-pthread-key|allocator-automatic-arena-reservation|allocator-dynamic-os-aligned-singleton|allocator-dynamic-arena-singleton-post-exit|allocator-mapped-post-exit|allocator-retired-prepass|allocator-aggregate-post-exit|allocator-aggregate-still-live|allocator-aggregate-same-bin-still-live|allocator-perf|allocator-huge-registry|allocator-huge-reservation|allocator-unit|allocator-core-unit)
+    allocator-dynamic-full-direct-small-unmapped-reabandon|image|allocator|allocator-m1|allocator-m2|allocator-tls|allocator-lifecycle|allocator-startup-regular-arena|allocator-initialization-tld|allocator-fault|allocator-fault-seam-inventory|allocator-release-evidence|allocator-api-coverage|allocator-cmake-modes|allocator-header-modes|allocator-static-modes|allocator-remote-free|allocator-live-owner-full-medium-remote-release|allocator-live-owner-full-medium-one-remote-unfull-reuse|allocator-direct-remote|allocator-mapped-reclaim|allocator-mapped-adoption|allocator-regular-mapped-reclaim|allocator-direct-small-allocation-adoption|allocator-unmapped-reabandon|allocator-on-demand|allocator-direct-on-demand|allocator-aligned-overalloc-realloc|allocator-regular-small|allocator-direct-small-full-retire|allocator-medium-full-retire|allocator-full-non-direct-small-force-collect-post-exit|allocator-full-direct-small-force-collect-post-exit|allocator-dynamic-full-direct-small-one-remote-force-collect-to-mapped|allocator-dynamic-full-direct-small-unmapped-reabandon|allocator-dynamic-full-non-direct-small-one-remote-force-collect-to-mapped|allocator-dynamic-full-non-direct-small-unmapped-reabandon|allocator-dynamic-full-medium-one-remote-force-collect-to-mapped|allocator-dynamic-full-medium-unmapped-reabandon|allocator-dynamic-full-large-one-remote-force-collect-to-mapped|allocator-dynamic-full-large-unmapped-reabandon|allocator-dynamic-full-large-homogeneous-aggregate|allocator-dynamic-full-medium-homogeneous-aggregate|allocator-dynamic-full-singleton-homogeneous-aggregate|allocator-dynamic-full-non-direct-small-homogeneous-aggregate|allocator-later-thread-exit-full-direct-small-pages|allocator-dynamic-nonfull-regular-pages-distinct-bin-aggregate|allocator-automatic-pthread-destructor|allocator-cancellation-pthread-destructor|allocator-process-done-pthread-key|allocator-automatic-arena-reservation|allocator-dynamic-os-aligned-singleton|allocator-dynamic-arena-singleton-post-exit|allocator-mapped-post-exit|allocator-retired-prepass|allocator-aggregate-post-exit|allocator-aggregate-still-live|allocator-aggregate-same-bin-still-live|allocator-perf|allocator-huge-registry|allocator-huge-reservation|allocator-huge-numa-qualification|allocator-unit|allocator-core-unit)
         ;;
     allocator-init-recursion)
         ;;
@@ -680,6 +699,17 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "allocator-huge-registry takes no arguments"
         ensure_image
         run_in_container python3 compat/allocator/x86_64_huge_registry_evidence.py
+        ;;
+    allocator-huge-numa-qualification)
+        ensure_image
+        if [ "$#" -eq 0 ]; then
+            run_in_container --with-ipc-lock \
+                python3 compat/allocator/x86_64_huge_numa_qualification.py
+        elif [ "$#" -eq 1 ] && [ "$1" = --reader-tests ]; then
+            run_in_container python3 compat/allocator/tests/test_x86_64_huge_numa_qualification.py
+        else
+            fail "allocator-huge-numa-qualification accepts only --reader-tests"
+        fi
         ;;
     allocator-unit)
         if [ "$#" -ne 0 ]; then

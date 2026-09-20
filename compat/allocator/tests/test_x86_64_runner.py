@@ -37,7 +37,13 @@ class X86AllocatorWorkspaceTests(unittest.TestCase):
 set -eu
 printf '%s\\n' "$1" >> "$DOCKER_CAPTURE.calls"
 if [ "$1" = image ]; then
-    if [ "${3:-}" = --format ]; then printf 'linux/amd64\\n'; fi
+    if [ "${3:-}" = --format ]; then
+        if [ "${4:-}" = '{{.Id}}' ]; then
+            printf 'sha256:allocator-evidence-fixture\\n'
+        else
+            printf 'linux/amd64\\n'
+        fi
+    fi
 elif [ "$1" = run ]; then
     printf '%s\\0' "$@" > "$DOCKER_CAPTURE"
 fi
@@ -95,6 +101,28 @@ fi
             b"python3", b"compat/allocator/run_unit_x86_64.py", name.encode(),
         ])
         self.assertIn(f"{self.boundary / 'target'}:/workspace/target".encode(), args)
+
+    def test_huge_numa_qualification_uses_only_ipc_lock_and_the_resolved_image_id(self):
+        result = self.launch("allocator-huge-numa-qualification")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        args = self.capture.read_bytes().split(b"\0")
+        self.assertIn(b"--cap-add=IPC_LOCK", args)
+        self.assertIn(b"CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID=sha256:allocator-evidence-fixture", args)
+        self.assertIn(b"sha256:allocator-evidence-fixture", args)
+        self.assertEqual(args[-3:-1], [
+            b"python3", b"compat/allocator/x86_64_huge_numa_qualification.py",
+        ])
+        self.assertNotIn(b"--security-opt", args)
+
+    def test_huge_numa_reader_tests_keep_the_default_container_capabilities(self):
+        result = self.launch("allocator-huge-numa-qualification", "--reader-tests")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        args = self.capture.read_bytes().split(b"\0")
+        self.assertNotIn(b"--cap-add=IPC_LOCK", args)
+        self.assertNotIn(b"CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID=sha256:allocator-evidence-fixture", args)
+        self.assertEqual(args[-3:-1], [
+            b"python3", b"compat/allocator/tests/test_x86_64_huge_numa_qualification.py",
+        ])
 
     def test_allocator_unit_rejects_ambiguous_filters_before_docker(self):
         for arguments in (("--filter",), ("--filter", ""), ("--filter", "os"),

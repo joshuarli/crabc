@@ -8188,6 +8188,128 @@ mod tests {
         assert_eq!(statistics.committed_current, 0);
     }
 
+    /// Runs only when the hardware qualification collector supplies two
+    /// source-valid NUMA node numbers.  It is deliberately not a general
+    /// topology test: each row calls the existing one-GiB
+    /// `HugeOsAllocation::allocate_for_process` primitive and records the
+    /// kernel's own `/proc/self/numa_maps` observation while that exact
+    /// mapping remains owned.  The collector first proves that the dedicated
+    /// host has one free one-GiB page for each requested node.
+    ///
+    /// The pinned C counterpart calls `mi_reserve_huge_os_pages_at` for the
+    /// same node list.  Existing source-policy, registry, and cleanup
+    /// evidence remains separate; this bounded witness is only the missing
+    /// hardware-success and physical-placement observation.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn hardware_huge_page_numa_qualification_workload() {
+        const ENVIRONMENT: &str = "CRABC_MIMALLOC_HUGE_NUMA_NODES";
+        const HUGE_PAGE_KIB: usize = 1024 * 1024;
+
+        // The normal unit suite has no entitlement to consume a hardware
+        // huge-page pool.  The qualification collector supplies this exact
+        // environment variable and rejects a missing trace, so an ordinary
+        // unit invocation remains a no-op while the named hardware job cannot
+        // silently pass without running this workload.
+        if std::env::var_os(ENVIRONMENT).is_none() {
+            return;
+        }
+
+        fn qualification_nodes() -> core::result::Result<[i32; 2], std::string::String> {
+            let raw = std::env::var(ENVIRONMENT)
+                .map_err(|_| std::format!("{ENVIRONMENT} must name two comma-separated NUMA nodes"))?;
+            let mut values = raw.split(',');
+            let first = values.next().ok_or_else(|| std::format!("{ENVIRONMENT} is empty"))?;
+            let second = values.next().ok_or_else(|| std::format!("{ENVIRONMENT} lacks a second node"))?;
+            if values.next().is_some() {
+                return Err(std::format!("{ENVIRONMENT} must contain exactly two nodes"));
+            }
+            let parse = |value: &str| {
+                value.parse::<i32>().ok().filter(|node| (0..=62).contains(node))
+                    .ok_or_else(|| std::format!("{ENVIRONMENT} contains an invalid source NUMA node"))
+            };
+            let nodes = [parse(first)?, parse(second)?];
+            if nodes[0] == nodes[1] {
+                return Err(std::format!("{ENVIRONMENT} requires two distinct nodes"));
+            }
+            Ok(nodes)
+        }
+
+        fn observed_huge_node(base: *mut u8) -> core::result::Result<usize, std::string::String> {
+            let address = std::format!("{:x}", base.addr());
+            let maps = std::fs::read_to_string("/proc/self/numa_maps")
+                .map_err(|error| std::format!("cannot read /proc/self/numa_maps: {error}"))?;
+            let line = maps.lines().find(|line| {
+                line.split_ascii_whitespace().next() == Some(address.as_str())
+            }).ok_or_else(|| std::format!("numa_maps has no live huge mapping at {address}"))?;
+            if !line.split_ascii_whitespace().any(|field| field == "kernelpagesize_kB=1048576") {
+                return Err(std::format!("huge mapping at {address} lacks a one-GiB kernel page record"));
+            }
+            let mut observed = None;
+            for field in line.split_ascii_whitespace() {
+                let Some(node) = field.strip_prefix('N') else { continue; };
+                let Some((node, pages)) = node.split_once('=') else { continue; };
+                let node = node.parse::<usize>()
+                    .map_err(|_| std::format!("numa_maps has an invalid node field {field}"))?;
+                let pages = pages.parse::<usize>()
+                    .map_err(|_| std::format!("numa_maps has an invalid page count {field}"))?;
+                if pages == 0 { continue; }
+                if observed.replace(node).is_some() {
+                    return Err(std::format!("huge mapping at {address} spans multiple NUMA nodes"));
+                }
+            }
+            observed.ok_or_else(|| std::format!("huge mapping at {address} has no physical NUMA node"))
+        }
+
+        let nodes = qualification_nodes().expect("hardware qualification node contract");
+        let _fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::detect(current_startup());
+        let policy = VmPolicy::defaults_for_test();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        let mut allocations = std::vec::Vec::new();
+        let observation = (|| -> core::result::Result<(), std::string::String> {
+            std::println!("CRABC_MI_HUGE_NUMA_RUST_TRACE_BEGIN");
+            for (index, requested_node) in nodes.into_iter().enumerate() {
+                let allocation = match HugeOsAllocation::allocate_for_process(
+                    process, config, 1, requested_node, 0, None,
+                ) {
+                    HugeOsAllocationOutcome::Allocated(allocation)
+                        if allocation.page_count() == 1
+                            && allocation.stop() == HugeOsAllocationStop::Complete => allocation,
+                    _ => return Err("source huge primitive did not complete".into()),
+                };
+                let mapping_address = allocation.base().as_ptr();
+                // Retain ownership before observing.  Thus an observation
+                // failure still takes the explicit cleanup path below rather
+                // than leaving a source allocation only for process exit.
+                allocations.push(allocation);
+                let observed_node = observed_huge_node(mapping_address)?;
+                if observed_node != requested_node as usize {
+                    return Err(std::format!(
+                        "source huge primitive requested NUMA node {requested_node}, observed {observed_node}"
+                    ));
+                }
+                std::println!("CRABC_MI_HUGE_NUMA_RUST_MAP.{index}.requested_node={requested_node}");
+                std::println!("CRABC_MI_HUGE_NUMA_RUST_MAP.{index}.observed_node={observed_node}");
+                std::println!("CRABC_MI_HUGE_NUMA_RUST_MAP.{index}.kernel_page_kib={HUGE_PAGE_KIB}");
+                std::println!("CRABC_MI_HUGE_NUMA_RUST_MAP.{index}.mapping_address={}", mapping_address.addr());
+            }
+            std::println!("CRABC_MI_HUGE_NUMA_RUST_TRACE_END");
+            Ok(())
+        })();
+        let mut cleanup: core::result::Result<(), std::string::String> = Ok(());
+        while let Some(allocation) = allocations.pop() {
+            let mut tracker = [0usize; 1];
+            if allocation.release_for_process(&mut tracker).is_err() {
+                cleanup = Err("source huge primitive cleanup failed".into());
+                break;
+            }
+        }
+        observation.expect("hardware huge-page and NUMA placement observation");
+        cleanup.expect("hardware huge-page cleanup");
+    }
+
     #[test]
     fn huge_os_noncontiguous_primitive_retains_only_its_adjusted_cleanup_owner() {
         let fault = fault::install(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));

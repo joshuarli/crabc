@@ -2832,3 +2832,50 @@ reservation order. The C fixture explicitly records downstream primitives;
 it does not require or prove hardware huge-page success. The report is
 `allocator/x86_64/huge-reservation.json`. The regular aligned-map retry after
 an injected direct-map failure remains source behavior, including at startup.
+
+### Native 1-GiB huge-page and multi-NUMA qualification
+
+`./compat/allocator/run-x86_64.sh allocator-huge-numa-qualification` is the
+hardware-only companion to the simulated reservation and registry evidence.
+It first runs those existing source-policy and ownership workloads, then runs
+the pinned C `mi_reserve_huge_os_pages_at(1, node, 0)` entry and the existing
+Rust `HugeOsAllocation::allocate_for_process` primitive. Each implementation
+holds two one-GiB mappings concurrently and records the kernel's own live
+`/proc/self/numa_maps` evidence. The C observer proves the exact requested
+node set, rather than assigning address-sorted `numa_maps` rows to reservation
+call order; the Rust observer binds each requested mapping address to its
+observed node. `--reader-tests` runs only the parser and source-boundary tests.
+
+The job selects any two distinct nodes with IDs 0 through 62 that are online,
+permitted by both the process `Mems_allowed_list` and
+`cpuset.mems.effective`, and each have at least one free one-GiB huge page.
+That is exactly two GiB of concurrent hugetlb reservation. Compiler/build
+memory, binaries, and ordinary process memory are separate capacity needs;
+the existing workloads do not establish a numeric ordinary-memory floor. The
+report instead retains the active cgroup memory counter and
+`RLIMIT_AS`/`RLIMIT_DATA`/`RLIMIT_MEMLOCK` values, and the job imposes no
+CPU-per-node affinity condition. It also requires readable `/proc/self/numa_maps`,
+the launcher's narrowly added `CAP_IPC_LOCK`, and an approved
+`mbind(MPOL_PREFERRED, flags=0)` syscall. Before resources are used,
+one private ordinary anonymous page performs that raw `mbind` form and is
+immediately unmapped. Its result is recorded rather than inferred from the
+container's seccomp mode; a nonzero result remains a pending external
+permission/resource gate.
+
+The generated report is
+`allocator/x86_64/huge-numa-hardware-qualification.json`. A successful report
+records the committed source inputs, verified pinned source files and anchors,
+container image ID, C/Rust toolchain commands, and hashes of the retained C
+and Rust executables that were actually run. A missing topology, pool, cgroup
+headroom, capability, observer, or raw `mbind` gate returns exit 3 with
+`pending_external_resources`; a build, parser, or harness problem is a
+separate failed report. This bounded job proves neither M2 completion nor
+general allocator/runtime integration, and it supplies no AArch64 evidence.
+
+Provision one native x86-64 qualification runner whose container can see two
+such source-valid NUMA nodes and one free one-GiB hugetlb page on each, with
+ordinary build/runtime headroom (numeric floor currently unmeasured; inspect
+the recorded cgroup/RLIMIT values). Preserve the default security controls; if
+the recorded private-page probe is nonzero, have the platform owner approve
+only the needed `mbind(MPOL_PREFERRED, flags=0)` rule while retaining all other
+controls—never use an unconfined seccomp profile.
