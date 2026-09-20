@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import sys
 import unittest
 from unittest import mock
 
@@ -46,6 +47,15 @@ EXPECTED_VM_CHECK_IDS = (
 )
 
 class NativeVmAssemblyTests(unittest.TestCase):
+    def test_runtime_thp_configuration_producer_registers_its_dataclass_module_before_execution(self):
+        """The aggregate loader must make the real lifecycle module importable to dataclasses."""
+
+        producer = RUNNER._m2_x86_64_runtime_thp_configuration_producer()
+        self.assertIs(
+            sys.modules["crabc_m2_runtime_thp_configuration"],
+            producer,
+        )
+
     @staticmethod
     def vm_evidence(summary):
         vm = next(component for component in summary["components"] if component["id"] == "vm-primitives")

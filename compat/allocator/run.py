@@ -11924,7 +11924,13 @@ def _m2_x86_64_runtime_thp_configuration_producer() -> Any:
     if spec is None or spec.loader is None:
         raise HarnessError("native x86 runtime THP configuration producer is absent")
     producer = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(producer)
+    # Its dataclass definitions resolve their module metadata during execution.
+    sys.modules[spec.name] = producer
+    try:
+        spec.loader.exec_module(producer)
+    except Exception:
+        sys.modules.pop(spec.name, None)
+        raise
     return producer
 
 
