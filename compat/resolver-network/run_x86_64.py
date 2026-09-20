@@ -22,6 +22,7 @@ import re
 import selectors
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -42,6 +43,29 @@ DEFAULT_REPORT = ROOT / "compat/reports/resolver-network/x86_64/latest.json"
 STATIC_FORMAT = "crabc-x86-64-sealed-static-driver-v1"
 DYNAMIC_FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
 DYNAMIC_INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
+PINNED_IMAGE = "crabc-core-evidence@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d"
+IMAGE_MANIFEST = ROOT / "compat/x86_64/owned_utmpx_image_inputs.json"
+PHYSICAL_RECEIPT_SCHEMA = "crabc.x86_64-resolver-network-physical/v2"
+COMPONENT_SCOPE = ["libc.resolver"]
+RECEIPT_SOURCE_FILES = {
+    "runner": ROOT / "compat/resolver-network/run_x86_64.py",
+    "workload": ROOT / "compat/resolver-network/workload.c",
+    "dns_fixture": ROOT / "compat/resolver-network/dns_server.py",
+    "dynamic_receipt_contract": ROOT / "compat/x86_64/owned_dynamic_receipt.py",
+    "reader": ROOT / "compat/x86_64/resolver_network_component_receipt.py",
+    "image_manifest": IMAGE_MANIFEST,
+}
+COMPILER_ORACLE_INPUTS = {
+    "gcc": Path("/usr/bin/gcc"),
+    "assembler": Path("/usr/bin/as"),
+    "linker": Path("/usr/bin/ld"),
+    "cc1": Path("/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/cc1"),
+    "collect2": Path("/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/collect2"),
+    "lto_plugin": Path("/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/liblto_plugin.so"),
+    "specs": MUSL_ROOT / "lib/musl-gcc.specs",
+    "libc_archive": MUSL_ROOT / "lib/libc.a",
+    "libc_shared": MUSL_ROOT / "lib/libc.so",
+}
 DNS_PORT = 53
 ROLE_ADDRESSES = {"valid": "127.0.0.1", "drop": "127.0.0.2", "fallback": "127.0.0.3"}
 RESOLVER_CONFIG = """# crabc native resolver-network fixture
@@ -81,6 +105,7 @@ REQUIRED_SERVER_NAMES = {
     "nodata.example.test.", "malformed.example.test.", "alias.example.test.",
     "tc.example.test.", "searchhost.search.test.", "fallback.example.test.",
 }
+HEADER_TRACE_PATH = re.compile(r"^\.+ (/.+)$")
 
 
 class RunnerError(RuntimeError):
@@ -304,12 +329,14 @@ def dynamic_manifest(sysroot: Path) -> dict[str, object]:
     return manifest
 
 
-def tree_identity(root: Path) -> dict[str, object]:
+def tree_identity(root: Path, *, excluded: frozenset[str] = frozenset()) -> dict[str, object]:
     """Hash the exact payload roster: files by bytes and aliases by target."""
 
     records: list[dict[str, object]] = []
     for entry in sorted(root.rglob("*")):
         relative = entry.relative_to(root).as_posix()
+        if relative in excluded:
+            continue
         if entry.is_symlink():
             records.append({"path": relative, "kind": "symlink", "target": os.readlink(entry)})
         elif entry.is_dir():
@@ -322,6 +349,192 @@ def tree_identity(root: Path) -> dict[str, object]:
     return {"entry_count": len(records), "sha256": hashlib.sha256(encoded).hexdigest()}
 
 
+def receipt_tree_identity(root: Path, *, excluded: frozenset[str] = frozenset()) -> dict[str, object]:
+    """Seal physical receipt trees, including modes that alter execution access."""
+
+    root = physical_directory(root, "physical receipt tree root")
+    records: list[dict[str, object]] = [{
+        "path": ".",
+        "kind": "directory",
+        "mode": stat.S_IMODE(root.lstat().st_mode),
+    }]
+    for entry in sorted(root.rglob("*")):
+        relative = entry.relative_to(root).as_posix()
+        if relative in excluded:
+            continue
+        mode = entry.lstat().st_mode
+        permissions = stat.S_IMODE(mode)
+        if stat.S_ISLNK(mode):
+            records.append({"path": relative, "kind": "symlink", "mode": permissions, "target": os.readlink(entry)})
+        elif stat.S_ISDIR(mode):
+            records.append({"path": relative, "kind": "directory", "mode": permissions})
+        elif stat.S_ISREG(mode):
+            records.append({"path": relative, "kind": "regular", "mode": permissions, "sha256": sha256_file(entry)})
+        else:
+            raise RunnerError(f"physical receipt tree contains an unsafe entry: {relative}")
+    encoded = json.dumps(records, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return {"entry_count": len(records), "sha256": hashlib.sha256(encoded).hexdigest()}
+
+
+def receipt_artifact(path: Path) -> dict[str, object]:
+    """Record bytes and mode for a receipt artifact without changing report-v1 records."""
+
+    record = artifact_record(path)
+    return {**record, "mode": stat.S_IMODE(path.lstat().st_mode)}
+
+
+def canonical_json(value: object) -> bytes:
+    return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+
+
+def retained_artifact(path: Path, contents: bytes) -> dict[str, object]:
+    """Write one raw receipt leaf only into this fresh execution state."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists() or path.is_symlink():
+        raise RunnerError(f"retained resolver receipt artifact is already occupied: {path}")
+    path.write_bytes(contents)
+    return receipt_artifact(path)
+
+
+def retain_command_record(state: Path, label: str, record: Mapping[str, object]) -> dict[str, object]:
+    """Preserve command argv and raw streams instead of relying on report summaries."""
+
+    if set(record) != {"argv", "status", "stdout", "stderr"}:
+        raise RunnerError(f"cannot retain malformed resolver command record: {label}")
+    argv = record["argv"]
+    status = record["status"]
+    stdout = record["stdout"]
+    stderr = record["stderr"]
+    if (not isinstance(argv, list) or not all(isinstance(item, str) for item in argv) or
+            not isinstance(stdout, Mapping) or not isinstance(stderr, Mapping)):
+        raise RunnerError(f"cannot retain malformed resolver command streams: {label}")
+    try:
+        stdout_bytes = str(stdout["text"]).encode("utf-8")
+        stderr_bytes = str(stderr["text"]).encode("utf-8")
+    except KeyError as error:
+        raise RunnerError(f"cannot retain incomplete resolver command streams: {label}") from error
+    # Command output in this producer is UTF-8 diagnostic/provenance text. The
+    # workload execution paths below retain their bytes directly, because they
+    # must preserve arbitrary rejected candidate streams without replacement.
+    if stream_record(stdout_bytes) != stdout or stream_record(stderr_bytes) != stderr:
+        raise RunnerError(f"cannot retain lossy resolver command streams: {label}")
+    directory = state / "receipt" / "commands"
+    return {
+        "argv": retained_artifact(directory / f"{label}.argv.json", canonical_json(argv)),
+        "status": retained_artifact(directory / f"{label}.status.json", canonical_json(status)),
+        "stdout": retained_artifact(directory / f"{label}.stdout", stdout_bytes),
+        "stderr": retained_artifact(directory / f"{label}.stderr", stderr_bytes),
+    }
+
+
+def retain_execution_record(
+    state: Path, label: str, argv: Sequence[str], raw: tuple[int | str, bytes, bytes], root: Path,
+) -> dict[str, object]:
+    """Keep every attempted process transcript as raw bytes, including failures."""
+
+    status, stdout, stderr = raw
+    directory = state / "receipt" / "executions"
+    return {
+        "argv": retained_artifact(directory / f"{label}.argv.json", canonical_json(list(argv))),
+        "status": retained_artifact(directory / f"{label}.status.json", canonical_json(status)),
+        "stdout": retained_artifact(directory / f"{label}.stdout", stdout),
+        "stderr": retained_artifact(directory / f"{label}.stderr", stderr),
+        "root": {"path": str(physical_directory(root, f"{label} execution root")), **receipt_tree_identity(root)},
+    }
+
+
+def physical_tool(path: Path, description: str) -> Path:
+    """Resolve a system command once, then record its non-alias executable."""
+
+    try:
+        resolved = path.resolve(strict=True)
+    except OSError as error:
+        raise RunnerError(f"cannot resolve {description}: {path}") from error
+    return physical_regular(resolved, description, executable=True)
+
+
+def source_receipt() -> dict[str, object]:
+    return {
+        name: receipt_artifact(physical_regular(path, f"resolver receipt source {name}"))
+        for name, path in RECEIPT_SOURCE_FILES.items()
+    }
+
+
+def tool_receipt(compiler: Path, arms: Mapping[str, Mapping[str, Path]]) -> dict[str, object]:
+    def command(name: str) -> Path:
+        value = shutil.which(name)
+        if value is None or not os.path.isabs(value):
+            raise RunnerError(f"native resolver receipt requires an absolute {name} command")
+        return physical_tool(Path(value), f"resolver receipt {name} tool")
+
+    return {
+        "compiler": receipt_artifact(physical_tool(compiler, "pinned musl compiler")),
+        "python": receipt_artifact(physical_tool(Path(sys.executable), "DNS fixture Python")),
+        "readelf": receipt_artifact(command("readelf")),
+        "chroot": receipt_artifact(command("chroot")),
+        "compiler_closure": {
+            name: receipt_artifact(physical_regular(path, f"pinned compiler {name}"))
+            for name, path in COMPILER_ORACLE_INPUTS.items()
+        },
+        "static_drivers": {
+            arm: receipt_artifact(physical_regular(roots["static"] / "bin/crabc-cc", f"{arm} static driver", executable=True))
+            for arm, roots in arms.items()
+        },
+        "dynamic_drivers": {
+            arm: receipt_artifact(physical_regular(roots["dynamic"] / "bin/crabc-cc-dynamic", f"{arm} dynamic driver", executable=True))
+            for arm, roots in arms.items()
+        },
+    }
+
+
+def product_receipt(arms: Mapping[str, Mapping[str, Path]]) -> dict[str, object]:
+    """Bind each supplied installed/extracted product and its physical manifest."""
+
+    result: dict[str, object] = {}
+    for arm, roots in arms.items():
+        static = physical_directory(roots["static"], f"{arm} static receipt product")
+        dynamic = physical_directory(roots["dynamic"], f"{arm} dynamic receipt product")
+        static_manifest(static)
+        dynamic_manifest(dynamic)
+        result[arm] = {
+            "static": {
+                "path": str(static),
+                "manifest": receipt_artifact(static / "share/crabc/manifest.json"),
+                "tree": receipt_tree_identity(static),
+            },
+            "dynamic": {
+                "path": str(dynamic),
+                "manifest": receipt_artifact(dynamic / "share/crabc/manifest.json"),
+                "tree": receipt_tree_identity(dynamic),
+            },
+        }
+    return result
+
+
+def link_receipt(reference: Path, artifacts: Mapping[str, Mapping[str, Mapping[str, object]]]) -> dict[str, object]:
+    """Record the physical link products and their driver receipts by arm."""
+
+    result: dict[str, object] = {"reference": {"binary": receipt_artifact(reference)}}
+    for arm, arm_artifacts in artifacts.items():
+        arm_result: dict[str, object] = {}
+        for mode, item in arm_artifacts.items():
+            output = Path(str(item["path"]))
+            audit = item["receipt_audit"]
+            if not isinstance(audit, Mapping):
+                raise RunnerError(f"resolver {arm} {mode} link audit is malformed")
+            entry: dict[str, object] = {"binary": receipt_artifact(output)}
+            for name in ("receipt", "trace", "map"):
+                if name in audit:
+                    value = audit[name]
+                    if not isinstance(value, Mapping) or not isinstance(value.get("path"), str):
+                        raise RunnerError(f"resolver {arm} {mode} {name} audit is malformed")
+                    entry[name] = receipt_artifact(Path(str(value["path"])))
+            arm_result[mode] = entry
+        result[arm] = arm_result
+    return result
+
+
 def prepared_product_arms(args: argparse.Namespace) -> dict[str, dict[str, Path]]:
     """Resolve all four caller-prepared product trees before compilation."""
 
@@ -329,13 +542,21 @@ def prepared_product_arms(args: argparse.Namespace) -> dict[str, dict[str, Path]
         "installed": {"static": args.static_sysroot, "dynamic": args.dynamic_sysroot},
         "extracted": {"static": args.extracted_static_sysroot, "dynamic": args.extracted_dynamic_sysroot},
     }
-    return {
+    result = {
         arm: {
             kind: physical_directory(path, f"prepared {arm} {kind} sysroot")
             for kind, path in roots.items()
         }
         for arm, roots in requested.items()
     }
+    physical_roots = {
+        (path.stat().st_dev, path.stat().st_ino)
+        for arm in result.values()
+        for path in arm.values()
+    }
+    if len(physical_roots) != 4:
+        raise RunnerError("native resolver-network product arms must use four distinct physical roots")
+    return result
 
 
 def product_identity(
@@ -355,12 +576,49 @@ def product_identity(
     return result
 
 
-def compiler_resource_directory(compiler: Path, timeout: float) -> Path:
+def compiler_resource_directory(compiler: Path, timeout: float) -> tuple[Path, dict[str, object]]:
     record = run_checked([str(compiler), "-print-file-name=include"], cwd=ROOT, timeout=timeout, description="pinned musl compiler resource query")
     stdout = record["stdout"]
     assert isinstance(stdout, Mapping)
     value = str(stdout["text"]).strip()
-    return physical_directory(Path(value), "pinned musl compiler resource headers")
+    return physical_directory(Path(value), "pinned musl compiler resource headers"), record
+
+
+def header_closure(trace: Path, resource: Path) -> dict[str, object]:
+    """Bind every ``-H`` header to the pinned musl or compiler-resource tree."""
+
+    musl_include = physical_directory(MUSL_ROOT / "include", "pinned musl include root")
+    resource = physical_directory(resource, "pinned compiler resource headers")
+    try:
+        lines = trace.read_text(encoding="utf-8").splitlines()
+    except UnicodeDecodeError as error:
+        raise RunnerError("resolver header trace is not UTF-8") from error
+    result: list[dict[str, object]] = []
+    seen: set[Path] = set()
+    for line in lines:
+        if not line.startswith("."):
+            continue
+        match = HEADER_TRACE_PATH.fullmatch(line)
+        if match is None:
+            raise RunnerError("resolver header trace has an unparseable include path")
+        header = physical_regular(Path(match.group(1)), "pinned resolver header")
+        try:
+            header.relative_to(musl_include)
+        except ValueError:
+            try:
+                header.relative_to(resource)
+            except ValueError as error:
+                raise RunnerError("resolver header trace escaped pinned musl/compiler-resource roots") from error
+        if header not in seen:
+            seen.add(header)
+            result.append(receipt_artifact(header))
+    if not result or musl_include / "netdb.h" not in seen:
+        raise RunnerError("resolver header trace omits the pinned musl netdb closure")
+    return {
+        "musl_include": {"path": str(musl_include), "mode": stat.S_IMODE(musl_include.lstat().st_mode)},
+        "resource": {"path": str(resource), "mode": stat.S_IMODE(resource.lstat().st_mode)},
+        "headers": result,
+    }
 
 
 def header_trace(compiler: Path, resource: Path, output: Path, timeout: float) -> dict[str, object]:
@@ -376,16 +634,10 @@ def header_trace(compiler: Path, resource: Path, output: Path, timeout: float) -
         raise RunnerError("pinned-musl resolver workload header trace did not complete") from error
     record = {"argv": [str(compiler), "-std=c11", "-D_GNU_SOURCE", "-nostdinc", "-isystem", str(MUSL_ROOT / "include"),
                        "-isystem", str(resource), "-E", "-H", str(SOURCE)], "status": process.returncode,
-              "stderr": stream_record(process.stderr)}
+              "stdout": stream_record(b""), "stderr": stream_record(process.stderr)}
     require_success(record, "pinned-musl resolver workload header trace")
-    trace = process.stderr.decode("utf-8", errors="replace")
-    output.write_text(trace, encoding="utf-8")
-    if str(MUSL_ROOT / "include") not in trace:
-        raise RunnerError("resolver workload did not include pinned musl headers")
-    forbidden = (str(ROOT / "include"), "/usr/include")
-    if any(marker in trace for marker in forbidden):
-        raise RunnerError("resolver workload header trace escaped pinned musl/resource headers")
-    return {"record": record, "trace": artifact_record(output)}
+    output.write_bytes(process.stderr)
+    return {"record": record, "trace": artifact_record(output), "closure": header_closure(output, resource)}
 
 
 def compile_object(compiler: Path, resource: Path, output: Path, timeout: float) -> dict[str, object]:
@@ -629,7 +881,7 @@ def run_chroot_raw(root: Path, argv: Sequence[str], timeout: float) -> tuple[int
         return f"EXEC_ERROR:{error.errno or 'unknown'}", b"", str(error).encode("utf-8")
 
 
-def start_server(events_path: Path) -> tuple[subprocess.Popen[bytes], dict[str, object]]:
+def start_server(events_path: Path, ready_path: Path) -> tuple[subprocess.Popen[bytes], dict[str, object]]:
     process = subprocess.Popen([sys.executable, "-B", str(DNS_SERVER), "--events", str(events_path)], cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     assert process.stdout is not None
     selector = selectors.DefaultSelector()
@@ -638,6 +890,7 @@ def start_server(events_path: Path) -> tuple[subprocess.Popen[bytes], dict[str, 
         if not selector.select(timeout=5.0):
             raise RunnerError("loopback DNS server did not publish readiness")
         line = process.stdout.readline()
+        retained_artifact(ready_path, line)
         try:
             ready = json.loads(line.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -676,7 +929,9 @@ def load_events(path: Path) -> tuple[list[dict[str, object]], str | None]:
         events = decoded.get("events")
         if not isinstance(events, list):
             return [], "DNS event record has no events list"
-        return [event for event in events if isinstance(event, dict)], None
+        if not all(isinstance(event, dict) for event in events):
+            return [], "DNS event record contains a non-object event"
+        return events, None
     except (OSError, json.JSONDecodeError) as error:
         return [], str(error)
 
@@ -744,6 +999,14 @@ def write_report(path: Path, report: Mapping[str, object]) -> None:
     temporary.replace(path)
 
 
+def record_run_error(report: dict[str, object], error: RunnerError) -> None:
+    """A retention failure invalidates a completed observation before publication."""
+
+    report["passed"] = False
+    report["result"] = "fail"
+    report["error"] = str(error)
+
+
 def publish_complete_report(report: Mapping[str, object], report_path: Path, destination: Path) -> Path | None:
     """Leave an incomplete twelve-arm run private to its disposable state root."""
 
@@ -752,12 +1015,128 @@ def publish_complete_report(report: Mapping[str, object], report_path: Path, des
     return publish_report(report_path, destination)
 
 
+def retain_physical_receipt(
+    state: Path,
+    report: Mapping[str, object],
+    arms: Mapping[str, Mapping[str, Path]],
+    compiler: Path,
+    sources_before: Mapping[str, object],
+    tools_before: Mapping[str, object],
+    products_before: Mapping[str, object],
+    raw_runs: Mapping[str, tuple[Sequence[str], tuple[int | str, bytes, bytes], Path]],
+) -> dict[str, object]:
+    """Seal the producer's actual files before the public summary is written.
+
+    The normal report remains useful for diagnosis, while this receipt gives a
+    read-only reader raw bytes and physical identities to reconstruct the
+    observation.  It is intentionally written even when an execution result
+    is rejected; only publication remains pass-only.
+    """
+
+    translation = report.get("translation")
+    reference = report.get("reference")
+    candidates = report.get("candidates")
+    execution = report.get("execution")
+    if not all(isinstance(value, Mapping) for value in (translation, reference, candidates, execution)):
+        raise RunnerError("cannot retain an incomplete resolver-network observation")
+    headers = translation.get("headers")
+    object_record = translation.get("object")
+    if not isinstance(headers, Mapping) or not isinstance(object_record, Mapping):
+        raise RunnerError("cannot retain incomplete resolver translation records")
+    resource = headers.get("resource")
+    closure = headers.get("closure")
+    if (not isinstance(resource, Mapping) or not isinstance(resource.get("query"), Mapping) or
+            not isinstance(closure, Mapping) or set(closure) != {"musl_include", "resource", "headers"} or
+            not isinstance(closure.get("headers"), list)):
+        raise RunnerError("cannot retain incomplete resolver header closure")
+    command_records: dict[str, Mapping[str, object]] = {
+        "compiler-resource": resource["query"],
+        "header-trace": headers.get("record"),
+        "compile": object_record.get("compile"),
+        "reference-link": reference.get("link"),
+    }
+    for arm, modes in candidates.items():
+        if not isinstance(arm, str) or not isinstance(modes, Mapping):
+            raise RunnerError("cannot retain malformed resolver candidate records")
+        for mode, item in modes.items():
+            if not isinstance(mode, str) or not isinstance(item, Mapping):
+                raise RunnerError("cannot retain malformed resolver candidate link")
+            link = item.get("link")
+            if not isinstance(link, Mapping):
+                raise RunnerError("cannot retain missing resolver candidate link")
+            command_records[f"{arm}-{mode}-link"] = link
+    commands = {
+        label: retain_command_record(state, label, value)
+        for label, value in command_records.items()
+        if isinstance(value, Mapping)
+    }
+    if set(commands) != set(command_records):
+        raise RunnerError("cannot retain malformed resolver command record")
+    header_receipt = {
+        "closure": retained_artifact(state / "receipt" / "header-closure.json", canonical_json(closure)),
+    }
+
+    executions = {
+        label: retain_execution_record(state, label, argv, raw, root)
+        for label, (argv, raw, root) in raw_runs.items()
+    }
+    expected_execution_labels = {"reference", *(str(name) for name in execution.get("candidates", {}))}
+    if set(executions) != expected_execution_labels:
+        raise RunnerError("cannot retain an incomplete resolver execution matrix")
+
+    dns = execution.get("dns_server")
+    if not isinstance(dns, Mapping):
+        raise RunnerError("cannot retain missing resolver DNS evidence")
+    events = state / "dns-events.json"
+    ready = state / "receipt" / "dns-ready.json"
+    dns_receipt = {
+        "ready": receipt_artifact(ready),
+        "events": receipt_artifact(events),
+    }
+    if not ready.is_file() or not events.is_file():
+        raise RunnerError("cannot retain missing resolver DNS artifacts")
+
+    sources_after = source_receipt()
+    tools_after = tool_receipt(compiler, arms)
+    products_after = product_receipt(arms)
+    workload = state / "workload.o"
+    reference_binary = state / "reference"
+    result = {
+        "schema": PHYSICAL_RECEIPT_SCHEMA,
+        "component": "resolver-network",
+        "source_mount": str(ROOT),
+        "scope": COMPONENT_SCOPE,
+        "execution_mode": "two-arms-twelve-candidate-modes",
+        "image": {
+            "id": PINNED_IMAGE,
+            "manifest": receipt_artifact(physical_regular(IMAGE_MANIFEST, "pinned core image manifest")),
+        },
+        "sources": {"before": dict(sources_before), "after": sources_after},
+        "tools": {"before": dict(tools_before), "after": tools_after},
+        "products": {"before": dict(products_before), "after": products_after},
+        "workload": receipt_artifact(workload),
+        "links": link_receipt(reference_binary, candidates),
+        "commands": commands,
+        "headers": header_receipt,
+        "executions": executions,
+        "dns": dns_receipt,
+        "family_completion": False,
+        "promotion_ready": False,
+        "public_support": False,
+    }
+    result["execution_root"] = {
+        "path": str(physical_directory(state, "resolver execution root")),
+        **receipt_tree_identity(state, excluded=frozenset({"report.json"})),
+    }
+    return result
+
+
 def run(args: argparse.Namespace) -> tuple[dict[str, object], Path, Path | None]:
     require_native_loopback_container()
     work_parent = private_work_root(args.work_root)
     state = Path(tempfile.mkdtemp(prefix="run-", dir=work_parent))
     report_path = state / "report.json"
-    report: dict[str, object] = {"schema_version": 1, "runner": "crabc-resolver-network-native-x86", "result": "fail", "passed": False, "state_root": str(state), "published_report": str(args.report), "contract": {"network_namespace": "Docker --network none: loopback is the only observed interface and no default route is admitted", "conventional_files": "each execution chroot has only runner-written etc/hosts and etc/resolv.conf; the host/container /etc is never written", "source_object": "one workload.c object translated with pinned musl 1.2.6 headers and linked unchanged into every reference/candidate artifact", "product_arms": ["installed", "extracted"], "candidate_modes_per_arm": ["static-et-exec", "static-pie", "dynamic-pie ordinary", "dynamic-pie direct-entry", "dynamic-non-pie ordinary", "dynamic-non-pie direct-entry"], "candidate_execution_count": 12, "comparison": "raw exit status, stdout, and stderr equality; no normalization"}}
+    report: dict[str, object] = {"schema_version": 2, "runner": "crabc-resolver-network-native-x86", "result": "fail", "passed": False, "state_root": str(state), "published_report": str(args.report), "contract": {"network_namespace": "Docker --network none: loopback is the only observed interface and no default route is admitted", "conventional_files": "each execution chroot has only runner-written etc/hosts and etc/resolv.conf; the host/container /etc is never written", "source_object": "one workload.c object translated with pinned musl 1.2.6 headers and linked unchanged into every reference/candidate artifact", "product_arms": ["installed", "extracted"], "candidate_modes_per_arm": ["static-et-exec", "static-pie", "dynamic-pie ordinary", "dynamic-pie direct-entry", "dynamic-non-pie ordinary", "dynamic-non-pie direct-entry"], "candidate_execution_count": 12, "comparison": "raw exit status, stdout, and stderr equality; no normalization", "physical_receipt": "raw execution bytes, physical inputs, link products, manifests and DNS event document are retained below state_root"}}
     try:
         compiler = physical_regular(MUSL_COMPILER, "pinned musl compiler", executable=True)
         physical_directory(MUSL_ROOT, "pinned musl root")
@@ -781,9 +1160,22 @@ def run(args: argparse.Namespace) -> tuple[dict[str, object], Path, Path | None]
             arms["extracted"]["static"], arms["extracted"]["dynamic"],
             *manifests["installed"], *manifests["extracted"],
         )
-        resource = compiler_resource_directory(compiler, args.timeout)
+        sources_before = source_receipt()
+        tools_before = tool_receipt(compiler, arms)
+        products_before = product_receipt(arms)
+        resource, resource_query = compiler_resource_directory(compiler, args.timeout)
         object_file = state / "workload.o"
-        report["translation"] = {"compiler": artifact_record(compiler), "musl_root": str(MUSL_ROOT), "musl_loader": musl_loader, "source": artifact_record(SOURCE), "headers": header_trace(compiler, resource, state / "headers.trace", args.timeout), "object": compile_object(compiler, resource, object_file, args.timeout)}
+        report["translation"] = {
+            "compiler": artifact_record(compiler),
+            "musl_root": str(MUSL_ROOT),
+            "musl_loader": musl_loader,
+            "source": artifact_record(SOURCE),
+            "headers": {
+                "resource": {"query": resource_query, "directory": str(resource)},
+                **header_trace(compiler, resource, state / "headers.trace", args.timeout),
+            },
+            "object": compile_object(compiler, resource, object_file, args.timeout),
+        }
         reference_file = state / "reference"
         report["reference"] = link_reference(compiler, object_file, reference_file, args.timeout)
         artifacts = {
@@ -802,17 +1194,29 @@ def run(args: argparse.Namespace) -> tuple[dict[str, object], Path, Path | None]
             layouts[f"{arm}-dynamic-non-pie"] = dynamic_chroot(Path(str(arm_artifacts["dynamic-non-pie"]["path"])), roots["dynamic"], chroots / f"{arm}-dynamic-non-pie")
         report["chroots"] = layouts
         events_path = state / "dns-events.json"
-        server, ready = start_server(events_path)
+        ready_path = state / "receipt" / "dns-ready.json"
+        server, ready = start_server(events_path, ready_path)
         try:
-            reference_outcome = outcome(*run_chroot_raw(chroots / "reference", ["/workload"], args.timeout))
+            reference_argv = ["/workload"]
+            reference_raw = run_chroot_raw(chroots / "reference", reference_argv, args.timeout)
+            reference_outcome = outcome(*reference_raw)
             runs: dict[str, dict[str, object]] = {}
+            raw_runs: dict[str, tuple[Sequence[str], tuple[int | str, bytes, bytes], Path]] = {
+                "reference": (reference_argv, reference_raw, chroots / "reference"),
+            }
             for arm in arms:
-                runs[f"{arm}-static-et-exec"] = outcome(*run_chroot_raw(chroots / f"{arm}-static-et-exec", ["/workload"], args.timeout))
-                runs[f"{arm}-static-pie"] = outcome(*run_chroot_raw(chroots / f"{arm}-static-pie", ["/workload"], args.timeout))
-                runs[f"{arm}-dynamic-pie-ordinary"] = outcome(*run_chroot_raw(chroots / f"{arm}-dynamic-pie", ["/workload"], args.timeout))
-                runs[f"{arm}-dynamic-pie-direct-entry"] = outcome(*run_chroot_raw(chroots / f"{arm}-dynamic-pie", [DYNAMIC_INTERPRETER, "/workload"], args.timeout))
-                runs[f"{arm}-dynamic-non-pie-ordinary"] = outcome(*run_chroot_raw(chroots / f"{arm}-dynamic-non-pie", ["/workload"], args.timeout))
-                runs[f"{arm}-dynamic-non-pie-direct-entry"] = outcome(*run_chroot_raw(chroots / f"{arm}-dynamic-non-pie", [DYNAMIC_INTERPRETER, "/workload"], args.timeout))
+                for label, chroot_name, invocation in (
+                    ("static-et-exec", f"{arm}-static-et-exec", ["/workload"]),
+                    ("static-pie", f"{arm}-static-pie", ["/workload"]),
+                    ("dynamic-pie-ordinary", f"{arm}-dynamic-pie", ["/workload"]),
+                    ("dynamic-pie-direct-entry", f"{arm}-dynamic-pie", [DYNAMIC_INTERPRETER, "/workload"]),
+                    ("dynamic-non-pie-ordinary", f"{arm}-dynamic-non-pie", ["/workload"]),
+                    ("dynamic-non-pie-direct-entry", f"{arm}-dynamic-non-pie", [DYNAMIC_INTERPRETER, "/workload"]),
+                ):
+                    name = f"{arm}-{label}"
+                    raw = run_chroot_raw(chroots / chroot_name, invocation, args.timeout)
+                    runs[name] = outcome(*raw)
+                    raw_runs[name] = (invocation, raw, chroots / chroot_name)
         finally:
             stop_server(server)
         events, event_error = load_events(events_path)
@@ -827,8 +1231,11 @@ def run(args: argparse.Namespace) -> tuple[dict[str, object], Path, Path | None]
         report["execution"] = {"reference": reference_outcome, "candidates": runs, "comparisons": comparisons, "reference_expected": reference_expected, "candidate_expected": candidate_expected, "expected_stdout": stream_record(EXPECTED_STDOUT.encode("utf-8")), "dns_server": {"ready": ready, "events": events, "event_contract": dns}}
         report["passed"] = passed
         report["result"] = "pass" if passed else "fail"
+        report["receipt"] = retain_physical_receipt(
+            state, report, arms, compiler, sources_before, tools_before, products_before, raw_runs,
+        )
     except RunnerError as error:
-        report["error"] = str(error)
+        record_run_error(report, error)
     write_report(report_path, report)
     published = publish_complete_report(report, report_path, args.report)
     return report, report_path, published

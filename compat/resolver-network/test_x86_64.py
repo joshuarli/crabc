@@ -60,6 +60,19 @@ class NativeResolverNetworkRunnerTests(unittest.TestCase):
             with self.assertRaisesRegex(runner.RunnerError, "prepared extracted static sysroot"):
                 runner.prepared_product_arms(arguments)
 
+    def test_product_arms_require_four_distinct_physical_roots(self) -> None:
+        with tempfile.TemporaryDirectory(dir=runner.ROOT / ".work") as directory:
+            root = Path(directory)
+            for name in ("static", "dynamic", "extracted-dynamic"):
+                (root / name).mkdir()
+            arguments = runner.parse_args([
+                "--static-sysroot", str(root / "static"), "--dynamic-sysroot", str(root / "dynamic"),
+                "--extracted-static-sysroot", str(root / "static"),
+                "--extracted-dynamic-sysroot", str(root / "extracted-dynamic"),
+            ])
+            with self.assertRaisesRegex(runner.RunnerError, "four distinct physical roots"):
+                runner.prepared_product_arms(arguments)
+
     def test_chroot_fixture_writes_only_its_private_conventional_files(self) -> None:
         with tempfile.TemporaryDirectory(dir=runner.ROOT / ".work") as directory:
             root = Path(directory) / "root"
@@ -101,6 +114,44 @@ class NativeResolverNetworkRunnerTests(unittest.TestCase):
         with mock.patch.object(runner, "publish_report") as publish:
             self.assertIsNone(runner.publish_complete_report({"passed": False}, Path("private.json"), Path("latest.json")))
         publish.assert_not_called()
+
+    def test_receipt_retention_error_clears_a_previously_passing_summary_before_publication(self) -> None:
+        report = {"passed": True, "result": "pass"}
+        runner.record_run_error(report, runner.RunnerError("cannot retain physical receipt"))
+        self.assertEqual(report, {
+            "passed": False,
+            "result": "fail",
+            "error": "cannot retain physical receipt",
+        })
+        with mock.patch.object(runner, "publish_report") as publish:
+            self.assertIsNone(runner.publish_complete_report(report, Path("private.json"), Path("latest.json")))
+        publish.assert_not_called()
+
+    def test_rejected_execution_receipt_preserves_non_utf8_raw_bytes(self) -> None:
+        with tempfile.TemporaryDirectory(dir=runner.ROOT / ".work") as directory:
+            state = Path(directory) / "state"
+            execution_root = Path(directory) / "execution-root"
+            state.mkdir()
+            execution_root.mkdir()
+            record = runner.retain_execution_record(
+                state,
+                "rejected-candidate",
+                ["/workload"],
+                (17, b"\xff raw stdout\n", b"\x80 raw stderr\n"),
+                execution_root,
+            )
+            self.assertEqual(
+                (state / "receipt/executions/rejected-candidate.stdout").read_bytes(),
+                b"\xff raw stdout\n",
+            )
+            self.assertEqual(
+                (state / "receipt/executions/rejected-candidate.stderr").read_bytes(),
+                b"\x80 raw stderr\n",
+            )
+            self.assertEqual(
+                (state / "receipt/executions/rejected-candidate.status.json").read_bytes(), b"17\n",
+            )
+            self.assertEqual(record["root"]["path"], str(execution_root))
 
     def test_static_pie_elf_audit_accepts_the_et_dyn_header(self) -> None:
         with tempfile.TemporaryDirectory(dir=runner.ROOT / ".work") as directory:

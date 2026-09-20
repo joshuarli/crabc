@@ -21,7 +21,8 @@ network-isolated environment; see [Isolated resolver configuration](#isolated-re
 | [`prepare_x86_64.py`](prepare_x86_64.py) | Materializes the exact static and dynamic installed x86 products in the ordinary pinned container before network isolation. |
 | [`run_x86_64.py`](run_x86_64.py) | Native x86 differential: compiles one pinned-musl-header object, links the pinned-musl static reference plus four owned product artifacts, and runs the reference and six owned entry modes in private chroots. |
 | [`test_x86_64.py`](test_x86_64.py) | Stdlib contract tests for the native runner's product, ELF, report, fixture, and DNS-event boundaries. |
-| `dns-events.json` (temporary) | Server-side query evidence. The runner embeds it in the report and removes the temporary directory after the run. |
+| [`../x86_64/resolver_network_component_receipt.py`](../x86_64/resolver_network_component_receipt.py) | Read-only native x86 physical-receipt reader. It reconstructs the retained two-arm execution and remains a non-promoting `libc.resolver` component check. |
+| `dns-events.json` | Server-side query evidence. The legacy `run.py` embeds it then removes its temporary directory; native x86 v2 retains the raw document below its execution `state_root`. |
 | `compat/reports/resolver-network.json` (default) | Atomic report destination; override with `--report` or `CRABC_RESOLVER_NETWORK_REPORT`. |
 
 `run.py` is intentionally native-AArch64-only, matching the repository's
@@ -73,6 +74,44 @@ Run the two phases through the pinned dispatcher:
 ```sh
 ./scripts/dev-x86_64.sh owned-resolver-network
 ```
+
+### Native x86 physical component receipt
+
+The native runner publishes `schema_version: 2` only after it has retained a
+physical receipt below that run's `state_root`. The receipt keeps the exact
+source and tool identities before and after collection; each supplied static
+and dynamic product's manifest and complete tree identity; the one workload
+object; reference and all eight product link outputs and link sidecars; every
+command envelope; and raw argv, status, stdout, and stderr files for all
+thirteen executions. It also retains the DNS readiness document and the raw
+versioned DNS event document. The public JSON must byte-match the producer's
+`state_root/report.json`.
+
+Replay it from the pinned core image with the checkout mounted read-only at
+`/workspace` and each of the four supplied products mounted at the physical
+paths named by the report:
+
+```sh
+python3 -B compat/x86_64/resolver_network_component_receipt.py validate-report \
+  --root /workspace \
+  --report /workspace/compat/reports/resolver-network/x86_64/latest.json
+```
+
+The reader refuses a symlinked input or path component, a missing retained
+artifact, altered raw streams, altered source/tool/product bytes, manifest or
+link substitution, an incomplete execution matrix, and DNS-event summaries
+that do not recompute from the retained event document. It derives the fixed
+exit-zero/stdout/stderr requirement and all candidate comparisons from the raw
+files; summary booleans cannot establish this receipt.
+
+Older `schema_version: 1` resolver reports remain useful measurements, but
+they do not contain this physical receipt and the reader rejects them for
+component admission. A fresh collector may inspect specifically supplied
+products from a different source revision: the collector-source seals and the
+four product manifest/tree seals remain separate. Such a mixed supplied-product
+replay proves only those exact bytes and this bounded component. It does not
+transfer qualification to either revision, complete `compat.resolver-network`,
+or make a promotion or public-support claim.
 
 The separate [owned classic netdb slice](../x86_64/owned-classic-netdb.md)
 reuses this DNS fixture for installed host/service APIs and the owned modern
@@ -186,7 +225,10 @@ resolver run. This allows the current resolver implementation's malformed-
 packet/TC behavior to be observed without changing libc as part of the
 harness.
 
-## Report contract
+## Legacy AArch64 report contract
+
+This contract belongs to the paused native-AArch64 `run.py` path. It does not
+describe the native x86 `schema_version: 2` physical component receipt above.
 
 The JSON report has `schema_version: 1` and includes:
 
