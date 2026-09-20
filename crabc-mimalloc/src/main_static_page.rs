@@ -2378,6 +2378,7 @@ mod tests {
         ARENA_ALIGNMENT, ARENA_MIN_SIZE, VmOption, VmOptionEnvironment, VmOptions,
     };
     use crate::main_theap::{MainStaticAttachmentStorage, MainStaticTheapAttachment};
+    use crate::meta::MetaAllocator;
     use crate::os::{MapAccess, Mapping, MemoryConfig, PageSize};
     use crate::process_init::ProcessMainInitializationStorage;
     use crate::process_arena::{ProcessSharedArenaLease, ProcessSharedArenaStorage};
@@ -2417,13 +2418,13 @@ mod tests {
         (page_map, arena)
     }
 
-    fn process_backing_with_first_arena_options(
+    fn process_main_with_first_arena_options(
         config: MemoryConfig,
         subprocess: &'static MainSubprocess,
         arena_reserve_bytes: usize,
         arena_eager_commit: i64,
         allow_large_os_pages: i64,
-    ) -> crate::process_init::ProcessMainBackingBinding {
+    ) -> crate::process_init::ProcessMainThread {
         let mut options = VmOptions::uninitialized();
         options.initialize_all(|_| VmOptionEnvironment::Absent);
         options.set(
@@ -2434,18 +2435,22 @@ mod tests {
         options.set(VmOption::ArenaEagerCommit, arena_eager_commit);
         options.set(VmOption::AllowLargeOsPages, allow_large_os_pages);
         let process = ProcessMainInitializationStorage::test_static_owner();
+        let main_static = MainStaticAttachmentStorage::test_static_owner();
+        let metadata = MetaAllocator::test_static_owner();
         let page_map = ProcessPageMapStorage::test_static_owner();
-        // SAFETY: this isolated fixture owns one permanent coordinator, source
-        // option image, subprocess, and PageMap storage for the thread.
+        // SAFETY: this isolated fixture owns the full source-ordered process
+        // startup tuple through its permanent ticket-zero page session.
         unsafe {
-            process.test_prepare_vm_process_backing_binding(
+            process.initialize_with_test_components_and_vm_options(
                 config,
                 options,
+                main_static,
                 subprocess,
+                metadata,
                 page_map,
             )
         }
-        .expect("the fixture publishes one canonical policy/PageMap binding")
+        .expect("the fixture publishes one source-ready policy/PageMap binding")
     }
 
     /// Opens the real initial persistent owner through its first ordinary
@@ -3028,20 +3033,20 @@ mod tests {
     fn process_bound_runtime_first_arena_uses_its_live_policy_and_random_image() {
         thread::spawn(|| {
             let config = memory_config();
-            let attachment_storage = MainStaticAttachmentStorage::test_static_owner();
             let subprocess = MainSubprocess::test_static_owner();
-            let binding = process_backing_with_first_arena_options(
+            let owner = process_main_with_first_arena_options(
                 config,
                 subprocess,
                 128 * 1024 * 1024,
                 2,
                 1,
             );
+            let binding = owner
+                .ready()
+                .expect("the source coordinator publishes READY before ticket-zero page ownership")
+                .process_backing()
+                .expect("the ready coordinator exposes its canonical policy/PageMap binding");
             let arena_storage = ProcessSharedArenaStorage::test_static_owner();
-            let mut owner = unsafe {
-                MainStaticTheapAttachment::begin_with_test_storage(attachment_storage, subprocess)
-            }
-            .expect("ticket zero attaches before its policy-bound first page miss");
             let session = owner
                 .begin_process_lifetime_page_session()
                 .expect("the empty ticket-zero image becomes its permanent page owner");
