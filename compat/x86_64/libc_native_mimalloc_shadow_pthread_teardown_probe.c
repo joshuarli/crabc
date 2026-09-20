@@ -9,6 +9,9 @@
  * finished. A distinct normal-return round makes no public allocation from
  * its user start routine: its TSD destructor observes a rejected first
  * request and then makes the worker's first successful public allocation.
+ * A separate ordinary worker retains a live small client across a rejected
+ * `realloc` failure, frees that original client, and then reaches the
+ * same post-user-TSD allocation and native teardown boundary.
  * A final worker also reaches ordinary `atexit` only after the
  * bootstrapped thread called `pthread_exit`; before logical process done its
  * completed owner is reinitialized, while after logical process done the
@@ -38,6 +41,7 @@ enum {
     CRABC_NORMAL_MARKER = 0x13579bdfu,
     CRABC_EXPLICIT_MARKER = 0x2468ace0u,
     CRABC_TSD_FIRST_MARKER = 0x10293847u,
+    CRABC_REALLOC_FAILURE_MARKER = 0x31415926u,
     CRABC_PROCESS_DONE_CLIENT_COUNT = 2u,
 };
 
@@ -69,6 +73,9 @@ struct teardown_round {
     volatile int first_public_allocation_from_tsd;
     volatile int user_start_returned;
     volatile int rejected_first_request;
+    /* The ordinary realloc-failure round proves that a rejected replacement
+     * leaves its exact current-worker client usable before user TSD teardown. */
+    volatile int realloc_failure_preserved;
     uintptr_t marker;
 };
 
@@ -272,6 +279,39 @@ static void *first_public_allocation_in_tsd_worker(void *opaque)
         return 0;
     }
     __atomic_store_n(&round->user_start_returned, 1, __ATOMIC_RELEASE);
+    return (void *)round->marker;
+}
+
+/* Pinned `src/alloc.c:361-404` only consumes `p` after a successful
+ * replacement. Keep this a current-worker ordinary non-direct-small client:
+ * it does not probe foreign/post-exit reallocation or an implementation-
+ * specific OOM path. */
+static void *realloc_failure_preserving_worker(void *opaque)
+{
+    struct teardown_round *round = opaque;
+    volatile unsigned char *allocation = malloc(1025);
+
+    if (allocation == 0) {
+        record_failure(round, 5);
+        return 0;
+    }
+    allocation[0] = 0x4d;
+    allocation[1024] = 0xb2;
+    errno = 0;
+    if (realloc((void *)allocation, SIZE_MAX) != 0 || errno != ENOMEM) {
+        record_failure(round, 6);
+        return 0;
+    }
+    if (allocation[0] != 0x4d || allocation[1024] != 0xb2) {
+        record_failure(round, 7);
+        return 0;
+    }
+    free((void *)allocation);
+    __atomic_store_n(&round->realloc_failure_preserved, 1, __ATOMIC_RELEASE);
+    if (install_worker_teardown_tsd(round) != 0) {
+        record_failure(round, 8);
+        return 0;
+    }
     return (void *)round->marker;
 }
 
@@ -845,6 +885,34 @@ int main(void)
     if (__crabc_x86_native_mimalloc_active_later_thread_count_test_audit() !=
             baseline_later_thread_count)
         return 32;
+#endif
+    {
+        pthread_t thread;
+        void *worker_result = 0;
+        struct teardown_round round = {
+            .ready = 0,
+            .tsd_finished = 0,
+            .failure = 0,
+            .realloc_failure_preserved = 0,
+            .marker = CRABC_REALLOC_FAILURE_MARKER,
+        };
+
+        if (pthread_create(&thread, 0, realloc_failure_preserving_worker,
+                &round) != 0)
+            return 33;
+        if (pthread_join(thread, &worker_result) != 0)
+            return 34;
+        if (worker_result != (void *)CRABC_REALLOC_FAILURE_MARKER
+                || __atomic_load_n(&round.failure, __ATOMIC_ACQUIRE) != 0
+                || __atomic_load_n(&round.realloc_failure_preserved,
+                    __ATOMIC_ACQUIRE) != 1
+                || __atomic_load_n(&round.tsd_finished, __ATOMIC_ACQUIRE) != 1)
+            return 35;
+    }
+#ifdef CRABC_NATIVE_MIMALLOC_SHADOW_TEST_AUDIT
+    if (__crabc_x86_native_mimalloc_active_later_thread_count_test_audit() !=
+            baseline_later_thread_count)
+        return 36;
 #endif
     result = run_deferred_cancellation_round();
     if (result != 0)

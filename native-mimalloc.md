@@ -2681,7 +2681,17 @@ that pthread attachment made no unrelated internal allocations, or close
 upstream `mi_tld_create`/`_mi_thread_init_with_heap` source-order and failure
 paths. Its test-only audit checks that the existing `active_later_thread_count`
 begins at zero after the rejected pre-start child and returns to zero after
-every join. Its strong application `malloc` replacement also proves an
+every join. A separate ordinary worker makes one current 1025-byte
+non-direct-small native client, rejects `realloc(client, SIZE_MAX)` with
+`ENOMEM`, checks both sentinel bytes in that original client, frees it, and
+then reaches the same user-TSD allocation/teardown boundary. This applies the
+pinned `src/alloc.c:361-404` replacement rule--consume the old client only
+after a successful replacement--to the selected Rust native reallocation
+boundary.
+The paired musl run is the C/POSIX reference; it does not claim generic OOM
+behavior, a successful replacement, foreign or post-owner-exit reallocation,
+or full source reallocation parity. Its strong
+application `malloc` replacement also proves an
 ordinary private client, `pthread_atfork`, allocates through libc's direct
 native internal helper. The candidate is an explicitly selected
 `native-mimalloc-shadow` static build, not the project's default public
