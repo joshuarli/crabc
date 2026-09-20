@@ -104,12 +104,49 @@ now forwards an optional supplied static product without preparing replacement
 products. Eleven focused reader/dispatch tests pass. This remains bounded
 `libc.resolver` evidence, with no resolver-family or Rust capability credit.
 
+The clean `e44d771b` checkpoint now has a 71-case dynamic receipt covering all
+213 executions across two independent builds and extraction, with identical
+manifests and archives. Its worktree is
+`.work/worktrees/runtime_component_batch_current_e44d771b/`; paths in this
+paragraph are relative to that checkout. The non-promoting receipt is
+`.work/x86_64/tmp/materialized-dynamic.wGWmPa/qualification.json`.
+The first attempt stopped at an absent pinned APK cache after 70 installed
+cases; the original failure and raw log remain under
+`.work/x86_64/dynamic-qualification-e44d771b/`. After provisioning those inputs,
+the missing case and both remaining complete product suites passed, followed
+by the unchanged qualification validator. Parent review authenticates all 213
+case receipts and logs. The full ten-suite OS-test replay also completed at
+`.work/x86_64/tmp/owned-os-test.xs2k9kmn/os-test.json`: eight suites match, with
+18 remaining differences (six atomic addressability, four credential-profile,
+and eight BSD-random observations), and no adapter errors. `aio_suspend` now
+records `exit: 0` for both musl and crabc. This standalone measurement does not
+close the ordered native aggregate or waive any remaining difference.
+
+At that checkpoint, all 47 component paths have passing evidence, with six
+explicit successor steps after a historical header receipt was rejected.
+Fresh header collection and replay precede the successful declaration retry;
+the failed batch is preserved. Selection reconstruction passes at
+`.work/x86_64/native-abi-selection/header-refresh-e44d771b/report.json`, retaining
+2,531 identities, 30,684 occurrences, and 293 unresolved requirements.
+Nine text/math/locale/stdio component groups also pass all three product pairs;
+their 27 report identities and pending family inputs are recorded under
+`.work/x86_64/text-family-inputs-e44d771b/`. POSIX/pthread prerequisites and real
+family admission remain required; individual component runs do not close them.
+
+The checkpoint exposed a FILE-engine dispatcher argument mismatch before its
+workloads ran. `da149adf` fixes the public command's translation to the runner's
+two positional paths. The corrected regression fails before the fix; all 18
+reader/dispatcher tests and a committed native public-command replay pass.
+The frozen checkpoint remains unchanged and uses the runner's documented
+positional interface for its three-pair component evidence. Qualification is
+not transferred to the later dispatcher revision.
+
 The combined goal remains incomplete. Main through `0158c312` includes the
 locale source/product identity repairs, executable `libc.so` package mode,
 host-readable wordexp expected-input capture, and preservation of compiler
 product modes in OS-test. These fixes do not transfer qualification between
-source revisions. The latest complete product checkpoint below is frozen at
-`26dfb153`; subsequent changes still require fresh ordered qualification.
+source revisions. The earlier product checkpoint below remains frozen at
+`26dfb153`; the newer checkpoint above still requires full ordered qualification.
 
 Paths in this paragraph are relative to
 `.work/worktrees/runtime_component_batch_current_26dfb153/`. The 70-case
