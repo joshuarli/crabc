@@ -136,7 +136,7 @@ static void duplication(void) {
     printf("duplicate errno=%d checksum=%u\n",error,checksum(copy,sizeof original)); free(copy);
     copy=wcsdup(L"");require(copy && copy[0]==0);free(copy);puts("duplicate-empty-ok");
 }
-int main(void) {
+int crabc_x86_64_owned_wide_conversion_probe(void) {
     const char *locales[]={"C","POSIX","C.UTF-8"};
     const char *strings[]={"", "abc", "a\xc2\xa2\xe2\x82\xac\xf0\x9f\x99\x82!", "a\xff!", "\xe2\x82", "\xed\xa0\x80", "\xf4\x90\x80\x80"};
     const wchar_t *wide[]={L"",L"abc",L"a\u00a2\u20ac\U0001f642!",(const wchar_t[]){'a',0xd800,0},(const wchar_t[]){-1,0},(const wchar_t[]){0xdf80,0xdfff,0}};
@@ -163,3 +163,9 @@ int main(void) {
     require(wcsnrtombs(&byte,&null_wide,1,1,&state)==0 && null_wide==NULL);
     guard_pages();independent_state();thread_locale();duplication();puts("wide-conversion-ok");return 0;
 }
+
+#ifndef CRABC_OWNED_WIDE_CONVERSION_COMPONENT_FREESTANDING
+int main(void) {
+    return crabc_x86_64_owned_wide_conversion_probe();
+}
+#endif

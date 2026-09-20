@@ -2056,7 +2056,7 @@ unsafe fn join_selected_worker_inner(
             'owned-crypt-runtime|owned-atomic-addressable-profile',
             'owned-system-cancellation',
             'owned-rand',
-            'owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-fmtmsg|owned-utmpx|owned-process-trio|owned-underscore-fork|owned-aio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-account-files|owned-locale|owned-wordexp|owned-stdio|owned-numeric-calendar|owned-math-fenv-all-entry|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition',
+            'owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-fmtmsg|owned-utmpx|owned-process-trio|owned-underscore-fork|owned-aio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-account-files|owned-locale|owned-wordexp|owned-stdio|owned-numeric-calendar|owned-math-fenv-all-entry|owned-text-locale-numeric-component|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition',
             'owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern|owned-wcsftime|owned-regex|owned-strfmon',
             'owned-pthread-spin',
             'owned-syslog',
