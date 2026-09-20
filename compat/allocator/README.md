@@ -2862,14 +2862,17 @@ immediately unmapped. Its result is recorded rather than inferred from the
 container's seccomp mode; a nonzero result remains a pending external
 permission/resource gate.
 
-The generated report is
-`allocator/x86_64/huge-numa-hardware-qualification.json`. A successful report
-records the committed source inputs, verified pinned source files and anchors,
+Each invocation writes one immutable full receipt beneath
+`allocator/x86_64/huge-numa-hardware-qualification-runs/`; the stable
+`allocator/x86_64/huge-numa-hardware-qualification.json` is only an
+atomic latest-receipt pointer with its hash. The collector refuses to reuse a
+run directory or retained executable path. A successful full receipt records
+the committed source inputs, verified pinned source files and anchors,
 container image ID, C/Rust toolchain commands, and hashes of the retained C
 and Rust executables that were actually run. A missing topology, pool, cgroup
 headroom, capability, observer, or raw `mbind` gate returns exit 3 with
 `pending_external_resources`; a build, parser, or harness problem is a
-separate failed report. This bounded job proves neither M2 completion nor
+separate failed receipt. This bounded job proves neither M2 completion nor
 general allocator/runtime integration, and it supplies no AArch64 evidence.
 
 Provision one native x86-64 qualification runner whose container can see two

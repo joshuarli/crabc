@@ -29,6 +29,7 @@ import resource
 import shutil
 import sys
 from typing import Any, Mapping
+import uuid
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -41,8 +42,10 @@ SPEC.loader.exec_module(run)
 
 SCHEMA = "crabc-mimalloc-x86_64-huge-numa-hardware-qualification"
 FORMAT = 1
-REPORT = ROOT / "compat/reports/allocator/x86_64/huge-numa-hardware-qualification.json"
-PRODUCT_DIRECTORY = REPORT.parent / "huge-numa-hardware-products"
+REPORT_DIRECTORY = ROOT / "compat/reports/allocator/x86_64"
+LATEST_REPORT = REPORT_DIRECTORY / "huge-numa-hardware-qualification.json"
+RUN_DIRECTORY = REPORT_DIRECTORY / "huge-numa-hardware-qualification-runs"
+RUN_REPORT_NAME = "receipt.json"
 FIXTURE = ROOT / "compat/allocator/m2_huge_numa_qualification_x86_64.c"
 MBIND_PERMISSION_FIXTURE = ROOT / "compat/allocator/m2_huge_numa_permission_x86_64.c"
 RUST_TEST = "os::tests::hardware_huge_page_numa_qualification_workload"
@@ -570,13 +573,44 @@ def recorded_checked(
     return record
 
 
-def retain_executed_product(source: Path, name: str) -> dict[str, Any]:
+def reserve_run_directory(parent: Path, identifier: str) -> Path:
+    """Create one empty immutable receipt directory and never reuse a name."""
+
+    if not re.fullmatch(r"[a-z0-9-]+", identifier):
+        raise error(f"qualification run identifier is invalid: {identifier!r}")
+    parent.mkdir(parents=True, exist_ok=True)
+    candidate = parent / identifier
+    # Reject every preexisting path, including an empty directory.  Reusing an
+    # empty path is still a race with another collector; reusing a nonempty
+    # path could overwrite evidence or executable products.
+    if candidate.exists() or candidate.is_symlink():
+        raise error(f"qualification refuses to reuse existing run output: {candidate}")
+    try:
+        candidate.mkdir()
+    except FileExistsError as failure:
+        raise error(f"qualification run output was claimed concurrently: {candidate}") from failure
+    if any(candidate.iterdir()):
+        raise error(f"qualification run output is unexpectedly nonempty: {candidate}")
+    return candidate
+
+
+def reserve_run_output() -> dict[str, Path]:
+    directory = reserve_run_directory(RUN_DIRECTORY, f"run-{uuid.uuid4().hex}")
+    return {
+        "directory": directory,
+        "report": directory / RUN_REPORT_NAME,
+        "products": directory / "products",
+    }
+
+
+def retain_executed_product(source: Path, destination: Path) -> dict[str, Any]:
     """Copy an executable into generated evidence before executing that copy."""
 
     if not source.is_file():
         raise error(f"executed product is absent before retention: {source}")
-    PRODUCT_DIRECTORY.mkdir(parents=True, exist_ok=True)
-    destination = PRODUCT_DIRECTORY / name
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists() or destination.is_symlink():
+        raise error(f"qualification refuses to overwrite retained product: {destination}")
     shutil.copy2(source, destination)
     return run.artifact_record(destination)
 
@@ -626,7 +660,9 @@ def run_existing_workloads(progress: dict[str, Any]) -> list[dict[str, Any]]:
     return records
 
 
-def run_hardware_workload(preflight: Mapping[str, Any], source: Path, progress: dict[str, Any]) -> dict[str, Any]:
+def run_hardware_workload(
+    preflight: Mapping[str, Any], source: Path, progress: dict[str, Any], products: Path,
+) -> dict[str, Any]:
     nodes = list(preflight["selected_nodes"])
     compiler = run.require_tool("musl-gcc")
     hardware: dict[str, Any] = {"selected_nodes": nodes}
@@ -641,8 +677,8 @@ def run_hardware_workload(preflight: Mapping[str, Any], source: Path, progress: 
             "-I", str(source / "include"), "-I", str(source / "src"),
             *run.CONFIGURATION_PROFILES["release"], str(FIXTURE), "-pthread", "-o", str(binary),
         ], "pinned C huge-NUMA workload build")
-        c_product = PRODUCT_DIRECTORY / "huge-numa-c"
-        c["executed_product"] = retain_executed_product(binary, c_product.name)
+        c_product = products / "huge-numa-c"
+        c["executed_product"] = retain_executed_product(binary, c_product)
         header = recorded_checked(c, "elf_header", [run.require_tool("readelf"), "-h", str(c_product)],
                                   "C huge-NUMA ELF identity")
         c["elf"] = run.parse_elf_identity(header["stdout"], "x86_64")
@@ -663,8 +699,8 @@ def run_hardware_workload(preflight: Mapping[str, Any], source: Path, progress: 
             "-p", "crabc-mimalloc", "--lib", "--no-default-features", "--no-run", "--message-format=json",
         ], "Rust huge-NUMA test executable build", env=environment)
         rust_binary = cargo_test_executable(cargo_build["stdout"])
-        rust_product = PRODUCT_DIRECTORY / "huge-numa-rust-test"
-        rust["executed_product"] = retain_executed_product(rust_binary, rust_product.name)
+        rust_product = products / "huge-numa-rust-test"
+        rust["executed_product"] = retain_executed_product(rust_binary, rust_product)
         rust_header = recorded_checked(rust, "elf_header", [run.require_tool("readelf"), "-h", str(rust_product)],
                                        "Rust huge-NUMA ELF identity")
         rust["elf"] = run.parse_elf_identity(rust_header["stdout"], "x86_64")
@@ -687,7 +723,7 @@ def execution_identity() -> dict[str, str]:
     return {"allocator_evidence_image_id": image_id}
 
 
-def success_report(preflight: Mapping[str, Any], progress: dict[str, Any]) -> dict[str, Any]:
+def success_report(preflight: Mapping[str, Any], progress: dict[str, Any], output: Mapping[str, Path]) -> dict[str, Any]:
     before = source_state(require_clean=True)
     progress["source_before"] = before
     pin = run.load_pin()
@@ -703,7 +739,7 @@ def success_report(preflight: Mapping[str, Any], progress: dict[str, Any]) -> di
         recorded_checked(toolchains, "rustc", [run.require_tool("rustc"), "-Vv"], "Rust compiler identity")
         recorded_checked(toolchains, "cargo", [run.require_tool("cargo"), "-V"], "Cargo identity")
         existing = run_existing_workloads(progress)
-        hardware = run_hardware_workload(preflight, source, progress)
+        hardware = run_hardware_workload(preflight, source, progress, output["products"])
         pinned_sources = run.source_file_records(source, PINNED_C_SOURCES)
         anchors = [
             {"member": "src/arena.c", **extract_definition(source / "src/arena.c", "int mi_reserve_huge_os_pages_at(")},
@@ -732,6 +768,29 @@ def success_report(preflight: Mapping[str, Any], progress: dict[str, Any]) -> di
     }
 
 
+def publish_report(output: Mapping[str, Path], payload: Mapping[str, Any]) -> Path:
+    """Publish an immutable full receipt, then a stable pointer to it."""
+
+    receipt_path = output["report"]
+    receipt = dict(payload)
+    receipt["receipt"] = {
+        "run_directory": run.relative(output["directory"]),
+        "report_path": run.relative(receipt_path),
+        "products_directory": run.relative(output["products"]),
+    }
+    run.write_json(receipt_path, receipt)
+    receipt_path.chmod(0o644)
+    pointer = {
+        "schema": SCHEMA,
+        "format": FORMAT,
+        "status": receipt["status"],
+        "latest_receipt": run.artifact_record(receipt_path),
+    }
+    run.write_json(LATEST_REPORT, pointer)
+    LATEST_REPORT.chmod(0o644)
+    return receipt_path
+
+
 def pending_report(preflight: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "schema": SCHEMA,
@@ -748,37 +807,34 @@ def pending_report(preflight: Mapping[str, Any]) -> dict[str, Any]:
 
 def main() -> int:
     run.require_native_x86_64()
+    output = reserve_run_output()
     preflight = collect_preflight()
     run_mbind_permission_probe(preflight)
     if preflight["status"] == "failed":
-        run.write_json(REPORT, {
+        receipt_path = publish_report(output, {
             "schema": SCHEMA, "format": FORMAT, "status": "failed", "architecture": "x86_64",
             "execution": {**run.require_native_x86_64(), **execution_identity()}, "requirements": qualification_requirements(),
             "preflight": preflight,
         })
-        REPORT.chmod(0o644)
-        print(f"allocator huge-NUMA qualification: FAIL technical preflight ({REPORT})")
+        print(f"allocator huge-NUMA qualification: FAIL technical preflight ({receipt_path})")
         return 1
     if preflight["status"] != "ready":
-        run.write_json(REPORT, pending_report(preflight))
-        REPORT.chmod(0o644)
-        print(f"allocator huge-NUMA qualification: PENDING external resources ({REPORT})")
+        receipt_path = publish_report(output, pending_report(preflight))
+        print(f"allocator huge-NUMA qualification: PENDING external resources ({receipt_path})")
         return 3
     progress: dict[str, Any] = {}
     try:
-        report = success_report(preflight, progress)
+        report = success_report(preflight, progress, output)
     except (run.HarnessError, OSError, ValueError) as failure:
-        run.write_json(REPORT, {
+        receipt_path = publish_report(output, {
             "schema": SCHEMA, "format": FORMAT, "status": "failed", "architecture": "x86_64",
             "execution": {**run.require_native_x86_64(), **execution_identity()}, "requirements": qualification_requirements(),
             "preflight": preflight, "progress": progress, "error": str(failure),
         })
-        REPORT.chmod(0o644)
-        print(f"allocator huge-NUMA qualification: FAIL: {failure}")
+        print(f"allocator huge-NUMA qualification: FAIL: {failure} ({receipt_path})")
         return 1
-    run.write_json(REPORT, report)
-    REPORT.chmod(0o644)
-    print(f"allocator huge-NUMA qualification: PASS ({REPORT})")
+    receipt_path = publish_report(output, report)
+    print(f"allocator huge-NUMA qualification: PASS ({receipt_path})")
     return 0
 
 

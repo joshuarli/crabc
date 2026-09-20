@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -103,6 +105,35 @@ class HugeNumaQualificationTests(unittest.TestCase):
         self.assertEqual(qualification.cargo_test_executable(messages), Path("/work/mimalloc-test"))
         with self.assertRaises(qualification.run.HarnessError):
             qualification.cargo_test_executable('{"reason":"build-finished","success":true}')
+
+    def test_retained_run_directory_rejects_nonempty_reuse_and_keeps_a_stable_pointer(self) -> None:
+        scratch = ROOT / ".work/allocator-x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary_name:
+            temporary = Path(temporary_name)
+            runs = temporary / "runs"
+            first = qualification.reserve_run_directory(runs, "run-first")
+            (first / "receipt.json").write_text('{"preserved":true}\n', encoding="utf-8")
+            with self.assertRaisesRegex(qualification.run.HarnessError, "refuses to reuse"):
+                qualification.reserve_run_directory(runs, "run-first")
+            second = qualification.reserve_run_directory(runs, "run-second")
+            output = {
+                "directory": second,
+                "report": second / "receipt.json",
+                "products": second / "products",
+            }
+            original_latest = qualification.LATEST_REPORT
+            try:
+                qualification.LATEST_REPORT = temporary / "latest.json"
+                qualification.publish_report(output, {"schema": qualification.SCHEMA,
+                                                      "format": qualification.FORMAT,
+                                                      "status": "pending_external_resources"})
+            finally:
+                qualification.LATEST_REPORT = original_latest
+            self.assertTrue((first / "receipt.json").is_file())
+            latest = json.loads((temporary / "latest.json").read_text(encoding="utf-8"))
+            self.assertEqual(latest["status"], "pending_external_resources")
+            self.assertEqual(latest["latest_receipt"]["path"], qualification.run.relative(output["report"]))
 
     def test_checked_in_c_workloads_preserve_the_source_and_permission_boundaries(self) -> None:
         huge = (ROOT / "compat/allocator/m2_huge_numa_qualification_x86_64.c").read_text(encoding="utf-8")
