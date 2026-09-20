@@ -43,17 +43,44 @@ def audit_graph(metadata, lock):
     package_names = [p['name'] for p in package_records]
     if len(package_names) != len(set(package_names)):
         raise ValueError('duplicate package name in resolved dependency graph')
+    package_ids = [p['id'] for p in package_records]
+    if len(package_ids) != len(set(package_ids)):
+        raise ValueError('duplicate resolved package identity')
     packages = {p['name']: p for p in package_records}
     if set(packages) != set(FEATURES):
         raise ValueError('unapproved dependency graph')
-    locked = {p['name']: p for p in lock['package']}
+    packages_by_id = {p['id']: p for p in package_records}
+
+    lock_records = lock['package']
+    lock_names = [p['name'] for p in lock_records]
+    if len(lock_names) != len(set(lock_names)):
+        raise ValueError('duplicate lock package name')
+    locked = {p['name']: p for p in lock_records}
+    if set(locked) != set(FEATURES):
+        raise ValueError('unapproved locked dependency graph')
+
+    root = locked['crabc-unwinder']
+    if (root['version'] != packages['crabc-unwinder']['version']
+            or 'source' in root or 'checksum' in root):
+        raise ValueError('unapproved root lock package')
     for name, (version, checksum) in PINS.items():
         if (locked[name]['version'], locked[name]['checksum']) != (version, checksum):
             raise ValueError(f'unapproved source pin: {name}')
         if packages[name]['version'] != version:
             raise ValueError(f'unapproved resolved version: {name}')
-    for node in metadata['resolve']['nodes']:
-        package = next(p for p in packages.values() if p['id'] == node['id'])
+
+    nodes = metadata['resolve']['nodes']
+    node_ids = [node['id'] for node in nodes]
+    if len(node_ids) != len(set(node_ids)):
+        raise ValueError('duplicate resolve node identity')
+    unknown_node_ids = set(node_ids) - set(packages_by_id)
+    if unknown_node_ids:
+        raise ValueError('unknown resolve node identity')
+    missing_node_ids = set(packages_by_id) - set(node_ids)
+    if missing_node_ids:
+        raise ValueError('missing resolve node identity')
+    for node in nodes:
+        package = packages_by_id[node['id']]
         name = package['name']
         if set(node['features']) != FEATURES[name]:
             raise ValueError(f'unapproved features for {name}: {node["features"]}')
