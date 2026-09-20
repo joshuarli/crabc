@@ -16667,8 +16667,17 @@ def command_record(
 
 def require_success(record: Mapping[str, Any], description: str) -> None:
     if record["status"] != 0:
+        stdout = str(record["stdout"]).strip()
         stderr = str(record["stderr"]).strip()
-        raise HarnessError(f"{description} failed ({record['status']}): {stderr}")
+        diagnostics = "\n".join(
+            entry
+            for entry in (
+                f"stdout: {stdout}" if stdout else "",
+                f"stderr: {stderr}" if stderr else "",
+            )
+            if entry
+        )
+        raise HarnessError(f"{description} failed ({record['status']}): {diagnostics}")
 
 
 def artifact_record(path: Path) -> dict[str, Any]:

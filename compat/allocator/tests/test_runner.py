@@ -207,6 +207,21 @@ M1_REPRESENTATION_EXCLUSION_IDS = {
 }
 
 
+class CommandRecordTests(unittest.TestCase):
+    def test_require_success_preserves_stdout_and_stderr_from_a_failed_test_batch(self) -> None:
+        record = {
+            "status": 101,
+            "stdout": "test source_batch::fails ... FAILED\n",
+            "stderr": "native test process exited\n",
+        }
+
+        with self.assertRaises(RUNNER.HarnessError) as raised:
+            RUNNER.require_success(record, "native x86 M2 focused source-test batch")
+
+        self.assertIn("test source_batch::fails ... FAILED", str(raised.exception))
+        self.assertIn("native test process exited", str(raised.exception))
+
+
 class WorkRootTests(unittest.TestCase):
     def test_relocating_cache_preserves_reviewed_source_contract_identity(self) -> None:
         pin = RUNNER.load_pin()
