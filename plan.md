@@ -182,8 +182,12 @@ The separate clean checkout
 `.work/worktrees/runtime_component_batch_current_deac7ae7/` passes all 47
 sealed ABI batch nodes and their finalizer without retries or imported pass
 receipts. Its finalizer authenticates the saved receipts and derives the
-selection audit and closure commands; selection remains unfinished under
-`.work/x86_64/abi-selection-execution-deac7ae7/` in that checkout.
+selection audit and closure commands. The audit succeeds with 2,531 identities
+and 30,684 occurrences; independent closure replay exits 2 with the same 293
+blockers as the earlier checkpoint: 266 unresolved identity requirements, 25
+unavailable family-semantic records, and one missing semantic and family
+receipt set each. Both retain clean, unchanged source and authenticated raw
+streams under `.work/x86_64/abi-selection-execution-deac7ae7/` in that checkout.
 None of these receipts completes a family
 or promotes x86 support. Later allocator harness commits do not inherit this
 checkpoint's source-qualified evidence.
