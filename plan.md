@@ -129,9 +129,21 @@ the failed batch is preserved. Selection reconstruction passes at
 `.work/x86_64/native-abi-selection/header-refresh-e44d771b/report.json`, retaining
 2,531 identities, 30,684 occurrences, and 293 unresolved requirements.
 Nine text/math/locale/stdio component groups also pass all three product pairs;
-their 27 report identities and pending family inputs are recorded under
-`.work/x86_64/text-family-inputs-e44d771b/`. POSIX/pthread prerequisites and real
-family admission remain required; individual component runs do not close them.
+their 27 report identities are recorded under
+`.work/x86_64/text-family-inputs-e44d771b/`. The same checkpoint now passes the
+54-run POSIX matrix, installed pthread and loader component receipts, and the
+18-cell rich-text aggregate. Installed crypt and addressable-atomic profile
+companions also pass. Real family admission and the ordered native aggregate
+remain required; these component receipts do not close them.
+
+The first real text coordinator replay rejects the matrix product adapter:
+the matrix's `request` field is a sealed file identity, but the adapter passed
+it as inline producer request contents. The original failure is retained in
+`.work/x86_64/text-family-coordination-e44d771b/execution/`. `c00d71de`
+authenticates and reads that request before product replay; both new
+regressions fail before the fix and all 17 coordinator tests pass afterward.
+The frozen checkpoint remains unchanged. A repaired-reader development replay
+does not transfer its products or receipts to the later source revision.
 
 The checkpoint exposed a FILE-engine dispatcher argument mismatch before its
 workloads ran. `da149adf` fixes the public command's translation to the runner's
