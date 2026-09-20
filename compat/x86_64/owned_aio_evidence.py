@@ -28,6 +28,7 @@ import owned_crypt_runtime_evidence as copies
 import owned_posix_product_evidence as products
 import owned_dynamic_qualification as qualification
 import run_qualification_manifest as native_qualification
+import owned_os_test_aio_suspend_source as os_test_aio_suspend
 
 SCHEMA = "crabc.x86_64-owned-aio-receipts/v1"
 EXPECTED_SCHEMA = "crabc.x86_64-owned-aio-expected-native-inputs/v1"
@@ -39,20 +40,28 @@ PROBES = {
     "fd-reuse": "compat/x86_64/owned_aio_fd_reuse_probe.c",
     "lio-create-failure": "compat/x86_64/owned_aio_lio_create_failure_probe.c",
     "suspend-wake": "compat/x86_64/owned_aio_suspend_wake_probe.c",
+    "suspend-lifetime": "compat/x86_64/owned_aio_suspend_lifetime_probe.c",
     "queued-cancel": "compat/x86_64/owned_aio_cancel_defect_probe.c",
     "cancel-cursor": "compat/x86_64/owned_aio_cancel_cursor_probe.c",
     "submit-cancel": "compat/x86_64/owned_aio_submit_cancel_probe.c",
     "fresh-signal": "compat/x86_64/owned_aio_fresh_signal_probe.c",
 }
-OBJECTS = {key: f"{key if key != 'workload' else 'workload'}-workload.o" for key in PROBES}
+PREPARED_OS_TEST_AIO_SUSPEND = "os-test-aio-suspend"
+PREPARED_OS_TEST_AIO_SUSPEND_ROOT = "os-test-aio-suspend-source"
+PREPARED_OS_TEST_AIO_SUSPEND_RECEIPT = "os-test-aio-suspend-source.json"
+COMPILED_PROBES = (*PROBES, PREPARED_OS_TEST_AIO_SUSPEND)
+OBJECTS = {key: f"{key if key != 'workload' else 'workload'}-workload.o" for key in COMPILED_PROBES}
 OBJECTS["workload"] = "workload.o"
 CONSUMERS = {
     "workload": "consumer", "behavior": "behavior", "fd-reuse": "fd-reuse",
     "lio-create-failure": "lio-create-failure", "suspend-wake": "suspend-wake",
+    "suspend-lifetime": "suspend-lifetime",
+    PREPARED_OS_TEST_AIO_SUSPEND: PREPARED_OS_TEST_AIO_SUSPEND,
     "queued-cancel": "queued-cancel", "cancel-cursor": "cancel-cursor",
     "submit-cancel": "submit-cancel", "fresh-signal": "fresh-signal",
 }
-ORACLE_CASES = ("workload", "behavior", "fd-reuse", "lio-create-failure", "suspend-wake")
+ORACLE_CASES = ("workload", "behavior", "fd-reuse", "lio-create-failure", "suspend-wake", "suspend-lifetime",
+                PREPARED_OS_TEST_AIO_SUSPEND)
 STATIC_MODES = (("static", "static"), ("static-pie", "static-pie"))
 DYNAMIC_MODES = (("dynamic-pie", "pie"), ("dynamic-non-pie", "non-pie"))
 ROUTES = ("kernel", "direct")
@@ -62,8 +71,12 @@ STANDARD_TRANSCRIPTS = {
     "behavior": b"owned-aio behavior positioned/nonseekable/append/cancel/partial-sigevent/notify/list/suspend/fork=ok\n",
     "lio-create-failure": b"lio-create-failure-mask-retained=ok\n",
     "suspend-wake": b"aio-suspend wake-all single/list=ok\n",
+    PREPARED_OS_TEST_AIO_SUSPEND: b"",
 }
 FD_REUSE_SUCCESS = b"fd-reuse-regular-to-pipe=ok\n"
+SUSPEND_LIFETIME = re.compile(
+    rb"aio-suspend-lifetime source-shape-completed=[12] controlled-second-live=1 drained=2\n\Z"
+)
 FD_REUSE_ATTEMPTS = 512
 # The receipt models the x86 target ABI, whose C int is signed 32-bit.  In
 # pinned musl aio.c, aio_error/aio_return return the stored request result
@@ -81,6 +94,7 @@ FD_REUSE_ESPIPE = re.compile(
 )
 SOURCES = tuple(PROBES.values()) + (
     "compat/x86_64/run_owned_aio.sh", "compat/x86_64/owned_aio_evidence.py",
+    "compat/x86_64/owned_os_test_aio_suspend_source.py",
     "compat/x86_64/owned_dynamic_receipt.py",
     "compat/x86_64/owned_posix_product_evidence.py", "compat/x86_64/owned_crypt_runtime_evidence.py",
     "compat/x86_64/owned_dynamic_qualification.py", "compat/x86_64/run_qualification_manifest.py",
@@ -536,6 +550,18 @@ def assert_oracle_fd_reuse(root: Path, command: Mapping[str, Any]) -> None:
     else:
         fail("pinned musl fd-reuse status differs")
 
+def assert_suspend_lifetime_observation(root: Path, command: Mapping[str, Any], description: str) -> None:
+    """Accept the one-or-two source-shaped completion observation only.
+
+    Regular-file scheduling may finish the second request immediately after
+    aio_suspend returns, so that count is evidence rather than an oracle
+    equality. The pipe-controlled portion proves the semantic boundary and
+    the final count proves both C-owned controls were reaped before exit.
+    """
+    stdout, stderr = _streams(root, command, description)
+    if SUSPEND_LIFETIME.fullmatch(stdout) is None or stderr != b"":
+        fail(f"{description} lifetime observation differs")
+
 def _candidate_expected(consumer: str, arguments: str) -> bytes:
     if consumer in STANDARD_TRANSCRIPTS:
         return STANDARD_TRANSCRIPTS[consumer]
@@ -562,11 +588,46 @@ def _validate_header(root: Path, work: Path, dynamic: Path, tools: Mapping[str, 
             fail(f"AIO installed header trace omits {header}")
     return record
 
+
+def _prepared_os_test_aio_suspend_source(work: Path) -> Path:
+    """Verify the sealed standalone derivative before it can be compiled."""
+    fixture_root = _physical(work / PREPARED_OS_TEST_AIO_SUSPEND_ROOT,
+                             "prepared os-test aio_suspend source root", directory=True)
+    expected_files = os_test_aio_suspend.prepared_fixture_files()
+    observed_files: dict[str, bytes] = {}
+    for path in sorted(fixture_root.rglob("*")):
+        relative = path.relative_to(fixture_root).as_posix()
+        mode = path.lstat().st_mode
+        if stat.S_ISDIR(mode):
+            continue
+        if not stat.S_ISREG(mode):
+            fail("prepared os-test aio_suspend source tree has a non-regular file")
+        observed_files[relative] = path.read_bytes()
+    if observed_files != expected_files:
+        fail("prepared os-test aio_suspend source tree differs")
+    receipt = _read(work / PREPARED_OS_TEST_AIO_SUSPEND_RECEIPT,
+                    "prepared os-test aio_suspend source receipt")
+    expected_receipt = os_test_aio_suspend.prepared_fixture_receipt()
+    if receipt != expected_receipt:
+        fail("prepared os-test aio_suspend source receipt differs")
+    return _physical(fixture_root / os_test_aio_suspend.SOURCE_PATH,
+                     "prepared os-test aio_suspend source", directory=False)
+
+
+def _probe_source(root: Path, work: Path, key: str) -> Path:
+    if key == PREPARED_OS_TEST_AIO_SUSPEND:
+        return _prepared_os_test_aio_suspend_source(work)
+    return _physical(root / PROBES[key], f"AIO source {key}", directory=False)
+
+
 def _compile_commands(root: Path, work: Path, dynamic: Path, tools: Mapping[str, Any]) -> dict[str, Any]:
     result = {}
-    for key, source in PROBES.items():
+    for key in COMPILED_PROBES:
+        source = _probe_source(root, work, key)
         output = work / OBJECTS[key]
-        argv = [tools["dynamic-driver"]["path"], "--dynamic-pie", "-std=c11", "-fno-builtin", "-c", _mounted(root, root / source), "-o", _mounted(root, output)]
+        feature_flags = list(os_test_aio_suspend.BASIC_COMPILE_FLAGS) if key == PREPARED_OS_TEST_AIO_SUSPEND else []
+        argv = [tools["dynamic-driver"]["path"], "--dynamic-pie", "-std=c11", "-fno-builtin", *feature_flags,
+                "-c", _mounted(root, source), "-o", _mounted(root, output)]
         result[key] = _command(root, work, f"compile-{key}", argv, {b"0\n"})
         _physical(output, f"AIO installed header object {key}", directory=False)
     return result
@@ -639,6 +700,9 @@ def validate_report(root: Path, report_path: Path, expected: object, *, live: bo
         ("source-link-fd-reuse", work / OBJECTS["fd-reuse"], work / "oracle-fd-reuse"),
         ("source-link-lio-create-failure", work / OBJECTS["lio-create-failure"], work / "oracle-lio-create-failure"),
         ("source-link-suspend-wake", work / OBJECTS["suspend-wake"], work / "oracle-suspend-wake"),
+        ("source-link-suspend-lifetime", work / OBJECTS["suspend-lifetime"], work / "oracle-suspend-lifetime"),
+        ("source-link-os-test-aio-suspend", work / OBJECTS[PREPARED_OS_TEST_AIO_SUSPEND],
+         work / "oracle-os-test-aio-suspend"),
     ]
     for label, input_path, output_path in source_links:
         _command(root, work, label, [tools["oracle-compiler"]["path"], "-static", "-fno-pie", "-no-pie", "-pthread",
@@ -660,6 +724,8 @@ def validate_report(root: Path, report_path: Path, expected: object, *, live: bo
         oracle_commands[key] = _command(root, work, f"oracle-{key}" if key != "workload" else "oracle", argv, statuses)
         if key == "fd-reuse":
             assert_oracle_fd_reuse(root, oracle_commands[key])
+        elif key == "suspend-lifetime":
+            assert_suspend_lifetime_observation(root, oracle_commands[key], "pinned musl suspend lifetime")
         else:
             assert_success_transcript(root, oracle_commands[key], STANDARD_TRANSCRIPTS[key], f"pinned musl {key}")
     links: dict[str, Any] = {}
@@ -689,13 +755,17 @@ def validate_report(root: Path, report_path: Path, expected: object, *, live: bo
     if report["executions"] != executions: fail("AIO execution root records differ")
     for label, rootmode, consumer, route, arguments in _cell_specs(static):
         candidate = _command(root, work, label, _execution_argv(root, work, rootmode, consumer, route, arguments), {b"0\n"})
-        assert_success_transcript(root, candidate, _candidate_expected(consumer, arguments), f"owned {label}")
+        if consumer == "suspend-lifetime":
+            assert_suspend_lifetime_observation(root, candidate, f"owned {label}")
+        else:
+            assert_success_transcript(root, candidate, _candidate_expected(consumer, arguments), f"owned {label}")
         if consumer in STANDARD_TRANSCRIPTS:
             assert_matched_transcript(root, oracle_commands[consumer], candidate, f"owned {label}")
-    expected_labels = {"installed-header-trace", *{f"compile-{key}" for key in PROBES},
+    expected_labels = {"installed-header-trace", *{f"compile-{key}" for key in COMPILED_PROBES},
                        *{label for label, _, _ in source_links}, "oracle-queued-cancel-target",
                        "oracle-queued-cancel-all", "oracle-submit-cancel", "oracle", "oracle-behavior",
-                       "oracle-fd-reuse", "oracle-lio-create-failure", "oracle-suspend-wake"}
+                       "oracle-fd-reuse", "oracle-lio-create-failure", "oracle-suspend-wake", "oracle-suspend-lifetime",
+                       "oracle-os-test-aio-suspend"}
     if static is not None:
         expected_labels |= {f"link-{mode}-{key}" for mode, _ in STATIC_MODES for key in CONSUMERS}
     expected_labels |= {f"link-{mode}-{key}" for mode, _ in DYNAMIC_MODES for key in CONSUMERS}
@@ -718,7 +788,7 @@ def finalize(root: Path, work: Path, expected_path: Path) -> Path:
               "modes": _mode_claims(static),
               "inputs": {"before": before, "after": after, "expected_native_inputs": _mounted(root, expected_path)},
               "header_trace": _read(work / "commands/installed-header-trace.json", "header trace command"),
-              "compiles": {key: _read(work / f"commands/compile-{key}.json", f"compile {key}") for key in PROBES},
+              "compiles": {key: _read(work / f"commands/compile-{key}.json", f"compile {key}") for key in COMPILED_PROBES},
               "links": {}, "executions": {}, "commands": commands}
     # The reader reconstructs all links and roots; persist only their resulting
     # records after live product validation, never an arbitrary supplied map.

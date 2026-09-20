@@ -18,6 +18,7 @@ import owned_wordexp_upstream_policy as wordexp_policy
 import owned_differential_evidence as differential
 import owned_signal_process_evidence as signals
 import owned_pthread_stress_source as profile
+import owned_os_test_aio_suspend_source as aio_suspend_source
 
 MODES = ('pie-kernel', 'pie-direct', 'non-pie-kernel', 'non-pie-direct')
 
@@ -325,6 +326,7 @@ class NativeObservationsTests(unittest.TestCase):
             self.put(stage / suite / 'case.c', ('/* ' + suite + ' */\n').encode())
         for name in ('dlopen', 'dlclose', 'dlsym'):
             self.put(stage / 'basic/dlfcn' / (name + '.c'), ('/* ' + name + ' */\n').encode())
+        self.put(stage / aio_suspend_source.SOURCE_PATH, aio_suspend_source.FROZEN_SOURCE)
         if profile:
             import owned_posix_native_dispositions as dispositions
             for alias, content in dispositions.OS_ALIAS_SOURCES.items():
@@ -362,6 +364,20 @@ class NativeObservationsTests(unittest.TestCase):
                     'driver_sha256': self.binding(self.product / 'bin/crabc-cc-dynamic')['sha256']}
         product_roster = artifact(self.leaf / 'records/supplied-product-roster.json',
                                  {'schema': 'crabc.x86_64-owned-os-test-product-roster/v1', 'entries': baseline})
+        preparer = self.put(self.root / 'compat/x86_64/owned_os_test_aio_suspend_source.py',
+                            (HERE / 'owned_os_test_aio_suspend_source.py').read_bytes())
+        prepared_aio_suspend, aio_suspend_replacements = aio_suspend_source.prepare(
+            (stage / aio_suspend_source.SOURCE_PATH).read_bytes()
+        )
+        aio_suspend_preparation = {
+            'schema': aio_suspend_source.SCHEMA,
+            'fixture': aio_suspend_source.SOURCE_PATH,
+            'source_sha256': aio_suspend_source.ORIGINAL_SHA256,
+            'prepared_sha256': aio_suspend_source.PREPARED_SHA256,
+            'preparer': {'path': preparer.relative_to(self.root).as_posix(), 'sha256': self.binding(preparer)['sha256']},
+            'replacements': aio_suspend_replacements,
+            'sides': {},
+        }
         report = {'schema': 'crabc.x86_64-owned-os-test/v1', 'passed': True, 'profile': list(native.OS_TEST_SUITES),
                   'timeout_seconds': 600.0, 'work': self.recorded(self.leaf),
                   'product': {**product_identity(self.product), 'payload_roster': product_roster},
@@ -369,7 +385,8 @@ class NativeObservationsTests(unittest.TestCase):
                              'gnu_makefile_sha256': self.binding(stage / 'GNUmakefile')['sha256'],
                              'suite_list_sha256': self.binding(stage / 'misc/suites.list')['sha256'],
                              'stage': {'stage': 'source-stage', 'revision': native.OS_TEST_REVISION, 'tree': tree,
-                                       'tracked_path_count': len(source_files), 'roster': source_roster}}, 'suites': []}
+                                       'tracked_path_count': len(source_files), 'roster': source_roster}},
+                  'source_preparation': {'aio_suspend_lifetime': aio_suspend_preparation}, 'suites': []}
         def copied(root):
             shutil.copytree(stage, root, symlinks=True)
         counter = 0
@@ -472,6 +489,13 @@ class NativeObservationsTests(unittest.TestCase):
             musl, dynamic = self.leaf / 'musl' / suite, self.leaf / 'suites' / suite
             copied(musl)
             copied(dynamic)
+            if suite == 'basic':
+                for side, root in (('musl', musl), ('dynamic', dynamic)):
+                    self.put(root / aio_suspend_source.SOURCE_PATH, prepared_aio_suspend)
+                    aio_suspend_preparation['sides'][side] = artifact(
+                        self.leaf / 'records' / f'basic.{side}.aio-suspend-preparation.json',
+                        {**{key: value for key, value in aio_suspend_preparation.items() if key != 'sides'}, 'side': side},
+                    )
             sources = sorted(path.relative_to(stage / suite).as_posix() for path in (stage / suite).rglob('*.c'))
             expected = [str(Path(name).with_suffix('.out')) for name in sources]
             row = {'suite': suite, 'passed': True, 'differences': [], 'difference_count': 0,
@@ -612,8 +636,8 @@ class NativeObservationsTests(unittest.TestCase):
         with patch('subprocess.run', side_effect=AssertionError('collector executed a tool')), \
              patch('subprocess.Popen', side_effect=AssertionError('collector launched a process')):
             result = self.collect('os-test')
-        self.assertEqual(len(result['observations']), 13)
-        self.assertEqual(len(result['objects']), 15)
+        self.assertEqual(len(result['observations']), 14)
+        self.assertEqual(len(result['objects']), 16)
         original = (self.leaf / 'os-test.json').read_bytes()
         for description, mutate in {
             'one omitted suite': lambda r: r['suites'].pop(),
@@ -632,6 +656,8 @@ class NativeObservationsTests(unittest.TestCase):
             'foreign basic shell compiler': lambda r: r['suites'][2]['dynamic']['execution_control']['shell_launcher']['compile']['command'].__setitem__(0, '/foreign/compiler'),
             'foreign basic shell source': lambda r: r['suites'][2]['dynamic']['execution_control']['shell_launcher']['source'].update(sha256='0' * 64),
             'replaced basic shell installation': lambda r: r['suites'][2]['dynamic']['execution_control']['shell_launcher']['launcher'].update(candidate_path='/bin/other'),
+            'changed aio suspend source attribution': lambda r: r['source_preparation']['aio_suspend_lifetime'].update(prepared_sha256='0' * 64),
+            'missing aio suspend candidate preparation receipt': lambda r: r['source_preparation']['aio_suspend_lifetime']['sides'].pop('dynamic'),
         }.items():
             with self.subTest(description=description):
                 changed = json.loads(original)
@@ -643,7 +669,9 @@ class NativeObservationsTests(unittest.TestCase):
         for relative in ('records/malloc.musl.stdout', 'records/malloc.dynamic.status.json', 'products/malloc/usr/lib/libc.so',
                          'runtime/malloc/usr/lib/libc.so', 'suites/malloc/out/linux/malloc/case.out', 'source-stage/GNUmakefile', object_relative,
                          'runtime/basic/bin/sh', 'runtime/basic/control/candidate-shell-launcher.c',
-                         'runtime/basic/control/candidate-shell-launcher.o', 'runtime/basic/etc/passwd', 'runtime/basic/control/busybox'):
+                         'runtime/basic/control/candidate-shell-launcher.o', 'runtime/basic/etc/passwd', 'runtime/basic/control/busybox',
+                         'source-stage/basic/aio/aio_suspend.c', 'musl/basic/basic/aio/aio_suspend.c',
+                         'suites/basic/basic/aio/aio_suspend.c', 'records/basic.dynamic.aio-suspend-preparation.json'):
             with self.subTest(artifact=relative):
                 path = self.leaf / relative
                 before, mode = path.read_bytes(), path.stat().st_mode & 0o7777
@@ -716,8 +744,8 @@ class NativeObservationsTests(unittest.TestCase):
             suite[side]['outcomes']['case.out'] = {'sha256': self.binding(path)['sha256'], 'text': 'missing_header\n'}
         self.put(self.leaf / 'os-test.json', report)
         result = self.collect('os-test')
-        self.assertEqual(len(result['observations']), 13)
-        self.assertEqual(len(result['objects']), 14)
+        self.assertEqual(len(result['observations']), 14)
+        self.assertEqual(len(result['objects']), 15)
         self.assertFalse(any(name.startswith('include/') for name in result['objects']))
 
     def libc_identity_fixture(self, name='regression/pthread_atfork-errno-clobber', side='candidate'):

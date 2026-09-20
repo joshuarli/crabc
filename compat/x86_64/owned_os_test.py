@@ -27,6 +27,8 @@ import time
 import uuid
 from typing import Any, Iterable
 
+import owned_os_test_aio_suspend_source as aio_suspend_source
+
 ROOT = Path(__file__).resolve().parents[2]
 HERE = ROOT / "compat/x86_64"
 OS_TEST_REVISION = "5e9456d510612f83b6ec8b1a0c06d6b1303a2512"
@@ -50,6 +52,8 @@ BASIC_SYSTEM_FILES = {
     "group": b"root:x:0:\n",
     "services": b"http 80/tcp\n",
 }
+
+AIO_SUSPEND_PREPARER = HERE / "owned_os_test_aio_suspend_source.py"
 
 
 class RunnerError(RuntimeError):
@@ -325,6 +329,43 @@ def stage_pristine_source(source: Path, destination: Path, work: Path) -> dict[s
     freeze_tree(destination)
     return {"stage": artifact_path(work, destination), "revision": OS_TEST_REVISION, "tree": OS_TEST_TREE,
             "tracked_path_count": len(roster), "roster": artifact}
+
+
+def aio_suspend_preparation(stage: Path) -> tuple[bytes, dict[str, Any]]:
+    """Bind the sole lifetime repair to the exact frozen upstream fixture."""
+    fixture = stage / aio_suspend_source.SOURCE_PATH
+    require_regular(fixture, "pinned os-test aio_suspend source")
+    try:
+        prepared, replacements = aio_suspend_source.prepare(fixture.read_bytes())
+    except aio_suspend_source.SourcePreparationError as error:
+        raise RunnerError(str(error)) from error
+    preparer = require_regular(AIO_SUSPEND_PREPARER, "os-test aio_suspend preparer")
+    return prepared, {
+        "schema": aio_suspend_source.SCHEMA,
+        "fixture": aio_suspend_source.SOURCE_PATH,
+        "source_sha256": aio_suspend_source.ORIGINAL_SHA256,
+        "prepared_sha256": aio_suspend_source.PREPARED_SHA256,
+        "preparer": {"path": preparer.relative_to(ROOT).as_posix(), "sha256": sha256(preparer)},
+        "replacements": replacements,
+    }
+
+
+def prepare_aio_suspend_copy(source: Path, side: str, prepared: bytes, preparation: dict[str, Any],
+                             work: Path) -> dict[str, Any]:
+    """Apply the sealed fixture derivative to one disposable oracle or target copy."""
+    fixture = source / aio_suspend_source.SOURCE_PATH
+    require_regular(fixture, f"{side} os-test aio_suspend source")
+    try:
+        observed, replacements = aio_suspend_source.prepare(fixture.read_bytes())
+    except aio_suspend_source.SourcePreparationError as error:
+        raise RunnerError(str(error)) from error
+    if observed != prepared or replacements != preparation["replacements"]:
+        raise RunnerError("os-test aio_suspend preparation differs from its staged source contract")
+    fixture.write_bytes(prepared)
+    if sha256(fixture) != preparation["prepared_sha256"]:
+        raise RunnerError("prepared os-test aio_suspend source bytes differ")
+    record = {**preparation, "side": side}
+    return retain_json(work, work / "records" / f"basic.{side}.aio-suspend-preparation.json", record)
 
 
 def musl_oracle_identity(work: Path, label: str) -> dict[str, Any]:
@@ -1310,14 +1351,20 @@ def run_profile(values: argparse.Namespace) -> int:
         })
         source_stage = work / "source-stage"
         staged_source = stage_pristine_source(source, source_stage, work)
+        prepared_aio_suspend, aio_suspend_map = aio_suspend_preparation(source_stage)
         musl_before = musl_oracle_identity(work, "before")
         report["product"] = {**product_identity, "payload_roster": product_roster_artifact}
         report["source"] = {**source_identity, "stage": staged_source}
+        report["source_preparation"] = {"aio_suspend_lifetime": {**aio_suspend_map, "sides": {}}}
         report["musl_oracle"] = {"before": musl_before, "after": None, "unchanged": False}
         for suite in DEFAULT_SUITES:
             expected, expected_artifact = retain_expected_outcomes(work, source_stage, suite)
             musl_root = work / "musl" / suite
             copied_tree(source_stage, musl_root, discard_git=True, buildable=True)
+            if suite == "basic":
+                report["source_preparation"]["aio_suspend_lifetime"]["sides"]["musl"] = prepare_aio_suspend_copy(
+                    musl_root, "musl", prepared_aio_suspend, aio_suspend_map, work
+                )
             musl_command = musl_make_command(suite, musl_root, values.header_jobs)
             musl_started = time.monotonic()
             musl_status, musl_stdout, musl_stderr = run_make(musl_command, values.timeout)
@@ -1327,6 +1374,10 @@ def run_profile(values: argparse.Namespace) -> int:
             musl_passed = suite_passed(musl_status, musl_outcomes, expected, [])
             suite_root = work / "suites" / suite
             copied_tree(source_stage, suite_root, discard_git=True, buildable=True)
+            if suite == "basic":
+                report["source_preparation"]["aio_suspend_lifetime"]["sides"]["dynamic"] = prepare_aio_suspend_copy(
+                    suite_root, "dynamic", prepared_aio_suspend, aio_suspend_map, work
+                )
             evidence = work / "evidence" / suite
             evidence.mkdir(parents=True)
             runtime = work / "runtime" / suite
