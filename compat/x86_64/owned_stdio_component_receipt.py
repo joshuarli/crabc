@@ -29,12 +29,13 @@ import owned_crypt_runtime_evidence as copies
 import owned_posix_product_evidence as products
 
 
-SCHEMA = "crabc.x86_64-owned-stdio-products/v2"
+SCHEMA = "crabc.x86_64-owned-stdio-products/v3"
 SCOPE = (
     "stdio.path-stream",
     "stdio.stream-io",
     "stdio.position-buffering",
     "stdio.format-scan",
+    "stdio.fopen64-alias",
 )
 REQUIRED_HEADERS = (
     "errno.h", "fcntl.h", "locale.h", "stdio.h", "unistd.h", "wchar.h", "features.h", "bits/alltypes.h",
@@ -42,7 +43,75 @@ REQUIRED_HEADERS = (
 ORACLE_TRANSCRIPT = b"owned-stdio-products-ok\n"
 COPIES_PATH = HERE / "owned_crypt_runtime_evidence.py"
 ORACLE_COMPILER = "/usr/local/bin/crabc-x86_64-musl-gcc"
+MUSL_INCLUDE = Path("/opt/musl-1.2.6/include")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+
+FOPEN64_HEADER_PROFILES: dict[str, tuple[str, str, tuple[str, ...]]] = {
+    "c11-base": (
+        "compat/x86_64/fopen64_header_abi_probe.c", "hidden",
+        ("-U_GNU_SOURCE", "-U_BSD_SOURCE", "-U_XOPEN_SOURCE", "-U_POSIX_C_SOURCE",
+         "-U_FILE_OFFSET_BITS", "-U_LARGEFILE_SOURCE", "-U_LARGEFILE64_SOURCE",
+         "-U_DEFAULT_SOURCE", "-DCRABC_FOPEN64_HEADER_C11_BASE"),
+    ),
+    "c11-gnu": (
+        "compat/x86_64/fopen64_header_abi_probe.c", "hidden",
+        ("-U_BSD_SOURCE", "-U_XOPEN_SOURCE", "-U_POSIX_C_SOURCE", "-U_FILE_OFFSET_BITS",
+         "-U_LARGEFILE_SOURCE", "-U_LARGEFILE64_SOURCE", "-U_DEFAULT_SOURCE", "-D_GNU_SOURCE",
+         "-DCRABC_FOPEN64_HEADER_C11_GNU"),
+    ),
+    "c11-file-offset-bits-64": (
+        "compat/x86_64/fopen64_header_abi_probe.c", "hidden",
+        ("-U_GNU_SOURCE", "-U_BSD_SOURCE", "-U_XOPEN_SOURCE", "-U_POSIX_C_SOURCE",
+         "-U_LARGEFILE_SOURCE", "-U_LARGEFILE64_SOURCE", "-U_DEFAULT_SOURCE", "-D_FILE_OFFSET_BITS=64",
+         "-DCRABC_FOPEN64_HEADER_C11_FILE_OFFSET_BITS_64"),
+    ),
+    "c11-largefile-source": (
+        "compat/x86_64/fopen64_header_abi_probe.c", "hidden",
+        ("-U_GNU_SOURCE", "-U_BSD_SOURCE", "-U_XOPEN_SOURCE", "-U_POSIX_C_SOURCE",
+         "-U_FILE_OFFSET_BITS", "-U_LARGEFILE64_SOURCE", "-U_DEFAULT_SOURCE", "-D_LARGEFILE_SOURCE",
+         "-DCRABC_FOPEN64_HEADER_C11_LARGEFILE_SOURCE"),
+    ),
+    "c11-largefile64": (
+        "compat/x86_64/fopen64_header_abi_probe.c", "fopen",
+        ("-U_GNU_SOURCE", "-U_BSD_SOURCE", "-U_XOPEN_SOURCE", "-U_POSIX_C_SOURCE",
+         "-U_FILE_OFFSET_BITS", "-U_LARGEFILE_SOURCE", "-U_DEFAULT_SOURCE", "-D_LARGEFILE64_SOURCE",
+         "-DCRABC_FOPEN64_HEADER_C11_LARGEFILE64"),
+    ),
+    "cxx17-base": (
+        "compat/x86_64/fopen64_header_abi_probe.cpp", "hidden",
+        ("-U_GNU_SOURCE", "-U_BSD_SOURCE", "-U_XOPEN_SOURCE", "-U_POSIX_C_SOURCE",
+         "-U_FILE_OFFSET_BITS", "-U_LARGEFILE_SOURCE", "-U_LARGEFILE64_SOURCE",
+         "-U_DEFAULT_SOURCE", "-DCRABC_FOPEN64_HEADER_CXX17_BASE"),
+    ),
+    "cxx17-gnu": (
+        "compat/x86_64/fopen64_header_abi_probe.cpp", "hidden",
+        ("-U_BSD_SOURCE", "-U_XOPEN_SOURCE", "-U_POSIX_C_SOURCE", "-U_FILE_OFFSET_BITS",
+         "-U_LARGEFILE_SOURCE", "-U_LARGEFILE64_SOURCE", "-U_DEFAULT_SOURCE", "-D_GNU_SOURCE",
+         "-DCRABC_FOPEN64_HEADER_CXX17_GNU"),
+    ),
+    "cxx17-file-offset-bits-64": (
+        "compat/x86_64/fopen64_header_abi_probe.cpp", "hidden",
+        ("-U_GNU_SOURCE", "-U_BSD_SOURCE", "-U_XOPEN_SOURCE", "-U_POSIX_C_SOURCE",
+         "-U_LARGEFILE_SOURCE", "-U_LARGEFILE64_SOURCE", "-U_DEFAULT_SOURCE", "-D_FILE_OFFSET_BITS=64",
+         "-DCRABC_FOPEN64_HEADER_CXX17_FILE_OFFSET_BITS_64"),
+    ),
+    "cxx17-largefile-source": (
+        "compat/x86_64/fopen64_header_abi_probe.cpp", "hidden",
+        ("-U_GNU_SOURCE", "-U_BSD_SOURCE", "-U_XOPEN_SOURCE", "-U_POSIX_C_SOURCE",
+         "-U_FILE_OFFSET_BITS", "-U_LARGEFILE64_SOURCE", "-U_DEFAULT_SOURCE", "-D_LARGEFILE_SOURCE",
+         "-DCRABC_FOPEN64_HEADER_CXX17_LARGEFILE_SOURCE"),
+    ),
+    "cxx17-largefile64": (
+        "compat/x86_64/fopen64_header_abi_probe.cpp", "fopen",
+        ("-U_GNU_SOURCE", "-U_BSD_SOURCE", "-U_XOPEN_SOURCE", "-U_POSIX_C_SOURCE",
+         "-U_FILE_OFFSET_BITS", "-U_LARGEFILE_SOURCE", "-U_DEFAULT_SOURCE", "-D_LARGEFILE64_SOURCE",
+         "-DCRABC_FOPEN64_HEADER_CXX17_LARGEFILE64"),
+    ),
+}
+FOPEN64_DYNAMIC_CELLS = (
+    "dynamic-pie-kernel", "dynamic-pie-direct",
+    "dynamic-non-pie-kernel", "dynamic-non-pie-direct",
+)
 
 
 class ReceiptError(RuntimeError):
@@ -230,7 +299,9 @@ def _product_seal(value: object, product: Path, family: str) -> None:
     same(tree_identity(product), value["tree"], f"{family} product seal tree differs")
 
 
-def validate_source_product_seals(checkout: Path, work: Path, report: Mapping[str, Any], *, static: bool) -> tuple[Path, Path]:
+def validate_source_product_seals(
+    checkout: Path, work: Path, report: Mapping[str, Any], *, static: bool,
+) -> tuple[Path, Path, Path, Path]:
     seals = report["seals"]
     before = check_identity(work, seals["source-product-before"], "source/product before seal")
     after = check_identity(work, seals["source-product-after"], "source/product after seal")
@@ -240,10 +311,15 @@ def validate_source_product_seals(checkout: Path, work: Path, report: Mapping[st
     expected = {"sources", "dynamic"} | ({"static"} if static else set())
     require(set(before_value) == expected, "source/product seal fields drifted")
     sources = before_value["sources"]
-    require(type(sources) is dict and set(sources) == {"probe", "runner", "reader"}, "source seal source roster differs")
+    require(type(sources) is dict and set(sources) == {"probe", "runner", "reader", "fopen64_c", "fopen64_cxx"},
+            "source seal source roster differs")
     probe = _source_file(checkout, sources["probe"], "compat/x86_64/owned_stdio_probe.c", "stdio probe source")
     runner = _source_file(checkout, sources["runner"], "compat/x86_64/run_owned_stdio.sh", "stdio runner source")
     _source_file(checkout, sources["reader"], "compat/x86_64/owned_stdio_component_receipt.py", "stdio receipt reader source")
+    fopen64_c = _source_file(checkout, sources["fopen64_c"], "compat/x86_64/fopen64_header_abi_probe.c",
+                              "fopen64 C header source")
+    fopen64_cxx = _source_file(checkout, sources["fopen64_cxx"], "compat/x86_64/fopen64_header_abi_probe.cpp",
+                                "fopen64 C++ header source")
     source = report["source"]
     require(type(source) is dict and set(source) == {"path", "sha256", "size", "mode"}, "report source identity fields drifted")
     same(source, identity(checkout, probe), "report source differs from sealed probe")
@@ -261,7 +337,7 @@ def validate_source_product_seals(checkout: Path, work: Path, report: Mapping[st
             products._validate_static_product(static_product)
         except Exception as error:
             raise ReceiptError("static product validation failed") from error
-    return probe, runner
+    return probe, runner, fopen64_c, fopen64_cxx
 
 
 def _dynamic_helper_tools(dynamic: Path) -> dict[str, Path]:
@@ -360,19 +436,156 @@ def canonical(value: object) -> bytes:
     return (json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n").encode("utf-8")
 
 
-def _object_seals(work: Path, report: Mapping[str, Any], probe: Path, runner: Path, workload: Path) -> None:
+def fopen64_row(*, static: bool) -> dict[str, object]:
+    """The one installed macro-consumer observation, not a stdio family claim."""
+
+    return {
+        "feature": "_LARGEFILE64_SOURCE=1",
+        "macro": "fopen64",
+        "target": "fopen",
+        "pointer_equality": True,
+        "object_import": "fopen",
+        "header_profiles": {name: visibility for name, (_, visibility, _) in FOPEN64_HEADER_PROFILES.items()},
+        "runtime_cells": [*FOPEN64_DYNAMIC_CELLS, *(["static", "static-pie"] if static else [])],
+    }
+
+
+def undefined_elf_symbols(path: Path) -> set[str]:
+    """Read undefined names from one physical ELF64 little-endian ET_REL object."""
+
+    data = regular(path, "installed-header ELF object").read_bytes()
+    require(data[:7] == b"\x7fELF\x02\x01\x01", "installed-header object is not ELF64 little-endian")
+    require(len(data) >= 64 and int.from_bytes(data[16:18], "little") == 1
+            and int.from_bytes(data[18:20], "little") == 62 and int.from_bytes(data[20:24], "little") == 1,
+            "installed-header object is not x86-64 ET_REL")
+    sections_at = int.from_bytes(data[40:48], "little")
+    section_size = int.from_bytes(data[58:60], "little")
+    section_count = int.from_bytes(data[60:62], "little")
+    require(section_size == 64 and section_count > 0 and sections_at >= 64
+            and section_count <= (len(data) - sections_at) // section_size,
+            "installed-header object section table is invalid")
+    sections = [data[sections_at + index * section_size:sections_at + (index + 1) * section_size]
+                for index in range(section_count)]
+    symbol_sections = [section for section in sections if int.from_bytes(section[4:8], "little") == 2]
+    require(len(symbol_sections) == 1, "installed-header object symbol table differs")
+    symbols = symbol_sections[0]
+    strings_index = int.from_bytes(symbols[40:44], "little")
+    symbols_at, symbols_size, symbols_entry_size = (int.from_bytes(symbols[offset:offset + 8], "little")
+                                                     for offset in (24, 32, 56))
+    require(strings_index < section_count and symbols_entry_size == 24 and symbols_size % symbols_entry_size == 0
+            and symbols_at <= len(data) and symbols_size <= len(data) - symbols_at,
+            "installed-header object symbol table bounds differ")
+    strings = sections[strings_index]
+    require(int.from_bytes(strings[4:8], "little") == 3, "installed-header object string table differs")
+    strings_at, strings_size = (int.from_bytes(strings[offset:offset + 8], "little") for offset in (24, 32))
+    require(strings_at <= len(data) and strings_size <= len(data) - strings_at,
+            "installed-header object string table bounds differ")
+    names = data[strings_at:strings_at + strings_size]
+    undefined: set[str] = set()
+    for index in range(symbols_size // symbols_entry_size):
+        symbol = data[symbols_at + index * symbols_entry_size:symbols_at + (index + 1) * symbols_entry_size]
+        name_at = int.from_bytes(symbol[0:4], "little")
+        section = int.from_bytes(symbol[6:8], "little")
+        if section != 0 or name_at == 0:
+            continue
+        require(name_at < len(names), "installed-header object symbol name is invalid")
+        end = names.find(b"\0", name_at)
+        require(end != -1, "installed-header object symbol name is unterminated")
+        try:
+            name = names[name_at:end].decode("ascii")
+        except UnicodeDecodeError as error:
+            raise ReceiptError("installed-header object symbol name is not ASCII") from error
+        undefined.add(name)
+    return undefined
+
+
+def _object_seals(
+    work: Path, report: Mapping[str, Any], probe: Path, runner: Path, fopen64_c: Path, fopen64_cxx: Path, workload: Path,
+) -> None:
     records = report["object_seals"]
     require(type(records) is dict and set(records) == {"before", "after"}, "object seal roster differs")
     before = check_identity(work, records["before"], "object before seal")
     after = check_identity(work, records["after"], "object after seal")
-    expected_before = "".join(f"{digest(path)}  {path}\n" for path in (probe, runner, workload)).encode("ascii")
+    sealed = (probe, fopen64_c, fopen64_cxx, runner, workload)
+    expected_before = "".join(f"{digest(path)}  {path}\n" for path in sealed).encode("ascii")
     require(before.read_bytes() == expected_before, "object before seal differs")
-    expected_after = "".join(f"{path}: OK\n" for path in (probe, runner, workload)).encode("utf-8")
+    expected_after = "".join(f"{path}: OK\n" for path in sealed).encode("utf-8")
     require(after.read_bytes() == expected_after, "object after seal differs")
 
 
+def _fopen64_profile_argv(
+    tree: str, profile: str, compiler: str, include: Path, source: Path, object_path: Path, phase: str,
+) -> list[str]:
+    expected_source, _, feature_flags = FOPEN64_HEADER_PROFILES[profile]
+    require(source.as_posix().endswith(expected_source), "fopen64 header source path differs")
+    language = (["-x", "c++", "-std=c++17", "-nostdinc++"] if profile.startswith("cxx17-")
+                else ["-x", "c", "-std=c11", "-Werror=implicit-function-declaration"])
+    common = [*language, "-nostdinc", "-isystem", str(include), "-H", "-fno-builtin", *feature_flags]
+    if phase == "preprocess":
+        return [compiler, *common, "-E", str(source)]
+    require(phase == "compile", "fopen64 header phase differs")
+    return [compiler, *common, "-c", str(source), "-o", str(object_path)]
+
+
+def _fopen64_header_trace(trace: Path, root: Path, label: str) -> None:
+    traced: list[Path] = []
+    for line in trace.read_text(errors="replace").splitlines():
+        match = re.fullmatch(r"\.+\s+(.+)", line)
+        if match is None:
+            continue
+        candidate = Path(match.group(1))
+        require(candidate.is_absolute() and ".." not in candidate.parts and candidate.is_relative_to(root),
+                label + " header trace escapes declared include tree")
+        traced.append(candidate)
+    require(all(root / name in traced for name in ("stdio.h", "features.h", "bits/alltypes.h")),
+            label + " header trace omits required header")
+
+
+def _validate_fopen64_header_controls(
+    work: Path, retained: Mapping[str, Mapping[str, object]], tools: Mapping[str, Mapping[str, object]],
+    dynamic: Path, fopen64_c: Path, fopen64_cxx: Path,
+) -> None:
+    """Reconstruct C/C++ hidden and exposed macro controls against both headers."""
+
+    for tree, compiler, include in (
+        ("reference", str(tools["oracle"]["path"]), MUSL_INCLUDE),
+        ("installed", str(tools["compiler"]["path"]), dynamic / "usr/include"),
+    ):
+        include = directory(include, tree + " fopen64 include tree")
+        for profile, (relative_source, visibility, _) in FOPEN64_HEADER_PROFILES.items():
+            source = fopen64_cxx if relative_source.endswith(".cpp") else fopen64_c
+            object_path = regular(work / f"fopen64-{tree}-{profile}.o", tree + " " + profile + " header object")
+            preprocess = retained[f"fopen64-{tree}-{profile}-preprocess"]
+            compile = retained[f"fopen64-{tree}-{profile}-compile"]
+            require_argv(preprocess, _fopen64_profile_argv(tree, profile, compiler, include, source, object_path, "preprocess"),
+                         tree + " " + profile + " preprocess")
+            require_argv(compile, _fopen64_profile_argv(tree, profile, compiler, include, source, object_path, "compile"),
+                         tree + " " + profile + " compile")
+            for phase, command in (("preprocess", preprocess), ("compile", compile)):
+                stdout, stderr = command["stdout"], command["stderr"]
+                assert isinstance(stdout, Path) and isinstance(stderr, Path)
+                if phase == "compile":
+                    require(stdout.read_bytes() == b"", tree + " " + profile + " compile stdout differs")
+                    _fopen64_header_trace(stderr, include, tree + " " + profile)
+                else:
+                    _fopen64_header_trace(stderr, include, tree + " " + profile)
+                    source_text = stdout.read_text(errors="replace")
+                    require(f'# 0 "{source}"' in source_text,
+                            tree + " " + profile + " preprocessed source differs")
+                    expansion = re.sub(r"^#.*$", "", source_text, flags=re.MULTILINE)
+                    if visibility == "fopen":
+                        require(re.search(r"fopen64_macro_reference\s*=\s*&\s*fopen\s*;", expansion) is not None,
+                                tree + " " + profile + " macro expansion differs")
+                    else:
+                        require("fopen64_macro_reference" not in source_text,
+                                tree + " " + profile + " unexpectedly exposes fopen64")
+            imports = undefined_elf_symbols(object_path)
+            require("fopen" in imports and "fopen64" not in imports,
+                    tree + " " + profile + " object import differs")
+
+
 def validate_commands(
-    checkout: Path, work: Path, report: Mapping[str, Any], probe: Path, runner: Path,
+    checkout: Path, work: Path, report: Mapping[str, Any], probe: Path, runner: Path, fopen64_c: Path, fopen64_cxx: Path,
     tools: Mapping[str, Mapping[str, object]], *, static: bool,
 ) -> tuple[dict[str, dict[str, object]], Path]:
     commands = report["commands"]
@@ -383,21 +596,28 @@ def validate_commands(
     }
     if static:
         expected |= {f"{mode}-{part}" for mode in ("static", "static-pie") for part in ("link", "validate", "run")}
+    expected |= {f"fopen64-{tree}-{profile}-{phase}"
+                 for tree in ("reference", "installed") for profile in FOPEN64_HEADER_PROFILES
+                 for phase in ("preprocess", "compile")}
     require(type(commands) is dict and set(commands) == expected, "command roster differs")
     retained: dict[str, dict[str, object]] = {stem: command_files(work, commands[stem], stem) for stem in expected}
     workload = check_identity(work, report["workload"], "installed-header workload")
     require(workload.name == "workload.o", "installed-header workload filename differs")
-    _object_seals(work, report, probe, runner, workload)
+    _object_seals(work, report, probe, runner, fopen64_c, fopen64_cxx, workload)
     dynamic = directory(Path(report["products"]["dynamic"]), "dynamic product")
     include = dynamic / "usr/include"
+    _validate_fopen64_header_controls(work, retained, tools, dynamic, fopen64_c, fopen64_cxx)
     compiler = str(tools["compiler"]["path"])
-    require_argv(retained["header-trace"], [compiler, "-nostdinc", "-isystem", str(include), "-ffreestanding", "-fno-builtin",
+    require_argv(retained["header-trace"], [compiler, "-nostdinc", "-isystem", str(include), "-D_LARGEFILE64_SOURCE=1", "-ffreestanding", "-fno-builtin",
                                              "-fno-stack-protector", "-std=c11", "-fPIE", "-E", "-H", str(probe)], "header trace")
     header_stdout = retained["header-trace"]["stdout"]
     header_stderr = retained["header-trace"]["stderr"]
     assert isinstance(header_stdout, Path) and isinstance(header_stderr, Path)
-    require((f'# 0 "{probe}"'.encode() in header_stdout.read_bytes()
-             and b"int main(int argc, char **argv)" in header_stdout.read_bytes()),
+    header_source = header_stdout.read_text(errors="replace")
+    header_expansion = re.sub(r"^#.*$", "", header_source, flags=re.MULTILINE)
+    require((f'# 0 "{probe}"' in header_source
+             and "int main(int argc, char **argv)" in header_source
+             and re.search(r"fopen64_macro_entry\s*=\s*fopen\s*;", header_expansion) is not None),
             "header trace preprocessed source differs")
     traced_headers: list[Path] = []
     for line in header_stderr.read_text(errors="replace").splitlines():
@@ -412,8 +632,11 @@ def validate_commands(
             "header trace omits a required installed header")
     dynamic_driver = str(tools["dynamic_driver"]["path"])
     require(dynamic_driver == str(dynamic / "bin/crabc-cc-dynamic"), "dynamic driver tool path differs from product")
-    require_argv(retained["compile"], [dynamic_driver, "--dynamic-pie", "-std=c11", "-D_POSIX_C_SOURCE=200809L", "-fno-builtin",
+    require_argv(retained["compile"], [dynamic_driver, "--dynamic-pie", "-std=c11", "-D_POSIX_C_SOURCE=200809L", "-D_LARGEFILE64_SOURCE=1", "-fno-builtin",
                                         "-fno-stack-protector", "-c", str(probe), "-o", str(workload)], "compile")
+    macro_imports = undefined_elf_symbols(workload)
+    require("fopen" in macro_imports and "fopen64" not in macro_imports,
+            "fopen64 macro consumer object import differs")
     for stem in ("compile", "oracle-link"):
         stdout, stderr = retained[stem]["stdout"], retained[stem]["stderr"]
         assert isinstance(stdout, Path) and isinstance(stderr, Path)
@@ -544,7 +767,7 @@ def validate_report(path: Path, checkout: Path, *, require_static: bool = False)
     work = directory(path.parent, "stdio receipt work directory")
     require(work.is_relative_to(checkout / ".work"), "stdio receipt report escapes checkout .work")
     report = strict_json(path, "stdio receipt report")
-    expected = {"schema", "scope", "source", "workload", "products", "seals", "object_seals", "commands", "links", "execution_payloads",
+    expected = {"schema", "scope", "rows", "source", "workload", "products", "seals", "object_seals", "commands", "links", "execution_payloads",
                 "family_completion", "promotion_ready", "public_support"}
     require(set(report) == expected and report["schema"] == SCHEMA, "stdio receipt schema differs")
     require(report["scope"] == list(SCOPE), "stdio receipt capability scope differs")
@@ -555,13 +778,19 @@ def validate_report(path: Path, checkout: Path, *, require_static: bool = False)
     static = "static" in product_records
     if require_static:
         require(static, "supplied-static admission requires static and static-PIE cells")
-    probe, runner = validate_source_product_seals(checkout, work, report, static=static)
+    require(type(report["rows"]) is dict and set(report["rows"]) == {"stdio.fopen64-alias"},
+            "stdio receipt row roster differs")
+    same(report["rows"]["stdio.fopen64-alias"], fopen64_row(static=static),
+         "stdio fopen64 macro-consumer row differs")
+    probe, runner, fopen64_c, fopen64_cxx = validate_source_product_seals(checkout, work, report, static=static)
     tools = validate_tools(work, report, static=static)
-    commands, workload = validate_commands(checkout, work, report, probe, runner, tools, static=static)
+    commands, workload = validate_commands(checkout, work, report, probe, runner, fopen64_c, fopen64_cxx, tools, static=static)
     validate_links(checkout, work, report, commands, workload, static=static)
     validate_payloads(work, report, commands)
     return {"schema": SCHEMA, "matrix": "supplied-static" if static else "dynamic-development",
-            "cells": 6 if static else 4, "scope": list(SCOPE),
+            "cells": 6 if static else 4, "scope": list(SCOPE), "rows": report["rows"],
+            "products": report["products"], "source": report["source"],
+            "source_product_seal": report["seals"]["source-product-before"],
             "family_completion": False, "promotion_ready": False, "public_support": False}
 
 

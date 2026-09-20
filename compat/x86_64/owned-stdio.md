@@ -1,11 +1,11 @@
 # Installed stdio composition
 
 `run_owned_stdio.sh` is a bounded installed-product behavior component for
-`stdio.path-stream`, `stdio.stream-io`, `stdio.position-buffering`, and
-`stdio.format-scan`. It translates one C11 object through the selected dynamic
-product's installed headers, then links those unchanged object bytes with
-pinned musl and the selected owned products. It is not a private archive
-fixture.
+`stdio.path-stream`, `stdio.stream-io`, `stdio.position-buffering`,
+`stdio.format-scan`, and the source-only `stdio.fopen64-alias` row. It
+translates one C11 object through the selected dynamic product's installed
+headers, then links those unchanged object bytes with pinned musl and the
+selected owned products. It is not a private archive fixture.
 
 The object keeps byte and wide operations on separate live `FILE` objects. The
 byte stream opens a path as `w+`, keeps a caller full buffer, verifies the
@@ -25,6 +25,16 @@ policy. The component excludes cookie and memory streams, standard streams,
 threads, wide printf/scanf grammar, arbitrary locale maps, legacy encodings,
 and general stdio completion.
 
+The named `stdio.fopen64-alias` row is a Linux/x86-64 LP64 macro consumer. The
+same object requires exactly `_LARGEFILE64_SOURCE=1`, proves that the installed
+`fopen64` spelling expands to `fopen` with the same FILE-pointer function type
+and address, and retains only the ordinary `fopen` undefined object import. It
+then takes the macro pointer through a missing `r` open with `ENOENT`, `w+`
+write/seek/read/close, and `r` read/close/unlink lifecycle. Every retained
+dynamic kernel/direct PIE/non-PIE cell, and supplied static/static-PIE cell,
+executes that consumer. It neither adds a runtime alias nor establishes mode
+parsing, pathname-stream, or general stdio completion.
+
 The runner retains one pinned-musl static ET_EXEC link using
 `-static -fno-pie -no-pie`, static ET_EXEC and static PIE when a static product
 is supplied, and dynamic PIE/non-PIE through both kernel and direct owned
@@ -42,7 +52,12 @@ reader both validate the source/product seal and product validator before they
 load the sealed installed compiler helper. The reader also rechecks the sealed
 tool bytes before deriving the helper's compiler and linker paths, so a
 rehashed tool record cannot redirect the header observation to an ambient tool.
-It then rebuilds each link with
+For the macro row it also retains C11/C++17 compile and preprocess controls
+against pinned musl and the installed headers: base, GNU,
+`_FILE_OFFSET_BITS=64`, and `_LARGEFILE_SOURCE` hide `fopen64`; only
+`_LARGEFILE64_SOURCE` exposes its ordinary `fopen` expansion. The reader parses
+the main ET_REL symbol table itself and rejects any `fopen64` import. It then
+rebuilds each link with
 `owned_posix_product_evidence.validate_link` and each copied dynamic root with
 `owned_crypt_runtime_evidence.audit_execution_payload`. The reader checks the
 installed-header trace, one unchanged object across the pinned-musl and owned
@@ -56,7 +71,10 @@ the matrix exactly six cells by adding static ET_EXEC and static PIE. The
 reader's `--require-static` admission rejects a four-cell record, so a
 dynamic-only development observation cannot be relabelled as supplied-static
 evidence. Both forms retain false family-completion, promotion, and public
-support flags.
+support flags. Schema v3 requires this row and the five-entry finite scope.
+Historical schema-v2 reports remain reconstructable only with the immutable v2
+reader retained beside their frozen evidence; the v3 reader deliberately does
+not reinterpret an older receipt as macro-consumer evidence.
 
 Run it in the pinned native environment:
 
@@ -73,7 +91,7 @@ physical directories below that tree. A supplied static product also requires
 the dynamic product that provides the installed compilation headers. Every
 dynamic product must replay this component in the canonical qualification catalog.
 
-This receipt is evidence for four finite stdio components only. It does not
+This receipt is evidence for five finite stdio components only. It does not
 close the stdio family, alter a disposition, imply broad locale or wide-format
 coverage, or claim promotion or public x86 support.
 
