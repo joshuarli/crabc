@@ -79,16 +79,22 @@ or close M2. Parent source-map and evidence checks pass all 52 tests. The clean
 native receipt is under
 `.work/worktrees/allocator_processdone_native_finalizer/.work/x86_64/processdone-finalizer-native-20260920T015100Z-clean/`.
 
-Empty-name locale selection remains a concrete parity gap. The current x86
-`setlocale` and `newlocale` leaves reject environment selection; that bounded
-implementation choice is not a profile exclusion. With `LC_ALL=C`, the same
-installed-header object passes pinned musl and fails the frozen candidate at
-`setlocale(LC_ALL, "")`. The isolated regression and raw development receipt
-are in `.work/worktrees/locale_environment_parity/` and
-`.work/x86_64/locale-environment-regression/red-v2/`. Supported-name environment
-selection, category precedence, object/base semantics, and failure-state
-preservation need implementation and direct evidence before locale closure.
-General locale databases remain excluded.
+Empty-name locale selection is implemented in `22647dd0` for the owned x86
+runtime. Isolated failing regressions for both `setlocale` and `newlocale`
+precede the repair; they remain under
+`.work/x86_64/locale-environment-regression/`. Supported-name environment
+selection now follows `LC_ALL`, category, then `LANG` precedence, with the
+pinned musl default and object/base semantics. Unsupported names preserve
+state on failure. General locale databases remain excluded, and the private
+freestanding profile preserves its existing environment-free contract.
+The locale v3 receipt seals the shared environment probe and separates common
+oracle comparisons from candidate profile checks. Locale and rich-text
+development replays pass all six product modes; both public readers pass
+after commit with read-only mounts. Parent review authenticates 690 command
+artifacts in `.work/x86_64/public-data-integration/locale-environment-final-parent-review.json`.
+The merged tree passes 45 focused tests and the parity-ledger validator.
+These development products do not replace current-source three-pair
+qualification or establish locale-family closure.
 
 Classic-netdb component `dedc02b9` is integrated with the existing executable
 roster of 23 scenarios. Supplied frozen products pass all six candidate cells
