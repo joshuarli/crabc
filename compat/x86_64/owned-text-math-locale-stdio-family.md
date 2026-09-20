@@ -36,8 +36,12 @@ scope labels do not prove the corresponding complete capabilities.
 to credit `numeric.parse-float-locale`, `locale.core`,
 `text.wide-multibyte`, and `text.iconv`. Its closed rows include float parsing
 and aliases, the locale ctype/collation/alias/strfmon behavior, wide-character
-and conversion behavior, and UTF-16/32 iconv behavior. Until that public reader
-and its aggregate receipt exist, collection rejects the request.
+and conversion behavior, and UTF-16/32 iconv behavior. Its aggregate receipt
+must declare one physical `pair_evidence_roots` directory for each product pair,
+and its direct per-pair report must be a child of that root. The coordinator
+snapshots and retains each declared root separately from the aggregate receipt
+directory. Until that public reader and its aggregate receipt exist, collection
+rejects the request.
 
 `owned_stdio_component_receipt.py` retains the independent `fopen64` macro,
 header-profile, pointer-equality, and ET_REL import observation. The separate

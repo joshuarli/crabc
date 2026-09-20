@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import importlib
 import inspect
 import json
@@ -62,11 +63,41 @@ class FamilyFixture:
             self.products[pair] = {"static": static, "dynamic": dynamic}
         self.reports: dict[str, dict[str, Path]] = {}
         self.aggregate_receipts: dict[str, Path] = {}
+        self.aggregate_pair_roots: dict[str, Path] = {}
+        self.aggregate_pair_reports: dict[str, Path] = {}
+        self.aggregate_pair_payloads: dict[str, Path] = {}
         self.expected_inputs: dict[str, Path] = {}
         for component, specification in coordinator.COMPONENTS.items():
             if specification.request_kind == "aggregate":
+                for pair in coordinator.PAIRS:
+                    root = self.root / f".work/{component}-pair-evidence" / pair
+                    root.mkdir(parents=True)
+                    report = self.write(
+                        f".work/{component}-pair-evidence/{pair}/report.json", component + ":" + pair + "\n",
+                    )
+                    payload = self.write(
+                        f".work/{component}-pair-evidence/{pair}/retained/nested-payload", pair + "\n",
+                    )
+                    self.aggregate_pair_roots[pair] = root
+                    self.aggregate_pair_reports[pair] = report
+                    self.aggregate_pair_payloads[pair] = payload
+                aggregate = {
+                    "pair_evidence_roots": {
+                        pair: self.relative(self.aggregate_pair_roots[pair]) for pair in coordinator.PAIRS
+                    },
+                    "pairs": {
+                        pair: {
+                            "report": self.relative(self.aggregate_pair_reports[pair]),
+                            "report_sha256": hashlib.sha256(
+                                self.aggregate_pair_reports[pair].read_bytes()
+                            ).hexdigest(),
+                            "execution_cells": list(coordinator.TEXT_COMPONENT_MODES),
+                        }
+                        for pair in coordinator.PAIRS
+                    },
+                }
                 self.aggregate_receipts[component] = self.write(
-                    f".work/evidence/{component}/receipt.json", component + " aggregate\n",
+                    f".work/evidence/{component}/receipt.json", json.dumps(aggregate, sort_keys=True) + "\n",
                 )
                 continue
             entries: dict[str, Path] = {}
@@ -81,6 +112,7 @@ class FamilyFixture:
             self.reports[component] = entries
         self.request_path = self.write(".work/request.json", json.dumps(self.request(), sort_keys=True) + "\n")
         self.mutate_during_read = False
+        self.mutate_aggregate_root = False
 
     def addCleanup(self) -> None:
         self.temporary.cleanup()
@@ -169,6 +201,9 @@ class FamilyFixture:
                 if self.mutate_during_read and name == "locale":
                     self.mutate_during_read = False
                     (selected_products["primary"]["dynamic"] / "payload").write_text("changed\n", encoding="utf-8")
+                if self.mutate_aggregate_root and name == "text-locale-numeric":
+                    self.mutate_aggregate_root = False
+                    self.aggregate_pair_payloads["primary"].write_text("changed\n", encoding="utf-8")
                 return {
                     pair: coordinator.ComponentEvidence(
                         source=copy.deepcopy(source),
@@ -239,6 +274,10 @@ class TextMathLocaleStdioFamilyTests(unittest.TestCase):
             self.assertEqual(tuple(record["components"][component]["pairs"]), coordinator.PAIRS)
             for pair in coordinator.PAIRS:
                 self.assertEqual(tuple(record["components"][component]["pairs"][pair]["modes"]), coordinator.PAIR_MODES)
+        aggregate_pairs = record["components"]["text-locale-numeric"]["pairs"]
+        for pair in coordinator.PAIRS:
+            self.assertEqual(aggregate_pairs[pair]["evidence_root"]["path"],
+                             self.fixture.relative(self.fixture.aggregate_pair_roots[pair]))
 
     def test_roster_capabilities_are_the_current_parity_family_capabilities(self) -> None:
         parity = tomllib.loads((ROOT / "compat/x86_64/parity.toml").read_text(encoding="utf-8"))
@@ -316,6 +355,11 @@ class TextMathLocaleStdioFamilyTests(unittest.TestCase):
 
     def test_reader_rejects_a_nested_product_payload_mutated_after_component_validation(self) -> None:
         self.fixture.mutate_during_read = True
+        with self.assertRaisesRegex(coordinator.FamilyError, "declared input changed during collection"):
+            self.collect()
+
+    def test_reader_rejects_an_aggregate_pair_root_payload_mutated_after_validation(self) -> None:
+        self.fixture.mutate_aggregate_root = True
         with self.assertRaisesRegex(coordinator.FamilyError, "declared input changed during collection"):
             self.collect()
 
