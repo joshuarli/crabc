@@ -42,6 +42,14 @@ second stack-backed request is still active. An explicitly attributed fixture
 repair for both oracle and candidate remains under development; neither this
 observation nor the development replay closes the ordered native aggregate.
 
+Native allocator teardown work must preserve the pinned ordinary heap policy:
+an exhausted page is abandoned rather than retained in `BIN_FULL`. The fixed
+C observation and focused initial/later-owner tests establish that transition;
+the native teardown fixture still needs its old full-queue assumption repaired.
+Use a source-valid nonfull page for retained-owner local-free coverage, while
+keeping full-page abandonment as separate evidence. The final native teardown
+gate remains unqualified until that corrected fixture passes.
+
 The combined goal remains incomplete. Main through `0158c312` includes the
 locale source/product identity repairs, executable `libc.so` package mode,
 host-readable wordexp expected-input capture, and preservation of compiler
