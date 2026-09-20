@@ -71,6 +71,9 @@ Required qualification includes:
   and DSOs, plus malformed/truncated unwind metadata failure behavior.
 - Loader graph/callback reentrancy and mapping-lifetime evidence during frame
   enumeration. Do not infer async-signal safety from `dl_iterate_phdr` support.
+  `compat/x86_64/general_dynamic_iterate_consumer.c` is the separate loader
+  witness for this prerequisite; it does not integrate or qualify the unwind
+  provider.
 - Final stock-std and build-std consumer gates without suppressing unresolved
   symbols or removing the behavior those gates require.
 

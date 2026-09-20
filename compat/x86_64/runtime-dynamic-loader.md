@@ -16,6 +16,20 @@ and `src/ldso/dlinfo.c` provide lookup and introspection behavior. Runtime maps 
 identity and process finalization owns destructors. Failed admission rolls back
 only new maps. Physical close-time unmapping is not the musl parity target.
 
+`general_dynamic_iterate_consumer.c`, run by
+`run_general_dynamic_dlopen.sh`, is the installed/extracted callback witness
+for the unwinder proposal's frame-enumeration prerequisite. Musl 1.2.6
+`ldso/dynlink.c::dl_iterate_phdr` invokes the callback without holding its
+loader read lock, checks and propagates its nonzero return, then takes that
+lock only to read `current->next`; `src/ldso/dlclose.c` validates the handle
+without unmapping it. The witness consequently closes the admitted
+`libscope-first.so` from its outer callback, reads the borrowed name and
+program-header mapping afterward, opens `libscope-second.so` exactly once,
+and performs a nested enumeration that returns a sentinel at the retained
+target. The outer walk must subsequently observe that appended DSO, while a
+separate one-callback early-return probe proves return propagation. It does
+not claim async-signal safety or unwind-provider qualification.
+
 ## Conventional musl main startup
 
 The installed x86 product admits two explicit initial-main owners. Rust

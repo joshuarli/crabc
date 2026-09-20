@@ -127,6 +127,15 @@ for provider in first second; do
         -Wl,-z,now,-soname,"libscope-$provider.so" -o "$work/oracle/libscope-$provider.so"
     cp "$work/libscope-$provider.so" "$work/execution-root/usr/lib/"
 done
+"$driver" "$entry_mode" "$ROOT/compat/x86_64/general_dynamic_iterate_consumer.c" -o "$work/iterate"
+"$oracle_cc" "${oracle_entry_flags[@]}" "$ROOT/compat/x86_64/general_dynamic_iterate_consumer.c" \
+    -Wl,-rpath,"$work/oracle" -o "$work/oracle/iterate"
+cp "$work/iterate" "$work/execution-root/iterate"
+timeout 20 chroot "$work/execution-root" /iterate >"$work/iterate-candidate.stdout"
+LD_LIBRARY_PATH="$work/oracle" timeout 20 "$work/oracle/iterate" >"$work/iterate-oracle.stdout"
+cmp "$work/iterate-oracle.stdout" "$work/iterate-candidate.stdout"
+[ "$(<"$work/iterate-candidate.stdout")" = 'dl_iterate_phdr: nested callback, retained mapping, bounded append' ]
+printf 'general runtime iterate: PASS (nested callback, retained close, bounded appended DSO); evidence: %s\n' "$work"
 "$driver" "$entry_mode" "$ROOT/compat/x86_64/general_dynamic_scope_consumer.c" -o "$work/scope"
 "$oracle_cc" "${oracle_entry_flags[@]}" "$ROOT/compat/x86_64/general_dynamic_scope_consumer.c" \
     -Wl,-rpath,"$work/oracle" -o "$work/oracle/scope"

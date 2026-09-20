@@ -652,6 +652,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   lua-dynamic-source-build  qualify pinned Lua through installed/extracted x86 dynamic sysroots
   libc-owned-wordexp  run the installed x86 wordexp/wordfree ET_EXEC/static-PIE gate
   owned-loader-short-stack  compare owned dynamic startup with musl at libc-test's 100 KiB stack limit
+  general-dynamic-dlopen [--entry-mode dynamic-pie|dynamic-non-pie] DYNAMIC_SYSROOT  run bounded runtime loader dlfcn evidence against one supplied product
   owned-dynamic-sysroot  qualify both clean dynamic builds and extracted runtime
   owned-dynamic-pthread-exit  test installed dynamic main and last pthread exit
   owned-dynamic-fork  test installed loader, TLS and pthread fork transactions
@@ -3503,6 +3504,24 @@ prepare_owned_dynamic_product_argument() {
     if [ -n "$dynamic_product" ]; then
         OWNED_DYNAMIC_PRODUCT_ARGUMENTS+=("$dynamic_product")
     fi
+}
+
+prepare_general_dynamic_dlopen_arguments() {
+    local expected='usage: ./scripts/dev-x86_64.sh general-dynamic-dlopen [--entry-mode dynamic-pie|dynamic-non-pie] DYNAMIC_SYSROOT'
+    local entry_mode='--dynamic-pie'
+    if [ "${1:-}" = --entry-mode ]; then
+        [ "$#" -ge 2 ] || fail "$expected"
+        case "$2" in
+            dynamic-pie) entry_mode='--dynamic-pie' ;;
+            dynamic-non-pie) entry_mode='--dynamic-non-pie' ;;
+            *) fail "$expected" ;;
+        esac
+        shift 2
+    fi
+    [ "$#" -eq 1 ] && [ -n "$1" ] && [[ "$1" != -* ]] || fail "$expected"
+    local dynamic_product
+    dynamic_product="$(translate_owned_posix_product "$1")" || exit 2
+    GENERAL_DYNAMIC_DLOPEN_ARGUMENTS=("$entry_mode" "$dynamic_product")
 }
 
 require_native_linux_x86_64_host() {
@@ -6789,6 +6808,7 @@ case "$command" in
     dynamic-main-thread-runtime-v1) ;;
     dynamic-main-thread-runtime-v1-target-root) ;;
     general-dynamic-lifecycle) ;;
+    general-dynamic-dlopen) ;;
     general-relocations) ;;
     math-special-header-abi|libc-math-special) ;;
     math-exp2-header-abi|math-expm1-header-abi|math-log10-header-abi|libc-math-exp2|libc-math-expm1|libc-math-log10|math-exp10-header-abi|math-log-header-abi|math-sin-header-abi|math-tan-header-abi|math-tanh-header-abi|math-atanh-header-abi|math-acosh-header-abi|math-sincos-header-abi|math-pow-header-abi|libc-math-exp10|libc-math-log|libc-math-sin|libc-math-tan|libc-math-tanh|libc-math-atanh|libc-math-acosh|libc-math-sincos|libc-math-pow) ;;
@@ -7060,6 +7080,10 @@ case "$command" in
     owned-nftw-relative-base|owned-wcsftime|owned-strfmon)
         prepare_owned_dynamic_product_argument "$command" "$@"
         set -- "${OWNED_DYNAMIC_PRODUCT_ARGUMENTS[@]}"
+        ;;
+    general-dynamic-dlopen)
+        prepare_general_dynamic_dlopen_arguments "$@"
+        set -- "${GENERAL_DYNAMIC_DLOPEN_ARGUMENTS[@]}"
         ;;
 esac
 
@@ -11057,6 +11081,14 @@ PY
         [ "$#" -eq 0 ] || fail "general-dynamic-lifecycle takes no arguments"
         ensure_image
         run_general_dynamic_lifecycle_tests
+        ;;
+    general-dynamic-dlopen)
+        [ "$#" -eq 2 ] || fail "general-dynamic-dlopen requires an entry mode and dynamic sysroot"
+        ensure_image
+        run_in_chroot_cap_container env \
+            CRABC_GENERAL_DYNAMIC_ENTRY_MODE="$1" \
+            CRABC_GENERAL_DYNAMIC_DLOPEN_SKIP_SEARCH=1 \
+            bash /workspace/compat/x86_64/run_general_dynamic_dlopen.sh "$2"
         ;;
     general-relocations)
         [ "$#" -eq 0 ] || fail "general-relocations takes no arguments"
