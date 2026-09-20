@@ -2,9 +2,11 @@
 
 ## Current evidence and implementation frontier — 2026-09-20
 
-Main through `6bae6f5e` adds independently reconstructable locale and
-numeric/calendar component receipts and the installed 206-entry math/fenv
-component. Focused reader tests and six-mode development replays pass using
+Main through `ca817bae` adds independently reconstructable locale,
+numeric/calendar, regex, and stdio component receipts, including the installed
+`fopen64` macro consumer, and the installed 206-entry math/fenv component.
+The math and regex readers replay symbol inspection against physical artifacts
+before accepting retained provider observations. Focused reader tests and six-mode development replays pass using
 the frozen `26dfb153` products. The math reader also passes a separate retained
 report replay in the pinned image. These are mixed-source development checks,
 not current-source qualification or family closure. The new math component
@@ -16,8 +18,9 @@ themselves. The family aggregate must also bind the existing numeric, locale,
 ctype, wide-string, and UTF conversion observations to installed products.
 The FILE engine needs its memory/cookie/process, wide formatting/scanning,
 extended stream-helper, and ordinary-exit observations in addition to the
-bounded path/buffering probe. Full calendar and `fopen64` source-alias rows
-remain required as well. These are evidence gaps against the frozen family
+bounded path/buffering probe. Full calendar rows remain required as well;
+the completed `fopen64` component still needs current-source aggregate binding.
+These are evidence gaps against the frozen family
 scope, not new APIs or permission to replace behavior with symbol counts.
 
 The full OS-test development replay with the compiler-mode fix completed all
