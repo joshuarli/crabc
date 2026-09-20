@@ -279,6 +279,36 @@ class TextMathLocaleStdioFamilyTests(unittest.TestCase):
                 coordinator._product_pairs(self.fixture.root, matrix)
         replay.assert_not_called()
 
+    def test_rich_text_adapter_accepts_the_public_aggregate_collector_contract(self) -> None:
+        import owned_text_locale_numeric_component_receipt as component
+
+        fixture = self.fixture
+        context = coordinator.MatrixContext(
+            SOURCE, fixture.matrix()["inputs"], fixture.products,
+            fixture.static_preparation, fixture.dynamic_qualification,
+        )
+        request = coordinator.ComponentRequest(
+            reports={}, receipt=fixture.aggregate_receipts["text-locale-numeric"],
+            evidence_roots=fixture.aggregate_pair_roots,
+        )
+        patches = fixture.patches(fixture.adapter_results())
+        # Exercise the real aggregate writer and public validator together.
+        # Only the native leaf/product judges are substituted in this test.
+        with patches[2], mock.patch.object(component.static_products, "source_identity", return_value=SOURCE), \
+                mock.patch.object(component, "validate_report", return_value=(
+                    {"execution_cells": list(component.EXECUTION_CELLS)}, {"fixture": b"same object"},
+                )):
+            receipt = component.collect(fixture.root, fixture.static_preparation,
+                                        fixture.dynamic_qualification, fixture.aggregate_pair_reports)
+            request.receipt.write_text(json.dumps(receipt), encoding="utf-8")
+            observed = coordinator._text_locale_numeric_adapter(fixture.root, request, context)
+        self.assertEqual(set(observed), set(coordinator.PAIRS))
+        for pair, evidence in observed.items():
+            self.assertEqual(evidence.products, fixture.products[pair])
+            self.assertEqual(evidence.modes, coordinator.PAIR_MODES)
+            self.assertEqual(evidence.scope, coordinator.COMPONENTS["text-locale-numeric"].scope)
+            self.assertEqual(set(evidence.rows), set(coordinator.TEXT_LOCALE_NUMERIC_ROWS))
+
     def test_roster_keeps_the_exact_sixteen_capabilities_and_eighteen_cells(self) -> None:
         roster = coordinator.load_roster(ROOT / "compat/x86_64/text-math-locale-stdio-family.toml")
         self.assertEqual(tuple(roster["capabilities"]), coordinator.CAPABILITIES)

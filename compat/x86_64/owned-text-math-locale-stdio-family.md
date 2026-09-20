@@ -45,8 +45,12 @@ and conversion behavior, and UTF-16/32 iconv behavior. Its aggregate receipt
 must declare one physical `pair_evidence_roots` directory for each product pair,
 and its direct per-pair report must be a child of that root. The coordinator
 snapshots and retains each declared root separately from the aggregate receipt
-directory. Until that public reader and its aggregate receipt exist, collection
-rejects the request.
+directory. The public validator takes a decoded aggregate mapping. Its rows
+carry separate `capability` and `id` fields, and its execution cells live in
+each pair record. `_text_locale_numeric_adapter` normalizes these validated
+records into the coordinator's capability/row keys and mode names; it does not
+require the leaf report's `scope` or top-level `execution_cells` fields on the
+aggregate. Input receipt paths are resolved against the supplied checkout.
 
 `owned_stdio_component_receipt.py` retains the independent `fopen64` macro,
 header-profile, pointer-equality, and ET_REL import observation. The separate

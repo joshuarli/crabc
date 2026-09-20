@@ -685,19 +685,26 @@ def _text_locale_numeric_adapter(root: Path, request: ComponentRequest, context:
     require(request.receipt is not None, "text-locale-numeric aggregate receipt is missing")
     try:
         module = importlib.import_module("owned_text_locale_numeric_component_receipt")
-        report = module.validate(root, request.receipt)
+        report = module.validate(root, _strict_json(request.receipt, "text-locale-numeric aggregate receipt"))
     except Exception as error:
         raise FamilyError(f"text-locale-numeric public receipt rejected: {error}") from error
     require(isinstance(report, Mapping)
             and report.get("schema") == "crabc.x86_64-owned-text-locale-numeric-receipt/v1"
             and same(report.get("source"), context.source)
-            and tuple(report.get("scope", ())) == COMPONENTS["text-locale-numeric"].scope
+            and report.get("cell_count") == len(PAIRS) * len(TEXT_COMPONENT_MODES)
             and report.get("family_completion") is False and report.get("promotion_ready") is False
             and report.get("public_support") is False,
             "text-locale-numeric public receipt contract differs")
-    rows = report.get("rows")
-    require(isinstance(rows, Mapping) and set(rows) == set(TEXT_LOCALE_NUMERIC_ROWS),
+    # The aggregate owns an ordered row list and per-pair execution cells.
+    # Normalize only after its public reader has reconstructed those records.
+    raw_rows = report.get("rows")
+    require(isinstance(raw_rows, list)
+            and all(isinstance(row, dict) and isinstance(row.get("id"), str)
+                    and isinstance(row.get("capability"), str) for row in raw_rows)
+            and len(raw_rows) == len(TEXT_LOCALE_NUMERIC_ROWS),
             "text-locale-numeric required behavior rows differ")
+    rows = {row["capability"] + "/" + row["id"]: row for row in raw_rows}
+    require(tuple(rows) == TEXT_LOCALE_NUMERIC_ROWS, "text-locale-numeric required behavior rows differ")
     require(request.evidence_roots is not None and set(request.evidence_roots) == set(PAIRS),
             "text-locale-numeric aggregate evidence roots are missing")
     raw_roots = report.get("pair_evidence_roots")
@@ -706,10 +713,8 @@ def _text_locale_numeric_adapter(root: Path, request: ComponentRequest, context:
             and isinstance(pair_records, Mapping) and set(pair_records) == set(PAIRS),
             "text-locale-numeric aggregate pair-evidence roster differs")
     products = report.get("products")
-    cells = report.get("execution_cells")
-    require(isinstance(products, Mapping) and set(products) == set(PAIRS)
-            and isinstance(cells, Mapping) and set(cells) == set(PAIRS),
-            "text-locale-numeric aggregate product/cell roster differs")
+    require(isinstance(products, Mapping) and set(products) == set(PAIRS),
+            "text-locale-numeric aggregate product roster differs")
     result: dict[str, ComponentEvidence] = {}
     for pair in PAIRS:
         require(isinstance(raw_roots[pair], str)
@@ -731,13 +736,13 @@ def _text_locale_numeric_adapter(root: Path, request: ComponentRequest, context:
         require(report_path.parent == request.evidence_roots[pair]
                 and hashlib.sha256(report_path.read_bytes()).hexdigest() == pair_record["report_sha256"],
                 f"text-locale-numeric {pair} aggregate report differs")
-        raw_cells = cells[pair]
+        raw_cells = pair_record["execution_cells"]
         require(isinstance(raw_cells, list) and tuple(raw_cells) == TEXT_COMPONENT_MODES,
                 f"text-locale-numeric {pair} mode roster differs")
         result[pair] = ComponentEvidence(
             source=report["source"], products=_normal_products(root, products[pair], f"text-locale-numeric {pair}"),
             modes=tuple(TEXT_TO_FAMILY_MODE[cell] for cell in raw_cells),
-            scope=tuple(report["scope"]), rows=rows,
+            scope=COMPONENTS["text-locale-numeric"].scope, rows=rows,
         )
     return result
 

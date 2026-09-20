@@ -1034,7 +1034,7 @@ def validate(root: Path, receipt: object) -> dict[str, object]:
         require(report.parent == evidence_root, f"{pair} report is not a direct child of its evidence root")
         require(digest(report) == item["report_sha256"], f"{pair} report hash differs")
         reports[pair] = report
-    observed = collect(root, Path(inputs["static_preparation"]), Path(inputs["dynamic_qualification"]), reports)
+    observed = collect(root, root / inputs["static_preparation"], root / inputs["dynamic_qualification"], reports)
     require(family.same_json(receipt, observed), "aggregate receipt differs from reconstructed evidence")
     return observed
 
