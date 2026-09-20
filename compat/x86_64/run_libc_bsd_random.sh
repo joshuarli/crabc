@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Pinned-musl/x86 static BSD random-state provider differential.
 #
-# The initial `--expect-missing` invocation is the retained red regression:
-# one project-header C fixture first executes against pinned musl, then proves
-# that the feature-selected crabc archive has no quartet provider. Once the
-# provider exists, the same fixture compares musl and one extracted provider
-# object in a true -nostdlib static executable.
+# `--expect-missing` is the pre-provider red-regression mechanism: one
+# project-header C fixture first executes against pinned musl, then its static
+# link must expose all four absent providers. The historical pre-provider
+# receipt captured archive-symbol absence only; this runner does not relabel it
+# as an unexecuted link receipt. Once the provider exists, the same fixture
+# compares musl and an extracted provider object in a true -nostdlib static
+# executable.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

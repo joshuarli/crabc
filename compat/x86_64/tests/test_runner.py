@@ -2229,6 +2229,7 @@ unsafe fn join_selected_worker_inner(
         # outside the no-argument admission groups above, but execution coverage
         # remains exact.
         execution_only_commands = {
+            "libc-bsd-random",
             "native-abi-inventory",
             "native-abi-inventory-test",
             "native-abi-ratchet",
@@ -18005,6 +18006,122 @@ esac
             'command = "./scripts/dev-x86_64.sh libc-rand-r"', parity_ledger
         )
         self.assertIn("libc-rand-r", runner)
+
+    def test_libc_owned_bsd_random_stays_feature_selected_and_provenanced(self) -> None:
+        """The legacy BSD generator is the narrowly selected musl semantic port."""
+
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "bsd_random.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_bsd_random_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_bsd_random_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_bsd_random.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        entropy_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_random_entropy.sh"
+        ).read_text(encoding="utf-8")
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "bsd_random.rs"]', static_root)
+        self.assertIn('#[cfg(feature = "x86-owned-static-runtime")]', static_root)
+        for required in (
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "src/prng/random.c",
+            "3a47a757115e2a2ea7b1242a0000100ad802c27c2a398b4d8b8360d768780209",
+            "Copyright © 2005-2020 Rich Felker, et al.",
+            "src/thread/__lock.c",
+            "AtomicI32",
+            "FUTEX_WAIT_PRIVATE",
+            "read_unaligned",
+            "write_unaligned",
+            "pub extern \"C\" fn random",
+            "pub extern \"C\" fn srandom",
+            "pub unsafe extern \"C\" fn initstate",
+            "pub unsafe extern \"C\" fn setstate",
+            "pthread_fork_prepare",
+            "pthread_fork_parent",
+            "pthread_fork_child",
+            "never an entropy, secret, allocator",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in ("getrandom", "getentropy", "crabc_mimalloc"):
+            self.assertNotIn(forbidden, implementation)
+
+        for required in (
+            "random_signature",
+            "srandom_signature",
+            "initstate_signature",
+            "setstate_signature",
+            "0x80000000U",
+            "0xffffffffU",
+            "index < 8",
+            "8, 31, 32, 63, 64, 127, 128, 255, 256, 272",
+            "record_stream(130)",
+            "Saving before loading makes setstate(active_state) return itself.",
+            "restore the original static state",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "crabc_x86_64_bsd_random_probe",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "--expect-missing",
+            "red link did not expose missing",
+            "raw_syscall.*syscall3",
+            "-nostdlib -static",
+            "-Wl,--no-undefined",
+            "-Wl,--gc-sections",
+            "readelf -lW",
+            "cmp \"$work_dir/reference.trace\" \"$work_dir/candidate.trace\"",
+            "chmod -R a+rX \"$work_dir\"",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("trap", artifact_runner)
+
+        static_export_names = {
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        for symbol in ("random", "srandom", "initstate", "setstate"):
+            self.assertNotIn(symbol, static_export_names)
+
+        archive_prng_exclusion = re.search(
+            r"for unselected in(?P<symbols>.*?); do\n"
+            r'    if grep -Eq [^\n]*"\$archive_symbols"; then',
+            entropy_runner,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(archive_prng_exclusion)
+        assert archive_prng_exclusion is not None
+        entropy_excluded_symbols = set(
+            archive_prng_exclusion.group("symbols").replace("\\", " ").split()
+        )
+        for symbol in ("random", "srandom", "initstate", "setstate"):
+            self.assertIn(symbol, entropy_excluded_symbols)
+
+        for required in (
+            "libc-bsd-random [--expect-missing]",
+            "run_libc_bsd_random()",
+            "/workspace/compat/x86_64/run_libc_bsd_random.sh",
+            "libc-bsd-random takes no more than --expect-missing",
+            "libc-bsd-random only accepts --expect-missing",
+            "    libc-bsd-random)\n        ensure_image\n        run_libc_bsd_random \"$@\"",
+        ):
+            self.assertIn(required, dispatcher)
 
     def test_libc_static_c_abi_legacy_memory_artifact_stays_bounded(self) -> None:
         static_root = (
