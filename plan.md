@@ -143,7 +143,31 @@ scenarios across musl and six candidate modes. That replay is retained under
 `.work/x86_64/resolver-shared-startup-regression/`. The failed checkpoint is
 not qualified, and its evidence is not transferred to the repaired revision.
 
-The clean `e44d771b` checkpoint now has a 71-case dynamic receipt covering all
+The replacement clean checkpoint `deac7ae7` passes all 213 dynamic cases and
+the final qualification validator, all 54 POSIX matrix workloads and their
+receipt validator, the installed pthread and loader components, and the
+18-cell text/locale/numeric aggregate. Its checkout is
+`.work/worktrees/runtime_combined_deac7ae7/`; the following paths are relative
+to it:
+
+| Verified result | Retained receipt |
+| --- | --- |
+| Dynamic qualification | `.work/x86_64/tmp/materialized-dynamic.zNqKXd/qualification.json` |
+| POSIX workload matrix | `.work/x86_64/posix-family-deac7ae7/execution.json` |
+| Pthread component | `.work/x86_64/pthread-family-deac7ae7/receipt.json` |
+| Loader component | `.work/x86_64/loader-family-deac7ae7/receipt.json` |
+| Text/locale/numeric aggregate | `.work/x86_64/text-family-inputs-deac7ae7/text-locale-numeric-aggregate.json` |
+
+Parent review authenticates all 213 case logs. The nine text component groups
+also pass all three product pairs. Full text coordination and the ordered
+native aggregate remain unfinished: their retained runs are under
+`.work/x86_64/text-family-pipeline-deac7ae7/` and
+`.work/x86_64/native-aggregate-pipeline-deac7ae7/`. The latter has passed
+differential and started OS-test. None of these receipts completes a family
+or promotes x86 support. Later allocator harness commits do not inherit this
+checkpoint's source-qualified evidence.
+
+The earlier clean `e44d771b` checkpoint has a 71-case dynamic receipt covering all
 213 executions across two independent builds and extraction, with identical
 manifests and archives. Its worktree is
 `.work/worktrees/runtime_component_batch_current_e44d771b/`; paths in this
@@ -189,8 +213,9 @@ final repair. A full development replay now passes at
 streams, terminal status, and an unchanged frozen source identity. It overlays
 only the repaired reader functions and writes no qualification receipt.
 The frozen checkpoint remains unchanged; this development result does not
-transfer its products or receipts to the later source revision. A new clean
-combined checkpoint and genuine family admission remain required.
+transfer its products or receipts to the later source revision. Same-source
+coordinator replay and genuine family admission remain required; the
+replacement checkpoint above is pursuing those gates without overlays.
 
 The checkpoint exposed a FILE-engine dispatcher argument mismatch before its
 workloads ran. `da149adf` fixes the public command's translation to the runner's

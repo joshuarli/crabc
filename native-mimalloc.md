@@ -2477,6 +2477,20 @@ and the retained live byte before cleanup reschedules the range. It excludes
 concurrent guard contention, registry mutation, pinned/external arenas, real
 clock behavior, and arena lifecycle completion.
 
+The 99-value trace matches at clean `fa2884bc`, integrated as `31cbb36a`.
+Both native arms and their raw streams are retained under
+`.work/worktrees/allocator_arena_purge_fallback/.work/allocator-x86_64/`
+with prefix `arena-purge-fallback-final-fa2884bc`; the sibling comparison
+record binds all values. Subsequent harness repairs (`3a8145f0`, `8eeb3ac7`)
+correct stale pinned-source ranges and declaration spellings. Independent
+archive replay verifies all 42 M2 anchors, but this is source evidence only:
+the clean aggregate at `9a625b75` stops before producing a report because its
+Python producer loader omits module registration required by dataclasses.
+That failure is retained under
+`.work/worktrees/allocator_m2_anchor_preflight/.work/allocator-x86_64/m2-anchor-preflight-9a625b75/`.
+M2 remains partial; neither the bounded trace nor repaired anchors qualify its
+remaining components.
+
 The fault-injection component has one additional partial, current-source
 admission: `allocator-fault-seam-inventory` retains a fixed direct C profile
 and a private Rust `FaultPlan` trace for selected OS/page-map receiver rows.
