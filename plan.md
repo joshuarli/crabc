@@ -129,6 +129,20 @@ summary-only reports remain inadmissible. Parent replay records are under
 product source identities stay separate; this is not current-source runtime
 qualification or resolver-family completion.
 
+Combined checkpoint `417292cf` passes static preparation, all three calendar
+pairs, and a same-source resolver/network collection. Its dynamic qualification
+stops at classic-netdb because the new DNS readiness retention accidentally
+made the shared `start_server` helper's second argument mandatory. The frozen
+failure is preserved under
+`.work/worktrees/runtime_combined_417292cf/.work/x86_64/qualification-start/dynamic/`.
+`9da54fe8` restores the original one-argument interface while keeping explicit
+raw-readiness retention for the physical resolver receipt. The isolated
+regression fails before the repair; 38 focused tests pass afterward, and a
+committed supplied-product development replay passes all 23 classic-netdb
+scenarios across musl and six candidate modes. That replay is retained under
+`.work/x86_64/resolver-shared-startup-regression/`. The failed checkpoint is
+not qualified, and its evidence is not transferred to the repaired revision.
+
 The clean `e44d771b` checkpoint now has a 71-case dynamic receipt covering all
 213 executions across two independent builds and extraction, with identical
 manifests and archives. Its worktree is
