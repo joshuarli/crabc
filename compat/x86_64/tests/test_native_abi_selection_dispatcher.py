@@ -82,6 +82,7 @@ class NativeAbiSelectionDispatcherTests(unittest.TestCase):
             "--pthread-timed-feature-report", ".work/x86_64/pthread timed/report.json",
             "--resolver-alias-receipt-report", ".work/x86_64/resolver aliases/report.json",
             "--headers-layouts-aggregate-report", "compat/x86_64/generated/headers_layouts_aggregate/report.json",
+            "--text-family-semantic-report", ".work/x86_64/text family/receipt.json",
             "--public-data-declaration-runtime-report", ".work/x86_64/public data declaration runtime/report.json",
             "--loader-structural-owner-receipt-report", ".work/x86_64/loader structural/report.json",
         ]

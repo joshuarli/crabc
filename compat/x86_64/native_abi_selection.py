@@ -72,6 +72,12 @@ HEADERS_LAYOUTS_LIMITS = [
     'Only the finite libc.headers-layouts installed-header assessment is admitted.',
     'The aggregate does not select a provider, close archive extraction or runtime semantics, satisfy the complete family-receipt gate, promote a family, or establish public support.',
 ]
+TEXT_FAMILY = 'libc.text-math-locale-stdio'
+TEXT_FAMILY_LIMITS = [
+    'Only the current immutable three-product text/math/locale/stdio component coordinator is attached.',
+    'Its sixteen covered capabilities remain component evidence while the ledger family stays planned.',
+    'The attachment does not complete the family, its required aggregate admission, qualification, promotion, or public support.',
+]
 SELECTORS = {'header-providers', 'feature-abi-only', 'exact-file-members', 'explicit'}
 DISPOSITIONS = {'public-provider', 'private-provider', 'unresolved'}
 SUPPORTED_TYPES = {'NOTYPE', 'OBJECT', 'FUNC', 'SECTION', 'FILE', 'COMMON', 'TLS', 'IFUNC'}
@@ -860,11 +866,148 @@ def headers_layouts_aggregate_adapter(report_path: Path | None) -> dict[str, Any
     }
 
 
+def _text_family_reader():
+    """Load the public non-promoting text-family reader at its ABI boundary."""
+    try:
+        return importlib.import_module('owned_text_math_locale_stdio_family')
+    except (ImportError, OSError, ValueError) as error:
+        raise SelectionError(f'cannot load text family reader: {error}') from error
+
+
+def _text_family_source(source: Mapping[str, Any]) -> dict[str, str]:
+    """Project the selector seal into the coordinator's no-clean-flag shape."""
+    source = exact(dict(source), {'revision', 'content_sha256', 'clean'}, 'selection source')
+    require(type(source['clean']) is bool, 'selection source clean flag differs')
+    return {
+        'revision': string(source['revision'], 'selection source revision'),
+        'content_sha256': string(source['content_sha256'], 'selection source digest'),
+    }
+
+
+def text_family_semantic_adapter(report_path: Path | None, *, source: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Attach one replayed text-family component receipt without admitting its family.
+
+    ``owned_text_math_locale_stdio_family`` owns the complete three-product
+    reader replay.  The selector records only the exact capability/component
+    projection after that replay, so a component receipt cannot be mistaken for
+    the still-planned family aggregate required by ``parity.toml``.
+    """
+    if report_path is None:
+        return None
+    reader = _text_family_reader()
+    path = physical_work_path(report_path, directory=False)
+    require(path.is_relative_to(ROOT / '.work'), 'text family receipt belongs to another checkout')
+    before = file_identity(path)
+    relative = path.relative_to(ROOT)
+    try:
+        report = reader.validate_receipt(ROOT, relative)
+    except (OSError, RuntimeError, ValueError) as error:
+        raise SelectionError(f'text family receipt rejected: {error}') from error
+    require(same(before, file_identity(path)), 'text family receipt changed during validation')
+    report = exact(report, {
+        'schema', 'status', 'family', 'capabilities', 'inputs', 'components',
+        'component_complete', 'family_completion', 'promotion_ready', 'public_support',
+    }, 'text family receipt')
+    expected_source = _text_family_source(source)
+    inputs = exact(report['inputs'], {
+        'request', 'family_execution', 'pthread_family', 'source_before', 'source_after', 'roster',
+    }, 'text family receipt inputs')
+    require(report['schema'] == reader.SCHEMA
+            and report['status'] == 'immutable-component-coordination-verified'
+            and report['family'] == reader.FAMILY == TEXT_FAMILY
+            and report['capabilities'] == list(reader.CAPABILITIES)
+            and inputs['source_before'] == expected_source and inputs['source_after'] == expected_source
+            and same(inputs['roster'], selecting_source_file_identity(reader.ROSTER_PATH))
+            and report['component_complete'] is False and report['family_completion'] is False
+            and report['promotion_ready'] is False and report['public_support'] is False,
+            'text family receipt completion or source boundary differs')
+    components = exact(report['components'], set(reader.COMPONENTS), 'text family component roster')
+    component_projection: dict[str, Any] = {}
+    for name, specification in reader.COMPONENTS.items():
+        component = exact(components[name], {'scope', 'credits', 'pairs'}, f'text family {name} component')
+        pairs = component['pairs']
+        require(component['scope'] == list(specification.scope)
+                and component['credits'] == list(specification.credits)
+                and type(pairs) is dict and set(pairs) == set(reader.PAIRS),
+                f'text family {name} component roster differs')
+        for pair in reader.PAIRS:
+            pair_record = pairs[pair]
+            require(type(pair_record) is dict and pair_record.get('modes') == list(reader.PAIR_MODES)
+                    and type(pair_record.get('rows')) is dict
+                    and set(pair_record['rows']) == set(specification.rows),
+                    f'text family {name} {pair} component evidence differs')
+        component_projection[name] = {
+            'scope': list(specification.scope), 'credits': list(specification.credits),
+            'rows': list(specification.rows), 'pair_modes': list(reader.PAIR_MODES),
+        }
+    return {
+        'status': 'text-family-component-semantics-attached',
+        'report': before,
+        'source': expected_source,
+        'source_inputs': {'roster': selecting_source_file_identity(reader.ROSTER_PATH)},
+        'result': {
+            'schema': reader.SCHEMA, 'family': reader.FAMILY,
+            'capabilities': list(reader.CAPABILITIES), 'components': component_projection,
+            'component_complete': False, 'family_completion': False,
+            'promotion_ready': False, 'public_support': False,
+        },
+        'limits': list(TEXT_FAMILY_LIMITS),
+    }
+
+
+def _text_family_semantic_evidence(companion: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate the finite selector projection before replacing one blocker."""
+    reader = _text_family_reader()
+    companion = exact(companion, {'status', 'report', 'source', 'source_inputs', 'result', 'limits'},
+                      'text family semantic companion')
+    report = exact(companion['report'], {'path', 'sha256', 'size', 'mode'}, 'text family semantic report')
+    source = exact(companion['source'], {'revision', 'content_sha256'}, 'text family semantic source')
+    expected_source = {
+        'revision': string(source['revision'], 'text family semantic source revision'),
+        'content_sha256': string(source['content_sha256'], 'text family semantic source digest'),
+    }
+    expected_components = {
+        name: {
+            'scope': list(specification.scope), 'credits': list(specification.credits),
+            'rows': list(specification.rows), 'pair_modes': list(reader.PAIR_MODES),
+        }
+        for name, specification in reader.COMPONENTS.items()
+    }
+    result = exact(companion['result'], {
+        'schema', 'family', 'capabilities', 'components', 'component_complete', 'family_completion',
+        'promotion_ready', 'public_support',
+    }, 'text family semantic result')
+    require(companion['status'] == 'text-family-component-semantics-attached'
+            and report['path'].startswith(str(ROOT / '.work') + os.sep)
+            and same(companion['source'], expected_source)
+            and same(companion['source_inputs'], {'roster': selecting_source_file_identity(reader.ROSTER_PATH)})
+            and result['schema'] == reader.SCHEMA and result['family'] == TEXT_FAMILY
+            and result['capabilities'] == list(reader.CAPABILITIES)
+            and same(result['components'], expected_components)
+            and result['component_complete'] is False and result['family_completion'] is False
+            and result['promotion_ready'] is False and result['public_support'] is False
+            and companion['limits'] == TEXT_FAMILY_LIMITS,
+            'text family semantic companion boundary differs')
+    return {
+        'family': TEXT_FAMILY,
+        'status': 'text-family-component-semantics-attached',
+        'capabilities': list(reader.CAPABILITIES),
+        'requirements_discharged': ['family-semantic-evidence-unavailable'],
+        'family_completion': False,
+    }
+
+
 def headers_layouts_family_evidence(families: Sequence[Mapping[str, Any]],
-                                    companion: Mapping[str, Any] | None) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
-    """Replace only the headers unavailable row after the exact aggregate admission."""
+                                    companion: Mapping[str, Any] | None,
+                                    text_family_companion: Mapping[str, Any] | None = None) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
+    """Replace only replayed family-semantic unavailable rows.
+
+    Headers may be complete at their narrower boundary.  The text companion is
+    intentionally weaker: it makes component semantics available while its
+    family remains planned and its aggregate-admission requirement remains.
+    """
     ids = [family.get('id') for family in families]
-    require(ids.count(HEADERS_LAYOUTS_FAMILY) == 1 and len(ids) == len(set(ids)),
+    require(ids.count(HEADERS_LAYOUTS_FAMILY) == 1 and ids.count(TEXT_FAMILY) == 1 and len(ids) == len(set(ids)),
             'headers/layouts family roster differs')
     evidence: list[dict[str, Any]] = []
     if companion is not None:
@@ -900,12 +1043,22 @@ def headers_layouts_family_evidence(families: Sequence[Mapping[str, Any]],
             'status': 'headers-layouts-aggregate-attached',
             'requirements_discharged': ['family-semantic-evidence-unavailable'],
         })
+    if text_family_companion is not None:
+        evidence.append(_text_family_semantic_evidence(text_family_companion))
     blockers = [
         {'code': 'family-semantic-evidence-unavailable', 'family': family['id'], 'ledger_status': family['status']}
         for family in families
-        if not (companion is not None and family['id'] == HEADERS_LAYOUTS_FAMILY)
+        if not ((companion is not None and family['id'] == HEADERS_LAYOUTS_FAMILY)
+                or (text_family_companion is not None and family['id'] == TEXT_FAMILY))
     ]
     return blockers, evidence
+
+
+def family_semantic_evidence(families: Sequence[Mapping[str, Any]], *,
+                             headers_layouts_companion: Mapping[str, Any] | None,
+                             text_family_companion: Mapping[str, Any] | None) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
+    """Name the multi-family selector boundary without hiding old callers."""
+    return headers_layouts_family_evidence(families, headers_layouts_companion, text_family_companion)
 
 
 def _recheck_headers_layouts_aggregate(companion: Mapping[str, Any] | None) -> None:
@@ -921,6 +1074,20 @@ def _recheck_headers_layouts_aggregate(companion: Mapping[str, Any] | None) -> N
     replayed = headers_layouts_aggregate_adapter(path)
     require(same(replayed, companion) and same(before, selecting_source_file_identity(path)),
             'headers/layouts aggregate changed during final recheck')
+
+
+def _recheck_text_family_semantics(companion: Mapping[str, Any] | None, *, source: Mapping[str, Any]) -> None:
+    """Replay the current component reader after all ABI joins complete."""
+    if companion is None:
+        return
+    report = companion.get('report')
+    require(type(report) is dict and type(report.get('path')) is str,
+            'text family semantic report identity differs during final recheck')
+    path = physical_work_path(Path(report['path']), directory=False)
+    before = file_identity(path)
+    replayed = text_family_semantic_adapter(path, source=source)
+    require(same(replayed, companion) and same(before, file_identity(path)),
+            'text family semantic receipt changed during final recheck')
 
 
 def _recheck_public_data_declaration_runtime(
@@ -8768,6 +8935,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
                   resolver_alias_receipt_report: Path | None = None,
                   locale_alias_contract_report: Path | None = None,
                   headers_layouts_aggregate_report: Path | None = None,
+                  text_family_semantic_report: Path | None = None,
                   public_data_declaration_runtime_report: Path | None = None,
                   loader_structural_owner_receipt_report: Path | None = None) -> dict[str, Any]:
     if pthread_timed_feature_report is not None:
@@ -8838,6 +9006,9 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         loader_debug_report=loader_debug_report, loader_runtime_registry_report=loader_runtime_registry_report,
     )
     headers_layouts_aggregate_companion = headers_layouts_aggregate_adapter(headers_layouts_aggregate_report)
+    text_family_semantic_companion = text_family_semantic_adapter(
+        text_family_semantic_report, source=source_before,
+    )
     declaration = declaration_adapter(
         declaration_report,
         selected_objects=contract['object_contracts'],
@@ -8909,9 +9080,13 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     resolver_alias_receipt_joins = attach_native_resolver_alias(accounting, resolver_alias_receipt_companion)
     locale_alias_contract_joins = attach_native_locale_alias(accounting, locale_alias_contract_companion)
     loader_structural_owner_joins = attach_loader_structural_owner(accounting, loader_structural_owner_companion)
-    family_evidence_blockers, headers_layouts_aggregate_evidence = headers_layouts_family_evidence(
-        inputs['families'], headers_layouts_aggregate_companion,
+    family_evidence_blockers, family_semantic_receipts = family_semantic_evidence(
+        inputs['families'], headers_layouts_companion=headers_layouts_aggregate_companion,
+        text_family_companion=text_family_semantic_companion,
     )
+    headers_layouts_aggregate_evidence = [
+        receipt for receipt in family_semantic_receipts if receipt['family'] == HEADERS_LAYOUTS_FAMILY
+    ]
     _recheck_runtime_receipt_cohort(
         paths=paths, facts=facts, measurement=measurement, source=source_before,
         registry=loader_runtime_registry_companion, pthread=pthread_alias_contract_companion,
@@ -8932,6 +9107,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         loader_debug_report=loader_debug_report, loader_runtime_registry_report=loader_runtime_registry_report,
     )
     _recheck_headers_layouts_aggregate(headers_layouts_aggregate_companion)
+    _recheck_text_family_semantics(text_family_semantic_companion, source=source_before)
     _recheck_public_data_declaration_runtime(
         public_data_declaration_runtime_companion, paths=paths, source=source_before, measurement=measurement,
         declaration_report=declaration_report, ordinary_declaration_abi_report=ordinary_declaration_abi_report,
@@ -8987,10 +9163,12 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'loader_structural_owner_joins': loader_structural_owner_joins,
             'headers_layouts_aggregate_companion': headers_layouts_aggregate_companion,
             'headers_layouts_aggregate_evidence': headers_layouts_aggregate_evidence,
+            'text_family_semantic_companion': text_family_semantic_companion,
+            'family_semantic_receipts': family_semantic_receipts,
             **accounting, 'closure': {'complete': not blockers, 'blockers': blockers}, 'status': dict(STATUS),
             'limits': ['selection audit is not qualification', 'complete raw ELF observations stay with the publicly replayed supplement',
                        'no allocator metadata or unwinder investigation', 'no imported AArch64 execution proof',
-                       'public-data linkage is scoped evidence; aggregate semantic and family receipt adapters remain unavailable']}
+                       'public-data linkage is scoped evidence; only the text component-semantic receipt is attached while aggregate family admission remains unavailable']}
 
 
 def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declaration_report: Path | None = None,
@@ -9010,6 +9188,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                  resolver_alias_receipt_report: Path | None = None,
                  locale_alias_contract_report: Path | None = None,
                  headers_layouts_aggregate_report: Path | None = None,
+                 text_family_semantic_report: Path | None = None,
                  public_data_declaration_runtime_report: Path | None = None,
                  loader_structural_owner_receipt_report: Path | None = None,
                  **measurement_inputs: Path) -> dict[str, Any]:
@@ -9034,6 +9213,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                            resolver_alias_receipt_report=resolver_alias_receipt_report,
                            locale_alias_contract_report=locale_alias_contract_report,
                            headers_layouts_aggregate_report=headers_layouts_aggregate_report,
+                           text_family_semantic_report=text_family_semantic_report,
                            public_data_declaration_runtime_report=public_data_declaration_runtime_report,
                            loader_structural_owner_receipt_report=loader_structural_owner_receipt_report)
     output.mkdir()
@@ -9058,6 +9238,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                     resolver_alias_receipt_report: Path | None = None,
                     locale_alias_contract_report: Path | None = None,
                     headers_layouts_aggregate_report: Path | None = None,
+                    text_family_semantic_report: Path | None = None,
                     public_data_declaration_runtime_report: Path | None = None,
                     loader_structural_owner_receipt_report: Path | None = None,
                     **measurement_inputs: Path) -> dict[str, Any]:
@@ -9084,6 +9265,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                              resolver_alias_receipt_report=resolver_alias_receipt_report,
                              locale_alias_contract_report=locale_alias_contract_report,
                              headers_layouts_aggregate_report=headers_layouts_aggregate_report,
+                             text_family_semantic_report=text_family_semantic_report,
                              public_data_declaration_runtime_report=public_data_declaration_runtime_report,
                              loader_structural_owner_receipt_report=loader_structural_owner_receipt_report)
     require(same(report, expected), 'selection report does not reconstruct exactly from source inputs and public measurement replay')
@@ -9116,6 +9298,7 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument('--resolver-alias-receipt-report', type=Path)
     parser.add_argument('--locale-alias-contract-report', type=Path)
     parser.add_argument('--headers-layouts-aggregate-report', type=Path)
+    parser.add_argument('--text-family-semantic-report', type=Path)
     parser.add_argument('--public-data-declaration-runtime-report', type=Path)
     parser.add_argument('--loader-structural-owner-receipt-report', type=Path)
     options = [arg.split('=', 1)[0] for arg in argv if arg.startswith('--')]
@@ -9137,6 +9320,7 @@ def main(argv: Sequence[str]) -> int:
                                                 'pthread_timed_feature_report', 'resolver_alias_receipt_report',
                                                 'locale_alias_contract_report',
                                                 'headers_layouts_aggregate_report',
+                                                'text_family_semantic_report',
                                                 'public_data_declaration_runtime_report',
                                                 'loader_structural_owner_receipt_report')}
     kwargs['ordinary_link_report'] = kwargs.pop('public_data_ordinary_link_report')

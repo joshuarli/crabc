@@ -393,6 +393,21 @@ public support all remain unresolved. The other twenty-five family rows,
 global family and semantic receipt blockers, selected identities, declarations,
 and every raw ELF occurrence stay unchanged.
 
+`--text-family-semantic-report RECEIPT` is independently optional and accepts
+only a current-checkout immutable receipt below `.work/`. Its owner,
+`owned_text_math_locale_stdio_family.py`, reconstructs every declared input
+and all three static/dynamic product pairs before the selector reads its
+projection. The selector binds the exact sixteen capability roster, nine
+component scopes/credits, each component's three-pair six-mode coverage, the
+current source seal, and the tracked family roster. It then replays the owner
+after its ABI joins and rejects any changed receipt. This replaces only
+`libc.text-math-locale-stdio`'s
+`family-semantic-evidence-unavailable` row with component-semantic evidence.
+The receipt explicitly retains `component_complete = false`,
+`family_completion = false`, and both promotion flags false; the planned
+ledger family's required aggregate admission and the global family-receipt
+gate remain open.
+
 These runtime attachments run before the one public declaration-envelope replay
 and are rechecked after their scoped joins. Their source/product/ELF cohort is
 therefore shared with the selection transaction without rereading the header
@@ -445,7 +460,10 @@ independently optional and leaves both descriptor requirements unresolved.
 
 The selection report schema is `crabc.x86_64-native-abi-selection-report/v7`;
 v7 adds the optional closed `locale_alias_contract_companion` and
-`locale_alias_contract_joins` fields. It admits the locale reader only after
+`locale_alias_contract_joins` fields. The current selector also records the
+non-promoting `text_family_semantic_companion` and multi-family
+`family_semantic_receipts` projection; it does not alter the planned text
+family's ledger status. It admits the locale reader only after
 its complete 98-name source contract, all 35 normal consumer commands, and
 the receipt-local static/dynamic product trees match the selector's supplied
 cohort by relative bytes, modes, and links. Its retained top-level and dynamic
