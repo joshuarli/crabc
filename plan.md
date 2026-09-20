@@ -227,6 +227,16 @@ review of every raw stream and status, under
 That replay combines the repaired fixture with frozen products; it neither
 qualifies the repaired revision nor changes the failed checkpoint's status.
 
+The clean `0ff8e77e` checkpoint then passes static preparation and the complete
+213-case dynamic gate, including all 605 resolver-cancellation executions on
+each of the installed, independently rebuilt, and extracted products. Parent
+review authenticates every case receipt and log hash. The producer exits zero
+with clean, unchanged source; its qualification receipt is
+`.work/worktrees/runtime_combined_0ff8e77e/.work/x86_64/tmp/materialized-dynamic.qZe2zD/qualification.json`.
+This proves the repaired fixture through the full product gate. Same-source
+text coordination, family admission, and the remaining combined-plan gates
+are still required; family and promotion flags remain false.
+
 The earlier clean `e44d771b` checkpoint has a 71-case dynamic receipt covering all
 213 executions across two independent builds and extraction, with identical
 manifests and archives. Its worktree is
