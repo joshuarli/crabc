@@ -335,6 +335,11 @@ mod rand_r;
 #[cfg(feature = "x86-owned-static-runtime")]
 #[path = "owned_rand.rs"]
 mod owned_rand;
+// The selected owned product carries musl's separately locked BSD random
+// state. Keep the frozen default archive at caller-owned rand_r/rand48 leaves.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "bsd_random.rs"]
+mod bsd_random;
 #[path = "lrand48.rs"]
 mod lrand48;
 #[path = "fenv.rs"]

@@ -2710,6 +2710,7 @@ general facade admission, or C ABI support claim.
   libc-pthread-setconcurrency  run the static x86 crabc-libc stateless pthread concurrency-status slice
   libc-lrand48  run the static x86 crabc-libc legacy rand48 provider slice
   libc-rand-r  run the static x86 crabc-libc caller-state rand_r slice
+  libc-bsd-random [--expect-missing]  run the static x86 BSD random-state provider slice
 EOF
 }
 
@@ -4512,6 +4513,10 @@ run_libc_stateful_byte_strings() {
 
 run_libc_rand_r() {
     run_in_container bash /workspace/compat/x86_64/run_libc_rand_r.sh
+}
+
+run_libc_bsd_random() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_bsd_random.sh "$@"
 }
 
 run_libc_lrand48() {
@@ -6931,6 +6936,10 @@ case "$command" in
     libc-pthread-getconcurrency) ;;
     libc-pthread-setconcurrency) ;;
     libc-rand-r|libc-lrand48) ;;
+    libc-bsd-random)
+        [ "$#" -le 1 ] || fail "libc-bsd-random takes no more than --expect-missing"
+        [ "$#" -eq 0 ] || [ "$1" = --expect-missing ] || fail "libc-bsd-random only accepts --expect-missing"
+        ;;
     feature-profile-control-plane-header-abi) ;;
     terminal-streams-header-topology) ;;
     link-header-source-form) ;;
@@ -10616,6 +10625,10 @@ PY
         [ "$#" -eq 0 ] || fail "libc-rand-r takes no arguments"
         ensure_image
         run_libc_rand_r
+        ;;
+    libc-bsd-random)
+        ensure_image
+        run_libc_bsd_random "$@"
         ;;
     libc-lrand48)
         [ "$#" -eq 0 ] || fail "libc-lrand48 takes no arguments"

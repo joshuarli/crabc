@@ -419,7 +419,7 @@ pub unsafe extern "C" fn pthread_atfork(
 ///
 /// The caller is the owned initial task or one selected worker. The dynamic
 /// adapter first retains graph/callback ownership, then both linkage modes
-/// follow musl's key -> stdio -> syslog -> timezone -> thread-list ->
+/// follow musl's key -> BSD-random -> stdio -> syslog -> timezone -> thread-list ->
 /// process-creation order. Parent/error completion releases that ownership
 /// before user hooks.
 /// The child keeps its FS image, adopts TSD/cleanup/robust/main-task state and
@@ -456,9 +456,9 @@ pub unsafe extern "C" fn fork() -> c_int {
     #[cfg(feature = "x86-owned-static-runtime")]
     unsafe {
         // Musl `fork.c` locks __at_quick_exit_lockptr after pthread-key
-        // metadata. It comes before the named IPC registry and stdio-family
-        // locks, and retains no user quick-exit callback across raw fork.
+        // metadata. Its random lock is next, before named IPC and stdio.
         super::owned_quick_exit::pthread_fork_prepare();
+        super::bsd_random::pthread_fork_prepare();
         super::owned_named_ipc::pthread_fork_prepare();
         super::stdio_standard::pthread_fork_prepare();
         super::owned_syslog::pthread_fork_prepare();
@@ -492,8 +492,9 @@ pub unsafe extern "C" fn fork() -> c_int {
         #[cfg(feature = "x86-owned-static-runtime")]
         unsafe {
             // `fork.c` completes its private atfork locks forward: the copied
-            // quick-exit guard, then named IPC, then stdio-family state.
+            // quick-exit guard, BSD random, then named IPC/stdio-family state.
             super::owned_quick_exit::pthread_fork_child();
+            super::bsd_random::pthread_fork_child();
             super::owned_named_ipc::pthread_fork_child();
             super::stdio_standard::pthread_fork_child();
             super::owned_syslog::pthread_fork_child();
@@ -522,8 +523,9 @@ pub unsafe extern "C" fn fork() -> c_int {
         #[cfg(feature = "x86-owned-static-runtime")]
         unsafe {
             // `fork.c` completes its private atfork locks forward before user
-            // parent callbacks: quick-exit, named IPC, then stdio-family.
+            // parent callbacks: quick-exit, BSD random, then named IPC/stdio.
             super::owned_quick_exit::pthread_fork_parent();
+            super::bsd_random::pthread_fork_parent();
             super::owned_named_ipc::pthread_fork_parent();
             super::stdio_standard::pthread_fork_parent();
             super::owned_syslog::pthread_fork_parent();
