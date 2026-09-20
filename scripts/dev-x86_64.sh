@@ -619,6 +619,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   wordexp-paths-private  run the private wordexp pathname and passwd fixture
   wordexp-result-private  test wordexp partial-result ownership with result allocation failures
   owned-stdio [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed byte/wide streams, positioning and format/scan
+  owned-stdio-file-engine --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT  replay seven installed FILE-engine rows
   owned-numeric-calendar [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed numeric conversions and clock/calendar behavior
   owned-math-fenv-all-entry [--static-sysroot STATIC_SYSROOT] DYNAMIC_SYSROOT  test the bounded installed C math/fenv all-entry component
   owned-package-corpus --dynamic-sysroot DYNAMIC_SYSROOT [OPTIONS]  run the frozen native Alpine workloads with supplied package inputs
@@ -6781,7 +6782,7 @@ case "$command" in
     native-thread-signal-abi) ;;
     owned-system-cancellation) ;;
     owned-rand) ;;
-    owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-fmtmsg|owned-utmpx|owned-process-trio|owned-underscore-fork|owned-aio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-account-files|owned-locale|owned-wordexp|owned-stdio|owned-numeric-calendar|owned-math-fenv-all-entry|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition) ;;
+    owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-fmtmsg|owned-utmpx|owned-process-trio|owned-underscore-fork|owned-aio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-account-files|owned-locale|owned-wordexp|owned-stdio|owned-stdio-file-engine|owned-numeric-calendar|owned-math-fenv-all-entry|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition) ;;
     owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern|owned-wcsftime|owned-regex|owned-strfmon) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
@@ -6993,6 +6994,12 @@ case "$command" in
     native-thread-signal-abi)
         [ "$#" -eq 3 ] && [ "$1" = --static-sysroot ] || \
             fail "usage: ./scripts/dev-x86_64.sh native-thread-signal-abi --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT"
+        prepare_owned_posix_replay_arguments "$command" "$@"
+        set -- "${POSIX_REPLAY_ARGUMENTS[@]}"
+        ;;
+    owned-stdio-file-engine)
+        [ "$#" -eq 3 ] && [ "$1" = --static-sysroot ] && [ -n "$2" ] && [ -n "$3" ] ||
+            fail "usage: ./scripts/dev-x86_64.sh owned-stdio-file-engine --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT"
         prepare_owned_posix_replay_arguments "$command" "$@"
         set -- "${POSIX_REPLAY_ARGUMENTS[@]}"
         ;;
@@ -9099,6 +9106,10 @@ case "$command" in
     owned-stdio)
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_stdio.sh "$@"
+        ;;
+    owned-stdio-file-engine)
+        ensure_image
+        run_in_dynamic_loader_mount_container bash /workspace/compat/x86_64/run_owned_stdio_file_engine.sh "$@"
         ;;
     owned-numeric-calendar)
         ensure_image
