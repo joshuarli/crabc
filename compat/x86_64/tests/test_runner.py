@@ -2053,7 +2053,7 @@ unsafe fn join_selected_worker_inner(
             'memfd-create-header-abi',
             'vector-io-header-abi',
             'libc-crt1-static-tls',
-            'owned-crypt-runtime|owned-atomic-addressable-profile',
+            'owned-crypt-runtime|owned-atomic-addressable-profile|owned-bsd-random',
             'owned-system-cancellation',
             'owned-rand',
             'owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-fmtmsg|owned-utmpx|owned-process-trio|owned-underscore-fork|owned-aio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-account-files|owned-locale|owned-wordexp|owned-stdio|owned-stdio-file-engine|owned-numeric-calendar|owned-math-fenv-all-entry|owned-text-locale-numeric-component|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition|owned-regex',

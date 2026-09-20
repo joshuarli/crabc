@@ -247,7 +247,7 @@ run_dynamic_scenarios() {
 "$ORACLE_CC" -std=c11 -D_BSD_SOURCE -fno-builtin -pthread \
     -c "$PROBE" -o "$work/oracle-header.o"
 "$dynamic_product/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -D_BSD_SOURCE -fno-builtin \
-    -pthread -c "$PROBE" -o "$work/workload.o"
+    -c "$PROBE" -o "$work/workload.o"
 "$ORACLE_CC" -static -fno-pie -no-pie -pthread "$work/workload.o" -o "$work/oracle"
 
 assert_provider_symbols "$static_product/usr/lib/libc.a" nm "$work/static-symbols.txt"
