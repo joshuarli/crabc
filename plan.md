@@ -116,6 +116,19 @@ now forwards an optional supplied static product without preparing replacement
 products. Eleven focused reader/dispatch tests pass. This remains bounded
 `libc.resolver` evidence, with no resolver-family or Rust capability credit.
 
+The native resolver/network collector now retains a physical v2 component
+receipt (`88e03986`): raw command and execution files, DNS events, complete
+source/tool/header and product identities, link artifacts, permission modes,
+and execution trees. Its read-only reader reconstructs the existing two-arm,
+twelve-candidate gate rather than accepting summary booleans. A fresh
+supplied-`e44d771b` development run and independent reader replay pass, as do
+37 focused tests and the optional real-report test. Missing-receipt,
+raw-stream, source, and permission-only product changes are rejected; historical
+summary-only reports remain inadmissible. Parent replay records are under
+`.work/x86_64/resolver-physical-parent-review/mounted-products/`. Collector and
+product source identities stay separate; this is not current-source runtime
+qualification or resolver-family completion.
+
 The clean `e44d771b` checkpoint now has a 71-case dynamic receipt covering all
 213 executions across two independent builds and extraction, with identical
 manifests and archives. Its worktree is
