@@ -95,6 +95,8 @@ use crate::meta::MetaAllocation;
 #[cfg(any(test, feature = "native-runtime-test-audit"))]
 use crate::meta::MetaAllocator;
 use crate::os::{MemoryConfig, PageSize, StartupInput};
+#[cfg(feature = "native-runtime-test-audit")]
+use crate::os::{MapAccess, Mapping};
 #[cfg(target_arch = "x86_64")]
 use crate::diagnostic_output::{ProcessDiagnosticInputs, RuntimeStderrOutput};
 use crate::process_init::{ProcessMainInitializationStorage, ProcessMainThread};
@@ -3366,7 +3368,7 @@ impl RuntimeProcessStorage {
     /// selected release profile has `MI_SHARED_LIB`, so source lines 610-614
     /// do not force collection.
     fn finish_selected_default_release_process_after_user_atexit(
-        &self,
+        &'static self,
     ) -> SelectedProcessDoneResult {
         if !self.is_active()
             || self.state.load(Ordering::Acquire) == PROCESS_RETAINED
@@ -3389,6 +3391,16 @@ impl RuntimeProcessStorage {
             }
         }
 
+        // The selected source initializer retains its resolved VmPolicy beside
+        // the never-dropped main subprocess before PROCESS_ACTIVE. Process
+        // done needs that same immutable pair for its final `os_preloading =
+        // true` effect. Do this preflight before claiming the one-way logical
+        // transition so a missing process backing cannot publish a partial
+        // selected process-done state.
+        let Some(vm_process) = self.active_vm_process() else {
+            return SelectedProcessDoneResult::Retained;
+        };
+
         match self.logical_process_done.compare_exchange(
             PROCESS_DONE_OPEN,
             PROCESS_DONE_TRANSITION,
@@ -3408,6 +3420,13 @@ impl RuntimeProcessStorage {
         // branch; changing only the root preserves the source-visible cache
         // effect without claiming dynamic-cache teardown.
         set_cached_theap(core::ptr::NonNull::from(empty_default_theap()));
+        // `src/init.c:647` restores the source preloading guard last. Its
+        // process-wide once claim already excludes startup re-entry here, so
+        // retain the existing AtomicBool rather than inventing a second
+        // startup state machine. Late VM purge now takes the source reset arm
+        // while physical mappings and statistics remain owned by this same
+        // static process pair.
+        vm_process.policy().enter_process_done_preloading();
         self.logical_process_done
             .store(PROCESS_DONE_COMPLETE, Ordering::Release);
         SelectedProcessDoneResult::Completed
@@ -3495,6 +3514,19 @@ impl RuntimeProcessStorage {
         // immutable ready witness; it never borrows the permanent page owner.
         let owner = unsafe { self.active_owner() }?;
         owner.ready().ok()?.page_map().ok()
+    }
+
+    /// Returns the immutable VM process pair retained by the selected source
+    /// process owner.
+    ///
+    /// Like [`Self::page_map_for_live_native_allocation`], this takes only a
+    /// ready, process-static witness. It never forms a mutable borrow of the
+    /// permanent `ProcessMainThread`, its PageMap, or its page engine.
+    #[inline]
+    fn active_vm_process(&'static self) -> Option<crate::os::VmProcess<'static>> {
+        // SAFETY: PROCESS_ACTIVE publishes the never-dropped static owner.
+        // `ready` and `vm_process` return immutable process-lifetime views.
+        unsafe { self.active_owner() }?.ready().ok()?.vm_process().ok()
     }
 
     /// Returns the durable ticket-zero owner after its Release publication.
@@ -4581,6 +4613,30 @@ pub struct NativeRuntimeFirstArenaPolicyAudit {
     pub process_arena_initially_committed: usize,
     pub page_map_registered_entry_count: usize,
     pub arena_registry_count: usize,
+}
+
+/// Scalar receipt for one process-done no-callback purge on a transient
+/// mapping owned by the already-published selected process pair.
+///
+/// This default-off test audit exposes neither its mapping address nor a
+/// reusable VM capability. The caller may use it only after the selected
+/// logical process finalizer has run and while its fixture has no concurrent
+/// allocator statistics writer, so the recorded deltas describe this one
+/// source-shaped operation.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeRuntimeProcessDoneTerminalPurgeAudit {
+    pub terminal_preloading: usize,
+    pub purge_decommits_enabled: usize,
+    pub mapping_retained_before_release: usize,
+    pub purge_needs_recommit: usize,
+    pub purge_calls_delta: usize,
+    pub purged_bytes_delta: usize,
+    pub reset_calls_delta: usize,
+    pub reset_bytes_delta: usize,
+    pub release_succeeded: usize,
 }
 
 /// A non-owning fingerprint of one exact live arena-backed regular client.
@@ -5740,6 +5796,90 @@ pub fn native_runtime_fork_admission_test_audit() -> NativeRuntimeForkAdmissionA
     NativeRuntimeForkAdmissionAudit {
         active_later_thread_count: state & FORK_GATE_COUNT_MASK,
     }
+}
+
+/// Runs the selected source's no-callback purge consequence after process
+/// done, over one temporary mapping owned by the retained process pair.
+///
+/// Pinned `src/init.c:647` makes `os_preloading` true after
+/// `mi_process_done_once`; then `src/os.c:657-679` must select reset instead
+/// of decommit even when `purge_decommits` is enabled. The finalizer has
+/// already proven the process pair is immutable and process-lifetime; this
+/// audit obtains only that pair and owns its transient mapping locally.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub fn native_runtime_process_done_terminal_purge_test_audit(
+) -> Result<NativeRuntimeProcessDoneTerminalPurgeAudit, i32> {
+    if !RUNTIME_PROCESS.logical_process_done_is_complete() {
+        return Err(-1);
+    }
+    let Some(process) = RUNTIME_PROCESS.active_vm_process() else {
+        return Err(-2);
+    };
+    // SAFETY: `active_vm_process` borrows the same immutable ready owner. The
+    // ready configuration is Copy and remains valid for its process lifetime.
+    let Some(config) = (unsafe { RUNTIME_PROCESS.active_owner() })
+        .and_then(|owner| owner.ready().ok())
+        .and_then(|ready| ready.memory_config().ok())
+    else {
+        return Err(-3);
+    };
+    if !process.is_preloading() {
+        return Err(-4);
+    }
+    if !process.policy().purge_decommits() {
+        return Err(-5);
+    }
+    if process.policy().purge_delay_milliseconds() < 0 {
+        return Err(-6);
+    }
+
+    let page = config.page_size().bytes();
+    let mut mapping = Mapping::map_for_process(
+        process,
+        config,
+        page,
+        1,
+        MapAccess::Committed,
+        false,
+        None,
+    )
+    .map_err(|_| -7)?;
+    let base = mapping.base().map_err(|_| -8)?;
+    let before = process.subprocess().vm_statistics().snapshot();
+    let purge = mapping.purge_for_process(process, 0, page, true, page);
+    let mapping_retained_before_release = mapping.base() == Ok(base);
+    let after = process.subprocess().vm_statistics().snapshot();
+    let release_succeeded = mapping.unmap_for_process(process, page, false).is_ok();
+    if purge != Ok(false) {
+        return Err(-9);
+    }
+    if !mapping_retained_before_release || !release_succeeded {
+        return Err(-10);
+    }
+    let Some(purge_calls_delta) = after.purge_calls.checked_sub(before.purge_calls) else {
+        return Err(-11);
+    };
+    let Some(purged_bytes_delta) = after.purged.checked_sub(before.purged) else {
+        return Err(-12);
+    };
+    let Some(reset_calls_delta) = after.reset_calls.checked_sub(before.reset_calls) else {
+        return Err(-13);
+    };
+    let Some(reset_bytes_delta) = after.reset.checked_sub(before.reset) else {
+        return Err(-14);
+    };
+    Ok(NativeRuntimeProcessDoneTerminalPurgeAudit {
+        terminal_preloading: 1,
+        purge_decommits_enabled: 1,
+        mapping_retained_before_release: 1,
+        purge_needs_recommit: 0,
+        purge_calls_delta: purge_calls_delta as usize,
+        purged_bytes_delta: purged_bytes_delta as usize,
+        reset_calls_delta: reset_calls_delta as usize,
+        reset_bytes_delta: reset_bytes_delta as usize,
+        release_succeeded: 1,
+    })
 }
 
 /// Reports whether the current worker's raw TLS identity equals the retained

@@ -2615,6 +2615,22 @@ allocator destruction, dynamic TLS-key shutdown, a claim about source
 stats/destroy/general nonempty-cache branches, or a default-backend or
 public-support claim.
 
+Within that retained selected-static state, pinned `src/init.c:647` restores
+`os_preloading = true` last. The private
+`VmPolicy::enter_process_done_preloading` call follows the finalizer's existing
+one-way logical-process-done claim and cached-Theap clear; the process root
+cannot initialize again, so this remains the existing `AtomicBool` policy
+rather than a second startup state machine. The 53-value pinned-C receipt calls
+real `mi_process_done()` and then `_mi_os_purge_ex` on a live mapping. In the
+selected release profile it observes the reset arm rather than decommit, no
+recommit requirement, safe retained access, and explicit mapping release. The
+normal-main shadow fixture observes the same terminal preloading consequence
+from its application destructor through one transient retained-process mapping
+and the existing purge/reset counters. This maps one process-done VM consumer;
+it does not complete M2, source statistics/dynamic-TLS/destroy branches,
+general cache teardown, physical process teardown, or initialization and
+publication behavior.
+
 The same selected x86 static slice now maps pinned
 `src/page.c:359-388` and `src/arena.c:1304-1355` for a source-default normal
 Theap (`allow_page_abandon == true`, `page_full_retain == 2`).

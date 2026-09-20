@@ -425,6 +425,9 @@ nm -A --defined-only "$archive" >"$normal_main_archive_symbols"
 grep -Eq "[[:space:]][TW][[:space:]]__crabc_x86_native_mimalloc_process_done_fini_array_test_audit$" \
     "$normal_main_archive_symbols" ||
     fail "normal-main selected archive lacks its fini-array receipt"
+grep -Eq "[[:space:]][TW][[:space:]]__crabc_x86_native_mimalloc_process_done_terminal_purge_test_audit$" \
+    "$normal_main_archive_symbols" ||
+    fail "normal-main selected archive lacks its terminal-purge receipt"
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
     -DCRABC_NATIVE_MIMALLOC_SHADOW_NORMAL_MAIN_RETURN_PROBE \

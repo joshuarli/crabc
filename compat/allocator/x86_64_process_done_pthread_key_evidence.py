@@ -6,7 +6,9 @@ The native fixture initializes mimalloc, explicitly calls public
 initializes a default Theap and allocates two medium clients, but the Unix
 automatic thread-done key has already been deleted. Its natural return leaves
 the page and its worker Theap owned; two later ``mi_free`` calls publish remote
-frees without collecting or releasing that page.
+frees without collecting or releasing that page. The same direct source
+fixture then calls pinned ``_mi_os_purge_ex`` on one live raw mapping after
+``mi_process_done`` and records the terminal preloading reset arm.
 
 This is C-oracle-only native Linux/x86-64 evidence. It establishes neither a
 Rust process-done implementation nor a public x86 runtime, allocator, libc,
@@ -59,13 +61,15 @@ EXPECTED_ARCHIVE_SHA256 = "1e432f0559a4ab512143b9bff7a700541a2c8d4712b26a72de3e0
 EXPECTED_PROFILE = "linux-x86_64-private-c-process-done-pthread-key"
 EXPECTED_SCOPE = {
     "aarch64_status_reused": False,
-    "after_process_done_worker_create_join_only": True,
+    "after_process_done_worker_create_join_and_purge_only": True,
     "automatic_destructor_absence_observed": True,
     "explicit_public_mi_process_done_fixture_only": True,
-    "late_free_remote_publication_only": True,
+    "late_free_remote_publication_and_terminal_purge_only": True,
     "mi_tls_model_local_required": True,
     "ordinary_medium_full_abandonment_observed": True,
-    "process_done_pthread_key_only": True,
+    "post_process_done_no_callback_purge_only": True,
+    "process_done_purge_reset_observed": True,
+    "process_done_pthread_key_and_terminal_purge_only": True,
     "emulation_accepted": False,
     "general_abandonment_or_adoption_claimed": False,
     "general_lifecycle_claimed": False,
@@ -97,6 +101,8 @@ EXPECTED_SOURCE_ANCHORS = (
     ("src/prim/unix/prim.c", 1011, 1040, "eef3c9b9715fec9a271f8a966febe73d3ff3113165c5bc9c930fa46c657aa87a"),
     ("src/init.c", 305, 360, "8b5a6af8d90da7f2cb33cf5c6211c9325234840d57a54c25be891e49e4d354e5"),
     ("src/init.c", 595, 648, "18bc636a2f41434dc59cb34b0505242d1762e3a7f5d6717c5bb906012d25a869"),
+    ("src/os.c", 655, 680, "5bf5130ba1a0a05988e9bf818a1f6d45057c790d8337317553560d9d8968e1c1"),
+    ("src/prim/unix/prim.c", 571, 597, "0c483f64cb62dfce8f6101943ce2c7cbecc83c03d5375ed378d9387fecd77781"),
     ("src/prim/prim-tls.c", 211, 250, "79dbeedce267f8671d082fad73bb141404192decb5d1191670fa6341aa75619b"),
     ("src/free.c", 223, 255, "53e59015c42883dfe56d1b920e5b2907a61df09c5da49b4abe3035db5dc76ff4"),
     ("src/page.c", 291, 388, "164b52805d60011e009131354a48e0a032843b2ed064865f75c8cb904ae1ebea"),
@@ -113,6 +119,13 @@ EXPECTED_TRACE_VALUES = {
     "trace.process_done_pthread_key.cached_empty_after_done": 1,
     "trace.process_done_pthread_key.auto_key_invalid_after_done": 1,
     "trace.process_done_pthread_key.main_theap_initialized_after_done": 1,
+    "trace.process_done_pthread_key.process_done_purge_page_size": 4096,
+    "trace.process_done_pthread_key.process_done_purge_option_enabled": 1,
+    "trace.process_done_pthread_key.process_done_purge_needs_recommit": 0,
+    "trace.process_done_pthread_key.process_done_purge_advice_calls": 1,
+    "trace.process_done_pthread_key.process_done_purge_reset_not_decommit": 1,
+    "trace.process_done_pthread_key.process_done_purge_mapping_retained": 1,
+    "trace.process_done_pthread_key.process_done_purge_mapping_released": 1,
     "trace.process_done_pthread_key.worker_theap_initialized_before_return": 1,
     "trace.process_done_pthread_key.worker_auto_key_invalid": 1,
     "trace.process_done_pthread_key.worker_returned_naturally": 1,
@@ -153,6 +166,10 @@ EXPECTED_TRACE_VALUES = {
 
 
 C_TRACE_PROBE = r'''
+#ifndef _DEFAULT_SOURCE
+#define _DEFAULT_SOURCE
+#endif
+
 #include "mimalloc/internal.h"
 #include "mimalloc/prim-tls.h"
 
@@ -160,6 +177,9 @@ C_TRACE_PROBE = r'''
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <sys/mman.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 
 #if !defined(__linux__) || !defined(__x86_64__)
 #error this private process-done pthread-key fixture requires native Linux/x86_64
@@ -181,6 +201,22 @@ C_TRACE_PROBE = r'''
 // fixture intentionally observes the key's invalid value after `mi_process_done`;
 // it never calls the source's explicit thread-done entry point.
 extern pthread_key_t _mi_heap_default_key;
+
+/* Keep the exact `src/prim/unix/prim.c` advice observable only for the one
+ * `_mi_os_purge_ex` call after real `mi_process_done`. Earlier source setup
+ * remains uninstrumented, and the wrapper uses the kernel entry directly so
+ * it cannot recurse through the C runtime after the source terminal guard. */
+static bool capture_process_done_purge_advice = false;
+static size_t process_done_purge_advice_calls = 0;
+static int process_done_purge_advice = 0;
+
+int madvise(void* start, size_t size, int advice) {
+  if (capture_process_done_purge_advice) {
+    process_done_purge_advice_calls++;
+    process_done_purge_advice = advice;
+  }
+  return (int)syscall(SYS_madvise, start, size, advice);
+}
 
 typedef struct worker_context_s {
   void* block;
@@ -426,6 +462,13 @@ int main(void) {
   int page_abandoned_after_final_late_free = 0;
   int page_mapping_retained_after_final_late_free = 0;
   int full_page_join_completed = 0;
+  size_t process_done_purge_page_size = 0;
+  int process_done_purge_option_enabled = 0;
+  int process_done_purge_needs_recommit = 1;
+  int process_done_purge_reset_not_decommit = 0;
+  int process_done_purge_mapping_retained = 0;
+  int process_done_purge_mapping_released = 0;
+  void* process_done_purge_mapping = NULL;
 
   mi_thread_init();
   main_theap = _mi_theap_default();
@@ -433,6 +476,13 @@ int main(void) {
   auto_key_valid_before_done = (_mi_heap_default_key != MI_PTHREAD_KEY_INVALID);
   if (!process_initialized_before_done || !auto_key_valid_before_done
       || main_theap == NULL || !mi_theap_is_initialized(main_theap)) goto output;
+  process_done_purge_page_size = _mi_os_page_size();
+  mi_option_set(mi_option_purge_delay, 0);
+  mi_option_set(mi_option_purge_decommits, 1);
+  process_done_purge_option_enabled =
+      (mi_option_get(mi_option_purge_delay) == 0
+       && mi_option_is_enabled(mi_option_purge_decommits));
+  if (process_done_purge_page_size == 0 || !process_done_purge_option_enabled) goto output;
   stage = 1;
 
   mi_process_done();
@@ -441,6 +491,29 @@ int main(void) {
   main_theap_initialized_after_done = mi_theap_is_initialized(main_theap);
   if (!cached_empty_after_done || !auto_key_invalid_after_done
       || !main_theap_initialized_after_done) goto output;
+
+  process_done_purge_mapping = mmap(NULL, process_done_purge_page_size,
+      PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (process_done_purge_mapping == MAP_FAILED) {
+    process_done_purge_mapping = NULL;
+    goto output;
+  }
+  ((volatile unsigned char*)process_done_purge_mapping)[0] = 0x5a;
+  capture_process_done_purge_advice = true;
+  process_done_purge_needs_recommit = _mi_os_purge_ex(_mi_subproc_main(),
+      process_done_purge_mapping, process_done_purge_page_size,
+      true, process_done_purge_page_size, NULL, NULL);
+  capture_process_done_purge_advice = false;
+  process_done_purge_reset_not_decommit =
+      (process_done_purge_advice_calls == 1 && process_done_purge_advice != MADV_DONTNEED);
+  process_done_purge_mapping_retained =
+      (((volatile unsigned char*)process_done_purge_mapping)[0] == 0
+       || ((volatile unsigned char*)process_done_purge_mapping)[0] == 0x5a);
+  process_done_purge_mapping_released =
+      (munmap(process_done_purge_mapping, process_done_purge_page_size) == 0);
+  process_done_purge_mapping = NULL;
+  if (process_done_purge_needs_recommit || !process_done_purge_reset_not_decommit
+      || !process_done_purge_mapping_retained || !process_done_purge_mapping_released) goto output;
   stage = 2;
 
   if (pthread_create(&worker, NULL, worker_main, &context) != 0) goto output;
@@ -520,6 +593,9 @@ int main(void) {
   valid = (process_initialized_before_done && auto_key_valid_before_done
            && cached_empty_after_done && auto_key_invalid_after_done
            && main_theap_initialized_after_done && worker_theap_initialized_before_return
+           && process_done_purge_option_enabled && !process_done_purge_needs_recommit
+           && process_done_purge_reset_not_decommit && process_done_purge_mapping_retained
+           && process_done_purge_mapping_released
            && worker_auto_key_invalid && worker_returned_naturally && join_completed
            && full_page_join_completed && full_page.setup_valid
            && full_page.ordinary_abandoning_options && full_page.worker_auto_key_invalid
@@ -542,6 +618,8 @@ int main(void) {
 output:
   if (worker_started) (void)pthread_join(worker, NULL);
   if (full_page_worker_started) (void)pthread_join(full_page_worker, NULL);
+  if (process_done_purge_mapping != NULL)
+    (void)munmap(process_done_purge_mapping, process_done_purge_page_size);
   printf("CRABC_MI_PROCESS_DONE_PTHREAD_KEY_TRACE_BEGIN\n");
 #define OUT_N(k,v) printf("trace.process_done_pthread_key.%s=%zu\n", k, (size_t)(v))
 #define OUT_B(k,v) printf("trace.process_done_pthread_key.%s=%d\n", k, (v) ? 1 : 0)
@@ -555,6 +633,13 @@ output:
   OUT_B("cached_empty_after_done", cached_empty_after_done);
   OUT_B("auto_key_invalid_after_done", auto_key_invalid_after_done);
   OUT_B("main_theap_initialized_after_done", main_theap_initialized_after_done);
+  OUT_N("process_done_purge_page_size", process_done_purge_page_size);
+  OUT_B("process_done_purge_option_enabled", process_done_purge_option_enabled);
+  OUT_B("process_done_purge_needs_recommit", process_done_purge_needs_recommit);
+  OUT_N("process_done_purge_advice_calls", process_done_purge_advice_calls);
+  OUT_B("process_done_purge_reset_not_decommit", process_done_purge_reset_not_decommit);
+  OUT_B("process_done_purge_mapping_retained", process_done_purge_mapping_retained);
+  OUT_B("process_done_purge_mapping_released", process_done_purge_mapping_released);
   OUT_B("worker_theap_initialized_before_return", worker_theap_initialized_before_return);
   OUT_B("worker_auto_key_invalid", worker_auto_key_invalid);
   OUT_B("worker_returned_naturally", worker_returned_naturally);
@@ -655,6 +740,9 @@ def validate_probe_source(probe: str = C_TRACE_PROBE) -> None:
     required = (
         "extern pthread_key_t _mi_heap_default_key;",
         "mi_process_done();",
+        "_mi_os_purge_ex(_mi_subproc_main(),",
+        "capture_process_done_purge_advice = true;",
+        "process_done_purge_advice != MADV_DONTNEED",
         "_mi_heap_default_key == MI_PTHREAD_KEY_INVALID",
         "context->worker_returned_naturally = true;",
         "pthread_join(worker, NULL)",

@@ -623,6 +623,21 @@ static volatile int normal_main_user_atexit_seen;
 
 #ifdef CRABC_NATIVE_MIMALLOC_SHADOW_PROCESS_DONE_EXIT_TEST_AUDIT
 extern int __crabc_x86_native_mimalloc_process_done_fini_array_test_audit(void);
+
+struct process_done_terminal_purge_audit {
+    size_t terminal_preloading;
+    size_t purge_decommits_enabled;
+    size_t mapping_retained_before_release;
+    size_t purge_needs_recommit;
+    size_t purge_calls_delta;
+    size_t purged_bytes_delta;
+    size_t reset_calls_delta;
+    size_t reset_bytes_delta;
+    size_t release_succeeded;
+};
+
+extern int __crabc_x86_native_mimalloc_process_done_terminal_purge_test_audit(
+    struct process_done_terminal_purge_audit *output);
 #endif
 
 int crabc_x86_64_native_mimalloc_shadow_normal_main_user_atexit_observed(void)
@@ -670,10 +685,23 @@ static void normal_main_return_application_fini(void)
     ((volatile unsigned char *)allocation)[0] = 0xe3;
     free(allocation);
 #ifdef CRABC_NATIVE_MIMALLOC_SHADOW_PROCESS_DONE_EXIT_TEST_AUDIT
+    struct process_done_terminal_purge_audit purge = { 0 };
+
     /* The allocation/free itself must remain valid after the selected fini
-     * bridge; the receipt then proves the bridge ran before this app fini. */
+     * bridge. The following source-shaped purge receipt additionally proves
+     * its `init.c:647` terminal preloading state reaches `os.c` while the
+     * transient mapping remains owned and releasable. */
     if (__crabc_x86_native_mimalloc_process_done_fini_array_test_audit() != 1)
         _Exit(75);
+    if (__crabc_x86_native_mimalloc_process_done_terminal_purge_test_audit(&purge) != 0)
+        _Exit(81);
+    if (purge.terminal_preloading != 1 || purge.purge_decommits_enabled != 1
+            || purge.mapping_retained_before_release != 1
+            || purge.purge_needs_recommit != 0 || purge.purge_calls_delta != 1
+            || purge.purged_bytes_delta == 0 || purge.reset_calls_delta != 1
+            || purge.reset_bytes_delta != purge.purged_bytes_delta
+            || purge.release_succeeded != 1)
+        _Exit(82);
 #endif
     if (write(STDERR_FILENO, &marker, 1) != 1)
         _Exit(77);

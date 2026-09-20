@@ -14,9 +14,13 @@
 //! owns the only public operation context. Private static ticket-zero and
 //! regular-key dynamic Theap attachments exist. One bounded source-order
 //! process-main coordinator establishes the static Heap, detached metadata
-//! readiness, global PageMap, and ticket-zero roots; it does not choose
-//! options, reserve the process-shared arena, initialize pthread/TLS keys, or
-//! own process shutdown. A paired sidecar can retain one caller-selected
+//! readiness, global PageMap, and ticket-zero roots. The selected-static
+//! process-done finalizer additionally clears the cached Theap root and
+//! restores terminal VM preloading so a later no-callback purge selects reset;
+//! it retains the physical process pair, PageMap, and live allocations. It
+//! does not choose options, reserve the process-shared arena, initialize
+//! pthread/TLS keys, or own physical process destruction. A paired sidecar can
+//! retain one caller-selected
 //! source-managed arena mapping. One crate-private ticket-zero static owner or
 //! one complete later-thread operation at a time may bind that exact pair to
 //! the arena's embedded `pages_main` bitmap; several later-thread engines may
@@ -120,6 +124,7 @@ pub mod __crabc_runtime {
         NativeRuntimeFirstArenaPolicyAudit, NativeRuntimeForkAdmissionAudit, NativeRuntimeLifecycleAudit,
         NativeRuntimeLiveClientPageAudit, NativeRuntimeLiveClientPageMapSpanAudit,
         NativeRuntimeProcessDoneRetainedLocalPageAudit,
+        NativeRuntimeProcessDoneTerminalPurgeAudit,
         NativeRuntimeOwnerExitCollectionRendezvous,
         native_runtime_first_arena_policy_test_audit, native_runtime_fork_admission_test_audit,
         native_runtime_current_local_page_test_audit,
@@ -133,6 +138,7 @@ pub mod __crabc_runtime {
         native_runtime_process_done_retained_local_preflight_test_audit,
         native_runtime_process_done_retained_page_retired_test_audit,
         native_runtime_process_done_retained_worker_matches_current_thread_test_audit,
+        native_runtime_process_done_terminal_purge_test_audit,
         native_runtime_test_arm_owner_exit_collection_rendezvous,
     };
 

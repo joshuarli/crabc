@@ -15,13 +15,15 @@
   },
   "scope": {
     "aarch64_status_reused": false,
-    "after_process_done_worker_create_join_only": true,
+    "after_process_done_worker_create_join_and_purge_only": true,
     "automatic_destructor_absence_observed": true,
     "explicit_public_mi_process_done_fixture_only": true,
-    "late_free_remote_publication_only": true,
+    "late_free_remote_publication_and_terminal_purge_only": true,
     "mi_tls_model_local_required": true,
     "ordinary_medium_full_abandonment_observed": true,
-    "process_done_pthread_key_only": true,
+    "post_process_done_no_callback_purge_only": true,
+    "process_done_purge_reset_observed": true,
+    "process_done_pthread_key_and_terminal_purge_only": true,
     "emulation_accepted": false,
     "general_abandonment_or_adoption_claimed": false,
     "general_lifecycle_claimed": false,
@@ -99,6 +101,18 @@
       "sha256": "18bc636a2f41434dc59cb34b0505242d1762e3a7f5d6717c5bb906012d25a869"
     },
     {
+      "member": "src/os.c",
+      "start_line": 655,
+      "end_line": 680,
+      "sha256": "5bf5130ba1a0a05988e9bf818a1f6d45057c790d8337317553560d9d8968e1c1"
+    },
+    {
+      "member": "src/prim/unix/prim.c",
+      "start_line": 571,
+      "end_line": 597,
+      "sha256": "0c483f64cb62dfce8f6101943ce2c7cbecc83c03d5375ed378d9387fecd77781"
+    },
+    {
       "member": "src/prim/prim-tls.c",
       "start_line": 211,
       "end_line": 250,
@@ -123,7 +137,7 @@
       "sha256": "d7328658d88aa8c24dabcd1a093e5857b6bc699b03677eb4e8ab3c7d160c6dbb"
     }
   ],
-  "c_probe_sha256": "f1b34dfb7c4095da7c892c8165bd95d9ff9271ee1ba3fafd24046f0828f275f2",
+  "c_probe_sha256": "a4497babaf1a862e11d6a9375a571c9429a646a3254831eaee7153fe8115208c",
   "trace": {
     "begin": "CRABC_MI_PROCESS_DONE_PTHREAD_KEY_TRACE_BEGIN",
     "end": "CRABC_MI_PROCESS_DONE_PTHREAD_KEY_TRACE_END",
@@ -138,6 +152,13 @@
       "trace.process_done_pthread_key.cached_empty_after_done": 1,
       "trace.process_done_pthread_key.auto_key_invalid_after_done": 1,
       "trace.process_done_pthread_key.main_theap_initialized_after_done": 1,
+      "trace.process_done_pthread_key.process_done_purge_page_size": 4096,
+      "trace.process_done_pthread_key.process_done_purge_option_enabled": 1,
+      "trace.process_done_pthread_key.process_done_purge_needs_recommit": 0,
+      "trace.process_done_pthread_key.process_done_purge_advice_calls": 1,
+      "trace.process_done_pthread_key.process_done_purge_reset_not_decommit": 1,
+      "trace.process_done_pthread_key.process_done_purge_mapping_retained": 1,
+      "trace.process_done_pthread_key.process_done_purge_mapping_released": 1,
       "trace.process_done_pthread_key.worker_theap_initialized_before_return": 1,
       "trace.process_done_pthread_key.worker_auto_key_invalid": 1,
       "trace.process_done_pthread_key.worker_returned_naturally": 1,

@@ -286,7 +286,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "linux-x86_64-private-c-process-done-pthread-key",
         )
         self.assertTrue(schema["scope"]["automatic_destructor_absence_observed"])
-        self.assertEqual(len(schema["trace"]["expected_values"]), 31)
+        self.assertEqual(len(schema["trace"]["expected_values"]), 53)
 
     def test_cancellation_pthread_destructor_schema_profile_is_exact(self) -> None:
         schema = json.loads(CANCELLATION_PTHREAD_DESTRUCTOR_SCHEMA.read_text(encoding="utf-8"))

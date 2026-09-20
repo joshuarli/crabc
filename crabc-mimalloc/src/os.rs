@@ -495,9 +495,11 @@ pub(crate) struct VmPolicy {
     /// fixture construction rejects unresolved slots instead of creating a
     /// hidden ambient environment dependency.
     option_environment: Option<VmOptionEnvironmentReader>,
-    // Pinned `src/init.c` keeps this true until the process-load owner has
-    // left the C-runtime-unsafe preloading interval.  Only that one owner may
-    // clear it; VM and arena callers receive a read-only view through their
+    // Pinned `src/init.c` initializes this true, has the unique process-start
+    // owner clear it, and makes it true again as the final effect of
+    // `mi_process_done_once`. The existing runtime process state owns both
+    // transitions: this scalar has no startup or finalization authority of
+    // its own. VM and arena callers receive a read-only view through their
     // borrowed `VmProcess` pair.
     preloading: AtomicBool,
     aligned_hint_base: AtomicUsize,
@@ -886,15 +888,30 @@ impl VmPolicy {
         *access.unresolved_options()
     }
 
-    /// Ends the one-way source preloading interval.
+    /// Ends the source process-start preloading interval.
     ///
     /// This is intentionally crate-private and is called only by the
     /// process-start owner after it completed the C-runtime-unsafe phase.
-    /// Repeating the store is harmless, matching source initialization's
-    /// one-way `true -> false` state rather than reopening a preload path.
+    /// The selected runtime's once-only process state prevents this startup
+    /// owner from running after its logical process-done transition. Pinned
+    /// `mi_process_done_once` has a distinct terminal `false -> true` effect,
+    /// modeled by [`Self::enter_process_done_preloading`].
     #[inline]
     pub(crate) fn finish_preloading(&self) {
         self.preloading.store(false, Ordering::Release);
+    }
+
+    /// Restores the source terminal preloading value after logical process
+    /// done, so late source purge avoids C-runtime-unsafe decommit.
+    ///
+    /// Pinned `src/init.c:595-648` performs this as the final
+    /// `mi_process_done_once` effect. The caller must already hold the
+    /// selected runtime's `PROCESS_DONE_OPEN -> PROCESS_DONE_TRANSITION`
+    /// claim; this policy scalar deliberately cannot reopen or initialize a
+    /// process by itself.
+    #[inline]
+    pub(crate) fn enter_process_done_preloading(&self) {
+        self.preloading.store(true, Ordering::Release);
     }
 
     /// Reads the source preloading state without granting mutation authority.
@@ -6259,6 +6276,54 @@ mod tests {
             5,
             "the source rejects INT_MAX itself as an explicit option and probes the primitive"
         );
+    }
+
+    #[test]
+    fn process_done_preloading_keeps_a_live_mapping_and_selects_reset_purge() {
+        let fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::detect(current_startup());
+        let page = config.page_size().bytes();
+        let mut options = VmOptions::uninitialized();
+        options.initialize_all(|_| VmOptionEnvironment::Absent);
+        options.set(VmOption::PurgeDelay, 0);
+        options.set(VmOption::PurgeDecommits, 1);
+        let policy = VmPolicy::new(options)
+            .expect("the process-done purge receiver owns a resolved source option image");
+        policy.finish_preloading();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        let mut mapping = Mapping::map_for_process(
+            process,
+            config,
+            page,
+            1,
+            MapAccess::Committed,
+            false,
+            None,
+        )
+        .expect("the process-done receiver begins with one live mapping");
+        let base = mapping.base().expect("the receiver mapping is live before process done");
+        let before = subprocess.vm_statistics().snapshot();
+
+        policy.enter_process_done_preloading();
+
+        assert!(policy.is_preloading(), "process-done re-enters source preloading");
+        assert_eq!(
+            mapping.purge_for_process(process, 0, page, true, page),
+            Ok(false),
+            "post-process-done source purge reports no recommit requirement"
+        );
+        let after = subprocess.vm_statistics().snapshot();
+        assert_eq!(mapping.base(), Ok(base), "reset retains the source mapping owner");
+        assert_eq!(after.purge_calls, before.purge_calls + 1);
+        assert_eq!(after.purged, before.purged + page as i64);
+        assert_eq!(after.reset_calls, before.reset_calls + 1,
+            "terminal preloading selects the reset arm instead of decommit");
+        assert_eq!(after.reset, before.reset + page as i64);
+        mapping
+            .unmap_for_process(process, page, false)
+            .expect("the reset mapping remains releasable");
+        drop(fault);
     }
 
     /// Exercises the selected normal-release `_mi_os_get_aligned_hint` matrix

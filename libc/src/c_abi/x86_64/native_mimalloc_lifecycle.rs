@@ -21,6 +21,11 @@ use crabc_mimalloc::__crabc_runtime::{
     retain_current_thread_native_owner_after_process_done_nonfinal,
     reinitialize_current_thread_native_owner_for_final_process_exit,
 };
+#[cfg(feature = "native-mimalloc-shadow-process-done-exit-test-audit")]
+use crabc_mimalloc::__crabc_runtime::{
+    NativeRuntimeProcessDoneTerminalPurgeAudit,
+    native_runtime_process_done_terminal_purge_test_audit,
+};
 
 /// Child-side native attachment result for the create handshake.
 ///
@@ -199,6 +204,63 @@ unsafe extern "C" {
 #[no_mangle]
 pub extern "C" fn __crabc_x86_native_mimalloc_process_done_fini_array_test_audit() -> c_int {
     c_int::from(PROCESS_DONE_FINI_ARRAY_TEST_AUDIT.load(Ordering::Acquire))
+}
+
+/// Scalar-only selected process-done purge receipt for the normal-main
+/// fixture. This is absent from ordinary selected archives and never exposes
+/// a mapping or VM owner.
+#[cfg(feature = "native-mimalloc-shadow-process-done-exit-test-audit")]
+#[repr(C)]
+pub struct ProcessDoneTerminalPurgeAudit {
+    pub terminal_preloading: usize,
+    pub purge_decommits_enabled: usize,
+    pub mapping_retained_before_release: usize,
+    pub purge_needs_recommit: usize,
+    pub purge_calls_delta: usize,
+    pub purged_bytes_delta: usize,
+    pub reset_calls_delta: usize,
+    pub reset_bytes_delta: usize,
+    pub release_succeeded: usize,
+}
+
+/// Observes the process-done reset-purge consequence through one transient,
+/// retained-process mapping.
+///
+/// # Safety
+///
+/// `output` must point to writable [`ProcessDoneTerminalPurgeAudit`] storage.
+/// The normal-main fixture calls this only after the selected `.fini_array`
+/// bridge and with no concurrent allocator statistics writer, so its deltas
+/// describe this one audit operation.
+#[cfg(feature = "native-mimalloc-shadow-process-done-exit-test-audit")]
+#[no_mangle]
+pub unsafe extern "C" fn __crabc_x86_native_mimalloc_process_done_terminal_purge_test_audit(
+    output: *mut ProcessDoneTerminalPurgeAudit,
+) -> c_int {
+    let Some(output) = core::ptr::NonNull::new(output) else {
+        return -1;
+    };
+    let audit = match native_runtime_process_done_terminal_purge_test_audit() {
+        Ok(audit) => audit,
+        Err(error) => return error,
+    };
+    // SAFETY: the caller's documented writable output contract holds for this
+    // scalar-only copy; neither Rust audit structure contains an address or
+    // retained source capability.
+    unsafe {
+        output.as_ptr().write(ProcessDoneTerminalPurgeAudit {
+            terminal_preloading: audit.terminal_preloading,
+            purge_decommits_enabled: audit.purge_decommits_enabled,
+            mapping_retained_before_release: audit.mapping_retained_before_release,
+            purge_needs_recommit: audit.purge_needs_recommit,
+            purge_calls_delta: audit.purge_calls_delta,
+            purged_bytes_delta: audit.purged_bytes_delta,
+            reset_calls_delta: audit.reset_calls_delta,
+            reset_bytes_delta: audit.reset_bytes_delta,
+            release_succeeded: audit.release_succeeded,
+        });
+    }
+    0
 }
 
 /// Test-only observation of the engine's active later-worker admission count.
