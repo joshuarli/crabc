@@ -2723,7 +2723,103 @@ mod tests {
         assert_eq!(bitmap_mask(0), 7);
         assert_eq!(bitmap_mask(1), 7);
         record_stage(before_arena.arena_purges, before_vm.purge_calls, before_vm.purged);
-        assert_eq!(field, 80);
+
+        // Pinned `mi_arena_try_purge_visitor` first tries to claim the entire
+        // scheduled two-slice free range. A new one-slice claim can win that
+        // source bitmap race before collection; the visitor must then retry
+        // each slice, purge only the remaining free sibling, and atomically
+        // consume the original purge range. This uses the regular owner and
+        // collector rather than a synthetic bitmap transition.
+        let process = purge_process(100_000, true);
+        let fallback_backing = Box::leak(Box::new(ProcessArenaBacking::new()));
+        let id = install(fallback_backing, process, MapAccess::Reserved);
+        let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+        let claimed = unsafe {
+            fallback_backing.try_find_free(search(id), 2, ARENA_SLICE_SIZE, true)
+        }
+        .unwrap();
+        let start = claimed.slice_index();
+        let original = claimed.start();
+        assert!(claimed.release());
+        let live = unsafe {
+            fallback_backing.try_find_free(search(id), 1, ARENA_SLICE_SIZE, true)
+        }
+        .unwrap();
+        assert_eq!(live.slice_index(), start);
+        assert_eq!(live.start(), original);
+        unsafe { live.start().write(0x7b); }
+        let range_mask = |kind| {
+            (0..2).fold(0i64, |mask, offset| {
+                let set = match kind {
+                    0 => unsafe { view.slices_free() }.unwrap().is_set_range(start + offset, 1),
+                    1 => unsafe { view.slices_purge() }.unwrap().is_set_range(start + offset, 1),
+                    _ => unsafe { view.slices_committed() }.unwrap().is_set_range(start + offset, 1),
+                };
+                if set == Some(true) {
+                    mask | (1i64 << offset)
+                } else {
+                    mask
+                }
+            })
+        };
+        let before_free_mask = range_mask(0);
+        let before_purge_mask = range_mask(1);
+        let before_committed_mask = range_mask(2);
+        assert_eq!(before_free_mask, 2);
+        assert_eq!(before_purge_mask, 3);
+        assert_eq!(before_committed_mask, 3);
+        let before_vm = process.subprocess().vm_statistics().snapshot();
+        let before_arena = process.subprocess().arena_statistics().snapshot();
+        assert!(unsafe { fallback_backing.collect_purge(process, config(), true, true, 0) });
+        let after_vm = process.subprocess().vm_statistics().snapshot();
+        let after_arena = process.subprocess().arena_statistics().snapshot();
+        assert_eq!(after_vm.purge_calls - before_vm.purge_calls, 1);
+        assert_eq!(after_vm.purged - before_vm.purged, ARENA_SLICE_SIZE as i64);
+        assert_eq!(after_vm.reset_calls - before_vm.reset_calls, 0);
+        assert_eq!(after_vm.reset - before_vm.reset, 0);
+        assert_eq!(after_vm.committed_current - before_vm.committed_current, 0);
+        assert_eq!(after_arena.arena_purges - before_arena.arena_purges, 1);
+        assert_eq!(crate::atomic::i64_load_relaxed(&view.arena().purge_expire), 0);
+        let after_free_mask = range_mask(0);
+        let after_purge_mask = range_mask(1);
+        let after_committed_mask = range_mask(2);
+        assert_eq!(after_free_mask, 2);
+        assert_eq!(after_purge_mask, 0);
+        // Pinned Linux release MADV_DONTNEED reports no recommit requirement.
+        assert_eq!(after_committed_mask, 3);
+        assert_eq!(unsafe { live.start().read() }, 0x7b);
+        for value in [
+            i64::from(live.slice_index() == start),
+            i64::from(live.start() == original),
+            before_free_mask,
+            before_purge_mask,
+            before_committed_mask,
+            after_vm.purge_calls - before_vm.purge_calls,
+            after_vm.purged - before_vm.purged,
+            after_vm.reset_calls - before_vm.reset_calls,
+            after_vm.reset - before_vm.reset,
+            after_vm.committed_current - before_vm.committed_current,
+            after_arena.arena_purges - before_arena.arena_purges,
+            i64::from(crate::atomic::i64_load_relaxed(&view.arena().purge_expire) == 0),
+            after_free_mask,
+            after_purge_mask,
+            after_committed_mask,
+            i64::from(unsafe { live.start().read() }),
+        ] {
+            std::println!("m2.arena.purge.{field}={value}"); field += 1;
+        }
+        assert!(live.release());
+        assert_eq!(range_mask(0), 3);
+        assert_eq!(range_mask(1), 1);
+        assert!(crate::atomic::i64_load_relaxed(&view.arena().purge_expire) > 0);
+        for value in [
+            range_mask(0),
+            range_mask(1),
+            i64::from(crate::atomic::i64_load_relaxed(&view.arena().purge_expire) > 0),
+        ] {
+            std::println!("m2.arena.purge.{field}={value}"); field += 1;
+        }
+        assert_eq!(field, 99);
     }
 
     #[test]

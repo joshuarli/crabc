@@ -2461,15 +2461,21 @@ one execution. This does not qualify the remaining substrate components.
 The partial arenas component has one x86-only C/Rust differential for the
 pinned process-wide delayed-purge traversal. It creates three regular arenas
 with deterministic future expiries and scheduled free/committed slices. Its
-80-value trace retains 32 established local fields and adds 48 process-wide
+99-value trace retains 32 established local fields and 48 process-wide
 observations: current registry count, per-arena free/committed/purge and
 expiry-zero masks, plus every stage's `arena_purges` and VM
 `purge_calls`/`purged` deltas. It checks the ordinary skip, `visit_all`
 global-expiry rebase, thread-sequence rotation with the normal budget and one
 purge bit cleared while the fully committed bit remains set on Linux's
 no-recommit path, full drain, and final no-pending expiry clear without VM
-work. It excludes concurrent guard contention, registry mutation,
-pinned/external arenas, real clock behavior, and arena lifecycle completion.
+work. Its final 19 fields first drain independent fixture work, then use an
+explicit delayed two-slice free range where the first slice is reallocated at
+the same address before forced collection. The C/Rust pair records the whole
+range claim failure, one-slice fallback purge, before/after
+free/purge/committed masks, one-slice VM and arena counter deltas, zero expiry,
+and the retained live byte before cleanup reschedules the range. It excludes
+concurrent guard contention, registry mutation, pinned/external arenas, real
+clock behavior, and arena lifecycle completion.
 
 The fault-injection component has one additional partial, current-source
 admission: `allocator-fault-seam-inventory` retains a fixed direct C profile

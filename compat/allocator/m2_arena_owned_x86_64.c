@@ -217,6 +217,110 @@ static void trace_process_arena_collect(void) {
   main_tld->thread_seq = saved_thread_seq;
 }
 
+/*
+  A delayed two-slice release can be partly reclaimed before collection. The
+  source collector must fail its whole-range `slices_free` claim, try each
+  slice, and purge only the free sibling. This is a sequential observation of
+  the source atomic ownership relation, not a scheduler race fixture.
+*/
+static int64_t reallocation_mask(mi_arena_t* owner, size_t start, int kind) {
+  int64_t mask = 0;
+  for (size_t offset = 0; offset < 2; offset++) {
+    bool set;
+    if (kind == 0) {
+      set = mi_bbitmap_is_setN(owner->slices_free, start + offset, 1);
+    }
+    else if (kind == 1) {
+      set = mi_bitmap_is_setN(owner->slices_purge, start + offset, 1);
+    }
+    else {
+      set = mi_bitmap_is_setN(owner->slices_committed, start + offset, 1);
+    }
+    if (set) mask |= ((int64_t)1 << offset);
+  }
+  return mask;
+}
+
+static void trace_reallocated_slice_purge_fallback(void) {
+  mi_tld_t* const main_tld = &mi_process_tld_main;
+  // The preceding 80 fields intentionally retain their original order. Drain
+  // their independent delayed-purge work before this measured relation, then
+  // choose the same explicit positive delay as the Rust isolated process.
+  mi_option_set(mi_option_purge_delay, 100000);
+  mi_option_set(mi_option_purge_decommits, true);
+  _mi_arenas_collect(true, true, main_tld);
+  _mi_arenas_collect(true, true, main_tld);
+  require(mi_atomic_loadi64_relaxed(&subprocess->purge_expire) == 0);
+
+  mi_arena_t* owner = arena(false);
+  mi_memid_t released;
+  void* const original = mi_arena_try_alloc_at(owner, 2, true, 0, &released);
+  require(original != NULL);
+  const size_t start = released.mem.arena.slice_index;
+  _mi_arenas_free(subprocess, original, 2 * MI_ARENA_SLICE_SIZE, released);
+
+  mi_memid_t reallocated;
+  void* const live = mi_arena_try_alloc_at(owner, 1, true, 0, &reallocated);
+  require(live != NULL);
+  require(reallocated.mem.arena.slice_index == start);
+  require(live == original);
+  *(volatile uint8_t*)live = 0x7b;
+  const int64_t before_free_mask = reallocation_mask(owner, start, 0);
+  const int64_t before_purge_mask = reallocation_mask(owner, start, 1);
+  const int64_t before_committed_mask = reallocation_mask(owner, start, 2);
+  require(before_free_mask == 2);
+  require(before_purge_mask == 3);
+  require(before_committed_mask == 3);
+
+  const int64_t purge_calls = subprocess->stats.purge_calls.total;
+  const int64_t purged = subprocess->stats.purged.total;
+  const int64_t reset_calls = subprocess->stats.reset_calls.total;
+  const int64_t reset = subprocess->stats.reset.total;
+  const int64_t committed = subprocess->stats.committed.current;
+  const int64_t arena_purges = subprocess->stats.arena_purges.total;
+  _mi_arenas_collect(true, true, main_tld);
+  require(subprocess->stats.purge_calls.total == purge_calls + 1);
+  require(subprocess->stats.purged.total == purged + (int64_t)MI_ARENA_SLICE_SIZE);
+  require(subprocess->stats.reset_calls.total == reset_calls);
+  require(subprocess->stats.reset.total == reset);
+  require(subprocess->stats.committed.current == committed);
+  require(subprocess->stats.arena_purges.total == arena_purges + 1);
+  require(mi_atomic_loadi64_relaxed(&owner->purge_expire) == 0);
+  const int64_t after_free_mask = reallocation_mask(owner, start, 0);
+  const int64_t after_purge_mask = reallocation_mask(owner, start, 1);
+  const int64_t after_committed_mask = reallocation_mask(owner, start, 2);
+  require(after_free_mask == 2);
+  require(after_purge_mask == 0);
+  // Pinned Linux release MADV_DONTNEED reports no recommit requirement.
+  require(after_committed_mask == 3);
+  require(*(volatile uint8_t*)live == 0x7b);
+
+  emit_purge((int64_t)(reallocated.mem.arena.slice_index == start));
+  emit_purge((int64_t)(live == original));
+  emit_purge(before_free_mask);
+  emit_purge(before_purge_mask);
+  emit_purge(before_committed_mask);
+  emit_purge(subprocess->stats.purge_calls.total - purge_calls);
+  emit_purge(subprocess->stats.purged.total - purged);
+  emit_purge(subprocess->stats.reset_calls.total - reset_calls);
+  emit_purge(subprocess->stats.reset.total - reset);
+  emit_purge(subprocess->stats.committed.current - committed);
+  emit_purge(subprocess->stats.arena_purges.total - arena_purges);
+  emit_purge((int64_t)(mi_atomic_loadi64_relaxed(&owner->purge_expire) == 0));
+  emit_purge(after_free_mask);
+  emit_purge(after_purge_mask);
+  emit_purge(after_committed_mask);
+  emit_purge(*(volatile uint8_t*)live);
+
+  _mi_arenas_free(subprocess, live, MI_ARENA_SLICE_SIZE, reallocated);
+  require(reallocation_mask(owner, start, 0) == 3);
+  require(reallocation_mask(owner, start, 1) == 1);
+  require(mi_atomic_loadi64_relaxed(&owner->purge_expire) > 0);
+  emit_purge(reallocation_mask(owner, start, 0));
+  emit_purge(reallocation_mask(owner, start, 1));
+  emit_purge((int64_t)(mi_atomic_loadi64_relaxed(&owner->purge_expire) > 0));
+}
+
 static void trace_purge(long delay, bool decommit, bool mixed) {
   mi_option_set(mi_option_purge_delay, delay);
   mi_option_set(mi_option_purge_decommits, decommit);
@@ -279,5 +383,7 @@ int main(void) {
     emit_purge(process_collect_trace[index]);
   }
   require(purge_field == 80);
+  trace_reallocated_slice_purge_fallback();
+  require(purge_field == 99);
   return 0;
 }

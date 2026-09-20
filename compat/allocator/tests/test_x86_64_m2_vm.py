@@ -587,7 +587,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 "comparison_status": "matched",
                 "component": "arenas",
                 "command": self.arena_owned_evidence(summary)["arena_owned_rust_command"],
-                "evidence_scope": "bounded-three-regular-arena-pinned-c-rust-process-purge-relation",
+                "evidence_scope": "bounded-three-regular-arena-pinned-c-rust-process-purge-and-two-slice-reallocation-fallback-relation",
                 "id": "process-wide-arena-purge-c-rust-differential",
                 "passed_test_count": 1,
                 "target": "arena::owned::tests::emit_native_owned_arena_purge_trace",
@@ -615,6 +615,9 @@ class NativeVmAssemblyTests(unittest.TestCase):
             ),
             "altered-comparison-count": lambda evidence: evidence["arena_owned_comparison"].__setitem__(
                 "compared_value_count", producer.ARENA_OWNED_EVENT_FIELD_COUNT - 1
+            ),
+            "dropped-reallocation-fallback-values": lambda evidence: evidence["arena_owned_comparison"].__setitem__(
+                "compared_value_count", 80
             ),
             "missing-command": lambda evidence: evidence.pop("arena_owned_c_command"),
             "missing-fixture": lambda evidence: evidence.pop("arena_owned_fixture"),
@@ -690,7 +693,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 "comparison_status": "matched",
                 "component": "arenas",
                 "command": ["<process-arena-purge-producer>"],
-                "evidence_scope": "bounded-three-regular-arena-pinned-c-rust-process-purge-relation",
+                "evidence_scope": "bounded-three-regular-arena-pinned-c-rust-process-purge-and-two-slice-reallocation-fallback-relation",
                 "id": arena_check["id"],
                 "passed_test_count": arena_check["expected_passed_test_count"],
                 "target": arena_check["target"],

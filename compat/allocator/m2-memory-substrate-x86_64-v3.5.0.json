@@ -105,7 +105,7 @@
       "id": "arenas",
       "native_status": "partial",
       "remaining_conditions": [
-        "Qualify arena creation, OS reservation, abandonment, and cross-thread reclamation through native lifecycle and failure evidence beyond the finite three-regular-arena process-wide delayed-purge relation."
+        "Qualify arena creation, OS reservation, abandonment, and cross-thread reclamation through native lifecycle and failure evidence beyond the finite three-regular-arena delayed-purge and two-slice whole-range-claim-fallback relations."
       ],
       "source_map_records": [
         { "required_status": "partial", "unit_id": "arena-lifecycle" },

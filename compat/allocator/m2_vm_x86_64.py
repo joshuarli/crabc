@@ -35,7 +35,10 @@ ALIGNED_HINT_PROFILE_TRACE_BEGIN = "CRABC_MI_M2_ALIGNED_HINT_SOURCE_PROFILE_TRAC
 ALIGNED_HINT_PROFILE_TRACE_END = "CRABC_MI_M2_ALIGNED_HINT_SOURCE_PROFILE_TRACE_END"
 ALIGNED_OVERMAP_TRACE_BEGIN = "CRABC_MI_M2_ALIGNED_OVERMAP_TRACE_BEGIN"
 ALIGNED_OVERMAP_TRACE_END = "CRABC_MI_M2_ALIGNED_OVERMAP_TRACE_END"
-ARENA_OWNED_EVENT_FIELD_COUNT = 80
+# Thirty-two local purge fields, forty-eight process-wide traversal fields,
+# and nineteen fields for one source-scheduled two-slice range where a new
+# allocation wins the whole-range free-bitmap claim before collection.
+ARENA_OWNED_EVENT_FIELD_COUNT = 99
 ARENA_OWNED_EVENT_PREFIX = "m2.arena.purge."
 ARENA_OWNED_RUST_INLINE_PREFIX = (
     "test arena::owned::tests::emit_native_owned_arena_purge_trace ... "
@@ -789,7 +792,7 @@ def parse_arena_owned_purge_trace(output: str, *, source: str) -> tuple[int, ...
 
     The pinned C producer emits every `m2.arena.purge.N=V` field at a line
     start. Rust libtest writes only field zero after this exact test-name
-    delimiter and puts fields one through 79 at line starts. No other prefix,
+    delimiter and puts fields one through 98 at line starts. No other prefix,
     separator, field order, or integer spelling is accepted.
     """
 

@@ -265,7 +265,23 @@ class NativeM2ArenaEventFixtureTests(unittest.TestCase):
         self.assertIn("record_process_collect((int64_t)mi_arenas_get_count(subprocess));", fixture)
         self.assertIn("record_process_collect(process_collect_bitmap_mask(owners, starts, 0));", fixture)
         self.assertIn("record_process_collect(process_collect_bitmap_mask(owners, starts, 1));", fixture)
-        self.assertIn("require(purge_field == 80);", fixture)
+        self.assertIn("static void trace_reallocated_slice_purge_fallback(void)", fixture)
+        self.assertIn("_mi_arenas_collect(true, true, main_tld);", fixture)
+        self.assertIn("require(reallocated.mem.arena.slice_index == start);", fixture)
+        self.assertIn("mi_option_set(mi_option_purge_delay, 100000);", fixture)
+        self.assertIn("_mi_arenas_collect(true, true, main_tld);", fixture)
+        self.assertIn("require(mi_atomic_loadi64_relaxed(&subprocess->purge_expire) == 0);", fixture)
+        self.assertIn("const int64_t before_free_mask = reallocation_mask(owner, start, 0);", fixture)
+        self.assertIn("require(before_purge_mask == 3);", fixture)
+        self.assertIn("require(after_purge_mask == 0);", fixture)
+        self.assertIn("require(reallocation_mask(owner, start, 0) == 3);", fixture)
+        self.assertIn("require(purge_field == 99);", fixture)
+        fallback = fixture[fixture.index("static void trace_reallocated_slice_purge_fallback(void)"):]
+        self.assertEqual(fallback.count("_mi_arenas_collect(true, true, main_tld);"), 3)
+        self.assertLess(
+            fallback.index("require(mi_atomic_loadi64_relaxed(&subprocess->purge_expire) == 0);"),
+            fallback.index("mi_arena_t* owner = arena(false);"),
+        )
 
     def test_arena_event_reader_accepts_only_exact_inline_libtest_first_field(self) -> None:
         values = tuple(range(ARENA_OWNED_EVENT_FIELD_COUNT))
@@ -280,7 +296,8 @@ class NativeM2ArenaEventFixtureTests(unittest.TestCase):
         for malformed in (
             rust_stream.replace(ARENA_OWNED_RUST_INLINE_PREFIX, "test other ... ", 1),
             rust_stream.replace("m2.arena.purge.1=1", "m2.arena.purge.2=1", 1),
-            rust_stream.replace("m2.arena.purge.79=79", "m2.arena.purge.80=79", 1),
+            rust_stream.replace("m2.arena.purge.80=80", "m2.arena.purge.81=80", 1),
+            rust_stream.replace("m2.arena.purge.98=98", "m2.arena.purge.99=98", 1),
             rust_stream.replace("m2.arena.purge.0=0", "m2.arena.purge.0=0x0", 1),
             rust_stream.replace("m2.arena.purge.0=0", "m2.arena.purge.0=00", 1),
             rust_stream.replace("m2.arena.purge.0=0", "m2.arena.purge.0=-0", 1),

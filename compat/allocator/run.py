@@ -13057,7 +13057,7 @@ def _m2_x86_64_process_arena_collect_check_records(
         "comparison_status": "matched",
         "component": "arenas",
         "command": list(evidence["arena_owned_rust_command"]),
-        "evidence_scope": "bounded-three-regular-arena-pinned-c-rust-process-purge-relation",
+        "evidence_scope": "bounded-three-regular-arena-pinned-c-rust-process-purge-and-two-slice-reallocation-fallback-relation",
         "id": check["id"],
         "passed_test_count": check["expected_passed_test_count"],
         "target": check["target"],
