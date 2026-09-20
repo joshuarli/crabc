@@ -68,6 +68,15 @@ at clean worker `7b35111a4acebd29eadd076892358825df3ea7c0`; its revision-stamped
 log is `.work/worktrees/allocator_resume/.work/allocator_resume-evidence/native-shadow-pthread-teardown-7b35111a4acebd29eadd076892358825df3ea7c0.log`.
 This includes first-request rejection and later success, not a complete TLD
 failure matrix or selection of the native backend by default.
+The subsequent clean worker `499455de71c3c6ee54311918a35db65a708ec46d`
+additionally proves an existing runtime failure path: a live 1025-byte worker
+client survives `realloc(client, SIZE_MAX)` returning NULL/ENOMEM, retains
+both sentinel bytes, and can be freed before TSD allocation and teardown.
+The paired musl/native-shadow log is
+`.work/worktrees/allocator_resume/.work/allocator_resume-evidence/native-shadow-live-realloc-failure-499455de71c3c6ee54311918a35db65a708ec46d.log`
+(SHA-256 `c36867f3b524f801211dda843649a009112ff4b006f02775aa50b4036b5da93e`).
+Integrated as `b0f26ee3`, this adds qualification evidence, not a production
+fix or generic OOM/source reallocation parity.
 
 The preserved approved standalone unwinder provider is now present on main
 (`fbf8837e`, from `d3ca0e79`), without selecting it in runtime products. At
@@ -87,6 +96,10 @@ no ambient unwind runtime. The retained receipt is
 twenty-one focused Python tests pass. This is standalone pinned-musl
 valid-frame consumer evidence (`qualified: false`), not owned runtime,
 malformed-metadata, DSO, build-std or cross-runtime LTO qualification.
+Link-harness regression `19512430` additionally rejects compiler-forwarded
+linker response files; its two new failing examples were observed before the
+fix, and all 22 focused host tests pass afterward. This does not upgrade the
+standalone consumer receipt or its qualification boundary.
 
 Family admission machinery (`6110739d`) now reconstructs the existing matrix
 and native aggregate, all 9 capabilities / 149 spellings, actual ledger
