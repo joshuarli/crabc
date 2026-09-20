@@ -54,7 +54,12 @@ def translate_arguments(arguments: list[str], archive: Path, stock_libdir: Path)
     inserted = False
     replaced_stock_archive = 0
     for argument in arguments:
-        if argument.startswith('@'):
+        # The compiler driver can forward a response file directly to ld.
+        # Its contents would evade the explicit unwind-input translation.
+        if argument.startswith('@') or (
+            argument.startswith('-Wl,')
+            and any(option.startswith('@') for option in argument.split(',')[1:])
+        ):
             raise LinkError(f'response file is not admitted: {argument}')
         if argument in {'-l', '-Xlinker'}:
             raise LinkError(f'alternate linker library spelling is not admitted: {argument}')

@@ -61,6 +61,15 @@ class CleanupLinkContract(unittest.TestCase):
         with self.assertRaisesRegex(linker.LinkError, 'response file'):
             self.translate(['fixture.o', '@linker-arguments', '-lunwind'])
 
+    def test_driver_forwarded_response_file_cannot_hide_a_runtime_provider(self):
+        for argument in ('-Wl,@linker-arguments', '-Wl,--as-needed,@linker-arguments'):
+            with self.subTest(argument=argument), self.assertRaisesRegex(linker.LinkError, 'response file'):
+                self.translate([
+                    'fixture.o', argument,
+                    str(self.stock_libdir / 'libunwind-0123456789abcdef.rlib'),
+                    '-lunwind',
+                ])
+
     def test_missing_standard_unwind_request_cannot_hide_provider_selection(self):
         with self.assertRaisesRegex(linker.LinkError, 'unwind request'):
             self.translate(['fixture.o', '-lc', '-nodefaultlibs'])
