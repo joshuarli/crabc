@@ -324,9 +324,10 @@ M2_X86_64_FAULT_FRAGMENT = ALLOCATOR_ROOT / "m2-fault-seam-inventory-x86_64-v3.5
 # separately against the upstream archive before any native check executes.
 M2_X86_64_BITMAP_FRAGMENT_DIGEST = "dbb2bc7d34762819f7ed76c3b50fd3d8599d46b0ba7b9f78fcc9310afe536300"
 # `ef723d8f` admitted the selected pinned arena statistics and the explicit
-# auto-process-init source context.  That integrated source-inventory change
-# deliberately changes this normalized JSON digest; it does not promote M2.
-M2_X86_64_VM_FRAGMENT_DIGEST = "aefd83528076c482b5a79b4320ab1b7a4e95170258074f67139a8318b95ad82b"
+# auto-process-init source context. The current digest also repairs the
+# large-only source anchor to include its required enclosing `unix_mmap`
+# definition. These source-inventory changes do not promote M2.
+M2_X86_64_VM_FRAGMENT_DIGEST = "e4befc04de41c867a70525270a5ac4c7ec59d5b6d34649557168b25b92ba6121"
 M2_X86_64_INITIALIZATION_FRAGMENT_DIGEST = "08c3cdd0c8625518350fcc6cf12cc4555943f0b3950f2c2f1545cd8622a885ef"
 M2_X86_64_FAULT_FRAGMENT_DIGEST = "f475d677ac853bbb91b02edf75e7739f312b85e2da31a51ec864a3b41693a529"
 M2_X86_64_PAGE_MAP_CHECK_IDS = (

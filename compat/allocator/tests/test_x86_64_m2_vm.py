@@ -376,6 +376,41 @@ class NativeVmAssemblyTests(unittest.TestCase):
             with self.subTest(key=key):
                 self.assertIn(key, producer.TRACE_KEYS)
 
+    def test_large_only_terminal_map_anchor_includes_its_unix_mmap_definition(self):
+        """The one-GiB terminal route starts at the enclosing source function."""
+
+        fragment = RUNNER.read_json(RUNNER.M2_X86_64_VM_FRAGMENT)
+        definition = next(
+            definition
+            for definition in fragment["component"]["bounded_source_definitions"]
+            if definition["id"] == "unix-large-only-one-gib-terminal-map"
+        )
+        self.assertEqual(
+            definition["source_anchor"],
+            {
+                "member": "src/prim/unix/prim.c",
+                "start_line": 383,
+                "end_line": 449,
+                "sha256": "6305c06b0233856a2fab800243e657b13666f0d04324da6597beee559decc0dd",
+            },
+        )
+        self.assertEqual(
+            definition["required_definitions"],
+            [
+                "static void* unix_mmap",
+                "static _Atomic(size_t) mi_huge_1gib_pages_unavailable",
+                "MAP_HUGE_1GB",
+                "MAP_HUGE_2MB",
+            ],
+        )
+        self.assertEqual(
+            definition["evidence_check_ids"],
+            [
+                "native-vm-fixed-lifecycle-differential",
+                "large-only-one-gib-failure-no-regular-owner",
+            ],
+        )
+
     def test_aligned_hint_matrix_binds_the_direct_source_definition_and_all_relations(self):
         """Keep the finite normal-release cursor contract explicit in the ledger."""
 
