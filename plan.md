@@ -31,6 +31,15 @@ real-zone transitions. Preserve those records, supply authenticated fixtures,
 and require known offset/transition checks as well as oracle comparison. This
 does not authorize bundling timezone data into the runtime.
 
+The immutable family coordinator is integrated through `f1695e6d` in
+`owned_text_math_locale_stdio_family.py`. Its fourteen focused tests cover
+missing rows and modes, product/source substitution, mutation during
+collection and output construction, and physical fresh-output handling.
+It rejects missing rich text, full FILE-engine, and calendar readers; these
+tests do not establish real aggregate admission. The rich text aggregate's
+referenced pair-evidence roots must also enter the coordinator's snapshots
+before that integration can be qualified.
+
 The full OS-test development replay with the compiler-mode fix completed all
 ten suites using frozen `26dfb153` products and consumer `69f547a5`. Eight
 suites match; the raw report retains nineteen differences: six atomic
