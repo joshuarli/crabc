@@ -37,9 +37,9 @@ owners; this leaf does not add a locale database or a Rust regex API.
 
 ## Installed-product proof
 
-`./scripts/dev-x86_64.sh owned-regex [DYNAMIC_SYSROOT]` dispatches
-`compat/x86_64/run_owned_regex.sh`, which builds fresh owned static
-and dynamic products when no product is supplied. It compiles
+`./scripts/dev-x86_64.sh owned-regex [--static-sysroot STATIC_SYSROOT]
+[DYNAMIC_SYSROOT]` dispatches `compat/x86_64/run_owned_regex.sh`, which builds
+fresh owned static and dynamic products when neither product is supplied. It compiles
 `compat/x86_64/owned_regex_probe.c` once with the installed dynamic driver and
 records hashes for both the source and resulting object. That unchanged object
 links against fixed musl, owned static, owned static-PIE, and owned dynamic
@@ -52,9 +52,25 @@ captures, BRE backreferences including the empty backreference progress edge,
 newline anchors, character classes, case folding, C.UTF-8 byte offsets,
 `REG_NOTBOL`, `REG_NOTEOL`, `REG_NOSUB`, source-shaped compile/free/recompile,
 and `regerror` table/truncation behavior. Each owned executable's stdout and
-stderr must exactly match the pinned musl execution, while the runner also
-requires each of the four public entries to be a defined global function in
-the relevant archive or shared object.
+stderr must exactly match the pinned musl execution. The retained object has
+exactly one undefined public row for each of `regcomp`, `regexec`, `regerror`,
+and `regfree`; pinned musl, the static archive and linked static entries, and
+the dynamic shared object each retain the corresponding provider rows.
+
+The runner writes `owned-regex-products.json` and validates it with
+`owned_regex_component_receipt.py validate-report`. Its v2 reader rehashes
+physical sources, products, tool paths, the installed-header object, retained
+commands and raw streams, link receipts and their public validation output,
+and copied dynamic execution payloads. Before it interprets the four API rows,
+it reruns the sealed read-only `env -i`/`nm` or `readelf` command against the
+rehashed physical object, archive, executable, or shared object and requires
+the retained raw stream to match exactly. It rejects ambient header origins and
+reconstructs the exact fourteen-line musl transcript before admitting each
+candidate entry. A full receipt records static ET_EXEC, static PIE, and both
+kernel and direct entries for dynamic PIE and non-PIE; a supplied dynamic
+product alone yields the explicitly non-complete four-cell development mode.
+`--require-static` rejects that development mode. Neither shape closes a
+family or asserts promotion or public support.
 
 `compat/x86_64/run_owned_regex_execution.sh` remains the separate private
 allocator-failure checkpoint. It uses copied source routing and a recording
