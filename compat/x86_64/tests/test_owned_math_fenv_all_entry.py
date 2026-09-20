@@ -258,6 +258,146 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
         with self.assertRaises(evidence.EvidenceError):
             evidence.validate_invocations(ROOT, work, dynamic, compiler)
 
+    def test_receipt_rejects_rehashed_provider_text_that_disagrees_with_artifacts(self) -> None:
+        root = ROOT / ".work/x86_64/owned-math-fenv-provider-replay-fixture"
+        root.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        work = root / "work"
+        static = root / "static"
+        dynamic = root / "dynamic"
+        work.mkdir()
+        (static / "usr/lib").mkdir(parents=True)
+        (dynamic / "usr/include").mkdir(parents=True)
+        (dynamic / "usr/lib").mkdir(parents=True)
+        (dynamic / "bin").mkdir(parents=True)
+        (dynamic / "share/crabc").mkdir(parents=True)
+
+        # These physical inputs stand in for the independently authenticated
+        # ET_REL object, DSO, and archive. The old receipt reader never reads
+        # them while accepting a fully coherent, rehashed provider claim.
+        (work / "workload.o").write_bytes(b"actual workload artifact")
+        (dynamic / "usr/lib/libc.so").write_bytes(b"actual dynamic artifact")
+        (static / "usr/lib/libc.a").write_bytes(b"actual static artifact")
+        compiler = dynamic / "bin/fixed-image-gcc"
+        compiler.write_bytes(b"fixed image compiler")
+        (dynamic / "share/crabc/crabc_cc_static.py").write_text(
+            f"def compiler():\n    return {str(compiler)!r}\n", encoding="utf-8"
+        )
+
+        trace = "".join(f". {dynamic / 'usr/include' / header}\n"
+                        for header in evidence.INSTALLED_HEADERS)
+        for role, relative, define in contract.OBJECT_ROLES:
+            (work / f"compile-{role}.argv.json").write_text(
+                json.dumps(evidence.compile_argv(ROOT, work, dynamic, role, relative, define)),
+                encoding="utf-8",
+            )
+            (work / f"header-{role}.argv.json").write_text(
+                json.dumps(evidence.header_argv(ROOT, dynamic, compiler, relative, define)),
+                encoding="utf-8",
+            )
+            (work / f"header-{role}.stderr").write_text(trace, encoding="utf-8")
+
+        symbols = tuple(symbol for group in contract.load_roster(ROOT).values() for symbol in group)
+        aliases = {"pow10": "exp10", "pow10f": "exp10f", "pow10l": "exp10l"}
+        imports = "\n".join(f"{symbol} U" for symbol in symbols) + "\n"
+        static_definitions = "\n".join(
+            f"libc.a:owner-{index}.o: {symbol} T 0 1"
+            for index, symbol in enumerate(symbols, start=1)
+        ) + "\n"
+
+        def dynamic_definitions(offset: int) -> str:
+            values = {symbol: index + offset for index, symbol in enumerate(symbols, start=1)}
+            for alias, target in aliases.items():
+                values[alias] = values[target]
+            return "\n".join(
+                f"{index}: {values[symbol]:016x} 0 FUNC "
+                f"{'WEAK' if symbol in aliases else 'GLOBAL'} DEFAULT 1 {symbol}"
+                for index, symbol in enumerate(symbols, start=1)
+            ) + "\n"
+
+        def identity(path: Path) -> dict[str, object]:
+            data = path.read_bytes()
+            return {
+                "path": path.relative_to(ROOT).as_posix(),
+                "sha256": hashlib.sha256(data).hexdigest(),
+                "size": len(data),
+            }
+
+        retained_dynamic = dynamic_definitions(0x1000)
+        actual_dynamic = dynamic_definitions(0)
+        result = evidence.validate(
+            ROOT, imports, retained_dynamic, static_definitions, work, dynamic,
+        )
+        provider = work / "provider.json"
+        provider.write_text(json.dumps(result), encoding="utf-8")
+        encoded = json.dumps(result, sort_keys=True, separators=(",", ":")) + "\n"
+        command_paths = {}
+        for stem, output in (
+            ("workload-imports", imports),
+            ("dynamic-provider-symbols", retained_dynamic),
+            ("static-provider-symbols", static_definitions),
+            ("component-preflight", encoded),
+            ("component-collector", encoded),
+        ):
+            path = work / f"{stem}.stdout"
+            path.write_text(output, encoding="utf-8")
+            command_paths[stem] = {"stdout": path}
+
+        def completed(stdout: str) -> subprocess.CompletedProcess[bytes]:
+            return subprocess.CompletedProcess([], 0, stdout.encode("utf-8"), b"")
+
+        # The positive control proves that the reader accepts its retained
+        # projection when the independently observed three views match it.
+        with mock.patch.object(receipt.subprocess, "run", side_effect=[
+            completed(imports), completed(retained_dynamic), completed(static_definitions),
+        ]) as positive_replay:
+            self.assertEqual(
+                receipt.validate_provider_record(
+                    ROOT, identity(provider), command_paths, work, dynamic, static,
+                ),
+                provider,
+            )
+
+        # Rehashing the retained symbol text and provider JSON can keep all
+        # parser, roster, and alias-address checks coherent. It cannot make
+        # the retained dynamic address projection true of the actual DSO.
+        forged_dynamic = dynamic_definitions(0x2000)
+        result = evidence.validate(ROOT, imports, forged_dynamic, static_definitions, work, dynamic)
+        provider.write_text(json.dumps(result), encoding="utf-8")
+        encoded = json.dumps(result, sort_keys=True, separators=(",", ":")) + "\n"
+        command_paths["dynamic-provider-symbols"]["stdout"].write_text(forged_dynamic, encoding="utf-8")
+        for stem in ("component-preflight", "component-collector"):
+            command_paths[stem]["stdout"].write_text(encoded, encoding="utf-8")
+        with mock.patch.object(receipt.subprocess, "run", side_effect=[
+            completed(imports), completed(actual_dynamic), completed(static_definitions),
+        ]):
+            with self.assertRaises(receipt.ReceiptError):
+                receipt.validate_provider_record(
+                    ROOT, identity(provider), command_paths, work, dynamic, static,
+                )
+        self.assertEqual(
+            [call.args[0] for call in positive_replay.call_args_list],
+            [
+                ["/usr/bin/nm", "--undefined-only", "--format=posix", str(work / "workload.o")],
+                ["/usr/bin/readelf", "--dyn-syms", "-W", str(dynamic / "usr/lib/libc.so")],
+                ["/usr/bin/nm", "-A", "-g", "--defined-only", "--format=posix", str(static / "usr/lib/libc.a")],
+            ],
+        )
+        with mock.patch.object(receipt.subprocess, "run", return_value=subprocess.CompletedProcess(
+            [], 7, b"partial output", b"inspection failed",
+        )):
+            with self.assertRaisesRegex(receipt.ReceiptError, "exited with status 7"):
+                receipt.validate_provider_record(
+                    ROOT, identity(provider), command_paths, work, dynamic, static,
+                )
+        with mock.patch.object(receipt.subprocess, "run", return_value=subprocess.CompletedProcess(
+            [], 0, imports.encode("utf-8"), b"unexpected diagnostic",
+        )):
+            with self.assertRaisesRegex(receipt.ReceiptError, "wrote stderr"):
+                receipt.validate_provider_record(
+                    ROOT, identity(provider), command_paths, work, dynamic, static,
+                )
+
     def test_receipt_output_reader_requires_a_valid_pinned_oracle_stream(self) -> None:
         root = ROOT / ".work/x86_64/owned-math-fenv-stream-fixture"
         root.mkdir(parents=True, exist_ok=True)
