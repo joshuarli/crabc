@@ -31,14 +31,14 @@ real-zone transitions. Preserve those records, supply authenticated fixtures,
 and require known offset/transition checks as well as oracle comparison. This
 does not authorize bundling timezone data into the runtime.
 
-The immutable family coordinator is integrated through `f1695e6d` in
-`owned_text_math_locale_stdio_family.py`. Its fourteen focused tests cover
+The immutable family coordinator is integrated through `87f08e9b` in
+`owned_text_math_locale_stdio_family.py`. Its fifteen focused tests cover
 missing rows and modes, product/source substitution, mutation during
 collection and output construction, and physical fresh-output handling.
 It rejects missing rich text, full FILE-engine, and calendar readers; these
-tests do not establish real aggregate admission. The rich text aggregate's
-referenced pair-evidence roots must also enter the coordinator's snapshots
-before that integration can be qualified.
+tests do not establish real aggregate admission. Its snapshots include the
+rich text aggregate's three declared pair-evidence roots, with direct-child
+report hashes and exact execution-cell binding.
 
 The full OS-test development replay with the compiler-mode fix completed all
 ten suites using frozen `26dfb153` products and consumer `69f547a5`. Eight
@@ -47,9 +47,13 @@ addressability observations, four credential-profile observations, eight
 missing BSD random observations, and an `aio_suspend` crash. Its report is
 `.work/worktrees/os_test_mode_fix_full_replay/.work/x86_64/tmp/owned-os-test.dkxfi_6t/os-test.json`.
 The AIO investigation observed that the upstream fixture can return while its
-second stack-backed request is still active. An explicitly attributed fixture
-repair for both oracle and candidate remains under development; neither this
-observation nor the development replay closes the ordered native aggregate.
+second stack-backed request is still active. The source-attributed repair for
+both oracle and candidate is integrated through `d7d98984`; it preserves the
+original assertion and drains both requests before cleanup. The prepared case
+passes pinned musl and all four dynamic development routes, with the original
+warning and feature flags retained. This does not identify the old faulting
+instruction or close the ordered native aggregate; its full current-source
+OS-test replay remains required.
 
 Native allocator teardown work must preserve the pinned ordinary heap policy:
 an exhausted page is abandoned rather than retained in `BIN_FULL`. The fixed
