@@ -884,7 +884,93 @@ def _text_family_source(source: Mapping[str, Any]) -> dict[str, str]:
     }
 
 
-def text_family_semantic_adapter(report_path: Path | None, *, source: Mapping[str, Any]) -> dict[str, Any] | None:
+def _text_family_selected_product_cohort(reader: Any, paths: Mapping[str, Path]) -> dict[str, Any]:
+    """Describe the ABI transaction's selected primary POSIX products.
+
+    The text coordinator owns the three-pair POSIX matrix.  Selection does
+    not translate that matrix; it asks its physical family reader to identify
+    the selected preparation and primary manifests in the same identity form
+    the matrix uses.  Keeping this join here prevents source equality alone
+    from admitting a receipt made from another same-source product cohort.
+    """
+    required = ('static_preparation', 'static_product', 'dynamic_product')
+    require(all(name in paths and isinstance(paths[name], Path) for name in required),
+            'text family semantic evidence lacks the selected product cohort')
+    static_preparation = paths['static_preparation']
+    static_product = paths['static_product']
+    dynamic_product = paths['dynamic_product']
+    for description, path, directory in (
+            ('selected static preparation', static_preparation, False),
+            ('selected static product', static_product, True),
+            ('selected dynamic product', dynamic_product, True)):
+        require(path.is_relative_to(ROOT) and path.exists() and not path.is_symlink()
+                and (path.is_dir() if directory else path.is_file()),
+                f'text family {description} is not in the selecting checkout')
+    products: dict[str, dict[str, Any]] = {}
+    try:
+        for kind, product in (('static', static_product), ('dynamic', dynamic_product)):
+            manifest = product / 'share/crabc/manifest.json'
+            products[kind] = {
+                'path': product.relative_to(ROOT).as_posix(),
+                'manifest': reader.family.file_identity(ROOT, manifest),
+            }
+        return {
+            'static_preparation': reader.family.file_identity(ROOT, static_preparation),
+            'primary': products,
+        }
+    except (OSError, RuntimeError, ValueError) as error:
+        raise SelectionError(f'text family selected product cohort rejected: {error}') from error
+
+
+def _text_family_receipt_product_cohort(reader: Any, inputs: Mapping[str, Any],
+                                        paths: Mapping[str, Path]) -> dict[str, Any]:
+    """Replay the coordinator's physical POSIX owner before joining products."""
+    family_execution = exact(inputs.get('family_execution'), {'path', 'sha256', 'size'},
+                             'text family execution receipt identity')
+    matrix_relative = Path(string(family_execution['path'], 'text family execution receipt path'))
+    require(not matrix_relative.is_absolute() and '..' not in matrix_relative.parts,
+            'text family execution receipt path escapes the selecting checkout')
+    matrix_path = ROOT / matrix_relative
+    require(matrix_path.is_relative_to(ROOT / '.work'),
+            'text family execution receipt must remain under the selecting checkout .work')
+    try:
+        matrix = reader.family.validate_receipt(ROOT, matrix_path)
+        require(same(reader.family.file_identity(ROOT, matrix_path), family_execution),
+                'text family execution receipt changed during replay')
+        matrix_inputs = matrix.get('inputs') if isinstance(matrix, Mapping) else None
+        request_identity = exact(matrix.get('request') if isinstance(matrix, Mapping) else None,
+                                 {'path', 'sha256', 'size'}, 'text family matrix request identity')
+        request_relative = Path(string(request_identity['path'], 'text family matrix request path'))
+        require(not request_relative.is_absolute() and '..' not in request_relative.parts,
+                'text family matrix request path escapes the selecting checkout')
+        request_path = ROOT / request_relative
+        require(request_path.is_relative_to(ROOT / '.work')
+                and same(reader.family.file_identity(ROOT, request_path), request_identity),
+                'text family matrix request changed during replay')
+        matrix_request = reader.family.read(request_path)
+        matrix_product_inputs, products = reader.family.input_products(ROOT, matrix_request)
+    except (OSError, RuntimeError, ValueError) as error:
+        raise SelectionError(f'text family POSIX product receipt rejected: {error}') from error
+    require(isinstance(matrix_inputs, Mapping) and same(matrix_inputs, matrix_product_inputs),
+            'text family POSIX matrix product inputs differ')
+    require(isinstance(products, Mapping) and isinstance(products.get('primary'), Mapping),
+            'text family POSIX matrix primary product is absent')
+    primary = products['primary']
+    expected = _text_family_selected_product_cohort(reader, paths)
+    require(same(matrix_product_inputs.get('static_preparation'), expected['static_preparation']),
+            'text family static preparation differs from the selected ABI preparation')
+    for kind, selected in (('static', paths['static_product']), ('dynamic', paths['dynamic_product'])):
+        product = primary.get(kind)
+        require(isinstance(product, Path) and product == selected,
+                f'text family primary {kind} product differs from the selected ABI product')
+        require(same(reader.family.file_identity(ROOT, product / 'share/crabc/manifest.json'),
+                     expected['primary'][kind]['manifest']),
+                f'text family primary {kind} manifest differs from the selected ABI product')
+    return expected
+
+
+def text_family_semantic_adapter(report_path: Path | None, *, paths: Mapping[str, Path],
+                                 source: Mapping[str, Any]) -> dict[str, Any] | None:
     """Attach one replayed text-family component receipt without admitting its family.
 
     ``owned_text_math_locale_stdio_family`` owns the complete three-product
@@ -921,6 +1007,7 @@ def text_family_semantic_adapter(report_path: Path | None, *, source: Mapping[st
             and report['component_complete'] is False and report['family_completion'] is False
             and report['promotion_ready'] is False and report['public_support'] is False,
             'text family receipt completion or source boundary differs')
+    product_cohort = _text_family_receipt_product_cohort(reader, inputs, paths)
     components = exact(report['components'], set(reader.COMPONENTS), 'text family component roster')
     component_projection: dict[str, Any] = {}
     for name, specification in reader.COMPONENTS.items():
@@ -945,6 +1032,7 @@ def text_family_semantic_adapter(report_path: Path | None, *, source: Mapping[st
         'report': before,
         'source': expected_source,
         'source_inputs': {'roster': selecting_source_file_identity(reader.ROSTER_PATH)},
+        'product_cohort': product_cohort,
         'result': {
             'schema': reader.SCHEMA, 'family': reader.FAMILY,
             'capabilities': list(reader.CAPABILITIES), 'components': component_projection,
@@ -955,10 +1043,10 @@ def text_family_semantic_adapter(report_path: Path | None, *, source: Mapping[st
     }
 
 
-def _text_family_semantic_evidence(companion: Mapping[str, Any]) -> dict[str, Any]:
+def _text_family_semantic_evidence(companion: Mapping[str, Any], *, paths: Mapping[str, Path]) -> dict[str, Any]:
     """Validate the finite selector projection before replacing one blocker."""
     reader = _text_family_reader()
-    companion = exact(companion, {'status', 'report', 'source', 'source_inputs', 'result', 'limits'},
+    companion = exact(companion, {'status', 'report', 'source', 'source_inputs', 'product_cohort', 'result', 'limits'},
                       'text family semantic companion')
     report = exact(companion['report'], {'path', 'sha256', 'size', 'mode'}, 'text family semantic report')
     source = exact(companion['source'], {'revision', 'content_sha256'}, 'text family semantic source')
@@ -981,6 +1069,7 @@ def _text_family_semantic_evidence(companion: Mapping[str, Any]) -> dict[str, An
             and report['path'].startswith(str(ROOT / '.work') + os.sep)
             and same(companion['source'], expected_source)
             and same(companion['source_inputs'], {'roster': selecting_source_file_identity(reader.ROSTER_PATH)})
+            and same(companion['product_cohort'], _text_family_selected_product_cohort(reader, paths))
             and result['schema'] == reader.SCHEMA and result['family'] == TEXT_FAMILY
             and result['capabilities'] == list(reader.CAPABILITIES)
             and same(result['components'], expected_components)
@@ -999,7 +1088,8 @@ def _text_family_semantic_evidence(companion: Mapping[str, Any]) -> dict[str, An
 
 def headers_layouts_family_evidence(families: Sequence[Mapping[str, Any]],
                                     companion: Mapping[str, Any] | None,
-                                    text_family_companion: Mapping[str, Any] | None = None) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
+                                    text_family_companion: Mapping[str, Any] | None = None, *,
+                                    paths: Mapping[str, Path] | None = None) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
     """Replace only replayed family-semantic unavailable rows.
 
     Headers may be complete at their narrower boundary.  The text companion is
@@ -1007,7 +1097,7 @@ def headers_layouts_family_evidence(families: Sequence[Mapping[str, Any]],
     family remains planned and its aggregate-admission requirement remains.
     """
     ids = [family.get('id') for family in families]
-    require(ids.count(HEADERS_LAYOUTS_FAMILY) == 1 and ids.count(TEXT_FAMILY) == 1 and len(ids) == len(set(ids)),
+    require(ids.count(HEADERS_LAYOUTS_FAMILY) == 1 and len(ids) == len(set(ids)),
             'headers/layouts family roster differs')
     evidence: list[dict[str, Any]] = []
     if companion is not None:
@@ -1044,7 +1134,9 @@ def headers_layouts_family_evidence(families: Sequence[Mapping[str, Any]],
             'requirements_discharged': ['family-semantic-evidence-unavailable'],
         })
     if text_family_companion is not None:
-        evidence.append(_text_family_semantic_evidence(text_family_companion))
+        require(ids.count(TEXT_FAMILY) == 1 and paths is not None,
+                'text family semantic evidence requires its family and selected product cohort')
+        evidence.append(_text_family_semantic_evidence(text_family_companion, paths=paths))
     blockers = [
         {'code': 'family-semantic-evidence-unavailable', 'family': family['id'], 'ledger_status': family['status']}
         for family in families
@@ -1056,9 +1148,12 @@ def headers_layouts_family_evidence(families: Sequence[Mapping[str, Any]],
 
 def family_semantic_evidence(families: Sequence[Mapping[str, Any]], *,
                              headers_layouts_companion: Mapping[str, Any] | None,
-                             text_family_companion: Mapping[str, Any] | None) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
+                             text_family_companion: Mapping[str, Any] | None,
+                             paths: Mapping[str, Path] | None = None) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
     """Name the multi-family selector boundary without hiding old callers."""
-    return headers_layouts_family_evidence(families, headers_layouts_companion, text_family_companion)
+    return headers_layouts_family_evidence(
+        families, headers_layouts_companion, text_family_companion, paths=paths,
+    )
 
 
 def _recheck_headers_layouts_aggregate(companion: Mapping[str, Any] | None) -> None:
@@ -1076,7 +1171,8 @@ def _recheck_headers_layouts_aggregate(companion: Mapping[str, Any] | None) -> N
             'headers/layouts aggregate changed during final recheck')
 
 
-def _recheck_text_family_semantics(companion: Mapping[str, Any] | None, *, source: Mapping[str, Any]) -> None:
+def _recheck_text_family_semantics(companion: Mapping[str, Any] | None, *, paths: Mapping[str, Path],
+                                   source: Mapping[str, Any]) -> None:
     """Replay the current component reader after all ABI joins complete."""
     if companion is None:
         return
@@ -1085,7 +1181,7 @@ def _recheck_text_family_semantics(companion: Mapping[str, Any] | None, *, sourc
             'text family semantic report identity differs during final recheck')
     path = physical_work_path(Path(report['path']), directory=False)
     before = file_identity(path)
-    replayed = text_family_semantic_adapter(path, source=source)
+    replayed = text_family_semantic_adapter(path, paths=paths, source=source)
     require(same(replayed, companion) and same(before, file_identity(path)),
             'text family semantic receipt changed during final recheck')
 
@@ -9007,7 +9103,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     )
     headers_layouts_aggregate_companion = headers_layouts_aggregate_adapter(headers_layouts_aggregate_report)
     text_family_semantic_companion = text_family_semantic_adapter(
-        text_family_semantic_report, source=source_before,
+        text_family_semantic_report, paths=paths, source=source_before,
     )
     declaration = declaration_adapter(
         declaration_report,
@@ -9082,7 +9178,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     loader_structural_owner_joins = attach_loader_structural_owner(accounting, loader_structural_owner_companion)
     family_evidence_blockers, family_semantic_receipts = family_semantic_evidence(
         inputs['families'], headers_layouts_companion=headers_layouts_aggregate_companion,
-        text_family_companion=text_family_semantic_companion,
+        text_family_companion=text_family_semantic_companion, paths=paths,
     )
     headers_layouts_aggregate_evidence = [
         receipt for receipt in family_semantic_receipts if receipt['family'] == HEADERS_LAYOUTS_FAMILY
@@ -9107,7 +9203,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         loader_debug_report=loader_debug_report, loader_runtime_registry_report=loader_runtime_registry_report,
     )
     _recheck_headers_layouts_aggregate(headers_layouts_aggregate_companion)
-    _recheck_text_family_semantics(text_family_semantic_companion, source=source_before)
+    _recheck_text_family_semantics(text_family_semantic_companion, paths=paths, source=source_before)
     _recheck_public_data_declaration_runtime(
         public_data_declaration_runtime_companion, paths=paths, source=source_before, measurement=measurement,
         declaration_report=declaration_report, ordinary_declaration_abi_report=ordinary_declaration_abi_report,

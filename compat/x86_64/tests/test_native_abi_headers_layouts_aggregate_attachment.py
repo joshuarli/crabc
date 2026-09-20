@@ -132,6 +132,15 @@ class HeadersLayoutsAggregateAttachmentTests(unittest.TestCase):
         }])
         self.assertTrue(all(row['family'] != FAMILY for row in with_headers))
 
+    def test_header_only_helper_keeps_legacy_partial_rosters_without_text_evidence(self) -> None:
+        blockers, evidence = selection.headers_layouts_family_evidence([
+            {'id': FAMILY, 'status': 'planned'},
+        ], None)
+        self.assertEqual(blockers, [{
+            'code': 'family-semantic-evidence-unavailable', 'family': FAMILY, 'ledger_status': 'planned',
+        }])
+        self.assertEqual(evidence, [])
+
     def test_actual_36642_accounting_loses_exactly_one_family_row_and_no_global_receipt(self) -> None:
         if not BASE_REPORT.is_file():
             self.skipTest('requires retained 36642 selection report')

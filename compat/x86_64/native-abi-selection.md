@@ -399,8 +399,12 @@ only a current-checkout immutable receipt below `.work/`. Its owner,
 and all three static/dynamic product pairs before the selector reads its
 projection. The selector binds the exact sixteen capability roster, nine
 component scopes/credits, each component's three-pair six-mode coverage, the
-current source seal, and the tracked family roster. It then replays the owner
-after its ABI joins and rejects any changed receipt. This replaces only
+current source seal, and the tracked family roster. It also asks the physical
+POSIX family reader to recover the receipt's primary pair, then requires that
+its static preparation, static product path and manifest, and dynamic product
+path and manifest are the ABI transaction's selected cohort. A same-source
+receipt from another configured product cohort is therefore rejected. It then
+replays the owner after its ABI joins and rejects any changed receipt. This replaces only
 `libc.text-math-locale-stdio`'s
 `family-semantic-evidence-unavailable` row with component-semantic evidence.
 The receipt explicitly retains `component_complete = false`,
