@@ -18113,6 +18113,20 @@ esac
         for symbol in ("random", "srandom", "initstate", "setstate"):
             self.assertIn(symbol, entropy_excluded_symbols)
 
+        candidate_prng_exclusion = re.search(
+            r"for unselected in(?P<symbols>.*?); do\n"
+            r'    if grep -Eq [^\n]*"\$candidate_symbols"; then',
+            entropy_runner,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(candidate_prng_exclusion)
+        assert candidate_prng_exclusion is not None
+        entropy_candidate_excluded_symbols = set(
+            candidate_prng_exclusion.group("symbols").replace("\\", " ").split()
+        )
+        for symbol in ("random", "srandom", "initstate", "setstate"):
+            self.assertIn(symbol, entropy_candidate_excluded_symbols)
+
         for required in (
             "libc-bsd-random [--expect-missing]",
             "run_libc_bsd_random()",
