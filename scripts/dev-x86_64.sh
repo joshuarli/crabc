@@ -562,7 +562,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-crt-static-tls  run the real x86 rcrt1-to-libc static TLS composition slice
   libc-crt1-static-tls  run the real x86 crt1.o ET_EXEC-to-libc static TLS composition slice
   owned-resolver-network  compare owned products with musl in isolated loopback DNS fixtures
-  owned-classic-netdb [DYNAMIC_SYSROOT]  compare installed host/service C APIs in isolated loopback DNS fixtures
+  owned-classic-netdb [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  compare installed host/service C APIs in isolated loopback DNS fixtures
   owned-resolver-cancellation [DYNAMIC_SYSROOT]  compare installed DNS cancellation and descriptor cleanup
   owned-dynamic-io-cancellation [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify shared-runtime cancellation through kernel and direct entry
 
@@ -6043,8 +6043,8 @@ run_lua_static_source_build_probe() {
 }
 
 run_owned_classic_netdb_probe() {
-    if [ "$#" -eq 1 ]; then
-        run_in_resolver_network_container bash /workspace/compat/x86_64/run_owned_classic_netdb.sh "$1"
+    if [ "$#" -eq 1 ] || [ "$#" -eq 3 ]; then
+        run_in_resolver_network_container bash /workspace/compat/x86_64/run_owned_classic_netdb.sh "$@"
         return
     fi
     prepare_work_dir
@@ -9033,7 +9033,8 @@ case "$command" in
         run_libc_crt1_static_tls_probe
         ;;
     owned-classic-netdb)
-        [ "$#" -le 1 ] || fail "owned-classic-netdb takes at most one dynamic sysroot"
+        [ "$#" -le 1 ] || { [ "$#" -eq 3 ] && [ "$1" = --static-sysroot ] && [ -n "$2" ] && [ -n "$3" ]; } ||
+            fail "usage: ./scripts/dev-x86_64.sh owned-classic-netdb [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]"
         ensure_image
         run_owned_classic_netdb_probe "$@"
         ;;

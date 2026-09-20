@@ -90,6 +90,14 @@ selection, category precedence, object/base semantics, and failure-state
 preservation need implementation and direct evidence before locale closure.
 General locale databases remain excluded.
 
+Classic-netdb component `dedc02b9` is integrated with the existing executable
+roster of 23 scenarios. Supplied frozen products pass all six candidate cells
+and the read-only `--require-static` receipt reconstruction; the dynamic-only
+replay remains explicitly insufficient for that requirement. The dispatcher
+now forwards an optional supplied static product without preparing replacement
+products. Eleven focused reader/dispatch tests pass. This remains bounded
+`libc.resolver` evidence, with no resolver-family or Rust capability credit.
+
 The combined goal remains incomplete. Main through `0158c312` includes the
 locale source/product identity repairs, executable `libc.so` package mode,
 host-readable wordexp expected-input capture, and preservation of compiler
