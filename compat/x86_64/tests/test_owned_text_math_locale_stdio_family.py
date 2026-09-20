@@ -273,6 +273,28 @@ class TextMathLocaleStdioFamilyTests(unittest.TestCase):
         with self.assertRaisesRegex(coordinator.FamilyError, "locale primary product pair differs"):
             self.collect(self.fixture.adapter_results(products=products))
 
+    def test_output_rejects_a_symlinked_parent_hop_inside_checkout_work(self) -> None:
+        target = self.fixture.root / ".work/output-target"
+        nested = target / "nested"
+        nested.mkdir(parents=True)
+        (self.fixture.root / ".work/output-link").symlink_to("output-target", target_is_directory=True)
+        with self.assertRaisesRegex(coordinator.FamilyError, "output parent traverses a symbolic link"):
+            coordinator._fresh_output(self.fixture.root, Path(".work/output-link/nested/receipt.json"))
+
+    def test_output_creation_is_exclusive_after_collection(self) -> None:
+        output_parent = self.fixture.root / ".work/output"
+        output_parent.mkdir()
+        output = output_parent / "receipt.json"
+
+        def create_racing_output(_root: Path, _request: Path) -> dict[str, object]:
+            output.write_text("racing output\n", encoding="utf-8")
+            return {"fixture": True}
+
+        with mock.patch.object(coordinator, "collect", side_effect=create_racing_output):
+            with self.assertRaisesRegex(coordinator.FamilyError, "output is no longer fresh"):
+                coordinator.execute(self.fixture.root, Path(".work/request.json"), Path(".work/output/receipt.json"))
+        self.assertEqual(output.read_text(encoding="utf-8"), "racing output\n")
+
     def test_reader_rejects_a_component_source_different_from_the_matrix_source(self) -> None:
         wrong_source = {**SOURCE, "content_sha256": "e" * 64}
         with self.assertRaisesRegex(coordinator.FamilyError, "locale primary source, scope, or mode roster differs"):

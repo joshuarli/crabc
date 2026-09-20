@@ -976,10 +976,27 @@ def collect(root: Path, request_path: Path) -> dict[str, Any]:
 def _fresh_output(root: Path, path: Path) -> Path:
     require(not path.is_absolute() and path.parts and ".." not in path.parts,
             "family output path escapes checkout")
+    root = root.resolve(strict=True)
     output = root / path
-    require(output.parent.is_dir() and not output.parent.is_symlink() and output.parent.is_relative_to(root / ".work"),
-            "family output parent must be a physical checkout .work directory")
-    require(output.name == "receipt.json" and not output.exists(), "family output must be a fresh receipt.json")
+    require(output.name == "receipt.json" and output.parent.is_relative_to(root / ".work"),
+            "family output parent must be a checkout .work directory")
+    current = root
+    for part in path.parts[:-1]:
+        current /= part
+        try:
+            metadata = current.lstat()
+        except OSError as error:
+            raise FamilyError("family output parent is unreadable") from error
+        require(stat.S_ISDIR(metadata.st_mode) and not current.is_symlink(),
+                "family output parent traverses a symbolic link")
+    try:
+        output.lstat()
+    except FileNotFoundError:
+        pass
+    except OSError as error:
+        raise FamilyError("family output path is unreadable") from error
+    else:
+        raise FamilyError("family output must be a fresh receipt.json")
     return output
 
 
@@ -987,7 +1004,11 @@ def execute(root: Path, request_path: Path, output: Path) -> Path:
     root = root.resolve(strict=True)
     receipt = _fresh_output(root, output)
     value = collect(root, request_path)
-    receipt.write_text(json.dumps(value, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
+    try:
+        with receipt.open("x", encoding="utf-8") as stream:
+            stream.write(json.dumps(value, indent=2, sort_keys=True, allow_nan=False) + "\n")
+    except FileExistsError as error:
+        raise FamilyError("family output is no longer fresh") from error
     receipt.chmod(0o444)
     return receipt
 
