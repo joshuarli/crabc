@@ -147,6 +147,64 @@ attribute record that makes the detached waiter creation fail, verifies
 `EAGAIN` and the retained mask, restores its own test mask, then waits for the
 already-submitted write before reclaiming its `aiocb`.
 
+## Frozen os-test `aio_suspend` fixture lifetime
+
+The frozen os-test case
+`basic/aio/aio_suspend.c` at revision
+`5e9456d510612f83b6ec8b1a0c06d6b1303a2512`, tree
+`68fd4eef88d0e52b55c7cc2a73659b1e439d33fe`, has SHA-256
+`3ff7bf5dc07a92d3c8fe0394d581ccc9c34dbbad10737953be6d7e595904f51d`.
+It submits two writes using stack `aiocb`s and one shared stack buffer, calls
+`aio_suspend` once, then calls `aio_return` only for requests already terminal
+at that instant. `aio_suspend` promises one completed request; it does not
+make the remaining listed request terminal. Returning with the other request
+live releases its control block, buffer, and descriptor at the function/exit
+boundary, violating the caller lifetime required by POSIX and by
+`owned_aio.rs`.
+
+The preserved full-campaign raw observation at
+`.work/worktrees/os_test_mode_fix_full_replay/.work/x86_64/tmp/owned-os-test.dkxfi_6t/os-test.json`
+(SHA-256 `0d2fe146d2cbf166838dccdbd964ecf019610e8ffb14af2fac9834469e19e619`)
+records candidate `basic/aio/aio_suspend.out` as `exit: 139` and pinned musl
+as `exit: 0`. That outcome is consistent with the invalid lifetime, but it
+does not identify the exact faulting instruction or prove a runtime AIO defect.
+
+`owned_aio_suspend_lifetime_probe.c` keeps the same two-write shape, records
+the terminal count immediately after the single `aio_suspend` return, and
+then drains both controls while their buffer and descriptor remain live. Its
+controlled-pipe branch proves that a second request can remain live after the
+first completion. Pinned musl and all four dynamic supplied-product routes
+recorded `source-shape-completed=1 controlled-second-live=1 drained=2` in
+`.work/worktrees/aio_suspend_regression/.work/x86_64/tmp/owned-aio.7DaVMv`; this is bounded development evidence for
+the fixture boundary, not a promotion or a replacement for a fresh runtime
+build.
+
+`owned_os_test_aio_suspend_source.py` carries the upstream ISC notice and
+admits only those exact frozen source bytes. `owned_os_test.py` leaves the
+source stage unchanged, applies its single derivative independently to the
+musl and dynamic `basic` copies, preserves the original one-completion
+assertion, and reaps every submitted request before `fclose` or stack expiry.
+Each side has a preparation receipt; the native observation reader requires
+the source hash, prepared hash, preparer hash, replacement map, identical
+side receipts, and prepared copy bytes. This is an audited fixture repair on
+both sides, not a profile waiver or an AIO ABI/state workaround. Earlier v1
+raw os-test reports without this explicit `source_preparation` record remain
+historical evidence and cannot be silently admitted as a repaired aggregate.
+
+The focused native replay materializes the same derivative with its unchanged
+`basic/basic.h`, `misc/errors.h`, and `misc/compile.sh` support inputs. The
+last script supplies its frozen `-Wall`, `-Wextra`,
+`-Werror=implicit-function-declaration`, `-D_GNU_SOURCE`, `-D_BSD_SOURCE`,
+`-D_ALL_SOURCE`, and `-D_DEFAULT_SOURCE` arguments, so the isolated build uses
+the source suite's normal C surface. In
+`.work/worktrees/aio_suspend_regression/.work/x86_64/tmp/owned-aio.7btggs`,
+pinned musl and all four supplied-product dynamic routes (PIE/non-PIE,
+kernel/direct loader) compiled and ran the prepared fixture with status zero
+and empty streams. `owned_aio_evidence.py validate` re-derived its source tree,
+support hashes, preparation receipt, compile flags, links, and execution
+records. This remains bounded development evidence against the supplied
+pre-existing product; it does not qualify a changed runtime build.
+
 ## Installed-product evidence
 
 `compat/x86_64/run_owned_aio.sh` first compiles the installed-header object

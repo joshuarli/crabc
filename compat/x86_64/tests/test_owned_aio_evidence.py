@@ -207,6 +207,52 @@ class OwnedAioBehaviorObservationTests(unittest.TestCase):
                     with self.assertRaises(self.evidence.EvidenceError):
                         self.evidence.assert_oracle_fd_reuse(self.root, command)
 
+    def test_suspend_lifetime_observation_keeps_only_the_bounded_return_states(self) -> None:
+        for completed in (1, 2):
+            with self.subTest(completed=completed):
+                command = self._record(
+                    f"lifetime-valid-{completed}",
+                    f"aio-suspend-lifetime source-shape-completed={completed} "
+                    "controlled-second-live=1 drained=2\n".encode("ascii"),
+                )
+                with unittest.mock.patch.object(self.evidence, "SOURCE_MOUNT", str(self.root)):
+                    self.evidence.assert_suspend_lifetime_observation(
+                        self.root, command, "valid lifetime observation"
+                    )
+        invalid = (
+            b"aio-suspend-lifetime source-shape-completed=0 controlled-second-live=1 drained=2\n",
+            b"aio-suspend-lifetime source-shape-completed=3 controlled-second-live=1 drained=2\n",
+            b"aio-suspend-lifetime source-shape-completed=1 controlled-second-live=0 drained=2\n",
+            b"aio-suspend-lifetime source-shape-completed=1 controlled-second-live=1 drained=1\n",
+            b"aio-suspend-lifetime source-shape-completed=1 controlled-second-live=1 drained=2\nextra\n",
+        )
+        for index, stdout in enumerate(invalid):
+            with self.subTest(invalid=stdout):
+                command = self._record(f"lifetime-invalid-{index}", stdout)
+                with unittest.mock.patch.object(self.evidence, "SOURCE_MOUNT", str(self.root)):
+                    with self.assertRaises(self.evidence.EvidenceError):
+                        self.evidence.assert_suspend_lifetime_observation(
+                            self.root, command, "invalid lifetime observation"
+                        )
+
+    def test_prepared_os_test_fixture_requires_exact_source_tree_and_receipt(self) -> None:
+        profile = self.evidence.os_test_aio_suspend
+        fixture = self.work / self.evidence.PREPARED_OS_TEST_AIO_SUSPEND_ROOT
+        receipt = self.work / self.evidence.PREPARED_OS_TEST_AIO_SUSPEND_RECEIPT
+        profile.write_prepared_fixture_receipt(fixture, receipt)
+        self.assertEqual(
+            self.evidence._prepared_os_test_aio_suspend_source(self.work),
+            fixture / profile.SOURCE_PATH,
+        )
+        source = fixture / profile.SOURCE_PATH
+        source.write_bytes(source.read_bytes() + b"/* changed */\n")
+        with self.assertRaises(self.evidence.EvidenceError):
+            self.evidence._prepared_os_test_aio_suspend_source(self.work)
+        source.write_bytes(profile.prepared_fixture_files()[profile.SOURCE_PATH])
+        receipt.write_text("{}\n", encoding="utf-8")
+        with self.assertRaises(self.evidence.EvidenceError):
+            self.evidence._prepared_os_test_aio_suspend_source(self.work)
+
 
 class OwnedAioSuppliedPathTests(unittest.TestCase):
     def test_symlinked_supplied_product_is_rejected_before_product_validation(self) -> None:

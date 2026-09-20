@@ -7,6 +7,7 @@ import hashlib
 import importlib.util
 import json
 import shlex
+import shutil
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -16,14 +17,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 MODULE = ROOT / "compat/x86_64/owned_os_test.py"
+sys.path.insert(0, str(MODULE.parent))
 SPEC = importlib.util.spec_from_file_location("owned_os_test_test", MODULE)
 assert SPEC is not None and SPEC.loader is not None
 RUNNER = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = RUNNER
 SPEC.loader.exec_module(RUNNER)
 
-sys.path.insert(0, str(MODULE.parent))
 sys.modules["owned_os_test"] = RUNNER
+import owned_os_test_aio_suspend_source as aio_suspend_source
 TTYNAME_PROC_MODULE = ROOT / "compat/x86_64/owned_os_test_ttyname_proc.py"
 TTYNAME_PROC_SPEC = importlib.util.spec_from_file_location("owned_os_test_ttyname_proc_test", TTYNAME_PROC_MODULE)
 assert TTYNAME_PROC_SPEC is not None and TTYNAME_PROC_SPEC.loader is not None
@@ -411,6 +413,8 @@ class EvidenceContractTests(unittest.TestCase):
                 stack.enter_context(mock.patch.object(RUNNER, "tree_roster", return_value=[]))
                 stack.enter_context(mock.patch.object(RUNNER, "retain_json", return_value={"path": "record"}))
                 stack.enter_context(mock.patch.object(RUNNER, "stage_pristine_source", return_value={"stage": "source-stage"}))
+                stack.enter_context(mock.patch.object(RUNNER, "aio_suspend_preparation", return_value=(b"prepared", {"replacements": []})))
+                stack.enter_context(mock.patch.object(RUNNER, "prepare_aio_suspend_copy", return_value={"path": "aio-suspend-preparation"}))
                 stack.enter_context(mock.patch.object(RUNNER, "musl_oracle_identity", return_value={}))
                 stack.enter_context(mock.patch.object(RUNNER, "retain_expected_outcomes", return_value=([], {"path": "expected"})))
                 stack.enter_context(mock.patch.object(RUNNER, "copied_tree"))
@@ -525,6 +529,45 @@ class EvidenceContractTests(unittest.TestCase):
             self.assertEqual(status["suite"], "basic")
             self.assertEqual(status["side"], "dynamic")
             self.assertEqual(status["stdout"]["sha256"], hashlib.sha256(b"out\x00").hexdigest())
+
+    def test_aio_suspend_preparation_is_identical_for_musl_and_dynamic_and_retains_both_receipts(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as temporary:
+            work = Path(temporary)
+            stage = work / "source-stage"
+            fixture = aio_suspend_source.SOURCE_PATH
+            source = stage / fixture
+            source.parent.mkdir(parents=True)
+            source.write_bytes(aio_suspend_source.FROZEN_SOURCE)
+            musl = work / "musl/basic"
+            dynamic = work / "suites/basic"
+            shutil.copytree(stage, musl)
+            shutil.copytree(stage, dynamic)
+
+            prepared, preparation = RUNNER.aio_suspend_preparation(stage)
+            musl_receipt = RUNNER.prepare_aio_suspend_copy(musl, "musl", prepared, preparation, work)
+            dynamic_receipt = RUNNER.prepare_aio_suspend_copy(dynamic, "dynamic", prepared, preparation, work)
+
+            self.assertEqual((musl / fixture).read_bytes(), prepared)
+            self.assertEqual((dynamic / fixture).read_bytes(), prepared)
+            self.assertEqual(prepared, aio_suspend_source.prepare(aio_suspend_source.FROZEN_SOURCE)[0])
+            self.assertEqual(preparation["fixture"], fixture)
+            self.assertEqual(preparation["source_sha256"], aio_suspend_source.ORIGINAL_SHA256)
+            self.assertEqual(preparation["prepared_sha256"], aio_suspend_source.PREPARED_SHA256)
+            self.assertEqual(preparation["preparer"], {
+                "path": "compat/x86_64/owned_os_test_aio_suspend_source.py",
+                "sha256": hashlib.sha256(Path(aio_suspend_source.__file__).read_bytes()).hexdigest(),
+            })
+            self.assertEqual(json.loads((work / musl_receipt["path"]).read_text()), {**preparation, "side": "musl"})
+            self.assertEqual(json.loads((work / dynamic_receipt["path"]).read_text()), {**preparation, "side": "dynamic"})
+
+    def test_aio_suspend_preparation_rejects_changed_staged_source_before_copying(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as temporary:
+            stage = Path(temporary) / "source-stage"
+            fixture = stage / aio_suspend_source.SOURCE_PATH
+            fixture.parent.mkdir(parents=True)
+            fixture.write_bytes(aio_suspend_source.FROZEN_SOURCE + b"/* drift */\n")
+            with self.assertRaisesRegex(RUNNER.RunnerError, "SHA-256"):
+                RUNNER.aio_suspend_preparation(stage)
 
     def test_payload_roster_detects_a_post_execution_product_addition(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as temporary:

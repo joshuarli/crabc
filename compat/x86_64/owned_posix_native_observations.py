@@ -23,6 +23,7 @@ import owned_dynamic_receipt as receipt_contract
 import owned_differential_evidence as differential
 import owned_signal_process_evidence as signals
 import owned_pthread_stress_source as stress_source
+import owned_os_test_aio_suspend_source as aio_suspend_source
 
 ROOT = Path(__file__).resolve().parents[2]
 MODES = ('pie-kernel', 'pie-direct', 'non-pie-kernel', 'non-pie-direct')
@@ -1253,7 +1254,10 @@ def _os_event_graph(reader, suite, expected, result, source_files, contract):
                 key = reader.recorded(object_path)
                 require(key not in original_objects, 'os-test canonical object overwritten by another successful attempt')
                 original_objects[key] = (retained, event)
-                objects[suite + '/' + event_id] = {'source': reader.identity(leaf / 'source-stage' / suite / source),
+                source_path = leaf / 'source-stage' / suite / source
+                if suite == 'basic' and source == 'aio/aio_suspend.c':
+                    source_path = cwd / source
+                objects[suite + '/' + event_id] = {'source': reader.identity(source_path),
                                                   'object': reader.identity(retained), 'replay': reader.identity(direct)}
             else:
                 require('object' not in event and 'replay' not in event, 'os-test failed compile invented an object')
@@ -1423,6 +1427,42 @@ def _os_source(reader, report):
     return stage, files
 
 
+def _os_aio_suspend_preparation(reader, report, stage, files):
+    """Admit only the sealed lifetime repair on both basic-suite copies."""
+    source = stage / aio_suspend_source.SOURCE_PATH
+    try:
+        prepared, replacements = aio_suspend_source.prepare(read_bytes(source))
+    except aio_suspend_source.SourcePreparationError as error:
+        raise NativeObservationError(str(error)) from error
+    preparer = reader.root / "compat/x86_64/owned_os_test_aio_suspend_source.py"
+    expected = {
+        "schema": aio_suspend_source.SCHEMA,
+        "fixture": aio_suspend_source.SOURCE_PATH,
+        "source_sha256": aio_suspend_source.ORIGINAL_SHA256,
+        "prepared_sha256": aio_suspend_source.PREPARED_SHA256,
+        "preparer": {"path": preparer.relative_to(reader.root).as_posix(), "sha256": digest(preparer)},
+        "replacements": replacements,
+    }
+    source_preparation = keys(report["source_preparation"], ("aio_suspend_lifetime",),
+                              "os-test source preparation roster")
+    preparation = keys(source_preparation["aio_suspend_lifetime"],
+                       (*expected, "sides"), "os-test aio_suspend preparation")
+    same({key: preparation[key] for key in expected}, expected,
+         "os-test aio_suspend preparation source attribution")
+    sides = keys(preparation["sides"], ("musl", "dynamic"),
+                 "os-test aio_suspend preparation side roster")
+    for side, root in (("musl", reader.leaf / "musl/basic"),
+                       ("dynamic", reader.leaf / "suites/basic")):
+        fixture = root / aio_suspend_source.SOURCE_PATH
+        require(read_bytes(fixture) == prepared,
+                "os-test " + side + " aio_suspend prepared source differs")
+        receipt_path = reader.leaf / "records" / f"basic.{side}.aio-suspend-preparation.json"
+        reader.relative_artifact(sides[side], receipt_path)
+        same(read_json(receipt_path), {**expected, "side": side},
+             "os-test " + side + " aio_suspend preparation receipt")
+    return {**files, aio_suspend_source.SOURCE_PATH: hashlib.sha256(prepared).hexdigest()}
+
+
 def _os_basic_fixtures(reader, control, product, runtime, contract):
     """Admit basic's source-selected system files and explicit shell control."""
     files = {}
@@ -1587,6 +1627,7 @@ def _os_test(reader):
          ['crabc.x86_64-owned-os-test/v1', not profiled, list(OS_TEST_SUITES), 600.0, reader.recorded(leaf)], 'complete os-test campaign')
     require([suite['suite'] for suite in report['suites']] == list(OS_TEST_SUITES), 'os-test full suite roster differs')
     stage, files = _os_source(reader, report)
+    prepared_basic_files = _os_aio_suspend_preparation(reader, report, stage, files)
     product = report['product']
     same({key: product[key] for key in ('root', 'manifest', 'manifest_sha256', 'driver', 'driver_sha256')},
          {'root': reader.recorded(reader.product), 'manifest': reader.recorded(reader.manifest), 'manifest_sha256': digest(reader.manifest),
@@ -1621,9 +1662,11 @@ def _os_test(reader):
             outcomes = root / 'out/linux' / name
             actual = {path.relative_to(outcomes).as_posix() for path in outcomes.rglob('*.out')}
             same(actual == set(expected), True, 'os-test physical outcome roster')
-            # Make creates binaries and reports beside the tracked C inputs;
-            # every tracked source byte must still equal its pristine stage.
-            for relative, expected_hash in files.items():
+            # Make creates binaries and reports beside the tracked C inputs.
+            # Every source byte must still equal its pristine stage except the
+            # sole sealed basic/aio/aio_suspend.c lifetime derivative above.
+            source_files = prepared_basic_files if name == "basic" else files
+            for relative, expected_hash in source_files.items():
                 if (stage / relative).is_symlink():
                     require((root / relative).is_symlink(), 'os-test copied source symlink changed type')
                     same(hashlib.sha256(os.fsencode(os.readlink(root / relative))).hexdigest(), expected_hash, 'os-test copied source symlink')
@@ -1656,7 +1699,8 @@ def _os_test(reader):
             same([suite['passed'], suite['differences'], suite['difference_count']],
                  [False, expected_differences, 4 if name == 'basic' else 6],
                  'os-test exact selected profile differences')
-        objects.update(_os_event_graph(reader, name, expected, suite['dynamic'], files, contract))
+        objects.update(_os_event_graph(reader, name, expected, suite['dynamic'],
+                                       prepared_basic_files if name == "basic" else files, contract))
         _os_product_copy(reader, name, suite['dynamic']['execution_control'], product_roster['entries'], contract)
     oracle = report['musl_oracle']
     same(oracle['unchanged'], True, 'os-test pinned musl oracle stability')
@@ -1683,4 +1727,5 @@ def _os_test(reader):
         qualification={'status': 'profile-qualified' if profiled else 'passed', 'raw_passed': not profiled,
                        'dispositions': dispositions},
         source_tree={'revision': OS_TEST_REVISION, 'tree': OS_TEST_TREE, 'files': files},
+        source_preparation=reader.identity(reader.root / 'compat/x86_64/owned_os_test_aio_suspend_source.py', source=True),
         oracle_inputs=oracle, limits={'suite_timeout_seconds': 600.0, 'header_jobs': 8})

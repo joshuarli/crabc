@@ -15,6 +15,12 @@ readonly BEHAVIOR_PROBE="$ROOT/compat/x86_64/owned_aio_behavior_probe.c"
 readonly FD_REUSE_PROBE="$ROOT/compat/x86_64/owned_aio_fd_reuse_probe.c"
 readonly LIO_CREATE_FAILURE_PROBE="$ROOT/compat/x86_64/owned_aio_lio_create_failure_probe.c"
 readonly SUSPEND_WAKE_PROBE="$ROOT/compat/x86_64/owned_aio_suspend_wake_probe.c"
+readonly SUSPEND_LIFETIME_PROBE="$ROOT/compat/x86_64/owned_aio_suspend_lifetime_probe.c"
+readonly OS_TEST_AIO_SUSPEND_PREPARER="$ROOT/compat/x86_64/owned_os_test_aio_suspend_source.py"
+readonly -a OS_TEST_AIO_SUSPEND_FLAGS=(
+    -Wall -Wextra -Werror=implicit-function-declaration
+    -D_GNU_SOURCE -D_BSD_SOURCE -D_ALL_SOURCE -D_DEFAULT_SOURCE
+)
 readonly CANCEL_DEFECT_PROBE="$ROOT/compat/x86_64/owned_aio_cancel_defect_probe.c"
 readonly CANCEL_CURSOR_PROBE="$ROOT/compat/x86_64/owned_aio_cancel_cursor_probe.c"
 readonly SUBMIT_CANCEL_PROBE="$ROOT/compat/x86_64/owned_aio_submit_cancel_probe.c"
@@ -81,6 +87,15 @@ readonly WORK="$(mktemp -d "$TMPDIR/owned-aio.XXXXXX")"
 chmod a+rx "$WORK"
 printf 'owned aio evidence: %s\n' "$WORK"
 
+# This is the exact prepared os-test case, not a source-shaped replacement
+# probe. Its profile writes the fixed derivative and unchanged local headers
+# once; the evidence reader rederives and rejects any altered output.
+env -i LC_ALL=C PATH=/usr/bin:/bin SOURCE_DATE_EPOCH=1 TZ=UTC TMPDIR="$WORK" \
+	python3 -B "$OS_TEST_AIO_SUSPEND_PREPARER" \
+		--materialize "$WORK/os-test-aio-suspend-source" \
+		--receipt "$WORK/os-test-aio-suspend-source.json" >/dev/null ||
+	fail "cannot materialize the sealed os-test aio_suspend fixture"
+
 validate_product() {
 	local product="$1" family="$2"
 	python3 -B - "$ROOT" "$product" "$family" <<'PY'
@@ -132,7 +147,8 @@ assert_symbols() {
 
 prepare_root() {
 	local root="$1"
-	mkdir -p "$root/state" "$root/dev"
+	mkdir -p "$root/state" "$root/dev" "$root/tmp"
+	chmod 1777 "$root/tmp"
 	[ -e "$root/dev/null" ] || mknod "$root/dev/null" c 1 3
 }
 
@@ -196,6 +212,19 @@ run_fresh_signal_owned() {
 		fail "owned fresh-queue signal handler close remained pending"
 }
 
+# `aio_suspend` may return after one of a list has completed. This observer
+# retains the source-shaped two-write state count without treating its regular
+# file scheduling as a musl/candidate byte-for-byte comparison. Both sides
+# must still drain all caller-owned request storage, and its controlled pipe
+# route must show the second control live at that return boundary.
+run_suspend_lifetime_observation() {
+	local output="$1"
+	shift
+	run_capture "$output" "$@"
+	grep -Eq '^aio-suspend-lifetime source-shape-completed=[12] controlled-second-live=1 drained=2$' "$output" ||
+		fail "aio_suspend lifetime observer did not retain its bounded completion boundary"
+}
+
 compare_transcript() {
 	local oracle="$1" candidate="$2"
 	for suffix in stdout stderr status; do
@@ -217,12 +246,14 @@ record_raw() {
 
 run_compile() {
 	local key="$1" source="$2" object="$3" label="compile-$1" status=0
+	shift 3
+	local -a extra_flags=("$@")
 	env -i LC_ALL=C PATH=/usr/bin:/bin SOURCE_DATE_EPOCH=1 TZ=UTC TMPDIR="$WORK" \
-		"$dynamic_product/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
+		"$dynamic_product/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin "${extra_flags[@]}" \
 		-c "$source" -o "$object" >"$WORK/$label.stdout" 2>"$WORK/$label.stderr" || status=$?
 	printf '%s\n' "$status" >"$WORK/$label.status"
 	record_raw "$label" "$WORK/$label.stdout" "$WORK/$label.status" "$ROOT" \
-		"$dynamic_product/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
+		"$dynamic_product/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin "${extra_flags[@]}" \
 		-c "$source" -o "$object"
 	[ "$status" -eq 0 ] || fail "installed header compilation failed for $key"
 }
@@ -335,6 +366,8 @@ run_compile behavior "$BEHAVIOR_PROBE" "$WORK/behavior-workload.o"
 run_compile fd-reuse "$FD_REUSE_PROBE" "$WORK/fd-reuse-workload.o"
 run_compile lio-create-failure "$LIO_CREATE_FAILURE_PROBE" "$WORK/lio-create-failure-workload.o"
 run_compile suspend-wake "$SUSPEND_WAKE_PROBE" "$WORK/suspend-wake-workload.o"
+run_compile suspend-lifetime "$SUSPEND_LIFETIME_PROBE" "$WORK/suspend-lifetime-workload.o"
+run_compile os-test-aio-suspend "$WORK/os-test-aio-suspend-source/basic/aio/aio_suspend.c" "$WORK/os-test-aio-suspend-workload.o" "${OS_TEST_AIO_SUSPEND_FLAGS[@]}"
 run_compile queued-cancel "$CANCEL_DEFECT_PROBE" "$WORK/queued-cancel-workload.o"
 run_compile cancel-cursor "$CANCEL_CURSOR_PROBE" "$WORK/cancel-cursor-workload.o"
 run_compile submit-cancel "$SUBMIT_CANCEL_PROBE" "$WORK/submit-cancel-workload.o"
@@ -355,6 +388,12 @@ run_capture "$WORK/oracle-lio-create-failure.stdout" /usr/sbin/chroot "$WORK/ora
 run_oracle_link source-link-suspend-wake "$WORK/suspend-wake-workload.o" "$WORK/oracle-suspend-wake"
 cp "$WORK/oracle-suspend-wake" "$WORK/oracle-root/suspend-wake"
 run_capture "$WORK/oracle-suspend-wake.stdout" /usr/sbin/chroot "$WORK/oracle-root" /suspend-wake
+run_oracle_link source-link-suspend-lifetime "$WORK/suspend-lifetime-workload.o" "$WORK/oracle-suspend-lifetime"
+cp "$WORK/oracle-suspend-lifetime" "$WORK/oracle-root/suspend-lifetime"
+run_suspend_lifetime_observation "$WORK/oracle-suspend-lifetime.stdout" /usr/sbin/chroot "$WORK/oracle-root" /suspend-lifetime
+run_oracle_link source-link-os-test-aio-suspend "$WORK/os-test-aio-suspend-workload.o" "$WORK/oracle-os-test-aio-suspend"
+cp "$WORK/oracle-os-test-aio-suspend" "$WORK/oracle-root/os-test-aio-suspend"
+run_capture "$WORK/oracle-os-test-aio-suspend.stdout" /usr/sbin/chroot "$WORK/oracle-root" /os-test-aio-suspend
 
 executed_products='dynamic PIE/non-PIE kernel/direct'
 if [ -n "$static_product" ]; then
@@ -363,7 +402,7 @@ if [ -n "$static_product" ]; then
 	for mode in static static-pie; do
 		root="$WORK/$mode-root"
 		prepare_root "$root"
-		for key in workload behavior fd-reuse lio-create-failure suspend-wake queued-cancel cancel-cursor submit-cancel fresh-signal; do
+		for key in workload behavior fd-reuse lio-create-failure suspend-wake suspend-lifetime os-test-aio-suspend queued-cancel cancel-cursor submit-cancel fresh-signal; do
 			candidate="$WORK/$mode"
 			[ "$key" = workload ] || candidate="$WORK/$mode-$key"
 			object="$WORK/$key-workload.o"
@@ -381,6 +420,9 @@ if [ -n "$static_product" ]; then
 		compare_transcript oracle-lio-create-failure "$mode-lio-create-failure"
 		run_capture "$WORK/$mode-suspend-wake.stdout" /usr/sbin/chroot "$root" /suspend-wake
 		compare_transcript oracle-suspend-wake "$mode-suspend-wake"
+		run_suspend_lifetime_observation "$WORK/$mode-suspend-lifetime.stdout" /usr/sbin/chroot "$root" /suspend-lifetime
+		run_capture "$WORK/$mode-os-test-aio-suspend.stdout" /usr/sbin/chroot "$root" /os-test-aio-suspend
+		compare_transcript oracle-os-test-aio-suspend "$mode-os-test-aio-suspend"
 		for cancel_case in target all; do
 			run_capture "$WORK/$mode-queued-cancel-$cancel_case.stdout" /usr/sbin/chroot "$root" /queued-cancel "$cancel_case"
 			grep -Fxq "queued-cancel-$cancel_case=ok" "$WORK/$mode-queued-cancel-$cancel_case.stdout" || fail "owned $mode queued $cancel_case cancellation did not complete"
@@ -401,7 +443,7 @@ for mode in pie non-pie; do
 	mkdir -p "$root"
 	cp -a "$dynamic_product/." "$root/"
 	prepare_root "$root"
-	for key in workload behavior fd-reuse lio-create-failure suspend-wake queued-cancel cancel-cursor submit-cancel fresh-signal; do
+	for key in workload behavior fd-reuse lio-create-failure suspend-wake suspend-lifetime os-test-aio-suspend queued-cancel cancel-cursor submit-cancel fresh-signal; do
 		candidate="$WORK/dynamic-$mode"
 		[ "$key" = workload ] || candidate="$WORK/dynamic-$mode-$key"
 		object="$WORK/$key-workload.o"
@@ -425,6 +467,9 @@ for mode in pie non-pie; do
 		compare_transcript oracle-lio-create-failure "dynamic-$mode-$route-lio-create-failure"
 		run_capture "$WORK/dynamic-$mode-$route-suspend-wake.stdout" "${prefix[@]}" /suspend-wake
 		compare_transcript oracle-suspend-wake "dynamic-$mode-$route-suspend-wake"
+		run_suspend_lifetime_observation "$WORK/dynamic-$mode-$route-suspend-lifetime.stdout" "${prefix[@]}" /suspend-lifetime
+		run_capture "$WORK/dynamic-$mode-$route-os-test-aio-suspend.stdout" "${prefix[@]}" /os-test-aio-suspend
+		compare_transcript oracle-os-test-aio-suspend "dynamic-$mode-$route-os-test-aio-suspend"
 		for cancel_case in target all; do
 			run_capture "$WORK/dynamic-$mode-$route-queued-cancel-$cancel_case.stdout" "${prefix[@]}" /queued-cancel "$cancel_case"
 			grep -Fxq "queued-cancel-$cancel_case=ok" "$WORK/dynamic-$mode-$route-queued-cancel-$cancel_case.stdout" || fail "owned dynamic-$mode-$route queued $cancel_case cancellation did not complete"

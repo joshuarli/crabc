@@ -49,6 +49,18 @@ runtime controls. Its control shell, source tree, devices, resolver fixtures,
 and private devpts mount live outside the product payload; post-execution
 product rosters must still match exactly.
 
+`basic/aio/aio_suspend.c` is the one explicit prepared-source exception.  The
+runner first verifies its pinned upstream bytes, then replaces only its `main`
+with the hash-pinned lifetime-safe derivative from
+`owned_os_test_aio_suspend_source.py`.  That derivative retains the original
+one-completion assertion after `aio_suspend`, but reaps every submitted request
+before its `aiocb`s, shared buffer, or `FILE` can expire.  The exact derivative
+is staged separately for musl and the dynamic product; both retained receipts
+bind the upstream hash, derivative hash, replacement map, and preparer hash.
+Aggregate admission requires this explicit `source_preparation` record.  Earlier
+v1 raw reports without it remain historical observations and are not silently
+upgraded into the prepared-fixture aggregate.
+
 The runner creates one `owned-os-test.*` directory directly under `TMPDIR`.
 Its `os-test.json` contains every Make status record, raw stream artifact,
 outcome file, selected-product and staged-source identity, retained adapter
