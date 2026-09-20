@@ -142,7 +142,7 @@ The later `f1b18e01` checkpoint passed all 47 selected component jobs and the
 final selection audit, but closure correctly exited incomplete. Its report is
 `.work/worktrees/runtime_component_batch_current_f1b18e01/.work/x86_64/native-abi-selection/clean-f1b18e01/report.json`.
 Installed math/fenv composition and fixed-mimalloc process-done/retained-worker
-free integration are still under implementation and review. Full runtime
+free integration have since landed as described above. Full runtime
 family closure, allocator milestones, performance qualification, and the
 same-final-revision promotion gates remain required.
 
