@@ -8,7 +8,9 @@
 //! category remains `C`. `C` and `POSIX` use musl's byte-to-private-code-unit
 //! representation while `C.UTF-8` uses musl's UTF-8 state machine. The global
 //! selection has a small atomic lock solely for the named category state and `LC_ALL` result
-//! serialization; it has no environment lookup, locale database, allocator,
+//! serialization. The owned runtime also resolves empty names through its
+//! existing environment owner; the private freestanding artifact does not.
+//! Neither selects a locale database, allocator,
 //! locale-object allocation, collation, iconv, wide-stream, syscall,
 //! loader, CRT, or general stdio boundary.
 //!
@@ -24,14 +26,16 @@
 //!   `wcsrtombs.c`, `mbstowcs.c`, `wcstombs.c`, `btowc.c`, and `wctob.c`
 //!   map to the corresponding entries below.
 //!
-//! The source's optional environment-backed `setlocale(category, "")`,
-//! arbitrary locale-map names and mixed-name parser variants beyond the exact
-//! serialized six-category form intentionally remain unselected. The separate
+//! Environment-backed `setlocale(category, "")` is selected only by the owned
+//! runtime, with `LC_ALL`, category, then `LANG` precedence and a `C.UTF-8`
+//! default. Arbitrary locale-map names and mixed-name parser variants beyond
+//! the exact serialized six-category form remain unselected. The separate
 //! `locale_objects` leaf can override this global CTYPE mode for the selected
 //! main/worker Static Initial TLS v1 paths without changing this module's
 //! process-global named-category owner. An
-//! unsupported name or empty environment request returns null without
-//! changing the current named state. The null-state `mbrtowc` and `mbrlen`
+//! unsupported name returns null without changing the current named state;
+//! the freestanding artifact also rejects empty environment requests.
+//! The null-state `mbrtowc` and `mbrlen`
 //! paths retain distinct atomic internal state words like musl's distinct
 //! static words; callers requiring one logical conversion must supply a
 //! caller-owned `mbstate_t`. `setlocale` is not async-signal-safe, so a signal
@@ -387,6 +391,23 @@ unsafe fn setlocale_locked(category: c_int, name: *const c_char) -> *mut c_char 
         return unsafe { query_locale_locked(category, current) };
     }
 
+    #[cfg(feature = "x86-owned-static-runtime")]
+    if unsafe { *name } == 0 {
+        let categories = if category == LC_ALL { 0..LC_ALL } else { category..category + 1 };
+        let mut next = current;
+        for selected in categories {
+            // Resolve every requested category before publishing any change.
+            let Some(utf8) = (unsafe { environment_locale_mode(selected) }) else {
+                return core::ptr::null_mut();
+            };
+            if selected == LC_CTYPE {
+                next = if utf8 { LC_CTYPE_UTF8_MASK } else { 0 };
+            }
+        }
+        LOCALE_STATE.store(next, Ordering::Release);
+        return unsafe { query_locale_locked(category, next) };
+    }
+
     let next = if category == LC_ALL {
         // SAFETY: name is a caller-owned NUL-terminated C string.
         match unsafe { parse_all_locale_state(name) } {
@@ -413,16 +434,45 @@ unsafe fn setlocale_locked(category: c_int, name: *const c_char) -> *mut c_char 
     unsafe { query_locale_locked(category, next) }
 }
 
+/// Resolve one built-in category through musl `locale_map.c`'s environment
+/// precedence. Empty variables are skipped; an absent selection defaults to
+/// C.UTF-8. Unsupported names fail within this project's fixed locale profile.
+/// The owned runtime already provides the environment owner; private
+/// freestanding locale artifacts keep their original dependency boundary.
+///
+/// The caller supplies a category in 0..6 and excludes concurrent environment
+/// mutation for the borrowed getenv values, as required by that C interface.
+#[cfg(feature = "x86-owned-static-runtime")]
+pub(super) unsafe fn environment_locale_mode(category: c_int) -> Option<bool> {
+    const CATEGORY_NAMES: [&[u8]; 6] = [
+        b"LC_CTYPE\0", b"LC_NUMERIC\0", b"LC_TIME\0",
+        b"LC_COLLATE\0", b"LC_MONETARY\0", b"LC_MESSAGES\0",
+    ];
+    for variable in [b"LC_ALL\0".as_slice(), CATEGORY_NAMES[category as usize], b"LANG\0".as_slice()] {
+        let value = unsafe { super::environment::getenv(variable.as_ptr().cast()) };
+        if !value.is_null() && unsafe { *value } != 0 {
+            return unsafe { named_locale_mode(value) };
+        }
+    }
+    Some(true)
+}
+
 /// Select or query the bounded global C/POSIX/C.UTF-8 category state.
 ///
 /// `locale` must be null or a readable NUL-terminated C string. A non-null
 /// name accepts only `C`, `POSIX`, `C.UTF-8`, or the exact six-component
 /// semicolon serialization returned for a mixed `LC_ALL` state. The pinned
 /// built-in `C.UTF-8` map affects `LC_CTYPE` alone, so a global selection
-/// serializes as `C.UTF-8;C;C;C;C;C`. This static artifact intentionally
-/// rejects the environment request `""`, arbitrary locale-map names, and
-/// locale-object behavior. The returned pointer is libc-owned and may be
-/// overwritten by a later `setlocale` call.
+/// serializes as `C.UTF-8;C;C;C;C;C`. In the owned runtime an empty name
+/// resolves supported names from the environment; the freestanding artifact
+/// rejects that request. Arbitrary locale-map names remain unsupported.
+/// The returned pointer is libc-owned and may be overwritten by a later call.
+///
+/// # Safety
+///
+/// `locale` must be null or point to a readable NUL-terminated string. Exclude
+/// concurrent environment mutation during an environment-backed selection.
+/// Do not read a returned mixed-category buffer while another call changes it.
 #[no_mangle]
 pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *mut c_char {
     if !(LC_CTYPE..=LC_ALL).contains(&category) {

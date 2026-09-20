@@ -56,11 +56,13 @@ non-credit rows are `candidate-locale-object-wide-profile` from
 candidate cells, physical link/payload receipts, and the source branch
 literals that caused the separation.
 
-The object-wide selector records the frozen supplied candidate's rejection of
-an unsupported locale name and an empty locale name. Environment-backed and
-empty-name locale behavior is an unclosed family/parity gap: it has no Musl
-parity comparison and no `locale.core` completion credit. It is historical
-candidate-only evidence, rather than a final owned-runtime boundary. The iconv selector
+The owned-runtime object-wide selector rejects unsupported names and accepts
+empty-name environment selection with `LC_ALL=C`. Its private freestanding
+counterpart still rejects empty names because it has no environment owner.
+The earlier frozen rejection was an unclosed family/parity gap, not a final
+profile exclusion. Current environment precedence and default/base behavior
+require the separate owned-locale `v3` differential component; this supplement
+still has no `locale.core` completion credit. The iconv selector
 records the bounded rejection of generic `ISO-8859-1`, `UTF-16`, and
 `UCS-2LE` names. It does not alter the UTF-16LE/BE and UTF-32 conversion row
 above or claim a general legacy-encoding registry. The multibyte selector

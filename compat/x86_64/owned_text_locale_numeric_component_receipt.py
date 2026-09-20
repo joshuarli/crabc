@@ -65,9 +65,7 @@ ALL_WORKLOADS = (*WORKLOADS, SOURCE_SPECIFIC_WORKLOAD)
 LINKAGES = ("static", "static-pie", "dynamic-pie", "dynamic-non-pie")
 SOURCE_SPECIFIC_EXECUTION_CELLS = contract.SOURCE_SPECIFIC_EXECUTION_CELLS
 SOURCE_SPECIFIC_ORACLE_RELATION = "candidate-static-mode-consistency/no-musl-oracle"
-SOURCE_SPECIFIC_UNCLOSED_GAPS = (
-    "The frozen candidate-only environment/empty-name locale observation has no Musl-parity or locale.core completion credit and remains an unclosed family/parity gap; it is historical evidence rather than a final owned-runtime boundary.",
-)
+SOURCE_SPECIFIC_UNCLOSED_GAPS = ()
 NORMAL_FRAME_ROLES = (
     "float-parse", "ctype-locators", "locale-narrow", "locale-object-wide",
     "locale-wide-iconv", "locale-multibyte", "wide-character", "strfmon", "wide-conversion",
@@ -587,7 +585,8 @@ def validate_source_specific_branches(root: Path) -> None:
         "compat/x86_64/libc_locale_object_wide_probe.c": (
             "#if defined(CRABC_LOCALE_OBJECT_WIDE_FREESTANDING)",
             'newlocale(LC_ALL_MASK, "en_US.UTF-8", NULL) != NULL || errno != ENOENT',
-            'newlocale(LC_ALL_MASK, "", NULL) != NULL || errno != ENOENT',
+            '#if defined(CRABC_OWNED_LOCALE_ENVIRONMENT)',
+            'environment_locale == NULL || errno != EINTR',
             "uselocale(NULL) != LC_GLOBAL_LOCALE || MB_CUR_MAX != 1",
         ),
         "compat/x86_64/libc_locale_wide_iconv_probe.c": (

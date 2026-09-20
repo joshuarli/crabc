@@ -3,7 +3,7 @@
  * This is one application object compiled through selected installed headers.
  * It uses only C, POSIX, and C.UTF-8; fixed UTF-8/16/32 and ASCII iconv
  * descriptors; and two selected pthread workers.  It intentionally excludes
- * environment locale lookup, arbitrary locale maps, wide streams, collation,
+ * arbitrary locale maps, wide streams, collation,
  * general Unicode tables, and historical code pages.
  */
 
@@ -19,6 +19,11 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <wchar.h>
+
+/* Keep the isolated regression and this same-object installed composition on
+ * the same assertions. The receipt seals this exact additional source. */
+#define CRABC_LOCALE_ENVIRONMENT_NO_MAIN
+#include "libc_locale_environment_probe.c"
 
 #if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
     !defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || \
@@ -303,7 +308,7 @@ static int check_iconv_pointer_and_errors(void)
     return 0;
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
     locale_t c_locale;
     locale_t utf8_locale;
@@ -322,5 +327,12 @@ int main(void)
         return 80;
     freelocale(utf8_locale);
     freelocale(c_locale);
+    status = crabc_x86_64_locale_environment_probe(argc, argv);
+    if (status != 0)
+        return status;
+    if (argc == 2 && !strcmp(argv[1], "profile")) {
+        static const char result[] = "owned-locale-environment-profile-ok\n";
+        return write(STDOUT_FILENO, result, sizeof result - 1) == sizeof result - 1 ? 0 : 127;
+    }
     return write(STDOUT_FILENO, "owned-locale-products-ok\n", 25) == 25 ? 0 : 127;
 }

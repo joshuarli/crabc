@@ -6,7 +6,9 @@
 //! locale-parameterized form of the selected allocation-free wide-character
 //! core. `POSIX` normalizes to `C`; only LC_CTYPE differs for `C.UTF-8`, while
 //! numeric, time, collation, monetary, and messages data retain fixed C values.
-//! No locale map, environment lookup, allocation, refcount, filesystem,
+//! The owned runtime resolves empty names and null-base default categories
+//! through the existing environment owner. Private freestanding artifacts do
+//! not select that composition. No locale map, allocation, refcount, filesystem,
 //! gettext catalog, normalization, legacy encoding, stdio, numeric parser,
 //! syscall, dynamic TLS, loader, or general locale database is selected.
 //!
@@ -242,6 +244,13 @@ unsafe fn requested_utf8(name: *const c_char) -> Option<bool> {
 }
 
 /// Create or modify one immutable built-in locale object.
+///
+/// # Safety
+///
+/// For a nonzero mask, `name` must point to a readable NUL-terminated string.
+/// `base` must be null or a live locale object, never `LC_GLOBAL_LOCALE`.
+/// The caller must exclude concurrent environment mutation when an empty
+/// name or null base requires default-category selection.
 #[export_name = "__newlocale"]
 pub unsafe extern "C" fn newlocale(mask: c_int, name: *const c_char, base: Locale) -> Locale {
     let mut utf8 = if base.is_null() {
@@ -249,6 +258,31 @@ pub unsafe extern "C" fn newlocale(mask: c_int, name: *const c_char, base: Local
     } else {
         token_is_utf8(base)
     };
+    #[cfg(feature = "x86-owned-static-runtime")]
+    {
+        // musl newlocale.c inherits unselected categories from a supplied
+        // base; without a base it resolves their default environment names.
+        // All six names must validate before the immutable token is returned.
+        for category in 0..LC_ALL {
+            let selected = mask & (1 << category) != 0;
+            if !selected && !base.is_null() {
+                continue;
+            }
+            let requested = if !selected || unsafe { *name } == 0 {
+                unsafe { locale_multibyte::environment_locale_mode(category) }
+            } else {
+                unsafe { requested_utf8(name) }
+            };
+            let Some(requested) = requested else {
+                unsafe { errno::set_errno(ENOENT) };
+                return core::ptr::null_mut();
+            };
+            if category == LC_CTYPE {
+                utf8 = requested;
+            }
+        }
+    }
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     if mask != 0 {
         let Some(requested) = (unsafe { requested_utf8(name) }) else {
             unsafe { errno::set_errno(ENOENT) };

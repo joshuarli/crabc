@@ -111,7 +111,9 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr' \
 fi
 for snippet in '9fa28ece75d8a2191de7c5bb53bed224c5947417' \
     'built-ins reuse their token' \
-    'No locale map, environment lookup, allocation'; do
+    'No locale map, allocation' \
+    '#[cfg(feature = "x86-owned-static-runtime")]' \
+    '#[cfg(not(feature = "x86-owned-static-runtime"))]'; do
     grep -Fq "$snippet" libc/src/c_abi/x86_64/locale_objects.rs ||
         fail "implementation omits provenance boundary $snippet"
 done

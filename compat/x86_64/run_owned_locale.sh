@@ -6,6 +6,7 @@ ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly PROBE="$ROOT/compat/x86_64/owned_locale_probe.c"
+readonly ENVIRONMENT_PROBE="$ROOT/compat/x86_64/libc_locale_environment_probe.c"
 readonly RUNNER="$ROOT/compat/x86_64/run_owned_locale.sh"
 readonly RECEIPT_READER="$ROOT/compat/x86_64/owned_locale_component_receipt.py"
 readonly COPIES="$ROOT/compat/x86_64/owned_crypt_runtime_evidence.py"
@@ -182,7 +183,9 @@ def product_identity(path, kind):
     return {'path': path.relative_to(root).as_posix(),
             'manifest': family.file_identity(root, manifest), 'tree': family.snapshot(path)}
 
-record = {'sources': {'probe': source_identity(source), 'runner': source_identity(runner),
+record = {'sources': {'probe': source_identity(source),
+                      'environment-probe': source_identity(root / 'compat/x86_64/libc_locale_environment_probe.c'),
+                      'runner': source_identity(runner),
                       'reader': source_identity(reader)},
           'dynamic': product_identity(dynamic, 'dynamic')}
 if str(static_text) != '.':
@@ -237,14 +240,14 @@ capture_seal source-product-before
 readonly COMPILER="$(resolve_compiler)"
 capture header-trace "$COMPILER" -nostdinc -isystem "$DYNAMIC_PRODUCT/usr/include" \
     -ffreestanding -fno-builtin -fno-stack-protector -std=c11 -fPIE -E -H "$PROBE"
-for header in errno.h iconv.h langinfo.h limits.h locale.h pthread.h stddef.h stdlib.h unistd.h wchar.h \
+for header in errno.h iconv.h langinfo.h limits.h locale.h pthread.h stddef.h stdlib.h string.h unistd.h wchar.h \
     features.h bits/alltypes.h; do
     grep -Fq "$DYNAMIC_PRODUCT/usr/include/$header" "$WORK/header-trace.stderr" ||
         fail "installed header trace omitted $header"
 done
 capture compile "$DYNAMIC_PRODUCT/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -D_XOPEN_SOURCE=700 \
     -fno-builtin -fno-stack-protector -c "$PROBE" -o "$WORK/workload.o"
-sha256sum "$PROBE" "$RUNNER" "$RECEIPT_READER" "$WORK/workload.o" >"$WORK/source-object-before.sha256"
+sha256sum "$PROBE" "$ENVIRONMENT_PROBE" "$RUNNER" "$RECEIPT_READER" "$WORK/workload.o" >"$WORK/source-object-before.sha256"
 
 capture oracle-link "$ORACLE_CC" -std=c11 -pthread "$WORK/workload.o" -o "$WORK/oracle"
 capture oracle-run env -i LC_ALL=C LANG=C TZ=UTC "$WORK/oracle"
@@ -262,6 +265,7 @@ if [ -n "$STATIC_PRODUCT" ]; then
         validate_link "$mode" "$STATIC_PRODUCT" "$WORK/workload.o" "$WORK/$mode" "$receipt" "$mode"
         capture "$mode-run" env -i LC_ALL=C LANG=C TZ=UTC "$WORK/$mode"
         compare_oracle "$mode-run"
+        capture "$mode-profile" env -i LC_ALL=C LANG=C TZ=UTC "$WORK/$mode" profile
     done
 fi
 
@@ -283,10 +287,12 @@ for mode in pie non-pie; do
         --product "$DYNAMIC_PRODUCT" --execution-root "$root" \
         --source-consumer "$executable" --execution-consumer "$root/consumer" \
         --record "$WORK/dynamic-$mode-execution-payload.json"
-    capture "dynamic-$mode-kernel" chroot "$root" /consumer
+    capture "dynamic-$mode-kernel" env -i LC_ALL=C LANG=C TZ=UTC /usr/sbin/chroot "$root" /consumer
     compare_oracle "dynamic-$mode-kernel"
-    capture "dynamic-$mode-direct" chroot "$root" "$INTERPRETER" /consumer
+    capture "dynamic-$mode-direct" env -i LC_ALL=C LANG=C TZ=UTC /usr/sbin/chroot "$root" "$INTERPRETER" /consumer
     compare_oracle "dynamic-$mode-direct"
+    capture "dynamic-$mode-kernel-profile" env -i LC_ALL=C LANG=C TZ=UTC /usr/sbin/chroot "$root" /consumer profile
+    capture "dynamic-$mode-direct-profile" env -i LC_ALL=C LANG=C TZ=UTC /usr/sbin/chroot "$root" "$INTERPRETER" /consumer profile
     capture "dynamic-$mode-copy-audit-after" python3 -B "$COPIES" audit \
         --product "$DYNAMIC_PRODUCT" --execution-root "$root" \
         --source-consumer "$executable" --execution-consumer "$root/consumer" \
@@ -332,7 +338,7 @@ payloads = {name: {
     'after': identity(work / f'dynamic-{name}-copy-audit-after.stdout'),
 } for name in ('pie', 'non-pie')}
 record = {
-    'schema': 'crabc.x86_64-owned-locale-products/v2',
+    'schema': 'crabc.x86_64-owned-locale-products/v3',
     'source_mount': '/workspace',
     'execution_mode': ('full-six-mode' if str(static_text) != '.' else
                        'dynamic-only-four-cell-development'),

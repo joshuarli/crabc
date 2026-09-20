@@ -120,7 +120,7 @@ readonly -a ROLE_SOURCES=(
     'strfmon|compat/x86_64/owned_strfmon_probe.c|main=crabc_text_locale_numeric_strfmon_private_main'
     'wide-conversion|compat/x86_64/owned_wide_conversion_probe.c|main=crabc_text_locale_numeric_wide_conversion_private_main'
     'source-specific-driver|compat/x86_64/owned_text_locale_numeric_source_specific_driver.c|'
-    'candidate-locale-object-wide-profile|compat/x86_64/libc_locale_object_wide_probe.c|CRABC_LOCALE_OBJECT_WIDE_FREESTANDING;main=crabc_text_locale_numeric_candidate_locale_object_wide_private_main'
+    'candidate-locale-object-wide-profile|compat/x86_64/libc_locale_object_wide_probe.c|CRABC_LOCALE_OBJECT_WIDE_FREESTANDING;CRABC_OWNED_LOCALE_ENVIRONMENT;main=crabc_text_locale_numeric_candidate_locale_object_wide_private_main'
     'candidate-locale-wide-iconv-profile|compat/x86_64/libc_locale_wide_iconv_probe.c|CRABC_LOCALE_WIDE_ICONV_FREESTANDING;main=crabc_text_locale_numeric_candidate_locale_wide_iconv_private_main'
     'candidate-locale-multibyte-profile|compat/x86_64/libc_locale_multibyte_probe.c|CRABC_LOCALE_MULTIBYTE_FREESTANDING;main=crabc_text_locale_numeric_candidate_locale_multibyte_private_main'
 )
@@ -400,4 +400,4 @@ python3 -B "$RECEIPT" write-report --root "$ROOT" --work "$WORK" --static "$STAT
     --dynamic "$DYNAMIC_PRODUCT" --output "$WORK/owned-text-locale-numeric.json"
 python3 -B "$RECEIPT" validate-report --root "$ROOT" --report "$WORK/owned-text-locale-numeric.json"
 
-printf 'owned text/locale/numeric component: PASS (11 bounded Musl-parity rows; 3 historical non-credit source-specific candidate observations; selected normal imports rebound to physical static/dynamic providers; separate public-alias executable; static/static-PIE and dynamic PIE/non-PIE kernel/direct; no family completion) evidence: %s\n' "$WORK"
+printf 'owned text/locale/numeric component: PASS (11 bounded Musl-parity rows; 3 non-credit source-specific candidate observations; selected normal imports rebound to physical static/dynamic providers; separate public-alias executable; static/static-PIE and dynamic PIE/non-PIE kernel/direct; no family completion) evidence: %s\n' "$WORK"
