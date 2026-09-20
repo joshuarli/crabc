@@ -582,7 +582,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-pthread-spin  qualify installed private/shared pthread spin locking
   owned-syslog [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify owned C syslog delivery and state against musl
   owned-pattern  qualify owned C fnmatch/glob/globfree behavior against musl
-  owned-regex [DYNAMIC_SYSROOT]  compare installed TRE regex behavior with musl
+  owned-regex [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  replay the installed TRE regex component against musl
   owned-wcsftime [DYNAMIC_SYSROOT]  compare installed wide calendar formatting with musl
   owned-strfmon [DYNAMIC_SYSROOT]  compare installed monetary formatting with musl
   owned-fmtmsg [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify installed fmtmsg and cancellation semantics
@@ -6781,8 +6781,8 @@ case "$command" in
     native-thread-signal-abi) ;;
     owned-system-cancellation) ;;
     owned-rand) ;;
-    owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-fmtmsg|owned-utmpx|owned-process-trio|owned-underscore-fork|owned-aio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-account-files|owned-locale|owned-wordexp|owned-stdio|owned-numeric-calendar|owned-math-fenv-all-entry|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition) ;;
-    owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern|owned-wcsftime|owned-regex|owned-strfmon) ;;
+    owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-fmtmsg|owned-utmpx|owned-process-trio|owned-underscore-fork|owned-aio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-account-files|owned-locale|owned-wordexp|owned-stdio|owned-numeric-calendar|owned-math-fenv-all-entry|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition|owned-regex) ;;
+    owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern|owned-wcsftime|owned-strfmon) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
     owned-error-reporting|owned-stdio-allocator-interposition|owned-mimalloc-startup-errno|owned-signal-handler-fork|owned-c-allocation-interposition) ;;
@@ -6996,11 +6996,11 @@ case "$command" in
         prepare_owned_posix_replay_arguments "$command" "$@"
         set -- "${POSIX_REPLAY_ARGUMENTS[@]}"
         ;;
-    owned-rand|owned-aio|owned-posix-filesystem|owned-process-control|owned-posix-signals|owned-posix-composition|owned-credentials-profile|owned-environment-lifecycle|owned-kernel-residual|owned-linux-control|owned-dynamic-spawn|owned-fmtmsg|owned-utmpx|owned-account-files|owned-locale|owned-wordexp|owned-stdio|owned-numeric-calendar|owned-math-fenv-all-entry|owned-process-trio|owned-underscore-fork|owned-syslog|owned-crypt-runtime|owned-system-cancellation|owned-signal-helpers|owned-pthread-signal|owned-posix-timers|owned-dynamic-io-cancellation|project-header-extension-policy)
+    owned-rand|owned-aio|owned-posix-filesystem|owned-process-control|owned-posix-signals|owned-posix-composition|owned-credentials-profile|owned-environment-lifecycle|owned-kernel-residual|owned-linux-control|owned-dynamic-spawn|owned-fmtmsg|owned-utmpx|owned-account-files|owned-locale|owned-wordexp|owned-stdio|owned-numeric-calendar|owned-math-fenv-all-entry|owned-process-trio|owned-underscore-fork|owned-syslog|owned-crypt-runtime|owned-system-cancellation|owned-signal-helpers|owned-pthread-signal|owned-posix-timers|owned-dynamic-io-cancellation|project-header-extension-policy|owned-regex)
         prepare_owned_posix_replay_arguments "$command" "$@"
         set -- "${POSIX_REPLAY_ARGUMENTS[@]}"
         ;;
-    owned-nftw-relative-base|owned-wcsftime|owned-regex|owned-strfmon)
+    owned-nftw-relative-base|owned-wcsftime|owned-strfmon)
         prepare_owned_dynamic_product_argument "$command" "$@"
         set -- "${OWNED_DYNAMIC_PRODUCT_ARGUMENTS[@]}"
         ;;
