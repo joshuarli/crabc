@@ -2670,13 +2670,24 @@ Run `./scripts/dev-x86_64.sh libc-native-mimalloc-shadow-pthread-teardown` for t
 reference plus the real static candidate. The fixture covers normal return,
 explicit exit, and deferred cancellation; each user TSD destructor allocates
 and frees through the selected native adapter, proving the common
-after-user-destructor seam. Its test-only audit checks that the existing
-`active_later_thread_count` begins at zero after the rejected pre-start child
-and returns to zero after every join. Its strong application `malloc`
-replacement also proves an ordinary private client, `pthread_atfork`, allocates
-through libc's direct native internal helper. The selected static aggregate
-still carries its existing incidental `libmimalloc-sys`/C mimalloc build
-dependency, so this receipt makes no C-free graph, default-backend, promotion,
+after-user-destructor seam. A distinct normal-return worker returns from its
+user start routine after only installing an existing pthread TSD value. Its
+destructor therefore makes the first *public* allocation attempt: a
+`SIZE_MAX` request must fail with `ENOMEM`, then the first successful public
+`malloc` allocates and frees before native teardown. This proves the selected
+candidate keeps its attached worker usable after that C-ABI refusal and can
+complete the following valid allocation. It deliberately does **not** prove
+that pthread attachment made no unrelated internal allocations, or close
+upstream `mi_tld_create`/`_mi_thread_init_with_heap` source-order and failure
+paths. Its test-only audit checks that the existing `active_later_thread_count`
+begins at zero after the rejected pre-start child and returns to zero after
+every join. Its strong application `malloc` replacement also proves an
+ordinary private client, `pthread_atfork`, allocates through libc's direct
+native internal helper. The candidate is an explicitly selected
+`native-mimalloc-shadow` static build, not the project's default public
+allocator provider; its selected static aggregate still carries its existing
+incidental `libmimalloc-sys`/C mimalloc build dependency. This receipt makes no
+C-free graph, default-backend, promotion, general public-provider,
 dynamic-runtime, or process-shutdown claim.
 
 After the bootstrapped task calls `pthread_exit`, the same fixture releases its

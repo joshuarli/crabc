@@ -6,7 +6,10 @@
  * receives EAGAIN without invoking user code, then starts libc normally.
  * Normal return, pthread_exit, and deferred pthread cancellation each make a
  * user TSD destructor allocate and free before the selected native owner is
- * finished. A final worker also reaches ordinary `atexit` only after the
+ * finished. A distinct normal-return round makes no public allocation from
+ * its user start routine: its TSD destructor observes a rejected first
+ * request and then makes the worker's first successful public allocation.
+ * A final worker also reaches ordinary `atexit` only after the
  * bootstrapped thread called `pthread_exit`; before logical process done its
  * completed owner is reinitialized, while after logical process done the
  * final-task decision preserves its same active source owner for callbacks.
@@ -34,6 +37,7 @@ enum {
     CRABC_WAIT_LIMIT = 100000000u,
     CRABC_NORMAL_MARKER = 0x13579bdfu,
     CRABC_EXPLICIT_MARKER = 0x2468ace0u,
+    CRABC_TSD_FIRST_MARKER = 0x10293847u,
     CRABC_PROCESS_DONE_CLIENT_COUNT = 2u,
 };
 
@@ -59,6 +63,12 @@ struct teardown_round {
     volatile int ready;
     volatile int tsd_finished;
     volatile int failure;
+    /* The first-public-allocation round sets these before its worker returns.
+     * They distinguish the source-order receipt from an unsupported claim
+     * that pthread attachment itself performs no internal allocation. */
+    volatile int first_public_allocation_from_tsd;
+    volatile int user_start_returned;
+    volatile int rejected_first_request;
     uintptr_t marker;
 };
 
@@ -178,6 +188,27 @@ static void native_allocation_tsd_destructor(void *opaque)
         record_failure(round, 101);
         return;
     }
+    /* This selected-native round performs no public allocation in its user
+     * start routine. Its TSD callback therefore supplies its first public
+     * allocator attempt. The impossible request must be rejected at the C
+     * boundary without preventing the following first successful selected
+     * native allocation. This observes neither a generic `mi_tld_create`
+     * matrix nor whether pthread attachment used unrelated internal storage. */
+    if (__atomic_load_n(&round->first_public_allocation_from_tsd,
+            __ATOMIC_ACQUIRE) != 0) {
+        if (__atomic_load_n(&round->user_start_returned,
+                __ATOMIC_ACQUIRE) != 1) {
+            record_failure(round, 103);
+            return;
+        }
+        errno = 0;
+        if (malloc(SIZE_MAX) != 0 || errno != ENOMEM) {
+            record_failure(round, 104);
+            return;
+        }
+        __atomic_store_n(&round->rejected_first_request, 1,
+            __ATOMIC_RELEASE);
+    }
     allocation = malloc(97);
     if (allocation == 0) {
         record_failure(round, 102);
@@ -188,6 +219,13 @@ static void native_allocation_tsd_destructor(void *opaque)
     __atomic_store_n(&round->tsd_finished, 1, __ATOMIC_RELEASE);
 }
 
+/* Installing a user TSD value changes only the selected pthread value table;
+ * it intentionally contains no public allocation call. */
+static int install_worker_teardown_tsd(struct teardown_round *round)
+{
+    return pthread_setspecific(teardown_key, round) == 0 ? 0 : 1;
+}
+
 static int prepare_worker_teardown(struct teardown_round *round)
 {
     void *allocation = malloc(10241);
@@ -196,9 +234,7 @@ static int prepare_worker_teardown(struct teardown_round *round)
         return 1;
     ((volatile unsigned char *)allocation)[0] = 0xa5;
     free(allocation);
-    if (pthread_setspecific(teardown_key, round) != 0)
-        return 2;
-    return 0;
+    return install_worker_teardown_tsd(round) == 0 ? 0 : 2;
 }
 
 static void *normal_return_worker(void *opaque)
@@ -221,6 +257,22 @@ static void *explicit_exit_worker(void *opaque)
         return 0;
     }
     pthread_exit((void *)round->marker);
+}
+
+/* The native attachment already exists before this user routine, but this
+ * routine intentionally makes no public allocation call. Its TSD callback
+ * therefore owns the first public allocation attempt and first successful
+ * selected-native allocation for this worker. */
+static void *first_public_allocation_in_tsd_worker(void *opaque)
+{
+    struct teardown_round *round = opaque;
+
+    if (install_worker_teardown_tsd(round) != 0) {
+        record_failure(round, 4);
+        return 0;
+    }
+    __atomic_store_n(&round->user_start_returned, 1, __ATOMIC_RELEASE);
+    return (void *)round->marker;
 }
 
 static void *deferred_cancel_worker(void *opaque)
@@ -761,6 +813,38 @@ int main(void)
     if (__crabc_x86_native_mimalloc_active_later_thread_count_test_audit() !=
             baseline_later_thread_count)
         return 28;
+#endif
+    {
+        pthread_t thread;
+        void *worker_result = 0;
+        struct teardown_round round = {
+            .ready = 0,
+            .tsd_finished = 0,
+            .failure = 0,
+            .first_public_allocation_from_tsd = 1,
+            .user_start_returned = 0,
+            .rejected_first_request = 0,
+            .marker = CRABC_TSD_FIRST_MARKER,
+        };
+
+        if (pthread_create(&thread, 0, first_public_allocation_in_tsd_worker,
+                &round) != 0)
+            return 29;
+        if (pthread_join(thread, &worker_result) != 0)
+            return 30;
+        if (worker_result != (void *)CRABC_TSD_FIRST_MARKER
+                || __atomic_load_n(&round.failure, __ATOMIC_ACQUIRE) != 0
+                || __atomic_load_n(&round.tsd_finished, __ATOMIC_ACQUIRE) != 1
+                || __atomic_load_n(&round.user_start_returned,
+                    __ATOMIC_ACQUIRE) != 1
+                || __atomic_load_n(&round.rejected_first_request,
+                    __ATOMIC_ACQUIRE) != 1)
+            return 31;
+    }
+#ifdef CRABC_NATIVE_MIMALLOC_SHADOW_TEST_AUDIT
+    if (__crabc_x86_native_mimalloc_active_later_thread_count_test_audit() !=
+            baseline_later_thread_count)
+        return 32;
 #endif
     result = run_deferred_cancellation_round();
     if (result != 0)
