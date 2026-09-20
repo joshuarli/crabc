@@ -181,4 +181,7 @@ if __name__ == '__main__':
         runs = ROOT.parent / '.work/x86_64/unwinder-builds'
         runs.mkdir(parents=True, exist_ok=True)
         output = Path(tempfile.mkdtemp(prefix='run-', dir=runs))
+        # The pinned container builds as root; retain public build evidence
+        # readable by the invoking host user, like the installed-product jobs.
+        output.chmod(0o755)
     build(output)
