@@ -658,6 +658,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   materialized-dynamic-sysroot  build and test the installed initial-graph shared runtime
   crt-object-bundle  stage and audit the private five-object x86 Rust CRT bundle
   unwinder-build  build and audit the pinned standalone Rust unwind archive (not runtime qualification)
+  unwinder-cleanup  run the standalone pinned-musl Rust cleanup unwind regression
   crt-dynamic-startup  run the private x86 Scrt1.o dynamic-PIE startup artifact
   crt-dynamic-link-contract  audit the closed x86 Rust CRT dynamic-PIE link boundary
   consumer-static-pie-lto  run the private no-std crabc-rs O3/full-LTO owned-runtime consumer
@@ -6838,7 +6839,7 @@ case "$command" in
     owned-dynamic-fork) ;;
     materialized-dynamic-sysroot) ;;
     crt-object-bundle) ;;
-    unwinder-build) ;;
+    unwinder-build|unwinder-cleanup) ;;
     crt-dynamic-startup|crt-dynamic-link-contract|consumer-static-pie-lto|consumer-native-facade-lto) ;;
     linux-5-10-uapi) ;;
     candidate-header-closure) ;;
@@ -9487,6 +9488,11 @@ PY
         [ "$#" -eq 0 ] || fail "unwinder-build takes no arguments"
         ensure_image
         run_in_container python3 -B /workspace/unwinder/build.py
+        ;;
+    unwinder-cleanup)
+        [ "$#" -eq 0 ] || fail "unwinder-cleanup takes no arguments"
+        ensure_image
+        run_in_container python3 -B /workspace/unwinder/cleanup.py
         ;;
     crt-object-bundle)
         [ "$#" -eq 0 ] || fail "crt-object-bundle takes no arguments"

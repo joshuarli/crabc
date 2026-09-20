@@ -27,6 +27,31 @@ and the defined/undefined symbol inventories retain build evidence.
 The artifact embeds LLVM bitcode, uses PIC and preserves unwind tables. This
 alone does not prove consumer or cross-runtime LTO qualification.
 
+## Standalone cleanup regression
+
+Run the existing full cleanup fixture through the pinned native dispatcher:
+
+```sh
+./scripts/dev-x86_64.sh unwinder-cleanup
+```
+
+The fixture captures a backtrace, unwinds a `panic_any(73usize)` through two
+`Drop` frames, checks the payload and cleanup count, and repeats that behavior
+on a worker thread. The runner first creates a fresh provider receipt, then
+links the complete pinned Rust standard-library input graph with that selected
+archive. It replaces exactly one pinned target `libunwind-*.rlib` input and
+Rust's direct `-lunwind`/`-lgcc*` fallback request with the selected provider;
+every other libgcc/libunwind input, alternate linker-library spelling, and
+response file is rejected. The retained link receipt records the command,
+resolved-link trace, selected archive path and SHA-256.
+
+Each fresh `.work/x86_64/unwinder-cleanup-runs/run-*` receipt records the
+fixture/provider/binary digests, `GNU_EH_FRAME`, the selected provider ABI, and
+the three ABI entries exercised by this fixture. This is standalone pinned-musl
+Rust-std cleanup evidence only. It neither installs nor selects the provider
+in a crabc runtime product, and does not qualify installed/extracted consumers,
+build-std, DSO discovery, LTO, or malformed-metadata behavior.
+
 ## Source and ownership
 
 The exact normal graph is:
