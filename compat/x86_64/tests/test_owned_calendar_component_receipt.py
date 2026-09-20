@@ -11,6 +11,7 @@ import shutil
 import stat
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
@@ -349,6 +350,23 @@ class OwnedCalendarComponentReceiptTests(unittest.TestCase):
         result = self.validate()
         self.assertEqual(result["execution_mode"], "full-six-mode")
         self.assertEqual(result["scope"], ["time.clock-calendar"])
+
+    def test_family_adapter_consumes_the_reconstructed_calendar_report(self) -> None:
+        import owned_text_math_locale_stdio_family as coordinator
+
+        source = {"revision": "a" * 40, "content_sha256": "b" * 64}
+        request = coordinator.ComponentRequest(reports={pair: self.report for pair in coordinator.PAIRS})
+        # Reuse the physical calendar fixture and its real public reader;
+        # this adapter test does not claim three independent product builds.
+        public = SimpleNamespace(validate_report=lambda root, path, require_static: self.validate())
+        with mock.patch.object(coordinator.importlib, "import_module", return_value=public), \
+                mock.patch.object(coordinator, "_source_after_reader", return_value=source):
+            observed = coordinator._calendar_adapter(self.root, request, None)
+        for evidence in observed.values():
+            self.assertEqual(evidence.products, {"static": self.static, "dynamic": self.dynamic})
+            self.assertEqual(evidence.modes, coordinator.PAIR_MODES)
+            self.assertEqual(evidence.scope, self.module.SCOPE)
+            self.assertEqual(tuple(evidence.rows), coordinator.CALENDAR_ROWS)
 
     def test_exact_rows_keep_candidate_only_malformed_object_outside_capabilities(self) -> None:
         self.assertEqual(self.module.ROWS, (

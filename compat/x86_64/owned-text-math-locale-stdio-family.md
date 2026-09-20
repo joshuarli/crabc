@@ -61,7 +61,10 @@ behavior. There is no fallback from the bounded stdio receipt to those rows.
 
 Math, Wordexp, regex, and calendar retain their own public evidence contracts.
 The calendar component requires all five named calendar rows; its malformed
-TZif support probe is not a sixth credited row. `family_completion`,
+TZif support probe is not a sixth credited row. Its public report records
+row/role pairs and the `full-six-mode` execution contract; the calendar reader
+reconstructs those six modes before the coordinator normalizes them.
+`family_completion`,
 `promotion_ready`, and `public_support` remain `false` in every successful
 coordinator receipt. The output is not a parity selection, aggregate
 qualification, or public-support claim; a same-source complete input set is

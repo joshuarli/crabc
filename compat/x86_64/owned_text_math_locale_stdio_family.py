@@ -816,21 +816,26 @@ def _calendar_adapter(root: Path, request: ComponentRequest, _context: MatrixCon
                 and report.get("family_completion") is False and report.get("promotion_ready") is False
                 and report.get("public_support") is False,
                 f"calendar {pair} public receipt contract differs")
-        rows = report.get("rows")
-        require(isinstance(rows, Mapping) and set(rows) == set(CALENDAR_ROWS),
+        raw_rows = report.get("rows")
+        require(isinstance(raw_rows, list) and len(raw_rows) == len(CALENDAR_ROWS)
+                and all(isinstance(row, list) and len(row) == 2
+                        and all(isinstance(value, str) for value in row) for row in raw_rows),
                 "calendar required behavior rows differ")
+        rows = {row: {"role": role} for row, role in raw_rows}
+        require(tuple(rows) == CALENDAR_ROWS, "calendar required behavior rows differ")
         _calendar_source_product_seals(root, request.reports[pair], report)
         products = report.get("products")
         require(isinstance(products, Mapping) and set(products) == {"static", "dynamic"}
                 and all(isinstance(products[kind], str) for kind in ("static", "dynamic")),
                 f"calendar {pair} product identity differs")
-        cells = report.get("execution_cells")
-        require(isinstance(cells, list) and tuple(cells) == PAIR_MODES,
+        # The public calendar reader reconstructs all six cells under this
+        # named execution contract; its report has no execution_cells field.
+        require(report.get("execution_mode") == "full-six-mode",
                 f"calendar {pair} mode roster differs")
         result[pair] = ComponentEvidence(
             source=_source_after_reader(root),
             products=_normal_products(root, products, f"calendar {pair}", source_mount=str(root)),
-            modes=tuple(cells), scope=tuple(report["scope"]), rows=rows,
+            modes=PAIR_MODES, scope=tuple(report["scope"]), rows=rows,
         )
     return result
 
