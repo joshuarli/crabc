@@ -163,7 +163,7 @@ static void localized_cases(locale_t c_locale, locale_t utf8_locale)
     record("strfmon_l-c-utf8", "truncated", 1, result, error, &guarded);
 }
 
-int main(void)
+int crabc_x86_64_owned_strfmon_probe(void)
 {
     locale_t c_locale;
     locale_t utf8_locale;
@@ -181,3 +181,10 @@ int main(void)
     puts("strfmon-ok");
     return 0;
 }
+
+#ifndef CRABC_OWNED_STRFMON_COMPONENT_FREESTANDING
+int main(void)
+{
+    return crabc_x86_64_owned_strfmon_probe();
+}
+#endif
