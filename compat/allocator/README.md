@@ -2849,11 +2849,33 @@ observed node. `--reader-tests` runs only the parser and source-boundary tests.
 The job selects any two distinct nodes with IDs 0 through 62 that are online,
 permitted by both the process `Mems_allowed_list` and
 `cpuset.mems.effective`, and each have at least one free one-GiB huge page.
-That is exactly two GiB of concurrent hugetlb reservation. Compiler/build
-memory, binaries, and ordinary process memory are separate capacity needs;
-the existing workloads do not establish a numeric ordinary-memory floor. The
-report instead retains the active cgroup memory counter and
-`RLIMIT_AS`/`RLIMIT_DATA`/`RLIMIT_MEMLOCK` values, and the job imposes no
+That is exactly two GiB of concurrent hugetlb reservation. It is not the
+whole virtual-address requirement: the prior source-policy workloads run
+sequentially before hardware qualification. `m2_huge_registry_x86_64.c`
+keeps a 32-MiB regular arena while its 17-GiB anonymous replacement is live;
+the source aligned-map retry can instead hold 18 GiB plus that arena. The
+same registry lane's one Rust libtest process runs its three `huge_` ownership
+tests together. Two retain 17-GiB anonymous replacements and their regular
+arenas; the third has a one-GiB replacement whose aligned retry can occupy two
+GiB beside a third 32-MiB arena. Its source-shaped virtual-address peak is
+therefore **36 GiB + 96 MiB** (`38,755,368,960` bytes). The direct-alignment
+branch can be smaller, but qualification must permit the source retry.
+
+No other selected prerequisite is larger: the huge-reservation C fixture has
+an exact three-GiB `PROT_NONE` anonymous span, and each selected Rust
+huge-reservation test is a separate cargo-test process with at most a
+four-GiB aligned-retry span. The later C and Rust hardware workloads are also
+sequential, so their two-GiB hugetlb reservation is not added to the
+36-GiB-plus-96-MiB source prerequisite peak.
+
+Provision the job with `RLIMIT_AS=unlimited`. The source-derived mapping
+component is exact, but it deliberately excludes the varying executable,
+dynamic-loader, libtest, and compiler address space; source alone cannot
+honestly turn that into a finite total address-space floor. This is a virtual
+mapping condition, not an ordinary resident-memory or compiler budget.
+Compiler/build memory, binaries, and ordinary process memory remain separate
+unmeasured capacity needs. The report retains the active cgroup memory counter
+and `RLIMIT_AS`/`RLIMIT_DATA`/`RLIMIT_MEMLOCK` values, and the job imposes no
 CPU-per-node affinity condition. It also requires readable `/proc/self/numa_maps`,
 the launcher's narrowly added `CAP_IPC_LOCK`, and an approved
 `mbind(MPOL_PREFERRED, flags=0)` syscall. Before resources are used,
@@ -2877,8 +2899,9 @@ general allocator/runtime integration, and it supplies no AArch64 evidence.
 
 Provision one native x86-64 qualification runner whose container can see two
 such source-valid NUMA nodes and one free one-GiB hugetlb page on each, with
-ordinary build/runtime headroom (numeric floor currently unmeasured; inspect
-the recorded cgroup/RLIMIT values). Preserve the default security controls; if
-the recorded private-page probe is nonzero, have the platform owner approve
-only the needed `mbind(MPOL_PREFERRED, flags=0)` rule while retaining all other
-controls—never use an unconfined seccomp profile.
+`RLIMIT_AS=unlimited` and ordinary build/runtime headroom (resident-memory
+floor remains unmeasured; inspect the recorded cgroup/RLIMIT values). Preserve
+the default security controls; if the recorded private-page probe is nonzero,
+have the platform owner approve only the needed `mbind(MPOL_PREFERRED,
+flags=0)` rule while retaining all other controls—never use an unconfined
+seccomp profile.

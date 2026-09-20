@@ -51,12 +51,38 @@ MBIND_PERMISSION_FIXTURE = ROOT / "compat/allocator/m2_huge_numa_permission_x86_
 RUST_TEST = "os::tests::hardware_huge_page_numa_qualification_workload"
 HUGE_PAGE_BYTES = 1024 * 1024 * 1024
 HUGE_PAGE_KIB = 1024 * 1024
+MEBIBYTE = 1024 * 1024
 CAP_IPC_LOCK = 14
 MAXIMUM_SOURCE_NUMA_NODE = 62
 NODE_ONLINE = Path("/sys/devices/system/node/online")
 NODE_ROOT = Path("/sys/devices/system/node")
 GLOBAL_HUGE_ROOT = Path("/sys/kernel/mm/hugepages/hugepages-1048576kB")
 CGROUP_ROOT = Path("/sys/fs/cgroup")
+
+# These are virtual-address envelopes of the existing prerequisite evidence,
+# not a RAM or hugetlb reservation.  The registry C fixture keeps a 32-MiB
+# regular arena while its 17-GiB anonymous replacement is live.  Its aligned
+# primitive can discard an unaligned direct candidate and retry with one
+# extra GiB, so that C child can transiently occupy 18 GiB plus that arena.
+#
+# The registry Rust command executes its three ``huge_`` ownership tests in
+# one libtest process.  The first two retain 17-GiB test replacements and
+# their 32-MiB regular arenas.  The third has a one-GiB replacement and a
+# third regular arena; its source-shaped aligned retry maps two GiB before
+# trimming.  The all-branch envelope is consequently 36 GiB + 96 MiB.  This
+# is deliberately distinct from ordinary resident/compiler capacity.
+REGISTRY_REGULAR_ARENA_BYTES = 32 * MEBIBYTE
+REGISTRY_C_ANONYMOUS_SPAN_BYTES = 17 * HUGE_PAGE_BYTES
+REGISTRY_C_ALIGNED_RETRY_PEAK_BYTES = (
+    REGISTRY_C_ANONYMOUS_SPAN_BYTES + HUGE_PAGE_BYTES + REGISTRY_REGULAR_ARENA_BYTES
+)
+REGISTRY_RUST_PREREQUISITE_PEAK_BYTES = (
+    2 * REGISTRY_C_ANONYMOUS_SPAN_BYTES
+    + 2 * HUGE_PAGE_BYTES
+    + 3 * REGISTRY_REGULAR_ARENA_BYTES
+)
+RESERVATION_C_ANONYMOUS_SPAN_BYTES = 3 * HUGE_PAGE_BYTES
+RESERVATION_RUST_ALIGNED_RETRY_PEAK_BYTES = 4 * HUGE_PAGE_BYTES
 
 EXISTING_WORKLOADS = (
     (
@@ -79,6 +105,8 @@ CURRENT_INPUTS = (
     "compat/allocator/x86_64_huge_numa_qualification.py",
     "compat/allocator/m2_huge_numa_qualification_x86_64.c",
     "compat/allocator/m2_huge_numa_permission_x86_64.c",
+    "compat/allocator/m2_huge_registry_x86_64.c",
+    "compat/allocator/m2_huge_reservation_x86_64.c",
     "compat/allocator/README.md",
     "compat/allocator/tests/test_x86_64_runner.py",
     "compat/allocator/tests/test_x86_64_huge_numa_qualification.py",
@@ -91,7 +119,9 @@ CURRENT_INPUTS = (
     "crabc-core/src/syscall.rs",
     "crabc-core/src/syscall_x86_64.rs",
     "crabc-mimalloc/Cargo.toml",
+    "crabc-mimalloc/src/arena_owned.rs",
     "crabc-mimalloc/src/arena_huge.rs",
+    "crabc-mimalloc/src/config.rs",
     "crabc-mimalloc/src/os.rs",
 )
 PINNED_C_SOURCES = (
@@ -196,7 +226,7 @@ def cgroup_hugetlb_headroom() -> dict[str, Any]:
 
 
 def ordinary_memory_limits() -> dict[str, Any]:
-    """Retain limits relevant to, but not a measured floor for, ordinary RAM."""
+    """Retain ordinary-RAM limits separately from the source VA envelope."""
 
     process_limits: dict[str, int | str] = {}
     for name in ("RLIMIT_AS", "RLIMIT_DATA", "RLIMIT_MEMLOCK"):
@@ -213,7 +243,8 @@ def ordinary_memory_limits() -> dict[str, Any]:
         else "invalid"
     )
     return {
-        "ordinary_memory_budget": "unmeasured: the existing source workloads do not establish a numeric compiler/runtime RAM floor",
+        "ordinary_memory_budget": "unmeasured: compiler, executable, and resident-RAM capacity remain outside the source-derived virtual-address envelope",
+        "source_prerequisite_virtual_address": source_prerequisite_virtual_address(),
         "process_rlimits": process_limits,
         "cgroup_memory": {
             "status": cgroup_status,
@@ -238,6 +269,49 @@ def refresh_preflight_status(preflight: dict[str, Any]) -> None:
         preflight["status"] = "pending_external_resources"
 
 
+def source_prerequisite_virtual_address() -> dict[str, Any]:
+    """Describe the largest selected source workload without measuring a host.
+
+    The fixed huge-registry command has real anonymous test mappings even
+    though they simulate successful huge primitives.  A finite process image,
+    dynamic loader, test harness, and compiler baseline cannot be recovered
+    from source alone, so a numeric source-map envelope is not a sufficient
+    total ``RLIMIT_AS`` setting.  Requiring an unlimited address-space limit
+    avoids inventing that missing baseline while still retaining the exact
+    source-derived component.
+    """
+
+    return {
+        "required_rlimit_as": "unlimited",
+        "source_mapping_peak_bytes": REGISTRY_RUST_PREREQUISITE_PEAK_BYTES,
+        "source_mapping_peak_gib": 36,
+        "source_mapping_peak_mib_remainder": 96,
+        "source_mapping_peak_detail": (
+            "the one huge-registry Rust libtest process retains two 17-GiB anonymous "
+            "replacements and two 32-MiB regular arenas; its third one-GiB replacement "
+            "can take the source aligned retry (two GiB) beside a third 32-MiB arena"
+        ),
+        "c_registry_peak_bytes": REGISTRY_C_ALIGNED_RETRY_PEAK_BYTES,
+        "c_registry_peak_detail": (
+            "the C registry fixture retains its 32-MiB regular arena while a 17-GiB "
+            "anonymous replacement takes the source aligned retry to 18 GiB"
+        ),
+        "other_selected_prerequisites": {
+            "huge_reservation_c_anonymous_span_bytes": RESERVATION_C_ANONYMOUS_SPAN_BYTES,
+            "huge_reservation_rust_aligned_retry_peak_bytes": RESERVATION_RUST_ALIGNED_RETRY_PEAK_BYTES,
+            "detail": (
+                "the huge-reservation C fixture maps an exact 3-GiB PROT_NONE span; "
+                "its selected Rust tests run in separate cargo-test processes and their "
+                "largest three-GiB test replacement has a four-GiB aligned-retry peak"
+            ),
+        },
+        "excludes": (
+            "the launching process/test-image/loader/compiler address space and any resident-RAM "
+            "or cgroup-memory budget; those prevent a source-only finite total RLIMIT_AS floor"
+        ),
+    }
+
+
 def qualification_requirements() -> dict[str, Any]:
     return {
         "hardware_footprint": {
@@ -246,8 +320,9 @@ def qualification_requirements() -> dict[str, Any]:
             "concurrent_mappings": 2,
             "reserved_hugetlb_bytes": 2 * HUGE_PAGE_BYTES,
             "reservation_shape": "one free 1-GiB hugetlb page on each of two distinct process-visible NUMA nodes; C and Rust workloads run sequentially",
-            "ordinary_overhead": "unmeasured: build artifacts, compiler memory, test executable memory, and ordinary process memory are outside the 2-GiB hugetlb reservation; the report retains the active cgroup and RLIMIT evidence but does not invent a numeric floor",
+            "ordinary_overhead": "unmeasured: build artifacts, compiler memory, test executable memory, and ordinary process memory are outside the 2-GiB hugetlb reservation and the separate source-derived virtual-address envelope; the report retains the active cgroup and RLIMIT evidence but does not invent a resident-memory floor",
         },
+        "source_prerequisite_virtual_address": source_prerequisite_virtual_address(),
         "topology": {
             "minimum_distinct_memory_nodes": 2,
             "selection": "the collector selects any two online nodes in both /proc/self/status Mems_allowed_list and cgroup cpuset.mems.effective, with IDs 0 through 62",
@@ -303,6 +378,8 @@ def collect_preflight() -> dict[str, Any]:
     cap_ipc_lock = bool(cap_eff_value & (1 << CAP_IPC_LOCK))
     numa_maps = Path("/proc/self/numa_maps")
     hugetlb = cgroup_hugetlb_headroom()
+    ordinary_limits = ordinary_memory_limits()
+    rlimit_as = ordinary_limits["process_rlimits"]["RLIMIT_AS"]
     headroom = hugetlb["headroom_bytes"]
     cgroup_limit_ok = (
         hugetlb["status"] in {"not-exposed", "unlimited"}
@@ -317,6 +394,9 @@ def collect_preflight() -> dict[str, Any]:
              f"selected={selected}; each selected node requires nr_hugepages >= 1 and free_hugepages >= 1; pool_errors={pool_errors}"),
         gate("hugetlb-cgroup-headroom", cgroup_limit_ok,
              f"cgroup 1-GiB huge-TLB state={hugetlb['status']} headroom_bytes={headroom}; required={2 * HUGE_PAGE_BYTES}"),
+        gate("source-prerequisite-unlimited-rlimit-as", rlimit_as == "unlimited",
+             f"RLIMIT_AS={rlimit_as!r}; required=unlimited because the source mapping envelope is "
+             f"{REGISTRY_RUST_PREREQUISITE_PEAK_BYTES} bytes before the variable process/image/compiler baseline"),
         gate("container-cap-ipc-lock", cap_ipc_lock,
              f"CapEff={cap_eff or 'absent'}; CAP_IPC_LOCK bit={CAP_IPC_LOCK}"),
         gate("numa-maps-observer", numa_maps.is_file() and os.access(numa_maps, os.R_OK),
@@ -334,7 +414,7 @@ def collect_preflight() -> dict[str, Any]:
         "per_node_1gib_pools": pools,
         "pool_read_errors": pool_errors,
         "cgroup_hugetlb": hugetlb,
-        "ordinary_memory_limits": ordinary_memory_limits(),
+        "ordinary_memory_limits": ordinary_limits,
         "capabilities": {"effective_hex": cap_eff, "cap_ipc_lock": cap_ipc_lock},
         "security": {"seccomp_mode": status.get("Seccomp"), "no_new_privs": status.get("NoNewPrivs"),
                      "mbind_rule": "not inferred from seccomp mode; observed by the hardware workload"},
