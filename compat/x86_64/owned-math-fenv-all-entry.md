@@ -42,7 +42,10 @@ primary, reproduction, and extracted product pairs. It first authenticates the
 current product-preparation and dynamic-qualification inputs, then reconstructs
 all source/product/tool seals, commands, header traces, imports/providers,
 public link records and validator stdout, payload audits, and raw oracle
-comparisons. It compares
+comparisons. After authenticating the fixed retained command shapes, it also
+replays only the fixed `/usr/bin/nm` and `/usr/bin/readelf` provider inspections
+against the authenticated workload object, installed `libc.so`, and installed
+`libc.a`; their raw output must equal the retained provider views. It compares
 the ten role-object bytes across all pairs. A report from a different source
 transaction, or a single development product pair, cannot satisfy that
 three-pair receipt. Neither the runner nor the adapter completes a math family,

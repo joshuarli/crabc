@@ -15,6 +15,7 @@ import importlib.util
 import json
 from pathlib import Path
 import stat
+import subprocess
 import sys
 from typing import Any
 
@@ -207,15 +208,70 @@ def expected_tool_seal(static: Path, dynamic: Path) -> dict[str, object]:
         sys.modules.pop(spec.name, None)
 
 
+def replay_provider_observations(root: Path, work: Path, dynamic: Path,
+                                 static: Path) -> dict[str, bytes]:
+    """Read the three retained provider views from their current artifacts.
+
+    The report's command identities and exact argv have already been checked
+    before this point.  This replay deliberately reconstructs only those three
+    fixed inspection commands; it never executes a retained argv.
+    """
+
+    try:
+        workload = physical(root, (work / "workload.o").relative_to(root).as_posix())
+        dynamic_libc = physical(root, (dynamic / "usr/lib/libc.so").relative_to(root).as_posix())
+        static_libc = physical(root, (static / "usr/lib/libc.a").relative_to(root).as_posix())
+    except ValueError as error:
+        raise ReceiptError("provider artifact path escapes the checkout") from error
+    commands = {
+        "workload-imports": [
+            "/usr/bin/nm", "--undefined-only", "--format=posix", str(workload),
+        ],
+        "dynamic-provider-symbols": [
+            "/usr/bin/readelf", "--dyn-syms", "-W", str(dynamic_libc),
+        ],
+        "static-provider-symbols": [
+            "/usr/bin/nm", "-A", "-g", "--defined-only", "--format=posix", str(static_libc),
+        ],
+    }
+    observations: dict[str, bytes] = {}
+    for label, command in commands.items():
+        try:
+            completed = subprocess.run(
+                command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                check=False, timeout=30,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise ReceiptError(f"{label} provider replay could not inspect its artifact") from error
+        require(completed.returncode == 0,
+                f"{label} provider replay exited with status {completed.returncode}")
+        require(completed.stderr == b"", f"{label} provider replay wrote stderr")
+        observations[label] = completed.stdout
+    return observations
+
+
 def validate_provider_record(root: Path, identity: object, command_paths: dict[str, dict[str, Path]],
-                             work: Path, dynamic: Path) -> Path:
+                             work: Path, dynamic: Path, static: Path) -> Path:
     path = validate_identity(root, identity, "provider evidence")
     record = read(path)
+    retained = {
+        label: command_paths[label]["stdout"].read_bytes()
+        for label in ("workload-imports", "dynamic-provider-symbols", "static-provider-symbols")
+    }
+    replayed = replay_provider_observations(root, work, dynamic, static)
+    for label, output in replayed.items():
+        require(retained[label] == output, f"{label} retained provider output differs from its artifact")
+    try:
+        imports = replayed["workload-imports"].decode("utf-8")
+        dynamic_definitions = replayed["dynamic-provider-symbols"].decode("utf-8")
+        static_definitions = replayed["static-provider-symbols"].decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ReceiptError("provider replay output is not UTF-8") from error
     observed = providers.validate(
         root,
-        command_paths["workload-imports"]["stdout"].read_text(encoding="utf-8"),
-        command_paths["dynamic-provider-symbols"]["stdout"].read_text(encoding="utf-8"),
-        command_paths["static-provider-symbols"]["stdout"].read_text(encoding="utf-8"),
+        imports,
+        dynamic_definitions,
+        static_definitions,
         work,
         dynamic,
     )
@@ -425,7 +481,7 @@ def validate_report(root: Path, path: Path, expected_products: dict[str, Path]) 
             and needed_commands.issubset(commands), "math/fenv command roster differs")
     command_paths = {name: validate_command(root, value, name) for name, value in commands.items()}
     validate_execution_commands(root, command_paths, work, static, dynamic, expected_tools)
-    validate_provider_record(root, report["provider_evidence"], command_paths, work, dynamic)
+    validate_provider_record(root, report["provider_evidence"], command_paths, work, dynamic, static)
     links = report["links"]
     require(isinstance(links, dict) and set(links) == set(LINKAGES),
             "math/fenv retained product link roster differs")
