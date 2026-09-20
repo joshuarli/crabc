@@ -1,0 +1,353 @@
+"""Contract checks for the immutable text/math/locale/stdio family coordinator."""
+
+from __future__ import annotations
+
+import copy
+import importlib
+import inspect
+import json
+from pathlib import Path
+import sys
+import tempfile
+import tomllib
+import unittest
+from unittest import mock
+
+
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "compat/x86_64"))
+
+import owned_text_math_locale_stdio_family as coordinator
+
+
+SOURCE = {"revision": "a" * 40, "content_sha256": "b" * 64}
+
+
+class FamilyFixture:
+    """Physical declared inputs with only the behavior-owner boundary mocked.
+
+    The coordinator must snapshot these evidence and product roots itself. The
+    public component semantics belong to their individual readers, so the tests
+    substitute only normalized reader results while retaining the coordinator's
+    actual path, product, and mutation checks.
+    """
+
+    def __init__(self) -> None:
+        scratch = ROOT / ".work/x86_64/test-owned-text-math-locale-stdio-family"
+        scratch.mkdir(parents=True, exist_ok=True)
+        self.temporary = tempfile.TemporaryDirectory(dir=scratch)
+        self.root = Path(self.temporary.name) / "checkout"
+        self.root.mkdir()
+        self.roster = self.root / "compat/x86_64/text-math-locale-stdio-family.toml"
+        self.roster.parent.mkdir(parents=True)
+        self.roster.write_text(
+            (ROOT / "compat/x86_64/text-math-locale-stdio-family.toml").read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        for specification in coordinator.COMPONENTS.values():
+            reader = self.root / specification.reader
+            reader.parent.mkdir(parents=True, exist_ok=True)
+            reader.write_text("# fixture public reader\n", encoding="utf-8")
+        self.matrix_path = self.write(".work/family/execution.json", "{}\n")
+        self.pthread_path = self.write(".work/pthread/receipt.json", "{}\n")
+        self.static_preparation = self.write(".work/static/preparation.json", "{}\n")
+        self.dynamic_qualification = self.write(".work/dynamic/qualification.json", "{}\n")
+        self.products: dict[str, dict[str, Path]] = {}
+        for pair in coordinator.PAIRS:
+            static = self.root / ".work/products" / pair / "static"
+            dynamic = self.root / ".work/products" / pair / "dynamic"
+            for product in (static, dynamic):
+                product.mkdir(parents=True)
+                (product / "payload").write_text(pair + "\n", encoding="utf-8")
+            self.products[pair] = {"static": static, "dynamic": dynamic}
+        self.reports: dict[str, dict[str, Path]] = {}
+        self.aggregate_receipts: dict[str, Path] = {}
+        self.expected_inputs: dict[str, Path] = {}
+        for component, specification in coordinator.COMPONENTS.items():
+            if specification.request_kind == "aggregate":
+                self.aggregate_receipts[component] = self.write(
+                    f".work/evidence/{component}/receipt.json", component + " aggregate\n",
+                )
+                continue
+            entries: dict[str, Path] = {}
+            for pair in coordinator.PAIRS:
+                entries[pair] = self.write(
+                    f".work/evidence/{component}/{pair}/report.json", component + ":" + pair + "\n",
+                )
+                if specification.request_kind == "wordexp-pairs":
+                    self.expected_inputs[pair] = self.write(
+                        f".work/evidence/{component}/{pair}/expected-inputs.json", pair + "\n",
+                    )
+            self.reports[component] = entries
+        self.request_path = self.write(".work/request.json", json.dumps(self.request(), sort_keys=True) + "\n")
+        self.mutate_during_read = False
+
+    def addCleanup(self) -> None:
+        self.temporary.cleanup()
+
+    def write(self, relative: str, contents: str) -> Path:
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(contents, encoding="utf-8")
+        return path
+
+    def relative(self, path: Path) -> str:
+        return path.relative_to(self.root).as_posix()
+
+    def request(self) -> dict[str, object]:
+        components: dict[str, object] = {}
+        for name, specification in coordinator.COMPONENTS.items():
+            if specification.request_kind == "aggregate":
+                components[name] = {"receipt": self.relative(self.aggregate_receipts[name])}
+            elif specification.request_kind == "wordexp-pairs":
+                components[name] = {
+                    pair: {
+                        "report": self.relative(self.reports[name][pair]),
+                        "expected_inputs": self.relative(self.expected_inputs[pair]),
+                    }
+                    for pair in coordinator.PAIRS
+                }
+            else:
+                components[name] = {
+                    pair: self.relative(self.reports[name][pair]) for pair in coordinator.PAIRS
+                }
+        return {
+            "schema": coordinator.SCHEMA,
+            "family_execution": self.relative(self.matrix_path),
+            "pthread_family": self.relative(self.pthread_path),
+            "components": components,
+        }
+
+    def matrix(self) -> dict[str, object]:
+        return {
+            "schema": coordinator.family.SCHEMA,
+            "status": "workload-matrix-verified",
+            "family": "libc.posix-runtime",
+            "native_aggregate_complete": False,
+            "family_completion": False,
+            "public_support": False,
+            "request": {"fixture": "matrix"},
+            "inputs": {
+                "source": SOURCE,
+                "static_preparation": coordinator.family.file_identity(self.root, self.static_preparation),
+                "dynamic_qualification": coordinator.family.file_identity(self.root, self.dynamic_qualification),
+                "oracle": {"fixture": "musl"},
+            },
+        }
+
+    def pthread(self) -> dict[str, object]:
+        return {
+            "schema": coordinator.pthread.SCHEMA,
+            "status": "installed-behavior-component-verified",
+            "family": "libc.pthread-tls",
+            "inputs": {
+                "family_execution": coordinator.family.file_identity(self.root, self.matrix_path),
+                "source": SOURCE,
+            },
+            "component_complete": True,
+            "family_completion": False,
+            "promotion_ready": False,
+            "public_support": False,
+        }
+
+    def adapter_results(self, *, source: object = SOURCE,
+                        products: dict[str, dict[str, Path]] | None = None,
+                        modes: tuple[str, ...] = coordinator.PAIR_MODES,
+                        rows: dict[str, dict[str, object]] | None = None) -> dict[str, object]:
+        selected_products = self.products if products is None else products
+        selected_rows = rows if rows is not None else {
+            "text-locale-numeric": {key: {"fixture": True} for key in coordinator.TEXT_LOCALE_NUMERIC_ROWS},
+            "stdio": {"stdio.fopen64-alias": {"fixture": True}},
+            "stdio-engine": {key: {"fixture": True} for key in coordinator.STDIO_ENGINE_ROWS},
+            "calendar": {key: {"fixture": True} for key in coordinator.CALENDAR_ROWS},
+        }
+
+        def reader(name: str):
+            def validate(root: Path, request: coordinator.ComponentRequest,
+                         context: coordinator.MatrixContext) -> dict[str, coordinator.ComponentEvidence]:
+                self.assert_context(context)
+                if self.mutate_during_read and name == "locale":
+                    self.mutate_during_read = False
+                    (selected_products["primary"]["dynamic"] / "payload").write_text("changed\n", encoding="utf-8")
+                return {
+                    pair: coordinator.ComponentEvidence(
+                        source=copy.deepcopy(source),
+                        products=selected_products[pair],
+                        modes=modes,
+                        scope=coordinator.COMPONENTS[name].scope,
+                        rows=copy.deepcopy(selected_rows.get(name, {})),
+                    )
+                    for pair in coordinator.PAIRS
+                }
+            return validate
+
+        return {name: reader(name) for name in coordinator.COMPONENTS}
+
+    def assert_context(self, context: coordinator.MatrixContext) -> None:
+        if context.source != SOURCE:
+            raise AssertionError("fixture source context differs")
+        if context.products != self.products:
+            raise AssertionError("fixture product context differs")
+        if context.static_preparation != self.static_preparation:
+            raise AssertionError("fixture static input differs")
+        if context.dynamic_qualification != self.dynamic_qualification:
+            raise AssertionError("fixture dynamic input differs")
+
+    def patches(self, adapters: dict[str, object]):
+        matrix = self.matrix()
+        return mock.patch.multiple(
+            coordinator,
+            ROSTER_PATH=self.roster,
+            current_source_identity=mock.Mock(return_value=SOURCE),
+            _reader_adapters=mock.Mock(return_value=adapters),
+        ), mock.patch.object(coordinator.family, "validate_receipt", return_value=matrix), mock.patch.object(
+            coordinator.family, "input_products", return_value=(matrix["inputs"], self.products)
+        ), mock.patch.object(coordinator.pthread, "validate_receipt", return_value=self.pthread())
+
+
+class TextMathLocaleStdioFamilyTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.fixture = FamilyFixture()
+        self.addCleanup(self.fixture.addCleanup)
+
+    def collect(self, adapters: dict[str, object] | None = None) -> dict[str, object]:
+        adapters = self.fixture.adapter_results() if adapters is None else adapters
+        patches = self.fixture.patches(adapters)
+        with patches[0], patches[1], patches[2], patches[3]:
+            return coordinator.collect(self.fixture.root, self.fixture.relative(self.fixture.request_path))
+
+    def test_roster_keeps_the_exact_sixteen_capabilities_and_eighteen_cells(self) -> None:
+        roster = coordinator.load_roster(ROOT / "compat/x86_64/text-math-locale-stdio-family.toml")
+        self.assertEqual(tuple(roster["capabilities"]), coordinator.CAPABILITIES)
+        self.assertEqual(tuple(roster["mode_sets"]["all"]), coordinator.ALL_MODES)
+        self.assertEqual(len(coordinator.CAPABILITIES), 16)
+        self.assertEqual(len(coordinator.PAIR_MODES), 6)
+        self.assertEqual(len(coordinator.ALL_MODES), 18)
+        self.assertEqual(coordinator.COMPONENTS["locale"].credits, ())
+        self.assertEqual(coordinator.COMPONENTS["numeric"].credits, ())
+        self.assertEqual(coordinator.COMPONENTS["stdio"].credits, ())
+
+    def test_positive_control_records_all_components_without_family_or_promotion_claims(self) -> None:
+        record = self.collect()
+        self.assertEqual(record["status"], "immutable-component-coordination-verified")
+        self.assertEqual(tuple(record["capabilities"]), coordinator.CAPABILITIES)
+        self.assertFalse(record["component_complete"])
+        self.assertFalse(record["family_completion"])
+        self.assertFalse(record["promotion_ready"])
+        self.assertFalse(record["public_support"])
+        for component in coordinator.COMPONENTS:
+            self.assertEqual(tuple(record["components"][component]["pairs"]), coordinator.PAIRS)
+            for pair in coordinator.PAIRS:
+                self.assertEqual(tuple(record["components"][component]["pairs"][pair]["modes"]), coordinator.PAIR_MODES)
+
+    def test_roster_capabilities_are_the_current_parity_family_capabilities(self) -> None:
+        parity = tomllib.loads((ROOT / "compat/x86_64/parity.toml").read_text(encoding="utf-8"))
+        family = next(item for item in parity["family"] if item["id"] == coordinator.FAMILY)
+        self.assertEqual(tuple(family["capabilities"]), coordinator.CAPABILITIES)
+
+    def test_current_math_regex_and_stdio_public_reader_interfaces_match_the_adapter(self) -> None:
+        math = importlib.import_module("owned_math_fenv_all_entry_receipt")
+        regex = importlib.import_module("owned_regex_component_receipt")
+        stdio = importlib.import_module("owned_stdio_component_receipt")
+        self.assertEqual(math.SCHEMA, "crabc.x86_64-owned-math-fenv-all-entry-receipt/v1")
+        self.assertEqual(regex.SCHEMA, "crabc.x86_64-owned-regex-products/v2")
+        self.assertEqual(stdio.SCHEMA, "crabc.x86_64-owned-stdio-products/v3")
+        self.assertEqual(tuple(stdio.SCOPE), coordinator.COMPONENTS["stdio"].scope)
+        self.assertEqual(tuple(inspect.signature(math.collect).parameters),
+                         ("root", "static_preparation", "dynamic_qualification", "reports"))
+        self.assertEqual(tuple(inspect.signature(regex.validate_report).parameters),
+                         ("root", "report_path", "require_static"))
+        self.assertEqual(tuple(inspect.signature(stdio.validate_report).parameters),
+                         ("path", "checkout", "require_static"))
+
+    def test_request_rejects_an_omitted_product_pair_before_reader_admission(self) -> None:
+        request = self.fixture.request()
+        del request["components"]["locale"]["extracted"]
+        self.fixture.request_path.write_text(json.dumps(request), encoding="utf-8")
+        with self.assertRaisesRegex(coordinator.FamilyError, "locale product-pair roster differs"):
+            self.collect()
+
+    def test_reader_rejects_a_substituted_product_pair(self) -> None:
+        products = copy.deepcopy(self.fixture.products)
+        products["primary"] = self.fixture.products["reproduction"]
+        with self.assertRaisesRegex(coordinator.FamilyError, "locale primary product pair differs"):
+            self.collect(self.fixture.adapter_results(products=products))
+
+    def test_output_rejects_a_symlinked_parent_hop_inside_checkout_work(self) -> None:
+        target = self.fixture.root / ".work/output-target"
+        nested = target / "nested"
+        nested.mkdir(parents=True)
+        (self.fixture.root / ".work/output-link").symlink_to("output-target", target_is_directory=True)
+        with self.assertRaisesRegex(coordinator.FamilyError, "output parent traverses a symbolic link"):
+            coordinator._fresh_output(self.fixture.root, Path(".work/output-link/nested/receipt.json"))
+
+    def test_output_creation_is_exclusive_after_collection(self) -> None:
+        output_parent = self.fixture.root / ".work/output"
+        output_parent.mkdir()
+        output = output_parent / "receipt.json"
+
+        def create_racing_output(_root: Path, _request: Path) -> dict[str, object]:
+            output.write_text("racing output\n", encoding="utf-8")
+            return {"fixture": True}
+
+        with mock.patch.object(coordinator, "collect", side_effect=create_racing_output):
+            with self.assertRaisesRegex(coordinator.FamilyError, "output is no longer fresh"):
+                coordinator.execute(self.fixture.root, Path(".work/request.json"), Path(".work/output/receipt.json"))
+        self.assertEqual(output.read_text(encoding="utf-8"), "racing output\n")
+
+    def test_reader_rejects_a_component_source_different_from_the_matrix_source(self) -> None:
+        wrong_source = {**SOURCE, "content_sha256": "e" * 64}
+        with self.assertRaisesRegex(coordinator.FamilyError, "locale primary source, scope, or mode roster differs"):
+            self.collect(self.fixture.adapter_results(source=wrong_source))
+
+    def test_reader_rejects_an_omitted_required_behavior_row(self) -> None:
+        rows = {
+            "text-locale-numeric": {key: {"fixture": True} for key in coordinator.TEXT_LOCALE_NUMERIC_ROWS[:-1]},
+            "stdio": {"stdio.fopen64-alias": {"fixture": True}},
+            "stdio-engine": {key: {"fixture": True} for key in coordinator.STDIO_ENGINE_ROWS},
+            "calendar": {key: {"fixture": True} for key in coordinator.CALENDAR_ROWS},
+        }
+        with self.assertRaisesRegex(coordinator.FamilyError, "text-locale-numeric required behavior rows differ"):
+            self.collect(self.fixture.adapter_results(rows=rows))
+
+    def test_reader_rejects_an_omitted_mode(self) -> None:
+        with self.assertRaisesRegex(coordinator.FamilyError, "locale primary source, scope, or mode roster differs"):
+            self.collect(self.fixture.adapter_results(modes=coordinator.PAIR_MODES[:-1]))
+
+    def test_reader_rejects_a_nested_product_payload_mutated_after_component_validation(self) -> None:
+        self.fixture.mutate_during_read = True
+        with self.assertRaisesRegex(coordinator.FamilyError, "declared input changed during collection"):
+            self.collect()
+
+    def test_reader_rejects_a_nested_product_payload_mutated_during_output_construction(self) -> None:
+        original = coordinator._pair_record
+        changed = False
+
+        def mutate(root: Path, request: coordinator.ComponentRequest, pair: str,
+                   evidence: coordinator.ComponentEvidence) -> dict[str, object]:
+            nonlocal changed
+            record = original(root, request, pair, evidence)
+            if not changed:
+                changed = True
+                (self.fixture.products["primary"]["static"] / "payload").write_text("changed\n", encoding="utf-8")
+            return record
+
+        with mock.patch.object(coordinator, "_pair_record", side_effect=mutate):
+            with self.assertRaisesRegex(coordinator.FamilyError, "declared input changed during collection"):
+                self.collect()
+
+    def test_reader_rejects_a_retained_input_mutated_while_output_identities_are_built(self) -> None:
+        original = coordinator._roster_identity
+
+        def mutate(root: Path, roster: Path) -> dict[str, object]:
+            identity = original(root, roster)
+            self.fixture.pthread_path.write_text("changed\n", encoding="utf-8")
+            return identity
+
+        with mock.patch.object(coordinator, "_roster_identity", side_effect=mutate):
+            with self.assertRaisesRegex(coordinator.FamilyError, "declared input changed during collection"):
+                self.collect()
+
+
+if __name__ == "__main__":
+    unittest.main()
