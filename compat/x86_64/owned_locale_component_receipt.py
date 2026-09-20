@@ -31,17 +31,19 @@ import owned_posix_family_execution as family
 import owned_posix_product_evidence as products
 
 
-SCHEMA = "crabc.x86_64-owned-locale-products/v2"
+SCHEMA = "crabc.x86_64-owned-locale-products/v3"
 SOURCE_MOUNT = "/workspace"
 SCOPE = ("locale.core", "text.wide-multibyte", "text.iconv")
 HEADERS = (
     "errno.h", "iconv.h", "langinfo.h", "limits.h", "locale.h", "pthread.h", "stddef.h",
-    "stdlib.h", "unistd.h", "wchar.h", "features.h", "bits/alltypes.h",
+    "stdlib.h", "string.h", "unistd.h", "wchar.h", "features.h", "bits/alltypes.h",
 )
 ORACLE_STDOUT = b"owned-locale-products-ok\n"
+PROFILE_STDOUT = b"owned-locale-environment-profile-ok\n"
 INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
 SOURCE_PATHS = {
     "probe": "compat/x86_64/owned_locale_probe.c",
+    "environment-probe": "compat/x86_64/libc_locale_environment_probe.c",
     "runner": "compat/x86_64/run_owned_locale.sh",
     "reader": "compat/x86_64/owned_locale_component_receipt.py",
 }
@@ -253,6 +255,7 @@ def command_plan(paths: Mapping[str, object], tools: Mapping[str, object], mode:
             plan[f"{name}-validate"] = ["python3", "-B", "-", SOURCE_MOUNT, m(static), m(workload),
                                           m(executable), m(receipt), linkage]
             plan[f"{name}-run"] = ["env", "-i", "LC_ALL=C", "LANG=C", "TZ=UTC", m(executable)]
+            plan[f"{name}-profile"] = [*plan[f"{name}-run"], "profile"]
     for name, linkage in (("dynamic-pie", "pie"), ("dynamic-non-pie", "non-pie")):
         executable = Path(executables[name])
         root_copy = work / f"{name}-root"
@@ -265,8 +268,10 @@ def command_plan(paths: Mapping[str, object], tools: Mapping[str, object], mode:
         copy_tool = m(root / "compat/x86_64/owned_crypt_runtime_evidence.py")
         plan[f"{name}-copy-before"] = ["python3", "-B", copy_tool, "record", *payload]
         plan[f"{name}-copy-audit-before"] = ["python3", "-B", copy_tool, "audit", *payload]
-        plan[f"{name}-kernel"] = ["chroot", m(root_copy), "/consumer"]
-        plan[f"{name}-direct"] = ["chroot", m(root_copy), INTERPRETER, "/consumer"]
+        plan[f"{name}-kernel"] = ["env", "-i", "LC_ALL=C", "LANG=C", "TZ=UTC", "/usr/sbin/chroot", m(root_copy), "/consumer"]
+        plan[f"{name}-direct"] = ["env", "-i", "LC_ALL=C", "LANG=C", "TZ=UTC", "/usr/sbin/chroot", m(root_copy), INTERPRETER, "/consumer"]
+        for entry in ("kernel", "direct"):
+            plan[f"{name}-{entry}-profile"] = [*plan[f"{name}-{entry}"], "profile"]
         plan[f"{name}-copy-audit-after"] = ["python3", "-B", copy_tool, "audit", *payload]
     return plan
 
@@ -300,7 +305,7 @@ def check_source_object_checks(root: Path, work: Path, sources: Mapping[str, obj
             "source/object check record differs")
     before = assert_identity(root, checks["before"], "source/object before", expected=work / "source-object-before.sha256")
     after = assert_identity(root, checks["after"], "source/object after", expected=work / "source-object-after.txt")
-    paths = [checkout_path(root, sources[name]["path"], f"source/object {name}") for name in ("probe", "runner", "reader")]
+    paths = [checkout_path(root, sources[name]["path"], f"source/object {name}") for name in ("probe", "environment-probe", "runner", "reader")]
     paths.append(workload)
     expected_before = b"".join(
         f"{digest(path)}  {mounted(root, path)}\n".encode("ascii") for path in paths
@@ -390,10 +395,15 @@ def validate_report(root: Path, report_path: Path, *, require_static: bool = Fal
                       for field in ("argv", "stdout", "stderr", "status")}
         require(parse_argv(raw[label]["argv"], label) == expected_argv, f"{label} retained argv differs")
         require(raw[label]["status"] == b"0\n", f"{label} retained status is not zero")
+        if label.endswith("-profile"):
+            require(raw[label]["stdout"] == PROFILE_STDOUT and raw[label]["stderr"] == b"",
+                    f"{label} candidate profile assertion differs")
     require(raw["header-trace"]["stdout"], "installed header trace stdout is empty")
     trace_paths = header_trace_paths(raw["header-trace"]["stderr"])
     include_root = mounted(root, dynamic / "usr/include") + "/"
-    require(all(path.startswith(include_root) for path in trace_paths),
+    environment_probe = mounted(root, root / SOURCE_PATHS["environment-probe"])
+    require(environment_probe in trace_paths, "installed trace omitted the environment regression source")
+    require(all(path.startswith(include_root) or path == environment_probe for path in trace_paths),
             "installed header trace names an ambient header origin")
     for header in HEADERS:
         require(mounted(root, dynamic / "usr/include" / header) in trace_paths,

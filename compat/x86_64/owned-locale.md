@@ -32,14 +32,14 @@ relocatable installed-header object; and compares each candidate raw transcript
 with the retained pinned-musl transcript. Recomputing a report hash after
 changing an argv or a candidate transcript therefore does not make the receipt
 valid. The report schema is
-`crabc.x86_64-owned-locale-products/v2` and records one of two explicit modes:
+`crabc.x86_64-owned-locale-products/v3` and records one of two explicit modes:
 `full-six-mode` includes static ET_EXEC, static PIE, dynamic PIE kernel/direct,
 and dynamic non-PIE kernel/direct; `dynamic-only-four-cell-development` includes
 only the four dynamic entries. The reader validates both shapes, while callers
 that need a complete component pass `--require-static` and reject the dynamic
-development shape. Historical `v1` JSON lacks this reconstructable command,
-raw-stream, and link-validation interface and is not admitted by the `v2`
-reader.
+development shape. Historical `v1` JSON lacks the reconstructable command/link interface.
+Version `v2` did not require environment selection. The `v3` reader admits
+neither historical schema and seals the shared environment regression source.
 
 Run it in the pinned native environment:
 
@@ -63,10 +63,20 @@ paths with that fixed mount spelling while retaining their physical hashes, so
 the same report can be reconstructed after a host checkout path changes without
 mistaking host path text for a different compiler or driver.
 
-This component deliberately excludes environment-driven locale selection,
-arbitrary locale tokens or locale maps, collating and wide-stream behavior,
+This component includes supported-name environment precedence, default UTF-8
+selection, category masks, locale-object base inheritance, and independence
+from per-thread selection through `libc_locale_environment_probe.c`. It
+deliberately excludes arbitrary locale tokens or locale maps, collating and wide-stream behavior,
 general Unicode tables, and legacy encodings. Those non-C locale and legacy
 encoding boundaries stay outside this pinned-musl equality component. The
 receipt is evidence for these three finite components only; it does not close
 a locale family, alter a disposition, or claim promotion or public x86
 support.
+
+The `v3` command roster also requires a separate `profile` execution in every
+candidate cell. It tests rejection of an unsupported environment name without
+partially changing the global locale or a supplied locale object. Its distinct
+transcript is a project-profile assertion, not a pinned-musl comparison. All
+common and profile runs receive the same explicit initial environment. See
+[`owned-locale-environment.md`](owned-locale-environment.md) for precedence and
+category/base semantics.

@@ -43,6 +43,7 @@ class OwnedLocaleComponentReceiptTests(unittest.TestCase):
         self.work = self.root / ".work/x86_64/owned-locale-products.fixture"
         self.work.mkdir(parents=True)
         self.probe = self.write("compat/x86_64/owned_locale_probe.c", b"probe\n")
+        self.environment_probe = self.write("compat/x86_64/libc_locale_environment_probe.c", b"environment probe\n")
         self.runner = self.write("compat/x86_64/run_owned_locale.sh", b"runner\n")
         self.reader = self.write("compat/x86_64/owned_locale_component_receipt.py", b"reader\n")
         self.dynamic = self.mkdir(".work/x86_64/dynamic")
@@ -61,7 +62,7 @@ class OwnedLocaleComponentReceiptTests(unittest.TestCase):
             "static_driver": self.tools["static-driver"],
         }
         source_records = {name: {**self.identity(path), "mode": stat.S_IMODE(path.stat().st_mode)}
-                          for name, path in (("probe", self.probe), ("runner", self.runner), ("reader", self.reader))}
+                          for name, path in (("probe", self.probe), ("environment-probe", self.environment_probe), ("runner", self.runner), ("reader", self.reader))}
         self.seal = {
             "sources": source_records,
             "dynamic": {"path": self.relative(self.dynamic), "manifest": self.identity(self.write(".work/x86_64/dynamic/manifest", b"dynamic\n")), "tree": {}},
@@ -119,10 +120,13 @@ class OwnedLocaleComponentReceiptTests(unittest.TestCase):
                 stdout = b"# installed locale preprocessed source\n"
                 stderr = b"\n".join((module.mounted(self.root, self.dynamic / "usr/include" / header).encode()
                                        for header in module.HEADERS)) + b"\n"
+                stderr += module.mounted(self.root, self.environment_probe).encode() + b"\n"
             if "copy-audit" in label:
                 stdout = b"{}\n"
             if label == "oracle-run" or label.endswith("-run") or label.endswith("-kernel") or label.endswith("-direct"):
                 stdout = module.ORACLE_STDOUT
+            if label.endswith("-profile"):
+                stdout = module.PROFILE_STDOUT
             if label.endswith("-validate"):
                 stdout = module.canonical(self.link_result(label.removesuffix("-validate")))
             commands[label] = self.raw(label, argv, stdout=stdout, stderr=stderr)
@@ -130,7 +134,7 @@ class OwnedLocaleComponentReceiptTests(unittest.TestCase):
                             ("tools-before", self.tool_roster), ("tools-after", self.tool_roster)):
             self.write(f".work/x86_64/owned-locale-products.fixture/{name}.json",
                        json.dumps(value, sort_keys=True, separators=(",", ":")).encode() + b"\n")
-        source_paths = (self.probe, self.runner, self.reader, self.workload)
+        source_paths = (self.probe, self.environment_probe, self.runner, self.reader, self.workload)
         before = self.write(
             ".work/x86_64/owned-locale-products.fixture/source-object-before.sha256",
             b"".join(f"{hashlib.sha256(item.read_bytes()).hexdigest()}  {module.mounted(self.root, item)}\n".encode()
@@ -216,6 +220,25 @@ class OwnedLocaleComponentReceiptTests(unittest.TestCase):
     def test_full_six_mode_control_reconstructs_before_negative_mutations(self) -> None:
         self.assertEqual(self.validate()["execution_mode"], "full-six-mode")
 
+    def test_profile_assertions_cannot_be_replaced_by_the_common_oracle_stream(self) -> None:
+        record = self.report_value()
+        identity = record["commands"]["dynamic-pie-kernel-profile"]["stdout"]
+        (self.root / identity["path"]).write_bytes(self.module.ORACLE_STDOUT)
+        self.rewrite_identity(identity)
+        self.rewrite_report(record)
+        with self.assertRaisesRegex(self.module.LocaleReceiptError, "candidate profile assertion differs"):
+            self.validate()
+
+    def test_dynamic_cells_use_the_same_explicit_environment_as_the_oracle(self) -> None:
+        commands = self.report_value()["commands"]
+        oracle = json.loads((self.root / commands["oracle-run"]["argv"]["path"]).read_text())
+        for mode in ("pie", "non-pie"):
+            for route in ("kernel", "direct"):
+                label = f"dynamic-{mode}-{route}"
+                argv = json.loads((self.root / commands[label]["argv"]["path"]).read_text())
+                self.assertEqual(argv[:5], oracle[:5], label)
+                self.assertEqual(argv[5], "/usr/sbin/chroot", label)
+
     def test_recomputed_identity_does_not_admit_garbage_candidate_output(self) -> None:
         record = self.report_value()
         identity = record["commands"]["dynamic-pie-kernel"]["stdout"]
@@ -254,6 +277,27 @@ class OwnedLocaleComponentReceiptTests(unittest.TestCase):
         record = self.module.recorded_tool_identity(self.root, tool, "fixture tool")
         self.assertEqual(record["path"], self.module.mounted(self.root, tool))
         self.assertEqual(record["sha256"], hashlib.sha256(b"tool\n").hexdigest())
+
+    def test_rehashed_trace_cannot_omit_environment_regression_source(self) -> None:
+        record = self.report_value()
+        identity = record["commands"]["header-trace"]["stderr"]
+        path = self.root / identity["path"]
+        included = self.module.mounted(self.root, self.environment_probe).encode() + b"\n"
+        path.write_bytes(path.read_bytes().replace(included, b""))
+        self.rewrite_identity(identity)
+        self.rewrite_report(record)
+        with self.assertRaisesRegex(self.module.LocaleReceiptError, "omitted the environment regression"):
+            self.validate()
+
+    def test_rehashed_trace_cannot_substitute_another_checkout_source(self) -> None:
+        record = self.report_value()
+        identity = record["commands"]["header-trace"]["stderr"]
+        path = self.root / identity["path"]
+        path.write_bytes(path.read_bytes() + b". /workspace/compat/x86_64/other.c\n")
+        self.rewrite_identity(identity)
+        self.rewrite_report(record)
+        with self.assertRaisesRegex(self.module.LocaleReceiptError, "ambient header origin"):
+            self.validate()
 
     def test_dynamic_only_replays_but_cannot_satisfy_static_requirement(self) -> None:
         self.report.unlink()

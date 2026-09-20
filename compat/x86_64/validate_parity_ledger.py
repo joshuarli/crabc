@@ -73452,7 +73452,9 @@ def require_locale_object_wide_artifact(family: Mapping[str, Any]) -> None:
         "THREAD_GLOBAL",
         "current_ctype_override",
         "TIME_STRINGS",
-        "No locale map, environment lookup, allocation",
+        "No locale map, allocation",
+        '#[cfg(feature = "x86-owned-static-runtime")]',
+        '#[cfg(not(feature = "x86-owned-static-runtime"))]',
         "9fa28ece75d8a2191de7c5bb53bed224c5947417",
     ):
         require(snippet in implementation, f"locale_objects leaf omits {snippet}")

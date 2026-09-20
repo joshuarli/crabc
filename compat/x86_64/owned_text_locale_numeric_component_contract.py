@@ -67,13 +67,14 @@ OBJECT_ROLES = (
 # which cannot share a Musl oracle transcript.  Keep them in a different
 # workload, with their own rows and raw candidate evidence, so they cannot be
 # mistaken for additions to the eleven parity-credit rows above.  In
-# particular, the empty-name locale observation is retained as an unclosed
-# environment/parity gap rather than a final locale.core boundary.
+# particular, environment selection is checked in the separate owned locale
+# v3 component; this supplement never substitutes for that differential proof.
 SOURCE_SPECIFIC_OBJECT_ROLES = (
     ("source-specific-driver", "compat/x86_64/owned_text_locale_numeric_source_specific_driver.c", None,
      "source-specific"),
     ("candidate-locale-object-wide-profile", "compat/x86_64/libc_locale_object_wide_probe.c",
      ("CRABC_LOCALE_OBJECT_WIDE_FREESTANDING",
+      "CRABC_OWNED_LOCALE_ENVIRONMENT",
       "main=crabc_text_locale_numeric_candidate_locale_object_wide_private_main"), "source-specific"),
     ("candidate-locale-wide-iconv-profile", "compat/x86_64/libc_locale_wide_iconv_probe.c",
      ("CRABC_LOCALE_WIDE_ICONV_FREESTANDING",
@@ -92,7 +93,7 @@ SOURCE_SPECIFIC_ROWS = (
         "candidate-locale-object-wide-profile",
         ("candidate-locale-object-wide-profile",),
         "candidate-mode-consistency",
-        "The frozen candidate-only environment/empty-name observation remains an unclosed family/parity gap; it is historical evidence with no locale.core credit.",
+        "The owned-runtime selector accepts empty-name environment requests and rejects unsupported names. This candidate consistency observation has no locale.core credit; the locale v3 differential remains required.",
     ),
     (
         "candidate-locale-wide-iconv-profile",

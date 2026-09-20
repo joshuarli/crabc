@@ -252,9 +252,17 @@ int crabc_x86_64_locale_object_wide_probe(void)
     if (newlocale(LC_ALL_MASK, "en_US.UTF-8", NULL) != NULL || errno != ENOENT)
         return 60;
     errno = EINTR;
+#if defined(CRABC_OWNED_LOCALE_ENVIRONMENT)
+    locale_t environment_locale = newlocale(LC_ALL_MASK, "", NULL);
+    if (environment_locale == NULL || errno != EINTR ||
+        uselocale(NULL) != LC_GLOBAL_LOCALE || MB_CUR_MAX != 1)
+        return 60;
+    freelocale(environment_locale);
+#else
     if (newlocale(LC_ALL_MASK, "", NULL) != NULL || errno != ENOENT ||
         uselocale(NULL) != LC_GLOBAL_LOCALE || MB_CUR_MAX != 1)
         return 60;
+#endif
 #endif
     freelocale(recomposed);
     freelocale(utf8_locale);

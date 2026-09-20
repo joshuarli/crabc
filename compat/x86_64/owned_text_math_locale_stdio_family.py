@@ -830,7 +830,7 @@ def _reader_adapters() -> dict[str, ComponentAdapter]:
     """Expose only concrete public readers; a missing interface is rejected."""
 
     return {
-        "locale": _report_adapter("owned_locale_component_receipt", "crabc.x86_64-owned-locale-products/v2", "locale"),
+        "locale": _report_adapter("owned_locale_component_receipt", "crabc.x86_64-owned-locale-products/v3", "locale"),
         "numeric": _report_adapter(
             "owned_numeric_calendar_component_receipt", "crabc.x86_64-owned-numeric-calendar-products/v2", "numeric",
         ),
