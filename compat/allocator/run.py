@@ -12193,13 +12193,13 @@ def validate_x86_64_m2_memory_substrate_contract(
             ):
                 raise HarnessError(f"native x86 M2 component {component_id} has an invalid check")
             if raw_check.get("kind") == "c-rust-runtime-thp-source-environment-admission":
-                expected_target = (
+                expected_check_target = (
                     "native_runtime_first_arena_policy::"
                     "runtime_process_admits_source_allow_thp_images_with_retained_ready_configuration"
                 )
                 source = ROOT / "crabc-mimalloc/tests/native_runtime_first_arena_policy.rs"
                 if (
-                    raw_check.get("target") != expected_target
+                    raw_check.get("target") != expected_check_target
                     or not source.is_file()
                     or "fn runtime_process_admits_source_allow_thp_images_with_retained_ready_configuration()"
                     not in source.read_text(encoding="utf-8")

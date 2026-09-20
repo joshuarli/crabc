@@ -4316,6 +4316,7 @@ class ContractTests(unittest.TestCase):
             contract, RUNNER.load_pin()
         )
 
+        self.assertEqual(summary["target"], contract["target"])
         self.assertEqual(summary["target"]["architecture"], "x86_64")
         self.assertEqual(summary["target"]["rust_target"], "x86_64-unknown-linux-musl")
         self.assertEqual(summary["milestone"]["status"], "partial")
