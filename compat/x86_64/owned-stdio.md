@@ -34,6 +34,30 @@ roster, selected manifests and trees before and after execution, keeps the one
 object identity, validates every product link receipt, and records/audits each
 copied dynamic execution payload before and after both entries.
 
+`owned_stdio_component_receipt.py` reads the resulting
+`owned-stdio-products.json` directly from physical retained bytes. It rejects
+lexical and symlink hops before opening a report, source, product, tool,
+object, link, copied runtime payload, or raw command stream. The producer and
+reader both validate the source/product seal and product validator before they
+load the sealed installed compiler helper. The reader also rechecks the sealed
+tool bytes before deriving the helper's compiler and linker paths, so a
+rehashed tool record cannot redirect the header observation to an ambient tool.
+It then rebuilds each link with
+`owned_posix_product_evidence.validate_link` and each copied dynamic root with
+`owned_crypt_runtime_evidence.audit_execution_payload`. The reader checks the
+installed-header trace, one unchanged object across the pinned-musl and owned
+links, exact command argv, raw observations, and the pinned-musl comparison;
+it does not treat the report's hashes as those facts.
+
+The ordinary catalog invocation supplies a dynamic product only. Its retained
+component-development matrix is exactly four cells: dynamic PIE and non-PIE,
+each through kernel and direct loader entry. A supplied static product makes
+the matrix exactly six cells by adding static ET_EXEC and static PIE. The
+reader's `--require-static` admission rejects a four-cell record, so a
+dynamic-only development observation cannot be relabelled as supplied-static
+evidence. Both forms retain false family-completion, promotion, and public
+support flags.
+
 Run it in the pinned native environment:
 
 ```sh

@@ -8,6 +8,7 @@ readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly PROBE="$ROOT/compat/x86_64/owned_stdio_probe.c"
 readonly RUNNER="$ROOT/compat/x86_64/run_owned_stdio.sh"
 readonly COPIES="$ROOT/compat/x86_64/owned_crypt_runtime_evidence.py"
+readonly RECEIPT_READER="$ROOT/compat/x86_64/owned_stdio_component_receipt.py"
 readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
 
 usage() {
@@ -49,6 +50,18 @@ import os, stat, sys
 
 root, temporary, static, dynamic = map(Path, sys.argv[1:])
 root = root.resolve(strict=True)
+
+# A component reader may live in an isolated worktree below the primary
+# checkout's ignored .work tree.  Admit frozen sibling products only below
+# that shared boundary; inspect every lexical component before realpath later
+# resolves the product root.
+def project_worktree(root):
+    for ancestor in (root, *root.parents):
+        if ancestor.name == '.work':
+            return ancestor.parent / '.work'
+    return root / '.work'
+
+worktree = project_worktree(root)
 items = [(temporary, 'TMPDIR')]
 if str(static) != '.':
     items.append((static, 'static product'))
@@ -56,7 +69,7 @@ if str(dynamic) != '.':
     items.append((dynamic, 'dynamic product'))
 for path, description in items:
     path = path.absolute()
-    if '..' in path.parts or not path.is_relative_to(root / '.work'):
+    if '..' in path.parts or not path.is_relative_to(worktree):
         raise SystemExit(f'owned stdio products {description} must stay below checkout .work')
     current = Path(path.anchor)
     for part in path.parts[1:]:
@@ -65,13 +78,15 @@ for path, description in items:
             raise SystemExit(f'owned stdio products {description} traverses a symlink')
     if not path.is_dir():
         raise SystemExit(f'owned stdio products {description} is not a directory')
+    if (path / '.git').exists():
+        raise SystemExit(f'owned stdio products {description} must not name a checkout worktree')
 PY
 
 if [ -n "$provided_static" ]; then provided_static="$(realpath -e "$provided_static")"; fi
 if [ -n "$provided_dynamic" ]; then provided_dynamic="$(realpath -e "$provided_dynamic")"; fi
 [ -x "$ORACLE_CC" ] || fail 'missing pinned musl compiler'
-[ -f "$PROBE" ] && [ -f "$RUNNER" ] && [ -f "$COPIES" ] ||
-    fail 'missing owned stdio source, runner, or payload auditor'
+[ -f "$PROBE" ] && [ -f "$RUNNER" ] && [ -f "$COPIES" ] && [ -f "$RECEIPT_READER" ] ||
+    fail 'missing owned stdio source, runner, payload auditor, or receipt reader'
 command -v chroot >/dev/null || fail 'missing chroot'
 command -v timeout >/dev/null || fail 'missing timeout'
 
@@ -132,7 +147,8 @@ def identity(path):
     if not stat.S_ISREG(path.lstat().st_mode):
         raise SystemExit(f'owned stdio tool is not a physical regular file: {path}')
     data = path.read_bytes()
-    return {'path': str(path), 'sha256': hashlib.sha256(data).hexdigest(), 'size': len(data)}
+    return {'path': str(path), 'sha256': hashlib.sha256(data).hexdigest(), 'size': len(data),
+            'mode': stat.S_IMODE(path.stat().st_mode)}
 
 helper = dynamic / 'share/crabc/crabc_cc_static.py'
 if helper.is_symlink() or not helper.is_file():
@@ -156,13 +172,13 @@ PY
 
 capture_seal() {
     local point="$1"
-    python3 -B - "$ROOT" "$PROBE" "$RUNNER" "$STATIC_PRODUCT" "$DYNAMIC_PRODUCT" "$WORK/$point.json" <<'PY'
+    python3 -B - "$ROOT" "$PROBE" "$RUNNER" "$RECEIPT_READER" "$STATIC_PRODUCT" "$DYNAMIC_PRODUCT" "$WORK/$point.json" <<'PY'
 import json
 from pathlib import Path
 import stat
 import sys
 
-root, source, runner, static_text, dynamic, output = map(Path, sys.argv[1:])
+root, source, runner, reader, static_text, dynamic, output = map(Path, sys.argv[1:])
 sys.path.insert(0, str(root / 'compat/x86_64'))
 import owned_posix_family_execution as family
 import owned_posix_product_evidence as products
@@ -178,10 +194,13 @@ def product_identity(path, kind):
     path = path.resolve(strict=True)
     manifest, _ = (products._validate_static_product(path) if kind == 'static'
                    else products._validate_dynamic_product(path))
-    return {'path': path.relative_to(root).as_posix(),
-            'manifest': family.file_identity(root, manifest), 'tree': family.snapshot(path)}
+    metadata = manifest.stat()
+    return {'path': str(path),
+            'manifest': {'path': str(manifest), 'sha256': family.digest(manifest), 'size': metadata.st_size},
+            'tree': family.snapshot(path)}
 
-record = {'sources': {'probe': source_identity(source), 'runner': source_identity(runner)},
+record = {'sources': {'probe': source_identity(source), 'runner': source_identity(runner),
+                      'reader': source_identity(reader)},
           'dynamic': product_identity(dynamic, 'dynamic')}
 if str(static_text) != '.':
     record['static'] = product_identity(static_text, 'static')
@@ -230,8 +249,8 @@ compare_oracle() {
     cmp "$WORK/oracle-run.status" "$WORK/$stem.status" || fail "$stem status differs from pinned musl"
 }
 
-capture_tools "$WORK/tools-before.json"
 capture_seal source-product-before
+capture_tools "$WORK/tools-before.json"
 readonly COMPILER="$(resolve_compiler)"
 capture header-trace "$COMPILER" -nostdinc -isystem "$DYNAMIC_PRODUCT/usr/include" \
     -ffreestanding -fno-builtin -fno-stack-protector -std=c11 -fPIE -E -H "$PROBE"
@@ -308,47 +327,64 @@ python3 -B - "$ROOT" "$WORK" "$STATIC_PRODUCT" "$DYNAMIC_PRODUCT" "$PROBE" <<'PY
 import hashlib
 import json
 from pathlib import Path
+import stat
 import sys
 
 root, work, static_text, dynamic, source = map(Path, sys.argv[1:])
 
-def identity(path):
+def receipt_identity(path):
     data = path.read_bytes()
-    try:
-        name = path.relative_to(root).as_posix()
-    except ValueError:
-        name = str(path)
-    return {'path': name, 'sha256': hashlib.sha256(data).hexdigest(), 'size': len(data)}
+    path = path.resolve(strict=True)
+    if path.is_symlink() or not path.is_file() or not path.is_relative_to(work):
+        raise SystemExit(f'owned stdio retained artifact is not a physical work file: {path}')
+    return {'path': path.relative_to(work).as_posix(), 'sha256': hashlib.sha256(data).hexdigest(),
+            'size': len(data), 'mode': stat.S_IMODE(path.stat().st_mode)}
+
+def source_identity(path):
+    data = path.read_bytes()
+    path = path.resolve(strict=True)
+    if path.is_symlink() or not path.is_file() or not path.is_relative_to(root):
+        raise SystemExit(f'owned stdio source is not a physical checkout file: {path}')
+    return {'path': path.relative_to(root).as_posix(), 'sha256': hashlib.sha256(data).hexdigest(),
+            'size': len(data), 'mode': stat.S_IMODE(path.stat().st_mode)}
 
 commands = {}
 for path in sorted(work.glob('*.argv.json')):
     stem = path.name.removesuffix('.argv.json')
-    commands[stem] = {name: identity(work / f'{stem}.{suffix}')
+    commands[stem] = {name: receipt_identity(work / f'{stem}.{suffix}')
                       for name, suffix in (('argv', 'argv.json'), ('stdout', 'stdout'),
                                            ('stderr', 'stderr'), ('status', 'status'))}
-links = {name: identity(work / f'{name}.product-link.json') for name in
+links = {name: receipt_identity(work / f'{name}.product-link.json') for name in
          ('static', 'static-pie', 'dynamic-pie', 'dynamic-non-pie')
          if (work / f'{name}.product-link.json').is_file()}
 payloads = {name: {
-    'record': identity(work / f'dynamic-{name}-execution-payload.json'),
-    'before': identity(work / f'dynamic-{name}-copy-audit-before.stdout'),
-    'after': identity(work / f'dynamic-{name}-copy-audit-after.stdout'),
+    'record': receipt_identity(work / f'dynamic-{name}-execution-payload.json'),
+    'before': receipt_identity(work / f'dynamic-{name}-copy-audit-before.stdout'),
+    'after': receipt_identity(work / f'dynamic-{name}-copy-audit-after.stdout'),
 } for name in ('pie', 'non-pie')}
 record = {
-    'schema': 'crabc.x86_64-owned-stdio-products/v1',
+    'schema': 'crabc.x86_64-owned-stdio-products/v2',
     'scope': ['stdio.path-stream', 'stdio.stream-io', 'stdio.position-buffering', 'stdio.format-scan'],
-    'source': identity(source), 'workload': identity(work / 'workload.o'),
-    'products': {'dynamic': dynamic.relative_to(root).as_posix()},
-    'seals': {name: identity(work / f'{name}.json') for name in
+    'source': source_identity(source), 'workload': receipt_identity(work / 'workload.o'),
+    'products': {'dynamic': str(dynamic)},
+    'seals': {name: receipt_identity(work / f'{name}.json') for name in
               ('source-product-before', 'source-product-after', 'tools-before', 'tools-after')},
+    'object_seals': {name: receipt_identity(work / f'source-object-{name}.{suffix}') for name, suffix in
+                     (('before', 'sha256'), ('after', 'txt'))},
     'commands': commands, 'links': links, 'execution_payloads': payloads,
     'family_completion': False, 'promotion_ready': False, 'public_support': False,
 }
 if str(static_text) != '.':
-    record['products']['static'] = static_text.relative_to(root).as_posix()
+    record['products']['static'] = str(static_text)
 (work / 'owned-stdio-products.json').write_text(
     json.dumps(record, sort_keys=True, separators=(',', ':')) + '\n', encoding='utf-8')
 PY
+
+if [ -n "$STATIC_PRODUCT" ]; then
+    python3 -B "$RECEIPT_READER" "$WORK/owned-stdio-products.json" --checkout "$ROOT" --require-static
+else
+    python3 -B "$RECEIPT_READER" "$WORK/owned-stdio-products.json" --checkout "$ROOT"
+fi
 
 if [ -n "$STATIC_PRODUCT" ]; then
     printf 'owned stdio products: PASS (one selected-header object; pinned musl, static/static-PIE, dynamic PIE/non-PIE kernel/direct; selected path/stream, byte/wide I/O, positions, and byte format/scan only); evidence: %s\n' "$WORK"
