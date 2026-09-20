@@ -48,7 +48,7 @@
 //! that defined Rust translation is not a claim that musl's `uint32_t *` cast
 //! accepts unaligned C storage. As in musl, `setstate` trusts a state image
 //! produced by this family; an invalid pointer, insufficient backing storage,
-//! corrupted state header, or an unsynchronized external mutation of active
+//! corrupted state header, or an unsynchronized external access to active
 //! storage violates the C caller contract.
 //! This non-cryptographic legacy state is never an entropy, secret, allocator,
 //! or hardening source.
@@ -295,7 +295,7 @@ pub extern "C" fn srandom(seed: c_uint) {
 ///
 /// For a size of at least eight, `state` must remain writable for `size` bytes
 /// and retained until the active state changes again; no external task may
-/// mutate that backing without synchronizing with all calls to this family. It
+/// read or mutate that backing without synchronizing with all calls to this family. It
 /// may be unaligned as a defined Rust-port extension, not as a claim about
 /// musl's aligned `uint32_t *` C access. Sizes below eight return null before
 /// observing `state` and leave both errno and the active state unchanged.
@@ -333,7 +333,7 @@ pub unsafe extern "C" fn initstate(seed: c_uint, state: *mut c_char, size: usize
 /// `state` must be a live, writable image previously initialized by this BSD
 /// random family, with the backing capacity required by its packed n/i/j
 /// header. It stays retained after selection until a later switch, and no
-/// external task mutates either selected buffer without synchronizing with all
+/// external task reads or mutates either selected buffer without synchronizing with all
 /// calls to this family. The active previous state remains writable through
 /// this call. Unaligned images are a defined Rust-port extension only.
 #[no_mangle]
