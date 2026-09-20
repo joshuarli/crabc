@@ -1,7 +1,9 @@
 /*
  * One installed-header stdio composition object.
  *
- * The byte and wide cases use distinct live FILE objects.  The byte object
+ * The fopen64 macro consumer, byte, and wide cases use distinct live FILE
+ * objects.  The macro consumer retains Linux LP64's source-only fopen64
+ * alias through the selected fopen path.  The byte object
  * crosses caller-buffered output, a seek/read/fsetpos/write direction change,
  * stream printf/scanf, EOF and a deterministic wrong-direction error, then
  * `freopen`.  The wide object fixes C.UTF-8 and remains independently wide
@@ -29,6 +31,22 @@
 _Static_assert(sizeof(long) == 8, "x86-64 LP64 stream positions");
 _Static_assert(sizeof(wchar_t) == 4, "installed wide FILE code units");
 
+#ifndef _LARGEFILE64_SOURCE
+#error "this installed macro consumer requires _LARGEFILE64_SOURCE=1"
+#endif
+#ifndef fopen64
+#error "Linux LP64 must expose fopen64 as a preprocessing alias"
+#endif
+
+typedef FILE *(*fopen_signature)(const char *, const char *);
+
+_Static_assert(__builtin_types_compatible_p(__typeof__(&fopen64),
+    fopen_signature), "fopen64 macro function type");
+
+static fopen_signature volatile fopen_entry = fopen;
+/* This initializer must preprocess to the same ordinary fopen spelling. */
+static fopen_signature volatile fopen64_macro_entry = fopen64;
+
 static int equal_bytes(const char *actual, const char *expected, size_t count)
 {
     size_t index;
@@ -37,6 +55,48 @@ static int equal_bytes(const char *actual, const char *expected, size_t count)
         if (actual[index] != expected[index])
             return 0;
     return 1;
+}
+
+static int fopen64_macro_consumer(const char *path)
+{
+    static const char payload[] = "fopen64 macro consumer";
+    char observed[sizeof(payload)];
+    FILE *stream;
+
+    if (fopen_entry != fopen64_macro_entry)
+        return 1;
+    (void)unlink(path);
+    errno = 0;
+    if (fopen64_macro_entry(path, "r") != NULL || errno != ENOENT)
+        return 2;
+    stream = fopen64_macro_entry(path, "w+");
+    if (stream == NULL)
+        return 3;
+    if (fwrite(payload, 1, sizeof(payload), stream) != sizeof(payload) ||
+        fseek(stream, 0, SEEK_SET) != 0 ||
+        fread(observed, 1, sizeof(observed), stream) != sizeof(observed) ||
+        !equal_bytes(observed, payload, sizeof(payload))) {
+        (void)fclose(stream);
+        (void)unlink(path);
+        return 4;
+    }
+    if (fclose(stream) != 0) {
+        (void)unlink(path);
+        return 5;
+    }
+    stream = fopen64_macro_entry(path, "r");
+    if (stream == NULL) {
+        (void)unlink(path);
+        return 6;
+    }
+    if (fgetc(stream) != payload[0]) {
+        (void)fclose(stream);
+        (void)unlink(path);
+        return 7;
+    }
+    if (fclose(stream) != 0 || unlink(path) != 0)
+        return 8;
+    return 0;
 }
 
 static int byte_stream(const char *first, const char *second)
@@ -155,8 +215,10 @@ int main(int argc, char **argv)
         return 80;
     if (byte_stream(argv[1], argv[2]) != 0)
         return 81;
-    if (wide_stream(argv[3]) != 0)
+    if (fopen64_macro_consumer(argv[1]) != 0)
         return 82;
+    if (wide_stream(argv[3]) != 0)
+        return 83;
     puts("owned-stdio-products-ok");
     return 0;
 }

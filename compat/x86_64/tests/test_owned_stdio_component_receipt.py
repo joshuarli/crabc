@@ -30,6 +30,44 @@ def identity(root: Path, path: Path) -> dict[str, object]:
     }
 
 
+def undefined_elf_object(*names: str) -> bytes:
+    """Minimal physical ELF64 ET_REL bytes for the reader's direct parser."""
+
+    strings = b"\0" + b"".join(name.encode("ascii") + b"\0" for name in names)
+    string_offsets: dict[str, int] = {}
+    position = 1
+    for name in names:
+        string_offsets[name] = position
+        position += len(name) + 1
+    symbols = b"\0" * 24 + b"".join(
+        string_offsets[name].to_bytes(4, "little") + b"\x10\0\0\0" + b"\0" * 16
+        for name in names
+    )
+    strings_at = 64
+    symbols_at = strings_at + len(strings)
+    sections_at = symbols_at + len(symbols)
+    header = bytearray(64)
+    header[:7] = b"\x7fELF\x02\x01\x01"
+    header[16:18] = (1).to_bytes(2, "little")
+    header[18:20] = (62).to_bytes(2, "little")
+    header[20:24] = (1).to_bytes(4, "little")
+    header[40:48] = sections_at.to_bytes(8, "little")
+    header[52:54] = (64).to_bytes(2, "little")
+    header[58:60] = (64).to_bytes(2, "little")
+    header[60:62] = (3).to_bytes(2, "little")
+    string_section = bytearray(64)
+    string_section[4:8] = (3).to_bytes(4, "little")
+    string_section[24:32] = strings_at.to_bytes(8, "little")
+    string_section[32:40] = len(strings).to_bytes(8, "little")
+    symbol_section = bytearray(64)
+    symbol_section[4:8] = (2).to_bytes(4, "little")
+    symbol_section[24:32] = symbols_at.to_bytes(8, "little")
+    symbol_section[32:40] = len(symbols).to_bytes(8, "little")
+    symbol_section[40:44] = (1).to_bytes(4, "little")
+    symbol_section[56:64] = (24).to_bytes(8, "little")
+    return bytes(header) + strings + symbols + b"\0" * 64 + bytes(string_section) + bytes(symbol_section)
+
+
 class ReceiptFixture:
     """Small physical receipt whose product/link boundaries are mocked alone.
 
@@ -44,13 +82,16 @@ class ReceiptFixture:
         self.work = self.checkout / ".work" / "stdio"
         self.dynamic = root / "dynamic-product"
         self.static = root / "static-product"
+        self.musl_include = root / "musl/include"
         self.checkout.mkdir(parents=True)
         self.work.mkdir(parents=True)
         self.dynamic.mkdir()
+        (self.musl_include / "bits").mkdir(parents=True)
         if static:
             self.static.mkdir()
         (self.dynamic / "bin").mkdir()
         (self.dynamic / "share/crabc").mkdir(parents=True)
+        (self.dynamic / "usr/include/bits").mkdir(parents=True)
         self.dynamic_driver = self.dynamic / "bin/crabc-cc-dynamic"
         self.dynamic_driver.write_bytes(b"dynamic driver\n")
         self.dynamic_driver.chmod(0o755)
@@ -70,8 +111,12 @@ class ReceiptFixture:
         self.runner.chmod(0o755)
         self.reader = self.checkout / "compat/x86_64/owned_stdio_component_receipt.py"
         self.reader.write_bytes(b"# retained stdio receipt reader\n")
+        self.fopen64_c = self.checkout / "compat/x86_64/fopen64_header_abi_probe.c"
+        self.fopen64_c.write_bytes(b"/* fopen64 C profile */\n")
+        self.fopen64_cxx = self.checkout / "compat/x86_64/fopen64_header_abi_probe.cpp"
+        self.fopen64_cxx.write_bytes(b"/* fopen64 C++ profile */\n")
         self.object = self.work / "workload.o"
-        self.object.write_bytes(b"ELF selected object\n")
+        self.object.write_bytes(undefined_elf_object("fopen"))
         self.oracle = self.work / "oracle"
         self.oracle.write_bytes(b"oracle binary\n")
         self.tool = self.work / "tool"
@@ -100,12 +145,43 @@ class ReceiptFixture:
         self.write(stem + ".stderr", stderr)
         self.write(stem + ".status", status)
 
+    def _write_fopen64_header_controls(self) -> None:
+        for tree, compiler, include in (
+            ("reference", str(self.tool), self.musl_include),
+            ("installed", str(self.tool), self.dynamic / "usr/include"),
+        ):
+            trace = b"".join(
+                f". {include / header}\n".encode()
+                for header in ("stdio.h", "features.h", "bits/alltypes.h")
+            )
+            for profile, (relative_source, visibility, _) in receipt.FOPEN64_HEADER_PROFILES.items():
+                source = self.fopen64_cxx if relative_source.endswith(".cpp") else self.fopen64_c
+                object_path = self.work / f"fopen64-{tree}-{profile}.o"
+                object_path.write_bytes(undefined_elf_object("fopen"))
+                preprocessed = f'# 0 "{source}"\n'.encode()
+                if visibility == "fopen":
+                    preprocessed += b"fopen64_macro_reference = &fopen;\n"
+                else:
+                    preprocessed += b"fopen_reference = fopen;\n"
+                self.command(
+                    f"fopen64-{tree}-{profile}-preprocess",
+                    receipt._fopen64_profile_argv(tree, profile, compiler, include, source, object_path, "preprocess"),
+                    stdout=preprocessed, stderr=trace,
+                )
+                self.command(
+                    f"fopen64-{tree}-{profile}-compile",
+                    receipt._fopen64_profile_argv(tree, profile, compiler, include, source, object_path, "compile"),
+                    stderr=trace,
+                )
+
     def _write_raw(self, static: bool) -> None:
         source_seal = {
             "sources": {
                 "probe": {"path": "compat/x86_64/owned_stdio_probe.c", "sha256": hashlib.sha256(self.probe.read_bytes()).hexdigest(), "mode": 0o644},
                 "runner": {"path": "compat/x86_64/run_owned_stdio.sh", "sha256": hashlib.sha256(self.runner.read_bytes()).hexdigest(), "mode": 0o755},
                 "reader": {"path": "compat/x86_64/owned_stdio_component_receipt.py", "sha256": hashlib.sha256(self.reader.read_bytes()).hexdigest(), "mode": 0o644},
+                "fopen64_c": {"path": "compat/x86_64/fopen64_header_abi_probe.c", "sha256": hashlib.sha256(self.fopen64_c.read_bytes()).hexdigest(), "mode": 0o644},
+                "fopen64_cxx": {"path": "compat/x86_64/fopen64_header_abi_probe.cpp", "sha256": hashlib.sha256(self.fopen64_cxx.read_bytes()).hexdigest(), "mode": 0o644},
             },
             "dynamic": {"path": str(self.dynamic), "manifest": {"path": str(self.dynamic / "share/crabc/manifest.json"), "sha256": hashlib.sha256((self.dynamic / "share/crabc/manifest.json").read_bytes()).hexdigest(), "size": (self.dynamic / "share/crabc/manifest.json").stat().st_size}, "tree": receipt.tree_identity(self.dynamic)},
         }
@@ -124,9 +200,10 @@ class ReceiptFixture:
         self.write("tools-after.json", encoded_tools)
         header_prefix = str(self.dynamic / "usr/include")
         header_trace = b"".join((f". {header_prefix}/{name}\n".encode() for name in receipt.REQUIRED_HEADERS))
-        header_source = (f'# 0 "{self.probe}"\nint main(int argc, char **argv) {{ return 0; }}\n').encode()
-        self.command("header-trace", [str(self.tool), "-nostdinc", "-isystem", header_prefix, "-ffreestanding", "-fno-builtin", "-fno-stack-protector", "-std=c11", "-fPIE", "-E", "-H", str(self.probe)], stdout=header_source, stderr=header_trace)
-        self.command("compile", [str(self.dynamic_driver), "--dynamic-pie", "-std=c11", "-D_POSIX_C_SOURCE=200809L", "-fno-builtin", "-fno-stack-protector", "-c", str(self.probe), "-o", str(self.object)])
+        header_source = (f'# 0 "{self.probe}"\nstatic void *fopen64_macro_entry = fopen;\nint main(int argc, char **argv) {{ return 0; }}\n').encode()
+        self.command("header-trace", [str(self.tool), "-nostdinc", "-isystem", header_prefix, "-D_LARGEFILE64_SOURCE=1", "-ffreestanding", "-fno-builtin", "-fno-stack-protector", "-std=c11", "-fPIE", "-E", "-H", str(self.probe)], stdout=header_source, stderr=header_trace)
+        self.command("compile", [str(self.dynamic_driver), "--dynamic-pie", "-std=c11", "-D_POSIX_C_SOURCE=200809L", "-D_LARGEFILE64_SOURCE=1", "-fno-builtin", "-fno-stack-protector", "-c", str(self.probe), "-o", str(self.object)])
+        self._write_fopen64_header_controls()
         self.command("oracle-link", [str(self.tool), "-std=c11", "-static", "-fno-pie", "-no-pie", str(self.object), "-o", str(self.oracle)])
         runtime_argv = ["env", "-i", "LC_ALL=C", "LANG=C", "TZ=UTC", str(self.oracle), str(self.work / "oracle-first"), str(self.work / "oracle-second"), str(self.work / "oracle-wide")]
         self.command("oracle-run", runtime_argv, b"owned-stdio-products-ok\n")
@@ -179,6 +256,7 @@ class ReceiptFixture:
         self.report = {
             "schema": receipt.SCHEMA,
             "scope": list(receipt.SCOPE),
+            "rows": {"stdio.fopen64-alias": receipt.fopen64_row(static=static)},
             "source": identity(self.checkout, self.probe),
             "workload": identity(self.work, self.object),
             "products": {"dynamic": str(self.dynamic), **({"static": str(self.static)} if static else {})},
@@ -202,8 +280,9 @@ class ReceiptFixture:
     def refresh_object_seals(self) -> None:
         before = self.work / "source-object-before.sha256"
         after = self.work / "source-object-after.txt"
-        before.write_bytes(b"".join(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path}\n".encode() for path in (self.probe, self.runner, self.object)))
-        after.write_bytes(b"".join(f"{path}: OK\n".encode() for path in (self.probe, self.runner, self.object)))
+        sealed = (self.probe, self.fopen64_c, self.fopen64_cxx, self.runner, self.object)
+        before.write_bytes(b"".join(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path}\n".encode() for path in sealed))
+        after.write_bytes(b"".join(f"{path}: OK\n".encode() for path in sealed))
         self.report["object_seals"] = {"before": identity(self.work, before), "after": identity(self.work, after)}
 
     def refresh(self, *names: str) -> None:
@@ -235,6 +314,7 @@ class OwnedStdioComponentReceiptTests(unittest.TestCase):
         self.fixture = ReceiptFixture(self.root)
         self.patches = [
             mock.patch.object(receipt, "ORACLE_COMPILER", str(self.fixture.tool)),
+            mock.patch.object(receipt, "MUSL_INCLUDE", self.fixture.musl_include),
             mock.patch.object(receipt.products, "_validate_dynamic_product", return_value=(self.fixture.dynamic / "manifest.json", {"bin/crabc-cc-dynamic": "d" * 64})),
             mock.patch.object(receipt.products, "_validate_static_product", return_value=(self.fixture.static / "manifest.json", {"bin/crabc-cc": "s" * 64})),
             mock.patch.object(receipt.products, "validate_link", side_effect=self._link),
@@ -261,11 +341,44 @@ class OwnedStdioComponentReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(receipt.ReceiptError, "supplied-static"):
             self.validate(require_static=True)
 
+    def test_fopen64_macro_consumer_row_is_reconstructed(self) -> None:
+        row = {
+            "feature": "_LARGEFILE64_SOURCE=1",
+            "macro": "fopen64",
+            "target": "fopen",
+            "pointer_equality": True,
+            "object_import": "fopen",
+            "header_profiles": {
+                "c11-base": "hidden",
+                "c11-gnu": "hidden",
+                "c11-file-offset-bits-64": "hidden",
+                "c11-largefile-source": "hidden",
+                "c11-largefile64": "fopen",
+                "cxx17-base": "hidden",
+                "cxx17-gnu": "hidden",
+                "cxx17-file-offset-bits-64": "hidden",
+                "cxx17-largefile-source": "hidden",
+                "cxx17-largefile64": "fopen",
+            },
+            "runtime_cells": [
+                "dynamic-pie-kernel", "dynamic-pie-direct",
+                "dynamic-non-pie-kernel", "dynamic-non-pie-direct",
+            ],
+        }
+        report = self.validate()
+        self.assertEqual(report["rows"]["stdio.fopen64-alias"], row)
+        self.assertEqual(report["products"], self.fixture.report["products"])
+        self.assertEqual(report["source"], self.fixture.report["source"])
+        self.assertEqual(report["source_product_seal"], self.fixture.report["seals"]["source-product-before"])
+
     def test_supplied_static_receipt_reconstructs_exactly_six_cells(self) -> None:
         self.fixture = ReceiptFixture(self.root / "static", static=True)
         self.patches[0].stop()
         self.patches[0] = mock.patch.object(receipt, "ORACLE_COMPILER", str(self.fixture.tool))
         self.patches[0].start()
+        self.patches[1].stop()
+        self.patches[1] = mock.patch.object(receipt, "MUSL_INCLUDE", self.fixture.musl_include)
+        self.patches[1].start()
         report = self.validate(require_static=True)
         self.assertEqual(report["matrix"], "supplied-static")
 
@@ -274,6 +387,37 @@ class OwnedStdioComponentReceiptTests(unittest.TestCase):
         path.write_text(json.dumps(["wrong", "-c", str(self.fixture.probe), "-o", str(self.fixture.object)]) + "\n")
         self.fixture.refresh("commands")
         with self.assertRaisesRegex(receipt.ReceiptError, "compile argv"):
+            self.validate()
+
+    def test_recomputed_hashes_cannot_remove_fopen64_feature_exposure(self) -> None:
+        for stem in ("header-trace", "compile"):
+            path = self.fixture.work / (stem + ".argv.json")
+            argv = json.loads(path.read_text())
+            argv.remove("-D_LARGEFILE64_SOURCE=1")
+            path.write_text(json.dumps(argv, separators=(",", ":")) + "\n")
+        self.fixture.refresh("commands")
+        with self.assertRaisesRegex(receipt.ReceiptError, "header trace argv"):
+            self.validate()
+
+    def test_recomputed_hashes_cannot_forge_fopen64_macro_expansion(self) -> None:
+        path = self.fixture.work / "fopen64-installed-c11-largefile64-preprocess.stdout"
+        path.write_bytes(path.read_bytes().replace(b"= &fopen;", b"= &forged;"))
+        self.fixture.refresh("commands")
+        with self.assertRaisesRegex(receipt.ReceiptError, "macro expansion"):
+            self.validate()
+
+    def test_recomputed_hashes_cannot_import_distinct_fopen64_symbol(self) -> None:
+        self.fixture.object.write_bytes(undefined_elf_object("fopen", "fopen64"))
+        self.fixture.report["workload"] = identity(self.fixture.work, self.fixture.object)
+        self.fixture.refresh_object_seals()
+        self.fixture.write_report()
+        with self.assertRaisesRegex(receipt.ReceiptError, "fopen64 macro consumer object import"):
+            self.validate()
+
+    def test_fopen64_macro_consumer_row_cannot_relabel_pointer_identity(self) -> None:
+        self.fixture.report["rows"]["stdio.fopen64-alias"]["pointer_equality"] = False
+        self.fixture.write_report()
+        with self.assertRaisesRegex(receipt.ReceiptError, "macro-consumer row"):
             self.validate()
 
     def test_recomputed_hashes_cannot_substitute_runtime_output(self) -> None:
@@ -338,7 +482,7 @@ class OwnedStdioComponentReceiptTests(unittest.TestCase):
             self.validate()
 
     def test_recomputed_hashes_cannot_replace_the_shared_object(self) -> None:
-        self.fixture.object.write_bytes(b"other ELF selected object\n")
+        self.fixture.object.write_bytes(undefined_elf_object("fopen", "other"))
         self.fixture.report["workload"] = identity(self.fixture.work, self.fixture.object)
         self.fixture.refresh_object_seals()
         self.fixture.write_report()
