@@ -30,6 +30,25 @@ clean committed qualification checkouts while jobs run. Keep C mimalloc
 selected until native promotion requirements pass. Final qualification still
 requires the joint same-revision evidence; old receipts remain historical.
 
+The BSD quartet is implemented in `5effd16d`, including musl's state classes,
+seeding, switching, private futex synchronization and ordinary-fork lock repair.
+At clean `20cedd47`, `./scripts/dev-x86_64.sh libc-bsd-random` passes against
+pinned musl through the extracted native provider; retained evidence is
+`.work/x86_64/tmp/libc-bsd-random.aoewif/` and
+`.work/x86_64/bsd-random-main-20cedd47.log`. It covers default/reseeding,
+high-bit seeds, invalid sizes 0–7, class boundaries, repeated ring wraparound,
+returned pointers and restoration. The initial pre-port regression proved
+musl execution and missing archive symbols; the subsequently strengthened
+unresolved-link red mode was not executed against that old source. Installed
+product, concurrency/fork and owning-aggregate qualification remain pending.
+
+Allocator `5c4e2746` removes the private test-only direct-commit failure-path
+divergence without changing the already-fallback-eligible production mapping
+path. Its new native regression passes at that clean revision, retained in
+`.work/x86_64/allocator-direct-commit-main.log`; eight on-demand reader tests
+also pass. The worker's existing 23-value C/Rust successful-commit differential
+passes; it does not claim C fault-injection parity or backend promotion.
+
 The preserved approved standalone unwinder provider is now present on main
 (`fbf8837e`, from `d3ca0e79`), without selecting it in runtime products. At
 clean `1ccef617`, `./scripts/dev-x86_64.sh unwinder-build` passes in the pinned
@@ -46,7 +65,7 @@ preserve prior evidence. This is standalone producer evidence only:
 
 | Category | Behavior/gates and evidence | Clearing action | Independent executable work |
 | --- | --- | --- | --- |
-| Implementation | BSD-random quartet missing; `owned-posix-native` at `deac7ae7` stops on `include/stdlib/initstate.out` (receipt below). Policy decision is resolved. | Implement pinned source semantics and differential/product proof, then rerun the owning aggregate. | Allocator ordinary-page work and other runtime components. |
+| Product / aggregate qualification | BSD quartet implementation and extracted-provider differential now pass. Historical `owned-posix-native` at `deac7ae7` stopped on `include/stdlib/initstate.out`; installed synchronization and aggregate evidence are not yet supplied. | Complete installed static/dynamic/extracted behavior and concurrency/fork tests, then rerun the owning aggregate from a clean frozen checkpoint. | Allocator ordinary-page work and other runtime components. |
 | Historical tool-denial record; exact operation unavailable | The retained rejection record names `rust_std_unwinder` and `allocator_m2_metadata`, but no original diagnostic or rejected command was recovered from repository history or preserved files. An exact prohibited action and its dependent gates cannot be inferred from those task names. | Obtain the original review transcript/tool-owner diagnostic to identify any denied operation before retrying it; use supported review where available. Preserve the historical record without inventing a blanket subsystem ban. | Approved standalone unwinder source/dependency/archive checks now pass; independent runtime and ordinary-page allocator work continues. |
 | Technical correctness / unwinder qualification | The approved design and preserved provider README identify unbounded upstream unwind-metadata slices/indirect pointers; installed/extracted stock-std, build-std, DSO, LTO and malformed-metadata qualification remain open. Standalone archive production does not prove them. | Assess the preserved implementation and finish bounds/failure behavior and real owned-product consumer evidence with the approved dependency/features boundary. | Standalone build/provenance tests and unrelated runtime implementation. |
 | Qualification pending: external resources | Native huge-page success and multi-NUMA placement remain unqualified; historical host observations below are not current measurements. | Inspect the host once, finish the existing runnable job, and derive one concrete provisioning request from its workloads. | Ordinary-page/single-node behavior, deterministic failures and concurrency tests. |
