@@ -1,0 +1,164 @@
+# Immutable installed-product composition roster for the planned native x86
+# text, math, locale, stdio, regex, wordexp, and calendar family. Component
+# readers own behavior. This roster joins only retained evidence that is bound
+# to the current POSIX product matrix; it cannot complete a family or promote
+# x86 support.
+schema = "crabc.x86_64-owned-text-math-locale-stdio-family-roster/v1"
+family = "libc.text-math-locale-stdio"
+capabilities = [
+  "numeric.parse-float-locale",
+  "math.elementary-long-double",
+  "math.elementary-fenv-sensitive",
+  "math.special",
+  "math.complex",
+  "locale.core",
+  "text.wide-multibyte",
+  "text.iconv",
+  "pattern.regex",
+  "pattern.wordexp",
+  "stdio.path-stream",
+  "stdio.fopen64-alias",
+  "stdio.stream-io",
+  "stdio.position-buffering",
+  "stdio.format-scan",
+  "time.clock-calendar",
+]
+
+[mode_sets]
+static = [
+  "primary:static-et-exec", "primary:static-pie",
+  "reproduction:static-et-exec", "reproduction:static-pie",
+  "extracted:static-et-exec", "extracted:static-pie",
+]
+dynamic = [
+  "primary:dynamic-pie-kernel", "primary:dynamic-pie-direct",
+  "primary:dynamic-non-pie-kernel", "primary:dynamic-non-pie-direct",
+  "reproduction:dynamic-pie-kernel", "reproduction:dynamic-pie-direct",
+  "reproduction:dynamic-non-pie-kernel", "reproduction:dynamic-non-pie-direct",
+  "extracted:dynamic-pie-kernel", "extracted:dynamic-pie-direct",
+  "extracted:dynamic-non-pie-kernel", "extracted:dynamic-non-pie-direct",
+]
+all = [
+  "primary:static-et-exec", "primary:static-pie",
+  "reproduction:static-et-exec", "reproduction:static-pie",
+  "extracted:static-et-exec", "extracted:static-pie",
+  "primary:dynamic-pie-kernel", "primary:dynamic-pie-direct",
+  "primary:dynamic-non-pie-kernel", "primary:dynamic-non-pie-direct",
+  "reproduction:dynamic-pie-kernel", "reproduction:dynamic-pie-direct",
+  "reproduction:dynamic-non-pie-kernel", "reproduction:dynamic-non-pie-direct",
+  "extracted:dynamic-pie-kernel", "extracted:dynamic-pie-direct",
+  "extracted:dynamic-non-pie-kernel", "extracted:dynamic-non-pie-direct",
+]
+
+# The pre-existing bounded receipts are required corroborating evidence, but
+# their scopes cannot credit the broader coverage capabilities below.
+[components.locale]
+reader = "compat/x86_64/owned_locale_component_receipt.py"
+scope = ["locale.core", "text.wide-multibyte", "text.iconv"]
+credits = []
+
+[components.numeric]
+reader = "compat/x86_64/owned_numeric_calendar_component_receipt.py"
+scope = ["numeric.parse-float-locale", "time.clock-calendar"]
+credits = []
+
+# This aggregate reader owns the missing installed rich locale/numeric/ctype/
+# wchar/UTF behavior. Its receipt binds all three product pairs itself.
+[components.text-locale-numeric]
+reader = "compat/x86_64/owned_text_locale_numeric_component_receipt.py"
+scope = ["numeric.parse-float-locale", "locale.core", "text.wide-multibyte", "text.iconv"]
+credits = ["numeric.parse-float-locale", "locale.core", "text.wide-multibyte", "text.iconv"]
+rows = [
+  "numeric.parse-float-locale/float-parse",
+  "locale.core/ctype-locators",
+  "locale.core/narrow-ctype-collation",
+  "locale.core/object-wide",
+  "locale.core/alias-contract",
+  "locale.core/strfmon",
+  "text.wide-multibyte/locale-object-wide",
+  "text.wide-multibyte/multibyte",
+  "text.wide-multibyte/wide-character",
+  "text.wide-multibyte/wide-conversion",
+  "text.iconv/utf16-32-iconv",
+]
+
+[components.math]
+reader = "compat/x86_64/owned_math_fenv_all_entry_receipt.py"
+scope = [
+  "math.elementary-long-double",
+  "math.elementary-fenv-sensitive",
+  "math.special",
+  "math.complex",
+]
+credits = [
+  "math.elementary-long-double",
+  "math.elementary-fenv-sensitive",
+  "math.special",
+  "math.complex",
+]
+
+[components.wordexp]
+reader = "compat/x86_64/owned_wordexp_evidence.py"
+scope = ["pattern.wordexp"]
+credits = ["pattern.wordexp"]
+
+# v3 proves the macro/ET_REL/header slice. The full engine below remains a
+# separate required reader before any stdio capability can receive credit.
+[components.stdio]
+reader = "compat/x86_64/owned_stdio_component_receipt.py"
+scope = [
+  "stdio.path-stream",
+  "stdio.stream-io",
+  "stdio.position-buffering",
+  "stdio.format-scan",
+  "stdio.fopen64-alias",
+]
+credits = []
+rows = ["stdio.fopen64-alias"]
+
+# Planned full-engine reader. It has no fallback: until a public reader retains
+# these seven behavior groups, collection rejects the input as incomplete.
+[components.stdio-engine]
+reader = "compat/x86_64/owned_stdio_file_engine_receipt.py"
+scope = [
+  "stdio.file-backends",
+  "stdio.process-streams",
+  "stdio.wide-stream",
+  "stdio.wide-format",
+  "stdio.file-extensions",
+  "stdio.printf-float",
+  "stdio.scanf",
+]
+credits = [
+  "stdio.path-stream",
+  "stdio.fopen64-alias",
+  "stdio.stream-io",
+  "stdio.position-buffering",
+  "stdio.format-scan",
+]
+rows = [
+  "stdio.file-backends",
+  "stdio.process-streams",
+  "stdio.wide-stream",
+  "stdio.wide-format",
+  "stdio.file-extensions",
+  "stdio.printf-float",
+  "stdio.scanf",
+]
+
+[components.regex]
+reader = "compat/x86_64/owned_regex_component_receipt.py"
+scope = ["pattern.regex"]
+credits = ["pattern.regex"]
+
+[components.calendar]
+reader = "compat/x86_64/owned_calendar_component_receipt.py"
+scope = ["time.clock-calendar"]
+credits = ["time.clock-calendar"]
+rows = [
+  "calendar-posix-tz-format",
+  "calendar-tzif-specification",
+  "calendar-strptime",
+  "calendar-getdate-global",
+  "calendar-clock-adjustment-safe",
+]
