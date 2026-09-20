@@ -34,8 +34,9 @@ The preserved approved standalone unwinder provider is now present on main
 (`fbf8837e`, from `d3ca0e79`), without selecting it in runtime products. At
 clean `1ccef617`, `./scripts/dev-x86_64.sh unwinder-build` passes in the pinned
 native image, retaining `.work/x86_64/unwinder-builds/run-ty446s2i/provenance.json`
-and `.work/x86_64/unwinder-host-readable-build.log`. Its 17-symbol archive is
-SHA-256 `c89cda364237e6c2efa71137351381ca73600dcd8c0143d03032e3f8e49d5ac9`;
+and `.work/x86_64/unwinder-host-readable-build.log`. Its archive with the
+17-function unwind ABI is SHA-256
+`c89cda364237e6c2efa71137351381ca73600dcd8c0143d03032e3f8e49d5ac9`;
 the exact approved dependency/features audit and eleven host regression tests
 pass. Duplicate/missing graph identities fail closed, and fresh build outputs
 preserve prior evidence. This is standalone producer evidence only:
