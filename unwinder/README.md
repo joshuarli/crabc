@@ -12,6 +12,7 @@ Build from the checkout through the pinned native dispatcher:
 ```sh
 ./scripts/dev-x86_64.sh unwinder-build
 ./scripts/dev-x86_64.sh unwinder-metadata-bounds
+./scripts/dev-x86_64.sh unwinder-eh-frame-bounds
 python3 -B -m unittest discover -s unwinder/tests
 ```
 
@@ -48,9 +49,19 @@ larger than Rust's slice limit, and complete containment in a readable
 `PT_LOAD`; the fixture then proves that lookup returns no FDE instead of
 faulting. Header-slice formation remains explicitly unsafe because only the
 loader can guarantee the mapping's lifetime and actual readability. This is one
-malformed-header behavior only. It does not bound the `PT_DYNAMIC` scan,
-indirect `eh_frame_ptr` dereference, later DWARF/LSDA references, callback
-reentrancy, or runtime DSO mapping lifetime.
+malformed-header behavior only. It does not exercise the separate decoded
+`.eh_frame` pointer path, the `PT_DYNAMIC` scan, later DWARF/LSDA references,
+callback reentrancy, or runtime DSO mapping lifetime.
+
+`unwinder-eh-frame-bounds` exercises the next, separate decoded-pointer
+boundary. It rejects a direct `.eh_frame` target outside a readable `PT_LOAD`,
+forms `EhFrame` only from the target through that load's end, and checks the
+full native-word range of an indirect pointer cell before its unaligned read.
+Null, arithmetic-overflow, and slice-limit values are rejected. The fixture
+places the direct target at the final readable byte and an indirect cell in the
+following guard page; both return no FDE without a fault. This does not prove
+that FDE/CIE/DWARF records within the selected load are well formed, that every
+later indirect pointer is safe, or that loader mappings remain live.
 
 ## Standalone cleanup regression
 
@@ -114,9 +125,10 @@ backtrace capture as observable requirements.
 Build-std requires matching core linkage. Initial/runtime DSO unwind,
 installed/extracted PIE/non-PIE, consumer LTO and malformed metadata checks
 remain required by the approved design before qualification is complete.
-The local overlay bounds only the declared `PT_GNU_EH_FRAME` header; it does
-not validate every indirect DWARF pointer or later metadata read. Source
-pinning and the guarded-header regression do not establish safe failure for
-malicious/truncated mapped unwind metadata generally. Those boundaries must be
-fixed and tested before this provider is promoted. Enumeration is not claimed
+The local overlay bounds the declared `PT_GNU_EH_FRAME` header and the decoded
+`.eh_frame` entry range only. It does not validate every FDE/CIE/DWARF record,
+every later indirect pointer, or later metadata read. Source pinning and the
+guarded metadata regressions do not establish safe failure for malicious or
+truncated mapped unwind metadata generally. Those boundaries must be fixed and
+tested before this provider is promoted. Enumeration is not claimed
 async-signal-safe.

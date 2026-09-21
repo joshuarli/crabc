@@ -18,6 +18,12 @@ class MetadataBoundsExecutionContract(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'unexpected'):
             metadata_bounds.assert_execution(0, 'truncated metadata accepted\n')
 
+    def test_guarded_eh_frame_pointer_cases_return_no_fde_without_a_fault(self):
+        expected = 'guarded EH frame pointers rejected\n'
+        metadata_bounds.assert_execution(0, expected, expected)
+        with self.assertRaisesRegex(RuntimeError, 'status'):
+            metadata_bounds.assert_execution(-11, '', expected)
+
     def test_provider_provenance_must_name_the_compiled_overlay(self):
         patch = metadata_bounds.digest(
             Path(__file__).parents[1] / 'patches/unwinding-0.2.10-phdr-bounds.rs'

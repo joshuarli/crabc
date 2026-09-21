@@ -2,8 +2,10 @@
 // Derived from unwinding 0.2.10, src/unwinder/find_fde/phdr.rs.
 //
 // The PT_GNU_EH_FRAME input is only readable within its declared p_memsz and
-// a containing readable PT_LOAD segment. This overlay intentionally does not
-// establish bounds for indirect DWARF pointers or the PT_DYNAMIC scan.
+// a containing readable PT_LOAD segment. Its decoded .eh_frame pointer must
+// also stay within a readable PT_LOAD, including an indirect pointer cell.
+// This overlay intentionally does not establish bounds for later DWARF
+// records or the PT_DYNAMIC scan.
 use super::FDESearchResult;
 use crate::util::*;
 
@@ -11,7 +13,7 @@ use core::convert::TryFrom;
 use core::mem;
 use core::ops::Range;
 use core::slice;
-use gimli::{BaseAddresses, EhFrame, EhFrameHdr, NativeEndian, UnwindSection};
+use gimli::{BaseAddresses, EhFrame, EhFrameHdr, NativeEndian, Pointer, UnwindSection};
 use libc::{PF_R, PT_DYNAMIC, PT_GNU_EH_FRAME, PT_LOAD};
 
 #[cfg(target_pointer_width = "32")]
@@ -95,6 +97,23 @@ fn contains_range(container: &Range<usize>, candidate: &Range<usize>) -> bool {
     container.start <= candidate.start && candidate.end <= container.end
 }
 
+fn readable_load_for_range(
+    phdrs: &[Elf_Phdr],
+    base: usize,
+    required: &Range<usize>,
+) -> Option<Range<usize>> {
+    if required.is_empty() {
+        return None;
+    }
+    phdrs.iter().find_map(|phdr| {
+        if phdr.p_type != PT_LOAD || phdr.p_flags & PF_R == 0 {
+            return None;
+        }
+        let load = phdr_range(base, phdr)?;
+        contains_range(&load, required).then_some(load)
+    })
+}
+
 /// # Safety
 ///
 /// `header` must describe bytes that remain mapped and readable for the
@@ -108,15 +127,46 @@ unsafe fn bounded_eh_frame_header(
     if header.is_empty() || header.start == 0 || header.len() > isize::MAX as usize {
         return None;
     }
-    let contained_in_readable_load = phdrs.iter().any(|phdr| {
-        phdr.p_type == PT_LOAD
-            && phdr.p_flags & PF_R != 0
-            && phdr_range(base, phdr).is_some_and(|load| contains_range(&load, header))
-    });
-    if !contained_in_readable_load {
+    if readable_load_for_range(phdrs, base, header).is_none() {
         return None;
     }
     Some(unsafe { slice::from_raw_parts(header.start as *const u8, header.len()) })
+}
+
+/// # Safety
+///
+/// The program headers must describe bytes that remain mapped and readable
+/// while the returned slice is used. Metadata containment does not establish
+/// that loader mapping-lifetime obligation.
+unsafe fn bounded_eh_frame(
+    phdrs: &[Elf_Phdr],
+    base: usize,
+    pointer: Pointer,
+) -> Option<(usize, &'static [u8])> {
+    let start = match pointer {
+        Pointer::Direct(value) => usize::try_from(value).ok()?,
+        Pointer::Indirect(value) => {
+            let address = usize::try_from(value).ok()?;
+            if address == 0 {
+                return None;
+            }
+            let pointer_end = address.checked_add(mem::size_of::<usize>())?;
+            if readable_load_for_range(phdrs, base, &(address..pointer_end)).is_none() {
+                return None;
+            }
+            unsafe { (address as *const usize).read_unaligned() }
+        }
+    };
+    if start == 0 {
+        return None;
+    }
+    let start_end = start.checked_add(1)?;
+    let load = readable_load_for_range(phdrs, base, &(start..start_end))?;
+    let length = load.end.checked_sub(start)?;
+    if length == 0 || length > isize::MAX as usize {
+        return None;
+    }
+    Some((start, unsafe { slice::from_raw_parts(start as *const u8, length) }))
 }
 
 fn search_phdr(phdrs: &[Elf_Phdr], base: usize, pc: usize) -> Option<FDESearchResult> {
@@ -173,9 +223,10 @@ fn search_phdr(phdrs: &[Elf_Phdr], base: usize, pc: usize) -> Option<FDESearchRe
             .parse(&bases, mem::size_of::<usize>() as _)
             .ok()?;
 
-        let eh_frame = deref_pointer(eh_frame_hdr.eh_frame_ptr());
-        bases = bases.set_eh_frame(eh_frame as _);
-        let eh_frame = EhFrame::new(get_unlimited_slice(eh_frame as usize as _), NativeEndian);
+        let (eh_frame_start, eh_frame_bytes) =
+            bounded_eh_frame(phdrs, base, eh_frame_hdr.eh_frame_ptr())?;
+        bases = bases.set_eh_frame(eh_frame_start as _);
+        let eh_frame = EhFrame::new(eh_frame_bytes, NativeEndian);
 
         // Use binary search table for address if available.
         if let Some(table) = eh_frame_hdr.table()

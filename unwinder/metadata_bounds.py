@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise one guarded malformed-EH-header boundary through the provider.
+"""Build the provider and exercise one guarded metadata boundary.
 
 This is standalone provider evidence only. It does not select the archive in
 an owned runtime or qualify loader callbacks, indirect pointers, or DWARF.
@@ -38,10 +38,15 @@ def run_logged(command: list[str | Path], environment: dict[str, str], log: Path
     return result.stdout
 
 
-def assert_execution(status: int, output: str) -> None:
+def assert_execution(
+    status: int,
+    output: str,
+    expected_output: str = EXPECTED_OUTPUT,
+    description: str = 'truncated-metadata',
+) -> None:
     if status:
-        raise RuntimeError(f'truncated-metadata fixture exited with status {status}')
-    if output != EXPECTED_OUTPUT:
+        raise RuntimeError(f'{description} fixture exited with status {status}')
+    if output != expected_output:
         raise RuntimeError(f'unexpected truncated-metadata fixture output: {output!r}')
 
 
@@ -75,8 +80,15 @@ def assert_patched_provider(provenance: dict, archive_sha256: str) -> None:
         raise RuntimeError('provider source audit does not match the compiled bounded-header overlay')
 
 
-def main() -> None:
-    runs = ROOT.parent / '.work/x86_64/unwinder-metadata-bounds-runs'
+def run_fixture(
+    runs_name: str,
+    fixture_name: str,
+    expected_output: str,
+    scope: str,
+    execution_log_name: str,
+    description: str,
+) -> Path:
+    runs = ROOT.parent / '.work/x86_64' / runs_name
     runs.mkdir(parents=True, exist_ok=True)
     output = Path(tempfile.mkdtemp(prefix='run-', dir=runs))
     output.chmod(0o755)
@@ -100,8 +112,9 @@ def main() -> None:
         environment,
         output / 'target-libdir.log',
     ).strip())
-    binary = output / 'truncated-metadata'
-    link_log = output / 'truncated-metadata-link.log'
+    fixture = ROOT / 'fixtures' / fixture_name
+    binary = output / fixture.stem
+    link_log = output / f'{fixture.stem}-link.log'
     fixture_environment = dict(environment)
     fixture_environment.update(
         CRABC_UNWINDER_ARCHIVE=str(archive),
@@ -114,10 +127,10 @@ def main() -> None:
             '-C', 'panic=unwind', '-C', 'force-unwind-tables=yes',
             '-C', f'linker={ROOT / "cleanup_link.py"}',
             '-C', 'link-arg=-Wl,--eh-frame-hdr',
-            ROOT / 'fixtures/truncated_metadata.rs', '-o', binary,
+            fixture, '-o', binary,
         ],
         fixture_environment,
-        output / 'truncated-metadata-compile.log',
+        output / f'{fixture.stem}-compile.log',
     )
     link_receipt = json.loads(link_log.read_text())
     if link_receipt['archive'] != {'path': str(archive), 'sha256': digest(archive)}:
@@ -128,19 +141,30 @@ def main() -> None:
         [binary], env=fixture_environment, text=True, stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT, preexec_fn=disable_core_dumps,
     )
-    (output / 'truncated-metadata-execution.log').write_text(execution.stdout)
-    assert_execution(execution.returncode, execution.stdout)
+    (output / execution_log_name).write_text(execution.stdout)
+    assert_execution(execution.returncode, execution.stdout, expected_output, description)
     receipt = {
         'schema': 1,
-        'scope': 'standalone guarded PT_GNU_EH_FRAME provider regression',
+        'scope': scope,
         'qualified': False,
-        'fixture': {'path': 'unwinder/fixtures/truncated_metadata.rs', 'sha256': digest(ROOT / 'fixtures/truncated_metadata.rs')},
+        'fixture': {'path': f'unwinder/fixtures/{fixture_name}', 'sha256': digest(fixture)},
         'provider_archive_sha256': digest(archive),
         'binary_sha256': digest(binary),
         'link_receipt_sha256': digest(link_log),
     }
     (output / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
-    print(output)
+    return output
+
+
+def main() -> None:
+    print(run_fixture(
+        'unwinder-metadata-bounds-runs',
+        'truncated_metadata.rs',
+        EXPECTED_OUTPUT,
+        'standalone guarded PT_GNU_EH_FRAME provider regression',
+        'truncated-metadata-execution.log',
+        'truncated-metadata',
+    ))
 
 
 if __name__ == '__main__':
