@@ -99,6 +99,53 @@ Rust-std cleanup evidence only. It neither installs nor selects the provider
 in a crabc runtime product, and does not qualify installed/extracted consumers,
 build-std, DSO discovery, LTO, or malformed-metadata behavior.
 
+## Supplied owned-product cleanup consumer
+
+The intermediate owned consumer has a separate command because its two runtime
+products are caller-supplied physical inputs, not an installation format for
+the provider:
+
+```sh
+./scripts/dev-x86_64.sh unwinder-owned-cleanup \
+  --static-sysroot .work/x86_64/RUN/static-product \
+  .work/x86_64/RUN/dynamic-product
+```
+
+The existing static preparation producer is, for example:
+
+```sh
+./scripts/dev-x86_64.sh owned-posix-static-products \
+  .work/x86_64/rust-std-unwinder-static-products
+```
+
+Its primary product is
+`.work/x86_64/rust-std-unwinder-static-products/products/primary`. The
+existing `materialized-dynamic-sysroot` command produces and validates an
+independently materialized dynamic product; retain a physical dynamic product
+root from its existing evidence before using this replay. The consumer refuses
+missing, duplicate, symlinked, or manifest-mismatched roots, and revalidates
+both complete payloads after collection.
+
+For each mode the runner invokes the existing `unwinder/build.py` producer into
+a fresh checkout-local evidence directory, retains the exact provider archive
+and provenance, then compiles the unmodified full `fixtures/cleanup.rs`
+stock-Rust fixture. Its finite linker wrapper omits the one stock
+`libunwind-*.rlib` and compiler-builtins archive, replaces Rust's native
+libc/libgcc requests with explicit product files, and rejects ambient libc,
+CRT, libgcc, libunwind, response-file, and native-library-search inputs. The
+static link uses supplied `crt1.o`/`libc.a`; the dynamic link uses supplied
+`Scrt1.o`, attach object, `libc.so`, and selected loader. Both retain product
+roots/manifests, provider provenance/archive, complete linker command/trace,
+and executable digest before checking main and worker-thread panic cleanup plus
+backtrace behavior.
+
+This is non-promoting consumer-development evidence: its receipt keeps all
+qualification, family-completion, promotion, and public-support flags false.
+The separately supplied archive/provenance is **not** installed-product
+packaging. Installing it into a product and then repeating source-bound
+consumer qualification remains required, as do build-std/core matching, LTO,
+runtime DSO discovery, and complete malformed-metadata handling.
+
 ## Source and ownership
 
 The exact normal graph is:

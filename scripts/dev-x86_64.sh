@@ -660,6 +660,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   crt-object-bundle  stage and audit the private five-object x86 Rust CRT bundle
   unwinder-build  build and audit the pinned standalone Rust unwind archive (not runtime qualification)
   unwinder-cleanup  run the standalone pinned-musl Rust cleanup unwind regression
+  unwinder-owned-cleanup --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT  run full stock-Rust cleanup through supplied owned products
   unwinder-metadata-bounds  run the standalone guarded EH-header provider regression
   unwinder-eh-frame-bounds  run the standalone guarded decoded-EH-frame regression
   unwinder-dynamic-bounds  run the standalone guarded PT_DYNAMIC regression
@@ -6862,7 +6863,7 @@ case "$command" in
     owned-dynamic-fork) ;;
     materialized-dynamic-sysroot) ;;
     crt-object-bundle) ;;
-    unwinder-build|unwinder-cleanup|unwinder-metadata-bounds|unwinder-eh-frame-bounds|unwinder-dynamic-bounds) ;;
+    unwinder-build|unwinder-cleanup|unwinder-owned-cleanup|unwinder-metadata-bounds|unwinder-eh-frame-bounds|unwinder-dynamic-bounds) ;;
     crt-dynamic-startup|crt-dynamic-link-contract|consumer-static-pie-lto|consumer-native-facade-lto) ;;
     linux-5-10-uapi) ;;
     candidate-header-closure) ;;
@@ -9520,6 +9521,15 @@ PY
         [ "$#" -eq 0 ] || fail "unwinder-cleanup takes no arguments"
         ensure_image
         run_in_container python3 -B /workspace/unwinder/cleanup.py
+        ;;
+    unwinder-owned-cleanup)
+        [ "$#" -eq 3 ] && [ "$1" = --static-sysroot ] && [ -n "$2" ] && [ -n "$3" ] || \
+            fail "usage: ./scripts/dev-x86_64.sh unwinder-owned-cleanup --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT"
+        owned_rust_static="$(translate_owned_posix_product "$2")" || exit 2
+        owned_rust_dynamic="$(translate_owned_posix_product "$3")" || exit 2
+        ensure_image
+        run_in_container python3 -B /workspace/unwinder/owned_cleanup.py \
+            --static-sysroot "$owned_rust_static" --dynamic-sysroot "$owned_rust_dynamic"
         ;;
     unwinder-metadata-bounds)
         [ "$#" -eq 0 ] || fail "unwinder-metadata-bounds takes no arguments"
