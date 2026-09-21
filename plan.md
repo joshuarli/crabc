@@ -66,6 +66,13 @@ signal-process, pthread-stress, and full libc-test. It records
 `native_aggregate_complete: true`, with family completion and public support
 still false. No missing-provider disposition was added. Main advances
 independently without altering this frozen checkout or its evidence.
+The dependent pthread component now passes all 18 static/dynamic cells at
+the same frozen revision. Its publicly reconstructed
+`.work/x86_64/pthread-family-3aaee635/receipt.json` has SHA-256
+`547056fc2c10561044b0aa838deef002152b4891d916186a612454ef4b21aadd`;
+`component_complete` is true while family completion, promotion and public
+support remain false. Text/math/locale/stdio component qualification can now
+consume this receipt without changing the frozen source.
 
 Allocator `5c4e2746` removes the private test-only direct-commit failure-path
 divergence without changing the already-fallback-eligible production mapping
@@ -99,6 +106,16 @@ VM primitives, metadata, arenas, initialization, fault injection and allocator
 recursion remain partial. The old dataclass-loader failure is historical,
 not the current blocker. Injected `mbind` fault tests replace the syscall;
 their execution did not retry the denied kernel operation.
+Additional source-engine evidence at clean worker `5d8c144c` proves cleanup
+when later-thread Theap metadata allocation fails after successful TLD
+creation, before any worker-root publication; a subsequent attachment also
+finishes correctly. It is not paired C fault injection or M2 completion.
+The retained raw run is
+`.work/worktrees/allocator_next_lifecycle/.work/allocator-next-lifecycle/later-theap-metadata-failure-5d8c144c-raw/`,
+including clean before/after revisions, exit status and raw output (stdout
+SHA-256 `301956b6a31c1ae08998d7972d33bd7cccaa5a6153cefeb3b9cd278b46c34bb3`).
+An earlier handwritten summary had an inconsistent timestamp and is marked
+superseded; it is not the qualification basis.
 
 The preserved approved standalone unwinder provider is now present on main
 (`fbf8837e`, from `d3ca0e79`), without selecting it in runtime products. At
@@ -135,6 +152,16 @@ passes both metadata-bounds and full cleanup runs, retained under
 The original fault/core remains preserved; future probes disable core dumps.
 Indirect frame-pointer/DWARF and dynamic-tag bounds remain open, as do owned
 runtime, DSO, build-std and LTO qualification. Main's 27 focused host tests pass.
+The decoded frame-pointer slice `c1a592ef` additionally fixes a reproduced
+indirect-pointer guard-page crash and bounds direct frame data to a readable
+load segment. At clean worker `a8e1c135`, header bounds, indirect/direct frame
+bounds, and full cleanup pass in `unwinder-metadata-bounds-runs/run-j25vn6lh`,
+`unwinder-eh-frame-bounds-runs/run-0pox6aaa`, and
+`unwinder-cleanup-runs/run-qxp20e2n` under that worker's `.work/x86_64/`.
+All three provider archives have SHA-256
+`d16a2f6a54ac65d3b736ed7a080c1357c86eb74ed484f6fb998bb178ef17914b`;
+28 focused tests pass on main. Later indirect accesses and the dynamic-tag
+scan remain open; this is still standalone, non-promoting evidence.
 
 Family admission machinery (`6110739d`) now reconstructs the existing matrix
 and native aggregate, all 9 capabilities / 149 spellings, actual ledger
