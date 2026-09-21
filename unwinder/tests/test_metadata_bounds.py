@@ -24,6 +24,12 @@ class MetadataBoundsExecutionContract(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'status'):
             metadata_bounds.assert_execution(-11, '', expected)
 
+    def test_guarded_dynamic_table_cases_return_their_exact_results(self):
+        expected = 'guarded dynamic table rejected\n'
+        metadata_bounds.assert_execution(0, expected, expected)
+        with self.assertRaisesRegex(RuntimeError, 'status'):
+            metadata_bounds.assert_execution(-11, '', expected)
+
     def test_provider_provenance_must_name_the_compiled_overlay(self):
         patch = metadata_bounds.digest(
             Path(__file__).parents[1] / 'patches/unwinding-0.2.10-phdr-bounds.rs'

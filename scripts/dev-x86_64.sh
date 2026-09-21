@@ -662,6 +662,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   unwinder-cleanup  run the standalone pinned-musl Rust cleanup unwind regression
   unwinder-metadata-bounds  run the standalone guarded EH-header provider regression
   unwinder-eh-frame-bounds  run the standalone guarded decoded-EH-frame regression
+  unwinder-dynamic-bounds  run the standalone guarded PT_DYNAMIC regression
   crt-dynamic-startup  run the private x86 Scrt1.o dynamic-PIE startup artifact
   crt-dynamic-link-contract  audit the closed x86 Rust CRT dynamic-PIE link boundary
   consumer-static-pie-lto  run the private no-std crabc-rs O3/full-LTO owned-runtime consumer
@@ -6861,7 +6862,7 @@ case "$command" in
     owned-dynamic-fork) ;;
     materialized-dynamic-sysroot) ;;
     crt-object-bundle) ;;
-    unwinder-build|unwinder-cleanup|unwinder-metadata-bounds|unwinder-eh-frame-bounds) ;;
+    unwinder-build|unwinder-cleanup|unwinder-metadata-bounds|unwinder-eh-frame-bounds|unwinder-dynamic-bounds) ;;
     crt-dynamic-startup|crt-dynamic-link-contract|consumer-static-pie-lto|consumer-native-facade-lto) ;;
     linux-5-10-uapi) ;;
     candidate-header-closure) ;;
@@ -9529,6 +9530,11 @@ PY
         [ "$#" -eq 0 ] || fail "unwinder-eh-frame-bounds takes no arguments"
         ensure_image
         run_in_container python3 -B /workspace/unwinder/eh_frame_bounds.py
+        ;;
+    unwinder-dynamic-bounds)
+        [ "$#" -eq 0 ] || fail "unwinder-dynamic-bounds takes no arguments"
+        ensure_image
+        run_in_container python3 -B /workspace/unwinder/dynamic_bounds.py
         ;;
     crt-object-bundle)
         [ "$#" -eq 0 ] || fail "crt-object-bundle takes no arguments"

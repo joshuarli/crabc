@@ -5,7 +5,7 @@
 // a containing readable PT_LOAD segment. Its decoded .eh_frame pointer must
 // also stay within a readable PT_LOAD, including an indirect pointer cell.
 // This overlay intentionally does not establish bounds for later DWARF
-// records or the PT_DYNAMIC scan.
+// records.
 use super::FDESearchResult;
 use crate::util::*;
 
@@ -114,6 +114,47 @@ fn readable_load_for_range(
     })
 }
 
+type DynRecord = [usize; 2];
+
+/// # Safety
+///
+/// `dynamic` must describe bytes that remain mapped and readable while this
+/// function reads them. Program-header containment is metadata only; the
+/// caller owns the loader mapping-lifetime guarantee.
+unsafe fn dynamic_got(
+    phdrs: &[Elf_Phdr],
+    base: usize,
+    dynamic: &Range<usize>,
+) -> Option<Option<usize>> {
+    const DT_NULL: usize = 0;
+    const DT_PLTGOT: usize = 3;
+
+    let record_size = mem::size_of::<DynRecord>();
+    if dynamic.is_empty()
+        || dynamic.start == 0
+        || dynamic.len() % record_size != 0
+        || readable_load_for_range(phdrs, base, dynamic).is_none()
+    {
+        return None;
+    }
+    let mut cursor = dynamic.start;
+    while cursor < dynamic.end {
+        let record_end = cursor.checked_add(record_size)?;
+        if record_end > dynamic.end {
+            return None;
+        }
+        let record = unsafe { (cursor as *const DynRecord).read_unaligned() };
+        if record[0] == DT_NULL {
+            return Some(None);
+        }
+        if record[0] == DT_PLTGOT {
+            return Some(Some(record[1]));
+        }
+        cursor = record_end;
+    }
+    None
+}
+
 /// # Safety
 ///
 /// `header` must describe bytes that remain mapped and readable for the
@@ -187,7 +228,7 @@ fn search_phdr(phdrs: &[Elf_Phdr], base: usize, pc: usize) -> Option<FDESearchRe
                     eh_frame_hdr = Some(range);
                 }
                 PT_DYNAMIC => {
-                    dynamic = Some(range.start);
+                    dynamic = Some(range);
                 }
                 _ => (),
             }
@@ -201,21 +242,11 @@ fn search_phdr(phdrs: &[Elf_Phdr], base: usize, pc: usize) -> Option<FDESearchRe
             .set_eh_frame_hdr(eh_frame_hdr.start as _)
             .set_text(text.start as _);
 
-        // Find the GOT section.
-        if let Some(start) = dynamic {
-            const DT_NULL: usize = 0;
-            const DT_PLTGOT: usize = 3;
-
-            let mut tags = start as *const [usize; 2];
-            let mut tag = *tags;
-            while tag[0] != DT_NULL {
-                if tag[0] == DT_PLTGOT {
-                    bases = bases.set_got(tag[1] as _);
-                    break;
-                }
-                tags = tags.add(1);
-                tag = *tags;
-            }
+        // Find the GOT section from complete declared PT_DYNAMIC records.
+        if let Some(dynamic) = dynamic
+            && let Some(got) = dynamic_got(phdrs, base, &dynamic)?
+        {
+            bases = bases.set_got(got as _);
         }
 
         // Parse only the declared .eh_frame_hdr bytes.
