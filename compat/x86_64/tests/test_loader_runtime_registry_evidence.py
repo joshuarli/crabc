@@ -197,6 +197,11 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
         runner = (ROOT / "compat/x86_64/run_general_dynamic_dlopen.sh").read_text(encoding="utf-8")
         self.assertIn(EVIDENCE.DLFCN_SKIP_SEARCH_ENV, runner)
 
+    def test_iterate_consumer_is_an_explicit_component_source_input(self):
+        fixture = "compat/x86_64/general_dynamic_iterate_consumer.c"
+        self.assertIn(fixture, EVIDENCE.SOURCE_FILES)
+        self.assertEqual(EVIDENCE.source_records(ROOT)[fixture], EVIDENCE.identity(ROOT / fixture, logical_path=fixture))
+
     def test_growth_projection_requires_the_41_module_line_and_exact_oracle_stream(self):
         stream = EVIDENCE.EXPECTED_GROWTH + b"runtime fini 40\n"
         EVIDENCE.validate_growth_output(stream, stream)
@@ -255,6 +260,8 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
                 "tbss-oracle.stdout": EVIDENCE.EXPECTED_TBSS,
                 "growth.stdout": EVIDENCE.EXPECTED_GROWTH,
                 "oracle.stdout": EVIDENCE.EXPECTED_GROWTH,
+                "iterate-candidate.stdout": EVIDENCE.EXPECTED_ITERATE,
+                "iterate-oracle.stdout": EVIDENCE.EXPECTED_ITERATE,
                 "scope.stdout": b"scope=first\n",
                 "oracle-scope.stdout": b"scope=first\n",
                 "failure-ie.stdout": b"failure=ie\n",
@@ -271,6 +278,7 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
             self.assertEqual(set(observed), set(streams))
             for name, altered, message in (
                 ("tbss-oracle.stdout", b"wrong\n", "TBSS differential"),
+                ("iterate-oracle.stdout", b"wrong\n", "iterate differential"),
                 ("oracle-scope.stdout", b"wrong\n", "scope differential"),
                 ("oracle-failure-ie.stdout", b"wrong\n", "failure ie differential"),
             ):

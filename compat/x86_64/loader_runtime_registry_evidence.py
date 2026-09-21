@@ -41,6 +41,7 @@ SOURCE_FILES = (
     "compat/x86_64/loader-runtime-registry-private-resolution.toml",
     "compat/x86_64/crabc_cc_owned_dynamic.py",
     "compat/x86_64/run_general_dynamic_dlopen.sh",
+    "compat/x86_64/general_dynamic_iterate_consumer.c",
     "compat/x86_64/run_general_dynamic_fork.sh",
     "compat/x86_64/run_owned_posix_timers.sh",
     "compat/x86_64/owned_dynamic_fork_evidence.py",
@@ -84,6 +85,7 @@ SYMBOL_TABLES = (".dynsym", ".symtab")
 EXPECTED_GROWTH = b"runtime TLS: old/new workers, 41 modules, retained addresses, recursive/concurrent constructors\n"
 EXPECTED_DLOPEN = b"nested-dlopen=42\n"
 EXPECTED_TBSS = b"initial-tbss=8192,worker=isolated\n"
+EXPECTED_ITERATE = b"dl_iterate_phdr: nested callback, retained mapping, bounded append\n"
 # The retained runners invoke the image's existing `chroot` command and the
 # timer reset source test invokes the pinned image's `rustc` wrapper through
 # its pinned Rustup state.  Keep those exact locations and state available
@@ -646,6 +648,7 @@ def _dlfcn_streams(work: Path, output: Path) -> dict[str, dict[str, object]]:
     """Reopen the runner's named behavior streams, including every oracle pair."""
     names = (
         "consumer.stdout", "tbss-candidate.stdout", "tbss-oracle.stdout", "growth.stdout", "oracle.stdout",
+        "iterate-candidate.stdout", "iterate-oracle.stdout",
         "scope.stdout", "oracle-scope.stdout", "oracle-failure-ie.stdout", "oracle-failure-unresolved.stdout",
         *(f"failure-{case}.stdout" for case in ("ie", "unresolved", "array-half", "tls-filesz", "relocation-kind")),
     )
@@ -659,6 +662,10 @@ def _dlfcn_streams(work: Path, output: Path) -> dict[str, dict[str, object]]:
     require(bytes_by_name["tbss-candidate.stdout"] == EXPECTED_TBSS, "general dlfcn TBSS output drifted")
     require(bytes_by_name["tbss-candidate.stdout"] == bytes_by_name["tbss-oracle.stdout"],
             "general dlfcn TBSS differential drifted")
+    require(bytes_by_name["iterate-candidate.stdout"] == EXPECTED_ITERATE,
+            "general dlfcn iterate callback output drifted")
+    require(bytes_by_name["iterate-candidate.stdout"] == bytes_by_name["iterate-oracle.stdout"],
+            "general dlfcn iterate differential drifted")
     validate_growth_output(bytes_by_name["growth.stdout"], bytes_by_name["oracle.stdout"])
     for case in ("ie", "unresolved"):
         require(bytes_by_name[f"failure-{case}.stdout"] == bytes_by_name[f"oracle-failure-{case}.stdout"],
@@ -683,7 +690,7 @@ def dlfcn_observations(product: Path, output: Path, work: Path, *, replay: fork_
     output = physical_directory(output, "component evidence output")
     work = physical_directory(work, "general dlfcn work")
     require(work.is_relative_to(output), "general dlfcn work escapes retained component output")
-    expected = ("libnested_leaf.so", "libnested_mid.so", "consumer", "tbss-consumer", "growth",
+    expected = ("libnested_leaf.so", "libnested_mid.so", "consumer", "tbss-consumer", "growth", "iterate",
                 "libfailure.so", "libfailure-ie.so", "failure", "libscope-first.so", "libscope-second.so", "scope")
     for name in expected:
         physical_regular(work / name, f"general dlfcn {name}")
@@ -701,12 +708,13 @@ def dlfcn_observations(product: Path, output: Path, work: Path, *, replay: fork_
     # current driver does; derive exact one mode from every executable rather
     # than relying on a runner label.
     modes = {read_json(work / f"{stem}.crabc-link.json", f"{stem} receipt").get("mode")
-             for stem in ("consumer", "tbss-consumer", "growth", "failure", "scope")}
+             for stem in ("consumer", "tbss-consumer", "growth", "iterate", "failure", "scope")}
     mode = single_driver_mode(modes)
     # Reread with the actual mode (the first lookup above catches wrong shape
     # and keeps only a bounded artifact path surface).
     entries = {key: _link_record(product, work, output, stem, mode, replay=replay) for key, stem in
-               {"consumer": "consumer", "tbss": "tbss-consumer", "growth": "growth", "failure": "failure", "scope": "scope"}.items()}
+               {"consumer": "consumer", "tbss": "tbss-consumer", "growth": "growth", "iterate": "iterate",
+                "failure": "failure", "scope": "scope"}.items()}
     return {"driver_mode": mode, "work": str(work.relative_to(output)), "dso_links": dso_links, "links": entries, "streams": streams,
             "growth_modules": 41, "operations": list(DLFCN_NAMES), "scenario": "runtime-tls-41-modules"}
 
