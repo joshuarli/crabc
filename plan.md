@@ -41,7 +41,7 @@ returned pointers and restoration. The initial pre-port regression proved
 musl execution and missing archive symbols; the subsequently strengthened
 unresolved-link red mode was not executed against that old source.
 
-Fresh products are being qualified at frozen clean
+Products were qualified at frozen clean
 `3aaee6350f52c5fb89a2f4fa0fd4a0e1e6563698` in
 `.work/worktrees/runtime_combined_3aaee635/`; its source must not change during
 execution. Static preparation passes at
@@ -53,9 +53,19 @@ including concurrency and active-worker fork. The retained roots are
 `owned-bsd-random.NRM380` (reproduction), and `owned-bsd-random.NunJjU`
 (extracted). Extraction is bound by the static preparation and dynamic
 `materialized-dynamic.qpNz70/qualification-prepare.json`, not by the runner's
-`--extracted` label alone. The full dynamic qualification and subsequent
-owning native aggregate remain pending; no missing-provider disposition was
-added. Main may advance independently without altering this frozen checkout.
+`--extracted` label alone. The full dynamic qualification now passes for all
+three products; its final `materialized-dynamic.qpNz70/qualification.json`
+retains `qualified-pending-review`, not promotion. After that seal, all three
+BSD routes were rerun successfully in `owned-bsd-random.Hpy08I` (primary),
+`owned-bsd-random.ScSuw1` (reproduction), and `owned-bsd-random.FEyMHe`
+(extracted). The owning family matrix and native aggregate also pass:
+`.work/x86_64/posix-family-3aaee635/execution.json` and
+`.work/x86_64/posix-native-3aaee635/native-execution.json`. The latter
+reconstructs all five required components: differential, OS-test,
+signal-process, pthread-stress, and full libc-test. It records
+`native_aggregate_complete: true`, with family completion and public support
+still false. No missing-provider disposition was added. Main advances
+independently without altering this frozen checkout or its evidence.
 
 Allocator `5c4e2746` removes the private test-only direct-commit failure-path
 divergence without changing the already-fallback-eligible production mapping
@@ -77,6 +87,18 @@ The paired musl/native-shadow log is
 (SHA-256 `c36867f3b524f801211dda843649a009112ff4b006f02775aa50b4036b5da93e`).
 Integrated as `b0f26ee3`, this adds qualification evidence, not a production
 fix or generic OOM/source reallocation parity.
+
+The M2 aggregate now reaches its honest partial receipt at clean worker
+`8e00164c8a3c983ef7e68b962ee0924200182193` (expected exit 3), after repairs
+for retained fault-overlay collisions, lost failure diagnostics, a pre-READY
+first-arena test fixture, and an overwritten report target field. Its report
+is `.work/allocator-x86_64/reports/allocator/x86_64/m2-memory-substrate-latest.json`
+under `.work/worktrees/allocator_resume/`, SHA-256
+`35c5e8b4af5d805c8a83cab0cf99a91e669ccfe3e19e5ed6d0afd971292295f4`.
+VM primitives, metadata, arenas, initialization, fault injection and allocator
+recursion remain partial. The old dataclass-loader failure is historical,
+not the current blocker. Injected `mbind` fault tests replace the syscall;
+their execution did not retry the denied kernel operation.
 
 The preserved approved standalone unwinder provider is now present on main
 (`fbf8837e`, from `d3ca0e79`), without selecting it in runtime products. At
@@ -100,6 +122,19 @@ Link-harness regression `19512430` additionally rejects compiler-forwarded
 linker response files; its two new failing examples were observed before the
 fix, and all 22 focused host tests pass afterward. This does not upgrade the
 standalone consumer receipt or its qualification boundary.
+The next provider slice, integrated as `bb54012a`, fixes a reproduced
+protected-page crash in the declared `PT_GNU_EH_FRAME` header read. It uses
+a provenance-checked local overlay of the same pinned dependency/features,
+with declared-length/readable-load bounds, checked arithmetic and Rust slice
+validity checks. Clean worker `8305150eb329f8a092788ca9b5482db17b734f91`
+passes both metadata-bounds and full cleanup runs, retained under
+`.work/worktrees/unwinder_resume/.work/x86_64/` in
+`unwinder-metadata-bounds-runs/run-9ux_ltbd` and
+`unwinder-cleanup-runs/run-qi9xaehu`. Both freshly built archives have SHA-256
+`bf279afafa1d704678f3b0a60cc2cc8cc80db0c8fdc8c533ccdcb03a5e26e1ff`.
+The original fault/core remains preserved; future probes disable core dumps.
+Indirect frame-pointer/DWARF and dynamic-tag bounds remain open, as do owned
+runtime, DSO, build-std and LTO qualification. Main's 27 focused host tests pass.
 
 Family admission machinery (`6110739d`) now reconstructs the existing matrix
 and native aggregate, all 9 capabilities / 149 spellings, actual ledger
@@ -112,7 +147,7 @@ not discharge anything using old-source receipts or promote the text family.
 
 | Category | Behavior/gates and evidence | Clearing action | Independent executable work |
 | --- | --- | --- | --- |
-| Aggregate qualification | BSD quartet behavior, installed/extracted synchronization and fork tests now pass at frozen `3aaee635`. Historical `owned-posix-native` at `deac7ae7` stopped on its missing provider; the new owning aggregate has not yet run. | Finish current dynamic qualification, then run the existing native aggregate and address its next genuine failure. | Allocator ordinary-page work and other runtime components. |
+| Family admission | BSD quartet and the owning five-component native POSIX aggregate pass at frozen `3aaee635`; historical `deac7ae7` missing-provider failure is resolved without a disposition. Family admission is separate from these receipts. | Reconstruct the existing admission proof against the sealed current-source matrix/native inputs; retain ledger and final same-revision promotion requirements. | Allocator implementation, unwinder bounds and other family qualification. |
 | Historical tool-denial record; exact operation unavailable | The retained rejection record names `rust_std_unwinder` and `allocator_m2_metadata`, but no original diagnostic or rejected command was recovered from repository history or preserved files. An exact prohibited action and its dependent gates cannot be inferred from those task names. | Obtain the original review transcript/tool-owner diagnostic to identify any denied operation before retrying it; use supported review where available. Preserve the historical record without inventing a blanket subsystem ban. | Approved standalone unwinder source/dependency/archive checks now pass; independent runtime and ordinary-page allocator work continues. |
 | Technical correctness / unwinder qualification | The approved design and preserved provider README identify unbounded upstream unwind-metadata slices/indirect pointers; installed/extracted stock-std, build-std, DSO, LTO and malformed-metadata qualification remain open. Standalone archive production does not prove them. | Assess the preserved implementation and finish bounds/failure behavior and real owned-product consumer evidence with the approved dependency/features boundary. | Standalone build/provenance tests and unrelated runtime implementation. |
 | Qualification pending: external resources; exact container syscall denial | Clean `2e18daef` observes only memory node 0, zero 1-GiB pages, and `mbind(MPOL_PREFERRED, flags=0)` returning `-1/EPERM` on a private 4096-byte mapping; unmap succeeds. This is the kernel/container execution boundary, not a repository pause. The precise policy origin is not inferred from seccomp mode. | Provision the resources and obtain platform/security-owner review for that exact syscall as requested below. Do not repeat it unchanged or route it through another container/tool. | Ordinary-page/single-node allocation paths not requiring that denied operation, deterministic failures and concurrency tests. |
