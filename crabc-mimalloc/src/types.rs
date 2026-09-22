@@ -6661,7 +6661,7 @@ mod tests {
             terminal: false,
         };
         let prepass = TheapCollectAbandonFieldPrepass::new(
-            move |fields: TheapCollectAbandonFieldAccess, _callbacks: &mut Callbacks| {
+            move |fields: &mut TheapCollectAbandonFieldAccess, _callbacks: &mut Callbacks| {
                 assert_eq!(fields.page_count(), 1);
                 worker
                     .take()
@@ -6670,7 +6670,7 @@ mod tests {
                     .expect("the Heap-list source worker completes");
                 Ok::<_, ()>(())
             },
-            |fields: TheapCollectAbandonFieldAccess, _callbacks: &mut Callbacks| {
+            |fields: &mut TheapCollectAbandonFieldAccess, _callbacks: &mut Callbacks| {
                 assert_eq!(fields.retired_bounds(), (BIN_FULL, 0));
                 Ok::<_, ()>(())
             },

@@ -200,7 +200,6 @@ use crate::types::page_queue::{
     TheapCollectAbandonFieldAccess, TheapCollectAbandonFieldPrepass,
     TheapCollectAbandonPageAction, TheapCollectAbandonPrepass,
     TheapCollectAbandonReleasedPage, TheapCollectAbandonTerminalContext,
-    theap_collect_abandon_update_direct_cache, theap_collect_abandon_update_direct_cache_at,
     page_queue_enqueue_from_full_metadata,
     page_queue_enqueue_from_metadata, page_queue_push_metadata,
     page_queue_move_to_front_metadata, page_queue_push_at_end_metadata,
@@ -9344,9 +9343,9 @@ impl<'attachment, 'main, 'arena, 'map, B: PageBacking<'arena>>
                 // it here would select a second foreign callback while queue
                 // state is borrowed, so retain its source position as an
                 // explicit completed prepass.
-                |_theap: TheapCollectAbandonFieldAccess,
+                |_theap: &mut TheapCollectAbandonFieldAccess,
                  _callbacks: &mut ProductionOwnerExitCallbacks<'_, '_, 'arena, '_, B>| Ok(()),
-                |theap: TheapCollectAbandonFieldAccess,
+                |theap: &mut TheapCollectAbandonFieldAccess,
                  callbacks: &mut ProductionOwnerExitCallbacks<'_, '_, 'arena, '_, B>| {
                     callbacks.collect_retired_prepass(theap)
                 },
@@ -41036,7 +41035,7 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
     /// forms `&mut Theap` while the shared Heap list can update `hprev`.
     fn collect_retired_prepass(
         &mut self,
-        theap: TheapCollectAbandonFieldAccess,
+        theap: &mut TheapCollectAbandonFieldAccess,
     ) -> Result<(), ProductionOwnerExitError> {
         if !theap.allows_page_abandon() {
             return Err(ProductionOwnerExitError::Retired);
@@ -41089,22 +41088,24 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
     /// because source retires it before creating current-page capability.
     fn release_retired_page(
         &mut self,
-        theap: TheapCollectAbandonFieldAccess,
+        theap: &mut TheapCollectAbandonFieldAccess,
         bin: usize,
         page: NonNull<Page>,
     ) -> Result<(), ProductionOwnerExitError> {
-        let queue = theap
-            .queue_mut(bin)
-            .ok_or(ProductionOwnerExitError::Retired)? as *mut _;
+        let queue = {
+            let queue = theap
+                .queue_mut(bin)
+                .ok_or(ProductionOwnerExitError::Retired)?;
+            queue as *mut _
+        };
         // SAFETY: the retired prepass still owns this exact current queue
         // member and its raw intrusive links.
         unsafe { page_queue_remove_metadata(&mut *queue, page.as_ptr()) };
         // SAFETY: the field-scoped source capability is the original owning
         // Theap address and owns this queue/direct/count transition. It does
         // not mint a mutable whole-Theap image beside a Heap-list prepend.
-        if !unsafe { theap_collect_abandon_update_direct_cache_at(theap.pointer(), bin) }
-            || !theap.note_page_removed()
-        {
+        let direct_cache_updated = theap.update_direct_cache(bin);
+        if !direct_cache_updated || !theap.note_page_removed() {
             return Err(ProductionOwnerExitError::Retired);
         }
         // SAFETY: zero use above excludes a live client/producer; this raw
