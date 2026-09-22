@@ -25,6 +25,18 @@ class DynamicNativeAllocatorSelectionTests(unittest.TestCase):
         with self.assertRaisesRegex(builder.common.BuildError, 'unclassified'):
             builder.select_allocator_members((*self.roster, 'foreign-native.o'), 'abc-static.o', 'native-shadow')
 
+    def test_native_shadow_accepts_omitted_c_member_with_complete_rust_roster(self):
+        roster = tuple(member for member in self.roster if member != 'abc-static.o')
+        selected, excluded = builder.select_allocator_members(roster, 'abc-static.o', 'native-shadow')
+        self.assertEqual(selected, ('c.libc.rcgu.o',))
+        self.assertEqual(excluded, roster[1:])
+        with self.assertRaisesRegex(builder.common.BuildError, 'absent'):
+            builder.select_allocator_members(roster, 'abc-static.o', 'accepted-c')
+        for invalid in ((*roster, 'foreign-native.o'), roster[1:], roster[:-1], (*roster, roster[0])):
+            with self.subTest(roster=invalid):
+                with self.assertRaises(builder.common.BuildError):
+                    builder.select_allocator_members(invalid, 'abc-static.o', 'native-shadow')
+
     def test_unknown_backend_cannot_fall_back_to_c(self):
         with self.assertRaisesRegex(builder.common.BuildError, 'allocator backend'):
             builder.select_allocator_members(self.roster, 'abc-static.o', 'unknown')

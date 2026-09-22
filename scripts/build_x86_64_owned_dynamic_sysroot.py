@@ -411,11 +411,14 @@ def select_allocator_members(members, allocator_member: str, allocator_backend: 
 
     The native Rust code is in libc's fat-LTO Rust object. Cargo still builds
     the existing C dependency through the shared leaf feature graph; its exact
-    attested object is never selected into the native shared runtime.
+    attested object, when Cargo retains it, is never selected into the native
+    shared runtime. An omitted C object leaves the same strict Rust roster.
     """
     if allocator_backend not in ALLOCATOR_BACKENDS:
         raise common.BuildError("unknown dynamic allocator backend")
-    selected, excluded = common.classify_libc_members(members, allocator_member=allocator_member)
+    classified_allocator = (None if allocator_backend == "native-shadow"
+                            and allocator_member not in members else allocator_member)
+    selected, excluded = common.classify_libc_members(members, allocator_member=classified_allocator)
     if allocator_backend == "native-shadow":
         selected = tuple(member for member in selected if member != allocator_member)
         excluded = tuple(member for member in members if member not in selected)
@@ -526,10 +529,11 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     if len(backend_members) != 1:
         raise common.BuildError("accepted allocator archive must have one object")
     member = backend_members[0]
-    if run([ar, "p", str(raw), member]) != run([ar, "p", str(backends[0]), member]):
-        raise common.BuildError("Cargo allocator member differs from attested backend")
     members = tuple(run([ar, "t", str(raw)]).decode().splitlines())
     selected, excluded = select_allocator_members(members, member, allocator_backend)
+    if member in members:
+        if run([ar, "p", str(raw), member]) != run([ar, "p", str(backends[0]), member]):
+            raise common.BuildError("Cargo allocator member differs from attested backend")
     objects = stage / "objects"
     objects.mkdir()
     run([ar, "x", str(raw), *selected], cwd=objects)
@@ -634,6 +638,7 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
                   "accepted_allocator": (common.accepted_allocator_pin() if allocator_backend == "accepted-c" else None),
                   "native_allocator": (_source_file_identity(ROOT / "crabc-mimalloc/UPSTREAM.md", "fixed native allocator provenance") if allocator_backend == "native-shadow" else None),
                   "excluded_c_allocator": ({"pin": common.accepted_allocator_pin(), "member": member,
+                      "present_in_cargo_libc": member in members,
                       "archive_sha256": common.sha256_file(backends[0])} if allocator_backend == "native-shadow" else None),
                   "allocator_headers": common.allocator_header_provenance(dependency_file, Path(environment["CARGO_HOME"])),
                   "allocator_compiler": common.executable_identity(Path("/usr/bin/gcc"), "pinned allocator C compiler"),

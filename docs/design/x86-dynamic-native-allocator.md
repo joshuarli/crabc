@@ -38,7 +38,10 @@ separate destroy-on-exit path or retire arenas with live owners.
 
 The builder classifies every Cargo archive member using the existing strict
 roster. Cargo still builds the pinned C dependency through shared features;
-native selection excludes only its byte-attested member from the final link.
+when Cargo retains its member in `libc.a`, native selection byte-attests and
+excludes that member from the final link. Cargo may omit the unused member;
+then every actual member still passes the strict Rust/compiler-helper roster,
+and provenance records its absence. Accepted-C selection requires its member.
 Native code resides in the Rust fat-LTO object. The C-specific hidden-symbol
 list is applied only to C products. The existing musl dynamic list and private
 errno/compiler-helper policies remain in both products. Native ELF inspection
