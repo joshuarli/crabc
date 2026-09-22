@@ -1760,7 +1760,7 @@ mod tests {
     extern crate std;
 
     use super::{
-        DiagnosticOptionSnapshot, FinalProcessDiagnosticView, FinalProcessInfo,
+        DiagnosticOptionSnapshot, FinalDiagnosticOutputError, FinalProcessDiagnosticView, FinalProcessInfo,
         FinalStatisticsOutputPermit, OutputCallback, OutputOwner, SourceFormattedMessage,
         ThreadWarningPrefix,
     };
@@ -2444,8 +2444,8 @@ mod tests {
             as for<'owner> unsafe fn(
                 &'owner OutputOwner,
             ) -> Result<Option<FinalStatisticsOutputPermit<'owner>>, FinalDiagnosticOutputError>;
-        let _ = FinalStatisticsOutputPermit::emit
-            as for<'owner> unsafe fn(FinalStatisticsOutputPermit<'owner>, FinalProcessDiagnosticView);
+        let _ = FinalStatisticsOutputPermit::<'_>::emit
+            as unsafe fn(FinalStatisticsOutputPermit<'_>, FinalProcessDiagnosticView);
         let _ = OutputOwner::final_process_done_message
             as unsafe fn(&OutputOwner, usize) -> Result<bool, FinalDiagnosticOutputError>;
     }

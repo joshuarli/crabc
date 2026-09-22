@@ -3515,7 +3515,7 @@ impl RuntimeProcessStorage {
                 // All source merge locks ended above. `FinalProcessDiagnosticView`
                 // contains scalar copies only, so output cannot retain source
                 // owner, Heap, Theap, PageMap, or TLS access.
-                let statistics = subprocess.final_output_snapshot();
+                let statistics = subprocess.statistics().final_output_snapshot();
                 let elapsed = crate::statistics::process_elapsed_msecs();
                 let nodes = vm_process.policy().numa_node_count();
                 let process = match crate::os::process_usage() {
@@ -3580,7 +3580,7 @@ impl RuntimeProcessStorage {
     #[cfg(target_arch = "x86_64")]
     fn merge_selected_default_process_done_statistics(
         &'static self,
-        subprocess: &'static crate::types::MainSubprocess,
+        subprocess: &'static crate::subproc::MainSubprocess,
     ) -> bool {
         let Some(main_heap) = (unsafe { self.active_main_heap() }) else {
             return false;
