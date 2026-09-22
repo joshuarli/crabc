@@ -40,6 +40,8 @@ RUST_SOURCE_FILES = (
     ROOT / "crabc-mimalloc/src/lib.rs",
     ROOT / "crabc-mimalloc/src/diagnostic_output.rs",
     ROOT / "crabc-mimalloc/src/lock.rs",
+    ROOT / "crabc-mimalloc/src/os.rs",
+    ROOT / "crabc-mimalloc/src/statistics.rs",
     ROOT / "crabc-core/src/lib.rs",
     ROOT / "crabc-core/src/error.rs",
     ROOT / "crabc-core/src/thread.rs",
@@ -64,11 +66,15 @@ PINNED_UPSTREAM = {
 PROFILE = "linux-x86_64-private-mimalloc-diagnostic-output-owner"
 TRACE_BEGIN = "CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_TRACE_BEGIN"
 TRACE_END = "CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_TRACE_END"
+FINAL_STATISTICS_BEGIN = "CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_FINAL_STATISTICS_BEGIN"
+FINAL_STATISTICS_END = "CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_FINAL_STATISTICS_END"
 THREAD_IDENTITIES_BEGIN = "CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_THREAD_IDENTITIES_BEGIN"
 THREAD_IDENTITIES_END = "CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_THREAD_IDENTITIES_END"
 DEFAULT_STDERR_BEGIN = "CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_DEFAULT_STDERR_BEGIN"
 DEFAULT_STDERR_END = "CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_DEFAULT_STDERR_END"
 SCENARIOS = ("release", "enabled", "cap", "verbose", "delayed", "null", "post_init")
+FINAL_STATISTICS_SCENARIO = "final_stats"
+C_SCENARIOS = (*SCENARIOS, FINAL_STATISTICS_SCENARIO)
 C_LINK_SOURCES = (
     "src/alloc.c",
     "src/alloc-aligned.c",
@@ -143,6 +149,62 @@ SECOND = "7365636f6e640a"
 EARLY = "6561726c790a"
 LATER = "6c617465720a"
 POST_INIT = "6561726c790a0a6c617465720a"
+
+# Exact Rust capture for the fixed MI_STAT=0 scalar image in the test-owned
+# trace. The pinned C run compares its source-stable formatter prefix through
+# `threads`; C supplies live process-info rows at the source print edge, so the
+# reader checks their grammar and phase rather than borrowing host timing/RSS
+# values into the Rust fixture.
+EXPECTED_RUST_FINAL_STATISTICS_TRACE = tuple(
+    line.hex()
+    for line in (
+        b"subproc 7\n",
+        b" pages           peak       total     current       block      total#   \n",
+        b"  touched   :     6.0 KiB     5.0 KiB     4.0 KiB                          \n",
+        b"  pages     :     5           7           2      \n",
+        b"  abandoned :     1           2           0      \n",
+        b"  reclaima  :     3      \n",
+        b"  reclaimf  :     4      \n",
+        b"  reabandon :     5      \n",
+        b"  waits     :     6      \n",
+        b"  extended  :     7      \n",
+        b"  retire    :     8      \n",
+        b"  searches  :     4.5 avg\n",
+        b"\n",
+        b" arenas          peak       total     current       block      total#   \n",
+        b"  reserved  :     2.0 KiB     3.0 KiB     1.0 KiB                          \n",
+        b"  committed :     2.0 KiB     3.0 KiB     1.0 KiB                          \n",
+        b"  reset     :     1.0 KiB\n",
+        b"  purged    :     2.0 KiB\n",
+        b"  arenas    :     1      \n",
+        b"  rollback  :     2      \n",
+        b"  mmaps     :     3      \n",
+        b"  commits   :     4      \n",
+        b"  resets    :     5      \n",
+        b"  purges    :     6      \n",
+        b"  guarded   :     7      \n",
+        b"  theaps    :     2           2           1      \n",
+        b"  heaps     :     3           3           1      \n",
+        b"  heap waits:     8      \n",
+        b"\n",
+        b" process         peak       total     current       block      total#   \n",
+        b"  threads   :     2           2           1      \n",
+        b"  numa nodes:     3\n",
+        b"  elapsed   :    12.345 s\n",
+        b"  process   : user: 5.678 s, system: 91.011 s, faults: 12, peak rss: 4.0 KiB, peak commit: 2.0 KiB\n",
+        b"\n",
+        b"mimalloc: process done 97\n",
+    )
+)
+FINAL_STATIC_PREFIX_COUNT = 31
+FINAL_PROCESS_ROWS = (
+    re.compile(r"  numa nodes: +[0-9]+\\n\\Z"),
+    re.compile(r"  elapsed   : +[0-9]+\\.[0-9]{3} s\\n\\Z"),
+    re.compile(
+        r"  process   : user: [0-9]+\\.[0-9]{3} s, system: [0-9]+\\.[0-9]{3} s, "
+        r"faults: [0-9]+, peak rss: .+\\n\\Z"
+    ),
+)
 def expected_trace_for_thread_identity(identity: int) -> dict[str, list[str]]:
     """Return the selected two-delivery trace for one observed TLS identity."""
 
@@ -171,12 +233,14 @@ EXPECTED_C_STDERR = {
     scenario: "".join(bytes.fromhex(fragment).decode("ascii") for fragment in fragments)
     for scenario, fragments in EXPECTED_DEFAULT_STDERR_TRACE.items()
 }
+EXPECTED_C_STDERR[FINAL_STATISTICS_SCENARIO] = ""
 SCOPE = {
     "claim": "private source-faithful diagnostic output owner trace",
     "public_runtime_support": False,
     "exclusions": [
         "public mi_register_output ABI or general callback API",
         "environment parsing and complete options API parity",
+        "public statistics or process-info APIs, general statistics callbacks, and MI_STAT>0 output",
         "normal mapping-error receiver integration",
         "fputs FILE locking/buffering and short-write or error transport parity",
         "VM/M2 or M7 qualification, allocator backend selection, and runtime integration",
@@ -355,6 +419,50 @@ def parse_single_trace(output: str, scenario: str) -> tuple[list[str], int]:
     return fragments, parse_thread_identity(encoded, f"C {scenario}")
 
 
+def parse_final_statistics_trace(output: str) -> list[str]:
+    """Read the one framed Rust final-statistics callback sequence."""
+
+    lines = output.splitlines()
+    if lines.count(FINAL_STATISTICS_BEGIN) != 1 or lines.count(FINAL_STATISTICS_END) != 1:
+        raise EvidenceError("final-statistics trace markers are missing or duplicated")
+    try:
+        start = lines.index(FINAL_STATISTICS_BEGIN) + 1
+        stop = lines.index(FINAL_STATISTICS_END, start)
+    except ValueError as error:
+        raise EvidenceError("final-statistics trace markers are missing or out of order") from error
+    if stop != start + 1:
+        raise EvidenceError("final-statistics trace has extra or missing records")
+    name, separator, encoded = lines[start].partition("=")
+    if separator != "=" or name != FINAL_STATISTICS_SCENARIO:
+        raise EvidenceError("final-statistics trace label drifted")
+    fragments = [] if encoded == "" else encoded.split(":")
+    if not all(HEX.fullmatch(fragment) and fragment != "" for fragment in fragments):
+        raise EvidenceError("final-statistics trace has non-hex fragment")
+    return fragments
+
+
+def validate_final_statistics_trace(c_trace: Sequence[str], rust_trace: Sequence[str]) -> None:
+    """Bind the source-stable formatter prefix and ordered final phases."""
+
+    if tuple(rust_trace) != EXPECTED_RUST_FINAL_STATISTICS_TRACE:
+        raise EvidenceError("Rust final-statistics formatter trace drifted")
+    if len(c_trace) != len(EXPECTED_RUST_FINAL_STATISTICS_TRACE):
+        raise EvidenceError("pinned C final-statistics callback count drifted")
+    if tuple(c_trace[:FINAL_STATIC_PREFIX_COUNT]) != EXPECTED_RUST_FINAL_STATISTICS_TRACE[:FINAL_STATIC_PREFIX_COUNT]:
+        raise EvidenceError("pinned C/Rust final-statistics static formatter trace drifted")
+    for index, pattern in enumerate(FINAL_PROCESS_ROWS, start=FINAL_STATIC_PREFIX_COUNT):
+        try:
+            line = bytes.fromhex(c_trace[index]).decode("ascii")
+        except ValueError as error:
+            raise EvidenceError("pinned C final-statistics process row is not ASCII") from error
+        if pattern.fullmatch(line) is None:
+            raise EvidenceError("pinned C final-statistics process row drifted")
+    if c_trace[FINAL_STATIC_PREFIX_COUNT + len(FINAL_PROCESS_ROWS)] != b"\n".hex():
+        raise EvidenceError("pinned C final-statistics separator/order drifted")
+    if c_trace[-1] != b"mimalloc: process done 97\n".hex():
+        raise EvidenceError("pinned C final-statistics verbose-tail order drifted")
+
+
 def validate_callback_trace(
     trace: Mapping[str, list[str]], identities: Mapping[str, int], context: str
 ) -> None:
@@ -460,7 +568,7 @@ def begin_candidate(report_path: Path) -> tuple[Path, Path, dict[str, Any]]:
         raise EvidenceError("diagnostic-output candidate path already exists; choose a fresh report path")
     artifact_root.mkdir(parents=True)
     candidate: dict[str, Any] = {
-        "format": 1,
+        "format": 2,
         "kind": "mimalloc-x86_64-diagnostic-output-owner-candidate",
         "status": "unvalidated",
         "admitted_report_path": str(report_path),
@@ -521,7 +629,7 @@ def collect(archive: Path, report_path: Path) -> dict[str, Any]:
 
     runs = c_oracle["runs"]
     assert isinstance(runs, dict)
-    for scenario in SCENARIOS:
+    for scenario in C_SCENARIOS:
         runs[scenario] = command_record([str(binary), scenario], source)
         persist_candidate(candidate_path, candidate)
     if any(run["status"] != 0 for run in runs.values()):
@@ -543,7 +651,7 @@ def collect(archive: Path, report_path: Path) -> dict[str, Any]:
             "source_files": c_oracle["source_files"],
         },
         "fixture": current_file_identity(FIXTURE),
-        "format": 1,
+        "format": 2,
         "kind": "mimalloc-x86_64-diagnostic-output-owner-evidence",
         "native_execution_provenance": provenance,
         "profile": PROFILE,
@@ -599,7 +707,7 @@ def validate_report(report: object) -> None:
         "rust", "rust_build_inputs", "rust_source_files", "scope", "status", "target", "upstream",
     }:
         raise EvidenceError("diagnostic-output report schema drifted")
-    if report["format"] != 1 or report["kind"] != "mimalloc-x86_64-diagnostic-output-owner-evidence":
+    if report["format"] != 2 or report["kind"] != "mimalloc-x86_64-diagnostic-output-owner-evidence":
         raise EvidenceError("diagnostic-output report identity drifted")
     if report["status"] != "passed":
         raise EvidenceError("diagnostic-output report status drifted")
@@ -635,8 +743,8 @@ def validate_report(report: object) -> None:
     runs = c_oracle["runs"]
     if (
         not isinstance(runs, Mapping)
-        or len(runs) != len(SCENARIOS)
-        or set(runs) != set(SCENARIOS)
+        or len(runs) != len(C_SCENARIOS)
+        or set(runs) != set(C_SCENARIOS)
     ):
         raise EvidenceError("diagnostic-output C scenario roster drifted")
     c_trace: dict[str, list[str]] = {}
@@ -652,6 +760,15 @@ def validate_report(report: object) -> None:
             raise EvidenceError(f"diagnostic-output C {scenario} command/status drifted")
         c_trace[scenario], c_thread_identities[scenario] = parse_single_trace(run["stdout"], scenario)
     validate_callback_trace(c_trace, c_thread_identities, "pinned C diagnostic-output")
+    final_run = require_record(runs[FINAL_STATISTICS_SCENARIO], "C final-statistics")
+    if (
+        final_run["status"] != 0
+        or final_run["cwd"] != str(source)
+        or final_run["command"] != [str(binary), FINAL_STATISTICS_SCENARIO]
+        or final_run["stderr"] != EXPECTED_C_STDERR[FINAL_STATISTICS_SCENARIO]
+    ):
+        raise EvidenceError("diagnostic-output C final-statistics command/status drifted")
+    c_final_trace, _ = parse_single_trace(final_run["stdout"], FINAL_STATISTICS_SCENARIO)
     source_files = c_oracle["source_files"]
     if source_files != expected_pinned_c_source_records():
         raise EvidenceError("diagnostic-output C source identity drifted")
@@ -666,6 +783,7 @@ def validate_report(report: object) -> None:
     rust_trace = parse_trace(rust["stdout"], TRACE_BEGIN, TRACE_END)
     rust_thread_identities = parse_thread_identities(rust["stdout"])
     validate_callback_trace(rust_trace, rust_thread_identities, "Rust diagnostic-output")
+    validate_final_statistics_trace(c_final_trace, parse_final_statistics_trace(rust["stdout"]))
     rust_default_stderr_stream = extract_single_line_framed_stream(
         rust["stderr"], DEFAULT_STDERR_BEGIN, DEFAULT_STDERR_END, "diagnostic-output Rust default-stderr"
     )

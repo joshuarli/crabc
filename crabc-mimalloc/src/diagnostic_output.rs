@@ -9,8 +9,9 @@
 // `%tx` formatter route at `src/libc.c:254-261,285-307,313-397`, and Linux
 // thread identity at `include/mimalloc/prim-tls.h:170-190` /
 // `src/prim/prim-tls.c:34-38`, the warning gate's C11 fetch-add at
-// `include/mimalloc/atomic.h:88,98`, and surrounding process ordering in
-// `src/init.c:505-550`.
+// `include/mimalloc/atomic.h:88,98`, final MI_STAT=0 formatting and process
+// information at `src/stats.c:151-430,568-597`, and its retained/physical
+// process ordering at `src/init.c:633-650` / `src/subproc.c:241-245`.
 //
 // The C source keeps one 16 KiB delayed byte buffer, one lock, independently
 // published output function/argument pointers, and an AcqRel warning counter.
@@ -25,9 +26,12 @@
 
 use crate::config::VmOptionEnvironmentReader;
 use crate::lock::PrivateLock;
+use crate::os::ProcessUsage;
+use crate::statistics::{FinalStatCount, FinalStatisticsSnapshot};
 use crabc_core::{Errno, thread::thread_pointer_identity};
 use core::cell::UnsafeCell;
 use core::ffi::{c_char, c_void, CStr};
+use core::fmt::{self, Write};
 use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicUsize, Ordering};
 
 const INITIAL_MAX_WARNING_COUNT: isize = 16;
@@ -43,15 +47,18 @@ const DEFAULT_CALLBACK: u8 = 3;
 const THREAD_WARNING_PREFIX_BYTES: usize = 64;
 const WARNING_PREFIX_HEAD: &[u8] = b"mimalloc: warning: thread 0x";
 const WARNING_PREFIX_TAIL: &[u8] = b": ";
+const FINAL_NOT_ALL_FREED: &[u8] = b"not all freed";
+const FINAL_EXPLICIT_EMPTY_NOT_OK: &[u8] = b"";
 
-/// The three descriptors consumed by this intentionally partial M7 owner.
+/// The four descriptors consumed by this intentionally partial M7 owner.
 ///
-/// This mirrors only `show_errors`, `verbose`, and `max_warnings` in the
+/// This mirrors only `show_errors`, `show_stats`, `verbose`, and `max_warnings` in the
 /// pinned table. It does not parse an environment, mutate options, or claim
 /// any other `src/options.c` descriptor/API.
 #[derive(Clone, Copy)]
 pub(crate) struct DiagnosticOptionSnapshot {
     show_errors: isize,
+    show_stats: isize,
     verbose: isize,
     max_warnings: isize,
 }
@@ -94,7 +101,7 @@ impl RuntimeStderrOutput {
 /// Mandatory process-startup inputs for this private diagnostic owner.
 ///
 /// This is not a VM-policy input: it retains exactly the raw environment
-/// reader needed for the three selected `options.c` descriptors and the
+/// reader needed for the four selected `options.c` descriptors and the
 /// caller-owned FILE primitive held by [`OutputOwner`] for process life.
 pub(crate) struct ProcessDiagnosticInputs {
     environment_reader: VmOptionEnvironmentReader,
@@ -132,12 +139,13 @@ impl ProcessDiagnosticInputs {
     }
 }
 
-const DIAGNOSTIC_DESCRIPTOR_COUNT: usize = 3;
+const DIAGNOSTIC_DESCRIPTOR_COUNT: usize = 4;
 const SOURCE_OPTION_VALUE_BYTES: usize = 64;
 const SOURCE_ENVIRONMENT_ENTRY_LIMIT: usize = 10_000;
 const DIAGNOSTIC_SHOW_ERRORS: usize = 0;
-const DIAGNOSTIC_VERBOSE: usize = 1;
-const DIAGNOSTIC_MAX_WARNINGS: usize = 2;
+const DIAGNOSTIC_SHOW_STATS: usize = 1;
+const DIAGNOSTIC_VERBOSE: usize = 2;
+const DIAGNOSTIC_MAX_WARNINGS: usize = 3;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum DiagnosticOptionInit {
@@ -153,7 +161,7 @@ struct DiagnosticOptionSlot {
     init: DiagnosticOptionInit,
 }
 
-/// The exact selected three-entry `options.c` image. It intentionally does
+/// The exact selected four-entry `options.c` image. It intentionally does
 /// not share `VmOptions`: callback/output state and these source descriptors
 /// remain outside `VmPolicy`.
 struct ProcessDiagnosticOptions {
@@ -166,6 +174,7 @@ impl ProcessDiagnosticOptions {
         Self {
             slots: [
                 DiagnosticOptionSlot { name: b"show_errors", value: 0, init: DiagnosticOptionInit::Uninitialized },
+                DiagnosticOptionSlot { name: b"show_stats", value: 0, init: DiagnosticOptionInit::Uninitialized },
                 DiagnosticOptionSlot { name: b"verbose", value: 0, init: DiagnosticOptionInit::Uninitialized },
                 DiagnosticOptionSlot { name: b"max_warnings", value: 32, init: DiagnosticOptionInit::Uninitialized },
             ],
@@ -180,6 +189,7 @@ impl ProcessDiagnosticOptions {
             self.slots[DIAGNOSTIC_VERBOSE].value,
             self.slots[DIAGNOSTIC_MAX_WARNINGS].value,
         )
+        .with_show_stats(self.slots[DIAGNOSTIC_SHOW_STATS].value)
     }
 
     /// Mirrors one `mi_option_init`: unavailable source environment results
@@ -224,7 +234,7 @@ enum DiagnosticEnvironmentValue {
     Unavailable,
 }
 
-/// The selected `_mi_prim_getenv` scan for the three diagnostic descriptors.
+/// The selected `_mi_prim_getenv` scan for the four diagnostic descriptors.
 unsafe fn diagnostic_environment_value(
     environment: *const *const c_char,
     name: &[u8],
@@ -323,9 +333,18 @@ impl DiagnosticOptionSnapshot {
     pub(crate) const fn new(show_errors: isize, verbose: isize, max_warnings: isize) -> Self {
         Self {
             show_errors,
+            show_stats: 0,
             verbose,
             max_warnings,
         }
+    }
+
+    /// Adds the selected signed `show_stats` descriptor without changing the
+    /// existing warning-gate constructor shape.
+    #[inline]
+    pub(crate) const fn with_show_stats(mut self, show_stats: isize) -> Self {
+        self.show_stats = show_stats;
+        self
     }
 
     /// The pinned normal release defaults: `show_errors=0`, `verbose=0`, and
@@ -344,6 +363,108 @@ impl DiagnosticOptionSnapshot {
     #[inline]
     const fn verbose_enabled(self) -> bool {
         self.verbose != 0
+    }
+
+    #[inline]
+    const fn show_stats_enabled(self) -> bool {
+        self.show_stats != 0
+    }
+}
+
+/// Scalar process information captured before final diagnostic output.
+///
+/// This follows `stats.c:334-353,568-597`: Unix process usage supplies the
+/// elapsed/user/system/peak-RSS/fault values while the selected subprocess
+/// statistics supply the current and peak commit fields.  It contains no OS,
+/// heap, Theap, TLS, or allocator-owner capability.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct FinalProcessInfo {
+    elapsed_milliseconds: usize,
+    user_milliseconds: usize,
+    system_milliseconds: usize,
+    peak_resident_bytes: usize,
+    page_faults: usize,
+    numa_nodes: usize,
+}
+
+impl FinalProcessInfo {
+    /// Captures the signed Unix primitive values at the source print edge.
+    ///
+    /// Pinned `stats.c:568-597` clamps each elapsed/user/system observation to
+    /// the nonnegative `PTRDIFF_MAX` `size_t` range before it reaches the
+    /// formatter. The raw `ProcessUsage` sampler is called by the process
+    /// owner at that same edge; this constructor performs only the source
+    /// scalar conversion and stores no OS or allocator capability.
+    #[inline]
+    pub(crate) fn from_source_observations(
+        elapsed_milliseconds: i64,
+        usage: ProcessUsage,
+        numa_nodes: usize,
+    ) -> Self {
+        Self::new(
+            source_process_milliseconds(elapsed_milliseconds),
+            source_process_milliseconds(usage.user_milliseconds),
+            source_process_milliseconds(usage.system_milliseconds),
+            usage.peak_resident_bytes,
+            usage.major_page_faults,
+            numa_nodes,
+        )
+    }
+
+    #[inline]
+    pub(crate) const fn new(
+        elapsed_milliseconds: usize,
+        user_milliseconds: usize,
+        system_milliseconds: usize,
+        peak_resident_bytes: usize,
+        page_faults: usize,
+        numa_nodes: usize,
+    ) -> Self {
+        Self {
+            elapsed_milliseconds,
+            user_milliseconds,
+            system_milliseconds,
+            peak_resident_bytes,
+            page_faults,
+            numa_nodes,
+        }
+    }
+}
+
+/// Pinned `stats.c:589-591`'s signed millisecond-to-size conversion.
+#[inline]
+const fn source_process_milliseconds(value: i64) -> usize {
+    if value <= 0 {
+        0
+    } else if value >= isize::MAX as i64 {
+        isize::MAX as usize
+    } else {
+        value as usize
+    }
+}
+
+/// The renderer-only final process image.
+///
+/// The process lifecycle owns the source teardown/merge order and must capture
+/// this value after the applicable `Theap -> Heap -> MainSubprocess` merges.
+/// The diagnostic adapter can then run in its ordinary retained marker or the
+/// terminal descriptor-local scope without reopening allocator admission or
+/// borrowing source owners.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct FinalProcessDiagnosticView {
+    subprocess_sequence: usize,
+    statistics: FinalStatisticsSnapshot,
+    process: FinalProcessInfo,
+}
+
+impl FinalProcessDiagnosticView {
+    #[inline]
+    pub(crate) const fn new(
+        subprocess_sequence: usize,
+        statistics: FinalStatisticsSnapshot,
+        process: FinalProcessInfo,
+    ) -> Self {
+        Self { subprocess_sequence, statistics, process }
     }
 }
 
@@ -370,6 +491,21 @@ impl SourceFormattedMessage {
         let length = core::cmp::min(source.len(), SOURCE_FORMAT_PAYLOAD_BYTES);
         let mut bytes = [0; SOURCE_FORMAT_STORAGE_BYTES];
         bytes[..length].copy_from_slice(&source[..length]);
+        Self { bytes, length }
+    }
+
+    /// Copies one formatter-owned byte span through the same source
+    /// `mi_vfprintf` payload boundary as [`Self::from_source_formatted`].
+    ///
+    /// Final statistics output builds each source line on the caller stack;
+    /// this constructor neither parses a format string nor permits an interior
+    /// NUL.  The renderer's bounded line builder has already retained source
+    /// truncation when a line reaches this boundary.
+    #[inline]
+    fn from_rendered_bytes(message: &[u8]) -> Self {
+        let length = core::cmp::min(message.len(), SOURCE_FORMAT_PAYLOAD_BYTES);
+        let mut bytes = [0; SOURCE_FORMAT_STORAGE_BYTES];
+        bytes[..length].copy_from_slice(&message[..length]);
         Self { bytes, length }
     }
 
@@ -684,10 +820,10 @@ impl OutputOwner {
         self.max_warning_count = options.max_warnings;
     }
 
-    /// Resolves the selected three `options.c` descriptors before VM/OS work.
+    /// Resolves the selected four `options.c` descriptors before VM/OS work.
     ///
     /// The exclusive startup borrow proves that no dispatcher can observe the
-    /// inline option image until all three source-order initial attempts have
+    /// inline option image until all four source-order initial attempts have
     /// completed and the post-pass warning cap has replaced the initial 16.
     /// Unavailable environment reads remain UNINIT, exactly for a later
     /// lock-serialized warning-route retry.
@@ -904,6 +1040,115 @@ impl OutputOwner {
         self.fputs_default(None, message.as_c_str());
     }
 
+    /// Emits the selected process-end statistics from an already-captured
+    /// scalar view.
+    ///
+    /// This is the Rust adapter for pinned `stats.c:356-430` and its two
+    /// source callers at `init.c:633-640` and `subproc.c:241-245`. It reads
+    /// only this owner's signed `show_stats` and `verbose` descriptors,
+    /// renders stack-bounded fragments, and dispatches through the existing
+    /// default output route. It never reads allocator state or obtains a
+    /// normal operation guard.
+    ///
+    /// The caller determines the source phase. In particular, this must run
+    /// after the retained path's prescribed Theap/Heap merges, or after the
+    /// physical path's arena retirement, and before that path destroys its
+    /// PageMap. [`Self::final_process_done_message`] is intentionally a
+    /// separate later phase: its source caller is `init.c:646`, after the
+    /// final PageMap work.
+    ///
+    /// # Safety
+    ///
+    /// The caller must hold the existing ordinary retained diagnostic marker,
+    /// or the process owner's exact terminal descriptor-local diagnostic
+    /// scope. It must also satisfy [`Self::raw_message`]'s serialized
+    /// registration and in-flight callback lifetime obligations. The view
+    /// must have been captured after the caller's source-prescribed merge
+    /// order; this method does not validate, repeat, or reorder those merges.
+    pub(crate) unsafe fn final_statistics_output(&self, view: FinalProcessDiagnosticView) -> bool {
+        if self.source_options_ready.load(Ordering::Acquire) != 1 {
+            return false;
+        }
+
+        let mut pending = PendingSourceWarnings::new();
+        let enabled = {
+            let Ok(_guard) = self.source_options_lock.lock() else {
+                return false;
+            };
+            // Pinned `||` reads show_stats first and only then verbose. Each
+            // lazy descriptor retry remains serialized, and any invalid-value
+            // warning is staged until after the descriptor lock is released.
+            let (show_stats, invalid_show_stats) = unsafe {
+                self.source_option_get_unlocked(DIAGNOSTIC_SHOW_STATS)
+            };
+            if let Some(invalid) = invalid_show_stats {
+                unsafe { self.collect_invalid_source_option_unlocked(invalid, &mut pending) };
+            }
+            let (verbose, invalid_verbose) = unsafe {
+                self.source_option_get_unlocked(DIAGNOSTIC_VERBOSE)
+            };
+            if let Some(invalid) = invalid_verbose {
+                unsafe { self.collect_invalid_source_option_unlocked(invalid, &mut pending) };
+            }
+            show_stats != 0 || verbose != 0
+        };
+
+        // SAFETY: descriptor serialization ended above; the caller owns the
+        // same serialized output scope required by raw_message.
+        unsafe { pending.deliver(self) };
+        if !enabled {
+            return false;
+        }
+        // SAFETY: each bounded line remains live for this synchronous default
+        // output dispatch and the enclosing caller owns it.
+        unsafe { render_final_statistics(self, view) };
+        true
+    }
+
+    /// Emits only the common source final verbose tail.
+    ///
+    /// This is pinned `init.c:646`'s `_mi_verbose_message("process done
+    /// %zu\n", sizeof(mi_page_t))` path. It is separate from
+    /// [`Self::final_statistics_output`] because the source places it after
+    /// the process's final PageMap/allocator cleanup and just before it marks
+    /// preloading. It needs only the caller-captured page-record size, never a
+    /// source owner, heap, TLS image, VM state, or normal operation guard.
+    ///
+    /// # Safety
+    ///
+    /// The caller must hold the same retained or exact terminal diagnostic
+    /// authority and serialized output lifetime described by
+    /// [`Self::final_statistics_output`]. It must call this only at the
+    /// source's common final-tail point, after any applicable final statistics
+    /// phase and PageMap retirement.
+    pub(crate) unsafe fn final_process_done_message(&self, page_record_bytes: usize) -> bool {
+        if self.source_options_ready.load(Ordering::Acquire) != 1 {
+            return false;
+        }
+
+        let mut pending = PendingSourceWarnings::new();
+        let verbose = {
+            let Ok(_guard) = self.source_options_lock.lock() else {
+                return false;
+            };
+            let (verbose, invalid_verbose) = unsafe {
+                self.source_option_get_unlocked(DIAGNOSTIC_VERBOSE)
+            };
+            if let Some(invalid) = invalid_verbose {
+                unsafe { self.collect_invalid_source_option_unlocked(invalid, &mut pending) };
+            }
+            verbose
+        };
+        // SAFETY: the descriptor lock was released before any foreign output.
+        unsafe { pending.deliver(self) };
+        if verbose == 0 {
+            return false;
+        }
+        // SAFETY: caller owns the current phase's diagnostic output authority.
+        unsafe { render_final_verbose_tail(self, page_record_bytes) };
+        true
+    }
+
     /// Emits the selected `_mi_warning_message` path.
     ///
     /// # Safety
@@ -1047,12 +1292,329 @@ impl OutputOwner {
     }
 }
 
+/// One bounded source-format line for the final statistics path.
+///
+/// `fmt::Write` is used only as an allocation-free decimal/width primitive.
+/// It cannot expand the selected formatting language: every caller below
+/// names a literal from `stats.c`. `_mi_stats_print` sends that formatted
+/// material through a 255-byte line-buffered callback, so dispatch preserves
+/// that smaller boundary separately from the source `mi_vfprintf` payload
+/// storage used by ordinary diagnostics.
+struct FinalOutputLine {
+    bytes: [u8; SOURCE_FORMAT_STORAGE_BYTES],
+    length: usize,
+}
+
+impl FinalOutputLine {
+    #[inline]
+    const fn new() -> Self {
+        Self { bytes: [0; SOURCE_FORMAT_STORAGE_BYTES], length: 0 }
+    }
+
+    #[inline]
+    fn append_bytes(&mut self, bytes: &[u8]) {
+        let available = SOURCE_FORMAT_PAYLOAD_BYTES.saturating_sub(self.length);
+        let copied = core::cmp::min(available, bytes.len());
+        self.bytes[self.length..self.length + copied].copy_from_slice(&bytes[..copied]);
+        self.length += copied;
+    }
+
+    #[inline]
+    fn append_spaces(&mut self, count: usize) {
+        let available = SOURCE_FORMAT_PAYLOAD_BYTES.saturating_sub(self.length);
+        let count = core::cmp::min(available, count);
+        self.bytes[self.length..self.length + count].fill(b' ');
+        self.length += count;
+    }
+
+    #[inline]
+    fn append_left(&mut self, value: &[u8], width: usize) {
+        self.append_bytes(value);
+        self.append_spaces(width.saturating_sub(value.len()));
+    }
+
+    #[inline]
+    fn append_right(&mut self, value: &[u8], width: usize) {
+        self.append_spaces(width.saturating_sub(value.len()));
+        self.append_bytes(value);
+    }
+
+    #[inline]
+    fn as_message(&self) -> SourceFormattedMessage {
+        SourceFormattedMessage::from_rendered_bytes(&self.bytes[..self.length])
+    }
+}
+
+impl Write for FinalOutputLine {
+    fn write_str(&mut self, value: &str) -> fmt::Result {
+        let available = SOURCE_FORMAT_PAYLOAD_BYTES.saturating_sub(self.length);
+        let copied = core::cmp::min(available, value.len());
+        self.bytes[self.length..self.length + copied].copy_from_slice(&value.as_bytes()[..copied]);
+        self.length += copied;
+        if copied == value.len() { Ok(()) } else { Err(fmt::Error) }
+    }
+}
+
+#[inline]
+unsafe fn emit_final_statistics_line(output: &OutputOwner, line: &FinalOutputLine) {
+    // `_mi_stats_print` wraps its output in `buffered_t { count: 255 }`: it
+    // flushes before the next byte once that many bytes are retained, and
+    // flushes again at every LF. Keep the actual callback boundary here rather
+    // than treating a source statistic row as one generic diagnostic message.
+    const SOURCE_STATISTICS_BUFFER_BYTES: usize = 255;
+    let mut offset = 0;
+    while offset < line.length {
+        let end = core::cmp::min(offset + SOURCE_STATISTICS_BUFFER_BYTES, line.length);
+        // SAFETY: the enclosing final-output adapter owns the serialized
+        // output scope; this slice is copied into source-shaped message
+        // storage before synchronous dispatch.
+        unsafe {
+            output.raw_message(SourceFormattedMessage::from_rendered_bytes(
+                &line.bytes[offset..end],
+            ))
+        };
+        offset = end;
+    }
+}
+
+#[inline]
+fn append_final_amount(line: &mut FinalOutputLine, value: i64, unit: i64, limit_width: bool) {
+    let start = line.length;
+    let suffix = if unit <= 0 { b" ".as_slice() } else { b"B".as_slice() };
+    let base = if unit == 0 { 1_000_i64 } else { 1_024_i64 };
+    let value = if unit > 0 { value.wrapping_mul(unit) } else { value };
+    let magnitude = value.unsigned_abs() as i128;
+    if magnitude < i128::from(base) {
+        if value != 1 || suffix != b"B" {
+            let _ = write!(line, "{value}");
+            line.append_bytes(b"   ");
+            line.append_left(if value == 0 { b"" } else { suffix }, 3);
+        }
+    } else {
+        let mut divider = i128::from(base);
+        let mut magnitude_name = b"K".as_slice();
+        if magnitude >= divider * i128::from(base) {
+            divider *= i128::from(base);
+            magnitude_name = b"M";
+        }
+        if magnitude >= divider * i128::from(base) {
+            divider *= i128::from(base);
+            magnitude_name = b"G";
+        }
+        let tens = i128::from(value) / (divider / 10);
+        let whole = tens / 10;
+        let fractional = (tens % 10).unsigned_abs();
+        let _ = write!(line, "{whole}.{fractional} ");
+        line.append_bytes(magnitude_name);
+        if base == 1_024 { line.append_bytes(b"i"); }
+        line.append_left(suffix, 3usize.saturating_sub(magnitude_name.len() + usize::from(base == 1_024)));
+    }
+    if limit_width {
+        let produced = line.length - start;
+        if produced < 12 {
+            let padding = 12 - produced;
+            line.bytes.copy_within(start..line.length, start + padding);
+            line.bytes[start..start + padding].fill(b' ');
+            line.length += padding;
+        }
+    }
+}
+
+#[inline]
+fn append_final_count(line: &mut FinalOutputLine, value: i64, unit: i64) {
+    if unit == 1 {
+        line.append_spaces(12);
+    } else {
+        append_final_amount(line, value, 0, true);
+    }
+}
+
+#[inline]
+fn emit_final_header(output: &OutputOwner, name: &[u8]) {
+    let mut line = FinalOutputLine::new();
+    line.append_bytes(b" ");
+    line.append_left(name, 11);
+    for column in [b"peak   ".as_slice(), b"total   ", b"current   ", b"block   ", b"total#   "] {
+        // Each `%11s` in the pinned header has its own literal leading space.
+        line.append_bytes(b" ");
+        line.append_right(column, 11);
+    }
+    line.append_bytes(b"\n");
+    // SAFETY: this helper is called only by the enclosing adapter's serialized
+    // output scope.
+    unsafe { emit_final_statistics_line(output, &line) };
+}
+
+#[inline]
+fn emit_final_stat(output: &OutputOwner, statistic: FinalStatCount, name: &[u8], unit: i64, not_ok: &[u8]) {
+    let mut line = FinalOutputLine::new();
+    line.append_bytes(b"  ");
+    line.append_left(name, 10);
+    line.append_bytes(b":");
+    if unit != 0 {
+        if unit > 0 {
+            append_final_amount(&mut line, statistic.peak, unit, true);
+            append_final_amount(&mut line, statistic.total, unit, true);
+            append_final_amount(&mut line, statistic.current, unit, true);
+            append_final_amount(&mut line, unit, 1, true);
+            append_final_count(&mut line, statistic.total, unit);
+        } else {
+            append_final_amount(&mut line, statistic.peak, -1, true);
+            append_final_amount(&mut line, statistic.total, -1, true);
+            append_final_amount(&mut line, statistic.current, -1, true);
+            if unit == -1 {
+                line.append_spaces(24);
+            } else {
+                append_final_amount(&mut line, -unit, 1, true);
+                append_final_count(&mut line, statistic.total / -unit, 0);
+            }
+        }
+        if statistic.current != 0 {
+            line.append_bytes(b"  ");
+            line.append_bytes(not_ok);
+            line.append_bytes(b"\n");
+        } else {
+            line.append_bytes(b"  ok\n");
+        }
+    } else {
+        append_final_amount(&mut line, statistic.peak, 0, true);
+        append_final_amount(&mut line, statistic.total, 0, true);
+        append_final_amount(&mut line, statistic.current, 0, true);
+        line.append_bytes(b"\n");
+    }
+    // SAFETY: this helper is called only by the enclosing adapter's serialized
+    // output scope.
+    unsafe { emit_final_statistics_line(output, &line) };
+}
+
+#[inline]
+fn emit_final_counter(output: &OutputOwner, value: i64, name: &[u8], unit: i64) {
+    let mut line = FinalOutputLine::new();
+    line.append_bytes(b"  ");
+    line.append_left(name, 10);
+    line.append_bytes(b":");
+    append_final_amount(&mut line, value, unit, true);
+    line.append_bytes(b"\n");
+    // SAFETY: this helper is called only by the enclosing adapter's serialized
+    // output scope.
+    unsafe { emit_final_statistics_line(output, &line) };
+}
+
+#[inline]
+fn emit_final_average(output: &OutputOwner, count: i64, total: i64, name: &[u8]) {
+    let average_tens = if count == 0 { 0 } else { total.wrapping_mul(10) / count };
+    let mut line = FinalOutputLine::new();
+    line.append_bytes(b"  ");
+    line.append_left(name, 10);
+    let _ = write!(line, ": {:>5}.{} avg\n", average_tens / 10, (average_tens % 10).unsigned_abs());
+    // SAFETY: this helper is called only by the enclosing adapter's serialized
+    // output scope.
+    unsafe { emit_final_statistics_line(output, &line) };
+}
+
+unsafe fn render_final_statistics(output: &OutputOwner, view: FinalProcessDiagnosticView) {
+    let statistics = view.statistics;
+    let process = view.process;
+    let mut line = FinalOutputLine::new();
+    let _ = write!(line, "subproc {}\n", view.subprocess_sequence);
+    unsafe { emit_final_statistics_line(output, &line) };
+
+    // `MI_STAT == 0` keeps the malloc section structurally present but emits
+    // no lines.  The pages and arena sections retain their source guards.
+    if statistics.pages.total != 0 {
+        emit_final_header(output, b"pages");
+        // `stats.c` supplies `""`, not NULL, for this explicit display
+        // branch. A live final allocation therefore leaves its status field
+        // blank instead of saying `not all freed`.
+        emit_final_stat(output, statistics.page_committed, b"touched", 1, FINAL_EXPLICIT_EMPTY_NOT_OK);
+        emit_final_stat(output, statistics.pages, b"pages", 0, FINAL_NOT_ALL_FREED);
+        emit_final_stat(output, statistics.pages_abandoned, b"abandoned", 0, FINAL_NOT_ALL_FREED);
+        emit_final_counter(output, statistics.pages_reclaim_on_alloc, b"reclaima", 0);
+        emit_final_counter(output, statistics.pages_reclaim_on_free, b"reclaimf", 0);
+        emit_final_counter(output, statistics.pages_reabandon_full, b"reabandon", 0);
+        emit_final_counter(output, statistics.pages_unabandon_busy_wait, b"waits", 0);
+        emit_final_counter(output, statistics.pages_extended, b"extended", 0);
+        emit_final_counter(output, statistics.pages_retire, b"retire", 0);
+        emit_final_average(output, statistics.page_searches_count, statistics.page_searches, b"searches");
+        let mut separator = FinalOutputLine::new();
+        separator.append_bytes(b"\n");
+        unsafe { emit_final_statistics_line(output, &separator) };
+    }
+
+    if statistics.arena_count > 0 {
+        emit_final_header(output, b"arenas");
+        emit_final_stat(output, statistics.reserved, b"reserved", 1, FINAL_EXPLICIT_EMPTY_NOT_OK);
+        emit_final_stat(output, statistics.committed, b"committed", 1, FINAL_EXPLICIT_EMPTY_NOT_OK);
+        emit_final_counter(output, statistics.reset, b"reset", 1);
+        emit_final_counter(output, statistics.purged, b"purged", 1);
+        emit_final_counter(output, statistics.arena_count, b"arenas", 0);
+        emit_final_counter(output, statistics.arena_rollback_count, b"rollback", 0);
+        emit_final_counter(output, statistics.mmap_calls, b"mmaps", 0);
+        emit_final_counter(output, statistics.commit_calls, b"commits", 0);
+        emit_final_counter(output, statistics.reset_calls, b"resets", 0);
+        emit_final_counter(output, statistics.purge_calls, b"purges", 0);
+        emit_final_counter(output, statistics.malloc_guarded_count, b"guarded", 0);
+        emit_final_stat(output, statistics.theaps, b"theaps", 0, FINAL_EXPLICIT_EMPTY_NOT_OK);
+        emit_final_stat(output, statistics.heaps, b"heaps", 0, FINAL_EXPLICIT_EMPTY_NOT_OK);
+        emit_final_counter(output, statistics.heaps_delete_wait, b"heap waits", 0);
+        let mut separator = FinalOutputLine::new();
+        separator.append_bytes(b"\n");
+        unsafe { emit_final_statistics_line(output, &separator) };
+    }
+
+    emit_final_header(output, b"process");
+    emit_final_stat(output, statistics.threads, b"threads", 0, FINAL_EXPLICIT_EMPTY_NOT_OK);
+    let mut numa = FinalOutputLine::new();
+    numa.append_bytes(b"  ");
+    numa.append_left(b"numa nodes", 10);
+    let _ = write!(numa, ": {:>5}\n", process.numa_nodes);
+    unsafe { emit_final_statistics_line(output, &numa) };
+
+    let mut elapsed = FinalOutputLine::new();
+    elapsed.append_bytes(b"  ");
+    elapsed.append_left(b"elapsed", 10);
+    let _ = write!(elapsed, ": {:>5}.{:03} s\n", process.elapsed_milliseconds / 1_000, process.elapsed_milliseconds % 1_000);
+    unsafe { emit_final_statistics_line(output, &elapsed) };
+
+    let mut process_line = FinalOutputLine::new();
+    process_line.append_bytes(b"  ");
+    process_line.append_left(b"process", 10);
+    let _ = write!(
+        process_line,
+        ": user: {}.{:03} s, system: {}.{:03} s, faults: {}, peak rss: ",
+        process.user_milliseconds / 1_000,
+        process.user_milliseconds % 1_000,
+        process.system_milliseconds / 1_000,
+        process.system_milliseconds % 1_000,
+        process.page_faults,
+    );
+    append_final_amount(&mut process_line, process.peak_resident_bytes as i64, 1, false);
+    if statistics.committed.peak > 0 {
+        process_line.append_bytes(b", peak commit: ");
+        append_final_amount(&mut process_line, statistics.committed.peak, 1, false);
+    }
+    process_line.append_bytes(b"\n");
+    unsafe { emit_final_statistics_line(output, &process_line) };
+    let mut separator = FinalOutputLine::new();
+    separator.append_bytes(b"\n");
+    unsafe { emit_final_statistics_line(output, &separator) };
+}
+
+unsafe fn render_final_verbose_tail(output: &OutputOwner, page_record_bytes: usize) {
+    let mut line = FinalOutputLine::new();
+    let _ = write!(line, "mimalloc: process done {page_record_bytes}\n");
+    // SAFETY: `_mi_verbose_message` dispatches its one complete message
+    // directly. Unlike statistics it has no 255-byte buffered wrapper.
+    unsafe { output.raw_message(line.as_message()) };
+}
+
 fn invalid_diagnostic_option_message(index: usize) -> SourceFormattedMessage {
     let message = match index {
         DIAGNOSTIC_SHOW_ERRORS => b"environment option mimalloc_show_errors has an invalid value.\n\0".as_slice(),
+        DIAGNOSTIC_SHOW_STATS => b"environment option mimalloc_show_stats has an invalid value.\n\0".as_slice(),
         DIAGNOSTIC_VERBOSE => b"environment option mimalloc_verbose has an invalid value.\n\0".as_slice(),
         DIAGNOSTIC_MAX_WARNINGS => b"environment option mimalloc_max_warnings has an invalid value.\n\0".as_slice(),
-        _ => unreachable!("only the fixed three source descriptors are selectable"),
+        _ => unreachable!("only the fixed selected source descriptors are selectable"),
     };
     // SAFETY: each fixed source message is NUL-terminated and has no interior
     // NUL, matching the fixed `mi_option_init` literals.
@@ -1115,8 +1677,12 @@ mod tests {
     extern crate std;
 
     use super::{
-        DiagnosticOptionSnapshot, OutputCallback, OutputOwner, SourceFormattedMessage,
-        ThreadWarningPrefix,
+        DiagnosticOptionSnapshot, FinalProcessDiagnosticView, FinalProcessInfo, OutputCallback,
+        OutputOwner, SourceFormattedMessage, ThreadWarningPrefix,
+    };
+    use crate::{
+        os::ProcessUsage,
+        statistics::{FinalStatCount, FinalStatisticsSnapshot},
     };
     use crabc_core::{Errno, thread::thread_pointer_identity};
     use core::cell::UnsafeCell;
@@ -1205,15 +1771,15 @@ mod tests {
     static DIAGNOSTIC_ENVIRONMENT_TEST_LOCK: Mutex<()> = Mutex::new(());
     static DIAGNOSTIC_ENVIRONMENT_CALLS: AtomicUsize = AtomicUsize::new(0);
     static DIAGNOSTIC_ENVIRONMENT_MODE: AtomicUsize = AtomicUsize::new(0);
-    static mut DIAGNOSTIC_ENVIRONMENT_ENTRIES: [*const c_char; 4] = [core::ptr::null(); 4];
+    static mut DIAGNOSTIC_ENVIRONMENT_ENTRIES: [*const c_char; 5] = [core::ptr::null(); 5];
 
     const DIAGNOSTIC_ENV_FIXED: usize = 0;
-    const DIAGNOSTIC_ENV_THREE_UNAVAILABLE_THEN_VERBOSE: usize = 1;
+    const DIAGNOSTIC_ENV_FOUR_UNAVAILABLE_THEN_VERBOSE: usize = 1;
 
     unsafe fn diagnostic_test_environment_reader() -> *const *const c_char {
         let call = DIAGNOSTIC_ENVIRONMENT_CALLS.fetch_add(1, Ordering::Relaxed) + 1;
         if DIAGNOSTIC_ENVIRONMENT_MODE.load(Ordering::Relaxed)
-            == DIAGNOSTIC_ENV_THREE_UNAVAILABLE_THEN_VERBOSE && call <= 3
+            == DIAGNOSTIC_ENV_FOUR_UNAVAILABLE_THEN_VERBOSE && call <= 4
         {
             return core::ptr::null();
         }
@@ -1224,7 +1790,7 @@ mod tests {
 
     unsafe fn install_diagnostic_test_environment(
         mode: usize,
-        entries: [*const c_char; 4],
+        entries: [*const c_char; 5],
     ) {
         // SAFETY: callers hold DIAGNOSTIC_ENVIRONMENT_TEST_LOCK and no route
         // can outlive the test's synchronous initialization/dispatch.
@@ -1257,6 +1823,68 @@ mod tests {
         SourceFormattedMessage::from_source_formatted(
             CStr::from_bytes_with_nul(bytes).expect("test messages are NUL-terminated"),
         )
+    }
+
+    const fn final_stat_count(peak: i64, total: i64, current: i64) -> FinalStatCount {
+        FinalStatCount { peak, total, current }
+    }
+
+    fn final_statistics_fixture() -> FinalStatisticsSnapshot {
+        FinalStatisticsSnapshot {
+            pages: final_stat_count(5, 7, 2),
+            page_committed: final_stat_count(6_144, 5_120, 4_096),
+            pages_abandoned: final_stat_count(1, 2, 0),
+            threads: final_stat_count(2, 2, 1),
+            reserved: final_stat_count(2_048, 3_072, 1_024),
+            committed: final_stat_count(2_048, 3_072, 1_024),
+            theaps: final_stat_count(2, 2, 1),
+            heaps: final_stat_count(3, 3, 1),
+            reset: 1_024,
+            purged: 2_048,
+            mmap_calls: 3,
+            commit_calls: 4,
+            reset_calls: 5,
+            purge_calls: 6,
+            arena_count: 1,
+            malloc_guarded_count: 7,
+            arena_rollback_count: 2,
+            pages_reclaim_on_alloc: 3,
+            pages_reclaim_on_free: 4,
+            pages_reabandon_full: 5,
+            pages_unabandon_busy_wait: 6,
+            pages_extended: 7,
+            pages_retire: 8,
+            page_searches: 9,
+            page_searches_count: 2,
+            heaps_delete_wait: 8,
+        }
+    }
+
+    fn final_process_view() -> FinalProcessDiagnosticView {
+        FinalProcessDiagnosticView::new(
+            7,
+            final_statistics_fixture(),
+            FinalProcessInfo::new(12_345, 5_678, 91_011, 4_096, 12, 3),
+        )
+    }
+
+    fn install_final_output_environment(show_stats: &[u8], verbose: &[u8]) {
+        let show_errors = b"mimalloc_show_errors=0\0";
+        let max_warnings = b"mimalloc_max_warnings=32\0";
+        // SAFETY: every caller holds DIAGNOSTIC_ENVIRONMENT_TEST_LOCK and
+        // keeps the fixed input byte strings live through its synchronous use.
+        unsafe {
+            install_diagnostic_test_environment(
+                DIAGNOSTIC_ENV_FIXED,
+                [
+                    show_errors.as_ptr().cast(),
+                    show_stats.as_ptr().cast(),
+                    verbose.as_ptr().cast(),
+                    max_warnings.as_ptr().cast(),
+                    core::ptr::null(),
+                ],
+            )
+        };
     }
 
     struct LengthCapture {
@@ -1333,7 +1961,10 @@ mod tests {
         unsafe {
             install_diagnostic_test_environment(
                 DIAGNOSTIC_ENV_FIXED,
-                [show_errors.as_ptr().cast(), verbose.as_ptr().cast(), core::ptr::null(), core::ptr::null()],
+                [
+                    show_errors.as_ptr().cast(), verbose.as_ptr().cast(),
+                    core::ptr::null(), core::ptr::null(), core::ptr::null(),
+                ],
             )
         };
         let mut owner = output_owner();
@@ -1346,7 +1977,7 @@ mod tests {
         // completed; the reader uses the test's stable raw vector.
         unsafe { owner.initialize_source_options(diagnostic_test_environment_reader) };
 
-        assert_eq!(DIAGNOSTIC_ENVIRONMENT_CALLS.load(Ordering::Relaxed), 3);
+        assert_eq!(DIAGNOSTIC_ENVIRONMENT_CALLS.load(Ordering::Relaxed), 4);
         assert_eq!(capture.count(), 2);
         assert_live_thread_warning_prefix(capture.message(0));
         assert_eq!(
@@ -1363,12 +1994,15 @@ mod tests {
             .expect("diagnostic environment test lock is not poisoned");
         let show_errors = b"mimalloc_show_errors=0\0";
         let verbose = b"mimalloc_verbose=1\0";
-        // The three startup reads are unavailable. The first warning retry may
+        // The four startup reads are unavailable. The first warning retry may
         // resolve only verbose: enabled verbose bypasses show_errors entirely.
         unsafe {
             install_diagnostic_test_environment(
-                DIAGNOSTIC_ENV_THREE_UNAVAILABLE_THEN_VERBOSE,
-                [show_errors.as_ptr().cast(), verbose.as_ptr().cast(), core::ptr::null(), core::ptr::null()],
+                DIAGNOSTIC_ENV_FOUR_UNAVAILABLE_THEN_VERBOSE,
+                [
+                    show_errors.as_ptr().cast(), verbose.as_ptr().cast(),
+                    core::ptr::null(), core::ptr::null(), core::ptr::null(),
+                ],
             )
         };
         let mut owner = output_owner();
@@ -1382,7 +2016,7 @@ mod tests {
         // the one source descriptor retry.
         unsafe { owner.warning_from_source_options(source_message(b"mbind retry\n\0")) };
 
-        assert_eq!(DIAGNOSTIC_ENVIRONMENT_CALLS.load(Ordering::Relaxed), 4);
+        assert_eq!(DIAGNOSTIC_ENVIRONMENT_CALLS.load(Ordering::Relaxed), 5);
         assert_eq!(capture.count(), 2);
         assert_live_thread_warning_prefix(capture.message(0));
         assert_eq!(capture.message(1), b"mbind retry\n");
@@ -1421,7 +2055,10 @@ mod tests {
         unsafe {
             install_diagnostic_test_environment(
                 DIAGNOSTIC_ENV_FIXED,
-                [show_errors.as_ptr().cast(), verbose.as_ptr().cast(), max_warnings.as_ptr().cast(), core::ptr::null()],
+                [
+                    show_errors.as_ptr().cast(), verbose.as_ptr().cast(), max_warnings.as_ptr().cast(),
+                    core::ptr::null(), core::ptr::null(),
+                ],
             )
         };
         let mut owner = output_owner();
@@ -1450,6 +2087,167 @@ mod tests {
     }
 
     #[test]
+    fn final_process_info_clamps_the_source_signed_time_scalars() {
+        let usage = ProcessUsage {
+            user_milliseconds: -1,
+            system_milliseconds: i64::MAX,
+            peak_resident_bytes: 4_096,
+            major_page_faults: 7,
+        };
+        assert_eq!(
+            FinalProcessInfo::from_source_observations(-1, usage, 3),
+            FinalProcessInfo::new(0, 0, isize::MAX as usize, 4_096, 7, 3),
+            "stats.c clamps elapsed, user, and system before its size_t formatter",
+        );
+    }
+
+    #[test]
+    fn signed_show_stats_emits_the_pinned_final_statistics_layout() {
+        let _environment_guard = DIAGNOSTIC_ENVIRONMENT_TEST_LOCK
+            .lock()
+            .expect("diagnostic environment test lock is not poisoned");
+        let show_stats = b"mimalloc_show_stats=-7\0";
+        let verbose = b"mimalloc_verbose=0\0";
+        install_final_output_environment(show_stats, verbose);
+        let mut owner = output_owner();
+        // SAFETY: this test owns the fixed environment through initialization.
+        unsafe { owner.initialize_source_options(diagnostic_test_environment_reader) };
+        let capture = Capture::new();
+        // SAFETY: the callback remains live and registration is serialized.
+        unsafe { owner.register_output(Some(capture_output), capture_argument(&capture)) };
+        capture.reset();
+
+        // SAFETY: this test supplies the completed source-order scalar image
+        // and serializes final output with registration.
+        assert!(unsafe { owner.final_statistics_output(final_process_view()) });
+        // SAFETY: verbose is zero in the same selected source option image.
+        assert!(!unsafe { owner.final_process_done_message(97) });
+
+        let expected: &[&[u8]] = &[
+            b"subproc 7\n",
+            b" pages           peak       total     current       block      total#   \n",
+            b"  touched   :     6.0 KiB     5.0 KiB     4.0 KiB                          \n",
+            b"  pages     :     5           7           2      \n",
+            b"  abandoned :     1           2           0      \n",
+            b"  reclaima  :     3      \n",
+            b"  reclaimf  :     4      \n",
+            b"  reabandon :     5      \n",
+            b"  waits     :     6      \n",
+            b"  extended  :     7      \n",
+            b"  retire    :     8      \n",
+            b"  searches  :     4.5 avg\n",
+            b"\n",
+            b" arenas          peak       total     current       block      total#   \n",
+            b"  reserved  :     2.0 KiB     3.0 KiB     1.0 KiB                          \n",
+            b"  committed :     2.0 KiB     3.0 KiB     1.0 KiB                          \n",
+            b"  reset     :     1.0 KiB\n",
+            b"  purged    :     2.0 KiB\n",
+            b"  arenas    :     1      \n",
+            b"  rollback  :     2      \n",
+            b"  mmaps     :     3      \n",
+            b"  commits   :     4      \n",
+            b"  resets    :     5      \n",
+            b"  purges    :     6      \n",
+            b"  guarded   :     7      \n",
+            b"  theaps    :     2           2           1      \n",
+            b"  heaps     :     3           3           1      \n",
+            b"  heap waits:     8      \n",
+            b"\n",
+            b" process         peak       total     current       block      total#   \n",
+            b"  threads   :     2           2           1      \n",
+            b"  numa nodes:     3\n",
+            b"  elapsed   :    12.345 s\n",
+            b"  process   : user: 5.678 s, system: 91.011 s, faults: 12, peak rss: 4.0 KiB, peak commit: 2.0 KiB\n",
+            b"\n",
+        ];
+        assert_eq!(capture.count(), expected.len());
+        for (index, expected) in expected.iter().enumerate() {
+            assert_eq!(capture.message(index), *expected, "source final line {index}");
+        }
+    }
+
+    #[test]
+    fn verbose_final_statistics_precede_the_common_process_done_message() {
+        let _environment_guard = DIAGNOSTIC_ENVIRONMENT_TEST_LOCK
+            .lock()
+            .expect("diagnostic environment test lock is not poisoned");
+        let show_stats = b"mimalloc_show_stats=0\0";
+        let verbose = b"mimalloc_verbose=-1\0";
+        install_final_output_environment(show_stats, verbose);
+        let mut owner = output_owner();
+        // SAFETY: this test owns the fixed environment through initialization.
+        unsafe { owner.initialize_source_options(diagnostic_test_environment_reader) };
+        let capture = Capture::new();
+        // SAFETY: the callback remains live and registration is serialized.
+        unsafe { owner.register_output(Some(capture_output), capture_argument(&capture)) };
+        capture.reset();
+
+        // SAFETY: the view is complete and this test owns the current output phase.
+        assert!(unsafe { owner.final_statistics_output(final_process_view()) });
+        let statistics_lines = capture.count();
+        // SAFETY: this is the later init.c common-tail phase, after statistics.
+        assert!(unsafe { owner.final_process_done_message(97) });
+        assert_eq!(statistics_lines, 35);
+        assert_eq!(capture.count(), statistics_lines + 1);
+        assert_eq!(capture.message(statistics_lines - 1), b"\n");
+        assert_eq!(capture.message(statistics_lines), b"mimalloc: process done 97\n");
+    }
+
+    #[test]
+    fn final_statistics_release_the_descriptor_lock_before_output_callback() {
+        let _environment_guard = DIAGNOSTIC_ENVIRONMENT_TEST_LOCK
+            .lock()
+            .expect("diagnostic environment test lock is not poisoned");
+        let show_stats = b"mimalloc_show_stats=1\0";
+        let verbose = b"mimalloc_verbose=0\0";
+        install_final_output_environment(show_stats, verbose);
+        let mut owner = output_owner();
+        // SAFETY: this test owns the fixed environment through initialization.
+        unsafe { owner.initialize_source_options(diagnostic_test_environment_reader) };
+        let capture = SourceOptionsLockCapture {
+            capture: Capture::new(),
+            owner: &owner,
+            observed_available: AtomicBool::new(false),
+        };
+        // SAFETY: the callback remains live and this output phase is serialized.
+        unsafe {
+            owner.register_output(
+                Some(capture_source_options_lock),
+                &capture as *const SourceOptionsLockCapture as *mut c_void,
+            )
+        };
+        capture.capture.reset();
+
+        // SAFETY: no registration overlaps this completed scalar output phase.
+        assert!(unsafe { owner.final_statistics_output(final_process_view()) });
+        assert_eq!(capture.capture.count(), 35);
+        assert!(capture.observed_available.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn disabled_final_statistics_and_verbose_tail_emit_nothing() {
+        let _environment_guard = DIAGNOSTIC_ENVIRONMENT_TEST_LOCK
+            .lock()
+            .expect("diagnostic environment test lock is not poisoned");
+        let show_stats = b"mimalloc_show_stats=0\0";
+        let verbose = b"mimalloc_verbose=0\0";
+        install_final_output_environment(show_stats, verbose);
+        let mut owner = output_owner();
+        // SAFETY: this test owns the fixed environment through initialization.
+        unsafe { owner.initialize_source_options(diagnostic_test_environment_reader) };
+        let capture = Capture::new();
+        // SAFETY: the callback remains live and registration is serialized.
+        unsafe { owner.register_output(Some(capture_output), capture_argument(&capture)) };
+        capture.reset();
+
+        // SAFETY: these source phases are serialized with registration.
+        assert!(!unsafe { owner.final_statistics_output(final_process_view()) });
+        // SAFETY: these source phases are serialized with registration.
+        assert!(!unsafe { owner.final_process_done_message(97) });
+        assert_eq!(capture.count(), 0);
+    }
+
+    #[test]
     fn default_dispatch_and_registration_are_explicitly_unsafe_contracts() {
         let _ = OutputOwner::register_output
             as unsafe fn(&OutputOwner, Option<OutputCallback>, *mut c_void);
@@ -1457,6 +2255,9 @@ mod tests {
         let _ = OutputOwner::raw_message as unsafe fn(&OutputOwner, SourceFormattedMessage);
         let _ = OutputOwner::warning
             as unsafe fn(&OutputOwner, DiagnosticOptionSnapshot, SourceFormattedMessage);
+        let _ = OutputOwner::final_statistics_output
+            as unsafe fn(&OutputOwner, FinalProcessDiagnosticView) -> bool;
+        let _ = OutputOwner::final_process_done_message as unsafe fn(&OutputOwner, usize) -> bool;
     }
 
     #[test]
@@ -1976,6 +2777,29 @@ mod tests {
         print_trace_capture("post_init", &post_capture);
 
         std::println!("CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_TRACE_END");
+        let _environment_guard = DIAGNOSTIC_ENVIRONMENT_TEST_LOCK
+            .lock()
+            .expect("diagnostic environment test lock is not poisoned");
+        let show_stats = b"mimalloc_show_stats=-7\0";
+        let verbose = b"mimalloc_verbose=-1\0";
+        install_final_output_environment(show_stats, verbose);
+        let mut final_owner = output_owner();
+        // SAFETY: the fixed source environment remains live and locked for
+        // initialization plus this complete final-output trace.
+        unsafe { final_owner.initialize_source_options(diagnostic_test_environment_reader) };
+        let final_capture = Capture::new();
+        // SAFETY: the fixed custom route remains live and no registration
+        // overlaps either source-ordered final output phase.
+        unsafe { final_owner.register_output(Some(capture_output), capture_argument(&final_capture)) };
+        final_capture.reset();
+        // SAFETY: this test passes the already captured scalar image through
+        // the distinct stats.c and init.c tail phases in source order.
+        assert!(unsafe { final_owner.final_statistics_output(final_process_view()) });
+        assert!(unsafe { final_owner.final_process_done_message(97) });
+        std::println!("CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_FINAL_STATISTICS_BEGIN");
+        print_trace_capture("final_stats", &final_capture);
+        std::println!("CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_FINAL_STATISTICS_END");
+        drop(_environment_guard);
         std::println!("CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_THREAD_IDENTITIES_BEGIN");
         print_trace_thread_identity("release", release_thread_identity);
         print_trace_thread_identity("enabled", enabled_thread_identity);

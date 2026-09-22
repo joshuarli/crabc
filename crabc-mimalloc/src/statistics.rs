@@ -4,7 +4,7 @@
 // "LICENSE" at the root of this distribution.
 // SPDX-License-Identifier: MIT
 //
-// Source map: pinned mimalloc v3.5.0 `src/stats.c:25-63`,
+// Source map: pinned mimalloc v3.5.0 `src/stats.c:25-63,356-430,436-447,568-597`,
 // `include/mimalloc-stats.h:29-116`, and
 // `include/mimalloc/internal.h:394-398`.
 
@@ -28,6 +28,39 @@ const STAT_VERSION: usize = 5;
 const STAT_BIN_COUNT: usize = BIN_HUGE + 1;
 /// `MI_CBIN_COUNT` in the pinned v3.5.0 `mimalloc-stats.h` enum.
 const STAT_CHUNK_BIN_COUNT: usize = 6;
+
+/// Pinned `stats.c`'s one process-wide `mi_process_start` scalar.
+///
+/// The value is deliberately separate from the private per-owner statistics
+/// images. `init.c` initializes it after option parsing and before `_mi_os_init`;
+/// final output reads the elapsed value at its actual source print edge.
+static PROCESS_START_MILLISECONDS: AtomicI64Value = AtomicI64Value::new(0);
+
+/// Mirrors `_mi_stats_init`: initialize the source process clock once when
+/// its current scalar is zero.
+///
+/// The source state itself is a plain static reached during process
+/// initialization. This private Rust operation preserves that zero-sentinel
+/// rule and relies on the process owner's single initialization transition;
+/// it is not a general clock or synchronization API.
+#[inline]
+pub(crate) fn initialize_process_clock() {
+    if i64_load_relaxed(&PROCESS_START_MILLISECONDS) == 0 {
+        i64_store_relaxed(
+            &PROCESS_START_MILLISECONDS,
+            crate::os::source_process_clock_start(),
+        );
+    }
+}
+
+/// Mirrors `mi_process_info`'s `_mi_clock_end(mi_process_start)` observation.
+///
+/// The process owner calls this at the final statistics print edge. It has no
+/// heap, Theap, TLS, VM, or lifecycle effect.
+#[inline]
+pub(crate) fn process_elapsed_msecs() -> i64 {
+    crate::os::source_process_clock_end(i64_load_relaxed(&PROCESS_START_MILLISECONDS))
+}
 
 /// Source `mi_stat_count_t` using `mi_stat_update_mt`'s relaxed update order.
 #[repr(C)]
@@ -361,6 +394,67 @@ pub(crate) struct HeapTheapStatisticsSnapshot {
     pub(crate) pages_reclaim_on_free: i64,
     pub(crate) page_bin_total: [i64; STAT_BIN_COUNT],
     pub(crate) page_bin_current: [i64; STAT_BIN_COUNT],
+}
+
+/// One scalar copy of the source `mi_stat_count_t` fields used by the final
+/// process-output adapter.
+///
+/// `stats.c` reads every member independently with relaxed loads before it
+/// formats a line.  This is therefore deliberately a captured display input,
+/// not a transactional snapshot and not a public `mi_stats_t` representation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct FinalStatCount {
+    pub(crate) peak: i64,
+    pub(crate) total: i64,
+    pub(crate) current: i64,
+}
+
+/// The exact `MI_STAT == 0` field subset consumed by `stats.c`'s process-end
+/// display path.
+///
+/// The renderer never reads a Heap, Theap, subprocess, VM policy, or TLS root.
+/// Its process-state caller captures this scalar image only after it has
+/// completed the source-prescribed merge order.  Fields whose `MI_STAT == 0`
+/// branches cannot print are intentionally absent; this is neither a general
+/// statistics callback API nor a replacement for [`HeapTheapStatistics`]'s
+/// complete private source layout.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct FinalStatisticsSnapshot {
+    pub(crate) pages: FinalStatCount,
+    pub(crate) page_committed: FinalStatCount,
+    pub(crate) pages_abandoned: FinalStatCount,
+    pub(crate) threads: FinalStatCount,
+    pub(crate) reserved: FinalStatCount,
+    pub(crate) committed: FinalStatCount,
+    pub(crate) theaps: FinalStatCount,
+    pub(crate) heaps: FinalStatCount,
+    pub(crate) reset: i64,
+    pub(crate) purged: i64,
+    pub(crate) mmap_calls: i64,
+    pub(crate) commit_calls: i64,
+    pub(crate) reset_calls: i64,
+    pub(crate) purge_calls: i64,
+    pub(crate) arena_count: i64,
+    pub(crate) malloc_guarded_count: i64,
+    pub(crate) arena_rollback_count: i64,
+    pub(crate) pages_reclaim_on_alloc: i64,
+    pub(crate) pages_reclaim_on_free: i64,
+    pub(crate) pages_reabandon_full: i64,
+    pub(crate) pages_unabandon_busy_wait: i64,
+    pub(crate) pages_extended: i64,
+    pub(crate) pages_retire: i64,
+    pub(crate) page_searches: i64,
+    pub(crate) page_searches_count: i64,
+    pub(crate) heaps_delete_wait: i64,
+}
+
+#[inline]
+fn final_stat_count(stat: &StatCount) -> FinalStatCount {
+    FinalStatCount {
+        peak: i64_load_relaxed(&stat.peak),
+        total: i64_load_relaxed(&stat.total),
+        current: i64_load_relaxed(&stat.current),
+    }
 }
 
 impl HeapTheapStatistics {
@@ -738,6 +832,45 @@ impl HeapTheapStatistics {
             page_bin_current,
         }
     }
+
+    /// Captures only the selected release-profile values that `stats.c` can
+    /// render at final process output.
+    ///
+    /// The caller owns the source lifecycle exclusion and the preceding
+    /// Theap/Heap-to-subprocess merges.  Each field remains a separate relaxed
+    /// load, matching `stats.c`; no lock, mutation, or owner capability is
+    /// acquired here.
+    #[inline]
+    pub(crate) fn final_output_snapshot(&self) -> FinalStatisticsSnapshot {
+        FinalStatisticsSnapshot {
+            pages: final_stat_count(&self.pages),
+            page_committed: final_stat_count(&self.page_committed),
+            pages_abandoned: final_stat_count(&self.pages_abandoned),
+            threads: final_stat_count(&self.threads),
+            reserved: final_stat_count(&self.reserved),
+            committed: final_stat_count(&self.committed),
+            theaps: final_stat_count(&self.theaps),
+            heaps: final_stat_count(&self.heaps),
+            reset: i64_load_relaxed(&self.reset.total),
+            purged: i64_load_relaxed(&self.purged.total),
+            mmap_calls: i64_load_relaxed(&self.mmap_calls.total),
+            commit_calls: i64_load_relaxed(&self.commit_calls.total),
+            reset_calls: i64_load_relaxed(&self.reset_calls.total),
+            purge_calls: i64_load_relaxed(&self.purge_calls.total),
+            arena_count: i64_load_relaxed(&self.arena_count.total),
+            malloc_guarded_count: i64_load_relaxed(&self.malloc_guarded_count.total),
+            arena_rollback_count: i64_load_relaxed(&self.arena_rollback_count.total),
+            pages_reclaim_on_alloc: i64_load_relaxed(&self.pages_reclaim_on_alloc.total),
+            pages_reclaim_on_free: i64_load_relaxed(&self.pages_reclaim_on_free.total),
+            pages_reabandon_full: i64_load_relaxed(&self.pages_reabandon_full.total),
+            pages_unabandon_busy_wait: i64_load_relaxed(&self.pages_unabandon_busy_wait.total),
+            pages_extended: i64_load_relaxed(&self.pages_extended.total),
+            pages_retire: i64_load_relaxed(&self.pages_retire.total),
+            page_searches: i64_load_relaxed(&self.page_searches.total),
+            page_searches_count: i64_load_relaxed(&self.page_searches_count.total),
+            heaps_delete_wait: i64_load_relaxed(&self.heaps_delete_wait.total),
+        }
+    }
 }
 
 /// The VM-event projection into one shared subprocess `mi_stats_t`.
@@ -912,6 +1045,13 @@ impl SubprocessStatistics {
     #[inline]
     pub(crate) fn source_snapshot(&self) -> HeapTheapStatisticsSnapshot {
         self.statistics.snapshot()
+    }
+
+    /// Captures the renderer-only scalar view after the process owner has
+    /// completed its source-ordered final statistics merges.
+    #[inline]
+    pub(crate) fn final_output_snapshot(&self) -> FinalStatisticsSnapshot {
+        self.statistics.final_output_snapshot()
     }
 
     /// Merges a source Heap record into this owning subprocess and resets it.

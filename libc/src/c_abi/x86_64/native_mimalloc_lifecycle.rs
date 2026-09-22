@@ -23,6 +23,7 @@ use crabc_mimalloc::__crabc_runtime::{
     native_process_done_action, prepare_native_process_destroy,
     retain_current_thread_native_owner_after_process_done_nonfinal,
     reinitialize_current_thread_native_owner_for_final_process_exit,
+    with_native_allocator_diagnostic_callback,
 };
 #[cfg(feature = "native-mimalloc-shadow-process-done-exit-test-audit")]
 use crabc_mimalloc::__crabc_runtime::{
@@ -63,8 +64,19 @@ pub(super) enum SelectedWorkerNativeFinish {
 /// after the initial TLS and `environ` owners exist, before constructors can
 /// start another selected worker.
 unsafe extern "C" fn runtime_stderr_output(message: *const c_char) {
-    let stream = unsafe { super::stdio_standard::stderr };
-    let _ = unsafe { super::stdio_standard::fputs(message, stream) };
+    // Publish the descriptor-local callback marker before acquiring `stderr`'s
+    // foreign FILE lock. A terminal writer must observe that marker while it
+    // drains ordinary source operations. The admission boundary refuses before
+    // invoking this closure, so a rejected or incorrectly nested caller makes
+    // no foreign `fputs` call. The terminal diagnostic scope supplied by the
+    // transferred process owner uses this same narrow callback route without
+    // reopening a native source operation.
+    let _ = unsafe {
+        with_native_allocator_diagnostic_callback(|| {
+            let stream = unsafe { super::stdio_standard::stderr };
+            let _ = unsafe { super::stdio_standard::fputs(message, stream) };
+        })
+    };
 }
 
 /// Start the selected native process owner after x86 startup has installed

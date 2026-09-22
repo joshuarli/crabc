@@ -3757,6 +3757,27 @@ fn source_clock_lowres_milliseconds_from_ticks(ticks: i64) -> i64 {
     ticks / (SOURCE_CLOCKS_PER_SECOND / 1_000)
 }
 
+/// Starts the one source-calibrated clock used by process statistics.
+///
+/// This exposes the already-selected `_mi_clock_start` equivalent for the
+/// process statistics owner. It shares the same `SOURCE_CLOCK_DIFF_MILLISECONDS`
+/// calibration as the established huge-page timeout path; it adds no clock
+/// fallback, storage, or policy.
+#[inline]
+pub(crate) fn source_process_clock_start() -> i64 {
+    source_clock_start()
+}
+
+/// Ends one source-calibrated process-statistics interval.
+///
+/// This is the existing `_mi_clock_end` equivalent and therefore retains the
+/// source's wrapping subtraction and shared clock-difference compensation.
+#[inline]
+pub(crate) fn source_process_clock_end(start: i64) -> i64 {
+    source_clock_end(start)
+}
+
+#[inline]
 fn source_clock_start() -> i64 {
     if SOURCE_CLOCK_DIFF_MILLISECONDS.load(Ordering::Relaxed) == 0 {
         let before = source_clock_now();

@@ -481,10 +481,13 @@ error sets FILE state; mimalloc ignores only the resulting `fputs` status. A
 single raw `write(2, ...)` does not preserve that behavior, so this owner does
 not contain one or claim it is equivalent. The selected x86 private runtime
 now requires an explicit `RuntimeStderrOutput` capability and retains its
-caller-supplied `fputs(message, stderr)` primitive for process life. Native
-integration-test support and the ticket-zero evidence adapter provide the
-pinned musl primitive only as test inputs. They do not add a production ambient
-lookup, selected x86 libc startup caller, or FILE transport qualification.
+caller-supplied `fputs(message, stderr)` primitive for process life. The
+selected runtime adapter enters the existing descriptor-local diagnostic
+callback boundary before it acquires that FILE lock; a refused or invalid
+nested scope therefore makes no `fputs` delivery. Native integration-test
+support and the ticket-zero evidence adapter provide the pinned musl primitive
+only as test inputs. They do not add a production ambient lookup, selected x86
+libc startup caller, or FILE transport qualification.
 Normal, short-write, and error behavior still need that separate runtime/M8
 receiver evidence before default-stderr transport parity can be claimed. The
 prepared C/Rust receipt checks finite normal default-sink bytes and their
@@ -492,27 +495,36 @@ ordering separately from custom callback fragments; it records this transport
 prerequisite rather than closing it.
 
 The source map keeps `option-processing` partial. This private x86 relation
-covers only three descriptors, one source-formatted failed-`mbind` receiver,
-and a mandatory caller-supplied capability held before VM/OS/arena setup. It
-does not establish selected x86 libc startup, production FILE transport,
-environment parsing beyond the finite reader, the rest of the descriptor table,
-option mutation/public APIs, `mi_register_output` ABI, error/deferred-free
-callbacks, statistics, modes, ordinary mapping-error receivers, recursive
-output, or M7 completion.
+covers only four signed descriptors, one source-formatted failed-`mbind`
+receiver, and a mandatory caller-supplied capability held before VM/OS/arena
+setup. The selected process-final adapter additionally uses `show_stats` or
+`verbose` to render the fixed `MI_STAT=0` process view after its caller has
+completed the pinned merge boundary. It preserves `stats.c`'s 255-byte output
+fragments and keeps the later `init.c` verbose `process done` message as a
+separate post-PageMap phase. It does not establish selected x86 libc startup,
+production FILE transport, environment parsing beyond the finite reader, the
+rest of the descriptor table, option mutation/public APIs, `mi_register_output`
+ABI, error/deferred-free callbacks, public/general statistics output, modes,
+ordinary mapping-error receivers, recursive output, or M7 completion.
 
 `compat/allocator/x86_64_diagnostic_output_owner_oracle.c` and
 `compat/allocator/x86_64_diagnostic_output_owner_evidence.py` prepare the
 pinned C producer and process-free retained-stream reader for that later
 receiver. Its reader binds the current fixture, Cargo lock, the finite Rust
-source closure (`crabc-mimalloc` module route/owner/lock and the selected
-`crabc-core` module route/error/futex/syscall files), the root Cargo
+source closure (`crabc-mimalloc` module route/owner/lock/process-clock/final
+statistics files and the selected `crabc-core` module route/error/futex/syscall
+files), the root Cargo
 configuration, selected Cargo manifests, and toolchain input, exact pinned C
 source roster, reconstructed collector commands/cwds, and every finite
 custom/default output stream. The Rust command's complete stderr remains a
 retained command stream, including Cargo or rustup diagnostics. Within it, the
 private test capture must contain exactly one LF-delimited default-stderr
 BEGIN/END block; the reader compares that inclusive block byte-for-byte and
-then reconstructs its seven observations. This framing distinguishes command
+then reconstructs its seven warning observations. A separate framed final
+statistics trace binds the Rust fixed scalar layout to the pinned C formatter's
+stable prefix through `threads`, checks the C live process-info row grammar,
+and requires its `process done` verbose tail after the source separator. This
+framing distinguishes command
 stderr from the encoded private sink capture; it does not establish production
 FILE transport parity. Each C scenario and each Rust trace scenario
 also retains a separately observed same-process TLS identity; the reader

@@ -68,10 +68,25 @@ class RetainedStreamReaderTests(unittest.TestCase):
             )
             for scenario in EVIDENCE.SCENARIOS
         }
+        c_runs[EVIDENCE.FINAL_STATISTICS_SCENARIO] = self.raw_record(
+            [str(binary), EVIDENCE.FINAL_STATISTICS_SCENARIO],
+            source,
+            f"{EVIDENCE.FINAL_STATISTICS_SCENARIO}="
+            f"{':'.join(EVIDENCE.EXPECTED_RUST_FINAL_STATISTICS_TRACE)}\n"
+            f"thread_identity={self.C_THREAD_IDENTITY:x}\n",
+            EVIDENCE.EXPECTED_C_STDERR[EVIDENCE.FINAL_STATISTICS_SCENARIO],
+        )
         rust_stream = "\n".join(
             [EVIDENCE.TRACE_BEGIN]
             + [f"{scenario}={':'.join(rust_trace[scenario])}" for scenario in EVIDENCE.SCENARIOS]
-            + [EVIDENCE.TRACE_END, EVIDENCE.THREAD_IDENTITIES_BEGIN]
+            + [
+                EVIDENCE.TRACE_END,
+                EVIDENCE.FINAL_STATISTICS_BEGIN,
+                f"{EVIDENCE.FINAL_STATISTICS_SCENARIO}="
+                f"{':'.join(EVIDENCE.EXPECTED_RUST_FINAL_STATISTICS_TRACE)}",
+                EVIDENCE.FINAL_STATISTICS_END,
+                EVIDENCE.THREAD_IDENTITIES_BEGIN,
+            ]
             + [f"{scenario}={self.RUST_THREAD_IDENTITY:x}" for scenario in EVIDENCE.SCENARIOS]
             + [EVIDENCE.THREAD_IDENTITIES_END, ""]
         )
@@ -93,7 +108,7 @@ class RetainedStreamReaderTests(unittest.TestCase):
             },
             "cargo_lock": EVIDENCE.current_file_identity(EVIDENCE.LOCKFILE),
             "fixture": EVIDENCE.current_file_identity(EVIDENCE.FIXTURE),
-            "format": 1,
+            "format": 2,
             "kind": "mimalloc-x86_64-diagnostic-output-owner-evidence",
             "native_execution_provenance": {"execution_mode": "native", "host_architecture": "x86_64"},
             "profile": EVIDENCE.PROFILE,
@@ -124,7 +139,7 @@ class RetainedStreamReaderTests(unittest.TestCase):
         report = json.loads(json.dumps(self.complete_report(), sort_keys=True))
         self.assertEqual(
             list(report["c_oracle"]["runs"]),
-            sorted(EVIDENCE.SCENARIOS),
+            sorted(EVIDENCE.C_SCENARIOS),
         )
 
         EVIDENCE.validate_report(report)
@@ -253,6 +268,14 @@ class RetainedStreamReaderTests(unittest.TestCase):
         with self.assertRaisesRegex(EVIDENCE.EvidenceError, "trace markers"):
             EVIDENCE.validate_report(report)
 
+        report = self.complete_report()
+        report["rust"]["stdout"] = report["rust"]["stdout"].replace(
+            EVIDENCE.FINAL_STATISTICS_END,
+            f"{EVIDENCE.FINAL_STATISTICS_END}\n{EVIDENCE.FINAL_STATISTICS_END}",
+        )
+        with self.assertRaisesRegex(EVIDENCE.EvidenceError, "final-statistics trace markers"):
+            EVIDENCE.validate_report(report)
+
     def test_reader_rejects_each_changed_authenticated_identity(self) -> None:
         report = self.complete_report()
         mutations = {
@@ -275,13 +298,15 @@ class RetainedStreamReaderTests(unittest.TestCase):
                 with self.assertRaises(EVIDENCE.EvidenceError):
                     EVIDENCE.validate_report(changed)
 
-    def test_rust_source_roster_covers_owner_lock_and_x86_futex_dependency_chain(self) -> None:
+    def test_rust_source_roster_covers_owner_stats_clock_lock_and_x86_futex_dependency_chain(self) -> None:
         self.assertEqual(
             [record["path"] for record in EVIDENCE.current_rust_source_records()],
             [
                 "crabc-mimalloc/src/lib.rs",
                 "crabc-mimalloc/src/diagnostic_output.rs",
                 "crabc-mimalloc/src/lock.rs",
+                "crabc-mimalloc/src/os.rs",
+                "crabc-mimalloc/src/statistics.rs",
                 "crabc-core/src/lib.rs",
                 "crabc-core/src/error.rs",
                 "crabc-core/src/thread.rs",
@@ -383,6 +408,25 @@ class RetainedStreamReaderTests(unittest.TestCase):
         report = self.complete_report()
         report["c_oracle"]["runs"]["post_init"]["stderr"] = "wrong default output\n"
         with self.assertRaises(EVIDENCE.EvidenceError):
+            EVIDENCE.validate_report(report)
+
+    def test_reader_rejects_reordered_or_mutated_final_statistics_phases(self) -> None:
+        report = self.complete_report()
+        final = report["c_oracle"]["runs"][EVIDENCE.FINAL_STATISTICS_SCENARIO]
+        final["stdout"] = final["stdout"].replace(
+            "6d696d616c6c6f633a2070726f6365737320646f6e652039370a",
+            "0a",
+        )
+        with self.assertRaisesRegex(EVIDENCE.EvidenceError, "verbose-tail order"):
+            EVIDENCE.validate_report(report)
+
+        report = self.complete_report()
+        report["rust"]["stdout"] = report["rust"]["stdout"].replace(
+            "73756270726f6320370a",
+            "73756270726f6320380a",
+            1,
+        )
+        with self.assertRaisesRegex(EVIDENCE.EvidenceError, "Rust final-statistics formatter"):
             EVIDENCE.validate_report(report)
 
     def test_reader_rejects_changed_rust_default_stderr_bytes(self) -> None:
