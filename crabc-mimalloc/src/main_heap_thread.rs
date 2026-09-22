@@ -2909,14 +2909,21 @@ mod tests {
 
             thread::scope(|scope| {
                 scope.spawn(move || {
-                    let mut attachment = unsafe {
+                    let mut attachment = match unsafe {
                         MainHeapThreadAttachment::begin_with_test_metadata(
                             main_heap,
                             metadata,
                             memory_config(),
                         )
-                    }
-                    .expect("the focused later thread attaches");
+                    } {
+                        Ok(attachment) => attachment,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(_)) => {
+                            panic!("the focused later thread is not rejected")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { .. }) => {
+                            panic!("the focused later thread does not retain a terminal attachment")
+                        }
+                    };
                     let attached = subprocess.statistics().source_snapshot();
                     assert_eq!(
                         (attached.threads_total, attached.threads_peak, attached.threads_current),
