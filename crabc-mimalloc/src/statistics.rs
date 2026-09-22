@@ -412,7 +412,7 @@ impl HeapTheapStatistics {
     /// differential. The complete field sequence and both tail arrays are
     /// recorded so matching `sizeof` alone cannot hide a reordered member.
     #[cfg(test)]
-    pub(crate) fn layout_records() -> [(&'static str, usize); 47] {
+    pub(crate) fn layout_records() -> [(&'static str, usize); 49] {
         use core::mem::{align_of, offset_of, size_of};
 
         [
