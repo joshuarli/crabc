@@ -29,15 +29,15 @@ harness. Do not silently substitute an unknown alias or unsupported effort.
 
 | Work | Model | Effort |
 | --- | --- | --- |
-| Working area owner; difficult ownership/ABI/concurrency design; critical-path integration; high-risk independent review | `gpt-6-astra` | `medium` for difficult reasoning; `low` for bounded follow-through |
-| General implementation, debugging, tests, component review, integration execution | `gpt-5.6-terra` | `xhigh`; `max` for a genuinely demanding supported task |
-| Read-only inventory, bounded log extraction, straightforward execution/result collation | `gpt-5.6-luna` | `low` |
-| Mechanical edits with an unambiguous specification and proportionate checks | `gpt-5.6-luna` | `xhigh` |
+| Exceptionally difficult ownership, ABI, concurrency, or architectural decision; root coordination; high-risk independent review | `gpt-6-astra` | `medium` for difficult reasoning; `low` for bounded follow-through |
+| Ordinary area ownership, implementation, debugging, tests, component review, and integration | `gpt-5.6-terra` | `xhigh`; `max` for a genuinely demanding supported task |
+| Bounded mechanical edits, read-only inventory, log extraction, and result collation | `gpt-5.6-luna` | `low` for extraction; `xhigh` for a mechanical edit with proportionate checks |
 
-Use Astra implementers directly when a hard shared contract or correctness
-problem lies on the critical path. Do not insist on several failed cheaper
-attempts first. Conversely, do not assign routine collection work to an Astra
-owner while a Terra/Luna execution slot can do it correctly.
+Reserve Astra for the exceptional ownership, ABI, concurrency, and architectural
+work in the table. Use Terra for ordinary ownership, implementation, review,
+and integration. Use Luna for bounded mechanical or extraction work. A hard
+shared contract on the critical path may warrant Astra without requiring failed
+lower-cost attempts first, but ordinary follow-through does not.
 
 Preserve the user's parent-intelligence boundary: no child above its parent.
 Astra area owners may delegate only within explicitly assigned budgets; Terra
@@ -63,18 +63,19 @@ cannot raise a runtime cap. Use the supported project configuration when
 available; report a lower effective cap once and work efficiently within it.
 Do not bypass a limit by creating unbudgeted agent trees or external sessions.
 
-An illustrative 32-child working set is four Astra working area owners,
-twenty-four Terra implementation/review workers, and four execution,
-integration, or triage workers. These are movable allocations, not permanent
-positions. Keep at least roughly two-thirds of occupied capacity on substantive
+An illustrative 32-child working set is weighted toward Terra
+implementation/review workers, with Luna used for bounded mechanical or
+extraction work and Astra assigned only when the exceptional criteria above
+apply. This is not a quota, default count, or permanent model allocation. Keep
+at least roughly two-thirds of occupied capacity on substantive
 implementation/integration while that work remains; shift toward qualification
 as the code converges. Area owners must also deliver code, design decisions,
 or substantive reviews, not merely relay status.
 
-Astra working areas normally cover runtime/family closure, allocator substrate,
-allocator engine/lifecycle, and loader/unwinder/consumer integration. Give each
-an exact domain and interface boundary. They do not all reread/audit the whole
-repository. Root can combine these roles when the effective cap is small.
+When an exceptional Astra working area is warranted, give it an exact domain and
+interface boundary. It does not imply that routine runtime, allocator, or
+loader/unwinder ownership belongs to Astra, and no preset number of Astra areas
+is required. Root can combine such roles when the effective cap is small.
 
 Do not leave slots unused solely to honor the global skill's smallest-fan-out
 preference. Do leave them unused when there is no genuinely independent useful
