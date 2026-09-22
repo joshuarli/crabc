@@ -47,10 +47,13 @@ export CARGO_HOME="$ROOT_DIR/.work/x86_64/cargo"
 mkdir -p "$CARGO_HOME"
 cleanup() {
     status=$?
-    if [ "$status" -eq 0 ]; then
+    if [ "$status" -eq 0 ] && [ "$physical_process_destroy_only" -eq 0 ]; then
         rm -rf -- "$work_dir"
     else
-        printf 'x86 selected native-mimalloc pthread teardown retained failed evidence: %s\n' \
+        # The focused physical-destroy lane retains the source-runtime receipt,
+        # link map, and trace even on success. They prove its static closure
+        # without retaining a broad worker-teardown cohort.
+        printf 'x86 selected native-mimalloc pthread teardown retained evidence: %s\n' \
             "$work_dir" >&2
     fi
     exit "$status"
@@ -234,12 +237,20 @@ EOF
     printf 'x86 selected native-mimalloc pthread teardown probe regressions: PASS\n'
 }
 
+physical_process_destroy_only=0
 if [ "${1:-}" = "--probe-regressions" ]; then
     [ "$#" -eq 1 ] || fail "--probe-regressions takes no additional arguments"
     run_final_worker_atexit_probe_regressions
     exit 0
+elif [ "${1:-}" = "--physical-process-destroy" ]; then
+    [ "$#" -eq 1 ] || fail "--physical-process-destroy takes no additional arguments"
+    # Build one owned-static source-runtime closure and execute only the
+    # disabled explicit-destroy audit. This is intentionally narrower than
+    # the normal worker-teardown and normal-main evidence family.
+    physical_process_destroy_only=1
+elif [ "$#" -ne 0 ]; then
+    fail "run_libc_native_mimalloc_shadow_pthread_teardown.sh takes no arguments"
 fi
-[ "$#" -eq 0 ] || fail "run_libc_native_mimalloc_shadow_pthread_teardown.sh takes no arguments"
 
 work_relative="${work_dir#"$ROOT_DIR/.work/x86_64/"}"
 [ "$work_relative" != "$work_dir" ] || fail "private work directory escapes .work/x86_64"
@@ -253,6 +264,8 @@ reference="$work_dir/musl-reference"
 candidate="$work_dir/native-shadow-candidate"
 internal_allocator_override_candidate="$work_dir/native-shadow-internal-allocator-override-candidate"
 physical_process_destroy_candidate="$work_dir/native-shadow-physical-process-destroy-candidate"
+physical_process_destroy_link_map="$work_dir/physical-process-destroy-link.map"
+physical_process_destroy_link_trace="$work_dir/physical-process-destroy-link.trace"
 normal_main_reference="$work_dir/musl-normal-main-return-reference"
 normal_main_candidate="$work_dir/native-shadow-normal-main-return-candidate"
 archive_symbols="$work_dir/archive-symbols"
@@ -297,15 +310,17 @@ python3 crt/build_x86_64.py --out-dir "$crt_output" --llvm-objdump "$crt_llvm_ob
 objcopy --redefine-sym _start=__crabc_x86_fixture_unused_owned_crt_start \
     "$crt_output/crt1.o" "$fixture_crt1"
 
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin \
-    -fno-stack-protector -I"$ROOT_DIR/include" \
-    compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_probe.c \
-    -o "$reference"
-if ! run_final_worker_atexit_probe "$reference" "pinned-musl reference normal-return" R; then
-    fail "pinned-musl reference execution failed"
-fi
-if ! run_final_worker_atexit_probe "$reference" "pinned-musl reference explicit-exit" E; then
-    fail "pinned-musl reference execution failed"
+if [ "$physical_process_destroy_only" -eq 0 ]; then
+    "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin \
+        -fno-stack-protector -I"$ROOT_DIR/include" \
+        compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_probe.c \
+        -o "$reference"
+    if ! run_final_worker_atexit_probe "$reference" "pinned-musl reference normal-return" R; then
+        fail "pinned-musl reference execution failed"
+    fi
+    if ! run_final_worker_atexit_probe "$reference" "pinned-musl reference explicit-exit" E; then
+        fail "pinned-musl reference execution failed"
+    fi
 fi
 
 [ -x "$source_runtime_helper" ] || fail "missing native static source-runtime producer"
@@ -382,11 +397,28 @@ python3 "$source_runtime_helper" audit-final-link \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie \
     -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start \
     -Wl,--no-undefined -Wl,--gc-sections \
+    -Wl,-Map,"$physical_process_destroy_link_map" -Wl,--trace-symbol=rust_eh_personality \
     -Wl,-u,__crabc_x86_native_mimalloc_shadow_v1 \
     "$fixture_crt1" "$crt_output/crti.o" \
     compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_probe.c \
     compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_start.S \
-    "$archive" "$crt_output/crtn.o" -o "$physical_process_destroy_candidate"
+    "$archive" "$crt_output/crtn.o" -o "$physical_process_destroy_candidate" >"$physical_process_destroy_link_trace" 2>&1
+python3 "$source_runtime_helper" audit-final-link \
+    --receipt "$source_runtime_primary_receipt" --candidate "$physical_process_destroy_candidate" \
+    --link-map "$physical_process_destroy_link_map" --trace "$physical_process_destroy_link_trace" \
+    --label selected-native-explicit-process-destroy ||
+    fail "source-built native static runtime physical process-destroy final link audit failed"
+
+if [ "$physical_process_destroy_only" -eq 1 ]; then
+    for destroy_on_exit in 1 2 -1; do
+        if ! env "mimalloc_destroy_on_exit=$destroy_on_exit" \
+            timeout "$EXECUTION_TIMEOUT" "$physical_process_destroy_candidate"; then
+            fail "selected native explicit process-destroy candidate failed for destroy_on_exit=$destroy_on_exit"
+        fi
+    done
+    printf 'x86 selected native-mimalloc explicit process-destroy fixture: PASS\n'
+    exit 0
+fi
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
