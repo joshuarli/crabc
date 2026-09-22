@@ -471,22 +471,38 @@ mod tests {
         observation.nested_heartbeat.store(2, Ordering::SeqCst);
     }
 
-    fn paired_source_metadata() -> (Heap, ThreadLocalData, Theap) {
+    /// One address-stable source pair for the raw Theap/TLD callback boundary.
+    ///
+    /// `Theap::bind_exclusive_single_thread` records the exact TLD address.
+    /// Keeping all three images in one heap allocation before that bind makes
+    /// this fixture model the source-private pairing rather than retaining a
+    /// pointer to a stack local that would move out of a tuple return.
+    struct PairedSourceMetadata {
+        heap: Heap,
+        tld: ThreadLocalData,
+        theap: Theap,
+    }
+
+    fn paired_source_metadata() -> std::boxed::Box<PairedSourceMetadata> {
         // The source `mi_threadid_t` reserves its low two bits for page
         // flags. Keep this test's synthetic owner above the sentinel range
         // and aligned like a live source identity.
         let thread = LiveThreadId::new(16).expect("the test thread identity is source-valid");
-        let mut heap = Heap::bootstrap_empty();
-        let mut tld = ThreadLocalData::detached();
-        tld.attach_bootstrap_exclusive(thread);
-        let mut theap = Theap::empty();
-        assert!(theap.bind_exclusive_single_thread(&mut heap, &mut tld));
-        (heap, tld, theap)
+        let mut source = std::boxed::Box::new(PairedSourceMetadata {
+            heap: Heap::bootstrap_empty(),
+            tld: ThreadLocalData::detached(),
+            theap: Theap::empty(),
+        });
+        source.tld.attach_bootstrap_exclusive(thread);
+        assert!(source
+            .theap
+            .bind_exclusive_single_thread(&mut source.heap, &mut source.tld));
+        source
     }
 
     #[test]
     fn registered_callback_receives_force_and_nested_entry_only_advances_heartbeat() {
-        let (_heap, mut tld, mut theap) = paired_source_metadata();
+        let mut source = paired_source_metadata();
         let registration = DeferredFreeRegistration::new();
         let observation = CallbackObservation {
             calls: AtomicUsize::new(0),
@@ -494,8 +510,8 @@ mod tests {
             first_heartbeat: AtomicUsize::new(0),
             nested_heartbeat: AtomicUsize::new(0),
             registration: core::ptr::from_ref(&registration),
-            theap: core::ptr::from_mut(&mut theap),
-            tld: core::ptr::from_mut(&mut tld),
+            theap: core::ptr::from_mut(&mut source.theap),
+            tld: core::ptr::from_mut(&mut source.tld),
         };
         // SAFETY: the callback/context remain live and this test owns every
         // synchronous invocation through the registration fixture.
@@ -508,8 +524,8 @@ mod tests {
 
         let invocation = begin(
             &registration,
-            NonNull::from(&mut theap),
-            NonNull::from(&mut tld),
+            NonNull::from(&mut source.theap),
+            NonNull::from(&mut source.tld),
             true,
         )
         .expect("paired source metadata selects the callback");
@@ -521,29 +537,48 @@ mod tests {
         assert_eq!(observation.force.load(Ordering::SeqCst), 1);
         assert_eq!(observation.first_heartbeat.load(Ordering::SeqCst), 1);
         assert_eq!(observation.nested_heartbeat.load(Ordering::SeqCst), 2);
-        assert!(!tld.recursing());
+        assert!(!source.tld.recursing());
     }
 
     #[test]
     fn dropping_undispatched_callback_token_restores_the_tld_marker() {
         unsafe extern "C" fn unused_callback(_: bool, _: u64, _: *mut c_void) {}
 
-        let (_heap, mut tld, mut theap) = paired_source_metadata();
+        let mut source = paired_source_metadata();
         let registration = DeferredFreeRegistration::new();
         // SAFETY: no invocation escapes this stack-owned fixture.
         unsafe { registration.register(Some(unused_callback), core::ptr::null_mut()) };
         let invocation = begin(
             &registration,
-            NonNull::from(&mut theap),
-            NonNull::from(&mut tld),
+            NonNull::from(&mut source.theap),
+            NonNull::from(&mut source.tld),
             false,
         )
         .expect("paired source metadata selects the callback");
-        assert!(tld.recursing());
+        assert!(source.tld.recursing());
         drop(invocation);
         assert!(
-            !tld.recursing(),
+            !source.tld.recursing(),
             "an abandoned caller-stack continuation must not suppress a later callback"
+        );
+    }
+
+    #[test]
+    fn deferred_callback_rejects_a_different_live_tld() {
+        let mut source = paired_source_metadata();
+        let mut other = paired_source_metadata();
+        let registration = DeferredFreeRegistration::new();
+
+        assert!(matches!(
+            begin(
+                &registration,
+                NonNull::from(&mut source.theap),
+                NonNull::from(&mut other.tld),
+                false,
+            ),
+            Err(DeferredFreeInvocationError::TldMismatch)
+        ),
+            "a live but different TLD must not satisfy the raw source pairing"
         );
     }
 }
