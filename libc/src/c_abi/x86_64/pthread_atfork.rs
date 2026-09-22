@@ -55,6 +55,8 @@ use super::{
     pthread_create_join, pthread_identity, pthread_tsd,
     signal_execution, static_tls,
 };
+#[cfg(feature = "native-mimalloc-shadow")]
+use crabc_mimalloc::__crabc_runtime::begin_native_allocator_raw_fork_copy;
 
 #[cfg(not(crabc_x86_owned_runtime))]
 const ATFORK_CAPACITY: usize = 32;
@@ -278,8 +280,31 @@ unsafe fn fork_without_handlers() -> i64 {
     unsafe { signal_execution::block_all_signals(&mut saved) };
     let caller = unsafe { pthread_create_join::capture_process_child_caller() };
     unsafe { super::owned_process_lock::pthread_fork_prepare() };
+    // The process owner admits this existing raw-copy interval as one ordinary
+    // epoch operation. Refusal is a synthetic raw-fork error: complete the
+    // source abort-lock/signal pair and let a full `fork` take its unchanged
+    // outer parent-handler route. Do not call the syscall after refusal.
+    #[cfg(feature = "native-mimalloc-shadow")]
+    let raw_copy = match unsafe { begin_native_allocator_raw_fork_copy() } {
+        Ok(guard) => guard,
+        Err(_) => {
+            unsafe {
+                super::owned_process_lock::pthread_fork_parent();
+                signal_execution::restore_application_signals(&saved);
+            }
+            return -EAGAIN;
+        }
+    };
     let result = unsafe { raw_selected_fork() };
     if result == 0 {
+        // Drop the copied admission while its current descriptor is still
+        // mapped. `adopt_process_child_caller` may discard copied TLS/list
+        // roots, so completing it later would dereference stale ownership.
+        // A failed copied-state validation may not continue into child repair.
+        #[cfg(feature = "native-mimalloc-shadow")]
+        if unsafe { raw_copy.complete_child() }.is_err() {
+            unsafe { super::immediate_termination::_Exit(127) }
+        }
         unsafe {
             pthread_create_join::adopt_process_child_caller(caller);
             super::owned_process_lock::pthread_fork_child();
@@ -288,6 +313,8 @@ unsafe fn fork_without_handlers() -> i64 {
             super::owned_aio::atfork(1);
         }
     } else {
+        #[cfg(feature = "native-mimalloc-shadow")]
+        raw_copy.complete_parent();
         unsafe { super::owned_process_lock::pthread_fork_parent() };
     }
     unsafe { signal_execution::restore_application_signals(&saved) };
@@ -306,9 +333,27 @@ unsafe fn fork_without_handlers_deferred_registry_reset(
     unsafe { signal_execution::block_all_signals(&mut saved) };
     let caller = unsafe { pthread_create_join::capture_process_child_caller() };
     unsafe { super::owned_process_lock::pthread_fork_prepare() };
+    // Match `_Fork`'s ordinary copy admission exactly. The full dynamic
+    // parent/error route below owns loader and atfork completion after this
+    // inner process-lock/signal pair has been restored.
+    #[cfg(feature = "native-mimalloc-shadow")]
+    let raw_copy = match unsafe { begin_native_allocator_raw_fork_copy() } {
+        Ok(guard) => guard,
+        Err(_) => {
+            unsafe {
+                super::owned_process_lock::pthread_fork_parent();
+                signal_execution::restore_application_signals(&saved);
+            }
+            return (-EAGAIN, None);
+        }
+    };
     let result = unsafe { raw_selected_fork() };
     let mut deferred = None;
     if result == 0 {
+        #[cfg(feature = "native-mimalloc-shadow")]
+        if unsafe { raw_copy.complete_child() }.is_err() {
+            unsafe { super::immediate_termination::_Exit(127) }
+        }
         unsafe {
             deferred = Some(pthread_create_join::prepare_process_child_caller(caller));
             super::owned_process_lock::pthread_fork_child();
@@ -317,6 +362,8 @@ unsafe fn fork_without_handlers_deferred_registry_reset(
             super::owned_aio::atfork(1);
         }
     } else {
+        #[cfg(feature = "native-mimalloc-shadow")]
+        raw_copy.complete_parent();
         unsafe { super::owned_process_lock::pthread_fork_parent() };
     }
     unsafe { signal_execution::restore_application_signals(&saved) };

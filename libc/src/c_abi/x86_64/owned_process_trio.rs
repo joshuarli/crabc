@@ -16,6 +16,10 @@
 
 use core::ffi::{c_char, c_int, c_void};
 use super::{c_status, owned_process_lock, pthread_create_join, signal_execution};
+#[cfg(feature = "native-mimalloc-shadow")]
+use crabc_mimalloc::__crabc_runtime::{
+    begin_native_allocator_raw_fork_copy, NativeAllocatorRawForkCopyGuard,
+};
 
 const CLONE_VM: c_int = 0x100;
 const CLONE_PIDFD: c_int = 0x1000;
@@ -24,6 +28,7 @@ const CLONE_SETTLS: c_int = 0x80000;
 const CLONE_PARENT_SETTID: c_int = 0x100000;
 const CLONE_CHILD_CLEARTID: c_int = 0x200000;
 const CLONE_CHILD_SETTID: c_int = 0x1000000;
+const EAGAIN: i64 = 11;
 
 type CloneFunction = unsafe extern "C" fn(*mut c_void) -> c_int;
 
@@ -92,11 +97,28 @@ struct CloneStart {
     argument: *mut c_void,
     signal_mask: u64,
     caller: pthread_create_join::ProcessChildCaller,
+    // This is copied with the caller stack by a non-CLONE_VM raw clone. The
+    // parent and sole child each consume their copied guard before either
+    // process releases/re-roots the selected descriptor/TLS state.
+    #[cfg(feature = "native-mimalloc-shadow")]
+    native_allocator_raw_copy: Option<NativeAllocatorRawForkCopyGuard>,
 }
 
 unsafe extern "C" fn clone_start(argument: *mut c_void) -> c_int {
-    let start = unsafe { &*argument.cast::<CloneStart>() };
+    let start = unsafe { &mut *argument.cast::<CloneStart>() };
     unsafe {
+        // `adopt_process_child_caller` can clear the copied registry and
+        // re-root caller TLS. End only this child copy while its descriptor
+        // still names the inherited mapping.
+        #[cfg(feature = "native-mimalloc-shadow")]
+        match start.native_allocator_raw_copy.take() {
+            Some(guard) => {
+                if guard.complete_child().is_err() {
+                    super::immediate_termination::_Exit(127)
+                }
+            }
+            None => super::immediate_termination::_Exit(127),
+        }
         pthread_create_join::adopt_process_child_caller(start.caller);
         owned_process_lock::pthread_fork_child();
         // Musl clone.c shares __post_Fork: AIO follows minimal caller
@@ -137,12 +159,40 @@ pub unsafe extern "C" fn clone(function: Option<CloneFunction>, stack: *mut c_vo
     }
     let mut saved = 0;
     unsafe { signal_execution::block_all_signals(&mut saved) };
-    let mut start = CloneStart { function, argument, signal_mask: saved,
-        caller: unsafe { pthread_create_join::capture_process_child_caller() } };
+    let caller = unsafe { pthread_create_join::capture_process_child_caller() };
     unsafe { owned_process_lock::pthread_fork_prepare() };
+    // A non-VM clone copies the native current-TLS descriptor just like the
+    // raw `fork` routes. If terminal admission has closed, complete the
+    // existing process-lock/signal pair and return the normal Linux EAGAIN
+    // form without issuing clone. CLONE_VM returned above: it shares this
+    // address space and deliberately has none of the child repair contract.
+    #[cfg(feature = "native-mimalloc-shadow")]
+    let raw_copy = match unsafe { begin_native_allocator_raw_fork_copy() } {
+        Ok(guard) => guard,
+        Err(_) => {
+            unsafe {
+                owned_process_lock::pthread_fork_parent();
+                signal_execution::restore_application_signals(&saved);
+            }
+            return c_status(-EAGAIN);
+        }
+    };
+    let mut start = CloneStart { function, argument, signal_mask: saved,
+        caller,
+        #[cfg(feature = "native-mimalloc-shadow")]
+        native_allocator_raw_copy: Some(raw_copy),
+    };
     let result = unsafe { __crabc_owned_clone_raw(Some(clone_start), stack, flags,
         core::ptr::addr_of_mut!(start).cast(), parent_tid, tls, child_tid) };
     unsafe {
+        #[cfg(feature = "native-mimalloc-shadow")]
+        match start.native_allocator_raw_copy.take() {
+            Some(guard) => guard.complete_parent(),
+            // A parent/error path must retain the guard from its own copied
+            // stack. A missing value would mean a child-only mutation became
+            // visible without a process copy, so stop before unlocking.
+            None => super::immediate_termination::_Exit(127),
+        }
         owned_process_lock::pthread_fork_parent();
         signal_execution::restore_application_signals(&saved);
     }

@@ -8253,6 +8253,141 @@ unsafe fn join_selected_worker_inner(
             runner,
         )
 
+    def test_native_mimalloc_raw_fork_copy_guard_keeps_existing_completion_order(self) -> None:
+        """Read the selected source order until a real terminal writer exists."""
+        atfork = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_atfork.rs"
+        ).read_text(encoding="utf-8")
+        trio = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "owned_process_trio.rs"
+        ).read_text(encoding="utf-8")
+        admission = (
+            ROOT / "crabc-mimalloc" / "src" / "runtime_admission.rs"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" /
+            "libc_native_mimalloc_shadow_pthread_teardown_probe.c"
+        ).read_text(encoding="utf-8")
+        fixture_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_libc_native_mimalloc_shadow_pthread_teardown.sh"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("begin_native_allocator_raw_fork_copy", atfork)
+        self.assertIn("NativeAllocatorRawForkCopyGuard", trio)
+        self.assertIn("NativeAllocatorRawForkCopyError", admission)
+        self.assertIn("raw_fork_copy_completion_releases_only_its_own_descriptor", admission)
+        self.assertIn("raw_copy_child_discards_only_copied_precommit_writer", admission)
+
+        minimal = atfork.split("unsafe fn fork_without_handlers() -> i64 {", 1)[1].split(
+            "/// Dynamic full `fork`", 1
+        )[0]
+        self.assertLess(
+            minimal.index("owned_process_lock::pthread_fork_prepare()"),
+            minimal.index("begin_native_allocator_raw_fork_copy()"),
+        )
+        self.assertLess(
+            minimal.index("begin_native_allocator_raw_fork_copy()"),
+            minimal.index("raw_selected_fork()"),
+        )
+        self.assertLess(
+            minimal.index("raw_copy.complete_child()"),
+            minimal.index("adopt_process_child_caller(caller)"),
+        )
+        self.assertLess(
+            minimal.index("raw_copy.complete_child() }.is_err()"),
+            minimal.index("adopt_process_child_caller(caller)"),
+        )
+        self.assertLess(
+            minimal.index("raw_copy.complete_parent()"),
+            minimal.rindex("owned_process_lock::pthread_fork_parent()"),
+        )
+        self.assertLess(
+            minimal.index("restore_application_signals(&saved)"),
+            minimal.index("return -EAGAIN"),
+        )
+
+        dynamic = atfork.split(
+            "unsafe fn fork_without_handlers_deferred_registry_reset(", 1
+        )[1].split("/// Fork the initialized owned task", 1)[0]
+        self.assertLess(
+            dynamic.index("owned_process_lock::pthread_fork_prepare()"),
+            dynamic.index("begin_native_allocator_raw_fork_copy()"),
+        )
+        self.assertLess(
+            dynamic.index("begin_native_allocator_raw_fork_copy()"),
+            dynamic.index("raw_selected_fork()"),
+        )
+        self.assertLess(
+            dynamic.index("raw_copy.complete_child()"),
+            dynamic.index("prepare_process_child_caller(caller)"),
+        )
+        self.assertLess(
+            dynamic.index("raw_copy.complete_child() }.is_err()"),
+            dynamic.index("prepare_process_child_caller(caller)"),
+        )
+        self.assertLess(
+            dynamic.index("raw_copy.complete_parent()"),
+            dynamic.rindex("owned_process_lock::pthread_fork_parent()"),
+        )
+        self.assertLess(
+            dynamic.index("restore_application_signals(&saved)"),
+            dynamic.index("return (-EAGAIN, None)"),
+        )
+
+        clone_start = trio.split("unsafe extern \"C\" fn clone_start", 1)[1].split(
+            "/// Create a process", 1
+        )[0]
+        clone = trio.split("pub unsafe extern \"C\" fn clone", 1)[1].split(
+            "/// Detach through musl", 1
+        )[0]
+        self.assertLess(
+            clone.index("if flags & CLONE_VM != 0"),
+            clone.index("begin_native_allocator_raw_fork_copy()"),
+        )
+        self.assertLess(
+            clone.index("owned_process_lock::pthread_fork_prepare()"),
+            clone.index("begin_native_allocator_raw_fork_copy()"),
+        )
+        self.assertLess(
+            clone.index("begin_native_allocator_raw_fork_copy()"),
+            clone.index("__crabc_owned_clone_raw(Some(clone_start)"),
+        )
+        self.assertLess(
+            clone_start.index("guard.complete_child()"),
+            clone_start.index("adopt_process_child_caller(start.caller)"),
+        )
+        self.assertIn("guard.complete_child().is_err()", clone_start)
+        self.assertLess(
+            clone.index("guard.complete_parent()"),
+            clone.rindex("owned_process_lock::pthread_fork_parent()"),
+        )
+        self.assertLess(
+            clone.rindex("owned_process_lock::pthread_fork_parent()"),
+            clone.rindex("restore_application_signals(&saved)"),
+        )
+        self.assertLess(
+            clone.index("restore_application_signals(&saved)"),
+            clone.index("return c_status(-EAGAIN)"),
+        )
+
+        # The selected fixture runs each regular completion through the same
+        # static native-shadow product. It intentionally has no terminal
+        # refusal endpoint yet, so this reader is the current evidence for
+        # the rejection branch above rather than a terminal-fork claim.
+        self.assertIn("run_raw_copy_completion_paths", fixture)
+        self.assertIn("child = fork();", fixture)
+        self.assertIn("child = _Fork();", fixture)
+        self.assertIn("child = clone(raw_copy_clone_child", fixture)
+        self.assertLess(
+            fixture.index("pthread_key_create(&teardown_key"),
+            fixture.index("result = run_raw_copy_completion_paths();"),
+        )
+        self.assertIn(
+            "x86-owned-static-native-shadow,native-mimalloc-shadow-test-audit",
+            fixture_runner,
+        )
+
     def test_libc_static_c_abi_pthread_affinity_stays_bounded(self) -> None:
         affinity = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" /

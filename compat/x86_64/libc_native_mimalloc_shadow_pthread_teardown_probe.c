@@ -29,8 +29,11 @@
 
 #include <errno.h>
 #include <pthread.h>
+#include <sched.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #define CRABC_TYPE_IS(actual, expected) \
@@ -82,6 +85,59 @@ struct teardown_round {
 static pthread_key_t teardown_key;
 static volatile int prestart_callback_count;
 static void *final_worker_pre_teardown_allocation;
+
+/* These are normal parent/child completion witnesses for the three raw
+ * process-copy entries. The fixture's child code takes no allocator, loader,
+ * stdio, or user callback path after libc has completed its copied-current-descriptor
+ * admission: `fork` and `_Fork` immediately `_Exit`, while non-CLONE_VM
+ * `clone` returns one fixed status. They therefore exercise only the interim
+ * raw-copy guard, not generic vanished-owner repair in a copied process. */
+enum {
+    CRABC_RAW_COPY_FORK_STATUS = 61,
+    CRABC_RAW_COPY_UNDERSCORE_FORK_STATUS = 62,
+    CRABC_RAW_COPY_CLONE_STATUS = 63,
+    CRABC_RAW_COPY_CLONE_STACK_SIZE = 64 * 1024,
+};
+
+static unsigned char raw_copy_clone_stack[CRABC_RAW_COPY_CLONE_STACK_SIZE];
+
+static int raw_copy_clone_child(void *opaque)
+{
+    (void)opaque;
+    return CRABC_RAW_COPY_CLONE_STATUS;
+}
+
+static int wait_for_raw_copy_child(pid_t child, int expected_status)
+{
+    int status;
+
+    if (child < 0)
+        return -1;
+    if (waitpid(child, &status, 0) != child)
+        return -1;
+    return WIFEXITED(status) && WEXITSTATUS(status) == expected_status ? 0 : -1;
+}
+
+static int run_raw_copy_completion_paths(void)
+{
+    pid_t child;
+
+    child = fork();
+    if (child == 0)
+        _Exit(CRABC_RAW_COPY_FORK_STATUS);
+    if (wait_for_raw_copy_child(child, CRABC_RAW_COPY_FORK_STATUS) != 0)
+        return 1;
+
+    child = _Fork();
+    if (child == 0)
+        _Exit(CRABC_RAW_COPY_UNDERSCORE_FORK_STATUS);
+    if (wait_for_raw_copy_child(child, CRABC_RAW_COPY_UNDERSCORE_FORK_STATUS) != 0)
+        return 2;
+
+    child = clone(raw_copy_clone_child,
+        raw_copy_clone_stack + CRABC_RAW_COPY_CLONE_STACK_SIZE, SIGCHLD, 0);
+    return wait_for_raw_copy_child(child, CRABC_RAW_COPY_CLONE_STATUS) == 0 ? 0 : 3;
+}
 
 /* This candidate-only round mirrors the pinned process-done source probe.
  * A private test seam transitions the selected process into the source's
@@ -910,6 +966,9 @@ int main(void)
 #endif
     if (pthread_key_create(&teardown_key, native_allocation_tsd_destructor) != 0)
         return 10;
+    result = run_raw_copy_completion_paths();
+    if (result != 0)
+        return 90 + result;
     result = run_return_round(normal_return_worker, CRABC_NORMAL_MARKER, 10);
     if (result != 0)
         return result;
