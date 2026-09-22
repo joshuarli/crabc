@@ -874,7 +874,8 @@ impl MetaAllocation<'static> {
     ///
     /// `pointer` must be the still-live image returned by exactly one prior
     /// `into_source_retained_theap` on an allocation belonging to `owner`.
-    /// Its stored memory ID and typed image must remain unchanged and valid.
+    /// Its stored memory ID must remain unchanged and its typed image valid;
+    /// source-ordered list/invalidation changes are preserved, never reset.
     /// That transfer must not already have been recovered; no Rust wrapper,
     /// page session, callback, or other reference may access the image during
     /// recovery. The caller must have whole-process quiescence and exclusive
@@ -900,7 +901,7 @@ impl MetaAllocation<'static> {
     ///
     /// # Safety
     ///
-    /// `pointer` must be the still-live, unchanged image returned by one prior
+    /// `pointer` must be the still-live, valid typed image returned by one prior
     /// `into_source_retained_tld` belonging to `owner`, never yet recovered.
     /// The caller must prove whole-process quiescence, exclusive source TLD
     /// ownership, no surviving TLS wrapper or aliases accessing this image,
