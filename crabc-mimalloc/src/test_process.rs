@@ -120,10 +120,11 @@ fn emit_child_started(test_name: &str) {
 
 fn assert_child_started(test_name: &str, output: &[u8]) {
     let expected = std::format!("{CHILD_STARTED_PREFIX}{test_name}");
+    let test_prefix = std::format!("test {test_name} ... ");
     assert!(
         String::from_utf8_lossy(output)
             .lines()
-            .any(|line| line == expected),
+            .any(|line| line.strip_prefix(&test_prefix).unwrap_or(line) == expected.as_str()),
         "fresh test child {test_name} exited successfully without its exact child-start marker; stdout:\n{}",
         String::from_utf8_lossy(output),
     );
