@@ -1384,7 +1384,7 @@ mod tests {
                 .activate_detached_for_main_subprocess(process.subprocess()).unwrap();
             let commit_ordinal = match selected { 2 | 5 => 1, 3 => 2, _ => usize::MAX };
             fault.set(if selected == 1 {
-                fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM)
+                fault::Plan::at_pair(fault::Point::Map, 1, fault::Point::Map, 1, Errno::NOMEM)
             } else {
                 fault::Plan::at_pair(fault::Point::Commit, commit_ordinal,
                     fault::Point::Unmap, if selected == 5 { 1 } else { usize::MAX }, Errno::NOMEM)
@@ -1404,7 +1404,7 @@ mod tests {
                     assert_eq!(failure.error().operation(), Errno::NOMEM);
                     facts[0] = true;
                     facts[1] = selected == 1 || fault.observed() == commit_ordinal;
-                    facts[2] = selected != 1 || fault.observed() == 1;
+                    facts[2] = selected != 1 || (fault.observed() == 2 && fault.secondary_observed() == 1);
                     facts[3] = selected == 1 || fault.secondary_observed() == 1;
                     facts[4] = failure.error().cleanup().is_some() == (selected == 5);
                     facts[5] = true; // no primary, aliases, or PageMap publication occurred
