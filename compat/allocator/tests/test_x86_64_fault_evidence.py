@@ -90,7 +90,7 @@ class CargoCommandTests(unittest.TestCase):
                 "aligned-claim-commit-unmap-retention",
                 "aligned-publication-map-failure-unmap-retry",
                 "aligned-publication-provenance-refusal-retention",
-                "external-arena-decommit-retry-state",
+                "external-arena-decommit-consumes-purge-work",
             ],
         )
         self.assertEqual(

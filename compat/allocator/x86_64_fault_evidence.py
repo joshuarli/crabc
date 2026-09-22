@@ -137,13 +137,13 @@ TEST_LANES = (
         ),
     ),
     FaultLane(
-        identifier="external-arena-decommit-retry-state",
-        test_filter="single_thread::tests::forced_unpinned_arena_decommit_failure_keeps_retry_state_and_external_mapping",
+        identifier="external-arena-decommit-consumes-purge-work",
+        test_filter="single_thread::tests::forced_unpinned_arena_decommit_failure_consumes_source_purge_work",
         fault_points=("Decommit",),
         expected_pass_count=1,
         state_preservation=(
-            "an injected forced decommit failure preserves the free and purge retry bits",
-            "the external arena mapping remains owned through retry and only context teardown may unmap it",
+            "an injected forced decommit failure consumes scheduled purge work and restores free availability while preserving committed bits",
+            "the external arena mapping remains owned after failed decommit and only context teardown may unmap it",
         ),
     ),
 )
