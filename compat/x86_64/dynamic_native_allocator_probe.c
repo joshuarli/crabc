@@ -54,6 +54,8 @@ static ssize_t flush(void *cookie, const char *bytes, size_t length)
 {
     (void)cookie;
     check(__crabc_x86_owned_allocator_lifecycle_test_phase() == 2);
+    /* musl cookiewrite flushes buffered bytes, then the empty new span. */
+    if (length == 0) return 0;
     check(length == 8 && memcmp(bytes, "buffered", 8) == 0);
     allocation();
     message("FLUSH=2\n");
