@@ -2875,6 +2875,26 @@ native_facade_performance_host_path() {
     esac
 }
 
+# The supplied owned Rust cleanup inputs are admitted through the general
+# physical-product translator, then rebound read-only at their canonical
+# container paths. Keep that conversion local to this dispatcher boundary:
+# unlike the normal work tree, the cleanup evidence root is the only writable
+# part of /workspace/.work/x86_64 for this command.
+owned_rust_cleanup_host_path() {
+    case "$1" in
+        /workspace/.work/x86_64/cargo|/workspace/.work/x86_64/cargo/*)
+            printf '%s%s\n' "$CARGO_VOLUME" "${1#/workspace/.work/x86_64/cargo}"
+            ;;
+        /workspace/.work/x86_64|/workspace/.work/x86_64/*)
+            printf '%s%s\n' "$WORK_DIR" "${1#/workspace/.work/x86_64}"
+            ;;
+        /workspace/*)
+            printf '%s/%s\n' "$ROOT_DIR" "${1#/workspace/}"
+            ;;
+        *) fail "owned Rust cleanup path is outside the source mount" ;;
+    esac
+}
+
 prepare_native_facade_performance_arguments() {
     local mode='' report='' work_root='' rustybench_source='' rustix_source=''
     local translated
@@ -3588,6 +3608,64 @@ run_in_container() {
         --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
         --volume "$TARGET_VOLUME:/workspace/target" \
         --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
+        "$IMAGE" "$@"
+}
+
+# The supplied sysroots and provider vendor are immutable development inputs.
+# Mount exactly those directories read-only over the read-only checkout and
+# give the consumer one fresh writable evidence root. This keeps input modes
+# intact while the collector rehashes the supplied product after Cargo exits.
+run_in_owned_rust_cleanup_container() {
+    local evidence_root="$WORK_DIR/owned-rust-std-cleanup"
+    local resolved_evidence_root private_directory resolved_private_directory
+    local input input_name
+
+    resolved_evidence_root="$(resolve_existing_directory "$evidence_root")" || \
+        fail "owned Rust cleanup evidence root is unreadable"
+    [ "$resolved_evidence_root" = "$evidence_root" ] || \
+        fail "owned Rust cleanup evidence root must be a physical work directory"
+    mkdir -p "$evidence_root"
+    for private_directory in "$evidence_root/tmp" "$evidence_root/cargo"; do
+        mkdir -p "$private_directory"
+        resolved_private_directory="$(resolve_existing_directory "$private_directory")" || \
+            fail "owned Rust cleanup private directory is unreadable"
+        [ "$resolved_private_directory" = "$private_directory" ] || \
+            fail "owned Rust cleanup private directory must remain below its evidence root"
+    done
+    for input_name in provider-vendor static-sysroot dynamic-sysroot; do
+        case "$input_name" in
+            provider-vendor) input="$OWNED_RUST_CLEANUP_PROVIDER_VENDOR_HOST" ;;
+            static-sysroot) input="$OWNED_RUST_CLEANUP_STATIC_HOST" ;;
+            dynamic-sysroot) input="$OWNED_RUST_CLEANUP_DYNAMIC_HOST" ;;
+        esac
+        [[ "$input" != *:* ]] || fail "owned Rust cleanup $input_name must not contain Docker mount syntax"
+        case "$input" in
+            "$evidence_root"|"$evidence_root"/*)
+                fail "owned Rust cleanup $input_name must be outside its writable evidence root"
+                ;;
+        esac
+        case "$evidence_root" in
+            "$input"/*)
+                fail "owned Rust cleanup $input_name must not contain its writable evidence root"
+                ;;
+        esac
+    done
+    docker run --rm --init \
+        --user "$(id -u):$(id -g)" \
+        "${GIT_METADATA_MOUNT[@]}" \
+        --platform "$PLATFORM" --network none --workdir /workspace \
+        --env CARGO_HOME=/workspace/.work/x86_64/owned-rust-std-cleanup/cargo \
+        --env CRABC_WORK_DIR=/workspace/.work/x86_64/owned-rust-std-cleanup \
+        --env TMPDIR=/workspace/.work/x86_64/owned-rust-std-cleanup/tmp \
+        --env PYTHONDONTWRITEBYTECODE=1 --env GIT_OPTIONAL_LOCKS=0 \
+        --env GIT_CONFIG_COUNT=1 --env GIT_CONFIG_KEY_0=safe.directory \
+        --env GIT_CONFIG_VALUE_0=/workspace \
+        --volume "$ROOT_DIR:/workspace:ro" \
+        --volume "$evidence_root:/workspace/.work/x86_64/owned-rust-std-cleanup" \
+        --volume "$evidence_root/tmp:/tmp" \
+        --volume "$OWNED_RUST_CLEANUP_PROVIDER_VENDOR_HOST:$OWNED_RUST_CLEANUP_PROVIDER_VENDOR_CONTAINER:ro" \
+        --volume "$OWNED_RUST_CLEANUP_STATIC_HOST:$OWNED_RUST_CLEANUP_STATIC_CONTAINER:ro" \
+        --volume "$OWNED_RUST_CLEANUP_DYNAMIC_HOST:$OWNED_RUST_CLEANUP_DYNAMIC_CONTAINER:ro" \
         "$IMAGE" "$@"
 }
 
@@ -9589,13 +9667,17 @@ PY
             && [ "$3" = --static-sysroot ] && [ -n "$4" ] && [[ "$4" != -* ]] \
             && [ "$5" = --dynamic-sysroot ] && [ -n "$6" ] && [[ "$6" != -* ]] || \
             fail "usage: ./scripts/dev-x86_64.sh unwinder-owned-cleanup --provider-vendor VENDOR --static-sysroot STATIC_SYSROOT --dynamic-sysroot DYNAMIC_SYSROOT [--mixed-source-generated-compile-diagnostics-only]"
-        owned_rust_provider_vendor="$(translate_owned_posix_product "$2")" || exit 2
-        owned_rust_static="$(translate_owned_posix_product "$4")" || exit 2
-        owned_rust_dynamic="$(translate_owned_posix_product "$6")" || exit 2
+        OWNED_RUST_CLEANUP_PROVIDER_VENDOR_CONTAINER="$(translate_owned_posix_product "$2")" || exit 2
+        OWNED_RUST_CLEANUP_STATIC_CONTAINER="$(translate_owned_posix_product "$4")" || exit 2
+        OWNED_RUST_CLEANUP_DYNAMIC_CONTAINER="$(translate_owned_posix_product "$6")" || exit 2
+        OWNED_RUST_CLEANUP_PROVIDER_VENDOR_HOST="$(owned_rust_cleanup_host_path "$OWNED_RUST_CLEANUP_PROVIDER_VENDOR_CONTAINER")"
+        OWNED_RUST_CLEANUP_STATIC_HOST="$(owned_rust_cleanup_host_path "$OWNED_RUST_CLEANUP_STATIC_CONTAINER")"
+        OWNED_RUST_CLEANUP_DYNAMIC_HOST="$(owned_rust_cleanup_host_path "$OWNED_RUST_CLEANUP_DYNAMIC_CONTAINER")"
         ensure_image
-        run_in_container python3 -B /workspace/unwinder/owned_cleanup.py \
-            --provider-vendor "$owned_rust_provider_vendor" \
-            --static-sysroot "$owned_rust_static" --dynamic-sysroot "$owned_rust_dynamic" \
+        run_in_owned_rust_cleanup_container python3 -B /workspace/unwinder/owned_cleanup.py \
+            --provider-vendor "$OWNED_RUST_CLEANUP_PROVIDER_VENDOR_CONTAINER" \
+            --static-sysroot "$OWNED_RUST_CLEANUP_STATIC_CONTAINER" \
+            --dynamic-sysroot "$OWNED_RUST_CLEANUP_DYNAMIC_CONTAINER" \
             "${owned_rust_cleanup_mode[@]}"
         ;;
     unwinder-metadata-bounds)

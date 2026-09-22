@@ -247,6 +247,11 @@ post-close condition and the plugin's worker condition each accept only their
 expected `Ok` value. They keep a panic distinct from a nonzero plugin result
 without relying on `PartialEq` for its panic payload.
 
+The dispatcher mounts the checkout and each supplied vendor, static product,
+and dynamic product read-only at their canonical paths. Only the fresh
+`.work/x86_64/owned-rust-std-cleanup` evidence root is writable, so collection
+preserves supplied input modes while it rehashes those inputs after Cargo.
+
 Cargo may also pass the pinned toolchain target library directory with
 `-L`. The runner derives that one directory from the same `rustc --print
 target-libdir` invocation and records it solely as an unused search path.

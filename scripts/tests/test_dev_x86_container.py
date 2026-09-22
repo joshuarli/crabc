@@ -90,26 +90,64 @@ exit 64
                     self.assertFalse(capture.exists())
                     self.assertFalse(capture.with_suffix(".calls").exists())
 
-    def test_unwinder_owned_cleanup_forwards_the_required_provider_vendor(self):
-        with self.tempdir() as td, tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as inputs:
+    def test_unwinder_owned_cleanup_isolates_supplied_inputs_from_writable_evidence(self):
+        with self.tempdir() as td, tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as work:
             bindir, capture = self.fake_docker(Path(td))
-            input_root = Path(inputs)
+            work_root = Path(work)
+            input_root = work_root / "inputs"; input_root.mkdir()
             provider = input_root / "provider-vendor"; provider.mkdir()
             static = input_root / "static-product"; static.mkdir()
             dynamic = input_root / "dynamic-product"; dynamic.mkdir()
             result = self.invoke(
                 bindir, capture, "unwinder-owned-cleanup",
                 ("--provider-vendor", str(provider), "--static-sysroot", str(static), "--dynamic-sysroot", str(dynamic)),
+                CRABC_X86_64_WORK_DIR=str(work_root),
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             arguments = [argument.decode() for argument in capture.read_bytes().split(b"\0") if argument]
+            mounts = [arguments[index + 1] for index, argument in enumerate(arguments[:-1]) if argument == "--volume"]
+            evidence_root = work_root / "owned-rust-std-cleanup"
+            self.assertIn(f"{ROOT}:/workspace:ro", mounts)
+            self.assertIn(f"{evidence_root}:/workspace/.work/x86_64/owned-rust-std-cleanup", mounts)
+            self.assertIn(f"{evidence_root / 'tmp'}:/tmp", mounts)
+            self.assertNotIn(f"{work_root}:/workspace/.work/x86_64", mounts)
+            self.assertNotIn(f"{work_root / 'target'}:/workspace/target", mounts)
+            self.assertNotIn(f"{work_root / 'cargo'}:/workspace/.work/x86_64/cargo", mounts)
+            self.assertIn("CARGO_HOME=/workspace/.work/x86_64/owned-rust-std-cleanup/cargo", arguments)
+            self.assertIn("CRABC_WORK_DIR=/workspace/.work/x86_64/owned-rust-std-cleanup", arguments)
+            self.assertIn("TMPDIR=/workspace/.work/x86_64/owned-rust-std-cleanup/tmp", arguments)
+            for source, target in (
+                (provider, "/workspace/.work/x86_64/inputs/provider-vendor"),
+                (static, "/workspace/.work/x86_64/inputs/static-product"),
+                (dynamic, "/workspace/.work/x86_64/inputs/dynamic-product"),
+            ):
+                self.assertIn(f"{source}:{target}:ro", mounts)
+            self.assertEqual(arguments[arguments.index("--network") + 1], "none")
+            self.assertIn(f"{os.getuid()}:{os.getgid()}", arguments)
             command = arguments[arguments.index("python3"):]
             self.assertEqual(command, [
                 "python3", "-B", "/workspace/unwinder/owned_cleanup.py",
-                "--provider-vendor", f"/workspace/.work/x86_64/{input_root.name}/provider-vendor",
-                "--static-sysroot", f"/workspace/.work/x86_64/{input_root.name}/static-product",
-                "--dynamic-sysroot", f"/workspace/.work/x86_64/{input_root.name}/dynamic-product",
+                "--provider-vendor", "/workspace/.work/x86_64/inputs/provider-vendor",
+                "--static-sysroot", "/workspace/.work/x86_64/inputs/static-product",
+                "--dynamic-sysroot", "/workspace/.work/x86_64/inputs/dynamic-product",
             ])
+
+    def test_unwinder_owned_cleanup_rejects_an_input_inside_writable_evidence(self):
+        with self.tempdir() as td, tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as work:
+            bindir, capture = self.fake_docker(Path(td))
+            work_root = Path(work)
+            evidence_root = work_root / "owned-rust-std-cleanup"; evidence_root.mkdir()
+            provider = evidence_root / "provider-vendor"; provider.mkdir()
+            static = work_root / "static-product"; static.mkdir()
+            dynamic = work_root / "dynamic-product"; dynamic.mkdir()
+            result = self.invoke(
+                bindir, capture, "unwinder-owned-cleanup",
+                ("--provider-vendor", str(provider), "--static-sysroot", str(static), "--dynamic-sysroot", str(dynamic)),
+                CRABC_X86_64_WORK_DIR=str(work_root),
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("must be outside its writable evidence root", result.stderr)
+            self.assertFalse(capture.exists())
 
     def test_unwinder_owned_cleanup_rejects_a_missing_provider_vendor_before_docker(self):
         with self.tempdir() as td:
