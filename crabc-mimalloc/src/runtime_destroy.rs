@@ -414,12 +414,12 @@ mod tests {
 
     #[test]
     fn physical_destroy_refuses_pending_owner_exit_without_a_live_callback_marker() {
-        // A rejected transfer must retain the live TLS mapping, not join/drop
-        // its pending owner. The outer process observes only the exit status;
-        // the isolated child exits with its parked worker still mapped.
-        let child = crabc_core::process::fork_raw().expect("isolated pending-owner fixture");
-        if child == 0 {
-            let _ = std::panic::catch_unwind(|| {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::destroy::tests::physical_destroy_refuses_pending_owner_exit_without_a_live_callback_marker",
+            || {
+            // A rejected transfer must retain the live TLS mapping, not join or
+            // drop its pending owner. This child has a fresh process owner;
+            // it exits while the parked worker remains mapped.
             unsafe { std::env::set_var("mimalloc_destroy_on_exit", "1"); }
             assert!(initialize_process(4096, unsafe { RuntimeStderrOutput::new(fixture_stderr) }));
             assert!(prepare_native_later_thread_arena());
@@ -472,27 +472,32 @@ mod tests {
                 (initial_client.as_ptr().addr() & !4095) as *mut u8, 4096, &mut resident) }.is_ok());
             assert!(matches!(native_allocate_aligned(32, 16, false), NativePageAllocationResult::Unavailable));
             crabc_core::process::exit_immediately(0);
-            });
-            crabc_core::process::exit_immediately(126);
-        }
-        let mut status = 0;
-        assert_eq!(unsafe { crabc_core::process::wait4_raw(child, &mut status, 0) }, Ok(child));
-        assert_eq!(status, 0, "pending owner and backing survive a permanently sealed refusal");
+            },
+        );
     }
 
     #[test]
     fn physical_destroy_transfers_live_worker_before_arena_and_page_map_release() {
-        physical_destroy_fixture(false, false);
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::destroy::tests::physical_destroy_transfers_live_worker_before_arena_and_page_map_release",
+            || physical_destroy_fixture(false, false),
+        );
     }
 
     #[test]
     fn physical_destroy_os_only_retains_source_pages_but_seals_all_native_access() {
-        physical_destroy_fixture(true, false);
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::destroy::tests::physical_destroy_os_only_retains_source_pages_but_seals_all_native_access",
+            || physical_destroy_fixture(true, false),
+        );
     }
 
     #[test]
     fn physical_destroy_tracking_oom_retains_transferred_graph_and_permanent_seal() {
-        physical_destroy_fixture(false, true);
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::destroy::tests::physical_destroy_tracking_oom_retains_transferred_graph_and_permanent_seal",
+            || physical_destroy_fixture(false, true),
+        );
     }
 
     #[test]

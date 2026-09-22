@@ -98,6 +98,12 @@ mod single_thread;
 mod statistics;
 mod subproc;
 mod support;
+// Some native lifecycle fixtures intentionally terminalize process-global
+// source state.  Their test-only child-exec boundary lives outside the
+// production allocator modules so a full unit binary can retain every fixture
+// without inheriting an earlier fixture's irreversible owner.
+#[cfg(test)]
+mod test_process;
 #[cfg(feature = "test-adapter")]
 mod test_context;
 mod thread_local;
