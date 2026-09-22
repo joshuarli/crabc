@@ -8,6 +8,10 @@
 //! not freed by this transition. Their exact Rust capabilities remain in
 //! external tracking storage until the enclosing arena-destruction owner
 //! consumes that backing. Failed Theap frees also remain represented there.
+//! The current Theap prefix omits source statistics, so the source per-Theap
+//! statistics merge remains unimplemented. Main-Heap unlink/count bookkeeping,
+//! the detached metadata bootstrap Heap, arena release, and global PageMap
+//! destruction are separate required predecessors/successors of full teardown.
 
 use super::{Heap, MemoryKind, Theap, ThreadLocalData};
 use crate::meta::{MetaAllocation, MetaAllocator, MetaError};
@@ -40,18 +44,59 @@ pub(crate) struct MainHeapDestroyTracking {
     theap: Option<MetaAllocation<'static>>,
     tld: Option<MetaAllocation<'static>>,
     registration: Option<ThreadRegistrationLease>,
+    theap_release_due: bool,
 }
 
 impl MainHeapDestroyTracking {
     pub(crate) const fn empty() -> Self {
-        Self { pointer: None, tld_pointer: None, theap: None, tld: None, registration: None }
+        Self { pointer: None, tld_pointer: None, theap: None, tld: None, registration: None, theap_release_due: false }
     }
 
     pub(crate) fn retains_theap(&self) -> bool { self.theap.is_some() }
     pub(crate) fn retains_tld(&self) -> bool { self.tld.is_some() }
+
+    /// Retries only the exact metadata free whose source reference already
+    /// reached zero. A cached-reference owner is never eligible, and this
+    /// never repeats list mutation or a source reference decrement.
+    pub(crate) fn retry_theap_metadata_release(
+        &mut self,
+        metadata: Pin<&'static MetaAllocator>,
+    ) -> Result<(), MetaError> {
+        if !self.theap_release_due { return Err(MetaError::ReleasedOrStale); }
+        let allocation = self.theap.as_mut().ok_or(MetaError::ReleasedOrStale)?;
+        metadata.free(allocation)?;
+        self.theap = None;
+        self.theap_release_due = false;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_retained_tld_is_detached(&mut self) -> bool {
+        self.tld.as_mut().and_then(MetaAllocation::thread_local_data_mut)
+            .is_some_and(|tld| tld.is_subprocess_attached_no_theap())
+    }
 }
 
 impl Heap {
+    #[cfg(test)]
+    pub(crate) fn test_destroy_graph_counts(&self) -> (usize, usize) {
+        let guard = self.theaps_lock.lock().expect("source graph audit lock");
+        let mut dynamic = 0;
+        let mut attached = 0;
+        let mut current = self.theaps;
+        while let Some(pointer) = NonNull::new(current) {
+            // The held source lock protects each valid intrusive-list member.
+            let theap = unsafe { pointer.as_ref() };
+            if theap.memid.kind() == MemoryKind::Malloc {
+                dynamic += 1;
+                attached += usize::from(!theap.tld.is_null());
+            }
+            current = theap.hnext;
+        }
+        guard.unlock().expect("source graph audit unlock");
+        (dynamic, attached)
+    }
+
     /// Applies the source main-Heap Theap-list destruction with exact dynamic
     /// metadata ownership. Static images remain allocated and unchanged
     /// except for their list links, as source `_mi_theap_decref` requires.
@@ -68,8 +113,8 @@ impl Heap {
     /// metadata frees. All source lists and pointers are valid and exclusively
     /// accessible. Every dynamic member and its distinct TLD were explicitly
     /// transferred by their old Rust wrappers, with no recovery or surviving
-    /// wrapper; `metadata` is their original allocator. No lock guard/waiter
-    /// remains. Source TLS/cache roots have been retired in source order.
+    /// wrapper; `metadata` is their original allocator. No Heap/TLD lock
+    /// guard/waiter remains. Source TLS/cache roots have been retired in source order.
     /// Tracking, this Heap, and metadata control storage live outside arenas
     /// which the subsequent subprocess transition may release. The caller
     /// retains tracking on success and failure and never reopens this Heap.
@@ -161,8 +206,9 @@ impl Heap {
                 if previous == 0 {
                     first_error.get_or_insert(MainHeapDestroyError::InvalidOwnership);
                 } else if previous == 1 {
+                    slot.theap_release_due = true;
                     match metadata.free(allocation) {
-                        Ok(()) => { slot.theap = None; }
+                        Ok(()) => { slot.theap = None; slot.theap_release_due = false; }
                         Err(error) => { first_error.get_or_insert(MainHeapDestroyError::Metadata(error)); }
                     }
                 }

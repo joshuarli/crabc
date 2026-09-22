@@ -551,6 +551,15 @@ pub(crate) struct MainStaticHeapGuard<'main> {
 }
 
 impl<'main> MainStaticHeapLease<'main> {
+    #[cfg(test)]
+    pub(crate) fn test_destroyed_heap_list_empty(self) -> bool {
+        let guard = self.storage.shared_heap_projection_lock.lock().expect("retired Heap audit lock");
+        let empty = self.storage.state.load(Ordering::Acquire) == TORN_DOWN
+            && unsafe { &*self.storage.heap.image.get() }.test_theap_head_is(core::ptr::null_mut());
+        guard.unlock().expect("retired Heap audit unlock");
+        empty
+    }
+
     /// Closes every safe Heap projection before the source force-destruction
     /// Theap pass. This terminal boundary does not release arenas/PageMap or
     /// imply that the surrounding process shutdown has completed.

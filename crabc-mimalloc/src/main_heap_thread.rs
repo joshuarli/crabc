@@ -1887,6 +1887,13 @@ mod tests {
             });
             assert_eq!(metadata.test_allocation_audit().live_capability_count, 6);
             assert_eq!(subprocess.live_thread_count(), 4);
+            let before_live = subprocess.live_thread_count();
+            let (dynamic_members, attached_tlds) = {
+                let mut guard = heap.lock_heap().expect("quiescent main Heap audit");
+                let counts = guard.heap_mut().test_destroy_graph_counts();
+                guard.unlock().expect("main Heap audit releases");
+                counts
+            };
             crate::compiler_tls::clear_main_static_attachment_roots();
             let tracking = std::boxed::Box::leak(std::boxed::Box::new([
                 const { crate::types::heap_destroy::MainHeapDestroyTracking::empty() }; 4
@@ -1901,9 +1908,71 @@ mod tests {
             assert_eq!(tracking.iter().filter(|slot| slot.retains_tld()).count(), 3);
             assert_eq!(metadata.test_allocation_audit().live_capability_count, 3);
             assert_eq!(subprocess.live_thread_count(), 4, "source Heap destruction does not free TLDs");
+            let detached = tracking.iter_mut().map(|slot| slot.test_retained_tld_is_detached()).filter(|detached| *detached).count();
+            assert_eq!(detached, 3);
+            for (index, value) in [before_live, dynamic_members, attached_tlds,
+                usize::from(heap.test_destroyed_heap_list_empty()), detached, subprocess.live_thread_count()].into_iter().enumerate() {
+                std::println!("m2.heap.destroy.{index}={value}");
+            }
             // The fixture retains the detached TLD owners in external leaked
             // storage; arena/process destruction is a separate transition.
         }).join().expect("quiescent Heap destruction lifecycle");
+    }
+
+    #[test]
+    fn source_retained_main_heap_destruction_preserves_owners_on_capacity_and_metadata_refusal() {
+        for refuse_metadata in [false, true] {
+            thread::spawn(move || {
+                use crate::types::heap_destroy::{MainHeapDestroyError, MainHeapDestroyTracking};
+                let (storage, subprocess) = fixture();
+                let metadata = MetaAllocator::test_static_owner();
+                let main = unsafe {
+                    MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+                }.expect("main source owner");
+                let heap = main.shared_main_heap_lease().expect("main Heap");
+                thread::scope(|scope| {
+                    scope.spawn(move || {
+                        let mut owner = match unsafe {
+                            MainHeapThreadAttachment::begin_with_test_metadata(heap, metadata, memory_config())
+                        } {
+                            Ok(owner) => owner,
+                            Err(_) => panic!("later source owner"),
+                        };
+                        unsafe { owner.transfer_source_state_after_process_done() }
+                            .expect("explicit source transfer");
+                    }).join().expect("transferred worker joins");
+                });
+                crate::compiler_tls::clear_main_static_attachment_roots();
+                let tracking = std::boxed::Box::leak(std::boxed::Box::new([
+                    const { MainHeapDestroyTracking::empty() }; 2
+                ]));
+                if refuse_metadata {
+                    // The test holds only metadata's private entry gate, not
+                    // a Heap/TLD projection or metadata image. The actual
+                    // free receiver refuses before accessing backing state.
+                    let result = metadata.test_with_held_backing_entry(|| unsafe {
+                        heap.force_destroy_source_owned_theaps(metadata, tracking)
+                    }).expect("held metadata entry fixture");
+                    assert_eq!(result, Err(MainHeapDestroyError::Metadata(MetaError::RecursiveEntry)));
+                    assert_eq!(tracking.iter().filter(|slot| slot.retains_theap()).count(), 1);
+                    assert_eq!(tracking.iter().filter(|slot| slot.retains_tld()).count(), 1);
+                    assert_eq!(metadata.test_allocation_audit().live_capability_count, 2);
+                    let failed = tracking.iter_mut().find(|slot| slot.retains_theap()).unwrap();
+                    failed.retry_theap_metadata_release(metadata).expect("exact owner retry after entry release");
+                    assert_eq!(failed.retry_theap_metadata_release(metadata), Err(MetaError::ReleasedOrStale));
+                    assert_eq!(metadata.test_allocation_audit().live_capability_count, 1);
+                } else {
+                    let result = unsafe { heap.force_destroy_source_owned_theaps(metadata, &mut tracking[..1]) };
+                    assert_eq!(result, Err(MainHeapDestroyError::TrackingCapacity { required: 2 }));
+                    assert!(tracking.iter().all(|slot| !slot.retains_theap() && !slot.retains_tld()));
+                    assert_eq!(metadata.test_allocation_audit().live_capability_count, 2);
+                }
+                assert!(heap.lock_heap().is_err(), "neither failure reopens the source Heap");
+                assert_eq!(subprocess.live_thread_count(), 2);
+                // External tracking and the leaked fixture retain every
+                // outstanding owner; neither error authorizes arena release.
+            }).join().expect("destruction refusal preserves ownership");
+        }
     }
 
     #[test]

@@ -905,3 +905,36 @@ through public pthread APIs.
    promotion claim.
 
 A later tag is not evidence that this fixed-port contract has changed.
+
+## Native source-retained main-Heap Theap destruction
+
+`src/theap.c:381-412` and `src/heap.c:162-185` map to
+`types::heap_destroy::Heap::force_destroy_main_heap_theaps_quiescent`.
+`MainStaticHeapLease::force_destroy_source_owned_theaps` permanently closes
+safe Heap projections before that pass. The caller must separately establish
+whole-process quiescence and invalidate prior engines, projections, and TLS
+roots; the terminal Heap state cannot revoke already-issued Rust references.
+Every dynamic main-Heap Theap and its distinct TLD must first transfer its
+typed metadata and registration owners. The real nonfinal post-process-done
+worker bridge now performs that transfer before libc releases worker TLS.
+
+The pass preserves source ordering: detach all TLD relations, detach the Heap
+list, then decrement dynamic Theap references and release final metadata.
+Static Theaps retain their source images. Caller-provided external storage
+keeps the exact detached TLD/registration owners, cached-reference Theaps,
+and failed metadata-release owners. A metadata retry repeats only the failed
+free after the source reference reached zero. It never repeats detachment or
+reference decrement. This typed failure retention strengthens the source's
+void free boundary; it is not source failure/retry parity.
+
+The development `compat/allocator/heap_destroy.c`/`.py` pair compares six
+actual main-Heap/TLD lifecycle observations after three C workers created
+after real `mi_process_done()` and three explicitly source-retained Rust
+workers. Rust additionally checks metadata capability release and refusal
+ownership. Source `mi_heap_free_theaps` includes a statistics merge absent
+from the current Rust Theap prefix. Main-Heap bookkeeping/unlink, the separate
+Rust detached-metadata bootstrap Heap, process admission sealing, arena
+release, and PageMap root retirement remain required composition work.
+`src/arena.c:2640-2643` deliberately skips individual page destruction for a
+main Heap. This prerequisite does not implement `destroy_on_exit`, add a
+process-destruction caller, or change ordinary process-done retention.
