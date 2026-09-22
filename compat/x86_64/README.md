@@ -375,9 +375,10 @@ roster. The resulting receipt remains non-promoting: it does not complete
 
 [`owned-resolver-family.md`](owned-resolver-family.md) maps the three frozen
 resolver capabilities to their exact behavior readers. Its cancellation reader
-replays one source-bound static/dynamic 847-run raw receipt. The remaining hard
-gaps are installed/extracted protocol-database behavior and one current
-source-bound primary/reproduction/extracted cohort.
+replays one source-bound static/dynamic 847-run raw receipt, while its protocol
+reader replays pinned-musl fixed-table behavior through three product pairs and
+all eighteen C-runtime entries. The remaining hard gap is one current
+source-bound installed/reproduction/extracted cohort shared by every component.
 [`owned_resolver_family.py`](owned_resolver_family.py) only replays explicitly
 named evidence and reports those gaps; it does not build a product, run DNS, or
 promote `libc.resolver`.

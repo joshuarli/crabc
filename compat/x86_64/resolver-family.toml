@@ -89,12 +89,14 @@ modes = [
 ]
 role = "source/product-bound cancellation, wait-state ordering, UDP/TCP cleanup, descriptor retirement, and retry lifecycle"
 
-# The static provider slice proves only its own archive boundary.  There is no
-# installed/extracted six-mode protocol-database behavior receipt yet.
+# The selected x86 C ABI is musl's fixed `proto.c` table, not the separate
+# Rust-facing `/etc/protocols` snapshot facade. Its public reader requires
+# three non-reused product pairs and all six C-runtime entry modes per pair.
 [[component]]
 id = "protocol-database-product"
-state = "missing-reader"
-required_reader = "an installed/extracted six-mode protocol-database behavior receipt"
+state = "reader"
+reader = "compat/x86_64/owned_protocol_database_receipt.py"
+request_fields = ["report"]
 products = ["installed", "reproduction", "extracted"]
 modes = [
   "static-et-exec",
@@ -104,7 +106,7 @@ modes = [
   "dynamic-non-pie-kernel",
   "dynamic-non-pie-direct",
 ]
-role = "conventional /etc/protocols lookup and protocol result lifetime"
+role = "fixed musl proto.c table, shared result lifetime, and selected public netdb interfaces"
 
 # The family needs a common current source/product cohort before component
 # receipts may be combined.  This coordinator intentionally records the gap;
@@ -175,8 +177,8 @@ id = "protocol-database-installed-behavior"
 component = "protocol-database-product"
 capabilities = ["network.netdb"]
 behaviors = [
-  "/etc/protocols lookup behavior",
-  "protocol result lifetime and selected public netdb interfaces",
+  "fixed musl proto.c table enumeration and lookup behavior",
+  "protocol result lifetime, shared cursor, and selected public netdb interfaces",
 ]
 
 [[proof]]

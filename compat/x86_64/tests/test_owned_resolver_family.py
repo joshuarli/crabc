@@ -48,6 +48,7 @@ class OwnedResolverFamilyTests(unittest.TestCase):
         cancellation_work = self._relative(self._directory("cancellation-work"))
         cancellation_static = self._relative(self._directory("cancellation-static"))
         cancellation_dynamic = self._relative(self._directory("cancellation-dynamic"))
+        protocol = self._relative(self._file("protocol-database.json"))
         cohort = self._relative(self._file("cohort.json"))
         return {
             "resolver-network-physical": {"report": report},
@@ -66,6 +67,7 @@ class OwnedResolverFamilyTests(unittest.TestCase):
                 "static_product": cancellation_static,
                 "dynamic_product": cancellation_dynamic,
             },
+            "protocol-database-product": {"report": protocol},
         }
 
     def test_roster_maps_each_frozen_capability_to_behavior_proofs(self) -> None:
@@ -121,16 +123,18 @@ class OwnedResolverFamilyTests(unittest.TestCase):
                 "classic-netdb": valid_reader,
                 "resolver-alias-private-bodies": valid_reader,
                 "resolver-cancellation": valid_reader,
+                "protocol-database-product": valid_reader,
             },
         )
 
-        self.assertEqual(len(calls), 4)
+        self.assertEqual(len(calls), 5)
         self.assertTrue(report["components"]["resolver-network-physical"]["admitted"])
         self.assertTrue(report["components"]["classic-netdb"]["admitted"])
         self.assertTrue(report["components"]["resolver-alias-private-bodies"]["admitted"])
         self.assertTrue(report["components"]["resolver-cancellation"]["admitted"])
+        self.assertTrue(report["components"]["protocol-database-product"]["admitted"])
         self.assertTrue(report["proofs"]["resolver-cancellation-and-retirement"]["admitted"])
-        self.assertFalse(report["proofs"]["protocol-database-installed-behavior"]["admitted"])
+        self.assertTrue(report["proofs"]["protocol-database-installed-behavior"]["admitted"])
         self.assertFalse(report["proofs"]["common-current-product-cohort"]["admitted"])
         self.assertFalse(report["family_complete"])
 

@@ -60,7 +60,7 @@ EXPECTED_COMPONENTS = {
         ("one-supplied-static-and-dynamic-pair",), SIX_MODES,
     ),
     "protocol-database-product": (
-        "missing-reader", None, "an installed/extracted six-mode protocol-database behavior receipt", (),
+        "reader", "compat/x86_64/owned_protocol_database_receipt.py", None, ("report",),
         ("installed", "reproduction", "extracted"), SIX_MODES,
     ),
     "resolver-family-cohort": (
@@ -436,12 +436,29 @@ def _cancellation_reader(root: Path, paths: Mapping[str, Path]) -> dict[str, obj
     }
 
 
+def _protocol_database_reader(root: Path, paths: Mapping[str, Path]) -> dict[str, object]:
+    module = importlib.import_module("owned_protocol_database_receipt")
+    report = module.validate_report(root, paths["report"])
+    require(tuple(module.ENTRY_MODES) == SIX_MODES,
+            "protocol-database reader six-mode roster differs")
+    require(tuple(module.ARMS) == ("installed", "reproduction", "extracted"),
+            "protocol-database reader product-arm roster differs")
+    return {
+        "reader_schema": module.SCHEMA,
+        "report": report,
+        "entry_modes": list(module.ENTRY_MODES),
+        "product_arms": list(module.ARMS),
+        "provider_symbols": list(module.PROVIDERS),
+    }
+
+
 Reader = Callable[[Path, Mapping[str, Path]], dict[str, object]]
 READERS: dict[str, Reader] = {
     "resolver-network-physical": _network_reader,
     "classic-netdb": _classic_reader,
     "resolver-alias-private-bodies": _alias_reader,
     "resolver-cancellation": _cancellation_reader,
+    "protocol-database-product": _protocol_database_reader,
 }
 DIRECTORY_INPUTS = {
     "resolver-alias-private-bodies": frozenset(("static_product", "dynamic_product")),
