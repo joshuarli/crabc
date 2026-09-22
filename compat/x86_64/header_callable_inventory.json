@@ -597,6 +597,30 @@
       {
         "aliases": [],
         "evidence_record": null,
+        "id": "x86-owned-static-native-shadow",
+        "members": [],
+        "runner": "compat/x86_64/run_owned_static_sysroot.sh",
+        "state": "planned"
+      },
+      {
+        "aliases": [],
+        "evidence_record": null,
+        "id": "x86-owned-dynamic-native-shadow",
+        "members": [],
+        "runner": "compat/x86_64/run_materialized_dynamic_sysroot.sh",
+        "state": "planned"
+      },
+      {
+        "aliases": [],
+        "evidence_record": null,
+        "id": "x86-owned-allocator-lifecycle-test-audit",
+        "members": [],
+        "runner": "compat/x86_64/run_materialized_dynamic_sysroot.sh",
+        "state": "planned"
+      },
+      {
+        "aliases": [],
+        "evidence_record": null,
         "id": "x86-kernel-admin",
         "members": [],
         "runner": "compat/x86_64/run_libc_kernel_admin.sh",
@@ -417716,7 +417740,7 @@
     "linux_uapi_version": "5.10",
     "musl_source_sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
     "musl_version": "1.2.6",
-    "parity_ledger_sha256": "eef78f7d05027812b4669cbee55df3ae501e62c05b3fbc4f88b7136b651170c0",
+    "parity_ledger_sha256": "db747c88cfed538374d5029302bf26ebfb3eb334c0dd490c7025c1363aad87a5",
     "static_c_abi_exports_sha256": "3698b538aea4c357f0536bacf340bf4c0c520a6b8cc6d34a8e119b4ce1c655b3"
   },
   "oracle": "Pinned musl 1.2.6",

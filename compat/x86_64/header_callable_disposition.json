@@ -2,9 +2,9 @@
   "contract_schema": "crabc.x86_64-header-callable-disposition/v2",
   "inputs": {
     "callable_extension_contract_sha256": "950febf6d9d8f26f001eb31844438c047f6ada96dbb3c2ecc27de97e51151b7f",
-    "callable_inventory_sha256": "9d0ab5e46e8f7d6557a4fd2cce5d7f8f5105628e17ab9ee1bd59383fb05ebfb1",
+    "callable_inventory_sha256": "904899da2c1f612e899039d1a999567b9b8e0ce9e1ee6d4e00aa4d7df1a8236a",
     "candidate_external_callable_sha256": "ac2057843e61094f0a8f1dc8b3774d2d2b848f8a860c0f7cf6193cd3ae7ac118",
-    "parity_ledger_sha256": "eef78f7d05027812b4669cbee55df3ae501e62c05b3fbc4f88b7136b651170c0",
+    "parity_ledger_sha256": "db747c88cfed538374d5029302bf26ebfb3eb334c0dd490c7025c1363aad87a5",
     "static_c_abi_exports_sha256": "3698b538aea4c357f0536bacf340bf4c0c520a6b8cc6d34a8e119b4ce1c655b3"
   },
   "missing_reference_declaration_groups": [],
@@ -329,6 +329,18 @@
       },
       {
         "id": "x86-owned-dynamic-runtime",
+        "members": []
+      },
+      {
+        "id": "x86-owned-static-native-shadow",
+        "members": []
+      },
+      {
+        "id": "x86-owned-dynamic-native-shadow",
+        "members": []
+      },
+      {
+        "id": "x86-owned-allocator-lifecycle-test-audit",
         "members": []
       },
       {

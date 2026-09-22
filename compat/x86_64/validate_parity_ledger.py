@@ -55472,7 +55472,7 @@ def require_crypt_profile_slice(family: Mapping[str, Any]) -> None:
     ).read_text(encoding="utf-8")
     for snippet in (
         '#[cfg(feature = "x86-crypt")]\n#[path = "crypt.rs"]\nmod crypt;',
-        "not(feature = \"x86-crypt-allocator-composition\")",
+        "not(crabc_x86_crypt_allocator_composition)",
         "x86-crypt and x86-allocator-runtime must be enabled through x86-crypt-allocator-composition",
     ):
         require(snippet in static_root, f"crypto.crypt-profile static root omits {snippet}")

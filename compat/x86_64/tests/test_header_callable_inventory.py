@@ -398,8 +398,17 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         self.assertNotIn("tgkill", unprovided)
         self.assertEqual(
             set(planned),
-            {"x86-owned-static-runtime", "x86-owned-dynamic-runtime", "x86-kernel-admin"},
+            {
+                "x86-owned-static-runtime", "x86-owned-dynamic-runtime", "x86-kernel-admin",
+                "x86-owned-static-native-shadow", "x86-owned-dynamic-native-shadow",
+                "x86-owned-allocator-lifecycle-test-audit",
+            },
         )
+        for feature in (
+            "x86-owned-static-native-shadow", "x86-owned-dynamic-native-shadow",
+            "x86-owned-allocator-lifecycle-test-audit",
+        ):
+            self.assertEqual(planned[feature], set())
         self.assertEqual(planned["x86-kernel-admin"], set())
         self.assertEqual(
             planned["x86-owned-static-runtime"],
