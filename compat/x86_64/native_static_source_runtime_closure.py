@@ -14,6 +14,7 @@ import json
 import os
 import pathlib
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -50,6 +51,14 @@ RUNTIME_FLAGS = (
 )
 FORBIDDEN_RUNTIME_NAMES = re.compile(r"(?:^|[-_])(std|panic_abort|panic_unwind|unwind|libunwind)(?:[-_.]|$)")
 FORBIDDEN_FINAL_SYMBOL = re.compile(r"(?:rust_eh_personality|_Unwind_|panic_(?:abort|unwind))")
+# `cargo -vv` prints its process display as an indented `Running `...`` record.
+# That display is not a shell-escaped transport: a package description can retain
+# literal backticks and newlines inside a shell-quoted environment assignment.
+# The outer closing backtick is therefore the one at the end of a physical line
+# immediately followed by Cargo's next uncoloured progress/diagnostic record.
+# Accept only that current renderer shape, then let shlex parse the command itself.
+CARGO_RUNNING = re.compile(r"(?m)^ {5}Running `")
+CARGO_NEXT_RECORD = re.compile(r"(?: {5}Running `| {3}Compiling |warning: | {4}Finished |error(?:\[|:))")
 
 
 class ClosureError(RuntimeError):
@@ -374,12 +383,35 @@ def emitted_artifacts(records: Sequence[dict[str, Any]], target: pathlib.Path) -
 
 
 def cargo_commands(stderr_path: pathlib.Path) -> list[list[str]]:
+    """Parse each current Cargo `-vv` process rendering without splitting on data backticks."""
+
+    text = stderr_path.read_text(encoding="utf-8")
+    starts = list(CARGO_RUNNING.finditer(text))
     commands: list[list[str]] = []
-    for rendered in re.findall(r"Running `([^`]+)`", stderr_path.read_text(encoding="utf-8")):
-        try:
-            command = __import__("shlex").split(rendered)
-        except ValueError as error:
-            raise ClosureError("Cargo verbose log has an unparsable command") from error
+    for index, start in enumerate(starts):
+        # The next `Running` start bounds this one, but its immediately preceding
+        # newline can be the current record's terminator, so inspect the suffix in
+        # the complete stream when checking the next Cargo record.
+        boundary = starts[index + 1].start() if index + 1 < len(starts) else len(text)
+        rendered = text[start.end():boundary]
+        candidates: list[list[str]] = []
+        cursor = 0
+        while True:
+            end = rendered.find("`\n", cursor)
+            if end < 0:
+                break
+            next_record = text[start.end() + end + 2:]
+            if CARGO_NEXT_RECORD.match(next_record):
+                try:
+                    candidates.append(shlex.split(rendered[:end]))
+                except ValueError:
+                    # A literal backtick inside Cargo's shell-quoted metadata is
+                    # not the outer process-display terminator.
+                    pass
+            cursor = end + 1
+        if len(candidates) != 1:
+            fail("Cargo verbose log lacks one unambiguous rendered command")
+        command = candidates[0]
         if "--crate-name" in command:
             commands.append(command)
     if not commands:

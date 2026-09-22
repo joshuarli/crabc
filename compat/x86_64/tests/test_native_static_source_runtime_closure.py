@@ -87,6 +87,56 @@ class NativeStaticSourceRuntimeClosureTests(unittest.TestCase):
 
         self.assertEqual(found, package.resolve())
 
+    def test_cargo_commands_accepts_literal_backticks_in_multiline_description(self) -> None:
+        work = ROOT / ".work"
+        work.mkdir(exist_ok=True)
+        temporary = Path(tempfile.mkdtemp(dir=work))
+        self.addCleanup(lambda: __import__("shutil").rmtree(temporary, ignore_errors=True))
+        stderr = temporary / "cargo.stderr.log"
+        # This is Cargo's retained `-vv` form from the failing source-runtime
+        # graph: the description is shell quoted but Cargo leaves its Markdown
+        # backticks and physical newlines intact inside the outer `Running` pair.
+        stderr.write_text(
+            "     Running `CARGO_PKG_DESCRIPTION='Constant-time utility library\n"
+            "applications. Supports `const fn` where appropriate. Built on `cmov`.\n"
+            "' /opt/rustup/bin/rustc --crate-name ctutils --target x86_64-unknown-linux-musl`\n"
+            "   Compiling crabc-libc v0.3.0 (/workspace/libc)\n"
+            "     Running `RUSTC=/opt/rustup/bin/rustc /opt/rustup/bin/rustc --crate-name c "
+            "--target x86_64-unknown-linux-musl`\n"
+            "    Finished `dev` profile [optimized + debuginfo] target(s) in 1.00s\n",
+            encoding="utf-8",
+        )
+
+        commands = CLOSURE.cargo_commands(stderr)
+
+        self.assertEqual([CLOSURE.option_values(command, "--crate-name") for command in commands], [["ctutils"], ["c"]])
+        self.assertIn("CARGO_PKG_DESCRIPTION=Constant-time utility library\napplications. Supports `const fn` where appropriate. Built on `cmov`.\n", commands[0])
+
+    def test_cargo_commands_rejects_ambiguous_or_malformed_rendering(self) -> None:
+        work = ROOT / ".work"
+        work.mkdir(exist_ok=True)
+        temporary = Path(tempfile.mkdtemp(dir=work))
+        self.addCleanup(lambda: __import__("shutil").rmtree(temporary, ignore_errors=True))
+        stderr = temporary / "cargo.stderr.log"
+        stderr.write_text(
+            "     Running `rustc --crate-name c --target x86_64-unknown-linux-musl`\n"
+            "warning: synthetic diagnostic\n"
+            "`\n"
+            "    Finished `dev` profile [optimized + debuginfo] target(s) in 1.00s\n",
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(CLOSURE.ClosureError, "unambiguous rendered command"):
+            CLOSURE.cargo_commands(stderr)
+
+        stderr.write_text(
+            "     Running `rustc --crate-name c --target x86_64-unknown-linux-musl\n"
+            "warning: synthetic diagnostic\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(CLOSURE.ClosureError, "unambiguous rendered command"):
+            CLOSURE.cargo_commands(stderr)
+
     def test_primary_record_binds_all_source_runtime_externs(self) -> None:
         command, target, runtime, source = self._command(immediate_abort=True)
 
