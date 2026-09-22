@@ -124,7 +124,7 @@
       "id": "initialization",
       "evidence_fragment": {
         "path": "compat/allocator/m2-initialization-x86_64-v3.5.0.fragment.json",
-        "inventory_sha256": "c5afc1001e74e51b022e119a18e95301e944162230a698bd0505a5cd2752ae3e"
+        "inventory_sha256": "e5f165c07fcbe0412e1ad12ab058ffec5fa8d9e1aebbb73d601191fa39bad2f8"
       }
     },
     {

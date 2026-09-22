@@ -146,10 +146,10 @@ class InitRecursionEvidenceTests(unittest.TestCase):
             "compared_value_count": len(evidence.EXPECTED_TRACE_VALUES),
             "status": "matched",
         })
-        self.assertEqual(len(report["lifecycle_checks"]), 7)
+        self.assertEqual(len(report["lifecycle_checks"]), 8)
         self.assertEqual(
             report["lifecycle_checks"][-1]["filter"],
-            "main_heap_thread::tests::later_thread_rejects_every_nonpristine_source_root_before_ticket_or_metadata_mutation",
+            "main_heap_thread::tests::later_tld_metadata_failure_precedes_theap_allocation_and_root_publication",
         )
 
         report = self.complete_report()

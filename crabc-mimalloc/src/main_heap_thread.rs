@@ -2005,6 +2005,120 @@ mod tests {
         .expect("the later-Theap allocation failure lifecycle completes");
     }
 
+    /// Pinned `_mi_thread_init_with_heap` first creates its later TLD through
+    /// `mi_tld_create`.  A failed metadata allocation at that first step has
+    /// no TLD capability to clean up, so it must return before either Theap
+    /// allocation or any shared-main root/list publication.  As in the C
+    /// branch, the old `thread_total_count` value remains consumed while the
+    /// live count stays at the ticket-zero owner.
+    #[test]
+    fn later_tld_metadata_failure_precedes_theap_allocation_and_root_publication() {
+        thread::spawn(|| {
+            let (storage, subprocess) = fixture();
+            let metadata = MetaAllocator::test_static_owner();
+            let mut main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the process main images");
+            let main_heap = main
+                .shared_main_heap_lease()
+                .expect("the live main attachment lends its heap");
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    assert_ne!(
+                        size_of::<crate::types::ThreadLocalData>(),
+                        size_of::<Theap>(),
+                        "the focused fault selects the first metadata allocation rather than Theap creation"
+                    );
+                    metadata
+                        .get_ref()
+                        .test_fail_next_direct_zeroed_size(size_of::<crate::types::ThreadLocalData>());
+
+                    assert!(matches!(
+                        unsafe {
+                            MainHeapThreadAttachment::begin_with_test_metadata(
+                                main_heap,
+                                metadata,
+                                memory_config(),
+                            )
+                        },
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(
+                            MainHeapThreadAttachmentError::ThreadLocalData(
+                                ThreadLocalDataError::Metadata(MetaError::AllocationUnavailable)
+                            )
+                        ))
+                    ));
+                    assert_eq!(
+                        subprocess.total_thread_count(),
+                        2,
+                        "the rejected later-TLD source ticket remains consumed"
+                    );
+                    assert_eq!(
+                        subprocess.live_thread_count(),
+                        1,
+                        "the failed TLD never becomes a live registration"
+                    );
+                    assert_eq!(
+                        storage.test_shared_later_theap_count(),
+                        0,
+                        "the later Theap cannot exist when TLD construction fails first"
+                    );
+                    assert_eq!(
+                        metadata.test_allocation_audit().live_capability_count,
+                        0,
+                        "a rejected TLD request leaves no metadata capability to release"
+                    );
+                    assert!(
+                        roots_are_pristine_for_later_main_attachment(),
+                        "the rejected TLD leaves the default, fast, cached, and dynamic roots untouched"
+                    );
+
+                    let mut recovered = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(
+                            main_heap,
+                            metadata,
+                            memory_config(),
+                        )
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("the later TLD retry rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("the later TLD retry retained: {error:?}")
+                        }
+                    };
+                    assert_eq!(
+                        recovered
+                            .current_tld_mut()
+                            .expect("the recovered TLD is current")
+                            .thread_sequence()
+                            .get(),
+                        2,
+                        "the recovery receives the source sequence after the rejected TLD"
+                    );
+                    recovered
+                        .finish_after_user_destructors()
+                        .expect("the recovered no-page attachment tears down normally");
+                    assert!(
+                        roots_are_pristine_for_later_main_attachment(),
+                        "the recovered attachment restores the empty worker roots"
+                    );
+                });
+                worker.join().expect("the rejected-then-recovered worker completes");
+            });
+
+            assert_eq!(subprocess.total_thread_count(), 3);
+            assert_eq!(subprocess.live_thread_count(), 1);
+            main.teardown()
+                .expect("ticket zero retires after the rejected and recovered later paths");
+            assert_eq!(subprocess.live_thread_count(), 0);
+        })
+        .join()
+        .expect("the later-TLD allocation failure lifecycle completes");
+    }
+
     /// Emits the normalized source-owner transitions for the native C/Rust
     /// initialization, reentry, teardown, and recovery witness.
     ///

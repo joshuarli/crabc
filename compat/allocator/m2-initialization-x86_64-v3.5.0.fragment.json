@@ -136,7 +136,7 @@
       }
     ],
     "remaining_conditions": [
-      "Generic/later TLD allocation and its metadata/publication transactions remain outside this bounded direct-source matrix.",
+      "Generic/later TLD allocation and its normal metadata/publication transactions remain outside this bounded direct-source matrix. The source-anchored Rust later-TLD allocation-failure check records only pre-publication ownership; it is not C fault-injection equivalence.",
       "Automatic pthread-destructor and process-shutdown routes remain unqualified.",
       "The retained explicit worker recovery receipt does not complete allocator-recursion or make Rust-only failure checks C fault equivalence."
     ]

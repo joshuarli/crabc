@@ -13,9 +13,12 @@ recursive entry keeps one current owner.
 
 The fixed native Rust batch also records the process-once race/reentry,
 preflight-cancellation retry, post-claim PageMap failure retention, persistent
-compiler-TLS reentry and failed-exit recovery, and every nonpristine
-later-worker root rejection.  Those are separate ownership and failure
-matrices, not additional C/Rust state equivalences.
+compiler-TLS reentry and failed-exit recovery, every nonpristine later-worker
+root rejection, and the later-TLD metadata-allocation rejection before Theap
+construction.  The C probe retains the direct source anchor for that
+constructor, but it does not inject the allocation failure.  These are
+separate ownership and failure matrices, not additional C/Rust fault
+equivalences.
 
 This is private native Linux/x86-64 evidence for the named source paths.  It
 does not claim a public allocator API, runtime callback integration, automatic
@@ -153,6 +156,10 @@ EXPECTED_LIFECYCLE_CHECKS = (
     },
     {
         "filter": "main_heap_thread::tests::later_thread_rejects_every_nonpristine_source_root_before_ticket_or_metadata_mutation",
+        "source": "crabc-mimalloc/src/main_heap_thread.rs",
+    },
+    {
+        "filter": "main_heap_thread::tests::later_tld_metadata_failure_precedes_theap_allocation_and_root_publication",
         "source": "crabc-mimalloc/src/main_heap_thread.rs",
     },
 )

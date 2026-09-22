@@ -330,7 +330,7 @@ M2_X86_64_BITMAP_FRAGMENT_DIGEST = "dbb2bc7d34762819f7ed76c3b50fd3d8599d46b0ba7b
 M2_X86_64_VM_FRAGMENT_DIGEST = "e4befc04de41c867a70525270a5ac4c7ec59d5b6d34649557168b25b92ba6121"
 # The current source-inventory digests repair exact pinned v3.5 declaration
 # spellings and the huge-page paired-free range. They do not promote M2.
-M2_X86_64_INITIALIZATION_FRAGMENT_DIGEST = "c5afc1001e74e51b022e119a18e95301e944162230a698bd0505a5cd2752ae3e"
+M2_X86_64_INITIALIZATION_FRAGMENT_DIGEST = "e5f165c07fcbe0412e1ad12ab058ffec5fa8d9e1aebbb73d601191fa39bad2f8"
 M2_X86_64_FAULT_FRAGMENT_DIGEST = "7eca87cb7f02667ef25f23c7910a15bef44c57f1433e294de10529eda73aef07"
 M2_X86_64_PAGE_MAP_CHECK_IDS = (
     "successful-page-map-lifecycle",
