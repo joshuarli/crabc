@@ -47,6 +47,16 @@ pub(crate) enum SourceSubprocessRegistryError {
 }
 
 impl SourceSubprocessRegistry {
+    /// Reads the immutable sequence assigned before main publication.
+    ///
+    /// # Safety
+    /// The exact subprocess completed initialization in this registry. Its
+    /// process-lifetime storage remains live; terminal unlink never rewrites
+    /// this scalar. No initializer can run again.
+    pub(crate) unsafe fn initialized_main_sequence(&self, subprocess: &MainSubprocess) -> usize {
+        unsafe { *subprocess.source_membership.sequence.get() }
+    }
+
     pub(crate) const fn new() -> Self {
         Self { head: UnsafeCell::new(core::ptr::null_mut()), lock: PrivateLock::new(), total_count: AtomicUsize::new(0) }
     }

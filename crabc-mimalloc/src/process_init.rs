@@ -131,6 +131,10 @@ pub(crate) struct ProcessMainInitializationStorage {
     // VM/OS/arena operation and never moved or replaced.
     #[cfg(target_arch = "x86_64")]
     diagnostic_output: UnsafeCell<MaybeUninit<OutputOwner>>,
+    // Null on legacy fixture paths without a diagnostic owner. Publication
+    // follows option initialization; READY separately gates normal capture.
+    #[cfg(target_arch = "x86_64")]
+    diagnostic_output_ptr: AtomicPtr<OutputOwner>,
 }
 
 // SAFETY: `process_once` makes COLD -> INITIALIZING exclusive and retains its
@@ -157,6 +161,8 @@ impl ProcessMainInitializationStorage {
             startup_reservations: UnsafeCell::new(MaybeUninit::uninit()),
             #[cfg(target_arch = "x86_64")]
             diagnostic_output: UnsafeCell::new(MaybeUninit::uninit()),
+            #[cfg(target_arch = "x86_64")]
+            diagnostic_output_ptr: AtomicPtr::new(core::ptr::null_mut()),
         }
     }
 
@@ -659,6 +665,7 @@ impl ProcessMainInitializationStorage {
                     unsafe { (*self.diagnostic_output.get()).write(output) };
                     let output = unsafe { (&mut *self.diagnostic_output.get()).assume_init_mut() };
                     unsafe { output.initialize_source_options(environment_reader) };
+                    self.diagnostic_output_ptr.store(output, Ordering::Release);
                     (Some(policy), true, ProcessStartupDiagnostics::Selected(output))
                 }
             }
@@ -669,6 +676,10 @@ impl ProcessMainInitializationStorage {
             VmPolicyStartup::RetainOnly(policy) => (Some(policy), false),
             VmPolicyStartup::ApplyProcessMemoryPolicy(policy) => (Some(policy), true),
         };
+        // Source init.c initializes its statistics clock after options and
+        // before `_mi_os_init`, including process memory-policy operations.
+        #[cfg(target_arch = "x86_64")]
+        crate::statistics::initialize_process_clock();
         let vm_process = if let Some(policy) = policy {
             // The source process-load edge clears `os_preloading` before its
             // option/OS/main-heap work. Retain this policy first, then expose
@@ -1445,6 +1456,25 @@ pub(crate) struct ProcessMainTerminalState {
 }
 
 impl ProcessMainReadyLease {
+    pub(crate) fn subprocess_sequence(self) -> Result<usize, ProcessMainInitError> {
+        self.ensure_ready()?;
+        // SAFETY: READY follows canonical subprocess initialization, which
+        // assigns the immutable source sequence before main Heap publication.
+        Ok(unsafe { self.storage.source_subprocesses.initialized_main_sequence(self.subprocess) })
+    }
+
+    /// Captures the permanent output owner before coordinator sealing. This
+    /// identity grants no callback authority: callers must separately hold
+    /// ordinary entry or the transferred terminal writer's diagnostic scope.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) fn diagnostic_output(self) -> Result<Option<&'static OutputOwner>, ProcessMainInitError> {
+        self.ensure_ready()?;
+        let pointer = self.storage.diagnostic_output_ptr.load(Ordering::Acquire);
+        // SAFETY: the inline owner is initialized once before publication and
+        // never moved or reclaimed, including when allocator backing retires.
+        Ok(unsafe { pointer.as_ref() })
+    }
+
     /// Removes the exact canonical source subprocess before Heap destruction.
     ///
     /// # Safety
