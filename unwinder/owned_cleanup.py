@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 import platform
 import resource
+import re
 import stat
 import subprocess
 import sys
@@ -40,6 +41,7 @@ BUILD_STD_DSO_HOST = "crabc-owned-cleanup-dso-host"
 BUILD_STD_DSO_LIBRARY = "libcrabc_owned_cleanup_plugin.so"
 BUILD_STD_CRATES = ("std", "core", "alloc", "panic_unwind", "unwind", "compiler_builtins")
 HOST_BUILD_LINKER = Path("/usr/bin/gcc")
+HOST_BUILD_SCRIPT_OUTPUT = re.compile(r"build_script_build-[0-9a-f]+\Z")
 SERIAL_BUILD_ENVIRONMENT = {
     "CARGO_BUILD_JOBS": "1",
     "CMAKE_BUILD_PARALLEL_LEVEL": "1",
@@ -309,22 +311,115 @@ def source_build_log_contract(log: str, rust_source: Path) -> None:
             "Cargo build-std log does not retain the requested fat-LTO profile")
 
 
-def host_build_script_links(path: Path, root: Path) -> list[dict[str, Any]]:
-    """Audit the same-triple Cargo host-tool exception outside final links."""
+def host_build_script_output(arguments: list[str], description: str) -> str:
+    """Read the one ``-o`` output from a pinned host-link command."""
 
-    path = physical(path, "Cargo host build-script link log")
-    root = physical(root, "Cargo host build-script root", directory=True)
-    records: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    selected: str | None = None
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        index += 1
+        if argument != "-o":
+            continue
+        require(index < len(arguments) and selected is None,
+                f"{description} has an invalid output")
+        selected = arguments[index]
+        index += 1
+    require(selected is not None, f"{description} has no output")
+    return selected
+
+
+def file_identity(path: Path) -> tuple[int, int]:
+    """Return the physical inode identity Cargo preserves when it hard-links."""
+
+    metadata = path.stat()
+    return metadata.st_dev, metadata.st_ino
+
+
+def cargo_custom_build_artifacts(stream: str, rust_source: Path, host_build_root: Path) -> list[dict[str, Any]]:
+    """Select the finite Cargo-declared host build-script artifacts.
+
+    Cargo publishes the build-script executable as ``build-script-build`` and
+    hard-links the rustc linker output named ``build_script_build-*`` to it.
+    Both names must denote the same physical file; the later receipt closure
+    therefore binds the provisional wrapper exception to Cargo's own record.
+    """
+
+    rust_source = physical(rust_source, "pinned rust-src library", directory=True)
+    host_build_root = physical(host_build_root, "Cargo host build-script root", directory=True)
+    artifacts: list[dict[str, Any]] = []
+    seen_paths: set[Path] = set()
+    seen_identities: set[tuple[int, int]] = set()
+    for line in stream.splitlines():
         try:
             record = json.loads(line)
         except json.JSONDecodeError as error:
-            raise OwnedCleanupError("Cargo host build-script link log is not JSON lines") from error
-        require(isinstance(record, dict), "Cargo host build-script link record is not an object")
+            raise OwnedCleanupError("Cargo emitted a non-JSON machine-readable record") from error
+        if not isinstance(record, dict) or record.get("reason") != "compiler-artifact":
+            continue
+        target = record.get("target")
+        if not isinstance(target, dict) or target.get("kind") != ["custom-build"]:
+            continue
+        require(
+            target.get("crate_types") == ["bin"] and target.get("name") == "build-script-build",
+            "Cargo custom-build artifact identity drifted",
+        )
+        package_id = record.get("package_id")
+        manifest_value = record.get("manifest_path")
+        source_value = target.get("src_path")
+        filenames = record.get("filenames")
+        require(
+            isinstance(package_id, str) and isinstance(manifest_value, str) and isinstance(source_value, str)
+            and isinstance(filenames, list) and len(filenames) == 1 and isinstance(filenames[0], str)
+            and record.get("executable") is None,
+            "Cargo custom-build artifact record is malformed",
+        )
+        manifest = physical(Path(manifest_value), "Cargo custom-build manifest")
+        source = physical(Path(source_value), "Cargo custom-build source")
+        output = physical(Path(filenames[0]), "Cargo custom-build artifact output", executable=True)
+        require(
+            manifest.is_relative_to(rust_source) and source.is_relative_to(rust_source),
+            "Cargo custom-build artifact is outside pinned rust-src",
+        )
+        require(
+            output.is_relative_to(host_build_root) and output.name == "build-script-build",
+            "Cargo custom-build artifact is outside the declared host root",
+        )
+        identity = file_identity(output)
+        require(output not in seen_paths and identity not in seen_identities,
+                "Cargo declared a duplicate custom-build artifact")
+        seen_paths.add(output)
+        seen_identities.add(identity)
+        artifacts.append({
+            "package_id": package_id,
+            "manifest": manifest,
+            "source": source,
+            "output": output,
+            "identity": identity,
+        })
+    require(artifacts, "Cargo build-std did not declare its same-triple host build-script artifacts")
+    return artifacts
+
+
+def host_build_script_receipts(root: Path, host_build_root: Path) -> list[dict[str, Any]]:
+    """Read one exclusive receipt for every provisional host linker output."""
+
+    root = physical(root, "Cargo host build-script receipt root", directory=True)
+    host_build_root = physical(host_build_root, "Cargo host build-script root", directory=True)
+    records: list[dict[str, Any]] = []
+    seen_outputs: set[tuple[int, int]] = set()
+    try:
+        entries = sorted(root.iterdir())
+    except OSError as error:
+        raise OwnedCleanupError(f"Cargo host build-script receipt root is unreadable: {root}") from error
+    for receipt in entries:
+        require(receipt.suffix == ".json", "Cargo host build-script receipt has an unapproved name")
+        receipt = physical(receipt, "Cargo host build-script receipt")
+        record = json_object(receipt, "Cargo host build-script receipt")
         require(set(record) == {"schema", "kind", "linker", "command", "output"},
-                "Cargo host build-script link record fields drifted")
+                "Cargo host build-script receipt fields drifted")
         require(record["schema"] == 1 and record["kind"] == "cargo-host-build-script",
-                "Cargo host build-script link record identity drifted")
+                "Cargo host build-script receipt identity drifted")
         linker = record["linker"]
         command = record["command"]
         output = record["output"]
@@ -335,15 +430,83 @@ def host_build_script_links(path: Path, root: Path) -> list[dict[str, Any]]:
             "Cargo host build-script linker identity drifted",
         )
         require(isinstance(output, dict) and isinstance(output.get("path"), str),
-                "Cargo host build-script output record is malformed")
-        candidate = physical(Path(output["path"]), "Cargo host build-script output", executable=True)
-        require(candidate.is_relative_to(root) and candidate.name.startswith("build_script_build-"),
-                "Cargo host build-script output is outside the declared host root")
-        require(output == record_file(candidate, "Cargo host build-script output"),
-                "Cargo host build-script output identity drifted")
-        records.append(record)
+                "Cargo host build-script receipt output is malformed")
+        linked = physical(Path(output["path"]), "Cargo host build-script linker output", executable=True)
+        require(
+            linked.is_relative_to(host_build_root)
+            and HOST_BUILD_SCRIPT_OUTPUT.fullmatch(linked.name) is not None
+            and output == record_file(
+                linked, "Cargo host build-script linker output",
+            ),
+            "Cargo host build-script receipt output is outside the declared host root or drifted",
+        )
+        require(host_build_script_output(command[1:], "Cargo host build-script receipt command") == str(linked),
+                "Cargo host build-script receipt command differs from its output")
+        expected_name = hashlib.sha256(str(linked).encode()).hexdigest() + ".json"
+        require(receipt.name == expected_name,
+                "Cargo host build-script receipt name does not bind its output")
+        identity = file_identity(linked)
+        require(identity not in seen_outputs, "Cargo host build-script receipts duplicate an output")
+        seen_outputs.add(identity)
+        records.append({"receipt": receipt, "record": record, "output": linked, "identity": identity})
     require(records, "Cargo build-std did not retain its same-triple host build-script links")
     return records
+
+
+def host_build_script_manifest(
+    *, cargo_stream: str, cargo_stdout: Path, rust_source: Path, rust_source_lock: Path,
+    host_build_root: Path, receipts_root: Path, output: Path,
+) -> dict[str, Any]:
+    """Close Cargo custom-build artifacts over their independent host receipts."""
+
+    cargo_stdout = physical(cargo_stdout, "Cargo JSON stream")
+    try:
+        retained_stream = cargo_stdout.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise OwnedCleanupError(f"Cargo JSON stream is unreadable: {cargo_stdout}") from error
+    require(retained_stream == cargo_stream,
+            "Cargo JSON stream changed before host receipt closure")
+    rust_source = physical(rust_source, "pinned rust-src library", directory=True)
+    rust_source_lock = physical(rust_source_lock, "pinned rust-src lock")
+    require(rust_source_lock.parent == rust_source,
+            "pinned rust-src lock is outside its source library")
+    declared = cargo_custom_build_artifacts(cargo_stream, rust_source, host_build_root)
+    receipts = host_build_script_receipts(receipts_root, host_build_root)
+    declared_by_identity = {entry["identity"]: entry for entry in declared}
+    receipt_by_identity = {entry["identity"]: entry for entry in receipts}
+    require(
+        set(declared_by_identity) == set(receipt_by_identity),
+        "Cargo custom-build artifact and host-link receipt closure differs",
+    )
+    output = Path(os.path.abspath(output))
+    physical(output.parent, "Cargo host build-script manifest parent", directory=True)
+    require(not output.exists() and not output.is_symlink(),
+            "Cargo host build-script manifest must be fresh")
+    artifacts: list[dict[str, Any]] = []
+    for identity in sorted(declared_by_identity):
+        artifact = declared_by_identity[identity]
+        receipt = receipt_by_identity[identity]
+        artifacts.append({
+            "package_id": artifact["package_id"],
+            "manifest": record_file(artifact["manifest"], "Cargo custom-build manifest"),
+            "source": record_file(artifact["source"], "Cargo custom-build source"),
+            "artifact_output": record_file(artifact["output"], "Cargo custom-build artifact output"),
+            "host_link_receipt": record_file(receipt["receipt"], "Cargo host build-script receipt"),
+            "host_link_output": record_file(receipt["output"], "Cargo host build-script linker output"),
+        })
+    manifest = {
+        "schema": 1,
+        "format": "crabc-owned-rust-host-build-manifest/v1",
+        "cargo_stdout": record_file(cargo_stdout, "Cargo JSON stream"),
+        "rust_source_library": str(rust_source),
+        "rust_source_lock": record_file(rust_source_lock, "pinned rust-src lock"),
+        "host_build_root": str(physical(host_build_root, "Cargo host build-script root", directory=True)),
+        "artifacts": artifacts,
+    }
+    with output.open("x", encoding="utf-8") as stream:
+        json.dump(manifest, stream, sort_keys=True)
+        stream.write("\n")
+    return manifest
 
 
 def provider_snapshot(provider: Path, toolchain: str) -> dict[str, Any]:
@@ -449,9 +612,9 @@ def compile_source_built_mode(
     cargo_home = application / "cargo-home"
     for directory in (source_library_root, host_build_root, temporary, cargo_home):
         directory.mkdir(parents=True, mode=0o755)
-    host_build_log = application / "host-build-links.jsonl"
-    with host_build_log.open("x", encoding="utf-8"):
-        pass
+    host_build_receipt_root = application / "host-build-link-receipts"
+    host_build_receipt_root.mkdir(mode=0o755)
+    host_build_manifest_path = application / "host-build-manifest.json"
     rust_sysroot = Path(run_logged(
         ["rustup", "run", channel, "rustc", "--print", "sysroot"], clean_environment(),
         application / "rust-sysroot.log", f"{label} Rust sysroot discovery",
@@ -483,7 +646,7 @@ def compile_source_built_mode(
         "CRABC_OWNED_RUST_APPLICATION_ROOT": str(release),
         "CRABC_OWNED_RUST_HOST_BUILD_ROOT": str(host_build_root),
         "CRABC_OWNED_RUST_HOST_BUILD_LINKER": str(HOST_BUILD_LINKER),
-        "CRABC_OWNED_RUST_HOST_BUILD_LOG": str(host_build_log),
+        "CRABC_OWNED_RUST_HOST_BUILD_RECEIPTS": str(host_build_receipt_root),
         "CRABC_OWNED_RUST_CHANNEL": channel,
         "TMPDIR": str(temporary),
     })
@@ -499,7 +662,15 @@ def compile_source_built_mode(
         f"{label} source-built Rust std cleanup compile",
     )
     source_build_log_contract(stdout + stderr, rust_source)
-    host_build_script_links(host_build_log, host_build_root)
+    host_build_script_manifest(
+        cargo_stream=stdout,
+        cargo_stdout=application / "cargo.stdout.jsonl",
+        rust_source=rust_source,
+        rust_source_lock=rust_source_lock,
+        host_build_root=host_build_root,
+        receipts_root=host_build_receipt_root,
+        output=host_build_manifest_path,
+    )
     binary = cargo_artifact(stdout, package=package, target=target, name=binary_name, crate_type="bin")
     binary = physical(binary, f"{label} source-built cleanup executable", executable=True)
     binary_receipt_path, binary_link_output = cargo_link_receipt_for_artifact(
@@ -519,7 +690,9 @@ def compile_source_built_mode(
         "rust_source_library": str(rust_source),
         "rust_source_lock": record_file(rust_source_lock, f"{label} pinned rust-src lock"),
         "source_built_target_library_root": str(source_library_root),
-        "host_build_script_links": record_file(host_build_log, f"{label} Cargo host build-script links"),
+        "host_build_script_manifest": record_file(
+            host_build_manifest_path, f"{label} Cargo host build-script manifest",
+        ),
         "binary": record_file(binary, f"{label} source-built cleanup executable"),
         "link_receipt": record_file(binary_receipt_path, f"{label} source-built cleanup link receipt"),
         "link_command": binary_receipt["command"],

@@ -220,10 +220,14 @@ The native toolchain's host and requested target are both x86_64-musl, so
 Cargo also routes its `build_script_build-*` host executables through the
 target-linker setting. The runner admits that finite Cargo `release/build`
 subtree only to the pinned container `/usr/bin/gcc`, records every such host
-link in JSONL, and rejects every other output outside the final target release
-root. Those host tools do not become target inputs: the final executable and
-cdylib link receipts still require fresh source-built `std`/`core`/`alloc`/
-`panic_unwind` rlibs and contain no stock target rlib.
+link in an exclusive per-artifact receipt. A generated manifest binds the
+receipts by hard-link identity to the exact `compiler-artifact` custom-build
+records from Cargo's machine-readable stream, and records the pinned
+`rust-src` lock plus each declared package manifest and `build.rs`. It rejects
+unmatched, duplicate, forged, or target-lookalike records before it accepts a
+consumer. Those host tools do not become target inputs: the final executable
+and cdylib link receipts still require fresh source-built
+`std`/`core`/`alloc`/`panic_unwind` rlibs and contain no stock target rlib.
 
 This is non-promoting consumer-development evidence: its receipt keeps all
 qualification, family-completion, promotion, and public-support flags false.

@@ -7,12 +7,13 @@ file replaces Rust's target ``libunwind``/compiler-builtins inputs and native
 ``-l`` requests with the explicitly supplied provider and product files.
 
 Cargo's host and requested target triples are both x86_64-musl in the native
-image.  Cargo therefore applies the target linker override to build-script
-executables as well as the final target artifact.  A narrowly identified
+image. Cargo therefore applies the target linker override to build-script
+executables as well as the final target artifact. A narrowly identified
 ``build_script_build-*`` output below the separately declared Cargo host-build
-root delegates to the pinned container GCC and is logged as host tooling.  It
-never enters the owned target link parser or receipt; every application and
-cdylib output still takes the closed owned-runtime path below.
+root delegates to the pinned container GCC and writes one exclusive receipt.
+The runner later requires exact closure between those receipts and Cargo's
+machine-readable custom-build artifact records. Every application and cdylib
+output still takes the closed owned-runtime path below.
 """
 from __future__ import annotations
 
@@ -358,11 +359,11 @@ def delegate_host_build_script(arguments: list[str], output: Path) -> None:
     """
 
     linker_value = os.environ.get("CRABC_OWNED_RUST_HOST_BUILD_LINKER")
-    log_value = os.environ.get("CRABC_OWNED_RUST_HOST_BUILD_LOG")
-    if not linker_value or not log_value:
+    receipts_value = os.environ.get("CRABC_OWNED_RUST_HOST_BUILD_RECEIPTS")
+    if not linker_value or not receipts_value:
         raise LinkError("missing owned Rust host build-script linker evidence")
     linker = physical_regular(Path(linker_value), "pinned Cargo host build-script linker")
-    log = physical_regular(Path(log_value), "Cargo host build-script link log")
+    receipts = physical_directory(Path(receipts_value), "Cargo host build-script receipt root")
     environment = dict(os.environ)
     environment.pop("CARGO_MAKEFLAGS", None)
     environment.pop("MAKEFLAGS", None)
@@ -380,7 +381,10 @@ def delegate_host_build_script(arguments: list[str], output: Path) -> None:
         "command": [str(linker), *arguments],
         "output": {"path": str(output), "sha256": sha256(output)},
     }
-    with log.open("a", encoding="utf-8") as stream:
+    receipt = receipts / f"{hashlib.sha256(str(output).encode()).hexdigest()}.json"
+    if receipt.exists() or receipt.is_symlink():
+        raise LinkError(f"Cargo host build-script receipt must be fresh: {receipt}")
+    with receipt.open("x", encoding="utf-8") as stream:
         json.dump(record, stream, sort_keys=True)
         stream.write("\n")
 

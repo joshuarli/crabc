@@ -2,6 +2,7 @@
 from pathlib import Path
 import hashlib
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -102,35 +103,162 @@ class OwnedCleanupContract(unittest.TestCase):
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "stock Rust runtime"):
             owned_cleanup.source_built_link_receipt(receipt, binary, source, "test source-built link")
 
-    def test_host_build_script_link_cannot_be_reclassified_as_a_final_target_link(self):
+    def host_build_fixture(self):
+        """Make the Cargo hard-link and its wrapper receipt without Cargo."""
+
+        rust_source = Path(self.temporary.name) / "rust-src/library"
+        package_source = rust_source / "compiler-builtins/compiler-builtins"
+        package_source.mkdir(parents=True)
+        (rust_source / "Cargo.lock").write_text("source lock\n")
+        manifest = package_source / "Cargo.toml"
+        source = package_source / "build.rs"
+        manifest.write_text("[package]\nname = \"compiler_builtins\"\n")
+        source.write_text("fn main() {}\n")
         host_root = Path(self.temporary.name) / "cargo-target/release/build"
         package = host_root / "compiler_builtins-0123456789abcdef"
         package.mkdir(parents=True)
-        build_script = package / "build_script_build-0123456789abcdef"
-        build_script.write_bytes(b"host build script")
-        build_script.chmod(0o755)
-        log = Path(self.temporary.name) / "host-build-links.jsonl"
+        linked = package / "build_script_build-0123456789abcdef"
+        linked.write_bytes(b"host build script")
+        linked.chmod(0o755)
+        artifact = package / "build-script-build"
+        os.link(linked, artifact)
+        receipts = Path(self.temporary.name) / "host-build-receipts"
+        receipts.mkdir()
+        receipt_record = {
+            "schema": 1,
+            "kind": "cargo-host-build-script",
+            "linker": owned_cleanup.record_file(
+                owned_cleanup.HOST_BUILD_LINKER, "pinned Cargo host build-script linker",
+            ),
+            "command": [str(owned_cleanup.HOST_BUILD_LINKER), "-o", str(linked)],
+            "output": owned_cleanup.record_file(linked, "Cargo host build-script linker output"),
+        }
+        receipt = receipts / (hashlib.sha256(str(linked).encode()).hexdigest() + ".json")
+        receipt.write_text(json.dumps(receipt_record) + "\n")
+        cargo_record = {
+            "reason": "compiler-artifact",
+            "package_id": f"path+file://{package_source}#compiler_builtins@0.1.0",
+            "manifest_path": str(manifest),
+            "target": {
+                "kind": ["custom-build"],
+                "crate_types": ["bin"],
+                "name": "build-script-build",
+                "src_path": str(source),
+            },
+            "filenames": [str(artifact)],
+            "executable": None,
+        }
+        cargo_stdout = Path(self.temporary.name) / "cargo.stdout.jsonl"
+        cargo_stdout.write_text(json.dumps(cargo_record) + "\n")
+        return {
+            "rust_source": rust_source,
+            "host_root": host_root,
+            "linked": linked,
+            "artifact": artifact,
+            "receipts": receipts,
+            "receipt": receipt,
+            "receipt_record": receipt_record,
+            "cargo_record": cargo_record,
+            "cargo_stdout": cargo_stdout,
+        }
+
+    def write_host_receipt(self, directory, output):
         record = {
             "schema": 1,
             "kind": "cargo-host-build-script",
             "linker": owned_cleanup.record_file(
-                owned_cleanup.HOST_BUILD_LINKER, "pinned Cargo host build-script linker"
+                owned_cleanup.HOST_BUILD_LINKER, "pinned Cargo host build-script linker",
             ),
-            "command": [str(owned_cleanup.HOST_BUILD_LINKER), "-o", str(build_script)],
-            "output": owned_cleanup.record_file(build_script, "Cargo host build-script output"),
+            "command": [str(owned_cleanup.HOST_BUILD_LINKER), "-o", str(output)],
+            "output": owned_cleanup.record_file(output, "Cargo host build-script linker output"),
         }
-        log.write_text(json.dumps(record) + "\n")
-        self.assertEqual(
-            owned_cleanup.host_build_script_links(log, host_root), [record]
+        receipt = directory / (hashlib.sha256(str(output).encode()).hexdigest() + ".json")
+        receipt.write_text(json.dumps(record) + "\n")
+        return receipt
+
+    def host_build_manifest(self, fixture, stream=None):
+        manifest = Path(self.temporary.name) / "host-build-manifest.json"
+        return owned_cleanup.host_build_script_manifest(
+            cargo_stream=stream if stream is not None else fixture["cargo_stdout"].read_text(),
+            cargo_stdout=fixture["cargo_stdout"],
+            rust_source=fixture["rust_source"],
+            rust_source_lock=fixture["rust_source"] / "Cargo.lock",
+            host_build_root=fixture["host_root"],
+            receipts_root=fixture["receipts"],
+            output=manifest,
         )
 
+    def test_host_build_manifest_closes_cargo_custom_build_artifact_to_one_receipt(self):
+        fixture = self.host_build_fixture()
+        manifest = self.host_build_manifest(fixture)
+        self.assertEqual(manifest["format"], "crabc-owned-rust-host-build-manifest/v1")
+        self.assertEqual(manifest["rust_source_lock"], owned_cleanup.record_file(
+            fixture["rust_source"] / "Cargo.lock", "pinned rust-src lock",
+        ))
+        self.assertEqual(len(manifest["artifacts"]), 1)
+        artifact = manifest["artifacts"][0]
+        self.assertEqual(artifact["artifact_output"], owned_cleanup.record_file(
+            fixture["artifact"], "Cargo custom-build artifact output",
+        ))
+        self.assertEqual(artifact["host_link_output"], owned_cleanup.record_file(
+            fixture["linked"], "Cargo host build-script linker output",
+        ))
+
+    def test_host_build_manifest_rejects_target_lookalike(self):
+        fixture = self.host_build_fixture()
+        record = fixture["cargo_record"]
+        record["target"]["kind"] = ["bin"]
+        fixture["cargo_stdout"].write_text(json.dumps(record) + "\n")
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "did not declare"):
+            self.host_build_manifest(fixture)
+
+    def test_host_build_manifest_rejects_an_unmatched_host_receipt(self):
+        fixture = self.host_build_fixture()
+        forged = fixture["host_root"] / "forged-0123456789abcdef"
+        forged.mkdir()
+        output = forged / "build_script_build-fedcba9876543210"
+        output.write_bytes(b"forged host build script")
+        output.chmod(0o755)
+        self.write_host_receipt(fixture["receipts"], output)
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "closure differs"):
+            self.host_build_manifest(fixture)
+
+    def test_host_build_manifest_rejects_duplicate_cargo_artifact_records(self):
+        fixture = self.host_build_fixture()
+        stream = (json.dumps(fixture["cargo_record"]) + "\n") * 2
+        fixture["cargo_stdout"].write_text(stream)
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "duplicate custom-build artifact"):
+            self.host_build_manifest(fixture)
+
+    def test_host_build_manifest_uses_the_retained_cargo_stream(self):
+        fixture = self.host_build_fixture()
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "stream changed"):
+            self.host_build_manifest(fixture, "{}\n")
+
+    def test_host_build_manifest_rejects_a_forged_source_path(self):
+        fixture = self.host_build_fixture()
+        forged_source = Path(self.temporary.name) / "forged-build.rs"
+        forged_source.write_text("fn main() {}\n")
+        record = fixture["cargo_record"]
+        record["target"]["src_path"] = str(forged_source)
+        fixture["cargo_stdout"].write_text(json.dumps(record) + "\n")
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "outside pinned rust-src"):
+            self.host_build_manifest(fixture)
+
+    def test_host_build_script_link_cannot_be_reclassified_as_a_final_target_link(self):
+        fixture = self.host_build_fixture()
         final = Path(self.temporary.name) / "final-cleanup"
         final.write_bytes(b"not a host build script")
         final.chmod(0o755)
-        record["output"] = owned_cleanup.record_file(final, "Cargo host build-script output")
-        log.write_text(json.dumps(record) + "\n")
+        fixture["receipt_record"]["output"] = owned_cleanup.record_file(
+            final, "Cargo host build-script linker output",
+        )
+        fixture["receipt_record"]["command"][-1] = str(final)
+        fixture["receipt"].write_text(json.dumps(fixture["receipt_record"]) + "\n")
+        replacement = fixture["receipts"] / (hashlib.sha256(str(final).encode()).hexdigest() + ".json")
+        fixture["receipt"].rename(replacement)
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "outside the declared host root"):
-            owned_cleanup.host_build_script_links(log, host_root)
+            self.host_build_manifest(fixture)
 
     def test_cargo_artifact_accepts_only_the_declared_fixture_target(self):
         package = Path(self.temporary.name) / "package"

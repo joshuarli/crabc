@@ -1,8 +1,13 @@
 """The owned Rust linker admits only the complete explicit product link."""
 import importlib.util
+import hashlib
+import json
+import os
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 spec = importlib.util.spec_from_file_location(
@@ -122,6 +127,30 @@ class OwnedRustLinkContract(unittest.TestCase):
             self.host_build,
         )
         self.assertEqual(selected, output)
+
+    def test_host_build_script_link_writes_one_exclusive_receipt(self):
+        package = self.host_build / "compiler_builtins-0123456789abcdef"
+        package.mkdir()
+        source = package / "host.c"
+        source.write_text("int main(void) { return 0; }\n")
+        object_file = package / "host.o"
+        host_linker = Path("/usr/bin/gcc")
+        subprocess.run(
+            [str(host_linker), "-c", str(source), "-o", str(object_file)],
+            check=True,
+        )
+        output = package / "build_script_build-0123456789abcdef"
+        receipts = Path(self.temporary.name) / "host-build-receipts"
+        receipts.mkdir()
+        with patch.dict(os.environ, {
+            "CRABC_OWNED_RUST_HOST_BUILD_LINKER": str(host_linker),
+            "CRABC_OWNED_RUST_HOST_BUILD_RECEIPTS": str(receipts),
+        }):
+            linker.delegate_host_build_script([str(object_file), "-o", str(output)], output)
+        receipt = receipts / (hashlib.sha256(str(output).encode()).hexdigest() + ".json")
+        self.assertEqual(json.loads(receipt.read_text())["output"], {
+            "path": str(output), "sha256": linker.sha256(output),
+        })
 
     def test_source_built_std_rejects_stock_target_archives(self):
         arguments = self.source_built_arguments()
