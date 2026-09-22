@@ -13,11 +13,14 @@ use core::ffi::{c_char, c_int, c_void};
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use crabc_mimalloc::__crabc_runtime::{
-    RuntimeStderrOutput, SelectedProcessDoneResult, ThreadAttachResult,
+    RuntimeStderrOutput, NativeProcessDestroyError, NativeProcessDoneAction,
+    NativeProcessDoneInvocation, SelectedProcessDoneResult, ThreadAttachResult,
     ThreadFinalProcessExitOwnerResult, ThreadFinishResult,
-    attach_current_thread, finish_current_thread_native_after_user_destructors,
+    attach_current_thread, capture_native_process_destroy_request,
+    finish_current_thread_native_after_user_destructors,
     finish_selected_default_release_process_after_user_atexit,
     initialize_process, prepare_native_later_thread_arena,
+    native_process_done_action, prepare_native_process_destroy,
     retain_current_thread_native_owner_after_process_done_nonfinal,
     reinitialize_current_thread_native_owner_for_final_process_exit,
 };
@@ -144,6 +147,78 @@ pub(super) unsafe fn reinitialize_selected_final_worker_for_ordinary_exit() {
         != ThreadFinalProcessExitOwnerResult::Reinitialized
     {
         super::immediate_termination::_Exit(134);
+    }
+}
+
+/// Result of the private libc adapter for pinned process-done dispatch.
+///
+/// This preserves the source's separate automatic and explicit decisions:
+/// automatic `destroy_on_exit >= 2` skips process-done entirely, while an
+/// explicit process-done call still selects destruction. `Retained` is the
+/// existing default-release result, not a physical-destroy fallback.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum SelectedNativeProcessDoneResult {
+    Completed,
+    AlreadyCompleted,
+    SkippedAutomatic,
+    Retained,
+}
+
+/// Prepares and, only after dropping libc's existing worker-registry pin,
+/// completes one source-selected physical process-destroy request.
+///
+/// The caller supplies the established finalizer or explicit-process-done
+/// boundary after user callbacks. The `DestroyBacking` path snapshots its
+/// immutable process witnesses before taking the existing registry pin. The
+/// pinned callback performs only the process-owned terminal admission and TLS
+/// source-owner transfer; `NativePreparedProcessDestroy` then leaves that
+/// scope before its Heap, metadata, arena, PageMap, and OS work begins.
+///
+/// This adapter is deliberately not yet installed in the production
+/// `.fini_array` caller. The existing finalizer remains the retaining route
+/// until this composed native lifecycle has compiler, review, and installed
+/// fixture evidence.
+///
+/// # Safety
+/// The invocation is at the process-owned finalization boundary, after user
+/// callbacks and outside every source borrow and outer libc lock. A physical
+/// destroy failure is terminal: callers must not substitute the retaining
+/// path or C allocator cleanup after this function reports an error.
+unsafe fn finish_selected_native_process_after_user_atexit(
+    invocation: NativeProcessDoneInvocation,
+) -> Result<SelectedNativeProcessDoneResult, NativeProcessDestroyError> {
+    match native_process_done_action(invocation)? {
+        NativeProcessDoneAction::AlreadyCompleted => {
+            Ok(SelectedNativeProcessDoneResult::AlreadyCompleted)
+        }
+        NativeProcessDoneAction::SkipAutomatic => {
+            Ok(SelectedNativeProcessDoneResult::SkippedAutomatic)
+        }
+        NativeProcessDoneAction::RetainBacking => {
+            Ok(match finish_selected_default_release_process_after_user_atexit() {
+                SelectedProcessDoneResult::Completed => SelectedNativeProcessDoneResult::Completed,
+                SelectedProcessDoneResult::AlreadyCompleted => {
+                    SelectedNativeProcessDoneResult::AlreadyCompleted
+                }
+                SelectedProcessDoneResult::Retained => SelectedNativeProcessDoneResult::Retained,
+            })
+        }
+        NativeProcessDoneAction::DestroyBacking => {
+            // The request uses one ordinary source entry and drops it before
+            // the existing libc worker-list lock is acquired.
+            let request = capture_native_process_destroy_request()?;
+            let prepared = unsafe {
+                super::pthread_create_join::with_selected_native_allocator_pinned_registry(
+                    |registry| unsafe { prepare_native_process_destroy(request, registry) },
+                )
+            }?;
+            // The scoped registry callback above has returned and released
+            // its pin. `finish` may now take its process-owned locks, map
+            // tracking storage, and perform raw OS teardown without retaining
+            // a libc list/control/TLS borrow.
+            unsafe { prepared.finish() }?;
+            Ok(SelectedNativeProcessDoneResult::Completed)
+        }
     }
 }
 
@@ -515,6 +590,28 @@ pub extern "C" fn __crabc_x86_native_mimalloc_process_done_test_audit() -> i32 {
         SelectedProcessDoneResult::Completed => 0,
         SelectedProcessDoneResult::AlreadyCompleted => 1,
         SelectedProcessDoneResult::Retained => -1,
+    }
+}
+
+/// Test-only request for the disabled explicit physical process-destroy
+/// adapter.
+///
+/// This isolated hook is intentionally distinct from the retained-process
+/// probe above and from the production automatic `.fini_array` finalizer. It
+/// lets the installed native fixture validate the capture -> pinned prepare ->
+/// unpinned finish handoff with a fresh selected process and signed nonzero
+/// option, without enabling either existing caller.
+#[cfg(feature = "native-mimalloc-shadow-test-audit")]
+#[no_mangle]
+pub extern "C" fn __crabc_x86_native_mimalloc_process_destroy_test_audit() -> i32 {
+    match unsafe {
+        finish_selected_native_process_after_user_atexit(NativeProcessDoneInvocation::Explicit)
+    } {
+        Ok(SelectedNativeProcessDoneResult::Completed) => 0,
+        Ok(SelectedNativeProcessDoneResult::AlreadyCompleted) => 1,
+        Ok(SelectedNativeProcessDoneResult::SkippedAutomatic)
+        | Ok(SelectedNativeProcessDoneResult::Retained)
+        | Err(_) => -1,
     }
 }
 

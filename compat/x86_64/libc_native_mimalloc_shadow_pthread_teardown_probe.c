@@ -144,6 +144,7 @@ extern int __crabc_x86_native_mimalloc_process_done_retained_local_page_test_aud
 extern int __crabc_x86_native_mimalloc_process_done_retained_page_retired_test_audit(
     void *former_client, size_t expected_reserved);
 extern int __crabc_x86_native_mimalloc_process_done_test_audit(void);
+extern int __crabc_x86_native_mimalloc_process_destroy_test_audit(void);
 extern int __crabc_x86_native_mimalloc_process_done_retained_page_test_audit(
     void *first, void *second, int remote_free_published);
 #endif
@@ -735,7 +736,36 @@ int crabc_x86_64_native_mimalloc_shadow_prestart_rejection(void)
     return 0;
 }
 
-#ifdef CRABC_NATIVE_MIMALLOC_SHADOW_NORMAL_MAIN_RETURN_PROBE
+#if defined(CRABC_NATIVE_MIMALLOC_SHADOW_PHYSICAL_PROCESS_DESTROY_PROBE)
+/* This private selected-native probe invokes the dedicated test-only explicit
+ * physical process-destroy spelling after process startup. Its runner supplies signed
+ * nonzero `mimalloc_destroy_on_exit` values. The process-destroy adapter must
+ * transfer the initial descriptor while the existing worker registry pins it,
+ * return from that callback, and only then release the physical source graph.
+ * A second observation must be the source once no-op and must not reopen the
+ * sealed VM/source state. Do not free or otherwise touch `client` after the
+ * destroy; it names memory which the physical branch may have unmapped. */
+#ifndef CRABC_NATIVE_MIMALLOC_SHADOW_TEST_AUDIT
+#error "physical process-destroy probe requires its private audit feature"
+#endif
+int main(void)
+{
+    void *client = malloc(431);
+
+    if (client == 0)
+        _Exit(83);
+    ((volatile unsigned char *)client)[0] = 0x9a;
+    if (__crabc_x86_native_mimalloc_process_destroy_test_audit() != 0)
+        _Exit(84);
+    if (__crabc_x86_native_mimalloc_process_destroy_test_audit() != 1)
+        _Exit(85);
+    /* The production automatic finalizer is intentionally still disabled for
+     * physical destruction. Exit directly so this focused explicit probe does
+     * not exercise that retaining `.fini_array` caller after the terminal
+     * process image has been destroyed. */
+    _Exit(0);
+}
+#elif defined(CRABC_NATIVE_MIMALLOC_SHADOW_NORMAL_MAIN_RETURN_PROBE)
 /* The ordinary static-startup return path registers executable fini before
  * application code. A later application `atexit` therefore runs first; the
  * CRT then walks fini-array entries in reverse. Pinned `src/prim/prim.c`

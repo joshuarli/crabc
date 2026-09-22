@@ -272,10 +272,24 @@ performance_qualified = false
 [[unit]]
 upstream = "src/options.c"
 source_region = "selected signed VM descriptors in the static table (111-177) and their lazy source-environment initialization/parser (187-190,623-675), plus the separately bounded diagnostic-output owner"
-rust_module = "crabc_mimalloc::config, crabc_mimalloc::diagnostic_output, crabc_mimalloc::os, and crabc_mimalloc::runtime_lifecycle"
-rust_item = "partial: VmOption/VmOptions retain the selected source descriptor order, defaults, lazy signed parser, and raw Unix environment observation; VmPolicy::destroy_on_exit_raw exposes only the selected destroy_on_exit value to the separately owned process finalization path; diagnostic_output retains its separately mapped finite output owner"
-intentional_difference = "The selected image has 18 VM-policy descriptors, including destroy_on_exit after disallow_os_alloc in the source declaration order. The raw getter deliberately preserves zero, signed nonzero, and values at least two without deciding explicit destruction or automatic process-done suppression. Public mi_option APIs, option mutation, callbacks, option printing, and process finalization dispatch remain outside this bounded option binding; the existing diagnostic output record remains separately partial."
-tests = ["crabc-mimalloc/src/config.rs", "crabc-mimalloc/src/diagnostic_output.rs", "crabc-mimalloc/src/os.rs", "compat/allocator/tests/test_x86_64_source_map.py"]
+rust_module = "crabc_mimalloc::config, crabc_mimalloc::diagnostic_output, crabc_mimalloc::os, crabc_mimalloc::runtime_destroy, and libc::c_abi::x86_64::native_mimalloc_lifecycle"
+rust_item = "partial: VmOption/VmOptions retain the selected source descriptor order, defaults, lazy signed parser, and raw Unix environment observation; VmPolicy::destroy_on_exit_raw remains the sole signed option projection; runtime_destroy distinguishes zero, signed nonzero, and automatic values at least two; the private libc adapter consumes its resulting action without re-parsing or boolean flattening; diagnostic_output retains its separately mapped finite output owner"
+intentional_difference = "The selected image has 18 VM-policy descriptors, including destroy_on_exit after disallow_os_alloc in source declaration order. Public mi_option APIs, option mutation, callbacks, option printing, and public mi_process_done remain outside this bounded binding. The production .fini_array caller intentionally remains the retaining route until the isolated physical-destroy adapter has a composed compiler, review, and installed-native receipt; its private explicit fixture cannot enable that automatic caller."
+tests = ["crabc-mimalloc/src/config.rs", "crabc-mimalloc/src/diagnostic_output.rs", "crabc-mimalloc/src/os.rs", "crabc-mimalloc/src/runtime_destroy.rs", "libc/src/c_abi/x86_64/native_mimalloc_lifecycle.rs", "compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_probe.c", "compat/x86_64/run_libc_native_mimalloc_shadow_pthread_teardown.sh", "compat/allocator/tests/test_x86_64_source_map.py"]
+exported = false
+implemented = false
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "src/init.c and src/subproc.c"
+source_region = "mi_process_done_once's current-cache clear and signed destroy_on_exit branch (605,626-647), _mi_auto_process_done automatic suppression (660), and source subprocess/heap/metadata/arena/PageMap destruction order (src/subproc.c:202-255)"
+rust_module = "crabc_mimalloc::runtime_destroy and libc::c_abi::x86_64::native_mimalloc_lifecycle"
+rust_item = "partial: NativeProcessDoneInvocation/NativeProcessDoneAction preserve Automatic versus Explicit signed selection; capture_native_process_destroy_request runs before the existing libc selected-worker registry pin; prepare_native_process_destroy runs only inside that pin and returns NativePreparedProcessDestroy; the private libc adapter releases the pin before finish performs process-owned physical destruction"
+intentional_difference = "This is an isolated adapter and explicit installed fixture, not enabled process finalization. The production .fini_array still uses the existing retaining finalizer, so Automatic selection is represented but not yet installed. No public mi_process_done symbol, generic process-destroy caller, fork-child repair, allocator fallback, or terminal qualification is claimed. A post-epoch failure retains the process-owned source graph under its permanent terminal state; libc must not replace it with retaining or C cleanup."
+tests = ["crabc-mimalloc/src/runtime_destroy.rs", "libc/src/c_abi/x86_64/native_mimalloc_lifecycle.rs", "libc/src/c_abi/x86_64/pthread_create_join.rs", "compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_probe.c", "compat/x86_64/run_libc_native_mimalloc_shadow_pthread_teardown.sh"]
 exported = false
 implemented = false
 unit_verified = false

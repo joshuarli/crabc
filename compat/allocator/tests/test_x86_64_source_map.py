@@ -176,6 +176,7 @@ class X86_64SourceMapTests(unittest.TestCase):
                 "crabc_mimalloc::config",
                 "crabc_mimalloc::diagnostic_output",
                 "crabc_mimalloc::os",
+                "crabc_mimalloc::runtime_destroy",
             ],
         )
         self.assertIn("show_errors/verbose/max_warnings", option_processing["difference"])
@@ -189,6 +190,8 @@ class X86_64SourceMapTests(unittest.TestCase):
         self.assertIn("atomic.h", option_processing["difference"])
         self.assertIn("18 selected signed VM descriptors", option_processing["difference"])
         self.assertIn("destroy_on_exit_raw", option_processing["difference"])
+        self.assertIn("Automatic/Explicit action selection", option_processing["difference"])
+        self.assertIn("automatic finalizer remains retaining", option_processing["difference"])
 
         options = self.sources["src/options.c"]
         atomic = self.sources["include/mimalloc/atomic.h"]
