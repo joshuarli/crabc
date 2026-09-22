@@ -11,10 +11,13 @@ spec = importlib.util.spec_from_file_location(
 linker = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(linker)
 
+WORK = Path(__file__).parents[2] / ".work/x86_64/unwinder-output-tests"
+
 
 class OwnedRustLinkContract(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory()
+        WORK.mkdir(parents=True, exist_ok=True)
+        self.temporary = tempfile.TemporaryDirectory(dir=WORK)
         root = Path(self.temporary.name)
         self.application = root / "application"
         self.stock = root / "stock"

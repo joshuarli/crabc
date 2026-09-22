@@ -36,6 +36,12 @@ class MetadataBoundsExecutionContract(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'status'):
             metadata_bounds.assert_execution(-11, '', expected)
 
+    def test_direct_metadata_targets_return_their_exact_results_without_a_fault(self):
+        expected = 'direct metadata targets rejected\n'
+        metadata_bounds.assert_execution(0, expected, expected)
+        with self.assertRaisesRegex(RuntimeError, 'status'):
+            metadata_bounds.assert_execution(-11, '', expected)
+
     def test_provider_provenance_must_name_the_compiled_overlay(self):
         patches = []
         files = []

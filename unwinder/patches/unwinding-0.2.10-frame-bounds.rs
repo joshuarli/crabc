@@ -3,10 +3,11 @@
 //
 // The selected fde-phdr-dl finder resolves a present indirect CIE personality
 // or FDE LSDA pointer only while dl_iterate_phdr supplies a readable PT_LOAD
-// for its full native-word cell. A present cell that cannot be resolved is
-// malformed unwind metadata, not absent metadata. The caller still owns the
-// enclosing loader mapping-lifetime obligation and the resulting target's
-// ordinary ABI.
+// for its full native-word cell. A non-null personality target must be in an
+// executable PT_LOAD; a nonzero LSDA target must be in a readable PT_LOAD.
+// A present cell or target that cannot be resolved is malformed unwind
+// metadata, not absent metadata. The caller still owns the enclosing loader
+// mapping-lifetime obligation and the resulting target's ordinary ABI.
 use core::convert::TryFrom;
 use core::mem;
 use core::ops::Range;
@@ -17,7 +18,7 @@ use gimli::{
 };
 #[cfg(feature = "dwarf-expr")]
 use gimli::{Evaluation, EvaluationResult, Location, Value};
-use libc::{dl_iterate_phdr, dl_phdr_info, PF_R, PT_LOAD};
+use libc::{dl_iterate_phdr, dl_phdr_info, PF_R, PF_X, PT_LOAD};
 
 #[cfg(target_pointer_width = "32")]
 use libc::Elf32_Phdr as Elf_Phdr;
@@ -72,27 +73,57 @@ struct IndirectPointerRead {
     value: Option<usize>,
 }
 
+unsafe fn load_contains(
+    info: *mut dl_phdr_info,
+    range: &Range<usize>,
+    required_flags: u32,
+) -> bool {
+    unsafe {
+        if info.is_null() || (*info).dlpi_phdr.is_null() {
+            return false;
+        }
+        let phdrs = slice::from_raw_parts((*info).dlpi_phdr, (*info).dlpi_phnum as usize);
+        let base = (*info).dlpi_addr as usize;
+        phdrs.iter().any(|phdr| {
+            phdr.p_type == PT_LOAD
+                && phdr.p_flags & required_flags == required_flags
+                && phdr_range(base, phdr).is_some_and(|load| contains_range(&load, range))
+        })
+    }
+}
+
 unsafe extern "C" fn read_indirect_pointer_callback(
     info: *mut dl_phdr_info,
     _size: usize,
     data: *mut core::ffi::c_void,
 ) -> i32 {
     unsafe {
-        if info.is_null() || (*info).dlpi_phdr.is_null() {
-            return 0;
-        }
         let data = &mut *(data as *mut IndirectPointerRead);
-        let phdrs = slice::from_raw_parts((*info).dlpi_phdr, (*info).dlpi_phnum as usize);
-        let base = (*info).dlpi_addr as usize;
-        let readable = phdrs.iter().any(|phdr| {
-            phdr.p_type == PT_LOAD
-                && phdr.p_flags & PF_R != 0
-                && phdr_range(base, phdr).is_some_and(|load| contains_range(&load, &data.range))
-        });
-        if !readable {
+        if !load_contains(info, &data.range, PF_R) {
             return 0;
         }
         data.value = Some((data.range.start as *const usize).read_unaligned());
+        1
+    }
+}
+
+struct PointerTarget {
+    range: Range<usize>,
+    required_flags: u32,
+    found: bool,
+}
+
+unsafe extern "C" fn find_pointer_target_callback(
+    info: *mut dl_phdr_info,
+    _size: usize,
+    data: *mut core::ffi::c_void,
+) -> i32 {
+    unsafe {
+        let data = &mut *(data as *mut PointerTarget);
+        if !load_contains(info, &data.range, data.required_flags) {
+            return 0;
+        }
+        data.found = true;
         1
     }
 }
@@ -128,6 +159,59 @@ unsafe fn resolve_fde_pointer(pointer: Pointer) -> Result<usize, gimli::Error> {
             data.value.ok_or(gimli::Error::OffsetOutOfBounds(value))
         }
     }
+}
+
+/// # Safety
+///
+/// The loader must keep the mapping disclosed by `dl_iterate_phdr` live
+/// through the callback. Checking the target's one-byte entry range does not
+/// establish its later callable or readable lifetime.
+unsafe fn validate_pointer_target(
+    target: usize,
+    required_flags: u32,
+) -> Result<(), gimli::Error> {
+    if target == 0 {
+        return Err(gimli::Error::OffsetOutOfBounds(0));
+    }
+    let end = target.checked_add(1).ok_or(gimli::Error::AddressOverflow)?;
+    let mut data = PointerTarget {
+        range: target..end,
+        required_flags,
+        found: false,
+    };
+    unsafe {
+        dl_iterate_phdr(
+            Some(find_pointer_target_callback),
+            &mut data as *mut PointerTarget as *mut core::ffi::c_void,
+        );
+    }
+    if data.found {
+        Ok(())
+    } else {
+        Err(gimli::Error::OffsetOutOfBounds(target as u64))
+    }
+}
+
+/// # Safety
+///
+/// The caller must keep the validated executable target live through the ABI
+/// call. A null function pointer is not a valid `PersonalityRoutine` value.
+unsafe fn resolve_personality(pointer: Pointer) -> Result<PersonalityRoutine, gimli::Error> {
+    let target = unsafe { resolve_fde_pointer(pointer) }?;
+    unsafe { validate_pointer_target(target, PF_X) }?;
+    Ok(unsafe { core::mem::transmute(target) })
+}
+
+/// # Safety
+///
+/// The caller must keep a nonzero validated LSDA target readable while the
+/// personality consumes it. Zero is the ordinary absent-LSDA value.
+unsafe fn resolve_lsda(pointer: Pointer) -> Result<usize, gimli::Error> {
+    let target = unsafe { resolve_fde_pointer(pointer) }?;
+    if target != 0 {
+        unsafe { validate_pointer_target(target, PF_R) }?;
+    }
+    Ok(target)
 }
 
 #[derive(Debug)]
@@ -167,19 +251,19 @@ impl Frame {
             )?
             .clone();
 
-        // Preserve upstream absence and zero values. A present indirect cell
-        // that cannot be read is malformed metadata and must reach the
-        // caller's phase-specific `Err` path rather than appearing absent.
+        // Preserve absent personality and zero-LSDA values. A present null
+        // personality, or a present cell or target that cannot be resolved,
+        // is malformed metadata and must reach the caller's phase-specific
+        // `Err` path rather than appearing absent.
         let personality = fde_result
             .fde
             .personality()
-            .map(|pointer| unsafe { resolve_fde_pointer(pointer) })
-            .transpose()?
-            .map(|value| unsafe { core::mem::transmute(value) });
+            .map(|pointer| unsafe { resolve_personality(pointer) })
+            .transpose()?;
         let lsda = fde_result
             .fde
             .lsda()
-            .map(|pointer| unsafe { resolve_fde_pointer(pointer) })
+            .map(|pointer| unsafe { resolve_lsda(pointer) })
             .transpose()?
             .unwrap_or(0);
 

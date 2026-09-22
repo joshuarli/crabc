@@ -12,9 +12,13 @@ import build  # noqa: E402
 import owned_cleanup  # noqa: E402
 
 
+WORK = Path(__file__).parents[2] / ".work/x86_64/unwinder-output-tests"
+
+
 class OwnedCleanupContract(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory()
+        WORK.mkdir(parents=True, exist_ok=True)
+        self.temporary = tempfile.TemporaryDirectory(dir=WORK)
         self.provider = Path(self.temporary.name) / "provider"
         self.provider.mkdir()
         self.archive = self.provider / "libcrabc-unwind.a"

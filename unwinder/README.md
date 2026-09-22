@@ -15,6 +15,7 @@ Build from the checkout through the pinned native dispatcher:
 ./scripts/dev-x86_64.sh unwinder-eh-frame-bounds
 ./scripts/dev-x86_64.sh unwinder-dynamic-bounds
 ./scripts/dev-x86_64.sh unwinder-indirect-personality-bounds
+./scripts/dev-x86_64.sh unwinder-metadata-target-bounds
 python3 -B -m unittest discover -s unwinder/tests
 ```
 
@@ -86,9 +87,21 @@ personality remains absent; an absent or resolved-zero LSDA remains zero. The
 fixture separately routes `_Unwind_RaiseException` through matching FDEs with a
 guarded personality cell and a guarded LSDA cell. Each returns
 `FATAL_PHASE1_ERROR` without a fault. The cleanup fixture continues to use its
-valid indirect metadata. This does not validate the target pointer,
-DWARF-expression memory reads, later CFI register loads, or loader mapping
-lifetime.
+valid indirect metadata. This does not validate the target's ABI or LSDA
+contents, DWARF-expression memory reads, later CFI register loads, or loader
+mapping lifetime.
+
+`unwinder-metadata-target-bounds` covers the next target boundary. After
+resolving a present pointer cell, the frame overlay requires a non-null CIE
+personality target in an executable `PT_LOAD`, and a nonzero FDE LSDA target in
+a readable `PT_LOAD`; a target outside those ranges propagates through the
+existing phase error path. The fixture first proves that an absent personality
+and a direct zero LSDA still return `END_OF_STACK`. It then requires
+`FATAL_PHASE1_ERROR` for direct-null and indirect-null personalities, a direct
+personality target in a guarded page, and a direct LSDA target in that guarded
+page. The check covers the target's one-byte entry range only. It does not
+validate a personality's ABI, an LSDA's contents, DWARF-expression memory
+reads, later CFI register loads, or loader mapping lifetime.
 
 ## Standalone cleanup regression
 
@@ -191,13 +204,13 @@ Upstream `src/unwinder/mod.rs` owns the exported unwind ABI;
 `src/unwinder/arch/x86_64.rs` owns register save/restore through audited Rust
 inline/naked assembly. `src/unwinder/find_fde/phdr.rs` obtains frame metadata
 from owned `dl_iterate_phdr`, `PT_LOAD` and `PT_GNU_EH_FRAME`; the frame overlay
-also resolves late indirect personality and LSDA cells during a bounded
-`dl_iterate_phdr` callback. Consumers must request `--eh-frame-hdr`. No
-C/C++/standalone assembly object, prebuilt target unwinder, libgcc or
-compiler-rt archive is included. libc's Rust cfg-discovery build script is the
-sole admitted build executable. The selected path has no allocation, registry,
-mutable global frame state, thread creation, personality or panic-handler
-implementation.
+also resolves late indirect personality and LSDA cells, then checks their
+non-null targets during bounded `dl_iterate_phdr` callbacks. Consumers must
+request `--eh-frame-hdr`. No C/C++/standalone assembly object, prebuilt target
+unwinder, libgcc or compiler-rt archive is included. libc's Rust cfg-discovery
+build script is the sole admitted build executable. The selected path has no
+allocation, registry, mutable global frame state, thread creation, personality
+or panic-handler implementation.
 
 ## Qualification boundary
 
@@ -214,9 +227,11 @@ The local overlay bounds the declared `PT_GNU_EH_FRAME` header, decoded
 `.eh_frame` entry range, `PT_DYNAMIC` tag table, and complete native words of
 late indirect CIE personality and FDE LSDA cells before they are dereferenced.
 Present cells that cannot be resolved produce the existing phase error; they are
-not treated as absent metadata. It does not validate every FDE/CIE/DWARF record,
-pointer targets, DWARF-expression memory reads, later CFI register loads, or
-loader mapping lifetime. Source pinning and the guarded metadata regressions do
-not establish safe failure for malicious or truncated mapped unwind metadata
-generally. Those boundaries must be fixed and tested before this provider is
-promoted. Enumeration is not claimed async-signal-safe.
+not treated as absent metadata. A non-null personality target must occupy an
+executable `PT_LOAD`, and a nonzero LSDA target a readable `PT_LOAD`; this
+one-byte target check does not validate the called ABI or LSDA contents. It does
+not validate every FDE/CIE/DWARF record, DWARF-expression memory reads, later
+CFI register loads, or loader mapping lifetime. Source pinning and the guarded
+metadata regressions do not establish safe failure for malicious or truncated
+mapped unwind metadata generally. Those boundaries must be fixed and tested
+before this provider is promoted. Enumeration is not claimed async-signal-safe.
