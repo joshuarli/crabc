@@ -219,21 +219,59 @@ def _products(fixture: Any, values: Mapping[str, Path]) -> dict[str, dict[str, o
             "static": {
                 "path": static_root.relative_to(ROOT).as_posix(),
                 "manifest": artifact(ROOT, static_root / "share/crabc/manifest.json"),
-                "tree": fixture.receipt_tree_identity(static_root),
+                "payload_tree": _cross_arm_tree_identity(static_root),
+                "physical_tree": fixture.receipt_tree_identity(static_root),
             },
             "dynamic": {
                 "path": dynamic_root.relative_to(ROOT).as_posix(),
                 "manifest": artifact(ROOT, dynamic_root / "share/crabc/manifest.json"),
-                "tree": fixture.receipt_tree_identity(dynamic_root),
+                "payload_tree": _cross_arm_tree_identity(dynamic_root),
+                "physical_tree": fixture.receipt_tree_identity(dynamic_root),
             },
         }
     require(len({(path.stat().st_dev, path.stat().st_ino) for path in roots}) == len(roots),
             "protocol products must use six distinct physical roots")
     for kind in ("static", "dynamic"):
-        identities = [result[arm][kind]["tree"] for arm in ARMS]
+        identities = [result[arm][kind]["payload_tree"] for arm in ARMS]
         require(identities[0] == identities[1] == identities[2],
                 f"installed, reproduction, and extracted {kind} products differ")
     return result
+
+
+def _cross_arm_tree_identity(root: Path) -> dict[str, object]:
+    """Compare packaged product trees without inheriting directory setgid state.
+
+    The dynamic package contains only regular payloads and its one approved
+    alias; extraction creates parent directories locally.  A checkout's
+    setgid work directory can therefore add the directory setgid bit to an
+    extracted header subtree without changing the package.  Compare every
+    regular-file mode and byte, all alias modes and targets, and each
+    directory's access bits.  Only the inherited directory setgid bit is
+    normalized.  ``physical_tree`` above remains the exact per-root seal.
+    """
+
+    root = _physical(root, "cross-arm product root", directory=True)
+    records: list[dict[str, object]] = [{
+        "path": ".",
+        "kind": "directory",
+        "mode": stat.S_IMODE(root.lstat().st_mode) & ~stat.S_ISGID,
+    }]
+    for entry in sorted(root.rglob("*")):
+        relative = entry.relative_to(root).as_posix()
+        mode = entry.lstat().st_mode
+        permissions = stat.S_IMODE(mode)
+        if stat.S_ISLNK(mode):
+            records.append({"path": relative, "kind": "symlink", "mode": permissions,
+                            "target": os.readlink(entry)})
+        elif stat.S_ISDIR(mode):
+            records.append({"path": relative, "kind": "directory", "mode": permissions & ~stat.S_ISGID})
+        elif stat.S_ISREG(mode):
+            records.append({"path": relative, "kind": "regular", "mode": permissions,
+                            "sha256": sha256(entry.read_bytes()).hexdigest()})
+        else:
+            raise ProtocolDatabaseError(f"cross-arm product has an unsafe entry: {relative}")
+    encoded = json.dumps(records, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return {"entry_count": len(records), "sha256": sha256(encoded).hexdigest()}
 
 
 def _compile(work: Path, timeout: float) -> tuple[Path, dict[str, object]]:

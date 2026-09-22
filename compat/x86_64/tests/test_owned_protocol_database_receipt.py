@@ -64,6 +64,49 @@ class OwnedProtocolDatabaseReceiptTests(unittest.TestCase):
         self.assertEqual(receipt.COMPONENT, "protocol-database-product")
         self.assertEqual(receipt.REPORT_NAME, "owned-protocol-database-products.json")
 
+    def test_product_arms_admit_byte_identical_extraction_directory_modes(self) -> None:
+        """Extraction may preserve setgid header directories without changing payload bytes."""
+
+        class ProductFixture:
+            @staticmethod
+            def static_manifest(_root: Path) -> None:
+                return None
+
+            @staticmethod
+            def dynamic_manifest(_root: Path) -> None:
+                return None
+
+            @staticmethod
+            def receipt_tree_identity(root: Path) -> dict[str, object]:
+                return producer.fixture_module().receipt_tree_identity(root)
+
+        roots: dict[str, Path] = {}
+        for arm in producer.ARMS:
+            for kind in ("static", "dynamic"):
+                root = self.work / f"{arm}-{kind}"
+                (root / "share/crabc").mkdir(parents=True)
+                (root / "usr/include").mkdir(parents=True)
+                root.chmod(0o755)
+                (root / "usr").chmod(0o755)
+                (root / "usr/include").chmod(0o755)
+                (root / "share/crabc/manifest.json").write_text("{}\n", encoding="utf-8")
+                (root / "usr/include/netdb.h").write_text("fixed payload\n", encoding="utf-8")
+                if arm == "extracted" and kind == "dynamic":
+                    (root / "usr").chmod(0o2755)
+                    (root / "usr/include").chmod(0o2755)
+                roots[f"{arm}-{kind}"] = root
+
+        products = producer._products(ProductFixture(), roots)
+
+        self.assertEqual(
+            products["installed"]["dynamic"]["payload_tree"],
+            products["extracted"]["dynamic"]["payload_tree"],
+        )
+        self.assertNotEqual(
+            products["installed"]["dynamic"]["physical_tree"],
+            products["extracted"]["dynamic"]["physical_tree"],
+        )
+
     def test_raw_replay_rejects_one_candidate_stream_that_differs_from_musl(self) -> None:
         entries: dict[str, object] = {}
         expected = producer.expected_executions()

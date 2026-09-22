@@ -143,7 +143,7 @@ def _reported_products(root: Path, value: object, helper: Any) -> dict[str, dict
                 f"protocol receipt {arm} product shape differs")
         for kind in ("static", "dynamic"):
             item = arm_value[kind]
-            require(isinstance(item, dict) and set(item) == {"path", "manifest", "tree"},
+            require(isinstance(item, dict) and set(item) == {"path", "manifest", "payload_tree", "physical_tree"},
                     f"protocol receipt {arm} {kind} product shape differs")
             paths[f"{arm}-{kind}"] = _relative(root, item["path"], f"{arm} {kind} product", directory=True)
     try:

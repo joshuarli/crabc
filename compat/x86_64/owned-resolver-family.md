@@ -51,6 +51,12 @@ root contains a deliberately irrelevant `/etc/protocols` fixture: the selected
 C ABI must continue to use its fixed 36-record musl table. The Rust-facing
 snapshot API is not linked or credited here.
 
+The three products must match in every regular payload byte and mode, every
+alias, and every directory access mode. Dynamic archive extraction creates
+parent directories locally, so the comparison normalizes only an inherited
+directory setgid bit. Each root's unnormalized physical tree is still sealed
+before and after collection.
+
 Run this native producer inside the pinned x86 evidence environment, with the
 three pairs taken from one current product preparation:
 
