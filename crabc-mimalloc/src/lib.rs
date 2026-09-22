@@ -132,6 +132,7 @@ pub mod __crabc_runtime {
         native_runtime_current_local_page_test_audit,
         native_runtime_current_local_page_same_test_audit,
         native_runtime_lifecycle_test_audit,
+        native_runtime_metadata_page_map_test_audit,
         native_runtime_live_client_uses_startup_regular_arena_test_audit,
         native_runtime_live_client_page_map_span_test_audit,
         native_runtime_live_client_page_test_audit,

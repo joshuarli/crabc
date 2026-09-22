@@ -5464,6 +5464,35 @@ unsafe impl Sync for NativePostExitRouteRegistry {}
 #[cfg(test)]
 static NATIVE_POST_EXIT_ROUTE: NativePostExitRouteRegistry = NativePostExitRouteRegistry::new();
 
+/// Counts registered slices positively identified as belonging to the
+/// detached source metadata Theap by `_mi_meta_is_meta_page`.
+///
+/// Unlike the scalar lifecycle audit, this default-off scan reads registered
+/// page images and therefore requires an explicit unsafe observation boundary.
+/// It acquires no allocator ownership or synchronization capability.
+///
+/// # Safety
+///
+/// The caller must keep the initialized runtime, shared PageMap, subprocess,
+/// detached metadata Theap identity, and every registered page image alive
+/// for the entire call. All runtime owners must be quiescent: no allocator
+/// operation, registration/unregistration, page ownership transition, thread
+/// attachment/teardown, or process teardown may overlap this scan. Joining
+/// all participating workers before the call, while the sole remaining
+/// runtime thread performs only this observation, establishes that boundary.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub unsafe fn native_runtime_metadata_page_map_test_audit() -> Option<usize> {
+    // SAFETY: the caller retains the initialized, quiescent runtime owner.
+    let owner = unsafe { RUNTIME_PROCESS.active_owner() }?;
+    let ready = owner.ready().ok()?;
+    let page_map = ready.page_map().ok()?.page_map().ok()?;
+    let subprocess = ready.subprocess().ok()?;
+    // SAFETY: the caller's whole-runtime quiescence and page-image lifetime
+    // obligations satisfy the raw registered-entry scan's requirements.
+    unsafe { page_map.test_metadata_registered_entry_count(subprocess) }.ok()
+}
+
 /// Returns scalar-only lifecycle accounting for the process-global runtime.
 ///
 /// A `None` result means the source process image is not active and quiescent

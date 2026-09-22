@@ -451,6 +451,36 @@ impl PageMap {
         Ok(self.registered_entry_count.load(Ordering::Acquire))
     }
 
+    /// Counts registered slices whose page belongs to the source detached
+    /// metadata Theap, using `subproc.c::_mi_meta_is_meta_page` identity.
+    ///
+    /// # Safety
+    ///
+    /// The caller must establish process-wide quiescence: no registration,
+    /// unregistration, page ownership transition, or page release may overlap
+    /// this scan. Every registered page must retain its initialized image.
+    #[cfg(feature = "native-runtime-test-audit")]
+    pub(crate) unsafe fn test_metadata_registered_entry_count(
+        &self,
+        subprocess: &crate::subproc::MainSubprocess,
+    ) -> Result<usize> {
+        let mut count = 0;
+        for index in 0..self.committed_count()? {
+            let Some(submap) = self.submap_at(index)? else { continue; };
+            for offset in 0..PAGE_MAP_SUB_COUNT {
+                // SAFETY: the published submap bounds this entry; the caller
+                // excludes entry mutation and retains every registered page.
+                let page = unsafe { *(*submap.as_ptr().add(offset)).0.get() };
+                // SAFETY: null is admitted and every nonnull registered page
+                // remains initialized and quiescent for this observation.
+                if subprocess.is_metadata_page(unsafe { page.as_ref() }) {
+                    count += 1;
+                }
+            }
+        }
+        Ok(count)
+    }
+
     /// Counts published submaps and the lazy publications that created them.
     /// Both are process-map ownership observations, not allocator policy.
     #[cfg(any(test, feature = "native-runtime-test-audit"))]

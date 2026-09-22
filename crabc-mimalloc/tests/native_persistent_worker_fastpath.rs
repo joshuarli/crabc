@@ -13,7 +13,8 @@ use crabc_mimalloc::__crabc_runtime::{
     attach_current_thread, finish_current_thread_native_after_user_destructors,
     native_allocate_aligned, native_free, native_reallocate,
     native_runtime_current_thread_attachment_test_audit, native_runtime_fork_admission_test_audit,
-    native_runtime_lifecycle_test_audit, native_usable_size, prepare_native_later_thread_arena,
+    native_runtime_lifecycle_test_audit, native_runtime_metadata_page_map_test_audit,
+    native_usable_size, prepare_native_later_thread_arena,
 };
 
 const CHILD_WIDTH_ENV: &str = "CRABC_NATIVE_PERSISTENT_WORKER_FASTPATH_WIDTH";
@@ -142,6 +143,10 @@ fn run_width(width: usize, teardown: WorkerTeardown) {
     );
     let baseline = native_runtime_lifecycle_test_audit()
         .expect("the initialized runtime begins in a quiescent auditable state");
+    // SAFETY: this fresh child has initialized its runtime but has not spawned
+    // workers. Its sole runtime thread performs only these observations.
+    let baseline_metadata_entries = unsafe { native_runtime_metadata_page_map_test_audit() }
+        .expect("the live runtime retains its source metadata identity");
 
     let (ready_sender, ready_receiver) = mpsc::sync_channel(width);
     let start = Arc::new(Barrier::new(width + 1));
@@ -175,6 +180,10 @@ fn run_width(width: usize, teardown: WorkerTeardown) {
 
     let after = native_runtime_lifecycle_test_audit()
         .expect("every worker joined before the quiescent lifecycle audit");
+    // SAFETY: every participating worker has joined, and this sole runtime
+    // thread keeps the process and all registered pages live without mutation.
+    let after_metadata_entries = unsafe { native_runtime_metadata_page_map_test_audit() }
+        .expect("joined workers leave a quiescent metadata registration audit");
     let expected_owner_local_operations = width
         * (LOCAL_CYCLES * 2
             + match teardown {
@@ -208,7 +217,21 @@ fn run_width(width: usize, teardown: WorkerTeardown) {
     );
     match teardown {
         WorkerTeardown::AllFree => {
-            assert_eq!(after.page_map_registered_entry_count, 0);
+            // Pinned init.c::mi_tld_free returns TLD/Theap blocks through
+            // _mi_meta_free; it does not destroy mi_process_theap_meta.
+            // Its reusable pages remain registered. Account for only pages
+            // positively identified by subproc.c::_mi_meta_is_meta_page, so
+            // even one leaked application-page registration still fails.
+            assert_eq!(
+                after.page_map_registered_entry_count,
+                after_metadata_entries,
+                "all remaining registrations belong to the detached metadata Theap"
+            );
+            assert_eq!(
+                after.metadata_live_capability_count,
+                baseline.metadata_live_capability_count,
+                "normal teardown returns every worker TLD/Theap metadata capability"
+            );
         }
         WorkerTeardown::CollectAbandon => {
             assert!(
@@ -218,7 +241,9 @@ fn run_width(width: usize, teardown: WorkerTeardown) {
             );
             assert!(
                 after.page_map_registered_entry_count
-                    >= baseline.page_map_registered_entry_count + width,
+                    - after_metadata_entries
+                    >= baseline.page_map_registered_entry_count
+                        - baseline_metadata_entries + width,
                 "each independently abandoned local page remains PageMap-addressable after normal owner teardown"
             );
         }
@@ -288,6 +313,10 @@ fn attach_pins_a_page_empty_owner_until_normal_no_allocation_teardown() {
     );
     let before = native_runtime_lifecycle_test_audit()
         .expect("the initialized process has a quiescent baseline");
+    // SAFETY: the test runtime is initialized and no worker exists yet; this
+    // sole runtime thread retains all source owners without concurrent mutation.
+    let before_metadata_entries = unsafe { native_runtime_metadata_page_map_test_audit() }
+        .expect("the initialized metadata identity remains live");
 
     let attached = std::thread::spawn(move || {
         assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
@@ -316,6 +345,10 @@ fn attach_pins_a_page_empty_owner_until_normal_no_allocation_teardown() {
 
     let after = native_runtime_lifecycle_test_audit()
         .expect("the completed no-allocation worker restores a quiescent audit");
+    // SAFETY: the only worker has joined; this sole runtime thread retains
+    // the process and registered page images and performs no concurrent work.
+    let after_metadata_entries = unsafe { native_runtime_metadata_page_map_test_audit() }
+        .expect("the completed worker leaves a quiescent metadata registration audit");
     // The source TLD/Theap constructor legitimately uses metadata and its
     // PageMap registrations are not application-page claims. The persistent
     // owner state above proves the page engine remains dormant; these existing
@@ -338,6 +371,11 @@ fn attach_pins_a_page_empty_owner_until_normal_no_allocation_teardown() {
     assert_eq!(
         after.metadata_live_capability_count, before.metadata_live_capability_count,
         "normal teardown releases the worker TLD/Theap metadata ownership"
+    );
+    assert_eq!(
+        after.page_map_registered_entry_count - after_metadata_entries,
+        before.page_map_registered_entry_count - before_metadata_entries,
+        "page-empty attachment retains no application-page registration"
     );
     assert_eq!(after.shared_later_theap_count, 0);
     assert_eq!(
