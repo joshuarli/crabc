@@ -3710,3 +3710,18 @@ unit_verified = true
 differential_verified = false
 stress_verified = false
 performance_qualified = false
+
+[[item]]
+upstream = "src/arena.c"
+name = "persistent-arena-quiescent-destruction"
+source_region = "1542-1565 mi_arenas_unsafe_destroy and _mi_arenas_unsafe_destroy_all; src/os.c:258-284 full MemoryId release"
+rust_module = "crabc_mimalloc::arena::owned::destroy"
+rust_item = "ProcessArenaBacking::destroy_all and DestroyedArenas::retry_raw"
+intentional_difference = "Exclusive quiescence is an unsafe caller obligation. Snapshot owner identities before release to avoid reading child metadata after its parent map is freed; registry clears and primitive frees retain source order. Caller-owned huge failure bits must be outside retiring backing; all capacity/ownership refusals precede mutation. Failed OS ranges remain in a linear raw-only retry owner with no automatic Drop syscall or repeated accounting. Existing aligned exact-base admission is unchanged. Source destroy_on_exit option/subprocess heap and metadata shutdown composition remains unconnected, and simulated huge backing is not hardware qualification."
+tests = ["crabc-mimalloc/src/arena_owned.rs", "compat/allocator/arena_destroy.c", "compat/allocator/arena_destroy.py"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
+stress_verified = false
+performance_qualified = false

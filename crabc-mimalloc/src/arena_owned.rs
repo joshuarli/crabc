@@ -10,8 +10,9 @@
 //! is the arena group of one `MainSubprocess`: one reserve lock, one registry,
 //! and the exact regular or huge OS owners of its published arenas. This Rust ownership group
 //! is not an assertion about the complete C `mi_subproc_t` layout. Publication
-//! retains backing for process lifetime; quiescent subprocess destruction is
-//! a separate caller and must not infer authority from an ordinary arena view.
+//! retains backing until explicit quiescent `destroy_all` transfers it into
+//! terminal release ownership. That caller must not infer shutdown authority
+//! from an ordinary arena view; normal thread exit never destroys this group.
 
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
@@ -30,6 +31,10 @@ use crate::types::{Arena, MemoryId, MemoryKind};
 #[path = "arena_purge.rs"]
 mod purge;
 
+#[path = "arena_destroy.rs"]
+mod destroy;
+pub(crate) use destroy::{ArenaDestroyError, DestroyedArenas};
+
 #[path = "arena_huge.rs"]
 mod huge;
 pub(crate) use huge::{HugeArenaReserveError, HugeArenaCleanupError, StartupArenaReservationOutcomes};
@@ -38,6 +43,7 @@ const EMPTY: u8 = 0;
 const INITIALIZING: u8 = 1;
 const PUBLISHED: u8 = 2;
 const RETAINED: u8 = 3;
+const DESTROYED: u8 = 4;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ArenaPageCommitError {
@@ -82,13 +88,14 @@ impl ArenaAllocationSlot {
 
     /// # Safety
     ///
-    /// PUBLISHED and RETAINED values are immutable for process lifetime.
+    /// PUBLISHED and RETAINED values are immutable until exclusive teardown;
+    /// no borrow may survive the unsafe `destroy_all` transition.
     /// INITIALIZING requires the reserve lock or the callback capability for
     /// this exact slot: another arena's publication never protects it against
     /// initialization failure moving the mapping out or reusing the slot.
     unsafe fn initialized(&self) -> Option<&OwnedArenaAllocation> {
         let state = self.state.load(Ordering::Acquire);
-        if state == EMPTY { return None; }
+        if state == EMPTY || state == DESTROYED { return None; }
         #[cfg(test)]
         if state == INITIALIZING { self.initializing_reads.fetch_add(1, Ordering::Relaxed); }
         Some(unsafe { (&*self.value.get()).assume_init_ref() })
@@ -408,9 +415,11 @@ impl OwnedArenaAllocation {
 /// Installation needs `&'static self`: callbacks and registry entries never
 /// point into movable stack owners. The reserve lock serializes binding and
 /// slot transitions; an arena's Release publication follows initialization
-/// of its final mapping slot. Published slots are immutable, and no method
-/// here releases a published mapping while a page/bitmap view can exist.
+/// of its final mapping slot. Published slots remain immutable until exclusive
+/// `destroy_all`; that boundary requires all page/bitmap/callback views to end
+/// before any published mapping can be released.
 pub(crate) struct ProcessArenaBacking {
+    destroyed: AtomicBool,
     reserve_lock: PrivateLock,
     huge_reservation_lock: PrivateLock,
     huge_cleanup_retained: AtomicBool,
@@ -421,7 +430,8 @@ pub(crate) struct ProcessArenaBacking {
 }
 
 // SAFETY: the lock exclusively owns all unpublished slot transitions. Once
-// published, slots and mappings are never moved or released. Their shared VM
+// published, slots and mappings remain fixed until the unsafe quiescent
+// teardown boundary transfers ownership after all aliases end. Their shared VM
 // transitions touch only caller-owned source ranges and atomic statistics.
 // The separate huge reservation lock exclusively owns pending cleanup and its
 // metadata tracker. Its lock may acquire reserve_lock, never the reverse; the
@@ -431,6 +441,7 @@ unsafe impl Sync for ProcessArenaBacking {}
 impl ProcessArenaBacking {
     pub(crate) const fn new() -> Self {
         Self {
+            destroyed: AtomicBool::new(false),
             reserve_lock: PrivateLock::new(),
             huge_reservation_lock: PrivateLock::new(),
             huge_cleanup_retained: AtomicBool::new(false),
@@ -974,7 +985,8 @@ impl ProcessArenaBacking {
     fn published_allocation(&self, base: *mut u8, size: usize) -> Option<&OwnedArenaAllocation> {
         self.slots.iter().find_map(|slot| {
             if slot.state.load(Ordering::Acquire) != PUBLISHED { return None; }
-            // SAFETY: a PUBLISHED slot is never moved, replaced or released.
+            // SAFETY: a PUBLISHED slot remains fixed until exclusive teardown,
+            // whose caller must exclude this lookup and every returned borrow.
             let owner = unsafe { slot.initialized()? };
             let stored = owner.memory.os_memory()?;
             (stored.base == base && stored.size == size).then_some(owner)
@@ -1211,6 +1223,103 @@ mod tests {
     use crate::subproc::MainSubprocess;
     use crabc_core::Errno;
     use std::boxed::Box;
+
+    #[test]
+    fn destroy_all_retires_regular_external_and_huge_owners_with_exact_retries() {
+        let fault = fault::install(fault::Plan::disabled());
+        let process = process();
+        let backing = backing();
+        install(backing, process, MapAccess::Committed);
+        install(backing, process, MapAccess::Reserved);
+        let trace = Box::leak(Box::new(ExternalCallbackTrace::new()));
+        let (external, base) = external_lease(process, ARENA_MIN_SIZE, true, true, trace);
+        install_external(backing, process, ARENA_MIN_SIZE, external);
+        trace.clear_observation();
+        let before = process.subprocess().vm_statistics().snapshot();
+        let count = backing.registry.count();
+        // All fixture views have expired; the external map remains caller-owned.
+        let destroyed = unsafe { backing.destroy_all(&mut []) }.unwrap();
+        assert!(destroyed.is_released());
+        let after = process.subprocess().vm_statistics().snapshot();
+        assert_eq!(backing.registry.count(), 0);
+        assert_eq!(trace.commits.load(Ordering::Acquire), 0);
+        assert_eq!(trace.purges.load(Ordering::Acquire), 0);
+        unsafe { base.add(ARENA_MIN_SIZE - 1).write(0x5a); }
+        assert_eq!(unsafe { base.add(ARENA_MIN_SIZE - 1).read() }, 0x5a);
+        std::println!();
+        for (index, value) in [count as i64, backing.registry.count() as i64,
+            before.reserved_current - after.reserved_current,
+            before.committed_current - after.committed_current,
+            trace.commits.load(Ordering::Acquire) as i64,
+            trace.purges.load(Ordering::Acquire) as i64, 1].into_iter().enumerate() {
+            std::println!("m2.arena.destroy.{index}={value}");
+        }
+        assert!(matches!(unsafe { backing.destroy_all(&mut []) }, Err(ArenaDestroyError::AlreadyDestroyed)));
+        unsafe { crabc_core::mm::munmap_raw(base, ARENA_MIN_SIZE) }.unwrap();
+
+        // Full parent provenance must survive failed free, including its
+        // child arena headers. The successful retry never touches them.
+        let process = self::process();
+        let backing = self::backing();
+        let size = ARENA_MAX_SIZE + ARENA_MIN_SIZE;
+        unsafe { backing.reserve_os_memory_for_process(process, config(), size,
+            MapAccess::Reserved, false, None) }.unwrap();
+        assert_eq!(backing.registry.count(), 2);
+        fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+        let mut destroyed = unsafe { backing.destroy_all(&mut []) }.unwrap();
+        assert_eq!(fault.observed(), 1, "one parent owns both source arenas");
+        assert!(!destroyed.is_released());
+        assert_eq!(backing.registry.count(), 0);
+        let accounted = process.subprocess().vm_statistics().snapshot();
+        std::println!("m2.arena.destroy.7={}", fault.observed());
+        std::println!("m2.arena.destroy.8={}", backing.registry.count());
+        std::println!("m2.arena.destroy.9={}", usize::from(!destroyed.is_released()));
+        fault.set(fault::Plan::disabled());
+        destroyed.retry_raw().unwrap();
+        assert!(destroyed.is_released());
+        assert_eq!(process.subprocess().vm_statistics().snapshot(), accounted);
+
+        // Simulated huge primitives exercise exact failed-page bookkeeping,
+        // not kernel huge-page availability or NUMA placement.
+        for pages in [3, 17] {
+            fault.set(fault::Plan::disabled());
+            let process = self::process();
+            let backing = self::backing();
+            let huge = HugeOsAllocation::test_registry_allocation(process, config(), pages);
+            let huge_base = huge.base();
+            unsafe { backing.install_owned_huge_allocation(config(), huge, -1, false) }
+                .unwrap_or_else(|_| panic!("simulated huge arena installs"));
+            let expected_arenas = if pages == 3 { 1 } else { 2 };
+            assert_eq!(backing.registry.count(), expected_arenas);
+            let before_refusal = process.subprocess().vm_statistics().snapshot();
+            fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+            assert!(matches!(unsafe { backing.destroy_all(&mut []) },
+                Err(ArenaDestroyError::TrackingCapacity { required_words: 1 })));
+            let inside = unsafe { core::slice::from_raw_parts_mut(
+                huge_base.as_ptr().add(crate::config::GIB - 4096).cast::<usize>(), 1) };
+            assert!(matches!(unsafe { backing.destroy_all(inside) },
+                Err(ArenaDestroyError::TrackingInsideArena)));
+            assert_eq!(fault.observed(), 0, "admission never attempts unmap");
+            assert_eq!(process.subprocess().vm_statistics().snapshot(), before_refusal);
+            assert_eq!(backing.registry.count(), expected_arenas, "capacity refusal precedes publication changes");
+            let mut tracking = [0usize; 1];
+            fault.set(fault::Plan::at(fault::Point::Unmap, 2, Errno::NOMEM));
+            let mut destroyed = unsafe { backing.destroy_all(&mut tracking) }.unwrap();
+            assert_eq!(fault.observed(), pages, "source huge free continues after an error");
+            if pages == 3 {
+                std::println!("m2.arena.destroy.10={}", fault.observed());
+                std::println!("m2.arena.destroy.11={}", backing.registry.count());
+                std::println!("m2.arena.destroy.12={}", usize::from(!destroyed.is_released()));
+            }
+            assert!(!destroyed.is_released());
+            let accounted = process.subprocess().vm_statistics().snapshot();
+            fault.set(fault::Plan::at(fault::Point::Unmap, 2, Errno::NOMEM));
+            destroyed.retry_raw().unwrap();
+            assert_eq!(fault.observed(), 1, "raw retry visits only the failed huge page");
+            assert!(destroyed.is_released());
+            assert_eq!(process.subprocess().vm_statistics().snapshot(), accounted);
+        }
+    }
 
     fn process() -> VmProcess<'static> {
         let mut options = VmOptions::uninitialized();

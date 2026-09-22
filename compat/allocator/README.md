@@ -23,6 +23,15 @@ raw output. Zero matching tests, an ignored test, or a failed test returns a
 failure. Omit `--filter` for the full library unit suite. These commands do not
 produce M1/M2 qualification receipts.
 
+`./compat/allocator/run-x86_64.sh allocator-arena-destroy` runs the pinned-C
+and Rust development differential for the persistent arena group's quiescent
+retirement. It checks regular/reserved full-map accounting, external retention,
+a failed multi-arena parent release, and simulated huge-page failure continuation;
+Rust additionally checks preflight refusal and exact raw-only retries. Anonymous
+huge backing does not qualify kernel hugetlb or NUMA. Logs live in the existing
+allocator artifacts directory under `x86_64/arena-destroy`. The runtime
+`destroy_on_exit` option/subprocess-heap teardown caller remains outstanding.
+
 This directory owns the reproducible source, inventory, C-oracle, and later
 Rust/C evidence for the fixed mimalloc v3.5.0 semantic port. Native
 Linux/x86-64 little-endian development is active alongside runtime parity;

@@ -267,6 +267,31 @@ allocation regression matches the pinned arena probe's block size 64,
 slice-relative offset 64, capacity 512, and 49,152-byte committed/released
 prefix.
 
+`ProcessArenaBacking::destroy_all` owns pinned `src/arena.c:1542-1565`
+registry retirement after exclusive subprocess quiescence. It snapshots only
+owner identities while parent and child headers remain mapped, then preserves
+source index-order Release clears and OS frees. This avoids reading a child
+header after the parent's full OS mapping was released. External mappings are
+unpublished without invoking callbacks or freeing their storage. Regular OS
+owners use their complete admitted MemoryId extent and the source's
+`still_committed=true` accounting, including reserved arenas. The existing
+owner admission requires an aligned exact mapping base; this does not add
+support for source management of unaligned external OS prefixes.
+
+Huge-failure bitmap storage is supplied and checked before the first mutation,
+without calling the metadata allocator during teardown. Insufficient capacity,
+storage overlapping a retiring backing, and unpublished cleanup leave the
+registry and VM state unchanged. `DestroyedArenas` retains failed regular maps
+and exact failed huge-page sets; explicit raw retries never repeat statistics.
+Dropping it performs no syscall. Callers must retain failures until released.
+This is the persistent arena owner's destruction transition, not permission
+to retire live pages from ordinary thread exit or default process shutdown.
+The remaining caller is `init.c:626`'s opt-in `destroy_on_exit` branch through
+`subproc.c:202-255`: remove subprocess membership, force-destroy its heaps and
+thread-local owners, clear metadata identity, destroy arenas, then retire locks,
+subprocess metadata and the main PageMap. That option and complete quiescence
+chain remain unconnected; default process-done continues to retain backing.
+
 `ProcessArenaBacking::install_owned_huge_allocation` is the separate
 `src/arena.c:2167-2191` manage boundary after a huge reservation succeeds.
 Its existing process registry now retains `ArenaOsAllocation::Regular` or

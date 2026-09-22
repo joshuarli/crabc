@@ -67,7 +67,7 @@ pub(crate) use selection::{ArenaReservationPlan, ArenaSearch};
 
 #[path = "arena_owned.rs"]
 mod owned;
-pub(crate) use owned::{ArenaPageCommitError, FirstRegularStartupArenaSelection,
+pub(crate) use owned::{ArenaDestroyError, DestroyedArenas, ArenaPageCommitError, FirstRegularStartupArenaSelection,
     ProcessArenaBacking, ProcessArenaInstallFailure, HugeArenaReserveError,
     HugeArenaCleanupError, StartupArenaReservationOutcomes};
 
