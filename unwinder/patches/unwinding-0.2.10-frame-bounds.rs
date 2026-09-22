@@ -41,10 +41,10 @@ fn validate_register(register: Register) -> Result<(), gimli::Error> {
 }
 
 // Bound the interpreter independently of its existing fixed stack storage.
-// 4096 operations admits compiler CFI arithmetic with ample headroom while
+// 4096 evaluator iterations leave headroom for compiler CFI arithmetic while
 // ensuring a backward DW_OP_skip cannot hold an unwind phase indefinitely.
 // Exhaustion is gimli::Error::TooManyIterations, propagated as a phase error.
-const MAX_EXPRESSION_OPERATIONS: u32 = 4096;
+const MAX_EXPRESSION_ITERATIONS: u32 = 4096;
 
 struct StoreOnStack;
 
@@ -294,7 +294,7 @@ impl Frame {
         let expr = expr.get(&self.fde_result.eh_frame)?;
         let mut eval =
             Evaluation::<_, StoreOnStack>::new_in(expr.0, self.fde_result.fde.cie().encoding());
-        eval.set_max_iterations(MAX_EXPRESSION_OPERATIONS);
+        eval.set_max_iterations(MAX_EXPRESSION_ITERATIONS);
         let mut result = eval.evaluate()?;
         loop {
             match result {

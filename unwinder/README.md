@@ -113,7 +113,8 @@ with the relocated address itself; it does not dereference that address.
 the little-endian target. Non-default address spaces and typed operations
 remain unsupported and return an error.
 
-The expression interpreter permits at most 4096 operations per expression.
+The expression interpreter permits at most 4096 evaluator iterations per expression
+(gimli may process two operations in one iteration).
 This finite bound supplements its existing 64-value stack and single-result
 storage, leaves room for compiler-generated CFI arithmetic, and prevents an
 unconditional backward branch from hanging an unwind phase. Exhaustion returns
@@ -121,7 +122,7 @@ unconditional backward branch from hanging an unwind phase. Exhaustion returns
 fixture checks invalid CFA/source/destination/expression registers, unsupported
 states/results, a backward loop, valid register arithmetic, an address pointing
 into a guard page without dereferencing it, and every 1–8-byte read width ending
-exactly at that page boundary. These corrections do **not** establish arbitrary
+exactly at that page boundary, including nonzero value and zero-extension checks. These corrections do **not** establish arbitrary
 address readability: CFI register restoration and expression memory reads still
 need a fault-contained memory owner, and LSDA parsing remains the consuming
 personality's responsibility. No broader malformed-metadata safety claim

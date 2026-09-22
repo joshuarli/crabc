@@ -109,9 +109,18 @@ unsafe fn run_case(case: &str) {
             "memory-width-1" | "memory-width-2" | "memory-width-3" | "memory-width-4"
             | "memory-width-5" | "memory-width-6" | "memory-width-7" | "memory-width-8" => {
                 let width: usize = case.rsplit('-').next().unwrap().parse().unwrap();
+                let bytes = [0x91, 0x82, 0xf3, 0xa4, 0xd5, 0xb6, 0xe7, 0xc8];
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), allocation.add(PAGE - width), width);
+                let mut expected = [0u8; 8];
+                expected[..width].copy_from_slice(&bytes[..width]);
                 let mut expr = vec![0x0e]; // DW_OP_const8u, not relocated DW_OP_addr.
                 expr.extend_from_slice(&(allocation.add(PAGE - width) as u64).to_le_bytes());
                 expr.extend_from_slice(&[0x94, width as u8]); // DW_OP_deref_size.
+                expr.push(0x0e);
+                expr.extend_from_slice(&u64::from_le_bytes(expected).to_le_bytes());
+                // DW_OP_eq; branch over unsupported bregx only on exact value.
+                // A sign-extended or incorrect value produces a phase error.
+                expr.extend_from_slice(&[0x29, 0x28, 3, 0, 0x92, 127, 0, 0x30]);
                 (cfa_expression(&expr), END_OF_STACK)
             }
             "relocated-address" => {
