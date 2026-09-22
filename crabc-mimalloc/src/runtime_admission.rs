@@ -282,6 +282,7 @@ unsafe fn with_diagnostic_callback_at<R>(
 #[must_use = "hold through the raw copy and complete before user hooks"]
 pub struct NativeAllocatorRawForkCopyGuard {
     operation: NativeAllocatorOperationGuard,
+    generation_floor: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -299,7 +300,35 @@ impl NativeAllocatorRawForkCopyGuard {
     /// copied current descriptor, whose mapping remains valid. No registry
     /// reset may have reclaimed that mapping. This guard is the copied value,
     /// not a foreign or reconstructed parent descriptor capability.
-    pub unsafe fn complete_child(self) { drop(self); }
+    pub unsafe fn complete_child(self) -> Result<(), NativeAllocatorQuiescenceError> {
+        complete_raw_fork_child_at(&EPOCH, &self)?;
+        drop(self);
+        Ok(())
+    }
+}
+
+fn complete_raw_fork_child_at(epoch: &NativeAllocatorEpoch, copy: &NativeAllocatorRawForkCopyGuard)
+    -> Result<(), NativeAllocatorQuiescenceError> {
+    let record = unsafe { copy.operation.descriptor.as_ref() };
+    if !record.entered.load(Ordering::SeqCst) || unsafe { *record.nesting.get() } == 0
+        || record.registration.load(Ordering::Acquire) != REGISTERED {
+        return Err(NativeAllocatorQuiescenceError::InvalidDescriptor);
+    }
+    let observed = epoch.state.load(Ordering::SeqCst);
+    if observed & !MODE_MASK < copy.generation_floor {
+        return Err(NativeAllocatorQuiescenceError::InvalidDescriptor);
+    }
+    match observed & MODE_MASK {
+        OPEN => Ok(()),
+        // A writer can close after ordinary admission but cannot finish its
+        // drain while this exact raw-copy record remains entered. Therefore
+        // the copied child contains no committed transfer from that writer.
+        // Only the sole child discards the now-vanished pre-commit writer.
+        // Refusal/reopen may have advanced generations before the copy, hence
+        // the monotonic floor rather than an invalid equality requirement.
+        FORK_CLOSED | TERMINAL_CLOSING => epoch.reopen(observed),
+        _ => Err(NativeAllocatorQuiescenceError::WriterBusy),
+    }
 }
 
 /// Protects the existing raw-fork copy from terminal source-owner transfer.
@@ -324,7 +353,11 @@ fn raw_fork_copy_at(epoch: &NativeAllocatorEpoch, descriptor: NonNull<NativeAllo
         NativeAllocatorEntryError::Closed => NativeAllocatorRawForkCopyError::Closed,
         _ => NativeAllocatorRawForkCopyError::Unavailable,
     })?;
-    Ok(NativeAllocatorRawForkCopyGuard { operation })
+    let observed = epoch.state.load(Ordering::SeqCst);
+    if observed & MODE_MASK == TERMINAL {
+        return Err(NativeAllocatorRawForkCopyError::Closed);
+    }
+    Ok(NativeAllocatorRawForkCopyGuard { operation, generation_floor: observed & !MODE_MASK })
 }
 
 struct CallbackSuspension {
@@ -699,7 +732,8 @@ mod tests {
         parent.complete_parent();
         assert!(!parent_record.entered.load(Ordering::SeqCst));
         assert!(child_record.entered.load(Ordering::SeqCst));
-        unsafe { child.complete_child(); }
+        complete_raw_fork_child_at(&child_epoch, &child).unwrap();
+        child.complete_parent();
         assert!(!child_record.entered.load(Ordering::SeqCst));
         assert_eq!(unsafe { *parent_record.nesting.get() }, 0);
         assert_eq!(unsafe { *child_record.nesting.get() }, 0);
@@ -707,6 +741,45 @@ mod tests {
         assert!(matches!(raw_fork_copy_at(&parent_epoch, NonNull::from(&parent_record)),
             Err(NativeAllocatorRawForkCopyError::Closed)));
         assert!(!parent_record.entered.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn raw_copy_child_discards_only_copied_precommit_writer_and_parent_keeps_closure() {
+        for mode in [FORK_CLOSED, TERMINAL_CLOSING] {
+            let parent_epoch = NativeAllocatorEpoch::new();
+            let parent_record = registered_record();
+            let parent = raw_fork_copy_at(&parent_epoch, NonNull::from(&parent_record)).unwrap();
+            let child_epoch = NativeAllocatorEpoch::new();
+            let child_record = registered_record();
+            let child = raw_fork_copy_at(&child_epoch, NonNull::from(&child_record)).unwrap();
+            std::thread::scope(|scope| {
+                let writer = scope.spawn(|| parent_epoch.close_for(&Registry(&parent_record), mode));
+                while parent_epoch.state.load(Ordering::SeqCst) & MODE_MASK != mode {
+                    core::hint::spin_loop();
+                }
+                // Deterministic copy after the writer closes, while the raw
+                // copy entry still prevents any source-owner transfer.
+                child_epoch.state.store(parent_epoch.state.load(Ordering::SeqCst), Ordering::SeqCst);
+                complete_raw_fork_child_at(&child_epoch, &child).unwrap();
+                assert_eq!(child_epoch.state.load(Ordering::SeqCst) & MODE_MASK, OPEN);
+                assert_eq!(parent_epoch.state.load(Ordering::SeqCst) & MODE_MASK, mode);
+                assert!(parent_record.entered.load(Ordering::SeqCst));
+                child.complete_parent();
+                parent.complete_parent();
+                let closed = writer.join().unwrap().unwrap();
+                if mode == FORK_CLOSED { parent_epoch.reopen(closed).unwrap(); }
+                else { assert_eq!(parent_epoch.state.load(Ordering::SeqCst) & MODE_MASK, TERMINAL); }
+            });
+        }
+        // An invalid copied true-Terminal image must never be reopened even
+        // if a malformed caller presents a still-entered record.
+        let epoch = NativeAllocatorEpoch::new();
+        let record = registered_record();
+        let copy = raw_fork_copy_at(&epoch, NonNull::from(&record)).unwrap();
+        epoch.state.store(TERMINAL, Ordering::SeqCst);
+        assert_eq!(complete_raw_fork_child_at(&epoch, &copy), Err(NativeAllocatorQuiescenceError::WriterBusy));
+        assert_eq!(epoch.state.load(Ordering::SeqCst), TERMINAL);
+        copy.complete_parent();
     }
 
     #[test]

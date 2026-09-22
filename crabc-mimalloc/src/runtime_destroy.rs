@@ -221,6 +221,119 @@ impl NativePreparedProcessDestroy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    extern crate std;
+
+    struct PinnedFixtureRegistry<'a> {
+        initial: NonNull<admission::NativeAllocatorThreadDescriptor>,
+        worker: &'a core::sync::atomic::AtomicPtr<admission::NativeAllocatorThreadDescriptor>,
+    }
+    // SAFETY: exactly one initial and one registered worker participate. The
+    // scoped worker cannot exit until physical completion releases its stop
+    // flag. Descriptor publication precedes source entry and the main thread
+    // waits for its ready flag; there is no concurrent registration/removal.
+    unsafe impl admission::NativeAllocatorPinnedThreadRegistry for PinnedFixtureRegistry<'_> {
+        fn visit_descriptors(&self, visitor: &mut dyn FnMut(NonNull<admission::NativeAllocatorThreadDescriptor>)) {
+            visitor(self.initial);
+            if let Some(worker) = NonNull::new(self.worker.load(Ordering::Acquire)) { visitor(worker); }
+        }
+    }
+
+    unsafe extern "C" {
+        fn fputs(message: *const core::ffi::c_char, stream: *mut core::ffi::c_void) -> core::ffi::c_int;
+        static mut stderr: *mut core::ffi::c_void;
+    }
+    unsafe extern "C" fn fixture_stderr(message: *const core::ffi::c_char) {
+        unsafe { admission::with_native_allocator_diagnostic_callback(|| { let _ = fputs(message, stderr); }) }
+            .expect("native source diagnostics retain ordinary admission");
+    }
+
+    struct ReleaseFlag<'a>(&'a core::sync::atomic::AtomicBool);
+    impl Drop for ReleaseFlag<'_> {
+        fn drop(&mut self) { self.0.store(true, Ordering::Release); }
+    }
+
+    fn physical_destroy_fixture(os_only: bool) {
+        // These filters run in separate native test processes: the process
+        // owner and Terminal state intentionally cannot be reinitialized.
+        unsafe {
+            std::env::set_var("mimalloc_destroy_on_exit", "1");
+            std::env::set_var("mimalloc_arena_reserve", "65536");
+            std::env::set_var("mimalloc_disallow_arena_alloc", if os_only { "1" } else { "0" });
+        }
+        std::thread::spawn(move || {
+            assert!(initialize_process(4096, unsafe { RuntimeStderrOutput::new(fixture_stderr) }));
+            assert!(prepare_native_later_thread_arena());
+            assert_eq!(native_process_done_action(NativeProcessDoneInvocation::Automatic),
+                Ok(NativeProcessDoneAction::DestroyBacking));
+            let NativePageAllocationResult::Allocated(initial_client) = native_allocate_aligned(80, 16, false)
+                else { panic!("initial live client"); };
+            unsafe { initial_client.as_ptr().write_bytes(0x35, 80); }
+            let descriptor = core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+            let ready = core::sync::atomic::AtomicBool::new(false);
+            let stop = core::sync::atomic::AtomicBool::new(false);
+            std::thread::scope(|scope| {
+                // A failing main assertion must still release the parked
+                // worker before std's scoped-thread join runs during unwind.
+                let _release_worker = ReleaseFlag(&stop);
+                let worker = scope.spawn(|| {
+                    let _publish_failure = ReleaseFlag(&ready);
+                    let current = admission::current_native_allocator_thread_descriptor();
+                    descriptor.store(current.as_ptr(), Ordering::Release);
+                    assert!(unsafe { admission::register_current_native_allocator_worker_descriptor(current) });
+                    assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+                    let NativePageAllocationResult::Allocated(client) = native_allocate_aligned(96, 16, false)
+                        else { panic!("worker live client"); };
+                    unsafe { client.as_ptr().write_bytes(0x63, 96); }
+                    ready.store(true, Ordering::Release);
+                    while !stop.load(Ordering::Acquire) { std::thread::yield_now(); }
+                    // The foreign thread still runs after physical release.
+                    // Its ordinary API must deny access before touching the
+                    // transferred TLS cells or old cached source pointers.
+                    assert!(matches!(native_allocate_aligned(32, 16, false), NativePageAllocationResult::Unavailable));
+                });
+                while !ready.load(Ordering::Acquire) { std::thread::yield_now(); }
+                assert!(unsafe { core::slice::from_raw_parts(initial_client.as_ptr(), 80) }.iter().all(|byte| *byte == 0x35));
+                let registry = PinnedFixtureRegistry { initial: admission::native_allocator_initial_thread_descriptor().unwrap(), worker: &descriptor };
+                let prepared = unsafe { prepare_native_process_destroy(&registry) }
+                    .expect("all source owners transfer while both TLS mappings are pinned");
+                // This fixture's registry pin is the worker stop condition;
+                // no registry/source lock spans the physical successor.
+                unsafe { prepared.finish() }.expect("source ordered physical retirement");
+                assert!(!process_is_active());
+                assert!(RUNTIME_PROCESS.logical_process_done_is_complete());
+                assert!(matches!(native_allocate_aligned(32, 16, false), NativePageAllocationResult::Unavailable));
+                let owners = unsafe { &*DESTROY_OWNERS.0.get() };
+                assert!(owners.tracking_mapping.is_some());
+                assert!(owners.arenas.as_ref().unwrap().is_released());
+                assert!(owners.failure.is_none());
+                let mut resident = 0u8;
+                let page_address = initial_client.as_ptr().addr() & !4095;
+                let mapping_observation = unsafe {
+                    crabc_core::mm::mincore_raw(page_address as *mut u8, 4096, &mut resident)
+                };
+                if os_only {
+                    assert!(mapping_observation.is_ok(), "source main Heap retains direct OS pages");
+                } else {
+                    assert!(mapping_observation.is_err(), "released arena no longer owns the client mapping");
+                }
+                assert!(unsafe { core::slice::from_raw_parts(owners.tracking, owners.tracking_len) }
+                    .iter().any(MainHeapDestroyTracking::retains_tld));
+                stop.store(true, Ordering::Release);
+                worker.join().expect("transferred worker returns without source access");
+            });
+        }).join().expect("the isolated initial owner completes physical destruction");
+    }
+
+    #[test]
+    fn physical_destroy_transfers_live_worker_before_arena_and_page_map_release() {
+        physical_destroy_fixture(false);
+    }
+
+    #[test]
+    fn physical_destroy_os_only_retains_source_pages_but_seals_all_native_access() {
+        physical_destroy_fixture(true);
+    }
+
     #[test]
     fn source_destroy_option_keeps_signed_explicit_and_automatic_dispatch_distinct() {
         for raw in [-7, -1, 0, 1, 2, 9, i64::MAX] {
