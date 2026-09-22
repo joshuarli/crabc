@@ -448,6 +448,18 @@ pub(crate) unsafe trait TheapPageSession: theap_page_session_sealed::Sealed {
     /// alternate source policy.
     #[inline]
     fn permits_selected_main_arena_ordinary_full_abandonment(&self) -> bool { false }
+    /// Links one non-arena full page into the selected source Heap's private
+    /// `os_abandoned_pages` list after its abandoned identity is visible and
+    /// before the common low-owner-bit release. The sealed default refuses:
+    /// an unavailable source list is a retained transition, never permission
+    /// to use the arena bitmap or the non-abandoning full queue.
+    #[inline]
+    fn push_selected_main_os_abandoned_page(&mut self, _page: NonNull<Page>) -> bool { false }
+    /// Removes the exact all-free non-arena page from the selected source
+    /// Heap's private abandoned list before its PageMap/metadata/mapping
+    /// terminal release. The default has no list authority.
+    #[inline]
+    fn remove_selected_main_os_abandoned_page(&mut self, _page: NonNull<Page>) -> bool { false }
     fn queue(&self, bin: usize) -> Option<&PageQueue>;
     fn queue_mut(&mut self, bin: usize) -> Option<&mut PageQueue>;
     fn direct_page(&self, index: usize) -> Option<*mut Page>;

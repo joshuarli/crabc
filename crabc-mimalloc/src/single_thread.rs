@@ -2529,6 +2529,7 @@ enum SelectedMainArenaRegularFullPreflightError {
     NonArenaQueue,
     SingletonQueueIsNotHuge,
     MemoryIsNotArena,
+    MemoryIsNotOs,
     PageKindIsNotRegular,
     PageKindIsNotSingleton,
     AlreadyFull,
@@ -3646,6 +3647,14 @@ unsafe impl TheapPageSession for OwnerLocalMainHeapPageSession {
     fn permits_selected_main_arena_ordinary_full_abandonment(&self) -> bool {
         self.active()
             .permits_selected_main_arena_ordinary_full_abandonment()
+    }
+    #[inline]
+    fn push_selected_main_os_abandoned_page(&mut self, page: NonNull<Page>) -> bool {
+        self.active_mut().push_selected_main_os_abandoned_page(page)
+    }
+    #[inline]
+    fn remove_selected_main_os_abandoned_page(&mut self, page: NonNull<Page>) -> bool {
+        self.active_mut().remove_selected_main_os_abandoned_page(page)
     }
     #[inline]
     fn queue(&self, bin: usize) -> Option<&crate::types::PageQueue> {
@@ -37966,10 +37975,17 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // Pinned `mi_free_nonnull` chooses its multi-threaded
         // `allow_collect` branch once `_mi_page_abandon` has changed the
         // source page identity, even when this same engine still carries the
-        // original Theap pointer. Check that narrow full-arena-singleton state
-        // before the ordinary Theap-pointer ownership predicate below: treating
-        // it as local would write its detached page as if `BIN_HUGE` still
-        // owned it.
+        // original Theap pointer. Check the detached non-arena and arena
+        // singleton states before the ordinary Theap-pointer owner predicate:
+        // neither remains owned by its former BIN_HUGE queue.
+        if self.selected_main_abandoned_os_singleton_can_free(page) {
+            // SAFETY: the checked PageMap entry and the caller's exact live
+            // allocation contract retain this singleton metadata and its one
+            // current client through the source allow-collect transition.
+            let base = unsafe { Page::canonical_remote_block_for_live_client_at(page, block) }
+                .ok_or(FreeError::InvalidBlock(FreeListError::InvalidBlock))?;
+            return self.free_selected_main_abandoned_os_singleton(page, base);
+        }
         if self.selected_main_arena_abandoned_singleton_can_free(page) {
             // SAFETY: the checked PageMap entry and the caller's exact live
             // allocation contract retain this singleton metadata and its one
@@ -39525,13 +39541,20 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             .selects_selected_main_arena_source_full_abandonment()
         {
             // Pinned `mi_page_to_full` gives every selected page to
-            // `_mi_page_abandon`. Regular pages can become bitmap-mapped after
-            // false collection; an arena singleton stays unmapped and its
-            // later source free takes the singleton terminal tail.
+            // `_mi_page_abandon`. The subsequent arena/non-arena choice comes
+            // from the page's original memory provenance, never from this
+            // session's ordinary abandoning option alone.
             if matches!(
                 size_class::page_kind_for_block_size(unsafe { page.as_ref() }.block_size()),
                 Some(PageKind::Singleton)
             ) {
+                if unsafe { page.as_ref() }.memid().is_os() {
+                    return self.abandon_selected_main_os_singleton_page_from_full(
+                        bin,
+                        page,
+                        popped_block,
+                    );
+                }
                 return self.abandon_selected_main_arena_singleton_page_from_full(
                     bin,
                     page,
@@ -39612,9 +39635,6 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // is the pre-transition read of one queue-linked page. A producer can
         // touch only the disjoint atomic remote-free projection.
         let page = unsafe { page.as_ref() };
-        if page.memid().kind() != MemoryKind::Arena {
-            return Err(SelectedMainArenaRegularFullPreflightError::MemoryIsNotArena);
-        }
         if page_is_in_full(page) {
             return Err(SelectedMainArenaRegularFullPreflightError::AlreadyFull);
         }
@@ -39640,6 +39660,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // SAFETY: the common preflight above retained the same exclusive page
         // borrow through this class-specific read.
         let page = unsafe { page.as_ref() };
+        if page.memid().kind() != MemoryKind::Arena {
+            return Err(SelectedMainArenaRegularFullPreflightError::MemoryIsNotArena);
+        }
         if !matches!(
             size_class::page_kind_for_block_size(page.block_size()),
             Some(PageKind::Small | PageKind::Medium | PageKind::Large)
@@ -39665,10 +39688,41 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // SAFETY: the common preflight above retained the same exclusive page
         // borrow through this class-specific read.
         let page = unsafe { page.as_ref() };
+        if page.memid().kind() != MemoryKind::Arena {
+            return Err(SelectedMainArenaRegularFullPreflightError::MemoryIsNotArena);
+        }
         if size_class::page_kind_for_block_size(page.block_size()) != Some(PageKind::Singleton) {
             return Err(SelectedMainArenaRegularFullPreflightError::PageKindIsNotSingleton);
         }
         if size_class::bin(page.block_size()) != Some(BIN_HUGE) {
+            return Err(SelectedMainArenaRegularFullPreflightError::SingletonQueueIsNotHuge);
+        }
+        Ok(())
+    }
+
+    /// Validates the selected-main non-arena singleton form of
+    /// `page.c:mi_page_to_full`. Unlike an arena singleton it must first
+    /// become a member of `heap->os_abandoned_pages`; no arena bitmap or
+    /// synthetic BIN_FULL route can represent that source ownership.
+    fn selected_main_os_singleton_page_full_preflight(
+        &self,
+        bin: usize,
+        page: NonNull<Page>,
+    ) -> Result<(), SelectedMainArenaRegularFullPreflightError> {
+        self.selected_main_arena_full_page_preflight(page)?;
+        if bin != BIN_HUGE {
+            return Err(SelectedMainArenaRegularFullPreflightError::SingletonQueueIsNotHuge);
+        }
+        // SAFETY: the common preflight above retained the same exclusive page
+        // borrow through this source-provenance read.
+        let page = unsafe { page.as_ref() };
+        if !page.memid().is_os() {
+            return Err(SelectedMainArenaRegularFullPreflightError::MemoryIsNotOs);
+        }
+        if size_class::page_kind_for_block_size(page.block_size()) != Some(PageKind::Singleton) {
+            return Err(SelectedMainArenaRegularFullPreflightError::PageKindIsNotSingleton);
+        }
+        if page.reserved() != 1 || size_class::bin(page.block_size()) != Some(BIN_HUGE) {
             return Err(SelectedMainArenaRegularFullPreflightError::SingletonQueueIsNotHuge);
         }
         Ok(())
@@ -39882,6 +39936,103 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
     }
 
+    /// Ports the non-arena full-singleton form of `page.c:_mi_page_abandon`.
+    ///
+    /// An ordinary selected Theap still abandons a full OS singleton. Its
+    /// original OS mapping and alignment provenance remain in the page while
+    /// source `_mi_arenas_page_abandon` links the detached member into the
+    /// static Heap's private list before releasing the abandoned low owner
+    /// bit. A later legal client free must remove that exact list member and
+    /// consume the existing clipped-map release owner; it never reuses an
+    /// arena bitmap, an artificial full queue, or a request-size special case.
+    fn abandon_selected_main_os_singleton_page_from_full(
+        &mut self,
+        bin: usize,
+        page: NonNull<Page>,
+        popped_block: Option<NonNull<u8>>,
+    ) -> Result<(), PageToFullError> {
+        if let Err(preflight) = self.selected_main_os_singleton_page_full_preflight(bin, page) {
+            self.retain_selected_main_full_preflight_poison(page, popped_block, preflight);
+            return Err(PageToFullError::Collection(PageCollectError::Lifecycle));
+        }
+        if let Err(error) = self.page_free_collect_false(page) {
+            self.retain_page_collect_poison(page, error, popped_block);
+            return Err(PageToFullError::Collection(error));
+        }
+
+        // Source performs its all-free decision before queue detach. A
+        // joined remote free may have made the one-block singleton empty.
+        let used = unsafe { Page::owner_used_at(page) };
+        if used == 0 {
+            if self.release_page(bin, page.as_ptr()) {
+                return Ok(());
+            }
+            self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
+            return Err(PageToFullError::Collection(PageCollectError::Lifecycle));
+        }
+        if used != 1 {
+            self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
+            return Err(PageToFullError::Collection(PageCollectError::Lifecycle));
+        }
+
+        let huge = match self.session.queue_mut(BIN_HUGE) {
+            Some(queue) => queue as *mut _,
+            None => {
+                self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
+                return Err(PageToFullError::Collection(PageCollectError::Lifecycle));
+            }
+        };
+        // SAFETY: false collection retained this source-live BIN_HUGE member;
+        // the exact queue/direct/count owner must disappear before the
+        // private OS abandoned-list publication.
+        unsafe { page_queue_remove_metadata(&mut *huge, page.as_ptr()) };
+        if !self.session.note_page_removed() {
+            self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
+            return Err(PageToFullError::Collection(PageCollectError::Lifecycle));
+        }
+
+        // SAFETY: queue/count detachment and the still-owned source page
+        // establish `_mi_page_abandon`'s preconditions. The callback makes
+        // the non-arena list publication occur after abandoned identity but
+        // before source unown, exactly as `arena.c` requires.
+        let result = unsafe {
+            abandoned::abandon_unmappable_after_collect_with_before_unown(page, || {
+                if !self.session.push_selected_main_os_abandoned_page(page) {
+                    return Err(AbandonError::PreUnownPublication);
+                }
+                self.session.theap().record_page_abandoned();
+                Ok(())
+            })
+        };
+        match result {
+            Ok(AbandonResult::UnownedUnmapped) => Ok(()),
+            Ok(AbandonResult::Empty) => {
+                // The list publication already occurred, so the terminal
+                // source order is list removal before PageMap/metadata/map
+                // release. A failed removal preserves the one live owner.
+                if !self.session.remove_selected_main_os_abandoned_page(page) {
+                    self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
+                    return Err(PageToFullError::Collection(PageCollectError::Lifecycle));
+                }
+                if self.release_queue_detached_abandoned_os_page(page) {
+                    Ok(())
+                } else {
+                    self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
+                    Err(PageToFullError::Collection(PageCollectError::Lifecycle))
+                }
+            }
+            Ok(_) => {
+                self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
+                Err(PageToFullError::Collection(PageCollectError::Lifecycle))
+            }
+            Err(error) => {
+                let error = PageCollectError::Abandon(error);
+                self.retain_page_collect_poison(page, error, popped_block);
+                Err(PageToFullError::Collection(error))
+            }
+        }
+    }
+
     /// Returns whether the direct local-free API reached the source state
     /// produced by [`Self::abandon_selected_main_arena_singleton_page_from_full`].
     ///
@@ -39914,6 +40065,39 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // SAFETY: this uses only the source identity atomic. The former
         // Theap pointer remains provenance for C's reclaim-on-free policy but
         // cannot make an abandoned page locally owned again.
+        let state = unsafe { Page::abandonment_state_at(page) };
+        unsafe { state.xthread_id.as_ref() }.load(Ordering::Acquire) & !PAGE_FLAG_MASK
+            == THREAD_ID_ABANDONED
+    }
+
+    /// Returns whether `page` is the exact detached non-arena singleton
+    /// produced by [`Self::abandon_selected_main_os_singleton_page_from_full`].
+    /// Its original Theap pointer is source provenance only; the private OS
+    /// abandoned list, not a local queue, owns the page until this free claims
+    /// the source low owner bit.
+    fn selected_main_abandoned_os_singleton_can_free(&self, page: NonNull<Page>) -> bool {
+        if !self
+            .session
+            .permits_selected_main_arena_ordinary_full_abandonment()
+        {
+            return false;
+        }
+        // SAFETY: `free` holds the checked PageMap result for its exact live
+        // client, and this short classification reads only immutable geometry
+        // plus the source atomic identity.
+        let page_ref = unsafe { page.as_ref() };
+        if !page_ref.memid().is_os()
+            || size_class::page_kind_for_block_size(page_ref.block_size())
+                != Some(PageKind::Singleton)
+            || size_class::bin(page_ref.block_size()) != Some(BIN_HUGE)
+            || page_ref.reserved() != 1
+            || !page_ref.is_queue_detached()
+            || page_ref.theap() != self.session.theap() as *const _ as *mut _
+        {
+            return false;
+        }
+        // SAFETY: this touches only the source identity atomic; the original
+        // Theap association remains valid provenance for reclaim-on-free.
         let state = unsafe { Page::abandonment_state_at(page) };
         unsafe { state.xthread_id.as_ref() }.load(Ordering::Acquire) & !PAGE_FLAG_MASK
             == THREAD_ID_ABANDONED
@@ -39973,6 +40157,60 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 // A one-block arena singleton cannot take either regular-page
                 // survivor outcome. Retain the page instead of inventing a
                 // mapped bitmap or a fresh queue owner.
+                self.retain_page_collect_poison(page, PageCollectError::Lifecycle, Some(block));
+                Err(FreeError::Lifecycle)
+            }
+            Err(error) => {
+                self.retain_page_collect_poison(
+                    page,
+                    PageCollectError::Abandon(error),
+                    Some(block),
+                );
+                Err(FreeError::Lifecycle)
+            }
+        }
+    }
+
+    /// Completes the ordinary live-owner failed-reclaim free for one OS
+    /// singleton detached by the selected full-page transition. The caller
+    /// arrived through the public direct-free API with the exact live client;
+    /// this is not a post-exit route or an alignment-specific helper.
+    fn free_selected_main_abandoned_os_singleton(
+        &mut self,
+        page: NonNull<Page>,
+        block: NonNull<u8>,
+    ) -> Result<(), FreeError> {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
+            Ok(free_list) => free_list.validate_local_free_preflight(block),
+            Err(error) => Err(error),
+        };
+        if let Err(error) = preflight {
+            return Err(FreeError::InvalidBlock(error));
+        }
+        // SAFETY: `page` is the classified detached OS singleton and `block`
+        // is its canonical once-live client. The raw helper performs the sole
+        // source allow-collect CAS before it reads ordinary state.
+        match unsafe { abandoned::free_unmappable_after_failed_reclaim(page, block) } {
+            Ok(abandoned::UnmappedAbandonedFreeResult::Empty) => {
+                // `_mi_arenas_page_unabandon` removes the list member before
+                // `_mi_arenas_page_free` unregisters PageMap metadata and
+                // transfers the original OS mapping owner to reclaim.
+                if !self.session.remove_selected_main_os_abandoned_page(page) {
+                    self.retain_page_collect_poison(page, PageCollectError::Lifecycle, Some(block));
+                    return Err(FreeError::Lifecycle);
+                }
+                if self.release_queue_detached_abandoned_os_page(page) {
+                    Ok(())
+                } else {
+                    self.retain_page_collect_poison(page, PageCollectError::Lifecycle, Some(block));
+                    Err(FreeError::Lifecycle)
+                }
+            }
+            Ok(abandoned::UnmappedAbandonedFreeResult::PublishedToExistingOwner) => Ok(()),
+            Ok(
+                abandoned::UnmappedAbandonedFreeResult::ReabandonedMapped
+                | abandoned::UnmappedAbandonedFreeResult::UnownedUnmapped,
+            ) => {
                 self.retain_page_collect_poison(page, PageCollectError::Lifecycle, Some(block));
                 Err(FreeError::Lifecycle)
             }

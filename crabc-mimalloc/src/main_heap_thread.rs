@@ -2038,6 +2038,49 @@ unsafe impl TheapPageSession for MainHeapThreadPageSession<'_, '_> {
         self.attachment.ensure_attached_current().is_ok()
     }
 
+    fn push_selected_main_os_abandoned_page(&mut self, page: NonNull<Page>) -> bool {
+        let main_heap = self.attachment.main_heap;
+        let linked = match main_heap.lock_heap() {
+            Ok(mut heap) => {
+                // SAFETY: the ordinary full-page transition has detached this
+                // exact page from its local queue after false collection, and
+                // the main Heap guard serializes the source private list.
+                let linked = unsafe { heap.heap_mut().push_os_abandoned_page(page) };
+                let unlocked = heap.unlock();
+                linked.is_ok() && unlocked.is_ok()
+            }
+            Err(_) => false,
+        };
+        if !linked {
+            // A list splice may have become visible before its wake failure.
+            // The current page transition must therefore stay terminally
+            // retained instead of trying an arena or full-queue fallback.
+            self.attachment.state = MainHeapThreadAttachmentState::Poisoned;
+        }
+        linked
+    }
+
+    fn remove_selected_main_os_abandoned_page(&mut self, page: NonNull<Page>) -> bool {
+        let main_heap = self.attachment.main_heap;
+        let removed = match main_heap.lock_heap() {
+            Ok(mut heap) => {
+                // SAFETY: the caller has the all-free low-owner result for
+                // this exact list member; no queue owner remains and the
+                // main Heap guard serializes source list removal.
+                let removed = unsafe { heap.heap_mut().remove_os_abandoned_page(page) };
+                let unlocked = heap.unlock();
+                removed.is_ok() && unlocked.is_ok()
+            }
+            Err(_) => false,
+        };
+        if !removed {
+            // Removal may have spliced before a post-mutation wake failure,
+            // so retain this transition rather than guessing a second owner.
+            self.attachment.state = MainHeapThreadAttachmentState::Poisoned;
+        }
+        removed
+    }
+
     #[inline]
     fn queue(&self, bin: usize) -> Option<&PageQueue> { self.theap().queue(bin) }
 
