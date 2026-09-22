@@ -36,8 +36,8 @@ class NativeInitializationM2AssemblyTests(unittest.TestCase):
                 (
                     "initialization-tld-direct-source-matrix",
                     "c-rust-initialization-tld-source-matrix",
-                    "x86_64_initialization_tld_evidence::three_fixed_direct_tld_branches",
-                    3,
+                    "x86_64_initialization_tld_evidence::four_fixed_direct_tld_branches",
+                    4,
                 ),
                 (
                     "initialization-explicit-worker-recovery-lifecycle",
@@ -49,7 +49,12 @@ class NativeInitializationM2AssemblyTests(unittest.TestCase):
         )
         self.assertEqual(
             [branch["id"] for branch in component["branch_matrix"]],
-            ["detached-static-preimage", "normal-direct-tld-init", "first-main-static-tld-create"],
+            [
+                "detached-static-preimage",
+                "normal-direct-tld-init",
+                "first-main-static-tld-create",
+                "later-main-tld-metadata-allocation-failure",
+            ],
         )
 
     def test_direct_tld_anchor_uses_the_pinned_v350_lock_and_live_count_definitions(self) -> None:

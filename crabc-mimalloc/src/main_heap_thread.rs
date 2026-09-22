@@ -2119,6 +2119,194 @@ mod tests {
         .expect("the later-TLD allocation failure lifecycle completes");
     }
 
+    /// Emits the common address-independent relations for the pinned
+    /// `mi_tld_create` generic/later metadata-allocation failure arm.
+    ///
+    /// The paired C fixture selects ticket one on the source main subprocess,
+    /// intercepts exactly its `_mi_meta_zalloc` call, and records the source
+    /// ENOMEM diagnostic before result visibility. Rust's fixed exact-size
+    /// seam is narrower than a production fault policy: it proves that the
+    /// typed owner consumes the same source ticket, does not register a TLD,
+    /// and leaves no Theap or metadata capability to publish. Successful
+    /// generic/later construction and all metadata publication receivers stay
+    /// outside this trace.
+    #[test]
+    fn emit_m2_later_tld_metadata_failure_c_rust_trace() {
+        macro_rules! record {
+            ($name:literal, $value:expr) => {
+                std::println!("{}={}", $name, $value as usize);
+            };
+        }
+
+        thread::spawn(|| {
+            let (storage, subprocess) = fixture();
+            let metadata = MetaAllocator::test_static_owner();
+            let mut main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the process main images");
+            let main_heap = main
+                .shared_main_heap_lease()
+                .expect("the live main attachment lends its heap");
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    assert_ne!(
+                        size_of::<crate::types::ThreadLocalData>(),
+                        size_of::<Theap>(),
+                        "the fault must select the preceding TLD metadata request"
+                    );
+                    let pre_main_subprocess_selected =
+                        core::ptr::eq(main_heap.subprocess(), subprocess);
+                    let pre_metadata_owner_ready = metadata
+                        .prepare_for_main_subprocess(memory_config(), subprocess)
+                        .is_ok();
+                    let pre_total_thread_count_one = subprocess.total_thread_count() == 1;
+                    let pre_live_thread_count_one = subprocess.live_thread_count() == 1;
+                    assert!(pre_main_subprocess_selected);
+                    assert!(pre_metadata_owner_ready);
+                    assert!(pre_total_thread_count_one);
+                    assert!(pre_live_thread_count_one);
+
+                    metadata
+                        .get_ref()
+                        .test_fail_next_direct_zeroed_size(size_of::<crate::types::ThreadLocalData>());
+                    let rejected = unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(
+                            main_heap,
+                            metadata,
+                            memory_config(),
+                        )
+                    };
+                    let result_unavailable = matches!(
+                        rejected,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(
+                            MainHeapThreadAttachmentError::ThreadLocalData(
+                                ThreadLocalDataError::Metadata(MetaError::AllocationUnavailable)
+                            )
+                        ))
+                    );
+                    let post_total_thread_count_two = subprocess.total_thread_count() == 2;
+                    let post_total_thread_count_incremented = post_total_thread_count_two;
+                    let post_live_thread_count_one = subprocess.live_thread_count() == 1;
+                    let post_live_thread_count_unchanged = post_live_thread_count_one;
+                    let post_no_normal_tld_registration = post_live_thread_count_unchanged;
+                    let allocation_failure_reported = result_unavailable;
+                    assert!(result_unavailable);
+                    assert!(post_total_thread_count_two);
+                    assert!(post_live_thread_count_one);
+                    assert_eq!(
+                        storage.test_shared_later_theap_count(),
+                        0,
+                        "the rejected source TLD has not begun Theap publication"
+                    );
+                    assert_eq!(
+                        metadata.test_allocation_audit().live_capability_count,
+                        0,
+                        "the failed source allocation has no capability to retain"
+                    );
+                    assert!(roots_are_pristine_for_later_main_attachment());
+
+                    // This successful next request consumes the one exact
+                    // test seam. Its sequence proves that the failed source
+                    // ticket was not rolled back or registered; it is test
+                    // cleanup only and does not enter the printed poststate.
+                    let mut recovered = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(
+                            main_heap,
+                            metadata,
+                            memory_config(),
+                        )
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("the later-TLD recovery rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("the later-TLD recovery retained: {error:?}")
+                        }
+                    };
+                    let recovery_uses_second_ticket = recovered
+                        .current_tld_mut()
+                        .expect("the recovered TLD is current")
+                        .thread_sequence()
+                        .get()
+                        == 2;
+                    assert!(recovery_uses_second_ticket);
+                    recovered
+                        .finish_after_user_destructors()
+                        .expect("the recovery tears down normally");
+
+                    // The C fixture records its own source-call order. This
+                    // Rust seam observes the resulting typed state only: it
+                    // has no hooks at the ticket, metadata, and return events,
+                    // so it must not present terminal booleans as event-order
+                    // parity.
+
+                    std::println!("CRABC_MI_M2_LATER_TLD_METADATA_FAILURE_TRACE_BEGIN");
+                    record!(
+                        "m2.initialization.later_tld_metadata_failure.pre.main_subprocess_selected",
+                        pre_main_subprocess_selected
+                    );
+                    record!(
+                        "m2.initialization.later_tld_metadata_failure.pre.metadata_owner_ready",
+                        pre_metadata_owner_ready
+                    );
+                    record!(
+                        "m2.initialization.later_tld_metadata_failure.pre.total_thread_count_one",
+                        pre_total_thread_count_one
+                    );
+                    record!(
+                        "m2.initialization.later_tld_metadata_failure.pre.live_thread_count_one",
+                        pre_live_thread_count_one
+                    );
+                    record!(
+                        "m2.initialization.later_tld_metadata_failure.post.result_unavailable",
+                        result_unavailable
+                    );
+                    record!(
+                        "m2.initialization.later_tld_metadata_failure.post.metadata_request_is_tld",
+                        true
+                    );
+                    record!(
+                        "m2.initialization.later_tld_metadata_failure.post.total_thread_count_two",
+                        post_total_thread_count_two
+                    );
+                    record!(
+                        "m2.initialization.later_tld_metadata_failure.post.total_thread_count_incremented",
+                        post_total_thread_count_incremented
+                    );
+                    record!(
+                        "m2.initialization.later_tld_metadata_failure.post.live_thread_count_one",
+                        post_live_thread_count_one
+                    );
+                    record!(
+                        "m2.initialization.later_tld_metadata_failure.post.live_thread_count_unchanged",
+                        post_live_thread_count_unchanged
+                    );
+                    record!(
+                        "m2.initialization.later_tld_metadata_failure.post.no_normal_tld_registration",
+                        post_no_normal_tld_registration
+                    );
+                    record!(
+                        "m2.initialization.later_tld_metadata_failure.post.allocation_failure_reported",
+                        allocation_failure_reported
+                    );
+                    std::println!("CRABC_MI_M2_LATER_TLD_METADATA_FAILURE_TRACE_END");
+                });
+                worker.join().expect("the later-TLD failure worker completes");
+            });
+
+            assert_eq!(subprocess.total_thread_count(), 3);
+            assert_eq!(subprocess.live_thread_count(), 1);
+            main.teardown()
+                .expect("ticket zero retires after the failure trace");
+            assert_eq!(subprocess.live_thread_count(), 0);
+        })
+        .join()
+        .expect("the later-TLD metadata failure trace completes");
+    }
+
     /// Emits the normalized source-owner transitions for the native C/Rust
     /// initialization, reentry, teardown, and recovery witness.
     ///

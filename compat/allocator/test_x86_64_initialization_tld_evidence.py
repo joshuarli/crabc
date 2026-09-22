@@ -68,6 +68,14 @@ class InitializationTldMatrixReaderTests(unittest.TestCase):
             with self.subTest(rows=malformed), self.assertRaises(EvidenceError):
                 validate_initialization_tld_branch_rows(malformed)
 
+    def test_later_tld_failure_row_does_not_claim_unobserved_rust_events(self) -> None:
+        keys = branch_trace_keys("later-main-tld-metadata-allocation-failure")
+        self.assertFalse(any(".order." in key for key in keys))
+        self.assertNotIn(
+            "m2.initialization.later_tld_metadata_failure.post.metadata_attempted_once",
+            keys,
+        )
+
     @staticmethod
     def c_probe(branch_id: str) -> dict:
         index = INITIALIZATION_TLD_BRANCH_IDS.index(branch_id)
@@ -155,15 +163,15 @@ class InitializationM2FragmentReaderTests(unittest.TestCase):
         path.write_text(json.dumps(fragment), encoding="utf-8")
         return path
 
-    def test_fragment_has_only_the_fixed_direct_tld_matrix(self) -> None:
+    def test_fragment_includes_the_fixed_later_tld_metadata_failure(self) -> None:
         loaded = load_fragment(self.write_fragment(self.fragment))
-        self.assertEqual(
+        self.assertIn(
+            "later-main-tld-metadata-allocation-failure",
             [branch["id"] for branch in loaded["component"]["branch_matrix"]],
-            list(INITIALIZATION_TLD_BRANCH_IDS),
         )
         self.assertEqual(
             [check["expected_passed_test_count"] for check in loaded["component"]["checks"]],
-            [3, 1],
+            [4, 1],
         )
 
     def test_fragment_rejects_changed_anchor_definition_or_missing_direct_branch(self) -> None:

@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Native x86-64 evidence for three fixed mimalloc initialization TLD arms.
+"""Native x86-64 evidence for four fixed mimalloc initialization TLD arms.
 
 This private producer compiles the pinned C direct fixtures for the detached
 static preimage, direct normal TLD initialization, and first-main static TLD
-creation.  It compares each complete address-independent record with the
-existing Rust emitter, then embeds the current native init-recursion receipt.
-The selected branch matrix is intentionally finite: generic/later TLD creation,
-automatic teardown, metadata publication, and allocator-recursion completion
-remain outside this initialization admission.
+creation, plus the generic later-TLD metadata-allocation failure before normal
+TLD initialization. It compares each complete address-independent record with
+the existing Rust emitter, then embeds the current native init-recursion
+receipt. The selected branch matrix is intentionally finite: successful generic
+later-TLD creation, automatic teardown, metadata publication, and
+allocator-recursion completion remain outside this initialization admission.
 """
 
 from __future__ import annotations
@@ -32,24 +33,27 @@ REPORT_DEFAULT = ROOT / "compat/reports/allocator/x86_64/initialization-tld-matr
 TARGET = "x86_64-unknown-linux-musl"
 NORMALIZED_EVIDENCE_ROOT = "<temporary-evidence-root>"
 NORMALIZED_PINNED_SOURCE = "<temporary-pinned-mimalloc-source>"
-EVIDENCE_KIND = "mimalloc-x86_64-initialization-three-fixed-tld-arms-and-explicit-worker-recovery-evidence"
-EVIDENCE_PROFILE = "release-initial-exec-direct-tld-static-normal-first-main-and-explicit-worker-recovery"
+EVIDENCE_KIND = "mimalloc-x86_64-initialization-four-fixed-tld-arms-and-explicit-worker-recovery-evidence"
+EVIDENCE_PROFILE = "release-initial-exec-direct-tld-static-normal-first-main-later-failure-and-explicit-worker-recovery"
 TEMPORARY_PREFIX = "crabc-mimalloc-x86-initialization-tld-"
 
 INITIALIZATION_TLD_BRANCH_IDS = (
     "detached-static-preimage",
     "normal-direct-tld-init",
     "first-main-static-tld-create",
+    "later-main-tld-metadata-allocation-failure",
 )
 BRANCH_TARGETS = (
     "types::tests::emit_m2_detached_tld_static_preimage_c_rust_trace",
     "subproc::tests::emit_m2_normal_tld_direct_c_rust_trace",
     "main_theap::tests::emit_m2_static_first_tld_create_c_rust_trace",
+    "main_heap_thread::tests::emit_m2_later_tld_metadata_failure_c_rust_trace",
 )
 BRANCH_RUST_SOURCES = (
     "crabc-mimalloc/src/types.rs",
     "crabc-mimalloc/src/subproc.rs",
     "crabc-mimalloc/src/main_theap.rs",
+    "crabc-mimalloc/src/main_heap_thread.rs",
 )
 BRANCH_C_SOURCE_FILE_RECORDS = (
     (
@@ -88,6 +92,14 @@ BRANCH_C_SOURCE_FILE_RECORDS = (
         {"path": "src/subproc.c", "bytes": 11458, "sha256": "39ab44c15b0dd91a53268fd52590d681e3c62e1930144b9392db0fde44439054"},
     ),
 )
+# The source closure is identical to the static `mi_tld_create` producer:
+# each direct fixture supplies its own `src/init.c` definition and retains all
+# remaining release translation units, including the real main-subprocess
+# identity from `src/subproc.c`.
+BRANCH_C_SOURCE_FILE_RECORDS = (
+    *BRANCH_C_SOURCE_FILE_RECORDS,
+    BRANCH_C_SOURCE_FILE_RECORDS[2],
+)
 EXPECTED_ANCHORS = (
     ("src/init.c", 192, 192, "a91cd5dc5550b774d82d31c371386cec7bc67cdafd9fe643af3b8c57c796f3d1"),
     ("src/init.c", 236, 250, "25b55becf855281d82750d46dcd93ab6e8786453295b7eb34b4648ace45fc455"),
@@ -111,6 +123,7 @@ EXPECTED_SCOPE = {
     "allocator_recursion_completion_claimed": False,
     "automatic_pthread_destructor_claimed": False,
     "generic_or_later_tld_create_claimed": False,
+    "later_tld_metadata_failure_c_rust_parity_claimed": True,
     "metadata_or_os_aligned_publication_claimed": False,
     "native_linux_x86_64_required": True,
     "private_engine_evidence_only": True,
@@ -132,6 +145,7 @@ BRANCH_C_PROBE_NAMES = (
     "m2-detached-tld-static-preimage-trace-probe",
     "m2-normal-tld-direct-trace-probe",
     "m2-static-first-tld-create-trace-probe",
+    "m2-later-tld-metadata-failure-trace-probe",
 )
 # Each direct fixture includes `src/init.c` itself, so the compile closure
 # deliberately omits it while the retained source-file inventory includes it.
@@ -139,6 +153,7 @@ BRANCH_C_ORACLE_SOURCES = (
     tuple(run.M2_DETACHED_TLD_STATIC_PREIMAGE_ORACLE_SOURCES),
     tuple(run.M2_NORMAL_TLD_DIRECT_ORACLE_SOURCES),
     tuple(run.M2_STATIC_FIRST_TLD_CREATE_ORACLE_SOURCES),
+    tuple(run.M2_LATER_TLD_METADATA_FAILURE_ORACLE_SOURCES),
 )
 BRANCH_C_SOURCE_FILES = (
     tuple(sorted((
@@ -149,6 +164,12 @@ BRANCH_C_SOURCE_FILES = (
         "include/mimalloc.h", "include/mimalloc/atomic.h", "include/mimalloc/internal.h",
         "include/mimalloc/prim.h", "include/mimalloc/prim-tls.h", "include/mimalloc/types.h",
         "src/init.c", "src/os.c", "src/prim/prim-tls.c", "src/prim/prim.c", "src/prim/unix/prim.c",
+    ))),
+    tuple(sorted((
+        "include/mimalloc.h", "include/mimalloc/atomic.h", "include/mimalloc/internal.h",
+        "include/mimalloc/prim.h", "include/mimalloc/prim-tls.h", "include/mimalloc/types.h",
+        "src/init.c", "src/os.c", "src/prim/prim-tls.c", "src/prim/prim.c", "src/prim/unix/prim.c",
+        "src/subproc.c",
     ))),
     tuple(sorted((
         "include/mimalloc.h", "include/mimalloc/atomic.h", "include/mimalloc/internal.h",
@@ -233,7 +254,9 @@ def branch_c_fixture(branch_id: str) -> str:
         return run.M2_DETACHED_TLD_STATIC_PREIMAGE_TRACE_PROBE
     if index == 1:
         return run.M2_NORMAL_TLD_DIRECT_TRACE_PROBE
-    return run.M2_STATIC_FIRST_TLD_CREATE_TRACE_PROBE
+    if index == 2:
+        return run.M2_STATIC_FIRST_TLD_CREATE_TRACE_PROBE
+    return run.M2_LATER_TLD_METADATA_FAILURE_TRACE_PROBE
 
 
 def branch_trace_keys(branch_id: str) -> tuple[str, ...]:
@@ -242,7 +265,9 @@ def branch_trace_keys(branch_id: str) -> tuple[str, ...]:
         return tuple(run.M2_DETACHED_TLD_STATIC_PREIMAGE_TRACE_KEYS)
     if index == 1:
         return tuple(run.M2_NORMAL_TLD_DIRECT_TRACE_KEYS)
-    return tuple(run.M2_STATIC_FIRST_TLD_CREATE_TRACE_KEYS)
+    if index == 2:
+        return tuple(run.M2_STATIC_FIRST_TLD_CREATE_TRACE_KEYS)
+    return tuple(run.M2_LATER_TLD_METADATA_FAILURE_TRACE_KEYS)
 
 
 def parse_branch_trace(branch_id: str, output: str, *, source: str) -> dict[str, int]:
@@ -252,7 +277,9 @@ def parse_branch_trace(branch_id: str, output: str, *, source: str) -> dict[str,
             return run.parse_m2_detached_tld_static_preimage_trace(output, source=source)
         if index == 1:
             return run.parse_m2_normal_tld_direct_trace(output, source=source)
-        return run.parse_m2_static_first_tld_create_trace(output, source=source)
+        if index == 2:
+            return run.parse_m2_static_first_tld_create_trace(output, source=source)
+        return run.parse_m2_later_tld_metadata_failure_trace(output, source=source)
     except run.HarnessError as error:
         raise EvidenceError(str(error)) from error
 
@@ -264,8 +291,10 @@ def validate_branch_trace(branch_id: str, trace: Mapping[str, int], *, source: s
             run.validate_m2_detached_tld_static_preimage_trace(trace, source=source)
         elif index == 1:
             run.validate_m2_normal_tld_direct_trace(trace, source=source)
-        else:
+        elif index == 2:
             run.validate_m2_static_first_tld_create_trace(trace, source=source)
+        else:
+            run.validate_m2_later_tld_metadata_failure_trace(trace, source=source)
     except run.HarnessError as error:
         raise EvidenceError(str(error)) from error
 
@@ -279,7 +308,7 @@ def compare_branch_trace(branch_id: str, c_trace: Mapping[str, int], rust_trace:
 
 
 def validate_initialization_tld_branch_rows(rows: object) -> None:
-    """Require the fixed three schemas, values, order, and exact C/Rust parity."""
+    """Require the fixed branch roster, observed state fields, and C/Rust parity."""
 
     if not isinstance(rows, list) or len(rows) != len(INITIALIZATION_TLD_BRANCH_IDS):
         raise EvidenceError("initialization TLD branch row count changed")
@@ -416,8 +445,10 @@ def build_c_branch(compiler: str, source: Path, temporary: Path, branch_id: str)
             built = run.build_m2_detached_tld_static_preimage_trace(compiler, source, profile_dir, profile)
         elif index == 1:
             built = run.build_m2_normal_tld_direct_trace(compiler, source, profile_dir, profile)
-        else:
+        elif index == 2:
             built = run.build_m2_static_first_tld_create_trace(compiler, source, profile_dir, profile)
+        else:
+            built = run.build_m2_later_tld_metadata_failure_trace(compiler, source, profile_dir, profile)
     except run.HarnessError as error:
         raise EvidenceError(str(error)) from error
     c_trace = built.get("record")
@@ -543,7 +574,7 @@ def load_fragment(path: Path = FRAGMENT_PATH) -> dict[str, Any]:
     ]:
         raise EvidenceError("initialization M2 source-map roster changed")
     expected_checks = (
-        ("initialization-tld-direct-source-matrix", "c-rust-initialization-tld-source-matrix", "x86_64_initialization_tld_evidence::three_fixed_direct_tld_branches", 3),
+        ("initialization-tld-direct-source-matrix", "c-rust-initialization-tld-source-matrix", "x86_64_initialization_tld_evidence::four_fixed_direct_tld_branches", 4),
         ("initialization-explicit-worker-recovery-lifecycle", "c-rust-init-recursion-lifecycle", "main_heap_thread::tests::emit_x86_64_init_recursion_teardown_c_rust_trace", 1),
     )
     checks = component.get("checks")
@@ -562,6 +593,7 @@ def load_fragment(path: Path = FRAGMENT_PATH) -> dict[str, Any]:
     expected_branch_anchors = (
         (EXPECTED_ANCHORS[0], EXPECTED_ANCHORS[1]),
         (EXPECTED_ANCHORS[1],),
+        (EXPECTED_ANCHORS[2],),
         (EXPECTED_ANCHORS[2],),
     )
     if not isinstance(branches, list) or len(branches) != len(INITIALIZATION_TLD_BRANCH_IDS):
@@ -653,7 +685,12 @@ def validate_report(report: Mapping[str, Any]) -> None:
     validate_initialization_tld_branch_rows(report.get("branch_rows"))
     c_probes = report.get("c_probes")
     rust_probes = report.get("rust_probes")
-    if not isinstance(c_probes, list) or not isinstance(rust_probes, list) or len(c_probes) != 3 or len(rust_probes) != 3:
+    if (
+        not isinstance(c_probes, list)
+        or not isinstance(rust_probes, list)
+        or len(c_probes) != len(INITIALIZATION_TLD_BRANCH_IDS)
+        or len(rust_probes) != len(INITIALIZATION_TLD_BRANCH_IDS)
+    ):
         raise EvidenceError("initialization evidence probe inventory changed")
     for index, branch_id in enumerate(INITIALIZATION_TLD_BRANCH_IDS):
         row = report["branch_rows"][index]
@@ -716,7 +753,7 @@ def require_native_x86_64() -> dict[str, str]:
 
 
 def run_evidence(*, offline: bool, report_path: Path) -> dict[str, Any]:
-    """Collect the one fixed direct-TLD matrix and retained worker receipt."""
+    """Collect the fixed direct-TLD matrix and retained worker receipt."""
 
     load_fragment()
     before = source_state()

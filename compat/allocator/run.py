@@ -330,7 +330,7 @@ M2_X86_64_BITMAP_FRAGMENT_DIGEST = "dbb2bc7d34762819f7ed76c3b50fd3d8599d46b0ba7b
 M2_X86_64_VM_FRAGMENT_DIGEST = "e4befc04de41c867a70525270a5ac4c7ec59d5b6d34649557168b25b92ba6121"
 # The current source-inventory digests repair exact pinned v3.5 declaration
 # spellings and the huge-page paired-free range. They do not promote M2.
-M2_X86_64_INITIALIZATION_FRAGMENT_DIGEST = "e5f165c07fcbe0412e1ad12ab058ffec5fa8d9e1aebbb73d601191fa39bad2f8"
+M2_X86_64_INITIALIZATION_FRAGMENT_DIGEST = "4e2aeaf6606b32e45733af06b60be88f5613eebb27e9cbf51a11e4b8522e5f85"
 M2_X86_64_FAULT_FRAGMENT_DIGEST = "7eca87cb7f02667ef25f23c7910a15bef44c57f1433e294de10529eda73aef07"
 M2_X86_64_PAGE_MAP_CHECK_IDS = (
     "successful-page-map-lifecycle",
@@ -609,6 +609,26 @@ M2_STATIC_FIRST_TLD_CREATE_TRACE_KEYS = (
     "m2.initialization.static_first_tld.order.total_increment_before_live_increment",
     "m2.initialization.static_first_tld.order.live_increment_before_result_visibility",
     "m2.initialization.static_first_tld.order.selected_create_effects_ordered",
+)
+# This direct failure arm remains below the stopped metadata-publication
+# receiver: it observes only `mi_tld_create` after its total-thread ticket,
+# with `_mi_meta_zalloc` returning NULL before `mi_tld_init` or Theap work.
+# The C fixture intercepts that one source call and its ENOMEM diagnostic; the
+# Rust side uses the existing exact-size test seam to prove the same typed
+# failure ownership relation without introducing a production fault policy.
+M2_LATER_TLD_METADATA_FAILURE_TRACE_KEYS = (
+    "m2.initialization.later_tld_metadata_failure.pre.main_subprocess_selected",
+    "m2.initialization.later_tld_metadata_failure.pre.metadata_owner_ready",
+    "m2.initialization.later_tld_metadata_failure.pre.total_thread_count_one",
+    "m2.initialization.later_tld_metadata_failure.pre.live_thread_count_one",
+    "m2.initialization.later_tld_metadata_failure.post.result_unavailable",
+    "m2.initialization.later_tld_metadata_failure.post.metadata_request_is_tld",
+    "m2.initialization.later_tld_metadata_failure.post.total_thread_count_two",
+    "m2.initialization.later_tld_metadata_failure.post.total_thread_count_incremented",
+    "m2.initialization.later_tld_metadata_failure.post.live_thread_count_one",
+    "m2.initialization.later_tld_metadata_failure.post.live_thread_count_unchanged",
+    "m2.initialization.later_tld_metadata_failure.post.no_normal_tld_registration",
+    "m2.initialization.later_tld_metadata_failure.post.allocation_failure_reported",
 )
 M2_PAGE_MAP_TRACE_KEYS = (
     "m2.page_map.control.page_size",
@@ -1604,6 +1624,13 @@ M2_NORMAL_TLD_DIRECT_ORACLE_SOURCES = tuple(
 # subproc.c in the ordinary source list because its real static main identity
 # is an explicit precondition of the selected branch.
 M2_STATIC_FIRST_TLD_CREATE_ORACLE_SOURCES = tuple(
+    item for item in ORACLE_SOURCES if item != "src/init.c"
+)
+
+# The generic later-TLD failure producer direct-includes the same private
+# `mi_tld_create` body. Its ordinary source list excludes only init.c so the
+# selected fault wrapper is the sole definition of that file-local caller.
+M2_LATER_TLD_METADATA_FAILURE_ORACLE_SOURCES = tuple(
     item for item in ORACLE_SOURCES if item != "src/init.c"
 )
 
@@ -4261,6 +4288,177 @@ int main(void) {
 
   // Fixture hygiene only: this is neither mi_tld_free nor lifecycle evidence.
   mi_lock_done(&returned->theaps_lock);
+  return 0;
+}
+"""
+
+
+# This direct inclusion selects the generic/later failure arm of
+# `mi_tld_create` only. Its source wrapper returns NULL from `_mi_meta_zalloc`
+# and records the resulting ENOMEM diagnostic before `mi_tld_init` can write
+# a TLD image or register the thread.
+M2_LATER_TLD_METADATA_FAILURE_TRACE_PROBE = r"""
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <errno.h>
+
+#include <mimalloc.h>
+#include <mimalloc/atomic.h>
+#include <mimalloc/prim.h>
+#include <mimalloc/prim-tls.h>
+#include <mimalloc/internal.h>
+
+#define U(name, value) printf(name "=%zu\n", (size_t)(value))
+
+static bool m2_later_tld_recording = false;
+static size_t m2_later_tld_event_count = 0;
+static size_t m2_later_tld_total_event = 0;
+static size_t m2_later_tld_main_predicate_event = 0;
+static size_t m2_later_tld_metadata_event = 0;
+static size_t m2_later_tld_failure_event = 0;
+static size_t m2_later_tld_result_event = 0;
+static size_t m2_later_tld_live_event = 0;
+static size_t m2_later_tld_metadata_calls = 0;
+static mi_subproc_t* m2_later_tld_subproc = NULL;
+static mi_subproc_t* m2_later_tld_metadata_subproc = NULL;
+static size_t m2_later_tld_metadata_size = 0;
+static mi_memid_t* m2_later_tld_metadata_memid = NULL;
+static int m2_later_tld_error = 0;
+static _Atomic(size_t)* m2_later_tld_total_target = NULL;
+static _Atomic(size_t)* m2_later_tld_live_target = NULL;
+
+// This pointer satisfies `mi_tld_create`'s selected precondition only. The
+// direct failure wrapper returns before this detached metadata Theap can be
+// dereferenced, initialized, or published.
+static mi_theap_t m2_later_tld_inert_theap_meta = mi_init_struct_zero;
+
+static void m2_later_tld_record(size_t* event) {
+  if (m2_later_tld_recording) {
+    *event = ++m2_later_tld_event_count;
+  }
+}
+
+// Define wrappers while their source forms are still visible. The aliases
+// below apply only to the direct `src/init.c` inclusion, so no ordinary C
+// translation unit acquires a fault path.
+static bool m2_later_tld_is_main(mi_subproc_t* subproc) {
+  m2_later_tld_record(&m2_later_tld_main_predicate_event);
+  return _mi_subproc_is_main(subproc);
+}
+
+static void* m2_later_tld_meta_zalloc(
+    mi_subproc_t* subproc, size_t size, mi_memid_t* memid) {
+  m2_later_tld_record(&m2_later_tld_metadata_event);
+  m2_later_tld_metadata_calls++;
+  m2_later_tld_metadata_subproc = subproc;
+  m2_later_tld_metadata_size = size;
+  m2_later_tld_metadata_memid = memid;
+  return NULL;
+}
+
+static void m2_later_tld_error_message(int error) {
+  m2_later_tld_record(&m2_later_tld_failure_event);
+  m2_later_tld_error = error;
+}
+
+static size_t m2_later_tld_increment_relaxed(_Atomic(size_t)* target) {
+  const size_t result = mi_atomic_increment_relaxed(target);
+  if (target == &m2_later_tld_subproc->thread_total_count) {
+    m2_later_tld_record(&m2_later_tld_total_event);
+    m2_later_tld_total_target = target;
+  }
+  else if (target == &m2_later_tld_subproc->thread_count) {
+    m2_later_tld_record(&m2_later_tld_live_event);
+    m2_later_tld_live_target = target;
+  }
+  return result;
+}
+
+#define _mi_subproc_is_main(subproc) m2_later_tld_is_main(subproc)
+#define _mi_meta_zalloc(subproc, size, memid) m2_later_tld_meta_zalloc(subproc, size, memid)
+#define _mi_error_message(error, format, ...) m2_later_tld_error_message(error)
+#undef mi_atomic_increment_relaxed
+#define mi_atomic_increment_relaxed(target) m2_later_tld_increment_relaxed(target)
+#include "init.c"
+#undef mi_atomic_increment_relaxed
+#undef _mi_error_message
+#undef _mi_meta_zalloc
+#undef _mi_subproc_is_main
+
+int main(void) {
+  mi_subproc_t* const subproc = _mi_subproc_main();
+  m2_later_tld_subproc = subproc;
+  subproc->theap_meta = &m2_later_tld_inert_theap_meta;
+  mi_atomic_store_relaxed(&subproc->thread_total_count, 1);
+  mi_atomic_store_relaxed(&subproc->thread_count, 1);
+
+  const bool pre_main_subprocess_selected = (subproc == _mi_subproc_main());
+  const bool pre_metadata_owner_ready = (subproc->theap_meta != NULL);
+  const size_t pre_total_thread_count =
+      mi_atomic_load_relaxed(&subproc->thread_total_count);
+  const size_t pre_live_thread_count =
+      mi_atomic_load_relaxed(&subproc->thread_count);
+
+  m2_later_tld_recording = true;
+  mi_tld_t* returned = mi_tld_create(subproc);
+  m2_later_tld_result_event = ++m2_later_tld_event_count;
+  m2_later_tld_recording = false;
+
+  const size_t post_total_thread_count =
+      mi_atomic_load_relaxed(&subproc->thread_total_count);
+  const size_t post_live_thread_count =
+      mi_atomic_load_relaxed(&subproc->thread_count);
+  const bool result_unavailable = (returned == NULL);
+  const bool metadata_attempted_once = (m2_later_tld_metadata_calls == 1 &&
+      m2_later_tld_metadata_subproc == subproc &&
+      m2_later_tld_metadata_memid != NULL);
+  const bool metadata_request_is_tld =
+      (m2_later_tld_metadata_size == sizeof(mi_tld_t));
+  const bool total_thread_count_two = (post_total_thread_count == 2);
+  const bool total_thread_count_incremented =
+      (post_total_thread_count == pre_total_thread_count + 1);
+  const bool live_thread_count_one = (post_live_thread_count == 1);
+  const bool live_thread_count_unchanged =
+      (post_live_thread_count == pre_live_thread_count);
+  const bool no_normal_tld_registration =
+      (m2_later_tld_live_event == 0 && m2_later_tld_live_target == NULL);
+  const bool allocation_failure_reported = (m2_later_tld_error == ENOMEM);
+  const bool ticket_before_metadata_attempt =
+      (m2_later_tld_total_event == 1 && m2_later_tld_main_predicate_event == 2 &&
+       m2_later_tld_metadata_event == 3 &&
+       m2_later_tld_total_target == &subproc->thread_total_count);
+  const bool metadata_attempt_before_failure_report =
+      (m2_later_tld_metadata_event == 3 && m2_later_tld_failure_event == 4);
+  const bool failure_report_before_result =
+      (m2_later_tld_failure_event == 4 && m2_later_tld_result_event == 5 &&
+       m2_later_tld_event_count == 5);
+  const bool all_relations =
+      pre_main_subprocess_selected && pre_metadata_owner_ready &&
+      pre_total_thread_count == 1 && pre_live_thread_count == 1 &&
+      result_unavailable && metadata_attempted_once && metadata_request_is_tld &&
+      total_thread_count_two && total_thread_count_incremented &&
+      live_thread_count_one && live_thread_count_unchanged &&
+      no_normal_tld_registration && allocation_failure_reported &&
+      ticket_before_metadata_attempt && metadata_attempt_before_failure_report &&
+      failure_report_before_result;
+  if (!all_relations) return 10;
+
+  puts("CRABC_MI_M2_LATER_TLD_METADATA_FAILURE_TRACE_BEGIN");
+  U("m2.initialization.later_tld_metadata_failure.pre.main_subprocess_selected", pre_main_subprocess_selected);
+  U("m2.initialization.later_tld_metadata_failure.pre.metadata_owner_ready", pre_metadata_owner_ready);
+  U("m2.initialization.later_tld_metadata_failure.pre.total_thread_count_one", pre_total_thread_count == 1);
+  U("m2.initialization.later_tld_metadata_failure.pre.live_thread_count_one", pre_live_thread_count == 1);
+  U("m2.initialization.later_tld_metadata_failure.post.result_unavailable", result_unavailable);
+  U("m2.initialization.later_tld_metadata_failure.post.metadata_request_is_tld", metadata_request_is_tld);
+  U("m2.initialization.later_tld_metadata_failure.post.total_thread_count_two", total_thread_count_two);
+  U("m2.initialization.later_tld_metadata_failure.post.total_thread_count_incremented", total_thread_count_incremented);
+  U("m2.initialization.later_tld_metadata_failure.post.live_thread_count_one", live_thread_count_one);
+  U("m2.initialization.later_tld_metadata_failure.post.live_thread_count_unchanged", live_thread_count_unchanged);
+  U("m2.initialization.later_tld_metadata_failure.post.no_normal_tld_registration", no_normal_tld_registration);
+  U("m2.initialization.later_tld_metadata_failure.post.allocation_failure_reported", allocation_failure_reported);
+  puts("CRABC_MI_M2_LATER_TLD_METADATA_FAILURE_TRACE_END");
   return 0;
 }
 """
@@ -12017,7 +12215,7 @@ def validate_x86_64_m2_memory_substrate_contract(
         "x86-64-bitmap-source-and-native-evidence",
         "x86-64-vm-primitives-fixed-profile-c-rust-and-owner-evidence",
         "x86-64-runtime-source-environment-thp-configuration-admission",
-        "x86-64-initialization-three-fixed-tld-and-worker-recovery-admission",
+        "x86-64-initialization-four-fixed-tld-and-worker-recovery-admission",
         "x86-64-source-indexed-fault-seam-inventory-admission",
     ]:
         raise HarnessError("native x86 M2 global evidence inventory changed")
@@ -12187,7 +12385,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                 or type(raw_check.get("expected_passed_test_count")) is not int
                 or raw_check.get("expected_passed_test_count") != (
                     41 if component_id == "bitmaps" else (
-                        3 if raw_check.get("kind") == "c-rust-initialization-tld-source-matrix" else 1
+                        4 if raw_check.get("kind") == "c-rust-initialization-tld-source-matrix" else 1
                     )
                 )
             ):
@@ -12213,7 +12411,7 @@ def validate_x86_64_m2_memory_substrate_contract(
             }:
                 expected_initialization_targets = {
                     "initialization-tld-direct-source-matrix": (
-                        "x86_64_initialization_tld_evidence::three_fixed_direct_tld_branches"
+                        "x86_64_initialization_tld_evidence::four_fixed_direct_tld_branches"
                     ),
                     "initialization-explicit-worker-recovery-lifecycle": (
                         "main_heap_thread::tests::emit_x86_64_init_recursion_teardown_c_rust_trace"
@@ -13111,7 +13309,7 @@ def _m2_x86_64_initialization_check_records(
             "comparison_status": "matched",
             "component": "initialization",
             "command": list(rust_probes[0]["command"]),
-            "evidence_scope": "three-fixed-direct-pinned-c-rust-tld-source-matrix",
+            "evidence_scope": "four-fixed-direct-pinned-c-rust-tld-source-matrix",
             "id": matrix["id"],
             "passed_test_count": matrix["expected_passed_test_count"],
             "target": matrix["target"],
@@ -13402,7 +13600,7 @@ def m2_x86_64_memory_substrate_report(
             "x86-64-runtime-source-environment-thp-configuration-admission": dict(
                 runtime_thp_evidence
             ) if runtime_thp_evidence is not None else {},
-            "x86-64-initialization-three-fixed-tld-and-worker-recovery-admission": dict(
+            "x86-64-initialization-four-fixed-tld-and-worker-recovery-admission": dict(
                 initialization_evidence
             ) if initialization_evidence is not None else {},
             "x86-64-source-indexed-fault-seam-inventory-admission": dict(
@@ -17502,6 +17700,79 @@ def compare_m2_static_first_tld_create_trace(
     }
 
 
+def parse_m2_later_tld_metadata_failure_trace(
+    output: str, *, source: str
+) -> dict[str, int]:
+    """Parse the selected generic later-TLD metadata-allocation failure."""
+
+    trace = parse_address_independent_trace(
+        output,
+        begin="CRABC_MI_M2_LATER_TLD_METADATA_FAILURE_TRACE_BEGIN",
+        end="CRABC_MI_M2_LATER_TLD_METADATA_FAILURE_TRACE_END",
+        description=f"{source} M2 later-TLD metadata-allocation failure trace",
+    )
+    if set(trace) != set(M2_LATER_TLD_METADATA_FAILURE_TRACE_KEYS):
+        missing = sorted(set(M2_LATER_TLD_METADATA_FAILURE_TRACE_KEYS) - set(trace))
+        unexpected = sorted(set(trace) - set(M2_LATER_TLD_METADATA_FAILURE_TRACE_KEYS))
+        problems: list[str] = []
+        if missing:
+            problems.append("missing: " + ", ".join(missing))
+        if unexpected:
+            problems.append("unexpected: " + ", ".join(unexpected))
+        raise HarnessError(
+            f"{source} M2 later-TLD metadata-allocation failure trace does not match the fixed schema: "
+            + "; ".join(problems)
+        )
+    return trace
+
+
+def validate_m2_later_tld_metadata_failure_trace(
+    trace: Mapping[str, int], *, source: str
+) -> None:
+    """Require the observed pre-registration failure state."""
+
+    if source not in {"pinned C", "Rust"}:
+        raise HarnessError(
+            f"unknown M2 later-TLD metadata-allocation failure trace source: {source}"
+        )
+    if set(trace) != set(M2_LATER_TLD_METADATA_FAILURE_TRACE_KEYS):
+        raise HarnessError(
+            f"{source} M2 later-TLD metadata-allocation failure trace keys differ from the fixed contract"
+        )
+    for key in M2_LATER_TLD_METADATA_FAILURE_TRACE_KEYS:
+        if type(trace[key]) is not int:
+            raise HarnessError(
+                f"{source} M2 later-TLD metadata-allocation failure trace field is not an integer: {key}"
+            )
+        if trace[key] != 1:
+            raise HarnessError(
+                f"{source} M2 later-TLD metadata-allocation failure trace contains an unmet relation: {key}"
+            )
+
+
+def compare_m2_later_tld_metadata_failure_trace(
+    c_trace: Mapping[str, int], rust_trace: Mapping[str, int]
+) -> dict[str, Any]:
+    """Require fixed-C and typed-Rust parity for the pre-publication failure."""
+
+    validate_m2_later_tld_metadata_failure_trace(c_trace, source="pinned C")
+    validate_m2_later_tld_metadata_failure_trace(rust_trace, source="Rust")
+    mismatches = [
+        f"{key} (C={c_trace[key]}, Rust={rust_trace[key]})"
+        for key in M2_LATER_TLD_METADATA_FAILURE_TRACE_KEYS
+        if c_trace[key] != rust_trace[key]
+    ]
+    if mismatches:
+        raise HarnessError(
+            "Rust M2 later-TLD metadata-allocation failure trace differs from pinned C: "
+            + "; ".join(mismatches)
+        )
+    return {
+        "compared_value_count": len(M2_LATER_TLD_METADATA_FAILURE_TRACE_KEYS),
+        "status": "matched",
+    }
+
+
 def parse_m2_page_map_trace(output: str, *, source: str) -> dict[str, int]:
     """Parse the fixed address-free selected PageMap lifecycle record."""
 
@@ -19606,6 +19877,72 @@ def build_m2_static_first_tld_create_trace(
     require_success(run, "pinned C M2 static-first mi_tld_create trace execution")
     record = parse_m2_static_first_tld_create_trace(str(run["stdout"]), source="pinned C")
     validate_m2_static_first_tld_create_trace(record, source="pinned C")
+    return {
+        "command": command,
+        "record": record,
+        "source_files": source_file_records(
+            source,
+            (
+                "include/mimalloc.h",
+                "include/mimalloc/atomic.h",
+                "include/mimalloc/internal.h",
+                "include/mimalloc/prim.h",
+                "include/mimalloc/prim-tls.h",
+                "include/mimalloc/types.h",
+                "src/init.c",
+                "src/subproc.c",
+                "src/os.c",
+                "src/prim/prim-tls.c",
+                "src/prim/prim.c",
+                "src/prim/unix/prim.c",
+            ),
+        ),
+    }
+
+
+def build_m2_later_tld_metadata_failure_trace(
+    compiler: str,
+    source: Path,
+    profile_dir: Path,
+    profile_flags: Sequence[str],
+) -> dict[str, Any]:
+    """Build the direct generic later-TLD metadata-allocation failure producer."""
+
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    trace_source = profile_dir / "m2-later-tld-metadata-failure-trace-probe.c"
+    trace_binary = profile_dir / "m2-later-tld-metadata-failure-trace-probe"
+    trace_source.write_text(M2_LATER_TLD_METADATA_FAILURE_TRACE_PROBE, encoding="utf-8")
+    command = [
+        compiler,
+        "-std=c11",
+        "-fPIC",
+        "-ftls-model=initial-exec",
+        "-DMI_SHARED_LIB",
+        "-DMI_SHARED_LIB_EXPORT",
+        "-DMI_LIBC_MUSL=1",
+        # The fixture seeds the source main-subprocess counters and inert
+        # detached metadata owner itself; automatic attach would alter that
+        # exact preimage before the one direct selected call.
+        "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
+        "-I",
+        str(source / "include"),
+        "-I",
+        str(source / "src"),
+        *profile_flags,
+        str(trace_source),
+        *(str(source / item) for item in M2_LATER_TLD_METADATA_FAILURE_ORACLE_SOURCES),
+        "-pthread",
+        "-o",
+        str(trace_binary),
+    ]
+    build = command_record(command, cwd=source)
+    require_success(build, "pinned C M2 later-TLD metadata-allocation failure trace build")
+    run = command_record((str(trace_binary),), cwd=source)
+    require_success(run, "pinned C M2 later-TLD metadata-allocation failure trace execution")
+    record = parse_m2_later_tld_metadata_failure_trace(
+        str(run["stdout"]), source="pinned C"
+    )
+    validate_m2_later_tld_metadata_failure_trace(record, source="pinned C")
     return {
         "command": command,
         "record": record,

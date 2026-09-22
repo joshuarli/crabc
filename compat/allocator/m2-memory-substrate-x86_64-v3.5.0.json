@@ -124,7 +124,7 @@
       "id": "initialization",
       "evidence_fragment": {
         "path": "compat/allocator/m2-initialization-x86_64-v3.5.0.fragment.json",
-        "inventory_sha256": "e5f165c07fcbe0412e1ad12ab058ffec5fa8d9e1aebbb73d601191fa39bad2f8"
+        "inventory_sha256": "4e2aeaf6606b32e45733af06b60be88f5613eebb27e9cbf51a11e4b8522e5f85"
       }
     },
     {
@@ -180,7 +180,7 @@
     "x86-64-bitmap-source-and-native-evidence",
     "x86-64-vm-primitives-fixed-profile-c-rust-and-owner-evidence",
     "x86-64-runtime-source-environment-thp-configuration-admission",
-    "x86-64-initialization-three-fixed-tld-and-worker-recovery-admission",
+    "x86-64-initialization-four-fixed-tld-and-worker-recovery-admission",
     "x86-64-source-indexed-fault-seam-inventory-admission"
   ],
   "milestone": {

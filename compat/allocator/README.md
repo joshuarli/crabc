@@ -2079,9 +2079,10 @@ The initialization TLD admission is a separate native x86-64 receipt:
 
 It compiles the existing pinned-C direct fixtures with the release
 initial-exec musl profile and compares their complete address-independent
-records with the three exact Rust emitters. The fixed rows are the detached
-static preimage, a caller-owned normal direct `mi_tld_init` image, and the
-first-main static `mi_tld_create` arm. The same receipt embeds the explicit
+records with four exact Rust emitters. The fixed rows are the detached static
+preimage, a caller-owned normal direct `mi_tld_init` image, the first-main
+static `mi_tld_create` arm, and the generic later-main metadata-allocation
+failure before normal TLD registration. The same receipt embeds the explicit
 worker init/repeat-init/done/repeat-done/recovery sequence and its seven fixed
 Rust ownership and failure filters. In particular, the retained PageMap filter
 is `process_main_binds_metadata_before_global_page_map_failure`; it is a
@@ -2089,10 +2090,13 @@ Rust lifecycle guarantee and is not claimed as a selected pinned-C fault
 equivalence. The report is
 `compat/reports/allocator/x86_64/initialization-tld-matrix.json`.
 
-This finite source matrix does not cover generic or later TLD creation,
-metadata or `OsAligned` publication, automatic pthread teardown or process
-shutdown, allocator-recursion completion, public/runtime integration, or
-AArch64 status. It admits the initialization component as partial M2 evidence.
+This finite source matrix does not cover successful generic or later TLD
+creation, metadata or `OsAligned` publication, automatic pthread teardown or
+process shutdown, allocator-recursion completion, public/runtime integration,
+or AArch64 status. The generic later failure compares C/Rust
+pre-registration NULL/ENOMEM state only. Its C fixture independently checks
+the source event order; the Rust trace does not claim event-order
+instrumentation. It admits the initialization component as partial M2 evidence.
 
 The separate bounded fault-injection judge is also native x86-only:
 
@@ -2455,7 +2459,7 @@ snapshot after review; the normal gate never updates its own baseline.
 | `x86_64_lifecycle_evidence.py` | Native x86-only fixed private lifecycle/concurrency selections. Its ten lanes are deliberately narrower than general allocator lifecycle or stress qualification; the separately selectable first-arena witness pairs one direct pinned-C initial-TLD NUMA policy observation with one ordinary Rust child. |
 | `x86_64_automatic_arena_reservation_evidence.py` and `x86_64-automatic-arena-reservation-evidence-v3.5.0.json` | Native x86-64-only private 21-value pinned-C/Rust differential for automatic regular-arena reservation. It observes an OS-disallow clean miss, four retained 256-slice claims that create a second regular arena, then a separate source-valid concurrent C setup: initialized worker Heap/TLD/Theap roots exhaust their metadata-owned baseline while disallowing OS allocation, each worker observes no existing free range, and eight actual `mi_arenas_try_alloc` calls reserve one new arena with distinct retained ranges. Rust uses private `ArenaSearch` inputs and an explicitly exhausted regular owner, without claiming C root identity or equal metadata occupancy. The receipt records range release and high-water deltas. It is dispatched by `allocator-automatic-arena-reservation`; it does not claim simultaneous reserve-lock misses/coalescing, bootstrap/READY behavior, general reservation policy, public runtime support, backend promotion, or AArch64 evidence. |
 | `x86_64_init_recursion_evidence.py` and `x86_64-init-recursion-evidence-v3.5.0.json` | Native x86-64-only private seven-value pinned-C/Rust differential for the explicit process-init, worker init/repeat-init, explicit teardown/repeat-teardown, and recovery-init route. C returns its existing default Theap while Rust refuses a second mutable `MainHeapThreadAttachment`; both traces require one current owner, empty roots after teardown, and successful recovery. Its fixed native Rust batch also records once/process reentry and racer behavior, preflight retry, post-claim PageMap failure retention, persistent TLS recovery, rejection of every nonpristine later-worker root before ticket/metadata/list mutation, and later-TLD metadata-allocation rejection before Theap construction. The latter is source-anchored Rust ownership evidence, not C fault-injection equivalence. It is dispatched by `allocator-init-recursion` and does not claim callback/runtime integration, metadata completion, public API/runtime, public x86 support, or AArch64 evidence. |
-| `x86_64_initialization_tld_evidence.py` and `m2-initialization-x86_64-v3.5.0.fragment.json` | Native x86-64-only three-row direct pinned-C/Rust initialization matrix for detached static preimage, direct normal TLD init, and first-main static TLD create. It freezes fixture bytes, direct include and translation-unit closure, release initial-exec command, complete trace schemas, and the source-current embedded explicit-worker recovery receipt with eight fixed Rust lifecycle filters, including the later-TLD allocation failure before Theap construction. That focused Rust row retains no C fault-equivalence claim. It is dispatched by `allocator-initialization-tld`, admits only partial M2 initialization evidence, and excludes generic/later TLD creation, metadata or `OsAligned` publication, automatic teardown, allocator-recursion completion, public/runtime integration, and AArch64 evidence. |
+| `x86_64_initialization_tld_evidence.py` and `m2-initialization-x86_64-v3.5.0.fragment.json` | Native x86-64-only four-row direct pinned-C/Rust initialization matrix for detached static preimage, direct normal TLD init, first-main static TLD create, and the generic later-main metadata-allocation failure. The failure row compares the NULL/ENOMEM pre-registration state with no live registration; its C fixture separately checks the ticket-to-result source order, which the Rust state trace does not claim to observe. It excludes successful generic/later construction and metadata publication. The receipt freezes fixture bytes, direct include and translation-unit closure, release initial-exec command, complete trace schemas, and the source-current embedded explicit-worker recovery receipt with eight fixed Rust lifecycle filters. It is dispatched by `allocator-initialization-tld`, admits only partial M2 initialization evidence, and excludes metadata or `OsAligned` publication, automatic teardown, allocator-recursion completion, public/runtime integration, and AArch64 evidence. |
 | `x86_64_fault_evidence.py` | Native x86-only fixed crate-private fault-injection state-preservation selections. Its five lanes are deliberately narrower than general fault/misuse, lifecycle, or stress qualification. |
 | `perf_x86_64.py` and `perf-x86_64/` | Native x86-only private-adapter C/Rust timing and post-init live-memory measurement harness. Its reports are not the public-runtime `compat/perf/` matrix. |
 | `known-differences.md` | Sole register for observed, pending, accepted, or rejected Rust/C differences; every entry must identify its architecture profile. |
