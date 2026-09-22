@@ -42,13 +42,14 @@ BUILD_STD_DSO_FIXTURE = ROOT / "fixtures/cleanup_dso"
 BUILD_STD_BINARY = "crabc-owned-cleanup-build-std"
 BUILD_STD_DSO_HOST = "crabc-owned-cleanup-dso-host"
 BUILD_STD_DSO_LIBRARY = "libcrabc_owned_cleanup_plugin.so"
-BUILD_STD_CRATES = ("std", "core", "alloc", "panic_unwind", "unwind", "compiler_builtins")
+BUILD_STD_CRATES = ("std", "core", "alloc", "panic_unwind", "unwind", "compiler_builtins", "proc_macro")
 SOURCE_LTO_RUNTIME_TARGETS = {
     "core": ("core/src/lib.rs", ["lib"], ["lib"]),
     "alloc": ("alloc/src/lib.rs", ["lib"], ["lib"]),
     "panic_unwind": ("panic_unwind/src/lib.rs", ["lib"], ["lib"]),
     "std": ("std/src/lib.rs", ["rlib"], ["rlib"]),
     "compiler_builtins": ("compiler-builtins/compiler-builtins/src/lib.rs", ["lib"], ["lib"]),
+    "proc_macro": ("proc_macro/src/lib.rs", ["lib"], ["lib"]),
 }
 SOURCE_GRAPH_PACKAGES = frozenset(build.FEATURES)
 HOST_BUILD_LINKER = Path("/usr/bin/gcc")
@@ -946,15 +947,17 @@ def cargo_source_lto_extern_closure(
         index += 2
 
     expected = {**runtime_artifacts, "crabc_unwinder": cargo_provider}
-    require(set(expected) <= set(externs),
-            "Cargo primary consumer rustc lacks the source-built standard-library/provider closure")
-    for name, artifact in expected.items():
-        require(externs[name] == artifact,
-                f"Cargo primary consumer rustc {name} extern differs from Cargo's declared artifact")
     built_unwind_path = built_unwind.get("path")
     require(isinstance(built_unwind_path, str) and all(
         record.get("path") != built_unwind_path for record in externs.values()
     ), "Cargo primary consumer rustc admits the unselected source-built libunwind archive")
+    require(
+        set(externs) == set(expected),
+        "Cargo primary consumer rustc extern closure differs from the declared source runtime/provider graph",
+    )
+    for name, artifact in expected.items():
+        require(externs[name] == artifact,
+                f"Cargo primary consumer rustc {name} extern differs from Cargo's declared artifact")
     return {
         "primary_crate": crate_name,
         "linker_output": record_file(link_output, "Cargo linker-side consumer output"),

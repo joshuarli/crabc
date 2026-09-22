@@ -605,6 +605,17 @@ class OwnedCleanupContract(unittest.TestCase):
                 source_library_root=target, runtime_artifacts=runtime_records, cargo_provider=provider_record,
                 built_unwind=built_unwind_record,
             )
+        extra = target / "libextra-0011223344556677.rlib"
+        extra.write_bytes(b"unapproved source target input")
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "extern closure differs"):
+            owned_cleanup.cargo_source_lto_extern_closure(
+                log.replace(f"--extern crabc_unwinder={provider}",
+                            f"--extern crabc_unwinder={provider} --extern extra={extra}"),
+                target_name="crabc-owned-cleanup-build-std", binary_name="crabc-owned-cleanup-build-std",
+                link_output=output,
+                source_library_root=target, runtime_artifacts=runtime_records, cargo_provider=provider_record,
+                built_unwind=built_unwind_record,
+            )
 
     def test_cargo_json_records_ignore_build_script_text_but_reject_malformed_json(self):
         record = {"reason": "compiler-artifact", "target": {"name": "fixture"}}

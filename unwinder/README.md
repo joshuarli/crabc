@@ -253,7 +253,8 @@ crossing the DSO ABI.
 For a source-built final link the wrapper admits only the Cargo application
 root and its declared target `release/deps` root. Cargo's compiler-artifact
 records identify the fresh `std`, `core`, `alloc`, `panic_unwind`,
-`compiler_builtins`, and `crabc-unwinder` rlibs by their pinned source paths.
+`compiler_builtins`, `proc_macro`, and `crabc-unwinder` rlibs by their pinned
+source paths.
 The retained primary `rustc` command must pass those exact records through
 `--extern` and must not pass its separately built `libunwind`. Fat LTO then
 absorbs that graph into one native object, so the final owned LLD command
