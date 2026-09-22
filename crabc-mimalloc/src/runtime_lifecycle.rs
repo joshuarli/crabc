@@ -16729,6 +16729,12 @@ mod tests {
                 MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
                     .expect("ticket zero attaches the focused source-static main image")
             }));
+            // `begin_with_test_storage` deliberately bypasses process_init's
+            // production coordinator. Model its already-covered initial
+            // `init.c:358` source event before this fixture creates the real
+            // later-thread attachment below, so the observed baseline keeps
+            // the process main thread counted.
+            subprocess.record_statistics_thread_attached();
             let main_heap = main
                 .shared_main_heap_lease()
                 .expect("the focused persistent worker borrows the static main Heap");
@@ -16771,6 +16777,42 @@ mod tests {
         operation: impl FnOnce(&mut NativePersistentThreadOwner) + Send + 'static,
     ) {
         with_native_persistent_owner_value_fixture(move |mut owner| operation(&mut owner));
+    }
+
+    #[test]
+    fn native_later_thread_statistics_follow_source_attach_and_normal_a_b_c_exit() {
+        with_native_persistent_owner_value_fixture(|mut owner| {
+            let subprocess = owner
+                .attachment
+                .subprocess()
+                .expect("the active later attachment keeps its selected subprocess");
+            let attached = subprocess.statistics().source_snapshot();
+            assert_eq!(
+                (attached.threads_total, attached.threads_peak, attached.threads_current),
+                (2, 2, 2),
+                "the modeled process-main event and real later attachment both reach the source statistics owner"
+            );
+
+            let NativeOwnerExitDeferredFreePhase::Call(call) = owner
+                .begin_owner_exit_deferred_free_phase(None)
+                .expect("the normal source phase A clears the later fast root");
+            let detached = subprocess.statistics().source_snapshot();
+            assert_eq!(
+                (detached.threads_total, detached.threads_peak, detached.threads_current),
+                (2, 2, 1),
+                "phase A records init.c:471's source exit event before its callback and phase C collection"
+            );
+
+            // SAFETY: phase A returned the value-only callback after it
+            // released every attachment and owner-local page-engine borrow.
+            let (_heartbeat, lease) = unsafe { call.invoke() };
+            owner
+                .resume_owner_exit_deferred_free_phase(lease)
+                .expect("the normal source phase C consumes the exact phase-A continuation");
+            owner
+                .teardown_after_owner_exit_deferred_free_phase()
+                .expect("the worker reaches its final attachment teardown after phase C");
+        });
     }
 
     #[test]
