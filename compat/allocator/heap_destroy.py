@@ -11,6 +11,10 @@ TEST = "main_heap_thread::tests::source_retained_workers_transfer_before_tls_exi
 
 
 def trace(output: str) -> list[int]:
+    output = re.sub(
+        rf"^test {re.escape(TEST)} \.\.\. (?=m2\.heap\.destroy\.0=)",
+        "", output, count=1, flags=re.MULTILINE,
+    )
     rows = re.findall(r"^m2\.heap\.destroy\.(\d+)=(\d+)$", output, re.MULTILINE)
     if [int(index) for index, _ in rows] != list(range(6)):
         raise harness.HarnessError("main-Heap destruction trace requires six ordered fields")
