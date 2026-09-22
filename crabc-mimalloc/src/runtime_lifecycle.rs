@@ -17441,6 +17441,14 @@ mod tests {
     #[test]
     #[cfg(target_arch = "x86_64")]
     fn native_deferred_free_callback_boundary_runs_initial_later_and_owner_exit_phase_abc() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::native_deferred_free_callback_boundary_runs_initial_later_and_owner_exit_phase_abc",
+            native_deferred_free_callback_boundary_fixture,
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn native_deferred_free_callback_boundary_fixture() {
         let _runtime_driver = NATIVE_DEFERRED_FREE_RUNTIME_DRIVER_LOCK.lock().expect(
             "the process-lifetime native driver regression has one initializer",
         );
@@ -17450,8 +17458,8 @@ mod tests {
         std::thread::spawn(|| {
             // SAFETY: the focused native x86 test links the pinned musl FILE
             // fixture; its selected stderr remains live until this isolated
-            // test process exits. No runtime test has initialized this static
-            // source owner before this exact filtered regression.
+            // test process exits. The fresh child starts before another test
+            // can initialize this irreversible static source owner.
             assert!(initialize_process(
                 4096,
                 unsafe { RuntimeStderrOutput::new(deferred_free_boundary_test_stderr) },
