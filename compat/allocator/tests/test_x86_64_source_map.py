@@ -179,7 +179,7 @@ class X86_64SourceMapTests(unittest.TestCase):
                 "crabc_mimalloc::runtime_destroy",
             ],
         )
-        self.assertIn("show_errors/verbose/max_warnings", option_processing["difference"])
+        self.assertIn("show_errors/show_stats/verbose/max_warnings", option_processing["difference"])
         self.assertIn("16 KiB delayed output", option_processing["difference"])
         self.assertIn("caller-supplied source-shaped fputs primitive", option_processing["difference"])
         self.assertIn("short-write/error transport parity", option_processing["difference"])
@@ -294,6 +294,7 @@ class X86_64SourceMapTests(unittest.TestCase):
                 "crabc_mimalloc::arena",
                 "crabc_mimalloc::arena_owned",
                 "crabc_mimalloc::bitmap",
+                "crabc_mimalloc::diagnostic_output",
                 "crabc_mimalloc::single_thread",
                 "crabc_mimalloc::statistics",
                 "crabc_mimalloc::subproc",
@@ -329,6 +330,10 @@ class X86_64SourceMapTests(unittest.TestCase):
             "crabc-mimalloc/src/abandoned.rs",
             "crabc-mimalloc/src/bitmap.rs",
             "crabc-mimalloc/src/bitmap_native_tests.rs",
+            "crabc-mimalloc/src/diagnostic_output.rs",
+            "compat/allocator/tests/test_x86_64_diagnostic_output_owner_evidence.py",
+            "compat/allocator/x86_64_diagnostic_output_owner_evidence.py",
+            "compat/allocator/x86_64_diagnostic_output_owner_oracle.c",
             "crabc-mimalloc/src/single_thread.rs",
             "crabc-mimalloc/src/statistics.rs",
             "crabc-mimalloc/src/subproc.rs",
