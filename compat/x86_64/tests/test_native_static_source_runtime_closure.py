@@ -50,6 +50,21 @@ class NativeStaticSourceRuntimeClosureTests(unittest.TestCase):
             for name, path in runtime.items()
         }
 
+    def test_project_vendor_requires_exact_versioned_package_directory(self) -> None:
+        work = ROOT / ".work"
+        work.mkdir(exist_ok=True)
+        temporary = Path(tempfile.mkdtemp(dir=work))
+        self.addCleanup(lambda: __import__("shutil").rmtree(temporary, ignore_errors=True))
+        vendor = temporary / "authenticated-project-vendor"
+        package = vendor / "example-runtime-1.2.3"
+        package.mkdir(parents=True)
+
+        found = CLOSURE.find_project_vendor_package(
+            vendor, "example-runtime", "1.2.3", "test project vendor package"
+        )
+
+        self.assertEqual(found, package.resolve())
+
     def test_primary_record_binds_all_source_runtime_externs(self) -> None:
         command, target, runtime, source = self._command(immediate_abort=True)
 

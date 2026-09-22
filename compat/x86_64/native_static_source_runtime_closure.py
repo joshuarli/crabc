@@ -182,14 +182,18 @@ def lock_registry_packages(lock: pathlib.Path, description: str) -> dict[str, tu
     return result
 
 
-def find_seed_package(seed: pathlib.Path, name: str, version: str, description: str) -> pathlib.Path:
-    source_root = seed / "registry" / "src"
-    source_root = physical(source_root, "seed Cargo registry source", directory=True)
-    candidates = [candidate / f"{name}-{version}" for candidate in sorted(source_root.iterdir()) if candidate.is_dir()]
-    existing = [physical(candidate, description, directory=True) for candidate in candidates if candidate.is_dir()]
-    if len(existing) != 1:
-        fail(f"{description} is missing or ambiguous in the seeded Cargo registry")
-    return existing[0]
+def find_project_vendor_package(project_vendor: pathlib.Path, name: str, version: str,
+                                description: str) -> pathlib.Path:
+    """Return one lock-named package from the authenticated project vendor tree."""
+
+    project_vendor = physical(project_vendor, "authenticated project Cargo vendor", directory=True)
+    key = checked_relative(f"{name}-{version}", f"{description} lock identity")
+    package = physical(project_vendor / key, description, directory=True)
+    try:
+        package.relative_to(project_vendor)
+    except ValueError as error:
+        raise ClosureError(f"{description} escapes authenticated project Cargo vendor: {package}") from error
+    return package
 
 
 def copy_vendor_tree(source: pathlib.Path, destination: pathlib.Path, description: str) -> None:
@@ -200,7 +204,7 @@ def copy_vendor_tree(source: pathlib.Path, destination: pathlib.Path, descriptio
     shutil.copytree(source, destination, copy_function=shutil.copy2)
 
 
-def private_vendor(work: pathlib.Path, rust_source: pathlib.Path, seed: pathlib.Path) -> dict[str, object]:
+def private_vendor(work: pathlib.Path, rust_source: pathlib.Path, project_vendor: pathlib.Path) -> dict[str, object]:
     rust_config = physical(rust_source / ".cargo" / "config.toml", "pinned rust-src vendor config")
     try:
         config = tomllib.loads(rust_config.read_text(encoding="utf-8"))
@@ -230,7 +234,9 @@ def private_vendor(work: pathlib.Path, rust_source: pathlib.Path, seed: pathlib.
             if existing["package_checksum"] != checksum:
                 fail(f"workspace and pinned rust-src disagree about registry package {key}")
             continue
-        source = find_seed_package(seed, name, version, f"workspace registry package {key}")
+        source = find_project_vendor_package(
+            project_vendor, name, version, f"workspace registry package {key}"
+        )
         validated = vendor_package_record(source, name, version, checksum, f"workspace registry package {key}")
         copy_vendor_tree(source, vendor / key, f"workspace registry package {key}")
         copied = vendor_package_record(vendor / key, name, version, checksum, f"private vendor package {key}")
@@ -251,6 +257,7 @@ def private_vendor(work: pathlib.Path, rust_source: pathlib.Path, seed: pathlib.
         "rust_source_lock": file_record(rust_lock, "pinned rust-src lock"),
         "workspace_lock": file_record(project_lock, "workspace lock"),
         "rust_source_vendor_config": file_record(rust_config, "pinned rust-src vendor config"),
+        "project_vendor_root": str(physical(project_vendor, "authenticated project Cargo vendor", directory=True)),
         "private_vendor_root": str(physical(vendor, "private composite vendor", directory=True)),
         "packages": [records[key] for key in sorted(records)],
         "cargo_config": file_record(config_path, "private Cargo source config"),
@@ -569,8 +576,12 @@ def build(arguments: argparse.Namespace) -> pathlib.Path:
     if not sysroot.name.startswith(TOOLCHAIN):
         fail(f"pinned Rust sysroot drifted: {sysroot}")
     rust_source = physical(sysroot / "lib" / "rustlib" / "src" / "rust" / "library", "pinned rust-src library", directory=True)
-    seed = physical(ROOT / ".work" / "x86_64" / "cargo", "seeded offline Cargo home", directory=True)
-    vendor = private_vendor(work, rust_source, seed)
+    project_vendor = physical(
+        ROOT / ".work" / "x86_64" / "cargo" / "native-static-source-runtime-vendor",
+        "authenticated project Cargo vendor",
+        directory=True,
+    )
+    vendor = private_vendor(work, rust_source, project_vendor)
     target = work_child(work, pathlib.Path("cargo-target"), "private source-runtime target")
     temporary = work_child(work, pathlib.Path("tmp"), "private source-runtime temporary directory")
     target.mkdir(mode=0o755)

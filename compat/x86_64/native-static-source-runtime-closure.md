@@ -30,8 +30,15 @@ and final-link inputs establish provenance.
 The development producer will create private state below
 `.work/x86_64/native-mimalloc-shadow-pthread-teardown/run.*/source-runtime-*/`
 and invoke the pinned nightly's Cargo once for `crabc-libc`, using the existing
-workspace lock and a fresh, authenticated offline vendor view.  The Rust standard-library source
-comes only from the pinned toolchain's
+workspace lock and an authenticated offline vendor view.  Networked staging uses
+pinned-image `cargo fetch --locked`, then pinned-image `cargo vendor --locked
+--offline --versioned-dirs` to materialize the complete checked workspace
+registry closure at
+`.work/x86_64/cargo/native-static-source-runtime-vendor/`.  Every staged crate
+archive and vendored file tree must match the frozen `Cargo.lock` checksum
+before the producer copies it into its fresh private vendor.
+
+The Rust standard-library source comes only from the pinned toolchain's
 `lib/rustlib/src/rust/library`, whose `Cargo.lock`, vendor configuration,
 package checksums, and selected source files are recorded.  Workspace and
 registry dependencies are resolved from the checked lock through that private
