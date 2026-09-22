@@ -76,6 +76,16 @@ class OwnedCleanupContract(unittest.TestCase):
         self.assertNotIn("lto=fat", owned_cleanup.SOURCE_BUILD_RUSTFLAGS)
         self.assertNotIn("codegen-units=1", owned_cleanup.SOURCE_BUILD_RUSTFLAGS)
 
+    def test_source_build_log_accepts_cargo_linker_plugin_lto(self):
+        source = Path(self.temporary.name) / "rust-src"
+        source.mkdir()
+        invocation = "\n".join(
+            f"--crate-name {crate}" for crate in owned_cleanup.BUILD_STD_CRATES
+        )
+        owned_cleanup.source_build_log_contract(
+            f"{invocation}\n{source}\n-C linker-plugin-lto -C codegen-units=1\n", source,
+        )
+
     def test_source_built_receipt_requires_source_runtime_omissions(self):
         source = Path(self.temporary.name) / "source-built"
         source.mkdir()

@@ -317,7 +317,8 @@ def source_build_log_contract(log: str, rust_source: Path) -> None:
     missing = [name for name in BUILD_STD_CRATES if f"--crate-name {name}" not in log]
     require(not missing, f"Cargo build-std log omits required Rust crates: {missing!r}")
     require(str(rust_source) in log, "Cargo build-std log does not name pinned rust-src")
-    require("lto=fat" in log and "codegen-units=1" in log,
+    lto = "lto=fat" in log or "linker-plugin-lto" in log
+    require(lto and "codegen-units=1" in log,
             "Cargo build-std log does not retain the requested fat-LTO profile")
 
 
