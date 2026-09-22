@@ -17,7 +17,7 @@ use crate::types::heap_destroy::{MainHeapDestroyError, MainHeapDestroyTracking};
 pub enum NativeProcessDoneInvocation { Automatic, Explicit }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum NativeProcessDoneAction { SkipAutomatic, RetainBacking, DestroyBacking }
+pub enum NativeProcessDoneAction { AlreadyCompleted, SkipAutomatic, RetainBacking, DestroyBacking }
 
 fn source_process_done_action(raw: i64, invocation: NativeProcessDoneInvocation) -> NativeProcessDoneAction {
     if invocation == NativeProcessDoneInvocation::Automatic && raw >= 2 {
@@ -34,6 +34,11 @@ fn source_process_done_action(raw: i64, invocation: NativeProcessDoneInvocation)
 /// transition at all. Negative nonzero values retain the source enabled test.
 pub fn native_process_done_action(invocation: NativeProcessDoneInvocation)
     -> Result<NativeProcessDoneAction, NativeProcessDestroyError> {
+    // The once result remains observable after physical retirement without
+    // reentering source or consulting its sealed VM binding.
+    if RUNTIME_PROCESS.logical_process_done_is_complete() {
+        return Ok(NativeProcessDoneAction::AlreadyCompleted);
+    }
     let _operation = admission::NativeAllocatorOperationGuard::enter()
         .map_err(|_| NativeProcessDestroyError::Inactive)?;
     let process = RUNTIME_PROCESS.active_vm_process().ok_or(NativeProcessDestroyError::Inactive)?;
@@ -45,6 +50,7 @@ pub enum NativeProcessDestroyError {
     Inactive,
     DefaultRetains,
     AlreadyCompleted,
+    ProcessDoneInProgress,
     UnsupportedOwner,
     Admission(admission::NativeAllocatorQuiescenceError),
     SourceOwner,
@@ -147,7 +153,10 @@ pub unsafe fn prepare_native_process_destroy(
     // This atomic once claim precedes epoch closure: a previously completed
     // retaining process_done must not accidentally become a permanent seal.
     RUNTIME_PROCESS.logical_process_done.compare_exchange(PROCESS_DONE_OPEN, PROCESS_DONE_TRANSITION,
-        Ordering::AcqRel, Ordering::Acquire).map_err(|_| NativeProcessDestroyError::AlreadyCompleted)?;
+        Ordering::AcqRel, Ordering::Acquire).map_err(|state| {
+            if state == PROCESS_DONE_COMPLETE { NativeProcessDestroyError::AlreadyCompleted }
+            else { NativeProcessDestroyError::ProcessDoneInProgress }
+        })?;
     let quiescence = match unsafe { admission::begin_native_allocator_terminal_quiescence(registry) } {
         Ok(quiescence) => quiescence,
         Err(error) => {
@@ -366,6 +375,10 @@ mod tests {
                 result.expect("source ordered physical retirement");
                 assert!(!process_is_active());
                 assert!(RUNTIME_PROCESS.logical_process_done_is_complete());
+                assert_eq!(native_process_done_action(NativeProcessDoneInvocation::Automatic),
+                    Ok(NativeProcessDoneAction::AlreadyCompleted));
+                assert_eq!(native_process_done_action(NativeProcessDoneInvocation::Explicit),
+                    Ok(NativeProcessDoneAction::AlreadyCompleted));
                 assert!(matches!(native_allocate_aligned(32, 16, false), NativePageAllocationResult::Unavailable));
                 let owners = unsafe { &*DESTROY_OWNERS.0.get() };
                 assert!(owners.tracking_mapping.is_some());
