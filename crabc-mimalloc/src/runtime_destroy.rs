@@ -101,6 +101,16 @@ pub struct NativePreparedProcessDestroy {
     ready: ProcessMainReadyLease,
     heap: MainStaticHeapLease<'static>,
     _owners: admission::NativeAllocatorTransferredProcessOwners,
+    diagnostics: Option<ProcessFinalDiagnosticIdentity>,
+}
+
+/// Only process-static output identity and a source scalar cross coordinator
+/// sealing. This value owns no Theap, Heap, PageMap or metadata projection and
+/// cannot authorize a callback without the transferred writer's scope.
+#[derive(Clone, Copy)]
+struct ProcessFinalDiagnosticIdentity {
+    output: &'static crate::diagnostic_output::OutputOwner,
+    subprocess_sequence: usize,
 }
 
 /// Immutable process witnesses captured under ordinary entry before libc
@@ -109,6 +119,7 @@ pub struct NativePreparedProcessDestroy {
 pub struct NativeProcessDestroyRequest {
     ready: ProcessMainReadyLease,
     heap: MainStaticHeapLease<'static>,
+    diagnostics: Option<ProcessFinalDiagnosticIdentity>,
 }
 
 /// Captures the exact live process/Heap binding before registry pinning. It
@@ -133,8 +144,12 @@ pub fn capture_native_process_destroy_request()
         return Err(NativeProcessDestroyError::DefaultRetains);
     }
     let heap = unsafe { RUNTIME_PROCESS.active_main_heap() }.ok_or(NativeProcessDestroyError::Inactive)?;
+    let diagnostics = ready.diagnostic_output().map_err(|_| NativeProcessDestroyError::Coordinator)?
+        .map(|output| ready.subprocess_sequence().map(|subprocess_sequence|
+            ProcessFinalDiagnosticIdentity { output, subprocess_sequence }))
+        .transpose().map_err(|_| NativeProcessDestroyError::Coordinator)?;
     drop(operation);
-    Ok(NativeProcessDestroyRequest { ready, heap })
+    Ok(NativeProcessDestroyRequest { ready, heap, diagnostics })
 }
 
 /// Transfers every native TLS owner under the existing pinned registry.
@@ -172,12 +187,12 @@ pub unsafe fn prepare_native_process_destroy(
         }
     };
     let owners = quiescence.transfer_source_owners().map_err(|_| NativeProcessDestroyError::SourceOwner)?;
-    let NativeProcessDestroyRequest { ready, heap } = request;
+    let NativeProcessDestroyRequest { ready, heap, diagnostics } = request;
     // Source init.c:605 clears the current cache before subprocess destruction.
     // The TLS transfer sealed source ownership but did not release this local
     // cache slot or any Theap storage, so its final empty publication is valid.
     set_cached_theap(NonNull::from(empty_default_theap()));
-    Ok(NativePreparedProcessDestroy { ready, heap, _owners: owners })
+    Ok(NativePreparedProcessDestroy { ready, heap, _owners: owners, diagnostics })
 }
 
 impl NativePreparedProcessDestroy {
