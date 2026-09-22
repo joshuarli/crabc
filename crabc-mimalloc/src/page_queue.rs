@@ -111,6 +111,124 @@ impl<DeferredFrees, RetiredPages> TheapCollectAbandonPrepass<DeferredFrees, Reti
     }
 }
 
+/// Field-scoped source access for an owner-exit queue collector.
+///
+/// A live Theap remains linked in its Heap while the ordinary owner-exit
+/// collector runs. The Heap list lock may therefore update its `hnext` and
+/// `hprev` cells; this capability never forms `&mut Theap`. It carries only
+/// the caller's authority over the source queue/direct-cache/page-count and
+/// retirement fields. The pinned `MI_ABANDON` ordering is still owned by the
+/// same queue coordinator below.
+#[derive(Clone, Copy)]
+pub(crate) struct TheapCollectAbandonFieldAccess {
+    theap: NonNull<Theap>,
+}
+
+impl TheapCollectAbandonFieldAccess {
+    /// # Safety
+    ///
+    /// `theap` must be a live pinned source image. The caller owns the local
+    /// queue/direct/count/retirement fields for the complete collection, but need not and
+    /// must not own the Heap-link cells or a whole Theap image.
+    #[inline]
+    pub(crate) const unsafe fn new(theap: NonNull<Theap>) -> Self {
+        Self { theap }
+    }
+
+    #[inline]
+    pub(crate) const fn pointer(self) -> NonNull<Theap> { self.theap }
+
+    #[inline]
+    pub(crate) fn page_count(self) -> usize {
+        // SAFETY: this capability owns the source local page-count field.
+        unsafe { Theap::local_page_count_at(self.theap) }
+    }
+
+    #[inline]
+    pub(crate) fn queue(self, bin: usize) -> Option<&PageQueue> {
+        // SAFETY: this capability permits only a shared projection of this
+        // queue and does not create a whole-Theap reference.
+        unsafe { Theap::local_queue_at(self.theap, bin) }
+    }
+
+    #[inline]
+    pub(crate) fn queue_mut(self, bin: usize) -> Option<&mut PageQueue> {
+        // SAFETY: this capability owns this selected local queue; callers
+        // bind the borrow to one source queue transition.
+        unsafe { Theap::local_queue_mut_at(self.theap, bin) }
+    }
+
+    #[inline]
+    pub(crate) fn direct_page(self, index: usize) -> Option<*mut Page> {
+        // SAFETY: this capability serializes the local direct-cache image.
+        unsafe { Theap::local_direct_page_at(self.theap, index) }
+    }
+
+    #[inline]
+    pub(crate) fn retired_bounds(self) -> (usize, usize) {
+        // SAFETY: this capability owns the two retirement bounds.
+        unsafe { Theap::local_retired_bounds_at(self.theap) }
+    }
+
+    #[inline]
+    pub(crate) fn reset_retired_bounds(self) {
+        // SAFETY: this capability owns the two retirement bounds.
+        unsafe { Theap::reset_local_retired_bounds_at(self.theap) }
+    }
+
+    #[inline]
+    pub(crate) fn allows_page_abandon(self) -> bool {
+        // SAFETY: the option image is frozen for this live source Theap.
+        unsafe { Theap::local_allows_page_abandon_at(self.theap) }
+    }
+
+    #[inline]
+    pub(crate) fn note_page_removed(self) -> bool {
+        // SAFETY: source queue removal precedes this owned count update.
+        unsafe { Theap::note_local_page_removed_at(self.theap) }
+    }
+}
+
+/// Source-order prepass callbacks for a collector that has only
+/// field-scoped Theap authority.
+///
+/// This is intentionally distinct from [`TheapCollectAbandonPrepass`]: the
+/// latter accepts a genuinely exclusive `&mut Theap`, whereas ordinary
+/// owner-exit collection must coexist with a Heap-locked update to the
+/// disjoint link cells.
+#[must_use = "the source prepass must be passed to the field-scoped collect-abandon coordinator"]
+pub(crate) struct TheapCollectAbandonFieldPrepass<DeferredFrees, RetiredPages> {
+    deferred_frees: DeferredFrees,
+    retired_pages: RetiredPages,
+}
+
+impl<DeferredFrees, RetiredPages> TheapCollectAbandonFieldPrepass<DeferredFrees, RetiredPages> {
+    #[inline]
+    pub(crate) const fn new(deferred_frees: DeferredFrees, retired_pages: RetiredPages) -> Self {
+        Self {
+            deferred_frees,
+            retired_pages,
+        }
+    }
+
+    #[inline]
+    fn run<E, Callbacks>(
+        &mut self,
+        theap: TheapCollectAbandonFieldAccess,
+        callbacks: &mut Callbacks,
+    ) -> Result<TheapCollectAbandonPageActionsReady, TheapCollectAbandonFailure<E>>
+    where
+        DeferredFrees: FnMut(TheapCollectAbandonFieldAccess, &mut Callbacks) -> Result<(), E>,
+        RetiredPages: FnMut(TheapCollectAbandonFieldAccess, &mut Callbacks) -> Result<(), E>,
+    {
+        (self.deferred_frees)(theap, callbacks)
+            .map_err(TheapCollectAbandonFailure::DeferredFrees)?;
+        (self.retired_pages)(theap, callbacks)
+            .map_err(TheapCollectAbandonFailure::RetiredPages)?;
+        Ok(TheapCollectAbandonPageActionsReady(()))
+    }
+}
+
 /// Evidence that the source deferred-free and retired-page prepasses finished.
 ///
 /// Its field is private so only [`TheapCollectAbandonPrepass::run`] can create
@@ -144,7 +262,7 @@ impl TheapCollectAbandonCurrentPage<'_> {
 /// source-specific work.
 pub(crate) struct TheapCollectAbandonReleasedPage<'ready> {
     page: NonNull<Page>,
-    theap: &'ready Theap,
+    theap: TheapCollectAbandonFieldAccess,
     _prepass: &'ready TheapCollectAbandonPageActionsReady,
 }
 
@@ -156,7 +274,7 @@ impl TheapCollectAbandonReleasedPage<'_> {
 
     /// Observes the source count after this page's one-way queue detach.
     #[inline]
-    pub(crate) const fn page_count_after_detach(&self) -> usize {
+    pub(crate) fn page_count_after_detach(&self) -> usize {
         self.theap.page_count()
     }
 
@@ -175,7 +293,7 @@ impl TheapCollectAbandonReleasedPage<'_> {
 /// PageMap, bitmap, arena, or mapping-release logic here.
 pub(crate) struct TheapCollectAbandonAbandonedPage<'ready> {
     page: NonNull<Page>,
-    theap: &'ready Theap,
+    theap: TheapCollectAbandonFieldAccess,
     _prepass: &'ready TheapCollectAbandonPageActionsReady,
 }
 
@@ -187,7 +305,7 @@ impl TheapCollectAbandonAbandonedPage<'_> {
 
     /// Observes the source count after this page's one-way queue detach.
     #[inline]
-    pub(crate) const fn page_count_after_detach(&self) -> usize {
+    pub(crate) fn page_count_after_detach(&self) -> usize {
         self.theap.page_count()
     }
 
@@ -418,6 +536,11 @@ where
     RetiredPages: FnMut(&mut Theap, &mut Callbacks) -> Result<(), Callbacks::Error>,
     Callbacks: TheapCollectAbandonCallbacks,
 {
+    // SAFETY: the exclusive caller supplies the stronger version of the
+    // field-scoped source contract. The capability is used only for opaque
+    // post-detach observations handed to callbacks, never to reconstruct a
+    // second whole-Theap mutable reference.
+    let fields = unsafe { TheapCollectAbandonFieldAccess::new(NonNull::from(&mut *theap)) };
     // `mi_theap_collect_ex` runs this complete prepass even when the visitor
     // finds no pages, so the source empty fast path follows rather than
     // bypasses the typed prerequisite boundary.
@@ -529,7 +652,7 @@ where
                 TheapCollectAbandonPageAction::Release => {
                     if let Err(error) = callbacks.release_page(TheapCollectAbandonReleasedPage {
                         page,
-                        theap: &*theap,
+                        theap: fields,
                         _prepass: &page_actions_ready,
                     }) {
                         return Err(theap_collect_abandon_terminal_failure(
@@ -544,7 +667,7 @@ where
                 TheapCollectAbandonPageAction::Abandon => {
                     if let Err(error) = callbacks.abandon_page(TheapCollectAbandonAbandonedPage {
                         page,
-                        theap: &*theap,
+                        theap: fields,
                         _prepass: &page_actions_ready,
                     }) {
                         return Err(theap_collect_abandon_terminal_failure(
@@ -593,6 +716,225 @@ where
         ));
     }
     Ok(())
+}
+
+/// Visits the source `MI_ABANDON` queues with only field-scoped Theap
+/// authority.
+///
+/// This is the ordinary attached-owner variant of
+/// [`theap_collect_abandon_queues`]. A live source Theap may remain in the
+/// shared Heap list while this collector runs, so a Heap-locked prepend may
+/// mutate its `hnext`/`hprev` cells. `theap` must be the original typed owner
+/// capability, and this helper deliberately never turns it into `&mut Theap`.
+/// It retains the exact pinned order: deferred prepass, retired prepass, then
+/// queues through `BIN_FULL`, each with saved successor, queue detach,
+/// direct-cache repair, page-count update, and release-or-abandon continuation.
+///
+/// Unlike the exclusive variant, a failure returns only the source failure
+/// after invoking `retain_terminal`; the caller's typed drain remains the
+/// terminal owner. That prevents this field-scoped helper from manufacturing a
+/// false whole-Theap exclusive borrow just to carry an error token.
+///
+/// # Safety
+///
+/// `theap` must identify a live pinned initialized source Theap. The caller
+/// exclusively owns its queues, direct cache, page count, and retirement
+/// fields for the call, while any Heap-list mutation uses the distinct
+/// `UnsafeCell` links under the source Heap lock. Prepass and page callbacks
+/// have the same page/queue restrictions as [`theap_collect_abandon_queues`].
+pub(crate) unsafe fn theap_collect_abandon_queues_at<DeferredFrees, RetiredPages, Callbacks>(
+    theap: NonNull<Theap>,
+    mut prepass: TheapCollectAbandonFieldPrepass<DeferredFrees, RetiredPages>,
+    callbacks: &mut Callbacks,
+) -> Result<(), TheapCollectAbandonFailure<Callbacks::Error>>
+where
+    DeferredFrees: FnMut(TheapCollectAbandonFieldAccess, &mut Callbacks) -> Result<(), Callbacks::Error>,
+    RetiredPages: FnMut(TheapCollectAbandonFieldAccess, &mut Callbacks) -> Result<(), Callbacks::Error>,
+    Callbacks: TheapCollectAbandonCallbacks,
+{
+    // SAFETY: forwarded from this field-scoped API contract.
+    let fields = unsafe { TheapCollectAbandonFieldAccess::new(theap) };
+    let page_actions_ready = match prepass.run(fields, callbacks) {
+        Ok(ready) => ready,
+        Err(failure) => {
+            return Err(theap_collect_abandon_field_terminal_failure(
+                fields,
+                callbacks,
+                failure,
+                None,
+                false,
+            ));
+        }
+    };
+
+    if fields.page_count() == 0 {
+        for bin in 0..=BIN_FULL {
+            let Some(queue) = fields.queue(bin) else {
+                return Err(theap_collect_abandon_field_terminal_failure(
+                    fields,
+                    callbacks,
+                    TheapCollectAbandonFailure::QueueInvariant,
+                    None,
+                    false,
+                ));
+            };
+            if queue.count != 0 || !queue.first.is_null() || !queue.last.is_null() {
+                return Err(theap_collect_abandon_field_terminal_failure(
+                    fields,
+                    callbacks,
+                    TheapCollectAbandonFailure::QueueInvariant,
+                    None,
+                    false,
+                ));
+            }
+        }
+        return Ok(());
+    }
+
+    let expected_page_count = fields.page_count();
+    let mut visited_page_count = 0usize;
+    for bin in 0..=BIN_FULL {
+        let Some(queue) = fields.queue(bin) else {
+            return Err(theap_collect_abandon_field_terminal_failure(
+                fields,
+                callbacks,
+                TheapCollectAbandonFailure::QueueInvariant,
+                None,
+                false,
+            ));
+        };
+        let mut remaining = queue.count;
+        let mut current = queue.first;
+
+        while remaining != 0 {
+            let Some(page) = NonNull::new(current) else {
+                return Err(theap_collect_abandon_field_terminal_failure(
+                    fields,
+                    callbacks,
+                    TheapCollectAbandonFailure::QueueInvariant,
+                    None,
+                    false,
+                ));
+            };
+            // SAFETY: source queue ownership makes the saved successor valid;
+            // no whole Page reference is formed beside a remote producer.
+            let next = unsafe { core::ptr::read(core::ptr::addr_of!((*page.as_ptr()).next)) };
+            let action = match callbacks.collect_page(TheapCollectAbandonCurrentPage {
+                page,
+                _prepass: &page_actions_ready,
+            }) {
+                Ok(action) => action,
+                Err(error) => {
+                    return Err(theap_collect_abandon_field_terminal_failure(
+                        fields,
+                        callbacks,
+                        TheapCollectAbandonFailure::CollectPage(error),
+                        Some(page),
+                        false,
+                    ));
+                }
+            };
+
+            // SAFETY: the exact current queue and source local fields are
+            // owned by `fields`; this does not materialize `&mut Theap`.
+            if let Err(detach) = unsafe { theap_collect_abandon_detach_page_at(fields, bin, page) } {
+                return Err(theap_collect_abandon_field_terminal_failure(
+                    fields,
+                    callbacks,
+                    TheapCollectAbandonFailure::QueueInvariant,
+                    Some(page),
+                    matches!(detach, TheapCollectAbandonDetachFailure::Detached),
+                ));
+            }
+
+            match action {
+                TheapCollectAbandonPageAction::Release => {
+                    if let Err(error) = callbacks.release_page(TheapCollectAbandonReleasedPage {
+                        page,
+                        theap: fields,
+                        _prepass: &page_actions_ready,
+                    }) {
+                        return Err(theap_collect_abandon_field_terminal_failure(
+                            fields,
+                            callbacks,
+                            TheapCollectAbandonFailure::ReleasePage(error),
+                            Some(page),
+                            true,
+                        ));
+                    }
+                }
+                TheapCollectAbandonPageAction::Abandon => {
+                    if let Err(error) = callbacks.abandon_page(TheapCollectAbandonAbandonedPage {
+                        page,
+                        theap: fields,
+                        _prepass: &page_actions_ready,
+                    }) {
+                        return Err(theap_collect_abandon_field_terminal_failure(
+                            fields,
+                            callbacks,
+                            TheapCollectAbandonFailure::AbandonPage(error),
+                            Some(page),
+                            true,
+                        ));
+                    }
+                }
+            }
+
+            let Some(next_visited_page_count) = visited_page_count.checked_add(1) else {
+                return Err(theap_collect_abandon_field_terminal_failure(
+                    fields,
+                    callbacks,
+                    TheapCollectAbandonFailure::QueueInvariant,
+                    None,
+                    false,
+                ));
+            };
+            visited_page_count = next_visited_page_count;
+            current = next;
+            remaining -= 1;
+        }
+
+        if !current.is_null() {
+            return Err(theap_collect_abandon_field_terminal_failure(
+                fields,
+                callbacks,
+                TheapCollectAbandonFailure::QueueInvariant,
+                NonNull::new(current),
+                false,
+            ));
+        }
+    }
+
+    if visited_page_count != expected_page_count || fields.page_count() != 0 {
+        return Err(theap_collect_abandon_field_terminal_failure(
+            fields,
+            callbacks,
+            TheapCollectAbandonFailure::QueueInvariant,
+            None,
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn theap_collect_abandon_field_terminal_failure<Callbacks>(
+    fields: TheapCollectAbandonFieldAccess,
+    callbacks: &mut Callbacks,
+    failure: TheapCollectAbandonFailure<Callbacks::Error>,
+    page: Option<NonNull<Page>>,
+    page_detached: bool,
+) -> TheapCollectAbandonFailure<Callbacks::Error>
+where
+    Callbacks: TheapCollectAbandonCallbacks,
+{
+    let terminal = TheapCollectAbandonTerminalContext {
+        phase: failure.terminal_phase(),
+        page,
+        page_detached,
+        remaining_page_count: fields.page_count(),
+    };
+    let _ = callbacks.retain_terminal(terminal);
+    failure
 }
 
 /// Why the test-only page-free M1 collect witness rejected the source shape.
@@ -805,6 +1147,36 @@ unsafe fn theap_collect_abandon_detach_page(
     Ok(())
 }
 
+/// Field-scoped counterpart of [`theap_collect_abandon_detach_page`].
+///
+/// # Safety
+///
+/// `fields` must retain the complete current queue and all local Theap fields
+/// named by this source detach. It must not be synthesized from a shared
+/// Theap reference.
+unsafe fn theap_collect_abandon_detach_page_at(
+    fields: TheapCollectAbandonFieldAccess,
+    bin: usize,
+    page: NonNull<Page>,
+) -> Result<(), TheapCollectAbandonDetachFailure> {
+    let Some(queue) = fields.queue_mut(bin) else {
+        return Err(TheapCollectAbandonDetachFailure::StillQueued);
+    };
+    let queue = queue as *mut PageQueue;
+    // SAFETY: the caller's field-scoped source queue authority proves the
+    // exact current membership and ordinary intrusive-link ownership.
+    unsafe { page_queue_remove_metadata(&mut *queue, page.as_ptr()) };
+    // SAFETY: `fields` retains the original pinned Theap capability and owns
+    // the direct-cache fields. No whole-Theap mutable reference is formed.
+    if !unsafe { theap_collect_abandon_update_direct_cache_at(fields.pointer(), bin) } {
+        return Err(TheapCollectAbandonDetachFailure::Detached);
+    }
+    if !fields.note_page_removed() {
+        return Err(TheapCollectAbandonDetachFailure::Detached);
+    }
+    Ok(())
+}
+
 /// Ports `mi_theap_queue_first_update` for the owner-exit detach path.
 ///
 /// It is deliberately local to the generic coordinator: source queue removal
@@ -812,10 +1184,26 @@ unsafe fn theap_collect_abandon_detach_page(
 /// OS, regular, full, or singleton release. Non-small queues are a source
 /// no-op.
 pub(crate) fn theap_collect_abandon_update_direct_cache(theap: &mut Theap, bin: usize) -> bool {
-    let Some(queue) = theap.pages.get(bin) else {
+    // SAFETY: an exclusive Theap caller supplies the stronger form of the
+    // field-scoped direct-cache contract.
+    unsafe { theap_collect_abandon_update_direct_cache_at(NonNull::from(theap), bin) }
+}
+
+/// Field-scoped direct-cache repair for the source owner-exit detach.
+///
+/// # Safety
+///
+/// `theap` must be the original live pinned source capability. The caller
+/// exclusively owns the selected queue and all direct-cache entries changed by
+/// this source operation, but does not own and must not borrow the complete
+/// Theap image while a Heap-list link update may occur.
+pub(crate) unsafe fn theap_collect_abandon_update_direct_cache_at(
+    theap: NonNull<Theap>,
+    bin: usize,
+) -> bool {
+    let Some(block_size) = (unsafe { Theap::local_queue_at(theap, bin) }).map(|queue| queue.block_size) else {
         return false;
     };
-    let block_size = queue.block_size;
     if block_size > SMALL_SIZE_MAX {
         return true;
     }
@@ -825,12 +1213,12 @@ pub(crate) fn theap_collect_abandon_update_direct_cache(theap: &mut Theap, bin: 
     if index >= PAGES_DIRECT || size_class::bin(block_size) != Some(bin) {
         return false;
     }
-    let replacement = if queue.first.is_null() {
-        EMPTY_PAGE.as_ptr()
-    } else {
-        queue.first
+    let Some(replacement) = (unsafe { Theap::local_queue_at(theap, bin) }).map(|queue| {
+        if queue.first.is_null() { EMPTY_PAGE.as_ptr() } else { queue.first }
+    }) else {
+        return false;
     };
-    if theap.pages_free_direct[index] == replacement {
+    if unsafe { Theap::local_direct_page_at(theap, index) } == Some(replacement) {
         return true;
     }
 
@@ -841,14 +1229,13 @@ pub(crate) fn theap_collect_abandon_update_direct_cache(theap: &mut Theap, bin: 
             return false;
         };
         while previous > 0
-            && theap
-                .pages
-                .get(previous)
+            && unsafe { Theap::local_queue_at(theap, previous) }
                 .is_some_and(|queue| size_class::bin(queue.block_size) == Some(bin))
         {
             previous -= 1;
         }
-        let Some(previous_size) = theap.pages.get(previous).map(|queue| queue.block_size) else {
+        let Some(previous_size) = (unsafe { Theap::local_queue_at(theap, previous) })
+            .map(|queue| queue.block_size) else {
             return false;
         };
         let Some(previous_index) = invariants::word_count(previous_size) else {
@@ -861,7 +1248,9 @@ pub(crate) fn theap_collect_abandon_update_direct_cache(theap: &mut Theap, bin: 
     };
 
     for direct in start..=index {
-        theap.pages_free_direct[direct] = replacement;
+        if !unsafe { Theap::set_local_direct_page_at(theap, direct, replacement) } {
+            return false;
+        }
     }
     true
 }
@@ -1794,17 +2183,17 @@ mod tests {
         // mixed queue image. The typed callbacks can only choose all-free or
         // live-page continuations; the coordinator owns the queue transitions.
         assert!(unsafe {
-            theap_collect_abandon_queues(
-                &mut theap,
-                TheapCollectAbandonPrepass::new(
-                    |theap: &mut Theap, _callbacks: &mut MixedCollectAbandonCallbacks<'_>| {
+            theap_collect_abandon_queues_at(
+                NonNull::from(&mut theap),
+                TheapCollectAbandonFieldPrepass::new(
+                    |theap: TheapCollectAbandonFieldAccess, _callbacks: &mut MixedCollectAbandonCallbacks<'_>| {
                         assert_eq!(theap.page_count(), 4);
                         events
                             .borrow_mut()
                             .push(MixedCollectAbandonEvent::DeferredFrees);
                         Ok::<_, ()>(())
                     },
-                    |theap: &mut Theap, _callbacks: &mut MixedCollectAbandonCallbacks<'_>| {
+                    |theap: TheapCollectAbandonFieldAccess, _callbacks: &mut MixedCollectAbandonCallbacks<'_>| {
                         assert_eq!(theap.page_count(), 4);
                         events
                             .borrow_mut()

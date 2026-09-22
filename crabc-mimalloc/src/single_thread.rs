@@ -194,11 +194,13 @@ use crate::types::{
     THREAD_ID_DETACHED,
 };
 use crate::types::page_queue::{
-    page_is_in_full, theap_collect_abandon_queues, TheapCollectAbandonAbandonedPage,
+    page_is_in_full, theap_collect_abandon_queues, theap_collect_abandon_queues_at,
+    TheapCollectAbandonAbandonedPage,
     TheapCollectAbandonCallbacks, TheapCollectAbandonCurrentPage,
+    TheapCollectAbandonFieldAccess, TheapCollectAbandonFieldPrepass,
     TheapCollectAbandonPageAction, TheapCollectAbandonPrepass,
     TheapCollectAbandonReleasedPage, TheapCollectAbandonTerminalContext,
-    theap_collect_abandon_update_direct_cache,
+    theap_collect_abandon_update_direct_cache, theap_collect_abandon_update_direct_cache_at,
     page_queue_enqueue_from_full_metadata,
     page_queue_enqueue_from_metadata, page_queue_push_metadata,
     page_queue_move_to_front_metadata, page_queue_push_at_end_metadata,
@@ -9285,8 +9287,8 @@ impl<'attachment, 'main, 'arena, 'map, B: PageBacking<'arena>>
     /// deferred-free phase was completed through its A/B/C caller-stack
     /// continuation before this collector begins. The callback object below
     /// owns only field-level projections disjoint from the coordinator's
-    /// exclusive `Theap` borrow: PageMap/arena facts, static-main Heap lease,
-    /// and terminal scalar slots.
+    /// local queue/direct/count/retirement authority: PageMap/arena facts,
+    /// static-main Heap lease, and terminal scalar slots.
     /// It never holds this engine, the attachment, or a whole `Page` borrow.
     /// That separation matters while a valid live client may still retain its
     /// atomic remote-free producer projection into a page being collected or
@@ -9336,26 +9338,26 @@ impl<'attachment, 'main, 'arena, 'map, B: PageBacking<'arena>>
                 #[cfg(test)]
                 page_free_collect_failure_once: &mut self.page_free_collect_failure_once,
             };
-            let prepass = TheapCollectAbandonPrepass::new(
+            let prepass = TheapCollectAbandonFieldPrepass::new(
                 // The caller-stack phase ran `_mi_deferred_free` before this
                 // coordinator formed its exclusive Theap borrow. Re-running
                 // it here would select a second foreign callback while queue
                 // state is borrowed, so retain its source position as an
                 // explicit completed prepass.
-                |_theap: &mut Theap,
+                |_theap: TheapCollectAbandonFieldAccess,
                  _callbacks: &mut ProductionOwnerExitCallbacks<'_, '_, 'arena, '_, B>| Ok(()),
-                |theap: &mut Theap,
+                |theap: TheapCollectAbandonFieldAccess,
                  callbacks: &mut ProductionOwnerExitCallbacks<'_, '_, 'arena, '_, B>| {
                     callbacks.collect_retired_prepass(theap)
                 },
             );
-            // SAFETY: `theap` is the exact exclusive current Theap of the
-            // consuming drain.  `callbacks` contains no engine/session/
-            // attachment reference and no whole-Page reference; it can touch
-            // only its disjoint TLD, PageMap/arena, Heap, and scalar fields.
-            // The generic coordinator retains all queue/link/direct/count
-            // mutation and source ordering through `BIN_FULL`.
-            unsafe { theap_collect_abandon_queues(&mut *theap.as_ptr(), prepass, &mut callbacks) }
+            // SAFETY: `theap` is the original typed draining capability.
+            // `callbacks` contains no engine/session/attachment reference and
+            // no whole-Page reference. The field-scoped coordinator owns only
+            // queue/link/direct/count/retirement fields through `BIN_FULL`;
+            // it never creates `&mut Theap` while the source Heap lock may
+            // prepend another Theap through the disjoint `hprev` cell.
+            unsafe { theap_collect_abandon_queues_at(theap, prepass, &mut callbacks) }
         };
         if result.is_err() {
             self.retain_terminal_thread_exit_route();
@@ -40958,12 +40960,12 @@ enum ProductionOwnerExitError {
     UnsupportedPage,
 }
 
-/// The state disjoint from the exclusive `Theap` reference held by
-/// `theap_collect_abandon_queues`.
+/// The state disjoint from the field-scoped local Theap authority held by
+/// `theap_collect_abandon_queues_at`.
 ///
 /// In particular, this deliberately does not contain a
 /// `PageAllocatorEngine`, a `MainHeapThreadPageDrainSession`, an attachment,
-/// or a whole-page reference.  A live remote producer may retain a pointer to
+/// a whole-Theap reference, or a whole-page reference. A live remote producer may retain a pointer to
 /// its atomic page projection during `collect_page` and `abandon_page`; those
 /// operations therefore use only the raw field projections in `types.rs`.
 /// Terminal release takes a whole-page mutable reference only after the
@@ -41029,12 +41031,12 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
     }
 
     /// Ports the `MI_ABANDON` retired-page phase before the generic visitor.
-    /// It holds only the current `Theap` callback reference plus this
-    /// field-only state, so saving a successor and testing live state never
-    /// produces a whole `Page` alias next to a remote producer.
+    /// The field-scoped source capability owns only the local retirement,
+    /// queue, direct-cache, and count fields. In particular, this path never
+    /// forms `&mut Theap` while the shared Heap list can update `hprev`.
     fn collect_retired_prepass(
         &mut self,
-        theap: &mut Theap,
+        theap: TheapCollectAbandonFieldAccess,
     ) -> Result<(), ProductionOwnerExitError> {
         if !theap.allows_page_abandon() {
             return Err(ProductionOwnerExitError::Retired);
@@ -41087,7 +41089,7 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
     /// because source retires it before creating current-page capability.
     fn release_retired_page(
         &mut self,
-        theap: &mut Theap,
+        theap: TheapCollectAbandonFieldAccess,
         bin: usize,
         page: NonNull<Page>,
     ) -> Result<(), ProductionOwnerExitError> {
@@ -41097,7 +41099,12 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
         // SAFETY: the retired prepass still owns this exact current queue
         // member and its raw intrusive links.
         unsafe { page_queue_remove_metadata(&mut *queue, page.as_ptr()) };
-        if !theap_collect_abandon_update_direct_cache(theap, bin) || !theap.note_page_removed() {
+        // SAFETY: the field-scoped source capability is the original owning
+        // Theap address and owns this queue/direct/count transition. It does
+        // not mint a mutable whole-Theap image beside a Heap-list prepend.
+        if !unsafe { theap_collect_abandon_update_direct_cache_at(theap.pointer(), bin) }
+            || !theap.note_page_removed()
+        {
             return Err(ProductionOwnerExitError::Retired);
         }
         // SAFETY: zero use above excludes a live client/producer; this raw
@@ -41532,7 +41539,7 @@ impl<'arena, B: PageBacking<'arena>> TheapCollectAbandonCallbacks for Production
         // The outer consuming drain immediately turns this into its explicit
         // `RetainedTerminalEngine` state.  Keeping this callback scalar-only
         // avoids a raw reborrow of its whole engine/session while the generic
-        // coordinator still owns `&mut Theap`.
+        // coordinator still owns the local source queue fields.
         terminal
     }
 }

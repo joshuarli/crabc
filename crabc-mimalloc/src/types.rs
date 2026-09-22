@@ -6254,6 +6254,74 @@ impl Theap {
         Some(unsafe { &mut (*pointer.as_ptr()).pages[bin] })
     }
 
+    /// Projects one immutable owner-local queue without borrowing the whole
+    /// Theap image.
+    ///
+    /// # Safety
+    ///
+    /// `pointer` must originate from the live pinned Theap capability and the
+    /// returned queue must not overlap a mutable projection of that same queue
+    /// for `'a`. This deliberately permits the source Heap list lock to update
+    /// the distinct `hnext`/`hprev` cells while an owner-exit collector reads
+    /// its local queue image.
+    #[inline]
+    pub(crate) unsafe fn local_queue_at<'a>(pointer: NonNull<Self>, bin: usize) -> Option<&'a PageQueue> {
+        if bin >= BIN_COUNT { return None; }
+        Some(unsafe { &(*pointer.as_ptr()).pages[bin] })
+    }
+
+    /// Copies one source-owned local page count without observing a whole
+    /// Theap. See [`Self::local_queue_at`] for the disjoint Heap-link rule.
+    ///
+    /// # Safety
+    ///
+    /// The caller must retain the live Theap and serialize this ordinary
+    /// source-local field against its own queue/count mutations.
+    #[inline]
+    pub(crate) unsafe fn local_page_count_at(pointer: NonNull<Self>) -> usize {
+        unsafe { core::ptr::read(core::ptr::addr_of!((*pointer.as_ptr()).page_count)) }
+    }
+
+    /// Copies one source direct-cache entry without observing a whole Theap.
+    ///
+    /// # Safety
+    ///
+    /// The caller must retain the live Theap and serialize this direct-cache
+    /// field against its own source queue transition.
+    #[inline]
+    pub(crate) unsafe fn local_direct_page_at(pointer: NonNull<Self>, index: usize) -> Option<*mut Page> {
+        if index >= PAGES_DIRECT { return None; }
+        Some(unsafe { core::ptr::read(core::ptr::addr_of!((*pointer.as_ptr()).pages_free_direct[index])) })
+    }
+
+    /// Copies the source retired-bin range without observing a whole Theap.
+    ///
+    /// # Safety
+    ///
+    /// The caller must retain the live Theap and serialize its retirement
+    /// fields against this observation.
+    #[inline]
+    pub(crate) unsafe fn local_retired_bounds_at(pointer: NonNull<Self>) -> (usize, usize) {
+        unsafe {
+            (
+                core::ptr::read(core::ptr::addr_of!((*pointer.as_ptr()).page_retired_min)),
+                core::ptr::read(core::ptr::addr_of!((*pointer.as_ptr()).page_retired_max)),
+            )
+        }
+    }
+
+    /// Copies the frozen source abandonment option without observing a whole
+    /// Theap.
+    ///
+    /// # Safety
+    ///
+    /// `pointer` must retain a live initialized Theap. The option image is
+    /// frozen after source initialization.
+    #[inline]
+    pub(crate) unsafe fn local_allows_page_abandon_at(pointer: NonNull<Self>) -> bool {
+        unsafe { core::ptr::read(core::ptr::addr_of!((*pointer.as_ptr()).allow_page_abandon)) }
+    }
+
     /// # Safety
     /// The live pinned image's direct-cache slot is exclusively owned for
     /// this call, with no overlapping whole-image observation. The ordinary
@@ -6494,6 +6562,128 @@ mod tests {
         assert_eq!(first.retired_bounds(), (1, 1));
         unsafe { Theap::reset_local_retired_bounds_at(first_pointer); }
         assert_eq!(first.retired_bounds(), (BIN_FULL, 0));
+        let guard = heap.theaps_lock.lock().unwrap();
+        assert_eq!(unsafe { *first.hprev.get() }, second_pointer);
+        guard.unlock().unwrap();
+    }
+
+    #[test]
+    fn field_scoped_owner_exit_collection_survives_a_concurrent_heap_prepend() {
+        use crate::types::page_queue::{
+            page_queue_push_at_end_metadata, theap_collect_abandon_queues_at,
+            theap_collect_abandon_update_direct_cache, TheapCollectAbandonAbandonedPage,
+            TheapCollectAbandonCallbacks, TheapCollectAbandonCurrentPage,
+            TheapCollectAbandonFieldAccess, TheapCollectAbandonFieldPrepass,
+            TheapCollectAbandonPageAction, TheapCollectAbandonReleasedPage,
+            TheapCollectAbandonTerminalContext,
+        };
+
+        struct Callbacks {
+            expected: NonNull<Page>,
+            released: bool,
+            terminal: bool,
+        }
+
+        impl TheapCollectAbandonCallbacks for Callbacks {
+            type Error = ();
+            type Retained = ();
+
+            fn collect_page(
+                &mut self,
+                current: TheapCollectAbandonCurrentPage<'_>,
+            ) -> Result<TheapCollectAbandonPageAction, Self::Error> {
+                assert_eq!(current.page(), self.expected);
+                Ok(TheapCollectAbandonPageAction::Release)
+            }
+
+            fn release_page(
+                &mut self,
+                released: TheapCollectAbandonReleasedPage<'_>,
+            ) -> Result<(), Self::Error> {
+                assert_eq!(released.page(), self.expected);
+                assert_eq!(released.page_count_after_detach(), 0);
+                self.released = true;
+                Ok(())
+            }
+
+            fn abandon_page(
+                &mut self,
+                _: TheapCollectAbandonAbandonedPage<'_>,
+            ) -> Result<(), Self::Error> {
+                panic!("the one all-free fixture must select release")
+            }
+
+            fn retain_terminal(&mut self, _: TheapCollectAbandonTerminalContext) -> Self::Retained {
+                self.terminal = true;
+            }
+        }
+
+        let mut heap = std::boxed::Box::new(Heap::bootstrap_empty());
+        let mut first = std::boxed::Box::new(Theap::empty());
+        let mut second = std::boxed::Box::new(Theap::empty());
+        let heap_pointer = core::ptr::from_mut(&mut *heap);
+        let first_pointer = NonNull::from(&mut *first);
+        let second_pointer = core::ptr::from_mut(&mut *second);
+        first.heap.store(heap_pointer, Ordering::Release);
+        second.heap.store(heap_pointer, Ordering::Release);
+        heap.attach_theap_after_heap_publication(first_pointer.as_ptr()).unwrap();
+
+        let bin = crate::size_class::bin(16).unwrap();
+        let block_size = first.queue(bin).unwrap().block_size();
+        let mut page = Page::empty();
+        page.block_size = block_size;
+        let page = NonNull::from(&mut page);
+        // SAFETY: this fixture owns the exact one-member source queue before
+        // handing only its local fields to the raw owner-exit coordinator.
+        unsafe {
+            page_queue_push_at_end_metadata(first.queue_mut(bin).unwrap(), page.as_ptr());
+        }
+        first.note_page_added();
+        assert!(theap_collect_abandon_update_direct_cache(&mut first, bin));
+
+        let heap_pointer_for_worker = heap_pointer.addr();
+        let second_pointer_for_worker = second_pointer.addr();
+        let worker = std::thread::spawn(move || {
+            // SAFETY: the field-scoped collector owns only `first` local
+            // queue/direct/count fields. This source Heap operation takes its
+            // list lock and mutates only `first.hprev` while publishing
+            // `second` at the head.
+            unsafe {
+                (*(heap_pointer_for_worker as *mut Heap))
+                    .attach_theap_after_heap_publication(second_pointer_for_worker as *mut Theap)
+                    .unwrap()
+            };
+        });
+        let mut worker = Some(worker);
+        let mut callbacks = Callbacks {
+            expected: page,
+            released: false,
+            terminal: false,
+        };
+        let prepass = TheapCollectAbandonFieldPrepass::new(
+            move |fields: TheapCollectAbandonFieldAccess, _callbacks: &mut Callbacks| {
+                assert_eq!(fields.page_count(), 1);
+                worker
+                    .take()
+                    .expect("the source prepend runs once during the prepass")
+                    .join()
+                    .expect("the Heap-list source worker completes");
+                Ok::<_, ()>(())
+            },
+            |fields: TheapCollectAbandonFieldAccess, _callbacks: &mut Callbacks| {
+                assert_eq!(fields.retired_bounds(), (BIN_FULL, 0));
+                Ok::<_, ()>(())
+            },
+        );
+
+        // SAFETY: `first_pointer` originates from the pinned first Theap and
+        // this fixture owns every local collection field. The worker changes
+        // only the disjoint Heap-list link cell under the source list lock.
+        assert!(unsafe { theap_collect_abandon_queues_at(first_pointer, prepass, &mut callbacks) }.is_ok());
+        assert!(callbacks.released);
+        assert!(!callbacks.terminal);
+        assert!(first.queue(bin).unwrap().is_empty());
+        assert_eq!(first.page_count(), 0);
         let guard = heap.theaps_lock.lock().unwrap();
         assert_eq!(unsafe { *first.hprev.get() }, second_pointer);
         guard.unlock().unwrap();
