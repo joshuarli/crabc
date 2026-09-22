@@ -332,6 +332,7 @@ M2_X86_64_VM_FRAGMENT_DIGEST = "41d7449d49f027992f139cd92ad43f49f5ae25ebcbe8e150
 # nonclaims. It does not promote M2.
 M2_X86_64_INITIALIZATION_FRAGMENT_DIGEST = "8ffe77f67c90df875bb1de6e0ae6921ca299bc240712480f119b3d0d437d0a3b"
 M2_X86_64_FAULT_FRAGMENT_DIGEST = "7eca87cb7f02667ef25f23c7910a15bef44c57f1433e294de10529eda73aef07"
+M2_X86_64_FAULT_FRAGMENT_DIGEST = "6953c3c95e08600b4b1abba64e017a6ca8e3e9d584a68dd67e8de6ecebb7704c"
 M2_X86_64_PAGE_MAP_CHECK_IDS = (
     "successful-page-map-lifecycle",
     "lazy-page-map-commit-failure",
@@ -12727,9 +12728,10 @@ def validate_x86_64_m2_memory_substrate_contract(
             elif raw_check.get("kind") == "c-rust-fault-seam-inventory":
                 if (
                     component_id != "fault-injection"
-                    or raw_check.get("id") != "source-indexed-fault-seam-inventory"
-                    or raw_check.get("target")
-                    != "os::tests::emit_m2_fault_seam_inventory_c_rust_trace"
+                    or raw_check.get("target") != {
+                        "source-indexed-fault-seam-inventory": "os::tests::emit_m2_fault_seam_inventory_c_rust_trace",
+                        "os-aligned-page-publication-fault-receiver": "os_page::tests::emit_os_publication_fault_receiver_trace",
+                    }.get(raw_check.get("id"))
                     or not (ALLOCATOR_ROOT / "x86_64_fault_seam_inventory.py").is_file()
                 ):
                     raise HarnessError("native x86 M2 fault-inventory evidence target is absent")
@@ -13633,9 +13635,8 @@ def _m2_x86_64_fault_check_records(
     """Bind the named partial fault component to retained process streams."""
 
     component = next(item for item in summary["components"] if item["id"] == "fault-injection")
-    if len(component["checks"]) != 1:
+    if len(component["checks"]) != 2:
         raise HarnessError("native x86 M2 fault-inventory check roster is absent")
-    check = component["checks"][0]
     producer = _m2_x86_64_fault_producer()
     if not isinstance(evidence, Mapping):
         raise HarnessError("native x86 M2 fault-inventory producer result is absent")
@@ -13643,29 +13644,27 @@ def _m2_x86_64_fault_check_records(
         producer.validate_report(evidence)
     except (producer.EvidenceError, ValueError) as error:
         raise HarnessError("native x86 M2 fault-inventory producer result is invalid") from error
-    receipt = evidence.get("huge_branch_receipt")
-    if not isinstance(receipt, Mapping) or not isinstance(receipt.get("rust_run"), Mapping):
-        raise HarnessError("native x86 M2 fault-inventory Rust receipt is absent")
-    command = receipt["rust_run"].get("command")
     records = evidence.get("branch_records")
-    if (
-        not isinstance(command, list)
-        or not all(isinstance(argument, str) and argument for argument in command)
-        or not isinstance(records, list)
-        or len(records) != len(producer.BRANCH_ROWS)
-    ):
+    if not isinstance(records, list) or len(records) != len(producer.BRANCH_ROWS):
         raise HarnessError("native x86 M2 fault-inventory executed receipt changed")
-    return [
-        {
+    results = []
+    for check, receipt_key in zip(component["checks"], ("huge_branch_receipt", "os_publication_receipt")):
+        receipt = evidence.get(receipt_key)
+        if not isinstance(receipt, Mapping) or not isinstance(receipt.get("rust_run"), Mapping):
+            raise HarnessError("native x86 M2 fault-inventory Rust receipt is absent")
+        command = receipt["rust_run"].get("command")
+        if not isinstance(command, list) or not all(isinstance(argument, str) and argument for argument in command):
+            raise HarnessError("native x86 M2 fault-inventory executed receipt changed")
+        results.append({
             "comparison_status": "source-specific-relation-verified",
             "component": "fault-injection",
             "command": list(command),
             "evidence_scope": "fixed-pinned-c-branch-profile-and-private-rust-fault-plan",
             "id": check["id"],
-            "passed_test_count": check["expected_passed_test_count"],
+            "passed_test_count": 1,
             "target": check["target"],
-        }
-    ]
+        })
+    return results
 
 
 def _m2_x86_64_bitmap_check_records(

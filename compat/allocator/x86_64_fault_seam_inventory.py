@@ -5,8 +5,9 @@ This is deliberately a reader for one fixed source-bound receipt, not a
 second fault injector.  ``m2_vm_x86_64.c`` keeps the C bodies direct-included
 and ``os::tests::emit_m2_fault_seam_inventory_c_rust_trace`` keeps Rust
 injection behind its existing test-only ``FaultPlan``.  This module names the
-complete set of source groups the receipt must account for, including the two
-receivers that current authority deliberately stops.  A passing receipt is
+complete set of source groups the receipt must account for, including the
+metadata receiver that remains unadmitted. The ordinary OS publication profile
+runs independently while the canonical aggregate still requires both profiles.  A passing receipt is
 therefore bounded evidence for selected OS paths; it does not complete M2.
 """
 
@@ -27,21 +28,22 @@ from typing import Any, Mapping, Sequence
 
 
 SCHEMA = "crabc-mimalloc-x86_64-fault-seam-inventory-evidence"
-# Format 2 adds the current validated fragment projection. A format-1 C-only
-# receipt cannot be replayed as the selected private diagnostic receiver.
+# Format 3 requires the separate ordinary OS publication receiver as well as
+# the source diagnostic/huge receiver. Legacy reports cannot admit the new rows.
 FORMAT = 3
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "compat/allocator/m2_vm_x86_64.c"
 REPORT_DEFAULT = ROOT / "compat/reports/allocator/x86_64/fault-seam-inventory.json"
 CANONICAL_M2_VM_FIXTURE = ROOT / "compat/allocator/m2_vm_x86_64.c"
 OS_PUBLICATION_PROFILE_DEFINE = "-DCRABC_M2_OS_PUBLICATION_PROFILE=1"
+OS_PUBLICATION_CHECK_ID = "os-aligned-page-publication-fault-receiver"
 OS_PUBLICATION_TARGET = "os_page::tests::emit_os_publication_fault_receiver_trace"
 OS_PUBLICATION_BEGIN = "CRABC_MI_M2_OS_PUBLICATION_TRACE_BEGIN"
 OS_PUBLICATION_END = "CRABC_MI_M2_OS_PUBLICATION_TRACE_END"
 OS_PUBLICATION_KEYS = tuple(
     f"os_publication.{selected}.{field}" for selected in range(1, 8)
     for field in ("page_result", "commit_branch", "map_branch", "release_once",
-                  "cleanup_retention", "unreachable", "raw_retry", "retry_statistics")
+                  "cleanup_retention", "unreachable", "raw_retry", "retry_statistics", "map_rollback")
 )
 OS_PUBLICATION_BOUNDARY = {
     "source": "src/arena.c:781-1120,1220-1297; src/page-map.c:391-515; src/os.c:240-294",
@@ -141,6 +143,7 @@ SOURCE_UNITS = (
     "src/os.c",
     "src/options.c",
     "src/page.c",
+    "src/page-map.c",
     "src/prim/prim.c",
     "src/prim/unix/prim.c",
 )
@@ -154,6 +157,7 @@ PINNED_C_SOURCE_FILES = (
     {"path": "src/os.c", "bytes": 39093, "sha256": "8410b04c2d5b37e59fff1854364fed1fba873133b064cfe02083277038388548"},
     {"path": "src/options.c", "bytes": 28585, "sha256": "760c694c7663a18ae9745deb969215544d682c15fedd87ffe2645c6d31d5ba30"},
     {"path": "src/page.c", "bytes": 44473, "sha256": "f7b1c3c0725b425516e22cf49d3ff7e03b708732fdba4bd1f4c759484d52593c"},
+    {"path": "src/page-map.c", "bytes": 22024, "sha256": "ff3509ae3d4185e9cb2a95e1f35daba3329e998bac917ac7938f1bf06dba0f78"},
     {"path": "src/prim/prim.c", "bytes": 2449, "sha256": "241b1087a0e22609de71b2deba6c771135dd37e756ea89ba79b5900165b4f229"},
     {"path": "src/prim/unix/prim.c", "bytes": 36822, "sha256": "8efeac14a9952aa7c3117ce2d9d801f93692bda6cd80e09a51ddca398d7ac774"},
 )
@@ -224,7 +228,7 @@ DIAGNOSTIC_OWNER_BOUNDARY = {
 NONCLAIMS = (
     "This selected node-62 EPERM receiver proves current-source C/Rust private diagnostic delivery through the stored default sink and custom callback; it does not qualify general FILE short-write/error/buffering parity, recursive output, selected x86 libc startup, or ambient NUMA placement.",
     "This fixed primitive-response profile does not qualify successful hardware huge pages or physical NUMA placement.",
-    "Metadata and OsAligned publication receivers remain stopped and unadmitted.",
+    "Metadata allocation/publication remains stopped; ordinary OS publication has its separate required receiver.",
     "This receipt leaves the fault-injection component and M2 partial.",
 )
 FRAGMENT_PATH = ROOT / "compat/allocator/m2-fault-seam-inventory-x86_64-v3.5.0.fragment.json"
@@ -234,10 +238,10 @@ FAULT_COMPONENT_SOURCE_MAP_RECORDS = [
     {"unit_id": "os-allocation-policy", "required_status": "partial"},
 ]
 FAULT_COMPONENT_SOURCE_UNITS = [
-    "src/os.c", "src/page-map.c", "src/prim/unix/prim.c", "src/options.c",
+    "src/os.c", "src/page-map.c", "src/prim/unix/prim.c", "src/options.c", "src/arena.c",
 ]
 FAULT_COMPONENT_UNQUALIFIED_IDS = (
-    "stopped-metadata-and-os-aligned-publication",
+    "stopped-metadata-publication",
     "remaining-ambient-and-hardware-fault-receivers",
 )
 SOURCE_ANCHORS = (
@@ -247,6 +251,7 @@ SOURCE_ANCHORS = (
     {"member": "src/os.c", "start_line": 534, "end_line": 712, "sha256": "dc9c44664aa3348206cdfe456b3a1eff19ffed26192d64ad314baf0b4d014feb"},
     {"member": "src/os.c", "start_line": 771, "end_line": 853, "sha256": "89affd5d917f2f40f32764001c58d52f72bf9e3faa23cdaa965f49bf322c05c2"},
     {"member": "src/page-map.c", "start_line": 214, "end_line": 515, "sha256": "b0218dd17e7a38ed3018fcb3f2941f5421fd72afb05c02023ce49bf21734edd3"},
+    {"member": "src/arena.c", "start_line": 781, "end_line": 1297, "sha256": "93215720a105d4e9cbc359f17668dbd08aa0271e01064f3c03fa47b7243bd383"},
 )
 SOURCE_REQUIRED_DEFINITIONS = (
     ("void mi_os_prim_free", "void _mi_os_free_ex", "void _mi_os_free"),
@@ -255,14 +260,15 @@ SOURCE_REQUIRED_DEFINITIONS = (
     ("bool _mi_os_commit_ex", "bool _mi_os_decommit", "bool _mi_os_purge_ex", "bool _mi_os_protect"),
     ("void* _mi_os_alloc_huge_os_pages", "static void mi_os_free_huge_os_pages"),
     ("static bool mi_page_map_init_once", "bool _mi_page_map_register"),
+    ("static uint8_t* mi_arenas_page_alloc_fresh_area", "static mi_page_t* mi_arenas_page_alloc_fresh", "static void mi_arenas_page_free_prim"),
 )
 BRANCH_OPEN_CONDITION = "The named source relation is bounded; it does not promote an unselected receiver."
 FAULT_COMPONENT_UNQUALIFIED_MATRIX = [
     {
-        "id": "stopped-metadata-and-os-aligned-publication",
-        "source_scope": "PageMetadataMapping/meta and OsAlignedPage claim-to-publication receivers.",
+        "id": "stopped-metadata-publication",
+        "source_scope": "PageMetadataMapping/meta allocation and publication receiver.",
         "required_evidence": [
-            "lifted metadata/OsAligned-publication authority boundary",
+            "lifted metadata-publication authority boundary",
             "native typed publication and rollback owner matrix",
         ],
     },
@@ -276,7 +282,7 @@ FAULT_COMPONENT_UNQUALIFIED_MATRIX = [
     },
 ]
 FAULT_COMPONENT_REMAINING_CONDITIONS = [
-    "Metadata-map publication and OsAligned claim-to-publication receivers remain stopped and unadmitted.",
+    "Metadata-map publication remains stopped and unadmitted; the ordinary OS claim/publication receiver is required independently of hardware.",
     "The selected node-62 fault diagnostic relation is source-bound and private; general diagnostic receivers, FILE parity, and recursive output remain unqualified.",
     "Ambient hardware huge-page success, physical NUMA placement, unselected callers, and general callback/statistics owners remain unqualified.",
     "The fault-injection component and M2 remain partial.",
@@ -316,7 +322,7 @@ class StoppedReceiver:
     reason: str
 
 
-# Keep these six source groups in source order.  The branch rows below are
+# Keep these source groups in their stable declaration order.  The branch rows below are
 # deliberately more granular: one anchor must not turn an unrelated source
 # receiver into an admitted fault result merely because it shares os.c.
 SOURCE_ROWS = (
@@ -368,6 +374,11 @@ SOURCE_ROWS = (
         "src/page-map.c:214-515",
         ("page_map.rs and process_page_map.rs completed M2 matrix",),
         ("page-map-completed-check-dependency",),
+    ),
+    SourceRow(
+        "os-aligned-page-publication", "src/arena.c:781-1297",
+        ("os_page.rs OsAlignedPageClaim/PublishedOsAlignedPage and single_thread.rs rollback_fresh_os_aligned",),
+        tuple("os-publication-" + case for case in OS_PUBLICATION_BOUNDARY["cases"]),
     ),
 )
 
@@ -530,6 +541,15 @@ BRANCH_ROWS = (
         "existing completed PageMap evidence is required input only; stopped metadata publication is not admitted here",
         "completed-dependency",
     ),
+    *(BranchRow(
+        "os-publication-" + case, "os-aligned-page-publication",
+        "arena.c ordinary OS claim/publication case " + str(index) + ": " + case,
+        OS_PUBLICATION_TARGET, point, ordinal, "ENOMEM",
+        "private source mapping; C void free and Rust typed owner remain distinct; retry accounts once",
+        "exact source branch, unreachable failed page, and retained-range lower release relation",
+    ) for index, (case, point, ordinal) in enumerate(zip(OS_PUBLICATION_BOUNDARY["cases"],
+        ("Map", "Commit", "Commit", "Map", "Commit+Unmap", "Map+Unmap", "Unmap"),
+        (1, 1, 2, 1, 1, 1, 1)), 1)),
 )
 
 UNQUALIFIED_BRANCHES: tuple[dict[str, str], ...] = ()
@@ -538,10 +558,6 @@ STOPPED_RECEIVERS = (
     StoppedReceiver(
         "metadata-map-commit-publication",
         "PageMetadataMapping/meta allocation and publication authority is stopped.",
-    ),
-    StoppedReceiver(
-        "os-aligned-page-publication",
-        "OsAlignedPageClaim claim-to-publication transactions are stopped.",
     ),
 )
 
@@ -636,6 +652,11 @@ def load_fragment(path: Path = FRAGMENT_PATH) -> dict[str, Any]:
         "kind": "c-rust-fault-seam-inventory",
         "target": RUST_TARGET,
         "expected_passed_test_count": 1,
+    }, {
+        "id": OS_PUBLICATION_CHECK_ID,
+        "kind": "c-rust-fault-seam-inventory",
+        "target": OS_PUBLICATION_TARGET,
+        "expected_passed_test_count": 1,
     }]:
         raise EvidenceError("fault inventory M2 check roster changed")
     definitions = component.get("bounded_source_definitions")
@@ -649,7 +670,7 @@ def load_fragment(path: Path = FRAGMENT_PATH) -> dict[str, Any]:
         if (
             not isinstance(definition, Mapping)
             or set(definition) != {"evidence_check_ids", "id", "required_definitions", "source_anchor"}
-            or definition.get("evidence_check_ids") != [FAULT_COMPONENT_CHECK_ID]
+            or definition.get("evidence_check_ids") != [OS_PUBLICATION_CHECK_ID if row.identifier == "os-aligned-page-publication" else FAULT_COMPONENT_CHECK_ID]
             or definition.get("required_definitions") != list(required_definitions)
             or definition.get("source_anchor") != anchor
         ):
@@ -668,7 +689,7 @@ def load_fragment(path: Path = FRAGMENT_PATH) -> dict[str, Any]:
             or set(branch) != {"disposition", "evidence_check_ids", "id", "missing_conditions", "source_anchors", "source_scope"}
             or branch.get("disposition") != "admitted-current-source-c-rust-relation"
             or branch.get("source_scope") != row.c_branch
-            or branch.get("evidence_check_ids") != [FAULT_COMPONENT_CHECK_ID]
+            or branch.get("evidence_check_ids") != [OS_PUBLICATION_CHECK_ID if row.source_row == "os-aligned-page-publication" else FAULT_COMPONENT_CHECK_ID]
             or branch.get("source_anchors") != [anchors_by_source_row[row.source_row]]
             or branch.get("missing_conditions") != [BRANCH_OPEN_CONDITION]
         ):
@@ -890,8 +911,12 @@ def _validate_huge_branch_receipt(receipt: object, runner: Any) -> dict[str, Any
 def validate_report(report: Mapping[str, Any]) -> dict[str, Any]:
     """Validate the immutable, current-source fault admission receipt shape."""
 
+    if report.get("profile") == "os-aligned-page-publication":
+        return validate_os_publication_report(report)
+    if "os_publication_receipt" not in report:
+        raise ValueError("fault inventory OS publication receipt is missing")
     expected_keys = {
-        "architecture", "branch_records", "diagnostic_owner_boundary", "format",
+        "architecture", "branch_records", "diagnostic_owner_boundary", "format", "os_publication_receipt",
         "fault_component_fragment", "huge_branch_receipt", "inventory", "nonclaims", "schema", "status",
         "stopped_receivers", "source_state_after", "source_state_before", "upstream",
         "unqualified_branches", "vm_receipt",
@@ -921,6 +946,7 @@ def validate_report(report: Mapping[str, Any]) -> dict[str, Any]:
     if report.get("fault_component_fragment") != fragment_receipt:
         raise ValueError("fault inventory fragment receipt changed")
     huge_receipt = _validate_huge_branch_receipt(report.get("huge_branch_receipt"), runner)
+    os_receipt = validate_os_publication_report(report["os_publication_receipt"])
     pin = runner.load_pin()
     if report.get("upstream") != {
         "archive_sha256": pin["sha256"], "revision": pin["revision"],
@@ -952,13 +978,14 @@ def validate_report(report: Mapping[str, Any]) -> dict[str, Any]:
         )
     except runner.HarnessError as error:
         raise ValueError("fault inventory source attestation changed") from error
-    if not before["worktree_clean"] or before != after:
+    if not before["worktree_clean"] or before != after or os_receipt["source_state_before"] != before:
         raise ValueError("fault inventory source state is not one clean revision")
     return {
         "branch_records": records,
         "diagnostic_owner_boundary": dict(DIAGNOSTIC_OWNER_BOUNDARY),
         "fault_component_fragment": fragment_receipt,
         "huge_branch_receipt": huge_receipt,
+        "os_publication_receipt": os_receipt,
         "inventory": inventory,
         "nonclaims": nonclaims,
         "stopped_receivers": stopped,
@@ -2235,6 +2262,7 @@ def run_evidence(
     except runner.HarnessError as error:
         raise EvidenceError(str(error)) from error
 
+    os_receipt = run_os_publication_receiver(offline=offline, test_program=test_program)
     artifacts.mkdir(parents=True, exist_ok=True)
     try:
         with runner.temporary_directory(prefix="crabc-mimalloc-fault-seam-source-") as temporary:
@@ -2292,6 +2320,7 @@ def run_evidence(
         raise EvidenceError(str(error)) from error
     report = {
         "architecture": "x86_64",
+        "os_publication_receipt": os_receipt,
         "branch_records": _branch_records(),
         "format": FORMAT,
         "fault_component_fragment": fragment_receipt,
@@ -2362,7 +2391,7 @@ def main() -> int:
             raise EvidenceError("fault inventory accepts one focused mode")
         if arguments.os_publication_receiver:
             run_os_publication_receiver(offline=arguments.offline)
-            print("allocator x86-64 fault seam inventory: OS publication C/Rust receiver PASS (56 relations)")
+            print("allocator x86-64 fault seam inventory: OS publication C/Rust receiver PASS (63 relations)")
             return 0
         if arguments.compile_only:
             compile_huge_branch_profile(offline=arguments.offline)

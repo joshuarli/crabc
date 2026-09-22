@@ -784,6 +784,8 @@ static struct {
   size_t length;
   bool active;
   bool retained;
+  bool map_failure_complete;
+  bool map_cleanup_allocated;
 } os_publication_probe;
 #endif
 
@@ -864,10 +866,20 @@ void* __wrap_mmap(void* address, size_t length, int protection, int flags,
 #if defined(CRABC_M2_OS_PUBLICATION_PROFILE)
   if (os_publication_probe.active && (os_publication_probe.selected == 1
       || ((os_publication_probe.selected == 4 || os_publication_probe.selected == 6)
-          && os_publication_probe.commits >= 2 && protection == (PROT_READ | PROT_WRITE)))) {
+          && os_publication_probe.commits >= 2 && protection == (PROT_READ | PROT_WRITE)
+          && !os_publication_probe.map_failure_complete))) {
     os_publication_probe.map_faults++;
+    // Fail both the source hint and its null-hint retry for this one
+    // PageMap allocation. The subsequent rollback's allocation stays real.
+    if (address == NULL) os_publication_probe.map_failure_complete = true;
     errno = ENOMEM;
     return MAP_FAILED;
+  }
+  if (os_publication_probe.active && os_publication_probe.map_failure_complete
+      && os_publication_probe.selected != 1 && protection == (PROT_READ | PROT_WRITE)) {
+    void* result = __real_mmap(address, length, protection, flags, descriptor, offset);
+    if (result != MAP_FAILED) os_publication_probe.map_cleanup_allocated = true;
+    return result;
   }
 #endif
   if (large_only_failure_probe.active) {
@@ -3729,7 +3741,7 @@ static int run_os_publication_child(int descriptor) {
   mi_option_set(mi_option_allow_large_os_pages, 0);
   mi_option_set(mi_option_show_errors, 0);
   mi_theap_t* const theap = _mi_subproc_main()->theap_meta;
-  bool facts[8] = {0};
+  bool facts[9] = {0};
   for (unsigned attempt = 0; attempt < 16; attempt++) {
     memset(&os_publication_probe, 0, sizeof(os_publication_probe));
     os_publication_probe.selected = os_publication_case;
@@ -3756,6 +3768,8 @@ static int run_os_publication_child(int descriptor) {
         || _mi_safe_ptr_page((uint8_t*)os_publication_probe.base + 128 * MI_KiB) == NULL;
     facts[6] = true;
     facts[7] = true;
+    facts[8] = !(os_publication_case == 4 || os_publication_case == 6)
+        || os_publication_probe.map_cleanup_allocated;
     if (os_publication_probe.retained) {
       const int64_t reserved = _mi_subproc_main()->stats.reserved.current;
       const int64_t committed = _mi_subproc_main()->stats.committed.current;
@@ -3766,7 +3780,7 @@ static int run_os_publication_child(int descriptor) {
       facts[7] = reserved == _mi_subproc_main()->stats.reserved.current
           && committed == _mi_subproc_main()->stats.committed.current;
     }
-    for (size_t i = 0; i < 8; i++) if (!facts[i]) return (int)(20 + i);
+    for (size_t i = 0; i < 9; i++) if (!facts[i]) return (int)(20 + i);
     return write(descriptor, facts, sizeof(facts)) == sizeof(facts) ? 0 : 40;
   }
   return 41;
@@ -3774,14 +3788,14 @@ static int run_os_publication_child(int descriptor) {
 
 int main(void) {
   const char* fields[] = {"page_result", "commit_branch", "map_branch", "release_once",
-      "cleanup_retention", "unreachable", "raw_retry", "retry_statistics"};
+      "cleanup_retention", "unreachable", "raw_retry", "retry_statistics", "map_rollback"};
   puts("CRABC_MI_M2_OS_PUBLICATION_TRACE_BEGIN");
   for (unsigned selected = 1; selected <= 7; selected++) {
-    bool facts[8] = {0};
+    bool facts[9] = {0};
     os_publication_case = selected;
     if (!capture_large_page_retry_child("OS publication child", run_os_publication_child,
         facts, sizeof(facts))) return 1;
-    for (size_t i = 0; i < 8; i++)
+    for (size_t i = 0; i < 9; i++)
       printf("os_publication.%u.%s=%u\n", selected, fields[i], (unsigned)facts[i]);
   }
   puts("CRABC_MI_M2_OS_PUBLICATION_TRACE_END");

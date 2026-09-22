@@ -52,6 +52,14 @@ class NativeFaultInventoryM2AssemblyTests(unittest.TestCase):
                     "id": INVENTORY.FAULT_COMPONENT_CHECK_ID,
                     "passed_test_count": 1,
                     "target": INVENTORY.RUST_TARGET,
+                }, {
+                    "comparison_status": "source-specific-relation-verified",
+                    "component": "fault-injection",
+                    "command": report["os_publication_receipt"]["rust_run"]["command"],
+                    "evidence_scope": "fixed-pinned-c-branch-profile-and-private-rust-fault-plan",
+                    "id": INVENTORY.OS_PUBLICATION_CHECK_ID,
+                    "passed_test_count": 1,
+                    "target": INVENTORY.OS_PUBLICATION_TARGET,
                 }],
             )
 

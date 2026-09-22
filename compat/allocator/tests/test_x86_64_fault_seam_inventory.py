@@ -160,6 +160,7 @@ def _valid_report(runner: object, profile: dict[str, object]) -> dict[str, objec
         "diagnostic_owner_boundary": INVENTORY.DIAGNOSTIC_OWNER_BOUNDARY,
         "fault_component_fragment": INVENTORY.fault_component_fragment_receipt(),
         "format": INVENTORY.FORMAT,
+        "os_publication_receipt": _valid_os_publication_report(),
         "huge_branch_receipt": {
             "c_build": c_build,
             "c_compiled_source_closure": {
@@ -506,11 +507,12 @@ class FaultInventoryShapeTests(unittest.TestCase):
                 "os-range-transition-fault-owners",
                 "os-huge-branch-fault-owners",
                 "page-map-completed-dependency",
+                "os-aligned-page-publication",
             ],
         )
         self.assertEqual(
             [receiver.identifier for receiver in INVENTORY.STOPPED_RECEIVERS],
-            ["metadata-map-commit-publication", "os-aligned-page-publication"],
+            ["metadata-map-commit-publication"],
         )
 
     def test_partial_m2_fragment_names_the_same_fixed_inventory(self) -> None:
@@ -527,6 +529,11 @@ class FaultInventoryShapeTests(unittest.TestCase):
                 "id": INVENTORY.FAULT_COMPONENT_CHECK_ID,
                 "kind": "c-rust-fault-seam-inventory",
                 "target": INVENTORY.RUST_TARGET,
+                "expected_passed_test_count": 1,
+            }, {
+                "id": INVENTORY.OS_PUBLICATION_CHECK_ID,
+                "kind": "c-rust-fault-seam-inventory",
+                "target": INVENTORY.OS_PUBLICATION_TARGET,
                 "expected_passed_test_count": 1,
             }],
         )
@@ -640,6 +647,13 @@ class FaultInventoryShapeTests(unittest.TestCase):
                 record["sha256"] = "0" * 64
                 with self.assertRaisesRegex(ValueError, "source"):
                     INVENTORY.validate_report(report)
+
+    def test_canonical_report_cannot_admit_os_row_without_os_receiver(self) -> None:
+        with _retained_profile_contract() as (runner, profile):
+            report = _valid_report(runner, profile)
+            report.pop("os_publication_receipt", None)
+            with self.assertRaisesRegex(ValueError, "OS publication"):
+                INVENTORY.validate_report(report)
 
     def test_report_names_the_bounded_private_receiver_without_admitting_general_parity(self) -> None:
         with _retained_profile_contract() as (runner, profile):

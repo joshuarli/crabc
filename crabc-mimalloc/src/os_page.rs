@@ -1391,7 +1391,8 @@ mod tests {
             });
             let allocation = OsAlignedPageClaim::allocate_for_process(process, config(4 * KIB),
                 128 * KIB, 128 * KIB, crate::arena::ArenaId::none());
-            let mut facts = [false; 8];
+            let mut facts = [false; 9];
+            facts[8] = true;
             let owner = match allocation {
                 Err(failure) => {
                     let expected_stage = match selected {
@@ -1434,20 +1435,24 @@ mod tests {
                     }.is_ok();
                     facts[0] = registered == (selected == 7);
                     facts[2] = selected == 7 || fault.observed() >= 1;
-                    let published = if registered {
+                    let release = if registered {
+                        // Transfer the sole release right before reconstructing
+                        // a terminal Published token from its source MemoryId.
+                        claim.into_published().unwrap();
                         let published = unsafe { PublishedOsAlignedPage::from_page_for_process(
                             process, config(4 * KIB), primary) }.unwrap();
                         unsafe { map.unregister_range(start.as_ptr(), layout.page_map_size()) }.unwrap();
-                        Some(published)
-                    } else { None };
-                    assert!(unsafe { claim.clear_secondary_metadata(primary) });
-                    assert!(session.retire_page(unsafe { primary.as_mut() }).is_some());
-                    facts[5] = unsafe { map.checked_lookup(start.as_ptr()) }.is_null();
-                    let release = if let Some(published) = published {
-                        claim.into_published().unwrap();
+                        assert!(unsafe { published.clear_secondary_metadata() });
+                        assert!(session.retire_page(unsafe { primary.as_mut() }).is_some());
                         fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
                         unsafe { published.reclaim() }
-                    } else { claim.release() };
+                    } else {
+                        facts[8] = map.test_lazy_submap_allocation_count() == 2;
+                        assert!(unsafe { claim.clear_secondary_metadata(primary) });
+                        assert!(session.retire_page(unsafe { primary.as_mut() }).is_some());
+                        claim.release()
+                    };
+                    facts[5] = unsafe { map.checked_lookup(start.as_ptr()) }.is_null();
                     facts[3] = if selected == 7 { fault.observed() == 1 }
                         else { fault.secondary_observed() == 1 };
                     facts[4] = release.is_err() == (selected >= 5);
@@ -1463,7 +1468,7 @@ mod tests {
             facts[7] = process.subprocess().vm_statistics().snapshot() == before_retry;
             assert!(facts.iter().all(|fact| *fact), "OS publication case {selected}: {facts:?}");
             for (field, value) in ["page_result", "commit_branch", "map_branch", "release_once",
-                "cleanup_retention", "unreachable", "raw_retry", "retry_statistics"]
+                "cleanup_retention", "unreachable", "raw_retry", "retry_statistics", "map_rollback"]
                 .into_iter().zip(facts) {
                 std::println!("os_publication.{selected}.{field}={}", u8::from(value));
             }

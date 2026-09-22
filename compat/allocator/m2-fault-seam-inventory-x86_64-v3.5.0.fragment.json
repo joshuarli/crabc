@@ -20,7 +20,8 @@
       "src/os.c",
       "src/page-map.c",
       "src/prim/unix/prim.c",
-      "src/options.c"
+      "src/options.c",
+      "src/arena.c"
     ],
     "source_map_records": [
       {
@@ -130,6 +131,23 @@
         ],
         "evidence_check_ids": [
           "source-indexed-fault-seam-inventory"
+        ]
+      },
+      {
+        "id": "os-aligned-page-publication",
+        "source_anchor": {
+          "member": "src/arena.c",
+          "start_line": 781,
+          "end_line": 1297,
+          "sha256": "93215720a105d4e9cbc359f17668dbd08aa0271e01064f3c03fa47b7243bd383"
+        },
+        "required_definitions": [
+          "static uint8_t* mi_arenas_page_alloc_fresh_area",
+          "static mi_page_t* mi_arenas_page_alloc_fresh",
+          "static void mi_arenas_page_free_prim"
+        ],
+        "evidence_check_ids": [
+          "os-aligned-page-publication-fault-receiver"
         ]
       }
     ],
@@ -456,14 +474,147 @@
         "missing_conditions": [
           "The named source relation is bounded; it does not promote an unselected receiver."
         ]
+      },
+      {
+        "id": "os-publication-map-failure",
+        "disposition": "admitted-current-source-c-rust-relation",
+        "source_scope": "arena.c ordinary OS claim/publication case 1: map-failure",
+        "source_anchors": [
+          {
+            "member": "src/arena.c",
+            "start_line": 781,
+            "end_line": 1297,
+            "sha256": "93215720a105d4e9cbc359f17668dbd08aa0271e01064f3c03fa47b7243bd383"
+          }
+        ],
+        "evidence_check_ids": [
+          "os-aligned-page-publication-fault-receiver"
+        ],
+        "missing_conditions": [
+          "The named source relation is bounded; it does not promote an unselected receiver."
+        ]
+      },
+      {
+        "id": "os-publication-metadata-commit-failure",
+        "disposition": "admitted-current-source-c-rust-relation",
+        "source_scope": "arena.c ordinary OS claim/publication case 2: metadata-commit-failure",
+        "source_anchors": [
+          {
+            "member": "src/arena.c",
+            "start_line": 781,
+            "end_line": 1297,
+            "sha256": "93215720a105d4e9cbc359f17668dbd08aa0271e01064f3c03fa47b7243bd383"
+          }
+        ],
+        "evidence_check_ids": [
+          "os-aligned-page-publication-fault-receiver"
+        ],
+        "missing_conditions": [
+          "The named source relation is bounded; it does not promote an unselected receiver."
+        ]
+      },
+      {
+        "id": "os-publication-block-commit-failure",
+        "disposition": "admitted-current-source-c-rust-relation",
+        "source_scope": "arena.c ordinary OS claim/publication case 3: block-commit-failure",
+        "source_anchors": [
+          {
+            "member": "src/arena.c",
+            "start_line": 781,
+            "end_line": 1297,
+            "sha256": "93215720a105d4e9cbc359f17668dbd08aa0271e01064f3c03fa47b7243bd383"
+          }
+        ],
+        "evidence_check_ids": [
+          "os-aligned-page-publication-fault-receiver"
+        ],
+        "missing_conditions": [
+          "The named source relation is bounded; it does not promote an unselected receiver."
+        ]
+      },
+      {
+        "id": "os-publication-page-map-publication-failure",
+        "disposition": "admitted-current-source-c-rust-relation",
+        "source_scope": "arena.c ordinary OS claim/publication case 4: page-map-publication-failure",
+        "source_anchors": [
+          {
+            "member": "src/arena.c",
+            "start_line": 781,
+            "end_line": 1297,
+            "sha256": "93215720a105d4e9cbc359f17668dbd08aa0271e01064f3c03fa47b7243bd383"
+          }
+        ],
+        "evidence_check_ids": [
+          "os-aligned-page-publication-fault-receiver"
+        ],
+        "missing_conditions": [
+          "The named source relation is bounded; it does not promote an unselected receiver."
+        ]
+      },
+      {
+        "id": "os-publication-metadata-commit-and-cleanup-failure",
+        "disposition": "admitted-current-source-c-rust-relation",
+        "source_scope": "arena.c ordinary OS claim/publication case 5: metadata-commit-and-cleanup-failure",
+        "source_anchors": [
+          {
+            "member": "src/arena.c",
+            "start_line": 781,
+            "end_line": 1297,
+            "sha256": "93215720a105d4e9cbc359f17668dbd08aa0271e01064f3c03fa47b7243bd383"
+          }
+        ],
+        "evidence_check_ids": [
+          "os-aligned-page-publication-fault-receiver"
+        ],
+        "missing_conditions": [
+          "The named source relation is bounded; it does not promote an unselected receiver."
+        ]
+      },
+      {
+        "id": "os-publication-page-map-and-cleanup-failure",
+        "disposition": "admitted-current-source-c-rust-relation",
+        "source_scope": "arena.c ordinary OS claim/publication case 6: page-map-and-cleanup-failure",
+        "source_anchors": [
+          {
+            "member": "src/arena.c",
+            "start_line": 781,
+            "end_line": 1297,
+            "sha256": "93215720a105d4e9cbc359f17668dbd08aa0271e01064f3c03fa47b7243bd383"
+          }
+        ],
+        "evidence_check_ids": [
+          "os-aligned-page-publication-fault-receiver"
+        ],
+        "missing_conditions": [
+          "The named source relation is bounded; it does not promote an unselected receiver."
+        ]
+      },
+      {
+        "id": "os-publication-published-page-release-failure",
+        "disposition": "admitted-current-source-c-rust-relation",
+        "source_scope": "arena.c ordinary OS claim/publication case 7: published-page-release-failure",
+        "source_anchors": [
+          {
+            "member": "src/arena.c",
+            "start_line": 781,
+            "end_line": 1297,
+            "sha256": "93215720a105d4e9cbc359f17668dbd08aa0271e01064f3c03fa47b7243bd383"
+          }
+        ],
+        "evidence_check_ids": [
+          "os-aligned-page-publication-fault-receiver"
+        ],
+        "missing_conditions": [
+          "The named source relation is bounded; it does not promote an unselected receiver."
+        ]
       }
     ],
     "unqualified_failure_matrix": [
       {
-        "id": "stopped-metadata-and-os-aligned-publication",
-        "source_scope": "PageMetadataMapping/meta and OsAlignedPage claim-to-publication receivers.",
+        "id": "stopped-metadata-publication",
+        "source_scope": "PageMetadataMapping/meta allocation and publication receiver.",
         "required_evidence": [
-          "lifted metadata/OsAligned-publication authority boundary",
+          "lifted metadata-publication authority boundary",
           "native typed publication and rollback owner matrix"
         ]
       },
@@ -482,10 +633,16 @@
         "kind": "c-rust-fault-seam-inventory",
         "target": "os::tests::emit_m2_fault_seam_inventory_c_rust_trace",
         "expected_passed_test_count": 1
+      },
+      {
+        "id": "os-aligned-page-publication-fault-receiver",
+        "kind": "c-rust-fault-seam-inventory",
+        "target": "os_page::tests::emit_os_publication_fault_receiver_trace",
+        "expected_passed_test_count": 1
       }
     ],
     "remaining_conditions": [
-      "Metadata-map publication and OsAligned claim-to-publication receivers remain stopped and unadmitted.",
+      "Metadata-map publication remains stopped and unadmitted; the ordinary OS claim/publication receiver is required independently of hardware.",
       "The selected node-62 fault diagnostic relation is source-bound and private; general diagnostic receivers, FILE parity, and recursive output remain unqualified.",
       "Ambient hardware huge-page success, physical NUMA placement, unselected callers, and general callback/statistics owners remain unqualified.",
       "The fault-injection component and M2 remain partial."

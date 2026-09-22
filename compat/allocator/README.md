@@ -2132,6 +2132,7 @@ The source-indexed OS/page-map fault receiver admission is separate:
 
 ```sh
 ./compat/allocator/run-x86_64.sh allocator-fault-seam-inventory
+./compat/allocator/run-x86_64.sh allocator-fault-seam-inventory --os-publication-receiver
 ./compat/allocator/run-x86_64.sh allocator-fault-seam-inventory --retry-helper-regression
 ./compat/allocator/run-x86_64.sh allocator-fault-seam-inventory --timeout-clock-helper-regression
 ./compat/allocator/run-x86_64.sh allocator-fault-seam-inventory --placement-warning-helper-regression
@@ -2139,17 +2140,35 @@ The source-indexed OS/page-map fault receiver admission is separate:
 ./compat/allocator/run-x86_64.sh allocator-fault-seam-inventory --huge-branch-diagnosis
 ```
 
-It retains a fixed pinned-C direct profile and the private Rust
-`os::tests::emit_m2_fault_seam_inventory_c_rust_trace` stream. The finite rows
-cover the selected regular/aligned cleanup, range-transition retry, huge
-partial-prefix/timeout/noncontiguous/release, and best-effort `mbind` branches.
-The receipt reconstructs both streams from raw command, working-directory,
-stdout, stderr, status, fixture, source closure, and current-source records
-before its one partial-M2 check is admitted. Its C warning observation enables
-the source option and records the prefix/body callback order; no Rust
-diagnostic-output parity is claimed. Metadata and `OsAligned` publication,
-actual huge-page success, ambient NUMA placement, production callers, and M2
-completion remain outside this receipt.
+The canonical receipt requires both the source diagnostic/huge profile and
+an ordinary OS publication profile. Each reconstructs its pinned C and Rust
+streams from raw commands, status, source closure, fixture identity, and an
+unchanged clean revision. The two required M2 checks retain independent exact
+Rust targets; an ordinary-only receipt cannot stand in for the canonical
+aggregate or its hardware requirements.
+
+`--os-publication-receiver` runs only the ordinary receiver. Its seven legal
+cases cover total aligned-allocation failure, metadata and block commitment
+failure, PageMap publication failure, two paired cleanup failures, and release
+after successful publication. The C profile calls the unchanged
+`_mi_arenas_page_alloc` and `_mi_arenas_page_free` bodies and interposes only
+`mmap`, `mprotect`, and `munmap` at the existing native seam. PageMap failure
+rejects one complete hint/null-hint allocation attempt, then allows the real
+rollback allocation. Rust exercises `OsAlignedPageClaim`, primary/alias
+publication, `PageMap`, and `PublishedOsAlignedPage`, retaining the exact typed
+owner when release fails. Sixty-three source relations include unreachable
+failed pages and no repeated statistics during raw retry. C's upper free is
+void: the C fixture's observed failed range enables lower primitive cleanup,
+not an invented C retry token. Corrupted-alias refusal remains the separate
+Rust safety difference in `known-differences.md`.
+
+The ordinary report is retained as
+`compat/reports/allocator/x86_64/fault-seam-inventory/os-publication.json`.
+The canonical inventory admits its named OS rows only with that validated
+receiver from the same revision. Metadata publication, general caller and
+callback coverage, actual hardware huge-page success, ambient NUMA placement,
+and full M2 remain unqualified. The existing private diagnostic receiver does
+not qualify general FILE transport or recursive output.
 
 The focused retry-helper regression compiles and runs only the fixture's
 synthetic three-call predicate. It accepts `1GiB, 1GiB, 2MiB` with the second
