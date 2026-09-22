@@ -43,10 +43,17 @@ class NativeStaticSourceRuntimeClosureTests(unittest.TestCase):
             command.extend(["--extern", f"{name}={artifact}"])
         return command, target, runtime, source
 
+    @staticmethod
+    def _emitted(runtime: dict[str, Path]) -> dict[Path, dict[str, object]]:
+        return {
+            path: {"target_name": name, "package_id": f"path+file:///source/{name}", "source": f"/source/{name}/lib.rs"}
+            for name, path in runtime.items()
+        }
+
     def test_primary_record_binds_all_source_runtime_externs(self) -> None:
         command, target, runtime, source = self._command(immediate_abort=True)
 
-        record = CLOSURE.command_record(command, target, runtime, "crabc-libc", source)
+        record = CLOSURE.command_record(command, target, runtime, self._emitted(runtime), "crabc-libc", source)
 
         self.assertEqual(set(record["runtime_externs"]), set(runtime))
         self.assertEqual(
@@ -58,7 +65,16 @@ class NativeStaticSourceRuntimeClosureTests(unittest.TestCase):
         command, target, runtime, source = self._command(immediate_abort=False)
 
         with self.assertRaisesRegex(CLOSURE.ClosureError, "panic=immediate-abort"):
-            CLOSURE.command_record(command, target, runtime, "crabc-libc", source)
+            CLOSURE.command_record(command, target, runtime, self._emitted(runtime), "crabc-libc", source)
+
+    def test_primary_record_rejects_unrecorded_target_extern(self) -> None:
+        command, target, runtime, source = self._command(immediate_abort=True)
+        extra = target / "libextra.rlib"
+        extra.write_bytes(b"not-a-recorded-cargo-artifact")
+        command.extend(["--extern", f"extra={extra}"])
+
+        with self.assertRaisesRegex(CLOSURE.ClosureError, "does not bind an emitted Cargo artifact"):
+            CLOSURE.command_record(command, target, runtime, self._emitted(runtime), "crabc-libc", source)
 
 
 if __name__ == "__main__":

@@ -325,6 +325,41 @@ def artifact_for_source(records: Sequence[dict[str, Any]], source: pathlib.Path,
     return artifact_path(matches[0], target, f"Cargo {name} artifact", suffix)
 
 
+def emitted_artifacts(records: Sequence[dict[str, Any]], target: pathlib.Path) -> dict[pathlib.Path, dict[str, object]]:
+    """Index Cargo-declared target artifacts before any rustc extern is trusted."""
+
+    emitted: dict[pathlib.Path, dict[str, object]] = {}
+    for record in records:
+        if record.get("reason") != "compiler-artifact":
+            continue
+        target_record = record.get("target")
+        package_id = record.get("package_id")
+        if not isinstance(target_record, dict) or not isinstance(package_id, str):
+            fail("Cargo compiler artifact lacks target identity")
+        name = target_record.get("name")
+        source = target_record.get("src_path")
+        filenames = record.get("filenames")
+        if not isinstance(name, str) or not isinstance(source, str) or not isinstance(filenames, list):
+            fail("Cargo compiler artifact has malformed identity")
+        source_path = physical(pathlib.Path(source), f"Cargo {name} artifact source")
+        for raw in filenames:
+            if not isinstance(raw, str):
+                fail(f"Cargo {name} artifact has a non-path filename")
+            artifact = physical(pathlib.Path(raw), f"Cargo {name} emitted artifact")
+            try:
+                artifact.relative_to(target)
+            except ValueError as error:
+                raise ClosureError(f"Cargo {name} emitted artifact escapes private target root: {artifact}") from error
+            identity = {"target_name": name, "package_id": package_id, "source": str(source_path)}
+            existing = emitted.get(artifact)
+            if existing is not None and existing != identity:
+                fail(f"Cargo emits one artifact path with conflicting identities: {artifact}")
+            emitted[artifact] = identity
+    if not emitted:
+        fail("Cargo JSON stream declares no target artifacts")
+    return emitted
+
+
 def cargo_commands(stderr_path: pathlib.Path) -> list[list[str]]:
     commands: list[list[str]] = []
     for rendered in re.findall(r"Running `([^`]+)`", stderr_path.read_text(encoding="utf-8")):
@@ -381,7 +416,9 @@ def externs(command: Sequence[str], description: str) -> dict[str, pathlib.Path]
 
 
 def command_record(command: Sequence[str], target: pathlib.Path, expected_runtime: dict[str, pathlib.Path],
-                   crate: str, source: pathlib.Path) -> dict[str, object]:
+                   emitted: dict[pathlib.Path, dict[str, object]], crate: str, source: pathlib.Path) -> dict[str, object]:
+    """Bind one target rustc command to source and Cargo-declared artifacts."""
+
     command_has_source(command, source, f"Cargo {crate} rustc")
     values = [*option_values(command, "-C"), *option_values(command, "-Z")]
     missing = [flag for flag in RUNTIME_FLAGS if flag.removeprefix("-C").removeprefix("-Z") not in values]
@@ -396,13 +433,22 @@ def command_record(command: Sequence[str], target: pathlib.Path, expected_runtim
         if actual != artifact:
             fail(f"Cargo {crate} rustc {name} extern differs from the source-built artifact")
         selected[name] = file_record(actual, f"Cargo {crate} {name} extern")
-    for name, path in crate_externs.items():
+    all_externs: dict[str, dict[str, object]] = {}
+    for name, artifact in crate_externs.items():
         try:
-            path.relative_to(target)
+            artifact.relative_to(target)
         except ValueError as error:
-            raise ClosureError(f"Cargo {crate} rustc admits external Rust artifact {name}: {path}") from error
-    return {"arguments": list(command), "runtime_externs": selected,
-            "all_externs": {name: file_record(path, f"Cargo {crate} {name} extern") for name, path in sorted(crate_externs.items())}}
+            raise ClosureError(f"Cargo {crate} rustc admits external Rust artifact {name}: {artifact}") from error
+        identity = emitted.get(artifact)
+        if identity is None:
+            fail(f"Cargo {crate} rustc {name} extern does not bind an emitted Cargo artifact")
+        target_name = identity["target_name"]
+        if not isinstance(target_name, str):
+            fail(f"Cargo {crate} rustc {name} extern has malformed emitted target identity")
+        if FORBIDDEN_RUNTIME_NAMES.search(name) or FORBIDDEN_RUNTIME_NAMES.search(target_name):
+            fail(f"Cargo {crate} rustc admits forbidden runtime extern {name} from {target_name}")
+        all_externs[name] = {**file_record(artifact, f"Cargo {crate} {name} extern"), "artifact": identity}
+    return {"arguments": list(command), "runtime_externs": selected, "all_externs": all_externs}
 
 
 def required_tool(sysroot: pathlib.Path, name: str) -> pathlib.Path:
@@ -547,19 +593,30 @@ def build(arguments: argparse.Namespace) -> pathlib.Path:
     stdout_path, stderr_path = work / "cargo.stdout.jsonl", work / "cargo.stderr.log"
     run(command, environment, stdout_path, stderr_path, "source-built native static runtime Cargo graph")
     records = cargo_records(stdout_path)
-    rlibs = {
-        name: artifact_for_source(records, physical(rust_source / source, f"pinned {name} source"), name, target, ".rlib")
+    emitted = emitted_artifacts(records, target)
+    runtime_sources = {
+        name: physical(rust_source / source, f"pinned {name} source")
         for name, source in RUNTIME_SOURCES.items()
+    }
+    rlibs = {
+        name: artifact_for_source(records, source, name, target, ".rlib")
+        for name, source in runtime_sources.items()
     }
     libc_source = physical(ROOT / "libc" / "src" / "lib.rs", "crabc-libc source")
     archive = artifact_for_source(records, libc_source, "c", target, ".a")
     commands = cargo_commands(stderr_path)
     expected_runtime = dict(rlibs)
+    source_runtime_rustc = {
+        name: command_record(
+            invocation_for(commands, name), target, {}, emitted, name, source,
+        )
+        for name, source in runtime_sources.items()
+    }
     primary = command_record(
-        invocation_for(commands, "c"), target, expected_runtime, "crabc-libc", libc_source,
+        invocation_for(commands, "c"), target, expected_runtime, emitted, "crabc-libc", libc_source,
     )
     allocator = command_record(
-        invocation_for(commands, "crabc_mimalloc"), target, expected_runtime, "crabc-mimalloc",
+        invocation_for(commands, "crabc_mimalloc"), target, expected_runtime, emitted, "crabc-mimalloc",
         physical(ROOT / "crabc-mimalloc" / "src" / "lib.rs", "crabc-mimalloc source"),
     )
     ar, nm = required_tool(sysroot, "llvm-ar"), required_tool(sysroot, "llvm-nm")
@@ -577,6 +634,7 @@ def build(arguments: argparse.Namespace) -> pathlib.Path:
         "rust_source": str(rust_source),
         "vendor": vendor,
         "source_runtime_artifacts": {name: file_record(path, f"source-built {name} rlib") for name, path in rlibs.items()},
+        "source_runtime_rustc": source_runtime_rustc,
         "primary_rustc": primary,
         "allocator_rustc": allocator,
         "staticlib_closure": closure,
