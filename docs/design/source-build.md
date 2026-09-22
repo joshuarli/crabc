@@ -86,6 +86,18 @@ candidate mappings. It runs source and bytecode workloads through the normal
 owned x86 loader, including successful, failing, and missing-symbol C-module
 loads and `io.popen`.
 
+Before compiling the Lua roster, the native runner compiles
+`compat/lua/fixtures/header_probe.c` through `crabc-cc-dynamic` with its
+sealed dependency-file diagnostic. The report records the live dependency
+file's identity and the audited selected-header paths, then rejects a missing
+probe source, an empty header list, or any header outside the installed dynamic
+sysroot's `usr/include` tree. It also binds the decoded dependency-rule target
+to the generated probe object. This keeps header provenance tied to the same
+installed driver as the candidate objects instead of inferring it from the
+driver's source code. Its retained file identity is a gate for that live runner
+report only; it is not an independently authenticated or replayable
+source-consumer receipt.
+
 A fresh pinned-musl 1.2.6 dynamic Lua graph is built from the same pinned
 sources as the execution oracle. It is never a candidate input. A pass also
 requires the six declared candidate artifact hashes to match between the

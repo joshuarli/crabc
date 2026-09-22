@@ -252,6 +252,217 @@ def dynamic_compile(
     return record
 
 
+def dynamic_header_probe(
+    wrapper: Path, flags: Sequence[str], work: Path, sysroot: Path, timeout: float
+) -> dict[str, object]:
+    """Record actual installed headers used by the sealed dynamic compiler."""
+
+    probe = require_regular(FIXTURES / "header_probe.c", "Lua dynamic header probe")
+    output = work / "header-probe.o"
+    dependencies = work / "header-probe.d"
+    record = command(
+        [
+            str(wrapper),
+            "--dynamic-shared-object",
+            "--application-dependency-file",
+            str(dependencies),
+            *flags,
+            "-c",
+            str(probe),
+            "-o",
+            str(output),
+        ],
+        work=work,
+        state=work / "header-state",
+        timeout=timeout,
+    )
+    require_success(record, "sealed dynamic header probe")
+    if not output.is_file() or output.is_symlink():
+        raise LUA.RunnerError("sealed dynamic header probe did not produce an object")
+    record["header_dependency_audit"] = dynamic_header_dependency_audit(
+        dependencies, sysroot, probe, output
+    )
+    return record
+
+
+def _flatten_make_continuations(text: str) -> str:
+    """Turn GCC's physical dependency-rule continuations into whitespace."""
+
+    flattened: list[str] = []
+    index = 0
+    while index < len(text):
+        character = text[index]
+        if character == "\\" and index + 1 < len(text):
+            if text[index + 1] == "\n":
+                flattened.append(" ")
+                index += 2
+                continue
+            if text[index + 1] == "\r" and index + 2 < len(text) and text[index + 2] == "\n":
+                flattened.append(" ")
+                index += 3
+                continue
+        flattened.append(character)
+        index += 1
+    return "".join(flattened)
+
+
+def _decode_make_path(spelling: str, description: str) -> str:
+    """Decode the bounded GCC Make path syntax without accepting shell input."""
+
+    decoded: list[str] = []
+    index = 0
+    while index < len(spelling):
+        character = spelling[index]
+        if character == "\\":
+            if index + 1 == len(spelling):
+                raise LUA.RunnerError(f"{description} has a dangling escape")
+            escaped = spelling[index + 1]
+            if escaped in {" ", "#", ":", "\\"}:
+                decoded.append(escaped)
+                index += 2
+                continue
+            # GCC leaves a physical backslash before an ordinary filename
+            # character unchanged. Preserve that actual spelling while
+            # decoding Make's four defined path escapes above.
+            decoded.append("\\")
+            index += 1
+            continue
+        if character == "$":
+            if index + 1 == len(spelling) or spelling[index + 1] != "$":
+                raise LUA.RunnerError(f"{description} has an unescaped dollar")
+            decoded.append("$")
+            index += 2
+            continue
+        if character == "#":
+            raise LUA.RunnerError(f"{description} has an unescaped hash")
+        if character.isspace():
+            raise LUA.RunnerError(f"{description} has unescaped whitespace")
+        decoded.append(character)
+        index += 1
+    if not decoded:
+        raise LUA.RunnerError(f"{description} is empty")
+    return "".join(decoded)
+
+
+def make_dependency_inputs(text: str, expected_target: Path) -> list[str]:
+    r"""Decode one GCC ``-MD`` rule bound to its generated physical target.
+
+    GCC does not reliably escape colons in target pathnames. Its bounded
+    diagnostic form separates the target with a colon followed by unescaped
+    whitespace, while target spaces remain ``\ ``. Decode that one target and
+    require it to be the object just produced before accepting its inputs.
+    """
+
+    rule = _flatten_make_continuations(text)
+    separator = next(
+        (
+            index
+            for index, character in enumerate(rule[:-1])
+            if character == ":" and rule[index + 1].isspace()
+        ),
+        None,
+    )
+    if separator is None:
+        raise LUA.RunnerError("sealed dynamic header dependency file has no target rule")
+
+    target_text = _decode_make_path(
+        rule[:separator], "sealed dynamic header dependency target"
+    )
+    target = Path(target_text)
+    if not target.is_absolute():
+        raise LUA.RunnerError("sealed dynamic header dependency target is not absolute")
+    physical_target = require_regular(target, "sealed dynamic header dependency target")
+    if physical_target != expected_target:
+        raise LUA.RunnerError("sealed dynamic header dependency target does not bind the generated object")
+
+    spellings: list[str] = []
+    current: list[str] = []
+
+    def finish_input() -> None:
+        if current:
+            spellings.append("".join(current))
+            current.clear()
+
+    index = separator + 1
+    while index < len(rule):
+        character = rule[index]
+        if character.isspace():
+            finish_input()
+            index += 1
+            continue
+        if character == "\\":
+            if index + 1 == len(rule):
+                raise LUA.RunnerError("sealed dynamic header dependency file has a dangling escape")
+            current.extend((character, rule[index + 1]))
+            index += 2
+            continue
+        current.append(character)
+        index += 1
+    finish_input()
+    if not spellings:
+        raise LUA.RunnerError("sealed dynamic header dependency file has no source inputs")
+    return [
+        _decode_make_path(spelling, "sealed dynamic header dependency input")
+        for spelling in spellings
+    ]
+
+
+def dynamic_header_dependency_audit(
+    dependencies: Path, sysroot: Path, source: Path, output: Path
+) -> dict[str, object]:
+    """Require a real compiler dependency list to name only the owned public headers."""
+
+    dependencies = require_regular(dependencies, "sealed dynamic header dependency file")
+    source = require_regular(source, "Lua dynamic header probe")
+    output = require_regular(output, "sealed dynamic header probe object")
+    installed_headers = LUA.require_physical_directory(
+        sysroot / "usr/include", "owned x86 dynamic headers"
+    )
+    try:
+        text = dependencies.read_text(encoding="utf-8")
+    except OSError as error:
+        raise LUA.RunnerError("cannot read sealed dynamic header dependency file") from error
+    path_texts = make_dependency_inputs(text, output)
+    paths: list[Path] = []
+    for path_text in path_texts:
+        path = Path(path_text)
+        if not path.is_absolute():
+            raise LUA.RunnerError("sealed dynamic header dependency is not absolute")
+        try:
+            physical = path.resolve(strict=True)
+        except OSError as error:
+            raise LUA.RunnerError("sealed dynamic header dependency is missing or unsafe") from error
+        if not physical.is_file() or path.is_symlink():
+            raise LUA.RunnerError("sealed dynamic header dependency is missing or unsafe")
+        paths.append(physical)
+    expected_source = source.resolve(strict=True)
+    if paths[0] != expected_source:
+        raise LUA.RunnerError("sealed dynamic header dependency does not begin with its probe source")
+    headers: list[Path] = []
+    seen: set[Path] = set()
+    ambient: list[str] = []
+    for path in paths[1:]:
+        if path in seen:
+            continue
+        seen.add(path)
+        headers.append(path)
+        if not path.is_relative_to(installed_headers):
+            ambient.append(str(path))
+    status = "passed" if headers and not ambient else ("rejected" if ambient else "unverified")
+    audit = {
+        "status": status,
+        "dependency_file": LUA.artifact_record(dependencies),
+        "target": str(output),
+        "source": str(expected_source),
+        "headers": [str(path) for path in headers],
+        "allowed_root": str(installed_headers),
+        "ambient_headers": ambient,
+    }
+    if status != "passed":
+        raise LUA.RunnerError("dynamic header probe selected an ambient or foreign header")
+    return audit
+
+
 def parallel_dynamic_compiles(
     wrapper: Path,
     flags: Sequence[str],
@@ -513,9 +724,7 @@ def build_candidate(
     support, fixture_record = prepare_dynamic_modules(source)
     plan = dynamic_driver_plan(wrapper, sysroot, runtime, work, timeout)
     flags = dynamic_flags()
-    header = dynamic_compile(
-        wrapper, flags, FIXTURES / "header_probe.c", work / "header-probe.o", work, work / "header-state", timeout
-    )
+    header = dynamic_header_probe(wrapper, flags, work, sysroot, timeout)
     roster = dynamic_roster(source)
     records, objects = parallel_dynamic_compiles(
         wrapper, flags, roster, work / "objects", work, timeout, jobs

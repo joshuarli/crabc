@@ -8,6 +8,7 @@ import importlib.util
 import json
 import signal
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -148,6 +149,175 @@ class NativeDynamicSysrootInputTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RUNNER.LUA.RunnerError, "payload roster drifted"):
             RUNNER.owned_dynamic_sysroot(self.temporary)
+
+
+class NativeDynamicHeaderSelectionTests(unittest.TestCase):
+    """The installed dynamic driver records the actual selected public headers."""
+
+    scratch_root = ROOT / ".work" / "lua-dynamic-header-selection-host-tests"
+
+    def setUp(self) -> None:
+        self.scratch_root.mkdir(parents=True, exist_ok=True)
+        self.temporary = Path(tempfile.mkdtemp(prefix="headers-", dir=self.scratch_root))
+        self.addCleanup(shutil.rmtree, self.temporary, ignore_errors=True)
+        self.sysroot = self.temporary / "sysroot"
+        self.headers = self.sysroot / "usr/include"
+        self.headers.mkdir(parents=True)
+        self.installed_header = self.headers / "stdio.h"
+        self.installed_header.write_text("/* owned stdio */\n", encoding="utf-8")
+        self.work = self.temporary / "work"
+        self.work.mkdir()
+        self.wrapper = self.temporary / "crabc-cc-dynamic"
+        self.wrapper.write_text("sealed wrapper\n", encoding="utf-8")
+
+    def command_with_dependencies(self, dependencies: str) -> mock.Mock:
+        def invoke(arguments: object, *, work: Path, state: Path, timeout: float) -> dict[str, object]:
+            assert isinstance(arguments, list)
+            dependency = Path(arguments[arguments.index("--application-dependency-file") + 1])
+            dependency.write_text(dependencies, encoding="utf-8")
+            output = Path(arguments[arguments.index("-o") + 1])
+            output.write_bytes(b"owned header probe object\n")
+            return {
+                "status": 0,
+                "stdout": RUNNER.LUA.stream_record(b""),
+                "stderr": RUNNER.LUA.stream_record(b""),
+            }
+
+        return mock.Mock(side_effect=invoke)
+
+    def test_header_probe_records_only_installed_header_dependencies(self) -> None:
+        command = self.command_with_dependencies(
+            f"{self.work / 'header-probe.o'}: {RUNNER.FIXTURES / 'header_probe.c'} {self.installed_header}\n"
+        )
+        with mock.patch.object(RUNNER, "command", command):
+            record = RUNNER.dynamic_header_probe(
+                self.wrapper,
+                RUNNER.dynamic_flags(),
+                self.work,
+                self.sysroot,
+                timeout=5.0,
+            )
+
+        arguments = command.call_args.args[0]
+        self.assertEqual(arguments[0:2], [str(self.wrapper), "--dynamic-shared-object"])
+        self.assertIn("--application-dependency-file", arguments)
+        self.assertIn("-c", arguments)
+        audit = record["header_dependency_audit"]
+        self.assertEqual(audit["status"], "passed")
+        self.assertEqual(audit["target"], str((self.work / "header-probe.o").resolve()))
+        self.assertEqual(audit["headers"], [str(self.installed_header.resolve())])
+        self.assertEqual(audit["ambient_headers"], [])
+
+    def test_header_probe_rejects_an_ambient_dependency(self) -> None:
+        command = self.command_with_dependencies(
+            f"{self.work / 'header-probe.o'}: {RUNNER.FIXTURES / 'header_probe.c'} /usr/include/stdio.h\n"
+        )
+        with mock.patch.object(RUNNER, "command", command):
+            with self.assertRaisesRegex(RUNNER.LUA.RunnerError, "ambient or foreign header"):
+                RUNNER.dynamic_header_probe(
+                    self.wrapper,
+                    RUNNER.dynamic_flags(),
+                    self.work,
+                    self.sysroot,
+                    timeout=5.0,
+                )
+
+    @staticmethod
+    def make_escape(path: Path) -> str:
+        return (
+            str(path)
+            .replace("\\", "\\\\")
+            .replace("$", "$$")
+            .replace("#", "\\#")
+            .replace(":", "\\:")
+            .replace(" ", "\\ ")
+        )
+
+    def test_make_dependency_paths_decode_gcc_escaping(self) -> None:
+        source = self.temporary / "source space#colon:quote\"single'$cash\\slash.c"
+        source.write_text("int source;\n", encoding="utf-8")
+        header = self.headers / "header space#colon:quote\"single'$cash\\slash.h"
+        header.write_text("/* owned header */\n", encoding="utf-8")
+        output = self.work / "target space#colon:quote\"single'$cash\\slash.o"
+        output.write_bytes(b"owned header probe object\n")
+        dependency = self.work / "header-probe.d"
+        source_rule = self.make_escape(source)
+        header_rule = self.make_escape(header)
+        target_rule = self.make_escape(output)
+        cases = {
+            "single-line": f"{target_rule}: {source_rule} {header_rule}\n",
+            "continued": f"{target_rule}: {source_rule} \\\n {header_rule}\n",
+        }
+
+        for label, rule in cases.items():
+            with self.subTest(label=label):
+                dependency.write_text(rule, encoding="utf-8")
+                audit = RUNNER.dynamic_header_dependency_audit(
+                    dependency, self.sysroot, source, output
+                )
+                self.assertEqual(audit["target"], str(output.resolve()))
+                self.assertEqual(audit["source"], str(source.resolve()))
+                self.assertEqual(audit["headers"], [str(header.resolve())])
+
+    def test_target_terminator_follows_an_unescaped_whitespace(self) -> None:
+        output = self.work / "target:physical.o"
+        output.write_bytes(b"owned header probe object\n")
+        paths = RUNNER.make_dependency_inputs(
+            f"{output}: /source:physical.c /headers:physical.h\n", output
+        )
+
+        self.assertEqual(paths, ["/source:physical.c", "/headers:physical.h"])
+
+    def test_header_dependency_rejects_a_mismatched_target(self) -> None:
+        output = self.work / "header-probe.o"
+        output.write_bytes(b"owned header probe object\n")
+        foreign = self.work / "foreign.o"
+        foreign.write_bytes(b"foreign object\n")
+        dependency = self.work / "header-probe.d"
+        dependency.write_text(
+            f"{foreign}: {RUNNER.FIXTURES / 'header_probe.c'} {self.installed_header}\n",
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(RUNNER.LUA.RunnerError, "does not bind the generated object"):
+            RUNNER.dynamic_header_dependency_audit(
+                dependency, self.sysroot, RUNNER.FIXTURES / "header_probe.c", output
+            )
+
+    @unittest.skipUnless(shutil.which("gcc"), "requires GCC")
+    def test_actual_gcc_dependency_paths_round_trip_make_escapes(self) -> None:
+        source = self.temporary / "source space#colon:quote\"single'$cash\\slash.c"
+        source.write_text("#include <stdio.h>\nint source;\n", encoding="utf-8")
+        output_work = self.temporary / "work space#colon:quote\"single'$cash\\slash"
+        output_work.mkdir()
+        dependency = output_work / "header-probe.d"
+        output = output_work / "header-probe.o"
+        subprocess.run(
+            [
+                "gcc",
+                "-nostdinc",
+                "-isystem",
+                str(self.headers),
+                "-MD",
+                "-MF",
+                str(dependency),
+                "-c",
+                str(source),
+                "-o",
+                str(output),
+            ],
+            check=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        audit = RUNNER.dynamic_header_dependency_audit(
+            dependency, self.sysroot, source, output
+        )
+        self.assertEqual(audit["target"], str(output.resolve()))
+        self.assertEqual(audit["source"], str(source.resolve()))
+        self.assertEqual(audit["headers"], [str(self.installed_header.resolve())])
 
 
 class NativeDynamicReceiptTests(unittest.TestCase):
