@@ -416,6 +416,12 @@ pub(crate) unsafe trait TheapPageSession: theap_page_session_sealed::Sealed {
     /// Static and completed drain sessions remain ordinary engine owners.
     #[inline]
     fn permits_ordinary_page_operations(&self) -> bool { true }
+
+    /// Native terminal retirement is separately opt-in. A session must prove
+    /// no bound local projection or retained selector owner remains, without
+    /// consulting the calling thread's TLS identity. This grants no source
+    /// access; the consuming engine still requires permanent quiescence.
+    fn permits_terminal_process_retirement(&self) -> bool { false }
     /// Authorizes only a captured pointer-first local free over a source
     /// Theap retained after process shutdown. This does not authorize fresh
     /// allocation, collection, attachment, or a general ordinary engine

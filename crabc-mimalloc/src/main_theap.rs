@@ -3317,6 +3317,16 @@ unsafe impl TheapPageSession for MainStaticPageSession<'_> {
 // Heap access is serialized through `shared_heap_projection_lock`, while the
 // paired process map lease remains the separate plain PageMap exclusion.
 unsafe impl TheapPageSession for MainStaticProcessPageSession {
+    fn permits_terminal_process_retirement(&self) -> bool {
+        self.storage.state.load(Ordering::Acquire) == THREAD_READY
+            && self.storage.process_page_session.load(Ordering::Acquire) == PROCESS_PAGE_SESSION_ACTIVE
+            && match &self.static_main_mapped_regular_claim {
+                StaticMainMappedRegularClaimSlot::Unavailable => true,
+                StaticMainMappedRegularClaimSlot::Ready(selector) => !selector.is_terminal(),
+                StaticMainMappedRegularClaimSlot::Bound => false,
+            }
+    }
+
     #[inline]
     fn theap(&self) -> &Theap { Self::theap(self) }
 

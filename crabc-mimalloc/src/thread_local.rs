@@ -787,6 +787,71 @@ impl<T> PersistentCompilerTlsOwnerCell<T> {
         }
     }
 
+    /// Observes one exact owner after native terminal admission has excluded
+    /// every source operation and foreign callback on its originating thread.
+    /// This does not infer remote authority from a TLS address or Heap list.
+    ///
+    /// # Safety
+    /// The caller holds the permanent terminal epoch capability and pins this
+    /// exact descriptor/TLS mapping through the operation. No source borrow,
+    /// local cell access, destructor, or callback can overlap; all future entry
+    /// on the originating thread is denied. The closure must not access that
+    /// thread's compiler-TLS globals or invoke foreign code.
+    pub(crate) unsafe fn with_terminal_quiescent_owner<R>(
+        self: Pin<&Self>,
+        operation: impl for<'owner> FnOnce(Pin<&'owner T>) -> R,
+    ) -> Result<R, PersistentCompilerTlsOwnerError> {
+        let cell = self.get_ref();
+        if cell.state.get() != PersistentCompilerTlsOwnerState::Active {
+            return Err(Self::access_error_for_state(cell.state.get()));
+        }
+        // SAFETY: Active proves initialization; the caller's permanent source
+        // exclusion and pinned mapping establish this scoped shared projection.
+        Ok(operation(unsafe { Pin::new_unchecked(&*cell.owner_pointer()) }))
+    }
+
+    /// Consumes source rights from a foreign TLS cell without using current-
+    /// thread identity or touching that foreign thread's independent TLS roots.
+    /// A refusal preserves the exact initialized payload terminally in place.
+    ///
+    /// # Safety
+    /// The same permanent terminal exclusion and pinned descriptor obligations
+    /// as `with_terminal_quiescent_owner` apply. Success from `transfer` proves
+    /// every payload engine borrow and linear metadata right has been consumed
+    /// or transferred, so dropping the remaining shell cannot access retired
+    /// backing, mutate thread-local state, acquire locks, or invoke foreign code.
+    pub(crate) unsafe fn transfer_terminal_quiescent_owner<E>(
+        self: Pin<&Self>,
+        transfer: impl for<'owner> FnOnce(Pin<&'owner mut T>) -> Result<(), E>,
+    ) -> Result<(), PersistentCompilerTlsOwnerTeardownError<E>> {
+        let cell = self.get_ref();
+        if cell.state.get() != PersistentCompilerTlsOwnerState::Active {
+            return Err(PersistentCompilerTlsOwnerTeardownError::State(
+                Self::access_error_for_state(cell.state.get())));
+        }
+        cell.state.set(PersistentCompilerTlsOwnerState::Exiting);
+        let mut transition = PersistentCompilerTlsOwnerTransition::new(
+            cell, PersistentCompilerTlsOwnerState::Retained);
+        // SAFETY: the permanent epoch excludes the original thread and all
+        // callbacks. Exiting disallows every ordinary cell projection.
+        match transfer(unsafe { Pin::new_unchecked(&mut *cell.owner_pointer()) }) {
+            Ok(()) => {
+                transition.disarm();
+                cell.thread.set(None);
+                // SAFETY: successful transfer proves this is only an inert
+                // shell. The payload ceases to be initialized exactly once.
+                unsafe { core::ptr::drop_in_place(cell.owner_pointer()) };
+                cell.state.set(PersistentCompilerTlsOwnerState::TornDown);
+                Ok(())
+            }
+            Err(error) => {
+                cell.state.set(PersistentCompilerTlsOwnerState::Retained);
+                transition.disarm();
+                Err(PersistentCompilerTlsOwnerTeardownError::Owner(error))
+            }
+        }
+    }
+
     /// Abandons a Rust wrapper after source process shutdown disabled its
     /// automatic per-thread destructor.
     ///

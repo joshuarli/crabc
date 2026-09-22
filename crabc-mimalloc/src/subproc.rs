@@ -24,8 +24,9 @@
 //! relaxed current-thread count. It is not a Rust layout claim for
 //! `mi_subproc_t`: `theap_meta` and `theap_meta_lock` are one-way
 //! identity/private-futex capabilities, not C byte-layout or normal C backing
-//! routes. It supplies no subprocess list, heap projection, or public
-//! subprocess API. It owns one source-shaped process arena-backing registry,
+//! routes. Its `registry` child module owns source main-subprocess list
+//! publication and terminal unlink; non-main creation and a public subprocess
+//! API remain absent. It owns one source-shaped process arena-backing registry,
 //! one complete private `mi_stats_t` image, and the bitmap statistics that its
 //! staged source paths actually mutate.
 //! Its main-Heap slot retains only the canonical
@@ -110,6 +111,7 @@ impl MainStaticTldSlot {
 /// the actual source-shaped `mi_process_tld_main` branch selected only by
 /// sequence zero; it is not a metadata allocation cache or a reusable TLD.
 pub(crate) struct MainSubprocess {
+    source_membership: registry::SourceSubprocessMembership,
     /// The one process-owned registry, reserve lock, and permanent exact OS
     /// backing slots for source normal arenas. This is a Rust ownership group,
     /// never a complete `mi_subproc_t` layout projection.
@@ -272,6 +274,7 @@ pub(crate) struct MainHeapPublication<'subprocess> {
 impl MainSubprocess {
     pub(crate) const fn new() -> Self {
         Self {
+            source_membership: registry::SourceSubprocessMembership::new(),
             arena_backing: crate::arena::ProcessArenaBacking::new(),
             statistics: crate::statistics::SubprocessStatistics::new(),
             heap_list: crate::types::heap_registry::SubprocessHeapList::new(),
@@ -736,6 +739,17 @@ impl MainSubprocess {
                 Ordering::Acquire,
             )
             .is_ok()
+    }
+
+    /// Source `subproc.c:232` clears metadata identity after Heap destruction
+    /// and before arena release. The allocator's engine must already be closed.
+    ///
+    /// # Safety
+    /// Permanent terminal admission excludes every source observer and the
+    /// exact metadata owner has consumed its engine. No old metadata Page may
+    /// subsequently be classified through this subprocess.
+    pub(crate) unsafe fn clear_metadata_identity_terminal(&self) {
+        self.theap_meta.store(core::ptr::null_mut(), Ordering::Release);
     }
 
     /// Checks only whether `theap` is the exact previously published detached
@@ -2252,3 +2266,6 @@ mod tests {
         );
     }
 }
+
+#[path = "subproc_registry.rs"]
+pub(crate) mod registry;

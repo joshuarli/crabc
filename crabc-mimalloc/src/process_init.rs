@@ -70,6 +70,7 @@ const RETAINED: u8 = 3;
 // Default Theap/TLD and the allocation tuple exist; source startup
 // reservations and their completed receipt do not yet exist.
 const SOURCE_ATTACHED: u8 = 4;
+const TERMINAL_CLOSED: u8 = 5;
 
 /// How this source-startup call owns an optional source VM policy.
 ///
@@ -106,6 +107,7 @@ enum ProcessStartupDiagnostics<'owner> {
 /// image, PageMap, TLD, or TLS root live, so retrying as if the process were
 /// cold would invent an unsafe second startup branch.
 pub(crate) struct ProcessMainInitializationStorage {
+    source_subprocesses: crate::subproc::registry::SourceSubprocessRegistry,
     /// The source-shaped once gate retains its private lock from the winning
     /// COLD claim until this coordinator has Release-published READY or
     /// RETAINED.  A different caller therefore waits as pinned
@@ -143,6 +145,7 @@ unsafe impl Sync for ProcessMainInitializationStorage {}
 impl ProcessMainInitializationStorage {
     const fn new() -> Self {
         Self {
+            source_subprocesses: crate::subproc::registry::SourceSubprocessRegistry::new(),
             process_once: AllocatorOnce::new(),
             state: AtomicU8::new(COLD),
             initializing_thread: AtomicUsize::new(0),
@@ -690,6 +693,16 @@ impl ProcessMainInitializationStorage {
             None
         };
 
+        if vm_process.is_some() {
+            // SAFETY: the source once gate exclusively owns both final static
+            // images. Canonical main joins the source subprocess list before
+            // `_mi_heap_main_init` publishes and initializes its main Heap.
+            if let Err(error) = unsafe { self.source_subprocesses.initialize_main(subprocess) } {
+                self.publish_terminal_state_and_release(completion, RETAINED);
+                return Err(ProcessMainInitError::SubprocessRegistry(error));
+            }
+        }
+
         let mut selection = match subprocess.reserve_static_bootstrap() {
             Ok(selection) => selection,
             Err(error) => {
@@ -1195,6 +1208,7 @@ pub(crate) enum ProcessMainInitError {
     /// The preserved legacy explicit-config startup path reached READY
     /// without a resolved VM policy owner.
     VmPolicyUnavailable,
+    SubprocessRegistry(crate::subproc::registry::SourceSubprocessRegistryError),
     BootstrapSelection(MainStaticBootstrapSelectionError),
     HeapFoundation(MainStaticHeapFoundationError),
     Metadata(MetaError),
@@ -1421,7 +1435,51 @@ unsafe impl Send for ProcessMainReadyLease {}
 // SAFETY: see the Send justification above.
 unsafe impl Sync for ProcessMainReadyLease {}
 
+/// Destruction-only witnesses after the canonical coordinator has closed.
+/// All owners are in final process-static storage, outside retiring arenas.
+pub(crate) struct ProcessMainTerminalState {
+    pub(crate) process: VmProcess<'static>,
+    pub(crate) registry: &'static crate::subproc::registry::SourceSubprocessRegistry,
+    pub(crate) page_map_storage: &'static ProcessPageMapStorage,
+    pub(crate) config: MemoryConfig,
+}
+
 impl ProcessMainReadyLease {
+    /// Removes the exact canonical source subprocess before Heap destruction.
+    ///
+    /// # Safety
+    /// Permanent process exclusion and source-owner transfer are complete.
+    /// Metadata still uses this ready binding until its subsequent close.
+    pub(crate) unsafe fn unlink_terminal_subprocess(self) -> Result<(), ProcessMainInitError> {
+        self.ensure_ready()?;
+        unsafe { self.storage.source_subprocesses.unlink_main_terminal(self.vm_process()?.subprocess()) }
+            .map_err(ProcessMainInitError::SubprocessRegistry)
+    }
+
+    /// Revokes future safe coordinator/binding projections before physical
+    /// source retirement. Existing references require separate exclusion.
+    ///
+    /// # Safety
+    /// Permanent terminal admission has consumed every native TLS engine and
+    /// source observer. No existing ready/binding reference may be used again
+    /// except the explicit witnesses returned for source-ordered destruction.
+    pub(crate) unsafe fn seal_terminal(self) -> Result<ProcessMainTerminalState, ProcessMainInitError> {
+        self.ensure_ready()?;
+        let process = self.vm_process()?;
+        let page_map_storage = NonNull::new(self.storage.page_map_storage.load(Ordering::Acquire))
+            .ok_or(ProcessMainInitError::Retained)?;
+        self.storage.state.compare_exchange(READY, TERMINAL_CLOSED, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| ProcessMainInitError::Retained)?;
+        Ok(ProcessMainTerminalState {
+            process,
+            registry: &self.storage.source_subprocesses,
+            // SAFETY: READY published this exact process-static map owner;
+            // only its normal entry is revoked, not the owner storage itself.
+            page_map_storage: unsafe { page_map_storage.as_ref() },
+            config: self.config,
+        })
+    }
+
     pub(crate) fn startup_reservation_outcomes(self)
         -> Result<crate::arena::StartupArenaReservationOutcomes, ProcessMainInitError> {
         self.ensure_ready()?;

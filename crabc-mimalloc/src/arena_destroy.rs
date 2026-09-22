@@ -69,6 +69,33 @@ impl DestroyedArenas<'_> {
 }
 
 impl ProcessArenaBacking {
+    /// Sizes external huge-release ownership bits before destructive work.
+    /// Only published source owners contribute; the consuming pass still
+    /// validates complete registry/owner correspondence before any mutation.
+    ///
+    /// # Safety
+    /// The process is permanently quiescent; no arena owner can publish,
+    /// disappear, or change between this observation and `destroy_all`.
+    pub(crate) unsafe fn terminal_tracking_words(&self) -> Result<usize, ArenaDestroyError> {
+        if self.destroyed.load(Ordering::Acquire) { return Err(ArenaDestroyError::AlreadyDestroyed); }
+        if self.huge_cleanup_retained.load(Ordering::Acquire) { return Err(ArenaDestroyError::InvalidOwnership); }
+        let mut words = 0usize;
+        for slot in &self.slots {
+            match slot.state.load(Ordering::Acquire) {
+                super::EMPTY => {}
+                PUBLISHED => {
+                    let owner = unsafe { (&*slot.value.get()).assume_init_ref() };
+                    if let ArenaBacking::Huge(allocation) = &owner.allocation {
+                        words = words.checked_add(allocation.release_tracking_words())
+                            .ok_or(ArenaDestroyError::InvalidOwnership)?;
+                    }
+                }
+                _ => return Err(ArenaDestroyError::InvalidOwnership),
+            }
+        }
+        Ok(words)
+    }
+
     /// Destroys the published arena registry in source order and permanently
     /// retires this group. External memory is only unpublished, never freed.
     /// Failure tracking is supplied before the first registry mutation; an

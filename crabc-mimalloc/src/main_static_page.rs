@@ -875,6 +875,74 @@ fn retain_runtime_resume_failure(
 }
 
 impl MainStaticRuntimeFirstArenaPageAllocator {
+    /// Checks the canonical native owner without consulting the originating
+    /// thread. Legacy standalone sidecars cannot authorize process retirement.
+    pub(crate) fn permits_terminal_process_retirement(&self) -> bool {
+        use crate::bootstrap::TheapPageSession;
+        match &self.state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { session, reservation, .. } => {
+                matches!(reservation, MainStaticRuntimeFirstArenaReservation::Process { .. })
+                    && session.permits_terminal_process_retirement()
+            }
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => {
+                matches!(active.route, MainStaticRuntimeFirstArenaRoute::SourceProcess(_))
+                    && active.engine.permits_terminal_process_retirement()
+            }
+            MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { session, route, .. } => {
+                matches!(route, MainStaticRuntimeFirstArenaRoute::SourceProcess(_))
+                    && session.permits_terminal_process_retirement()
+            }
+            _ => false,
+        }
+    }
+
+    /// Ends the initial engine/session borrows while preserving every live
+    /// source page for the following source Heap/arena destruction pass.
+    ///
+    /// # Safety
+    /// Permanent terminal admission excludes this owner's original thread,
+    /// all callbacks, and all source observations. The canonical process graph
+    /// and backing remain pinned. The caller must perform or retain the
+    /// following source destruction; this owner can never become active again.
+    pub(crate) unsafe fn retire_terminal_process_owner(&mut self) -> bool {
+        if !self.permits_terminal_process_retirement() { return false; }
+        let state = core::mem::replace(&mut self.state, MainStaticRuntimeFirstArenaPageAllocatorState::Retained);
+        match state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(mut active) => {
+                // SAFETY: preflight proved the canonical backing/session and
+                // the caller supplies permanent exclusion and source lifetime.
+                match unsafe { active.engine.retire_terminal_process_engine() } {
+                    Ok(session) => {
+                        // Session Drop seals its permanent page-session claim;
+                        // it releases no mapping and leaves Heap state ready
+                        // for the distinct source force-destruction seal.
+                        drop(session);
+                        // Historical fixtures carry a long mutation lease;
+                        // finish that exact lease rather than poisoning the
+                        // map through its unfinished Drop. Production has no
+                        // such lease and its source ranges are already sealed.
+                        #[cfg(test)]
+                        if active.page_map_lifecycle.finish().is_err() {
+                            return false;
+                        }
+                        true
+                    }
+                    Err(engine) => {
+                        active.engine = engine;
+                        self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active(active);
+                        false
+                    }
+                }
+            }
+            MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { session, .. }
+            | MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { session, .. } => {
+                drop(session);
+                true
+            }
+            other => { self.state = other; false }
+        }
+    }
+
     /// Forms the preserved explicit-config lazy owner without reserving an
     /// arena.
     ///

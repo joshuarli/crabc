@@ -6913,6 +6913,32 @@ enum NativeDeferredFreeAllocationPhase {
 }
 
 impl NativePersistentThreadOwner {
+    /// The terminal writer observes only this pinned owner's exact source
+    /// capabilities. It never adopts originating-thread TLS identity.
+    unsafe fn permits_terminal_transfer(&self) -> bool {
+        if !unsafe { self.attachment.permits_terminal_source_transfer() } { return false; }
+        match &self.state {
+            NativePersistentThreadOwnerExitState::PreDrain(engine) => engine.permits_terminal_process_retirement(&self.attachment),
+            NativePersistentThreadOwnerExitState::AttachmentOnly => true,
+            NativePersistentThreadOwnerExitState::RetainedTerminalEngine(_) => false,
+        }
+    }
+
+    unsafe fn transfer_terminal_source_owner(&mut self) -> Result<(), ()> {
+        if !unsafe { self.permits_terminal_transfer() } { return Err(()); }
+        match &mut self.state {
+            NativePersistentThreadOwnerExitState::PreDrain(engine) => {
+                if !unsafe { engine.retire_terminal_process_engine(&self.attachment) } { return Err(()); }
+            }
+            NativePersistentThreadOwnerExitState::AttachmentOnly => {}
+            NativePersistentThreadOwnerExitState::RetainedTerminalEngine(_) => return Err(()),
+        }
+        // The engine now holds no source borrows, and its TLS lease Drop has
+        // been disarmed without writing the originating thread's TLS globals.
+        self.state = NativePersistentThreadOwnerExitState::AttachmentOnly;
+        unsafe { self.attachment.transfer_source_state_terminal_quiescent() }.map_err(|_| ())
+    }
+
     /// Binds one short attachment view to the continuously stored engine.
     /// The scalar audit advances only after both the compiler-TLS projection
     /// and this source-engine projection succeeded.
@@ -7217,6 +7243,16 @@ struct NativeInitialPersistentThreadOwner {
 }
 
 impl NativeInitialPersistentThreadOwner {
+    fn permits_terminal_transfer(&self) -> bool {
+        self.deferred_free_callback_active.load(Ordering::Acquire) == 0
+            && self.allocator.permits_terminal_process_retirement()
+    }
+
+    unsafe fn transfer_terminal_source_owner(&mut self) -> Result<(), ()> {
+        if !self.permits_terminal_transfer() { return Err(()); }
+        if unsafe { self.allocator.retire_terminal_process_owner() } { Ok(()) } else { Err(()) }
+    }
+
     #[inline]
     fn allocate(&mut self, request: usize, zero: bool) -> Option<core::ptr::NonNull<u8>> {
         self.allocator
@@ -7493,6 +7529,75 @@ struct ThreadLifecycleSlot {
     /// Historical direct-test-only session generation.
     #[cfg(test)]
     next_page_owner_session_generation: usize,
+}
+
+/// Reads only source-owned TLS fields after permanent native exclusion.
+/// The descriptor's independent admission/presence atomics remain accessible
+/// to the running thread; no whole `ThreadLifecycleSlot` reference is formed.
+///
+/// # Safety
+/// The exact pinned registry descriptor supplies `pointer`; Terminal excludes
+/// every ordinary entry and callback. Its mapping remains pinned through the
+/// observation and no lower-level source borrow survives.
+unsafe fn terminal_slot_can_transfer(pointer: NonNull<ThreadLifecycleSlot>) -> bool {
+    let slot = pointer.as_ptr();
+    let state = unsafe { core::ptr::addr_of!((*slot).state).read() };
+    if matches!(state, ThreadLifecycleState::Retained | ThreadLifecycleState::ProcessDoneRetained) { return false; }
+    #[cfg(test)]
+    if unsafe { (&*core::ptr::addr_of!((*slot).page_owner)).is_some() } { return false; }
+    let initial = unsafe { core::ptr::addr_of!((*slot).initial_native_persistent_owner_installed).read() };
+    let later = unsafe { core::ptr::addr_of!((*slot).native_persistent_owner_installed).read() };
+    let attachment = unsafe { &*core::ptr::addr_of!((*slot).attachment) };
+    if initial {
+        if later || attachment.is_some() { return false; }
+        let cell = unsafe { Pin::new_unchecked(&*core::ptr::addr_of!((*slot).initial_native_persistent_owner)) };
+        return unsafe { cell.with_terminal_quiescent_owner(|owner| owner.permits_terminal_transfer()) }.unwrap_or(false);
+    }
+    if later {
+        if attachment.is_some() { return false; }
+        let cell = unsafe { Pin::new_unchecked(&*core::ptr::addr_of!((*slot).native_persistent_owner)) };
+        return unsafe { cell.with_terminal_quiescent_owner(|owner| owner.permits_terminal_transfer()) }.unwrap_or(false);
+    }
+    match attachment {
+        Some(attachment) => unsafe { attachment.permits_terminal_source_transfer() },
+        None => matches!(state, ThreadLifecycleState::Fresh | ThreadLifecycleState::Finished)
+            && unsafe { (&*core::ptr::addr_of!((*slot).admission)).is_none() },
+    }
+}
+
+/// Consumes only source-owned TLS fields under the same permanent exclusion
+/// as `terminal_slot_can_transfer`. Failure keeps exact residual owners in
+/// their original pinned cells/fields; no descriptor retirement is acknowledged.
+unsafe fn terminal_slot_transfer(pointer: NonNull<ThreadLifecycleSlot>) -> bool {
+    if !unsafe { terminal_slot_can_transfer(pointer) } { return false; }
+    let slot = pointer.as_ptr();
+    let initial = unsafe { core::ptr::addr_of!((*slot).initial_native_persistent_owner_installed).read() };
+    let later = unsafe { core::ptr::addr_of!((*slot).native_persistent_owner_installed).read() };
+    if initial {
+        let cell = unsafe { Pin::new_unchecked(&*core::ptr::addr_of!((*slot).initial_native_persistent_owner)) };
+        if unsafe { cell.transfer_terminal_quiescent_owner(|owner| owner.get_mut().transfer_terminal_source_owner()) }.is_err() { return false; }
+        unsafe { core::ptr::addr_of_mut!((*slot).initial_native_persistent_owner_installed).write(false); }
+    } else if later {
+        let cell = unsafe { Pin::new_unchecked(&*core::ptr::addr_of!((*slot).native_persistent_owner)) };
+        if unsafe { cell.transfer_terminal_quiescent_owner(|owner| owner.get_mut().transfer_terminal_source_owner()) }.is_err() { return false; }
+        unsafe { core::ptr::addr_of_mut!((*slot).native_persistent_owner_installed).write(false); }
+    } else {
+        let attachment = unsafe { &mut *core::ptr::addr_of_mut!((*slot).attachment) };
+        if let Some(owner) = attachment.as_mut() {
+            if unsafe { owner.transfer_source_state_terminal_quiescent() }.is_err() { return false; }
+        }
+        // Source capability transfer left only the inert attachment shell.
+        drop(attachment.take());
+    }
+    let admission = unsafe { &mut *core::ptr::addr_of_mut!((*slot).admission) };
+    if let Some(claim) = admission.take() {
+        if let Err(claim) = RUNTIME_FORK_ADMISSION.release_later_thread(claim) {
+            *admission = Some(claim);
+            return false;
+        }
+    }
+    unsafe { core::ptr::addr_of_mut!((*slot).state).write(ThreadLifecycleState::Finished); }
+    true
 }
 
 impl ThreadLifecycleSlot {
@@ -20827,7 +20932,18 @@ pub use admission::{
     NativeAllocatorThreadDescriptor, NativeAllocatorPinnedThreadRegistry,
     NativeAllocatorDescriptorRetirement, native_allocator_descriptor_retirement,
     NativeAllocatorCallbackBoundaryError, NativeAllocatorQuiescenceError,
+        NativeAllocatorForkQuiescence, NativeAllocatorForkChildRepair,
+        NativeAllocatorRawForkCopyGuard, NativeAllocatorRawForkCopyError,
     NativeAllocatorTerminalQuiescence, current_native_allocator_thread_descriptor,
     native_allocator_initial_thread_descriptor, register_current_native_allocator_worker_descriptor,
-    with_native_allocator_callback_boundary, begin_native_allocator_terminal_quiescence,
+    with_native_allocator_callback_boundary, with_native_allocator_diagnostic_callback,
+        begin_native_allocator_terminal_quiescence, begin_native_allocator_fork_quiescence,
+        begin_native_allocator_raw_fork_copy,
 };
+
+#[cfg(target_arch = "x86_64")]
+#[path = "runtime_destroy.rs"]
+mod destroy;
+#[cfg(target_arch = "x86_64")]
+pub use destroy::{prepare_native_process_destroy, NativePreparedProcessDestroy, NativeProcessDestroyError,
+    native_process_done_action, NativeProcessDoneInvocation, NativeProcessDoneAction};

@@ -3622,6 +3622,11 @@ impl theap_page_session_sealed::Sealed for OwnerLocalMainHeapPageSession {}
 // list identity. The continuously stored engine owns all page state, and the
 // guard clears the erased pointer before the attachment borrow ends.
 unsafe impl TheapPageSession for OwnerLocalMainHeapPageSession {
+    fn permits_terminal_process_retirement(&self) -> bool {
+        self.active.is_none() && self.mapped_abandoned_claim_selector.is_none()
+            && self.thread_sequence != 0
+    }
+
     #[inline]
     fn theap(&self) -> &Theap { self.active().theap() }
     #[inline]
@@ -35753,6 +35758,34 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     #[inline]
     pub(crate) fn deferred_free_source(&self) -> Option<crate::deferred_free::DeferredFreeSource> {
         self.session.deferred_free_source()
+    }
+
+    /// Checks only this engine's owned failure state under permanent process
+    /// quiescence. It deliberately performs no current-thread/session lookup.
+    pub(crate) fn permits_terminal_process_retirement(&self) -> bool {
+        self.pending_os_release.is_none() && self.collection_poison.is_none()
+            && !self.page_commit_poison && self.session.permits_terminal_process_retirement()
+    }
+
+    /// Ends this engine's PageMap/backing borrows without the unfinished-engine
+    /// latch. Source page ownership remains in the pinned Theap/Heap graph.
+    ///
+    /// # Safety
+    /// Permanent native terminal admission excludes every source operation and
+    /// callback. The source graph retains all live pages and backing. The
+    /// caller must immediately consume the returned session under its exact
+    /// terminal contract, never expose it as a new ordinary allocation session.
+    /// Dropping the backing witnesses must not release source mappings or
+    /// require originating-thread TLS access; native process backing meets
+    /// this requirement, arbitrary custom backing does not inherit it.
+    /// A refusal returns the complete engine and its exact failure owners.
+    pub(crate) unsafe fn retire_terminal_process_engine(self) -> Result<Session, Self> {
+        if !self.permits_terminal_process_retirement() { return Err(self); }
+        let (session, state) = self.into_session_and_state();
+        // No pending OS or poisoned collection owner can be discarded here.
+        // Remaining state consists of source-backing witnesses and scalars.
+        drop(state);
+        Ok(session)
     }
 
     /// Consumes this Drop-bearing engine without running its conservative

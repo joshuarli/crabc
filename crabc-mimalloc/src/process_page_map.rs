@@ -53,6 +53,19 @@ use crate::types::{
 const COLD: u8 = 0;
 const READY: u8 = 1;
 const POISONED: u8 = 2;
+const TERMINAL_DESTROYING: u8 = 3;
+const TERMINAL_RETAINED: u8 = 4;
+const TERMINAL_DESTROYED: u8 = 5;
+
+/// The process-static owner retains every remaining mapping after refusal.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ProcessPageMapTerminalDestroyError {
+    Inactive,
+    Busy,
+    RetainedPostExitOwner,
+    Release(Errno),
+    Unlock(Errno),
+}
 
 /// The `mi_page_t` prefix read by the pointer-only source boundary.
 ///
@@ -410,6 +423,46 @@ impl ProcessPageMapStorage {
             retained_initialization_mapping: UnsafeCell::new(MaybeUninit::uninit()),
             has_retained_initialization_mapping: AtomicBool::new(false),
             root: PageMapRoot::empty(),
+        }
+    }
+
+    /// Retires the source global PageMap only after all arena/metadata and
+    /// TLS-engine access has ended. Ordinary leases close before root removal.
+    /// A failed unmap retains the exact PageMap and its remaining submaps in
+    /// this process-static slot; a quiescent retry never republishes its root.
+    ///
+    /// # Safety
+    /// Native Terminal is permanent. Every source owner/callback and all
+    /// previously returned map references, raw readers and page observations
+    /// are inaccessible, including lower-level callers outside native entry.
+    /// Clearing state does not revoke a Rust reference. The caller already
+    /// consumed metadata/TLS engines and completed or retained source arena
+    /// destruction; this mapping is the last source lookup owner to retire.
+    pub(crate) unsafe fn destroy_terminal_quiescent(
+        &'static self,
+    ) -> Result<(), ProcessPageMapTerminalDestroyError> {
+        let guard = self.page_lifecycle_lock.try_lock()
+            .ok_or(ProcessPageMapTerminalDestroyError::Busy)?;
+        if self.post_exit_route_count.load(Ordering::Acquire) != 0 {
+            let _ = guard.unlock();
+            return Err(ProcessPageMapTerminalDestroyError::RetainedPostExitOwner);
+        }
+        let state = self.state.load(Ordering::Acquire);
+        if !matches!(state, READY | TERMINAL_RETAINED) {
+            let _ = guard.unlock();
+            return Err(ProcessPageMapTerminalDestroyError::Inactive);
+        }
+        self.state.store(TERMINAL_DESTROYING, Ordering::Release);
+        self.root.clear();
+        // SAFETY: READY or a previous terminal unmap refusal proves this
+        // exact slot initialized; permanent exclusion ends earlier references.
+        let map = unsafe { (&mut *self.page_map.get()).assume_init_mut() };
+        let result = unsafe { map.destroy() };
+        self.state.store(if result.is_ok() { TERMINAL_DESTROYED } else { TERMINAL_RETAINED }, Ordering::Release);
+        let unlocked = guard.unlock();
+        match result {
+            Err(error) => Err(ProcessPageMapTerminalDestroyError::Release(error)),
+            Ok(()) => unlocked.map_err(ProcessPageMapTerminalDestroyError::Unlock),
         }
     }
 

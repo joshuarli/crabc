@@ -564,6 +564,41 @@ impl DynamicAttachedThreadLocalData {
             && self.allocation.as_ref().is_some_and(MetaAllocation::can_transfer_source_retained_tld)
     }
 
+    /// Validates the exact transferred-image prerequisites without treating
+    /// the terminal writer as this TLD's originating thread.
+    ///
+    /// # Safety
+    /// Permanent terminal admission excludes the originating thread and all
+    /// observers; the exact TLD allocation and subprocess are still pinned.
+    pub(crate) unsafe fn can_transfer_source_state_terminal_quiescent(&self) -> bool {
+        if self.state != ThreadLocalDataState::Active || self.registration.is_none() {
+            return false;
+        }
+        let Some(allocation) = self.allocation.as_ref() else { return false; };
+        if !allocation.can_transfer_source_retained_tld() { return false; }
+        // SAFETY: the role-specific capability proved the initialized TLD
+        // layout and live source MemoryId; permanent exclusion scopes this
+        // observation without overlapping originating-thread projections.
+        let tld = unsafe { allocation.pointer().cast::<ThreadLocalData>().as_ref() };
+        tld.matches_subprocess_attached_lifecycle(self.thread, self.sequence, self.subprocess)
+    }
+
+    /// Transfers the same exact capabilities as process-done retention under
+    /// the separately proved terminal remote-owner authority.
+    ///
+    /// # Safety
+    /// `can_transfer_source_state_terminal_quiescent`'s obligations apply;
+    /// the enclosing Theap must transfer first and the wrapper must become
+    /// permanently inaccessible before any backing can retire.
+    pub(crate) unsafe fn transfer_source_state_terminal_quiescent(
+        &mut self,
+    ) -> Result<core::ptr::NonNull<ThreadLocalData>, ThreadLocalDataError> {
+        if !unsafe { self.can_transfer_source_state_terminal_quiescent() } {
+            return Err(ThreadLocalDataError::Projection);
+        }
+        self.transfer_validated_source_state()
+    }
+
     /// Transfers this live TLD's metadata and registration to the source
     /// Theap/TLD graph before its Rust TLS wrapper disappears. No source
     /// counter, list, identity, or allocation changes. The containing Theap
@@ -579,6 +614,12 @@ impl DynamicAttachedThreadLocalData {
         if !self.can_transfer_source_state_after_process_done() {
             return Err(ThreadLocalDataError::Projection);
         }
+        self.transfer_validated_source_state()
+    }
+
+    fn transfer_validated_source_state(
+        &mut self,
+    ) -> Result<core::ptr::NonNull<ThreadLocalData>, ThreadLocalDataError> {
         let allocation = self.allocation.take().ok_or(ThreadLocalDataError::Projection)?;
         let pointer = match allocation.into_source_retained_tld() {
             Ok(pointer) => pointer,

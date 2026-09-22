@@ -598,6 +598,49 @@ impl<'main> MainHeapThreadAttachment<'main> {
             && theap_matches
     }
 
+    /// Validates a remote terminal transfer without treating the terminal
+    /// writer as this source attachment's originating thread.
+    ///
+    /// # Safety
+    /// The permanent terminal capability excludes all source entries and
+    /// callbacks; this exact attachment/TLS mapping and metadata are pinned.
+    pub(crate) unsafe fn permits_terminal_source_transfer(&self) -> bool {
+        self.state == MainHeapThreadAttachmentState::Attached
+            && !self.has_active_deferred_free_callback()
+            && self.terminal_os_release.is_none() && !self.page_engine_suspended
+            && self.theap.as_ref().is_some_and(|allocation| {
+                allocation.can_transfer_source_retained_theap()
+                    && allocation.dynamic_theap().is_some_and(|theap| {
+                        theap.is_initialized() && theap.matches_thread(self.thread)
+                    })
+            })
+            && self.tld.as_ref().is_some_and(|tld| {
+                tld.thread() == self.thread
+                    && unsafe { tld.can_transfer_source_state_terminal_quiescent() }
+            })
+    }
+
+    /// Transfers both exact metadata capabilities after the terminal engine
+    /// retirement. It changes no source list, page or refcount; the following
+    /// force-destruction pass is the sole owner of those source transitions.
+    ///
+    /// # Safety
+    /// `permits_terminal_source_transfer`'s obligations apply. Every engine
+    /// borrowing this attachment has already been consumed, and this wrapper
+    /// is made permanently inaccessible before any backing retirement.
+    pub(crate) unsafe fn transfer_source_state_terminal_quiescent(
+        &mut self,
+    ) -> Result<(), MainHeapThreadAttachmentError> {
+        if !unsafe { self.permits_terminal_source_transfer() } {
+            return Err(MainHeapThreadAttachmentError::PageDrainState);
+        }
+        self.transfer_prevalidated_source_state(|tld| {
+            // SAFETY: the enclosing permanent terminal capability supplies
+            // the exact remote TLD authority checked above.
+            unsafe { tld.transfer_source_state_terminal_quiescent() }
+        })
+    }
+
     /// Hands the metadata release rights to the persistent source Heap/Theap
     /// graph before libc releases this worker's TLS mapping. This changes no
     /// source roots, lists, reference counts, live-thread count, or pages.
@@ -618,6 +661,16 @@ impl<'main> MainHeapThreadAttachment<'main> {
         {
             return Err(MainHeapThreadAttachmentError::TheapProjection);
         }
+        self.transfer_prevalidated_source_state(|tld| {
+            // SAFETY: forwarded from this nonfinal process-done transfer.
+            unsafe { tld.transfer_source_state_after_process_done() }
+        })
+    }
+
+    fn transfer_prevalidated_source_state(
+        &mut self,
+        transfer_tld: impl FnOnce(&mut DynamicAttachedThreadLocalData) -> Result<NonNull<crate::types::ThreadLocalData>, crate::tld::ThreadLocalDataError>,
+    ) -> Result<(), MainHeapThreadAttachmentError> {
         let allocation = self.theap.take().ok_or(MainHeapThreadAttachmentError::TheapProjection)?;
         match allocation.into_source_retained_theap() {
             Ok(_theap) => {}
@@ -626,10 +679,7 @@ impl<'main> MainHeapThreadAttachment<'main> {
                 return Err(MainHeapThreadAttachmentError::TheapProjection);
             }
         }
-        let result = unsafe {
-            self.tld.as_mut().expect("retention preflight validated TLD")
-                .transfer_source_state_after_process_done()
-        };
+        let result = transfer_tld(self.tld.as_mut().expect("retention preflight validated TLD"));
         if let Err(error) = result {
             // Both exact capabilities were preflighted without intervening
             // source mutation. An inconsistent second transfer is terminal:
@@ -1610,6 +1660,22 @@ impl<'attachment, 'main> MainHeapThreadPageSession<'attachment, 'main> {
 }
 
 impl MainHeapThreadOwnerLocalPageEngineLease {
+    /// Reads only the retained claim/attachment identity. Permanent terminal
+    /// exclusion supplies the proof that no originating-thread borrow remains.
+    pub(crate) fn matches_terminal_attachment(&self, attachment: &MainHeapThreadAttachment<'_>) -> bool {
+        !self.finished && self.thread_sequence != 0 && self.thread == attachment.thread
+            && attachment.tld.as_ref().is_some_and(|tld| tld.sequence().get() == self.thread_sequence)
+    }
+
+    /// Ends this wrapper's Drop obligation without writing the terminally
+    /// excluded originating thread's independent compiler-TLS engine flag.
+    ///
+    /// # Safety
+    /// The engine has consumed every session/backing borrow, native terminal
+    /// admission permanently forbids future source access, and the exact
+    /// descriptor/TLS image remains pinned through this operation.
+    pub(crate) unsafe fn finish_terminal_quiescent(&mut self) { self.finished = true; }
+
     /// Claims the current attachment's compiler-TLS owner after an ordinary
     /// empty page session has established its exact root/list/thread identity.
     pub(crate) fn claim(

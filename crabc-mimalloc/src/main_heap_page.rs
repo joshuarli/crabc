@@ -2140,6 +2140,42 @@ pub(crate) enum MainHeapThreadProcessPageExitMappedRegularPagesAdoptFailure<
 }
 
 impl<'main> MainHeapThreadOwnerLocalPageEngine<'main> {
+    /// Preflights exact engine/selector ownership without consulting foreign
+    /// compiler-TLS state. The surrounding terminal capability supplies
+    /// exclusive admission; this predicate itself releases nothing.
+    pub(crate) fn permits_terminal_process_retirement(
+        &self, attachment: &MainHeapThreadAttachment<'main>,
+    ) -> bool {
+        self.lifecycle.matches_terminal_attachment(attachment)
+            && !self.mapped_abandoned_claim.is_terminal()
+            && self.engine.as_ref().is_some_and(OwnerLocalMainHeapPageAllocator::permits_terminal_process_retirement)
+    }
+
+    /// Consumes engine borrows before the source Theap/TLD capability transfer.
+    /// A refused engine is restored exactly, with all its failure ownership.
+    ///
+    /// # Safety
+    /// Permanent terminal admission excludes every originating-thread source
+    /// operation/callback. Its descriptor/TLS storage and process backing are
+    /// pinned, and the caller must transfer or retain the matching attachment.
+    pub(crate) unsafe fn retire_terminal_process_engine(
+        &mut self, attachment: &MainHeapThreadAttachment<'main>,
+    ) -> bool {
+        if !self.permits_terminal_process_retirement(attachment) { return false; }
+        let engine = self.engine.take().expect("terminal preflight retains exact engine");
+        // SAFETY: caller provides permanent exclusion and canonical backing
+        // lifetime; the owner-local adapter is unbound and owns no source page.
+        match unsafe { engine.retire_terminal_process_engine() } {
+            Ok(session) => {
+                drop(session);
+                // SAFETY: all engine borrows have ended; no foreign TLS write.
+                unsafe { self.lifecycle.finish_terminal_quiescent() };
+                true
+            }
+            Err(engine) => { self.engine = Some(engine); false }
+        }
+    }
+
     /// Checks the non-destructive process-done retain boundary before its
     /// compiler-TLS wrapper is abandoned. The engine remains live in the
     /// departing TLS image; this merely rejects a borrowed, terminal, poisoned,

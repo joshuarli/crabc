@@ -179,7 +179,10 @@ impl NativeAllocatorOperationGuard {
         }
         let depth = unsafe { *record.nesting.get() };
         if depth != 0 {
-            if epoch.state.load(Ordering::SeqCst) & MODE_MASK >= TERMINAL_CLOSING {
+            // A pre-commit writer must drain this already admitted entry.
+            // Its nested source work may be necessary to finish that drain.
+            // Permanent Terminal is never compatible with live entry.
+            if epoch.state.load(Ordering::SeqCst) & MODE_MASK == TERMINAL {
                 return Err(NativeAllocatorEntryError::Closed);
             }
             let next = depth.checked_add(1).ok_or(NativeAllocatorEntryError::NestingOverflow)?;
@@ -211,6 +214,117 @@ impl Drop for NativeAllocatorOperationGuard {
         unsafe { *record.nesting.get() = depth - 1; }
         if depth == 1 { record.entered.store(false, Ordering::SeqCst); }
     }
+}
+
+/// A diagnostic callback may acquire libc locks while its allocator source
+/// borrows are still live. It therefore publishes callback presence without
+/// withdrawing ordinary entry. A closing writer must refuse and unwind its
+/// outer locks; it may never infer quiescence from this callback.
+struct DiagnosticCallbackPresence {
+    descriptor: NonNull<NativeAllocatorThreadDescriptor>,
+    previous_callbacks: usize,
+    _not_send_sync: PhantomData<*mut ()>,
+}
+
+impl Drop for DiagnosticCallbackPresence {
+    fn drop(&mut self) {
+        let record = unsafe { self.descriptor.as_ref() };
+        unsafe { *record.callback_nesting.get() = self.previous_callbacks; }
+        record.callback.store(self.previous_callbacks != 0, Ordering::SeqCst);
+    }
+}
+
+/// Marks a source diagnostic's foreign output call, preserving ordinary entry
+/// and all source borrows. Unlike deferred callbacks this does not suspend the
+/// allocator operation. Publication precedes every foreign lock acquisition;
+/// writers recheck this marker on every drain pass, including after observing
+/// an ordinary entry on an earlier pass.
+///
+/// # Safety
+/// The caller is the current thread inside a guarded native allocator source
+/// operation. The closure is exactly its synchronous diagnostic output call,
+/// and must not transfer source ownership or outlive the ordinary entry. Any
+/// foreign lock acquisition belongs inside this closure, after publication.
+/// A writer refusing this marker must release its outer locks before invoking
+/// parent/error hooks. The closure may keep existing source borrows; those are
+/// protected by ordinary entry until the enclosing operation returns.
+pub unsafe fn with_native_allocator_diagnostic_callback<R>(
+    callback: impl FnOnce() -> R,
+) -> Result<R, NativeAllocatorCallbackBoundaryError> {
+    unsafe { with_diagnostic_callback_at(current_native_allocator_thread_descriptor(), callback) }
+}
+
+unsafe fn with_diagnostic_callback_at<R>(
+    pointer: NonNull<NativeAllocatorThreadDescriptor>,
+    callback: impl FnOnce() -> R,
+) -> Result<R, NativeAllocatorCallbackBoundaryError> {
+    let record = unsafe { pointer.as_ref() };
+    if unsafe { *record.nesting.get() } == 0 || !record.entered.load(Ordering::SeqCst) {
+        return Err(NativeAllocatorCallbackBoundaryError::NoOperation);
+    }
+    let previous_callbacks = unsafe { *record.callback_nesting.get() };
+    let next = previous_callbacks.checked_add(1)
+        .ok_or(NativeAllocatorCallbackBoundaryError::InvalidNesting)?;
+    unsafe { *record.callback_nesting.get() = next; }
+    record.callback.store(true, Ordering::SeqCst);
+    let presence = DiagnosticCallbackPresence { descriptor: pointer, previous_callbacks,
+        _not_send_sync: PhantomData };
+    let result = callback();
+    drop(presence);
+    Ok(result)
+}
+
+/// Temporary terminal-safety coverage of the existing raw-fork copy interval.
+/// This is an ordinary epoch entry, not allocator-wide fork quiescence. It
+/// prevents permanent terminal transfer from racing the copy but does not
+/// repair vanished child owners. The shared fork writer and its child-repair
+/// continuation replace this guard when full generic repair is implemented.
+#[must_use = "hold through the raw copy and complete before user hooks"]
+pub struct NativeAllocatorRawForkCopyGuard {
+    operation: NativeAllocatorOperationGuard,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeAllocatorRawForkCopyError { Unavailable, Closed }
+
+impl NativeAllocatorRawForkCopyGuard {
+    /// Ends the parent or syscall-error copy interval before parent user hooks.
+    pub fn complete_parent(self) { drop(self); }
+
+    /// Ends only the copied ordinary admission on the surviving child TLS.
+    /// This makes no claim about inherited page/source-owner repair.
+    ///
+    /// # Safety
+    /// The raw fork has returned in its sole child; TLS still names the exact
+    /// copied current descriptor, whose mapping remains valid. No registry
+    /// reset may have reclaimed that mapping. This guard is the copied value,
+    /// not a foreign or reconstructed parent descriptor capability.
+    pub unsafe fn complete_child(self) { drop(self); }
+}
+
+/// Protects the existing raw-fork copy from terminal source-owner transfer.
+/// Future entry after Terminal is rejected; pre-commit closing also refuses
+/// fresh entry so libc can take its ordinary parent/error unlock path.
+///
+/// # Safety
+/// Cover every raw fork route, including fork and _Fork, from before the raw
+/// syscall through the corresponding parent/child completion. Acquire after
+/// public prepare hooks and before any source copying, and release before
+/// user hooks. On refusal libc performs its paired lock/signal completion;
+/// it must not invoke the syscall. This does not authorize inherited source
+/// repair or claim generic allocator fork correctness.
+pub unsafe fn begin_native_allocator_raw_fork_copy(
+) -> Result<NativeAllocatorRawForkCopyGuard, NativeAllocatorRawForkCopyError> {
+    raw_fork_copy_at(&EPOCH, current_native_allocator_thread_descriptor())
+}
+
+fn raw_fork_copy_at(epoch: &NativeAllocatorEpoch, descriptor: NonNull<NativeAllocatorThreadDescriptor>)
+    -> Result<NativeAllocatorRawForkCopyGuard, NativeAllocatorRawForkCopyError> {
+    let operation = NativeAllocatorOperationGuard::enter_at(epoch, descriptor).map_err(|error| match error {
+        NativeAllocatorEntryError::Closed => NativeAllocatorRawForkCopyError::Closed,
+        _ => NativeAllocatorRawForkCopyError::Unavailable,
+    })?;
+    Ok(NativeAllocatorRawForkCopyGuard { operation })
 }
 
 struct CallbackSuspension {
@@ -326,6 +440,64 @@ pub struct NativeAllocatorTerminalQuiescence<'registry> {
     _not_send_sync: PhantomData<*mut ()>,
 }
 
+/// All reachable native TLS source owners have been consumed or transferred
+/// into the source graph. This authority carries no TLS reference; the pinned
+/// registry borrow may end before Heap/meta locks and OS release begin.
+pub(super) struct NativeAllocatorTransferredProcessOwners {
+    _not_send_sync: PhantomData<*mut ()>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeAllocatorTerminalTransferError { InvalidDescriptor, RetainedSourceOwner }
+
+impl NativeAllocatorTerminalQuiescence<'_> {
+    /// Preflights all owners before the first transfer. A later unexpected
+    /// failure leaves completed descriptors acknowledged and each remaining
+    /// exact payload pinned/retained, with the native epoch permanently shut.
+    pub(super) fn transfer_source_owners(self) -> Result<NativeAllocatorTransferredProcessOwners, NativeAllocatorTerminalTransferError> {
+        let mut failure = None;
+        self.registry.visit_descriptors(&mut |pointer| {
+            let record = unsafe { pointer.as_ref() };
+            match record.registration.load(Ordering::Acquire) {
+                UNPUBLISHED | RETIRED | TRANSFERRED => {}
+                REGISTERED => match NonNull::new(record.owner_slot.load(Ordering::Acquire)) {
+                    Some(slot) if unsafe { super::terminal_slot_can_transfer(slot) } => {}
+                    _ => failure = Some(NativeAllocatorTerminalTransferError::RetainedSourceOwner),
+                },
+                _ => failure = Some(NativeAllocatorTerminalTransferError::InvalidDescriptor),
+            }
+        });
+        if let Some(error) = failure { return Err(error); }
+        self.registry.visit_descriptors(&mut |pointer| {
+            if failure.is_some() { return; }
+            let record = unsafe { pointer.as_ref() };
+            match record.registration.load(Ordering::Acquire) {
+                UNPUBLISHED | RETIRED => {
+                    // Registration still racing its initial OPEN observation
+                    // cannot enter source: the permanent epoch and post-CAS
+                    // check deny it. The acknowledgement also prevents its
+                    // UNPUBLISHED->REGISTERED CAS from succeeding afterward.
+                    record.registration.store(TRANSFERRED, Ordering::Release);
+                }
+                TRANSFERRED => {}
+                REGISTERED => {
+                    let transferred = NonNull::new(record.owner_slot.load(Ordering::Acquire))
+                        .is_some_and(|slot| unsafe { super::terminal_slot_transfer(slot) });
+                    if transferred {
+                        record.registration.store(TRANSFERRED, Ordering::Release);
+                    } else {
+                        record.registration.store(RETAINED, Ordering::Release);
+                        failure = Some(NativeAllocatorTerminalTransferError::RetainedSourceOwner);
+                    }
+                }
+                _ => failure = Some(NativeAllocatorTerminalTransferError::InvalidDescriptor),
+            }
+        });
+        if let Some(error) = failure { return Err(error); }
+        Ok(NativeAllocatorTransferredProcessOwners { _not_send_sync: PhantomData })
+    }
+}
+
 impl NativeAllocatorEpoch {
     fn reopen(&self, closed: usize) -> Result<(), NativeAllocatorQuiescenceError> {
         let Some(next) = (closed & !MODE_MASK).checked_add(MODE_MASK + 1) else {
@@ -338,9 +510,14 @@ impl NativeAllocatorEpoch {
     }
 
     fn close_terminal(&self, registry: &dyn NativeAllocatorPinnedThreadRegistry) -> Result<(), NativeAllocatorQuiescenceError> {
+        self.close_for(registry, TERMINAL_CLOSING).map(|_| ())
+    }
+
+    fn close_for(&self, registry: &dyn NativeAllocatorPinnedThreadRegistry, mode: usize) -> Result<usize, NativeAllocatorQuiescenceError> {
+        debug_assert!(mode == FORK_CLOSED || mode == TERMINAL_CLOSING);
         let observed = self.state.load(Ordering::SeqCst);
         if observed & MODE_MASK != OPEN { return Err(NativeAllocatorQuiescenceError::WriterBusy); }
-        let closed = observed | TERMINAL_CLOSING;
+        let closed = observed | mode;
         self.state.compare_exchange(observed, closed, Ordering::SeqCst, Ordering::SeqCst)
             .map_err(|_| NativeAllocatorQuiescenceError::WriterBusy)?;
         loop {
@@ -368,8 +545,10 @@ impl NativeAllocatorEpoch {
                 return Err(error);
             }
             if !active {
-                self.state.store(observed | TERMINAL, Ordering::SeqCst);
-                return Ok(());
+                if mode == TERMINAL_CLOSING {
+                    self.state.store(observed | TERMINAL, Ordering::SeqCst);
+                }
+                return Ok(closed);
             }
             // Only ordinary source entries can remain here. Their callback
             // transition is rechecked each pass; foreign code is never waited
@@ -377,6 +556,93 @@ impl NativeAllocatorEpoch {
             core::hint::spin_loop();
         }
     }
+}
+
+/// Prepared raw-fork interval over the already-held libc registry pin. This
+/// capability is not child source repair: copied source owners must still be
+/// reconciled before the child may reopen entry. Dropping an unfinished interval
+/// seals access permanently rather than leaving ordinary entries spinning.
+#[must_use = "complete the parent interval or preserve the child repair continuation"]
+pub struct NativeAllocatorForkQuiescence<'registry> {
+    registry: &'registry dyn NativeAllocatorPinnedThreadRegistry,
+    closed: usize,
+    armed: bool,
+    _not_send_sync: PhantomData<*mut ()>,
+}
+
+impl Drop for NativeAllocatorForkQuiescence<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            // Never overwrite another writer's state or a permanent seal.
+            let _ = EPOCH.state.compare_exchange(self.closed,
+                (self.closed & !MODE_MASK) | TERMINAL, Ordering::SeqCst, Ordering::SeqCst);
+        }
+    }
+}
+
+impl<'registry> NativeAllocatorForkQuiescence<'registry> {
+    /// Reopens the exact parent generation before libc releases its prepared
+    /// locks. Source owner identities and payloads remain unchanged.
+    ///
+    /// # Safety
+    /// This is the parent process (including raw syscall failure), never the
+    /// copied child. The original registry pin still covers every descriptor.
+    /// Paired libc lock completion and signal/parent hooks follow this call;
+    /// hooks must run only after those locks have been released.
+    pub unsafe fn resume_parent(mut self) -> Result<(), NativeAllocatorQuiescenceError> {
+        EPOCH.reopen(self.closed)?;
+        self.armed = false;
+        Ok(())
+    }
+
+    /// Moves the copied interval into the allocator's child-repair boundary.
+    /// This intentionally provides no public reopen operation: a successful
+    /// raw syscall is not proof that vanished source owners have been repaired.
+    ///
+    /// # Safety
+    /// This is the sole surviving child thread immediately after the raw fork,
+    /// before libc forgets any sibling descriptor or resets the registry. All
+    /// copied TLS/control mappings and the prepared registry pin remain valid.
+    pub unsafe fn into_child_repair(mut self) -> NativeAllocatorForkChildRepair<'registry> {
+        self.armed = false;
+        NativeAllocatorForkChildRepair { interval: Self { registry: self.registry,
+            closed: self.closed, armed: true, _not_send_sync: PhantomData } }
+    }
+}
+
+/// Exact copied registry/epoch ownership awaiting source-level child repair.
+/// The allocator must consume vanished owner capabilities and re-root the
+/// surviving source identity before this continuation can release its pin or
+/// reopen entry. No current public method claims that work is already done.
+#[must_use = "copied native source owners still require allocator child repair"]
+pub struct NativeAllocatorForkChildRepair<'registry> {
+    interval: NativeAllocatorForkQuiescence<'registry>,
+}
+
+/// Drains native source entry under libc's already-prepared raw-fork registry
+/// pin. Both fork and _Fork must use the same registry, not a second list/lock.
+/// Any callback refusal reopens the epoch; libc must unwind all prepared locks
+/// before parent hooks. Diagnostic callbacks keep source entry published, so
+/// every drain iteration rechecks their markers rather than waiting on them.
+///
+/// # Safety
+/// Every native source operation and foreign callback participates in this
+/// protocol. The registry is the exact prepared, continuously pinned libc
+/// registry (borrow its existing lock for fork; acquire that same lock for
+/// _Fork). Existing outer libc locks precede this close; no allocation or user
+/// callback runs while the pin is held. Call outside any current source entry.
+/// Keep the pin across raw fork and parent completion or child source repair;
+/// never relock it through the general scoped registry accessor. The raw fork
+/// syscall is the sole syscall allowed within this prepared interval. Child
+/// repair must be implemented and preflighted before enabling a product caller.
+pub unsafe fn begin_native_allocator_fork_quiescence(
+    registry: &dyn NativeAllocatorPinnedThreadRegistry,
+) -> Result<NativeAllocatorForkQuiescence<'_>, NativeAllocatorQuiescenceError> {
+    if unsafe { *DESCRIPTOR.nesting.get() != 0 || *DESCRIPTOR.callback_nesting.get() != 0 } {
+        return Err(NativeAllocatorQuiescenceError::CurrentOperationActive);
+    }
+    let closed = EPOCH.close_for(registry, FORK_CLOSED)?;
+    Ok(NativeAllocatorForkQuiescence { registry, closed, armed: true, _not_send_sync: PhantomData })
 }
 
 /// Closes future entry, excludes ordinary operations and refuses callback
@@ -418,6 +684,49 @@ mod tests {
         let owner = std::boxed::Box::leak(std::boxed::Box::new(ThreadLifecycleSlot::new()));
         record.owner_slot.store(core::ptr::from_mut(owner), Ordering::Relaxed);
         record
+    }
+
+    #[test]
+    fn raw_fork_copy_completion_releases_only_its_own_descriptor_and_terminal_refuses() {
+        let parent_epoch = NativeAllocatorEpoch::new();
+        let parent_record = registered_record();
+        let child_epoch = NativeAllocatorEpoch::new();
+        let child_record = registered_record();
+        // Separate fixture mappings represent the parent and copied child;
+        // neither completion may clear the other mapping's admission record.
+        let parent = raw_fork_copy_at(&parent_epoch, NonNull::from(&parent_record)).unwrap();
+        let child = raw_fork_copy_at(&child_epoch, NonNull::from(&child_record)).unwrap();
+        parent.complete_parent();
+        assert!(!parent_record.entered.load(Ordering::SeqCst));
+        assert!(child_record.entered.load(Ordering::SeqCst));
+        unsafe { child.complete_child(); }
+        assert!(!child_record.entered.load(Ordering::SeqCst));
+        assert_eq!(unsafe { *parent_record.nesting.get() }, 0);
+        assert_eq!(unsafe { *child_record.nesting.get() }, 0);
+        parent_epoch.close_terminal(&Registry(&parent_record)).unwrap();
+        assert!(matches!(raw_fork_copy_at(&parent_epoch, NonNull::from(&parent_record)),
+            Err(NativeAllocatorRawForkCopyError::Closed)));
+        assert!(!parent_record.entered.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn fork_epoch_parent_resume_preserves_terminal_and_rejects_callbacks() {
+        let epoch = NativeAllocatorEpoch::new();
+        let record = registered_record();
+        record.callback.store(true, Ordering::SeqCst);
+        assert_eq!(epoch.close_for(&Registry(&record), FORK_CLOSED),
+            Err(NativeAllocatorQuiescenceError::CallbackActive));
+        record.callback.store(false, Ordering::SeqCst);
+        let closed = epoch.close_for(&Registry(&record), FORK_CLOSED).unwrap();
+        assert_eq!(closed, 4 | FORK_CLOSED);
+        epoch.reopen(closed).unwrap();
+        let operation = NativeAllocatorOperationGuard::enter_at(&epoch, NonNull::from(&record)).unwrap();
+        drop(operation);
+        epoch.close_terminal(&Registry(&record)).unwrap();
+        assert!(epoch.reopen(closed).is_err());
+        assert_eq!(epoch.state.load(Ordering::SeqCst) & MODE_MASK, TERMINAL);
+        assert!(matches!(epoch.close_for(&Registry(&record), FORK_CLOSED),
+            Err(NativeAllocatorQuiescenceError::WriterBusy)));
     }
 
     #[test]
@@ -508,6 +817,98 @@ mod tests {
         });
         record.callback.store(false, Ordering::SeqCst);
         epoch.close_terminal(&Registry(&record)).unwrap();
+    }
+
+    #[test]
+    fn diagnostic_without_source_entry_never_invokes_foreign_output() {
+        let record = registered_record();
+        let invoked = core::cell::Cell::new(false);
+        let result = unsafe { with_diagnostic_callback_at(NonNull::from(&record), || invoked.set(true)) };
+        assert_eq!(result, Err(NativeAllocatorCallbackBoundaryError::NoOperation));
+        assert!(!invoked.get());
+        assert!(!record.entered.load(Ordering::SeqCst));
+        assert!(!record.callback.load(Ordering::SeqCst));
+        assert_eq!(unsafe { *record.callback_nesting.get() }, 0);
+    }
+
+    #[test]
+    fn diagnostic_after_writer_scan_preserves_entry_and_unwinds_before_parent_hook() {
+        struct ScannedRegistry<'a> {
+            record: &'a NativeAllocatorThreadDescriptor,
+            scanned: &'a AtomicBool,
+        }
+        // SAFETY: the scoped thread joins before either pinned fixture dies;
+        // only its owner thread touches nesting, and visiting is atomic-only.
+        unsafe impl NativeAllocatorPinnedThreadRegistry for ScannedRegistry<'_> {
+            fn visit_descriptors(&self, visitor: &mut dyn FnMut(NonNull<NativeAllocatorThreadDescriptor>)) {
+                visitor(NonNull::from(self.record));
+                self.scanned.store(true, Ordering::SeqCst);
+            }
+        }
+        let epoch = NativeAllocatorEpoch::new();
+        let record = registered_record();
+        let scanned = AtomicBool::new(false);
+        let stdio = std::sync::Mutex::new(());
+        let parent_hook_ran = AtomicBool::new(false);
+        let outer = NativeAllocatorOperationGuard::enter_at(&epoch, NonNull::from(&record)).unwrap();
+        std::thread::scope(|scope| {
+            let writer = scope.spawn(|| {
+                // Model the actual fork lock order: stdio precedes the registry
+                // pin/epoch close. The first scan sees entry, but no callback.
+                let stdio_lock = stdio.lock().unwrap();
+                let result = epoch.close_terminal(&ScannedRegistry { record: &record, scanned: &scanned });
+                assert_eq!(result, Err(NativeAllocatorQuiescenceError::CallbackActive));
+                assert!(record.entered.load(Ordering::SeqCst));
+                assert!(record.callback.load(Ordering::SeqCst));
+                assert_eq!(epoch.state.load(Ordering::SeqCst) & MODE_MASK, OPEN);
+                // Parent/error completion releases every outer lock before
+                // invoking user hooks. A hook acquiring stdio must not recurse
+                // into this thread's still-held lock.
+                drop(stdio_lock);
+                let hook_stdio = stdio.lock().unwrap();
+                parent_hook_ran.store(true, Ordering::SeqCst);
+                drop(hook_stdio);
+            });
+            while !scanned.load(Ordering::SeqCst) { core::hint::spin_loop(); }
+            assert!(!record.callback.load(Ordering::SeqCst));
+            unsafe { with_diagnostic_callback_at(NonNull::from(&record), || {
+                assert!(record.entered.load(Ordering::SeqCst));
+                assert!(record.callback.load(Ordering::SeqCst));
+                let diagnostic_stdio = stdio.lock().unwrap();
+                assert!(record.entered.load(Ordering::SeqCst));
+                // Nested diagnostics preserve the outer callback marker.
+                with_diagnostic_callback_at(NonNull::from(&record), || {}).unwrap();
+                assert!(record.callback.load(Ordering::SeqCst));
+                drop(diagnostic_stdio);
+            }).unwrap(); }
+            writer.join().unwrap();
+        });
+        assert!(parent_hook_ran.load(Ordering::SeqCst));
+        assert!(record.entered.load(Ordering::SeqCst));
+        assert!(!record.callback.load(Ordering::SeqCst));
+        drop(outer);
+        epoch.close_terminal(&Registry(&record)).unwrap();
+        assert_eq!(epoch.state.load(Ordering::SeqCst) & MODE_MASK, TERMINAL);
+    }
+
+    #[test]
+    fn nested_source_work_can_finish_while_terminal_writer_drains_outer_entry() {
+        let epoch = NativeAllocatorEpoch::new();
+        let record = registered_record();
+        let pointer = NonNull::from(&record);
+        let outer = NativeAllocatorOperationGuard::enter_at(&epoch, pointer).unwrap();
+        std::thread::scope(|scope| {
+            let writer = scope.spawn(|| epoch.close_terminal(&Registry(&record)));
+            while epoch.state.load(Ordering::SeqCst) & MODE_MASK != TERMINAL_CLOSING {
+                core::hint::spin_loop();
+            }
+            let inner = NativeAllocatorOperationGuard::enter_at(&epoch, pointer).unwrap();
+            drop(inner);
+            assert!(record.entered.load(Ordering::SeqCst));
+            drop(outer);
+            writer.join().unwrap().unwrap();
+        });
+        assert!(matches!(NativeAllocatorOperationGuard::enter_at(&epoch, pointer), Err(NativeAllocatorEntryError::Closed)));
     }
 
     #[test]

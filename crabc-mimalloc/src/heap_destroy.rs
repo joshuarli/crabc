@@ -104,6 +104,23 @@ impl MainHeapDestroyTracking {
 }
 
 impl Heap {
+    /// Counts the valid source list solely to size external terminal owner
+    /// tracking. No metadata allocation or ownership recovery occurs here.
+    ///
+    /// # Safety
+    /// Permanent quiescence and the source Heap projection lock protect this
+    /// complete valid list; no attachment/list mutation may follow the count.
+    pub(crate) unsafe fn terminal_tracking_len(&self) -> Result<usize, MainHeapDestroyError> {
+        if !self.is_main_static() { return Err(MainHeapDestroyError::NotMainHeap); }
+        let mut count = 0usize;
+        let mut current = self.theaps;
+        while let Some(theap) = NonNull::new(current) {
+            count = count.checked_add(1).ok_or(MainHeapDestroyError::InvalidOwnership)?;
+            current = unsafe { *(*theap.as_ptr()).hnext.get() };
+        }
+        Ok(count)
+    }
+
     #[cfg(test)]
     pub(crate) fn test_destroy_graph_counts(&self) -> (usize, usize, usize) {
         let guard = self.theaps_lock.lock().expect("source graph audit lock");
