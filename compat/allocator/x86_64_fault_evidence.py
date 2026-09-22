@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run a deliberately bounded native Linux/x86-64 fault-injection lane.
 
-This judge executes five named crate-private ``crabc-mimalloc`` regressions
+This judge executes seven named crate-private ``crabc-mimalloc`` regressions
 whose injected failures preserve a specifically named mapping-state owner or
 retry state.  It is intentionally independent of ``run.py``: that runner
 owns the AArch64 production-oracle contract, while this file records a narrow
@@ -114,6 +114,26 @@ TEST_LANES = (
         state_preservation=(
             "a metadata-commit failure paired with cleanup-unmap failure transfers a live claim owner",
             "the failure path cannot publish a page and the retained claim releases after fault removal",
+        ),
+    ),
+    FaultLane(
+        identifier="aligned-publication-map-failure-unmap-retry",
+        test_filter="single_thread::tests::os_claim_page_map_failure_rolls_back_metadata_before_retryable_release",
+        fault_points=("Map", "Unmap"),
+        expected_pass_count=1,
+        state_preservation=(
+            "failed PageMap allocation rolls back all private aliases and primary metadata before unmap",
+            "failed rollback unmap retains exactly one unpublished claim and explicit retry releases it",
+        ),
+    ),
+    FaultLane(
+        identifier="aligned-publication-provenance-refusal-retention",
+        test_filter="single_thread::tests::os_claim_rollback_alias_refusal_retains_the_mapping_owner",
+        fault_points=("Unmap",),
+        expected_pass_count=1,
+        state_preservation=(
+            "a private alias ownership refusal retains the exact unpublished mapping claim terminally",
+            "retry after provenance refusal performs no unmap and cannot discard unresolved metadata",
         ),
     ),
     FaultLane(

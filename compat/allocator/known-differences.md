@@ -3005,3 +3005,26 @@ The focused regression
 `single_thread::tests::generic_forced_collection_stops_at_one_pending_os_release`
 covers two remotely emptied OS singletons in both huge and full queues, paired
 release failures, preservation of the next registered page, and explicit retry.
+
+### `CRABC-MI-OS-PUBLICATION-ROLLBACK-OWNER` — private provenance-failure retention
+
+Pinned mimalloc v3.5.0 `src/arena.c:951-1120` initializes primary metadata,
+Release-publishes its aligned aliases, and registers the clipped PageMap span;
+a failed registration calls `mi_arenas_page_free_prim`. The Rust
+`PageAllocatorEngine::rollback_fresh_os_aligned` reverses these publications
+before releasing the still-private `OsAlignedPageClaim`. An ordinary failed
+unmap retains that exact claim for explicit retry, as on the existing release
+path.
+
+An alias ownership mismatch, rejected primary retirement, or rejected map
+unregistration is outside the source's valid private-page precondition. Rust
+retains the exact claim terminally in that case. The claim's release state
+rejects subsequent release attempts without a syscall, preventing a retry from
+unmapping unresolved metadata. It cannot silently drop ownership or masquerade
+as an ordinary detached mapping. This safety boundary is not C failure parity,
+an alternative allocation algorithm, or general metadata recovery.
+
+The focused `single_thread::tests::os_claim_` regressions distinguish legal
+PageMap-allocation/rollback-unmap failures from terminal alias provenance
+refusal. These unit receivers do not by themselves admit the broader stopped
+OS-publication row in the M2 C/Rust fault inventory.

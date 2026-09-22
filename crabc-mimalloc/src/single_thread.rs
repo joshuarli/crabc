@@ -37540,7 +37540,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         };
         // SAFETY: a `Published` owner enters this slot only after its queue,
         // page-map entries, aliases, and primary metadata were detached. A
-        // `Claim` owner is still private. Neither state has a live reader.
+        // `Claim` owner is still private; a refused publication rollback is
+        // terminal and its release method performs no syscall. Neither state
+        // has a live reader.
         match unsafe { owner.release() } {
             Ok(()) => true,
             Err(failure) => {
@@ -38385,6 +38387,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let layout = claim.layout();
         if page_map_registered {
             let Some(slice_start) = claim.slice_start() else {
+                self.park_pending_os_release(claim.retain_failed_publication());
                 return;
             };
             // SAFETY: no allocation or queue entry escaped this failed fresh
@@ -38397,17 +38400,20 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             {
                 // Preserve the active claim and metadata rather than reclaim a
                 // mapping while a stale page-map entry could still name it.
+                self.park_pending_os_release(claim.retain_failed_publication());
                 return;
             }
         }
         if aliases_published && !unsafe { claim.clear_secondary_metadata(page) } {
             // An alias ownership mismatch is a terminal provenance fault: do
             // not reclaim the mapping while an alias could still name it.
+            self.park_pending_os_release(claim.retain_failed_publication());
             return;
         }
         // SAFETY: failed fresh pages were never queue linked and retain no
         // live block, so only this session owns their primary retirement.
         if unsafe { self.session.retire_page(&mut *page.as_ptr()) }.is_none() {
+            self.park_pending_os_release(claim.retain_failed_publication());
             return;
         }
         self.release_unpublished_claim_or_park(claim);
@@ -44818,6 +44824,85 @@ mod tests {
             fault.set(fault::Plan::disabled());
             assert!(allocator.collect_retired(true));
             assert!(!allocator.has_pending_os_release());
+        });
+    }
+
+    #[test]
+    fn os_claim_page_map_failure_rolls_back_metadata_before_retryable_release() {
+        let fault = fault::install(fault::Plan::disabled());
+        with_allocator(|allocator| {
+            let claim = OsAlignedPageClaim::allocate(
+                allocator.page_map.memory_config(), 128 * KIB, 128 * KIB,
+            ).ok().unwrap();
+            let layout = claim.layout();
+            let memory = claim.memory_id().unwrap();
+            let start = claim.slice_start().unwrap();
+            let primary = unsafe {
+                allocator.session.publish_fresh_page(
+                    claim.metadata().unwrap(), layout.block_size(), layout.page_offset(),
+                    layout.reserved(), 0, memory.initially_zero(), memory,
+                )
+            }.unwrap();
+            assert!(unsafe { claim.publish_secondary_metadata(primary) });
+            // No prior page uses this fresh PageMap. Reject its lazy submap
+            // allocation at the existing OS seam, then reject rollback unmap.
+            fault.set(fault::Plan::at_pair(
+                fault::Point::Map, 1, fault::Point::Unmap, 1, Errno::NOMEM,
+            ));
+            assert!(unsafe {
+                allocator.page_map.register_range(start.as_ptr(), layout.page_map_size(), primary)
+            }.is_err());
+            allocator.rollback_fresh_os_aligned(claim, primary, true, false);
+            assert!(allocator.has_pending_os_release());
+            assert!(unsafe { allocator.page_map.checked_lookup(start.as_ptr()) }.is_null());
+            // The failed unmap leaves this mapping accessible. Every alias
+            // and primary must already have been retired before that syscall.
+            let OsAlignedPageOwner::Claim(claim) = allocator.pending_os_release.as_ref().unwrap()
+                else { panic!("fresh rollback retains its unpublished claim") };
+            for index in 0..layout.metadata_slot_count() {
+                let slot = claim.metadata_slot(index).unwrap();
+                assert!(unsafe { slot.as_ref().aligned_alias_owner() }.is_null());
+            }
+            fault.set(fault::Plan::disabled());
+            assert!(allocator.retry_pending_os_release());
+            assert!(!allocator.has_pending_os_release());
+            let allocation = allocator.allocate_aligned(7, 128 * KIB).unwrap();
+            unsafe { allocator.free(allocation).unwrap(); }
+        });
+    }
+
+    #[test]
+    fn os_claim_rollback_alias_refusal_retains_the_mapping_owner() {
+        let fault = fault::install(fault::Plan::disabled());
+        with_allocator(|allocator| {
+            let claim = OsAlignedPageClaim::allocate(
+                allocator.page_map.memory_config(), 128 * KIB, 128 * KIB,
+            ).ok().unwrap();
+            let layout = claim.layout();
+            let memory = claim.memory_id().unwrap();
+            let primary = unsafe {
+                allocator.session.publish_fresh_page(
+                    claim.metadata().unwrap(), layout.block_size(), layout.page_offset(),
+                    layout.reserved(), 0, memory.initially_zero(), memory,
+                )
+            }.unwrap();
+            assert!(unsafe { claim.publish_secondary_metadata(primary) });
+            // An alias ownership refusal must retain the primary and exact
+            // mapping right; blindly retrying munmap would invalidate metadata.
+            assert!(layout.metadata_slot_count() > 1);
+            assert!(unsafe {
+                Page::clear_aligned_alias_at(claim.metadata_slot(1).unwrap(), primary)
+            });
+            allocator.rollback_fresh_os_aligned(claim, primary, true, false);
+            assert!(allocator.has_pending_os_release());
+            fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+            assert!(!allocator.retry_pending_os_release());
+            assert_eq!(fault.observed(), 0, "publication refusal cannot become raw release");
+            assert!(allocator.has_pending_os_release());
+            // The explicit terminal owner deliberately survives this fixture;
+            // no cleanup API may erase unresolved publication provenance.
+            core::mem::forget(allocator.pending_os_release.take().unwrap());
+            fault.set(fault::Plan::disabled());
         });
     }
 

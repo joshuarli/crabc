@@ -78,8 +78,8 @@ class CargoCommandTests(unittest.TestCase):
                 self.assertEqual(command[delimiter + 1 :], ["--test-threads=1", "--exact"])
 
     def test_fixed_selection_covers_only_the_named_four_fault_points(self) -> None:
-        self.assertEqual(len(EVIDENCE.TEST_LANES), 5)
-        self.assertEqual(sum(lane.expected_pass_count for lane in EVIDENCE.TEST_LANES), 5)
+        self.assertEqual(len(EVIDENCE.TEST_LANES), 7)
+        self.assertEqual(sum(lane.expected_pass_count for lane in EVIDENCE.TEST_LANES), 7)
         self.assertEqual(EVIDENCE.FAULT_POINT_COVERAGE, ("Map", "Commit", "Unmap", "Decommit"))
         self.assertEqual(
             [lane.identifier for lane in EVIDENCE.TEST_LANES],
@@ -88,6 +88,8 @@ class CargoCommandTests(unittest.TestCase):
                 "metadata-map-commit-retry",
                 "aligned-claim-unmap-retry",
                 "aligned-claim-commit-unmap-retention",
+                "aligned-publication-map-failure-unmap-retry",
+                "aligned-publication-provenance-refusal-retention",
                 "external-arena-decommit-retry-state",
             ],
         )
@@ -98,6 +100,8 @@ class CargoCommandTests(unittest.TestCase):
                 ("Map", "Commit"),
                 ("Unmap",),
                 ("Commit", "Unmap"),
+                ("Map", "Unmap"),
+                ("Unmap",),
                 ("Decommit",),
             ],
         )
@@ -150,9 +154,9 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(
             report["summary"],
             {
-                "expected_pass_count": 5,
-                "observed_pass_count": 5,
-                "lane_count": 5,
+                "expected_pass_count": 7,
+                "observed_pass_count": 7,
+                "lane_count": 7,
                 "named_fault_points": ["Map", "Commit", "Unmap", "Decommit"],
             },
         )

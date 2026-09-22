@@ -367,6 +367,9 @@ enum OsPageReleaseState {
     Unaccounted,
     Accounted,
     RetainedAlignmentFailure(Errno),
+    /// Metadata or PageMap rollback refused its ownership precondition.
+    /// The mapping must remain live; raw unmap retry is not safe.
+    RetainedPublicationFailure,
 }
 
 /// Unique terminal ownership reconstructed from one live OS-aligned page.
@@ -414,7 +417,9 @@ impl PublishedOnDemandOsPageArea {
 /// An unpublished claim is still responsible for its mapping and any private
 /// fresh-page rollback. A published token is admitted here only after page-map
 /// entries, aliases, and primary metadata have been detached. Neither variant
-/// has a destructor: callers must retry [`Self::release`] explicitly.
+/// has a destructor: callers must retry [`Self::release`] explicitly. A claim
+/// whose publication rollback refused ownership remains terminally retained;
+/// retry never bypasses that unresolved metadata boundary.
 pub(crate) enum OsAlignedPageOwner {
     Claim(OsAlignedPageClaim),
     Published(PublishedOsAlignedPage),
@@ -865,12 +870,27 @@ impl OsAlignedPageClaim {
         Ok(memory)
     }
 
+    /// Retains this exact mapping after publication rollback rejected an
+    /// ownership precondition. Unlike an ordinary unmap failure, metadata or
+    /// PageMap entries may still name the mapping, so this state has no raw
+    /// release continuation. It occupies the existing sole pending owner slot.
+    pub(crate) fn retain_failed_publication(mut self) -> OsAlignedPageOwner {
+        self.release_state = OsPageReleaseState::RetainedPublicationFailure;
+        OsAlignedPageOwner::Claim(self)
+    }
+
     /// Releases an unpublished claim after metadata/page rollback.
     ///
     /// An `unmap` failure returns this exact still-live claim inside
     /// [`OsAlignedPageReleaseFailure`]. The caller must park or otherwise
     /// retain it for a later explicit retry; no implicit release occurs.
     pub(crate) fn release(mut self) -> Result<(), OsAlignedPageReleaseFailure> {
+        if matches!(self.release_state, OsPageReleaseState::RetainedPublicationFailure) {
+            return Err(OsAlignedPageReleaseFailure {
+                error: OsAlignedPageError::new(OsAlignedPageFailureStage::Publish, Errno::INVAL),
+                owner: OsAlignedPageOwner::Claim(self),
+            });
+        }
         let result = match (self.process, self.release_state) {
             (_, OsPageReleaseState::RetainedAlignmentFailure(error)) => Err(error),
             (Some(process), OsPageReleaseState::Unaccounted) => {
