@@ -1,4 +1,4 @@
-//! An indirect CIE personality pointer must not dereference a guard page.
+//! Late indirect metadata pointers must fail unwind without a guard-page read.
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -24,14 +24,14 @@ const HEADER: usize = 64;
 const EH_FRAME: usize = 256;
 const PAGE: usize = 4096;
 const TEXT_SPAN: usize = 65536;
-const END_OF_STACK: i32 = 5;
+const FATAL_PHASE1_ERROR: i32 = 3;
 
 static MAPPING: AtomicUsize = AtomicUsize::new(0);
 static TEXT: AtomicUsize = AtomicUsize::new(0);
 
 // The fixture admits one synthetic read-only metadata load and the page
 // containing the selected provider's phase-one return address. It exposes an
-// indirect CIE personality cell in the protected following page.
+// indirect CIE personality or FDE LSDA cell in the protected following page.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn dl_iterate_phdr(
     callback: unsafe extern "C" fn(*mut Info, usize, *mut c_void) -> i32,
@@ -68,7 +68,11 @@ unsafe fn write_header(header: *mut u8, eh_frame: usize) {
     }
 }
 
-unsafe fn write_eh_frame(eh_frame: *mut u8, text: usize, indirect_personality: usize) {
+unsafe fn write_indirect_personality_eh_frame(
+    eh_frame: *mut u8,
+    text: usize,
+    indirect_personality: usize,
+) {
     unsafe {
         // CIE: zP with an absolute indirect 64-bit personality pointer.
         (eh_frame as *mut u32).write_unaligned(26);
@@ -101,7 +105,40 @@ unsafe fn write_eh_frame(eh_frame: *mut u8, text: usize, indirect_personality: u
     }
 }
 
-fn main() {
+unsafe fn write_indirect_lsda_eh_frame(eh_frame: *mut u8, text: usize, indirect_lsda: usize) {
+    unsafe {
+        // CIE: zL with an absolute indirect 64-bit FDE LSDA pointer.
+        (eh_frame as *mut u32).write_unaligned(18);
+        (eh_frame.add(4) as *mut u32).write_unaligned(0);
+        eh_frame.add(8).write(1);
+        eh_frame.add(9).write(b'z');
+        eh_frame.add(10).write(b'L');
+        eh_frame.add(11).write(0);
+        eh_frame.add(12).write(1);
+        eh_frame.add(13).write(0x78);
+        eh_frame.add(14).write(16);
+        eh_frame.add(15).write(1);
+        eh_frame.add(16).write(0x80);
+        // cfa = rsp + 8; the caller return address is cfa - 8.
+        eh_frame.add(17).write(0x0c);
+        eh_frame.add(18).write(7);
+        eh_frame.add(19).write(8);
+        eh_frame.add(20).write(0x90);
+        eh_frame.add(21).write(1);
+
+        // The FDE's z augmentation contains the encoded LSDA pointer.
+        let fde = eh_frame.add(22);
+        (fde as *mut u32).write_unaligned(29);
+        (fde.add(4) as *mut u32).write_unaligned(26);
+        (fde.add(8) as *mut u64).write_unaligned(text as u64);
+        (fde.add(16) as *mut u64).write_unaligned(TEXT_SPAN as u64);
+        fde.add(24).write(8);
+        (fde.add(25) as *mut u64).write_unaligned(indirect_lsda as u64);
+        (fde.add(33) as *mut u32).write_unaligned(0);
+    }
+}
+
+unsafe fn run_case(write_eh_frame: unsafe fn(*mut u8, usize, usize)) {
     unsafe {
         let allocation = mmap(std::ptr::null_mut(), 2 * PAGE, 3, 0x22, -1, 0).cast::<u8>();
         assert_ne!(allocation as usize, usize::MAX);
@@ -117,9 +154,17 @@ fn main() {
             exception_cleanup: None,
             private: [0; 8],
         };
-        assert_eq!(_Unwind_RaiseException(&mut exception), END_OF_STACK);
+        assert_eq!(_Unwind_RaiseException(&mut exception), FATAL_PHASE1_ERROR);
 
         assert_eq!(munmap(allocation.cast(), 2 * PAGE), 0);
+        MAPPING.store(0, Ordering::SeqCst);
     }
-    println!("indirect personality pointer rejected");
+}
+
+fn main() {
+    unsafe {
+        run_case(write_indirect_personality_eh_frame);
+        run_case(write_indirect_lsda_eh_frame);
+    }
+    println!("guarded late indirect metadata rejected");
 }

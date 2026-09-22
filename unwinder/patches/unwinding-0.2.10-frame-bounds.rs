@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Derived from unwinding 0.2.10, src/unwinder/frame.rs.
 //
-// The selected fde-phdr-dl finder resolves an indirect CIE personality or FDE
-// LSDA pointer only while dl_iterate_phdr supplies a readable PT_LOAD for its
-// full native-word cell. The caller still owns the enclosing loader
-// mapping-lifetime obligation and the resulting target's ordinary ABI.
+// The selected fde-phdr-dl finder resolves a present indirect CIE personality
+// or FDE LSDA pointer only while dl_iterate_phdr supplies a readable PT_LOAD
+// for its full native-word cell. A present cell that cannot be resolved is
+// malformed unwind metadata, not absent metadata. The caller still owns the
+// enclosing loader mapping-lifetime obligation and the resulting target's
+// ordinary ABI.
 use core::convert::TryFrom;
 use core::mem;
 use core::ops::Range;
@@ -100,15 +102,17 @@ unsafe extern "C" fn read_indirect_pointer_callback(
 /// The loader must keep the mapping disclosed by `dl_iterate_phdr` readable
 /// through its callback. Program-header containment does not independently
 /// establish that mapping-lifetime obligation.
-unsafe fn resolve_fde_pointer(pointer: Pointer) -> Option<usize> {
+unsafe fn resolve_fde_pointer(pointer: Pointer) -> Result<usize, gimli::Error> {
     match pointer {
-        Pointer::Direct(value) => usize::try_from(value).ok(),
+        Pointer::Direct(value) => usize::try_from(value).map_err(|_| gimli::Error::AddressOverflow),
         Pointer::Indirect(value) => {
-            let start = usize::try_from(value).ok()?;
+            let start = usize::try_from(value).map_err(|_| gimli::Error::AddressOverflow)?;
             if start == 0 {
-                return None;
+                return Err(gimli::Error::OffsetOutOfBounds(value));
             }
-            let end = start.checked_add(mem::size_of::<usize>())?;
+            let end = start
+                .checked_add(mem::size_of::<usize>())
+                .ok_or(gimli::Error::AddressOverflow)?;
             let mut data = IndirectPointerRead {
                 range: start..end,
                 value: None,
@@ -121,7 +125,7 @@ unsafe fn resolve_fde_pointer(pointer: Pointer) -> Option<usize> {
                     &mut data as *mut IndirectPointerRead as *mut core::ffi::c_void,
                 );
             }
-            data.value
+            data.value.ok_or(gimli::Error::OffsetOutOfBounds(value))
         }
     }
 }
@@ -130,6 +134,8 @@ unsafe fn resolve_fde_pointer(pointer: Pointer) -> Option<usize> {
 pub struct Frame {
     fde_result: FDESearchResult,
     row: UnwindTableRow<usize, StoreOnStack>,
+    personality: Option<PersonalityRoutine>,
+    lsda: usize,
 }
 
 impl Frame {
@@ -161,7 +167,23 @@ impl Frame {
             )?
             .clone();
 
-        Ok(Some(Self { fde_result, row }))
+        // Preserve upstream absence and zero values. A present indirect cell
+        // that cannot be read is malformed metadata and must reach the
+        // caller's phase-specific `Err` path rather than appearing absent.
+        let personality = fde_result
+            .fde
+            .personality()
+            .map(|pointer| unsafe { resolve_fde_pointer(pointer) })
+            .transpose()?
+            .map(|value| unsafe { core::mem::transmute(value) });
+        let lsda = fde_result
+            .fde
+            .lsda()
+            .map(|pointer| unsafe { resolve_fde_pointer(pointer) })
+            .transpose()?
+            .unwrap_or(0);
+
+        Ok(Some(Self { fde_result, row, personality, lsda }))
     }
 
     #[cfg(feature = "dwarf-expr")]
@@ -265,19 +287,11 @@ impl Frame {
     }
 
     pub fn personality(&self) -> Option<PersonalityRoutine> {
-        self.fde_result
-            .fde
-            .personality()
-            .and_then(|pointer| unsafe { resolve_fde_pointer(pointer) })
-            .map(|x| unsafe { core::mem::transmute(x) })
+        self.personality
     }
 
     pub fn lsda(&self) -> usize {
-        self.fde_result
-            .fde
-            .lsda()
-            .and_then(|pointer| unsafe { resolve_fde_pointer(pointer) })
-            .unwrap_or(0)
+        self.lsda
     }
 
     pub fn initial_address(&self) -> usize {

@@ -665,7 +665,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   unwinder-metadata-bounds  run the standalone guarded EH-header provider regression
   unwinder-eh-frame-bounds  run the standalone guarded decoded-EH-frame regression
   unwinder-dynamic-bounds  run the standalone guarded PT_DYNAMIC regression
-  unwinder-indirect-personality-bounds  run the standalone guarded indirect CIE personality regression
+  unwinder-indirect-personality-bounds  run the standalone guarded late indirect CIE/FDE metadata regression
   crt-dynamic-startup  run the private x86 Scrt1.o dynamic-PIE startup artifact
   crt-dynamic-link-contract  audit the closed x86 Rust CRT dynamic-PIE link boundary
   consumer-static-pie-lto  run the private no-std crabc-rs O3/full-LTO owned-runtime consumer

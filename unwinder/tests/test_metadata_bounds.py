@@ -30,8 +30,8 @@ class MetadataBoundsExecutionContract(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'status'):
             metadata_bounds.assert_execution(-11, '', expected)
 
-    def test_guarded_indirect_personality_returns_end_of_stack_without_a_fault(self):
-        expected = 'indirect personality pointer rejected\n'
+    def test_guarded_late_indirect_metadata_returns_fatal_phase_one_without_a_fault(self):
+        expected = 'guarded late indirect metadata rejected\n'
         metadata_bounds.assert_execution(0, expected, expected)
         with self.assertRaisesRegex(RuntimeError, 'status'):
             metadata_bounds.assert_execution(-11, '', expected)

@@ -76,16 +76,19 @@ data-relative FDE base. It does not validate later pointer-derived metadata or
 loader mapping lifetime.
 
 `unwinder-indirect-personality-bounds` exercises the later CIE `zP` indirect
-personality boundary. The selected finder has no retained `PT_LOAD` identity
-once it hands an FDE to `Frame`, where upstream would otherwise dereference the
-encoded cell. The frame overlay re-enumerates program headers and reads an
-indirect CIE personality or FDE LSDA cell only when its complete native word is
-within a readable `PT_LOAD` during that callback. The fixture routes
-`_Unwind_RaiseException` through a matching FDE whose personality cell occupies
-a protected page; the rejected cell yields `END_OF_STACK` without a fault. The
-cleanup fixture continues to use its valid indirect metadata. This does not
-validate the target pointer, DWARF-expression memory reads, later CFI register
-loads, or loader mapping lifetime.
+personality and FDE `zL` indirect LSDA boundaries. The selected finder has no
+retained `PT_LOAD` identity once it hands an FDE to `Frame`, where upstream
+would otherwise dereference the encoded cell. `Frame::from_context` re-enumerates
+program headers, resolves and caches each present cell only when its complete
+native word is within a readable `PT_LOAD` during that callback, and propagates
+an unresolved present cell through the existing phase error path. An absent
+personality remains absent; an absent or resolved-zero LSDA remains zero. The
+fixture separately routes `_Unwind_RaiseException` through matching FDEs with a
+guarded personality cell and a guarded LSDA cell. Each returns
+`FATAL_PHASE1_ERROR` without a fault. The cleanup fixture continues to use its
+valid indirect metadata. This does not validate the target pointer,
+DWARF-expression memory reads, later CFI register loads, or loader mapping
+lifetime.
 
 ## Standalone cleanup regression
 
@@ -210,9 +213,10 @@ remain required by the approved design before qualification is complete.
 The local overlay bounds the declared `PT_GNU_EH_FRAME` header, decoded
 `.eh_frame` entry range, `PT_DYNAMIC` tag table, and complete native words of
 late indirect CIE personality and FDE LSDA cells before they are dereferenced.
-It does not validate every FDE/CIE/DWARF record, pointer targets,
-DWARF-expression memory reads, later CFI register loads, or loader mapping
-lifetime. Source pinning and the guarded metadata regressions do not establish
-safe failure for malicious or truncated mapped unwind metadata generally. Those
-boundaries must be fixed and tested before this provider is promoted.
-Enumeration is not claimed async-signal-safe.
+Present cells that cannot be resolved produce the existing phase error; they are
+not treated as absent metadata. It does not validate every FDE/CIE/DWARF record,
+pointer targets, DWARF-expression memory reads, later CFI register loads, or
+loader mapping lifetime. Source pinning and the guarded metadata regressions do
+not establish safe failure for malicious or truncated mapped unwind metadata
+generally. Those boundaries must be fixed and tested before this provider is
+promoted. Enumeration is not claimed async-signal-safe.
