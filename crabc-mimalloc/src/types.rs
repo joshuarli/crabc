@@ -2523,6 +2523,26 @@ impl ThreadLocalData {
             && !self.is_in_threadpool
     }
 
+    /// Checks the exact attached-TLD image during one selected deferred-free
+    /// callback. This stays separate from the ordinary lifecycle predicate:
+    /// callback allocation requires the source `recurse` marker to be live,
+    /// while normal allocation, teardown, and attachment projection require
+    /// it to be clear.
+    #[inline]
+    pub(crate) fn matches_subprocess_attached_deferred_callback_lifecycle(
+        &self,
+        thread_id: LiveThreadId,
+        thread_sequence: ThreadSequence,
+        subprocess: &MainSubprocess,
+    ) -> bool {
+        self.thread_id == thread_id.get()
+            && self.thread_seq == thread_sequence.get()
+            && !self.subprocess.is_null()
+            && self.is_attached_to_main_subprocess(subprocess)
+            && self.recurse
+            && !self.is_in_threadpool
+    }
+
     /// Executes the `mi_tld_free` identity invalidation after its owner has
     /// released the corresponding subprocess live-count lease.
     ///
@@ -5010,6 +5030,21 @@ pub(crate) struct Theap {
     statistics: HeapTheapStatistics,
 }
 
+/// The collection continuation selected by source generic-allocation
+/// administration.
+///
+/// Pinned mimalloc v3.5.0 keeps this decision in `mi_malloc_generic_admin`:
+/// every thousandth generic allocation resets its local counter, then either
+/// performs the ordinary whole-Theap collect or a mini deferred-free/retired
+/// collection. The caller owns the actual collector because selected deferred
+/// user code must run after the caller releases its mutable allocator owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum GenericAllocationAdministration {
+    None,
+    Mini,
+    Full,
+}
+
 impl Theap {
     /// `src/init.c:_mi_theap_empty` through its `memid` prefix.
     ///
@@ -5823,6 +5858,16 @@ impl Theap {
         Some(unsafe { self.tld.as_ref()? }.thread_sequence().get())
     }
 
+    /// Returns the exact TLD pointer recorded by a still-initialized Theap
+    /// for a caller-stack deferred-free identity. This is not a reusable TLD
+    /// owner: the caller must retain the source Theap/TLD lifetime and
+    /// revalidate both pointers and their source thread sequence before a
+    /// continuation reborrows an allocator owner.
+    #[inline]
+    pub(crate) fn deferred_free_tld(&self) -> Option<NonNull<ThreadLocalData>> {
+        self.is_initialized().then(|| NonNull::new(self.tld)).flatten()
+    }
+
     #[inline]
     fn matches_owner(&self, owner: TheapOwner) -> bool {
         // The only constructors use `DETACHED_THREAD_LOCAL` or a pinned
@@ -5929,14 +5974,123 @@ impl Theap {
         core::ptr::eq(self.tld, tld) && !tld.is_null()
     }
 
-    /// Advances source `mi_theap_t::heartbeat` for one collector entry.
+    /// Advances one source-owned `mi_theap_t::heartbeat` field.
     ///
-    /// Pinned C uses an unsigned counter, so overflow is defined modulo the
-    /// field width rather than a debug-only failure.
+    /// # Safety
+    ///
+    /// `pointer` must originate from the live owning Theap capability and the
+    /// caller must exclusively own its `heartbeat` field for this operation.
+    /// It deliberately does not form `&mut Theap`: shared main-Heap list
+    /// maintenance can observe unrelated Theap fields while a callback
+    /// advances this source-local counter. Pinned C uses an unsigned counter,
+    /// so overflow is defined modulo the field width.
     #[inline]
-    pub(crate) fn advance_heartbeat(&mut self) -> u64 {
-        self.heartbeat = self.heartbeat.wrapping_add(1);
-        self.heartbeat
+    pub(crate) unsafe fn advance_heartbeat_at(pointer: NonNull<Self>) -> u64 {
+        // SAFETY: the caller supplies the original live Theap capability. This
+        // projects only the independently owned heartbeat field, never a
+        // mutable whole-Theap image.
+        let heartbeat = unsafe { core::ptr::addr_of_mut!((*pointer.as_ptr()).heartbeat) };
+        // SAFETY: the method's field-exclusivity contract covers this one
+        // read-modify-write.
+        unsafe {
+            *heartbeat = (*heartbeat).wrapping_add(1);
+            *heartbeat
+        }
+    }
+
+    /// Advances source `_mi_malloc_generic` administration through the
+    /// `mi_malloc_generic_admin` collection decision.
+    ///
+    /// The fixed v3.5.0 default `mi_option_generic_collect` is 10,000. This
+    /// port has no option registration route yet, so it intentionally records
+    /// that pinned default rather than manufacturing a side option state.
+    #[inline]
+    pub(crate) fn advance_generic_allocation_administration(
+        &mut self,
+    ) -> GenericAllocationAdministration {
+        // SAFETY: the exclusive receiver owns both source counter fields.
+        unsafe { Self::advance_generic_allocation_administration_at(NonNull::from(self)) }
+    }
+
+    /// Advances only the two source generic-administration counters at an
+    /// already-stable Theap address.
+    ///
+    /// # Safety
+    ///
+    /// `pointer` must designate one live `Theap`; the caller exclusively owns
+    /// `generic_count` and `generic_collect_count`, and holds no shared whole-
+    /// `Theap` observation across this call. This narrow raw projection exists
+    /// for the permanent process page session, where unrelated linked-list
+    /// fields remain concurrently observable through the shared-Heap protocol.
+    #[inline]
+    pub(crate) unsafe fn advance_generic_allocation_administration_at(
+        pointer: NonNull<Theap>,
+    ) -> GenericAllocationAdministration {
+        const GENERIC_ADMIN_FREQUENCY: isize = 1_000;
+        const GENERIC_FULL_COLLECT_FREQUENCY: isize = 10_000;
+
+        // C reaches this function only after `_mi_malloc_generic` has
+        // incremented `generic_count`; it then routes the threshold value to
+        // fallback administration. Project the two disjoint source fields
+        // without forming `&mut Theap`: the process-static session cannot
+        // exclude its independently observed list fields for a whole-object
+        // borrow. The bounded fields never approach signed overflow.
+        // SAFETY: required by this method's caller contract; the pointer is
+        // live and the two source fields are exclusively owned. This forms
+        // raw field pointers only, never a whole-Theap reference.
+        let (generic_count, generic_collect_count) = unsafe {
+            (
+                core::ptr::addr_of_mut!((*pointer.as_ptr()).generic_count),
+                core::ptr::addr_of_mut!((*pointer.as_ptr()).generic_collect_count),
+            )
+        };
+        // SAFETY: the two projected fields are exclusive and remain valid for
+        // the entire operation.
+        unsafe {
+            *generic_count += 1;
+            if *generic_count < GENERIC_ADMIN_FREQUENCY {
+                return GenericAllocationAdministration::None;
+            }
+
+            *generic_collect_count += *generic_count;
+            *generic_count = 0;
+            if *generic_collect_count >= GENERIC_FULL_COLLECT_FREQUENCY {
+                *generic_collect_count = 0;
+                GenericAllocationAdministration::Full
+            } else {
+                GenericAllocationAdministration::Mini
+            }
+        }
+    }
+
+    /// Resets the two source generic-administration counters for a bounded
+    /// C/Rust differential fixture after it seeded a direct-small page.
+    ///
+    /// # Safety
+    ///
+    /// `pointer` must be the fixture's live original Theap capability, with
+    /// exclusive authority over these two source-local fields. This mirrors
+    /// the pinned C probe's explicit post-anchor reset and does not form a
+    /// mutable whole-Theap reference.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) unsafe fn test_reset_generic_allocation_administration_at(
+        pointer: NonNull<Theap>,
+    ) {
+        // SAFETY: the caller proves original live storage and field
+        // exclusivity. Project only the two source counter fields.
+        let (generic_count, generic_collect_count) = unsafe {
+            (
+                core::ptr::addr_of_mut!((*pointer.as_ptr()).generic_count),
+                core::ptr::addr_of_mut!((*pointer.as_ptr()).generic_collect_count),
+            )
+        };
+        // SAFETY: the fixture's source counter-field authority covers both
+        // writes and neither access forms a whole-Theap mutable reference.
+        unsafe {
+            *generic_count = 0;
+            *generic_collect_count = 0;
+        }
     }
 
     #[cfg(test)]
@@ -6341,7 +6495,7 @@ mod tests {
         unsafe { Theap::reset_local_retired_bounds_at(first_pointer); }
         assert_eq!(first.retired_bounds(), (BIN_FULL, 0));
         let guard = heap.theaps_lock.lock().unwrap();
-        assert_eq!(unsafe { *first.hprev.get() }, second_pointer);
+        assert_eq!(first.hprev, second_pointer);
         guard.unlock().unwrap();
     }
 
@@ -8736,6 +8890,46 @@ mod tests {
         assert_eq!(page.block_size, 0);
         assert_eq!(page.capacity, 0);
         assert_eq!(page.reserved, 0);
+    }
+
+    #[test]
+    fn generic_allocation_administration_resets_before_its_selected_collection() {
+        let mut theap = Theap::empty();
+
+        for _ in 0..999 {
+            assert_eq!(
+                theap.advance_generic_allocation_administration(),
+                GenericAllocationAdministration::None,
+                "the source fast generic branch remains below its 1000-call administration boundary"
+            );
+        }
+        assert_eq!(
+            theap.advance_generic_allocation_administration(),
+            GenericAllocationAdministration::Mini,
+            "the 1000th generic allocation resets the local counter then selects mini collection"
+        );
+        assert_eq!(theap.generic_count, 0);
+        assert_eq!(theap.generic_collect_count, 1_000);
+
+        for batch in 2..=10 {
+            for _ in 0..999 {
+                assert_eq!(
+                    theap.advance_generic_allocation_administration(),
+                    GenericAllocationAdministration::None
+                );
+            }
+            let expected = if batch == 10 {
+                GenericAllocationAdministration::Full
+            } else {
+                GenericAllocationAdministration::Mini
+            };
+            assert_eq!(theap.advance_generic_allocation_administration(), expected);
+        }
+        assert_eq!(theap.generic_count, 0);
+        assert_eq!(
+            theap.generic_collect_count, 0,
+            "the source resets generic_collect_count before its selected full collection"
+        );
     }
 
     #[test]

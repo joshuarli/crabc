@@ -1,0 +1,87 @@
+{
+  "c_probe_sha256": "4da8f91be650928cf4ad85186d8ebf1fc9c725fbfcc817af06016e444de7ef55",
+  "compile_definitions": [
+    "-DMI_SHARED_LIB",
+    "-DMI_SHARED_LIB_EXPORT",
+    "-DMI_LIBC_MUSL=1"
+  ],
+  "format": 1,
+  "profile": "linux-x86_64-private-deferred-free-callback",
+  "release_flags": [
+    "-O3",
+    "-DNDEBUG",
+    "-DMI_BUILD_RELEASE=1",
+    "-DMI_DEBUG=0",
+    "-DMI_STAT=0",
+    "-DMI_SECURE=0",
+    "-DMI_GUARDED=0"
+  ],
+  "release_source_set": [
+    "src/static.c"
+  ],
+  "rust_test": {
+    "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+    "target_arch": "x86_64",
+    "test_filter": "runtime_lifecycle::tests::native_deferred_free_callback_trace_matches_pinned_generic_timing"
+  },
+  "schema": "crabc-mimalloc-x86_64-deferred-free-callback-evidence",
+  "scope": {
+    "aarch64_status_reused": false,
+    "emulation_accepted": false,
+    "native_linux_x86_64_required": true,
+    "private_engine_evidence_only": true,
+    "public_crabc_support": false,
+    "public_mi_api_claimed": false,
+    "public_x86_libc_or_ldso_support": false,
+    "registration_remains_crate_private": true,
+    "single_callback_context_and_one_same_thread_owner_only": true
+  },
+  "source_anchors": [
+    {
+      "end_line": 1117,
+      "member": "src/page.c",
+      "sha256": "edc368582efb777195f6a0e47eab72c47bdfaf0394d378c2854c1b231e62d6e0",
+      "start_line": 987
+    },
+    {
+      "end_line": 155,
+      "member": "src/theap.c",
+      "sha256": "c04f23536687d633723539e9ea53296c2c0e39db4cafb3e20ef491c41ccc5807",
+      "start_line": 89
+    },
+    {
+      "end_line": 44,
+      "member": "src/static.c",
+      "sha256": "2a0ce462658c70ce646ba04347dd89cb2d868c84a7ae4173b7f4edf86efca6d2",
+      "start_line": 19
+    }
+  ],
+  "target": {
+    "architecture": "x86_64",
+    "endianness": "little",
+    "rust_target": "x86_64-unknown-linux-musl",
+    "system": "linux"
+  },
+  "trace": {
+    "begin": "CRABC_MI_DEFERRED_FREE_TRACE_BEGIN",
+    "end": "CRABC_MI_DEFERRED_FREE_TRACE_END",
+    "expected_values": {
+      "trace.deferred_free.callback_count": 11,
+      "trace.deferred_free.context_matches": 1,
+      "trace.deferred_free.first_heartbeat": 1,
+      "trace.deferred_free.force_callbacks": 1,
+      "trace.deferred_free.force_heartbeat_advanced": 1,
+      "trace.deferred_free.full_callbacks": 1,
+      "trace.deferred_free.full_heartbeat": 11,
+      "trace.deferred_free.mini_callbacks": 9,
+      "trace.deferred_free.nested_allocation_completed": 1,
+      "trace.deferred_free.nested_heartbeat": 2,
+      "trace.deferred_free.nested_reentry_suppressed": 1
+    }
+  },
+  "upstream": {
+    "archive_root": "mimalloc-3.5.0",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "version": "3.5.0"
+  }
+}

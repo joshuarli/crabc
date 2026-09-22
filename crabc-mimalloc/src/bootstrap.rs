@@ -392,6 +392,23 @@ pub(crate) mod theap_page_session_sealed {
 pub(crate) unsafe trait TheapPageSession: theap_page_session_sealed::Sealed {
     fn theap(&self) -> &Theap;
     fn thread_id(&self) -> Option<LiveThreadId>;
+    /// Advances the source generic-allocation administration counters for an
+    /// ordinary allocation boundary. Only a session that owns the exact
+    /// mutable Theap overrides this hook; read-only or deliberately narrowed
+    /// sessions retain their existing no-allocation behavior.
+    #[inline]
+    fn advance_generic_allocation_administration(
+        &mut self,
+    ) -> crate::types::GenericAllocationAdministration {
+        crate::types::GenericAllocationAdministration::None
+    }
+    /// Copies the current source identity for a caller-stack deferred-free
+    /// phase. The default deliberately grants no raw source identity to
+    /// narrowed, teardown, or fixture sessions.
+    #[inline]
+    fn deferred_free_source(&self) -> Option<crate::deferred_free::DeferredFreeSource> {
+        None
+    }
     /// Reports whether this session still authorizes ordinary page-engine
     /// operations. A typed teardown continuation can retain the backing page
     /// image solely to resume its own source boundary; it must not thereby

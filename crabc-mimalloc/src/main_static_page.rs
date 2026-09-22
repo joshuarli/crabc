@@ -44,7 +44,9 @@ use crate::process_page_map::{ProcessPageMapError, ProcessPageMapMutationLease};
 use crate::process_page_map::ProcessPageMapSuspendedEngineAccess;
 use crate::size_class;
 use crate::single_thread::{
-    FreeError, PageAllocatorEngine, RemoteFreePreparationError, RemoteFreeProducer,
+    DeferredFreeAllocationContinuation, DeferredFreeAllocationPhase,
+    GenericAllocationCollection, FreeError, PageAllocatorEngine,
+    RemoteFreePreparationError, RemoteFreeProducer,
 };
 #[cfg(test)]
 use crate::single_thread::PageAllocatorEngineState;
@@ -81,6 +83,19 @@ pub(crate) fn native_process_backing_first_arena_audit() -> usize {
 pub(crate) struct MainStaticProcessPageAllocator<'main> {
     engine: PageAllocatorEngine<'static, 'static, crate::main_theap::MainStaticPageSession<'main>>,
     page_map_lifecycle: ProcessPageMapMutationLease,
+}
+
+/// One caller-stack generic allocation phase for the persistent initial
+/// source owner. Its callback source is a scalar identity, never a borrowed
+/// page engine, session, or static owner.
+#[must_use = "an initial deferred-free allocation phase must be completed"]
+pub(crate) enum MainStaticDeferredFreeAllocationPhase {
+    Complete(Option<NonNull<u8>>),
+    Collect {
+        source: crate::deferred_free::DeferredFreeSource,
+        collection: GenericAllocationCollection,
+        continuation: DeferredFreeAllocationContinuation,
+    },
 }
 
 /// A pre-publication refusal while opening the bounded static page allocator.
@@ -1179,7 +1194,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
     /// engine's exact-owned-range PageMap contract. The operation itself
     /// selects only the source allocation primitive; it cannot change the
     /// owner state machine.
-    fn allocate_with(
+    fn allocate_with<R>(
         &mut self,
         request: usize,
         allocate: impl FnOnce(
@@ -1189,8 +1204,8 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 MainStaticProcessPageSession,
                 RuntimeFirstRegularPageBacking,
             >,
-        ) -> Option<NonNull<u8>>,
-    ) -> Option<NonNull<u8>> {
+        ) -> Option<R>,
+    ) -> Option<R> {
         let state = core::mem::replace(
             &mut self.state,
             MainStaticRuntimeFirstArenaPageAllocatorState::Transition,
@@ -1719,6 +1734,111 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         self.allocate_aligned(request, alignment, zero)
     }
 
+    /// Starts the persistent initial owner's generic allocation phase.
+    ///
+    /// `allocate_with` restores `Active` before this method returns, including
+    /// when the phase selected a callback. The returned source identity has
+    /// no engine or session borrow, so runtime phase B can invoke user code
+    /// only after the compiler-TLS owner projection ends.
+    pub(crate) fn begin_deferred_free_current_initial_thread_local(
+        &mut self,
+        request: usize,
+        zero: bool,
+    ) -> Option<MainStaticDeferredFreeAllocationPhase> {
+        if !matches!(
+            &self.state,
+            MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { .. }
+                | MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { .. }
+                | MainStaticRuntimeFirstArenaPageAllocatorState::Active(_)
+        ) {
+            return None;
+        }
+        self.allocate_with(request, |engine| {
+            match engine.begin_deferred_free_allocation(request, zero) {
+                DeferredFreeAllocationPhase::Complete(block) => {
+                    Some(MainStaticDeferredFreeAllocationPhase::Complete(block))
+                }
+                DeferredFreeAllocationPhase::Collect { collection, continuation } => {
+                    Some(MainStaticDeferredFreeAllocationPhase::Collect {
+                        source: engine.deferred_free_source()?,
+                        collection,
+                        continuation,
+                    })
+                }
+            }
+        })
+    }
+
+    /// Starts an aligned persistent-initial allocation with the same
+    /// caller-stack deferred-free phase contract as ordinary allocation.
+    pub(crate) fn begin_deferred_free_aligned_current_initial_thread_local(
+        &mut self,
+        request: usize,
+        alignment: usize,
+        zero: bool,
+    ) -> Option<MainStaticDeferredFreeAllocationPhase> {
+        if !matches!(
+            &self.state,
+            MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { .. }
+                | MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { .. }
+                | MainStaticRuntimeFirstArenaPageAllocatorState::Active(_)
+        ) || !size_class::alignment_is_valid(alignment)
+        {
+            return None;
+        }
+        self.allocate_with(request, |engine| {
+            match engine.begin_deferred_free_aligned_allocation(request, alignment, zero) {
+                DeferredFreeAllocationPhase::Complete(block) => {
+                    Some(MainStaticDeferredFreeAllocationPhase::Complete(block))
+                }
+                DeferredFreeAllocationPhase::Collect { collection, continuation } => {
+                    Some(MainStaticDeferredFreeAllocationPhase::Collect {
+                        source: engine.deferred_free_source()?,
+                        collection,
+                        continuation,
+                    })
+                }
+            }
+        })
+    }
+
+    /// Revalidates an initial source identity and resumes its selected
+    /// collector after user callback return. A callback can reenter and change
+    /// owner state, so only the already-active exact initial engine may resume.
+    pub(crate) fn resume_deferred_free_current_initial_thread_local(
+        &mut self,
+        source: crate::deferred_free::DeferredFreeSource,
+        collection: GenericAllocationCollection,
+        continuation: DeferredFreeAllocationContinuation,
+    ) -> Option<MainStaticDeferredFreeAllocationPhase> {
+        if !matches!(
+            &self.state,
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(_)
+        ) {
+            return None;
+        }
+        self.allocate_with(WORD_SIZE, |engine| {
+            if !engine
+                .deferred_free_source()
+                .is_some_and(|current| source.matches_current(current))
+            {
+                return None;
+            }
+            match engine.resume_deferred_free_allocation(collection, continuation) {
+                DeferredFreeAllocationPhase::Complete(block) => {
+                    Some(MainStaticDeferredFreeAllocationPhase::Complete(block))
+                }
+                DeferredFreeAllocationPhase::Collect { collection, continuation } => {
+                    Some(MainStaticDeferredFreeAllocationPhase::Collect {
+                        source: engine.deferred_free_source()?,
+                        collection,
+                        continuation,
+                    })
+                }
+            }
+        })
+    }
+
     /// Reallocates one live ticket-zero runtime allocation.
     ///
     /// # Safety
@@ -1816,40 +1936,6 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 // SAFETY: the persistent initial owner keeps this exact
                 // engine current and exclusively borrowed for the call.
                 let replacement = unsafe { active.engine.reallocate(Some(block), new_size) };
-                self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active(active);
-                replacement
-            }
-            other => {
-                self.state = other;
-                None
-            }
-        }
-    }
-
-    /// Reallocates one current native C-ABI client through the initial
-    /// persistent engine. The core retains ordinary realloc's source
-    /// decision/copy/free order while selecting a naturally aligned
-    /// replacement for the public Linux/AArch64 C boundary.
-    ///
-    /// # Safety
-    ///
-    /// `block` must be current in this exact active owner with no aliased
-    /// access, remote producer, or prior free.
-    #[inline]
-    pub(crate) unsafe fn reallocate_current_initial_thread_local_c_abi(
-        &mut self,
-        block: NonNull<u8>,
-        new_size: usize,
-    ) -> Option<NonNull<u8>> {
-        let state = core::mem::replace(
-            &mut self.state,
-            MainStaticRuntimeFirstArenaPageAllocatorState::Transition,
-        );
-        match state {
-            MainStaticRuntimeFirstArenaPageAllocatorState::Active(mut active) => {
-                // SAFETY: the persistent initial owner keeps this exact
-                // engine current and exclusively borrowed for the call.
-                let replacement = unsafe { active.engine.reallocate_c_abi(Some(block), new_size) };
                 self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active(active);
                 replacement
             }

@@ -2474,6 +2474,44 @@ impl MainHeapThreadOwnerLocalAllocator<'_> {
         self.engine.allocate(request, zero)
     }
 
+    /// Starts a native allocation without retaining this short owner-local
+    /// projection when source generic administration selects a deferred-free
+    /// callback. The returned phase contains only value-owned generic request
+    /// geometry; the runtime invokes its callback after this adapter is gone.
+    #[inline]
+    pub(crate) fn begin_deferred_free_allocation(
+        &mut self,
+        request: usize,
+        zero: bool,
+    ) -> crate::single_thread::DeferredFreeAllocationPhase {
+        self.engine.begin_deferred_free_allocation(request, zero)
+    }
+
+    /// Starts an aligned native allocation through the same value-only
+    /// callback split as ordinary generic allocation.
+    #[inline]
+    pub(crate) fn begin_deferred_free_aligned_allocation(
+        &mut self,
+        request: usize,
+        alignment: usize,
+        zero: bool,
+    ) -> crate::single_thread::DeferredFreeAllocationPhase {
+        self.engine
+            .begin_deferred_free_aligned_allocation(request, alignment, zero)
+    }
+
+    /// Resumes a callback-selected native generic phase after the runtime
+    /// reacquired and revalidated this owner-local engine.
+    #[inline]
+    pub(crate) fn resume_deferred_free_allocation(
+        &mut self,
+        collection: crate::single_thread::GenericAllocationCollection,
+        continuation: crate::single_thread::DeferredFreeAllocationContinuation,
+    ) -> crate::single_thread::DeferredFreeAllocationPhase {
+        self.engine
+            .resume_deferred_free_allocation(collection, continuation)
+    }
+
     /// Checks whether one held pointer-first source classification belongs to
     /// this active owner-local engine without performing another PageMap
     /// lookup or any page mutation.

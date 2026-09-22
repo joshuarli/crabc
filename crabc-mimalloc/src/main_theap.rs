@@ -3326,6 +3326,32 @@ unsafe impl TheapPageSession for MainStaticProcessPageSession {
     }
 
     #[inline]
+    fn advance_generic_allocation_administration(
+        &mut self,
+    ) -> crate::types::GenericAllocationAdministration {
+        // SAFETY: this permanent ticket-zero session exclusively owns these
+        // two counter fields. It deliberately does not form `&mut Theap`:
+        // concurrent source list observations use the separate shared-Heap
+        // protocol and may not alias a whole-Theap mutable projection.
+        unsafe {
+            Theap::advance_generic_allocation_administration_at(
+                NonNull::new(self.storage.theap.image.get())
+                    .expect("the process-static Theap slot has a stable address"),
+            )
+        }
+    }
+
+    #[inline]
+    fn deferred_free_source(&self) -> Option<crate::deferred_free::DeferredFreeSource> {
+        self.is_current().then(|| {
+            crate::deferred_free::DeferredFreeSource::capture(
+                NonNull::from(self.theap()),
+                self.thread,
+            )
+        }).flatten()
+    }
+
+    #[inline]
     fn permits_ordinary_page_operations(&self) -> bool {
         self.is_current()
             && !matches!(

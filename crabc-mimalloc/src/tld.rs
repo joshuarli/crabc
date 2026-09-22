@@ -644,6 +644,45 @@ impl DynamicAttachedThreadLocalData {
             .ok_or(ThreadLocalDataError::Projection)
     }
 
+    /// Projects the exact current attached TLD while its selected deferred-
+    /// free callback is synchronously executing.
+    ///
+    /// [`Self::current_mut`] deliberately rejects `TLD::recurse`: ordinary
+    /// lifecycle operations must not run during a callback. This narrower
+    /// projection rechecks the same owner, source sequence, subprocess, and
+    /// metadata origin, and additionally requires the already-published
+    /// source recurse marker. It cannot authorize teardown, a new callback,
+    /// or a foreign TLD.
+    #[inline]
+    pub(crate) fn current_deferred_callback_mut(
+        &mut self,
+    ) -> Result<&mut ThreadLocalData, ThreadLocalDataError> {
+        self.ensure_active_current()?;
+        let allocation = self
+            .allocation
+            .as_mut()
+            .ok_or(ThreadLocalDataError::Projection)?;
+        let (matches_callback_lifecycle, memory) = {
+            let tld = allocation
+                .thread_local_data_mut()
+                .ok_or(ThreadLocalDataError::Projection)?;
+            (
+                tld.matches_subprocess_attached_deferred_callback_lifecycle(
+                    self.thread,
+                    self.sequence,
+                    self.subprocess,
+                ),
+                tld.memory_id(),
+            )
+        };
+        if !matches_callback_lifecycle || !allocation.matches_memory_id(memory) {
+            return Err(ThreadLocalDataError::Projection);
+        }
+        allocation
+            .thread_local_data_mut()
+            .ok_or(ThreadLocalDataError::Projection)
+    }
+
     /// Retires this TLD only after its dynamic Theap was fully detached from
     /// both intrusive lists. After validating the empty-list state, this
     /// follows `mi_tld_free` order: release the live registration, invalidate

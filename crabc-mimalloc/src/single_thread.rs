@@ -188,9 +188,9 @@ use crate::remote_free::{self, RemoteFreeError};
 use crate::size_class;
 use crate::subproc::MainSubprocess;
 use crate::types::{
-    EMPTY_PAGE, Heap, HeapOsAbandonedPageListError, HeapOsAbandonedPageRemovalOutcome,
-    LiveThreadId, MemoryId, MemoryKind, Page, PageKind, PageRemoteFreeProducerState, Theap,
-    PAGE_FLAG_MASK, THREAD_ID_ABANDONED,
+    EMPTY_PAGE, GenericAllocationAdministration, Heap, HeapOsAbandonedPageListError,
+    HeapOsAbandonedPageRemovalOutcome, LiveThreadId, MemoryId, MemoryKind, Page, PageKind,
+    PageRemoteFreeProducerState, Theap, PAGE_FLAG_MASK, THREAD_ID_ABANDONED,
 };
 use crate::types::page_queue::{
     page_is_in_full, theap_collect_abandon_queues, TheapCollectAbandonAbandonedPage,
@@ -360,6 +360,77 @@ enum GenericPathError {
     Local(FreeListError),
     PageCommit(PageCommitError),
     Lifecycle,
+}
+
+/// The source collector which must follow a selected deferred-free callback
+/// before the pending generic allocation can advance.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum GenericAllocationCollection {
+    /// `_mi_deferred_free(false)` followed by `_mi_theap_collect_retired(false)`.
+    Mini,
+    /// `mi_theap_collect(theap, false)` before the first page lookup.
+    Full,
+    /// `mi_theap_collect(theap, true)` after the first page lookup failed.
+    Force,
+}
+
+/// Value-owned input for one source generic-page lookup.
+///
+/// It carries no session, PageMap, backing, or page pointer. The caller may
+/// release every mutable allocator owner before it asks the attachment to
+/// select and deliver the corresponding deferred-free callback.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct GenericAllocationContinuation {
+    bin: usize,
+    block_size: usize,
+    kind: PageKind,
+    zero: bool,
+}
+
+/// The allocation-specific completion work retained outside a callback.
+///
+/// The source callback runs before `mi_find_page` and therefore before an
+/// aligned request obtains its base block.  These values describe only the
+/// post-lookup pointer rule; they retain no page, map, backing, or owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DeferredFreeAlignedCompletion {
+    Natural { alignment: usize },
+    Overallocate { alignment: usize, offset: usize },
+    HugeSingleton,
+}
+
+/// Value-only work which resumes after a selected deferred-free callback.
+///
+/// Each variant owns the input to exactly one source `mi_find_page` attempt.
+/// An aligned completion carries neither a page reference nor a base pointer:
+/// phase C obtains that pointer only after the attachment identity is
+/// revalidated and a fresh short engine projection has begun.
+#[must_use = "a deferred allocation continuation must return through phase C"]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DeferredFreeAllocationContinuation {
+    Generic(GenericAllocationContinuation),
+    Aligned {
+        generic: GenericAllocationContinuation,
+        completion: DeferredFreeAlignedCompletion,
+    },
+    AlignedHuge {
+        request: usize,
+        alignment: usize,
+        zero: bool,
+    },
+}
+
+/// One completed native generic allocation attempt or its source collection
+/// continuation. A force continuation is emitted only after the first exact
+/// page lookup returned the source no-page result; resuming it performs the
+/// one permitted retry and cannot manufacture a second force attempt.
+#[must_use = "a deferred generic allocation phase must be resumed after its callback"]
+pub(crate) enum DeferredFreeAllocationPhase {
+    Complete(Option<NonNull<u8>>),
+    Collect {
+        collection: GenericAllocationCollection,
+        continuation: DeferredFreeAllocationContinuation,
+    },
 }
 
 /// Result of the selected static-main mapped-regular claim placed immediately
@@ -3555,6 +3626,10 @@ unsafe impl TheapPageSession for OwnerLocalMainHeapPageSession {
     fn theap(&self) -> &Theap { self.active().theap() }
     #[inline]
     fn thread_id(&self) -> Option<LiveThreadId> { self.active().thread_id() }
+    #[inline]
+    fn advance_generic_allocation_administration(&mut self) -> GenericAllocationAdministration {
+        TheapPageSession::advance_generic_allocation_administration(self.active_mut())
+    }
     #[cfg(target_arch = "x86_64")]
     #[inline]
     fn selects_selected_main_arena_source_full_abandonment(&self) -> bool {
@@ -35672,6 +35747,14 @@ impl<'attach, 'heap, 'arena, 'map>
 impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::PageBacking<'arena>>
     PageAllocatorEngine<'arena, 'map, Session, Backing> {
 
+    /// Copies this session's bounded deferred-free source identity without
+    /// exposing the session itself. It is valid only for a caller-stack phase
+    /// that releases this engine before it invokes user code.
+    #[inline]
+    pub(crate) fn deferred_free_source(&self) -> Option<crate::deferred_free::DeferredFreeSource> {
+        self.session.deferred_free_source()
+    }
+
     /// Consumes this Drop-bearing engine without running its conservative
     /// unfinished-engine latch, returning its unique typed session separately
     /// from the PageMap/arena state. Callers must immediately reassemble one
@@ -35943,6 +36026,332 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
 
         self.allocate_generic(request, zero)
+    }
+
+    /// Starts one ordinary allocation with explicit source deferred-free
+    /// collection phases. Native runtime callers use this instead of
+    /// [`Self::allocate`] so a selected user callback can run with no mutable
+    /// page-engine or session borrow alive.
+    ///
+    /// The returned continuation carries only generic page geometry. It does
+    /// not retain a page, page map, arena, session, or backing borrow.
+    pub(crate) fn begin_deferred_free_allocation(
+        &mut self,
+        request: usize,
+        zero: bool,
+    ) -> DeferredFreeAllocationPhase {
+        if self.is_collection_poisoned() {
+            return DeferredFreeAllocationPhase::Complete(None);
+        }
+        let request = request.max(WORD_SIZE);
+        if !size_class::request_size_is_valid(request) {
+            return DeferredFreeAllocationPhase::Complete(None);
+        }
+        if request <= SMALL_SIZE_MAX {
+            return self.begin_deferred_free_small_allocation(request, zero);
+        }
+        let Some(continuation) = self.generic_allocation_continuation(request, zero) else {
+            return DeferredFreeAllocationPhase::Complete(None);
+        };
+        self.begin_deferred_free_generic_allocation(
+            DeferredFreeAllocationContinuation::Generic(continuation),
+        )
+    }
+
+    /// Starts a source aligned allocation without allowing its generic
+    /// callback to retain this page-engine borrow. The direct small-head path
+    /// remains source-fast and has no `_mi_malloc_generic` administration;
+    /// every natural, overallocated, and OS-singleton fallback receives the
+    /// same value-only callback continuation as ordinary allocation.
+    pub(crate) fn begin_deferred_free_aligned_allocation(
+        &mut self,
+        size: usize,
+        alignment: usize,
+        zero: bool,
+    ) -> DeferredFreeAllocationPhase {
+        if self.is_collection_poisoned() || !size_class::alignment_is_valid(alignment) {
+            return DeferredFreeAllocationPhase::Complete(None);
+        }
+        if let Some(block) = self.allocate_aligned_small_head(size, alignment, 0, zero) {
+            return DeferredFreeAllocationPhase::Complete(Some(block));
+        }
+
+        let os_page_size = self.page_map.memory_config().page_size().bytes();
+        match aligned::allocation_plan(size, alignment, 0, os_page_size) {
+            Some(aligned::AlignedAllocationPlan::Natural) => {
+                let request = size.max(WORD_SIZE);
+                let Some(generic) = self.generic_allocation_continuation(request, zero) else {
+                    return DeferredFreeAllocationPhase::Complete(None);
+                };
+                self.begin_deferred_free_generic_allocation(
+                    DeferredFreeAllocationContinuation::Aligned {
+                        generic,
+                        completion: DeferredFreeAlignedCompletion::Natural { alignment },
+                    },
+                )
+            }
+            Some(aligned::AlignedAllocationPlan::Overallocate { request }) => {
+                let Some(generic) = self.generic_allocation_continuation(request, zero) else {
+                    return DeferredFreeAllocationPhase::Complete(None);
+                };
+                self.begin_deferred_free_generic_allocation(
+                    DeferredFreeAllocationContinuation::Aligned {
+                        generic,
+                        completion: DeferredFreeAlignedCompletion::Overallocate {
+                            alignment,
+                            offset: 0,
+                        },
+                    },
+                )
+            }
+            Some(aligned::AlignedAllocationPlan::HugeSingleton { request, alignment }) => {
+                self.begin_deferred_free_generic_allocation(
+                    DeferredFreeAllocationContinuation::AlignedHuge {
+                        request,
+                        alignment,
+                        zero,
+                    },
+                )
+            }
+            None => DeferredFreeAllocationPhase::Complete(None),
+        }
+    }
+
+    /// Resumes one source collection after its selected deferred-free callback
+    /// returned and the runtime revalidated the attachment that produced the
+    /// continuation.
+    pub(crate) fn resume_deferred_free_allocation(
+        &mut self,
+        collection: GenericAllocationCollection,
+        continuation: DeferredFreeAllocationContinuation,
+    ) -> DeferredFreeAllocationPhase {
+        let collected = match collection {
+            GenericAllocationCollection::Mini => self.collect_retired(false),
+            GenericAllocationCollection::Full => self.collect_generic_administration(false),
+            GenericAllocationCollection::Force => self.collect_all_pages_for_allocation_retry(),
+        };
+        if !collected {
+            return DeferredFreeAllocationPhase::Complete(None);
+        }
+        // Pinned `theap.c:123-148` merges the current Theap statistics only
+        // after the selected complete collector has returned. Mini collection
+        // remains an allocation-side maintenance pass; it neither transfers
+        // nor resets the source statistics image.
+        if matches!(collection, GenericAllocationCollection::Full | GenericAllocationCollection::Force)
+            && !self
+                .session
+                .theap()
+                .merge_statistics_into_owning_heap_after_collection()
+        {
+            return DeferredFreeAllocationPhase::Complete(None);
+        }
+        match collection {
+            // The force collector is the source's one retry. A second no-page
+            // result is final and must not schedule another force callback.
+            GenericAllocationCollection::Force => DeferredFreeAllocationPhase::Complete(
+                self.attempt_deferred_free_allocation(continuation)
+                    .ok()
+                    .flatten(),
+            ),
+            GenericAllocationCollection::Mini | GenericAllocationCollection::Full => {
+                self.try_deferred_free_allocation_once(continuation)
+            }
+        }
+    }
+
+    fn begin_deferred_free_small_allocation(
+        &mut self,
+        request: usize,
+        zero: bool,
+    ) -> DeferredFreeAllocationPhase {
+        let Some(bin) = size_class::bin(request) else {
+            return DeferredFreeAllocationPhase::Complete(None);
+        };
+        let direct_index = match invariants::word_count(request) {
+            Some(index) if index < PAGES_DIRECT => index,
+            _ => return DeferredFreeAllocationPhase::Complete(None),
+        };
+        let direct = match self.session.direct_page(direct_index) {
+            Some(direct) => direct,
+            None => return DeferredFreeAllocationPhase::Complete(None),
+        };
+        if direct != EMPTY_PAGE.as_ptr() {
+            let Some(page) = NonNull::new(direct) else {
+                return DeferredFreeAllocationPhase::Complete(None);
+            };
+            match self.pop_immediate_local(page, zero) {
+                Ok(Some(block)) => return DeferredFreeAllocationPhase::Complete(Some(block)),
+                Ok(None) => {}
+                Err(_) => return DeferredFreeAllocationPhase::Complete(None),
+            }
+        }
+        let Some(block_size) = size_class::bin_size(bin) else {
+            return DeferredFreeAllocationPhase::Complete(None);
+        };
+        self.begin_deferred_free_generic_allocation(
+            DeferredFreeAllocationContinuation::Generic(GenericAllocationContinuation {
+                bin,
+                block_size,
+                kind: PageKind::Small,
+                zero,
+            }),
+        )
+    }
+
+    fn generic_allocation_continuation(
+        &self,
+        request: usize,
+        zero: bool,
+    ) -> Option<GenericAllocationContinuation> {
+        let bin = size_class::bin(request)?;
+        if bin == BIN_HUGE {
+            let block_size = self.page_map.memory_config().good_alloc_size(request);
+            if block_size == 0 || block_size < request {
+                return None;
+            }
+            return Some(GenericAllocationContinuation {
+                bin,
+                block_size,
+                kind: PageKind::Singleton,
+                zero,
+            });
+        }
+        let page_size = self.page_map.memory_config().page_size().bytes();
+        let block_size = size_class::good_size(request, page_size)?;
+        if size_class::bin(block_size)? != bin {
+            return None;
+        }
+        let kind = size_class::page_kind_for_block_size(block_size)?;
+        if kind == PageKind::Singleton {
+            return None;
+        }
+        Some(GenericAllocationContinuation {
+            bin,
+            block_size,
+            kind,
+            zero,
+        })
+    }
+
+    fn begin_deferred_free_generic_allocation(
+        &mut self,
+        continuation: DeferredFreeAllocationContinuation,
+    ) -> DeferredFreeAllocationPhase {
+        match self.session.advance_generic_allocation_administration() {
+            GenericAllocationAdministration::None => {
+                self.try_deferred_free_allocation_once(continuation)
+            }
+            GenericAllocationAdministration::Mini => DeferredFreeAllocationPhase::Collect {
+                collection: GenericAllocationCollection::Mini,
+                continuation,
+            },
+            GenericAllocationAdministration::Full => DeferredFreeAllocationPhase::Collect {
+                collection: GenericAllocationCollection::Full,
+                continuation,
+            },
+        }
+    }
+
+    fn try_deferred_free_allocation_once(
+        &mut self,
+        continuation: DeferredFreeAllocationContinuation,
+    ) -> DeferredFreeAllocationPhase {
+        match self.attempt_deferred_free_allocation(continuation) {
+            Ok(Some(block)) => DeferredFreeAllocationPhase::Complete(Some(block)),
+            Err(_) => DeferredFreeAllocationPhase::Complete(None),
+            Ok(None) => DeferredFreeAllocationPhase::Collect {
+                collection: GenericAllocationCollection::Force,
+                continuation,
+            },
+        }
+    }
+
+    /// Performs one source `mi_find_page`-equivalent attempt after its
+    /// administrative callback/collection phase. A missing page is distinct
+    /// from an allocator invariant error: only the missing-page result may
+    /// select the one source force-collect retry.
+    fn attempt_deferred_free_allocation(
+        &mut self,
+        continuation: DeferredFreeAllocationContinuation,
+    ) -> Result<Option<NonNull<u8>>, GenericPathError> {
+        match continuation {
+            DeferredFreeAllocationContinuation::Generic(continuation) => {
+                self.allocate_generic_once(
+                    continuation.bin,
+                    continuation.block_size,
+                    continuation.kind,
+                    continuation.zero,
+                )
+            }
+            DeferredFreeAllocationContinuation::Aligned {
+                generic,
+                completion,
+            } => {
+                let base = self.allocate_generic_once(
+                    generic.bin,
+                    generic.block_size,
+                    generic.kind,
+                    generic.zero,
+                )?;
+                Ok(base.and_then(|base| self.complete_deferred_free_aligned_base(base, completion)))
+            }
+            DeferredFreeAllocationContinuation::AlignedHuge {
+                request,
+                alignment,
+                zero,
+            } => Ok(self.allocate_os_aligned_singleton(request, alignment, zero)),
+        }
+    }
+
+    /// Applies the source aligned allocator's post-base pointer adjustment.
+    ///
+    /// This runs only under phase C's fresh short owner-local projection. The
+    /// callback cannot observe a borrowed base allocation or an interior-page
+    /// flag because neither exists until the callback has returned.
+    fn complete_deferred_free_aligned_base(
+        &mut self,
+        base: NonNull<u8>,
+        completion: DeferredFreeAlignedCompletion,
+    ) -> Option<NonNull<u8>> {
+        match completion {
+            DeferredFreeAlignedCompletion::Natural { alignment } => {
+                if base.as_ptr().addr() & (alignment - 1) == 0 {
+                    Some(base)
+                } else {
+                    // The exact `AlignedAllocationPlan::Natural` proof makes
+                    // this unreachable. Keep the base balanced if a changed
+                    // size-class source mapping ever violates that proof.
+                    let _ = unsafe { self.free(base) };
+                    None
+                }
+            }
+            DeferredFreeAlignedCompletion::Overallocate { alignment, offset } => {
+                let adjustment = aligned::pointer_adjustment(
+                    base.as_ptr().addr(),
+                    alignment,
+                    offset,
+                )?;
+                let block = NonNull::new(base.as_ptr().wrapping_add(adjustment))?;
+                if adjustment == 0 {
+                    return Some(block);
+                }
+                // SAFETY: `base` is the just-created current allocation of
+                // this engine. The page-map entry remains live while the
+                // source interior-pointer bit is published.
+                let page = unsafe { self.page_map.checked_lookup(base.as_ptr()) };
+                let Some(page) = (unsafe { page.as_ref() }) else {
+                    let _ = unsafe { self.free(base) };
+                    return None;
+                };
+                if !self.owns_page(page) {
+                    let _ = unsafe { self.free(base) };
+                    return None;
+                }
+                page.set_has_interior_pointers(true);
+                Some(block)
+            }
+            DeferredFreeAlignedCompletion::HugeSingleton => Some(base),
+        }
     }
 
     fn allocate_small_direct(&mut self, request: usize, zero: bool) -> Option<NonNull<u8>> {
@@ -37913,6 +38322,17 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             && self.arena.collect(self.page_map.memory_config(), force, self.thread_sequence)
     }
 
+    /// The non-force page/backing portion of source
+    /// `mi_theap_collect(theap, false)` selected by generic administration.
+    /// The caller has already delivered `_mi_deferred_free(theap, false)` at
+    /// its phase boundary. The existing ordinary collector owns the same
+    /// retired/full-page and non-force arena purge sequence without borrowing
+    /// a callback context or manufacturing a statistics merge.
+    fn collect_generic_administration(&mut self, force: bool) -> bool {
+        debug_assert!(!force, "generic administration uses only normal source collect");
+        self.collect_retired(false)
+    }
+
     /// Source `page.c:mi_malloc_generic_fallback` retries OOM only after
     /// `theap.c:mi_theap_page_collect(MI_FORCE)` visits every owned queue.
     /// A last remote free does not retire its page: scanning only retired
@@ -37922,9 +38342,10 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// This ports the post-prepass page/backing portion of the forced
     /// collection transition. The retained Rust prepass also has an existing
     /// non-abandoning full-page scan, so it is not asserted to be the exact
-    /// whole-source collection sequence. Generic deferred-callback
-    /// administration and statistics registration remain outside this engine.
-    /// The prepass and all queue visits precede the forced arena purge here.
+    /// whole-source collection sequence. The matching deferred callback is
+    /// selected by the caller before it enters this method; statistics
+    /// registration remains outside this engine. The prepass and all queue
+    /// visits precede the forced arena purge here.
     fn collect_all_pages_for_allocation_retry(&mut self) -> bool {
         if !self.collect_retired_pages(true) {
             return false;

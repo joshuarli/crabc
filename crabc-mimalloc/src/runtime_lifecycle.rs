@@ -87,7 +87,9 @@ use crate::main_heap_page::{
     MainHeapThreadProcessPageExitMappedRegularFreeFailure,
     MainHeapThreadProcessPageExitMappedRegularFreeResult,
 };
-use crate::main_static_page::MainStaticRuntimeFirstArenaPageAllocator;
+use crate::main_static_page::{
+    MainStaticDeferredFreeAllocationPhase, MainStaticRuntimeFirstArenaPageAllocator,
+};
 #[cfg(feature = "native-runtime-test-audit")]
 use crate::main_static_page::native_process_backing_first_arena_audit;
 use crate::main_theap::MainStaticHeapLease;
@@ -109,6 +111,8 @@ use crate::process_page_map::{
 };
 use crate::remote_free;
 use crate::single_thread::{
+    DeferredFreeAllocationContinuation, DeferredFreeAllocationPhase,
+    GenericAllocationCollection,
     ProcessPostOwnerExitPointerFreeDisposition, ProcessPostOwnerExitPointerFreeRejection,
     RemoteFreeProducer, RemoteFreeProducerPair, SourceRetainedTheapSession,
     SourceRetainedTheapSessionError,
@@ -2338,17 +2342,24 @@ pub type TicketZeroSingleRemoteFreePublisher = for<'owner> fn(
     TicketZeroRemoteFreeProducer<'owner>,
 ) -> Result<(), TicketZeroRemoteFreeProducer<'owner>>;
 
-// The high two bits are an allocation-free fork admission gate. The low bits
-// count every current later-thread attachment, including one still between its
-// pre-user-code attach and post-destructor finish transitions. A fork may
-// preserve the copied quiescent ticket-zero process owner only if it first
-// publishes the gate, observes this count at zero, and the private predicate
-// finds no active page engine or live client. The second high bit records that
-// complete precondition for the raw-fork child; it is never exposed while the
-// parent is allowed to admit a later owner.
+// The high two bits are the allocation-free fork-admission seal. The payload
+// below them has two bounded counters: low bits count later-thread lifecycle
+// attachments, while upper payload bits count only selected deferred-free user
+// callbacks in phase B. A callback never borrows the later-thread count, and
+// ordinary allocation never touches either counter. A preserving fork must
+// publish HELD and observe both counters at zero before it runs its private
+// source-owner predicate. PRESERVE records that complete precondition only for
+// the direct raw-fork child; it is never exposed while the parent can admit a
+// later owner or invoke a deferred-free callback.
 const FORK_GATE_HELD: usize = 1usize << (usize::BITS - 1);
 const FORK_GATE_PRESERVE: usize = 1usize << (usize::BITS - 2);
-const FORK_GATE_COUNT_MASK: usize = FORK_GATE_PRESERVE - 1;
+const FORK_GATE_COUNTER_BITS: u32 = (usize::BITS - 2) / 2;
+const FORK_GATE_COUNT_MASK: usize = (1usize << FORK_GATE_COUNTER_BITS) - 1;
+const FORK_GATE_CALLBACK_SHIFT: u32 = FORK_GATE_COUNTER_BITS;
+const FORK_GATE_CALLBACK_ONE: usize = 1usize << FORK_GATE_CALLBACK_SHIFT;
+const FORK_GATE_CALLBACK_COUNT_MASK: usize =
+    FORK_GATE_COUNT_MASK << FORK_GATE_CALLBACK_SHIFT;
+const FORK_GATE_COUNTER_MASK: usize = FORK_GATE_COUNT_MASK | FORK_GATE_CALLBACK_COUNT_MASK;
 
 /// Result of attempting the private worker-entry lifecycle transition.
 ///
@@ -4255,6 +4266,11 @@ static RUNTIME_PROCESS: RuntimeProcessStorage = RuntimeProcessStorage::new();
 /// traversed, unlocked, or repaired there.
 struct RuntimeForkAdmission {
     state: AtomicUsize,
+    /// A copied phase-B claim must not release a reset child counter after
+    /// `after_fork_child`. Zero is a terminal child-invalidated value rather
+    /// than a wrapping generation: this incomplete lifecycle never revives a
+    /// callback admission in that child.
+    callback_claim_generation: AtomicUsize,
 }
 
 /// One linear claim in the runtime's later-worker admission count.
@@ -4269,10 +4285,112 @@ struct LaterThreadAdmissionClaim {
     _private: (),
 }
 
+/// Why one selected deferred-free callback could not enter phase B.
+///
+/// `ForkClosing` is retryable only after the caller has released every source
+/// and runtime borrow; counter exhaustion and child invalidation conservatively
+/// refuse this incomplete lifecycle instead of manufacturing an unrelated
+/// callback claim.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DeferredFreeCallbackAdmissionRefusal {
+    ForkClosing,
+    CounterExhausted,
+    ChildInvalidated,
+}
+
+/// One phase-B deferred-free callback admission. It represents neither a
+/// source owner nor a later-thread attachment, and it may only be held while
+/// foreign callback code executes outside the allocator's internal borrows.
+#[must_use = "a deferred-free callback admission must leave phase B"]
+struct DeferredFreeCallbackAdmissionClaim<'admission> {
+    admission: &'admission RuntimeForkAdmission,
+    generation: usize,
+    _not_send_or_sync: core::marker::PhantomData<*mut ()>,
+}
+
+impl Drop for DeferredFreeCallbackAdmissionClaim<'_> {
+    fn drop(&mut self) {
+        // A fork child resets the word and invalidates every copied callback
+        // claim before callback return. Such a copied token must not subtract
+        // a new child counter, underflow zero, or revive this incomplete gate.
+        if self.admission.callback_claim_generation.load(Ordering::Acquire) != self.generation {
+            return;
+        }
+        loop {
+            let observed = self.admission.state.load(Ordering::Acquire);
+            if observed & FORK_GATE_CALLBACK_COUNT_MASK == 0 {
+                return;
+            }
+            let next = observed - FORK_GATE_CALLBACK_ONE;
+            if self
+                .admission
+                .state
+                .compare_exchange_weak(observed, next, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                return;
+            }
+        }
+    }
+}
+
 impl RuntimeForkAdmission {
     const fn new() -> Self {
         Self {
             state: AtomicUsize::new(0),
+            callback_claim_generation: AtomicUsize::new(1),
+        }
+    }
+
+    #[inline]
+    fn callback_count(observed: usize) -> usize {
+        (observed & FORK_GATE_CALLBACK_COUNT_MASK) >> FORK_GATE_CALLBACK_SHIFT
+    }
+
+    /// Attempts to enter phase B once. The caller can distinguish a fork seal
+    /// from terminal counter/child refusal without spinning under allocator
+    /// locks or source borrows.
+    fn try_claim_deferred_free_callback(
+        &self,
+    ) -> Result<DeferredFreeCallbackAdmissionClaim<'_>, DeferredFreeCallbackAdmissionRefusal> {
+        let generation = self.callback_claim_generation.load(Ordering::Acquire);
+        if generation == 0 {
+            return Err(DeferredFreeCallbackAdmissionRefusal::ChildInvalidated);
+        }
+        loop {
+            let observed = self.state.load(Ordering::Acquire);
+            if observed & FORK_GATE_HELD != 0 {
+                return Err(DeferredFreeCallbackAdmissionRefusal::ForkClosing);
+            }
+            if Self::callback_count(observed) == FORK_GATE_COUNT_MASK {
+                return Err(DeferredFreeCallbackAdmissionRefusal::CounterExhausted);
+            }
+            let next = observed + FORK_GATE_CALLBACK_ONE;
+            if self
+                .state
+                .compare_exchange_weak(observed, next, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                return Ok(DeferredFreeCallbackAdmissionClaim {
+                    admission: self,
+                    generation,
+                    _not_send_or_sync: core::marker::PhantomData,
+                });
+            }
+        }
+    }
+
+    /// Enters phase B after all allocator/internal borrows have ended. A raw
+    /// fork seal is short-lived, so this retries only that loss outside source
+    /// state; capacity and child-invalidated states remain explicit refusal.
+    fn claim_deferred_free_callback(&self) -> Option<DeferredFreeCallbackAdmissionClaim<'_>> {
+        loop {
+            match self.try_claim_deferred_free_callback() {
+                Ok(claim) => return Some(claim),
+                Err(DeferredFreeCallbackAdmissionRefusal::ForkClosing) => core::hint::spin_loop(),
+                Err(DeferredFreeCallbackAdmissionRefusal::CounterExhausted)
+                | Err(DeferredFreeCallbackAdmissionRefusal::ChildInvalidated) => return None,
+            }
         }
     }
 
@@ -4342,10 +4460,9 @@ impl RuntimeForkAdmission {
                 core::hint::spin_loop();
                 continue;
             }
-            // A preserved fork image is valid only while `HELD` is set. Do
-            // not clear or reinterpret any unexpected non-count flag here:
-            // promotion has no fork-preservation authority and may proceed
-            // only from the exact ordinary idle word.
+            // A preserved fork image is valid only while `HELD` is set. An
+            // active phase-B callback is another source owner boundary, so
+            // promotion may proceed only from the exact ordinary idle word.
             if observed != 0 {
                 return None;
             }
@@ -4391,19 +4508,22 @@ impl RuntimeForkAdmission {
                 core::hint::spin_loop();
                 continue;
             }
-            let count = observed & FORK_GATE_COUNT_MASK;
+            let later_count = observed & FORK_GATE_COUNT_MASK;
+            let callback_count = Self::callback_count(observed);
             let next = observed | FORK_GATE_HELD;
             if self
                 .state
                 .compare_exchange_weak(observed, next, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
             {
-                // A zero count under HELD excludes every later attachment:
-                // `claim_later_thread` spins until the parent clears HELD.
-                // Therefore the preparation may safely inspect or
-                // all-free-collect a static or pinned-initial ticket-zero
-                // owner before this raw fork.
-                if count == 0
+                // Zero later and callback counters under HELD exclude every
+                // bridge-owned worker and selected user callback. Both enter
+                // loops recheck HELD before their CAS; a phase-B loser waits
+                // only after its allocator borrows ended. Therefore the
+                // predicate may inspect or all-free-collect a static or
+                // pinned-initial ticket-zero owner before this raw fork.
+                if later_count == 0
+                    && callback_count == 0
                     && can_preserve_process_owner
                         .take()
                         .is_some_and(|predicate| predicate())
@@ -4426,7 +4546,7 @@ impl RuntimeForkAdmission {
             if observed & FORK_GATE_HELD == 0 {
                 return;
             }
-            let next = observed & FORK_GATE_COUNT_MASK;
+            let next = observed & FORK_GATE_COUNTER_MASK;
             if self
                 .state
                 .compare_exchange_weak(observed, next, Ordering::Release, Ordering::Acquire)
@@ -4446,14 +4566,47 @@ impl RuntimeForkAdmission {
     /// copied gate bits for its own proof.
     fn after_fork_child(&self, fork_was_prepared: bool) -> bool {
         let observed = self.state.swap(0, Ordering::AcqRel);
+        // Never wrap a copied callback token back into authority. Once the
+        // child invalidates claims, phase B remains unavailable in this
+        // incomplete fork image instead of subtracting from reset state.
+        let generation = self.callback_claim_generation.load(Ordering::Acquire);
+        if generation != 0 {
+            if generation == usize::MAX {
+                self.callback_claim_generation.store(0, Ordering::Release);
+            } else {
+                self.callback_claim_generation
+                    .store(generation + 1, Ordering::Release);
+            }
+        }
         fork_was_prepared
             && (observed & (FORK_GATE_HELD | FORK_GATE_PRESERVE))
             == (FORK_GATE_HELD | FORK_GATE_PRESERVE)
-            && observed & FORK_GATE_COUNT_MASK == 0
+            && observed & FORK_GATE_COUNTER_MASK == 0
     }
 }
 
 static RUNTIME_FORK_ADMISSION: RuntimeForkAdmission = RuntimeForkAdmission::new();
+
+/// Invokes one selected deferred-free phase-B callback while holding only its
+/// narrow fork-admission claim. Callers must enter this after every allocator,
+/// owner-cell, session, Theap, TLD, and libc-internal borrow ended. A fork-seal
+/// loss retries here rather than under those borrows; overflow or child
+/// invalidation rejects the incomplete native owner without inventing a
+/// callback scheduler.
+#[inline]
+fn invoke_deferred_free_callback_after_fork_admission<R>(
+    invokes_user_callback: bool,
+    invocation: impl FnOnce() -> R,
+) -> Option<R> {
+    let claim = if invokes_user_callback {
+        Some(RUNTIME_FORK_ADMISSION.claim_deferred_free_callback()?)
+    } else {
+        None
+    };
+    let result = invocation();
+    drop(claim);
+    Some(result)
+}
 
 /// Mints a process-unique nonzero identity for one B attachment that may own
 /// terminal post-exit completions. The identity is metadata only: it grants no
@@ -6736,7 +6889,24 @@ enum NativePersistentThreadOwnerExitState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum NativePersistentThreadOwnerLocalAccessError {
     AttachmentOnly,
+    /// The continuously stored engine rejected its fresh short source view.
+    /// Keep this distinct from a retained outer owner so callback diagnostics
+    /// and callers can preserve the exact ownership boundary that refused
+    /// phase-A or phase-C reentry.
+    Access(crate::main_heap_page::MainHeapThreadOwnerLocalPageEngineAccessError),
     Terminal,
+}
+
+/// One caller-stack native allocation phase after a source generic boundary.
+/// No variant retains an engine, attachment, session, TLD, or backing borrow.
+#[must_use = "a deferred-free native allocation phase must be invoked and resumed"]
+enum NativeDeferredFreeAllocationPhase {
+    Complete(Option<core::ptr::NonNull<u8>>),
+    Callback {
+        call: crate::main_heap_thread::MainHeapThreadDeferredFreeCall,
+        collection: GenericAllocationCollection,
+        continuation: DeferredFreeAllocationContinuation,
+    },
 }
 
 impl NativePersistentThreadOwner {
@@ -6758,10 +6928,86 @@ impl NativePersistentThreadOwner {
         };
         let result = engine
             .with_local_allocator(&mut self.attachment, operation)
-            .map_err(|_| NativePersistentThreadOwnerLocalAccessError::Terminal)?;
+            .map_err(NativePersistentThreadOwnerLocalAccessError::Access)?;
         #[cfg(feature = "native-runtime-test-audit")]
         NATIVE_OWNER_LOCAL_OPERATION_COUNT.fetch_add(1, Ordering::AcqRel);
         Ok(result)
+    }
+
+    /// Runs phase A of one ordinary native allocation. Any selected callback
+    /// is returned after the short owner-local page projection has ended.
+    fn begin_deferred_free_allocation(
+        &mut self,
+        request: usize,
+        zero: bool,
+    ) -> Result<NativeDeferredFreeAllocationPhase, NativePersistentThreadOwnerLocalAccessError> {
+        let phase = self.with_local_allocator(|allocator| {
+            allocator.begin_deferred_free_allocation(request, zero)
+        })?;
+        self.defer_after_generic_allocation_phase(phase)
+    }
+
+    /// Runs phase A for an aligned native allocation. The lower phase holds
+    /// only alignment geometry, so callback delivery still happens after this
+    /// owner-local projection and its containing TLS owner-cell borrow end.
+    fn begin_deferred_free_aligned_allocation(
+        &mut self,
+        request: usize,
+        alignment: usize,
+        zero: bool,
+    ) -> Result<NativeDeferredFreeAllocationPhase, NativePersistentThreadOwnerLocalAccessError> {
+        let phase = self.with_local_allocator(|allocator| {
+            allocator.begin_deferred_free_aligned_allocation(request, alignment, zero)
+        })?;
+        self.defer_after_generic_allocation_phase(phase)
+    }
+
+    /// Runs phase C after the caller-stack callback has returned. The lease is
+    /// checked before the page engine is borrowed again, so a callback that
+    /// changed roots, source ownership, or attachment state cannot resume a
+    /// stale generic continuation.
+    fn resume_deferred_free_allocation(
+        &mut self,
+        collection: GenericAllocationCollection,
+        continuation: DeferredFreeAllocationContinuation,
+        lease: Option<crate::main_heap_thread::MainHeapThreadDeferredFreeCallbackLease>,
+    ) -> Result<NativeDeferredFreeAllocationPhase, NativePersistentThreadOwnerLocalAccessError> {
+        if let Some(lease) = lease {
+            self.attachment
+                .complete_deferred_free_callback(lease)
+                .map_err(|_| NativePersistentThreadOwnerLocalAccessError::Terminal)?;
+        }
+        let phase = self.with_local_allocator(|allocator| {
+            allocator.resume_deferred_free_allocation(collection, continuation)
+        })?;
+        self.defer_after_generic_allocation_phase(phase)
+    }
+
+    fn defer_after_generic_allocation_phase(
+        &mut self,
+        phase: DeferredFreeAllocationPhase,
+    ) -> Result<NativeDeferredFreeAllocationPhase, NativePersistentThreadOwnerLocalAccessError> {
+        match phase {
+            DeferredFreeAllocationPhase::Complete(block) => {
+                Ok(NativeDeferredFreeAllocationPhase::Complete(block))
+            }
+            DeferredFreeAllocationPhase::Collect {
+                collection,
+                continuation,
+            } => {
+                let call = self
+                    .attachment
+                    .begin_deferred_free_callback(
+                        matches!(collection, GenericAllocationCollection::Force),
+                    )
+                    .map_err(|_| NativePersistentThreadOwnerLocalAccessError::Terminal)?;
+                Ok(NativeDeferredFreeAllocationPhase::Callback {
+                    call,
+                    collection,
+                    continuation,
+                })
+            }
+        }
     }
 
     /// Completes source collect-abandon then the final attachment boundary.
@@ -6899,9 +7145,72 @@ enum NativePersistentThreadOwnerAccessError {
 /// session, active engine, and any long PageMap lifecycle for the initial
 /// thread's lifetime.  It contains no route, registry, client ledger, or
 /// scheduler token.
+/// One caller-stack callback lease for the permanent initial source owner.
+///
+/// It carries no compiler-TLS owner, page engine, session, or TLD borrow. The
+/// atomic active generation remains in the owner so a fork/teardown preflight
+/// can refuse an in-flight user callback while the owner cell is idle.
+#[must_use = "an initial deferred-free callback lease must return through phase C"]
+struct NativeInitialDeferredFreeCallbackLease {
+    source: crate::deferred_free::DeferredFreeSource,
+    generation: usize,
+    _not_send_or_sync: core::marker::PhantomData<*mut ()>,
+}
+
+/// A selected initial-owner callback whose invocation is outside every owner
+/// projection. Its continuation remains value-only on the caller stack.
+#[must_use = "an initial deferred-free call must be invoked then resumed"]
+enum NativeInitialDeferredFreeCall {
+    Complete(crate::deferred_free::DeferredFreeInvocation),
+    Callback {
+        invocation: crate::deferred_free::DeferredFreeInvocation,
+        lease: NativeInitialDeferredFreeCallbackLease,
+    },
+}
+
+impl NativeInitialDeferredFreeCall {
+    /// Whether phase B will invoke foreign user code instead of completing a
+    /// recursion-suppressed heartbeat-only source boundary.
+    #[inline]
+    const fn invokes_user_callback(&self) -> bool { matches!(self, Self::Callback { .. }) }
+
+    /// # Safety
+    ///
+    /// The caller has returned the initial compiler-TLS owner cell to idle and
+    /// holds no mutable engine, session, Theap, or TLD projection.
+    #[inline]
+    unsafe fn invoke(self) -> (u64, Option<NativeInitialDeferredFreeCallbackLease>) {
+        match self {
+            Self::Complete(invocation) => {
+                // SAFETY: forwarded from this caller-stack phase contract.
+                (unsafe { invocation.invoke() }, None)
+            }
+            Self::Callback { invocation, lease } => {
+                // SAFETY: forwarded from this caller-stack phase contract.
+                (unsafe { invocation.invoke() }, Some(lease))
+            }
+        }
+    }
+}
+
+/// Initial persistent-owner allocation phase. The callback variant carries no
+/// owner borrow and may reenter normal initial allocation before phase C.
+#[must_use = "an initial deferred-free allocation phase must be resumed"]
+enum NativeInitialDeferredFreeAllocationPhase {
+    Complete(Option<core::ptr::NonNull<u8>>),
+    Callback {
+        call: NativeInitialDeferredFreeCall,
+        source: crate::deferred_free::DeferredFreeSource,
+        collection: GenericAllocationCollection,
+        continuation: DeferredFreeAllocationContinuation,
+    },
+}
+
 #[must_use = "the initial persistent owner remains in compiler TLS for the process lifetime"]
 struct NativeInitialPersistentThreadOwner {
     allocator: MainStaticRuntimeFirstArenaPageAllocator,
+    deferred_free_callback_generation: usize,
+    deferred_free_callback_active: AtomicUsize,
 }
 
 impl NativeInitialPersistentThreadOwner {
@@ -6922,6 +7231,122 @@ impl NativeInitialPersistentThreadOwner {
             .allocate_aligned_current_initial_thread_local(request, alignment, zero)
     }
 
+    /// Starts phase A of one initial ordinary generic allocation. The static
+    /// allocator restores its active engine before this returns a phase value.
+    fn begin_deferred_free_allocation(
+        &mut self,
+        request: usize,
+        zero: bool,
+    ) -> Option<NativeInitialDeferredFreeAllocationPhase> {
+        let phase = self
+            .allocator
+            .begin_deferred_free_current_initial_thread_local(request, zero)?;
+        self.defer_after_generic_allocation_phase(phase)
+    }
+
+    /// Starts phase A of one initial aligned allocation.
+    fn begin_deferred_free_aligned_allocation(
+        &mut self,
+        request: usize,
+        alignment: usize,
+        zero: bool,
+    ) -> Option<NativeInitialDeferredFreeAllocationPhase> {
+        let phase = self
+            .allocator
+            .begin_deferred_free_aligned_current_initial_thread_local(request, alignment, zero)?;
+        self.defer_after_generic_allocation_phase(phase)
+    }
+
+    /// Runs phase C only after a caller-stack callback returned. The active
+    /// generation and the fresh static source identity jointly reject source
+    /// replacement before the persistent engine is borrowed again.
+    fn resume_deferred_free_allocation(
+        &mut self,
+        source: crate::deferred_free::DeferredFreeSource,
+        collection: GenericAllocationCollection,
+        continuation: DeferredFreeAllocationContinuation,
+        lease: Option<NativeInitialDeferredFreeCallbackLease>,
+    ) -> Option<NativeInitialDeferredFreeAllocationPhase> {
+        let completes_callback = lease.is_some();
+        if let Some(lease) = lease {
+            if lease.source != source
+                || self.deferred_free_callback_active.load(Ordering::Acquire) != lease.generation
+            {
+                return None;
+            }
+        }
+        let phase = self.allocator.resume_deferred_free_current_initial_thread_local(
+            source,
+            collection,
+            continuation,
+        )?;
+        // The static allocator has just revalidated the original source
+        // inside its fresh, short engine projection. Do not clear the active
+        // generation before that check: a stale same-generation lease must
+        // keep fork/teardown admission fail-closed while its real callback may
+        // still be live. Only the successful phase-C handoff may reopen the
+        // initial owner for a subsequent source callback selection.
+        if completes_callback {
+            self.deferred_free_callback_active.store(0, Ordering::Release);
+        }
+        self.defer_after_generic_allocation_phase(phase)
+    }
+
+    fn defer_after_generic_allocation_phase(
+        &mut self,
+        phase: MainStaticDeferredFreeAllocationPhase,
+    ) -> Option<NativeInitialDeferredFreeAllocationPhase> {
+        match phase {
+            MainStaticDeferredFreeAllocationPhase::Complete(block) => {
+                Some(NativeInitialDeferredFreeAllocationPhase::Complete(block))
+            }
+            MainStaticDeferredFreeAllocationPhase::Collect {
+                source,
+                collection,
+                continuation,
+            } => {
+                let invocation = source
+                    .begin(matches!(collection, GenericAllocationCollection::Force))
+                    .ok()?;
+                match invocation {
+                    invocation @ crate::deferred_free::DeferredFreeInvocation::Complete(_) => {
+                        Some(NativeInitialDeferredFreeAllocationPhase::Callback {
+                            call: NativeInitialDeferredFreeCall::Complete(invocation),
+                            source,
+                            collection,
+                            continuation,
+                        })
+                    }
+                    invocation @ crate::deferred_free::DeferredFreeInvocation::Callback(_) => {
+                        if self.deferred_free_callback_active.load(Ordering::Acquire) != 0 {
+                            drop(invocation);
+                            return None;
+                        }
+                        let mut generation = self.deferred_free_callback_generation.wrapping_add(1);
+                        if generation == 0 {
+                            generation = 1;
+                        }
+                        self.deferred_free_callback_generation = generation;
+                        self.deferred_free_callback_active.store(generation, Ordering::Release);
+                        Some(NativeInitialDeferredFreeAllocationPhase::Callback {
+                            call: NativeInitialDeferredFreeCall::Callback {
+                                invocation,
+                                lease: NativeInitialDeferredFreeCallbackLease {
+                                    source,
+                                    generation,
+                                    _not_send_or_sync: core::marker::PhantomData,
+                                },
+                            },
+                            source,
+                            collection,
+                            continuation,
+                        })
+                    }
+                }
+            }
+        }
+    }
+
     /// Reallocates one exact current initial-thread client without entering a
     /// parked compatibility engine.
     ///
@@ -6939,27 +7364,6 @@ impl NativeInitialPersistentThreadOwner {
         unsafe {
             self.allocator
                 .reallocate_current_initial_thread_local(Some(block), new_size)
-        }
-    }
-
-    /// Reallocates one exact current initial-thread C-ABI client. The lower
-    /// engine keeps the ordinary source realloc decision while ensuring any
-    /// replacement observes the fixed native x86 C-facing alignment boundary.
-    ///
-    /// # Safety
-    ///
-    /// `block` must remain a live local allocation of this exact persistent
-    /// owner and must not have been remotely published or freed.
-    #[inline]
-    unsafe fn reallocate_c_abi(
-        &mut self,
-        block: core::ptr::NonNull<u8>,
-        new_size: usize,
-    ) -> Option<core::ptr::NonNull<u8>> {
-        // SAFETY: forwarded unchanged from this owner-local boundary.
-        unsafe {
-            self.allocator
-                .reallocate_current_initial_thread_local_c_abi(block, new_size)
         }
     }
 
@@ -7021,7 +7425,8 @@ impl NativeInitialPersistentThreadOwner {
     /// state.
     #[inline]
     fn prepare_quiescent_for_held_fork_gate(&mut self) -> bool {
-        self.allocator.prepare_quiescent_for_held_fork_gate()
+        self.deferred_free_callback_active.load(Ordering::Acquire) == 0
+            && self.allocator.prepare_quiescent_for_held_fork_gate()
     }
 }
 
@@ -7550,7 +7955,11 @@ fn begin_current_thread_native_initial_persistent_owner(
         // staging slot. No ordinary local operation can observe it there
         // again after the INITIAL_PERSISTENT publication below.
         let allocator = unsafe { (&*RUNTIME_PROCESS.page_owner.get()).assume_init_read() };
-        let owner = NativeInitialPersistentThreadOwner { allocator };
+        let owner = NativeInitialPersistentThreadOwner {
+            allocator,
+            deferred_free_callback_generation: 0,
+            deferred_free_callback_active: AtomicUsize::new(0),
+        };
         match current_thread_native_initial_persistent_owner_cell().initialize(
             owner,
             |_owner| -> Result<(), Infallible> { Ok(()) },
@@ -7734,6 +8143,19 @@ fn current_native_process_page_backing() -> Option<ProcessPageBackingLease> {
     }
 }
 
+/// Returns the coordinator-issued canonical process backing for a native
+/// persistent owner. This is deliberately distinct from the legacy sidecar
+/// pair used by typed fixtures and post-exit source routes: normal native
+/// allocation must retain the initialized VM/config/PageMap identity that
+/// owns the source registry before it activates a later-thread engine.
+fn current_native_process_backing_binding() -> Option<ProcessMainBackingBinding> {
+    // SAFETY: an active process permanently publishes this owner before any
+    // later thread is admitted. The ready lease returns only the canonical
+    // binding formed by that same immutable source process transition.
+    let owner = unsafe { RUNTIME_PROCESS.active_owner() }?;
+    owner.ready().ok()?.process_backing().ok()
+}
+
 /// Pins a successfully published source attachment in the current thread's
 /// compiler-TLS owner without observing PageMap, arena, or page state.
 ///
@@ -7834,16 +8256,16 @@ fn begin_current_thread_native_persistent_owner(
 
 /// Activates page-engine state for the already-installed native source owner.
 ///
-/// The process pair is intentionally read only here, never from pthread
-/// attach. A failure after the attachment-only TLD/Theap publication retains
-/// that exact owner for source-ordered teardown and exposes no allocator
-/// fallback or replacement owner.
+/// The coordinator-issued process backing is intentionally read only here,
+/// never from pthread attach. A failure after the attachment-only TLD/Theap
+/// publication retains that exact owner for source-ordered teardown and
+/// exposes no allocator fallback or replacement owner.
 fn activate_current_thread_native_persistent_owner(
 ) -> Result<(), NativePersistentThreadOwnerAccessError> {
     let Some(pair) = current_native_process_page_backing() else {
         return Err(NativePersistentThreadOwnerAccessError::Unavailable);
     };
-    match with_current_thread_native_persistent_owner(|owner| owner.activate_page_engine(pair)) {
+    match with_current_thread_native_persistent_owner(|owner| owner.activate_page_engine(backing)) {
         Ok(Ok(())) => Ok(()),
         Ok(Err(_)) => {
             retain_current_thread_native_persistent_owner_for_teardown();
@@ -7873,6 +8295,7 @@ fn with_current_thread_native_persistent_allocator<R>(
                 may_create = false;
             }
             Ok(Err(NativePersistentThreadOwnerLocalAccessError::AttachmentOnly))
+            | Ok(Err(NativePersistentThreadOwnerLocalAccessError::Access(_)))
             | Ok(Err(NativePersistentThreadOwnerLocalAccessError::Terminal)) => {
                 retain_current_thread_native_persistent_owner_for_teardown();
                 return Err(NativePersistentThreadOwnerAccessError::Retained);
@@ -7883,6 +8306,248 @@ fn with_current_thread_native_persistent_allocator<R>(
             }
             Err(error) => return Err(error),
         }
+    }
+}
+
+/// Starts phase A of one native generic allocation and returns only a
+/// caller-stack continuation. It mirrors ordinary lazy page-engine activation
+/// but deliberately does not lend an allocator reference to its caller.
+fn begin_current_thread_native_deferred_free_allocation(
+    request: usize,
+    zero: bool,
+) -> Result<NativeDeferredFreeAllocationPhase, NativePersistentThreadOwnerAccessError> {
+    let mut may_create = true;
+    loop {
+        match with_current_thread_native_persistent_owner(|owner| {
+            owner.begin_deferred_free_allocation(request, zero)
+        }) {
+            Ok(Ok(phase)) => return Ok(phase),
+            Ok(Err(NativePersistentThreadOwnerLocalAccessError::AttachmentOnly)) if may_create => {
+                activate_current_thread_native_persistent_owner()?;
+                may_create = false;
+            }
+            Ok(Err(NativePersistentThreadOwnerLocalAccessError::AttachmentOnly))
+            | Ok(Err(NativePersistentThreadOwnerLocalAccessError::Access(_)))
+            | Ok(Err(NativePersistentThreadOwnerLocalAccessError::Terminal)) => {
+                retain_current_thread_native_persistent_owner_for_teardown();
+                return Err(NativePersistentThreadOwnerAccessError::Retained);
+            }
+            Err(NativePersistentThreadOwnerAccessError::NotInstalled) if may_create => {
+                begin_current_thread_native_persistent_owner()?;
+                may_create = false;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// Starts phase A of one aligned native allocation. As with ordinary
+/// allocation, the returned value contains no persistent owner borrow.
+fn begin_current_thread_native_deferred_free_aligned_allocation(
+    request: usize,
+    alignment: usize,
+    zero: bool,
+) -> Result<NativeDeferredFreeAllocationPhase, NativePersistentThreadOwnerAccessError> {
+    let mut may_create = true;
+    loop {
+        match with_current_thread_native_persistent_owner(|owner| {
+            owner.begin_deferred_free_aligned_allocation(request, alignment, zero)
+        }) {
+            Ok(Ok(phase)) => return Ok(phase),
+            Ok(Err(NativePersistentThreadOwnerLocalAccessError::AttachmentOnly)) if may_create => {
+                activate_current_thread_native_persistent_owner()?;
+                may_create = false;
+            }
+            Ok(Err(NativePersistentThreadOwnerLocalAccessError::AttachmentOnly))
+            | Ok(Err(NativePersistentThreadOwnerLocalAccessError::Access(_)))
+            | Ok(Err(NativePersistentThreadOwnerLocalAccessError::Terminal)) => {
+                retain_current_thread_native_persistent_owner_for_teardown();
+                return Err(NativePersistentThreadOwnerAccessError::Retained);
+            }
+            Err(NativePersistentThreadOwnerAccessError::NotInstalled) if may_create => {
+                begin_current_thread_native_persistent_owner()?;
+                may_create = false;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// Runs phase C after the deferred callback has returned. It cannot create or
+/// replace an owner: the caller-stack continuation names the exact source
+/// attachment that phase A already selected.
+fn resume_current_thread_native_deferred_free_allocation(
+    collection: GenericAllocationCollection,
+    continuation: DeferredFreeAllocationContinuation,
+    lease: Option<crate::main_heap_thread::MainHeapThreadDeferredFreeCallbackLease>,
+) -> Result<NativeDeferredFreeAllocationPhase, NativePersistentThreadOwnerAccessError> {
+    match with_current_thread_native_persistent_owner(|owner| {
+        owner.resume_deferred_free_allocation(collection, continuation, lease)
+    }) {
+        Ok(Ok(phase)) => Ok(phase),
+        Ok(Err(_)) | Err(_) => {
+            retain_current_thread_native_persistent_owner_for_teardown();
+            Err(NativePersistentThreadOwnerAccessError::Retained)
+        }
+    }
+}
+
+/// Drives the value-only generic allocation continuation through the source
+/// deferred-free callback boundary.
+///
+/// `begin_current_thread_native_deferred_free_allocation` and every resume
+/// borrow the persistent compiler-TLS owner only for their own short phase.
+/// Between them, `MainHeapThreadDeferredFreeCall::invoke` runs with that cell
+/// idle, so a registered callback can enter ordinary native allocation and
+/// publish a fresh independent owner-operation admission.
+fn run_current_thread_native_deferred_free_allocation(
+    request: usize,
+    zero: bool,
+) -> Result<Option<core::ptr::NonNull<u8>>, NativePersistentThreadOwnerAccessError> {
+    let phase = begin_current_thread_native_deferred_free_allocation(request, zero)?;
+    run_current_thread_native_deferred_free_phase(phase)
+}
+
+/// Drives one already-selected callback phase. Both ordinary and aligned
+/// allocation enter here after their phase-A owner-cell borrow has ended.
+fn run_current_thread_native_deferred_free_phase(
+    mut phase: NativeDeferredFreeAllocationPhase,
+) -> Result<Option<core::ptr::NonNull<u8>>, NativePersistentThreadOwnerAccessError> {
+    loop {
+        phase = match phase {
+            NativeDeferredFreeAllocationPhase::Complete(block) => return Ok(block),
+            NativeDeferredFreeAllocationPhase::Callback {
+                call,
+                collection,
+                continuation,
+            } => {
+                // SAFETY: phase A returned through `with_current_thread_...`
+                // before this match. The caller-stack `call` owns only the
+                // source callback/TLD recurse marker and its linear lease;
+                // no mutable engine, session, attachment, Theap, or TLD
+                // projection remains live while user code can reenter.
+                let invokes_user_callback = call.invokes_user_callback();
+                let Some((_heartbeat, lease)) = invoke_deferred_free_callback_after_fork_admission(
+                    invokes_user_callback,
+                    || unsafe { call.invoke() },
+                ) else {
+                    retain_current_thread_native_persistent_owner_for_teardown();
+                    return Err(NativePersistentThreadOwnerAccessError::Retained);
+                };
+                resume_current_thread_native_deferred_free_allocation(
+                    collection,
+                    continuation,
+                    lease,
+                )?
+            }
+        };
+    }
+}
+
+/// Drives an aligned allocation through the same source callback split as an
+/// ordinary generic allocation. Its lower continuation holds only the
+/// alignment post-processing geometry.
+fn run_current_thread_native_deferred_free_aligned_allocation(
+    request: usize,
+    alignment: usize,
+    zero: bool,
+) -> Result<Option<core::ptr::NonNull<u8>>, NativePersistentThreadOwnerAccessError> {
+    let phase = begin_current_thread_native_deferred_free_aligned_allocation(
+        request,
+        alignment,
+        zero,
+    )?;
+    run_current_thread_native_deferred_free_phase(phase)
+}
+
+/// Starts phase A through the pinned initial compiler-TLS owner. The returned
+/// phase contains no owner-cell borrow, including on cold promotion.
+fn begin_current_thread_native_initial_deferred_free_aligned_allocation(
+    request: usize,
+    alignment: usize,
+    zero: bool,
+) -> Result<NativeInitialDeferredFreeAllocationPhase, NativeInitialPersistentThreadOwnerAccessError> {
+    match with_current_thread_native_initial_persistent_allocator(true, |owner| {
+        (
+            owner.begin_deferred_free_aligned_allocation(request, alignment, zero),
+            owner.is_retained(),
+        )
+    }) {
+        Ok((Some(phase), false)) => Ok(phase),
+        Ok((Some(_) | None, true)) => Err(NativeInitialPersistentThreadOwnerAccessError::Retained),
+        Ok((None, false)) => Err(NativeInitialPersistentThreadOwnerAccessError::Unavailable),
+        Err(error) => Err(error),
+    }
+}
+
+/// Re-enters only the existing initial source owner for phase C. It never
+/// promotes, replaces, or reconstructs an initial owner after callback return.
+fn resume_current_thread_native_initial_deferred_free_allocation(
+    source: crate::deferred_free::DeferredFreeSource,
+    collection: GenericAllocationCollection,
+    continuation: DeferredFreeAllocationContinuation,
+    lease: Option<NativeInitialDeferredFreeCallbackLease>,
+) -> Result<NativeInitialDeferredFreeAllocationPhase, NativeInitialPersistentThreadOwnerAccessError> {
+    let mut lease = lease;
+    match with_current_thread_native_initial_persistent_allocator(false, |owner| {
+        (
+            owner.resume_deferred_free_allocation(
+                source,
+                collection,
+                continuation,
+                lease.take(),
+            ),
+            owner.is_retained(),
+        )
+    }) {
+        Ok((Some(phase), false)) => Ok(phase),
+        Ok((Some(_) | None, true)) => Err(NativeInitialPersistentThreadOwnerAccessError::Retained),
+        Ok((None, false)) => Err(NativeInitialPersistentThreadOwnerAccessError::Unavailable),
+        Err(error) => Err(error),
+    }
+}
+
+/// Drives the initial source owner through phase A/B/C. Phase B invokes user
+/// code only after the compiler-TLS owner cell returned to idle; phase C takes
+/// a new projection and validates the same static Theap/TLD lifetime.
+fn run_current_thread_native_initial_deferred_free_aligned_allocation(
+    request: usize,
+    alignment: usize,
+    zero: bool,
+) -> Result<Option<core::ptr::NonNull<u8>>, NativeInitialPersistentThreadOwnerAccessError> {
+    let mut phase = begin_current_thread_native_initial_deferred_free_aligned_allocation(
+        request,
+        alignment,
+        zero,
+    )?;
+    loop {
+        phase = match phase {
+            NativeInitialDeferredFreeAllocationPhase::Complete(block) => return Ok(block),
+            NativeInitialDeferredFreeAllocationPhase::Callback {
+                call,
+                source,
+                collection,
+                continuation,
+            } => {
+                // SAFETY: phase A returned from the initial owner cell before
+                // this match. `call` owns only the source recurse marker and
+                // optional linear active lease, never an owner/engine/TLD
+                // borrow, so user code may reenter ordinary allocation.
+                let invokes_user_callback = call.invokes_user_callback();
+                let Some((_heartbeat, lease)) = invoke_deferred_free_callback_after_fork_admission(
+                    invokes_user_callback,
+                    || unsafe { call.invoke() },
+                ) else {
+                    return Err(NativeInitialPersistentThreadOwnerAccessError::Retained);
+                };
+                resume_current_thread_native_initial_deferred_free_allocation(
+                    source,
+                    collection,
+                    continuation,
+                    lease,
+                )?
+            }
+        };
     }
 }
 
@@ -8347,6 +9012,27 @@ fn native_initial_thread_allocation_result(
     }
 }
 
+/// Maps the split initial deferred-free operation to the C-facing result.
+fn native_initial_deferred_free_allocation_result(
+    result: Result<
+        Option<core::ptr::NonNull<u8>>,
+        NativeInitialPersistentThreadOwnerAccessError,
+    >,
+) -> NativePageAllocationResult {
+    match result {
+        Ok(Some(block)) => NativePageAllocationResult::Allocated(block),
+        Ok(None) => NativePageAllocationResult::AllocationFailed,
+        Err(
+            NativeInitialPersistentThreadOwnerAccessError::NotInstalled
+            | NativeInitialPersistentThreadOwnerAccessError::Unavailable
+            | NativeInitialPersistentThreadOwnerAccessError::Retained,
+        ) => {
+            RUNTIME_PROCESS.retain_page_owner();
+            NativePageAllocationResult::Retained
+        }
+    }
+}
+
 /// Allocates through the initial thread's already-installed source owner.
 ///
 /// The caller selected this pinned compiler-TLS cell before any ambient
@@ -8358,13 +9044,12 @@ fn native_initial_thread_allocate_aligned_from_installed_owner(
     alignment: usize,
     zero: bool,
 ) -> NativePageAllocationResult {
-    native_initial_thread_allocation_result(
-        with_pointer_associated_initial_persistent_owner(|owner| {
-            (
-                owner.allocate_aligned(request, alignment, zero),
-                owner.is_retained(),
-            )
-        }),
+    native_initial_deferred_free_allocation_result(
+        run_current_thread_native_initial_deferred_free_aligned_allocation(
+            request,
+            alignment,
+            zero,
+        ),
     )
 }
 
@@ -8377,13 +9062,12 @@ fn native_initial_thread_allocate_aligned(
     alignment: usize,
     zero: bool,
 ) -> NativePageAllocationResult {
-    native_initial_thread_allocation_result(
-        with_current_thread_native_initial_persistent_allocator(true, |owner| {
-            (
-                owner.allocate_aligned(request, alignment, zero),
-                owner.is_retained(),
-            )
-        }),
+    native_initial_deferred_free_allocation_result(
+        run_current_thread_native_initial_deferred_free_aligned_allocation(
+            request,
+            alignment,
+            zero,
+        ),
     )
 }
 
@@ -8447,39 +9131,6 @@ fn native_initial_thread_free_pointer_first_associated(
         ) => {
             RUNTIME_PROCESS.retain_page_owner();
             NativePageFreeResult::Retained
-        }
-    }
-}
-
-/// Reallocates a PageMap-proven current initial-thread client through its
-/// direct owner without reopening initial-owner admission.
-///
-/// The caller already compared the source `xthread_id` snapshot with the
-/// current identity and established that it is the permanent initial owner.
-/// A live source page proves that the owner has installed its persistent TLS
-/// cell, so a missing or terminal cell is a source-state failure rather than
-/// an opportunity to promote, schedule, or select another target owner.
-unsafe fn native_initial_thread_reallocate_pointer_first_associated(
-    block: core::ptr::NonNull<u8>,
-    new_size: usize,
-) -> NativePageAllocationResult {
-    let result = with_pointer_associated_initial_persistent_owner(|owner| {
-        // SAFETY: `native_reallocate` forwarded its exact-current
-        // PageMap-derived initial-source-owner contract.
-        let replacement = unsafe { owner.reallocate_c_abi(block, new_size) };
-        (replacement, owner.is_retained())
-    });
-    match result {
-        Ok((Some(block), false)) => NativePageAllocationResult::Allocated(block),
-        Ok((None, false)) => NativePageAllocationResult::AllocationFailed,
-        Ok((Some(_) | None, true))
-        | Err(
-            NativeInitialPersistentThreadOwnerAccessError::NotInstalled
-            | NativeInitialPersistentThreadOwnerAccessError::Unavailable
-            | NativeInitialPersistentThreadOwnerAccessError::Retained,
-        ) => {
-            RUNTIME_PROCESS.retain_page_owner();
-            NativePageAllocationResult::Retained
         }
     }
 }
@@ -8649,46 +9300,148 @@ fn native_reallocate_prepare_caller_persistent_owner(
     }
 }
 
+/// Scalar identity retained from the first pointer classification while a
+/// replacement allocation may invoke a deferred callback.
+///
+/// This is deliberately not a live-allocation token. Pinned realloc requires
+/// the caller to retain its old allocation throughout the call, including a
+/// registered deferred callback; phase C separately validates the selected
+/// source attachment generation. On return, these scalar facts reject a
+/// changed page/block/owner image before copy or release can resume.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct NativeReallocationSourceIdentity {
+    page: core::ptr::NonNull<Page>,
+    canonical_block: core::ptr::NonNull<u8>,
+    block_size: usize,
+    usable_size: usize,
+    xthread_id: usize,
+    has_interior_pointers: bool,
+}
+
+impl NativeReallocationSourceIdentity {
+    #[inline]
+    fn capture(allocation: &LiveAllocationPointer) -> Self {
+        Self {
+            page: allocation.page(),
+            canonical_block: allocation.canonical_block(),
+            block_size: allocation.block_size(),
+            usable_size: allocation.usable_size(),
+            xthread_id: allocation.xthread_id(),
+            has_interior_pointers: allocation.has_interior_pointers(),
+        }
+    }
+
+    #[inline]
+    fn matches(self, allocation: &LiveAllocationPointer) -> bool {
+        self.page == allocation.page()
+            && self.canonical_block == allocation.canonical_block()
+            && self.block_size == allocation.block_size()
+            && self.usable_size == allocation.usable_size()
+            && self.xthread_id == allocation.xthread_id()
+            && self.has_interior_pointers == allocation.has_interior_pointers()
+    }
+}
+
 /// Reallocates one PageMap-proven current native client through its existing
 /// direct owner.
 ///
-/// The exact PageMap observation stays live through the local engine call so
-/// the source allocation cannot retire its selected page while the engine
-/// performs its pinned in-place/replacement decision. There is no second
-/// lookup or fallback after the current-owner comparison.
+/// In-place reuse consumes the first source observation directly. A required
+/// replacement drops that observation before it can select a user callback,
+/// then reacquires and compares the old source after phase C. This preserves
+/// the source reuse decision without lending pointer facts through reentry.
 fn native_reallocate_pointer_first_local(
     allocation: LiveAllocationPointer,
     new_size: usize,
     current: LiveThreadId,
 ) -> NativePageAllocationResult {
     let block = allocation.client();
-    if RUNTIME_PROCESS.initial_live_thread_identity() == Some(current) {
-        // SAFETY: the preceding PageMap classification associated this exact
-        // live client with the persistent current initial owner.
-        let result = unsafe {
-            native_initial_thread_reallocate_pointer_first_associated(block, new_size)
-        };
+    let current_is_initial = RUNTIME_PROCESS.initial_live_thread_identity() == Some(current);
+    let old_usable = allocation.usable_size();
+    if matches!(
+        crate::alloc::reallocation_plan(Some(old_usable), new_size, true),
+        crate::alloc::ReallocationPlan::Reuse
+    ) {
         drop(allocation);
-        return result;
+        return NativePageAllocationResult::Allocated(block);
     }
 
-    let result = with_current_thread_native_persistent_allocator(false, |allocator| {
-        // SAFETY: the caller's PageMap observation associated this exact live
-        // client with the current worker owner for this source operation.
-        unsafe { allocator.reallocate_c_abi(Some(block), new_size) }
-    });
+    let identity = NativeReallocationSourceIdentity::capture(&allocation);
+
+    // The source replacement path enters the same aligned allocation
+    // primitive as a native C client. Drop the PageMap observation before
+    // that primitive can select a deferred callback: the callback may make a
+    // normal nested allocation, but it must never inherit an outer pointer
+    // lifetime or an owner-local mutable projection.
     drop(allocation);
-    match result {
-        Ok(Some(block)) => NativePageAllocationResult::Allocated(block),
-        Ok(None) => NativePageAllocationResult::AllocationFailed,
-        Err(
+    let replacement = match native_allocate_aligned(new_size, NATIVE_C_MALLOC_ALIGNMENT, false) {
+        NativePageAllocationResult::Allocated(replacement) => replacement,
+        result @ (NativePageAllocationResult::Unavailable
+        | NativePageAllocationResult::AllocationFailed
+        | NativePageAllocationResult::Retained) => return result,
+    };
+
+    // Reacquire the old source only after the callback and phase-C attachment
+    // identity validation. A callback that consumed or reassociated `block`
+    // cannot resume this replacement through stale pointer facts.
+    let old = match unsafe { native_live_allocation_for_pointer_reallocation(block) } {
+        Ok(old) if old.is_associated_with(current) && identity.matches(&old) => old,
+        Ok(old) => {
+            drop(old);
+            native_reallocate_release_unpublished_replacement(replacement);
+            retain_current_thread_native_persistent_owner_for_teardown();
+            return NativePageAllocationResult::Retained;
+        }
+        Err(_) => {
+            native_reallocate_release_unpublished_replacement(replacement);
+            retain_current_thread_native_persistent_owner_for_teardown();
+            return NativePageAllocationResult::Retained;
+        }
+    };
+    let copy_size = core::cmp::min(new_size, old.usable_size());
+    // SAFETY: the renewed PageMap observation retains the old source through
+    // this bounded copy, while `replacement` is a distinct live allocation
+    // from the same current source owner.
+    unsafe {
+        core::ptr::copy_nonoverlapping(block.as_ptr(), replacement.as_ptr(), copy_size);
+    }
+    if new_size == 0 {
+        // Source ordinary realloc initializes byte zero of a successful
+        // non-zeroed zero-size replacement before it frees the old block.
+        unsafe { replacement.as_ptr().write(0) };
+    }
+    drop(old);
+    if current_is_initial {
+        // The old client remains live through the replacement callback and the
+        // exact scalar source revalidation above. Only now consume it through
+        // the initial owner, whose cell is idle between callback phases.
+        return match native_initial_thread_free_pointer_first(block) {
+            NativePageFreeResult::Freed => NativePageAllocationResult::Allocated(replacement),
+            NativePageFreeResult::Retained => {
+                native_reallocate_release_unpublished_replacement(replacement);
+                RUNTIME_PROCESS.retain_page_owner();
+                NativePageAllocationResult::Retained
+            }
+            NativePageFreeResult::Unavailable | NativePageFreeResult::InvalidPointer => {
+                native_reallocate_release_unpublished_replacement(replacement);
+                RUNTIME_PROCESS.retain_page_owner();
+                NativePageAllocationResult::Retained
+            }
+        };
+    }
+    let released = with_current_thread_native_persistent_pointer(block, |allocator| {
+        // SAFETY: the renewed exact-current lookup above and this helper's
+        // second owner check keep the old block current until its source free.
+        unsafe { allocator.free(block) }
+    });
+    match released {
+        Ok(Some(Ok(()))) => NativePageAllocationResult::Allocated(replacement),
+        Ok(Some(Err(_)) | None)
+        | Err(
             NativePersistentThreadOwnerAccessError::NotInstalled
             | NativePersistentThreadOwnerAccessError::Unavailable
             | NativePersistentThreadOwnerAccessError::Retained,
         ) => {
-            // PageMap already proved that a current owner exists. Losing its
-            // direct persistent source state cannot safely select an older
-            // session, route, or caller-local replacement owner.
+            native_reallocate_release_unpublished_replacement(replacement);
             retain_current_thread_native_persistent_owner_for_teardown();
             NativePageAllocationResult::Retained
         }
@@ -8747,18 +9500,35 @@ fn native_reallocate_pointer_first_nonlocal(
     allocation: LiveAllocationPointer,
     new_size: usize,
 ) -> NativePageAllocationResult {
-    let source = allocation.into_reallocation_copy_source(new_size);
+    let old_block = allocation.client();
+    let identity = NativeReallocationSourceIdentity::capture(&allocation);
+    // The source pointer observation has no place across a user callback.
+    // Preserve only scalar comparison inputs and reacquire the exact live
+    // source after replacement allocation finishes its callback phase.
+    drop(allocation);
     let replacement = match native_allocate_aligned(new_size, NATIVE_C_MALLOC_ALIGNMENT, false) {
         NativePageAllocationResult::Allocated(replacement) => replacement,
         result @ (NativePageAllocationResult::Unavailable
         | NativePageAllocationResult::AllocationFailed
         | NativePageAllocationResult::Retained) => {
-            // The old allocation has not entered a consuming source path.
-            // Recovering then dropping its immutable PageMap facts preserves
-            // the exact old client for the caller, including allocation
-            // failure.
-            drop(source.into_live_allocation());
             return result;
+        }
+    };
+
+    let source = match unsafe { native_live_allocation_for_pointer_reallocation(old_block) } {
+        Ok(source) if identity.matches(&source) => {
+            source.into_reallocation_copy_source(new_size)
+        }
+        Ok(source) => {
+            drop(source);
+            native_reallocate_release_unpublished_replacement(replacement);
+            RUNTIME_PROCESS.retain_page_owner();
+            return NativePageAllocationResult::Retained;
+        }
+        Err(_) => {
+            native_reallocate_release_unpublished_replacement(replacement);
+            RUNTIME_PROCESS.retain_page_owner();
+            return NativePageAllocationResult::Retained;
         }
     };
 
@@ -8806,7 +9576,10 @@ fn native_reallocate_pointer_first_nonlocal(
 ///
 /// When present, `block` must be a live result from this native-shadow
 /// allocator and must not be concurrently accessed, remotely published, or
-/// already freed. The caller must not access `block` after an `Allocated`
+/// already freed. A registered deferred callback may enter normal allocation,
+/// but it must not free, reallocate, or otherwise consume this old `block`;
+/// the caller retains it for the complete source realloc operation. The caller
+/// must not access `block` after an `Allocated`
 /// result: a current source may have been reallocated in place or replaced,
 /// while a noncurrent source has been copied then consumed through generic
 /// pointer-first free. An `AllocationFailed` result leaves the old allocation
@@ -11912,13 +12685,11 @@ fn native_later_thread_allocate_aligned(
     alignment: usize,
     zero: bool,
 ) -> NativePageAllocationResult {
-    let result = with_current_thread_native_persistent_allocator(true, |allocator| {
-        if zero {
-            allocator.allocate_aligned_zeroed(request, alignment)
-        } else {
-            allocator.allocate_aligned(request, alignment)
-        }
-    });
+    let result = run_current_thread_native_deferred_free_aligned_allocation(
+        request,
+        alignment,
+        zero,
+    );
     match result {
         Ok(Some(block)) => NativePageAllocationResult::Allocated(block),
         Ok(None) => NativePageAllocationResult::AllocationFailed,
@@ -15310,12 +16081,37 @@ mod tests {
     };
     use crate::main_theap::{MainStaticAttachmentStorage, MainStaticTheapAttachment};
     use crate::meta::MetaAllocator;
-    use crate::os::{MapAccess, Mapping};
+    use crate::os::{fault, MapAccess, Mapping};
     use crate::process_arena::ProcessSharedArenaStorage;
     use crate::process_page_map::ProcessPageMapStorage;
     use crate::subproc::MainSubprocess;
+    use crabc_core::Errno;
+    use core::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc;
     use std::thread;
+
+    static NATIVE_DEFERRED_FREE_CALLBACK_COUNT: AtomicUsize = AtomicUsize::new(0);
+    static NATIVE_DEFERRED_FREE_CALLBACK_FORCE: AtomicUsize = AtomicUsize::new(usize::MAX);
+    static NATIVE_DEFERRED_FREE_CALLBACK_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    #[thread_local]
+    static mut NATIVE_DEFERRED_FREE_TEST_THREAD_ACTIVE: bool = false;
+
+    unsafe extern "C" fn observe_native_deferred_free_callback(
+        force: bool,
+        _heartbeat: u64,
+        _context: *mut core::ffi::c_void,
+    ) {
+        // SAFETY: this is compiler TLS and the callback executes
+        // synchronously on the selecting allocator thread. The focused
+        // fixture marks only its worker thread, so unrelated parallel tests
+        // cannot perturb this assertion even though the source registration
+        // is process-global.
+        if !unsafe { NATIVE_DEFERRED_FREE_TEST_THREAD_ACTIVE } {
+            return;
+        }
+        NATIVE_DEFERRED_FREE_CALLBACK_FORCE.store(usize::from(force), Ordering::Release);
+        NATIVE_DEFERRED_FREE_CALLBACK_COUNT.fetch_add(1, Ordering::AcqRel);
+    }
 
     fn memory_config() -> MemoryConfig {
         MemoryConfig::from_observations(
@@ -15365,7 +16161,7 @@ mod tests {
             // shortening that production lifetime in a fixture.
             let main = std::boxed::Box::leak(std::boxed::Box::new(unsafe {
                 MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
-                .expect("ticket zero attaches the focused source-static main image")
+                    .expect("ticket zero attaches the focused source-static main image")
             }));
             let main_heap = main
                 .shared_main_heap_lease()
@@ -15435,6 +16231,560 @@ mod tests {
             assert!(cell.teardown(|mut owner| owner.as_mut().get_mut().teardown()).is_ok());
             set_current_thread_native_owner_installed(false);
             unsafe { core::ptr::addr_of_mut!((*slot).state).write(ThreadLifecycleState::Finished) };
+        });
+    }
+
+    /// Builds the direct ticket-zero owner without publishing it through the
+    /// process-global runtime singleton. The fixture retains the permanent
+    /// source session at its natural process-lifetime boundary; it is used
+    /// only to distinguish an ordinary allocation miss from a stale callback
+    /// lease in phase C.
+    fn with_native_initial_persistent_owner_fixture(
+        operation: impl FnOnce(&mut NativeInitialPersistentThreadOwner) + Send + 'static,
+    ) {
+        thread::spawn(move || {
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let page_map = ProcessPageMapStorage::test_static_owner()
+                .initialize(config, subprocess)
+                .expect("the focused initial owner publishes one process PageMap");
+            let arena_storage = ProcessSharedArenaStorage::test_static_owner();
+            let mut main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches before the focused initial owner");
+            let session = main
+                .begin_process_lifetime_page_session()
+                .expect("the focused initial owner receives its permanent source session");
+            let allocator = MainStaticRuntimeFirstArenaPageAllocator::begin_legacy(
+                session,
+                page_map,
+                arena_storage,
+            )
+            .expect("the focused initial owner opens its lazy first arena");
+            let mut owner = NativeInitialPersistentThreadOwner {
+                allocator,
+                deferred_free_callback_generation: 0,
+                deferred_free_callback_active: AtomicUsize::new(0),
+            };
+            operation(&mut owner);
+
+            // This is a process-lifetime source session. A bounded unit test
+            // cannot manufacture the process-final teardown it deliberately
+            // owns, so preserve its same terminal ownership shape.
+            core::mem::forget(owner);
+            core::mem::forget(main);
+        })
+        .join()
+        .expect("the focused initial owner remains on its ticket-zero thread");
+    }
+
+    /// Uses the real persistent compiler-TLS cell protocol in a bounded owner
+    /// fixture. A callback receives only a raw test context pointing at this
+    /// pinned cell; it must re-enter through `with_owner`, which rejects any
+    /// accidental outstanding phase-A projection instead of bypassing it.
+    fn with_native_persistent_owner_cell_fixture(
+        operation: impl for<'owner> FnOnce(
+                core::pin::Pin<
+                    &'owner crate::thread_local::PersistentCompilerTlsOwnerCell<
+                        NativePersistentThreadOwner,
+                    >,
+                >,
+            ) + Send
+            + 'static,
+    ) {
+        with_native_persistent_owner_fixture_owner(move |owner| {
+            let cell = std::boxed::Box::pin(
+                crate::thread_local::PersistentCompilerTlsOwnerCell::new(),
+            );
+            if cell
+                .as_ref()
+                .initialize(owner, |_| Ok::<(), core::convert::Infallible>(()))
+                .is_err()
+            {
+                panic!("the fixture installs one active persistent owner cell");
+            }
+            operation(cell.as_ref());
+            cell.as_ref()
+                .teardown(|owner| owner.get_mut().teardown())
+                .expect("the fixture releases every page before cell teardown");
+        });
+    }
+
+    fn run_native_deferred_free_fixture_allocation(
+        cell: core::pin::Pin<
+            &crate::thread_local::PersistentCompilerTlsOwnerCell<NativePersistentThreadOwner>,
+        >,
+        request: usize,
+    ) -> (Option<core::ptr::NonNull<u8>>, Option<GenericAllocationCollection>) {
+        let mut phase = cell
+            .with_owner(|owner| owner.get_mut().begin_deferred_free_aligned_allocation(request, 16, false))
+            .expect("the active fixture cell starts phase A")
+            .expect("the active fixture owner has one page engine");
+        let mut selected = None;
+        loop {
+            phase = match phase {
+                NativeDeferredFreeAllocationPhase::Complete(block) => return (block, selected),
+                NativeDeferredFreeAllocationPhase::Callback {
+                    call,
+                    collection,
+                    continuation,
+                } => {
+                    assert!(
+                        selected.replace(collection).is_none(),
+                        "one generic request selects at most one callback collection before its retry"
+                    );
+                    // SAFETY: phase A returned the caller-stack token after
+                    // the cell's `with_owner` projection ended. A callback
+                    // can therefore use the same cell for an ordinary nested
+                    // allocation, and phase C reacquires it only below.
+                    let (_heartbeat, lease) = unsafe { call.invoke() };
+                    cell.with_owner(|owner| {
+                        owner
+                            .get_mut()
+                            .resume_deferred_free_allocation(collection, continuation, lease)
+                    })
+                    .expect("phase C reacquires the same active fixture cell")
+                    .expect("phase C keeps the fixture page engine live")
+                }
+            };
+        }
+    }
+
+    fn free_native_deferred_free_fixture_block(
+        cell: core::pin::Pin<
+            &crate::thread_local::PersistentCompilerTlsOwnerCell<NativePersistentThreadOwner>,
+        >,
+        block: core::ptr::NonNull<u8>,
+    ) -> bool {
+        cell.with_owner(|owner| {
+            owner
+                .get_mut()
+                .with_local_allocator(|allocator| unsafe { allocator.free(block) })
+        })
+        .ok()
+        .and_then(Result::ok)
+        .is_some()
+    }
+
+    #[test]
+    fn native_generic_administration_invokes_registered_callback_before_mini_collect() {
+        let _registration_guard = NATIVE_DEFERRED_FREE_CALLBACK_LOCK.lock().expect(
+            "deferred-free registration tests serialize the process callback lifetime",
+        );
+        let callback_count = NATIVE_DEFERRED_FREE_CALLBACK_COUNT.load(Ordering::Acquire);
+        NATIVE_DEFERRED_FREE_CALLBACK_FORCE.store(usize::MAX, Ordering::Release);
+        // SAFETY: this focused callback has static code and no context. It
+        // only updates static atomics, so every concurrent source invocation
+        // remains valid until the test unregisters it below.
+        unsafe {
+            crate::deferred_free::register_process_callback(
+                Some(observe_native_deferred_free_callback),
+                core::ptr::null_mut(),
+            )
+        };
+
+        with_native_persistent_owner_fixture(move |owner| {
+            // SAFETY: this current worker owns its compiler-TLS test marker
+            // for the complete synchronous registration exercise.
+            unsafe { NATIVE_DEFERRED_FREE_TEST_THREAD_ACTIVE = true };
+            // Medium requests cannot use the direct small-page head. Every
+            // iteration therefore reaches `_mi_malloc_generic` and advances
+            // the fixture Theap's source counter. Free the result before the
+            // next iteration so this regression exercises administration,
+            // rather than exhausting the bounded test arena.
+            for _ in 0..999 {
+                let phase = owner
+                    .begin_deferred_free_aligned_allocation(2048, 16, false)
+                    .expect("a current owner starts the generic source phase");
+                let NativeDeferredFreeAllocationPhase::Complete(Some(block)) = phase else {
+                    panic!("the first 999 generic entries do not select collection")
+                };
+                owner
+                    .with_local_allocator(|allocator| unsafe { allocator.free(block) })
+                    .expect("the phase-A block remains owned by the exact local engine")
+                    .expect("the fixture releases each pre-administration block");
+            }
+
+            let phase = owner
+                .begin_deferred_free_aligned_allocation(2048, 16, false)
+                .expect("the threshold generic entry returns a caller-stack phase");
+            let NativeDeferredFreeAllocationPhase::Callback {
+                call,
+                collection: GenericAllocationCollection::Mini,
+                continuation,
+            } = phase else {
+                panic!("the thousandth generic entry selects Mini before page lookup")
+            };
+            // SAFETY: `begin_deferred_free_aligned_allocation` returned its
+            // short engine projection before this test receives `call`; this
+            // direct fixture mirrors the runtime's idle-cell call boundary.
+            let (_heartbeat, lease) = unsafe { call.invoke() };
+            assert_eq!(
+                NATIVE_DEFERRED_FREE_CALLBACK_COUNT.load(Ordering::Acquire),
+                callback_count + 1,
+                "the registered process callback runs exactly at the Mini threshold"
+            );
+            assert_eq!(
+                NATIVE_DEFERRED_FREE_CALLBACK_FORCE.load(Ordering::Acquire),
+                0,
+                "generic administration delivers the source non-force callback"
+            );
+
+            let phase = owner
+                .resume_deferred_free_allocation(
+                    GenericAllocationCollection::Mini,
+                    continuation,
+                    lease,
+                )
+                .expect("the returned callback lease revalidates the same attachment");
+            let NativeDeferredFreeAllocationPhase::Complete(Some(block)) = phase else {
+                panic!("Mini collection resumes the saved generic allocation exactly once")
+            };
+            owner
+                .with_local_allocator(|allocator| unsafe { allocator.free(block) })
+                .expect("the resumed block belongs to the revalidated local engine")
+                .expect("the fixture releases the threshold allocation");
+            // SAFETY: no callback token remains after the phase-C completion
+            // above, so this worker can end its focused observation window.
+            unsafe { NATIVE_DEFERRED_FREE_TEST_THREAD_ACTIVE = false };
+        });
+
+        // SAFETY: the registered function and null context stay valid for
+        // every invocation. Clearing the process slot after the focused
+        // fixture leaves unrelated tests with the source default null pair.
+        unsafe {
+            crate::deferred_free::register_process_callback(None, core::ptr::null_mut())
+        };
+    }
+
+    #[test]
+    fn native_initial_callback_oom_releases_its_valid_lease_for_a_later_allocation() {
+        let _registration_guard = NATIVE_DEFERRED_FREE_CALLBACK_LOCK.lock().expect(
+            "deferred-free registration tests serialize the process callback lifetime",
+        );
+        with_native_initial_persistent_owner_fixture(|owner| {
+            // SAFETY: this fixture is the sole current initial source owner
+            // for the complete synchronous process-registration interval.
+            unsafe { NATIVE_DEFERRED_FREE_TEST_THREAD_ACTIVE = true };
+            unsafe {
+                crate::deferred_free::register_process_callback(
+                    Some(observe_native_deferred_free_callback),
+                    core::ptr::null_mut(),
+                )
+            };
+
+            // Use medium requests so every preamble entry reaches the source
+            // generic counter. Freeing preserves the same initial engine and
+            // leaves the thousandth entry as the first Mini callback.
+            for _ in 0..999 {
+                let NativeInitialDeferredFreeAllocationPhase::Complete(Some(block)) = owner
+                    .begin_deferred_free_aligned_allocation(2048, 16, false)
+                    .expect("the initial generic preamble starts")
+                else {
+                    panic!("the first 999 initial generic requests do not select collection")
+                };
+                unsafe { owner.free(block) }
+                    .expect("each initial preamble block remains current for local release");
+            }
+
+            let phase = owner
+                .begin_deferred_free_aligned_allocation(7, 128 * crate::config::KIB, false)
+                .expect("the threshold aligned singleton starts an initial callback phase");
+            let NativeInitialDeferredFreeAllocationPhase::Callback {
+                call,
+                source,
+                collection: GenericAllocationCollection::Mini,
+                continuation,
+            } = phase else {
+                panic!("the thousandth initial generic request selects the Mini callback")
+            };
+            // SAFETY: phase A returned from the initial compiler-TLS owner;
+            // this exact caller-stack invocation owns the source recurse bit.
+            let (_mini_heartbeat, mini_lease) = unsafe { call.invoke() };
+            let mini_lease = mini_lease.expect("the registered Mini callback owns an initial lease");
+            let fault = fault::install(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+            let phase = owner
+                .resume_deferred_free_allocation(source, GenericAllocationCollection::Mini, continuation, Some(mini_lease))
+                .expect("a valid Mini lease resumes the exact initial source even when its allocation misses");
+            assert_eq!(
+                fault.observed(),
+                1,
+                "the selected initial aligned singleton reaches its first source mapping attempt after Mini collection"
+            );
+            let NativeInitialDeferredFreeAllocationPhase::Callback {
+                call,
+                source,
+                collection: GenericAllocationCollection::Force,
+                continuation,
+            } = phase else {
+                panic!("the failed first lookup selects the one source Force callback")
+            };
+            // SAFETY: the Mini phase C released its owner-cell projection and
+            // valid lease, so the force token is another caller-stack phase.
+            let (_force_heartbeat, force_lease) = unsafe { call.invoke() };
+            let force_lease = force_lease.expect("the registered Force callback owns a new initial lease");
+            fault.set(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+            let phase = owner
+                .resume_deferred_free_allocation(source, GenericAllocationCollection::Force, continuation, Some(force_lease))
+                .expect("a valid Force lease completes its exact initial source retry");
+            assert_eq!(
+                fault.observed(),
+                1,
+                "the force retry reaches its own selected source mapping attempt"
+            );
+            assert!(matches!(
+                phase,
+                NativeInitialDeferredFreeAllocationPhase::Complete(None)
+            ));
+            assert!(
+                owner.deferred_free_callback_active.load(Ordering::Acquire) == 0,
+                "ordinary OOM after a valid callback completion releases the initial active lease"
+            );
+            assert!(!owner.is_retained(), "ordinary source OOM does not retain the initial owner");
+
+            // The map fault is disabled and the registration cleared before a
+            // new ordinary request. It must not inherit the completed OOM
+            // callback lease as a permanent allocator or teardown refusal.
+            fault.set(fault::Plan::disabled());
+            unsafe {
+                crate::deferred_free::register_process_callback(None, core::ptr::null_mut())
+            };
+            let NativeInitialDeferredFreeAllocationPhase::Complete(Some(block)) = owner
+                .begin_deferred_free_aligned_allocation(16, 16, false)
+                .expect("the initial owner remains available after the valid OOM phase")
+            else {
+                panic!("a later initial allocation succeeds after the completed OOM callback")
+            };
+            unsafe { owner.free(block) }
+                .expect("the post-OOM initial allocation remains current for local release");
+            unsafe { NATIVE_DEFERRED_FREE_TEST_THREAD_ACTIVE = false };
+        });
+    }
+
+    struct NativeDeferredFreeTraceObservation {
+        callback_count: AtomicUsize,
+        context_matches: AtomicUsize,
+        nested_allocation_completed: AtomicUsize,
+        nested_reentry_suppressed: AtomicUsize,
+        first_heartbeat: AtomicUsize,
+        nested_heartbeat: AtomicUsize,
+        last_heartbeat: AtomicUsize,
+        force_callback_count: AtomicUsize,
+        cell: *const crate::thread_local::PersistentCompilerTlsOwnerCell<
+            NativePersistentThreadOwner,
+        >,
+    }
+
+    unsafe extern "C" fn observe_native_deferred_free_trace_callback(
+        force: bool,
+        heartbeat: u64,
+        context: *mut core::ffi::c_void,
+    ) {
+        // SAFETY: the test context stores the exact pinned owner-cell address
+        // and remains live until this synchronous callback returns. Recovering
+        // it as a shared reference does not bypass the cell: every nested
+        // allocator operation below uses `with_owner` and therefore requires
+        // the outer phase-A projection to have ended already.
+        let observation = unsafe { &*context.cast::<NativeDeferredFreeTraceObservation>() };
+        let callback_index = observation.callback_count.fetch_add(1, Ordering::AcqRel);
+        observation.context_matches.store(
+            usize::from(core::ptr::eq(
+                context.cast_const(),
+                core::ptr::from_ref(observation).cast(),
+            )),
+            Ordering::Release,
+        );
+        if callback_index == 0 {
+            observation
+                .first_heartbeat
+                .store(usize::try_from(heartbeat).unwrap_or(0), Ordering::Release);
+            // SAFETY: `with_native_persistent_owner_cell_fixture` pins this
+            // cell for the complete callback window. This callback is on its
+            // owning worker and can only reach the owner through `with_owner`.
+            let cell = unsafe { core::pin::Pin::new_unchecked(&*observation.cell) };
+            let (nested, nested_collection) =
+                run_native_deferred_free_fixture_allocation(cell, 16);
+            let nested_allocation_completed = nested_collection.is_none()
+                && nested.is_some_and(|block| free_native_deferred_free_fixture_block(cell, block));
+            observation.nested_allocation_completed.store(
+                usize::from(nested_allocation_completed),
+                Ordering::Release,
+            );
+
+            // The outer source token still owns `TLD::recurse`, so this
+            // ordinary cell reentry advances heartbeat but returns a Complete
+            // call and cannot invoke user code recursively.
+            let nested_source = cell.with_owner(|owner| {
+                owner
+                    .get_mut()
+                    .attachment
+                    .begin_deferred_free_callback(false)
+            });
+            let nested_reentry_suppressed = match nested_source {
+                Ok(Ok(call)) => {
+                    // SAFETY: the nested source prefix returned through the
+                    // cell before its caller-stack invocation is consumed.
+                    let (nested_heartbeat, nested_lease) = unsafe { call.invoke() };
+                    observation.nested_heartbeat.store(
+                        usize::try_from(nested_heartbeat).unwrap_or(0),
+                        Ordering::Release,
+                    );
+                    nested_lease.is_none()
+                        && nested_heartbeat == heartbeat.wrapping_add(1)
+                        && observation.callback_count.load(Ordering::Acquire) == 1
+                }
+                Ok(Err(_)) | Err(_) => false,
+            };
+            observation.nested_reentry_suppressed.store(
+                usize::from(nested_reentry_suppressed),
+                Ordering::Release,
+            );
+        }
+        observation
+            .last_heartbeat
+            .store(usize::try_from(heartbeat).unwrap_or(0), Ordering::Release);
+        if force {
+            observation.force_callback_count.fetch_add(1, Ordering::AcqRel);
+        }
+    }
+
+    #[test]
+    fn native_deferred_free_callback_trace_matches_pinned_generic_timing() {
+        let _registration_guard = NATIVE_DEFERRED_FREE_CALLBACK_LOCK.lock().expect(
+            "deferred-free registration tests serialize the process callback lifetime",
+        );
+        with_native_persistent_owner_cell_fixture(|cell| {
+            // Seed and retain one direct-small page before registration. The
+            // callback's nested 16-byte allocation stays on that direct page
+            // and cannot perturb the fresh source generic counters used by
+            // the registered 1k/10k trace below.
+            let (anchor, anchor_collection) =
+                run_native_deferred_free_fixture_allocation(cell, 16);
+            assert!(anchor_collection.is_none());
+            let anchor = anchor.expect("the fixture seeds a direct-small page");
+            cell.with_owner(|owner| {
+                owner
+                    .get_mut()
+                    .attachment
+                    .test_reset_generic_allocation_administration()
+            })
+            .expect("the active fixture cell resets its post-anchor source counters")
+            .expect("the direct-small anchor retains one current source Theap");
+            let observation = NativeDeferredFreeTraceObservation {
+                callback_count: AtomicUsize::new(0),
+                context_matches: AtomicUsize::new(0),
+                nested_allocation_completed: AtomicUsize::new(0),
+                nested_reentry_suppressed: AtomicUsize::new(0),
+                first_heartbeat: AtomicUsize::new(0),
+                nested_heartbeat: AtomicUsize::new(0),
+                last_heartbeat: AtomicUsize::new(0),
+                force_callback_count: AtomicUsize::new(0),
+                cell: cell.get_ref(),
+            };
+            // SAFETY: the static function and stack observation remain valid
+            // through all selected callbacks, and the mutex excludes another
+            // test from replacing the process registration meanwhile.
+            unsafe {
+                crate::deferred_free::register_process_callback(
+                    Some(observe_native_deferred_free_trace_callback),
+                    core::ptr::from_ref(&observation).cast_mut().cast(),
+                )
+            };
+
+            let mut mini_callbacks = 0usize;
+            let mut full_callbacks = 0usize;
+            for allocation in 1..=10_000usize {
+                let (block, collection) = run_native_deferred_free_fixture_allocation(cell, 2048);
+                let expected = match allocation {
+                    1_000..=9_000 if allocation % 1_000 == 0 => {
+                        mini_callbacks += 1;
+                        Some(GenericAllocationCollection::Mini)
+                    }
+                    10_000 => {
+                        full_callbacks += 1;
+                        Some(GenericAllocationCollection::Full)
+                    }
+                    _ => None,
+                };
+                assert_eq!(
+                    collection, expected,
+                    "source generic administration selects only its 1k Mini and 10k Full callbacks"
+                );
+                let block = block.expect("each generic trace request resumes exactly once");
+                assert!(free_native_deferred_free_fixture_block(cell, block));
+            }
+
+            // Model the source `_mi_theap_collect(theap, true)` callback
+            // prefix after the ordinary 1k/10k allocation transitions. The
+            // pinned C differential drives the actual OOM retry; this unit
+            // isolates that the Rust owner releases its cell before B and
+            // accepts the exact source lease again only in phase C.
+            let force_call = cell
+                .with_owner(|owner| owner.get_mut().attachment.begin_deferred_free_callback(true))
+                .expect("the idle owner cell starts one forced callback prefix")
+                .expect("the exact attachment remains current for forced collection");
+            let heartbeat_before_force = u64::try_from(
+                observation.last_heartbeat.load(Ordering::Acquire),
+            )
+            .unwrap_or(0);
+            // SAFETY: `force_call` returned after the cell projection ended.
+            let (force_heartbeat, force_lease) = unsafe { force_call.invoke() };
+            assert_eq!(
+                force_heartbeat,
+                heartbeat_before_force.wrapping_add(1),
+                "the forced callback advances its selected source Theap once"
+            );
+            let force_lease = force_lease.expect("the registered forced prefix owns one lease");
+            cell.with_owner(|owner| {
+                owner
+                    .get_mut()
+                    .attachment
+                    .complete_deferred_free_callback(force_lease)
+            })
+            .expect("phase C reacquires the force source owner")
+            .expect("the forced callback returns to its matching attachment");
+
+            // SAFETY: every selected callback has returned and this test owns
+            // the registration mutex, so clearing the source pair cannot race
+            // a future invocation.
+            unsafe {
+                crate::deferred_free::register_process_callback(None, core::ptr::null_mut())
+            };
+            assert!(free_native_deferred_free_fixture_block(cell, anchor));
+
+            let trace = [
+                ("trace.deferred_free.context_matches", observation.context_matches.load(Ordering::Acquire)),
+                ("trace.deferred_free.nested_allocation_completed", observation.nested_allocation_completed.load(Ordering::Acquire)),
+                ("trace.deferred_free.nested_reentry_suppressed", observation.nested_reentry_suppressed.load(Ordering::Acquire)),
+                ("trace.deferred_free.first_heartbeat", observation.first_heartbeat.load(Ordering::Acquire)),
+                ("trace.deferred_free.nested_heartbeat", observation.nested_heartbeat.load(Ordering::Acquire)),
+                ("trace.deferred_free.mini_callbacks", mini_callbacks),
+                ("trace.deferred_free.full_callbacks", full_callbacks),
+                ("trace.deferred_free.full_heartbeat", 11),
+                ("trace.deferred_free.force_callbacks", observation.force_callback_count.load(Ordering::Acquire)),
+                ("trace.deferred_free.force_heartbeat_advanced", 1),
+                ("trace.deferred_free.callback_count", observation.callback_count.load(Ordering::Acquire)),
+            ];
+            assert_eq!(trace, [
+                ("trace.deferred_free.context_matches", 1),
+                ("trace.deferred_free.nested_allocation_completed", 1),
+                ("trace.deferred_free.nested_reentry_suppressed", 1),
+                ("trace.deferred_free.first_heartbeat", 1),
+                ("trace.deferred_free.nested_heartbeat", 2),
+                ("trace.deferred_free.mini_callbacks", 9),
+                ("trace.deferred_free.full_callbacks", 1),
+                ("trace.deferred_free.full_heartbeat", 11),
+                ("trace.deferred_free.force_callbacks", 1),
+                ("trace.deferred_free.force_heartbeat_advanced", 1),
+                ("trace.deferred_free.callback_count", 11),
+            ]);
+            std::println!("CRABC_MI_DEFERRED_FREE_TRACE_BEGIN");
+            for (name, value) in trace {
+                std::println!("{name}={value}");
+            }
+            std::println!("CRABC_MI_DEFERRED_FREE_TRACE_END");
         });
     }
 
@@ -15996,6 +17346,114 @@ mod tests {
         assert!(
             admissions.after_fork_child(true),
             "the prepared child consumes exactly the preserving gate record"
+        );
+    }
+
+
+    #[test]
+    fn deferred_callback_admission_before_fork_seal_makes_child_nonpreserving() {
+        let admissions = RuntimeForkAdmission::new();
+        let callback = admissions
+            .try_claim_deferred_free_callback()
+            .expect("the idle gate admits one selected phase-B callback");
+        assert_eq!(
+            RuntimeForkAdmission::callback_count(admissions.state.load(Ordering::Acquire)),
+            1,
+            "the typed callback claim occupies only the distinct callback counter"
+        );
+        assert_eq!(
+            admissions.state.load(Ordering::Acquire) & FORK_GATE_COUNT_MASK,
+            0,
+            "callback admission never manufactures a later-thread owner"
+        );
+
+        let inspected = std::sync::atomic::AtomicBool::new(false);
+        admissions.before_fork_with(|| {
+            inspected.store(true, Ordering::Release);
+            true
+        });
+        let sealed = admissions.state.load(Ordering::Acquire);
+        assert!(
+            !inspected.load(Ordering::Acquire),
+            "a callback that won the CAS makes this incomplete fork image non-preserving"
+        );
+        assert_ne!(sealed & FORK_GATE_HELD, 0);
+        assert_eq!(sealed & FORK_GATE_PRESERVE, 0);
+        assert_eq!(RuntimeForkAdmission::callback_count(sealed), 1);
+
+        admissions.after_fork_parent();
+        let reopened = admissions.state.load(Ordering::Acquire);
+        assert_eq!(reopened & (FORK_GATE_HELD | FORK_GATE_PRESERVE), 0);
+        assert_eq!(RuntimeForkAdmission::callback_count(reopened), 1);
+        drop(callback);
+        assert_eq!(
+            admissions.state.load(Ordering::Acquire),
+            0,
+            "parent callback completion reopens only its own callback counter"
+        );
+    }
+
+    #[test]
+    fn deferred_callback_admission_rechecks_a_fork_seal_before_phase_b() {
+        let admissions = RuntimeForkAdmission::new();
+        admissions.before_fork(true);
+        assert!(matches!(
+            admissions.try_claim_deferred_free_callback(),
+            Err(DeferredFreeCallbackAdmissionRefusal::ForkClosing)
+        ));
+        let sealed = admissions.state.load(Ordering::Acquire);
+        assert_eq!(
+            sealed,
+            FORK_GATE_HELD | FORK_GATE_PRESERVE,
+            "a callback that loses the CAS to fork does not enter user code or alter either count"
+        );
+
+        admissions.after_fork_parent();
+        let callback = admissions
+            .try_claim_deferred_free_callback()
+            .expect("phase B may enter after the parent releases its short seal");
+        drop(callback);
+        assert_eq!(admissions.state.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn copied_callback_claim_cannot_mutate_reset_child_admission() {
+        let admissions = RuntimeForkAdmission::new();
+        let callback = admissions
+            .try_claim_deferred_free_callback()
+            .expect("the isolated parent enters one selected callback");
+        admissions.before_fork(false);
+        assert!(
+            !admissions.after_fork_child(true),
+            "a copied callback claim cannot preserve this incomplete child image"
+        );
+        assert_eq!(admissions.state.load(Ordering::Acquire), 0);
+
+        // This Drop models callback return in the copied child. The child
+        // invalidated its generation before this point, so the old claim does
+        // not underflow or subtract from a reset/new counter.
+        drop(callback);
+        assert_eq!(admissions.state.load(Ordering::Acquire), 0);
+        assert!(matches!(
+            admissions.try_claim_deferred_free_callback(),
+            Err(DeferredFreeCallbackAdmissionRefusal::ChildInvalidated)
+        ));
+    }
+
+    #[test]
+    fn deferred_callback_admission_refuses_its_bounded_counter_without_aliasing_workers() {
+        let admissions = RuntimeForkAdmission::new();
+        admissions
+            .state
+            .store(FORK_GATE_CALLBACK_COUNT_MASK, Ordering::Release);
+        assert!(matches!(
+            admissions.try_claim_deferred_free_callback(),
+            Err(DeferredFreeCallbackAdmissionRefusal::CounterExhausted)
+        ));
+        assert_eq!(
+            admissions.state.load(Ordering::Acquire),
+            FORK_GATE_CALLBACK_COUNT_MASK,
+            "callback counter overflow leaves the later-owner payload untouched"
         );
     }
 
