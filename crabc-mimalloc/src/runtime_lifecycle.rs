@@ -130,6 +130,8 @@ use crate::thread_local::{
     PersistentCompilerTlsOwnerCell, PersistentCompilerTlsOwnerError,
     PersistentCompilerTlsOwnerInitializeError, PersistentCompilerTlsOwnerTeardownError,
 };
+#[cfg(feature = "native-runtime-test-audit")]
+use crate::types::MemoryKind;
 use crate::types::{LiveThreadId, Page};
 
 const PROCESS_COLD: u8 = 0;
@@ -5566,6 +5568,98 @@ fn native_process_backing_published_os_arena_count(
         .count()
 }
 
+/// The bounded scalar image of one canonical root arena published by the
+/// process backing.
+///
+/// This is deliberately an audit image, rather than an arena lease: it cannot
+/// search, claim, release, or retain a source arena.  The two callers below
+/// already require whole-runtime quiescence.  Under that boundary the process
+/// binding, fixed configuration, registry slot, and immutable root fields can
+/// be checked together without turning the source registry into a general
+/// arena enumeration API.
+#[cfg(feature = "native-runtime-test-audit")]
+#[derive(Clone, Copy)]
+struct NativeProcessBackingArenaAudit {
+    numa_node: i32,
+    size: usize,
+    initially_committed: usize,
+    registry_count: usize,
+}
+
+/// Observes exactly one regular OS root retained in the canonical process
+/// registry after startup or the later ticket-zero fallback has published it.
+///
+/// `startup_regular_arena_selection` remains the ownership admission for its
+/// bounded startup consumer.  It intentionally rejects a later lazy root
+/// when the source startup reservation was absent or failed.  This audit has
+/// a different, scalar-only question: whether the selected process binding
+/// now has one immutable regular root.  It therefore validates the source
+/// binding/configuration and exact one-slot root image directly, instead of
+/// relabeling that valid later publication as an unavailable audit fact.
+#[cfg(feature = "native-runtime-test-audit")]
+fn native_process_backing_canonical_root_arena_audit(
+    process_backing: crate::process_init::ProcessMainBackingBinding,
+) -> Option<NativeProcessBackingArenaAudit> {
+    let process = process_backing.process();
+    let backing = process.subprocess().arena_backing();
+    let config = process_backing.page_map().memory_config().ok()?;
+    if !backing
+        .matches_existing_process_binding(process, config)
+        .ok()?
+    {
+        return None;
+    }
+    let registry = backing.registry();
+    if registry.count() != 1
+        || !registry.is_bound_to_subprocess(process.subprocess().as_ptr())
+    {
+        return None;
+    }
+    // SAFETY: whole-runtime quiescence keeps the one published process root
+    // live while this scalar audit reads its immutable source fields.
+    let arena = unsafe { registry.arena_at(0) }?;
+    if arena.subprocess != process.subprocess().as_ptr()
+        || !arena.parent.is_null()
+        || arena.memid.kind() != MemoryKind::Os
+        || arena.memid.is_pinned()
+        || arena.memid.os_memory().is_none()
+    {
+        return None;
+    }
+    // SAFETY: the checked registry publication and caller's quiescence retain
+    // this in-place source image for the short scalar read only.
+    let arena = unsafe { ArenaView::from_ptr(core::ptr::from_ref(arena).cast_mut()) }?;
+    Some(NativeProcessBackingArenaAudit {
+        numa_node: arena.arena().numa_node,
+        size: arena.size()?,
+        initially_committed: usize::from(arena.arena().memid.initially_committed()),
+        registry_count: registry.count(),
+    })
+}
+
+#[cfg(feature = "native-runtime-test-audit")]
+fn native_process_backing_first_arena_policy_audit(
+    process_backing: crate::process_init::ProcessMainBackingBinding,
+) -> Option<NativeProcessBackingArenaAudit> {
+    let registry_count = process_backing
+        .process()
+        .subprocess()
+        .arena_backing()
+        .registry()
+        .count();
+    if registry_count == 0 {
+        // A real empty canonical registry is the source-valid pre-first-page
+        // image.  It has no root geometry or commitment to fabricate.
+        return Some(NativeProcessBackingArenaAudit {
+            numa_node: 0,
+            size: 0,
+            initially_committed: 0,
+            registry_count,
+        });
+    }
+    native_process_backing_canonical_root_arena_audit(process_backing)
+}
+
 /// Returns scalar-only lifecycle accounting for the process-global runtime.
 ///
 /// A `None` result means the source process image is not active and quiescent
@@ -5599,28 +5693,20 @@ pub fn native_runtime_lifecycle_test_audit() -> Option<NativeRuntimeLifecycleAud
         Some(Err(_)) => 2,
     };
     // The historical lazy sidecar remains the audit source only when it was
-    // actually selected.  A successful source-start regular reservation is
-    // owned by `ProcessArenaBacking` instead and must not be hidden merely
-    // because this older sidecar remains cold.
-    let (process_arena, arena_registry_count) = match ProcessSharedArenaStorage::global()
-        .ready_lease()
-    {
-        Ok(arena) => (arena.arena().ok()?, arena.test_registry_count().ok()?),
-        Err(_) => match process_backing.startup_regular_arena_selection() {
-            crate::process_init::ProcessStartupRegularArenaSelection::Eligible(lease) => {
-                let arena = lease.arena()?;
-                let count = process_backing
-                    .process()
-                    .subprocess()
-                    .arena_backing()
-                    .registry()
-                    .count();
-                (arena, count)
+    // actually selected.  Otherwise `ProcessArenaBacking` retains the one
+    // canonical regular root, whether source startup published it directly or
+    // ticket-zero later installed its valid fallback.
+    let process_arena = match ProcessSharedArenaStorage::global().ready_lease() {
+        Ok(lease) => {
+            let arena = lease.arena().ok()?;
+            NativeProcessBackingArenaAudit {
+                numa_node: arena.arena().numa_node,
+                size: arena.size()?,
+                initially_committed: usize::from(arena.arena().memid.initially_committed()),
+                registry_count: lease.test_registry_count().ok()?,
             }
-            crate::process_init::ProcessStartupRegularArenaSelection::Absent
-            | crate::process_init::ProcessStartupRegularArenaSelection::ExistingOutsideFirstRegularCapability
-            | crate::process_init::ProcessStartupRegularArenaSelection::Retained => return None,
-        },
+        }
+        Err(_) => native_process_backing_canonical_root_arena_audit(process_backing)?,
     };
     let subprocess = ready.subprocess().ok()?;
     // SAFETY: see the owner access above. The copied lease permits one short
@@ -5659,15 +5745,13 @@ pub fn native_runtime_lifecycle_test_audit() -> Option<NativeRuntimeLifecycleAud
         vm_policy_use_numa_nodes: vm_policy.options().value(VmOption::UseNumaNodes)?,
         vm_policy_numa_node_count_cache: vm_policy.native_runtime_test_numa_node_count_cache(),
         ticket_zero_tld_numa_node: RUNTIME_PROCESS.initial_tld_numa_node.load(Ordering::Acquire),
-        process_arena_numa_node: process_arena.arena().numa_node,
-        process_arena_size: process_arena.size()?,
-        process_arena_initially_committed: usize::from(
-            process_arena.arena().memid.initially_committed(),
-        ),
+        process_arena_numa_node: process_arena.numa_node,
+        process_arena_size: process_arena.size,
+        process_arena_initially_committed: process_arena.initially_committed,
         page_map_registered_entry_count: page_map.test_registered_entry_count().ok()?,
         page_map_published_submap_count: page_map.test_published_submap_count().ok()?,
         page_map_lazy_submap_allocation_count: page_map.test_lazy_submap_allocation_count(),
-        arena_registry_count,
+        arena_registry_count: process_arena.registry_count,
         live_thread_count: subprocess.live_thread_count(),
         metadata_live_capability_count: metadata.live_capability_count,
         metadata_high_water_capability_count: metadata.high_water_capability_count,
@@ -5713,36 +5797,21 @@ pub fn native_runtime_first_arena_policy_test_audit() -> Option<NativeRuntimeFir
         Some(Err(_)) => 2,
     };
     // The historical sidecar is the selected source only after it is ready.
-    // Otherwise a source-start regular parent remains in ProcessArenaBacking,
-    // and an absent parent deliberately retains zero geometry/counts.
-    let (process_arena_size, process_arena_initially_committed, arena_registry_count) =
-        match ProcessSharedArenaStorage::global().ready_lease() {
-            Ok(lease) => {
-                let arena = lease.arena().ok()?;
-                (
-                    arena.size()?,
-                    usize::from(arena.arena().memid.initially_committed()),
-                    lease.test_registry_count().ok()?,
-                )
+    // Otherwise ProcessArenaBacking supplies the canonical root after source
+    // startup or ticket-zero fallback, while a truly empty registry retains
+    // zero geometry/counts.
+    let process_arena = match ProcessSharedArenaStorage::global().ready_lease() {
+        Ok(lease) => {
+            let arena = lease.arena().ok()?;
+            NativeProcessBackingArenaAudit {
+                numa_node: arena.arena().numa_node,
+                size: arena.size()?,
+                initially_committed: usize::from(arena.arena().memid.initially_committed()),
+                registry_count: lease.test_registry_count().ok()?,
             }
-            Err(_) => match process_backing.startup_regular_arena_selection() {
-                crate::process_init::ProcessStartupRegularArenaSelection::Eligible(lease) => {
-                    let arena = lease.arena()?;
-                    (
-                        arena.size()?,
-                        usize::from(arena.arena().memid.initially_committed()),
-                        process.subprocess().arena_backing().registry().count(),
-                    )
-                }
-                crate::process_init::ProcessStartupRegularArenaSelection::Absent => (
-                    0,
-                    0,
-                    process.subprocess().arena_backing().registry().count(),
-                ),
-                crate::process_init::ProcessStartupRegularArenaSelection::ExistingOutsideFirstRegularCapability
-                | crate::process_init::ProcessStartupRegularArenaSelection::Retained => return None,
-            },
-        };
+        }
+        Err(_) => native_process_backing_first_arena_policy_audit(process_backing)?,
+    };
     let process_backing_first_arena_begin_count = native_process_backing_first_arena_audit();
     let process_backing_published_os_arena_count =
         native_process_backing_published_os_arena_count(process_backing);
@@ -5753,10 +5822,10 @@ pub fn native_runtime_first_arena_policy_test_audit() -> Option<NativeRuntimeFir
         vm_policy_disallow_os_alloc: usize::from(policy.disallow_os_alloc()),
         process_backing_first_arena_begin_count,
         process_backing_published_os_arena_count,
-        process_arena_size,
-        process_arena_initially_committed,
+        process_arena_size: process_arena.size,
+        process_arena_initially_committed: process_arena.initially_committed,
         page_map_registered_entry_count: page_map.test_registered_entry_count().ok()?,
-        arena_registry_count,
+        arena_registry_count: process_arena.registry_count,
     })
 }
 
