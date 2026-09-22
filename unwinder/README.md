@@ -1,11 +1,12 @@
 # Native x86 unwind provider
 
 `build.py` compiles the approved `unwinding` configuration and extracts only
-Rust objects from its three dependency archives into `libcrabc-unwind.a`.
-The separate archive provides the 17 `_Unwind_*` functions in `UNWIND_ABI`;
-the consuming Rust standard library supplies its own personality, panic runtime
-and matching Rust core. The archive is not a standalone C unwinder: core
-references must resolve from the Rust consumer graph.
+Rust objects from its three dependency archives into `libcrabc-unwind.a` for
+the stock-Rust consumer path. The source-built path instead stages that exact
+patched provider graph below its consumer evidence directory and makes
+`crabc-unwinder` a normal Cargo dependency. Both paths provide the 17
+`_Unwind_*` functions in `UNWIND_ABI`; Rust std supplies its own personality
+and panic runtime. Neither provider form is a standalone C unwinder.
 
 Build from the checkout through the pinned native dispatcher:
 
@@ -161,6 +162,7 @@ the provider:
 
 ```sh
 ./scripts/dev-x86_64.sh unwinder-owned-cleanup \
+  --provider-vendor .work/x86_64/RUN/provider-vendor \
   --static-sysroot .work/x86_64/RUN/static-product \
   .work/x86_64/RUN/dynamic-product
 ```
@@ -193,11 +195,52 @@ roots/manifests, provider provenance/archive, complete linker command/trace,
 and executable digest before checking main and worker-thread panic cleanup plus
 backtrace behavior.
 
+The caller supplies `--provider-vendor` as a physical checkout-local Cargo
+directory source containing exactly the locked `unwinding`, `gimli`, and
+`libc 0.2.186` provider packages. Each Cargo checksum manifest and every
+listed file is rehashed against `PINS` before use. The runner separately
+audits Rust's pinned `rust-src/library/.cargo/config.toml`, complete
+`rust-src/library/vendor` roster, and `rust-src/library/Cargo.lock`; it merges
+only the extra provider `libc 0.2.186` source into a fresh private composite
+vendor. This preserves the complete source-built standard-library closure,
+including its own pinned dependencies, while keeping the provider graph
+exact. The patched-provider staging input is derived from the verified
+directory source by replacing only Cargo's directory-source checksum transport
+file with the two fixed registry transport markers, then checking the existing
+pinned upstream tree hash. Cargo's private source replacement has `net.offline = true`, and every
+metadata, lock, and build command passes `--offline`; registry/cache/network
+state is never an admitted input.
+
+Before admitting that compiler/linker round trip, the same pinned native
+container can run the exact generated-workspace preflight with a fresh output:
+
+```sh
+python3 -B unwinder/owned_cleanup.py \
+  --provider-vendor .work/x86_64/RUN/provider-vendor \
+  --source-graph-preflight-only \
+  --output .work/x86_64/RUN/source-graph-preflight
+```
+
+It records the authenticated composite vendor, patched source staging, both
+Cargo metadata streams, and offline generated lock. It does not compile, link,
+or execute a consumer, so its development receipt cannot replace the static
+source-built round trip.
+
+Cargo may also pass the pinned toolchain target library directory with
+`-L`. The runner derives that one directory from the same `rustc --print
+target-libdir` invocation and records it solely as an unused search path.
+Final Rust archives remain confined to the fresh source-built target directory,
+and no linker search path is forwarded to the owned LLD command. Cargo still
+builds its source `libunwind` archive for build-std, which the receipt records
+as unselected; the final normal Cargo graph instead retains the Cargo provider
+archive. A stock `std`, `core`, `unwind`, or other target archive, and any
+direct final `libunwind` archive, remains rejected.
+
 The same run then builds two checked-in Cargo fixtures with
-`--locked -Zbuild-std=std,panic_unwind`, fresh checkout-local Cargo home,
-target, and temporary directories, `CARGO_BUILD_JOBS=1`, and fat LTO. The
-source-built static fixture repeats the complete cleanup/backtrace check. The
-dynamic fixture builds a Rust `cdylib` plugin which performs that check itself;
+`--locked --offline -Zbuild-std=std,panic_unwind`, fresh checkout-local Cargo
+home, target, and temporary directories, `CARGO_BUILD_JOBS=1`, and fat LTO.
+The source-built static fixture repeats the complete cleanup/backtrace check.
+The dynamic fixture builds a Rust `cdylib` plugin which performs that check itself;
 its Rust host resolves the plugin's exported entry with `dlopen`/`dlsym` and
 loads the plugin by basename through the selected loader's explicit library
 path. The host starts the plugin's first internal cleanup, has a host worker
@@ -208,10 +251,16 @@ crossing the DSO ABI.
 
 For a source-built final link the wrapper admits only the Cargo application
 root and its declared target `release/deps` root. It requires the freshly
-built `std`, `core`, `alloc`, and `panic_unwind` archives, omits the
-source-built `libunwind` and compiler-builtins archives in favor of the
-selected provider and product archive, and records a separate schema-2 link
-receipt. Stock target rlibs are outside that boundary. Cargo artifact JSON,
+built `std`, `core`, `alloc`, `panic_unwind`, and exactly one
+`crabc-unwinder` rlib, then omits Cargo's `libunwind` and compiler-builtins
+archives. The provider rlib is retained through its real
+`_Unwind_RaiseException` address and is part of the same Cargo/LTO graph as
+the source-built `core`; no standalone provider archive is passed to this
+link. The generated workspace lock, exact pinned provider features and staged
+overlay sources are audited before compiling. The provider therefore inherits
+the consumer's `panic=unwind`, fat-LTO, and codegen-unit profile rather than
+its standalone producer profile. A schema-2 link receipt records this Cargo
+provider artifact and excludes stock target rlibs. Cargo artifact JSON,
 verbose build records, the pinned `rust-src` library lock, and the linker-side
 receipt bind the build to the final executable or plugin even where Cargo
 hard-links an artifact into its release directory.
@@ -223,10 +272,12 @@ subtree only to the pinned container `/usr/bin/gcc`, records every such host
 link in an exclusive per-artifact receipt. A generated manifest binds the
 receipts by hard-link identity to the exact `compiler-artifact` custom-build
 records from Cargo's machine-readable stream, and records the pinned
-`rust-src` lock plus each declared package manifest and `build.rs`. It rejects
-unmatched, duplicate, forged, or target-lookalike records before it accepts a
-consumer. Those host tools do not become target inputs: the final executable
-and cdylib link receipts still require fresh source-built
+`rust-src` lock plus every declared package manifest and build source. The
+only extra provider build executable is the already-audited pinned `libc`
+cfg build script; its manifest/source pair is recorded separately and must
+match the resolved provider graph. It rejects unmatched, duplicate, forged,
+or target-lookalike records before it accepts a consumer. Those host tools do
+not become target inputs: the final executable and cdylib link receipts still require fresh source-built
 `std`/`core`/`alloc`/`panic_unwind` rlibs and contain no stock target rlib.
 
 This is non-promoting consumer-development evidence: its receipt keeps all

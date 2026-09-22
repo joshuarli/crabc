@@ -30,6 +30,8 @@ class OwnedRustLinkContract(unittest.TestCase):
         self.stock.mkdir()
         self.source_built = root / "source-built"
         self.source_built.mkdir()
+        self.toolchain_search = root / "toolchain-target-lib"
+        self.toolchain_search.mkdir()
         self.host_build = root / "cargo-target/release/build"
         self.host_build.mkdir(parents=True)
         (self.application / "fixture.o").write_bytes(b"object")
@@ -44,6 +46,8 @@ class OwnedRustLinkContract(unittest.TestCase):
             "libpanic_unwind-0123456789abcdef.rlib",
             "libunwind-0123456789abcdef.rlib",
             "libcompiler_builtins-0123456789abcdef.rlib",
+            "libcrabc_unwinder-0123456789abcdef.rlib",
+            "libunwinding-0123456789abcdef.rlib",
         ):
             (self.source_built / name).write_bytes(b"archive")
         (self.application / "raw-dylibs").mkdir()
@@ -77,17 +81,19 @@ class OwnedRustLinkContract(unittest.TestCase):
         substitutions = {
             str(self.stock / "libstd-0123456789abcdef.rlib"):
                 str(self.source_built / "libstd-0123456789abcdef.rlib"),
-            str(self.stock / "libunwind-0123456789abcdef.rlib"):
-                str(self.source_built / "libunwind-0123456789abcdef.rlib"),
             str(self.stock / "libcompiler_builtins-0123456789abcdef.rlib"):
                 str(self.source_built / "libcompiler_builtins-0123456789abcdef.rlib"),
             str(self.stock): str(self.source_built),
         }
         return [substitutions.get(argument, argument) for argument in self.arguments()
-                if argument != str(self.application / "libapp-0123456789abcdef.rlib")] + [
+                if argument not in {
+                    str(self.application / "libapp-0123456789abcdef.rlib"),
+                    str(self.stock / "libunwind-0123456789abcdef.rlib"),
+                }] + [
             str(self.source_built / "libcore-0123456789abcdef.rlib"),
             str(self.source_built / "liballoc-0123456789abcdef.rlib"),
             str(self.source_built / "libpanic_unwind-0123456789abcdef.rlib"),
+            str(self.source_built / "libcrabc_unwinder-0123456789abcdef.rlib"),
         ]
 
     def test_complete_stock_input_replaces_both_ambient_unwind_paths(self):
@@ -103,11 +109,11 @@ class OwnedRustLinkContract(unittest.TestCase):
         with self.assertRaisesRegex(linker.LinkError, "stock Rust libunwind"):
             self.parse(arguments)
 
-    def test_source_built_std_replaces_its_own_runtime_archives(self):
+    def test_source_built_std_omits_direct_libunwind_and_replaces_compiler_builtins(self):
         parsed = linker.parse_arguments(
             self.source_built_arguments(), self.application, self.stock, self.source_built
         )
-        self.assertEqual(parsed["source_built_unwind"], self.source_built / "libunwind-0123456789abcdef.rlib")
+        self.assertIsNone(parsed["source_built_unwind"])
         self.assertEqual(
             parsed["source_built_compiler_builtins"],
             self.source_built / "libcompiler_builtins-0123456789abcdef.rlib",
@@ -115,6 +121,46 @@ class OwnedRustLinkContract(unittest.TestCase):
         self.assertEqual(parsed["rust_library_origin"], "source-built")
         self.assertTrue(any(path.name.startswith("libstd-") for path in parsed["archives"]))
         self.assertTrue(any(path.name.startswith("libcore-") for path in parsed["archives"]))
+        self.assertEqual(
+            parsed["cargo_graph_provider"], self.source_built / "libcrabc_unwinder-0123456789abcdef.rlib",
+        )
+
+    def test_source_built_direct_libunwind_archive_is_rejected(self):
+        with self.assertRaisesRegex(linker.LinkError, "libunwind archive must not enter"):
+            linker.parse_arguments(
+                [*self.source_built_arguments(), str(self.source_built / "libunwind-0123456789abcdef.rlib")],
+                self.application, self.stock, self.source_built,
+            )
+
+    def test_source_built_link_admits_only_the_declared_unused_toolchain_search_path(self):
+        arguments = self.source_built_arguments()
+        last_search = max(index for index, argument in enumerate(arguments) if argument == "-L")
+        arguments[last_search + 1] = str(self.toolchain_search)
+        parsed = linker.parse_arguments(
+            arguments, self.application, self.stock, self.source_built,
+            toolchain_search_root=self.toolchain_search,
+        )
+        self.assertIn(self.toolchain_search, parsed["search_paths"])
+        self.assertTrue(all(path.is_relative_to(self.source_built) for path in parsed["archives"]))
+        stock_core = self.toolchain_search / "libcore-0123456789abcdef.rlib"
+        stock_core.write_bytes(b"archive")
+        with self.assertRaisesRegex(linker.LinkError, "source-built Rust archive"):
+            linker.parse_arguments(
+                [*arguments, str(stock_core)], self.application, self.stock, self.source_built,
+                toolchain_search_root=self.toolchain_search,
+            )
+
+    def test_source_built_std_requires_one_cargo_graph_provider(self):
+        arguments = [argument for argument in self.source_built_arguments() if "libcrabc_unwinder-" not in argument]
+        with self.assertRaisesRegex(linker.LinkError, "crabc-unwinder archives"):
+            linker.parse_arguments(arguments, self.application, self.stock, self.source_built)
+
+    def test_source_built_graph_admits_the_approved_unwinding_crate_name(self):
+        parsed = linker.parse_arguments(
+            [*self.source_built_arguments(), str(self.source_built / "libunwinding-0123456789abcdef.rlib")],
+            self.application, self.stock, self.source_built,
+        )
+        self.assertIn(self.source_built / "libunwinding-0123456789abcdef.rlib", parsed["archives"])
 
     def test_source_built_host_build_script_is_separate_from_the_final_owned_link(self):
         """Cargo must not send its same-triple host build script to the target linker."""
@@ -256,13 +302,15 @@ class OwnedRustLinkContract(unittest.TestCase):
             self.source_built_arguments(), self.application, self.stock, self.source_built
         )
         command = linker.link_command(
-            linker=Path("/pinned/ld.lld"), root=root, mode="dynamic", provider=provider,
+            linker=Path("/pinned/ld.lld"), root=root, mode="dynamic", provider=None,
             objects=parsed["objects"], archives=parsed["archives"],
             output=self.application / "deps/libcleanup.so", export_dynamic=False, rust_mode="shared",
         )
         self.assertIn("-shared", command)
         self.assertIn("-soname", command)
         self.assertIn(str(library / "crti.o"), command)
+        self.assertIn(str(parsed["cargo_graph_provider"]), command)
+        self.assertNotIn(str(provider), command)
         self.assertNotIn(str(library / "Scrt1.o"), command)
         self.assertNotIn(str(library / "crabc-dynamic-attach.o"), command)
 

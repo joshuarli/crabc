@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Run the full Rust cleanup fixture through supplied owned runtime products.
 
-This is consumer-development evidence.  The selected provider is built beside
-the receipt and passed directly to each link; it is deliberately *not*
-installed into either supplied product.  Packaging that provider, a build-std
-consumer, LTO, DSO discovery, and complete malformed-metadata behavior remain
-separate requirements before any qualification or promotion claim.
+This is consumer-development evidence. Stock consumers receive the selected
+standalone provider beside the receipt; source-built consumers instead stage
+the exact patched provider as a normal Cargo dependency. Neither form is
+installed into a supplied product. Packaging, broad build-std/LTO/DSO
+qualification, and complete malformed-metadata behavior remain separate
+requirements before any qualification or promotion claim.
 """
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ from pathlib import Path
 import platform
 import resource
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -40,6 +42,7 @@ BUILD_STD_BINARY = "crabc-owned-cleanup-build-std"
 BUILD_STD_DSO_HOST = "crabc-owned-cleanup-dso-host"
 BUILD_STD_DSO_LIBRARY = "libcrabc_owned_cleanup_plugin.so"
 BUILD_STD_CRATES = ("std", "core", "alloc", "panic_unwind", "unwind", "compiler_builtins")
+SOURCE_GRAPH_PACKAGES = frozenset(build.FEATURES)
 HOST_BUILD_LINKER = Path("/usr/bin/gcc")
 HOST_BUILD_SCRIPT_OUTPUT = re.compile(r"build_script_build-[0-9a-f]+\Z")
 SERIAL_BUILD_ENVIRONMENT = {
@@ -52,6 +55,23 @@ SOURCE_BUILD_PROFILE = {
     "CARGO_PROFILE_RELEASE_CODEGEN_UNITS": "1",
     "CARGO_PROFILE_RELEASE_LTO": "fat",
 }
+CARGO_VENDOR_CONFIG = """[source.crates-io]
+replace-with = \"crabc-owned-composite-vendor\"
+
+[source.crabc-owned-composite-vendor]
+directory = \"{directory}\"
+
+[net]
+offline = true
+"""
+# Cargo's extracted registry tree carries two transport markers which Cargo
+# omits from a directory source.  ``build.py`` pins the extracted-tree digest,
+# so restore these fixed markers only in a private derivative after the vendor
+# checksum has authenticated every package source file.
+CARGO_REGISTRY_UNWINDING_MARKERS = {
+    ".cargo-ok": b'{"v":1}',
+    ".gitignore": b".vscode/\ntarget\n",
+}
 # Cargo coordinates fat LTO with its embed-bitcode setting. Duplicating these
 # profile settings in CARGO_ENCODED_RUSTFLAGS makes rustc reject the build.
 SOURCE_BUILD_RUSTFLAGS = (
@@ -60,7 +80,8 @@ SOURCE_BUILD_RUSTFLAGS = (
 )
 SOURCE_INPUTS = (
     ROOT / "owned_cleanup.py", ROOT / "owned_rust_link.py", ROOT / "cleanup.py",
-    ROOT / "build.py", FIXTURE,
+    ROOT / "build.py", ROOT / "Cargo.toml", ROOT / "Cargo.lock", ROOT / "src/lib.rs",
+    ROOT / "patches/unwinding-0.2.10-phdr-bounds.rs", ROOT / "patches/unwinding-0.2.10-frame-bounds.rs", FIXTURE,
     BUILD_STD_FIXTURE / "Cargo.toml", BUILD_STD_FIXTURE / "Cargo.lock", BUILD_STD_FIXTURE / "src/main.rs",
     BUILD_STD_DSO_FIXTURE / "Cargo.toml", BUILD_STD_DSO_FIXTURE / "Cargo.lock",
     BUILD_STD_DSO_FIXTURE / "src/main.rs", BUILD_STD_DSO_FIXTURE / "src/plugin.rs",
@@ -132,6 +153,390 @@ def json_object(path: Path, description: str) -> dict[str, Any]:
 
 def record_file(path: Path, description: str) -> dict[str, str]:
     return {"path": str(physical(path, description)), "sha256": digest(path)}
+
+
+def physical_tree_files(root: Path, description: str) -> list[Path]:
+    """Return one regular, non-symlinked source tree in deterministic order."""
+
+    root = physical(root, description, directory=True)
+    files: list[Path] = []
+
+    def visit(directory: Path) -> None:
+        try:
+            entries = sorted(directory.iterdir(), key=lambda entry: entry.name)
+        except OSError as error:
+            raise OwnedCleanupError(f"{description} is unreadable: {directory}") from error
+        for entry in entries:
+            try:
+                metadata = entry.lstat()
+            except OSError as error:
+                raise OwnedCleanupError(f"{description} is unreadable: {entry}") from error
+            if stat.S_ISLNK(metadata.st_mode):
+                raise OwnedCleanupError(f"{description} contains a symlink: {entry}")
+            if stat.S_ISDIR(metadata.st_mode):
+                visit(entry)
+            elif stat.S_ISREG(metadata.st_mode):
+                files.append(entry)
+            else:
+                raise OwnedCleanupError(f"{description} contains a non-regular entry: {entry}")
+
+    visit(root)
+    return files
+
+
+def cargo_vendor_tree(
+    root: Path, expected: dict[str, tuple[str, str, str]], description: str,
+) -> dict[str, Any]:
+    """Bind a Cargo directory source to its locked package checksums.
+
+    A Cargo vendor checksum is not a trust boundary on its own.  This reader
+    checks it against the checked-in lock checksum and rehashes every source
+    file it names, so the later offline source replacement has no implicit
+    registry/cache input.
+    """
+
+    root = physical(root, description, directory=True)
+    try:
+        entries = sorted(root.iterdir(), key=lambda entry: entry.name)
+    except OSError as error:
+        raise OwnedCleanupError(f"{description} is unreadable: {root}") from error
+    expected_identities = {(name, version): (directory_name, checksum)
+                           for directory_name, (name, version, checksum) in expected.items()}
+    require(len(expected_identities) == len(expected), f"{description} lock has duplicate package identities")
+    observed: dict[str, Path] = {}
+    for entry in entries:
+        directory = physical(entry, f"{description} package directory", directory=True)
+        manifest = physical(directory / "Cargo.toml", f"{description} package manifest")
+        try:
+            manifest_data = tomllib.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+            raise OwnedCleanupError(f"{description} package manifest is invalid: {entry.name}") from error
+        package = manifest_data.get("package")
+        require(isinstance(package, dict) and isinstance(package.get("name"), str)
+                and isinstance(package.get("version"), str),
+                f"{description} package has no manifest identity: {entry.name}")
+        identity = (package["name"], package["version"])
+        expected_entry = expected_identities.get(identity)
+        require(expected_entry is not None, f"{description} package is outside its lock: {entry.name}")
+        directory_name, _checksum = expected_entry
+        require(directory_name not in observed,
+                f"{description} repeats a locked package identity: {directory_name}")
+        observed[directory_name] = directory
+    require(set(observed) == set(expected), f"{description} package roster differs from its lock")
+    packages: list[dict[str, Any]] = []
+    identity = hashlib.sha256()
+    for directory_name in sorted(expected):
+        name, version, package_checksum = expected[directory_name]
+        directory = observed[directory_name]
+        manifest = physical(directory / "Cargo.toml", f"{description} package manifest")
+        try:
+            manifest_data = tomllib.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+            raise OwnedCleanupError(f"{description} package manifest is invalid: {directory_name}") from error
+        package = manifest_data.get("package")
+        require(
+            isinstance(package, dict) and package.get("name") == name and package.get("version") == version,
+            f"{description} package identity differs from its lock: {directory_name}",
+        )
+        checksum_path = physical(directory / ".cargo-checksum.json", f"{description} package checksum")
+        checksum = json_object(checksum_path, f"{description} package checksum")
+        require(
+            set(checksum) == {"$comment", "files", "package"}
+            and isinstance(checksum["$comment"], str)
+            and checksum.get("package") == package_checksum
+            and isinstance(checksum.get("files"), dict),
+            f"{description} package checksum differs from its lock: {directory_name}",
+        )
+        expected_files = checksum["files"]
+        require(
+            all(
+                isinstance(relative, str) and isinstance(value, str)
+                and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+                and relative not in {"", ".cargo-checksum.json"}
+                and not Path(relative).is_absolute() and ".." not in Path(relative).parts
+                for relative, value in expected_files.items()
+            ),
+            f"{description} package checksum file roster is malformed: {directory_name}",
+        )
+        actual_files = {
+            path.relative_to(directory).as_posix(): digest(path)
+            for path in physical_tree_files(directory, f"{description} package tree")
+            if path != checksum_path
+        }
+        require(actual_files == expected_files,
+                f"{description} package files differ from its checksum: {directory_name}")
+        file_records = [{"path": relative, "sha256": actual_files[relative]} for relative in sorted(actual_files)]
+        package_record = {
+            "name": name,
+            "version": version,
+            "package_checksum": package_checksum,
+            "directory": str(directory),
+            "manifest": record_file(manifest, f"{description} package manifest"),
+            "checksum": record_file(checksum_path, f"{description} package checksum"),
+            "files": file_records,
+        }
+        packages.append(package_record)
+        identity.update(directory_name.encode())
+        identity.update(b"\0")
+        identity.update(package_checksum.encode())
+        identity.update(b"\0")
+        identity.update(digest(checksum_path).encode())
+        identity.update(b"\0")
+        for file_record in file_records:
+            identity.update(file_record["path"].encode())
+            identity.update(b"\0")
+            identity.update(file_record["sha256"].encode())
+            identity.update(b"\0")
+    return {"root": str(root), "packages": packages, "identity": identity.hexdigest()}
+
+
+def locked_registry_vendor_packages(lock: Path, description: str) -> dict[str, tuple[str, str, str]]:
+    """Return the complete crates.io directory-source closure for one lock."""
+
+    lock = physical(lock, description)
+    try:
+        data = tomllib.loads(lock.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+        raise OwnedCleanupError(f"{description} is invalid") from error
+    records = data.get("package")
+    require(isinstance(records, list) and all(isinstance(record, dict) for record in records),
+            f"{description} has no package records")
+    expected: dict[str, tuple[str, str, str]] = {}
+    for record in records:
+        if record.get("source") != build.CRATES_IO_REGISTRY:
+            continue
+        name, version, checksum = record.get("name"), record.get("version"), record.get("checksum")
+        require(
+            isinstance(name, str) and isinstance(version, str)
+            and isinstance(checksum, str) and re.fullmatch(r"[0-9a-f]{64}", checksum) is not None,
+            f"{description} has a malformed registry package",
+        )
+        directory_name = f"{name}-{version}"
+        require(directory_name not in expected, f"{description} has a duplicate registry package")
+        expected[directory_name] = (name, version, checksum)
+    require(expected, f"{description} has no registry package closure")
+    return expected
+
+
+def rust_source_vendor(rust_source: Path) -> tuple[dict[str, Any], dict[str, tuple[str, str, str]]]:
+    """Read Rust's pinned complete build-std vendor source, not an ambient cache."""
+
+    rust_source = physical(rust_source, "pinned rust-src library", directory=True)
+    config = physical(rust_source / ".cargo/config.toml", "pinned rust-src vendor config")
+    try:
+        config_data = tomllib.loads(config.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+        raise OwnedCleanupError("pinned rust-src vendor config is invalid") from error
+    require(
+        config_data == {
+            "source": {
+                "crates-io": {"replace-with": "vendored-sources"},
+                "vendored-sources": {"directory": "vendor"},
+            },
+        },
+        "pinned rust-src vendor config differs from the declared source replacement",
+    )
+    lock = physical(rust_source / "Cargo.lock", "pinned rust-src lock")
+    expected = locked_registry_vendor_packages(lock, "pinned rust-src lock")
+    record = cargo_vendor_tree(rust_source / "vendor", expected, "pinned rust-src complete vendor")
+    record["config"] = record_file(config, "pinned rust-src vendor config")
+    record["lock"] = record_file(lock, "pinned rust-src lock")
+    return record, expected
+
+
+def provider_vendor(provider_vendor: Path) -> tuple[dict[str, Any], dict[str, tuple[str, str, str]]]:
+    """Read the independently authenticated, exact provider source closure."""
+
+    provider_vendor = work_child(provider_vendor, "owned Rust provider vendor input", existing=True)
+    expected = {
+        f"{name}-{version}": (name, version, checksum)
+        for name, (version, checksum) in build.PINS.items()
+    }
+    return cargo_vendor_tree(provider_vendor, expected, "owned Rust provider vendor input"), expected
+
+
+def prepare_offline_cargo_sources(
+    application: Path, rust_source: Path, provider_vendor_root: Path, cargo_home: Path,
+) -> dict[str, Any]:
+    """Compose Rust's full vendor with the checked provider-only source closure."""
+
+    standard, standard_expected = rust_source_vendor(rust_source)
+    provider, provider_expected = provider_vendor(provider_vendor_root)
+    combined_expected = dict(standard_expected)
+    standard_by_name = {f"{package['name']}-{package['version']}": package for package in standard["packages"]}
+    provider_by_name = {f"{package['name']}-{package['version']}": package for package in provider["packages"]}
+    for directory_name, expected in provider_expected.items():
+        existing = combined_expected.get(directory_name)
+        if existing is not None:
+            require(existing == expected, "Rust and provider vendor source pins conflict")
+            require(
+                standard_by_name[directory_name]["package_checksum"] == provider_by_name[directory_name]["package_checksum"]
+                and standard_by_name[directory_name]["files"] == provider_by_name[directory_name]["files"],
+                "Rust and provider vendor source contents differ",
+            )
+        else:
+            combined_expected[directory_name] = expected
+    composite_root = application / "cargo-vendor"
+    require(not composite_root.exists() and not composite_root.is_symlink(),
+            "private offline Cargo vendor must be fresh")
+    shutil.copytree(Path(standard["root"]), composite_root, copy_function=shutil.copy2)
+    for directory_name in sorted(set(provider_expected) - set(standard_expected)):
+        shutil.copytree(Path(provider_by_name[directory_name]["directory"]), composite_root / directory_name,
+                        copy_function=shutil.copy2)
+    composite = cargo_vendor_tree(composite_root, combined_expected, "private composite Cargo vendor")
+    config = cargo_home / "config.toml"
+    require(not config.exists() and not config.is_symlink(), "private Cargo source config must be fresh")
+    config.write_text(
+        CARGO_VENDOR_CONFIG.format(
+            directory=_toml_path(composite_root, "private composite Cargo vendor", directory=True),
+        ),
+        encoding="utf-8",
+    )
+    config = physical(config, "private Cargo source config")
+    return {
+        "rust_source_vendor": standard,
+        "provider_vendor": provider,
+        "composite_vendor": composite,
+        "composite_vendor_custom_build_inputs": cargo_vendor_custom_build_inputs(composite),
+        "cargo_config": record_file(config, "private Cargo source config"),
+    }
+
+
+def cargo_vendor_custom_build_inputs(vendor: dict[str, Any]) -> list[dict[str, dict[str, str]]]:
+    """Bind every composite-vendor build script to its authenticated package.
+
+    Cargo compiles directory-source build scripts from the private composite,
+    not Rust's original vendor tree.  The composite has already been rehashed
+    against both locked source closures; this records the exact manifest and
+    declared build source that Cargo may later name in a host artifact record.
+    """
+
+    packages = vendor.get("packages")
+    require(isinstance(packages, list) and all(isinstance(package, dict) for package in packages),
+            "private composite Cargo vendor package records are malformed")
+    inputs: list[dict[str, dict[str, str]]] = []
+    identities: set[tuple[Path, Path]] = set()
+    for package in packages:
+        directory_value = package.get("directory")
+        name, version = package.get("name"), package.get("version")
+        require(isinstance(directory_value, str) and isinstance(name, str) and isinstance(version, str),
+                "private composite Cargo vendor package identity is malformed")
+        directory = physical(Path(directory_value), "private composite Cargo vendor package", directory=True)
+        manifest = physical(directory / "Cargo.toml", "private composite Cargo vendor manifest")
+        try:
+            manifest_data = tomllib.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+            raise OwnedCleanupError("private composite Cargo vendor manifest is invalid") from error
+        package_data = manifest_data.get("package")
+        require(
+            isinstance(package_data, dict) and package_data.get("name") == name and package_data.get("version") == version,
+            "private composite Cargo vendor manifest identity drifted",
+        )
+        build = package_data.get("build")
+        if build is False:
+            continue
+        if build is None:
+            candidate = directory / "build.rs"
+            if not candidate.exists() and not candidate.is_symlink():
+                continue
+        else:
+            require(isinstance(build, str) and build and not Path(build).is_absolute()
+                    and ".." not in Path(build).parts,
+                    "private composite Cargo vendor build source is invalid")
+            candidate = directory / build
+        build_source = physical(candidate, "private composite Cargo vendor build source")
+        require(build_source.is_relative_to(directory),
+                "private composite Cargo vendor build source escapes its package")
+        identity = (manifest, build_source)
+        require(identity not in identities, "private composite Cargo vendor repeats a build source")
+        identities.add(identity)
+        inputs.append({
+            "manifest": record_file(manifest, "private composite Cargo vendor manifest"),
+            "source": record_file(build_source, "private composite Cargo vendor build source"),
+        })
+    return inputs
+
+
+def recorded_custom_build_inputs(
+    records: Any, description: str,
+) -> list[dict[str, Path]]:
+    """Turn source-bound manifest/source records back into checked paths."""
+
+    require(isinstance(records, list) and all(isinstance(record, dict) for record in records),
+            f"{description} records are malformed")
+    inputs: list[dict[str, Path]] = []
+    identities: set[tuple[Path, Path]] = set()
+    for record in records:
+        manifest_record, source_record = record.get("manifest"), record.get("source")
+        require(isinstance(manifest_record, dict) and isinstance(source_record, dict)
+                and isinstance(manifest_record.get("path"), str) and isinstance(source_record.get("path"), str),
+                f"{description} record is malformed")
+        manifest = physical(Path(manifest_record["path"]), f"{description} manifest")
+        build_source = physical(Path(source_record["path"]), f"{description} build source")
+        require(
+            manifest_record == record_file(manifest, f"{description} manifest")
+            and source_record == record_file(build_source, f"{description} build source"),
+            f"{description} record differs from its source",
+        )
+        identity = (manifest, build_source)
+        require(identity not in identities, f"{description} repeats a build source")
+        identities.add(identity)
+        inputs.append({"manifest": manifest, "source": build_source})
+    return inputs
+
+
+def provider_registry_unwinding_source(application: Path, offline_sources: dict[str, Any]) -> dict[str, Any]:
+    """Derive build.py's pinned registry-tree shape from the verified vendor.
+
+    Cargo directory sources intentionally omit ``.cargo-ok`` and ``.gitignore``
+    while adding ``.cargo-checksum.json``. The checked provider vendor has
+    already authenticated the actual package files; this private derivative
+    restores only the two fixed registry transport markers, removes only the
+    directory-source checksum manifest, and then proves the pre-existing
+    registry-tree identity before the normal patch staging code sees it.
+    """
+
+    provider = offline_sources.get("provider_vendor")
+    require(isinstance(provider, dict) and isinstance(provider.get("packages"), list),
+            "offline provider vendor record is malformed")
+    candidates = [package for package in provider["packages"] if isinstance(package, dict)
+                  and package.get("name") == build.PATCHED_UNWINDING
+                  and package.get("version") == build.PINS[build.PATCHED_UNWINDING][0]]
+    require(len(candidates) == 1 and isinstance(candidates[0].get("directory"), str),
+            "offline provider vendor lacks its pinned unwinding source")
+    source = physical(Path(candidates[0]["directory"]), "offline provider unwinding source", directory=True)
+    source_checksum = candidates[0].get("checksum")
+    require(isinstance(source_checksum, dict) and isinstance(source_checksum.get("path"), str),
+            "offline provider unwinding checksum record is malformed")
+    destination = application / "provider-registry-source" / f"{build.PATCHED_UNWINDING}-{build.PINS[build.PATCHED_UNWINDING][0]}"
+    require(not destination.exists() and not destination.is_symlink(),
+            "private provider registry source must be fresh")
+    destination.parent.mkdir(mode=0o755)
+    shutil.copytree(source, destination, copy_function=shutil.copy2)
+    checksum = physical(destination / ".cargo-checksum.json", "private provider directory-source checksum")
+    checksum.unlink()
+    markers: dict[str, dict[str, str]] = {}
+    for relative, contents in CARGO_REGISTRY_UNWINDING_MARKERS.items():
+        marker = destination / relative
+        require(not marker.exists() and not marker.is_symlink(),
+                f"private provider registry marker already exists: {relative}")
+        marker.write_bytes(contents)
+        markers[relative] = record_file(marker, f"private provider registry marker {relative}")
+    destination = physical(destination, "private provider registry source", directory=True)
+    upstream_tree_sha256 = build.tree_digest(destination)
+    require(upstream_tree_sha256 == build.PATCHED_UNWINDING_UPSTREAM_TREE_SHA256,
+            "offline provider vendor does not reconstruct the pinned upstream identity")
+    return {
+        "source": str(source),
+        "removed_directory_checksum": record_file(
+            physical(Path(source_checksum["path"]), "offline provider vendor checksum"),
+            "offline provider vendor checksum",
+        ),
+        "registry_source": str(destination),
+        "registry_manifest": record_file(destination / "Cargo.toml", "private provider registry manifest"),
+        "restored_registry_markers": markers,
+        "upstream_tree_sha256": upstream_tree_sha256,
+    }
 
 
 def work_child(path: Path, description: str, *, existing: bool = False) -> Path:
@@ -213,6 +618,8 @@ def run_logged_streams(
 
 def source_built_link_receipt(
     path: Path, binary: Path, source_library_root: Path, description: str,
+    cargo_graph_provider: dict[str, str] | None = None, toolchain_search_root: Path | None = None,
+    built_unwind: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Read one source-built final link without admitting stock target rlibs."""
 
@@ -222,12 +629,36 @@ def source_built_link_receipt(
     require(record.get("rust_library_origin") == "source-built"
             and record.get("source_built_target_library_root") == str(source_library_root),
             f"{description} does not bind the source-built target library root")
+    declared_search = record.get("declared_toolchain_search_root")
+    require(isinstance(declared_search, str),
+            f"{description} does not bind the Cargo toolchain search root")
+    if toolchain_search_root is not None:
+        require(declared_search == str(toolchain_search_root),
+                f"{description} changes the declared Cargo toolchain search root")
+    unused_searches = record.get("unused_search_paths")
+    application_root = source_library_root.parent
+    require(
+        isinstance(unused_searches, list) and all(isinstance(value, str) for value in unused_searches)
+        and declared_search in unused_searches
+        and all(
+            value == declared_search or Path(value).is_relative_to(application_root)
+            for value in unused_searches
+        ),
+        f"{description} has an unapproved Cargo Rust search path",
+    )
     require("omitted_stock_rust_unwind" not in record and "omitted_compiler_builtins" not in record,
             f"{description} retains a stock Rust runtime archive")
-    for field in ("omitted_source_built_rust_unwind", "omitted_source_built_compiler_builtins"):
-        value = record.get(field)
-        require(isinstance(value, dict) and value.get("path", "").startswith(str(source_library_root) + os.sep),
-                f"{description} does not omit a source-built Rust runtime archive")
+    require("provider_archive" not in record,
+            f"{description} retains a standalone provider beside its Cargo graph")
+    require("omitted_source_built_rust_unwind" not in record,
+            f"{description} admits a direct source-built Rust libunwind archive")
+    compiler_builtins = record.get("omitted_source_built_compiler_builtins")
+    require(
+        isinstance(compiler_builtins, dict)
+        and isinstance(compiler_builtins.get("path"), str)
+        and compiler_builtins["path"].startswith(str(source_library_root) + os.sep),
+        f"{description} does not omit its source-built compiler-builtins archive",
+    )
     inputs = record.get("application_inputs")
     require(isinstance(inputs, list) and all(isinstance(value, dict) for value in inputs),
             f"{description} lacks its Rust application inputs")
@@ -235,9 +666,33 @@ def source_built_link_receipt(
                 and value["path"].endswith(".rlib")]
     require(archives and all(path.startswith(str(source_library_root) + os.sep) for path in archives),
             f"{description} admits a non-source-built Rust archive")
+    require(not any(Path(path).name.startswith("libunwind-") for path in archives),
+            f"{description} admits a direct source-built Rust libunwind archive")
+    if built_unwind is not None:
+        built_path = built_unwind.get("path")
+        require(isinstance(built_path, str),
+                f"{description} has a malformed source-built Rust libunwind record")
+        built_archive = physical(Path(built_path), f"{description} source-built Rust libunwind archive")
+        require(
+            built_unwind == record_file(built_archive, f"{description} source-built Rust libunwind archive")
+            and built_archive.name.startswith("libunwind-")
+            and built_archive.is_relative_to(source_library_root)
+            and str(built_archive) not in archives,
+            f"{description} does not retain an unselected source-built Rust libunwind archive",
+        )
     required_archives = ("libstd-", "libcore-", "liballoc-", "libpanic_unwind-")
     require(all(any(Path(path).name.startswith(prefix) for path in archives) for prefix in required_archives),
             f"{description} lacks the source-built standard-library closure")
+    graph_provider = record.get("cargo_graph_provider")
+    require(
+        isinstance(graph_provider, dict) and graph_provider.get("path") in archives
+        and isinstance(graph_provider["path"], str)
+        and Path(graph_provider["path"]).name.startswith("libcrabc_unwinder-"),
+        f"{description} does not retain its Cargo graph provider",
+    )
+    if cargo_graph_provider is not None:
+        require(graph_provider == cargo_graph_provider,
+                f"{description} graph provider differs from Cargo's declared artifact")
     require(record.get("output") == record_file(binary, f"{description} output"),
             f"{description} does not identify its output")
     assert_nonpromoting(record, description)
@@ -245,12 +700,45 @@ def source_built_link_receipt(
     command = record.get("command")
     require(isinstance(trace, str) and isinstance(command, list) and all(isinstance(item, str) for item in command),
             f"{description} lacks exact command or trace")
-    forbidden = ("libgcc", "libunwind", "-lgcc", "-lunwind", "-lc")
-    require(not any(token in item for item in command for token in forbidden),
+    def ambient_runtime(value: str) -> bool:
+        name = Path(value).name
+        return "libgcc" in value or value in {"-lgcc", "-lgcc_s", "-lunwind", "-lc"} or (
+            name == "libunwind" or name.startswith(("libunwind-", "libunwind."))
+        ) or re.search(r"(?:^|/)libunwind(?:[-.]|$)", value) is not None
+
+    require(not any(ambient_runtime(item) for item in command),
             f"{description} linker command admits an ambient native runtime request")
-    require("libcrabc-unwind.a" in trace and not any(token in trace for token in ("libgcc", "libunwind")),
-            f"{description} link trace does not prove the selected provider without ambient unwind runtimes")
+    require(
+        "libcrabc-unwind.a" not in trace and Path(graph_provider["path"]).name in trace
+        and not ambient_runtime(trace),
+        f"{description} link trace does not prove the Cargo graph provider without ambient unwind runtimes",
+    )
     return record
+
+
+def cargo_json_records(stream: str, description: str) -> list[dict[str, Any]]:
+    """Read Cargo's JSON messages while retaining build-script text as noise.
+
+    Cargo interleaves a build script's literal ``cargo:`` output with its JSON
+    message stream even when the requested message format is JSON. Only JSON
+    object records can establish graph, artifact, or host-link facts; raw text
+    stays retained in the stream but cannot be treated as a Cargo record.
+    """
+
+    records: list[dict[str, Any]] = []
+    for line in stream.splitlines():
+        if not line:
+            continue
+        if not line.startswith("{"):
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise OwnedCleanupError(f"{description} has malformed Cargo JSON") from error
+        require(isinstance(record, dict), f"{description} has a non-object Cargo JSON record")
+        records.append(record)
+    require(records, f"{description} has no Cargo JSON records")
+    return records
 
 
 def cargo_artifact(
@@ -260,12 +748,8 @@ def cargo_artifact(
 
     selected: list[Path] = []
     source = package / "src" / ("main.rs" if crate_type == "bin" else "plugin.rs")
-    for line in stream.splitlines():
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError as error:
-            raise OwnedCleanupError("Cargo emitted a non-JSON machine-readable record") from error
-        if not isinstance(record, dict) or record.get("reason") != "compiler-artifact":
+    for record in cargo_json_records(stream, "Cargo artifact stream"):
+        if record.get("reason") != "compiler-artifact":
             continue
         artifact_target = record.get("target")
         if not isinstance(artifact_target, dict) or artifact_target.get("name") != name:
@@ -311,6 +795,41 @@ def cargo_link_receipt_for_artifact(artifact: Path, source_library_root: Path, d
     return candidates[0]
 
 
+def cargo_build_std_unwind_artifact(stream: str, target: Path, rust_source: Path) -> Path:
+    """Select Cargo's one fresh build-std unwind archive without linking it.
+
+    ``-Zbuild-std=std,panic_unwind`` compiles the standard unwind crate, but
+    Cargo's final normal graph selects the source provider rather than passing
+    that archive to the owned final link.  Record the built artifact and later
+    prove its absence from the final link inputs.
+    """
+
+    target = physical(target, "source-built Cargo target", directory=True)
+    unwind_source = physical(rust_source / "unwind/src/lib.rs", "pinned rust-src unwind source")
+    selected: list[Path] = []
+    for record in cargo_json_records(stream, "Cargo build-std unwind artifact stream"):
+        if record.get("reason") != "compiler-artifact":
+            continue
+        target_record = record.get("target")
+        if not isinstance(target_record, dict) or target_record.get("name") != "unwind":
+            continue
+        require(
+            target_record.get("kind") == ["lib"] and target_record.get("crate_types") == ["lib"]
+            and target_record.get("src_path") == str(unwind_source),
+            "Cargo build-std unwind artifact identity drifted",
+        )
+        filenames = record.get("filenames")
+        require(isinstance(filenames, list) and record.get("executable") is None,
+                "Cargo build-std unwind artifact has malformed outputs")
+        for filename in filenames:
+            if isinstance(filename, str) and filename.endswith(".rlib"):
+                artifact = physical(Path(filename), "Cargo build-std unwind archive")
+                require(artifact.is_relative_to(target), "Cargo build-std unwind archive escapes its target directory")
+                selected.append(artifact)
+    require(len(selected) == 1, f"expected one Cargo build-std unwind archive, found {selected!r}")
+    return selected[0]
+
+
 def source_build_log_contract(log: str, rust_source: Path) -> None:
     """Require a fresh full-std source build and fat-LTO compiler invocations."""
 
@@ -347,7 +866,10 @@ def file_identity(path: Path) -> tuple[int, int]:
     return metadata.st_dev, metadata.st_ino
 
 
-def cargo_custom_build_artifacts(stream: str, rust_source: Path, host_build_root: Path) -> list[dict[str, Any]]:
+def cargo_custom_build_artifacts(
+    stream: str, rust_source: Path, host_build_root: Path, provider_custom_builds: list[dict[str, Path]] | None = None,
+    composite_vendor_custom_builds: list[dict[str, Path]] | None = None,
+) -> list[dict[str, Any]]:
     """Select the finite Cargo-declared host build-script artifacts.
 
     Cargo publishes the build-script executable as ``build-script-build`` and
@@ -358,15 +880,18 @@ def cargo_custom_build_artifacts(stream: str, rust_source: Path, host_build_root
 
     rust_source = physical(rust_source, "pinned rust-src library", directory=True)
     host_build_root = physical(host_build_root, "Cargo host build-script root", directory=True)
+    provider_custom_builds = provider_custom_builds or []
+    composite_vendor_custom_builds = composite_vendor_custom_builds or []
+    approved_vendor_sources = {
+        (physical(entry["manifest"], "approved Cargo vendor build manifest"),
+         physical(entry["source"], "approved Cargo vendor build source"))
+        for entry in [*provider_custom_builds, *composite_vendor_custom_builds]
+    }
     artifacts: list[dict[str, Any]] = []
     seen_paths: set[Path] = set()
     seen_identities: set[tuple[int, int]] = set()
-    for line in stream.splitlines():
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError as error:
-            raise OwnedCleanupError("Cargo emitted a non-JSON machine-readable record") from error
-        if not isinstance(record, dict) or record.get("reason") != "compiler-artifact":
+    for record in cargo_json_records(stream, "Cargo host custom-build stream"):
+        if record.get("reason") != "compiler-artifact":
             continue
         target = record.get("target")
         if not isinstance(target, dict) or target.get("kind") != ["custom-build"]:
@@ -388,10 +913,9 @@ def cargo_custom_build_artifacts(stream: str, rust_source: Path, host_build_root
         manifest = physical(Path(manifest_value), "Cargo custom-build manifest")
         source = physical(Path(source_value), "Cargo custom-build source")
         output = physical(Path(filenames[0]), "Cargo custom-build artifact output", executable=True)
-        require(
-            manifest.is_relative_to(rust_source) and source.is_relative_to(rust_source),
-            "Cargo custom-build artifact is outside pinned rust-src",
-        )
+        source_is_rust = manifest.is_relative_to(rust_source) and source.is_relative_to(rust_source)
+        require(source_is_rust or (manifest, source) in approved_vendor_sources,
+                "Cargo custom-build artifact is outside approved pinned source")
         require(
             output.is_relative_to(host_build_root) and output.name == "build-script-build",
             "Cargo custom-build artifact is outside the declared host root",
@@ -466,7 +990,8 @@ def host_build_script_receipts(root: Path, host_build_root: Path) -> list[dict[s
 
 def host_build_script_manifest(
     *, cargo_stream: str, cargo_stdout: Path, rust_source: Path, rust_source_lock: Path,
-    host_build_root: Path, receipts_root: Path, output: Path,
+    host_build_root: Path, receipts_root: Path, output: Path, provider_custom_builds: list[dict[str, Path]] | None = None,
+    composite_vendor_custom_build_inputs: list[dict[str, dict[str, str]]] | None = None,
 ) -> dict[str, Any]:
     """Close Cargo custom-build artifacts over their independent host receipts."""
 
@@ -481,7 +1006,14 @@ def host_build_script_manifest(
     rust_source_lock = physical(rust_source_lock, "pinned rust-src lock")
     require(rust_source_lock.parent == rust_source,
             "pinned rust-src lock is outside its source library")
-    declared = cargo_custom_build_artifacts(cargo_stream, rust_source, host_build_root)
+    provider_custom_builds = provider_custom_builds or []
+    composite_vendor_custom_build_inputs = composite_vendor_custom_build_inputs or []
+    composite_vendor_custom_builds = recorded_custom_build_inputs(
+        composite_vendor_custom_build_inputs, "approved composite Cargo vendor build",
+    )
+    declared = cargo_custom_build_artifacts(
+        cargo_stream, rust_source, host_build_root, provider_custom_builds, composite_vendor_custom_builds,
+    )
     receipts = host_build_script_receipts(receipts_root, host_build_root)
     declared_by_identity = {entry["identity"]: entry for entry in declared}
     receipt_by_identity = {entry["identity"]: entry for entry in receipts}
@@ -506,12 +1038,20 @@ def host_build_script_manifest(
             "host_link_output": record_file(receipt["output"], "Cargo host build-script linker output"),
         })
     manifest = {
-        "schema": 1,
-        "format": "crabc-owned-rust-host-build-manifest/v1",
+        "schema": 3,
+        "format": "crabc-owned-rust-host-build-manifest/v3",
         "cargo_stdout": record_file(cargo_stdout, "Cargo JSON stream"),
         "rust_source_library": str(rust_source),
         "rust_source_lock": record_file(rust_source_lock, "pinned rust-src lock"),
         "host_build_root": str(physical(host_build_root, "Cargo host build-script root", directory=True)),
+        "provider_custom_build_inputs": [
+            {
+                "manifest": record_file(entry["manifest"], "approved provider build manifest"),
+                "source": record_file(entry["source"], "approved provider build source"),
+            }
+            for entry in provider_custom_builds
+        ],
+        "composite_vendor_custom_build_inputs": composite_vendor_custom_build_inputs,
         "artifacts": artifacts,
     }
     with output.open("x", encoding="utf-8") as stream:
@@ -542,6 +1082,313 @@ def provider_snapshot(provider: Path, toolchain: str) -> dict[str, Any]:
         "provenance": record_file(provenance_path, "selected provider provenance"),
         "record": provenance,
         "defined_unwind_abi": sorted(symbols),
+    }
+
+
+def _unique_packages(metadata: dict[str, Any], description: str) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    packages = metadata.get("packages")
+    require(isinstance(packages, list) and all(isinstance(package, dict) for package in packages),
+            f"{description} has no package records")
+    names = [package.get("name") for package in packages]
+    identifiers = [package.get("id") for package in packages]
+    require(all(isinstance(name, str) for name in names) and len(names) == len(set(names)),
+            f"{description} has duplicate or malformed package names")
+    require(all(isinstance(identifier, str) for identifier in identifiers) and len(identifiers) == len(set(identifiers)),
+            f"{description} has duplicate or malformed package identities")
+    return ({package["name"]: package for package in packages}, {package["id"]: package for package in packages})
+
+
+def audit_source_graph(
+    metadata: dict[str, Any], lock: dict[str, Any], package_root: Path, staged: dict[str, Any],
+) -> dict[str, Any]:
+    """Close the generated consumer workspace over the reviewed provider graph."""
+
+    package_root = physical(package_root, "generated source-built consumer package", directory=True)
+    manifest = physical(package_root / "Cargo.toml", "generated source-built consumer manifest")
+    manifest_data = tomllib.loads(manifest.read_text(encoding="utf-8"))
+    root = manifest_data.get("package")
+    require(isinstance(root, dict) and isinstance(root.get("name"), str) and isinstance(root.get("version"), str),
+            "generated source-built consumer manifest has no package identity")
+    root_name = root["name"]
+    packages, packages_by_id = _unique_packages(metadata, "source-built Cargo metadata")
+    expected_names = {root_name, *SOURCE_GRAPH_PACKAGES}
+    require(set(packages) == expected_names, "source-built Cargo graph has an unapproved package")
+    require(packages[root_name].get("manifest_path") == str(manifest),
+            "Cargo did not compile the generated source-built consumer manifest")
+    staged_manifest = physical(Path(staged["manifest"]), "staged crabc-unwinder manifest")
+    staged_unwinding = physical(Path(staged["staged"]), "staged unwinding source", directory=True)
+    require(packages["crabc-unwinder"].get("manifest_path") == str(staged_manifest),
+            "Cargo did not compile the staged crabc-unwinder root")
+    require(Path(packages[build.PATCHED_UNWINDING].get("manifest_path", "")).parent == staged_unwinding,
+            "Cargo did not compile the staged patched unwinding source")
+
+    records = lock.get("package")
+    require(isinstance(records, list) and all(isinstance(record, dict) for record in records),
+            "generated source-built lock has no package records")
+    lock_names = [record.get("name") for record in records]
+    require(all(isinstance(name, str) for name in lock_names) and len(lock_names) == len(set(lock_names)),
+            "generated source-built lock has duplicate package names")
+    locked = {record["name"]: record for record in records}
+    require(set(locked) == expected_names, "generated source-built lock has an unapproved package")
+    root_lock = locked[root_name]
+    require(root_lock.get("version") == root["version"] and "source" not in root_lock and "checksum" not in root_lock,
+            "generated source-built lock does not bind its local consumer")
+
+    resolve = metadata.get("resolve")
+    require(isinstance(resolve, dict) and isinstance(resolve.get("nodes"), list),
+            "source-built Cargo metadata has no resolve nodes")
+    nodes = resolve["nodes"]
+    require(all(isinstance(node, dict) and isinstance(node.get("id"), str) for node in nodes),
+            "source-built Cargo metadata has malformed resolve nodes")
+    node_ids = [node["id"] for node in nodes]
+    require(len(node_ids) == len(set(node_ids)) and set(node_ids) == set(packages_by_id),
+            "source-built Cargo resolve does not close its package graph")
+    nodes_by_id = {node["id"]: node for node in nodes}
+    root_id = packages[root_name]["id"]
+    provider_id = packages["crabc-unwinder"]["id"]
+    require(nodes_by_id[root_id].get("dependencies") == [provider_id],
+            "generated consumer has an unapproved direct dependency")
+    root_deps = nodes_by_id[root_id].get("deps")
+    require(isinstance(root_deps, list) and len(root_deps) == 1 and isinstance(root_deps[0], dict)
+            and root_deps[0].get("name") == "crabc_unwinder" and root_deps[0].get("pkg") == provider_id,
+            "generated consumer does not use the staged crabc-unwinder dependency")
+    provider_dependencies = {packages_by_id.get(identifier, {}).get("name") for identifier in nodes_by_id[provider_id].get("dependencies", [])}
+    require(provider_dependencies == set(build.PINS), "staged crabc-unwinder dependency closure drifted")
+
+    projected_metadata = {
+        "packages": [packages[name] for name in sorted(SOURCE_GRAPH_PACKAGES)],
+        "resolve": {"nodes": [nodes_by_id[packages[name]["id"]] for name in sorted(SOURCE_GRAPH_PACKAGES)]},
+    }
+    projected_lock = {"package": [locked[name] for name in sorted(SOURCE_GRAPH_PACKAGES)]}
+    build.audit_graph(projected_metadata, projected_lock, patched_unwinding=True)
+    build.verify_staged_patched_unwinding(staged)
+    libc_targets = packages["libc"].get("targets")
+    require(isinstance(libc_targets, list), "Cargo libc package has no targets")
+    provider_custom_builds: list[dict[str, Path]] = []
+    for target in libc_targets:
+        require(isinstance(target, dict), "Cargo libc package has a malformed target")
+        if target.get("kind") != ["custom-build"]:
+            continue
+        source = target.get("src_path")
+        require(isinstance(source, str), "Cargo libc custom build has no source")
+        provider_custom_builds.append({
+            "manifest": physical(Path(packages["libc"]["manifest_path"]), "Cargo libc manifest"),
+            "source": physical(Path(source), "Cargo libc custom-build source"),
+        })
+    require(len(provider_custom_builds) == 1,
+            "Cargo source-built provider graph has an unexpected custom-build roster")
+    return {
+        "root_package_id": root_id,
+        "provider_package_id": provider_id,
+        "provider_manifest": record_file(staged_manifest, "staged crabc-unwinder manifest"),
+        "provider_source": record_file(staged_manifest.parent / "src/lib.rs", "staged crabc-unwinder source"),
+        "patched_unwinding_manifest": record_file(staged_unwinding / "Cargo.toml", "staged patched unwinding manifest"),
+        "source_input": str(Path(staged["source_input"])),
+        "upstream_tree_sha256": staged["upstream_tree_sha256"],
+        "patched_tree_sha256": staged["patched_tree_sha256"],
+        "patches": staged["patches"],
+        "provider_custom_builds": provider_custom_builds,
+    }
+
+
+def _toml_path(path: Path, description: str, *, directory: bool = False) -> str:
+    value = str(physical(path, description, directory=directory))
+    require('"' not in value and "\\" not in value and "\n" not in value,
+            f"{description} cannot be represented in the generated Cargo manifest")
+    return value
+
+
+def _write_anchored_source(source: Path, output: Path, marker: str, description: str) -> dict[str, dict[str, str]]:
+    source = physical(source, f"{description} source")
+    contents = source.read_text(encoding="utf-8")
+    require(contents.count(marker) == 1, f"{description} has no unique anchor insertion point")
+    rendered = contents.replace(marker, marker + "\n    std::hint::black_box(crabc_unwinder::link_anchor());", 1)
+    if output.parent.exists() or output.parent.is_symlink():
+        physical(output.parent, f"generated {description} source parent", directory=True)
+    else:
+        output.parent.mkdir(parents=True, mode=0o755)
+    with output.open("x", encoding="utf-8") as stream:
+        stream.write(rendered)
+    output = physical(output, f"generated {description} source")
+    return {"source": record_file(source, f"{description} source"), "generated": record_file(output, f"generated {description} source")}
+
+
+def prepare_source_graph_package(
+    application: Path, package: Path, staged: dict[str, Any], with_plugin: bool,
+) -> dict[str, Any]:
+    """Copy one fixed fixture into a fresh workspace with the staged provider edge."""
+
+    application = physical(application, "source-built consumer application", directory=True)
+    package = physical(package, "source-built fixture package", directory=True)
+    manifest_source = physical(package / "Cargo.toml", "source-built fixture manifest")
+    lock_source = physical(package / "Cargo.lock", "source-built fixture lock")
+    fixture_manifest = tomllib.loads(manifest_source.read_text(encoding="utf-8"))
+    require("dependencies" not in fixture_manifest and "patch" not in fixture_manifest,
+            "source-built fixture has an unapproved preexisting dependency graph")
+    root = application / "cargo-package"
+    require(not root.exists() and not root.is_symlink(), "generated source-built consumer package must be fresh")
+    root.mkdir(mode=0o755)
+    staged_manifest = Path(staged["manifest"])
+    staged_unwinding = Path(staged["staged"])
+    rendered_manifest = (
+        manifest_source.read_text(encoding="utf-8").rstrip() + "\n\n"
+        "[dependencies]\n"
+        f"crabc-unwinder = {{ path = \"{_toml_path(staged_manifest.parent, 'staged crabc-unwinder source', directory=True)}\" }}\n\n"
+        "[patch.crates-io]\n"
+        f"unwinding = {{ path = \"{_toml_path(staged_unwinding, 'staged patched unwinding source', directory=True)}\" }}\n"
+    )
+    generated_manifest = root / "Cargo.toml"
+    generated_manifest.write_text(rendered_manifest, encoding="utf-8")
+    sources: list[dict[str, dict[str, str]]] = []
+    if package == BUILD_STD_FIXTURE:
+        sources.append(_write_anchored_source(FIXTURE, root / "src/main.rs", "fn main() {", "cleanup fixture"))
+    elif package == BUILD_STD_DSO_FIXTURE and with_plugin:
+        sources.append(_write_anchored_source(package / "src/main.rs", root / "src/main.rs", "fn main() {", "cleanup DSO host"))
+        sources.append(_write_anchored_source(
+            package / "src/plugin.rs", root / "src/plugin.rs",
+            "pub extern \"C\" fn crabc_owned_cleanup_dso() -> i32 {", "cleanup DSO plugin",
+        ))
+    else:
+        raise OwnedCleanupError("source-built fixture has no approved Cargo graph adapter")
+    return {
+        "root": physical(root, "generated source-built consumer package", directory=True),
+        "fixture_manifest": record_file(manifest_source, "source-built fixture manifest"),
+        "fixture_lock": record_file(lock_source, "source-built fixture lock"),
+        "generated_manifest": record_file(generated_manifest, "generated source-built consumer manifest"),
+        "sources": sources,
+    }
+
+
+def cargo_graph_provider_artifact(
+    stream: str, *, target: Path, provider_package_id: str, provider_source: Path,
+) -> Path:
+    """Select the one provider rlib Cargo actually compiled for this consumer."""
+
+    target = physical(target, "source-built Cargo target", directory=True)
+    provider_source = physical(provider_source, "staged crabc-unwinder source")
+    selected: list[Path] = []
+    for record in cargo_json_records(stream, "Cargo provider artifact stream"):
+        if record.get("reason") != "compiler-artifact":
+            continue
+        target_record = record.get("target")
+        if record.get("package_id") != provider_package_id or not isinstance(target_record, dict):
+            continue
+        require(
+            target_record.get("name") == "crabc_unwinder" and target_record.get("kind") == ["lib"]
+            and target_record.get("crate_types") == ["rlib"] and target_record.get("src_path") == str(provider_source),
+            "Cargo provider artifact identity drifted",
+        )
+        filenames = record.get("filenames")
+        require(isinstance(filenames, list) and record.get("executable") is None,
+                "Cargo provider artifact has malformed outputs")
+        for filename in filenames:
+            if isinstance(filename, str) and filename.endswith(".rlib"):
+                artifact = physical(Path(filename), "Cargo crabc-unwinder archive")
+                require(artifact.is_relative_to(target), "Cargo crabc-unwinder archive escapes its target directory")
+                selected.append(artifact)
+    require(len(selected) == 1, f"expected one Cargo crabc-unwinder archive, found {selected!r}")
+    return selected[0]
+
+
+def source_graph_profile_contract(log: str) -> None:
+    """The generated workspace must override the standalone provider abort profile."""
+
+    provider_lines = [line for line in log.splitlines() if "--crate-name crabc_unwinder" in line]
+    require(len(provider_lines) == 1, "Cargo log does not retain one crabc-unwinder compiler invocation")
+    provider_line = provider_lines[0]
+    require("panic=unwind" in provider_line and "panic=abort" not in provider_line,
+            "source-built crabc-unwinder did not inherit the consumer unwind profile")
+    require(("lto=fat" in provider_line or "linker-plugin-lto" in provider_line) and "codegen-units=1" in provider_line,
+            "source-built crabc-unwinder did not inherit the consumer fat-LTO profile")
+
+
+def source_graph_provider(
+    *, application: Path, package: Path, channel: str, environment: dict[str, str], with_plugin: bool,
+    offline_sources: dict[str, Any],
+) -> dict[str, Any]:
+    """Stage and audit one patched provider as a dependency of one consumer workspace."""
+
+    source_manifest = physical(ROOT / "Cargo.toml", "checked-in crabc-unwinder manifest")
+    source_lock = physical(ROOT / "Cargo.lock", "checked-in crabc-unwinder lock")
+    source_command: list[str | Path] = [
+        "rustup", "run", channel, "cargo", "metadata", "--manifest-path", source_manifest,
+        "--locked", "--offline", "--format-version=1", "--filter-platform", TARGET,
+    ]
+    source_stdout, _ = run_logged_streams(
+        source_command, environment, application / "provider-source-metadata.json", application / "provider-source-metadata.stderr.log",
+        "checked-in crabc-unwinder graph audit",
+    )
+    try:
+        source_metadata = json.loads(source_stdout)
+    except json.JSONDecodeError as error:
+        raise OwnedCleanupError("checked-in crabc-unwinder metadata is not JSON") from error
+    require(isinstance(source_metadata, dict), "checked-in crabc-unwinder metadata is not an object")
+    source_packages = build.audit_graph(source_metadata, tomllib.loads(source_lock.read_text(encoding="utf-8")))
+    registry_source = provider_registry_unwinding_source(application, offline_sources)
+    offline_sources["provider_registry_source"] = registry_source
+    source_packages[build.PATCHED_UNWINDING] = dict(source_packages[build.PATCHED_UNWINDING])
+    source_packages[build.PATCHED_UNWINDING]["manifest_path"] = registry_source["registry_manifest"]["path"]
+    staged = build.stage_patched_unwinding(source_packages)
+    build.verify_staged_patched_unwinding(staged)
+    prepared = prepare_source_graph_package(application, package, staged, with_plugin)
+    generated_manifest = Path(prepared["root"]) / "Cargo.toml"
+    run_logged(
+        ["rustup", "run", channel, "cargo", "generate-lockfile", "--offline", "--manifest-path", generated_manifest], environment,
+        application / "provider-generated-lock.log", "generated source-built provider lock",
+    )
+    generated_lock = physical(Path(prepared["root"]) / "Cargo.lock", "generated source-built provider lock")
+    metadata_command: list[str | Path] = [
+        "rustup", "run", channel, "cargo", "metadata", "--manifest-path", generated_manifest,
+        "--locked", "--offline", "--format-version=1", "--filter-platform", TARGET,
+    ]
+    metadata_stdout, _ = run_logged_streams(
+        metadata_command, environment, application / "provider-graph-metadata.json", application / "provider-graph-metadata.stderr.log",
+        "generated source-built provider graph audit",
+    )
+    try:
+        metadata = json.loads(metadata_stdout)
+    except json.JSONDecodeError as error:
+        raise OwnedCleanupError("generated source-built provider metadata is not JSON") from error
+    require(isinstance(metadata, dict), "generated source-built provider metadata is not an object")
+    graph = audit_source_graph(metadata, tomllib.loads(generated_lock.read_text(encoding="utf-8")), Path(prepared["root"]), staged)
+    receipt = {
+        "fixture": {
+            "root": str(prepared["root"]),
+            "fixture_manifest": prepared["fixture_manifest"],
+            "fixture_lock": prepared["fixture_lock"],
+            "generated_manifest": prepared["generated_manifest"],
+            "sources": prepared["sources"],
+        },
+        "provider": {
+            key: value for key, value in graph.items() if key != "provider_custom_builds"
+        },
+        "provider_custom_build_inputs": [
+            {
+                "manifest": record_file(entry["manifest"], "Cargo libc manifest"),
+                "source": record_file(entry["source"], "Cargo libc custom-build source"),
+            }
+            for entry in graph["provider_custom_builds"]
+        ],
+        "source_manifest": record_file(source_manifest, "checked-in crabc-unwinder manifest"),
+        "source_lock": record_file(source_lock, "checked-in crabc-unwinder lock"),
+        "source_metadata": record_file(application / "provider-source-metadata.json", "checked-in crabc-unwinder metadata"),
+        "generated_lock": record_file(generated_lock, "generated source-built provider lock"),
+        "generated_lock_log": record_file(application / "provider-generated-lock.log", "generated source-built provider lock log"),
+        "metadata": record_file(application / "provider-graph-metadata.json", "generated source-built provider metadata"),
+        "offline_sources": offline_sources,
+        "commands": {
+            "source_metadata": [str(item) for item in source_command],
+            "generate_lockfile": [
+                "rustup", "run", channel, "cargo", "generate-lockfile", "--offline",
+                "--manifest-path", str(generated_manifest),
+            ],
+            "generated_metadata": [str(item) for item in metadata_command],
+        },
+    }
+    return {
+        "package": prepared,
+        "graph": graph,
+        "receipt": receipt,
     }
 
 
@@ -608,8 +1455,8 @@ def compile_mode(
 
 
 def compile_source_built_mode(
-    *, label: str, mode: str, root: Path, provider: dict[str, Any], channel: str, output: Path,
-    package: Path, binary_name: str, with_plugin: bool,
+    *, label: str, mode: str, root: Path, channel: str, output: Path,
+    package: Path, binary_name: str, with_plugin: bool, provider_vendor_root: Path,
 ) -> dict[str, Any]:
     """Build a fresh full std through Cargo, then bind each final owned link."""
 
@@ -630,6 +1477,13 @@ def compile_source_built_mode(
         ["rustup", "run", channel, "rustc", "--print", "sysroot"], clean_environment(),
         application / "rust-sysroot.log", f"{label} Rust sysroot discovery",
     ).strip())
+    toolchain_search_root = Path(run_logged(
+        ["rustup", "run", channel, "rustc", "--target", TARGET, "--print", "target-libdir"], clean_environment(),
+        application / "toolchain-target-libdir.log", f"{label} Rust target-library discovery",
+    ).strip())
+    toolchain_search_root = physical(
+        toolchain_search_root, f"{label} declared Rust toolchain search root", directory=True,
+    )
     rust_source = physical(
         rust_sysroot / "lib/rustlib/src/rust/library", f"{label} pinned rust-src library", directory=True,
     )
@@ -639,6 +1493,7 @@ def compile_source_built_mode(
         **SERIAL_BUILD_ENVIRONMENT,
         **SOURCE_BUILD_PROFILE,
         "CARGO_HOME": str(cargo_home),
+        "CARGO_NET_OFFLINE": "true",
         "CARGO_INCREMENTAL": "0",
         "CARGO_TARGET_DIR": str(target),
         "CARGO_TERM_COLOR": "never",
@@ -646,8 +1501,8 @@ def compile_source_built_mode(
         "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER": str(ROOT / "owned_rust_link.py"),
         "CRABC_OWNED_RUST_LINK_MODE": mode,
         "CRABC_OWNED_RUST_PRODUCT": str(root),
-        "CRABC_OWNED_RUST_PROVIDER": str(provider["archive"]["path"]),
         "CRABC_OWNED_RUST_SOURCE_BUILT_LIBDIR": str(source_library_root),
+        "CRABC_OWNED_RUST_TOOLCHAIN_SEARCH_ROOT": str(toolchain_search_root),
         "CRABC_OWNED_RUST_APPLICATION_ROOT": str(release),
         "CRABC_OWNED_RUST_HOST_BUILD_ROOT": str(host_build_root),
         "CRABC_OWNED_RUST_HOST_BUILD_LINKER": str(HOST_BUILD_LINKER),
@@ -655,9 +1510,15 @@ def compile_source_built_mode(
         "CRABC_OWNED_RUST_CHANNEL": channel,
         "TMPDIR": str(temporary),
     })
+    offline_sources = prepare_offline_cargo_sources(application, rust_source, provider_vendor_root, cargo_home)
+    provider_graph = source_graph_provider(
+        application=application, package=package, channel=channel, environment=environment, with_plugin=with_plugin,
+        offline_sources=offline_sources,
+    )
+    generated_package = Path(provider_graph["package"]["root"])
     command: list[str | Path] = [
-        "rustup", "run", channel, "cargo", "build", "--manifest-path", package / "Cargo.toml", "--release",
-        "--target", TARGET, "--locked", "-Zbuild-std=std,panic_unwind", "-vv",
+        "rustup", "run", channel, "cargo", "build", "--manifest-path", generated_package / "Cargo.toml", "--release",
+        "--target", TARGET, "--locked", "--offline", "-Zbuild-std=std,panic_unwind", "-vv",
         "--message-format=json-render-diagnostics", "--bin", binary_name,
     ]
     if with_plugin:
@@ -667,6 +1528,12 @@ def compile_source_built_mode(
         f"{label} source-built Rust std cleanup compile",
     )
     source_build_log_contract(stdout + stderr, rust_source)
+    source_graph_profile_contract(stdout + stderr)
+    build.verify_staged_patched_unwinding({
+        "staged": Path(provider_graph["graph"]["patched_unwinding_manifest"]["path"]).parent,
+        "patched_tree_sha256": provider_graph["graph"]["patched_tree_sha256"],
+        "patches": provider_graph["graph"]["patches"],
+    })
     host_build_script_manifest(
         cargo_stream=stdout,
         cargo_stdout=application / "cargo.stdout.jsonl",
@@ -675,14 +1542,24 @@ def compile_source_built_mode(
         host_build_root=host_build_root,
         receipts_root=host_build_receipt_root,
         output=host_build_manifest_path,
+        provider_custom_builds=provider_graph["graph"]["provider_custom_builds"],
+        composite_vendor_custom_build_inputs=offline_sources["composite_vendor_custom_build_inputs"],
     )
-    binary = cargo_artifact(stdout, package=package, target=target, name=binary_name, crate_type="bin")
+    cargo_provider = cargo_graph_provider_artifact(
+        stdout, target=target, provider_package_id=provider_graph["graph"]["provider_package_id"],
+        provider_source=Path(provider_graph["graph"]["provider_source"]["path"]),
+    )
+    cargo_provider_record = record_file(cargo_provider, f"{label} Cargo crabc-unwinder archive")
+    built_unwind = cargo_build_std_unwind_artifact(stdout, target, rust_source)
+    built_unwind_record = record_file(built_unwind, f"{label} Cargo build-std unwind archive")
+    binary = cargo_artifact(stdout, package=generated_package, target=target, name=binary_name, crate_type="bin")
     binary = physical(binary, f"{label} source-built cleanup executable", executable=True)
     binary_receipt_path, binary_link_output = cargo_link_receipt_for_artifact(
         binary, source_library_root, f"{label} source-built cleanup executable",
     )
     binary_receipt = source_built_link_receipt(
         binary_receipt_path, binary_link_output, source_library_root, f"{label} source-built cleanup link receipt",
+        cargo_provider_record, toolchain_search_root, built_unwind_record,
     )
     consumer: dict[str, Any] = {
         "mode": mode,
@@ -692,9 +1569,17 @@ def compile_source_built_mode(
         "cargo_stdout": record_file(application / "cargo.stdout.jsonl", f"{label} Cargo JSON stream"),
         "cargo_stderr": record_file(application / "cargo.stderr.log", f"{label} Cargo diagnostics"),
         "rust_sysroot_log": record_file(application / "rust-sysroot.log", f"{label} Rust sysroot log"),
+        "toolchain_search_root": str(toolchain_search_root),
+        "toolchain_target_libdir_log": record_file(
+            application / "toolchain-target-libdir.log", f"{label} Rust target-library log",
+        ),
         "rust_source_library": str(rust_source),
         "rust_source_lock": record_file(rust_source_lock, f"{label} pinned rust-src lock"),
         "source_built_target_library_root": str(source_library_root),
+        "offline_sources": offline_sources,
+        "cargo_graph_provider": cargo_provider_record,
+        "built_but_unselected_source_built_rust_unwind": built_unwind_record,
+        "provider_graph": provider_graph["receipt"],
         "host_build_script_manifest": record_file(
             host_build_manifest_path, f"{label} Cargo host build-script manifest",
         ),
@@ -705,7 +1590,7 @@ def compile_source_built_mode(
     }
     if with_plugin:
         plugin = cargo_artifact(
-            stdout, package=package, target=target, name="crabc_owned_cleanup_plugin", crate_type="cdylib",
+            stdout, package=generated_package, target=target, name="crabc_owned_cleanup_plugin", crate_type="cdylib",
         )
         plugin = physical(plugin, f"{label} source-built cleanup plugin")
         plugin_receipt_path, plugin_link_output = cargo_link_receipt_for_artifact(
@@ -713,7 +1598,8 @@ def compile_source_built_mode(
         )
         plugin_receipt = source_built_link_receipt(
             plugin_receipt_path, plugin_link_output, source_library_root,
-            f"{label} source-built cleanup plugin link receipt",
+            f"{label} source-built cleanup plugin link receipt", cargo_provider_record, toolchain_search_root,
+            built_unwind_record,
         )
         require(plugin_receipt.get("rust_requested_mode") == "shared",
                 f"{label} source-built cleanup plugin was not linked as a shared object")
@@ -788,7 +1674,150 @@ def source_snapshot() -> list[dict[str, str]]:
     ]
 
 
-def run(static_root: Path, dynamic_root: Path, output: Path | None = None) -> Path:
+def run_source_graph_preflight(provider_vendor_root: Path, output: Path | None = None) -> Path:
+    """Exercise the generated provider workspace through Cargo without compiling it.
+
+    This development gate authenticates the same complete offline source closure
+    and runs both metadata passes plus lock generation that the source-built
+    static consumer uses.  It deliberately stops before rustc or the owned
+    linker, leaving the real source-built static round trip as the next judge.
+    """
+
+    require((platform.system(), platform.machine()) == ("Linux", "x86_64"), "native Linux/x86-64 required")
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    source_before = source_snapshot()
+    WORK.mkdir(parents=True, exist_ok=True)
+    if output is None:
+        output = Path(tempfile.mkdtemp(prefix="source-graph-preflight-", dir=WORK))
+        output.chmod(0o755)
+    else:
+        output = work_child(output, "source-built Cargo provider preflight output")
+        output.mkdir(mode=0o755)
+    output = physical(output, "source-built Cargo provider preflight output", directory=True)
+    application = output / "source-graph-preflight"
+    application.mkdir(mode=0o755)
+    cargo_home = application / "cargo-home"
+    target = application / "cargo-target"
+    temporary = application / "tmp"
+    for directory in (cargo_home, target, temporary):
+        directory.mkdir(mode=0o755)
+    channel = tomllib.loads((CHECKOUT / "rust-toolchain.toml").read_text(encoding="utf-8"))["toolchain"]["channel"]
+    rust_sysroot = Path(run_logged(
+        ["rustup", "run", channel, "rustc", "--print", "sysroot"], clean_environment(),
+        application / "rust-sysroot.log", "source-built Cargo provider preflight Rust sysroot discovery",
+    ).strip())
+    rust_source = physical(
+        rust_sysroot / "lib/rustlib/src/rust/library", "source-built Cargo provider preflight pinned rust-src library",
+        directory=True,
+    )
+    rust_source_lock = physical(
+        rust_source / "Cargo.lock", "source-built Cargo provider preflight pinned rust-src lock",
+    )
+    environment = clean_environment()
+    environment.update({
+        **SERIAL_BUILD_ENVIRONMENT,
+        **SOURCE_BUILD_PROFILE,
+        "CARGO_HOME": str(cargo_home),
+        "CARGO_NET_OFFLINE": "true",
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_TARGET_DIR": str(target),
+        "CARGO_TERM_COLOR": "never",
+        "CARGO_ENCODED_RUSTFLAGS": "\x1f".join(SOURCE_BUILD_RUSTFLAGS),
+        "TMPDIR": str(temporary),
+    })
+    offline_sources = prepare_offline_cargo_sources(application, rust_source, provider_vendor_root, cargo_home)
+    provider_graph = source_graph_provider(
+        application=application, package=BUILD_STD_FIXTURE, channel=channel, environment=environment,
+        with_plugin=False, offline_sources=offline_sources,
+    )
+    require(source_snapshot() == source_before, "owned Rust consumer source changed during Cargo provider preflight")
+    receipt = {
+        "schema": 1,
+        "scope": "owned source-built Rust provider Cargo graph preflight development",
+        "source_inputs": source_before,
+        "rust_sysroot_log": record_file(
+            application / "rust-sysroot.log", "source-built Cargo provider preflight Rust sysroot log",
+        ),
+        "rust_source_library": str(rust_source),
+        "rust_source_lock": record_file(
+            rust_source_lock, "source-built Cargo provider preflight pinned rust-src lock",
+        ),
+        "offline_sources": offline_sources,
+        "provider_graph": provider_graph["receipt"],
+        "qualified": False,
+        "family_completion": False,
+        "promotion_ready": False,
+        "public_support": False,
+        "limitations": [
+            "this preflight runs Cargo metadata and lock generation only; it does not compile, link, or execute a consumer",
+            "the source-built static cleanup round trip remains required before any consumer behavior claim",
+        ],
+    }
+    receipt_path = output / "receipt.json"
+    with receipt_path.open("x", encoding="utf-8") as stream:
+        json.dump(receipt, stream, indent=2, sort_keys=True)
+        stream.write("\n")
+    return output
+
+
+def run_source_built_static(static_root: Path, provider_vendor_root: Path, output: Path | None = None) -> Path:
+    """Run the smallest real source-built Rust std/provider round trip."""
+
+    require((platform.system(), platform.machine()) == ("Linux", "x86_64"), "native Linux/x86-64 required")
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    source_before = source_snapshot()
+    static = product_snapshot(static_root, "static")
+    WORK.mkdir(parents=True, exist_ok=True)
+    if output is None:
+        output = Path(tempfile.mkdtemp(prefix="source-static-", dir=WORK))
+        output.chmod(0o755)
+    else:
+        output = work_child(output, "source-built static Rust cleanup output")
+        output.mkdir(mode=0o755)
+    output = physical(output, "source-built static Rust cleanup output", directory=True)
+    channel = tomllib.loads((CHECKOUT / "rust-toolchain.toml").read_text(encoding="utf-8"))["toolchain"]["channel"]
+    consumer = compile_source_built_mode(
+        label="source-built-static", mode="static", root=Path(static["root"]), channel=channel,
+        output=output, package=BUILD_STD_FIXTURE, binary_name=BUILD_STD_BINARY, with_plugin=False,
+        provider_vendor_root=provider_vendor_root,
+    )
+    binary = Path(consumer["binary"]["path"])
+    symbols = binary_unwind_symbols(
+        binary, clean_environment(), output / "source-built-static" / "symbols.log",
+        "source-built static cleanup symbol inventory",
+    )
+    cleanup.assert_binary_unwind_symbols(set(symbols), set(build.UNWIND_ABI))
+    consumer["defined_unwind_abi"] = symbols
+    consumer["symbols_log"] = record_file(
+        output / "source-built-static" / "symbols.log", "source-built static cleanup symbol inventory",
+    )
+    execute_mode("static", consumer, Path(static["root"]), output / "source-built-static")
+    assert_same_product(static, "static")
+    require(source_snapshot() == source_before, "owned Rust consumer source changed during collection")
+    receipt = {
+        "schema": 1,
+        "scope": "owned static source-built Rust std fat-LTO cleanup consumer development",
+        "source_inputs": source_before,
+        "fixture": record_file(FIXTURE, "full Rust cleanup fixture"),
+        "product": static,
+        "source_built_consumer": consumer,
+        "qualified": False,
+        "family_completion": False,
+        "promotion_ready": False,
+        "public_support": False,
+        "limitations": [
+            "this focused static consumer does not package the provider or qualify source-built Rust std distribution",
+            "dynamic, DSO, stock-Rust, complete malformed unwind-metadata behavior, runtime-family completion, promotion, and public support remain unqualified",
+        ],
+    }
+    receipt_path = output / "receipt.json"
+    with receipt_path.open("x", encoding="utf-8") as stream:
+        json.dump(receipt, stream, indent=2, sort_keys=True)
+        stream.write("\n")
+    return output
+
+
+def run(static_root: Path, dynamic_root: Path, provider_vendor_root: Path, output: Path | None = None) -> Path:
     require((platform.system(), platform.machine()) == ("Linux", "x86_64"), "native Linux/x86-64 required")
     # Retain failed executions through their logs, never checkout-root cores.
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
@@ -825,30 +1854,32 @@ def run(static_root: Path, dynamic_root: Path, output: Path | None = None) -> Pa
         execute_mode(mode, consumer, Path(dynamic["root"]), output / mode)
         stock_consumers[mode] = consumer
     source_static = compile_source_built_mode(
-        label="source-built-static", mode="static", root=Path(static["root"]), provider=provider, channel=channel,
+        label="source-built-static", mode="static", root=Path(static["root"]), channel=channel,
         output=output, package=BUILD_STD_FIXTURE, binary_name=BUILD_STD_BINARY, with_plugin=False,
+        provider_vendor_root=provider_vendor_root,
     )
     source_static_binary = Path(source_static["binary"]["path"])
     source_static_symbols = binary_unwind_symbols(
         source_static_binary, clean_environment(), output / "source-built-static" / "symbols.log",
         "source-built static cleanup symbol inventory",
     )
-    cleanup.assert_binary_unwind_symbols(set(source_static_symbols), set(provider["defined_unwind_abi"]))
+    cleanup.assert_binary_unwind_symbols(set(source_static_symbols), set(build.UNWIND_ABI))
     source_static["defined_unwind_abi"] = source_static_symbols
     source_static["symbols_log"] = record_file(
         output / "source-built-static" / "symbols.log", "source-built static cleanup symbol inventory",
     )
     execute_mode("static", source_static, Path(dynamic["root"]), output / "source-built-static")
     source_dynamic_dso = compile_source_built_mode(
-        label="source-built-dynamic-dso", mode="dynamic", root=Path(dynamic["root"]), provider=provider, channel=channel,
+        label="source-built-dynamic-dso", mode="dynamic", root=Path(dynamic["root"]), channel=channel,
         output=output, package=BUILD_STD_DSO_FIXTURE, binary_name=BUILD_STD_DSO_HOST, with_plugin=True,
+        provider_vendor_root=provider_vendor_root,
     )
     plugin = Path(source_dynamic_dso["plugin"]["binary"]["path"])
     plugin_symbols = binary_unwind_symbols(
         plugin, clean_environment(), output / "source-built-dynamic-dso" / "plugin-symbols.log",
         "source-built DSO cleanup plugin symbol inventory",
     )
-    cleanup.assert_binary_unwind_symbols(set(plugin_symbols), set(provider["defined_unwind_abi"]))
+    cleanup.assert_binary_unwind_symbols(set(plugin_symbols), set(build.UNWIND_ABI))
     source_dynamic_dso["plugin"]["defined_unwind_abi"] = plugin_symbols
     source_dynamic_dso["plugin"]["symbols_log"] = record_file(
         output / "source-built-dynamic-dso" / "plugin-symbols.log", "source-built DSO cleanup plugin symbol inventory",
@@ -886,12 +1917,31 @@ def run(static_root: Path, dynamic_root: Path, output: Path | None = None) -> Pa
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--static-sysroot", required=True, type=Path)
-    parser.add_argument("--dynamic-sysroot", required=True, type=Path)
+    parser.add_argument("--static-sysroot", type=Path)
+    parser.add_argument("--dynamic-sysroot", type=Path)
+    parser.add_argument("--provider-vendor", required=True, type=Path,
+                        help="exact offline Cargo vendor for the approved crabc-unwinder dependency graph")
+    parser.add_argument("--source-graph-preflight-only", action="store_true",
+                        help="run the generated Cargo provider graph metadata/lock preflight without compiling")
+    parser.add_argument("--source-built-static-only", action="store_true",
+                        help="run only the source-built static Cargo/provider consumer")
     parser.add_argument("--output", type=Path, help="fresh checkout .work child for retained consumer evidence")
     arguments = parser.parse_args()
     try:
-        print(run(arguments.static_sysroot, arguments.dynamic_sysroot, arguments.output))
+        require(not (arguments.source_graph_preflight_only and arguments.source_built_static_only),
+                "Cargo provider preflight and source-built static cleanup are separate modes")
+        if arguments.source_graph_preflight_only:
+            require(arguments.static_sysroot is None and arguments.dynamic_sysroot is None,
+                    "Cargo provider preflight does not accept supplied sysroots")
+            print(run_source_graph_preflight(arguments.provider_vendor, arguments.output))
+        elif arguments.source_built_static_only:
+            require(arguments.static_sysroot is not None and arguments.dynamic_sysroot is None,
+                    "source-built static-only cleanup requires exactly one static sysroot")
+            print(run_source_built_static(arguments.static_sysroot, arguments.provider_vendor, arguments.output))
+        else:
+            require(arguments.static_sysroot is not None and arguments.dynamic_sysroot is not None,
+                    "full owned Rust cleanup requires static and dynamic sysroots")
+            print(run(arguments.static_sysroot, arguments.dynamic_sysroot, arguments.provider_vendor, arguments.output))
     except (OwnedCleanupError, OSError, ValueError, subprocess.SubprocessError) as error:
         print(f"crabc-owned-rust-std-cleanup: {error}", file=sys.stderr)
         return 1
