@@ -2101,6 +2101,7 @@ mod tests {
                             .test_theap_pointer()
                             .expect("the attached ordinary Theap remains projected")
                             .as_ref()
+                            .expect("the attached ordinary Theap pointer remains non-null")
                     };
                     assert!(ordinary.allows_page_abandon());
                     assert_eq!(ordinary.page_full_retain(), 2);
@@ -2193,6 +2194,7 @@ mod tests {
                             .test_theap_pointer()
                             .expect("the attached Theap remains projected")
                             .as_ref()
+                            .expect("the attached full-queue Theap pointer remains non-null")
                     };
                     assert!(!theap.allows_page_abandon());
                     assert_eq!(
