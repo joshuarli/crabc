@@ -241,8 +241,14 @@ if [ "${1:-}" = "--probe-regressions" ]; then
 fi
 [ "$#" -eq 0 ] || fail "run_libc_native_mimalloc_shadow_pthread_teardown.sh takes no arguments"
 
-cargo_target="$work_dir/cargo-target"
-archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
+work_relative="${work_dir#"$ROOT_DIR/.work/x86_64/"}"
+[ "$work_relative" != "$work_dir" ] || fail "private work directory escapes .work/x86_64"
+source_runtime_helper="$ROOT_DIR/compat/x86_64/native_static_source_runtime_closure.py"
+source_runtime_primary_work="$work_relative/source-runtime-primary"
+source_runtime_normal_work="$work_relative/source-runtime-normal-main"
+source_runtime_primary_receipt="$work_dir/source-runtime-primary/receipt.json"
+source_runtime_normal_receipt="$work_dir/source-runtime-normal-main/receipt.json"
+archive=""
 reference="$work_dir/musl-reference"
 candidate="$work_dir/native-shadow-candidate"
 internal_allocator_override_candidate="$work_dir/native-shadow-internal-allocator-override-candidate"
@@ -253,18 +259,24 @@ candidate_symbols="$work_dir/candidate-symbols"
 candidate_dynamic="$work_dir/candidate-dynamic"
 candidate_program_headers="$work_dir/candidate-program-headers"
 candidate_relocations="$work_dir/candidate-relocations"
+candidate_link_map="$work_dir/candidate-link.map"
+candidate_link_trace="$work_dir/candidate-link.trace"
 normal_main_archive_symbols="$work_dir/normal-main-archive-symbols"
+normal_main_link_map="$work_dir/normal-main-link.map"
+normal_main_link_trace="$work_dir/normal-main-link.trace"
 crt_output="$work_dir/owned-crt"
 fixture_crt1="$work_dir/fixture-crt1.o"
 
-# `cargo rustc -- -Ztls-model=initial-exec` would reach only crabc-libc, while
-# this selected archive also links crabc-mimalloc. Keep the model target-wide
-# for this static candidate so the audit bridge cannot hide a TLSGD dependency
-# in that dependency's object code. Cargo's encoded setting takes precedence
-# over RUSTFLAGS, including an empty encoded value, so set its one exact flag.
-readonly NATIVE_ENCODED_RUSTFLAGS='-Ztls-model=initial-exec'
+# The source-runtime producer applies this profile to the complete target
+# graph, including crabc-mimalloc and source-built core/alloc/compiler_builtins.
+# It replaces only the fixture's prebuilt target-runtime input; product builders
+# retain their own reviewed profiles. `panic=immediate-abort` is development-only
+# because it bypasses the static C root's nonreturning spin panic handler.
+readonly NATIVE_SOURCE_RUNTIME_PROFILE='-Ztls-model=initial-exec -Zunstable-options -Cpanic=immediate-abort -Cforce-unwind-tables=no -Crelocation-model=static -Ccode-model=small'
 
 cd "$ROOT_DIR"
+printf 'x86 selected native-mimalloc source-runtime profile: %s\n' "$NATIVE_SOURCE_RUNTIME_PROFILE"
+printf '%s\n' 'x86 selected native-mimalloc final link: -nostdlib -static -Wl,--no-undefined -Wl,--gc-sections -Wl,-Map -Wl,--trace-symbol=rust_eh_personality'
 # The native Docker image need not expose LLVM utilities globally. Use the
 # pinned Rust toolchain component selected by the ordinary CRT evidence lane,
 # so this fixture verifies the same owned executable init/fini bridge.
@@ -295,16 +307,20 @@ if ! run_final_worker_atexit_probe "$reference" "pinned-musl reference explicit-
     fail "pinned-musl reference execution failed"
 fi
 
-CARGO_ENCODED_RUSTFLAGS="$NATIVE_ENCODED_RUSTFLAGS" CARGO_TARGET_DIR="$cargo_target" \
-    cargo rustc --locked -p crabc-libc --lib \
-    --target x86_64-unknown-linux-musl \
-    --features x86-owned-static-native-shadow,native-mimalloc-shadow-test-audit -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
-[ -f "$archive" ] || fail "cargo did not emit the selected static libc archive"
+[ -x "$source_runtime_helper" ] || fail "missing native static source-runtime producer"
+archive="$(python3 "$source_runtime_helper" build \
+    --work "$source_runtime_primary_work" \
+    --features x86-owned-static-native-shadow,native-mimalloc-shadow-test-audit \
+    --print-archive)" || fail "source-built native static runtime production failed"
+[ -f "$archive" ] || fail "source-built native static runtime did not emit the selected archive"
+[ -f "$source_runtime_primary_receipt" ] ||
+    fail "source-built native static runtime did not retain its receipt"
 
 nm -A --defined-only "$archive" >"$archive_symbols"
 for symbol in __crabc_x86_native_mimalloc_shadow_v1 \
     __crabc_x86_native_mimalloc_active_later_thread_count_test_audit \
+    __crabc_x86_native_mimalloc_registered_thread_descriptor_count_test_audit \
+    __crabc_x86_native_mimalloc_reclaimed_worker_descriptor_count_test_audit \
     __crabc_x86_native_mimalloc_process_done_test_audit \
     __crabc_x86_native_mimalloc_process_done_retained_worker_matches_current_thread_test_audit \
     __crabc_x86_native_mimalloc_process_done_retained_local_preflight_test_audit \
@@ -324,11 +340,17 @@ done
     -I"$ROOT_DIR/include" \
     -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin \
     -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined -Wl,--gc-sections \
+    -Wl,-Map,"$candidate_link_map" -Wl,--trace-symbol=rust_eh_personality \
     -Wl,-u,__crabc_x86_native_mimalloc_shadow_v1 \
     "$fixture_crt1" "$crt_output/crti.o" \
     compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_probe.c \
     compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_start.S \
-    "$archive" "$crt_output/crtn.o" -o "$candidate"
+    "$archive" "$crt_output/crtn.o" -o "$candidate" >"$candidate_link_trace" 2>&1
+python3 "$source_runtime_helper" audit-final-link \
+    --receipt "$source_runtime_primary_receipt" --candidate "$candidate" \
+    --link-map "$candidate_link_map" --trace "$candidate_link_trace" \
+    --label selected-native-pthread-teardown ||
+    fail "source-built native static runtime final link audit failed"
 
 # A caller-owned strong malloc returns null. `pthread_atfork` is an existing
 # private allocator client, so successful registration proves its node uses
@@ -350,6 +372,8 @@ readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 for symbol in __crabc_x86_native_mimalloc_shadow_v1 \
     __crabc_x86_native_mimalloc_active_later_thread_count_test_audit \
+    __crabc_x86_native_mimalloc_registered_thread_descriptor_count_test_audit \
+    __crabc_x86_native_mimalloc_reclaimed_worker_descriptor_count_test_audit \
     __crabc_x86_native_mimalloc_process_done_test_audit \
     __crabc_x86_native_mimalloc_process_done_retained_worker_matches_current_thread_test_audit \
     __crabc_x86_native_mimalloc_process_done_retained_local_preflight_test_audit \
@@ -415,12 +439,13 @@ if ! run_normal_main_return_process_done_probe "$normal_main_reference" \
     fail "pinned-musl normal-main-return execution failed"
 fi
 
-CARGO_ENCODED_RUSTFLAGS="$NATIVE_ENCODED_RUSTFLAGS" CARGO_TARGET_DIR="$cargo_target" \
-    cargo rustc --locked -p crabc-libc --lib \
-    --target x86_64-unknown-linux-musl \
-    --features x86-owned-static-native-shadow,native-mimalloc-shadow-process-done-exit-test-audit -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
-[ -f "$archive" ] || fail "cargo did not emit the normal-main selected static libc archive"
+archive="$(python3 "$source_runtime_helper" build \
+    --work "$source_runtime_normal_work" \
+    --features x86-owned-static-native-shadow,native-mimalloc-shadow-process-done-exit-test-audit \
+    --print-archive)" || fail "normal-main source-built native static runtime production failed"
+[ -f "$archive" ] || fail "normal-main source-built native static runtime did not emit the selected archive"
+[ -f "$source_runtime_normal_receipt" ] ||
+    fail "normal-main source-built native static runtime did not retain its receipt"
 nm -A --defined-only "$archive" >"$normal_main_archive_symbols"
 grep -Eq "[[:space:]][TW][[:space:]]__crabc_x86_native_mimalloc_process_done_fini_array_test_audit$" \
     "$normal_main_archive_symbols" ||
@@ -434,12 +459,18 @@ grep -Eq "[[:space:]][TW][[:space:]]__crabc_x86_native_mimalloc_process_done_ter
     -DCRABC_NATIVE_MIMALLOC_SHADOW_PROCESS_DONE_EXIT_TEST_AUDIT \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie \
     -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start \
-    -Wl,--no-undefined -Wl,--gc-sections \
+    -Wl,--no-undefined -Wl,--gc-sections -Wl,-Map,"$normal_main_link_map" \
+    -Wl,--trace-symbol=rust_eh_personality \
     -Wl,-u,__crabc_x86_native_mimalloc_shadow_v1 \
     "$fixture_crt1" "$crt_output/crti.o" \
     compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_probe.c \
     compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_start.S \
-    "$archive" "$crt_output/crtn.o" -o "$normal_main_candidate"
+    "$archive" "$crt_output/crtn.o" -o "$normal_main_candidate" >"$normal_main_link_trace" 2>&1
+python3 "$source_runtime_helper" audit-final-link \
+    --receipt "$source_runtime_normal_receipt" --candidate "$normal_main_candidate" \
+    --link-map "$normal_main_link_map" --trace "$normal_main_link_trace" \
+    --label selected-native-normal-main-return ||
+    fail "normal-main source-built native static runtime final link audit failed"
 if ! run_normal_main_return_process_done_probe "$normal_main_candidate" \
     "selected native normal-main-return candidate" AMD \
     "$work_dir/normal-main-candidate.stderr"; then
