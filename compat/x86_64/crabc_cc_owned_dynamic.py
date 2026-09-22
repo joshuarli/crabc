@@ -487,7 +487,6 @@ def execute(root: Path, arguments: list[str]) -> None:
     transitive_dsos = []
     common = []
     quote_include_inputs = []
-    dependency_file = None
     rounding_math = False
     export_dynamic = False
     index = 0
@@ -550,11 +549,6 @@ def execute(root: Path, arguments: list[str]) -> None:
             if index == len(arguments) or arguments[index].startswith("-"):
                 raise shared.DriverError("--application-quote-include-dir requires one directory path")
             quote_include_inputs.append(Path(arguments[index]))
-        elif argument == "--application-dependency-file":
-            index += 1
-            if index == len(arguments) or arguments[index].startswith("-") or dependency_file is not None:
-                raise shared.DriverError("--application-dependency-file requires one output path")
-            dependency_file = Path(arguments[index])
         elif argument == "-frounding-math":
             if rounding_math:
                 raise shared.DriverError("-frounding-math may be specified only once")
@@ -585,8 +579,6 @@ def execute(root: Path, arguments: list[str]) -> None:
         raise shared.DriverError("compile-only accepts no binding/import contract")
     if invocation.compile_only and (dsos or transitive_dsos):
         raise shared.DriverError("compile-only accepts no DSO")
-    if dependency_file is not None and not invocation.compile_only:
-        raise shared.DriverError("--application-dependency-file is available only for a compile-only invocation")
     if transitive_dsos and not dsos:
         raise shared.DriverError("transitive application DSOs require one direct --application-dso")
     if invocation.link_receipt is not None:
@@ -626,13 +618,6 @@ def execute(root: Path, arguments: list[str]) -> None:
     shared.validate_application_output_disjoint(
         output, invocation.sources + invocation.objects + tuple(dsos) + tuple(transitive_dsos)
     )
-    dependency_output = None
-    if dependency_file is not None:
-        dependency_output = dependency_file.absolute()
-        shared.validate_application_output(root, dependency_output)
-        shared.validate_application_output_disjoint(
-            dependency_output, invocation.sources + invocation.objects + (output,)
-        )
     receipt = Path(str(output) + ".crabc-link.json")
     shared.validate_application_output(root, receipt)
     shared.validate_application_output_disjoint(
@@ -651,7 +636,6 @@ def execute(root: Path, arguments: list[str]) -> None:
                  "-isystem", str(root / "usr/include"),
                  "-ffreestanding", "-fno-builtin", "-fstack-protector-strong",
                  *invocation.compiler_flags, *(["-frounding-math"] if rounding_math else []),
-                 *(["-MD", "-MF", str(dependency_output)] if dependency_output is not None else []),
                  "-fPIC" if mode == "shared" else "-fPIE" if mode == "pie" else "-fno-pie",
                  "-c", str(source), "-o", str(obj)], temporary)
             objects.append(obj)
