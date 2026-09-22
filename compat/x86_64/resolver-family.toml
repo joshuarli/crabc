@@ -73,14 +73,12 @@ products = ["one-current-static-and-dynamic-cohort"]
 modes = ["static-et-exec", "static-pie", "dynamic-pie-kernel", "dynamic-non-pie-kernel"]
 role = "source-bound resolver state, weak aliases, private bodies, and product-provider boundary"
 
-# The producer executes this behavior, but it has no retained public receipt
-# reader.  A printed PASS or an unstructured work directory is not admissible
-# family evidence.
 [[component]]
 id = "resolver-cancellation"
-state = "missing-reader"
-required_reader = "a public read-only receipt reader for owned_resolver_cancellation.py"
-products = ["installed", "reproduction", "extracted"]
+state = "reader"
+reader = "compat/x86_64/owned_resolver_cancellation_receipt.py"
+request_fields = ["work", "static_product", "dynamic_product"]
+products = ["one-supplied-static-and-dynamic-pair"]
 modes = [
   "static-et-exec",
   "static-pie",
@@ -89,7 +87,7 @@ modes = [
   "dynamic-non-pie-kernel",
   "dynamic-non-pie-direct",
 ]
-role = "cancellation, wait-state ordering, UDP/TCP cleanup, descriptor retirement, and retry lifecycle"
+role = "source/product-bound cancellation, wait-state ordering, UDP/TCP cleanup, descriptor retirement, and retry lifecycle"
 
 # The static provider slice proves only its own archive boundary.  There is no
 # installed/extracted six-mode protocol-database behavior receipt yet.

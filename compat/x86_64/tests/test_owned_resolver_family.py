@@ -45,6 +45,9 @@ class OwnedResolverFamilyTests(unittest.TestCase):
     def _all_reader_request(self) -> dict[str, object]:
         report = self._relative(self._file("report.json"))
         product = self._relative(self._directory("product"))
+        cancellation_work = self._relative(self._directory("cancellation-work"))
+        cancellation_static = self._relative(self._directory("cancellation-static"))
+        cancellation_dynamic = self._relative(self._directory("cancellation-dynamic"))
         cohort = self._relative(self._file("cohort.json"))
         return {
             "resolver-network-physical": {"report": report},
@@ -57,6 +60,11 @@ class OwnedResolverFamilyTests(unittest.TestCase):
                 "static_preparation": cohort,
                 "elf_facts": cohort,
                 "base_inventory": cohort,
+            },
+            "resolver-cancellation": {
+                "work": cancellation_work,
+                "static_product": cancellation_static,
+                "dynamic_product": cancellation_dynamic,
             },
         }
 
@@ -93,7 +101,7 @@ class OwnedResolverFamilyTests(unittest.TestCase):
         )
         self.assertEqual(
             report["components"]["resolver-cancellation"]["gap"]["reason"],
-            "missing-public-reader",
+            "missing-component-report",
         )
         self.assertFalse(report["capabilities"]["network.resolver"]["admitted"])
 
@@ -112,14 +120,16 @@ class OwnedResolverFamilyTests(unittest.TestCase):
                 "resolver-network-physical": valid_reader,
                 "classic-netdb": valid_reader,
                 "resolver-alias-private-bodies": valid_reader,
+                "resolver-cancellation": valid_reader,
             },
         )
 
-        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(calls), 4)
         self.assertTrue(report["components"]["resolver-network-physical"]["admitted"])
         self.assertTrue(report["components"]["classic-netdb"]["admitted"])
         self.assertTrue(report["components"]["resolver-alias-private-bodies"]["admitted"])
-        self.assertFalse(report["proofs"]["resolver-cancellation-and-retirement"]["admitted"])
+        self.assertTrue(report["components"]["resolver-cancellation"]["admitted"])
+        self.assertTrue(report["proofs"]["resolver-cancellation-and-retirement"]["admitted"])
         self.assertFalse(report["proofs"]["protocol-database-installed-behavior"]["admitted"])
         self.assertFalse(report["proofs"]["common-current-product-cohort"]["admitted"])
         self.assertFalse(report["family_complete"])

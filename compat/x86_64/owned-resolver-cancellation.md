@@ -312,3 +312,36 @@ qualification leaf additionally requires its exact newly created user/network
 namespace and supplied product path. The fixed classic-netdb namespace entry
 remains supported through the shared finite DNS helper. No resolver-family or
 public-support status changes.
+
+## Public receipt replay
+
+[`owned_resolver_cancellation_receipt.py`](owned_resolver_cancellation_receipt.py)
+is the public read-only reader for this component. It accepts one explicitly
+named evidence directory and its explicitly named static and dynamic products
+under the checkout's `.work` tree. It recomputes the producer's live source
+digest and product-tree identities, binds `workload.o` and the probe source,
+replays each retained driver/ELF audit and provider-symbol read, and requires
+the complete oracle plus six installed entry-mode matrix: 847 zero-status raw
+observations. It reconstructs the admitted ordinary and source-later errno
+lists from those bytes; it does not trust either summary list by itself.
+
+The reader also validates the loopback-only namespace record and the retained
+fast-open and fallback-connect observations. It never builds, links, runs a
+resolver consumer, or contacts DNS. A dynamic-only 605-run producer directory
+is useful for local diagnosis but is rejected here because this resolver-family
+component requires the static entry modes too.
+
+Run it inside the same pinned native `/workspace` environment that created the
+receipt:
+
+```sh
+python3 -B compat/x86_64/owned_resolver_cancellation_receipt.py validate \
+  --work .work/x86_64/tmp/owned-resolver-cancellation.current \
+  --static-product .work/x86_64/products/static \
+  --dynamic-product .work/x86_64/products/dynamic
+```
+
+Its result is cancellation component evidence only. The resolver-family roster
+still requires the separate installed/extracted protocol-database behavior and
+common primary/reproduction/extracted product-cohort readers before
+`libc.resolver` can qualify.

@@ -34,11 +34,11 @@ six-mode contracts.
 | `resolver-network-physical` | [`resolver_network_component_receipt.py`](resolver_network_component_receipt.py) replays the retained raw local-DNS receipt for both installed and extracted product arms. It checks A/AAAA/CNAME, malformed and wrong-ID replies, search, retry/failover, and UDP truncation/TCP fallback across all twelve arm/mode executions. | Required reader. |
 | `classic-netdb` | [`owned_classic_netdb_component_receipt.py`](owned_classic_netdb_component_receipt.py) replays its full six-mode host/service, legacy/modern lookup, record-order, error, allocation, thread, and fork receipt. | Required reader. |
 | `resolver-alias-private-bodies` | [`owned_resolver_alias_contract_reader.py`](owned_resolver_alias_contract_reader.py) replays one source-bound static/dynamic cohort for `res_mkquery`, `res_send`, `res_search`, their private bodies, and protected controls. | Required ABI corroboration. It does not replace an entry-mode behavior matrix. |
-| `resolver-cancellation` | [`owned_resolver_cancellation.py`](owned_resolver_cancellation.py) executes the required lifecycle matrix, but has no public retained receipt reader. | Hard gap. A printed producer result or arbitrary `.work` directory is not admitted. |
+| `resolver-cancellation` | [`owned_resolver_cancellation_receipt.py`](owned_resolver_cancellation_receipt.py) replays one explicitly named source-bound static/dynamic receipt. It validates all 847 raw oracle/candidate observations, isolation, the application object, product trees, driver/ELF audits, and provider symbols. | Required reader. It proves one supplied product pair; it cannot substitute for the shared primary/reproduction/extracted cohort. |
 | `protocol-database-product` | The static `protocol_database` provider remains a private archive slice. | Hard gap: no installed/extracted six-mode `/etc/protocols` behavior receipt exists. |
 | `resolver-family-cohort` | Existing receipts may name different source/product cohorts. | Hard gap: no reader proves one current source plus primary, reproduction, and extracted products shared by every required behavior. |
 
-The last three are intentional failures, not exclusions. Their gaps keep a
+The last two are intentional failures, not exclusions. Their gaps keep a
 historical component pass from completing a capability whose remaining behavior
 has not been read from physical evidence.
 
@@ -54,7 +54,12 @@ and inventory inputs because its public reader authenticates that cohort.
   "schema": "crabc.x86_64-owned-resolver-family-request/v1",
   "components": {
     "resolver-network-physical": { "report": "compat/reports/resolver-network/x86_64/latest.json" },
-    "classic-netdb": { "report": ".work/x86_64/classic-netdb/current/classic-netdb-products.json" }
+    "classic-netdb": { "report": ".work/x86_64/classic-netdb/current/classic-netdb-products.json" },
+    "resolver-cancellation": {
+      "work": ".work/x86_64/owned-resolver-cancellation/current",
+      "static_product": ".work/x86_64/products/static",
+      "dynamic_product": ".work/x86_64/products/dynamic"
+    }
   }
 }
 ```
@@ -81,7 +86,7 @@ python3 -B compat/x86_64/owned_resolver_family.py validate \
   --assessment .work/x86_64/resolver-family/assessment.json
 ```
 
-The final command currently fails by design, naming the cancellation reader,
-protocol-database product proof, and common product-cohort reader as blockers.
-This is the correct result until those behavior boundaries exist and the
-coordinator can replay them against one source-bound product set.
+The final command currently fails by design, naming the protocol-database
+product proof and common product-cohort reader as blockers. This is the correct
+result until those behavior boundaries exist and the coordinator can replay
+them against one source-bound product set.

@@ -55,8 +55,9 @@ EXPECTED_COMPONENTS = {
         ("static-et-exec", "static-pie", "dynamic-pie-kernel", "dynamic-non-pie-kernel"),
     ),
     "resolver-cancellation": (
-        "missing-reader", None, "a public read-only receipt reader for owned_resolver_cancellation.py", (),
-        ("installed", "reproduction", "extracted"), SIX_MODES,
+        "reader", "compat/x86_64/owned_resolver_cancellation_receipt.py", None,
+        ("work", "static_product", "dynamic_product"),
+        ("one-supplied-static-and-dynamic-pair",), SIX_MODES,
     ),
     "protocol-database-product": (
         "missing-reader", None, "an installed/extracted six-mode protocol-database behavior receipt", (),
@@ -419,14 +420,32 @@ def _alias_reader(root: Path, paths: Mapping[str, Path]) -> dict[str, object]:
             "aliases": [list(alias) for alias in module.ALIASES]}
 
 
+def _cancellation_reader(root: Path, paths: Mapping[str, Path]) -> dict[str, object]:
+    module = importlib.import_module("owned_resolver_cancellation_receipt")
+    report = module.validate_report(
+        root, paths["work"], static_product=paths["static_product"],
+        dynamic_product=paths["dynamic_product"], require_static=True,
+    )
+    require(tuple(module.ENTRY_MODES) == SIX_MODES,
+            "resolver cancellation reader six-mode roster differs")
+    return {
+        "reader_schema": module.SCHEMA,
+        "report": report,
+        "entry_modes": list(module.ENTRY_MODES),
+        "case_count": len(importlib.import_module("owned_resolver_cancellation").CASES),
+    }
+
+
 Reader = Callable[[Path, Mapping[str, Path]], dict[str, object]]
 READERS: dict[str, Reader] = {
     "resolver-network-physical": _network_reader,
     "classic-netdb": _classic_reader,
     "resolver-alias-private-bodies": _alias_reader,
+    "resolver-cancellation": _cancellation_reader,
 }
 DIRECTORY_INPUTS = {
     "resolver-alias-private-bodies": frozenset(("static_product", "dynamic_product")),
+    "resolver-cancellation": frozenset(("work", "static_product", "dynamic_product")),
 }
 
 
