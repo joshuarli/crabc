@@ -190,6 +190,7 @@ use crate::subproc::MainSubprocess;
 use crate::types::{
     EMPTY_PAGE, Heap, HeapOsAbandonedPageListError, HeapOsAbandonedPageRemovalOutcome,
     LiveThreadId, MemoryId, MemoryKind, Page, PageKind, PageRemoteFreeProducerState, Theap,
+    PAGE_FLAG_MASK, THREAD_ID_ABANDONED,
 };
 use crate::types::page_queue::{
     page_is_in_full, theap_collect_abandon_queues, TheapCollectAbandonAbandonedPage,
@@ -295,6 +296,12 @@ struct RetainedPageCollectPoison {
     // Only the cfg(test) injection can set this. Real errors may follow a
     // remote detach and must remain permanently retained even in test builds.
     test_recoverable: bool,
+    // The selected-main full transition has a narrower regular-page
+    // implementation. A focused regression retains which exact predicate
+    // refused the source transition without making that diagnostic an owner
+    // capability or a production state transition.
+    #[cfg(test)]
+    selected_main_full_preflight: Option<SelectedMainArenaRegularFullPreflightError>,
 }
 
 /// Test-only source collection fault placement. Production failures remain
@@ -2393,6 +2400,68 @@ pub(crate) struct PageAllocatorEngine<'arena, 'map, Session: TheapPageSession,
     // a dynamic attachment terminally retained rather than discarding this
     // engine's poison/pending-release knowledge and allowing false teardown.
     shutdown_complete: bool,
+}
+
+/// Read-only quiescence image retained by focused lifecycle regressions when
+/// an ordinary engine refuses its all-free finish. It observes no ownership
+/// and cannot collect, clear, unlock, or otherwise alter the retained state.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PageAllocatorEngineFinishAudit {
+    pub(crate) page_count: usize,
+    pub(crate) queue_counts: [usize; BIN_COUNT],
+    pub(crate) nonempty_direct_count: usize,
+    pub(crate) collection_poisoned: bool,
+    pub(crate) pending_os_release: bool,
+    collection_poison: Option<PageAllocatorEngineCollectionPoisonAudit>,
+    page_commit_poisoned: bool,
+    static_main_mapped_regular_claim_terminal: bool,
+}
+
+/// The source collection fact retained by one read-only lifecycle audit.
+/// The raw page stays private; the kind identifies its source allocation
+/// class without extending that pointer's lifetime beyond the engine.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PageAllocatorEngineCollectionPoisonAudit {
+    error: PageCollectError,
+    page_kind: Option<PageKind>,
+    queue_bin: Option<usize>,
+    used: usize,
+    reserved: usize,
+    memory: PageAllocatorEngineCollectionPoisonMemoryAudit,
+    selected_main_full_preflight: Option<SelectedMainArenaRegularFullPreflightError>,
+}
+
+/// Read-only source provenance for the retained collection page. This keeps
+/// the concrete `MemoryId` arm and arena slice span visible to the regression
+/// without exposing the raw page or a release capability.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PageAllocatorEngineCollectionPoisonMemoryAudit {
+    kind: MemoryKind,
+    size: Option<usize>,
+    arena_slice: Option<(usize, usize)>,
+    is_pinned: bool,
+    initially_committed: bool,
+    initially_zero: bool,
+}
+
+/// The exact selected-main predicate that rejects a `mi_page_to_full`
+/// transition before queue detachment.  This is private diagnostic evidence;
+/// it does not turn a rejected page into an alternative allocation route.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SelectedMainArenaRegularFullPreflightError {
+    NotSelectedMainArenaOwner,
+    PageAbandonDisabled,
+    UnexpectedFullRetain,
+    NonArenaQueue,
+    SingletonQueueIsNotHuge,
+    MemoryIsNotArena,
+    PageKindIsNotRegular,
+    PageKindIsNotSingleton,
+    AlreadyFull,
+    ForeignTheap,
 }
 
 /// The engine state that remains valid while a consuming lifecycle changes
@@ -37417,6 +37486,21 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // simultaneous page-map registration or unregistration for this block.
         let page = unsafe { self.page_map.checked_lookup(block.as_ptr()) };
         let page = NonNull::new(page).ok_or(FreeError::Unmapped)?;
+        // Pinned `mi_free_nonnull` chooses its multi-threaded
+        // `allow_collect` branch once `_mi_page_abandon` has changed the
+        // source page identity, even when this same engine still carries the
+        // original Theap pointer. Check that narrow full-arena-singleton state
+        // before the ordinary Theap-pointer ownership predicate below: treating
+        // it as local would write its detached page as if `BIN_HUGE` still
+        // owned it.
+        if self.selected_main_arena_abandoned_singleton_can_free(page) {
+            // SAFETY: the checked PageMap entry and the caller's exact live
+            // allocation contract retain this singleton metadata and its one
+            // current block through the source `allow_collect` transition.
+            let base = unsafe { Page::canonical_remote_block_for_live_client_at(page, block) }
+                .ok_or(FreeError::InvalidBlock(FreeListError::InvalidBlock))?;
+            return self.free_selected_main_arena_abandoned_singleton(page, base);
+        }
         // SAFETY: this short immutable owner check ends before ordinary local
         // fields are raw-mutated below. Producer atomics may coexist with the
         // shared read because they are `UnsafeCell` subobjects.
@@ -38122,7 +38206,30 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             error,
             popped_block,
             test_recoverable,
+            #[cfg(test)]
+            selected_main_full_preflight: None,
         });
+    }
+
+    /// Retains a rejected selected-main full transition together with the
+    /// source predicate that failed. The ordinary poison remains the only
+    /// state transition; the extra fact is test-only and read-only.
+    fn retain_selected_main_full_preflight_poison(
+        &mut self,
+        page: NonNull<Page>,
+        popped_block: Option<NonNull<u8>>,
+        preflight: SelectedMainArenaRegularFullPreflightError,
+    ) {
+        self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
+        #[cfg(test)]
+        {
+            self.collection_poison
+                .as_mut()
+                .expect("the selected-main full failure retains its collection poison")
+                .selected_main_full_preflight = Some(preflight);
+        }
+        #[cfg(not(test))]
+        let _ = preflight;
     }
 
     /// Retains a normally transferred A-to-B page when a later target queue,
@@ -38267,6 +38374,58 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     #[cfg(test)]
     pub(crate) fn direct_page(&self, index: usize) -> Option<*mut Page> {
         self.session.direct_page(index)
+    }
+
+    /// Copies the all-free finish predicates after a focused lifecycle
+    /// regression retained its exact engine. A retained collection record
+    /// reports its source error and page class without exposing a raw page or
+    /// a recovery operation.
+    #[cfg(test)]
+    pub(crate) fn test_finish_audit(&self) -> PageAllocatorEngineFinishAudit {
+        let collection_poison = self.collection_poison.map(|poison| {
+            // SAFETY: the retained record itself owns the page-lifetime
+            // precondition. This observation neither mutates nor publishes
+            // the page pointer beyond copied source geometry and provenance.
+            let page = unsafe { poison.page.as_ref() };
+            let memory = page.memid();
+            let page_kind = size_class::page_kind_for_block_size(page.block_size());
+            PageAllocatorEngineCollectionPoisonAudit {
+                error: poison.error,
+                page_kind,
+                queue_bin: page_queue_bin(page),
+                used: page.used(),
+                reserved: usize::from(page.reserved()),
+                memory: PageAllocatorEngineCollectionPoisonMemoryAudit {
+                    kind: memory.kind(),
+                    size: memory.size(),
+                    arena_slice: memory.arena_memory().map(|arena| {
+                        (arena.slice_index as usize, arena.slice_count as usize)
+                    }),
+                    is_pinned: memory.is_pinned(),
+                    initially_committed: memory.initially_committed(),
+                    initially_zero: memory.initially_zero(),
+                },
+                selected_main_full_preflight: poison.selected_main_full_preflight,
+            }
+        });
+        PageAllocatorEngineFinishAudit {
+            page_count: self.session.theap().page_count(),
+            queue_counts: core::array::from_fn(|bin| {
+                self.session
+                    .queue(bin)
+                    .map_or(usize::MAX, |queue| queue.count())
+            }),
+            nonempty_direct_count: (0..PAGES_DIRECT)
+                .filter(|index| self.session.direct_page(*index) != Some(EMPTY_PAGE.as_ptr()))
+                .count(),
+            collection_poisoned: self.is_collection_poisoned(),
+            pending_os_release: self.pending_os_release.is_some(),
+            collection_poison,
+            page_commit_poisoned: self.page_commit_poison,
+            static_main_mapped_regular_claim_terminal: self
+                .session
+                .is_static_main_mapped_regular_claim_terminal(),
+        }
     }
 
     /// Test-only corruption seam for a direct-cache preflight regression.
@@ -38870,6 +39029,20 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             .session
             .selects_selected_main_arena_source_full_abandonment()
         {
+            // Pinned `mi_page_to_full` gives every selected page to
+            // `_mi_page_abandon`. Regular pages can become bitmap-mapped after
+            // false collection; an arena singleton stays unmapped and its
+            // later source free takes the singleton terminal tail.
+            if matches!(
+                size_class::page_kind_for_block_size(unsafe { page.as_ref() }.block_size()),
+                Some(PageKind::Singleton)
+            ) {
+                return self.abandon_selected_main_arena_singleton_page_from_full(
+                    bin,
+                    page,
+                    popped_block,
+                );
+            }
             return self.abandon_selected_main_arena_regular_page_from_full(bin, page, popped_block);
         }
         let regular = match self.session.queue_mut(bin) {
@@ -38917,37 +39090,93 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         self.move_regular_to_full(bin, page.as_ptr(), None).is_ok()
     }
 
-    /// Validates the selected static-main ordinary source full-page form.
+    /// Validates the common selected static-main source full-page form.
     ///
-    /// Policy has already selected `page.c:mi_page_to_full`'s abandoning arm.
-    /// This only proves that the present Rust page/arena capability can carry
-    /// that arm. It must never choose the non-abandoning arm on false: callers
-    /// retain the transition before returning its explicit lifecycle failure.
-    fn selected_main_arena_regular_page_can_abandon_from_full(
+    /// Pinned `page.c:mi_page_to_full` gives both regular arena pages and
+    /// arena singletons to `_mi_page_abandon`.  The class-specific helpers
+    /// below keep their distinct arena publication and later-free contracts;
+    /// this shared preflight proves only the owner, arena provenance, and live
+    /// source-page association that both forms require.
+    fn selected_main_arena_full_page_preflight(
         &self,
-        bin: usize,
         page: NonNull<Page>,
-    ) -> bool {
+    ) -> Result<(), SelectedMainArenaRegularFullPreflightError> {
         if !self
             .session
             .permits_selected_main_arena_ordinary_full_abandonment()
-            || !self.session.theap().allows_page_abandon()
-            || self.session.theap().page_full_retain() != 2
-            || bin >= ARENA_BIN_COUNT
         {
-            return false;
+            return Err(SelectedMainArenaRegularFullPreflightError::NotSelectedMainArenaOwner);
+        }
+        if !self.session.theap().allows_page_abandon() {
+            return Err(SelectedMainArenaRegularFullPreflightError::PageAbandonDisabled);
+        }
+        if self.session.theap().page_full_retain() != 2 {
+            return Err(SelectedMainArenaRegularFullPreflightError::UnexpectedFullRetain);
         }
         // SAFETY: callers hold the unique live page-engine borrow and this
         // is the pre-transition read of one queue-linked page. A producer can
         // touch only the disjoint atomic remote-free projection.
         let page = unsafe { page.as_ref() };
-        page.memid().kind() == MemoryKind::Arena
-            && matches!(
-                size_class::page_kind_for_block_size(page.block_size()),
-                Some(PageKind::Small | PageKind::Medium | PageKind::Large)
-            )
-            && !page_is_in_full(page)
-            && page.theap() == self.session.theap() as *const _ as *mut _
+        if page.memid().kind() != MemoryKind::Arena {
+            return Err(SelectedMainArenaRegularFullPreflightError::MemoryIsNotArena);
+        }
+        if page_is_in_full(page) {
+            return Err(SelectedMainArenaRegularFullPreflightError::AlreadyFull);
+        }
+        if page.theap() != self.session.theap() as *const _ as *mut _ {
+            return Err(SelectedMainArenaRegularFullPreflightError::ForeignTheap);
+        }
+        Ok(())
+    }
+
+    /// Validates the selected static-main regular-page variant of the source
+    /// full-page abandonment transition.  A regular page may become
+    /// arena-bitmap mapped after false collection, so its source queue must
+    /// name one ordinary arena bin.
+    fn selected_main_arena_regular_page_full_preflight(
+        &self,
+        bin: usize,
+        page: NonNull<Page>,
+    ) -> Result<(), SelectedMainArenaRegularFullPreflightError> {
+        self.selected_main_arena_full_page_preflight(page)?;
+        if bin >= ARENA_BIN_COUNT {
+            return Err(SelectedMainArenaRegularFullPreflightError::NonArenaQueue);
+        }
+        // SAFETY: the common preflight above retained the same exclusive page
+        // borrow through this class-specific read.
+        let page = unsafe { page.as_ref() };
+        if !matches!(
+            size_class::page_kind_for_block_size(page.block_size()),
+            Some(PageKind::Small | PageKind::Medium | PageKind::Large)
+        ) {
+            return Err(SelectedMainArenaRegularFullPreflightError::PageKindIsNotRegular);
+        }
+        Ok(())
+    }
+
+    /// Validates the selected static-main arena-singleton variant of the
+    /// source full-page abandonment transition.  The singleton remains in
+    /// `BIN_HUGE` through its queue detach and has no `pages_abandoned[bin]`
+    /// bitmap publication.
+    fn selected_main_arena_singleton_page_full_preflight(
+        &self,
+        bin: usize,
+        page: NonNull<Page>,
+    ) -> Result<(), SelectedMainArenaRegularFullPreflightError> {
+        self.selected_main_arena_full_page_preflight(page)?;
+        if bin != BIN_HUGE {
+            return Err(SelectedMainArenaRegularFullPreflightError::SingletonQueueIsNotHuge);
+        }
+        // SAFETY: the common preflight above retained the same exclusive page
+        // borrow through this class-specific read.
+        let page = unsafe { page.as_ref() };
+        if size_class::page_kind_for_block_size(page.block_size()) != Some(PageKind::Singleton) {
+            return Err(SelectedMainArenaRegularFullPreflightError::PageKindIsNotSingleton);
+        }
+        if size_class::bin(page.block_size()) != Some(BIN_HUGE) {
+            return Err(SelectedMainArenaRegularFullPreflightError::SingletonQueueIsNotHuge);
+        }
+        Ok(())
     }
 
     /// Ports the ordinary selected-main arena part of page.c full-page
@@ -38961,8 +39190,8 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         page: NonNull<Page>,
         popped_block: Option<NonNull<u8>>,
     ) -> Result<(), PageToFullError> {
-        if !self.selected_main_arena_regular_page_can_abandon_from_full(bin, page) {
-            self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
+        if let Err(preflight) = self.selected_main_arena_regular_page_full_preflight(bin, page) {
+            self.retain_selected_main_full_preflight_poison(page, popped_block, preflight);
             return Err(PageToFullError::Collection(PageCollectError::Lifecycle));
         }
         if let Err(error) = self.page_free_collect_false(page) {
@@ -39059,6 +39288,206 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 let error = PageCollectError::Abandon(error);
                 self.retain_page_collect_poison(page, error, popped_block);
                 Err(PageToFullError::Collection(error))
+            }
+        }
+    }
+
+    /// Ports the selected-main arena-singleton full-page transition.
+    ///
+    /// `page.c:_mi_page_abandon` applies to a full arena singleton just as it
+    /// does to a regular page: false collection comes first, then the page is
+    /// removed from `BIN_HUGE`, its originating Theap association stays in the
+    /// metadata for source reclaim-on-free, and `arena.c` leaves the singleton
+    /// unmapped.  A later free therefore enters the established singleton
+    /// abandoned-page terminal tail through its PageMap-derived claim; this
+    /// allocation-time transition never substitutes a `BIN_FULL` owner or a
+    /// post-exit-only route.
+    fn abandon_selected_main_arena_singleton_page_from_full(
+        &mut self,
+        bin: usize,
+        page: NonNull<Page>,
+        popped_block: Option<NonNull<u8>>,
+    ) -> Result<(), PageToFullError> {
+        if let Err(preflight) = self.selected_main_arena_singleton_page_full_preflight(bin, page) {
+            self.retain_selected_main_full_preflight_poison(page, popped_block, preflight);
+            return Err(PageToFullError::Collection(PageCollectError::Lifecycle));
+        }
+        if let Err(error) = self.page_free_collect_false(page) {
+            self.retain_page_collect_poison(page, error, popped_block);
+            return Err(PageToFullError::Collection(error));
+        }
+
+        // The source all-free check precedes queue removal. A singleton is
+        // normally one live block here, but a joined remote free may have made
+        // it empty during the exact false collection.
+        let used = unsafe { Page::owner_used_at(page) };
+        if used == 0 {
+            if self.release_page(bin, page.as_ptr()) {
+                return Ok(());
+            }
+            self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
+            return Err(PageToFullError::Collection(PageCollectError::Lifecycle));
+        }
+        if used != 1 || unsafe { page.as_ref() }.reserved() != 1 {
+            self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
+            return Err(PageToFullError::Collection(PageCollectError::Lifecycle));
+        }
+
+        let huge = match self.session.queue_mut(BIN_HUGE) {
+            Some(queue) => queue as *mut _,
+            None => {
+                self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
+                return Err(PageToFullError::Collection(PageCollectError::Lifecycle));
+            }
+        };
+        // SAFETY: false collection above retained this exact source-live
+        // `BIN_HUGE` member. `mi_page_queue_remove` detaches it before the
+        // abandoned identity is published; page metadata keeps its original
+        // Theap pointer for the subsequent source free/reclaim decision.
+        unsafe { page_queue_remove_metadata(&mut *huge, page.as_ptr()) };
+        if !self.session.note_page_removed() {
+            self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
+            return Err(PageToFullError::Collection(PageCollectError::Lifecycle));
+        }
+
+        // Arena singletons have no abandoned bitmap entry.  The unmappable
+        // helper establishes `THREAD_ID_ABANDONED` while deliberately leaving
+        // the original Theap association intact, then performs the source
+        // owner-bit unown loop.  A later exact free is handled by the existing
+        // PageMap-derived singleton continuation.
+        let result = unsafe {
+            abandoned::abandon_unmappable_after_collect_with_before_unown(page, || {
+                self.session.theap().record_page_abandoned();
+                Ok(())
+            })
+        };
+        match result {
+            Ok(AbandonResult::UnownedUnmapped) => Ok(()),
+            Ok(AbandonResult::Empty) => {
+                if self.release_queue_detached_abandoned_arena_page(page) {
+                    Ok(())
+                } else {
+                    self.retain_page_collect_poison(
+                        page,
+                        PageCollectError::Lifecycle,
+                        popped_block,
+                    );
+                    Err(PageToFullError::Collection(PageCollectError::Lifecycle))
+                }
+            }
+            Ok(_) => {
+                self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
+                Err(PageToFullError::Collection(PageCollectError::Lifecycle))
+            }
+            Err(error) => {
+                let error = PageCollectError::Abandon(error);
+                self.retain_page_collect_poison(page, error, popped_block);
+                Err(PageToFullError::Collection(error))
+            }
+        }
+    }
+
+    /// Returns whether the direct local-free API reached the source state
+    /// produced by [`Self::abandon_selected_main_arena_singleton_page_from_full`].
+    ///
+    /// The public engine API still requires an exact allocation from this
+    /// session and excludes a joined producer through its complete operation.
+    /// Under that proof these reads distinguish the page's preserved
+    /// originating Theap pointer from its atomic `THREAD_ID_ABANDONED`
+    /// identity. They do not turn an arbitrary foreign abandoned page into a
+    /// local release authority.
+    fn selected_main_arena_abandoned_singleton_can_free(&self, page: NonNull<Page>) -> bool {
+        if !self
+            .session
+            .permits_selected_main_arena_ordinary_full_abandonment()
+        {
+            return false;
+        }
+        // SAFETY: `free` has one checked PageMap result for the caller's exact
+        // current allocation and its exclusive session contract excludes a
+        // concurrent plain-field transition through this direct boundary.
+        let page_ref = unsafe { page.as_ref() };
+        if page_ref.memid().kind() != MemoryKind::Arena
+            || size_class::page_kind_for_block_size(page_ref.block_size())
+                != Some(PageKind::Singleton)
+            || size_class::bin(page_ref.block_size()) != Some(BIN_HUGE)
+            || !page_ref.is_queue_detached()
+            || page_ref.theap() != self.session.theap() as *const _ as *mut _
+        {
+            return false;
+        }
+        // SAFETY: this uses only the source identity atomic. The former
+        // Theap pointer remains provenance for C's reclaim-on-free policy but
+        // cannot make an abandoned page locally owned again.
+        let state = unsafe { Page::abandonment_state_at(page) };
+        unsafe { state.xthread_id.as_ref() }.load(Ordering::Acquire) & !PAGE_FLAG_MASK
+            == THREAD_ID_ABANDONED
+    }
+
+    /// Completes `free.c:mi_free_block_mt(..., allow_collect=true)` for an
+    /// arena singleton that was detached by the ordinary selected-main
+    /// full-page transition. The source never tries same-Theap reclaim for a
+    /// singleton (`block_size > MI_MEDIUM_MAX_OBJ_SIZE`); after the claimed
+    /// atomic free it must therefore reach the one-block terminal
+    /// `_mi_arenas_page_unabandon`/`_mi_arenas_page_free` tail or preserve the
+    /// exact failed owner.
+    fn free_selected_main_arena_abandoned_singleton(
+        &mut self,
+        page: NonNull<Page>,
+        block: NonNull<u8>,
+    ) -> Result<(), FreeError> {
+        // Validate the current client before the failed-reclaim tail publishes
+        // its atomic free-list link.  Pinned `mi_free_block_mt` performs the
+        // equivalent local block validation before it can change the remote
+        // head, so an invalid direct free cannot manufacture a terminal arena
+        // release from this detached singleton.
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
+            Ok(free_list) => free_list.validate_local_free_preflight(block),
+            Err(error) => Err(error),
+        };
+        if let Err(error) = preflight {
+            return Err(FreeError::InvalidBlock(error));
+        }
+        // SAFETY: the caller retained the exact source-abandoned singleton
+        // and canonical live block. The helper performs the only legal
+        // `allow_collect` CAS, then validates the abandoned identity before
+        // it observes ordinary singleton state.
+        match unsafe { abandoned::free_unmappable_after_failed_reclaim(page, block) } {
+            Ok(abandoned::UnmappedAbandonedFreeResult::Empty) => {
+                // The raw result retains the low owner bit through this exact
+                // terminal transition. `BIN_HUGE` was already detached by
+                // `_mi_page_abandon`, so this must not re-enter `release_page`.
+                if self.release_queue_detached_abandoned_arena_page(page) {
+                    Ok(())
+                } else {
+                    self.retain_page_collect_poison(page, PageCollectError::Lifecycle, Some(block));
+                    Err(FreeError::Lifecycle)
+                }
+            }
+            Ok(abandoned::UnmappedAbandonedFreeResult::PublishedToExistingOwner) => {
+                // A concurrent source collector owns the already-published
+                // remote head. This direct engine has no remaining queue or
+                // release authority for the detached singleton, exactly as
+                // `mi_free_block_mt` returns after its successful CAS.
+                Ok(())
+            }
+            Ok(
+                abandoned::UnmappedAbandonedFreeResult::ReabandonedMapped
+                | abandoned::UnmappedAbandonedFreeResult::UnownedUnmapped,
+            ) => {
+                // A one-block arena singleton cannot take either regular-page
+                // survivor outcome. Retain the page instead of inventing a
+                // mapped bitmap or a fresh queue owner.
+                self.retain_page_collect_poison(page, PageCollectError::Lifecycle, Some(block));
+                Err(FreeError::Lifecycle)
+            }
+            Err(error) => {
+                self.retain_page_collect_poison(
+                    page,
+                    PageCollectError::Abandon(error),
+                    Some(block),
+                );
+                Err(FreeError::Lifecycle)
             }
         }
     }
@@ -39747,6 +40176,8 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
             error,
             popped_block: None,
             test_recoverable,
+            #[cfg(test)]
+            selected_main_full_preflight: None,
         });
     }
 

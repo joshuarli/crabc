@@ -123,6 +123,7 @@ use crate::types::page_queue::{page_is_in_full, page_queue_has_member_link_coher
 use crate::size_class;
 #[cfg(test)]
 use crate::single_thread::{
+    PageAllocatorEngineFinishAudit,
     ThreadExitMappedRegularPagesPostExitRemoteFreeProducer,
     ThreadExitMappedRegularPagesPostExitRemoteFreeProducerPair,
 };
@@ -2649,6 +2650,18 @@ enum RuntimePersistentPageEngineFinishFailure<'attachment, 'main> {
     PageOwnerRetained,
 }
 
+/// A normal persistent engine could not clear the source fast slot into its
+/// all-free owner-exit drain. The retained engine remains the only owner of
+/// the still-attached page session, while the attachment error identifies the
+/// pre-transition condition for focused lifecycle evidence.
+#[must_use = "a failed runtime persistent-engine thread-exit transition retains its exact source owner"]
+enum RuntimePersistentPageEngineThreadExitDrainFailure<'attachment, 'main> {
+    Retained {
+        engine: RuntimePersistentPageEngine<'attachment, 'main>,
+        error: MainHeapThreadAttachmentError,
+    },
+}
+
 // SAFETY: the COLD -> INITIALIZING CAS gives one writer exclusive access to
 // `owner`; the final owner is written before PROCESS_ACTIVE's Release store
 // and is thereafter read immutably. The independent page-owner scheduler
@@ -2905,6 +2918,18 @@ impl Drop for RuntimeParkedPostExitRoute {
 }
 
 impl<'attachment, 'main> RuntimePersistentPageEngine<'attachment, 'main> {
+    /// Copies the retained all-free predicates for the one legacy
+    /// persistent-worker regression. The engine remains the sole owner of
+    /// every mutable page/map/arena capability.
+    #[cfg(test)]
+    #[inline]
+    fn test_finish_audit(&self) -> PageAllocatorEngineFinishAudit {
+        self.allocator
+            .as_ref()
+            .expect("a runtime persistent engine retains its normal allocator")
+            .test_finish_audit()
+    }
+
     #[inline]
     fn allocate(&mut self, request: usize, zero: bool) -> Option<core::ptr::NonNull<u8>> {
         self.allocator
@@ -3065,7 +3090,7 @@ impl<'attachment, 'main> RuntimePersistentPageEngine<'attachment, 'main> {
             RuntimeDormantPageOperation,
             ProcessPageArenaLease,
         ),
-        Self,
+        RuntimePersistentPageEngineThreadExitDrainFailure<'attachment, 'main>,
     > {
         let allocator = self
             .allocator
@@ -3077,10 +3102,13 @@ impl<'attachment, 'main> RuntimePersistentPageEngine<'attachment, 'main> {
             .expect("a runtime persistent engine retains its page-owner claim");
         match allocator.begin_thread_exit_drain() {
             Ok(drain) => Ok((drain, operation, self.pair)),
-            Err(MainHeapThreadProcessPageExitDrainFailure::Retained { allocator, .. }) => {
+            Err(MainHeapThreadProcessPageExitDrainFailure::Retained { allocator, error }) => {
                 self.allocator = Some(allocator);
                 self.operation = Some(operation);
-                Err(self)
+                Err(RuntimePersistentPageEngineThreadExitDrainFailure::Retained {
+                    engine: self,
+                    error,
+                })
             }
         }
     }
@@ -12435,33 +12463,73 @@ fn run_persistent_local_worker_workload(
 /// The operation owns the `READY -> BUSY -> READY` scheduler transition and
 /// can therefore be the same A-side capability that a separate focused test
 /// parks before one bounded B-side operation. This local witness does not
-/// park, transfer a client, or admit B; it proves that the prefixed C fixture
-/// exercises the typed scheduler without widening its ABI.
+/// park, transfer a client, or admit B; after it returns every local client it
+/// completes the existing all-free source thread-exit transaction. It proves
+/// that the prefixed C fixture exercises the typed scheduler without widening
+/// its ABI.
 fn run_runtime_persistent_local_worker_lifecycle<'attachment, 'main>(
     runtime: &'static RuntimeProcessStorage,
     attachment: &'attachment mut MainHeapThreadAttachment<'main>,
-) -> Result<PersistentLocalWorkerResult, ()> {
+) -> Result<PersistentLocalWorkerResult, PersistentLocalWorkerLifecycleError> {
     let mut engine = runtime
         .begin_persistent_later_engine(attachment)
-        .map_err(|_| ())?;
+        .map_err(PersistentLocalWorkerLifecycleError::Begin)?;
     let workload = engine.run_persistent_local_workload();
-    match (workload, engine.finish()) {
+    // This worker is ending, not merely yielding an already-empty allocator.
+    // `mi_thread_theaps_done` therefore runs `_mi_theap_collect_abandon` over
+    // every ordinary and full queue before the attachment clears its
+    // TLD/Theap roots. The ordinary persistent-engine finish only validates
+    // an already-empty allocator; it cannot substitute for thread exit.
+    let (drain, operation, pair) = match engine.begin_thread_exit_drain() {
+        Ok(parts) => parts,
+        Err(RuntimePersistentPageEngineThreadExitDrainFailure::Retained { engine, error }) => {
+            // A refused drain retains the attachment borrow, PageMap lease,
+            // and scheduler operation. Preserve that exact source owner;
+            // its attachment error is the regression's observable cause.
+            #[cfg(test)]
+            let audit = engine.test_finish_audit();
+            core::mem::forget(engine);
+            #[cfg(test)]
+            return Err(PersistentLocalWorkerLifecycleError::DrainBegin(error, audit));
+            #[cfg(not(test))]
+            return Err(PersistentLocalWorkerLifecycleError::DrainBegin(error));
+        }
+    };
+    // The paired arena identity authorizes only the conversion to the drain.
+    // The all-free source path owns no post-exit client route.
+    let _ = pair;
+    drain
+        .finish()
+        .map_err(|_| PersistentLocalWorkerLifecycleError::DrainFinish)?;
+    attachment
+        .finish_after_page_drain()
+        .map_err(|_| PersistentLocalWorkerLifecycleError::AttachmentFinish)?;
+    let finish_state = operation.finish_state();
+    let finish = operation
+        .settle(finish_state)
+        .map_err(|_| PersistentLocalWorkerLifecycleError::FinishPageOwner);
+    match (workload, finish) {
         (Ok(()), Ok(())) => Ok(PersistentLocalWorkerResult::Completed),
         (Err(PersistentLocalWorkerError::AllocationFailed), Ok(())) => {
             Ok(PersistentLocalWorkerResult::AllocationFailed)
         }
-        (
-            Err(PersistentLocalWorkerError::PatternMismatch | PersistentLocalWorkerError::Free),
-            Ok(()),
-        ) => {
+        (Err(PersistentLocalWorkerError::PatternMismatch), Ok(())) => {
             // The lower engine did reach its all-free finish, but this witness
             // observed a broken local invariant. Match the former
             // closure-shaped route: preserve a terminal process outcome rather
             // than reopening ticket zero after an unaccounted test failure.
             runtime.retain_page_owner();
-            Err(())
+            Err(PersistentLocalWorkerLifecycleError::WorkloadInvariant(
+                PersistentLocalWorkerError::PatternMismatch,
+            ))
         }
-        (_, Err(_)) => Err(()),
+        (Err(PersistentLocalWorkerError::Free), Ok(())) => {
+            runtime.retain_page_owner();
+            Err(PersistentLocalWorkerLifecycleError::WorkloadInvariant(
+                PersistentLocalWorkerError::Free,
+            ))
+        }
+        (_, Err(error)) => Err(error),
     }
 }
 
@@ -12469,6 +12537,25 @@ fn run_runtime_persistent_local_worker_lifecycle<'attachment, 'main>(
 enum PersistentLocalWorkerResult {
     Completed,
     AllocationFailed,
+}
+
+/// The exact bounded-operation boundary that prevents the persistent local
+/// witness from reporting an ordinary completed worker. This remains private
+/// to the runtime seam so callers still receive only the source-shaped public
+/// completion class, while focused regressions retain the actual failure
+/// rather than erasing it through `Result::ok`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PersistentLocalWorkerLifecycleError {
+    AttachmentUnavailable,
+    Begin(RuntimePersistentPageEngineBeginError),
+    WorkloadInvariant(PersistentLocalWorkerError),
+    #[cfg(test)]
+    DrainBegin(MainHeapThreadAttachmentError, PageAllocatorEngineFinishAudit),
+    #[cfg(not(test))]
+    DrainBegin(MainHeapThreadAttachmentError),
+    DrainFinish,
+    AttachmentFinish,
+    FinishPageOwner,
 }
 
 // A regular small page has at most this many exact 37-byte requests: source
@@ -13784,7 +13871,10 @@ pub fn ticket_zero_later_thread_persistent_local_workload() -> TicketZeroLaterTh
 
     let page_result = (|| {
         let slot = current_thread_slot();
-        let attachment = slot.attachment.as_mut().ok_or(())?;
+        let attachment = slot
+            .attachment
+            .as_mut()
+            .ok_or(PersistentLocalWorkerLifecycleError::AttachmentUnavailable)?;
         run_runtime_persistent_local_worker_lifecycle(&RUNTIME_PROCESS, attachment)
     })()
     .ok();
@@ -14659,7 +14749,7 @@ fn finish_current_thread_all_free_page_owner_after_user_destructors(
 
     let (drain, operation, pair) = match engine.begin_thread_exit_drain() {
         Ok(parts) => parts,
-        Err(engine) => {
+        Err(RuntimePersistentPageEngineThreadExitDrainFailure::Retained { engine, .. }) => {
             core::mem::forget(engine);
             retain_current_thread_live_page_owner();
             return ThreadFinishResult::Retained;
@@ -14859,7 +14949,7 @@ fn finish_current_thread_page_owner_after_user_destructors(
 
     let (drain, operation, pair) = match engine.begin_thread_exit_drain() {
         Ok(parts) => parts,
-        Err(engine) => {
+        Err(RuntimePersistentPageEngineThreadExitDrainFailure::Retained { engine, .. }) => {
             // The engine still owns its attachment borrow and PageMap lease.
             // It cannot be returned to compiler TLS as a self-reference, so
             // retain that exact source owner rather than dropping into a
@@ -16533,21 +16623,17 @@ mod tests {
                     let completed = run_runtime_persistent_local_worker_lifecycle(
                         runtime,
                         &mut attachment,
-                    )
-                    .ok();
+                    );
                     assert_eq!(
                         completed,
-                        Some(PersistentLocalWorkerResult::Completed),
-                        "the typed runtime operation lends its published pair to persistent local worker {worker_number}"
+                        Ok(PersistentLocalWorkerResult::Completed),
+                        "the typed runtime operation retains its exact begin, workload, or finish failure for persistent local worker {worker_number}"
                     );
                     assert_eq!(
                         runtime.page_owner_state.load(Ordering::Acquire),
                         PAGE_OWNER_READY,
                         "worker {worker_number} returns ticket zero only after its typed engine finishes"
                     );
-                    attachment
-                        .finish_after_user_destructors()
-                        .expect("the empty persistent worker engine restores normal worker teardown");
                 })
                 .join()
                 .expect("each later-main page engine stays on its worker thread");

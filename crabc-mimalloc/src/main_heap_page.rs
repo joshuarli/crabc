@@ -2992,6 +2992,14 @@ impl<'attachment, 'main> MainHeapThreadProcessPageAllocator<'attachment, 'main> 
         self.engine.queue_count(bin)
     }
 
+    /// Read-only retained-state evidence for the legacy persistent-worker
+    /// regression. It cannot alter this engine's page, map, or arena owner.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_finish_audit(&self) -> crate::single_thread::PageAllocatorEngineFinishAudit {
+        self.engine.test_finish_audit()
+    }
+
     #[cfg(test)]
     #[inline]
     fn test_enable_page_commit_on_demand(&mut self) {
