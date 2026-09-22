@@ -32,6 +32,13 @@ huge backing does not qualify kernel hugetlb or NUMA. Logs live in the existing
 allocator artifacts directory under `x86_64/arena-destroy`. The runtime
 `destroy_on_exit` option/subprocess-heap teardown caller remains outstanding.
 
+`./compat/allocator/run-x86_64.sh allocator-heap-destroy` compares the pinned-C
+main-Heap Theap-list destruction phase after `process_done` has retained worker
+TLS state with the matching Rust source-owner transfer. It records only the
+observed list/TLD/thread-count transition. Detached TLD backing, arena and
+PageMap release, Heap statistics and bookkeeping, and full subprocess
+destruction remain separate work.
+
 This directory owns the reproducible source, inventory, C-oracle, and later
 Rust/C evidence for the fixed mimalloc v3.5.0 semantic port. Native
 Linux/x86-64 little-endian development is active alongside runtime parity;

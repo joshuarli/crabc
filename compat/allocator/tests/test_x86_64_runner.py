@@ -109,6 +109,16 @@ fi
         ])
         self.assertIn(f"{self.boundary / 'target'}:/workspace/target".encode(), args)
 
+    def test_heap_destroy_command_is_closed_and_runs_the_pinned_differential(self):
+        result = self.launch("allocator-heap-destroy")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        args = self.capture.read_bytes().split(b"\0")
+        self.assertEqual(args[-3:-1], [b"python3", b"compat/allocator/heap_destroy.py"])
+
+        rejected = self.launch("allocator-heap-destroy", "unexpected")
+        self.assertEqual(rejected.returncode, 2)
+        self.assertIn("allocator-heap-destroy takes no arguments", rejected.stderr)
+
     def test_opt_in_allocator_budget_forwards_cargo_and_caps_the_container(self):
         result = self.launch(
             "allocator-unit", "--filter", "os::tests::native_large_page_retry_suppression",
