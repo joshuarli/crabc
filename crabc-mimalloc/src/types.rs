@@ -8754,6 +8754,7 @@ pub(crate) mod page_queue;
 
 #[path = "heap_destroy.rs"]
 pub(crate) mod heap_destroy;
+#[path = "heap_registry.rs"]
 pub(crate) mod heap_registry;
 
 #[path = "metadata_session.rs"]
