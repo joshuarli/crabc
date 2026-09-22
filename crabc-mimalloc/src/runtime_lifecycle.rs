@@ -102,7 +102,10 @@ use crate::os::{MemoryConfig, PageSize, StartupInput};
 use crate::os::{MapAccess, Mapping};
 #[cfg(target_arch = "x86_64")]
 use crate::diagnostic_output::{ProcessDiagnosticInputs, RuntimeStderrOutput};
-use crate::process_init::{ProcessMainInitializationStorage, ProcessMainThread, ProcessMainInitError};
+use crate::process_init::{
+    ProcessMainBackingBinding, ProcessMainInitializationStorage, ProcessMainInitError,
+    ProcessMainThread,
+};
 use crate::process_arena::{
     ProcessPageArenaLease, ProcessPageArenaLeaseError, ProcessPageBackingLease, ProcessSharedArenaStorage,
 };
@@ -8265,7 +8268,7 @@ fn activate_current_thread_native_persistent_owner(
     let Some(pair) = current_native_process_page_backing() else {
         return Err(NativePersistentThreadOwnerAccessError::Unavailable);
     };
-    match with_current_thread_native_persistent_owner(|owner| owner.activate_page_engine(backing)) {
+    match with_current_thread_native_persistent_owner(|owner| owner.activate_page_engine(pair)) {
         Ok(Ok(())) => Ok(()),
         Ok(Err(_)) => {
             retain_current_thread_native_persistent_owner_for_teardown();

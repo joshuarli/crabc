@@ -6495,7 +6495,7 @@ mod tests {
         unsafe { Theap::reset_local_retired_bounds_at(first_pointer); }
         assert_eq!(first.retired_bounds(), (BIN_FULL, 0));
         let guard = heap.theaps_lock.lock().unwrap();
-        assert_eq!(first.hprev, second_pointer);
+        assert_eq!(unsafe { *first.hprev.get() }, second_pointer);
         guard.unlock().unwrap();
     }
 
