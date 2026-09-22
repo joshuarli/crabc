@@ -160,7 +160,7 @@ class CoverageLedgerTests(unittest.TestCase):
 
     def test_coverage_rejects_anchor_only_rust_subsumption_evidence(self) -> None:
         ledger = self.ledger()
-        self.capability(ledger, "error.termination.abort")["evidence"][0] = "docs/history/crabc-rs-delivery-plan.md#33"
+        self.capability(ledger, "error.termination.abort")["evidence"][0] = "docs/design/crabc-rs.md#capability-accounting"
         with self.assertRaisesRegex(harness.HarnessError, "anchor"):
             harness.validate_coverage(ledger)
 
@@ -183,12 +183,12 @@ class CoverageLedgerTests(unittest.TestCase):
 
     def test_coverage_requires_both_source_and_behavior_rust_subsumption_evidence(self) -> None:
         ledger = self.ledger()
-        self.capability(ledger, "numeric.scalar-basic")["source_evidence"] = ["docs/history/crabc-rs-delivery-plan.md"]
+        self.capability(ledger, "numeric.scalar-basic")["source_evidence"] = ["AGENTS.md"]
         self.capability(ledger, "numeric.scalar-basic")["behavior_evidence"] = [
             "docs/evidence/crabc-rs-subsumption.md"
         ]
         self.capability(ledger, "numeric.scalar-basic")["evidence"] = [
-            "docs/history/crabc-rs-delivery-plan.md",
+            "AGENTS.md",
             "docs/evidence/crabc-rs-subsumption.md",
         ]
         with self.assertRaisesRegex(harness.HarnessError, "behavior_evidence must identify"):
@@ -269,7 +269,7 @@ class CoverageLedgerTests(unittest.TestCase):
             ("scope_exception_id", "different-exception", "exception id changed"),
             ("scope_exception_version", 2, "exception version changed"),
             ("scope_exception_policy", "rust-subsumed", "exception policy changed"),
-            ("evidence", ["docs/history/crabc-rs-delivery-plan.md"], "exception evidence changed"),
+            ("evidence", ["AGENTS.md"], "exception evidence changed"),
             ("status", "verified", "scope-exception must be documented"),
             ("rust_equivalent", "Box/Vec", "neither Rust-subsumed nor ABI-only"),
         )

@@ -8,7 +8,7 @@ for current guidance.
 # Native x86_64 foundation evidence
 
 This closed, native Linux/x86_64 lane is foundation evidence named by
-[`x86-64.md`](../../x86-64.md).
+[`plan.md`](../../plan.md).
 
 The checked [`AArch64-to-x86 contract inventory`](../../docs/evidence/x86-aarch64-parity-inventory.md)
 derives its snapshot from the immutable
@@ -7634,4 +7634,4 @@ allocator evidence beyond the separately scoped wrapper, string-duplication,
 and observability artifacts, and exposes no generic Cargo, shell, general
 `crabc-libc` artifact, dynamic-loader artifact, general CRT, or complete
 sysroot command. Those remain separate future completion work under
-`x86-64.md`; passing any command must not be reported as x86_64 runtime parity.
+`plan.md`; passing any command must not be reported as x86_64 runtime parity.

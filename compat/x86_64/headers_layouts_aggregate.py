@@ -342,7 +342,8 @@ def header_completion_assessment_contract(
 
     This contract intentionally names neither a provider audit nor a runtime
     gate.  Those facts remain reportable downstream, but adding one here would
-    create the reverse dependency prohibited by ``x86-64.md``.
+    create a reverse dependency on later gates in the ordered qualification
+    chain in ``plan.md``.
     """
 
     raw = foundation.get("header_completion_assessment")

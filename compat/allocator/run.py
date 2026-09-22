@@ -297,7 +297,7 @@ M1_FOUNDATIONS_GLOBAL_EVIDENCE = (
 )
 
 # M2 is an intentionally partial memory-substrate gate.  The eight categories
-# are the closure boundary from native-mimalloc.md; a report may record focused
+# are the closure boundary from plan.md; a report may record focused
 # evidence for one category without silently promoting the other seven.
 M2_MEMORY_SUBSTRATE_COMPONENT_IDS = (
     "vm-primitives",

@@ -88,8 +88,8 @@ class ElfMetadataTests(unittest.TestCase):
             evidence.public_metadata(self.path)
 
     def test_artifact_cannot_escape_checkout_scratch(self):
-        outside = ROOT / 'SCOPE.md'
-        item = {'path': 'SCOPE.md', 'sha256': evidence.digest(outside), 'size': outside.stat().st_size}
+        outside = ROOT / 'AGENTS.md'
+        item = {'path': 'AGENTS.md', 'sha256': evidence.digest(outside), 'size': outside.stat().st_size}
         with self.assertRaises(evidence.EvidenceError):
             evidence.artifact(item)
 

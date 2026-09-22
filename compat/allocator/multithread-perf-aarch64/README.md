@@ -1,7 +1,7 @@
 # AArch64 local multithread allocator scaling smoke
 
 `run.py` is a deliberately narrow early architecture smoke for the contract in
-[`native-mimalloc.md`](../../../native-mimalloc.md): once a thread owns an
+[`plan.md`](../../../plan.md#production-architecture): once a thread owns an
 already-initialized page, local allocation and free must not serialize through
 a process-global scheduler or a PageMap mutation lease. It measures only
 independent, thread-local `mi_malloc(64)` / touch / `mi_free` work.

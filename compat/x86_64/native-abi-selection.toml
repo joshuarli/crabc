@@ -798,7 +798,7 @@ requirements = ["explicit native facade consumer/protocol selection and complete
 [[structural_groups]]
 id = "unattributed-static-source"
 members = ["DW.ref.endhostent", "__stack_chk_fail_local"]
-sources = ["SCOPE.md", "compat/x86_64/native-abi-selection.md"]
+sources = ["AGENTS.md", "compat/x86_64/native-abi-selection.md"]
 disposition = "unresolved"
 reason = "Exact source attribution remains unresolved; no unwinder investigation is authorized."
 requirements = ["authorized exact owner accounting; retained d8 source audit267e737f only preserves unresolved observations"]
@@ -806,7 +806,7 @@ requirements = ["authorized exact owner accounting; retained d8 source audit267e
 [[structural_groups]]
 id = "restricted-static-source"
 members = ["__mi_theap_cached", "__mi_theap_default", "__mi_theap_main", "_mi_cpu_movsb_max", "_mi_cpu_stosb_max", "_mi_page_empty", "_mi_page_map", "_mi_process_is_initialized", "_mi_theap_empty", "_mi_theap_empty_wrong", "heap_main", "theap_main"]
-sources = ["SCOPE.md", "compat/x86_64/native-abi-selection.md"]
+sources = ["AGENTS.md", "compat/x86_64/native-abi-selection.md"]
 disposition = "unresolved"
 reason = "Exact source attribution remains unresolved by restriction; no allocator metadata investigation or inherited shared visibility waiver."
 requirements = ["authorized exact owner accounting; retained d8 source audit267e737f only preserves unresolved observations"]

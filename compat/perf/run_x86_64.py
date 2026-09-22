@@ -3541,7 +3541,7 @@ def collect(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
 
     A validated owned-dynamic-qualification receipt is deliberately only a
     supplied-product prerequisite.  It cannot stand in for the correctness
-    closed runtime predecessor chain mandated by ``x86-64.md``.  Keeping this
+    closed runtime predecessor chain mandated by ``plan.md``.  Keeping this
     command fail-closed prevents an attractive three-report selection from
     becoming a benchmark or release claim while the actual owner is absent.
     The immutable roster still records the exact future consecutive requests.

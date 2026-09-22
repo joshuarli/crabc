@@ -38,7 +38,11 @@ kernel operation.
   does not grow an async runtime, portability framework, process supervisor,
   security-policy layer, or C-varargs imitation.
 - Use Rustix only as a pinned API/behavior/source oracle. It is never a
-  production dependency.
+  production dependency, an implementation to copy, or a promise of
+  unconditional source compatibility; `compat/rustix/api.toml` records each
+  correspondence and exclusion. `io_uring` is a separate extended Linux
+  surface outside libc-native parity, and the undocumented, unstable
+  `rustix::runtime` module is not an application-facing API to mirror.
 
 ## Capability accounting
 
@@ -53,8 +57,6 @@ The exact classification and scope limits for deferred groups are in
 [`compat/crabc-rs/coverage.toml`](../../compat/crabc-rs/coverage.toml); the
 current completion frontier is in the Progress status section of
 [`plan.md`](../../plan.md), and acceptance remains in the relevant contract.
-Completed delivery rationale is preserved in the
-[historical `crabc-rs` record](../history/crabc-rs-delivery-plan.md).
 
 ## Bounded netdb snapshots
 

@@ -62,7 +62,8 @@ Musl's public headers declare none of these spellings. Their presence in the
 combined musl libc/loader dynamic symbol table remains an ABI input; it is
 not an instruction to reproduce that source's internal stage graph.
 
-The native resolution under `x86-64.md` lines 118 and 676 is explicit:
+The native resolution under the final provider-closure rule in `plan.md`
+(Families and public ABI) is explicit:
 
 | Identity | Resolved native structural boundary |
 | --- | --- |

@@ -268,9 +268,10 @@ enum ModelTerminalRelease {
 }
 
 /// A finite abstraction of the page/client lifetime relation from
-/// `native-mimalloc.md` §4.5. It is not a production allocator state machine:
-/// it states the cross-module proof that lets the real source-shaped atomics
-/// below operate on plain PageMap entries without a dangling producer.
+/// `plan.md` (Production architecture). It is not a production allocator
+/// state machine: it states the cross-module proof that lets the real
+/// source-shaped atomics below operate on plain PageMap entries without a
+/// dangling producer.
 ///
 /// `begin_live_remote_publication` and `begin_post_exit_publication` model
 /// the caller's PageMap lookup-to-atomic-publication lifetime. `begin_owner_exit`

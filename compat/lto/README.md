@@ -1,7 +1,7 @@
 # Static/build-std LTO evidence matrix
 
 `run.py` is a bounded, dependency-free measurement prototype for the four
-configurations documented in the [historical runtime plan](../../docs/history/runtime-plan.md):
+configurations below:
 
 | ID | Configuration | Build contract |
 | --- | --- | --- |

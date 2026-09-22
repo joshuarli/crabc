@@ -59,7 +59,7 @@ required_families = [
 [[excluded_surface]]
 id = "allocator.mimalloc-private"
 reason = "Private fixed-allocator evidence is neither crabc-libc integration nor x86 runtime/platform support."
-evidence = ["compat/allocator/README.md", "native-mimalloc.md"]
+evidence = ["compat/allocator/README.md", "plan.md"]
 
 # This is a native oracle-toolchain gate, not a crabc runtime artifact.  It
 # must remain first: every C/POSIX family below that uses musl as its oracle
@@ -1602,7 +1602,7 @@ source_owners = [
   "compat/x86_64/tests/test_runner.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "x86-64.md",
+  "plan.md",
   "scripts/dev-x86_64.sh",
   "compat/x86_64/libc_header_layouts_baseline_probe.c",
   "compat/x86_64/libc_header_layouts_baseline_probe.cpp",
@@ -3019,7 +3019,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -3056,7 +3055,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -3100,7 +3098,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -3144,7 +3141,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -3189,7 +3185,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -3234,7 +3229,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -3278,7 +3272,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -3323,7 +3316,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -3370,7 +3362,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -3426,7 +3417,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -3447,7 +3437,7 @@ oracle = [
 [[family.verified_artifact]]
 id = "static-c-temporary-names"
 description = "Private native x86 opt-in mixed-runtime legacy C temporary-name artifact inside still-planned `libc.posix-runtime`. It ports pinned musl 1.2.6 `src/stdio/tmpnam.c::tmpnam`, `src/stdio/tempnam.c::tempnam`, and shared `src/temp/__randname.c::__randname`. The frozen default selected-static archive remains unchanged; `x86-temporary-names` adds exactly `tempnam` and `tmpnam` over the complete `x86-allocator-runtime,x86-allocator-string-duplication` closure. `tmpnam` retains caller-owned or unsynchronized process-global L_tmpnam=20 storage. `tempnam` defaults only null directory/prefix arguments to `/tmp`/`temp`, preserves empty and trailing-slash spelling, rejects a constructed length at least PATH_MAX=4096 with ENAMETOOLONG=36, and returns a selected strdup allocation that its caller frees. Both generate at most 100 CLOCK_REALTIME/TID six-byte `A`-`P`/`a`-`p` candidates and use raw Linux readlink=89 with one-byte output; only raw -ENOENT=2 selects a currently absent pathname. Neither creates, opens, reserves, unlinks, normalizes, or consults TMPDIR, so it makes no security, uniqueness, descriptor, or filesystem-policy guarantee. The shared helper uses raw clock/gettid rather than musl's VDSO-first clock and pthread TCB paths, so seccomp can select its target-local NULL/raw-errno fail-closed branch where musl may still generate a suffix. The stdio C/C++ gate proves unconditional tmpnam/L_tmpnam plus GNU/BSD/any-X/Open tempnam/P_tmpdir visibility, including X/Open 800, and unmangled C++ linkage. Its mixed candidate owns this client and selected duplication/allocator/errno/backend closure while rejecting pinned-musl temporary-name and allocation implementations. It does not select mkstemp-family/mkdtemp/tmpfile, a safe Rust pathname API, general temporary-file policy, generic filesystem runtime, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
-source_owners = ["COMPATIBILITY-PROFILE.md", "compat/upstreams.toml", "compat/x86_64/temporary-names-provider.toml", "libc/Cargo.toml", "libc/src/lib.rs", "libc/src/c_abi/x86_64/static_c_abi.rs", "libc/src/c_abi/x86_64/temp_name_random.rs", "libc/src/c_abi/x86_64/temporary_names.rs", "libc/src/c_abi/x86_64/allocator_string_duplication.rs", "libc/src/c_abi/x86_64/errno.rs", "libc/src/c_abi/x86_64/static_tls.rs", "libc/src/c_abi/x86_64/syscall.rs", "include/errno.h", "include/features.h", "include/stddef.h", "include/stdint.h", "include/stdio.h", "include/stdlib.h", "include/bits/alltypes.h", "include/sys/prctl.h", "include/sys/syscall.h", "include/bits/syscall.h", "compat/x86_64/temporary_names_header_abi_probe.c", "compat/x86_64/temporary_names_header_abi_probe.cpp", "compat/x86_64/run_temporary_names_header_abi.sh", "compat/x86_64/libc_temporary_names_probe.c", "compat/x86_64/run_libc_temporary_names.sh", "compat/x86_64/tests/test_libc_temporary_names.py", "compat/x86_64/tests/test_feature_archive_roster.py", "compat/x86_64/tests/test_header_callable_disposition.py", "compat/x86_64/tests/test_header_callable_inventory.py", "compat/x86_64/tests/test_parity_ledger.py", "compat/x86_64/tests/test_runner.py", "compat/x86_64/validate_parity_ledger.py", "compat/x86_64/README.md", "plan.md", "x86-64.md", "scripts/dev-x86_64.sh", "scripts/check_structure.py"]
+source_owners = ["COMPATIBILITY-PROFILE.md", "compat/upstreams.toml", "compat/x86_64/temporary-names-provider.toml", "libc/Cargo.toml", "libc/src/lib.rs", "libc/src/c_abi/x86_64/static_c_abi.rs", "libc/src/c_abi/x86_64/temp_name_random.rs", "libc/src/c_abi/x86_64/temporary_names.rs", "libc/src/c_abi/x86_64/allocator_string_duplication.rs", "libc/src/c_abi/x86_64/errno.rs", "libc/src/c_abi/x86_64/static_tls.rs", "libc/src/c_abi/x86_64/syscall.rs", "include/errno.h", "include/features.h", "include/stddef.h", "include/stdint.h", "include/stdio.h", "include/stdlib.h", "include/bits/alltypes.h", "include/sys/prctl.h", "include/sys/syscall.h", "include/bits/syscall.h", "compat/x86_64/temporary_names_header_abi_probe.c", "compat/x86_64/temporary_names_header_abi_probe.cpp", "compat/x86_64/run_temporary_names_header_abi.sh", "compat/x86_64/libc_temporary_names_probe.c", "compat/x86_64/run_libc_temporary_names.sh", "compat/x86_64/tests/test_libc_temporary_names.py", "compat/x86_64/tests/test_feature_archive_roster.py", "compat/x86_64/tests/test_header_callable_disposition.py", "compat/x86_64/tests/test_header_callable_inventory.py", "compat/x86_64/tests/test_parity_ledger.py", "compat/x86_64/tests/test_runner.py", "compat/x86_64/validate_parity_ledger.py", "compat/x86_64/README.md", "plan.md", "scripts/dev-x86_64.sh", "scripts/check_structure.py"]
 x86_abi_prerequisites = ["System V AMD64 passes `char *tmpnam(char *)` in rdi/rax and `char *tempnam(const char *, const char *)` in rdi/rsi/rax. A non-null tmpnam buffer reserves L_tmpnam=20 writable bytes; its null result is one shared unsynchronized static buffer. tempnam's non-null arguments are readable NUL-terminated C strings and its non-null strdup result is released through the matching C free ABI.", "Pinned musl 1.2.6 tmpnam/tempnam uses src/temp/__randname.c for exactly 100 six-byte candidates. The x86 adaptation preserves realtime seconds + nanoseconds + gettid*65537, emits A-P/a-p while shifting by five, and fails closed only on impossible normal Linux clock/gettid failure without claiming that branch as a musl result.", "Musl may use a VDSO-first clock path and initialized pthread TCB tid before its syscall fallback. This static C ABI deliberately owns only raw clock_gettime=228/gettid=186, so seccomp denial can return target-local NULL/raw errno where musl may still generate a suffix; that exceptional route is not claimed as a musl result.", "Linux x86-64 readlink=89 receives pathname, one-byte output, and count one in rdi/rsi/rdx. The source compares raw output only to -ENOENT=2 and retries every other result without local errno translation. tempnam's checked dir + slash + prefix + underscore + suffix length at least PATH_MAX=4096 publishes ENAMETOOLONG=36 before its probe; selected strdup owns later allocation failure.", "The feature archive composes this client with existing selected duplication/allocator/errno/backend ownership. Its mixed pinned-musl link rejects musl tmpnam, tempnam, strdup, and allocator objects; it does not make a CRT or allocator-family claim."]
 x86_header_prerequisites = ["The dedicated pinned-musl/project-first `<stdio.h>` C11/C++17 matrix proves unconditional `char *tmpnam(char *)` and L_tmpnam=20, then proves `char *tempnam(const char *, const char *)` and P_tmpdir only for GNU, BSD, and every X/Open C profile including `_XOPEN_SOURCE=800`; strict/POSIX C rejects the latter pair. GNU and strict C++ retain extern-C linkage for both names. This is declaration/profile evidence only, not general stdio, archive, or public support completion."]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-temporary-names", scope = "Pinned-musl/project stdio C/C++ header proof plus equivalent pinned-musl C execution and an x86 `--features x86-temporary-names` mixed static candidate. The gate preserves the frozen default archive, audits temporary-name, strdup, allocator, errno, and backend closure members, rejects pinned-musl temporary-name implementation and allocation objects, and proves caller/null tmpnam, its preserved twentieth caller-buffer byte, null tempnam defaults, double-slash preservation, accepted PATH_MAX-1 plus PATH_MAX ENAMETOOLONG, raw absent pathnames, musl suffix alphabet, caller free, and TMPDIR nonselection. A `/dev/null` ENOTDIR and fixture-only seccomp raw-readlink ELOOP result prove that only -ENOENT selects a name and non-ENOENT retries preserve errno; bound disassembly follows each entry through readlink=89, clock_gettime=228, and gettid=186. It neither creates, opens, reserves, nor unlinks a returned pathname; it does not select safe Rust APIs, generic temporary-file/filesystem/allocator policy, family completion, promotion, or public x86 support." }]
@@ -3523,7 +3513,6 @@ source_owners = [
   "compat/x86_64/aarch64_parity_inventory.json",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -3584,7 +3573,7 @@ source_owners = [
   "compat/x86_64/aarch64_parity_inventory.json",
   "compat/x86_64/tests/test_aarch64_parity_inventory.py",
   "compat/x86_64/README.md",
-  "x86-64.md",
+  "plan.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -3693,7 +3682,7 @@ capabilities = ["process.signal"]
 id = "static-c-filesystem-extensions-selection"
 description = "Private native x86 selected-private frozen `filesystem.extensions` capability inside still-planned `libc.posix-runtime`. Its exact five-spelling AArch64 ABI-only roster is `mktemp`, `name_to_handle_at`, `open_by_handle_at`, `tempnam`, and `tmpnam`. The aggregate composes default `static-c-mktemp`, opt-in `x86-file-handles`, and opt-in `x86-temporary-names` over its allocator/string-duplication closure. The frozen default selected-static archive and `static_c_abi_exports.txt` remain unchanged: only the combined x86-temporary-names,x86-file-handles profile owns all five. `./scripts/dev-x86_64.sh libc-filesystem-extensions` reruns every component gate before proving that exact roster. This selects no safe Rust temporary-name or file-handle API, general temporary-file/filesystem/allocator policy, family completion, promotion, or public x86 support."
 capabilities = ["filesystem.extensions"]
-source_owners = ["compat/upstreams.toml", "compat/crabc-rs/coverage.toml", "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv", "compat/x86_64/temporary-names-provider.toml", "libc/Cargo.toml", "libc/src/lib.rs", "libc/src/c_abi/x86_64/static_c_abi.rs", "libc/src/c_abi/x86_64/mktemp.rs", "libc/src/c_abi/x86_64/temp_name_random.rs", "libc/src/c_abi/x86_64/temporary_names.rs", "libc/src/c_abi/x86_64/file_handles.rs", "include/stdio.h", "include/fcntl.h", "compat/x86_64/run_libc_mktemp.sh", "compat/x86_64/run_libc_file_handles.sh", "compat/x86_64/run_libc_temporary_names.sh", "compat/x86_64/run_libc_filesystem_extensions.sh", "compat/x86_64/aarch64_parity_inventory.py", "compat/x86_64/aarch64_parity_inventory.json", "compat/x86_64/tests/test_aarch64_parity_inventory.py", "compat/x86_64/tests/test_parity_ledger.py", "compat/x86_64/tests/test_runner.py", "compat/x86_64/validate_parity_ledger.py", "compat/x86_64/README.md", "plan.md", "x86-64.md", "scripts/dev-x86_64.sh"]
+source_owners = ["compat/upstreams.toml", "compat/crabc-rs/coverage.toml", "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv", "compat/x86_64/temporary-names-provider.toml", "libc/Cargo.toml", "libc/src/lib.rs", "libc/src/c_abi/x86_64/static_c_abi.rs", "libc/src/c_abi/x86_64/mktemp.rs", "libc/src/c_abi/x86_64/temp_name_random.rs", "libc/src/c_abi/x86_64/temporary_names.rs", "libc/src/c_abi/x86_64/file_handles.rs", "include/stdio.h", "include/fcntl.h", "compat/x86_64/run_libc_mktemp.sh", "compat/x86_64/run_libc_file_handles.sh", "compat/x86_64/run_libc_temporary_names.sh", "compat/x86_64/run_libc_filesystem_extensions.sh", "compat/x86_64/aarch64_parity_inventory.py", "compat/x86_64/aarch64_parity_inventory.json", "compat/x86_64/tests/test_aarch64_parity_inventory.py", "compat/x86_64/tests/test_parity_ledger.py", "compat/x86_64/tests/test_runner.py", "compat/x86_64/validate_parity_ledger.py", "compat/x86_64/README.md", "plan.md", "scripts/dev-x86_64.sh"]
 x86_abi_prerequisites = ["The frozen roster in compat/crabc-rs/coverage.toml and the AArch64 static TSV is exactly mktemp, name_to_handle_at, open_by_handle_at, tempnam, and tmpnam. The aggregate changes neither frozen AArch64 inputs nor the default selected-static export list.", "mktemp remains the default historical caller-buffer pathname leaf. x86-file-handles contributes exactly name_to_handle_at/open_by_handle_at; x86-temporary-names contributes exactly tempnam/tmpnam over x86-allocator-runtime,x86-allocator-string-duplication. The combined profile adds only file handles relative to the temporary-name closure.", "Components retain their own header and pinned-musl runtime contracts: mktemp trailing-X lookup, Linux file-handle syscall authority, and raw-readlink legacy temporary names. The aggregate does not infer a safe pathname, temporary-file, handle, allocator, or general filesystem policy."]
 x86_header_prerequisites = ["The aggregate composes the retained stdlib.h, fcntl.h, and stdio.h pinned-musl/project C/C++ gates. They establish only selected declarations, profile visibility, layouts, and unmangled linkage required by the components; no installed-header or general C ABI completion follows."]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-filesystem-extensions", scope = "Private filesystem.extensions aggregate. It reruns libc-mktemp, libc-file-handles, and libc-temporary-names, then requires unchanged default selected-static exports and an x86-temporary-names,x86-file-handles archive owning exactly mktemp, name_to_handle_at, open_by_handle_at, tempnam, and tmpnam. It selects filesystem.extensions privately; racy pathname use, file-handle authority, safe Rust APIs, general filesystem behavior, family completion, promotion, and public x86 support remain out of scope." }]
@@ -3748,7 +3737,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -3769,7 +3757,7 @@ oracle = [
 id = "static-c-secure-environment"
 description = "Private native x86 selected-static-archive GNU secure-environment observation block. One dependency-free crabc-libc archive resolves only GNU `secure_getenv` after equivalent pinned-musl execution; strong `__getauxval` and weak same-address `getauxval` remain the separately qualified static-c-auxv-observation sibling. The selected static startup first validates and publishes the immutable initial auxv through that raw-observation boundary, then caches musl's secure fact before init or application callbacks from the last matching AT_SECURE, AT_UID, AT_EUID, AT_GID, and AT_EGID values: nonzero final AT_SECURE or final UID/EUID or GID/EGID mismatch is secure. In secure mode secure_getenv returns null without inspecting its name or the environment; otherwise it returns the selected getenv borrowed value while preserving errno. This leaf observes startup security only: it does not alter direct raw auxv lookup, perform descriptor sanitation, credential mutation, or environment mutation, create processes or exec/spawn, install signal behavior, own a loader, allocate, complete a CRT, family promotion, or claim public x86 support."
 source_owners = [
-  "compat/upstreams.toml", "libc/Cargo.toml", "libc/src/lib.rs", "libc/src/c_abi/x86_64/static_c_abi.rs", "libc/src/c_abi/x86_64/static_tls.rs", "libc/src/c_abi/x86_64/static_startup.rs", "libc/src/c_abi/x86_64/auxv_observation.rs", "libc/src/c_abi/x86_64/startup_security.rs", "libc/src/c_abi/x86_64/secure_environment.rs", "libc/src/c_abi/x86_64/environment.rs", "libc/src/c_abi/x86_64/errno.rs", "include/errno.h", "include/features.h", "include/stdlib.h", "include/bits/alltypes.h", "compat/x86_64/stdlib_header_abi_probe.c", "compat/x86_64/stdlib_header_abi_probe.cpp", "compat/x86_64/run_stdlib_header_abi.sh", "compat/x86_64/static_c_abi_exports.txt", "compat/x86_64/libc_secure_environment_probe.c", "compat/x86_64/libc_secure_environment_start.S", "compat/x86_64/run_libc_secure_environment.sh", "compat/x86_64/validate_parity_ledger.py", "compat/x86_64/tests/test_parity_ledger.py", "compat/x86_64/tests/test_runner.py", "compat/x86_64/README.md", "plan.md", "x86-64.md", "scripts/dev-x86_64.sh", "scripts/check_structure.py",
+  "compat/upstreams.toml", "libc/Cargo.toml", "libc/src/lib.rs", "libc/src/c_abi/x86_64/static_c_abi.rs", "libc/src/c_abi/x86_64/static_tls.rs", "libc/src/c_abi/x86_64/static_startup.rs", "libc/src/c_abi/x86_64/auxv_observation.rs", "libc/src/c_abi/x86_64/startup_security.rs", "libc/src/c_abi/x86_64/secure_environment.rs", "libc/src/c_abi/x86_64/environment.rs", "libc/src/c_abi/x86_64/errno.rs", "include/errno.h", "include/features.h", "include/stdlib.h", "include/bits/alltypes.h", "compat/x86_64/stdlib_header_abi_probe.c", "compat/x86_64/stdlib_header_abi_probe.cpp", "compat/x86_64/run_stdlib_header_abi.sh", "compat/x86_64/static_c_abi_exports.txt", "compat/x86_64/libc_secure_environment_probe.c", "compat/x86_64/libc_secure_environment_start.S", "compat/x86_64/run_libc_secure_environment.sh", "compat/x86_64/validate_parity_ledger.py", "compat/x86_64/tests/test_parity_ledger.py", "compat/x86_64/tests/test_runner.py", "compat/x86_64/README.md", "plan.md", "scripts/dev-x86_64.sh", "scripts/check_structure.py",
 ]
 x86_abi_prerequisites = [
   "System V AMD64 passes the eight-byte char pointer secure_getenv argument in rdi and returns an eight-byte char pointer in rax. It publishes no raw auxiliary-vector pointer or public function alias.",
@@ -4036,7 +4024,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -4157,7 +4144,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -4206,7 +4192,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -4352,7 +4337,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -4485,7 +4469,6 @@ source_owners = [
   "compat/x86_64/aarch64_parity_inventory.json",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -4538,7 +4521,6 @@ source_owners = [
   "compat/x86_64/aarch64_parity_inventory.json",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -4593,7 +4575,6 @@ source_owners = [
   "compat/x86_64/aarch64_parity_inventory.json",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -4648,7 +4629,6 @@ source_owners = [
   "compat/x86_64/aarch64_parity_inventory.json",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -4703,7 +4683,6 @@ source_owners = [
   "compat/x86_64/aarch64_parity_inventory.json",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -4758,7 +4737,6 @@ source_owners = [
   "compat/x86_64/aarch64_parity_inventory.json",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -4849,7 +4827,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -4894,7 +4871,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -4944,7 +4920,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -5039,7 +5014,6 @@ source_owners = [
   "compat/x86_64/aarch64_parity_inventory.json",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -5093,7 +5067,6 @@ source_owners = [
   "compat/x86_64/aarch64_parity_inventory.json",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -5142,7 +5115,6 @@ source_owners = [
   "compat/x86_64/aarch64_parity_inventory.json",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -5190,7 +5162,6 @@ source_owners = [
   "compat/x86_64/aarch64_parity_inventory.json",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -5238,7 +5209,6 @@ source_owners = [
   "compat/x86_64/aarch64_parity_inventory.json",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -5286,7 +5256,6 @@ source_owners = [
   "compat/x86_64/aarch64_parity_inventory.json",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -5392,7 +5361,6 @@ source_owners = [
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
   "plan.md",
-  "x86-64.md",
   "compat/x86_64/README.md",
 ]
 x86_abi_prerequisites = [
@@ -5443,7 +5411,6 @@ source_owners = [
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
   "plan.md",
-  "x86-64.md",
   "compat/x86_64/README.md",
 ]
 x86_abi_prerequisites = [
@@ -5494,7 +5461,6 @@ source_owners = [
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
   "plan.md",
-  "x86-64.md",
   "compat/x86_64/README.md",
 ]
 x86_abi_prerequisites = [
@@ -5542,7 +5508,6 @@ source_owners = [
   "compat/x86_64/aarch64_parity_inventory.json",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -5597,7 +5562,6 @@ source_owners = [
   "compat/x86_64/aarch64_parity_inventory.json",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -5651,7 +5615,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -5704,7 +5667,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -5763,7 +5725,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -5813,7 +5774,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -5861,7 +5821,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -5908,7 +5867,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -5959,7 +5917,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -6008,7 +5965,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -6055,7 +6011,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -6104,7 +6059,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -6156,7 +6110,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -6210,7 +6163,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -6312,7 +6264,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -6512,7 +6463,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -6570,7 +6520,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -6907,7 +6856,6 @@ source_owners = [
   "scripts/check_structure.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
 ]
 x86_abi_prerequisites = [
   "Linux/x86-64 tee=276 receives signed int source/destination descriptors, LP64 size_t length, and unsigned flags in rdi/rsi/rdx/r10 through syscall4. The selected C wrapper returns the signed byte count or maps only Linux's raw -4095..=-1 range to C -1 plus the selected initial-TLS errno slot",
@@ -6958,7 +6906,6 @@ source_owners = [
   "scripts/check_structure.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
 ]
 x86_abi_prerequisites = [
   "Linux/x86-64 copy_file_range=326 receives signed int input/output descriptors, optional caller-owned signed LP64 off_t pointers, a size_t length, and unsigned flags in rdi/rsi/rdx/r10/r8/r9 through syscall6. The selected C wrapper returns the signed byte count or maps only Linux's raw -4095..=-1 range to C -1 plus the selected initial-TLS errno slot",
@@ -7008,7 +6955,6 @@ source_owners = [
   "scripts/check_structure.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
 ]
 x86_abi_prerequisites = [
   "Linux/x86-64 splice=275 receives signed int input/output descriptors, optional caller-owned signed LP64 off_t pointers, a size_t length, and unsigned flags in rdi/rsi/rdx/r10/r8/r9 through syscall6. The selected C wrapper returns the signed byte count or maps only Linux's raw -4095..=-1 range to C -1 plus the selected initial-TLS errno slot",
@@ -7556,7 +7502,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -7613,7 +7558,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -7673,7 +7617,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -7730,7 +7673,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -7779,7 +7721,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -7833,7 +7774,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -7885,7 +7825,6 @@ source_owners = [
   "scripts/check_structure.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -7933,7 +7872,6 @@ source_owners = [
   "compat/x86_64/aarch64_parity_inventory.json",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -7978,7 +7916,6 @@ source_owners = [
   "compat/x86_64/aarch64_parity_inventory.json",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -8031,7 +7968,6 @@ source_owners = [
   "compat/x86_64/aarch64_parity_inventory.json",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -8087,7 +8023,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -8140,7 +8075,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -8318,7 +8252,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -8394,7 +8327,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -8442,7 +8374,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -8493,7 +8424,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -8642,7 +8572,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -8739,7 +8668,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -8789,7 +8717,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -8998,7 +8925,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -9053,7 +8979,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -9110,7 +9035,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -9165,7 +9089,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -9378,7 +9301,7 @@ source_owners = [
   "compat/x86_64/tests/test_runner.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "x86-64.md",
+  "plan.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -9418,7 +9341,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -9463,7 +9385,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -9537,7 +9458,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -9580,7 +9500,6 @@ source_owners = [
   "compat/x86_64/aarch64_parity_inventory.json",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -9668,7 +9587,6 @@ source_owners = [
   "compat/x86_64/aarch64_parity_inventory.json",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -9709,7 +9627,6 @@ source_owners = [
   "compat/x86_64/aarch64_parity_inventory.json",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -10016,7 +9933,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -10165,7 +10081,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -10216,7 +10131,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -10340,7 +10254,6 @@ source_owners = [
   "scripts/dev-x86_64.sh",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
 ]
 x86_abi_prerequisites = [
   "SysV AMD64 passes strdup's const char pointer in rdi and returns char * in rax; strndup adds its LP64 size_t bound in rsi. Both selected client entries are strong globals, while their sole allocation call resolves the separately evidenced weak malloc entry. The caller owns every returned non-null allocation and releases it through the selected free boundary.",
@@ -10387,7 +10300,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -10436,7 +10348,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -10487,7 +10398,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -10539,7 +10449,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -10594,7 +10503,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -10651,7 +10559,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -10709,7 +10616,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -10761,7 +10667,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -10819,7 +10724,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -10871,7 +10775,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -10921,7 +10824,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -11022,7 +10924,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -11073,7 +10974,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -11117,7 +11017,6 @@ source_owners = [
   "compat/x86_64/aarch64_parity_inventory.json",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -11148,7 +11047,7 @@ depends_on = ["oracle.musl-toolchain", "libc.errno-tls", "libc.headers-layouts",
 category = "c-abi"
 description = "Pthread, thread-specific data, static/dynamic TLS, cancellation, and fork interactions in the selected C runtime. The isolated x86 i32 atomic and fixed musl-shaped raw process-clone leaves remain source-only prerequisites. Twenty-five separately verified static artifacts establish a private Static Initial TLS v1 final-executable template, real rcrt1 static-PIE and conventional crt1 ET_EXEC handoffs with archive-owned bounded ordinary-exit lifecycle, null-attribute create/join normal-return plus selected-worker explicit-exit routes that consume independent copies of it, a bounded opaque `%fs:0` pthread/C11 identity boundary, a typed C11 create/join/explicit-exit sibling, a prompt pthread/C11 detach state transition with lazy later create/join reaping after clear-child-tid, a bounded direct GNU pthread-affinity route for bootstrapped-main self handles and executing selected-worker handles, one pthread CPU-clock-ID route for bootstrapped-main and live selected-worker handles over direct Linux gettid and copied child-TID encoding, one bootstrapped-main GNU pthread task-name pair over direct Linux prctl, one source-closed opaque `pthread_spin_destroy` return-zero leaf with no spin-state observation, one standard musl-shaped pthread-attribute record-metadata block that intentionally leaves selected pthread_create null-attribute-only, one raw barrier-attribute pshared record pair separately proved as a record-only leaf, one complete static pthread-barrier block with lifecycle, pshared, reusable private stack-instance, and bounded shared-futex/vmlock evidence, one direct non-cancellation C11 `thrd_sleep` status adapter over `clock_nanosleep`, one void-returning direct C11 `thrd_yield` raw syscall leaf, a process-private normal pthread-mutex block over the selected worker seam, one complete private rwlock/rwlockattr block with private and process-shared futex waits, one process-private pthread-condition waiter/barrier/requeue handoff paired with that selected mutex, a distinct C11 `mtx_plain`/private-condition adapter over those exact engines, one private normal-return pthread/C11 once state machine over the same static worker seam, one bounded private pthread-key/C11-TSS lifecycle table with four-pass worker destructor ordering, one selected-worker deferred-cancellation route whose sole delivery point is explicit `pthread_testcancel`, one two-worker aggregate that composes those selected worker/TLS, mutex/condition, rwlock, once, and TSD paths, and one single-threaded fixed-capacity pthread_atfork/fork route with child-only bounded ordinary-exit callback dispatch. The direct pthread_spin_init zero-store record leaf follows those Twenty-five separately verified static artifacts; it is not pthread/TLS parity or a selected general C runtime. The installed `owned-pthread-family` component instead consumes one validated POSIX product matrix and requires its finite exact behavior-by-mode roster, including a supplied-product C11/TLS/synchronization composition. Its receipt remains non-promoting until dependency-ordered family admission."
 aarch64_gates = ["pthread-stress", "static-pthread-tls", "signal-process", "libc-test"]
-source_owners = ["libc/src/c_abi.rs", "libc/src/c_abi/x86_64/atomic.rs", "libc/src/c_abi/x86_64/clone.rs", "libc/src/c_abi/x86_64/static_tls.rs", "libc/src/c_abi/x86_64/static_startup.rs", "libc/src/c_abi/x86_64/pthread_identity.rs", "libc/src/c_abi/x86_64/pthread_name.rs", "libc/src/c_abi/x86_64/pthread_create_join.rs", "libc/src/c_abi/x86_64/pthread_cancel.rs", "libc/src/c_abi/x86_64/pthread_atfork.rs", "libc/src/c_abi/x86_64/pthread_tsd.rs", "libc/src/c_abi/x86_64/pthread_mutex.rs", "libc/src/c_abi/x86_64/pthread_rwlock.rs", "libc/src/c_abi/x86_64/pthread_cond.rs", "libc/src/c_abi/x86_64/pthread_once.rs", "libc/src/c_abi/x86_64/c11_thread_lifecycle.rs", "libc/src/c_abi/x86_64/c11_sync.rs", "libc/src/c_abi/x86_64/clock_nanosleep.rs", "ldso/src/loader.rs", "crt/build_x86_64.py", "crt/src/x86_64_crt1.rs", "crt/src/x86_64_rcrt1.rs", "crt/src/x86_64_startup.rs", "crt/src/x86_64_crti.rs", "crt/src/x86_64_crtn.rs", "compat/pthread-stress", "compat/static-pthread-tls", "compat/x86_64/libc_atomic_probe.rs", "compat/x86_64/run_libc_atomic.sh", "compat/x86_64/libc_clone_raw_probe.c", "compat/x86_64/libc_clone_raw_probe.rs", "compat/x86_64/run_libc_clone_raw.sh", "compat/x86_64/libc_static_tls_v1_probe.c", "compat/x86_64/libc_static_tls_v1_peer.c", "compat/x86_64/libc_static_tls_v1_start.S", "compat/x86_64/run_libc_static_tls_v1.sh", "compat/x86_64/libc_crt_static_tls_probe.c", "compat/x86_64/libc_crt_static_tls_peer.c", "compat/x86_64/run_libc_crt_static_tls.sh", "compat/x86_64/run_libc_crt1_static_tls.sh", "compat/x86_64/libc_pthread_create_join_tls_probe.c", "compat/x86_64/run_libc_pthread_create_join_tls.sh", "compat/x86_64/libc_pthread_identity_probe.c", "compat/x86_64/libc_pthread_identity_start.S", "compat/x86_64/run_libc_pthread_identity.sh", "compat/x86_64/libc_c11_lifecycle_probe.c", "compat/x86_64/libc_c11_lifecycle_start.S", "compat/x86_64/run_libc_c11_lifecycle.sh", "compat/x86_64/libc_c11_plain_sync_probe.c", "compat/x86_64/libc_c11_plain_sync_start.S", "compat/x86_64/run_libc_c11_plain_sync.sh", "compat/x86_64/libc_pthread_c11_once_probe.c", "compat/x86_64/libc_pthread_c11_once_start.S", "compat/x86_64/run_libc_pthread_c11_once.sh", "compat/x86_64/libc_pthread_c11_tsd_probe.c", "compat/x86_64/libc_pthread_c11_tsd_start.S", "compat/x86_64/run_libc_pthread_c11_tsd.sh", "compat/x86_64/libc_pthread_cancel_deferred_probe.c", "compat/x86_64/libc_pthread_cancel_deferred_start.S", "compat/x86_64/run_libc_pthread_cancel_deferred.sh", "compat/x86_64/pthread_cancellation_header_abi_probe.c", "compat/x86_64/pthread_cancellation_header_abi_probe.cpp", "compat/x86_64/run_pthread_cancellation_header_abi.sh", "compat/x86_64/libc_pthread_detach_probe.c", "compat/x86_64/libc_pthread_detach_start.S", "compat/x86_64/run_libc_pthread_detach.sh", "compat/x86_64/libc_thrd_sleep_probe.c", "compat/x86_64/libc_thrd_sleep_start.S", "compat/x86_64/run_libc_thrd_sleep.sh", "compat/x86_64/libc_pthread_mutex_normal_probe.c", "compat/x86_64/libc_pthread_mutex_normal_start.S", "compat/x86_64/run_libc_pthread_mutex_normal.sh", "compat/x86_64/libc_pthread_rwlock_probe.c", "compat/x86_64/libc_pthread_rwlock_start.S", "compat/x86_64/run_libc_pthread_rwlock.sh", "compat/x86_64/libc_pthread_cond_private_probe.c", "compat/x86_64/libc_pthread_cond_private_start.S", "compat/x86_64/run_libc_pthread_cond_private.sh", "compat/x86_64/libc_pthread_atfork_probe.c", "compat/x86_64/libc_pthread_atfork_start.S", "compat/x86_64/run_libc_pthread_atfork.sh", "compat/x86_64/libc_pthread_name_probe.c", "compat/x86_64/libc_pthread_name_start.S", "compat/x86_64/run_libc_pthread_name.sh", "compat/x86_64/pthread-family.toml", "compat/x86_64/owned_pthread_family.py", "compat/x86_64/owned_pthread_family_composition.c", "compat/x86_64/run_owned_pthread_family_composition.sh", "compat/x86_64/owned_posix_product_evidence.py", "compat/x86_64/owned_crypt_runtime_evidence.py", "compat/x86_64/owned-pthread-family.md", "compat/x86_64/tests/test_owned_pthread_family.py", "compat/x86_64/tests/test_owned_pthread_family_dispatch.py", "compat/x86_64/tests/test_owned_posix_product_evidence.py", "compat/x86_64/README.md", "x86-64.md"]
+source_owners = ["libc/src/c_abi.rs", "libc/src/c_abi/x86_64/atomic.rs", "libc/src/c_abi/x86_64/clone.rs", "libc/src/c_abi/x86_64/static_tls.rs", "libc/src/c_abi/x86_64/static_startup.rs", "libc/src/c_abi/x86_64/pthread_identity.rs", "libc/src/c_abi/x86_64/pthread_name.rs", "libc/src/c_abi/x86_64/pthread_create_join.rs", "libc/src/c_abi/x86_64/pthread_cancel.rs", "libc/src/c_abi/x86_64/pthread_atfork.rs", "libc/src/c_abi/x86_64/pthread_tsd.rs", "libc/src/c_abi/x86_64/pthread_mutex.rs", "libc/src/c_abi/x86_64/pthread_rwlock.rs", "libc/src/c_abi/x86_64/pthread_cond.rs", "libc/src/c_abi/x86_64/pthread_once.rs", "libc/src/c_abi/x86_64/c11_thread_lifecycle.rs", "libc/src/c_abi/x86_64/c11_sync.rs", "libc/src/c_abi/x86_64/clock_nanosleep.rs", "ldso/src/loader.rs", "crt/build_x86_64.py", "crt/src/x86_64_crt1.rs", "crt/src/x86_64_rcrt1.rs", "crt/src/x86_64_startup.rs", "crt/src/x86_64_crti.rs", "crt/src/x86_64_crtn.rs", "compat/pthread-stress", "compat/static-pthread-tls", "compat/x86_64/libc_atomic_probe.rs", "compat/x86_64/run_libc_atomic.sh", "compat/x86_64/libc_clone_raw_probe.c", "compat/x86_64/libc_clone_raw_probe.rs", "compat/x86_64/run_libc_clone_raw.sh", "compat/x86_64/libc_static_tls_v1_probe.c", "compat/x86_64/libc_static_tls_v1_peer.c", "compat/x86_64/libc_static_tls_v1_start.S", "compat/x86_64/run_libc_static_tls_v1.sh", "compat/x86_64/libc_crt_static_tls_probe.c", "compat/x86_64/libc_crt_static_tls_peer.c", "compat/x86_64/run_libc_crt_static_tls.sh", "compat/x86_64/run_libc_crt1_static_tls.sh", "compat/x86_64/libc_pthread_create_join_tls_probe.c", "compat/x86_64/run_libc_pthread_create_join_tls.sh", "compat/x86_64/libc_pthread_identity_probe.c", "compat/x86_64/libc_pthread_identity_start.S", "compat/x86_64/run_libc_pthread_identity.sh", "compat/x86_64/libc_c11_lifecycle_probe.c", "compat/x86_64/libc_c11_lifecycle_start.S", "compat/x86_64/run_libc_c11_lifecycle.sh", "compat/x86_64/libc_c11_plain_sync_probe.c", "compat/x86_64/libc_c11_plain_sync_start.S", "compat/x86_64/run_libc_c11_plain_sync.sh", "compat/x86_64/libc_pthread_c11_once_probe.c", "compat/x86_64/libc_pthread_c11_once_start.S", "compat/x86_64/run_libc_pthread_c11_once.sh", "compat/x86_64/libc_pthread_c11_tsd_probe.c", "compat/x86_64/libc_pthread_c11_tsd_start.S", "compat/x86_64/run_libc_pthread_c11_tsd.sh", "compat/x86_64/libc_pthread_cancel_deferred_probe.c", "compat/x86_64/libc_pthread_cancel_deferred_start.S", "compat/x86_64/run_libc_pthread_cancel_deferred.sh", "compat/x86_64/pthread_cancellation_header_abi_probe.c", "compat/x86_64/pthread_cancellation_header_abi_probe.cpp", "compat/x86_64/run_pthread_cancellation_header_abi.sh", "compat/x86_64/libc_pthread_detach_probe.c", "compat/x86_64/libc_pthread_detach_start.S", "compat/x86_64/run_libc_pthread_detach.sh", "compat/x86_64/libc_thrd_sleep_probe.c", "compat/x86_64/libc_thrd_sleep_start.S", "compat/x86_64/run_libc_thrd_sleep.sh", "compat/x86_64/libc_pthread_mutex_normal_probe.c", "compat/x86_64/libc_pthread_mutex_normal_start.S", "compat/x86_64/run_libc_pthread_mutex_normal.sh", "compat/x86_64/libc_pthread_rwlock_probe.c", "compat/x86_64/libc_pthread_rwlock_start.S", "compat/x86_64/run_libc_pthread_rwlock.sh", "compat/x86_64/libc_pthread_cond_private_probe.c", "compat/x86_64/libc_pthread_cond_private_start.S", "compat/x86_64/run_libc_pthread_cond_private.sh", "compat/x86_64/libc_pthread_atfork_probe.c", "compat/x86_64/libc_pthread_atfork_start.S", "compat/x86_64/run_libc_pthread_atfork.sh", "compat/x86_64/libc_pthread_name_probe.c", "compat/x86_64/libc_pthread_name_start.S", "compat/x86_64/run_libc_pthread_name.sh", "compat/x86_64/pthread-family.toml", "compat/x86_64/owned_pthread_family.py", "compat/x86_64/owned_pthread_family_composition.c", "compat/x86_64/run_owned_pthread_family_composition.sh", "compat/x86_64/owned_posix_product_evidence.py", "compat/x86_64/owned_crypt_runtime_evidence.py", "compat/x86_64/owned-pthread-family.md", "compat/x86_64/tests/test_owned_pthread_family.py", "compat/x86_64/tests/test_owned_pthread_family_dispatch.py", "compat/x86_64/tests/test_owned_posix_product_evidence.py", "compat/x86_64/README.md", "plan.md"]
 x86_abi_prerequisites = ["ELF x86-64 initial and dynamic TLS", "%fs thread-pointer convention", "pthread ABI object layouts", "x86 clone and signal/TLS interaction", "fixed musl x86 raw-process-clone entry's seven-argument SysV layout, clone=56 register shuffle, supplied child stack, callback, and exit=60 tail without CLONE_VM/THREAD/SETTLS", "source-only locked i32 cmpxchg/xchg/xadd helper contract", "Private Static Initial TLS v1 validates one final static executable's AT_PHDR/AT_PHENT/AT_PHNUM plus either unique PT_PHDR or a controlled no-PT_PHDR ET_EXEC ELF64-header form with e_phoff=64 and zero load bias, and its optional PT_TLS. It copies exactly p_filesz, zeroes exactly p_memsz-p_filesz below a Variant-II aligned TP, writes only the %fs:0 self word, installs ARCH_SET_FS, and retains the immutable template for selected CLONE_SETTLS workers. It excludes dynamic modules, DTV, loader handoff, dynamic TLS, and a general pthread state machine", "The separately selected bounded static worker uses a distinct private clone seam with CLONE_VM/THREAD/SETTLS, parent/child TID words, shared FUTEX_WAIT join, a full independent Static Initial TLS v1 final-image copy, and a 64-slot `%fs:0` plus gettid and still-live child-TID registry identity that serializes selected explicit exit with join withdrawal.", "Pinned musl x86 makes pthread_t the opaque Variant-II `%fs:0` thread pointer. pthread_self/thrd_current and pthread_equal/thrd_equal are weak same-address pairs; equality returns canonical one or zero. The selected pthread_create therefore publishes its child TP, while pthread_join resolves TP to the private control record under the fixed registry lock before dereferencing or reclaiming it. The separate detach artifact has one `Joinable -> Detached` state-only owner transition and reclaims only from a later selected create/join boundary after CLONE_CHILD_CLEARTID; it does not promote general detached-thread semantics.", "The selected private normal mutex maps pinned musl 1.2.6 src/thread/pthread_mutex_init.c, pthread_mutex_trylock.c, pthread_mutex_lock.c, pthread_mutex_timedlock.c, pthread_mutex_unlock.c, and pthread_mutex_destroy.c. Its public record is exactly 40 bytes with 8-byte alignment; type, lock, and waiter words are at offsets 0, 4, and 8. Only type word zero is accepted, and the lock state is exactly 0, EBUSY=16, or EBUSY|INT_MIN.", "The selected private condition path maps pinned musl 1.2.6 pthread_cond_init/destroy/wait/timedwait/signal/broadcast plus __wait. Its exact 48-byte align-8 condition record keeps a private stack waiter list at offsets 8/40 behind its 0/1/2 lock at offset 32, and atomically unlocks/relocks only the selected 40-byte normal mutex during a waiter/barrier/requeue handoff.", "The separate C11 plain-sync adapter maps distinct 40-byte `mtx_t` and 48-byte `cnd_t` storage through those exact private engines. It admits only mtx_plain, maps held EBUSY to thrd_busy, retains musl's direct valid mtx_unlock result, and maps zero/nonzero selected condition results to thrd_success/thrd_error without C errno publication.", "The selected normal-return once path maps pinned musl 1.2.6 src/thread/pthread_once.c::{__pthread_once,__pthread_once_full}, src/thread/call_once.c, src/thread/__wait.c::__wait, and src/internal/pthread_impl.h::__wake. Its four-byte aligned pthread_once_t/once_flag control's selected state machine is 0 initial, 1 initializer, 2 complete, and 3 initializer-with-waiters; compare-exchange 0->1, acquire completion observation, and release exchange to 2 publish relaxed payload/count observations only through the once release/acquire edge. C11 call_once invokes that private state machine directly rather than crossing an interposable pthread C ABI, and the artifact does not establish musl's weak pthread_once ELF binding or exact ELF parity.", "The bounded pthread-key/C11-TSS artifact maps pinned musl 1.2.6 src/thread/pthread_key_create.c::{__pthread_key_create,__pthread_key_delete,__pthread_tsd_run_dtors}, pthread_getspecific.c::__pthread_getspecific, pthread_setspecific.c::pthread_setspecific, tss_create.c, tss_delete.c, tss_set.c, and pthread_create.c::{start,start_c11,__pthread_exit}. It keeps PTHREAD_KEYS_MAX=128 and PTHREAD_DESTRUCTOR_ITERATIONS=TSS_DTOR_ITERATIONS=4 in a private key table plus process-main and selected-worker value tables. A null destructor reserves its key; deletion clears only those selected tables without a callback; a worker clears every value before its non-null callback, drops the private lock across that callback, admits rearming for at most four ascending-key passes, and completes before selected normal return, pthread_exit, or thrd_exit result publication and SYS_exit. It deliberately fails closed for invalid/deleted keys and non-selected callers rather than using musl's unchecked internal fast paths. It does not establish musl's full thread-list/fork protocol, weak/same-address TSD aliases, or exact ELF parity.", "Linux 5.10 x86-64 futex=202 receives FUTEX_WAIT_PRIVATE=128 or FUTEX_WAKE_PRIVATE=129 through the raw syscall boundary, with the wait fourth null pointer in r10. The condition requeue path additionally uses FUTEX_REQUEUE_PRIVATE=131 with val2=1 in r10 and its mutex lock-word handoff address in r8. The once path waits on exact state 3 and normalizes musl's wake-all sentinel to INT_MAX; atomic compare-exchange and exchange preserve the private state handoff, while EINTR and wake races retry without a C errno status write.", "The SysV AMD64 C entries consume the public pointer record with explicit atomic memory ordering. The selected worker seam provides only static TLS for bounded contention; the mutex/condition/once artifacts have no TCB/gettid, allocator, or dynamic-TLS dependency. The TSD table is not a general TCB or all-thread list: main-thread process-exit destructors, foreign threads, cancellation/cleanup handlers, concurrent key deletion/destructor interaction, fork/atfork, detached-thread lifecycle, dynamic/loader TLS/DTV, allocator ordering, and general pthread/C11 runtime behavior remain excluded."]
 x86_header_prerequisites = ["pthread.h, threads.h, time.h, errno.h, limits.h, and TLS-related installed ABI declarations. The isolated C/C++ pthread/C11 header matrix verifies the selected current/equality, pthread_detach/thrd_detach, thrd_sleep, five private condition, selected mutex, C11 mtx_plain/cnd function, pthread_once/call_once, pthread-key, and C11-TSS signatures and unmangled linkage without selecting the wider header or runtime surface.", "The normal-mutex, private-condition, C11 plain-sync, once, bounded TSD, and deferred-cancellation artifacts preprocess project pthread.h, threads.h, errno.h, limits.h, bits/alltypes.h, bits/syscall.h, and features.h. The separate 28-context C/C++ pthread/C11 header matrix supplies distinct selected 40-byte mtx/mutex and 48-byte cnd/condition declarations, four-byte pthread_once_t/once_flag zero-initializer facts, `pthread_key_t`/`tss_t` identity, PTHREAD_KEYS_MAX=128/TSS_DTOR_ITERATIONS=4 facts, and exact C linkage; the separate eight-profile cancellation matrix proves PTHREAD_CANCEL_ENABLE/DISABLE/MASKED, DEFERRED/ASYNCHRONOUS, `PTHREAD_CANCELED`, 24-byte `struct __ptcb` cleanup storage, `_pthread_cleanup_push`/`_pthread_cleanup_pop`, `pthread_cleanup_push`/`pthread_cleanup_pop`, and all six exact cancellation/cleanup declarations including `pthread_cancel`/`pthread_setcancelstate`/`pthread_setcanceltype`/`pthread_testcancel` with unmangled C++ linkage. Neither matrix is a broad header or pthread/C11 implementation claim."]
 native_evidence = [{ state = "required", command = "./scripts/dev-x86_64.sh libc-atomic", scope = "Source-only native x86 i32 atomic helper instruction/behavior proof; it does not select crabc-libc or complete pthread/TLS parity." }, { state = "required", command = "./scripts/dev-x86_64.sh libc-clone-raw", scope = "Source-only pinned-musl x86 process-clone machine-boundary proof for SIGCHLD callback/stack/exit behavior; it has no public clone, pthread, or TLS claim." }, { state = "required", command = "./scripts/dev-x86_64.sh owned-pthread-family --family-execution FILE --output NEW_DIR", scope = "The installed pthread/TLS component consumes a validated POSIX matrix and replays the exact finite six-static/twelve-dynamic roster. It retains one supplied-product C11/TLS/synchronization composition with pinned-musl comparison plus reused matrix and dynamic-qualification receipts. It is required component evidence only: it does not admit family completion, promotion, or public x86 support." }]
@@ -11230,7 +11129,6 @@ source_owners = [
   "crt/x86_64-static-pie.md",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -11284,7 +11182,6 @@ source_owners = [
   "crt/x86_64-static-pie.md",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -11406,7 +11303,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -11453,7 +11349,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -11502,7 +11397,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -11552,7 +11446,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -11598,7 +11491,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -11649,7 +11541,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -11705,7 +11596,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -11760,7 +11650,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -11815,7 +11704,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -11873,7 +11761,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -11932,7 +11819,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -11986,7 +11872,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -12030,7 +11915,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -12114,7 +11998,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -12163,7 +12046,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -12219,7 +12101,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/build_x86_64_owned_sysroot.py",
   "scripts/build_x86_64_owned_dynamic_sysroot.py",
   "scripts/dev-x86_64.sh",
@@ -12270,7 +12151,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -12311,7 +12191,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -12353,7 +12232,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -12394,7 +12272,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -12441,7 +12318,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -12482,7 +12358,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -12619,7 +12494,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -12669,7 +12543,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -12709,7 +12582,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -12749,7 +12621,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -12789,7 +12660,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -12829,7 +12699,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -12870,7 +12739,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -12910,7 +12778,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -12951,7 +12818,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -12991,7 +12857,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -13067,7 +12932,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -13138,10 +13002,9 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "SCOPE.md",
+  "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -13179,10 +13042,9 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "SCOPE.md",
+  "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -13226,10 +13088,9 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "SCOPE.md",
+  "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -13304,7 +13165,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -13346,10 +13206,9 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "SCOPE.md",
+  "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -13391,10 +13250,9 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "SCOPE.md",
+  "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -13436,10 +13294,9 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "SCOPE.md",
+  "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -13481,10 +13338,9 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "SCOPE.md",
+  "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -13528,10 +13384,9 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "SCOPE.md",
+  "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -13577,10 +13432,9 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "SCOPE.md",
+  "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -13626,10 +13480,9 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "SCOPE.md",
+  "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -13675,10 +13528,9 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "SCOPE.md",
+  "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -13722,10 +13574,9 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "SCOPE.md",
+  "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -13769,10 +13620,9 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "SCOPE.md",
+  "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -13816,10 +13666,9 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "SCOPE.md",
+  "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -13863,10 +13712,9 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "SCOPE.md",
+  "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -13881,7 +13729,7 @@ x86_header_prerequisites = [
   "Dedicated C++17 objects compiled with default SSE and -mfpmath=387 pin exact binary64/binary32 unary function-pointer signatures and unmangled C references from the project header against pinned musl.",
 ]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-log2", scope = "Pinned-musl/project-header C and C++ ABI execution plus one dependency-free `-nostdlib -static --no-undefined --gc-sections` candidate. The C fixture compares 216 exact 32-byte records across all four rounding directions: binary32/binary64 signed zero, raw normal/subnormal boundaries, exact powers and their neighbors, table-range values, high finite values, infinities, quiet/signaling NaNs, raw results, requested/observed MXCSR direction, and exception flags. ELF proof requires strong global target-owned log2/log2f definitions, exact archive surface, an eight-source localized data/error closure with no public `__log2_data` or `__math_divzero` helpers, and divsd/mulsd/addsd/subsd/divss/mulss/subss scalar source arithmetic; it rejects weak compiler-builtins fallback, log2l, log/log1p/log10, exp/expm1, exp2, inverse trigonometry, fma, hypot, fmod/remainder, rounding/truncation/ceiling/floor, roots, fenv API/policy, special and complex math, unresolved symbols, dynamic linkage, TLS, ambient libm, packed-SIMD/FMA ISA, and unowned runtime dependencies. It excludes category/family completion, promotion, full x86-64 parity, and public x86 support." }]
-oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, IEEE bit-level/fenv behavior, and public C ABI oracle for exactly src/math/log2.c, log2f.c, log2_data.c, log2f_data.c, __math_divzero{,f}.c, and __math_invalid{,f}.c." }, { kind = "aarch64-contract", source = "SCOPE.md, COMPATIBILITY-PROFILE.md, and libc/src/math_compat.rs", role = "The active AArch64 product contract supplies no selected public log2/log2f mapping; this x86-only evidence remains selected-private and does not import, imply, or promote an AArch64 capability." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 unary argument and return ABI plus caller-visible MXCSR scalar-SSE arithmetic boundary for the selected static C entries." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, IEEE bit-level/fenv behavior, and public C ABI oracle for exactly src/math/log2.c, log2f.c, log2_data.c, log2f_data.c, __math_divzero{,f}.c, and __math_invalid{,f}.c." }, { kind = "aarch64-contract", source = "AGENTS.md, COMPATIBILITY-PROFILE.md, and libc/src/math_compat.rs", role = "The active AArch64 product contract supplies no selected public log2/log2f mapping; this x86-only evidence remains selected-private and does not import, imply, or promote an AArch64 capability." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 unary argument and return ABI plus caller-visible MXCSR scalar-SSE arithmetic boundary for the selected static C entries." }]
 
 [[family.verified_slice]]
 id = "numeric.parse-float-locale"
@@ -13915,7 +13763,7 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "x86-64.md",
+  "plan.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -13954,7 +13802,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -14000,7 +13847,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -14050,7 +13896,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -14100,7 +13945,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -14154,7 +13998,7 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "x86-64.md",
+  "plan.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -14198,7 +14042,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -14245,7 +14088,7 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "x86-64.md",
+  "plan.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -14326,7 +14169,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -14369,7 +14211,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -14414,7 +14255,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -14459,7 +14299,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -14504,7 +14343,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -14549,7 +14387,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -14594,7 +14431,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -14639,7 +14475,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -14684,7 +14519,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -14729,7 +14563,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -14774,7 +14607,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -14818,7 +14650,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -14861,7 +14692,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -14905,7 +14735,7 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "x86-64.md",
+  "plan.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -14948,7 +14778,7 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "x86-64.md",
+  "plan.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -14991,7 +14821,7 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "x86-64.md",
+  "plan.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -15039,7 +14869,7 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "x86-64.md",
+  "plan.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -15086,7 +14916,7 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "x86-64.md",
+  "plan.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -15133,7 +14963,7 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "x86-64.md",
+  "plan.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -15176,7 +15006,7 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "x86-64.md",
+  "plan.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -15219,7 +15049,7 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "x86-64.md",
+  "plan.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -15263,7 +15093,7 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "x86-64.md",
+  "plan.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -15305,7 +15135,7 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "x86-64.md",
+  "plan.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -15349,7 +15179,7 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "x86-64.md",
+  "plan.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -15396,7 +15226,7 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "x86-64.md",
+  "plan.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -15435,7 +15265,7 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "x86-64.md",
+  "plan.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -15475,7 +15305,7 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "x86-64.md",
+  "plan.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -15517,7 +15347,7 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "x86-64.md",
+  "plan.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -15560,7 +15390,7 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "x86-64.md",
+  "plan.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -15580,7 +15410,7 @@ id = "stdio.fopen64-alias"
 description = "Private native x86 selected-private `stdio.fopen64-alias` capability inside still-planned `libc.text-math-locale-stdio`. Pinned musl 1.2.6 Linux LP64 `<stdio.h>` exposes `fopen64` solely when `_LARGEFILE64_SOURCE` is defined, as the preprocessing macro `#define fopen64 fopen`; it is a source-only `fopen64` alias with no distinct x86 ELF `fopen64` symbol. The dedicated project-first/pinned-musl C11/C++17 matrix retains strict, GNU, `_FILE_OFFSET_BITS=64`, and `_LARGEFILE_SOURCE` hiding, then proves the LFS-only `FILE *(*)(const char *, const char *)` macro identity, unmangled C++ `fopen` reference, and no `fopen64` relocation. The shared project-header fixture first executes through pinned musl and then a true dependency-free `-nostdlib -static --gc-sections` candidate, proving same-address `fopen`/macro pointers, missing-path `ENOENT`, and the existing bounded `\"w+\"`/`\"r\"` slot's write/seek/read/close lifecycle; archive and final-ELF checks retain the default selected-static export surface and reject every `fopen64` definition/reference. `libc/src/c_abi.rs` intentionally retains an AArch64 project forwarding entry, but this x86 capability follows its pinned-musl source/ELF contract rather than creating a target-specific wrapper. It does not complete `stdio.path-stream`, mode parsing, multiple streams, allocation/registry, general stdio, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
 capabilities = ["stdio.fopen64-alias"]
 source_owners = [
-  "SCOPE.md",
+  "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "compat/upstreams.toml",
   "compat/crabc-rs/coverage.toml",
@@ -15672,7 +15502,7 @@ id = "locale.core-fixed-profile"
 description = "Private native x86 selected-private `locale.core` fixed-profile slice inside still-planned `libc.text-math-locale-stdio`. It consumes that capability only at the `setlocale`/`localeconv` seam: one dependency-free `crabc-libc` archive resolves exactly those two entries into a strict C11/C++17 header matrix and a shared project-header fixture which first executes through pinned musl 1.2.6 and then a true `-nostdlib -static --gc-sections` candidate. The fixed global profile accepts only `C`, `POSIX`, and `C.UTF-8`; musl's built-in C.UTF-8 map changes `LC_CTYPE` alone, so direct `LC_ALL` C.UTF-8 and a mixed-state query serialize exactly as `C.UTF-8;C;C;C;C;C`, while non-CTYPE C.UTF-8 and POSIX normalize to C. `localeconv` returns the stable immutable POSIX record with decimal point `.`, empty text fields, and all fourteen monetary char fields `CHAR_MAX`. Candidate-only negative checks reject `setlocale(category, \"\")`, arbitrary map names, and non-returned LC_ALL forms without changing state. The candidate has no TLS, environment lookup, allocation, locale object, conversion, collation, iconv, gettext, numeric, time, or stdio dependency. This selected-private accounting does not claim every broader legacy `locale.core` spelling, family completion, promotion, or public x86 support; general locale or legacy-encoding databases, libc.so, CRT, loader, and sysroot remain excluded."
 capabilities = ["locale.core"]
 source_owners = [
-  "SCOPE.md",
+  "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "compat/upstreams.toml",
   "compat/crabc-rs/coverage.toml",
@@ -15703,7 +15533,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -15745,7 +15574,7 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "x86-64.md",
+  "plan.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -15790,7 +15619,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -15830,7 +15658,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -15877,7 +15704,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -15926,7 +15752,6 @@ source_owners = [
   "compat/x86_64/README.md",
   "docs/evidence/x86-aarch64-parity-inventory.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -15968,7 +15793,6 @@ source_owners = [
   "compat/x86_64/README.md",
   "docs/evidence/x86-aarch64-parity-inventory.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -16017,7 +15841,6 @@ source_owners = [
   "compat/x86_64/README.md",
   "docs/evidence/x86-aarch64-parity-inventory.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -16071,7 +15894,7 @@ source_owners = [
   "compat/x86_64/tests/test_runner.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "x86-64.md",
+  "plan.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -16121,7 +15944,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -16206,10 +16028,9 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "SCOPE.md",
+  "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -16224,7 +16045,7 @@ x86_header_prerequisites = [
   "Dedicated C++17 objects compiled with default SSE and -mfpmath=387 pin exact binary64/binary32 unary function-pointer signatures and unmangled C references from the project header against pinned musl.",
 ]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-exp", scope = "Pinned-musl/project-header C and C++ ABI execution plus one dependency-free `-nostdlib -static --no-undefined --gc-sections` candidate. The C fixture compares 216 exact 32-byte records across all four rounding directions: binary32/binary64 signed zero, raw normal/subnormal and threshold boundaries, table-reduction values, high finite values, infinities, quiet/signaling NaNs, raw results, requested/observed MXCSR direction, and exception flags. ELF proof requires strong global target-owned exp/expf definitions, exact archive surface, a ten-source localized data/error closure with no public `__exp_data` or `__math_oflow` helpers, and mulsd/addsd/subsd/addss/mulss scalar source arithmetic; it rejects weak compiler-builtins fallback, expl, exp2/expm1 and all log families, inverse/direct trigonometry, fma, hypot, fmod/remainder, rounding/truncation/ceiling/floor, roots, fenv API/policy, special and complex math, unresolved symbols, dynamic linkage, TLS, ambient libm, packed-SIMD/FMA ISA, and unowned runtime dependencies. It excludes category/family completion, promotion, full x86-64 parity, and public x86 support." }]
-oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, IEEE bit-level/fenv behavior, and public C ABI oracle for exactly src/math/exp.c, expf.c, exp_data.c, exp2f_data.c, __math_oflow{,f}.c, __math_uflow{,f}.c, and __math_xflow{,f}.c." }, { kind = "aarch64-contract", source = "SCOPE.md, COMPATIBILITY-PROFILE.md, and libc/src/math_compat.rs", role = "The active AArch64 product contract supplies no selected public exp/expf mapping; this x86-only evidence remains selected-private and does not import, imply, or promote an AArch64 capability." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 unary argument and return ABI plus caller-visible MXCSR scalar-SSE arithmetic boundary for the selected static C entries." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, IEEE bit-level/fenv behavior, and public C ABI oracle for exactly src/math/exp.c, expf.c, exp_data.c, exp2f_data.c, __math_oflow{,f}.c, __math_uflow{,f}.c, and __math_xflow{,f}.c." }, { kind = "aarch64-contract", source = "AGENTS.md, COMPATIBILITY-PROFILE.md, and libc/src/math_compat.rs", role = "The active AArch64 product contract supplies no selected public exp/expf mapping; this x86-only evidence remains selected-private and does not import, imply, or promote an AArch64 capability." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 unary argument and return ABI plus caller-visible MXCSR scalar-SSE arithmetic boundary for the selected static C entries." }]
 
 [[family.verified_artifact]]
 id = "static-c-math-cos"
@@ -16254,10 +16075,9 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "SCOPE.md",
+  "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -16272,7 +16092,7 @@ x86_header_prerequisites = [
   "Dedicated C++17 objects compiled with default SSE and -mfpmath=387 pin exact binary64/binary32 unary function-pointer signatures and unmangled C references from the project header against pinned musl.",
 ]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-cos", scope = "Pinned-musl/project-header C and C++ ABI execution plus one dependency-free `-nostdlib -static --no-undefined --gc-sections` candidate. The C fixture compares 256 exact 32-byte records across all four rounding directions: binary32/binary64 signed zero, raw normal/subnormal bounds, tiny and quadrant boundaries, moderate and huge reduction inputs, finite extrema, infinities, quiet/signaling NaNs, raw results, requested/observed MXCSR direction, and exception flags. ELF proof requires strong global target-owned cos/cosf definitions, exact archive surface, an eleven-source localized kernel/reduction closure with no public `__sin`, `__rem_pio2`, floor, or scalbn helpers, and addsd/addss/subsd/subss/mulsd/cvtss2sd/cvtsd2ss scalar source arithmetic; it rejects weak compiler-builtins fallback, cosl, sin/tan, sincos, hyperbolic/inverse trigonometry, log/exp/pow, fmod/remainder/modf, fenv API/policy, special and complex math, unresolved symbols, dynamic linkage, TLS, ambient libm, packed-SIMD/FMA ISA, and unowned runtime dependencies. It excludes category/family completion, promotion, full x86-64 parity, and public x86 support." }]
-oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "FreeBSD/Sun msun source, preserved permissive notices, exact IEEE payload/exception/directed-rounding behavior, and public C ABI oracle for exactly src/math/cos.c, cosf.c, __sin.c, __cos.c, __sindf.c, __cosdf.c, __rem_pio2.c, __rem_pio2f.c, __rem_pio2_large.c, floor.c, and scalbn.c." }, { kind = "aarch64-contract", source = "SCOPE.md, COMPATIBILITY-PROFILE.md, and libc/src/math_compat.rs", role = "The active AArch64 product contract supplies no selected public cos/cosf mapping; this x86-only evidence remains selected-private and does not import, imply, or promote an AArch64 capability." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 unary argument and return ABI plus caller-visible MXCSR scalar-SSE arithmetic boundary for the selected static C entries." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "FreeBSD/Sun msun source, preserved permissive notices, exact IEEE payload/exception/directed-rounding behavior, and public C ABI oracle for exactly src/math/cos.c, cosf.c, __sin.c, __cos.c, __sindf.c, __cosdf.c, __rem_pio2.c, __rem_pio2f.c, __rem_pio2_large.c, floor.c, and scalbn.c." }, { kind = "aarch64-contract", source = "AGENTS.md, COMPATIBILITY-PROFILE.md, and libc/src/math_compat.rs", role = "The active AArch64 product contract supplies no selected public cos/cosf mapping; this x86-only evidence remains selected-private and does not import, imply, or promote an AArch64 capability." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 unary argument and return ABI plus caller-visible MXCSR scalar-SSE arithmetic boundary for the selected static C entries." }]
 
 [[family.verified_artifact]]
 id = "static-c-math-cosh"
@@ -16302,10 +16122,9 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "SCOPE.md",
+  "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -16320,7 +16139,7 @@ x86_header_prerequisites = [
   "Dedicated C++17 objects compiled with default SSE and -mfpmath=387 pin exact binary64/binary32 unary function-pointer signatures and unmangled C references from the project header against pinned musl.",
 ]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-cosh", scope = "Pinned-musl/project-header C and C++ ABI execution plus one dependency-free `-nostdlib -static --no-undefined --gc-sections` candidate. The C fixture compares 256 exact 32-byte records across all four rounding directions: binary32/binary64 signed zero, raw tiny/subnormal and normal bounds, expm1/reconstruction and overflow thresholds, high finite values, infinities, quiet/signaling NaNs, raw results, requested/observed MXCSR direction, and exception flags. ELF proof requires strong global target-owned cosh/coshf definitions, exact archive surface, a sixteen-source localized exponent closure with no public `expm1`, `__expo2`, exp table, or error helper, and addsd/addss/subsd/subss/mulsd/mulss/divsd/divss/cvtss2sd/cvtsd2ss scalar source arithmetic; it rejects weak compiler-builtins fallback, coshl, sinh/tanh, public exp/expm1/log/pow, direct/inverse trigonometry, fmod/remainder/modf, fenv API/policy, special and complex math, unresolved symbols, dynamic linkage, TLS, ambient libm, packed-SIMD/FMA ISA, and unowned runtime dependencies. It excludes category/family completion, promotion, full x86-64 parity, and public x86 support." }]
-oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "FreeBSD/Sun msun and Arm MIT source, preserved permissive notices, exact IEEE payload/exception/directed-rounding behavior, and public C ABI oracle for exactly src/math/cosh.c, coshf.c, expm1.c, expm1f.c, __expo2.c, __expo2f.c, exp.c, expf.c, exp_data.c, exp2f_data.c, __math_oflow{,f}.c, __math_uflow{,f}.c, and __math_xflow{,f}.c." }, { kind = "aarch64-contract", source = "SCOPE.md, COMPATIBILITY-PROFILE.md, and libc/src/math_hyperbolic.rs", role = "The active AArch64 product contract supplies no selected public cosh/coshf mapping; this x86-only evidence remains selected-private and does not import, imply, or promote an AArch64 capability." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 unary argument and return ABI plus caller-visible MXCSR scalar-SSE arithmetic boundary for the selected static C entries." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "FreeBSD/Sun msun and Arm MIT source, preserved permissive notices, exact IEEE payload/exception/directed-rounding behavior, and public C ABI oracle for exactly src/math/cosh.c, coshf.c, expm1.c, expm1f.c, __expo2.c, __expo2f.c, exp.c, expf.c, exp_data.c, exp2f_data.c, __math_oflow{,f}.c, __math_uflow{,f}.c, and __math_xflow{,f}.c." }, { kind = "aarch64-contract", source = "AGENTS.md, COMPATIBILITY-PROFILE.md, and libc/src/math_hyperbolic.rs", role = "The active AArch64 product contract supplies no selected public cosh/coshf mapping; this x86-only evidence remains selected-private and does not import, imply, or promote an AArch64 capability." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 unary argument and return ABI plus caller-visible MXCSR scalar-SSE arithmetic boundary for the selected static C entries." }]
 
 [[family.verified_artifact]]
 id = "static-c-math-asinh"
@@ -16350,10 +16169,9 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "SCOPE.md",
+  "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -16368,7 +16186,7 @@ x86_header_prerequisites = [
   "Dedicated C++17 objects compiled with default SSE and -mfpmath=387 pin exact binary64/binary32 unary function-pointer signatures and unmangled C references from the project header against pinned musl.",
 ]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-asinh", scope = "Pinned-musl/project-header C and C++ ABI compilation plus one dependency-free `-nostdlib -static --no-undefined --gc-sections` candidate. The C fixture compares 256 exact 32-byte records across all four rounding directions: binary32/binary64 signed zero, raw tiny/subnormal and normal bounds, log1p/middle/large-reconstruction thresholds, high finite values, infinities, quiet/signaling NaNs, raw results, requested/observed MXCSR direction, and exception flags. ELF proof requires strong global target-owned asinh/asinhf definitions, exact archive surface, a fifteen-source localized log/square-root closure with no public log, log1p, sqrt, table, or error helper, and addsd/addss/subsd/subss/mulsd/mulss/divsd/divss/cvtss2sd/cvtsd2ss scalar source arithmetic; it rejects weak compiler-builtins fallback, asinhl, acosh/atanh/cosh/sinh/tanh, direct trigonometry, public log/log1p/sqrt/exp/pow, fmod/remainder/modf, fenv API/policy, special and complex math, unresolved symbols, dynamic linkage, TLS, ambient libm, packed-SIMD/FMA ISA, and unowned runtime dependencies. It excludes category/family completion, promotion, full x86-64 parity, and public x86 support." }]
-oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "FreeBSD/Sun msun and Arm MIT source, preserved permissive notices, exact IEEE payload/exception/directed-rounding behavior, and public C ABI oracle for exactly src/math/asinh.c, asinhf.c, log.c, logf.c, log_data.c, logf_data.c, log1p.c, log1pf.c, sqrt.c, sqrtf.c, sqrt_data.c, __math_invalid{,f}.c, and __math_divzero{,f}.c." }, { kind = "aarch64-contract", source = "SCOPE.md, COMPATIBILITY-PROFILE.md, and libc/src/math_hyperbolic.rs", role = "The active AArch64 product contract supplies no selected public asinh/asinhf mapping; this x86-only evidence remains selected-private and does not import, imply, or promote an AArch64 capability." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 unary argument and return ABI plus caller-visible MXCSR scalar-SSE arithmetic boundary for the selected static C entries." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "FreeBSD/Sun msun and Arm MIT source, preserved permissive notices, exact IEEE payload/exception/directed-rounding behavior, and public C ABI oracle for exactly src/math/asinh.c, asinhf.c, log.c, logf.c, log_data.c, logf_data.c, log1p.c, log1pf.c, sqrt.c, sqrtf.c, sqrt_data.c, __math_invalid{,f}.c, and __math_divzero{,f}.c." }, { kind = "aarch64-contract", source = "AGENTS.md, COMPATIBILITY-PROFILE.md, and libc/src/math_hyperbolic.rs", role = "The active AArch64 product contract supplies no selected public asinh/asinhf mapping; this x86-only evidence remains selected-private and does not import, imply, or promote an AArch64 capability." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 unary argument and return ABI plus caller-visible MXCSR scalar-SSE arithmetic boundary for the selected static C entries." }]
 
 [[family.verified_artifact]]
 id = "static-c-math-exp10f"
@@ -16398,10 +16216,9 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "SCOPE.md",
+  "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -16416,7 +16233,7 @@ x86_header_prerequisites = [
   "Dedicated C++17 GNU objects compiled with default SSE and -mfpmath=387 pin exact binary32 unary function-pointer signatures and unmangled C references for both the strong entry and weak alias from the project header against pinned musl.",
 ]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-exp10f", scope = "Pinned-musl/project-header GNU C and C++ ABI execution plus one dependency-free `-nostdlib -static --no-undefined --gc-sections` candidate. The C fixture compares 256 exact 32-byte records across all four rounding directions and both aliases: binary32 signed zero, raw tiny/subnormal and normal bounds, table and fallback thresholds, overflow/underflow, infinities, quiet/signaling NaNs, raw results, requested/observed MXCSR direction, and exception flags. ELF proof requires strong global target-owned exp10f plus a weak same-address pow10f alias, exact archive surface, a twelve-source localized modff/exp2 closure with no public modff, exp2, table, or error helper, and addsd/addss/subsd/subss/mulsd/mulss/cvtss2sd/cvtsd2ss scalar source arithmetic; it rejects compiler-builtins fallback, binary64 exp10/pow10, binary80 variants, public modf/exp2/exp/pow functions, other elementary math, fenv API/policy, special and complex math, unresolved symbols, dynamic linkage, TLS, ambient libm, packed-SIMD/FMA ISA, and unowned runtime dependencies. It excludes category/family completion, promotion, full x86-64 parity, and public x86 support." }]
-oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT declaration/source/behavior oracle and Arm MIT scalar math source for exactly src/math/exp10f.c, modff.c, exp2.c, exp2f.c, exp_data.c, exp2f_data.c, __math_oflow{,f}.c, __math_uflow{,f}.c, and __math_xflow{,f}.c, including the public GNU weak_alias(exp10f, pow10f) ABI and exact IEEE payload/exception/directed-rounding behavior." }, { kind = "aarch64-contract", source = "SCOPE.md, COMPATIBILITY-PROFILE.md, and libc/src/math_compat.rs", role = "The active AArch64 product contract supplies no selected public exp10f/pow10f mapping; this x86-only evidence remains selected-private and does not import, imply, or promote an AArch64 capability." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32 unary argument/return ABI, strong/weak ELF binding, same-address alias identity, and caller-visible MXCSR scalar-SSE arithmetic boundary for the selected static C entries." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT declaration/source/behavior oracle and Arm MIT scalar math source for exactly src/math/exp10f.c, modff.c, exp2.c, exp2f.c, exp_data.c, exp2f_data.c, __math_oflow{,f}.c, __math_uflow{,f}.c, and __math_xflow{,f}.c, including the public GNU weak_alias(exp10f, pow10f) ABI and exact IEEE payload/exception/directed-rounding behavior." }, { kind = "aarch64-contract", source = "AGENTS.md, COMPATIBILITY-PROFILE.md, and libc/src/math_compat.rs", role = "The active AArch64 product contract supplies no selected public exp10f/pow10f mapping; this x86-only evidence remains selected-private and does not import, imply, or promote an AArch64 capability." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32 unary argument/return ABI, strong/weak ELF binding, same-address alias identity, and caller-visible MXCSR scalar-SSE arithmetic boundary for the selected static C entries." }]
 
 [[family.verified_artifact]]
 id = "static-c-math-sinh"
@@ -16446,10 +16263,9 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "SCOPE.md",
+  "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -16464,7 +16280,7 @@ x86_header_prerequisites = [
   "Dedicated C++17 objects compiled with default SSE and -mfpmath=387 pin exact binary64/binary32 unary function-pointer signatures and unmangled C references from the project header against pinned musl.",
 ]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-sinh", scope = "Pinned-musl/project-header C and C++ ABI execution plus one dependency-free `-nostdlib -static --no-undefined --gc-sections` candidate. The C fixture compares 256 exact 32-byte records across all four rounding directions: binary32/binary64 signed zero, raw tiny/subnormal and normal bounds, expm1/reconstruction and overflow thresholds, high finite values, infinities, quiet/signaling NaNs, raw results, requested/observed MXCSR direction, and exception flags. ELF proof requires strong global target-owned sinh/sinhf definitions, exact archive surface, a sixteen-source localized exponent closure with no public `expm1`, `__expo2`, exp table, or error helper, and addsd/addss/subsd/subss/mulsd/mulss/divsd/divss/cvtss2sd/cvtsd2ss scalar source arithmetic; it rejects weak compiler-builtins fallback, sinhl, cosh/tanh, public exp/expm1/log/pow, direct/inverse trigonometry, fmod/remainder/modf, fenv API/policy, special and complex math, unresolved symbols, dynamic linkage, TLS, ambient libm, packed-SIMD/FMA ISA, and unowned runtime dependencies. It excludes category/family completion, promotion, full x86-64 parity, and public x86 support." }]
-oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "FreeBSD/Sun msun and Arm MIT source, preserved permissive notices, exact IEEE payload/exception/directed-rounding behavior, and public C ABI oracle for exactly src/math/sinh.c, sinhf.c, expm1.c, expm1f.c, __expo2.c, __expo2f.c, exp.c, expf.c, exp_data.c, exp2f_data.c, __math_oflow{,f}.c, __math_uflow{,f}.c, and __math_xflow{,f}.c." }, { kind = "aarch64-contract", source = "SCOPE.md, COMPATIBILITY-PROFILE.md, and libc/src/math_hyperbolic.rs", role = "The active AArch64 product contract supplies no selected public sinh/sinhf mapping; this x86-only evidence remains selected-private and does not import, imply, or promote an AArch64 capability." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 unary argument and return ABI plus caller-visible MXCSR scalar-SSE arithmetic boundary for the selected static C entries." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "FreeBSD/Sun msun and Arm MIT source, preserved permissive notices, exact IEEE payload/exception/directed-rounding behavior, and public C ABI oracle for exactly src/math/sinh.c, sinhf.c, expm1.c, expm1f.c, __expo2.c, __expo2f.c, exp.c, expf.c, exp_data.c, exp2f_data.c, __math_oflow{,f}.c, __math_uflow{,f}.c, and __math_xflow{,f}.c." }, { kind = "aarch64-contract", source = "AGENTS.md, COMPATIBILITY-PROFILE.md, and libc/src/math_hyperbolic.rs", role = "The active AArch64 product contract supplies no selected public sinh/sinhf mapping; this x86-only evidence remains selected-private and does not import, imply, or promote an AArch64 capability." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 unary argument and return ABI plus caller-visible MXCSR scalar-SSE arithmetic boundary for the selected static C entries." }]
 
 [[family.verified_artifact]]
 id = "static-c-math-exp10"
@@ -16496,10 +16312,9 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "SCOPE.md",
+  "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -16546,10 +16361,9 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "SCOPE.md",
+  "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -16595,10 +16409,9 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "SCOPE.md",
+  "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -16644,10 +16457,9 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "SCOPE.md",
+  "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -16693,10 +16505,9 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "SCOPE.md",
+  "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -16742,10 +16553,9 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "SCOPE.md",
+  "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -16791,10 +16601,9 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "SCOPE.md",
+  "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -16840,10 +16649,9 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "SCOPE.md",
+  "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -16889,10 +16697,9 @@ source_owners = [
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "SCOPE.md",
+  "AGENTS.md",
   "COMPATIBILITY-PROFILE.md",
   "plan.md",
-  "x86-64.md",
   "scripts/check_structure.py",
   "scripts/dev-x86_64.sh",
 ]
@@ -16962,7 +16769,7 @@ source_owners = [
   "compat/x86_64/tests/test_runner.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "x86-64.md",
+  "plan.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -17013,7 +16820,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -17064,7 +16870,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -17113,7 +16918,7 @@ source_owners = [
   "compat/x86_64/tests/test_runner.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "x86-64.md",
+  "plan.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -17152,7 +16957,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -17199,7 +17003,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -17316,7 +17119,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -17366,7 +17168,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -17416,7 +17217,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -17466,7 +17266,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -17516,7 +17315,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -17566,7 +17364,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -17617,7 +17414,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -17672,7 +17468,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -17723,7 +17518,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -17779,7 +17573,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -17994,7 +17787,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -18039,7 +17831,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -18159,7 +17950,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -18206,7 +17996,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -18247,7 +18036,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -18328,7 +18116,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -18368,7 +18155,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -18412,7 +18198,6 @@ source_owners = [
   "compat/x86_64/aarch64_parity_inventory.json",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -18452,7 +18237,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -18489,7 +18273,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -18543,7 +18326,6 @@ source_owners = [
   "compat/x86_64/aarch64_parity_inventory.json",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -18588,7 +18370,7 @@ source_owners = [
   "compat/x86_64/tests/test_runner.py",
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
-  "x86-64.md",
+  "plan.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -18634,7 +18416,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -18714,7 +18495,6 @@ source_owners = [
   "compat/x86_64/aarch64_parity_inventory.json",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = [
@@ -18756,7 +18536,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -18799,7 +18578,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -18848,7 +18626,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -18898,7 +18675,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -18948,7 +18724,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -18998,7 +18773,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -19020,7 +18794,7 @@ capabilities = ["numeric.qsort-helper"]
 [[family.verified_slice]]
 id = "allocator-observability"
 description = "Complete private native x86 `memory.allocator-observability` vertical over the exact one-symbol AArch64 public C surface: strong `malloc_usable_size`. A new target-neutral `allocator_observability_mimalloc.rs` leaf preserves the active AArch64 null-pointer-zero and direct `mi_usable_size` behavior, while a separate opt-in x86 feature keeps this strong observer out of the earlier weak basic-wrapper artifact. The native candidate uses real crabc `crt1.o`/`crti.o`/`crtn.o`, crabc static startup and Initial TLS v1, bounded environment/program-name/auxv startup publication, crabc errno, allocator entries, pthread create/join/TSD/mutex, mapping, clock, and child-reaping owners, then proves null/live/calloc/aligned/reallocated/remote-thread/inherited-child pointers and errno preservation against pinned musl and through the active AArch64 runtime. The fixture's raw single-threaded x86 fork is containment plumbing, not public fork/atfork ownership. The unchanged bundled mimalloc v3.3.2 backend now requires an exact eleven-object pinned-musl support tail (locking, abort support, the cloned `libc.lo`, `prctl`, `realpath`, `strchrnul`, `strdup`, and variadic `syscall` plus their named support objects); the final link map separately proves crabc ownership of `fputs`, `sleep`, and `__stack_chk_fail`. Current crabc startup owns `__environ`/`getenv`, and the candidate-local pinned `libc.lo` copy weakens only its duplicate `__progname`/`__progname_full` definitions while retaining required `__libc`/`__hwcap` support. This observer slice does not itself select `memory.allocator-basic`; the separately verified real-runtime allocator-basic slice owns those nine entries. General fork/atfork, the fixed-v3.5.0 Rust port, complete libc/pthread/runtime closure, promotion, and public x86 support remain unselected."
-source_owners = ["compat/crabc-rs/coverage.toml", "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv", "include/malloc.h", "libc/Cargo.toml", "libc/src/lib.rs", "libc/src/c_abi.rs", "libc/src/allocator_mimalloc.rs", "libc/src/allocator_observability_mimalloc.rs", "libc/src/program_utils_exports.rs", "libc/src/getopt_exports.rs", "libc/src/c_abi/x86_64/static_c_abi.rs", "libc/src/c_abi/x86_64/errno.rs", "libc/src/c_abi/x86_64/environment.rs", "libc/src/c_abi/x86_64/auxv_observation.rs", "libc/src/c_abi/x86_64/process_globals.rs", "libc/src/c_abi/x86_64/static_tls.rs", "libc/src/c_abi/x86_64/static_startup.rs", "libc/src/c_abi/x86_64/pthread_create_join.rs", "libc/src/c_abi/x86_64/pthread_tsd.rs", "libc/src/c_abi/x86_64/pthread_mutex.rs", "libc/src/c_abi/x86_64/memory_mapping.rs", "libc/src/c_abi/x86_64/clock_gettime.rs", "libc/src/c_abi/x86_64/child_reaping.rs", "libc/src/c_abi/x86_64/syscall.rs", "crt/src/x86_64_crt1.rs", "crt/src/x86_64_startup.rs", "crt/src/x86_64_crti.rs", "crt/src/x86_64_crtn.rs", "tests/allocator_observability.rs", "tests/fixtures/allocator_observability_test.c", "compat/x86_64/run_libc_allocator_observability.sh", "compat/x86_64/tests/test_libc_allocator_observability.py", "compat/x86_64/tests/test_parity_ledger.py", "compat/x86_64/tests/test_runner.py", "compat/x86_64/validate_parity_ledger.py", "scripts/dev-x86_64.sh", "compat/x86_64/README.md", "plan.md", "x86-64.md"]
+source_owners = ["compat/crabc-rs/coverage.toml", "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv", "include/malloc.h", "libc/Cargo.toml", "libc/src/lib.rs", "libc/src/c_abi.rs", "libc/src/allocator_mimalloc.rs", "libc/src/allocator_observability_mimalloc.rs", "libc/src/program_utils_exports.rs", "libc/src/getopt_exports.rs", "libc/src/c_abi/x86_64/static_c_abi.rs", "libc/src/c_abi/x86_64/errno.rs", "libc/src/c_abi/x86_64/environment.rs", "libc/src/c_abi/x86_64/auxv_observation.rs", "libc/src/c_abi/x86_64/process_globals.rs", "libc/src/c_abi/x86_64/static_tls.rs", "libc/src/c_abi/x86_64/static_startup.rs", "libc/src/c_abi/x86_64/pthread_create_join.rs", "libc/src/c_abi/x86_64/pthread_tsd.rs", "libc/src/c_abi/x86_64/pthread_mutex.rs", "libc/src/c_abi/x86_64/memory_mapping.rs", "libc/src/c_abi/x86_64/clock_gettime.rs", "libc/src/c_abi/x86_64/child_reaping.rs", "libc/src/c_abi/x86_64/syscall.rs", "crt/src/x86_64_crt1.rs", "crt/src/x86_64_startup.rs", "crt/src/x86_64_crti.rs", "crt/src/x86_64_crtn.rs", "tests/allocator_observability.rs", "tests/fixtures/allocator_observability_test.c", "compat/x86_64/run_libc_allocator_observability.sh", "compat/x86_64/tests/test_libc_allocator_observability.py", "compat/x86_64/tests/test_parity_ledger.py", "compat/x86_64/tests/test_runner.py", "compat/x86_64/validate_parity_ledger.py", "scripts/dev-x86_64.sh", "compat/x86_64/README.md", "plan.md"]
 x86_abi_prerequisites = ["The AArch64 capability ledger contains exactly one symbol, malloc_usable_size. Its SysV AMD64 entry takes one pointer in rdi and returns size_t in rax; it is a strong global function, while the basic allocation entries remain weak. The opt-in observability build uses non-LTO multi-CGU code generation so one exact two-symbol crate object owns the public observer and its private version witness independently of the weak allocation object and bundled backend object.", "The final ET_EXEC candidate enters through real crabc crt1/crti/crtn, validates and installs one local-exec Initial TLS v1 image, and reaches crabc __libc_start_main before the shared observer. That current startup path also publishes the already-selected bounded environment, program-name, and auxiliary-vector leaves. Crabc owns errno, allocation calls, pthread workers/keys/destructors/mutexes, mmap/munmap/mprotect/madvise, clock_gettime, waitpid, and immediate child exit. The thread regression observes live allocations after two producing workers terminate; the contained raw fork=57 child observes an inherited live allocation and a new child allocation before crabc _exit/waitpid containment.", "The bundled mimalloc v3.3.2 object is unchanged from the active AArch64 backend. A final link-map ratchet permits exactly eleven pinned-musl archive members for backend support only: __lock.lo, abort.lo, abort_lock.lo, block.lo, libc.lo, prctl.lo, realpath.lo, strchrnul.lo, strdup.lo, syscall.lo, and syscall_ret.lo. The same map separately proves crabc's feature-built archive supplies fputs, sleep, and __stack_chk_fail. Current crabc startup supplies __environ/getenv. The candidate-local copy of pinned libc.lo weakens only duplicate __progname/__progname_full while retaining its global __libc/__hwcap support; the final image therefore keeps crabc's strong program-name objects. The gate rejects every musl allocator/observer, startup/TLS, pthread, mapping, clock, and wait owner, all dynamic TLS/interpreter/dependency forms, unresolved symbols, and glibc."]
 x86_header_prerequisites = ["The shared fixture preprocesses project malloc.h, errno.h, pthread.h, stdint.h, stdlib.h, sys/wait.h, unistd.h, and bits/alltypes.h. malloc.h must declare malloc_usable_size exactly once and must not declare mallinfo, mallinfo2, malloc_info, malloc_stats, or mallopt, preserving the exact AArch64 public observability surface rather than inventing backend statistics/control APIs."]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-allocator-observability", scope = "Pinned-musl x86 execution plus an owned-CRT/static-startup/Initial-TLS crabc candidate over the same project-header C fixture, paired with the active AArch64 crabc test `cargo test -p crabc-libc --test allocator_observability`. The x86 gate proves one strong malloc_usable_size owner over mi_usable_size; separate weak allocator ownership; exact AArch64 source/header/ELF provenance; current bounded environment/program-name/auxv startup composition; null/live/zero/small/large/calloc/aligned/realloc observations; repeated-size and errno preservation; two crabc pthread producers with post-join remote observation; one contained single-threaded raw-fork inherited/new-allocation child; static ELF/TLS and no-glibc purity; and the exact eleven-member residual pinned-musl backend-support boundary, while the final link map proves crabc owns fputs, sleep, and __stack_chk_fail, including a candidate-local pinned libc.lo clone that weakens only its duplicate program-name globals while retaining __libc/__hwcap. It selects only memory.allocator-observability, not memory.allocator-basic, public fork/atfork, full pthread/libc runtime closure, the fixed Rust port, promotion, or public x86 support." }]
@@ -19130,7 +18904,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -19228,7 +19001,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -19289,7 +19061,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -19340,7 +19111,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -19388,7 +19158,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -19431,7 +19200,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -19474,7 +19242,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -19517,7 +19284,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -19613,7 +19379,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -19656,7 +19421,6 @@ source_owners = [
   "compat/x86_64/validate_parity_ledger.py",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -19694,7 +19458,6 @@ source_owners = [
   "compat/x86_64/aarch64_parity_inventory.json",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -19784,7 +19547,7 @@ id = "ldso-public-fixed-graph-dlfcn"
 description = "Non-promoting native x86 public-C dlfcn bridge artifact inside still-planned `ldso.dynamic-runtime`. The staged static `libc.a` now exports musl-shaped `dlopen`, `dlsym`, `dlclose`, `dlerror`, `dladdr`, `dlinfo`, and `dl_iterate_phdr` plus one private record-address helper, while an isolated PIC build of the exact same libc leaf forms a real ET_DYN main over the loader-owned immutable main -> mid -> leaf graph. Pinned musl 1.2.6 `src/ldso/dl_iterate_phdr.c` keeps its static body private and publishes `weak_alias(static_dl_iterate_phdr, dl_iterate_phdr)`: the AArch64 static manifest records `dl_iterate_phdr` as `STB_WEAK`, while its shared manifest records the global spelling. The staged archive and normal/malformed isolated candidates retain default-visible `STB_WEAK`; a caller strong definition wins after a retained `dlopen` address forces bridge extraction. Pinned musl 1.2.6 `src/ldso/dlopen.c` likewise keeps its static stub private and publishes `weak_alias(stub_dlopen, dlopen)`: the static manifest records `dlopen` as `STB_WEAK`, while libc.so records the global spelling. The staged archive and normal/malformed isolated candidates retain that weak `dlopen` binding, and a caller strong `dlopen` definition wins after a retained `dlsym` address extracts the bridge. Pinned musl 1.2.6 `src/ldso/dladdr.c` likewise keeps its static stub private and publishes `weak_alias(stub_dladdr, dladdr)`: the static manifest records `dladdr` as `STB_WEAK`, while libc.so records the global spelling. The staged archive and normal/malformed isolated candidates retain that weak `dladdr` binding, and a caller strong `dladdr` definition wins after a retained `dlsym` address extracts the bridge. All three are static-link ABI ratchets only; they do not change NULL-open behavior, address lookup/output, mapping, lifecycle, capability selection, or public-support scope. The bridge validates the weak undefined `R_X86_64_GLOB_DAT` `__crabc_x86_64_fixed_graph_dlfcn_v1` record before every dispatch and never falls back to an ambient loader when it is absent or malformed. Loader tokens, atomic acquisition counts, scoped symbols, and copied RuntimeV1-prefix metadata remain loader-owned. A 32-live-thread allocation-free process table keyed by Linux TID gives per-thread one-shot `dlerror` and borrowed `dladdr` name ownership without PT_TLS; dead TIDs are reclaimed lazily with `tgkill(pid, tid, 0)`. `dlinfo(RTLD_DI_LINKMAP)` materializes stable immutable link-map views. For a live retained handle in an admitted diagnostic slot, pinned musl 1.2.6 `src/ldso/dlinfo.c` requires every other signed `int` request to return -1, leave its result pointer untouched, and publish the exact one-shot `Unsupported request %d` diagnostic; a subsequent valid link-map query preserves that pending error. For NULL in an admitted diagnostic slot, pinned musl 1.2.6 `src/ldso/dlclose.c` delegates to `ldso/dynlink.c:__dl_invalid_handle`: `dlclose` returns exactly one and publishes exact `Invalid library handle 0` through that same one-shot state. The bridge admits only this null close diagnostic; non-null forged/stale close handling remains loader-owned. For a live retained non-`RTLD_NEXT` handle in the same bound, pinned musl 1.2.6 `src/ldso/dlsym.c:dlsym` reaches `ldso/dynlink.c:do_dlsym`: an empty NUL-terminated symbol name returns null and publishes exact one-shot `Symbol not found: `. The bridge replaces that diagnostic only after its existing bounded loader failure reports `loader symbol name is invalid`; non-empty missing names, null symbol pointers, and invalid handles retain their existing loader paths. For a writable `Dl_info` in this fixed graph, `dladdr(NULL)` returns zero with its caller’s `Dl_info` untouched and leaves `dlerror` clear: pinned musl 1.2.6 `ldso/dynlink.c:dladdr` exits at `if (!p) return 0`. The bridge preserves that no-image result also for an admitted non-null address outside every retained fixed-image PT_LOAD: musl’s `addr2dso` yields no DSO and `dladdr` exits at `if (!p) return 0`, leaving `Dl_info` and `dlerror` untouched. The bridge recognizes only the loader-confirmed `loader address not found` result for this second branch; other non-null failure and unavailable-record paths retain their existing output-clearing fail-closed handling. Only in this non-runtime public bridge, `dlopen(NULL, RTLD_NOLOAD)` returns the same permanent main handle without a `dlerror`: pinned musl 1.2.6 `ldso/dynlink.c:dlopen` exits at `if (!file) return head` before inspecting `mode`. The bridge converts only that exact flags value into its existing local main-token open; `run_ldso_bounded_dlopen.sh` compiles the shared leaf with `crabc_bounded_runtime_dlopen`, retaining the runtime sibling's bare-null `RTLD_NOLOAD` rejection. `dl_iterate_phdr` presents exact x86-64 64-byte records without holding the bridge lock across callbacks. Pinned musl 1.2.6 `ldso/dynlink.c:dl_iterate_phdr` invokes its callback before taking the reader lock for the next image; after an already-existing unknown-object failure, the first callback may consume its nonempty same-thread pending `dlerror`, return `74`, and leave the next `dlerror` null. The bridge admits only that diagnostic-state callback transaction, not callback-driven mapping, graph mutation, or a general reentrant loader. Native pinned-musl and project-header C/C++ fixtures prove the public ABI, ordinary retained-graph calls, callback stop propagation, concurrent diagnostics, malformed and absent records, stale handles, and all three static-archive override boundaries. Filesystem search and graph mutation, `RTLD_NEXT`, `RTLD_GLOBAL`, runtime mapping, finalization, and unload remain fail-closed or unavailable; consequently neither `loader.dlfcn-basic` nor `loader.dlfcn-introspection` is selected, the family remains planned, and public x86 support is not promoted."
 source_owners = ["ldso/src/x86_64_initial_graph_source_root.rs", "ldso/src/x86_64_initial_graph.rs", "libc/src/c_abi/x86_64/fixed_graph_dlfcn.rs", "libc/src/c_abi/x86_64/fixed_graph_dlfcn_runtime.rs", "libc/src/c_abi/x86_64/static_c_abi.rs", "compat/x86_64/static_c_abi_exports.txt", "include/dlfcn.h", "include/link.h", "compat/x86_64/ldso_initial_graph_leaf.c", "compat/x86_64/ldso_initial_graph_mid.c", "compat/x86_64/ldso_public_dlfcn_start.S", "compat/x86_64/ldso_public_dlfcn_probe.c", "compat/x86_64/ldso_public_dlfcn_header_probe.cpp", "compat/x86_64/run_ldso_public_dlfcn.sh", "compat/x86_64/ldso_bounded_dlopen_probe.c", "compat/x86_64/run_ldso_bounded_dlopen.sh", "scripts/dev-x86_64.sh"]
 x86_abi_prerequisites = ["The public Linux/x86-64 C ABI uses RTLD_LAZY=1, RTLD_NOW=2, RTLD_NOLOAD=4, RTLD_GLOBAL=0x100, RTLD_LOCAL=0, RTLD_NODELETE=4096, RTLD_DEFAULT=NULL, RTLD_NEXT=(void *)-1, and RTLD_DI_LINKMAP=2. LP64 sizes are Dl_info=32, link_map=40, and dl_phdr_info=64 with dlpi_tls_data at offset 56; the C and C++ project-header fixtures bind every function with C linkage. The pinned musl 1.2.6 AArch64 libc.so and libc.a ABI manifests retain dl_iterate_phdr, dladdr, dlclose, dlinfo, dlerror, dlsym, and dlopen exports. The static manifest specifically records `dl_iterate_phdr dl_iterate_phdr.lo W WEAK`, `dlopen dlopen.lo W WEAK`, and `dladdr dladdr.lo W WEAK`, while libc.so records each shared `FUNC GLOBAL DEFAULT` spelling.", "The bridge imports only undefined STB_WEAK `__crabc_x86_64_fixed_graph_dlfcn_v1` through R_X86_64_GLOB_DAT. It validates magic 0x43524142435f5844, version 1, ABI size 64, and six non-null open/symbol/close/address/snapshot/information pointers before use. The positive ET_DYN interpreter and main have no ambient libc/loader DT_NEEDED edge and no PT_TLS. `src/ldso/dl_iterate_phdr.c` maps its static private body through `weak_alias(static_dl_iterate_phdr, dl_iterate_phdr)`; the staged archive and normal/malformed isolated candidates retain default-visible STB_WEAK `dl_iterate_phdr`, while a caller STB_GLOBAL definition overrides it after a `dlopen` reference extracts the bridge. `src/ldso/dlopen.c` maps its static stub through `weak_alias(stub_dlopen, dlopen)`; the staged archive and normal/malformed isolated candidates retain default-visible STB_WEAK `dlopen`, while a caller STB_GLOBAL dlopen overrides it after a `dlsym` reference extracts the bridge. `src/ldso/dladdr.c` maps its static stub through `weak_alias(stub_dladdr, dladdr)`; the staged archive and normal/malformed isolated candidates retain default-visible STB_WEAK `dladdr`, while a caller STB_GLOBAL dladdr overrides it after a `dlsym` reference extracts the bridge. These static bindings change neither the bounded NULL-open path nor address lookup/output, loader admission, mapping, lifecycle, or public support.", "Each admitted Linux TID owns one of 32 fixed diagnostic slots. A failure replaces only that thread's 257-byte NUL-terminated error buffer; dlerror consumes its pending bit once. Separate 257-byte dladdr image/symbol buffers preserve a pending error. Slots for exited threads are reclaimed only after same-process tgkill=234 reports ESRCH; exhaustion fails closed with immutable diagnostic text.", "Pinned musl 1.2.6 commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 `src/ldso/dlinfo.c:dlinfo` accepts only RTLD_DI_LINKMAP=2 for a live handle. Within the admitted 32-slot diagnostic bound, every other signed C int request returns -1 without writing its result pointer, formats exactly `Unsupported request %d` into dlerror, and a later valid link-map request does not consume that pending state. `src/ldso/dlclose.c:dlclose` delegates an invalid NULL handle to `ldso/dynlink.c:__dl_invalid_handle`; its exact result is one with `Invalid library handle 0`. The bridge implements only that NULL branch in its existing per-TID slot, while non-null forged/stale close handling remains loader-owned. For a live retained non-RTLD_NEXT handle, `src/ldso/dlsym.c:dlsym` reaches `ldso/dynlink.c:do_dlsym`: an empty NUL-terminated symbol name returns null with exact `Symbol not found: `. The bridge substitutes that error only when its existing bounded loader path reports `loader symbol name is invalid`; non-empty missing names, null symbol pointers, and invalid handles retain their existing loader paths. For a writable `Dl_info` in this fixed graph, musl `ldso/dynlink.c:dladdr` first assigns `p = addr2dso(addr)` and exits at `if (!p) return 0` for both `dladdr(NULL)` and a nonnull address outside every retained PT_LOAD before assigning caller output or `dlerror`. Within the admitted valid-record boundary, the bridge recognizes only its exact `loader address not found` result as that nonnull no-image branch; other non-null failure and unavailable-record paths retain their existing output-clearing fail-closed handling. For the non-runtime public bridge, musl `ldso/dynlink.c:dlopen` handles null input at `if (!file) return head` before inspecting `mode`; `dlopen(NULL, RTLD_NOLOAD=4)` returns the same permanent main token and leaves `dlerror` clear. The bridge redirects only that exact call through its existing `RTLD_NOW` main route. `compat/x86_64/run_ldso_bounded_dlopen.sh` compiles the shared leaf with `crabc_bounded_runtime_dlopen`, so bare `NULL RTLD_NOLOAD` retains the runtime sibling's initial-object rejection. `ldso/dynlink.c:dl_iterate_phdr` invokes its callback before taking the reader lock for the next image; the bridge has completed its copied snapshot and holds no diagnostic-slot lock there, so the callback can consume an already-pending same-thread `dlerror` once, return `74`, and leave the following `dlerror` null. This does not admit callback-driven mapping, graph mutation, or general loader reentrancy. RTLD_DEFAULT maps to the permanent main token. Exact LAZY/NOW local retained-name opens, scoped ordinary symbol lookup, explicit reference close, copied dladdr metadata, useful RTLD_DI_LINKMAP, and three-object callback iteration are exposed. RTLD_NEXT and GLOBAL promotion fail with diagnostics; names outside the graph, malformed records, and absent records fail closed. Startup objects are never searched, mapped, finalized, or unmapped by this bridge."]
-x86_header_prerequisites = ["The installed project dlfcn.h and link.h declarations are consumed directly by C11 and freestanding C++17 probes. Their x86 LP64 macros, structure sizes/offsets, callback size, C linkage, and all seven archive exports are ratcheted. The existing `dl_iterate_phdr`, `dlopen`, and `dladdr` declarations are unchanged: STB_WEAK is a static-link binding boundary, not a new header/API claim. This public spelling is staged artifact evidence only and does not change SCOPE.md or the supported-platform profile."]
+x86_header_prerequisites = ["The installed project dlfcn.h and link.h declarations are consumed directly by C11 and freestanding C++17 probes. Their x86 LP64 macros, structure sizes/offsets, callback size, C linkage, and all seven archive exports are ratcheted. The existing `dl_iterate_phdr`, `dlopen`, and `dladdr` declarations are unchanged: STB_WEAK is a static-link binding boundary, not a new header/API claim. This public spelling is staged artifact evidence only and does not change AGENTS.md or the supported-platform profile."]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh ldso-public-dlfcn", scope = "Native x86 public fixed-graph dlfcn ET_DYN proof. The runner builds pinned-musl 1.2.6 and candidate executions, checks project C/C++ header ABI and the complete staged libc.a export contract, proves the pinned static STB_WEAK `dl_iterate_phdr` binding in the archive and normal/malformed isolated ET_DYN candidates, and executes a caller STB_GLOBAL override after a `dlopen` reference extracts the bridge. It separately proves the pinned static STB_WEAK `dlopen` binding in the same archive and candidates, and executes a caller STB_GLOBAL dlopen override after a `dlsym` reference extracts the bridge. It separately proves the pinned static STB_WEAK `dladdr` binding in the same archive and candidates, and executes a caller STB_GLOBAL dladdr override after a `dlsym` reference extracts the bridge. The runner also proves the exact weak GLOB_DAT/64-byte RuntimeV1-prefix wire and fixed DT_NEEDED graph, rejects ambient libc/loader dependencies and PT_TLS, then runs clean-environment open/symbol/close/dlerror/dladdr/dlinfo/dl_iterate_phdr behavior. A pinned-musl differential and candidate regression use a live retained handle within the 32-slot bound with request -7: dlinfo returns -1, leaves its result pointer untouched, publishes exact `Unsupported request -7`, and a valid RTLD_DI_LINKMAP query leaves that error pending for one dlerror consumption. The same differential proves dlclose(NULL) returns exactly one and publishes exact `Invalid library handle 0` through one dlerror consumption; non-null forged/stale close handling remains loader-owned. The same live retained handle calls the empty-name dlsym branch: both executions return null and publish exact `Symbol not found: ` for one dlerror consumption; the candidate replacement requires its existing loader-confirmed `loader symbol name is invalid` failure. The same differential uses seeded writable `Dl_info` for `dladdr(NULL)` and a non-null address outside every graph PT_LOAD: both executions return zero, preserve it, and leave `dlerror` clear. The candidate admits the latter only after its loader-confirmed `loader address not found` result; malformed and absent records retain their fail-closure without ambient fallback. It also calls `dlopen(NULL, RTLD_NOLOAD)`: both executions return the same main handle and leave `dlerror` clear. After the existing unknown-object failure, the first dl_iterate_phdr callback consumes its nonempty pending dlerror, returns `74`, and leaves the next dlerror null; it does not admit callback-driven mapping, graph mutation, or general loader reentrancy. Focused regressions also cover per-thread one-shot errors with two concurrent TLS-free clone threads, lazy dead-TID reclamation across 40 more worker lifetimes, callback stop propagation, malformed and absent record fail-closure without ambient fallback, stale handles, RTLD_NEXT, RTLD_GLOBAL, unknown objects, and copied borrowed-name lifetime. It does not select graph search/mutation, dynamic mapping, scope promotion, finalization/unload, loader.dlfcn-basic, loader.dlfcn-introspection, family completion, or public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 x86-64 loader, dlfcn.h, link.h, src/ldso/dl_iterate_phdr.c, src/ldso/dlopen.c, src/ldso/dladdr.c, src/ldso/dlinfo.c, src/ldso/dlclose.c, src/ldso/dlsym.c, and ldso/dynlink.c", role = "Public C ABI and ordinary already-loaded graph behavior, per-pthread dlerror isolation, callback iteration, address/link-map, RTLD_NEXT, GLOBAL comparison, the static `weak_alias(static_dl_iterate_phdr, dl_iterate_phdr)` archive-binding contract, the static `weak_alias(stub_dlopen, dlopen)` archive-binding contract, and the static `weak_alias(stub_dladdr, dladdr)` archive-binding contract, the exact live-handle unsupported-dlinfo diagnostic, the exact null-dlclose return/diagnostic, the exact live-handle empty-dlsym diagnostic, the exact null-dladdr untouched-output/no-error behavior, the exact nonnull-no-image dladdr untouched-output/no-error behavior, the exact null-RTLD_NOLOAD main-handle/no-error behavior, and `ldso/dynlink.c:dl_iterate_phdr` callback-before-next-lock same-thread pending-dlerror consumption. The candidate never dispatches into musl." }, { kind = "aarch64-contract", source = "compat/abi/musl-1.2.6/aarch64/libc.so.dynamic.tsv and libc.a.static.tsv", role = "Pinned-musl AArch64 ABI manifests retain dl_iterate_phdr, dladdr, dlclose, dlinfo, dlerror, dlsym, and dlopen exports; the static manifest records weak dl_iterate_phdr, dlopen, and dladdr while the shared manifest records global dl_iterate_phdr, dlopen, and dladdr. This is ABI-presence/binding evidence only, not a behavioral fallback or public x86 claim." }, { kind = "elf-abi", source = "System V AMD64 psABI and Linux ELF ABI", role = "LP64 layouts, SysV calls, ET_DYN/PT_INTERP, weak GLOB_DAT, static STB_WEAK caller override, program headers, dynamic pointers, and symbol addresses." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "getpid=39, gettid=186, tgkill=234 liveness reclamation, raw clone concurrency, and clean native process execution." }]
 
@@ -19802,7 +19565,7 @@ id = "ldso-bounded-runtime-dlopen"
 description = "Non-promoting native x86 bounded runtime-mapping artifact inside still-planned `ldso.dynamic-runtime`. A cfg-isolated extension of the no-TLS fixed graph keeps the exact 64-byte `RuntimeV1`-shaped public bridge record but serializes one append-only graph mutation with a loader-owned spin lock. `dlopen` accepts one basename through the main image's already-validated single absolute `DT_RUNPATH` component, maps one real ELF64 ET_DYN DSO, requires every `DT_NEEDED` dependency to be already retained, applies checked RELA relocation and final segment protections, seals PT_GNU_RELRO, then executes at most one nonzero executable `DT_INIT` entry before its bounded constructor array exactly once, validates at most one nonzero executable `DT_FINI` target without dispatching it, and release-publishes the fourth object with generation/additions one. Those legacy tags are admitted only for the appended DSO; initial main/mid/leaf `DT_INIT` remains reject-only and initial main/mid/leaf `DT_FINI` remains reject-only. The same fourth DSO may carry exactly one nonempty aligned 1–16-entry load-contained `DT_PREINIT_ARRAY`/`DT_PREINIT_ARRAYSZ` pair: it is structurally checked before publication but never retained, read, or dispatched, matching pinned musl's inert runtime-DSO behavior. Duplicate, partial, or out-of-load preinit metadata fails closed, and initial main/mid/leaf preinit tags remain reject-only in this sibling; duplicate or non-executable legacy targets, `DT_FINI_ARRAY`, finalization, and unload metadata fail closed. Two concurrent raw-clone callers receive the same opaque handle, while RTLD_LOCAL keeps the new definition outside RTLD_DEFAULT and handle-local lookup follows the new DSO's retained dependency edge. After that one publication, `RTLD_NOLOAD=4` with LAZY/NOW returns and explicitly references only the same runtime basename without a path lookup, mapping, constructor, or copied-graph change; before publication, for NULL (including bare `dlopen(NULL, RTLD_NOLOAD)`), and named initial main/mid/leaf identities fail closed. `RTLD_NODELETE=4096` is likewise accepted with LAZY/NOW only for that fourth identity, including its initial map and post-publication NOLOAD reference. Its mapping is already process-lifetime owned, so this is a lifecycle-neutral flag: it neither keeps an explicit stale token live nor adds a general unload rule; NULL and named initial identities fail closed. Copied `dladdr`, `RTLD_DI_LINKMAP`, and `dl_iterate_phdr` observations include the added image without changing the v1 wire. PT_TLS, RELR, nested RUNPATH, slash-containing names, unretained/recursive dependencies, a second runtime object, `RTLD_NEXT`, `RTLD_GLOBAL`, `DT_FINI_ARRAY`, finalization, and unload fail closed or remain unavailable. Pinned musl 1.2.6 separately proves ordinary runtime open/symbol/address/link-map/iteration, legacy `DT_INIT`-before-array ordering, legacy `DT_FINI` inert ordinary-close/reopen behavior, runtime-DSO `DT_PREINIT_ARRAY` inertness, RTLD_NOLOAD presence/reference, RTLD_NODELETE residency/reopen behavior, and concurrent single-constructor behavior. Accordingly neither `loader.dlfcn-basic` nor `loader.dlfcn-introspection` is selected, the family remains planned, and public x86 support is not promoted."
 source_owners = ["ldso/src/x86_64_initial_graph_source_root.rs", "ldso/src/x86_64_initial_graph.rs", "libc/src/c_abi/x86_64/fixed_graph_dlfcn.rs", "libc/src/c_abi/x86_64/fixed_graph_dlfcn_runtime.rs", "compat/x86_64/ldso_initial_graph_leaf.c", "compat/x86_64/ldso_initial_graph_mid.c", "compat/x86_64/ldso_public_dlfcn_start.S", "compat/x86_64/ldso_bounded_dlopen_plugin.c", "compat/x86_64/ldso_bounded_dlopen_preinit_plugin.c", "compat/x86_64/ldso_bounded_dlopen_tls.c", "compat/x86_64/ldso_bounded_dlopen_probe.c", "compat/x86_64/ldso_bounded_dlopen_preinit_probe.c", "compat/x86_64/ldso_bounded_dlopen_fini_probe.c", "compat/x86_64/run_ldso_bounded_dlopen.sh", "scripts/dev-x86_64.sh"]
 x86_abi_prerequisites = ["The runtime sibling retains the Linux/x86-64 no-TLS main PIE -> mid.so -> leaf.so PT_INTERP transaction and the weak undefined R_X86_64_GLOB_DAT record import. The public SysV record remains exactly magic 0x43524142435f5844, version 1, ABI size 64, and six RuntimeV1-prefix callbacks; image/text/address/information layouts do not change.", "The loader copies the initial three Object records before main entry. Its allocation-free lock serializes open, symbol, close, address, snapshot, and information callbacks with the one mapping transaction. The new Object and copied basename are fully relocated, protected, RELRO-sealed, and constructed before object_count is release-stored as four; snapshots return additions=1, removals=0, generation=1.", "Runtime search accepts only a nonempty slash-free basename below 256 bytes and tries only the main image's already-validated absolute one-component DT_RUNPATH. The mapped ELF must be x86-64 little-endian ET_DYN, SysV-hashed, RELA-only, no PT_TLS, no DT_RUNPATH, at most one nonzero `DT_INIT` target and at most one nonzero `DT_FINI` target inside that appended DSO's executable PT_LOAD, at most 16 init-array entries, at most one paired nonempty aligned 1–16-entry `DT_PREINIT_ARRAY`/`DT_PREINIT_ARRAYSZ` storage range wholly inside a PT_LOAD, and have only already-retained DT_NEEDED names. The preinit pair is validated only as metadata: its entries are neither retained, read, nor dispatched. The mapper passes this admission only to the appended DSO; main/mid/leaf DT_INIT remains reject-only, main/mid/leaf DT_FINI remains reject-only, and main/mid/leaf preinit tags remain reject-only. Capacity is exactly one appended image.", "The optional runtime `DT_INIT` pointer is checked before relocation and is invoked once after relocation, final protections, and RELRO, immediately before the bounded init array. The optional runtime `DT_FINI` pointer is checked before relocation but never retained or dispatched: pinned musl leaves that legacy tag inert on ordinary final close. A paired runtime `DT_PREINIT_ARRAY`/`DT_PREINIT_ARRAYSZ` is checked before relocation but intentionally inert: its entries are neither retained, read, nor dispatched, and malformed pair storage fails before publication. DT_FINI_ARRAY remains rejected and no close operation finalizes or unmaps the image.", "RTLD_LOCAL scope keeps the appended DSO outside RTLD_DEFAULT. Its handle searches itself and its explicitly retained dependency names. Startup mappings and the appended mapping are process-lifetime owned: reference zero makes the opaque token stale but neither finalizes nor unmaps the image, and reopening reacquires the same token.", "RTLD_NOLOAD=4 is accepted only with exactly one of LAZY/NOW for the named fourth runtime object. It acquires that existing token without opening a path, mapping, constructor dispatch, or copied-state change. Before runtime publication, for NULL, or for a non-null main/mid/leaf name, it fails closed before the mapper; no general already-loaded-object query is selected. The shared bridge root is compiled with private `crabc_bounded_runtime_dlopen`, so bare `dlopen(NULL, RTLD_NOLOAD)` retains this NULL initial-object rejection.", "RTLD_NODELETE=4096 is accepted only with exactly one of LAZY/NOW for the same fourth object, including its initial bounded map and its existing RTLD_NOLOAD reference. Process-lifetime mapping already supplies residency, so close still makes an explicit token stale while retaining the mapping for a later one-constructor reopen. NULL and non-null main/mid/leaf names fail closed; no general NODELETE/unload lifecycle is selected."]
-x86_header_prerequisites = ["The existing installed dlfcn.h and link.h x86 LP64 declarations and staged seven-symbol static archive surface are unchanged. This is private artifact evidence and does not alter SCOPE.md, COMPATIBILITY-PROFILE.md, or public_support=false."]
+x86_header_prerequisites = ["The existing installed dlfcn.h and link.h x86 LP64 declarations and staged seven-symbol static archive surface are unchanged. This is private artifact evidence and does not alter AGENTS.md, COMPATIBILITY-PROFILE.md, or public_support=false."]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh ldso-bounded-dlopen", scope = "Native x86 candidate and pinned-musl runtime dlopen proof. The runner checks real ET_DYN interpreter/main/plugin ELF, the exact weak GLOB_DAT/64-byte RuntimeV1-prefix ABI, absence of ambient libc/loader DT_NEEDED edges and positive PT_TLS, and the plugin's sole retained leaf dependency. The positive plugin has one executable `DT_INIT` entry before its bounded `DT_INIT_ARRAY` and one executable `DT_FINI` entry without `DT_FINI_ARRAY`; pinned musl and the candidate each prove the init one-time order across concurrent opens and later reopen. A separate ordinary-close/reopen route proves the validated legacy `DT_FINI` remains inert across each final explicit close. A separately retagged real ET_DYN DSO carries paired `DT_PREINIT_ARRAY`/`DT_PREINIT_ARRAYSZ` storage; pinned musl and the candidate both leave its marker inert, while a candidate out-of-load pair fails before publication and preserves the three-image snapshot. Under env -i, candidate regressions prove malformed PT_TLS, available-but-unretained dependency, slash-name, malformed non-executable runtime `DT_INIT`, malformed non-executable runtime `DT_FINI`, an initial-DSO `DT_INIT` status-127 rejection, and an initial-DSO `DT_FINI` status-127 rejection, plus before-publication RTLD_NOLOAD, NULL RTLD_NOLOAD (including bare `dlopen(NULL, RTLD_NOLOAD)`), named-initial-object RTLD_NOLOAD, NULL RTLD_NODELETE, and named-initial-object RTLD_NODELETE fail-closure without graph publication; two concurrent TLS-free RTLD_NODELETE clone opens with identical handles and one constructor; post-publication RTLD_NOLOAD and RTLD_NOLOAD|RTLD_NODELETE same-token explicit references with both RTLD_NOW and RTLD_LAZY; candidate copied-snapshot invariance and pinned-musl dlpi_adds reference difference; RTLD_NODELETE close/reopen residency with one constructor; callable/data/dependency lookup; RTLD_LOCAL isolation; copied four-image dladdr/dlinfo/dl_iterate_phdr data with additions one; stale-token rejection; and second-object capacity rejection. It does not select general filesystem search, recursive dependency mapping, TLS growth, RTLD_NEXT/global promotion, DT_FINI_ARRAY, finalization/unload, either dlfcn capability, family completion, or public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 x86-64 loader and dlfcn/link interfaces", role = "Ordinary concurrent runtime dlopen, one runtime DT_INIT-before-DT_INIT_ARRAY ordering, legacy DT_FINI inert ordinary-close/reopen behavior, RTLD_NOLOAD presence/reference and dlpi_adds reference observation, RTLD_NODELETE same-object residency/reopen with one constructor, symbol/dependency lookup, address/link-map, iteration, and close comparison; the candidate deliberately keeps copied snapshot additions for graph mutations only and never falls back to musl." }, { kind = "elf-abi", source = "System V AMD64 psABI and Linux ELF ABI", role = "ET_DYN mapping, DT_RUNPATH/DT_NEEDED, DT_INIT/DT_INIT_ARRAY/DT_FINI/DT_PREINIT_ARRAY/DT_PREINIT_ARRAYSZ, ELF64 RELA, PT_GNU_RELRO, weak GLOB_DAT, and SysV callback ABI." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "openat/fstat/mmap/mprotect/munmap/close, raw clone concurrency, and clean native execution." }]
 
@@ -20341,7 +20104,7 @@ oracle = [{ kind = "consumer-build", source = "Pinned Rust nightly-2026-07-24 x8
 [[family.verified_artifact]]
 id = "no-std-native-facade-full-lto-consumer"
 description = "Second private native x86 consumer artifact inside still-planned `consumer.rust-std-lto`. It preserves the AArch64 `lto-native-facade` workload shape across the no-std `crabc-rs` filesystem, pipe, eventfd, descriptor-flag, process-identity, and process-I/O routes, then compiles the application and four Rust dependency crates as LLVM linker-plugin inputs for full LLD `--lto-O3`. The one ordered closed static-PIE link admits only deterministic Rust-produced `rcrt1.o`/`crti.o`/`crtn.o`, the application/dependency inputs, exact pinned target `libcore`, twice-reproduced selected x86 C bulk-memory leaf, and deterministic one-member Rust-only `libcrabc-builtins.a`; runtime-derived `__udivti3` calls require trace attribution to that owned archive. The x86-64 static ET_DYN image has no interpreter, DT_NEEDED, unresolved symbol, or foreign CRT/libc/loader/compiler-runtime input, internalizes the cross-crate helper, and executes the full descriptor workload twice with identical fixed output. This closes a real `lto-native-facade`-shaped private prerequisite, but it is not the same source, stock Rust `std`, an installed owned sysroot, dynamic libc/loader integration, the complete AArch64 gate, source build, family completion, promotion, or public x86 support."
-source_owners = ["Cargo.lock", "rust-toolchain.toml", "plan.md", "x86-64.md", "compat/lto/native-facade-lto-fixture/src/main.rs", "crabc-core/src/error.rs", "crabc-core/src/event_x86_64.rs", "crabc-core/src/fs.rs", "crabc-core/src/io.rs", "crabc-core/src/pipe.rs", "crabc-core/src/process.rs", "crabc-core/src/syscall_x86_64.rs", "crabc-rs/src/event_x86_64.rs", "crabc-rs/src/fd.rs", "crabc-rs/src/fs_x86_64.rs", "crabc-rs/src/io.rs", "crabc-rs/src/pipe.rs", "crabc-rs/src/process_x86_64.rs", "libc/src/c_abi/x86_64/memory.rs", "builtins/build_x86_64.py", "builtins/src/lib.rs", "crt/build_x86_64.py", "crt/src/x86_64_rcrt1.rs", "crt/src/x86_64_crti.rs", "crt/src/x86_64_crtn.rs", "compat/x86_64/libc_memory_probe.rs", "compat/x86_64/consumer_static_pie_lto.py", "compat/x86_64/consumer_static_pie_lto_helper.rs", "compat/x86_64/consumer_native_facade_lto.py", "compat/x86_64/consumer_native_facade_lto_fixture.rs", "compat/x86_64/tests/test_consumer_native_facade_lto.py", "compat/x86_64/parity.toml", "compat/x86_64/validate_parity_ledger.py", "compat/x86_64/tests/test_parity_ledger.py", "compat/x86_64/README.md", "scripts/dev-x86_64.sh"]
+source_owners = ["Cargo.lock", "rust-toolchain.toml", "plan.md", "compat/lto/native-facade-lto-fixture/src/main.rs", "crabc-core/src/error.rs", "crabc-core/src/event_x86_64.rs", "crabc-core/src/fs.rs", "crabc-core/src/io.rs", "crabc-core/src/pipe.rs", "crabc-core/src/process.rs", "crabc-core/src/syscall_x86_64.rs", "crabc-rs/src/event_x86_64.rs", "crabc-rs/src/fd.rs", "crabc-rs/src/fs_x86_64.rs", "crabc-rs/src/io.rs", "crabc-rs/src/pipe.rs", "crabc-rs/src/process_x86_64.rs", "libc/src/c_abi/x86_64/memory.rs", "builtins/build_x86_64.py", "builtins/src/lib.rs", "crt/build_x86_64.py", "crt/src/x86_64_rcrt1.rs", "crt/src/x86_64_crti.rs", "crt/src/x86_64_crtn.rs", "compat/x86_64/libc_memory_probe.rs", "compat/x86_64/consumer_static_pie_lto.py", "compat/x86_64/consumer_static_pie_lto_helper.rs", "compat/x86_64/consumer_native_facade_lto.py", "compat/x86_64/consumer_native_facade_lto_fixture.rs", "compat/x86_64/tests/test_consumer_native_facade_lto.py", "compat/x86_64/parity.toml", "compat/x86_64/validate_parity_ledger.py", "compat/x86_64/tests/test_parity_ledger.py", "compat/x86_64/README.md", "scripts/dev-x86_64.sh"]
 x86_abi_prerequisites = ["The pinned nightly-2026-07-24 x86_64-unknown-linux-musl compiler supplies exactly one target `libcore` rlib with path, SHA-256, and byte length recorded. Every application and dependency crate is an explicit linker-plugin LLVM bitcode input; pinned Rust LLD performs full `--lto-O3`, while the fixture-owned pinned Rust ABI panic-abort and inert personality symbols avoid admitting panic or unwind runtime archives.", "The tracked AArch64 fixture and private x86 fixture are both hashed and independently required to contain the same named getpid/openat/write/pipe/read/eventfd/fcntl routes; `same_source_claimed` remains false. Native success requires all filesystem/pipe/eventfd assertions, cross-crate compiler-helper equality, and final stdout, so source-shape accounting is paired with actual compiler/link/runtime evidence.", "The final x86-64 ET_DYN static PIE uses the same closed link-input order as the earlier control/full-LTO artifact. The selected bulk-memory object defines exactly __memcpy_fwd/bcmp/memcmp/memcpy/memmove/memset with no undefined symbol; runtime-derived `__udivti3` calls select the owned builtins archive, and the output has no interpreter, DT_NEEDED, unresolved symbol, or forbidden runtime marker."]
 x86_header_prerequisites = ["No installed x86 header, C compiler driver, libc archive, loader, or sysroot is selected. The already-locked no-std `bitflags` source is compiled directly with its Cargo.lock version/checksum and cached-source hashes recorded; no dependency is added."]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh consumer-native-facade-lto", scope = "Native Linux/x86-64 compiler/link/runtime proof for the AArch64-shaped no-std native-facade workload. Two clean CRT builds and two clean selected bulk-memory builds must be byte-identical; the exact target libcore, locked Rust sources, both workload fixtures, all closed link inputs, and final artifact carry SHA-256 provenance. The full linker-plugin-LTO image must attribute `__udivti3` to `libcrabc-builtins.a`, internalize the helper boundary, retain its named facade inspection anchors, reject ambient CRT/libc/loader/compiler-runtime markers, and execute the `/dev/null`, pipe, eventfd, fcntl, getpid, read, write, and close routes twice with raw status/stdout/stderr equality. The family remains planned: this is not same-source AArch64 evidence, stock Rust std, an installed owned sysroot, dynamic libc/loader integration, source build, promotion, or public x86 support." }]
@@ -20373,7 +20136,7 @@ source_owners = ["compat/crabc-rs/coverage.toml", "compat/abi/musl-1.2.6/aarch64
 x86_abi_prerequisites = ["Every selected family has an x86 implementation, record/layout proof where applicable, and native evidence."]
 x86_header_prerequisites = ["Every selected C header and ABI capability is classified, evidenced, or explicitly outside the retained profile."]
 native_evidence = [{ state = "required", command = "python3 compat/x86_64/validate_parity_ledger.py", scope = "The validator includes a checked derived AArch64-to-x86 contract inventory and rejects unreviewed source/header/export/ledger drift, including a verified slice that escapes its owning family, a duplicate selected capability or verified-record id, a capability-bearing artifact, or a selected record without nonempty entirely-verified native evidence bound to a registered canonical x86/CRT verifier command. A selected artifact cannot repeat a verifier command as counterfeit independent corroboration. No unaccounted selected surface; this accounting does not consume AArch64 measurements as x86 proof or promote x86." }]
-oracle = [{ kind = "project-contract", source = "SCOPE.md, COMPATIBILITY-PROFILE.md, plan.md, and x86-64.md", role = "Selected-surface and promotion contract." }]
+oracle = [{ kind = "project-contract", source = "AGENTS.md, COMPATIBILITY-PROFILE.md, and plan.md", role = "Selected-surface and promotion contract." }]
 capabilities = []
 status = "planned"
 

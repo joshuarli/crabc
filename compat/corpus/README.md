@@ -158,7 +158,7 @@ APK cache before running it.
 
 Both curl workloads and both git workloads currently fail on strong
 `rand`/`srand` imports. These absent libc providers require a reviewed PRNG
-dependency under `SCOPE.md`. All 34 workloads remain required for completion.
+dependency under `AGENTS.md`. All 34 workloads remain required for completion.
 
 This is one consumer component for the frozen 34 workloads. It does not close
 the wider software-corpus, loader-family, performance, or source-build scope.

@@ -1,177 +1,165 @@
-# Project handoff
+# crabc
 
-## Identity and scope
+Build a small, auditable modern Unix runtime, not every historical libc
+subsystem: a Rust `no_std` libc, dynamic linker, owned CRT/compiler builtins,
+and an idiomatic `crabc-rs` facade. Narrow scope must not weaken ordinary Unix
+semantics.
 
-`crabc` is a small, auditable modern Unix runtime for **Linux/AArch64
-little-endian**: a Rust `no_std` libc, dynamic linker, and an idiomatic
-`crabc-rs` facade. Linux **5.10** is the kernel baseline. Public support remains
-AArch64; the user has opened native x86-64 runtime parity and native x86-64
-mimalloc work under `x86-64.md` and `native-mimalloc.md`, coordinated by
-`plan.md`. AArch64 implementation/qualification work is paused; preserve its
-contracts and frozen parity baseline. Do not add RISC-V, 32-bit, big-endian,
-non-Linux support, or portability abstractions without explicit user direction.
+## Scope and authority
 
-`crabc-rs` exposes useful OS/runtime capabilities; it is not a mechanical
-C-wrapper layer. A future macOS/AArch64 libSystem backend would be separately
-scoped and does not make `crabc` portable.
+- Linux, little-endian, kernel **5.10 or newer**. Public support remains
+  AArch64. Native x86-64 runtime parity and fixed-mimalloc completion are active
+  under `plan.md`; x86 becomes public only through its promotion gates.
+  AArch64 implementation and qualification are paused: preserve its behavior,
+  selected allocator, frozen baseline, and target-qualified evidence. Do not
+  run or emulate its suites for the x86 goal.
+- No new architectures, 32-bit/big-endian targets, non-Linux libc, speculative
+  portability layers, or CI-workflow work in the active campaign. A future
+  macOS/AArch64 libSystem backend for `crabc-rs` is separately scoped.
+  Downstream LLVM/C++ SDK notes do not extend the active runtime goal or
+  authorize ambient compiler-helper or unwinder inputs.
+- Pinned musl **1.2.6** is the C/POSIX compatibility oracle. Use the applicable
+  Linux and System V AMD64 ABI contracts for target boundaries. Rustix is a
+  pinned test oracle, never a production dependency. Glibc is neither an oracle
+  nor a fallback; candidate target artifacts must not borrow ambient runtime
+  inputs from musl, CRT, compiler runtimes, headers, or loaders either.
+- Read this file and `plan.md` to start. Consult the selected behavior in
+  `COMPATIBILITY-PROFILE.md`, the relevant executable contracts, pinned source,
+  and code-adjacent guidance as needed—not the entire documentation tree.
+  User direction governs, followed by this scope and the compatibility profile,
+  then `plan.md` and its machine-readable acceptance contracts. Tests and source
+  establish behavior; generated reports measure it. Reconcile contradictions;
+  neither stale prose nor an assertion in a report waives a requirement.
 
-Musl 1.2.6 is the C/POSIX compatibility oracle. Rustix is a pinned native-API
-and behavior oracle for tests only. Glibc is never an oracle or fallback.
+## Product boundaries
 
-Read [`SCOPE.md`](SCOPE.md), [`COMPATIBILITY-PROFILE.md`](COMPATIBILITY-PROFILE.md),
-and [`plan.md`](plan.md) before selecting new work.
+**Core runtime.** Be exact about filesystems, descriptors, pipes, signals,
+fork/exec, pthread/C11 threads, TLS, sockets, mappings, time, stdio, resolver,
+dynamic linking, errno, ABI, and their composition. Do not add pre-5.10 kernel
+fallbacks. Record newer-kernel requirements centrally before relying on them.
+Existing correct functionality need not be deleted merely because it exceeds
+these minimums.
 
-## Code map
+**Rust facade.** Classify capabilities as OS mechanisms, useful POSIX/runtime
+facilities, C ABI machinery, Rust-subsumed, or deliberately unsupported.
+Expose the first two idiomatically; account for all capabilities in
+`compat/crabc-rs/coverage.toml`. Do not mechanically wrap every C symbol or
+recreate Rust allocation, formatting, strings, slices, or sorting. Keep native
+paths thin and LLVM-visible rather than round-tripping through the C ABI.
+Expose real platform mechanisms, not emulations or a portable runtime framework.
 
-| Path | Contract |
+**Allocator.** No allocator invention. The exception is the faithful Rust
+semantic port of pinned mimalloc **v3.5.0**, with provenance in
+`crabc-mimalloc/UPSTREAM.md`. Preserve source algorithms, data structures,
+ownership, memory ordering, lifecycle, and valid-program behavior. Retain the
+exact C source as an oracle after production promotion. Algorithmic divergence
+needs a durable rationale plus differential and performance evidence; a more
+idiomatic-looking design is not sufficient. Backend selection is compile-time.
+The C backend remains selected until the native x86 promotion gates pass.
+
+**Cryptography.** Never implement cryptographic primitives locally, including
+when translating compatibility source. Use reviewed focused Rust dependencies
+for hashes, ciphers, password primitives, and PRNG/DRBG cores, or explicitly
+limit the feature. Direct OS entropy and surrounding domain-specific state
+machines are allowed. The sole legacy PRNG exception is a source-faithful port
+of musl 1.2.6 `random`, `srandom`, `initstate`, and `setstate`, including seeding,
+state layout, recurrence, and switching, with attribution. Never use it for
+entropy, secrets, allocator hardening, or other security-sensitive purposes.
+
+**Text and locale.** Support `C`, `POSIX`, and `C.UTF-8`; preserve byte-oriented
+C/POSIX versus UTF-8 semantics. Cheap UTF-8 aliases may normalize to the same
+profile, but unsupported names must fail honestly. Rust-facing text is UTF-8.
+The compatibility encoding profile is ASCII, UTF-8, UTF-16LE/BE, and
+UTF-32LE/BE—not general locale databases, collation/language packs, or legacy
+charset catalogs. Gettext is at most small ABI machinery, not a subsystem.
+
+**System data and DNS.** Consume conventional passwd/group, hosts,
+resolv.conf, services, protocols, and zoneinfo files. Support `TZ`, POSIX TZ
+syntax, and tzfile parsing; do not bundle databases. DNS stays within the
+bounded A/AAAA/CNAME, search, UDP/TCP fallback, retry/failover and netdb profile.
+No NSS/PAM/provider plugins, DNSSEC, DoH, DoT, mDNS, recursive-resolver framework,
+or IDNA policy.
+
+**Mature algorithms.** Preserve selected POSIX regex/glob/fnmatch semantics;
+a Rust regex library is not a substitute without equivalence. Use proven musl
+or equivalent focused math algorithms, including NaNs, infinities, signed
+zero, subnormals, rounding, exceptions, and long-double ABI. No new numerical
+algorithms or general-purpose regex ecosystem.
+
+**Mechanisms, not frameworks.** Provide synchronous OS substrate. Do not add
+an executor/reactor, `Future`/`Stream` API layer, process supervisor, shell
+pipeline framework, security-policy language, generic provider registry,
+plugin system, or hypothetical platform/backend abstraction. Use coarse
+features only for real dependency or environment boundaries.
+
+## Dependencies, safety, and performance
+
+Prefer small, mature, focused, auditable Rust dependencies over risky local
+reimplementations; zero dependencies is not itself a goal. Selection is
+implementation judgment, not a routine approval round trip. Record the actual
+primitive and normal transitive graph, native/build/proc-macro code, allocation
+and global state, `no_std`, and LTO implications where the dependency is owned.
+Broad or difficult-to-audit dependencies need stronger justification, not a
+scope expansion. Production allocator restrictions in `plan.md` still apply.
+
+Every public unsafe Rust API documents concrete caller obligations; explain
+nontrivial unsafe blocks at the actual ownership, lifetime, ABI, or provenance
+boundary. Do not invent superficially safe APIs with unenforceable invariants.
+Use short validated projections for concurrently accessed runtime metadata,
+not references whose aliasing promises the implementation cannot uphold.
+
+Remove unnecessary syscalls, allocation, indirection, and algorithmic work
+first; prove simple scalar semantics, then inspect active-target codegen.
+SIMD is a narrow, separately tested and measured optimization, not an internal
+framework or a substitute for a better algorithm. An established math kernel
+may be appropriate earlier when its numerical contract is proved. Crypto
+primitives remain in reviewed dependencies, including vectorized ones.
+
+## Working rules
+
+- Implement coherent behavior with focused regressions and real boundary
+  evidence. Reproduce bugs before fixing them; prose or behavior-neutral edits
+  do not need artificial failing tests. Reuse existing test matrices rather
+  than adding a runner, receipt schema, and status paragraph for each symbol.
+- Preserve exact upstream revisions, source-to-Rust mappings, licenses, and
+  intentional differences. Do not rewrite upstream workloads, suppress raw
+  failures, or weaken gates to conceal an implementation defect.
+- Keep unrelated dirty work. Do not run broad formatters, linters, pre-commit
+  hooks, or push a remote unless the user explicitly requests them.
+- Keep new worktrees, scratch, caches, extracted sources, and build state
+  inside the owning checkout's ignored `.work/` boundary. Honor stricter
+  launcher paths and existing ignored report locations. No external scratch,
+  symlink escapes, or shared mutable build outputs.
+- Use current user/global orchestration instructions for models and capacity.
+  Parallelize useful independent implementation in isolated worktrees; give
+  shared state one owner and integrate continuously. Do not invent work to
+  fill slots or require a scheduling board, handoff schema, or wave ceremony.
+  Bound nested build/test concurrency separately; qualifying benchmarks need
+  an uncontended host.
+- `plan.md` is the only implementation plan and repository-wide progress
+  handoff. Update its small Progress status section in place when the frontier
+  changes. Put required per-capability/source state in existing manifests and
+  raw evidence in ignored reports. Git is the history; do not add prose
+  archives, per-leaf settlement narratives, or duplicate status files.
+
+## Code and command map
+
+| Boundary | Location |
 | --- | --- |
-| `libc/` | `crabc-libc`: `no_std` C ABI, producing `libc.so` and `libc.a`. `libc/src/lib.rs` is the target/linkage root; `libc/src/c_abi.rs` owns shared C ABI translation and libc runtime state, while independent ABI leaves are normal private modules. |
-| `ldso/` | `crabc-ldso`: AArch64 dynamic linker and private runtime-state owner. `ldso/src/lib.rs` is the target/linkage root; `ldso/src/loader.rs` owns loader algorithms and state. |
-| `crt/` | `crabc-crt`: Rust-produced `crt1.o`, `Scrt1.o`, `rcrt1.o`, `crti.o`, and `crtn.o`; `crt/build.py` owns deterministic object production and provenance. |
-| `builtins/` | Rust `no_std` compiler-helper archive and deterministic builder for `libcrabc-builtins.a`; it replaces foreign target compiler-runtime archives. |
-| `crabc-core/` | Shared typed `no_std` primitives used by the Rust facade; public AArch64 contract and staged native x86 foundations. |
-| `crabc-rs/` | Public idiomatic Rust facade, direct probes, and native tests. |
-| `crabc-mimalloc/` | Fixed-upstream allocator provenance and incomplete `#![no_std]` semantic port. Native x86-64 work is active; AArch64 work is paused. It is not a new allocator design or the current production backend. |
-| `include/` | Installed public C headers. |
-| `tests/` | Root Rust integration tests and C fixtures. |
-| `compat/` | ABI, differential, loader, corpus, POSIX, Rust-std, LTO, Rustix, performance, and capability-ledger evidence. |
-| `libc-test-harness/` | Pinned upstream libc-test runner and its oracle evidence. |
-| `docker/` | Pinned target-specific development images. |
-| `scripts/dev-x86_64.sh` | Active native x86 Docker-first dispatcher; `scripts/dev.sh` preserves the paused AArch64 command surface. |
-| `compat/reports/` | Ignored generated evidence. |
-| `COMPATIBILITY.md` | Generated repository status dashboard; never edit it by hand. |
+| C ABI and libc-owned state | `libc/`; target root `src/lib.rs`, shared ABI translation `src/c_abi.rs` |
+| Loader and private runtime wire boundary | `ldso/`; `src/lib.rs` and `src/loader.rs` |
+| Owned application CRT and compiler helpers | `crt/`, `builtins/` |
+| Shared typed primitives and Rust facade | `crabc-core/`, `crabc-rs/` |
+| Fixed allocator port and source provenance | `crabc-mimalloc/`, `compat/allocator/` |
+| Public headers and integration fixtures | `include/`, `tests/` |
+| Native campaign and frozen parity contracts | `compat/x86_64/` |
+| Compatibility, corpus, std/LTO, and performance evidence | `compat/`, `libc-test-harness/` |
+| Pins | `rust-toolchain.toml`, `compat/upstreams.toml`, target Dockerfiles |
 
-## Documentation router
-
-| Need | Read |
-| --- | --- |
-| Governing scope and non-goals | [`SCOPE.md`](SCOPE.md) |
-| Public support/limitation boundary | [`COMPATIBILITY-PROFILE.md`](COMPATIBILITY-PROFILE.md) |
-| Current completion state and roadmap router | The in-place Progress status section in [`plan.md`](plan.md) |
-| Combined native x86-64 execution goal | [`plan.md`](plan.md), [`x86-64.md`](x86-64.md), and [`native-mimalloc.md`](native-mimalloc.md) |
-| Runtime ownership and dependency architecture | [`docs/design/architecture.md`](docs/design/architecture.md) |
-| Owned application CRT/sysroot design and purity boundary | [`docs/design/crt-and-sysroot.md`](docs/design/crt-and-sysroot.md) and [`docs/evidence/crabc-owned-sysroot.md`](docs/evidence/crabc-owned-sysroot.md) |
-| Completed Lua source-build gate | [`docs/design/source-build.md`](docs/design/source-build.md) and [`docs/evidence/lua-source-build.md`](docs/evidence/lua-source-build.md) |
-| Future CPython source-build contract | [`docs/roadmap/source-build.md`](docs/roadmap/source-build.md) |
-| Performance completion contract | [`docs/roadmap/performance-completion.md`](docs/roadmap/performance-completion.md) |
-| Follow-on software-corpus validation | [`docs/roadmap/software-corpus-validation.md`](docs/roadmap/software-corpus-validation.md) |
-| Current measured results | [`COMPATIBILITY.md`](COMPATIBILITY.md) and `compat/reports/**` |
-| Cross-cutting document index | [`docs/README.md`](docs/README.md) |
-| Current Rust-facade architecture | [`docs/design/crabc-rs.md`](docs/design/crabc-rs.md) |
-| Allocator-port scope, ownership, and provenance | [`docs/design/allocator.md`](docs/design/allocator.md) and [`crabc-mimalloc/UPSTREAM.md`](crabc-mimalloc/UPSTREAM.md) |
-| Performance contract and active cost frontier | [`docs/design/performance.md`](docs/design/performance.md) and [`compat/perf/README.md`](compat/perf/README.md) |
-| Allocator differential evidence and recorded differences | [`compat/allocator/README.md`](compat/allocator/README.md) and [`compat/allocator/known-differences.md`](compat/allocator/known-differences.md) |
-| Exact native capability classification | [`compat/crabc-rs/coverage.toml`](compat/crabc-rs/coverage.toml) |
-| Historical delivery rationale and rename provenance | [`docs/history/`](docs/history/) — provenance only, never a live backlog |
-| Harness mechanics | The nearest `compat/*/README.md` or package `README.md` |
-| Toolchain/oracle pins | `rust-toolchain.toml`, `compat/upstreams.toml`, `docker/Dockerfile` |
-
-When documentation disagrees, use this precedence:
-
-1. Explicit user direction and this working contract.
-2. `SCOPE.md`, then `COMPATIBILITY-PROFILE.md`, then `plan.md` and the
-   applicable execution or machine-readable contract. The Progress status
-   section in `plan.md` reports the current frontier; detailed contracts define
-   acceptance criteria.
-3. Executable and machine-readable contracts: manifests, headers, pins,
-   ledgers, scripts, and focused tests.
-4. Musl/POSIX/source-oracle evidence for the named behavior.
-5. Generated reports and dashboards as measurements, not normative policy.
-6. README and historical prose as orientation/provenance.
-
-Do not silently follow a stale paragraph. Reconcile its scope/status claim or
-record why it is historical.
-
-## Development and evidence
-
-Active work uses the pinned native Linux/x86-64 environment through
-`./scripts/dev-x86_64.sh`. Direct `cargo` is appropriate only inside the
-relevant pinned environment. Start with the campaign surface:
-
-```bash
-./scripts/dev-x86_64.sh --help
-./scripts/dev-x86_64.sh campaign-status
-./scripts/dev-x86_64.sh campaign-family FAMILY
-./scripts/dev-x86_64.sh campaign-all
-```
-
-The allocator lane uses `compat/allocator/run-x86_64.sh` with its separate
-`.work/allocator-x86_64/` state. Its standalone
-evidence cannot replace runtime integration. `scripts/dev.sh` and the pinned
-Apple Silicon → Linux/AArch64 workflow are paused reference paths, not commands
-to execute for this goal. Do not emulate AArch64.
-
-Detailed runner options and report contracts live next to each harness.
-`libc-test-harness/run.sh` is a compatibility launcher, not the canonical host
-entry point. `scripts/local-ci.sh` is legacy host-architecture convenience and
-does not replace the pinned native evidence environment.
-
-## Scope rules that affect implementation
-
-- Kernel-facing code may rely on Linux 5.10. Do not add pre-5.10 fallbacks;
-  centrally document a newer requirement before relying on it.
-- Allocator invention is out of scope. The one exception is a
-  provenance-preserving semantic port of fixed mimalloc v3.5.0 (native x86-64
-  active; AArch64 paused):
-  preserve its algorithms, data structures, memory orderings, and observable
-  behavior until parity is proved; retain the pinned C implementation as a
-  differential oracle; require a written design note plus differential and
-  performance evidence for any algorithmic divergence. `crabc-rs` uses normal
-  Rust allocation and does not expose C allocation APIs.
-- Never hand-roll cryptography, including when porting compatibility source.
-  Entropy syscalls and domain-specific state machines are in scope; every
-  cryptographic algorithm or PRNG/DRBG core requires a reviewed focused Rust
-  dependency or the feature remains explicitly limited.
-  The sole legacy PRNG exception is a provenance-preserving Rust semantic port
-  of pinned musl 1.2.6 `random`, `srandom`, `initstate`, and `setstate`, including
-  their recurrence, seeding, state representation and switching. Its exact C
-  source is the oracle; preserve attribution and licensing. Never use this
-  non-cryptographic generator for entropy, secrets, allocator hardening, or
-  other security-sensitive purposes. All cryptographic prohibitions and
-  approved entropy/dependency boundaries remain unchanged.
-- Locale support is `C`, `POSIX`, and `C.UTF-8`; Rust-facing text is UTF-8.
-  Do not add general locale/legacy-encoding databases.
-- Parse conventional system files. Do not build NSS, plugin/provider systems,
-  bundled tzdata, gettext, IDNA policy, async runtimes, process supervisors,
-  security-policy frameworks, or portability layers.
-- DNS is the bounded `/etc/hosts` + `/etc/resolv.conf`, A/AAAA/CNAME, search,
-  UDP/TCP fallback, retry/failover profile. Exclude DNSSEC, DoH, DoT, and mDNS.
-- Dependency selection is delegated to implementation judgment; no separate
-  user approval is required. Apply `SCOPE.md`'s preference for small, mature,
-  focused dependencies and scrutinize broad or difficult-to-audit choices.
-  Document the primitive, exact normal transitive graph, build/native code,
-  allocation/global state, `no_std`, and LTO consequences. This authority does
-  not expand project scope or waive provenance and qualification requirements.
-- Scalar behavior is canonical. Remove structural and algorithmic cost first;
-  use SIMD only as a separately proven, measured final optimization (except
-  for a fully proved established math kernel). Crypto stays in approved
-  RustCrypto primitives, never hand-rolled vector code.
-- Every public unsafe Rust API documents its concrete caller obligations.
-
-## Working contract
-
-Implementation is cheap; ambiguity is not. Spend care on durable names,
-types, interfaces, state transitions, permissions, tests, and explanations.
-
-- Before editing, find the behavior, boundaries, callers, tests, and docs.
-  Classify scope as core Unix runtime, useful POSIX/runtime, C ABI machinery,
-  Rust-subsumed, or deliberately unsupported legacy.
-- Work vertical slices: contract → focused regression → implementation →
-  direct-boundary/ABI proof → musl/POSIX/external evidence → ledger/docs.
-  Do not mass-add stubs or chase a symbol count.
-- For bugs, add the smallest isolated failing regression before the fix.
-- Keep unsafe boundaries explicit and preserve compatibility algorithms where
-  musl behavior is subtle. Do not hide fallbacks merely to make a patch fit.
-- For a translated fixed-upstream subsystem, record its exact revision, source
-  file/function-to-Rust-module mapping, source-specific license provenance,
-  and intentional differences before treating an implementation as a port.
-- Preserve unrelated dirty work. Do not run formatters, linters, pre-commit
-  hooks, or push a remote unless the user explicitly asks.
-- Keep development worktrees, scratch files, extracted sources, build/cache
-  state, and generated evidence under the checkout's ignored `.work/` tree.
-  Use `.work/x86_64/` for x86 runtime work. Override tools' temporary paths;
-  do not create new work under `/tmp` or outside the checkout. Existing
-  architecture-qualified evidence paths remain provenance, not permission
-  to create new external scratch directories.
-- A completed feature needs coherent tests, ledger/documentation updates, and
-  a commit when requested.
+Use `./scripts/dev-x86_64.sh --help` and `campaign-status` for active runtime
+work; use `./compat/allocator/run-x86_64.sh` for the separate allocator lane.
+Direct Cargo belongs inside the relevant pinned native environment. The
+AArch64 `scripts/dev.sh` route is paused, and `scripts/local-ci.sh` is not a
+substitute for native qualification. Harness READMEs own detailed options;
+`docs/README.md` is an optional reference index. `COMPATIBILITY.md` is generated,
+never hand-edited.

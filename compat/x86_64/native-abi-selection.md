@@ -4,7 +4,7 @@ The native ABI contract selects observable C interfaces and their owners. An
 ELF inventory records what an artifact contains; the dynamic ratchet prevents
 regression against a reviewed observation. Neither chooses the supported ABI.
 This contract supplies the ownership rules for the complete callable/data
-manifest required by `x86-64.md`, under `libc.c-abi-compat` and
+manifest required by `plan.md`, under `libc.c-abi-compat` and
 `compat.abi-differential`. The executable accounting below retains unresolved
 selection and evidence requirements; complete provider proof remains required.
 

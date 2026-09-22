@@ -34,8 +34,8 @@ Rust/C throughput ratio for every workload/worker-scale pair. A ratio is never
 published without those raw samples and provenance.
 
 This is an early architecture smoke. Its `0.25` ratio is the local ratchet in
-`native-mimalloc.md` §§7.2–7.3, not a final band. The report always records
-`final_promotion_qualified: false`. Apple-Silicon Docker is useful for this
+`plan.md` (Allocator verification and performance), not a final band. The
+report always records `final_promotion_qualified: false`. Apple-Silicon Docker is useful for this
 development smoke but is explicitly unqualified for promotion; §19.2 requires
 a recorded native Linux/AArch64 final-performance environment.
 

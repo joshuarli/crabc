@@ -53,7 +53,7 @@ which must be tested with this repository's exact pinned nightly.
 ## Decision and qualification boundary
 
 The user approved this pinned configuration on 2026-09-05 and delegated future
-dependency selection to implementation judgment under `SCOPE.md` §21. DWARF
+dependency selection to implementation judgment under the dependency policy in `AGENTS.md`. DWARF
 parsing and machine-context restoration replace a critical runtime component;
 the broad transitive bindings and absence of an identified upstream fuzz corpus
 remain audit and qualification concerns. Approval covers integration and

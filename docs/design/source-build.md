@@ -142,6 +142,6 @@ only, never a performance result.
 ## Future source-build work
 
 CPython remains unimplemented. Its activation conditions and narrow
-acceptance contract are in [`docs/roadmap/source-build.md`](../roadmap/source-build.md).
+acceptance contract are in [`plan.md`](../../plan.md#deferred-work).
 It starts from this owned-sysroot boundary; it must not introduce a portability
 layer, a package-management framework, or unproved optional dependencies.

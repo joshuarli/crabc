@@ -10125,7 +10125,6 @@ def require_memccpy_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -10400,7 +10399,6 @@ def require_mempcpy_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/aarch64_parity_inventory.json",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -10678,7 +10676,6 @@ def require_strsep_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/aarch64_parity_inventory.json",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -10964,7 +10961,6 @@ def require_strtok_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/aarch64_parity_inventory.json",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -11271,7 +11267,6 @@ def require_posix_spawnattr_init_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -11628,7 +11623,6 @@ def require_posix_spawnattr_getpgroup_artifact(family: Mapping[str, Any]) -> Non
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -12371,7 +12365,6 @@ def require_posix_spawnattr_getschedpolicy_artifact(
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -16755,7 +16748,6 @@ def require_no_std_static_pie_full_lto_consumer_artifact(
     )
     for owner in (
         "plan.md",
-        "x86-64.md",
         "compat/lto/native-facade-lto-fixture/src/main.rs",
         "crabc-core/src/event_x86_64.rs",
         "crabc-core/src/fs.rs",
@@ -17052,7 +17044,6 @@ def require_static_pthread_identity_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     }
@@ -17202,7 +17193,6 @@ def require_static_c11_lifecycle_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     }
@@ -17367,7 +17357,6 @@ def require_static_pthread_c11_detach_artifact(family: Mapping[str, Any]) -> Non
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     }
@@ -17532,7 +17521,6 @@ def require_static_thrd_sleep_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     }
@@ -17699,7 +17687,6 @@ def require_static_pthread_normal_mutex_artifact(family: Mapping[str, Any]) -> N
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     }
@@ -17934,7 +17921,6 @@ def require_static_pthread_rwlock_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     }
@@ -18191,7 +18177,6 @@ def require_static_pthread_private_cond_artifact(family: Mapping[str, Any]) -> N
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     }
@@ -18432,7 +18417,6 @@ def require_static_c11_plain_sync_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     }
@@ -18774,7 +18758,6 @@ def require_static_pthread_c11_once_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     }
@@ -19119,7 +19102,6 @@ def require_static_pthread_c11_tsd_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     }
@@ -19449,7 +19431,6 @@ def require_static_pthread_cancel_deferred_artifact(
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     }
@@ -19770,7 +19751,6 @@ def require_aio_error_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -20304,7 +20284,6 @@ def require_l64a_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -20884,7 +20863,6 @@ def require_error_strsignal_slice(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -21297,7 +21275,6 @@ def require_personality_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -21502,7 +21479,6 @@ def require_setfsgid_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -21741,7 +21717,6 @@ def require_setfsuid_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -21978,7 +21953,6 @@ def require_ctermid_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -22211,7 +22185,6 @@ def require_grantpt_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -22458,7 +22431,6 @@ def require_unlockpt_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -22723,7 +22695,6 @@ def require_getpass_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -22986,7 +22957,6 @@ def require_isatty_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -23234,7 +23204,6 @@ def require_ttyname_r_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -23526,7 +23495,6 @@ def require_tcgetpgrp_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -23798,7 +23766,6 @@ def require_tcsetpgrp_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -24080,7 +24047,6 @@ def require_mktemp_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -24414,7 +24380,6 @@ def require_posix_spawn_file_actions_artifact(family: Mapping[str, Any]) -> None
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -25050,7 +25015,6 @@ def require_file_handles_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -25403,7 +25367,6 @@ def require_temporary_names_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -25763,7 +25726,7 @@ def require_process_environment_mutation_slice(family: Mapping[str, Any]) -> Non
         "compat/x86_64/aarch64_parity_inventory.json",
         "compat/x86_64/tests/test_aarch64_parity_inventory.py",
         "compat/x86_64/README.md",
-        "x86-64.md",
+        "plan.md",
         "scripts/dev-x86_64.sh",
     ):
         require(owner in owners, f"static-c-environment source owners omit {owner}")
@@ -28056,7 +28019,6 @@ def require_readlinkat_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -28356,7 +28318,6 @@ def require_linkat_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -28653,7 +28614,6 @@ def require_renameat2_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -28953,7 +28913,6 @@ def require_lchown_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -29243,7 +29202,6 @@ def require_hasmntopt_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -29920,7 +29878,6 @@ def require_static_sched_cpucount_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/aarch64_parity_inventory.json",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -30174,7 +30131,6 @@ def require_static_sched_priority_bounds_artifact(
         "compat/x86_64/aarch64_parity_inventory.json",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -30532,7 +30488,6 @@ def require_clock_adjtime_error_abi_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/aarch64_parity_inventory.json",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -30836,7 +30791,6 @@ def require_clock_settime_error_abi_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/aarch64_parity_inventory.json",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -31129,7 +31083,6 @@ def require_timer_getoverrun_error_abi_artifact(family: Mapping[str, Any]) -> No
         "compat/x86_64/aarch64_parity_inventory.json",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -31442,7 +31395,6 @@ def require_timer_delete_raw_error_abi_artifact(family: Mapping[str, Any]) -> No
         "compat/x86_64/aarch64_parity_inventory.json",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -31765,7 +31717,6 @@ def require_timer_gettime_error_abi_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/aarch64_parity_inventory.json",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -32086,7 +32037,6 @@ def require_timer_settime_error_abi_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/aarch64_parity_inventory.json",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -32465,7 +32415,6 @@ def require_difftime_binary64_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -32681,7 +32630,6 @@ def require_timegm_utc_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -32917,7 +32865,6 @@ def require_gmtime_r_utc_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -33250,7 +33197,6 @@ def require_getpagesize_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/aarch64_parity_inventory.json",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -33658,7 +33604,6 @@ def require_getloadavg_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -35068,7 +35013,6 @@ def require_sigpause_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -35256,7 +35200,6 @@ def require_sigisemptyset_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -35437,7 +35380,6 @@ def require_sigandset_sigorset_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -35630,7 +35572,6 @@ def require_sigpending_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -35814,7 +35755,6 @@ def require_sigrtmax_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -35993,7 +35933,6 @@ def require_sigrtmin_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -36177,7 +36116,6 @@ def require_sched_getscheduler_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -36377,7 +36315,6 @@ def require_alarm_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -36585,7 +36522,6 @@ def require_ualarm_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -36822,7 +36758,6 @@ def require_sigset_mutation_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -37238,7 +37173,6 @@ def require_usleep_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -37416,7 +37350,6 @@ def require_sleep_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -38002,7 +37935,6 @@ def require_mkfifo_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
     ):
         require(owner in owners, f"static-c-mkfifo source owners omit {owner}")
@@ -38230,7 +38162,6 @@ def require_mkfifoat_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
     ):
         require(owner in owners, f"static-c-mkfifoat source owners omit {owner}")
@@ -38480,7 +38411,6 @@ def require_mkdirat_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -40043,7 +39973,6 @@ def require_network_byte_order_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -40336,7 +40265,6 @@ def require_in6addr_any_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -40706,7 +40634,6 @@ def require_in6addr_loopback_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -41870,7 +41797,6 @@ def require_mq_setattr_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -42834,7 +42760,6 @@ def require_fchdir_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -43163,7 +43088,6 @@ def require_ulimit_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -44298,7 +44222,6 @@ def require_filesystem_directory_slice(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
     ):
         require(
@@ -44555,7 +44478,6 @@ def require_filesystem_extensions_slice(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
     ):
         require(
@@ -44787,7 +44709,7 @@ def require_extended_attributes_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/tests/test_runner.py",
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
-        "x86-64.md",
+        "plan.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -45111,7 +45033,7 @@ def require_inet_address_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/tests/test_runner.py",
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
-        "x86-64.md",
+        "plan.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -45390,7 +45312,6 @@ def require_inet_ntoa_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -45744,7 +45665,6 @@ def require_inet_classful_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -46169,7 +46089,6 @@ def require_hstrerror_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -46477,7 +46396,6 @@ def require_qsort_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -46770,7 +46688,6 @@ def require_bsearch_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -47042,7 +46959,6 @@ def require_linear_search_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -47366,7 +47282,6 @@ def require_intrusive_queue_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/aarch64_parity_inventory.json",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -47670,7 +47585,6 @@ def require_gethostid_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -47936,7 +47850,6 @@ def require_issetugid_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -48703,7 +48616,6 @@ def require_gettid_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -48984,7 +48896,6 @@ def require_posix_close_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -49716,7 +49627,6 @@ def require_endhostent_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -50344,7 +50254,6 @@ def require_protocol_database_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -50846,7 +50755,6 @@ def require_endservent_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -51130,7 +51038,6 @@ def require_dn_skipname_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -51470,7 +51377,6 @@ def require_dn_expand_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -51840,7 +51746,6 @@ def require_ns_flagdata_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -52210,7 +52115,6 @@ def require_ns_get16_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -52550,7 +52454,6 @@ def require_ns_get32_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -52896,7 +52799,6 @@ def require_ns_put16_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -53243,7 +53145,6 @@ def require_auxv_observation_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -53467,7 +53368,6 @@ def require_process_globals_getopt_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -55779,7 +55679,6 @@ def require_alloca_builtin_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/aarch64_parity_inventory.json",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
     ):
         require(owner in owners, f"static-c-alloca-builtin source owners omit {owner}")
@@ -55943,7 +55842,6 @@ def require_getsubopt_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -56241,7 +56139,7 @@ def require_float_parse_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/tests/test_parity_ledger.py",
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
-        "x86-64.md",
+        "plan.md",
         "scripts/dev-x86_64.sh",
     ):
         require(owner in owners, f"static-c-float-parse omits {owner}")
@@ -56565,7 +56463,7 @@ def require_float_parse_locale_slice(family: Mapping[str, Any]) -> None:
         "compat/x86_64/tests/test_parity_ledger.py",
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
-        "x86-64.md",
+        "plan.md",
         "scripts/dev-x86_64.sh",
     ):
         require(owner in owners, f"numeric.parse-float-locale source owners omit {owner}")
@@ -56833,7 +56731,7 @@ def require_stdio_standard_streams_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/tests/test_parity_ledger.py",
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
-        "x86-64.md",
+        "plan.md",
         "scripts/dev-x86_64.sh",
     ):
         require(
@@ -57406,7 +57304,6 @@ def require_stdio_integer_scan_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
     ):
         require(
@@ -57697,7 +57594,6 @@ def require_stdio_octal_hex_scan_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
     ):
         require(
@@ -58024,7 +57920,6 @@ def require_stdio_fixed_percent_scan_artifact(family: Mapping[str, Any]) -> None
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
     ):
         require(
@@ -58376,7 +58271,6 @@ def require_stdio_fixed_format_whitespace_scan_artifact(
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
     ):
         require(
@@ -58735,7 +58629,6 @@ def require_stdio_fixed_literal_scan_artifact(
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
     ):
         require(
@@ -59088,7 +58981,6 @@ def require_stdio_fixed_empty_format_scan_artifact(
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
     ):
         require(
@@ -59444,7 +59336,6 @@ def require_stdio_fixed_suppressed_character_scan_artifact(
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
     ):
         require(
@@ -59807,7 +59698,6 @@ def require_stdio_fixed_suppressed_string_scan_artifact(
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
     ):
         require(
@@ -60176,7 +60066,6 @@ def require_stdio_fixed_suppressed_scanset_scan_artifact(
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
     ):
         require(
@@ -60546,7 +60435,6 @@ def require_stdio_fixed_suppressed_count_scan_artifact(
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
     ):
         require(
@@ -60879,7 +60767,6 @@ def require_stdio_float_hex_output_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
     ):
         require(
@@ -61080,7 +60967,6 @@ def require_stdio_errno_output_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
     ):
         require(path in owners, f"static-c-stdio-errno-output source owners omit {path}")
@@ -61401,7 +61287,7 @@ def require_stdio_permanent_line_io_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/tests/test_parity_ledger.py",
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
-        "x86-64.md",
+        "plan.md",
         "scripts/dev-x86_64.sh",
     ):
         require(
@@ -61717,7 +61603,7 @@ def require_stdio_permanent_byte_io_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/tests/test_parity_ledger.py",
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
-        "x86-64.md",
+        "plan.md",
         "scripts/dev-x86_64.sh",
     ):
         require(
@@ -62045,7 +61931,7 @@ def require_stdio_permanent_status_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/tests/test_parity_ledger.py",
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
-        "x86-64.md",
+        "plan.md",
         "scripts/dev-x86_64.sh",
     ):
         require(
@@ -62395,7 +62281,7 @@ def require_stdio_permanent_freading_stdin_artifact(
         "compat/x86_64/tests/test_parity_ledger.py",
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
-        "x86-64.md",
+        "plan.md",
         "scripts/dev-x86_64.sh",
     ):
         require(
@@ -62766,7 +62652,7 @@ def require_stdio_permanent_fsetlocking_stdin_artifact(
         "compat/x86_64/tests/test_parity_ledger.py",
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
-        "x86-64.md",
+        "plan.md",
         "scripts/dev-x86_64.sh",
     ):
         require(
@@ -63152,7 +63038,7 @@ def require_stdio_permanent_fseterr_stdin_artifact(
         "compat/x86_64/tests/test_parity_ledger.py",
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
-        "x86-64.md",
+        "plan.md",
         "scripts/dev-x86_64.sh",
     ):
         require(
@@ -63521,7 +63407,7 @@ def require_stdio_permanent_freadable_stdin_artifact(
         "compat/x86_64/tests/test_parity_ledger.py",
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
-        "x86-64.md",
+        "plan.md",
         "scripts/dev-x86_64.sh",
     ):
         require(
@@ -63879,7 +63765,7 @@ def require_stdio_permanent_fwritable_stderr_artifact(
         "compat/x86_64/tests/test_parity_ledger.py",
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
-        "x86-64.md",
+        "plan.md",
         "scripts/dev-x86_64.sh",
     ):
         require(
@@ -64246,7 +64132,7 @@ def require_stdio_permanent_fbufsize_stderr_artifact(
         "compat/x86_64/tests/test_parity_ledger.py",
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
-        "x86-64.md",
+        "plan.md",
         "scripts/dev-x86_64.sh",
     ):
         require(
@@ -64618,7 +64504,7 @@ def require_stdio_permanent_flbf_stderr_artifact(
         "compat/x86_64/tests/test_parity_ledger.py",
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
-        "x86-64.md",
+        "plan.md",
         "scripts/dev-x86_64.sh",
     ):
         require(
@@ -64989,7 +64875,7 @@ def require_stdio_permanent_feof_unlocked_artifact(
         "compat/x86_64/tests/test_parity_ledger.py",
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
-        "x86-64.md",
+        "plan.md",
         "scripts/dev-x86_64.sh",
     ):
         require(
@@ -65603,7 +65489,7 @@ def require_stdio_permanent_fileno_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/tests/test_parity_ledger.py",
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
-        "x86-64.md",
+        "plan.md",
         "scripts/dev-x86_64.sh",
     ):
         require(
@@ -65920,7 +65806,7 @@ def require_stdio_permanent_fileno_unlocked_artifact(
         "compat/x86_64/tests/test_parity_ledger.py",
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
-        "x86-64.md",
+        "plan.md",
         "scripts/dev-x86_64.sh",
     ):
         require(
@@ -66235,7 +66121,7 @@ def require_stdio_path_stream_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/tests/test_parity_ledger.py",
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
-        "x86-64.md",
+        "plan.md",
         "scripts/dev-x86_64.sh",
     ):
         require(
@@ -66526,7 +66412,7 @@ def require_stdio_tmpfile_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/tests/test_parity_ledger.py",
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
-        "x86-64.md",
+        "plan.md",
         "scripts/dev-x86_64.sh",
     ):
         require(owner in owners, f"static-c-stdio-tmpfile omits {owner}")
@@ -66779,7 +66665,7 @@ def require_stdio_fopen64_alias_slice(family: Mapping[str, Any]) -> None:
         nonempty_strings(selected.get("source_owners"), "stdio.fopen64-alias.source_owners")
     )
     for owner in (
-        "SCOPE.md",
+        "AGENTS.md",
         "COMPATIBILITY-PROFILE.md",
         "compat/upstreams.toml",
         "compat/crabc-rs/coverage.toml",
@@ -67311,7 +67197,6 @@ def require_elementary_sqrt_fenv_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -67477,7 +67362,6 @@ def require_fenv_sensitive_rounding_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -67656,7 +67540,6 @@ def require_math_x87_extended_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/check_structure.py",
         "scripts/dev-x86_64.sh",
     ):
@@ -67889,7 +67772,6 @@ def require_math_special_slice(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/check_structure.py",
         "scripts/dev-x86_64.sh",
     ):
@@ -68094,7 +67976,6 @@ def require_math_complex_complete_slice(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/check_structure.py",
         "scripts/dev-x86_64.sh",
     ):
@@ -68389,7 +68270,6 @@ def require_math_elementary_long_double_slice(family: Mapping[str, Any]) -> None
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/check_structure.py",
         "scripts/dev-x86_64.sh",
     ):
@@ -68658,7 +68538,6 @@ def require_fdim_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -68840,7 +68719,6 @@ def require_math_elementary_fenv_sensitive_slice(
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -69134,7 +69012,6 @@ def require_math_minmax_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -69322,7 +69199,6 @@ def require_math_bit_sign_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/check_structure.py",
         "scripts/dev-x86_64.sh",
     ):
@@ -69510,7 +69386,6 @@ def require_math_trunc_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/check_structure.py",
         "scripts/dev-x86_64.sh",
     ):
@@ -69700,7 +69575,6 @@ def require_math_fmod_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/check_structure.py",
         "scripts/dev-x86_64.sh",
     ):
@@ -69897,7 +69771,6 @@ def require_math_cbrt_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/check_structure.py",
         "scripts/dev-x86_64.sh",
     ):
@@ -70119,10 +69992,9 @@ def require_math_exp2_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/tests/test_parity_ledger.py",
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
-        "SCOPE.md",
+        "AGENTS.md",
         "COMPATIBILITY-PROFILE.md",
         "plan.md",
-        "x86-64.md",
         "scripts/check_structure.py",
         "scripts/dev-x86_64.sh",
     ):
@@ -70378,10 +70250,9 @@ def require_math_expm1_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/tests/test_parity_ledger.py",
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
-        "SCOPE.md",
+        "AGENTS.md",
         "COMPATIBILITY-PROFILE.md",
         "plan.md",
-        "x86-64.md",
         "scripts/check_structure.py",
         "scripts/dev-x86_64.sh",
     ):
@@ -70619,10 +70490,9 @@ def require_math_log10_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/tests/test_parity_ledger.py",
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
-        "SCOPE.md",
+        "AGENTS.md",
         "COMPATIBILITY-PROFILE.md",
         "plan.md",
-        "x86-64.md",
         "scripts/check_structure.py",
         "scripts/dev-x86_64.sh",
     ):
@@ -70861,7 +70731,6 @@ def require_math_ceil_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/check_structure.py",
         "scripts/dev-x86_64.sh",
     ):
@@ -71086,7 +70955,6 @@ def require_math_floor_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/check_structure.py",
         "scripts/dev-x86_64.sh",
     ):
@@ -71312,7 +71180,6 @@ def require_math_round_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/check_structure.py",
         "scripts/dev-x86_64.sh",
     ):
@@ -71544,7 +71411,6 @@ def require_math_log2_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/check_structure.py",
         "scripts/dev-x86_64.sh",
     ):
@@ -72340,7 +72206,7 @@ def require_locale_profile_slice(family: Mapping[str, Any]) -> None:
         selected["source_owners"], "locale.core-fixed-profile.source_owners"
     ))
     for owner in (
-        "SCOPE.md",
+        "AGENTS.md",
         "COMPATIBILITY-PROFILE.md",
         "compat/upstreams.toml",
         "compat/crabc-rs/coverage.toml",
@@ -72368,7 +72234,6 @@ def require_locale_profile_slice(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
     ):
         require(owner in owners, f"locale.core-fixed-profile source owners omit {owner}")
@@ -72850,7 +72715,7 @@ def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/tests/test_parity_ledger.py",
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
-        "x86-64.md",
+        "plan.md",
         "scripts/dev-x86_64.sh",
     ):
         require(
@@ -73070,7 +72935,6 @@ def require_wide_character_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
     ):
         require(owner in owners, f"static-c-wide-character-core omits {owner}")
@@ -73239,7 +73103,6 @@ def require_wcswcs_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -74627,7 +74490,6 @@ def require_static_pthread_affinity_artifact(
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
     }
     require(
@@ -74830,7 +74692,6 @@ def require_static_pthread_cpuclock_artifact(
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/build_x86_64_owned_sysroot.py",
         "scripts/build_x86_64_owned_dynamic_sysroot.py",
         "scripts/dev-x86_64.sh",
@@ -75063,7 +74924,6 @@ def require_static_pthread_name_artifact(
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
     }
     require(
@@ -75253,7 +75113,6 @@ def require_static_pthread_spin_destroy_artifact(
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
     }
     require(
@@ -75590,7 +75449,6 @@ def require_static_pthread_attr_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/check_structure.py",
         "scripts/dev-x86_64.sh",
     }
@@ -75867,7 +75725,6 @@ def require_static_pthread_barrierattr_pshared_artifact(
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
     }
     require(
@@ -76060,7 +75917,6 @@ def require_static_pthread_barrier_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/check_structure.py",
         "scripts/dev-x86_64.sh",
     }
@@ -76249,7 +76105,6 @@ def require_static_pthread_spin_init_artifact(family: Mapping[str, Any]) -> None
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
     }
     require(
@@ -76497,7 +76352,6 @@ def require_static_thrd_yield_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
     }
     require(
@@ -76670,7 +76524,6 @@ def require_inet_netof_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -77031,7 +76884,6 @@ def require_inet_network_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -77382,7 +77234,6 @@ def require_ns_put32_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -77725,7 +77576,6 @@ def require_ns_skiprr_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -78448,7 +78298,6 @@ def require_sched_getparam_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -78651,7 +78500,6 @@ def require_sched_setparam_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -79080,7 +78928,6 @@ def require_sched_getaffinity_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -79299,7 +79146,6 @@ def require_sched_setaffinity_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "plan.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):

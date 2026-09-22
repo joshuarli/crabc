@@ -39,7 +39,7 @@ artifact hashes. The detailed harness contract lives in
 
 The performance-completion roadmap uses this stable methodology; its
 workload-specific acceptance rows and changing status are kept in
-[`docs/roadmap/performance-completion.md`](../roadmap/performance-completion.md).
+[`plan.md`](../../plan.md#runtime-performance-and-qualification).
 
 The roadmap additionally records one narrow planning-only P0 time gate: C
 `clock_gettime` is provisionally accepted at `<= 1.05x` musl CPU only when its
@@ -164,7 +164,7 @@ Math may use an established vector kernel earlier only when its numerical
 contract is fully proved; musl edge behavior, bits, rounding, exceptions,
 `errno`, and ABI remain acceptance criteria. Cryptography is never hand-rolled
 for performance. A supported crypto primitive uses an approved focused,
-audited dependency after the `SCOPE.md` review, never an improvised vector
+audited dependency after the `AGENTS.md` review, never an improvised vector
 implementation.
 
 ## Current selected results

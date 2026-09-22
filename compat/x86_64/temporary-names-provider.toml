@@ -71,7 +71,6 @@ source_owners = [
   "compat/x86_64/aarch64_parity_inventory.json",
   "compat/x86_64/README.md",
   "plan.md",
-  "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]
 focused_evidence_command = "./scripts/dev-x86_64.sh libc-temporary-names"

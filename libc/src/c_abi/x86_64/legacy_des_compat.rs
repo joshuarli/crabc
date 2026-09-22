@@ -4,7 +4,7 @@
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417` places
 //! `src/legacy/encrypt.c::setkey` and `src/legacy/encrypt.c::encrypt` under
 //! musl's MIT license. Musl implements the historical DES key schedule and
-//! block transformation there. Crabc intentionally diverges: `SCOPE.md`
+//! block transformation there. Crabc intentionally diverges: `AGENTS.md`
 //! forbids a local cipher implementation, and this interface has no useful
 //! modern Rust contract.
 //!

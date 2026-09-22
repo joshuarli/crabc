@@ -913,7 +913,7 @@
         "crabc-mimalloc/src/subproc.rs",
         "crabc-mimalloc/tests/native_runtime_startup_regular_arena.rs",
         "libc/src/c_abi/x86_64/native_mimalloc_lifecycle.rs",
-        "native-mimalloc.md"
+        "plan.md"
       ]
     },
     {
@@ -1011,7 +1011,7 @@
         "crabc-mimalloc/src/os.rs",
         "crabc-mimalloc/src/os_page.rs",
         "libc/src/c_abi/x86_64/native_mimalloc_lifecycle.rs",
-        "native-mimalloc.md"
+        "plan.md"
       ]
     },
     {
@@ -1669,6 +1669,6 @@
     "unfinished_unit_count": 28,
     "unit_count": 34,
     "unit_ids_sha256": "dca679d8587cb38bcf6e6c62379284ed35a55d1b7991d07b0d30eac767670052",
-    "units_sha256": "18b306699c04b0c57a6431ad4b60a68649e3a55dd0c06049b743bbce6875f8bc"
+    "units_sha256": "3c3213d919f9395808b349cbbfd3e7b2c1cffe7920a66feb21aad4460bb2e0fa"
   }
 }

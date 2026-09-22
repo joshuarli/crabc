@@ -25,7 +25,7 @@ MUSL_TREE_SHA256 = '2ebc86943f5cdac77729695b304a08f6308e7a218f9d484cec5675006b20
 # by name alone.
 PROOF_SOURCES = {
     'compat/upstreams.toml': '21f2ac05168af11b667bd8e068499acfc484924176ee2fadd0ef11f20b86fdad',
-    'compat/x86_64/math-scalar-corrections.md': '8b3ca5800d0accf05cb3a6fe3ad05bc804155962498e2a58eb3fb6c2cf596a26',
+    'compat/x86_64/math-scalar-corrections.md': '7496c2882edc73f579cd02e56760cdf9e469b359b8d97e01a3bd135450d31f99',
     'compat/x86_64/math_scalar_corrections.py': '3df692cfaa4ce0a66288d6939aa4ba7ff4d1186543e644b1241b972fe23837d6',
     'compat/x86_64/run_math_scalar_corrections_libc_test.py': '898d6b45311a5126d2975020515e10f3f40015166c09775b3494f6a1cf60bea4',
     'compat/x86_64/math_scalar_corrections_probe.c': '9e5e3f8f407bfe383558bb939d9f2c824a6d791c9e6e0b6d0cc534c446779559',

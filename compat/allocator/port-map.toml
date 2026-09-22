@@ -3465,7 +3465,7 @@ retains. Registry completion and reuse therefore are not supported route
 behavior: the obsolete `native_post_exit_registry_reuse` test is retired rather
 than preserving a B-held admission contract. The remaining
 registry/completion/scheduler code is deletion-pending scaffolding, forbidden
-by `native-mimalloc.md` §3.3 and Phases E/F.
+by the no-production-scaffolding rule in `plan.md`.
 
 Exact live remote free is now pointer-first. An attached B proves the handed
 address through persistent PageMap/page state, derives its canonical source

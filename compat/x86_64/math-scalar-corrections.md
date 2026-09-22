@@ -2,8 +2,8 @@
 
 The native x86 math providers preserve the algorithms from musl 1.2.6 while
 correcting demonstrated result and exception defects in four source bodies.
-This is C ABI compatibility machinery within `SCOPE.md` §14, not a new math
-implementation or a numerical-support limitation. The independent pinned musl
+This is C ABI compatibility machinery within the mature-algorithms policy in
+`AGENTS.md`, not a new math implementation or a numerical-support limitation. The independent pinned musl
 oracle remains unchanged. Candidate success and oracle failure are distinct
 observations; matched failures do not establish conformance.
 

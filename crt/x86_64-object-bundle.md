@@ -19,4 +19,4 @@ libraries, builtins/compiler helpers, dynamic loader, linker driver, or
 sysroot, and it does not link or execute an application.  It therefore does
 not establish x86 dynamic startup, an owned x86 sysroot, Rust-std/LTO support,
 or public x86-64 support.  Those remain separate promotion requirements in
-`x86-64.md`.
+`plan.md`.

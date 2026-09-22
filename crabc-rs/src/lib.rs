@@ -12,7 +12,7 @@
 
 // `crabc-rs` is a public facade, unlike the fixed-mimalloc engine's narrowly
 // scoped native x86-64 evidence lane. Linux/x86-64 admission here is the
-// explicit staged direct-facade foundation from `x86-64.md`; it does not make
+// explicit staged direct-facade foundation from `plan.md`; it does not make
 // the facade or platform publicly supported, and runtime-owned features stay
 // separately gated until their own native boundaries exist.
 #[cfg(not(all(

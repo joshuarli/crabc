@@ -1,268 +1,445 @@
-# Finish the native x86-64 runtime and Rust mimalloc
+# Complete crabc's native x86-64 runtime
 
-## Mission and authority
+## Goal
 
-Implement this plan to completion: finish `x86-64.md` and the native Linux/x86-64
-scope of `native-mimalloc.md`, integrate them, qualify the native Rust allocator
-as the default, and complete public x86 support. Continue implementing while
-independent qualification runs. Do not stop at a plan, component receipt,
-checkpoint, or mechanically unchanged blocker report.
+Implement this plan through integrated, qualified completion: reproduce the
+frozen selected runtime on native Linux/x86-64, finish the faithful Rust
+mimalloc port, make it the qualified x86 default, and promote public x86
+support. “Implement plan.md” authorizes the necessary in-scope implementation,
+tests, integration, performance work, and local promotion changes—not merely
+another plan, private fixture, or intermediate handoff.
 
-Optimize **elapsed time to integrated, qualified behavior**, not commit count,
-agent count, individual witness count, or documentation volume. This is a
-throughput-oriented execution contract, not a request to reduce correctness.
+`AGENTS.md` owns scope and working rules. This file owns the complete active
+completion contract and its one progress handoff. Machine-readable manifests
+supply exact inventories and evidence requirements; technical guides explain
+implementation and runner details, not additional independent plans. Continue
+while useful independent work remains. A genuinely external blocker must remain
+explicit, never be converted into a pass or a smaller completion claim.
 
-This plan authorizes in-scope changes to execution order, work decomposition,
-intermediate development checks, and build/test throughput. It does not waive
-final requirements, authorize external spending or machine reconfiguration, or
-override tool/system restrictions. Existing unfinished work must be preserved.
+## Progress status
 
-Authority: explicit user direction; `SCOPE.md` and `COMPATIBILITY-PROFILE.md` for
-product scope; the two detailed completion contracts for acceptance; this plan
-and its local skill for execution; executable contracts and pinned-source
-behavior for implementation. Reconcile conflicting old scheduling prose once.
-Do not repeatedly ask permission for ordinary implementation or batching.
+Update this section in place when the frontier changes. Recorded checkpoints
+are not transferable passes for a different revision.
 
-## Progress status (update in place)
+- **Runtime:** Frozen accounting validates; `libc.headers-layouts` is
+  `foundation-verified`. Substantial POSIX/pthread/text/stdio/resolver/loader
+  and installed-product work is integrated. Complete the actual remaining
+  aggregate/family admissions from `campaign-status`, not another symbol sweep.
+- **Allocator:** M1's six bounded components passed at `0daef148bd20dc2bef2ac9dc34af4f3dd0e99d7a`.
+  M2 PageMap and scalar bitmaps qualified at `62d6435c772e9ddc144de302cc54ad78cea720e9`;
+  VM, metadata, arenas, initialization, fault injection, and no-recursion
+  qualification remain partial. Later witnesses do not close them.
+- **Integration:** Accepted C stays default. Explicit owned static and dynamic
+  native-shadow products and graph/purity checks exist; installed lifecycle,
+  interposition, full qualification and promotion remain distinct obligations.
+- **Qualification:** Native OS/libc-test aggregation, unwinder/std/LTO,
+  ordered consumer gates and release performance remain open. The 114-row
+  collector and bounded replay are not performance qualification. Hardware
+  prerequisites are recorded below.
+- **Preservation:** Reconcile unfinished local work before duplicating it,
+  including `x86/reboot-feature-20260904` if present. AArch64 remains paused;
+  its public profile, selected C backend and qualified records stay unchanged.
 
-This is the sole repository-wide current-status handoff. Replace this section
-in place as the frontier changes; do not append dated updates or per-leaf
-histories. Detailed acceptance remains in `x86-64.md`, `native-mimalloc.md`,
-their machine-readable contracts, and exact-revision reports. The combined goal
-is incomplete.
+## Fixed contracts
 
-- **Runtime:** The frozen 223-capability/26-family baseline validates, but
-  current accounting does not establish full parity. The header declaration
-  foundation is `foundation-verified`. Wide stdio, scalar math, signal
-  transactions, semaphore cancellation, loader search/direct-interpreter
-  entry, timed/shared conditions, resolver differential evidence, and
-  priority-inheritance mutexes are integrated. Priority-protect retains
-  musl's unsupported status. Residual POSIX workloads and shared-state
-  composition are integrated into the expanded dynamic catalog. The complete
-  three-product gate and POSIX workload matrix have installed/extracted
-  evidence and host replay, alongside pthread and loader component receipts;
-  complete native aggregate evidence and ordered qualification remain open
-  for family closure. Do not restart an export-by-export queue.
-- **Allocator:** Use `compat/allocator/run-x86_64.sh` and complete native x86
-  M2 qualification; AArch64 milestone passes do not transfer. Native M1 passed
-  all six bounded components and source contracts at `0daef148`. Native M2
-  qualifies PageMap and scalar bitmaps at `62d6435c`; the other six memory
-  substrate components remain partial. The selected production backend stays
-  C mimalloc until native Rust mimalloc passes its promotion gates.
-- **Integration:** Continue runtime development with the accepted C backend.
-  Installed static/static-PIE consumers cover allocator, TLS, POSIX, wide and
-  byte stdio, filesystem traversal, IPC, spawn, selected fork/exit, and normal,
-  recursive, and error-checking robust mutexes. Priority-inheritance mutexes
-  have focused installed-product evidence; refreshed aggregate checks,
-  runtime composition, and allocator lifecycle remain open. Installed and
-  extracted dynamic PIE/non-PIE consumers cover runtime-new dependency graphs,
-  DTV growth, retained close, scope, rollback, constructor exit, deferred
-  GOT/PLT binding, kernel-main `dladdr`, musl search policy, direct interpreter
-  entry, and dynamic fork ownership. Campaign-level product publication
-  remains open. Requalify installed x86 products after allocator promotion.
-- **Consumers and performance:** Full native OS-test and libc-test runner
-  results remain incomplete and do not close the native aggregate; retained
-  reports are under `compat/reports/`. The performance collector covers the
-  complete 114-row definition with separate memory observers and an isolated
-  timing launcher. Bounded native smokes and host replay pass; correctness-chain
-  admission and performance qualification remain open.
-- **External work and paused target:** The existing huge-page/NUMA request and
-  qualification job are described in §8; use that job after authorized
-  provisioning and continue independent work meanwhile. Preserve and reconcile
-  the unfinished uncommitted work in the legacy
-  `x86/reboot-feature-20260904` worktree before duplicating it; create no new
-  external scratch or worktrees. AArch64 implementation and qualification
-  remain paused, public support remains Linux/AArch64, and the x86 gates have
-  not promoted x86 support. The recorded AArch64 owned CRT/sysroot and Lua
-  deliverables are complete at their documented evidence boundary; full target
-  runtime Rust purity remains blocked by the C allocator.
+| Boundary | Required contract |
+| --- | --- |
+| Active target | Native Linux/x86-64 little-endian, Linux >= 5.10; `x86_64-unknown-linux-musl` where a Rust target name is needed. No AArch64 execution or emulation. |
+| Compatibility | Pinned musl 1.2.6, Linux ELF and System V AMD64 ABI, and `COMPATIBILITY-PROFILE.md`. Rustix remains test-only; no glibc or ambient target-runtime fallback. |
+| Frozen runtime | AArch64 commit `3e100d45c5a0798c2d3862d5e2eef584c610ccf9`: exactly **223 capabilities and 26 required families**. `compat/x86_64/aarch64_frozen_baseline.json` owns the three immutable ledger/ABI/header digests. Validate them, never refresh them to absorb drift. |
+| Runtime accounting | `compat/x86_64/parity.toml` owns exact capability mappings, family dependencies, and promotion. Every capability and required family occurs exactly once. Export ratchets are not inventories, schedules, or semantic proof. |
+| Allocator source | mimalloc **v3.5.0**, commit `18b08671c9302247bfb682286e6bf3cc1773f801`; archive hash, license, and source provenance in `crabc-mimalloc/UPSTREAM.md`. No silent upgrade or allocator redesign. |
+| Allocator accounting | `compat/allocator/port-map.toml`, applicability inventories, milestone manifests, and `known-differences.md`. Source-unit implementation, bounded evidence, integration, and target qualification are distinct. |
 
-## 1. Fixed boundaries
+The accepted `libmimalloc-sys` 0.1.49 backend bundles mimalloc v3.3.2; it is
+**not** the exact v3.5.0 engine oracle. Preserve separate candidate, accepted-C
+integration comparison, and pinned-v3.5.0 differential/performance inputs.
+Preserve the resolved musl BSD-random exception and approved cryptographic
+primitive boundaries in `AGENTS.md`; do not reopen them as blanket blockers.
 
-- Target **native Linux/x86-64 little-endian, Linux >= 5.10**, in the pinned
-  native environment. AArch64 implementation, qualification, and emulation stay
-  paused. Preserve its code, contracts, evidence, and selected backend.
-- Preserve the frozen baseline at
-  `3e100d45c5a0798c2d3862d5e2eef584c610ccf9`: **223 capabilities, 26 required
-  families**, and every recorded digest. Do not refresh it to absorb drift.
-- Use pinned musl 1.2.6 for C/POSIX compatibility and Rustix only in its existing
-  test role. No glibc oracle or ambient target-runtime fallback.
-- Faithfully port mimalloc v3.5.0 at
-  `18b08671c9302247bfb682286e6bf3cc1773f801`, with the archive hash and provenance
-  in `crabc-mimalloc/UPSTREAM.md`. Preserve algorithms, ownership, memory
-  ordering, lifecycle, and applicable behavior. No allocator invention.
-- Preserve the approved narrow musl BSD-random compatibility exception and
-  the no-handwritten-cryptography boundary. Do not reopen the resolved policy.
-- Continue runtime development with the accepted C allocator. Native shadow
-  integration is development work; default promotion requires its real gates.
-- Keep new worktrees, scratch, caches, extracted sources, and reports inside
-  the owning checkout's permitted `.work/` boundary. Respect each dispatcher's
-  stricter physical-path checks. No outside scratch or symlink escapes.
-- No unrelated cleanup, formatting/lint campaigns, pre-commit hooks, remote
-  pushes, CI-workflow work, new architectures, or new product scope.
+## Execution
 
-The completed AArch64 sysroot delivery is historical input, not a dependency
-that postpones the x86 sysroot until after mimalloc. Its durable design and
-evidence live in `docs/design/crt-and-sysroot.md` and
-`docs/evidence/crabc-owned-sysroot.md`. Both x86 products belong inside this
-goal and must be requalified after native allocator promotion.
+Start with current status, the relevant source and manifests, and existing
+unfinished work. Distinguish missing implementation from missing evidence and
+external qualification. Prefer coherent subsystem behavior with its tests to
+one-symbol patches, receipt-only work, or a new audit of already settled facts.
 
-## 2. Starting evidence, not a permanent backlog
+Implementation dependencies and qualification prerequisites are different.
+Develop successors against stable interfaces while prerequisites qualify, but
+never mark a downstream family or milestone complete before its required gates.
+Runtime work can continue with the accepted C backend; static delivery does
+not need dynamic startup; allocator engine work need not wait for unrelated
+hardware evidence. Prioritize shared prerequisites and the longest remaining
+integration path, not the easiest counter to change.
 
-This replacement was prepared against main
-`88e3037faa5a4f41195e42453803d4e1fab5a0fe`. Reconcile later commits and local work
-before assigning ownership. Inspect status and useful existing worktrees once;
-do not start another whole-repository audit before dispatching known work.
+Use current orchestration instructions, isolated persistent worktrees, one
+owner per shared state transition, and one writer for integration and central
+ledgers. Keep useful implementation, review, integration, and qualification
+moving concurrently. A concise outcome, ownership boundary, dependencies, and
+proving checks are enough for an assignment. Reuse warm private development
+state; integrate reviewed work continuously and test the merged result. Do
+not require synchronized waves, per-leaf handoff files, repeated global
+rebases, a fixed model roster, or a repository scheduling framework.
 
-| Area | Recorded starting position | Next useful outcome |
-| --- | --- | --- |
-| BSD random / native POSIX | The quartet is implemented. At frozen `3aaee635`, installed BSD routes, the POSIX matrix, all five native aggregate components, and the dependent pthread component pass. Family/public promotion is separate. | Consume the existing evidence where its exact source is admissible; complete real family admission and successor families. Do not reimplement or rediscover the resolved quartet. |
-| Runtime families / ABI | Component producers and admission machinery exist. Historical ABI closure reported 266 unresolved identities and 25 unavailable family-semantic records, not 291 proven implementation bugs. | Read current unresolved requirements and group them by actual behavior/provider and prerequisite family. Finish bindings or implementation as appropriate. |
-| Allocator substrate | Native M2 produces an honest partial receipt. VM, metadata, arenas, initialization, fault injection, and recursion have remaining conditions. PageMap/bitmap passes are historical target-specific evidence. | Close complete source transitions and their required C/Rust evidence; implement dependent engine/lifecycle work without pretending M2 is qualified. |
-| Native integration | Selected-static native-shadow lifecycle and failure cases exist; the default remains C. | Complete generic ownership, teardown, transfer/reclaim, fork, and static/dynamic integration, not another fixture-shaped route. |
-| Unwinder | The approved pinned provider, standalone cleanup, and bounds work exist. `88e3037f` adds bounded `PT_DYNAMIC` scans after the EH-header and decoded-frame changes. | Assess remaining metadata/indirect-access and mapping-lifetime obligations; complete owned-runtime, DSO, stock-std/build-std, and LTO integration. Do not redo the landed scans. |
-| Hardware qualification | A concrete huge-page/NUMA job and resource request already exist. | Use the existing job after authorized provisioning; continue unrelated work now. Do not build a replacement resource-audit framework. |
+Use focused regressions while developing, affected component/family and
+installed-product checks at integration, and complete canonical suites for
+qualification. A branch pass does not prove merged composition. Review unsafe
+ownership, atomics, loader/unwinder trust boundaries, and promotion carefully;
+ordinary changes do not need repeated ceremonial audits.
 
-Receipt locations and exact historical limitations belong to their owning
-contracts and the archived previous plan. Verify actual files before reuse;
-missing local receipts are unavailable evidence, not implied passes. Never
-transfer a worker/checkpoint pass to a different revision.
+Keep a frozen qualification checkout separate from moving development. One
+product cohort binds a clean revision, pinned tools/image/oracles, target,
+backend, features, and build configuration. Reuse its immutable products via
+existing supplied-product interfaces; keep required independent reproducibility
+builds independent. No shared mutable build/report directories, cross-revision
+receipt substitution, or relabeling of out-of-order diagnostics as qualification.
+Bound nested compiler/test concurrency by actual CPU and memory limits;
+performance qualification must not contend with builds or other measurements.
 
-Keep `plan.md` as the execution contract and current-status handoff. Maintain
-the Progress status section above in place, keep source requirements in their
-existing manifests, and keep execution records in ignored reports. Archive the
-previous plan before replacing it; retain its unique resource request and
-unfinished obligations. Stop appending per-commit biographies to this file.
+For runner changes, first exercise a small real dispatch → collector → physical
+output → independent-reader round trip. Extend existing matrices and readers
+rather than creating a proof schema for every case. Preserve raw failures,
+upstream schedules, and exact source identity. Update existing machine state
+when facts change; keep logs in ignored report paths and history in Git.
 
-## 3. Two dependency graphs, one continuously running campaign
+## Runtime completion
 
-Maintain separate **implementation dependencies** and **qualification
-prerequisites**. An admission requirement is not automatically an implementation
-barrier. A technically implementable successor may proceed against a stable
-interface before the predecessor's complete qualification finishes.
+All 26 required families must reach `foundation-verified` in their validated
+dependency order. All 223 capabilities must reach their promotion-recognized
+completed states, with no `missing` or `selected-private` entries. The following
+contracts describe the integrated outcomes; the frozen mappings define their
+finite selected surface, not all of musl or all of POSIX.
 
-Use a rolling ready queue, not synchronized waves. Dispatch a replacement when
-a worker completes or becomes externally blocked; do not wait for the slowest
-worker. Keep implementation, review/integration, and qualification active at
-the same time. Build a small ready backlog beyond the active assignments, not a
-speculative exhaustive inventory of every future leaf.
+### Families and public ABI
 
-Every assignment must name an outcome that advances a required product or
-closes a real blocker. Prefer one owner for a coherent source transition,
-component, or consumer family, including implementation and focused tests.
-Do not split one behavior into separate scouting, design, code, test, receipt,
-documentation, and handoff agents. Split only where independently testable
-ownership or substantial reasoning work justifies it.
+| Area | Completion requirement |
+| --- | --- |
+| Headers and layouts | Complete installed header paths, selected strict/POSIX/XOpen/GNU/BSD/large-file profiles, typedefs/records/enums/constants/macros/data/functions, C and selected C++ linkage, LP64/x87 layouts, transitive includes, and installed-tree isolation. Zero missing selected declarations or unclassified callable owners. A deferred provider disposition can close header routing, not implementation or archive extraction. |
+| POSIX runtime | Coherent filesystem/directory/traversal, descriptors, environment, process control, signals, and kernel-administration behavior, including aliases, errno/TLS, shared state, cancellation where selected, errors, output writes, and ownership. Complete native OS/signal/process/libc-test evidence, not merely Rust-facade equivalents. |
+| pthread/C11 and TLS | Selected lifecycle, attributes, identity, join/detach, synchronization, once, TSD, cleanup, cancellation, signals, timers/thread notification, atfork/fork, and exit. Main, loader, worker, static TLS, dynamic TLS, DTV/module IDs, and `__tls_get_addr` use one ownership model. Realistic static/dynamic composition and stress are mandatory. |
+| Text, math, locale, stdio | Selected iconv/wide/multibyte, regex, word expansion, clock/calendar, and complete stream/path/position/format/scan behavior. One stream engine owns locking, buffering, byte/wide orientation, permanent/created/adopted/memory/cookie streams, positioning, errors, and exit flushing. Preserve restricted locales, x87/MXCSR/fenv and long-double ABI, rounding, signed zero, NaNs, and exceptions. |
+| Resolver | End-to-end conventional files and bounded C netdb/resolver behavior: A/AAAA/CNAME, search, UDP/TCP fallback, timeout/retry/server failover, reply validation, errors, cancellation/thread interactions, and result lifetime. Prove controlled-network and file behavior through owned C products; a parser or typed Rust transport alone is insufficient. |
+| C compatibility and binding | Selected crypt/crypt-helpers through approved primitives, allocation, legacy compatibility, process globals, and final callable/data provider closure. Verify names, aliases, bindings, visibility, sizes, versions where selected, and static/shared ownership. Use ordinary archive extraction or an explicit structural oracle/builtin/consumer boundary—not hidden unresolved providers that happen not to be extracted. |
+| Loader | General admitted dependency graphs, not fixed fixture graphs: self-relocation/entry, kernel main image, search/RPATH/RUNPATH, mapping/protection/RELRO, supported RELA/RELR relocations, weak/global/protected scope, RuntimeV1, initial/runtime TLS, DTV growth, constructors/finalizers, and selected `dl*` introspection. Prove concurrency, callbacks/reentrancy, fork, retained handles, reopen, malformed input, and failed-load rollback. |
+| CRT, builtins, sysroot | Owned static/static-PIE and dynamic PIE/non-PIE entry, libc handoff, main lifecycle arrays, finalization, compiler helpers, deterministic link interface, installation, packaging, extraction, and reproducibility. Prove real applications consume the owned artifacts. |
+| Rust facade and remaining families | Preserve and complete every other frozen family and exact semantic mapping, including direct native API, error, ownership, dependency, and LTO evidence. A C ABI pass does not prove the Rust-native path or vice versa. |
 
-The coordinator owns priorities and shared architectural decisions, but does
-not personally redo every test or line of routine review. Area owners perform
-substantive implementation/review, not management-only reporting. One merge
-operator may execute approved integration; only one writer advances the
-integration branch and shared top-level ledgers at a time.
+For pinned musl parity, successful `dlclose` validates a handle but does **not**
+unmap the object or invoke its destructors. Reopen observes retained state;
+DSO destructors run at process exit. Failed load transactions still release
+their owned mappings. Do not implement physical last-close unloading and call
+it the selected musl contract.
 
-### Immediate allocation of work
+Use existing family matrices for routine ABI probes, feature profiles,
+C/C++ signatures, symbol/data ownership, oracle execution, and aggregate
+membership. Keep bespoke fixtures for genuinely unusual ABI, floating-point,
+callback/lifetime, TLS/fork/signal, ELF, privilege, or network behavior. Private
+opt-in features and extra exports do not create new frozen capabilities or
+waive family closure.
 
-Start these lanes together when their actual implementation inputs are ready.
-The widths below are opportunities, not instructions to duplicate work or
-invent missing features. Count area owners/reviewers in the skill's global
-agent budget. Reassign a lane's capacity when its useful work is finished.
+### Owned products
 
-| Lane | Useful independent assignments | Deliverable and proof boundary |
-| --- | --- | --- |
-| Runtime family closure | 3–5 owners: POSIX admission; text/math/locale/stdio; other dependency-ready families; ABI/provider joins. | Real family admission using current admissible products and complete existing readers. Diagnose missing evidence separately from missing behavior; no symbol-count closure. |
-| Allocator memory substrate | 4–6 owners: VM/purge; metadata ownership; arena registry/reservation/destruction; bootstrap/recursion; fault composition. | Complete applicable M2 remaining conditions through production owners and pinned-C evidence. Keep genuine hardware conditions separate. |
-| Allocator engine and lifecycle | 4–6 owners: local engine/realloc; remote publication; abandon/reclaim; thread/process exit; fork; concurrency models/stress. | Generic legal-client behavior with clear ownership, state-auditor and differential coverage. No per-client registry, global scheduling workaround, or geometry-specific production fast pass. |
-| Applicable allocator APIs/modes | 2–4 owners, after the relevant engine interfaces are stable. | Source-faithful heap/Theap/subprocess, managed-memory, visitation, options/statistics/callbacks, debug/secure/guarded groups from the existing applicability inventory. Do not wait for unrelated M2 hardware evidence to write implementable code. |
-| Runtime / allocator integration | 2–3 owners: static startup and teardown; loader/libc allocation ownership and dynamic shadow; TLS/pthread/fork composition. | Real installed consumers with the selected backend. Establish the loader descriptor/internal-allocation contract before enabling currently rejected dynamic selection. |
-| Unwinder / Rust consumers | 3–4 owners: remaining bounded metadata behavior; loader enumeration/lifetime; owned stock-std and build-std/LTO wiring. | Approved provider and features, real cleanup/backtrace/DSO consumers, no ambient unwinder or dummy symbols. A standalone musl-hosted pass is not owned-runtime qualification. |
-| Other consumers / performance | 2–3 owners as dependencies permit. | Finish the frozen source-build/corpus/facade requirements; diagnose performance with existing collectors. Do not invent a larger corpus or call developmental timing release qualification. |
-| Throughput / qualification | 2–3 execution owners, shared with the support budget. | Remove demonstrated preparation/replay bottlenecks, run frozen product cohorts, and return actionable failures. No new orchestration service or replacement test framework. |
+Deliver **all four modes**: ordinary static `ET_EXEC`, static PIE, dynamic PIE,
+and dynamic non-PIE. The installed sysroot owns headers, CRT objects, `libc.a`,
+shared libc, interpreter and required compatibility alias, compiler-builtins,
+selected allocator, and deterministic link specifications. A pinned host
+compiler is allowed; ambient target headers, CRT, libc, libgcc/compiler-rt,
+loader, or other undeclared target libraries are not.
 
-Assign exact modules, symbols, and shared-file owners after a targeted read.
-Several lanes may touch one broad subsystem, but never own the same mutable
-state-machine transition independently. The local skill defines how to split
-and integrate without serializing an entire directory.
+The static product must be admissible from owned headers/libc/allocator,
+pthread/TLS, static CRT, builtins, and its link interface without depending on
+dynamic startup. The combined sysroot still requires both static and dynamic
+products. Preserve this separation in the machine dependency graph.
 
-### Prioritize actual critical paths
+The static suite jointly proves argument/environment/auxv/program-name
+publication; initialized, zero-filled, and high-alignment TLS; errno;
+allocation/alignment/reallocation/failure and remote ownership; pthread/C11,
+TSD/cancellation/fork/exit; stdio buffering/formatting/positions/errors/flush;
+filesystem/process/signal/time; sockets/resolver; constructors/destructors,
+`atexit`, and ordinary/immediate termination. Include a compiler-helper
+consumer that fails to link when the owned builtins archive is removed.
 
-First unblock prerequisites with many dependents, then shorten the longest
-remaining end-to-end path. Preserve capacity for allocator substrate/lifecycle
-and unwinder/runtime integration while family qualification proceeds. Do not
-spend the entire fleet producing easy receipt or documentation changes because
-they finish sooner.
+The dynamic suite uses an installed main, an initial dependency graph, and a
+runtime-loaded plugin. It jointly proves interpreter/RuntimeV1 handoff,
+search/relocation/scope, lifecycle ordering and retained close/reopen, public
+`dlopen`/`dlsym`/`dlclose`/`dlerror`/`dladdr`/`dlinfo`/`dl_iterate_phdr`,
+initial-exec/general-dynamic TLS, DTV growth before and after worker creation,
+and allocation/errno/stdio/pthread/TSD/signal/exit across DSOs. Include
+concurrent lookup/open/close, callback reentrancy, selected fork repair, and
+selected malformed, missing, stale, or cyclic-input failures.
 
-A blocked assignment returns its precise obstruction and retained work. It
-must not hold a slot indefinitely waiting for hardware, permission, or an
-upstream interface. Reassign its independent remainder or resume it when the
-specific dependency changes. Do not commission repeated unchanged audits.
+For each final ELF inspect link traces/maps, target input identity, interpreter
+or its absence, dependencies, relocations, symbols, TLS, stack flags, RELRO,
+and unresolved references before execution. Require two independent clean
+installed builds to match byte-for-byte over the declared regular-file set,
+then package/extract into a fresh location and run the same complete product
+suites. Private direct-extraction tests remain useful but do not replace
+natural composed links and installed-product execution.
 
-## 4. Worktree and integration pipeline
+## Native allocator completion
 
-Use persistent, checkout-local worktrees for coherent assignments. Reuse a
-worker and its private build state across related slices. Do not create a new
-cold worktree and rebuild every dependency for each small correction.
+### Engine and source parity
 
-At dispatch, record the base commit and any explicit prerequisite commits.
-Land shared-interface changes early, or give consumers the exact prerequisite
-branch/ref and record that dependency. Do not make unrelated workers rebase
-on every main commit. Refresh at a relevant dependency change or integration
-boundary, and rerun affected checks.
+`crabc-mimalloc` is a `#![no_std]` Rust engine with no production `alloc`,
+C/C++ implementation, bindgen implementation, native implementation build
+script, dependency on crabc-libc, recursive allocator dependency, or hidden C
+fallback. Its permitted direction is `crabc-mimalloc → crabc-core + chacha20 +
+zeroize`, with libc depending on the engine, never the reverse. Additional
+focused pure-Rust primitives must preserve source behavior and allocation-free
+bootstrap. Keep errno and C ABI policy in libc.
 
-The author delivers a coherent patch or short dependent commit series with
-focused evidence and unfinished conditions stated. The reviewer checks the
-actual diff, unsafe/source invariants, test adequacy, and applicable evidence.
-For ordinary changes, one substantive review is enough. Use an independent
-high-capability review for memory ownership, atomics, loader/unwinder trust
-boundaries, and promotion; do not repeat ceremonial audits of the same result.
+Port complete source transitions rather than test-shaped routes. Maintain
+exact file/function mappings, configuration/layout probes, applicable API/mode
+inventory, intentional differences, and unit/differential/integration/stress/
+performance evidence in the existing contracts. Each applicable Linux/x86-64
+interface and mode must be implemented and verified; inapplicability requires
+source-backed reasons, not unavailable hardware or an inconvenient test.
+Upstream changes require separately reviewed source/inventory/map diffs and
+correctness, model, stress, and performance requalification.
 
-Integrate ready work continuously. Use small compatible batches to amortize
-merge-build checks, not huge delayed merges. Preserve useful commit boundaries
-for bisection. Run the union of affected focused/interface checks on the merged
-result; the author's branch pass alone does not prove composition. Resolve
-semantic conflicts with the relevant owners, not an unattended conflict fixer.
+### Production architecture
 
-Do not let a queue of reviewed, ready changes accumulate while the coordinator
-writes handoffs or performs unrelated implementation. If integration becomes
-the bottleneck, move agents into review, conflict resolution, and merged-tree
-tests before spawning more producers.
+1. **Persistent source owners.** Each allocating thread retains its TLD/Theap
+   across operations; the initial thread preserves source-required static
+   storage. Local small/direct-cache and generic queue operations remain
+   owner-local. Independent owners can progress independently.
+2. **Pointer-centered dispatch.** `free`, usable-size, and realloc derive the
+   page from the pointer and PageMap, recover the canonical aligned block,
+   and choose local, live-remote, or abandoned behavior from page/process
+   state—not caller identity or an exact-client registry. Realloc follows
+   `mi_theap_realloc_zero_ex`: source-permitted local in-place reuse, otherwise
+   current-owner allocation, bounded copy, and general free; preserve the old
+   allocation on failure and the selected zero-size policy.
+3. **Page-local remote publication.** Translate the pinned remote-free atomic
+   protocol without borrowing the owner's TLD/engine. PageMap and metadata
+   remain valid through every legal live client and unfinished remote
+   publication. Unregister/release only after source state proves no client,
+   uncollected free, or producer can remain, in source ownership order.
+   Ordinary lookup does not acquire a structural PageMap mutation lease.
+4. **One owner-exit traversal.** `_mi_theap_collect_abandon` performs deferred
+   free, retired-page collection, source queue traversal (including full
+   queues where required), per-page collection, empty-page release or live-page
+   abandonment, cache/list repair, and Heap/Theap/TLD detachment. Cover regular,
+   large, arena/OS singleton, mapped/unmapped, mixed, and late-publication
+   cases through that generic coordinator, not caller-selected geometry routes.
+5. **Callbacks without invalid borrows.** Source fast-TLS clearing does not
+   clear the still-live default Theap. Deferred callbacks may allocate through
+   it; execute them outside owner/engine/TLD/Theap reference projections and
+   revalidate attachment identity before resuming exclusive collection. Apply
+   the same discipline to VM, output, and initialization callbacks.
+6. **Abandonment outlives threads, not TLS.** Surviving pages belong to source
+   page/process abandonment structures; release old TLD/Theap when safe.
+   Any surviving thread can free/reallocate or reclaim as source permits.
+   Terminal release does not retain worker A's admission until worker B exits.
+   Failed reclaim preserves ownership; a one-way failure retains exactly one
+   identifiable terminal owner rather than guessing, leaking a capability, or
+   falling back to C.
+7. **No production scaffolding.** Before qualification remove per-allocation
+   side ledgers, live-TLS-owner/exact-post-exit registries, historical-thread
+   scans, per-call park/resume, global ordinary-operation schedulers, and
+   top-level fixture-geometry route products. Keep useful witnesses test-only.
+   A constant-size page-local lifetime aid needs a documented source invariant,
+   model and performance proof; it cannot recreate a side ledger.
 
-Keep a frozen qualification checkout separate from the moving integration
-branch. Main can advance while that checkpoint runs. New documentation,
-source, modes, or ledger changes must never mutate the frozen checkout.
+The architecture ratchet requires zero local-path global scheduler operations,
+structural PageMap leases, owner/client scans, remote owner-registry scans,
+and extra control bytes per live allocation; no per-call suspend/resume,
+ghost-owner admission, or compiled forbidden scaffolding. Actual source page
+metadata is not extra per-allocation control state. Metadata must plateau
+after warmup.
 
-## 5. Build once per product cohort; test many times
+Keep `#![deny(unsafe_op_in_unsafe_fn)]`, explicit caller obligations, strict
+provenance, atomics/`UnsafeCell` and short validated raw projections. Do not form
+long-lived Rust references whose aliasing promises contradict remote access.
+A legal free cannot return unavailable, and allocation cannot report OOM
+merely because a scheduler token is busy. Contention uses source-backed
+progress/retry, not indefinite global spinning or process poisoning. Reserve
+intentional forgetting for explicit terminal-retained/abort paths. Invalid-use
+hardening may differ from upstream UB; document it and test aborts in isolation.
 
-A **product cohort** is one clean source revision, pinned toolchain/image and
-oracle set, target, backend, features, and build configuration, with its
-required independent builds and extracted products. Share its immutable
-prepared products between compatible consumers using the existing supplied-
-product interfaces. Preserve exact source/header/object/link and execution-root
-proofs. A path label or a summary boolean is not an identity.
+### Bootstrap, memory, and lifecycle
 
-Do not rebuild a sysroot separately for every consumer that can use the same
-qualified input. Do not share a mutable product directory between producers.
-Keep required independent reproducibility builds genuinely independent.
+Initialization must be idempotent, race-safe, reentrant, and allocation-free
+until primitives are ready. Support lazy first allocation and explicit startup,
+concurrent entry, partial failure, entropy/diagnostic recursion, and PageMap
+failure. Receive raw nonowning startup auxv/page-size/`AT_RANDOM`/environment
+facts; do not call public libc or read `/proc/self/environ` for startup plumbing.
+An initializing-thread allocation lease is not completed process readiness.
 
-Maintain three verification levels:
+Use target-probed page/virtual-address geometry, not assumptions of 4-KiB
+pages, one VA width, or one arena mode. Complete raw Linux reservation,
+mapping/unmapping, commit/decommit, purge/reset, protection, applicable remap,
+time/identity/backoff, entropy, advice, and NUMA behavior. Put deterministic
+fault injection at that primitive boundary without a generic public OS trait.
 
-| Level | When | What it establishes |
-| --- | --- | --- |
-| Development | Each coherent implementation/debugging slice. | Nearest regression, affected unit/direct-boundary checks, required local differential or model evidence. Warm builds and explicitly labeled mixed-source experiments may help diagnosis, not promotion. |
-| Integration | Compatible patches have landed or an interface changes. | Merged-source checks, relevant installed consumers and complete component/family checks when admissible. Prepare a cohort for reuse rather than rerunning the whole campaign for each patch. |
-| Qualification | A major dependency closes, a milestone is ready, or final promotion is being proved. | Clean exact-revision canonical products, complete required suites, independent reconstruction, reproducibility, purity, stress and performance under their real contracts. |
+A test-only auditor checks queue uniqueness/links/counts/direct caches, exact
+PageMap spans, arena and abandoned bits/counts, OS lists, free counts,
+Heap/Theap/TLD relationships, thread counters, released-metadata reachability,
+and unique retained owners. Preserve proven low-level mechanics; change them
+for a demonstrated source or general-path defect, not a new architecture.
 
-The author records the reproducing regression for a bug; a behavior-neutral
-edit or prose correction does not require a manufactured red test. Preserve
-upstream sources and raw failures. Test-contract repairs need actual pinned-
-oracle justification and must not hide implementation failures.
+The final fork contract must use allocation-free hooks, preserve the parent,
+repair inherited locks, vanished-thread ownership and child TLS, and permit
+all standard allocation operations in the supported child. Prove public
+`pthread_atfork` ordering and distinguish prepared libc fork from an unprepared
+raw-fork image. A conservative bridge that disables normal child allocation
+is not final completion.
 
-For a changed dispatcher/collector/reader, exercise a minimal real public
-round-trip early: command dispatch, collection, physical output, independent
-reader. Catch argument/path/schema/mode/source-identity mismatches before a
-full expensive suite. Reuse existing malformed-input and receipt-validation
-tests; do not create a new schema or a second reader per small behavior.
+### Milestones
 
-Final native qualification retains the existing order:
+Each row requires its existing full target-qualified evidence, not a selected
+source anchor or bounded witness. Qualification is dependency-ordered;
+implementation may overlap. M0–M2 must qualify before dependent milestones
+can be declared complete.
+
+| Gate | Required outcome |
+| --- | --- |
+| M0 | Exact source/archive/license pin, no_std skeleton, API/mode inventory, source map, separate C oracle, configuration/layout baseline, and canonical harness. Inventory closure is not engine parity. |
+| M1 | The six manifest-defined bounded foundations: configuration/arithmetic, types/atomics/provenance, source random machinery, primitive and bootstrap foundations. Do not relabel this as whole-header/source-file completion. |
+| M2 | All eight components: VM, metadata, scalar bitmaps, PageMap, arenas, initialization, fault injection, and no allocator recursion; full ownership and failure conditions, including required physical hardware evidence. |
+| M3 | Heap/Theap bootstrap, page queues, local allocation/free, retirement/reuse, complete selected bin/page-class matrix, deterministic differential traces, and Miri-compatible execution. |
+| M4 | calloc, realloc, aligned operations, usable size, medium/large/singleton, collection, OOM/failure preservation, C adapter, and applicable upstream operation tests. |
+| M5 | General persistent concurrency/lifecycle: pointer dispatch, remote publication, generic exit, abandonment/reclaim/release, no forbidden scaffolding, selected libc shadow, state auditing, deterministic and soak churn, upstream pthread stress, and early codegen/performance proof. |
+| M6 | All applicable Heap, Theap, arena, managed-memory and subprocess APIs, including destruction, cross-thread lifetime, and failure behavior. |
+| M7 | All applicable options/environment, callbacks/deferred free, statistics, visitation, debug, secure, guarded and optional ISA profiles, without raising the baseline. |
+| M8 | Complete owned-libc integration: startup/constructors, pthread/TSD/cleanup/cancellation/fork, errno/C ABI, weak/interposed symbols, static/dynamic products, DSOs/loader, Rust std, Lua, and the selected real-program corpus. |
+| M9 | Full equivalent C/Rust performance/memory matrix, codegen audit, source-faithful convergence and at least three agreeing qualified full reports; correctness stays green. |
+| M10 | Isolated qualified x86 default switch; C mimalloc absent from target production dependencies and artifacts, exact C v3.5.0 retained only as oracle, and required native commands rerun at the promotion revision. |
+| M11 | Remove obsolete x86 transitional code/features, preserve anything required by paused AArch64, retain oracles/regressions, finalize v3.5.0 parity and the upstream-update procedure, and requalify the final simplified product. |
+
+### Allocator verification and performance
+
+Run real production entry points, not privileged test-only pointer routes.
+Keep the permanent legal-C regression in which a worker allocates, exits, is
+joined, and the initial thread frees its surviving block. Retain narrow
+witnesses as tests while moving their behavior through the general engine.
+
+Use separate pinned-C and Rust processes with logical allocation IDs and
+normalized state, not pointer equality. Cover allocation/zeroing/alignment,
+reallocation/content/size, heap/Theap/arena/collect, threads/transfers/exit,
+post-exit free/reclaim, faults, and fork where normalization is meaningful.
+Retain minimized failures and their original upstream workloads.
+
+Miri must exercise provenance, initialization, pointer arithmetic, local
+operations, and ownership/mapping lifetimes. Loom must model the production
+atomic transitions for remote publication/collection, owner/unown,
+abandoned claims, PageMap lifetime, and final release—not a model per numeric
+page geometry. Inject failures at TLD/Theap, metadata/page allocation,
+PageMap publish/unregister, arena claims, remote/abandon publication, reclaim,
+purge/decommit, terminal release, and fork preparation; audit the unique owner.
+
+Run applicable unmodified upstream tests with only environment/name binding.
+In `test/test-stress.c`, preserve which thread frees, owner-exit timing,
+transfer ownership, and cleanup/join order. Require **1, 2, 4, and 8 workers**,
+multiple meaningful scale/iteration settings, and applicable large-object mode.
+A fresh-thread cleanup workaround is not upstream acceptance. The smallest
+configuration must pass before larger failures are called capacity issues.
+
+Both deterministic bounded stress and a materially larger seeded,
+watchdog-bound soak must cover independent owners, multi-producer remote
+free, random transfer, partial/mixed pages, exit-before-free, initial-thread
+participation, reclaim, constructors, cleanup/TSD, normal return,
+`pthread_exit`, cancellation, and concurrent owners/releasers. Retain seeds,
+counts, page distribution, final liveness, and metadata/PageMap/arena/abandoned/
+TLD high-water. Equivalent thread churn must not cause unbounded growth.
+
+Measure architecture early: local allocation/free/realloc, remote publication
+and collection, scaling, churn, exit/reclaim, TLS codegen, syscalls/faults,
+memory, and code size. Before broad optional-API expansion the persistent local
+engine must reach at least **0.25× pinned-C single-thread throughput** and show
+real independent four-thread scaling. This is an architecture sanity gate,
+not final non-inferiority. Remove structural costs before micro-optimization.
+
+Final allocator comparisons use equivalent opaque C/Rust boundaries and fully
+integrated products on a qualified uncontended native x86 host:
+
+| Metric | Promotion gate against exact C mimalloc v3.5.0 |
+| --- | --- |
+| Throughput | Suite geometric-mean lower 95% bound >= **0.95**; no critical workload lower bound < **0.90** without a separately reviewed exception. |
+| Tail latency | Critical p99 upper ratio bound <= **1.10**. |
+| Memory | Geometric-mean peak RSS/PSS upper ratio <= **1.05**; no critical workload > **1.10** without explanation; no unbounded metadata/mapping growth. |
+| System and size | No material unexplained syscall/page-fault amplification or leak; investigate allocator-attributable code-size growth > **10%**. |
+| Repeatability | At least **three qualified full reports** agree, with source/configuration/host identity and raw data. |
+
+Audit optimized allocation, free, remote publication, PageMap/bin/TLS lookup,
+realloc and alignment paths for spurious helpers, checks, fences, division,
+formatting, zeroing and missed inlining. Preserve source memory orderings.
+Threshold changes are independent decisions, never repairs to make a failing
+implementation pass. Allocator parity does not waive the separate runtime
+performance scorecard below.
+
+## Allocator/runtime integration and Rust consumers
+
+Libc owns standard malloc-family policy: weak/preemptible bindings and matching
+allocation/free interposition, errno, zero-size and natural alignment, calloc
+overflow, realloc failure and `realloc(p, 0)`, aligned allocation,
+`posix_memalign` output preservation, and usable size. Internal allocation
+ownership must remain coherent under a strong application allocator override.
+A Rust pointer must never cross into the C backend as recovery.
+
+Use the existing explicit `x86-owned-static-native-shadow` and
+`x86-owned-dynamic-native-shadow` profiles and owned builders' native-shadow
+selection. Keep accepted C default until promotion. Preserve backend-neutral
+leaf/callable equivalence and target normal/build-graph plus archive/ELF purity
+checks; native provider rows cannot inherit C receipts.
+
+The dynamic RuntimeV1 handshake transfers validated runtime/TLS coordinates,
+not allocator pointers. Loader metadata uses its raw mapping owners; libc
+initializes its native process state after validated TLS/environment/auxv and
+before constructors. Prove absence of cross-backend ownership in real installed
+PIE/non-PIE and kernel/direct-loader execution, not just feature checks.
+`docs/design/x86-dynamic-native-allocator.md` documents this implemented seam.
+
+Worker attachment must establish its persistent owner before user code, even
+before its first allocation. Cleanup and user TSD destructors precede native
+owner teardown, which precedes TLS unmapping. Cover failed attachment,
+allocation/realloc refusal with subsequent valid use, remote ownership,
+final-worker ordinary exit, and fresh-owner reinitialization only after the
+old owner is genuinely finished. Do not reopen a retained or borrowed owner.
+
+Preserve source lifecycle placement: logical process-done runs from libc's own
+`.fini_array`, not an invented point after all DSO/stdio callbacks. Dependent
+and independent DSO finalizers can straddle it; retain the source-required
+backing so later callbacks remain valid. Default-release process-done is not
+physical destruction of all live allocations. Test the separately applicable
+statistics/destroy/cache/TLS-key branches before claiming their source parity.
+
+### Unwinder, std, and LTO
+
+Complete the approved pinned Rust unwinder integration rather than asking for
+approval again or copying an ambient unwinder:
+
+```toml
+unwinding = { version = "=0.2.10", default-features = false, features = ["unwinder", "fde-phdr-dl", "dwarf-expr"] }
+```
+
+Source commit: `0e2de8fb536b1ca42066024609f58d708cf80e69`. Lock and audit
+`gimli 0.34.0` (`read-core`, no defaults) and `libc 0.2.186` as the reviewed
+normal graph. The bindings target crabc's ABI, not an ambient libc. Keep the
+path no_std/allocation-free; disable frame registration, extra personality,
+panic-handler, printing, and allocator features. Rust std owns its personality.
+
+Prove the real `_Unwind_*` ABI, ordinary archive extraction and shared symbol
+resolution, executable/initial/runtime-DSO EH discovery, bounded malformed and
+truncated metadata/DWARF expressions, context restoration, and mapping
+lifetimes during `dl_iterate_phdr` callbacks. Preserve already landed bounded
+EH/PT_DYNAMIC work rather than restarting it. Do not infer async-signal safety
+from loader enumeration. Run backtrace and panic cleanup/resume across calls,
+threads and DSOs through installed/extracted static/dynamic products.
+
+Reproduce the frozen stock-std, dependency-bearing std, build-std and LTO
+consumer contracts, including their controls and exact toolchain/IR provenance.
+`panic=abort`, dummy unwind symbols, suppressed unresolved references, a
+musl-hosted standalone pass, or an easier fixture cannot replace those gates.
+Likewise reproduce the frozen Lua/source-build and real-software compatibility
+rosters through owned products; do not substitute version probes for required
+workloads or silently expand the active corpus.
+
+## Runtime performance and qualification
+
+Close runtime/products and family prerequisites, then execute the ordered
+qualification chain. Independent diagnostics may run earlier; they do not
+constitute an admitted final chain.
 
 ```text
 compat.abi-differential
@@ -275,180 +452,195 @@ compat.abi-differential
   -> performance.release
 ```
 
-Run independent development diagnostics and independent cases within an
-admissible stage in parallel. Do not relabel out-of-order diagnostics as an
-ordered final chain. Respect reader-enforced prerequisites. Reuse same-cohort
-receipts only when the existing contract permits it; no invented cross-revision
-qualification cache.
+Use the existing finite native performance definition and preserve all
+mandatory rows: startup/lifecycle and dependency graphs; clocks/identity;
+files/descriptors; dynamic lookup at small and 128/1,024+ symbol scales;
+memory primitives across sizes/alignments/cache and guard-page boundaries;
+allocation/churn/live sets; stdio/parsing; threads/TLS/synchronization; and
+hermetic sockets/resolver. Native-facade/Rustix and std-aware build-std/LTO
+lanes remain distinct supporting comparisons, not a musl C-ABI claim.
 
-## 6. Separate agent concurrency from machine concurrency
+The runtime release scorecard is **per workload**, not a compensating suite
+average. Preserve these requirements under native x86 adaptation:
 
-Many agents may reason, edit, review, or prepare tests simultaneously. That is
-not permission for every agent to launch an all-core compiler, LTO link,
-upstream suite, or benchmark. The local skill owns the global execution budget.
+| Metric | Required result against pinned musl |
+| --- | --- |
+| CPU | One-sided 95% bootstrap upper bound for median candidate/reference user-plus-system CPU <= **0.90**. |
+| Peak memory | Both protocol-controlled peak PSS and fresh cgroup-v2 `memory.peak` ratios <= **0.90**. |
+| Syscalls | Candidate <= **2R** for reference count R > 0; a zero-call marked reference region requires zero candidate calls. No uncontracted error/retry/fallback calls. |
+| Diagnostics | Retain wall median/p95, faults/context switches, RSS/private pages and size; investigate material regressions. All semantic gates remain green. |
 
-One execution owner records the effective CPU quota/affinity, memory limit,
-observed build/link peaks, and relevant disk/IO constraints. Use a small
-coordinator-owned queue to admit expensive jobs. Start conservatively where
-peaks are unknown, measure, and increase actual build/test throughput. Do not
-stall source work while tuning resources.
+Use identical fixture bytes except the explicitly admitted interpreter/runtime
+substitution, symmetric inputs, pinned build modes, interleaved reference/
+candidate samples, and complete raw provenance. Time without tracing,
+profiling, or memory observers. Measure high water with ready/hold/continue
+and `smaps_rollup`, plus a fresh delegated cgroup; count loader/runtime and
+process memory, not only allocator requests or virtual reservations. Missing
+cgroup access, invalid plateaus, omitted rows, or unsupported measurements
+cannot pass. Keep syscall startup totals distinct from marked useful work.
 
-Bound nested concurrency as well as outer jobs: Cargo, Make/Ninja, compiler
-workers, test sharding, and stress threads count toward the same host budget.
-Keep memory headroom for the coordinator, containers, links, and test peaks.
-Qualifying performance gets an uncontended host; agents may continue reasoning
-or working elsewhere, but not compete for that host's CPU/memory/IO resources.
+Preserve the existing full-sample/statistical protocol and repeat clean runs;
+use a second compatible native machine class when available. Attribute
+regressions before optimizing; use the existing scorecard, not a new benchmark
+framework. A provisional time-route **1.05** CPU ratio is at most development
+status, never a relaxation of the **0.90** release gate.
 
-Each live build writer owns its Cargo target, extraction, report, and temporary
-paths. Avoid a single shared writable `CARGO_TARGET_DIR` that serializes
-workers. Seed compatible private development caches from verified immutable
-inputs or safe copies where supported; never use hard-linked mutable build
-state. Keep the canonical cold-build/reproducibility lanes cold as required.
-Respect the launchers' per-checkout containment rather than mounting a sibling
-cache through an escape. Do not solve cache contention by weakening checks.
+The historical fully touched 32-MiB workload exposes a possible feasibility
+conflict in the absolute 0.90 peak-memory rule: payload alone can exceed 90%
+of the reference's total. Do not hide the row, subtract candidate-specific
+baselines, shrink its live set, or silently replace the metric. Re-evaluate
+with native x86 evidence; if the lower bound still precludes the requirement,
+retain that precise acceptance-policy blocker for an explicit user decision
+while completing independent work. The authorized faithful allocator port
+supersedes old instructions forbidding all allocator work, not this scorecard.
 
-Throughput work must remove an observed bottleneck and be small enough to
-exercise promptly on a real job. Prefer fixing an existing runner, adding
-supplied-product support where truly missing, or repairing isolation over
-building a scheduler, database, dashboard, daemon, or universal proof system.
+## Commands and evidence
 
-## 7. Close allocator milestones without making them coding barriers
+The active runtime dispatcher owns these aggregate commands:
 
-Use current `remaining_conditions`, source maps, applicability inventories,
-and milestone contracts as the finite work surface. The milestone number is
-an acceptance boundary, not a requirement that every later implementation wait.
+```sh
+./scripts/dev-x86_64.sh campaign-status
+./scripts/dev-x86_64.sh campaign-family FAMILY
+./scripts/dev-x86_64.sh campaign-static
+./scripts/dev-x86_64.sh campaign-dynamic
+./scripts/dev-x86_64.sh campaign-qualification
+./scripts/dev-x86_64.sh campaign-promotion-check
+./scripts/dev-x86_64.sh campaign-all
+```
 
-For each incomplete component, distinguish:
+Use `--help` and the owning manifests for focused commands. In particular,
+`materialized-dynamic-sysroot` is an executing installed-product gate; do not
+confuse a plan-only seed with execution. Admission/replay must use the pinned
+qualification dispatcher and its actual reader-enforced prerequisites.
 
-1. Missing or incorrect production behavior: implement the whole relevant
-   source transition and an independently meaningful regression.
-2. Existing behavior without adequate evidence: produce its actual required
-   C/Rust, ownership, concurrency, or installed-consumer evidence.
-3. External qualification: retain the precise resource/permission dependency
-   and continue independent behavior. Never mark it inapplicable merely
-   because the current machine cannot exercise it.
+The allocator has a separate contained native lane:
 
-Do not close M3 before M2 is qualified, but do implement dependency-ready
-engine, API, lifecycle, and integration work while M2 qualification proceeds.
-M8 and M10 wait for their actual runtime/promotion prerequisites, not for
-unrelated implementation agents to become idle. Keep one owner for the
-bootstrap/errno/TLS/teardown/fork/loader seams and review their composition.
+```sh
+./compat/allocator/run-x86_64.sh allocator --quick
+./compat/allocator/run-x86_64.sh allocator-m1
+./compat/allocator/run-x86_64.sh allocator-m2
+python3 compat/allocator/run.py --check --architecture x86_64 --offline
+```
 
-The end state remains the existing native-mimalloc contract: persistent
-source-shaped owners; pointer/page-derived free/realloc ownership; generic
-remote-free, owner-exit, abandonment/reclaim, and release; all applicable APIs
-and modes; complete fault/model/stress/soak and integration evidence; qualified
-performance; default promotion; and post-promotion stabilization. No fixture-
-shaped workaround or additional selected witness substitutes for that state.
+Use its current help/manifests and finish any missing native command capability
+for full correctness, exact upstream tests, installed shadow integration,
+seeded soak, performance smoke, qualified performance, and post-promotion
+repository checks. Do not present paused AArch64 command spellings as native
+x86 implementations. A full gate must name actual unmet conditions and fail
+closed while incomplete, then pass at completion—not permanently report an
+unspecified future milestone.
 
-## 8. External blockers: precise, retained, and off the worker critical path
+Keep each proving command and its raw/machine-readable report at the existing
+predictable target-qualified location. Allocator M1/M2 reports live beneath
+`.work/allocator-x86_64/reports/allocator/x86_64/`; runtime work uses
+`.work/x86_64/` and the established ignored report paths. A host replay verifies
+retained facts, not native execution by itself. Never hand-edit generated
+measurements or infer a pass from a missing report.
 
-The previous broad BSD-policy blocker is resolved. Allocator, ordinary ELF,
-and approved unwinder work have project authorization. Historical task names
-without original diagnostics do not establish a blanket subsystem prohibition.
-Preserve any actual denial and use its supported review path; do not retry an
-unchanged denied operation or route it through another agent/tool/container.
+## External qualification
 
-The recorded hardware request is already specific: native x86 Linux with two
-distinct online allowed memory nodes (IDs <= 62), one free 1-GiB hugetlb page
-per node, at least 2 GiB hugetlb cgroup headroom, readable `numa_maps`, the
-canonical capability requirements, and authorized use of the source's exact
-`mbind(MPOL_PREFERRED, flags=0)` operation. The previous environment returned
-`EPERM` for that private-mapping probe. Do not infer its precise policy origin
-from a seccomp flag or repeat the unchanged denied probe.
+The existing huge-page/NUMA job needs native x86 Linux with **two distinct
+online allowed memory nodes (IDs <= 62), one free 1-GiB hugetlb page per node,
+at least 2 GiB hugetlb cgroup headroom, readable `numa_maps`, the launcher's
+canonical capabilities, and authorized `mbind(MPOL_PREFERRED, flags=0)`**.
+Keep **RLIMIT_AS=unlimited**: existing composed simulated prerequisites may
+reserve **36 GiB + 96 MiB** of virtual address space, separate from physical
+huge pages and ordinary compiler/runtime RAM.
 
-Retain `RLIMIT_AS=unlimited`: existing composed simulated prerequisites may
-reserve 36 GiB + 96 MiB of virtual address space, separately from physical
-huge-page demand and ordinary unmeasured compiler/runtime RAM. Use current
-source-derived requirements in `compat/allocator/README.md` and the retained
-previous plan; do not silently relax them.
+A prior private-mapping probe returned `EPERM`. Preserve its diagnostic;
+do not infer the policy origin from a seccomp flag, repeat an unchanged denied
+operation, or route around it through another agent/tool. After authorized
+provisioning and validation of the pinned image, run:
 
-After authorized provisioning, use the existing pinned-image launcher:
-
-```bash
+```sh
 ./compat/allocator/run-x86_64.sh allocator-huge-numa-qualification
 ```
 
-Validate the current pinned image as its contract requires. This job proves
-its bounded native huge-page/two-node behavior, not all of M2 or promotion.
-Do not rent resources, change shared-host pools/security policy, or reboot
-without separate permission. Until real evidence exists, keep the relevant
-gates pending external qualification and the joint goal incomplete.
+This proves its bounded native hardware contract, not all of M2. Simulated
+fault paths cannot substitute for physical huge-page success and placement.
+Do not rent resources, change shared pools/security policy, or reboot without
+permission. Record a blocker once with the affected gate, evidence and clearing
+action; revisit when those facts change, not after every commit.
 
-Track a blocker once: exact action/behavior, evidence, affected prerequisites,
-clearing action, and useful independent work. Revisit only after relevant
-source, resources, permissions, or diagnostics change. When no independent
-work remains, report the precise external action needed without invented
-progress or a reduced completion claim.
+## Final promotion and definition of done
 
-## 9. Minimal campaign state and feedback
+Promote only through evidence-backed, isolated changes: first qualify the
+native allocator and its owned integration, switch the x86 default without
+changing AArch64, then complete the runtime/public-support transition when
+its validator computes readiness. Each transition requires its post-change
+reruns; neither can infer the other's completion.
 
-Use one coordinator-owned ignored board, for example
-`.work/coordination/board.md`, plus worker-private result files and existing
-evidence. Reuse an adequate current board rather than creating a competing one.
-The board needs only task/outcome, owner, base/dependencies, write boundary,
-state, and result/blocker pointer. It is scheduling state, not proof or a new
-repository-wide receipt standard. Only the coordinator or designated single
-writer updates shared rows.
+Finish all applicable stabilization before selecting the final clean committed
+candidate. Rebuild/requalify installed static and dynamic products with the
+promoted allocator, including independent reproducibility builds and extracted
+consumers. Run the complete native aggregate, allocator commands, ordered
+qualification, model/fault/stress/soak, ABI/interposition/TLS/fork/loader/DSO,
+std/LTO/source/corpus, dependency purity, and both performance contracts.
+Former C-backend or different-revision evidence cannot satisfy this rerun.
 
-Give concise event-driven updates: a dependency closes, implementation lands,
-a real regression appears, an interface changes, or an external action is
-needed. Do not repeatedly poll or ask workers for prose while they are working.
-Idle completed threads can be closed after their work/result is preserved.
+The active goal is complete only when **all** of the following hold together:
 
-At meaningful integration boundaries, use existing logs and the board to
-inspect accepted outcomes, time waiting for review/build, repeated rebuilds,
-conflicts/rework, and active versus blocked work. Treat these as diagnostics,
-not scorekeeping gates. Do not optimize commits/day or raw coverage counts.
-If the fleet produces more unintegrated work than it lands, fix integration;
-if jobs spend time waiting on cache/build locks, fix execution admission;
-if components pass but families cannot close, fix the missing admission path.
+- The frozen baseline and all digests validate; all 223 capabilities are
+  complete exactly once, all 26 required families are `foundation-verified`
+  in dependency order, and no required product or qualification remains open.
+- Both owned products cover all four link modes, reproduce independently,
+  and pass the same installed and extracted suites without ambient inputs.
+- All native allocator M0–M11 gates, applicable APIs/modes, production
+  architecture, correctness, lifetime, fault/model, upstream/stress/soak, and
+  performance requirements pass; no remaining condition is hidden or waived.
+- Rust mimalloc is the qualified x86 default. C mimalloc is absent from its
+  target production dependency/build/artifact graph and survives only in
+  explicitly isolated oracle/comparison inputs. AArch64 is not falsely promoted.
+- `promotion_ready` is computed from complete evidence **before** public x86
+  support is enabled; `public_support = true` and public documentation agree,
+  and `campaign-promotion-check` plus `campaign-all` pass after that change.
+- Final reports bind the same clean committed source, target, pinned inputs,
+  and declared configurations, including post-promotion products. All required
+  external qualification and runtime performance-policy issues are resolved.
 
-Update the Progress status section at the top of `plan.md` in place when the
-actual frontier changes, not after every witness. Routine explanation belongs
-with the code or owning test. Fold small narrative updates into the relevant
-implementation/batch; do not manufacture a follow-on `docs(plan): retain ...`
-commit for every test. Preserve substantial design and provenance changes, but
-do not make documentation churn a qualification trigger.
+Put final results in ignored reports. Do not create a new source commit merely
+to write its own SHA into a file being hashed. A necessary source change selects
+a successor candidate and requires affected requalification. The final response
+names the commit, proving commands/reports, parity and purity results, measured
+performance, and permitted limitations. Stop short only for explicit user
+interruption or a precise external/policy condition after independent work is
+exhausted; report that as incomplete, not as completion.
 
-## 10. Final convergence and exact joint completion
+## Deferred work
 
-When the real remaining work is integrated, retire obsolete transitional code
-in coherent batches before the last qualification. Native backend promotion
-and public support changes follow their existing isolated transactions and
-required post-change reruns. No premature default switch or public support.
+These retained directions are **not active x86 completion gates**. They do not
+resume AArch64 or enlarge the frozen consumer roster. Activating them requires
+new direction consistent with the target pause and scope.
 
-Freeze the final candidate after source, configuration, required ledger and
-public-boundary changes are committed. Run the complete required post-promotion
-chain at that clean revision. Keep generated final results in their existing
-ignored evidence location. Do not create an unnecessary source/doc commit
-just to write the final SHA back into the source being hashed. If a required
-source change is discovered, make it, select a successor, and requalify as the
-contracts require. Never inherit an unrelated revision's passing result.
+**Sustained software-corpus performance.** After the focused scorecard passes,
+retain the C0–C4 progression: measurable pinned-corpus substrate; sustained C
+baselines; cross-subsystem optimization; native application proof; reproducible
+release evidence. Use unmodified package executables with symmetric runtime
+overlays, exact outputs/state, pinned DSO/input hashes, fast and release sizes,
+hermetic local state, and declared fresh/steady/high-water/concurrency modes.
+C workloads cover grep/sed, tar, gzip/zstd, SQLite transactions/queries,
+Python data/traversal/subprocess, Git local operations, loopback curl, ssh
+configuration, and OpenSSL file digest strictly as a libc consumer. The five
+direct `crabc-rs` applications are descriptor pipeline, local service/client,
+thread/TLS worker, process/signal tool, and filesystem state tool. Their normal
+builds exclude Rustix/libc/nix; compare overlapping Rustix operations only in
+separate test builds, without pretending non-overlapping semantics are equal.
+Each C workload must meet the same per-row 0.90 CPU/PSS/cgroup and 2R syscall
+gates, with zero-call hot regions preserved; native targets are stated
+separately. Keep synthetic ABI/loader/POSIX and stock/dependency-bearing std
+lanes independent. Require three clean full runs and a second compatible
+machine class when available; no dropped unfavorable row or generic distro,
+public-network, cryptographic-performance, or package-manager scope.
 
-The goal is complete only when all of these hold together:
-
-1. Every item in `x86-64.md`'s exact full-completion definition passes: immutable
-   baseline/accounting; all 26 required families; reproducible owned static and
-   dynamic products and extraction; the ordered consumer/qualification chain;
-   native performance; computed promotion readiness; validated public support;
-   and the mandatory post-promotion aggregate rerun.
-2. Every applicable native x86 allocator milestone M0–M11 and every item in
-   `native-mimalloc.md`'s final definition of done passes. No hidden incomplete
-   components, remaining conditions, unclassified applicable behavior, waived
-   tests, hardware substitutions, or unqualified performance remain.
-3. Native Rust mimalloc is the qualified x86 default. Its production dependency
-   and artifact graph excludes C mimalloc; the exact pinned C oracle remains
-   isolated for testing. The paused AArch64 backend is not falsely promoted.
-4. Installed static and dynamic x86 products have been rebuilt and requalified
-   after promotion, including ABI, TLS/pthread/fork, loader/DSO, consumers,
-   reproducibility, dependency purity, stress, and performance. Former C-backend
-   evidence alone does not satisfy this requirement.
-5. Required final reports attest the same clean committed source revision,
-   target, pinned inputs, and applicable configuration. Documentation and
-   machine-readable state agree; neither detailed program remains incomplete.
-
-Finish with the final commit, proving commands and report paths, source-map
-and dependency-purity results, measured performance, and permitted limitations.
-Do not stop before that point unless the user stops the work or every remaining
-path is genuinely blocked by a precise unresolved external condition.
+**CPython source build.** The retained next candidate, only if selected, is
+pinned CPython 3.14.3 through the native installed owned sysroot. First build
+the interpreter/shared libpython without optional third-party extensions;
+prove startup/imports, extension loading, files, threads, subprocess, Unicode,
+and deterministic failures with a hermetic subset. Admit optional OpenSSL,
+zlib/bzip2/xz, libffi, SQLite, expat, readline/ncurses and other libraries only
+after each has independent owned-sysroot evidence. Audit headers, linker
+inputs, interpreter/maps/dependencies and raw outcomes; an interpreter launch
+is not broad CPython compatibility. A future true cross build must follow
+build-Python/CONFIG_SITE requirements, not guessed configure answers. Neither
+this direction nor completed AArch64 Lua/sysroot evidence supplies current x86
+qualification.

@@ -4,7 +4,7 @@
 
 > **Status: native x86-64 active; AArch64 paused.** The execution contract and
 > architecture-qualified live queue are in
-> [`native-mimalloc.md`](../../native-mimalloc.md). This document preserves
+> [`plan.md`](../../plan.md#native-allocator-completion). This document preserves
 > provenance, boundaries, and implementation context; its older evidence
 > records do not transfer milestone completion between architectures.
 
@@ -2825,7 +2825,7 @@ Linux/x86-64 little-endian, with Linux 5.10 as the kernel floor. Preserve the
 paused AArch64 port's valid page-size and ABI contracts without resuming its
 implementation or qualification. Existing x86 evidence does not establish
 public allocator integration or default promotion; those remain gated by
-`native-mimalloc.md` and the relevant owned-runtime contracts in `x86-64.md`.
+the allocator and owned-runtime contracts in `plan.md`.
 Do not use AArch64 emulation. RISC-V, macOS, Windows, big-endian, 32-bit, and portability
 scaffolds remain out of scope. Both allocator profiles must be `#![no_std]`,
 must not depend on `alloc` or libc, and must not compile C or C++ in the
@@ -3038,7 +3038,7 @@ Track these outcomes independently for the active native x86-64 profile:
 Preserve AArch64 outcomes as paused, architecture-qualified records. A
 standalone x86 allocator parity result is not libc readiness or public-platform
 completion. Backend promotion requires the native allocator and owned-runtime
-integration gates; public x86 support requires the full `x86-64.md` predicate.
+integration gates; public x86 support requires the full `plan.md` predicate.
 
 No outcome follows from basic allocation tests. Promotion requires focused
 invariants, layout/configuration probes, upstream-test evidence, deterministic

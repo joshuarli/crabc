@@ -59,8 +59,8 @@ substitute for any predecessor.
 
 The no-argument full-qualification command remains fail-closed. Even an
 all-ready declaration cannot open it: executing cases alone does not produce
-the source/tool/runtime/artifact-bound receipts required by `plan.md` and
-`x86-64.md`. The campaign's eight-gate chain is unchanged. This component is
+the source/tool/runtime/artifact-bound receipts required by `plan.md`.
+The campaign's eight-gate chain is unchanged. This component is
 executable prefix infrastructure, not final qualification or promotion.
 
 ## Remaining implementation before qualification

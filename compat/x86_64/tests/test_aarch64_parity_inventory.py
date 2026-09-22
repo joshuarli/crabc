@@ -58,7 +58,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         self.assertEqual(frozen["required_family_count"], 26)
         self.assertEqual(
             frozen["aarch64_inputs"]["capability_ledger"]["sha256"],
-            "128458dde00073bc0320b94972d864e66fa10d5f54e92b1b1c83081e2b4955e0",
+            "4c774b50acb3aea5cb9a5e6be2af4ac1dfae50e377f3d113d66a9d47375ce875",
         )
 
     def test_frozen_baseline_rejects_changed_live_aarch64_input(self) -> None:

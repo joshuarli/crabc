@@ -100,8 +100,7 @@ ALLOCATOR_SCOPE_EXCEPTION_ID = "allocator-mimalloc-libc-boundary"
 ALLOCATOR_SCOPE_EXCEPTION_VERSION = 1
 ALLOCATOR_SCOPE_EXCEPTION_POLICY = "mimalloc-backed-libc-boundary"
 ALLOCATOR_SCOPE_EXCEPTION_EVIDENCE = (
-    "docs/history/runtime-plan.md",
-    "docs/history/crabc-rs-delivery-plan.md",
+    "AGENTS.md",
     "docs/evidence/crabc-rs-subsumption.md",
 )
 ALLOCATOR_SCOPE_EXCEPTION_SYMBOLS = {

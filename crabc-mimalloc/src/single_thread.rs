@@ -757,9 +757,9 @@ enum ProcessPostOwnerExitClaimTerminalRetained {
 ///
 /// This is private on purpose.  It is the one process-lifetime destination
 /// for W07's non-copy claim, singleton release wrapper, or post-list mapping
-/// owner.  It has no accessor, retry, lookup, or drop surface: §4.7/§4.8 of
-/// `native-mimalloc.md` require one fail-closed owner after a one-way source
-/// transition, not a replacement post-exit route.
+/// owner.  It has no accessor, retry, lookup, or drop surface: the generic
+/// owner-exit rules in `plan.md` require one fail-closed owner after a
+/// one-way source transition, not a replacement post-exit route.
 #[must_use = "a terminal W03 source owner must be sealed, never reconstructed"]
 enum ProcessPostOwnerExitTerminalRetained {
     /// A claim path retained its W07/source owner and, only when unregister
@@ -989,9 +989,10 @@ static PROCESS_POST_OWNER_EXIT_TERMINAL_MARKER: ProcessPostOwnerExitTerminalMark
 ///
 /// The source claim's low bit, OS-list membership, PageMap lease, and backing
 /// token remain mechanically owned by `owner`; this explicit terminal type is
-/// the only value that may be forgotten under `native-mimalloc.md` §5.2. Each
-/// source page has its own low-bit serialization, so concurrent terminal
-/// failures on distinct pages retain distinct exact owners rather than
+/// the only value that may be forgotten under `plan.md` (Production
+/// architecture). Each source page has its own low-bit serialization, so
+/// concurrent terminal failures on distinct pages retain distinct exact
+/// owners rather than
 /// contending on a process-wide pre-CAS gate. The marker is published first so
 /// every in-flight later claim bypasses the first page's retained map tail.
 #[inline]

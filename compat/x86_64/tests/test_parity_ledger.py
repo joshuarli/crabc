@@ -3118,7 +3118,6 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         for owner in (
             "plan.md",
-            "x86-64.md",
             "compat/lto/native-facade-lto-fixture/src/main.rs",
             "crabc-core/src/event_x86_64.rs",
             "crabc-core/src/fs.rs",
@@ -9311,7 +9310,6 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/validate_parity_ledger.py",
             "compat/x86_64/README.md",
             "plan.md",
-            "x86-64.md",
             "scripts/check_structure.py",
             "scripts/dev-x86_64.sh",
         ):
@@ -9656,7 +9654,6 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/static_c_abi_exports.txt",
             "compat/x86_64/README.md",
             "plan.md",
-            "x86-64.md",
             "scripts/check_structure.py",
         ):
             self.assertIn(owner, artifact["source_owners"])
@@ -10212,7 +10209,6 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/validate_parity_ledger.py",
             "compat/x86_64/README.md",
             "plan.md",
-            "x86-64.md",
             "scripts/check_structure.py",
             "scripts/dev-x86_64.sh",
         ):
@@ -10582,7 +10578,6 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/validate_parity_ledger.py",
             "compat/x86_64/README.md",
             "plan.md",
-            "x86-64.md",
             "scripts/check_structure.py",
             "scripts/dev-x86_64.sh",
         ):
@@ -10680,7 +10675,6 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/validate_parity_ledger.py",
             "compat/x86_64/README.md",
             "plan.md",
-            "x86-64.md",
             "scripts/check_structure.py",
             "scripts/dev-x86_64.sh",
         ):
@@ -10778,7 +10772,6 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/validate_parity_ledger.py",
             "compat/x86_64/README.md",
             "plan.md",
-            "x86-64.md",
             "scripts/check_structure.py",
             "scripts/dev-x86_64.sh",
         ):
@@ -10871,7 +10864,6 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/tests/test_runner.py",
             "compat/x86_64/validate_parity_ledger.py",
             "plan.md",
-            "x86-64.md",
             "scripts/check_structure.py",
             "scripts/dev-x86_64.sh",
         ):
@@ -11335,7 +11327,6 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/validate_parity_ledger.py",
             "compat/x86_64/README.md",
             "plan.md",
-            "x86-64.md",
             "scripts/dev-x86_64.sh",
             "scripts/check_structure.py",
         ):
@@ -12323,7 +12314,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/aarch64_parity_inventory.py",
             "compat/x86_64/aarch64_parity_inventory.json",
             "compat/x86_64/tests/test_aarch64_parity_inventory.py",
-            "x86-64.md",
+            "plan.md",
         ):
             self.assertIn(owner, environment["source_owners"])
         self.assertNotIn(

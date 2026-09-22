@@ -1,9 +1,8 @@
 # Native x86-64 foundation evidence
 
 This directory records the native Linux/x86-64 little-endian campaign defined by
-[x86-64.md](../../x86-64.md), coordinated by [plan.md](../../plan.md).
-It is private foundation evidence until the completion predicate in x86-64.md
-passes; it is not a public-support claim.
+[plan.md](../../plan.md). It is private foundation evidence until the
+completion predicate in plan.md passes; it is not a public-support claim.
 
 ## Current authority
 
@@ -23,7 +22,7 @@ artifacts are ratchets or evidence, not completion predicates.
 feature provider rows, including the narrow non-header callable field
 that remains outside compiler-derived header accounting.
 
-For current state and the exact completion contract, use x86-64.md,
+For current state and the exact completion contract, use
 plan.md, COMPATIBILITY-PROFILE.md, and executable contracts. The
 large prior status narrative is preserved in
 [historical-evidence.md](historical-evidence.md); its instructions and
@@ -329,7 +328,7 @@ The selected AArch64 consumer set is reproduced on x86. Musl 1.2.6 is the
 C/POSIX oracle; Rustix is a pinned test-only native-API oracle. Glibc and
 ambient target inputs are never fallbacks. AArch64 implementation and
 qualification remain paused, and native mimalloc work follows
-[native-mimalloc.md](../../native-mimalloc.md) without weakening runtime
+[plan.md](../../plan.md#native-allocator-completion) without weakening runtime
 gates.
 
 ## Evidence and repository layout
@@ -356,7 +355,7 @@ nearest contract or evidence document.
 ## Completion boundary
 
 Native x86-64 becomes publicly supported only after the full predicate in
-x86-64.md passes: frozen accounting, all 26 families, reproducible owned
+plan.md passes: frozen accounting, all 26 families, reproducible owned
 static and dynamic products, complete ordered qualification, native
 performance, promotion validation, public-document update, and a final clean
 aggregate rerun. Until then, describe results as private foundation evidence.

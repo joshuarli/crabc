@@ -1,140 +1,45 @@
-# Documentation router
+# Technical references
 
-This directory owns durable cross-cutting design, evidence, roadmaps, and
-history. Keep executable runner instructions beside the harness that owns
-them; this router should explain ownership, not duplicate command contracts.
+Start with [AGENTS.md](../AGENTS.md) and [plan.md](../plan.md). The plan is the
+only active implementation/progress document; these references explain the
+boundary being changed and need not be loaded wholesale. The
+[compatibility profile](../COMPATIBILITY-PROFILE.md) defines deliberate limits;
+[COMPATIBILITY.md](../COMPATIBILITY.md) is generated evidence.
 
-## Governing project contract
+## Architecture and design
 
-- [Scope](../SCOPE.md) — public Linux/AArch64 profile, staged native x86-64
-  program, and non-goals.
-- [Compatibility profile](../COMPATIBILITY-PROFILE.md) — supported and
-  intentionally limited behavior.
-- [Combined native Linux/x86-64 completion goal](../plan.md) — execution
-  contract and in-place current progress status; alongside [runtime parity](../x86-64.md)
-  and [native mimalloc](../native-mimalloc.md), it defines active target-specific
-  implementation and promotion contracts, not current public support.
-- [Private x86-64 owned static sysroot evidence](../compat/x86_64/owned-static-sysroot.md)
-  — reproducible installed static artifact and real pthread/TLS consumer;
-  neither sysroot-family completion nor public support.
-- [Owned filesystem mechanism evidence](../compat/x86_64/owned-filesystem-mechanisms.md)
-  — source-mapped installed filesystem C ABI slice across owned products;
-  neither POSIX-family completion nor public support.
-- [Owned POSIX filesystem composition](../compat/x86_64/owned-posix-filesystem.md)
-  — source-mapped stat, directory, traversal, temporary-name, and file-handle
-  providers with manifest-bound one-object receipt evidence across owned
-  products; neither POSIX-family completion nor public support.
-- [Owned Linux/filesystem/terminal mechanism evidence](../compat/x86_64/owned-unix-mechanisms.md)
-  — source-mapped installed Unix C ABI slice across owned products;
-  neither POSIX-family completion nor public support.
-- [Installed residual POSIX process-control evidence](../compat/x86_64/owned-process-control.md)
-  — source-mapped 31-name C ABI workload across owned products; its 44-name
-  process-control accounting remains composite and non-promoting.
-- [Owned kernel-residual C API evidence](../compat/x86_64/owned-kernel-residual.md)
-  — source-mapped installed residual `system.kernel-admin` slice across owned
-  products; neither POSIX-family completion nor public support.
-- [Owned C11 quick-termination evidence](../compat/x86_64/owned-quick-exit.md)
-  — fixed-capacity `at_quick_exit`/`quick_exit` behavior across the installed
-  native products; neither runtime-family completion nor public support.
-- [Owned legacy time and clock-adjustment evidence](../compat/x86_64/owned-legacy-time.md)
-  — source-mapped `times`, interval-timer, and seccomp-contained
-  clock-adjustment behavior across installed native products; neither
-  runtime-family completion nor public support.
-- [Owned POSIX family acceptance proposal](../compat/x86_64/owned-posix-runtime.md)
-- [Finite native POSIX profile dispositions](../compat/x86_64/owned-posix-native-dispositions.md)
-- [Native POSIX aggregate execution](../compat/x86_64/owned-posix-native-execution.md)
-  — checked frozen scope, product matrix, and remaining behavior obligations.
-- [Owned classic host and service lookup](../compat/x86_64/owned-classic-netdb.md)
-  — conventional local files and bounded DNS through owned products, with
-  a reconstructable non-promoting `classic-netdb` receipt; explicit remaining
-  resolver cancellation and parser-order obligations remain.
-- [Owned TRE regex evidence](evidence/x86-owned-regex.md)
-- [`evidence/x86-owned-strfmon.md`](evidence/x86-owned-strfmon.md): fixed-profile monetary formatting and installed-product evidence.
-- [Owned wide calendar evidence](evidence/x86-owned-wcsftime.md)
-- [Owned `_Fork` evidence](../compat/x86_64/owned-underscore-fork.md)
-- [Owned fmtmsg evidence](../compat/x86_64/owned-fmtmsg.md)
-- [Owned utmpx evidence](evidence/x86-owned-utmpx.md)
-- [Owned account-file evidence](../compat/x86_64/owned-account-files.md)
-- [Owned rand/srand dependency and evidence](../compat/x86_64/owned-rand.md)
-- [Owned AIO evidence](evidence/x86-owned-aio.md)
-- [Owned C filename-pattern evidence](../compat/x86_64/owned-pattern.md)
-  — source-mapped `fnmatch`/`glob` C ABI slice across owned products; neither
-  pattern-family completion nor public support.
-- [Runtime ownership architecture](design/architecture.md) — layer ownership,
-  dependency direction, and the private runtime wire boundary.
-- [Agent/project handoff](../AGENTS.md) — code map, source precedence, and
-  canonical development commands.
-- [Generated compatibility dashboard](../COMPATIBILITY.md) — current measured
-  status; generated only, never hand-edited.
+| Boundary | Reference |
+| --- | --- |
+| Layer ownership and private runtime wire format | [Architecture](design/architecture.md) |
+| Typed native facade, ownership and safety | [crabc-rs](design/crabc-rs.md) |
+| CRT, installed sysroot, sealed driver and target-input purity | [CRT/sysroot](design/crt-and-sysroot.md) |
+| Allocator source mapping and implementation context | [Allocator](design/allocator.md), [upstream pin](../crabc-mimalloc/UPSTREAM.md) |
+| Explicit dynamic native-shadow ownership and lifecycle | [Dynamic allocator integration](design/x86-dynamic-native-allocator.md) |
+| Approved Rust unwinder provider and trust boundary | [Unwinder](design/x86-rust-unwinder-proposal.md) |
+| Measurement methodology and cost attribution | [Performance](design/performance.md) |
+| Existing owned-sysroot Lua consumer | [Source build](design/source-build.md) |
 
-## Current design
+Implementation context may contain revision-specific observations. The live
+code/manifests and current qualified reports establish current behavior;
+older measurements never transfer across targets, backends, or revisions.
+The plan contains release acceptance and explicitly deferred work.
 
-- [Native `crabc-rs` design](design/crabc-rs.md) — typed facade architecture,
-  ownership, safety, and runtime-state boundary.
-- [Performance design](design/performance.md) — measurement methodology,
-  optimization doctrine, and current cost model.
-- [Fixed mimalloc semantic-port design](design/allocator.md) — provenance,
-  dependency direction, integration ownership, and promotion boundary for the
-  paused AArch64 allocator record and active native x86-64 compatibility program.
-- [Owned CRT/sysroot design](design/crt-and-sysroot.md) — application startup,
-  sealed driver, purity boundary, and runtime ownership.
-- [Source-build design](design/source-build.md) — completed Lua gate through
-  the installed sysroot and its musl-oracle boundary.
-- [Rust-subsumption evidence](evidence/crabc-rs-subsumption.md) — why selected
-  C groups have no native Rust wrapper.
-- [Owned CRT/sysroot evidence](evidence/crabc-owned-sysroot.md) — completed
-  native sysroot/reproducibility proof and allocator-purity distinction.
-- [Lua source-build evidence](evidence/lua-source-build.md) — completed Lua
-  owned-sysroot integration proof.
-- [`compat/crabc-rs/coverage.toml`](../compat/crabc-rs/coverage.toml) — exact
-  machine-readable capability accounting.
+## Inventories and harnesses
 
-## Detailed acceptance contracts
+Runtime mappings and promotion live in
+[`compat/x86_64/parity.toml`](../compat/x86_64/parity.toml); the
+[native harness guide](../compat/x86_64/README.md) owns command options.
+Allocator source status lives in
+[`port-map.toml`](../compat/allocator/port-map.toml), with commands in the
+[allocator harness guide](../compat/allocator/README.md). Native Rust semantic
+accounting lives in [`coverage.toml`](../compat/crabc-rs/coverage.toml).
 
-- [Performance completion](roadmap/performance-completion.md) — active
-  scorecard and release proof.
-- [Software-corpus validation](roadmap/software-corpus-validation.md) —
-  sequenced C0–C4 real-software and native-application program after the
-  focused scorecard passes.
-- [Source-build progression](roadmap/source-build.md) — future CPython
-  acceptance contract on the completed owned-sysroot boundary.
+Use the nearest `compat/` README for ABI, loader, corpus, POSIX, Rust std/LTO,
+Rustix, or performance work. C runtime and loader guides are in
+[`libc/`](../libc/README.md) and [`ldso/`](../ldso/README.md); the pinned external
+suite has its [own harness](../libc-test-harness/README.md).
 
-## Historical rationale and naming provenance
-
-- [Runtime delivery record](history/runtime-plan.md) — concise delivery
-  provenance and the governing superseded-direction decisions.
-- [`crabc-rs` delivery record](history/crabc-rs-delivery-plan.md) — concise
-  facade architecture and capability-accounting provenance.
-- [Archived project status](history/project-status-2026-09-04.md) and
-  [paused AArch64 allocator handoff](history/native-mimalloc-aarch64.md) —
-  preserved implementation details and exact-revision evidence, not live queues.
-- [Semantic migration record](history/semantic-migration.md) — original blob
-  IDs, loss-prevention ledger, and milestone-to-semantic rename map.
-
-Historical records never override root policy, the execution and progress
-status in [`plan.md`](../plan.md), machine-readable contracts, or generated
-evidence.
-
-Keep live documents short: each fact has one owning contract, design note, or
-report. Guides link to those owners instead of repeating per-leaf scope and
-commit narratives. Archive useful old detail; never relabel it as current
-qualification or append history to an execution plan.
-
-## Code-adjacent guides
-
-- C runtime and dynamic loader: [`libc/README.md`](../libc/README.md),
-  [`ldso/README.md`](../ldso/README.md), and
-  [`compat/ldso/README.md`](../compat/ldso/README.md).
-- ABI and loader inventory: [`compat/abi/README.md`](../compat/abi/README.md)
-  and [`compat/loader/README.md`](../compat/loader/README.md).
-- Compatibility runners: [`libc-test-harness/README.md`](../libc-test-harness/README.md)
-  and the nearest `compat/*/README.md`.
-- Rust `std`, Rustix, and LTO evidence: [`compat/rust-std/README.md`](../compat/rust-std/README.md),
-  [`compat/rustix/`](../compat/rustix/), and [`compat/lto/README.md`](../compat/lto/README.md).
-- Performance runner mechanics: [`compat/perf/README.md`](../compat/perf/README.md).
-- Allocator source/oracle/differential mechanics:
-  [`compat/allocator/README.md`](../compat/allocator/README.md) and
-  [`crabc-mimalloc/UPSTREAM.md`](../crabc-mimalloc/UPSTREAM.md).
-
-The joint POSIX process-state workload is described in
-[`owned-posix-composition.md`](../compat/x86_64/owned-posix-composition.md).
+`evidence/` contains scoped technical arguments and observations, not another
+queue. Preserve required source provenance and raw generated reports in their
+owning locations. Git supplies delivery history; do not maintain prose archives
+or append a settlement narrative for each leaf change.

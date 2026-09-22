@@ -45,5 +45,5 @@ checked x86-derived inventory. It intentionally has no `--write` or snapshot
 refresh path: rebaselining requires explicit user direction and a separately
 recorded old-to-new baseline transition. `promotion_ready` and
 `public_support` are derived from current x86 contracts, not hard-coded false;
-promotion remains governed by every gate in `x86-64.md` and
+promotion remains governed by every gate in `plan.md` and
 `compat/x86_64/parity.toml`.
