@@ -28,9 +28,9 @@ and final-link inputs establish provenance.
 ## Source graph and profile
 
 The development producer will create private state below
-`.work/x86_64/native-static-source-runtime-closure/` and invoke the pinned
-nightly's Cargo once for `crabc-libc`, using the existing workspace lock and a
-fresh, authenticated offline vendor view.  The Rust standard-library source
+`.work/x86_64/native-mimalloc-shadow-pthread-teardown/run.*/source-runtime-*/`
+and invoke the pinned nightly's Cargo once for `crabc-libc`, using the existing
+workspace lock and a fresh, authenticated offline vendor view.  The Rust standard-library source
 comes only from the pinned toolchain's
 `lib/rustlib/src/rust/library`, whose `Cargo.lock`, vendor configuration,
 package checksums, and selected source files are recorded.  Workspace and
