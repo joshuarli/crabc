@@ -53,6 +53,14 @@ netdb, alias/private-body, and cancellation readers bind their one declared
 static/dynamic pair. Equal source hashes, byte-identical payloads, or an old
 report are never substitutes for those exact physical root and manifest joins.
 
+The alias/private-body receipt also names a loader-debug product report. For a
+common cohort, collect that report through
+[`run_loader_debug_abi.sh`](run_loader_debug_abi.sh) with the same primary
+static and installed dynamic roots supplied together. A loader-debug report
+that built private product roots cannot stand in for this input: the alias
+reader checks the selected dynamic manifest, state, libc, and loader paths and
+identities against the declared pair.
+
 ## Fixed protocol-table receipt
 
 `owned_protocol_database.py` consumes three independently prepared product
@@ -96,12 +104,21 @@ and inventory inputs because its public reader authenticates that cohort.
 {
   "schema": "crabc.x86_64-owned-resolver-family-request/v1",
   "components": {
-    "resolver-network-physical": { "report": "compat/reports/resolver-network/x86_64/latest.json" },
+    "resolver-network-physical": { "report": ".work/x86_64/resolver-network/current/report.json" },
     "classic-netdb": { "report": ".work/x86_64/classic-netdb/current/classic-netdb-products.json" },
+    "resolver-alias-private-bodies": {
+      "report": ".work/x86_64/resolver-alias/current/report.json",
+      "static_product": ".work/x86_64/posix-static/current/products/primary",
+      "dynamic_product": ".work/x86_64/dynamic/current/installed",
+      "product_report": ".work/x86_64/loader-debug/current/report.json",
+      "static_preparation": ".work/x86_64/posix-static/current/preparation.json",
+      "elf_facts": ".work/x86_64/native-abi-elf-facts/current/report.json",
+      "base_inventory": ".work/x86_64/native-abi-inventory/current/report.json"
+    },
     "resolver-cancellation": {
       "work": ".work/x86_64/owned-resolver-cancellation/current",
-      "static_product": ".work/x86_64/products/static",
-      "dynamic_product": ".work/x86_64/products/dynamic"
+      "static_product": ".work/x86_64/posix-static/current/products/primary",
+      "dynamic_product": ".work/x86_64/dynamic/current/installed"
     },
     "protocol-database-product": {
       "report": ".work/x86_64/protocol-database/current/owned-protocol-database-products.json"

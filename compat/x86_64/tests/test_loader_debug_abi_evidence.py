@@ -2,8 +2,11 @@
 import importlib.util
 from pathlib import Path
 import struct
+import sys
 import tempfile
+import types
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[3]
 SPEC = importlib.util.spec_from_file_location('loader_debug_abi_evidence', ROOT / 'compat/x86_64/loader_debug_abi_evidence.py')
@@ -89,6 +92,96 @@ class ElfMetadataTests(unittest.TestCase):
         item = {'path': 'SCOPE.md', 'sha256': evidence.digest(outside), 'size': outside.stat().st_size}
         with self.assertRaises(evidence.EvidenceError):
             evidence.artifact(item)
+
+
+class SuppliedProductModeTests(unittest.TestCase):
+    def setUp(self):
+        temporary = ROOT / '.work/x86_64/tmp'
+        temporary.mkdir(parents=True, exist_ok=True)
+        self.directory = tempfile.TemporaryDirectory(dir=temporary)
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.static = self.root / 'static-product'
+        self.dynamic = self.root / 'dynamic-product'
+        for path, contents in {
+            self.static / 'share/crabc/manifest.json': b'static-manifest',
+            self.dynamic / 'share/crabc/manifest.json': b'dynamic-manifest',
+            self.dynamic / 'share/crabc/dynamic-product-state.json': b'dynamic-state',
+            self.dynamic / 'usr/lib/libc.so': b'candidate-libc',
+            self.dynamic / 'lib/ld-crabc-x86_64.so.1': b'candidate-loader',
+        }.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(contents)
+
+    def test_supplied_mode_requires_the_complete_static_dynamic_pair_before_creating_output(self):
+        output = self.root / 'output'
+        with self.assertRaisesRegex(evidence.EvidenceError, 'require both static and dynamic roots'):
+            evidence.Collector(output, self.static, None)
+        self.assertFalse(output.exists())
+
+    def test_supplied_mode_rejects_a_symlinked_product_before_invoking_a_product_validator(self):
+        link = self.root / 'static-link'
+        link.symlink_to(self.static.name)
+        output = self.root / 'output'
+        with self.assertRaisesRegex(evidence.EvidenceError, 'physical checkout .work directory'):
+            evidence.Collector(output, link, self.dynamic)
+        self.assertFalse(output.exists())
+
+    def test_supplied_mode_rejects_overlapping_product_roots_before_creating_output(self):
+        output = self.root / 'output'
+        with self.assertRaisesRegex(evidence.EvidenceError, 'product roots overlap'):
+            evidence.Collector(output, self.static, self.static)
+        self.assertFalse(output.exists())
+
+    def test_product_record_retains_the_dynamic_state_change_between_pre_and_post_checks(self):
+        static_driver = types.SimpleNamespace(DriverError=RuntimeError,
+                                              validate_installed_runtime=mock.Mock())
+        qualification = types.SimpleNamespace(QualificationError=RuntimeError,
+                                              product_identity=mock.Mock(return_value='a' * 64))
+        with mock.patch.dict(sys.modules, {
+            'crabc_cc_static': static_driver,
+            'owned_dynamic_qualification': qualification,
+        }):
+            before = evidence._product_records(self.static, self.dynamic, 'supplied')
+            (self.dynamic / 'share/crabc/dynamic-product-state.json').write_bytes(b'changed-dynamic-state')
+            after = evidence._product_records(self.static, self.dynamic, 'supplied')
+        self.assertNotEqual(before, after)
+        self.assertEqual(static_driver.validate_installed_runtime.call_count, 2)
+        self.assertEqual(qualification.product_identity.call_count, 2)
+
+    def test_supplied_mode_rejects_the_existing_current_source_product_validator_failure(self):
+        static_driver = types.SimpleNamespace(DriverError=RuntimeError,
+                                              validate_installed_runtime=mock.Mock())
+        qualification = types.SimpleNamespace(
+            QualificationError=RuntimeError,
+            product_identity=mock.Mock(side_effect=RuntimeError('installed product source is stale')),
+        )
+        output = self.root / 'output'
+        with mock.patch.dict(sys.modules, {
+            'crabc_cc_static': static_driver,
+            'owned_dynamic_qualification': qualification,
+        }), self.assertRaisesRegex(evidence.EvidenceError, 'current supplied product contract differs'):
+            evidence.Collector(output, self.static, self.dynamic)
+        self.assertFalse(output.exists())
+        static_driver.validate_installed_runtime.assert_called_once_with(self.static)
+        qualification.product_identity.assert_called_once_with(self.dynamic)
+
+    def test_collect_cli_forwards_the_complete_supplied_pair_to_the_existing_collector(self):
+        collector = mock.Mock()
+        collector.return_value.collect.return_value = 'report'
+        with mock.patch.object(evidence, 'Collector', collector), \
+             mock.patch.object(sys, 'argv', [
+                 'loader_debug_abi_evidence.py', 'collect', '--output', str(self.root / 'output'),
+                 '--static-product', str(self.static), '--dynamic-product', str(self.dynamic),
+             ]):
+            evidence.main()
+        collector.assert_called_once_with(self.root / 'output', self.static, self.dynamic)
+
+    def test_documented_pinned_wrapper_contract_names_both_supplied_roots(self):
+        wrapper = (ROOT / 'compat/x86_64/run_loader_debug_abi.sh').read_text(encoding='utf-8')
+        document = (ROOT / 'compat/x86_64/loader-debug-crt-abi.md').read_text(encoding='utf-8')
+        self.assertIn('"$@"', wrapper)
+        self.assertIn('--static-product STATIC_PRODUCT --dynamic-product DYNAMIC_PRODUCT', document)
 
 
 if __name__ == '__main__':

@@ -91,6 +91,22 @@ requires clean source, builds one fresh static and one fresh dynamic product,
 and checks that source content/revision did not change. It is a component
 measurement, not full product qualification or reproducibility evidence.
 
+That default product-build route is unchanged. A consumer that must bind this
+workload to an already sealed source cohort supplies both roots together:
+
+```sh
+CRABC_LOADER_DEBUG_IMAGE_ID=crabc-core-evidence@sha256:... \
+  compat/x86_64/run_loader_debug_abi.sh collect --output PATH \
+  --static-product STATIC_PRODUCT --dynamic-product DYNAMIC_PRODUCT
+```
+
+The supplied route accepts only two existing physical directories below the
+same checkout's `.work`. It validates the static product plus the current
+dynamic materialization before and after the unchanged workload, retains the
+current source, static/dynamic manifests, dynamic state, libc, and loader
+identities, and never invokes either product builder. Supplying only one root
+is rejected. It remains the same component measurement boundary.
+
 The fixed matrix includes 68 execution cells. Each workload is compiled once
 by the pinned musl compiler and reused unchanged between oracle and candidate
 links. The ordinary lifecycle and isolated default/strong-override archive

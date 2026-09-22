@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import struct
 import subprocess
 import sys
@@ -179,6 +180,53 @@ def artifact(item):
     return path
 
 
+def _physical_product(path, description):
+    """Admit one existing product root below this checkout's retained work tree."""
+
+    value = Path(path).absolute()
+    try:
+        metadata = value.lstat()
+        resolved = value.resolve(strict=True)
+    except (OSError, RuntimeError) as error:
+        raise EvidenceError(f'{description} is unreadable: {path}') from error
+    require(resolved == value and value.is_relative_to(ROOT / '.work')
+            and stat.S_ISDIR(metadata.st_mode) and not value.is_symlink(),
+            f'{description} must be a physical checkout .work directory')
+    return value
+
+
+def _product_records(static, dynamic, mode):
+    """Validate and retain the exact supplied or self-built product identities."""
+
+    static = _physical_product(static, 'static product')
+    dynamic = _physical_product(dynamic, 'dynamic product')
+    require(static != dynamic and static not in dynamic.parents and dynamic not in static.parents,
+            'static and dynamic product roots overlap')
+    import crabc_cc_static
+    import owned_dynamic_qualification as qualification
+
+    try:
+        crabc_cc_static.validate_installed_runtime(static)
+        qualification.product_identity(dynamic)
+    except (crabc_cc_static.DriverError, qualification.QualificationError, OSError, ValueError) as error:
+        raise EvidenceError(f'current supplied product contract differs: {error}') from error
+    require(mode in ('self-built', 'supplied'), 'loader-debug product mode differs')
+    return {
+        'mode': mode,
+        'static': {
+            'path': relative(static),
+            'manifest': record(static / 'share/crabc/manifest.json'),
+        },
+        'dynamic': {
+            'path': relative(dynamic),
+            'manifest': record(dynamic / 'share/crabc/manifest.json'),
+            'state': record(dynamic / 'share/crabc/dynamic-product-state.json'),
+            'libc': record(dynamic / 'usr/lib/libc.so'),
+            'loader': record(dynamic / 'lib/ld-crabc-x86_64.so.1'),
+        },
+    }
+
+
 def validate_report(path):
     import owned_dynamic_qualification as qualification
     report = json.loads(Path(path).read_text())
@@ -285,21 +333,26 @@ def validate_report(path):
     for name, execution in report['executions'].items():
         if name.endswith('-trace'):
             require(execution['events'] == report['oracle_trace_events'], f'not the same debugger transaction sequence: {name}')
-    import crabc_cc_owned_dynamic
-    import crabc_cc_static
     dynamic = artifact(report['artifacts']['dynamic-manifest']).parents[2]
     static = artifact(report['artifacts']['static-manifest']).parents[2]
-    crabc_cc_owned_dynamic.validate(dynamic)
-    crabc_cc_static.validate_installed_runtime(static)
+    product_mode = 'self-built' if static.is_relative_to(Path(path).resolve().parent) \
+        and dynamic.is_relative_to(Path(path).resolve().parent) else 'supplied'
+    require(report.get('products') == _product_records(static, dynamic, product_mode),
+            'loader-debug product identities differ')
     for item in report['artifacts'].values():
         artifact(item)
     return report
 
 
 class Collector:
-    def __init__(self, output):
+    def __init__(self, output, static_product=None, dynamic_product=None):
+        require((static_product is None) == (dynamic_product is None),
+                'loader-debug supplied products require both static and dynamic roots')
         self.output = output.resolve()
         require(self.output.is_relative_to(ROOT / '.work') and not self.output.exists(), 'output must be a fresh .work directory')
+        self.supplied_products = None
+        if static_product is not None:
+            self.supplied_products = _product_records(static_product, dynamic_product, 'supplied')
         self.output.mkdir(parents=True)
         (self.output / 'raw').mkdir()
         self.commands = []
@@ -353,9 +406,15 @@ class Collector:
             saved = self.output / ('oracle-' + name)
             shutil.copyfile(ORACLE.with_name(name), saved)
             self.keep('oracle-' + name, saved)
-        static, dynamic = [self.output / value for value in ('static-product', 'dynamic-product')]
-        self.run('build-static', ['python3', '-B', ROOT / 'scripts/build_x86_64_owned_sysroot.py', '--output', static])
-        self.run('build-dynamic', ['python3', '-B', ROOT / 'scripts/build_x86_64_owned_dynamic_sysroot.py', '--output', dynamic])
+        if self.supplied_products is None:
+            static, dynamic = [self.output / value for value in ('static-product', 'dynamic-product')]
+            self.run('build-static', ['python3', '-B', ROOT / 'scripts/build_x86_64_owned_sysroot.py', '--output', static])
+            self.run('build-dynamic', ['python3', '-B', ROOT / 'scripts/build_x86_64_owned_dynamic_sysroot.py', '--output', dynamic])
+            products = _product_records(static, dynamic, 'self-built')
+        else:
+            static = ROOT / self.supplied_products['static']['path']
+            dynamic = ROOT / self.supplied_products['dynamic']['path']
+            products = self.supplied_products
         state = json.loads((dynamic / 'share/crabc/dynamic-product-state.json').read_text())
         require(state['source_sha256'] == source, 'dynamic product source differs')
         for lane, path in [('candidate', dynamic / 'usr/lib/libc.so'), ('oracle', ORACLE)]:
@@ -451,8 +510,11 @@ class Collector:
                     self.keep(binary.name + '-map', Path(str(binary) + '.map'))
                     self.execute(binary.name, ['timeout', '25', binary], 'archive-' + kind, binary)
         require(source == qualification.source_digest() and commit == qualification.require_clean_source(), 'source changed during component collection')
+        require(products == _product_records(static, dynamic, products['mode']),
+                'selected products changed during component collection')
         report = {'schema': SCHEMA, 'status': 'component-verified', 'family_complete': False, 'public_support': False,
                   'source_commit': commit, 'source_sha256': source, 'image': image, 'oracle': oracle,
+                  'products': products,
                   'artifacts': self.artifacts,
                   'public_metadata': public_metadata(dynamic / 'usr/lib/libc.so'),
                   'loader_hook_metadata': Elf(dynamic / 'lib/ld-crabc-x86_64.so.1').symbol('_dl_debug_state'),
@@ -470,12 +532,14 @@ def main():
     commands = parser.add_subparsers(dest='mode', required=True)
     collect = commands.add_parser('collect')
     collect.add_argument('--output', required=True, type=Path)
+    collect.add_argument('--static-product', type=Path)
+    collect.add_argument('--dynamic-product', type=Path)
     validate = commands.add_parser('validate-report')
     validate.add_argument('report', type=Path)
     args = parser.parse_args()
     try:
         if args.mode == 'collect':
-            print(Collector(args.output).collect())
+            print(Collector(args.output, args.static_product, args.dynamic_product).collect())
         else:
             validate_report(args.report)
             print('loader debugger/CRT component report: PASS')
