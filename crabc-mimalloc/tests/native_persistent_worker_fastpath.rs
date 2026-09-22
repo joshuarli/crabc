@@ -6,7 +6,7 @@ mod native_runtime_test_support;
 
 
 
-use std::sync::{Arc, Barrier, mpsc};
+use std::sync::{Arc, Barrier, Condvar, Mutex, mpsc};
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
@@ -29,6 +29,7 @@ const CYCLE_REQUEST: usize = 61;
 enum WorkerTeardown {
     AllFree,
     CollectAbandon,
+    CollectAbandonReclaim,
 }
 
 impl WorkerTeardown {
@@ -36,6 +37,7 @@ impl WorkerTeardown {
         match self {
             Self::AllFree => "all-free",
             Self::CollectAbandon => "collect-abandon",
+            Self::CollectAbandonReclaim => "collect-abandon-reclaim",
         }
     }
 
@@ -43,6 +45,7 @@ impl WorkerTeardown {
         match value.to_str() {
             Some("all-free") => Self::AllFree,
             Some("collect-abandon") => Self::CollectAbandon,
+            Some("collect-abandon-reclaim") => Self::CollectAbandonReclaim,
             _ => panic!("the child teardown selects one direct persistent-worker mode"),
         }
     }
@@ -69,6 +72,7 @@ fn run_independent_local_worker(
     ready: mpsc::SyncSender<()>,
     start: Arc<Barrier>,
     teardown: WorkerTeardown,
+    reclaim_turn: Option<Arc<(Mutex<usize>, Condvar)>>,
 ) {
     assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
 
@@ -88,6 +92,13 @@ fn run_independent_local_worker(
         .send(())
         .expect("the coordinator observes every attached local owner");
     start.wait();
+    if let Some(turn) = &reclaim_turn {
+        let (current, changed) = &**turn;
+        let mut current = current.lock().unwrap();
+        while *current != worker {
+            current = changed.wait(current).unwrap();
+        }
+    }
 
     let anchor = match unsafe { native_reallocate(Some(anchor), REALLOCATED_ANCHOR_REQUEST) } {
         NativePageAllocationResult::Allocated(block) => block,
@@ -130,6 +141,11 @@ fn run_independent_local_worker(
         ThreadFinishResult::Finished,
         "the persistent local engine follows normal source teardown"
     );
+    if let Some(turn) = &reclaim_turn {
+        let (current, changed) = &**turn;
+        *current.lock().unwrap() += 1;
+        changed.notify_all();
+    }
 }
 
 fn run_width(width: usize, teardown: WorkerTeardown) {
@@ -150,12 +166,19 @@ fn run_width(width: usize, teardown: WorkerTeardown) {
 
     let (ready_sender, ready_receiver) = mpsc::sync_channel(width);
     let start = Arc::new(Barrier::new(width + 1));
+    // The additional schedule preserves the ordinary concurrent case and
+    // deterministically lets a later realloc reclaim an earlier worker's
+    // abandoned replacement-anchor page, as pinned page.c::mi_page_fresh_alloc
+    // permits. Every worker has already attached and allocated its first bin.
+    let reclaim_turn = (teardown == WorkerTeardown::CollectAbandonReclaim)
+        .then(|| Arc::new((Mutex::new(0), Condvar::new())));
     let mut workers = Vec::with_capacity(width);
     for worker in 0..width {
         let ready = ready_sender.clone();
         let start = Arc::clone(&start);
+        let reclaim_turn = reclaim_turn.clone();
         workers.push(std::thread::spawn(move || {
-            run_independent_local_worker(worker, ready, start, teardown)
+            run_independent_local_worker(worker, ready, start, teardown, reclaim_turn)
         }));
     }
     drop(ready_sender);
@@ -188,7 +211,7 @@ fn run_width(width: usize, teardown: WorkerTeardown) {
         * (LOCAL_CYCLES * 2
             + match teardown {
                 WorkerTeardown::AllFree => 3,
-                WorkerTeardown::CollectAbandon => 2,
+                WorkerTeardown::CollectAbandon | WorkerTeardown::CollectAbandonReclaim => 2,
             });
     assert!(
         after
@@ -233,7 +256,7 @@ fn run_width(width: usize, teardown: WorkerTeardown) {
                 "normal teardown returns every worker TLD/Theap metadata capability"
             );
         }
-        WorkerTeardown::CollectAbandon => {
+        WorkerTeardown::CollectAbandon | WorkerTeardown::CollectAbandonReclaim => {
             assert!(
                 after.main_heap_abandoned_page_count
                     >= baseline.main_heap_abandoned_page_count + width,
@@ -276,7 +299,7 @@ fn persistent_workers_keep_independent_local_engines_through_normal_teardown() {
         return;
     }
 
-    for teardown in [WorkerTeardown::AllFree, WorkerTeardown::CollectAbandon] {
+    for teardown in [WorkerTeardown::AllFree, WorkerTeardown::CollectAbandon, WorkerTeardown::CollectAbandonReclaim] {
         for width in WORKER_WIDTHS {
             let status = std::process::Command::new(
                 std::env::current_exe().expect("the focused test executable has a current path"),
