@@ -1958,8 +1958,8 @@ mod tests {
                     assert_eq!(tracking.iter().filter(|slot| slot.retains_tld()).count(), 1);
                     assert_eq!(metadata.test_allocation_audit().live_capability_count, 2);
                     let failed = tracking.iter_mut().find(|slot| slot.retains_theap()).unwrap();
-                    failed.retry_theap_metadata_release(metadata).expect("exact owner retry after entry release");
-                    assert_eq!(failed.retry_theap_metadata_release(metadata), Err(MetaError::ReleasedOrStale));
+                    failed.retry_theap_metadata_release().expect("exact owner retry after entry release");
+                    assert_eq!(failed.retry_theap_metadata_release(), Err(MetaError::ReleasedOrStale));
                     assert_eq!(metadata.test_allocation_audit().live_capability_count, 1);
                 } else {
                     let result = unsafe { heap.force_destroy_source_owned_theaps(metadata, &mut tracking[..1]) };

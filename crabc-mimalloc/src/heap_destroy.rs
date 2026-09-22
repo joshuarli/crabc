@@ -14,7 +14,7 @@
 //! destruction are separate required predecessors/successors of full teardown.
 
 use super::{Heap, MemoryKind, Theap, ThreadLocalData};
-use crate::meta::{MetaAllocation, MetaAllocator, MetaError};
+use crate::meta::{MetaAllocation, MetaAllocator, MetaError, MetaRelease, MetaReleaseFailure};
 use crate::subproc::ThreadRegistrationLease;
 use core::pin::Pin;
 use core::ptr::NonNull;
@@ -33,6 +33,17 @@ pub(crate) enum MainHeapDestroyError {
     Metadata(MetaError),
 }
 
+enum TrackedTheap {
+    /// Recovered before source list mutation/refcount decrement.
+    Recovered(MetaAllocation<'static>),
+    /// Source still has a cached reference after dropping its Heap reference.
+    Cached(MetaAllocation<'static>),
+    /// Source reference reached zero; entry refusal made no allocator mutation.
+    Retryable(MetaAllocation<'static>),
+    /// A release was claimed before failure; retain diagnostic ownership only.
+    Terminal { allocation: MetaAllocation<'static>, error: MetaError },
+}
+
 /// External ownership storage for one source Theap and its detached TLD.
 /// A successful main-Heap destruction deliberately retains the TLD: source
 /// `mi_heap_free_theaps` does not call `mi_tld_free`. Never release this
@@ -41,15 +52,14 @@ pub(crate) enum MainHeapDestroyError {
 pub(crate) struct MainHeapDestroyTracking {
     pointer: Option<NonNull<Theap>>,
     tld_pointer: Option<NonNull<ThreadLocalData>>,
-    theap: Option<MetaAllocation<'static>>,
+    theap: Option<TrackedTheap>,
     tld: Option<MetaAllocation<'static>>,
     registration: Option<ThreadRegistrationLease>,
-    theap_release_due: bool,
 }
 
 impl MainHeapDestroyTracking {
     pub(crate) const fn empty() -> Self {
-        Self { pointer: None, tld_pointer: None, theap: None, tld: None, registration: None, theap_release_due: false }
+        Self { pointer: None, tld_pointer: None, theap: None, tld: None, registration: None }
     }
 
     pub(crate) fn retains_theap(&self) -> bool { self.theap.is_some() }
@@ -60,14 +70,29 @@ impl MainHeapDestroyTracking {
     /// never repeats list mutation or a source reference decrement.
     pub(crate) fn retry_theap_metadata_release(
         &mut self,
-        metadata: Pin<&'static MetaAllocator>,
     ) -> Result<(), MetaError> {
-        if !self.theap_release_due { return Err(MetaError::ReleasedOrStale); }
-        let allocation = self.theap.as_mut().ok_or(MetaError::ReleasedOrStale)?;
-        metadata.free(allocation)?;
-        self.theap = None;
-        self.theap_release_due = false;
-        Ok(())
+        match self.theap.take() {
+            Some(TrackedTheap::Retryable(allocation)) => self.release_theap(allocation),
+            other => {
+                self.theap = other;
+                Err(MetaError::ReleasedOrStale)
+            }
+        }
+    }
+
+    fn release_theap(&mut self, allocation: MetaAllocation<'static>) -> Result<(), MetaError> {
+        match MetaRelease::Malloc(allocation).release() {
+            Ok(()) => Ok(()),
+            Err(MetaReleaseFailure::MallocRetryable { error, allocation }) => {
+                self.theap = Some(TrackedTheap::Retryable(allocation));
+                Err(error)
+            }
+            Err(MetaReleaseFailure::MallocTerminal { error, allocation }) => {
+                self.theap = Some(TrackedTheap::Terminal { allocation, error });
+                Err(error)
+            }
+            Err(MetaReleaseFailure::RegularOs { .. }) => unreachable!("a Malloc capability cannot select OS release"),
+        }
     }
 
     #[cfg(test)]
@@ -156,9 +181,9 @@ impl Heap {
                 // SAFETY: whole-process quiescence and prior explicit
                 // transfer are caller obligations; each graph member is
                 // recovered only once into its external tracking slot.
-                tracking[index].theap = Some(unsafe {
+                tracking[index].theap = Some(TrackedTheap::Recovered(unsafe {
                     MetaAllocation::recover_source_retained_theap(metadata, pointer)
-                }.ok_or(MainHeapDestroyError::InvalidOwnership)?);
+                }.ok_or(MainHeapDestroyError::InvalidOwnership)?));
                 tracking[index].tld = Some(unsafe {
                     MetaAllocation::recover_source_retained_tld(metadata, tld)
                 }.ok_or(MainHeapDestroyError::InvalidOwnership)?);
@@ -201,16 +226,17 @@ impl Heap {
             let theap = unsafe { pointer.as_mut() };
             theap.hnext = core::ptr::null_mut();
             theap.hprev = core::ptr::null_mut();
-            if let Some(allocation) = slot.theap.as_mut() {
+            if let Some(TrackedTheap::Recovered(allocation)) = slot.theap.take() {
                 let previous = theap.refcount.fetch_sub(1, Ordering::AcqRel);
                 if previous == 0 {
+                    slot.theap = Some(TrackedTheap::Terminal { allocation, error: MetaError::ReleasedOrStale });
                     first_error.get_or_insert(MainHeapDestroyError::InvalidOwnership);
                 } else if previous == 1 {
-                    slot.theap_release_due = true;
-                    match metadata.free(allocation) {
-                        Ok(()) => { slot.theap = None; slot.theap_release_due = false; }
-                        Err(error) => { first_error.get_or_insert(MainHeapDestroyError::Metadata(error)); }
+                    if let Err(error) = slot.release_theap(allocation) {
+                        first_error.get_or_insert(MainHeapDestroyError::Metadata(error));
                     }
+                } else {
+                    slot.theap = Some(TrackedTheap::Cached(allocation));
                 }
             }
         }
