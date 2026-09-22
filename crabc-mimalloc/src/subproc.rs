@@ -118,6 +118,7 @@ pub(crate) struct MainSubprocess {
     /// lifetime with VM, arena, and Heap producers. This is private state,
     /// not a public `mi_stats_t` layout, reporting API, or generic sink.
     statistics: crate::statistics::SubprocessStatistics,
+    heap_list: crate::types::heap_registry::SubprocessHeapList,
     thread_count: AtomicUsize,
     thread_total_count: AtomicUsize,
     /// The one source `subproc->heap_main` identity selected for this
@@ -273,6 +274,7 @@ impl MainSubprocess {
         Self {
             arena_backing: crate::arena::ProcessArenaBacking::new(),
             statistics: crate::statistics::SubprocessStatistics::new(),
+            heap_list: crate::types::heap_registry::SubprocessHeapList::new(),
             thread_count: AtomicUsize::new(0),
             thread_total_count: AtomicUsize::new(0),
             main_heap: AtomicPtr::new(core::ptr::null_mut()),
@@ -289,6 +291,10 @@ impl MainSubprocess {
             main_tld_post_registration_live: AtomicUsize::new(0),
             main_tld: UnsafeCell::new(MainStaticTldSlot::new()),
         }
+    }
+
+    pub(crate) fn heap_list(&self) -> &crate::types::heap_registry::SubprocessHeapList {
+        &self.heap_list
     }
 
     /// Returns the one process-static main-subprocess identity.
@@ -2175,7 +2181,7 @@ mod tests {
         );
 
         assert!(
-            heap.initialize_main_static_after_kind_only_memid(main),
+            unsafe { heap.initialize_main_static_after_kind_only_memid(main) }.is_ok(),
             "the remaining source heap initializer preserves prepared provenance"
         );
         // SAFETY: the leaked static test image is initialized before the

@@ -13,9 +13,9 @@ spec.loader.exec_module(producer)
 
 class HeapDestroyTraceTests(unittest.TestCase):
     def test_real_libtest_prefix_preserves_the_first_observation(self):
-        fields = "\n".join(f"m2.heap.destroy.{index}={value}" for index, value in enumerate([4, 3, 3, 1, 3, 4, 5]))
+        fields = "\n".join(f"m2.heap.destroy.{index}={value}" for index, value in enumerate([4, 3, 3, 1, 3, 4, 5, 1, 0, 1, 1]))
         output = f"test {producer.TEST} ... {fields}\nok\n"
-        self.assertEqual(producer.trace(output), [4, 3, 3, 1, 3, 4, 5])
+        self.assertEqual(producer.trace(output), [4, 3, 3, 1, 3, 4, 5, 1, 0, 1, 1])
 
     def test_duplicate_or_missing_observation_is_rejected(self):
         for indexes in ([0, 1, 2, 3, 4, 5], [0, 1, 2, 3, 4, 5, 6, 6]):

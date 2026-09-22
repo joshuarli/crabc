@@ -300,21 +300,25 @@ impl Heap {
     /// remains owned by the enclosing process-static attachment capability.
     #[must_use = "a refused main-Heap field initialization must retain the source-static transition"]
     #[inline]
-    pub(crate) fn initialize_main_static_after_kind_only_memid(
+    /// # Safety
+    /// The image is permanently pinned in its final process-static slot. The
+    /// caller retains it on failure and prevents projections until publication.
+    pub(crate) unsafe fn initialize_main_static_after_kind_only_memid(
         &mut self,
         subprocess: &'static MainSubprocess,
-    ) -> bool {
+    ) -> Result<(), heap_registry::SourceHeapRegistryError> {
         if !self.is_uninitialized_main_static_image()
             || !self.has_kind_only_static_memid()
         {
-            return false;
+            return Err(heap_registry::SourceHeapRegistryError::InvalidImage);
         }
-        self.initialize_main_static_fields(subprocess);
-        true
+        self.initialize_main_static_fields(subprocess, true);
+        unsafe { subprocess.heap_list().link_main(self, subprocess) }
     }
 
-    /// Initializes the statically allocated main heap fields used before the
-    /// future heap/subprocess list and arena lifecycle exists.
+    /// Legacy explicit fixture initializer for a standalone main-shaped Heap.
+    /// It does not publish subprocess membership; the canonical production
+    /// foundation uses `initialize_main_static_after_kind_only_memid`.
     ///
     /// This is the selected source `_mi_heap_init` main-heap shape: fast key
     /// one, main subprocess, first (zero) heap sequence, no exclusive arena,
@@ -330,15 +334,15 @@ impl Heap {
         debug_assert!(self.subprocess.is_null());
         debug_assert!(self.theaps.is_null());
         self.memid = memid;
-        self.initialize_main_static_fields(subprocess);
+        self.initialize_main_static_fields(subprocess, false);
     }
 
     #[inline]
-    fn initialize_main_static_fields(&mut self, subprocess: &'static MainSubprocess) {
+    fn initialize_main_static_fields(&mut self, subprocess: &'static MainSubprocess, canonical: bool) {
         self.subprocess = subprocess.as_ptr();
-        // `mi_atomic_increment_relaxed` returns the previous source count;
-        // the one process-static main heap observes its initial value zero.
-        self.heap_seq = 0;
+        // Source increment returns the previous count. Explicit historical
+        // fixtures initialize only fields and never join the source registry.
+        self.heap_seq = if canonical { subprocess.heap_list().next_sequence() } else { 0 };
         self.next = null_mut();
         self.prev = null_mut();
         // `internal.h:mi_thread_local_key_fast` is the fixed key value one.
@@ -8750,6 +8754,7 @@ pub(crate) mod page_queue;
 
 #[path = "heap_destroy.rs"]
 pub(crate) mod heap_destroy;
+pub(crate) mod heap_registry;
 
 #[path = "metadata_session.rs"]
 pub(crate) mod metadata_session;

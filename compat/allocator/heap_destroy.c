@@ -38,17 +38,20 @@ int main(void) {
   for (size_t i = 0; i < 3; i++) {
     if (retained_tlds[i]->theaps != NULL) attached_tlds++;
   }
-  /* Source force-destroy's exact first phase, including every static and
-     dynamic member. Main-Heap page destruction is a later no-op in source;
-     statistics/Heap bookkeeping and subprocess destruction are not compared. */
-  mi_heap_free_theaps(heap);
+  /* Actual source force-destroy includes Theap release and Heap bookkeeping.
+     Main-Heap page destruction itself is a source no-op. */
+  const size_t heap_before = mi_atomic_load_relaxed(&mi_process_subproc_main.heap_count);
+  _mi_heap_force_destroy(heap, true);
   size_t detached_tlds = 0;
   for (size_t i = 0; i < 3; i++) {
     if (retained_tlds[i]->theaps == NULL) detached_tlds++;
   }
   const size_t values[] = { before_live, dynamic_members, attached_tlds,
     heap->theaps == NULL, detached_tlds,
-    mi_atomic_load_relaxed(&mi_process_subproc_main.thread_count), total_members };
+    mi_atomic_load_relaxed(&mi_process_subproc_main.thread_count), total_members,
+    heap_before, mi_atomic_load_relaxed(&mi_process_subproc_main.heap_count),
+    mi_atomic_load_relaxed(&mi_process_subproc_main.heap_total_count),
+    mi_process_subproc_main.heaps == NULL };
   for (size_t i = 0; i < sizeof(values)/sizeof(values[0]); i++) {
     printf("m2.heap.destroy.%zu=%zu\n", i, values[i]);
   }

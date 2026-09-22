@@ -8,10 +8,10 @@
 //! not freed by this transition. Their exact Rust capabilities remain in
 //! external tracking storage until the enclosing arena-destruction owner
 //! consumes that backing. Failed Theap frees also remain represented there.
-//! The current Theap prefix omits source statistics, so the source per-Theap
-//! statistics merge remains unimplemented. Main-Heap unlink/count bookkeeping,
-//! arena release and global PageMap
-//! destruction are separate required predecessors/successors of full teardown.
+//! Each detached Theap merges its source statistics into the Heap before
+//! decref. `MainStaticHeapLease::force_destroy_source_owned_main_heap` adds
+//! main-Heap merge/count/unlink bookkeeping. Arena release and global PageMap
+//! destruction remain separate successors required for full teardown.
 
 use super::{Heap, MemoryKind, Theap, ThreadLocalData};
 use crate::meta::{MetaAllocation, MetaAllocator, MetaError, MetaRelease, MetaReleaseFailure};
@@ -31,6 +31,7 @@ pub(crate) enum MainHeapDestroyError {
     Busy,
     Lock(Errno),
     Metadata(MetaError),
+    Bookkeeping(super::heap_registry::SourceHeapRegistryError),
 }
 
 enum TrackedTheap {
@@ -228,6 +229,7 @@ impl Heap {
             let theap = unsafe { pointer.as_mut() };
             *theap.hnext.get_mut() = core::ptr::null_mut();
             *theap.hprev.get_mut() = core::ptr::null_mut();
+            self.merge_detached_theap_statistics(theap);
             if let Some(TrackedTheap::Recovered(allocation)) = slot.theap.take() {
                 let previous = theap.refcount.fetch_sub(1, Ordering::AcqRel);
                 if previous == 0 {

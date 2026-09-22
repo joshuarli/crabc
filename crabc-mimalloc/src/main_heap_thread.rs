@@ -1895,6 +1895,8 @@ mod tests {
             assert_eq!(metadata.test_allocation_audit().live_capability_count, 6);
             assert_eq!(subprocess.live_thread_count(), 4);
             let before_live = subprocess.live_thread_count();
+            let heap_before = subprocess.heap_list().test_counts();
+            assert_eq!(heap_before, (1, 1, false));
             let (dynamic_members, attached_tlds, total_members) = {
                 let mut guard = heap.lock_heap().expect("quiescent main Heap audit");
                 let counts = guard.heap_mut().test_destroy_graph_counts();
@@ -1908,7 +1910,7 @@ mod tests {
             // SAFETY: all workers joined after transferring their owners;
             // the remaining initial roots are clear, and this test never
             // accesses the old main attachment or any earlier Heap projection.
-            unsafe { heap.force_destroy_source_owned_theaps(metadata, tracking) }
+            unsafe { heap.force_destroy_source_owned_main_heap(metadata, tracking) }
                 .expect("the complete main Heap list is destroyed");
             assert!(heap.lock_heap().is_err(), "copied leases cannot reopen a retired Heap");
             assert_eq!(tracking.iter().filter(|slot| slot.retains_theap()).count(), 0);
@@ -1918,7 +1920,9 @@ mod tests {
             let detached = tracking.iter_mut().map(|slot| slot.test_retained_tld_is_detached()).filter(|detached| *detached).count();
             assert_eq!(detached, 3);
             for (index, value) in [before_live, dynamic_members, attached_tlds,
-                usize::from(heap.test_destroyed_heap_list_empty()), detached, subprocess.live_thread_count(), total_members].into_iter().enumerate() {
+                usize::from(heap.test_destroyed_heap_list_empty()), detached, subprocess.live_thread_count(), total_members, heap_before.0,
+                subprocess.heap_list().test_counts().0, subprocess.heap_list().test_counts().1,
+                usize::from(subprocess.heap_list().test_counts().2)].into_iter().enumerate() {
                 std::println!("m2.heap.destroy.{index}={value}");
             }
             // Source static metadata is now detached along with the ordinary

@@ -16,7 +16,7 @@ def trace(output: str) -> list[int]:
         "", output, count=1, flags=re.MULTILINE,
     )
     rows = re.findall(r"^m2\.heap\.destroy\.(\d+)=(\d+)$", output, re.MULTILINE)
-    if [int(index) for index, _ in rows] != list(range(7)):
+    if [int(index) for index, _ in rows] != list(range(11)):
         raise harness.HarnessError("main-Heap destruction trace requires seven ordered fields")
     return [int(value) for _, value in rows]
 

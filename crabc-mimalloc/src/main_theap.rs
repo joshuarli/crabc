@@ -373,6 +373,7 @@ pub(crate) enum MainStaticHeapFoundationError {
     /// for the bounded source `memid_static` preparation or remaining
     /// `_mi_heap_init` fields.
     HeapPreparation,
+    HeapRegistration(crate::types::heap_registry::SourceHeapRegistryError),
     /// The canonical source `subproc->heap_main` identity could not enter its
     /// bounded absent -> reserved -> publishing -> ready transition.
     MainHeapPublication(MainHeapPublicationError),
@@ -470,10 +471,10 @@ impl MainStaticHeapFoundation {
         // the remaining Heap initialization: it mirrors `src/init.c:196-198`
         // while the opaque subprocess lookup still reports only Publishing.
         observer(&*heap);
-        if !heap.initialize_main_static_after_kind_only_memid(subprocess) {
+        if let Err(error) = unsafe { heap.initialize_main_static_after_kind_only_memid(subprocess) } {
             selection.retain_after_main_heap_reservation();
             storage.mark_poisoned();
-            return Err(MainStaticHeapFoundationError::HeapPreparation);
+            return Err(MainStaticHeapFoundationError::HeapRegistration(error));
         }
         // SAFETY: the exact process-static slot above is now fully
         // initialized and remains address-stable for the process lifetime.
@@ -632,6 +633,26 @@ impl<'main> MainStaticHeapLease<'main> {
         };
         let unlocked = guard.unlock().map_err(MainHeapDestroyError::Lock);
         result.and(unlocked)
+    }
+
+    /// Completes source main `mi_heap_free` bookkeeping after the force-Theap
+    /// pass. Arena, metadata-engine and PageMap destruction remain separate.
+    ///
+    /// # Safety
+    /// All `force_destroy_source_owned_theaps` obligations apply permanently.
+    /// The source-static owner remains retained on every error; no failed
+    /// operation may be retried or used to reopen earlier projections.
+    pub(crate) unsafe fn force_destroy_source_owned_main_heap(
+        self,
+        metadata: core::pin::Pin<&'static crate::meta::MetaAllocator>,
+        tracking: &mut [crate::types::heap_destroy::MainHeapDestroyTracking],
+    ) -> Result<(), crate::types::heap_destroy::MainHeapDestroyError> {
+        use crate::types::heap_destroy::MainHeapDestroyError;
+        unsafe { self.force_destroy_source_owned_theaps(metadata, tracking)?; }
+        // The preceding transition sealed every safe projection. The caller
+        // retains permanent quiescence, including canonical metadata access.
+        unsafe { self.subprocess.heap_list().free_main(&mut *self.storage.heap.image.get(), self.subprocess) }
+            .map_err(MainHeapDestroyError::Bookkeeping)
     }
 
     /// Returns the main subprocess identity selected by the ticket-zero

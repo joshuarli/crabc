@@ -1012,3 +1012,16 @@ field projections. Fresh page publication retains its short Heap guard.
 `local_page_fields_remain_disjoint_from_locked_source_heap_prepend` exercises a
 live queue borrow across source prepend; this is structural alias evidence,
 not a claim that an ordinary native test detects Rust alias violations.
+
+The canonical process main Heap now executes `src/heap.c:102-125` sequence,
+subprocess list publication, live-count and statistics transitions through
+`SubprocessHeapList`. Explicit legacy field-only fixtures remain unregistered.
+`force_destroy_source_owned_main_heap` composes the complete Theap pass with
+`src/heap.c:209-225` main-Heap statistics merge, count decrement and unlink.
+The process-static Heap is retained; private futex locks own no separately
+releasable resource and all subsequent projections remain sealed. Failures
+retain the pinned owner and do not admit retry. This remains a prerequisite:
+subprocess/arena/PageMap retirement and the actual destroy-on-exit runtime
+caller are not implemented by this bookkeeping transition.
+The comparison now calls actual C `_mi_heap_force_destroy` and also observes
+Heap count before/after, monotone total sequence count, and empty source head.
