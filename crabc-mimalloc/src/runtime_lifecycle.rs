@@ -20945,5 +20945,6 @@ pub use admission::{
 #[path = "runtime_destroy.rs"]
 mod destroy;
 #[cfg(target_arch = "x86_64")]
-pub use destroy::{prepare_native_process_destroy, NativePreparedProcessDestroy, NativeProcessDestroyError,
+pub use destroy::{prepare_native_process_destroy, capture_native_process_destroy_request,
+    NativeProcessDestroyRequest, NativePreparedProcessDestroy, NativeProcessDestroyError,
     native_process_done_action, NativeProcessDoneInvocation, NativeProcessDoneAction};

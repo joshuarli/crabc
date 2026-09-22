@@ -96,19 +96,19 @@ pub struct NativePreparedProcessDestroy {
     _owners: admission::NativeAllocatorTransferredProcessOwners,
 }
 
-/// Transfers every native TLS owner under the existing pinned registry.
-///
-/// # Safety
-/// All native source entries, diagnostics, deferred callbacks and raw process
-/// copies participate in the shared admission protocol. The registry pins all
-/// descriptors until this function returns. No lower-level source reference
-/// survives outside that protocol. The caller has completed user atexit and
-/// holds no source borrow. Physical completion must occur only after releasing
-/// the registry and every outer libc lock. Failures after epoch commit retain
-/// source owners permanently and never reopen native allocation.
-pub unsafe fn prepare_native_process_destroy(
-    registry: &dyn admission::NativeAllocatorPinnedThreadRegistry,
-) -> Result<NativePreparedProcessDestroy, NativeProcessDestroyError> {
+/// Immutable process witnesses captured under ordinary entry before libc
+/// acquires the registry pin. This grants no terminal source authority.
+#[must_use = "capture outside the registry, then consume inside the pinned transfer"]
+pub struct NativeProcessDestroyRequest {
+    ready: ProcessMainReadyLease,
+    heap: MainStaticHeapLease<'static>,
+}
+
+/// Captures the exact live process/Heap binding before registry pinning. It
+/// allocates nothing and claims no process-done once state. Dropping a request
+/// changes no source state; only its later transfer may close admission.
+pub fn capture_native_process_destroy_request()
+    -> Result<NativeProcessDestroyRequest, NativeProcessDestroyError> {
     let operation = admission::NativeAllocatorOperationGuard::enter()
         .map_err(|_| NativeProcessDestroyError::Inactive)?;
     if RUNTIME_PROCESS.logical_process_done_is_complete() {
@@ -127,11 +127,42 @@ pub unsafe fn prepare_native_process_destroy(
     }
     let heap = unsafe { RUNTIME_PROCESS.active_main_heap() }.ok_or(NativeProcessDestroyError::Inactive)?;
     drop(operation);
-    let quiescence = unsafe { admission::begin_native_allocator_terminal_quiescence(registry) }
-        .map_err(NativeProcessDestroyError::Admission)?;
-    let owners = quiescence.transfer_source_owners().map_err(|_| NativeProcessDestroyError::SourceOwner)?;
+    Ok(NativeProcessDestroyRequest { ready, heap })
+}
+
+/// Transfers every native TLS owner under the existing pinned registry.
+///
+/// # Safety
+/// All native source entries, diagnostics, deferred callbacks and raw process
+/// copies participate in the shared admission protocol. The registry pins all
+/// descriptors until this function returns. No lower-level source reference
+/// survives outside that protocol. The caller has completed user atexit and
+/// holds no source borrow. Physical completion must occur only after releasing
+/// the registry and every outer libc lock. Failures after epoch commit retain
+/// source owners permanently and never reopen native allocation.
+pub unsafe fn prepare_native_process_destroy(
+    request: NativeProcessDestroyRequest,
+    registry: &dyn admission::NativeAllocatorPinnedThreadRegistry,
+) -> Result<NativePreparedProcessDestroy, NativeProcessDestroyError> {
+    // This atomic once claim precedes epoch closure: a previously completed
+    // retaining process_done must not accidentally become a permanent seal.
     RUNTIME_PROCESS.logical_process_done.compare_exchange(PROCESS_DONE_OPEN, PROCESS_DONE_TRANSITION,
         Ordering::AcqRel, Ordering::Acquire).map_err(|_| NativeProcessDestroyError::AlreadyCompleted)?;
+    let quiescence = match unsafe { admission::begin_native_allocator_terminal_quiescence(registry) } {
+        Ok(quiescence) => quiescence,
+        Err(error) => {
+            // A pre-commit refusal reopens a fresh epoch. Only this claimant
+            // may roll back its not-yet-started process_done transition. An
+            // irreversible seal or retained writer never permits retry.
+            if !admission::native_source_entry_is_terminal() {
+                let _ = RUNTIME_PROCESS.logical_process_done.compare_exchange(
+                    PROCESS_DONE_TRANSITION, PROCESS_DONE_OPEN, Ordering::AcqRel, Ordering::Acquire);
+            }
+            return Err(NativeProcessDestroyError::Admission(error));
+        }
+    };
+    let owners = quiescence.transfer_source_owners().map_err(|_| NativeProcessDestroyError::SourceOwner)?;
+    let NativeProcessDestroyRequest { ready, heap } = request;
     // Source init.c:605 clears the current cache before subprocess destruction.
     // The TLS transfer sealed source ownership but did not release this local
     // cache slot or any Theap storage, so its final empty publication is valid.
@@ -293,12 +324,13 @@ mod tests {
                 });
                 while !ready.load(Ordering::Acquire) { std::thread::yield_now(); }
                 assert!(unsafe { core::slice::from_raw_parts(initial_client.as_ptr(), 80) }.iter().all(|byte| *byte == 0x35));
+                let request = capture_native_process_destroy_request().expect("source capture precedes registry pin");
                 let registry = PinnedFixtureRegistry { initial: admission::native_allocator_initial_thread_descriptor().unwrap(), worker: &descriptor };
                 let thread_count_before = crate::subproc::MainSubprocess::global().live_thread_count();
                 let mut before_resident = 0u8;
                 let before_mapped = unsafe { crabc_core::mm::mincore_raw(
                     (initial_client.as_ptr().addr() & !4095) as *mut u8, 4096, &mut before_resident) }.is_ok();
-                let prepared = unsafe { prepare_native_process_destroy(&registry) }
+                let prepared = unsafe { prepare_native_process_destroy(request, &registry) }
                     .expect("all source owners transfer while both TLS mappings are pinned");
                 // This fixture's registry pin is the worker stop condition;
                 // no registry/source lock spans the physical successor.
