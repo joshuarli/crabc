@@ -3046,10 +3046,12 @@ impl MainStaticProcessPageSession {
     }
 
     #[inline]
-    fn theap_mut(&mut self) -> &mut Theap {
-        // SAFETY: see `Self::theap`; the !Send session remains on the exact
-        // ticket-zero thread and is the only page owner of this Theap.
-        unsafe { &mut *self.storage.theap.image.get() }
+    fn local_theap_pointer(&mut self) -> NonNull<Theap> {
+        // This session owns only ordinary page fields. Later worker prepend
+        // can mutate hprev under the Heap lock, so never form a whole-image
+        // mutable reference for an ordinary local update. Callers bind any
+        // returned field reference to their exclusive session borrow.
+        unsafe { NonNull::new_unchecked(self.storage.theap.image.get()) }
     }
 
     /// Runs one short static-Heap operation while no later thread can create
@@ -3304,7 +3306,8 @@ unsafe impl TheapPageSession for MainStaticProcessPageSession {
 
     #[inline]
     fn queue_mut(&mut self, bin: usize) -> Option<&mut PageQueue> {
-        self.is_current().then(|| self.theap_mut().queue_mut(bin)).flatten()
+        if !self.is_current() { return None; }
+        unsafe { Theap::local_queue_mut_at(self.local_theap_pointer(), bin) }
     }
 
     #[inline]
@@ -3315,21 +3318,19 @@ unsafe impl TheapPageSession for MainStaticProcessPageSession {
     #[inline]
     fn set_direct_page(&mut self, index: usize, page: *mut Page) -> bool {
         self.is_current()
-            && self
-                .theap_mut()
-                .set_direct_page(index, page)
+            && unsafe { Theap::set_local_direct_page_at(self.local_theap_pointer(), index, page) }
     }
 
     #[inline]
     fn note_page_added(&mut self) {
         if self.is_current() {
-            self.theap_mut().note_page_added();
+            unsafe { Theap::note_local_page_added_at(self.local_theap_pointer()); }
         }
     }
 
     #[inline]
     fn note_page_removed(&mut self) -> bool {
-        self.is_current() && self.theap_mut().note_page_removed()
+        self.is_current() && unsafe { Theap::note_local_page_removed_at(self.local_theap_pointer()) }
     }
 
     fn ensure_arena_pages(&mut self, arena: &ArenaView<'_>, _config: MemoryConfig) -> bool {
@@ -3450,13 +3451,13 @@ unsafe impl TheapPageSession for MainStaticProcessPageSession {
 
     #[inline]
     fn note_retired_bin(&mut self, bin: usize) -> bool {
-        self.is_current() && self.theap_mut().note_retired_bin(bin)
+        self.is_current() && unsafe { Theap::note_local_retired_bin_at(self.local_theap_pointer(), bin) }
     }
 
     #[inline]
     fn reset_retired_bounds(&mut self) {
         if self.is_current() {
-            self.theap_mut().reset_retired_bounds();
+            unsafe { Theap::reset_local_retired_bounds_at(self.local_theap_pointer()); }
         }
     }
 

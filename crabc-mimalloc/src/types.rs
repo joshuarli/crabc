@@ -6065,6 +6065,76 @@ impl Theap {
         self.page_count += 1;
     }
 
+    /// Projects only the selected owner-local queue, leaving source Heap
+    /// links outside the exclusive borrow.
+    ///
+    /// # Safety
+    /// `pointer` identifies a live pinned Theap. The caller exclusively owns
+    /// this queue for `'a`; no whole-image reference or overlapping queue
+    /// reference may survive. Bound `'a` to the borrowing page session.
+    #[inline]
+    pub(crate) unsafe fn local_queue_mut_at<'a>(pointer: NonNull<Self>, bin: usize) -> Option<&'a mut PageQueue> {
+        if bin >= BIN_COUNT { return None; }
+        Some(unsafe { &mut (*pointer.as_ptr()).pages[bin] })
+    }
+
+    /// # Safety
+    /// The live pinned image's direct-cache slot is exclusively owned for
+    /// this call, with no overlapping whole-image observation. The ordinary
+    /// `set_direct_page` page-ownership contract also applies.
+    #[inline]
+    pub(crate) unsafe fn set_local_direct_page_at(pointer: NonNull<Self>, index: usize, page: *mut Page) -> bool {
+        if index >= PAGES_DIRECT { return false; }
+        unsafe { (*pointer.as_ptr()).pages_free_direct[index] = page; }
+        true
+    }
+
+    /// # Safety
+    /// The live pinned image's page count is exclusively owned for this call,
+    /// with no overlapping whole-image observation. Queue insertion precedes
+    /// this source count update.
+    #[inline]
+    pub(crate) unsafe fn note_local_page_added_at(pointer: NonNull<Self>) {
+        unsafe { (*pointer.as_ptr()).page_count += 1; }
+    }
+
+    /// # Safety
+    /// The live pinned image's page count is exclusively owned for this call,
+    /// with no overlapping whole-image observation. Queue removal precedes
+    /// this source count update.
+    #[inline]
+    pub(crate) unsafe fn note_local_page_removed_at(pointer: NonNull<Self>) -> bool {
+        let pointer = pointer.as_ptr();
+        let Some(next) = (unsafe { (*pointer).page_count }).checked_sub(1) else { return false; };
+        unsafe { (*pointer).page_count = next; }
+        true
+    }
+
+    /// # Safety
+    /// The live pinned image's retirement bounds are exclusively owned for
+    /// this call, with no overlapping whole-image observation.
+    #[inline]
+    pub(crate) unsafe fn note_local_retired_bin_at(pointer: NonNull<Self>, bin: usize) -> bool {
+        if bin >= BIN_FULL { return false; }
+        let pointer = pointer.as_ptr();
+        unsafe {
+            if bin < (*pointer).page_retired_min { (*pointer).page_retired_min = bin; }
+            if bin > (*pointer).page_retired_max { (*pointer).page_retired_max = bin; }
+        }
+        true
+    }
+
+    /// # Safety
+    /// The live pinned image's retirement bounds are exclusively owned for
+    /// this call, with no overlapping whole-image observation.
+    #[inline]
+    pub(crate) unsafe fn reset_local_retired_bounds_at(pointer: NonNull<Self>) {
+        unsafe {
+            (*pointer.as_ptr()).page_retired_min = BIN_FULL;
+            (*pointer.as_ptr()).page_retired_max = 0;
+        }
+    }
+
     /// Mirrors the owning-theap count update performed around the source's
     /// queue removal helpers. Returns `false` rather than underflowing when a
     /// caller violates the queue/page-count pairing contract.
@@ -6211,6 +6281,41 @@ mod tests {
         assert_eq!(unsafe { *observed.hprev.get() }, second_pointer);
         assert!(unsafe { (*observed.hnext.get()).is_null() });
         assert_eq!(unsafe { *second.hnext.get() }, first_pointer);
+        guard.unlock().unwrap();
+    }
+
+    #[test]
+    fn local_page_fields_remain_disjoint_from_locked_source_heap_prepend() {
+        let mut heap = std::boxed::Box::new(Heap::bootstrap_empty());
+        let mut first = std::boxed::Box::new(Theap::empty());
+        let mut second = std::boxed::Box::new(Theap::empty());
+        let heap_pointer = core::ptr::from_mut(&mut *heap);
+        let first_pointer = NonNull::from(&mut *first);
+        let second_pointer = core::ptr::from_mut(&mut *second);
+        first.heap.store(heap_pointer, Ordering::Release);
+        second.heap.store(heap_pointer, Ordering::Release);
+        heap.attach_theap_after_heap_publication(first_pointer.as_ptr()).unwrap();
+        // Keep only a queue borrow across the source neighbour-link write.
+        // A whole &mut Theap here would overlap the hprev update even though
+        // the latter uses UnsafeCell. No whole-image observation survives.
+        let queue = unsafe { Theap::local_queue_mut_at(first_pointer, 1) }.unwrap();
+        let block_size = queue.block_size;
+        heap.attach_theap_after_heap_publication(second_pointer).unwrap();
+        assert_eq!(queue.block_size, block_size);
+        unsafe {
+            Theap::note_local_page_added_at(first_pointer);
+            assert!(Theap::note_local_page_removed_at(first_pointer));
+            assert!(!Theap::note_local_page_removed_at(first_pointer));
+            assert!(Theap::set_local_direct_page_at(first_pointer, 0, EMPTY_PAGE.as_ptr()));
+            assert!(!Theap::set_local_direct_page_at(first_pointer, PAGES_DIRECT, EMPTY_PAGE.as_ptr()));
+            assert!(Theap::note_local_retired_bin_at(first_pointer, 1));
+            assert!(!Theap::note_local_retired_bin_at(first_pointer, BIN_FULL));
+        }
+        assert_eq!(first.retired_bounds(), (1, 1));
+        unsafe { Theap::reset_local_retired_bounds_at(first_pointer); }
+        assert_eq!(first.retired_bounds(), (BIN_FULL, 0));
+        let guard = heap.theaps_lock.lock().unwrap();
+        assert_eq!(unsafe { *first.hprev.get() }, second_pointer);
         guard.unlock().unwrap();
     }
 

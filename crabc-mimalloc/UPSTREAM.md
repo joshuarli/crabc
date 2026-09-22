@@ -1003,3 +1003,12 @@ both CLOSED and CLOSE_RETAINED states before callbacks or byte copies.
 The link-cell change alone does not repair existing whole-`&mut Theap` local
 projections in `MainStaticProcessPageSession`; that adjacent scoped-field
 prerequisite remains explicit until its separate implementation and review.
+
+The process-static main page session now projects queue/cache/count/retirement
+fields through `Theap::*local*_at` rather than a whole mutable Theap image.
+This closes the adjacent worker-prepend `hprev` alias boundary without adding
+an allocator hotpath lock. The canonical metadata session shares these exact
+field projections. Fresh page publication retains its short Heap guard.
+`local_page_fields_remain_disjoint_from_locked_source_heap_prepend` exercises a
+live queue borrow across source prepend; this is structural alias evidence,
+not a claim that an ordinary native test detects Rust alias violations.

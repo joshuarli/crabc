@@ -9,7 +9,6 @@
 use super::{LiveThreadId, MemoryId, Page, PageQueue, Theap, TheapOwner};
 use crate::arena::ArenaView;
 use crate::bootstrap::{TheapPageSession, theap_page_session_sealed};
-use crate::config::{BIN_COUNT, BIN_FULL, PAGES_DIRECT};
 use crate::main_theap::MainStaticMetadataHeapLease;
 use crate::os::MemoryConfig;
 use crate::os_page::OsAlignedPageOwner;
@@ -44,24 +43,17 @@ unsafe impl TheapPageSession for CanonicalMetadataTheapSession {
     fn thread_id(&self) -> Option<LiveThreadId> { None }
     fn queue(&self, bin: usize) -> Option<&PageQueue> { self.theap().queue(bin) }
     fn queue_mut(&mut self, bin: usize) -> Option<&mut PageQueue> {
-        if bin >= BIN_COUNT { return None; }
-        // Project the queue alone: a concurrent Heap-list operation may
-        // mutate this Theap's hlinks under the independent Heap list lock.
-        Some(unsafe { &mut (*self.theap.as_ptr()).pages[bin] })
+        unsafe { Theap::local_queue_mut_at(self.theap, bin) }
     }
     fn direct_page(&self, index: usize) -> Option<*mut Page> { self.theap().direct_page(index) }
     fn set_direct_page(&mut self, index: usize, page: *mut Page) -> bool {
-        if index >= PAGES_DIRECT { return false; }
-        unsafe { (*self.theap.as_ptr()).pages_free_direct[index] = page; }
-        true
+        unsafe { Theap::set_local_direct_page_at(self.theap, index, page) }
     }
-    fn note_page_added(&mut self) { unsafe { (*self.theap.as_ptr()).page_count += 1; } }
+    fn note_page_added(&mut self) { unsafe { Theap::note_local_page_added_at(self.theap); } }
     fn note_page_removed(&mut self) -> bool {
-        let pointer = self.theap.as_ptr();
-        let Some(next) = (unsafe { (*pointer).page_count }).checked_sub(1) else { return false; };
-        unsafe { (*pointer).page_count = next; }
-        true
+        unsafe { Theap::note_local_page_removed_at(self.theap) }
     }
+
     fn ensure_arena_pages(&mut self, arena: &ArenaView<'_>, _config: MemoryConfig) -> bool {
         unsafe { arena.pages().is_some() }
     }
@@ -94,19 +86,10 @@ unsafe impl TheapPageSession for CanonicalMetadataTheapSession {
     fn retire_page(&mut self, page: &mut Page) -> Option<MemoryId> { page.retire_exclusive() }
     fn retired_bounds(&self) -> (usize, usize) { self.theap().retired_bounds() }
     fn note_retired_bin(&mut self, bin: usize) -> bool {
-        if bin >= BIN_FULL { return false; }
-        let pointer = self.theap.as_ptr();
-        unsafe {
-            if bin < (*pointer).page_retired_min { (*pointer).page_retired_min = bin; }
-            if bin > (*pointer).page_retired_max { (*pointer).page_retired_max = bin; }
-        }
-        true
+        unsafe { Theap::note_local_retired_bin_at(self.theap, bin) }
     }
     fn reset_retired_bounds(&mut self) {
-        unsafe {
-            (*self.theap.as_ptr()).page_retired_min = BIN_FULL;
-            (*self.theap.as_ptr()).page_retired_max = 0;
-        }
+        unsafe { Theap::reset_local_retired_bounds_at(self.theap); }
     }
     fn retain_unfinished_os_release(&mut self, owner: OsAlignedPageOwner) -> Result<(), OsAlignedPageOwner> {
         Err(owner)
