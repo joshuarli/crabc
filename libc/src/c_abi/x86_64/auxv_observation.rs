@@ -15,8 +15,9 @@
 //! result, and `ENOENT`-on-absence contract, plus the weak same-address
 //! `getauxval` alias. The selected x86 leaf deliberately returns the raw
 //! observed `AT_SECURE` value like every other tag; it does not select musl's
-//! secure-execution policy, `secure_getenv`, loader state, or any auxiliary
-//! vector consumer beyond this direct C lookup.
+//! secure-execution policy, `secure_getenv`, or loader state. Narrow private
+//! accessors also serve allocator page-size initialization, main-thread stack
+//! observation, and the owned static executable's program-header enumeration.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 auxiliary-vector observation leaf requires little-endian Linux/x86-64");
@@ -135,4 +136,41 @@ pub unsafe extern "C" fn __getauxval(item: c_ulong) -> c_ulong {
     // result in the calling thread's already initialized initial-TLS slot.
     unsafe { errno::set_errno(ENOENT) };
     0
+}
+
+/// Kernel main-executable program-header coordinates, published by owned CRT.
+#[cfg(all(feature = "x86-owned-static-runtime", not(feature = "x86-owned-dynamic-runtime")))]
+pub(super) struct InitialProgramHeaders {
+    pub(super) address: *const u8,
+    pub(super) entry_size: usize,
+    pub(super) count: usize,
+}
+
+/// Observe only the three static main-image tags without altering errno.
+///
+/// Musl's static `dl_iterate_phdr` collects the last value for each auxv tag.
+/// Startup has validated the terminating vector and static TLS has validated
+/// the ELF table before this immutable address is published.
+#[cfg(all(feature = "x86-owned-static-runtime", not(feature = "x86-owned-dynamic-runtime")))]
+pub(super) fn initial_program_headers() -> Option<InitialProgramHeaders> {
+    let auxv = INITIAL_AUXV.load(Ordering::Acquire) as *const usize;
+    if auxv.is_null() {
+        return None;
+    }
+    let mut headers = InitialProgramHeaders { address: core::ptr::null(), entry_size: 0, count: 0 };
+    for index in 0..MAX_AUXV_ENTRIES {
+        // SAFETY: owned startup published the validated immutable vector.
+        let tag = unsafe { core::ptr::read(auxv.add(index * 2)) };
+        if tag == AT_NULL {
+            return Some(headers);
+        }
+        let value = unsafe { core::ptr::read(auxv.add(index * 2 + 1)) };
+        match tag {
+            3 => headers.address = value as *const u8, // AT_PHDR
+            4 => headers.entry_size = value, // AT_PHENT
+            5 => headers.count = value, // AT_PHNUM
+            _ => {}
+        }
+    }
+    None
 }

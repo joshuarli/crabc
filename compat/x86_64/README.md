@@ -41,6 +41,10 @@ bytes; it does not classify `nextafterl`, `wordexp`, or `random` this way. This
 finite accounting does not close the dynamic aggregate, whose `wordexp` and
 `random` blockers remain.
 
+[owned-static-dl-iterate-phdr.md](owned-static-dl-iterate-phdr.md) records the
+installed static main-executable program-header and calling-thread TLS
+contract, including pinned-musl ET_EXEC/static-PIE differential evidence.
+
 ## Campaign commands
 
 Run from the repository root in the pinned native environment:

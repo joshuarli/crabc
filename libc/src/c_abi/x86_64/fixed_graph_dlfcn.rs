@@ -4,6 +4,8 @@
 //! lookup, reference counts, and post-relocation metadata. This archive leaf
 //! imports only its exact weak `RuntimeV1` loader prefix. It deliberately does
 //! not fall back to an ambient loader when that record is absent or malformed.
+//! The owned-static feature separately selects the main-executable
+//! `dl_iterate_phdr` source contract, using only its CRT and TLS owners.
 //!
 //! The graph has no loader TLS. C `dlerror` and the borrowed names
 //! returned by `dladdr` therefore live in a 32-entry process table keyed by
@@ -23,6 +25,12 @@ use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use super::raw_syscall;
+
+// Owned static startup enumerates its one executable without a loader record.
+// The private fixed-graph proof keeps its existing snapshot implementation.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "static_dl_iterate_phdr.rs"]
+mod static_dl_iterate_phdr;
 
 const RECORD_MAGIC: u64 = 0x4352_4142_435f_5844;
 const RECORD_VERSION: u32 = 1;
@@ -788,7 +796,10 @@ pub unsafe extern "C" fn dlinfo(
     -1
 }
 
-/// Visit one copied snapshot of the loader graph.
+/// Visit the owned static executable, or a copied private-loader snapshot.
+///
+/// The installed static product selects musl's one-main-image enumeration;
+/// it does not require or synthesize a fixed-graph loader record.
 ///
 /// # Safety
 ///
@@ -816,37 +827,43 @@ pub unsafe extern "C" fn dl_iterate_phdr(
     let Some(callback) = callback else {
         return 0;
     };
-    let Some(record) = runtime_record() else {
-        return -1;
-    };
-    let mut images = [EMPTY_IMAGE; IMAGE_CAPACITY];
-    let Some((count, _)) = snapshot(record, &mut images) else { return -1; };
-    let mut names = [[0u8; C_TEXT_CAPACITY]; IMAGE_CAPACITY];
-    for index in 0..count {
-        copy_text_to_c(names[index].as_mut_ptr(), &images[index].image_name);
-    }
-    for index in 0..count {
-        let image = &images[index];
-        let mut public = DlPhdrInfo {
-            dlpi_addr: image.image_base as usize,
-            dlpi_name: names[index].as_ptr().cast(),
-            dlpi_phdr: image.program_headers,
-            dlpi_phnum: image.program_header_count,
-            dlpi_adds: image.additions,
-            dlpi_subs: image.removals,
-            dlpi_tls_modid: image.tls_module,
-            dlpi_tls_data: image.tls_data,
+    #[cfg(feature = "x86-owned-static-runtime")]
+    return static_dl_iterate_phdr::iterate(callback, data);
+
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    {
+        let Some(record) = runtime_record() else {
+            return -1;
         };
-        let result = callback(
-            &mut public,
-            mem::size_of::<DlPhdrInfo>(),
-            data,
-        );
-        if result != 0 {
-            return result;
+        let mut images = [EMPTY_IMAGE; IMAGE_CAPACITY];
+        let Some((count, _)) = snapshot(record, &mut images) else { return -1; };
+        let mut names = [[0u8; C_TEXT_CAPACITY]; IMAGE_CAPACITY];
+        for index in 0..count {
+            copy_text_to_c(names[index].as_mut_ptr(), &images[index].image_name);
         }
+        for index in 0..count {
+            let image = &images[index];
+            let mut public = DlPhdrInfo {
+                dlpi_addr: image.image_base as usize,
+                dlpi_name: names[index].as_ptr().cast(),
+                dlpi_phdr: image.program_headers,
+                dlpi_phnum: image.program_header_count,
+                dlpi_adds: image.additions,
+                dlpi_subs: image.removals,
+                dlpi_tls_modid: image.tls_module,
+                dlpi_tls_data: image.tls_data,
+            };
+            let result = callback(
+                &mut public,
+                mem::size_of::<DlPhdrInfo>(),
+                data,
+            );
+            if result != 0 {
+                return result;
+            }
+        }
+        0
     }
-    0
 }
 
 const _: () = assert!(mem::size_of::<RuntimeRecordV1>() == RECORD_SIZE as usize);

@@ -680,6 +680,11 @@ The six audit exclusions `__crabc_runtime_v1`, `initstate`, `random`,
 groups. This section also does not add the BSD random quartet, allocator
 metadata, or Rust unwinder identities.
 
+The existing weak static `dl_iterate_phdr` placement also has an owned-startup
+consumer contract: [owned static executable enumeration](owned-static-dl-iterate-phdr.md).
+It reports main-image metadata and the calling thread's TLS without requiring
+a private loader record; shared and private-loader selections remain separate.
+
 ### Native CRT definition placements
 
 The CRT groups select only definitions in the five real ET_REL artifacts; an

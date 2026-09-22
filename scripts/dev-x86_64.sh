@@ -607,6 +607,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-fcntl  test installed descriptor-control commands and variadic ABI
   owned-named-ipc  test installed named semaphore and shared-memory lifecycles
   owned-message-queues  test installed POSIX queue transfer and notification lifecycles
+  owned-static-dl-iterate-phdr  test installed static main-image enumeration and caller TLS
   owned-pthread-getattr  test installed live pthread stack and guard metadata
   owned-atfork-registry  test installed resource-sized atfork callback ordering
   owned-pty [DYNAMIC_SYSROOT]  test installed PTY naming, lifecycle and session handoff
@@ -6851,7 +6852,7 @@ case "$command" in
     owned-resolver-network|owned-classic-netdb|owned-resolver-cancellation) ;;
     owned-package-corpus|owned-loader-synthetic|owned-loader-inventory|owned-loader-libc-identity|owned-loader-family) ;;
     owned-dynamic-io-cancellation) ;;
-    owned-posix-timers|owned-pthread-scheduling|owned-pthread-cpuclock|owned-message-queues|owned-named-ipc|owned-fcntl|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex) ;;
+    owned-posix-timers|owned-pthread-scheduling|owned-pthread-cpuclock|owned-message-queues|owned-named-ipc|owned-fcntl|owned-static-dl-iterate-phdr|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex) ;;
     owned-pthread-lifecycle) ;;
     qualification-manifest) ;;
     owned-static-sysroot|owned-posix-static-products|owned-posix-family|owned-posix-native|owned-pthread-family|owned-pthread-family-composition) ;;
@@ -9442,6 +9443,10 @@ PY
         ;;
     owned-fcntl)
         run_in_container bash /workspace/compat/x86_64/run_owned_fcntl.sh "$@"
+        ;;
+    owned-static-dl-iterate-phdr)
+        [ "$#" -eq 0 ] || fail "owned-static-dl-iterate-phdr takes no arguments"
+        run_in_container bash /workspace/compat/x86_64/run_owned_static_dl_iterate_phdr.sh
         ;;
     owned-pthread-getattr)
         [ "$#" -eq 0 ] || fail "owned-pthread-getattr takes no arguments"

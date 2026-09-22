@@ -907,3 +907,23 @@ pub(super) unsafe fn reset_current_thread_images() {
         zero_bytes(destination.add(plan.filesz), plan.memsz - plan.filesz);
     }
 }
+
+/// Borrow the calling owned thread's one executable TLS image.
+///
+/// Static `dl_iterate_phdr` reports module 1 at offset zero, like musl's
+/// `__tls_get_addr({1, 0})`. This runtime has no DTV: its immutable variant-II
+/// plan already records the image's distance below each thread's own TP.
+///
+/// # Safety
+/// The caller must be an owned thread with live TLS installed by this module.
+#[cfg(feature = "x86-owned-static-runtime")]
+pub(super) unsafe fn current_initial_image() -> *mut u8 {
+    if !is_ready() {
+        return core::ptr::null_mut();
+    }
+    // SAFETY: is_ready acquired the bootstrap publication; the plan has no
+    // later writer, and the calling thread owns a materialization of it.
+    let plan = unsafe { core::ptr::read_volatile(core::ptr::addr_of!(STATIC_INITIAL_TLS_PLAN)) };
+    let tp = super::pthread_identity::current_thread_pointer();
+    unsafe { tp.sub(plan.image_offset_below_tp) }
+}

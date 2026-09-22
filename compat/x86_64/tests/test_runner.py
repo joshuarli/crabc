@@ -2065,7 +2065,7 @@ unsafe fn join_selected_worker_inner(
             'owned-resolver-network|owned-classic-netdb|owned-resolver-cancellation',
             'owned-package-corpus|owned-loader-synthetic|owned-loader-inventory|owned-loader-libc-identity|owned-loader-family',
             'owned-dynamic-io-cancellation',
-            'owned-posix-timers|owned-pthread-scheduling|owned-pthread-cpuclock|owned-message-queues|owned-named-ipc|owned-fcntl|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex',
+            'owned-posix-timers|owned-pthread-scheduling|owned-pthread-cpuclock|owned-message-queues|owned-named-ipc|owned-fcntl|owned-static-dl-iterate-phdr|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex',
             'owned-pthread-lifecycle',
             'qualification-manifest',
             'owned-static-sysroot|owned-posix-static-products|owned-posix-family|owned-posix-native|owned-pthread-family|owned-pthread-family-composition',
