@@ -95,6 +95,17 @@ class OwnedCleanupContract(unittest.TestCase):
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "unwind profile"):
             owned_cleanup.source_graph_profile_contract(log.replace("panic=unwind", "panic=abort"))
 
+    def test_source_provider_link_anchor_names_the_real_raise_exception_implementation(self):
+        source = owned_cleanup.ROOT / "src/lib.rs"
+        self.assertEqual(
+            owned_cleanup.source_provider_link_anchor(source),
+            owned_cleanup.record_file(source, "staged crabc-unwinder source link anchor"),
+        )
+        missing = Path(self.temporary.name) / "missing-anchor.rs"
+        missing.write_text("#![no_std]\nextern crate unwinding;\n")
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "real _Unwind_RaiseException link anchor"):
+            owned_cleanup.source_provider_link_anchor(missing)
+
     def write_vendor_package(
         self, root, name, version, package_checksum, source="pub fn source() {}\n", directory_name=None,
     ):

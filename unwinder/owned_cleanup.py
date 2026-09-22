@@ -64,6 +64,13 @@ SOURCE_BUILD_PROFILE = {
     "CARGO_PROFILE_RELEASE_CODEGEN_UNITS": "1",
     "CARGO_PROFILE_RELEASE_LTO": "fat",
 }
+PROVIDER_LINK_ANCHOR_DEFINITION = (
+    'pub fn link_anchor() -> unsafe extern "C-unwind" fn(\n'
+    '    *mut unwinding::abi::UnwindException,\n'
+    ') -> unwinding::abi::UnwindReasonCode {\n'
+    '    unwinding::abi::_Unwind_RaiseException\n'
+    '}'
+)
 CARGO_VENDOR_CONFIG = """[source.crates-io]
 replace-with = \"crabc-owned-composite-vendor\"
 
@@ -1237,6 +1244,18 @@ def provider_snapshot(provider: Path, toolchain: str) -> dict[str, Any]:
     }
 
 
+def source_provider_link_anchor(provider_source: Path) -> dict[str, str]:
+    """Bind the generated Cargo graph to its real LTO provider anchor."""
+
+    provider_source = physical(provider_source, "staged crabc-unwinder source")
+    contents = provider_source.read_text(encoding="utf-8")
+    require(
+        contents.count(PROVIDER_LINK_ANCHOR_DEFINITION) == 1,
+        "staged crabc-unwinder source lacks the real _Unwind_RaiseException link anchor",
+    )
+    return record_file(provider_source, "staged crabc-unwinder source link anchor")
+
+
 def _unique_packages(metadata: dict[str, Any], description: str) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
     packages = metadata.get("packages")
     require(isinstance(packages, list) and all(isinstance(package, dict) for package in packages),
@@ -1329,11 +1348,13 @@ def audit_source_graph(
         })
     require(len(provider_custom_builds) == 1,
             "Cargo source-built provider graph has an unexpected custom-build roster")
+    provider_source = staged_manifest.parent / "src/lib.rs"
     return {
         "root_package_id": root_id,
         "provider_package_id": provider_id,
         "provider_manifest": record_file(staged_manifest, "staged crabc-unwinder manifest"),
-        "provider_source": record_file(staged_manifest.parent / "src/lib.rs", "staged crabc-unwinder source"),
+        "provider_source": record_file(provider_source, "staged crabc-unwinder source"),
+        "provider_link_anchor": source_provider_link_anchor(provider_source),
         "patched_unwinding_manifest": record_file(staged_unwinding / "Cargo.toml", "staged patched unwinding manifest"),
         "source_input": str(Path(staged["source_input"])),
         "upstream_tree_sha256": staged["upstream_tree_sha256"],
