@@ -122,6 +122,23 @@ reentrant page-operation ownership before general initialization recursion can
 be qualified. The explicit worker recovery C/Rust receipt does not establish
 that behavior.
 
+The process coordinator distinguishes the source-attached allocation inputs
+from completed startup. `ProcessMainAllocationLease` admits the initializing
+thread after static Theap attachment and before reservations; it exposes only
+frozen memory configuration, canonical PageMap, and VM policy/subprocess.
+`ProcessMainReadyLease` still requires completed startup, and another thread
+cannot acquire the earlier lease. This represents pinned `init.c`'s ordering
+without manufacturing a completed reservation outcome.
+
+`MainHeapThreadOwnerLocalPageEngine::begin_for_process` is the shared activation
+seam for a canonical process backing. The owner-local engine and its consuming
+collect-abandon drain preserve the same backing type. Per-page release resolves
+the actual registry arena and reconciles its committed prefix before retiring
+metadata. The legacy paired-arena constructor remains for typed fixtures. The
+canonical constructor is a prerequisite: native startup publication and
+source-wide mapped-abandoned arena selection must be connected before it
+replaces the existing runtime route or establishes reentrant allocation parity.
+
 The default allocator remains that C backend. The explicit nondefault
 `crabc-libc` feature `native-mimalloc-shadow` selects
 `libc/src/allocator_native_mimalloc.rs` instead of the C malloc wrapper. Its

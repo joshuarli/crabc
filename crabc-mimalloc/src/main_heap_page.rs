@@ -101,6 +101,9 @@ use core::marker::PhantomData;
 use core::ptr::NonNull;
 
 use crate::arena::ArenaId;
+use crate::bootstrap::TheapPageSession;
+use crate::page_backing::RuntimeFirstRegularPageBacking;
+use crate::process_init::ProcessMainBackingBinding;
 use crate::main_heap_thread::{
     MainHeapThreadAttachment, MainHeapThreadAttachmentError, MainHeapThreadPageDrainSession,
     MainHeapThreadOwnerLocalPageEngineLease, MainHeapThreadPageSession,
@@ -224,7 +227,7 @@ extern crate std;
 /// queue/cache/poison state remains in this value between calls.
 #[must_use = "an owner-local page engine must finish or be retained with its attachment"]
 pub(crate) struct MainHeapThreadOwnerLocalPageEngine<'main> {
-    engine: Option<OwnerLocalMainHeapPageAllocator<'static, 'static>>,
+    engine: Option<OwnerLocalMainHeapPageAllocator<'static, 'static, RuntimeFirstRegularPageBacking>>,
     // The matching process pair and static-main Heap lease are selector facts
     // of this persistent owner, not general `PageAllocatorEngine` state.  A
     // short bound session borrows this value only for the selected
@@ -243,6 +246,9 @@ pub(crate) enum MainHeapThreadOwnerLocalPageEngineBeginError {
     Session(MainHeapThreadPageSessionError),
     SubprocessMismatch,
     ConfigurationMismatch,
+    PageMap(ProcessPageMapError),
+    ProcessNotAllocationReady,
+    MissingNumaNode,
 }
 
 /// Why one short local operation could not borrow the continuously stored
@@ -323,7 +329,7 @@ impl core::fmt::Debug for MainHeapThreadOwnerLocalPageEngineCollectAbandonFailur
 /// owner engine. It deliberately exposes only raw source allocation facts;
 /// allocation tracking remains allocator metadata, not a parallel ledger.
 pub(crate) struct MainHeapThreadOwnerLocalAllocator<'owner> {
-    engine: &'owner mut OwnerLocalMainHeapPageAllocator<'static, 'static>,
+    engine: &'owner mut OwnerLocalMainHeapPageAllocator<'static, 'static, RuntimeFirstRegularPageBacking>,
 }
 
 /// One bounded page engine for a later metadata Theap linked to `mi_heap_main`.
@@ -2199,7 +2205,7 @@ impl<'main> MainHeapThreadOwnerLocalPageEngine<'main> {
         let engine = unsafe {
             PageAllocatorEngine::activate_owner_local_later_main_thread(
                 &session,
-                arena,
+                RuntimeFirstRegularPageBacking::selected_sidecar(arena),
                 ArenaId::none(),
                 page_map,
             )
@@ -2210,6 +2216,51 @@ impl<'main> MainHeapThreadOwnerLocalPageEngine<'main> {
             lifecycle,
             _not_send_or_sync: PhantomData,
         })
+    }
+
+    /// Activates the same persistent owner against the canonical source
+    /// registry, including a source-attached initial process. This capability
+    /// exposes initialized policy/map inputs without reading startup outcomes.
+    pub(crate) fn begin_for_process(
+        attachment: &mut MainHeapThreadAttachment<'main>,
+        binding: ProcessMainBackingBinding,
+    ) -> Result<Self, MainHeapThreadOwnerLocalPageEngineBeginError> {
+        if !binding.is_allocation_ready() {
+            return Err(MainHeapThreadOwnerLocalPageEngineBeginError::ProcessNotAllocationReady);
+        }
+        let subprocess = attachment.subprocess()
+            .map_err(MainHeapThreadOwnerLocalPageEngineBeginError::Attachment)?;
+        if subprocess.as_ptr() != binding.process().subprocess().as_ptr() {
+            return Err(MainHeapThreadOwnerLocalPageEngineBeginError::SubprocessMismatch);
+        }
+        let config = binding.page_map().memory_config()
+            .map_err(MainHeapThreadOwnerLocalPageEngineBeginError::PageMap)?;
+        if attachment.memory_config()
+            .map_err(MainHeapThreadOwnerLocalPageEngineBeginError::Attachment)? != config {
+            return Err(MainHeapThreadOwnerLocalPageEngineBeginError::ConfigurationMismatch);
+        }
+        // SAFETY: each engine serializes its exact ranges and retains every
+        // registered page until its readers quiesce and entries are removed.
+        let page_map = unsafe { binding.page_map().page_map_for_owned_ranges() }
+            .map_err(MainHeapThreadOwnerLocalPageEngineBeginError::PageMap)?;
+        let session = attachment.page_session()
+            .map_err(MainHeapThreadOwnerLocalPageEngineBeginError::Session)?;
+        let numa_node = session.theap().tld_numa_node()
+            .ok_or(MainHeapThreadOwnerLocalPageEngineBeginError::MissingNumaNode)?;
+        let lifecycle = MainHeapThreadOwnerLocalPageEngineLease::claim(&session)
+            .map_err(MainHeapThreadOwnerLocalPageEngineBeginError::Attachment)?;
+        let mapped_abandoned_claim = StaticMainMappedRegularClaimSelector::for_process(
+            binding, session.main_heap_lease());
+        // SAFETY: process identity/configuration were checked above; the
+        // short source session supplies the owner identity rebound per call.
+        let engine = unsafe {
+            PageAllocatorEngine::activate_owner_local_later_main_thread(
+                &session, RuntimeFirstRegularPageBacking::source_registry(binding.process(), numa_node),
+                ArenaId::none(), page_map,
+            )
+        };
+        Ok(Self { engine: Some(engine), mapped_abandoned_claim, lifecycle,
+            _not_send_or_sync: PhantomData })
     }
 
     /// Runs one synchronous local allocation operation without parking,

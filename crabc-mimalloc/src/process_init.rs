@@ -34,7 +34,7 @@ use core::cell::UnsafeCell;
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicUsize, Ordering};
 
 use crate::compiler_tls::current_thread_identity;
 use crate::arena::{ArenaId, ArenaView, FirstRegularStartupArenaSelection};
@@ -69,6 +69,9 @@ const COLD: u8 = 0;
 const INITIALIZING: u8 = 1;
 const READY: u8 = 2;
 const RETAINED: u8 = 3;
+// Default Theap/TLD and the allocation tuple exist; source startup
+// reservations and their completed receipt do not yet exist.
+const SOURCE_ATTACHED: u8 = 4;
 
 /// How this source-startup call owns an optional source VM policy.
 ///
@@ -112,6 +115,7 @@ pub(crate) struct ProcessMainInitializationStorage {
     /// lets a recursive caller decline without waiting on itself.
     process_once: AllocatorOnce,
     state: AtomicU8,
+    initializing_thread: AtomicUsize,
     config: UnsafeCell<MaybeUninit<MemoryConfig>>,
     // A resolved source option image belongs to this exact process lifetime,
     // not to a caller-local VM helper. The pointer is null for the preserved
@@ -143,6 +147,7 @@ impl ProcessMainInitializationStorage {
         Self {
             process_once: AllocatorOnce::new(),
             state: AtomicU8::new(COLD),
+            initializing_thread: AtomicUsize::new(0),
             config: UnsafeCell::new(MaybeUninit::uninit()),
             vm_policy: UnsafeCell::new(MaybeUninit::uninit()),
             vm_policy_ptr: AtomicPtr::new(core::ptr::null_mut()),
@@ -487,6 +492,31 @@ impl ProcessMainInitializationStorage {
         F: FnOnce(),
         G: FnOnce(),
     {
+        unsafe {
+            self.initialize_with_components_at_attachment(
+                config, vm_policy, main_static, subprocess, metadata, page_map_storage,
+                after_claim, || {}, before_release,
+            )
+        }
+    }
+
+    unsafe fn initialize_with_components_at_attachment<F, H, G>(
+        &'static self,
+        mut config: MemoryConfig,
+        vm_policy: VmPolicyStartup,
+        main_static: &'static MainStaticAttachmentStorage,
+        subprocess: &'static MainSubprocess,
+        metadata: core::pin::Pin<&'static MetaAllocator>,
+        page_map_storage: &'static ProcessPageMapStorage,
+        after_claim: F,
+        after_attachment: H,
+        before_release: G,
+    ) -> Result<ProcessMainThread, ProcessMainInitError>
+    where
+        F: FnOnce(),
+        H: FnOnce(),
+        G: FnOnce(),
+    {
         let observed = self.state.load(Ordering::Acquire);
         let current_thread = match current_thread_identity() {
             Some(identity) => identity,
@@ -503,7 +533,7 @@ impl ProcessMainInitializationStorage {
                         MainStaticTheapError::InvalidCurrentThread,
                     ));
                 }
-                INITIALIZING => return Err(ProcessMainInitError::Initializing),
+                INITIALIZING | SOURCE_ATTACHED => return Err(ProcessMainInitError::Initializing),
                 READY => return Err(ProcessMainInitError::AlreadyInitialized),
                 RETAINED | _ => return Err(ProcessMainInitError::Retained),
             },
@@ -540,6 +570,7 @@ impl ProcessMainInitializationStorage {
             return Err(ProcessMainInitError::Preflight(error));
         }
 
+        self.initializing_thread.store(current_thread.get(), Ordering::Relaxed);
         self.state.store(INITIALIZING, Ordering::Release);
         after_claim();
 
@@ -700,6 +731,12 @@ impl ProcessMainInitializationStorage {
             }
         };
 
+        // Pinned init.c publishes the default Theap before TLS setup and
+        // source startup reservation calls can reenter allocation. This state
+        // publishes only the initialized tuple, never reservation outcomes.
+        self.state.store(SOURCE_ATTACHED, Ordering::Release);
+        after_attachment();
+
         // Source startup reserves huge memory first and regular memory next,
         // after the default Theap/TLS attachment exists. Failed reservations
         // do not prevent READY; their exact cleanup owners remain retained.
@@ -747,7 +784,7 @@ impl ProcessMainInitializationStorage {
 
         self.publish_terminal_state_and_release_with_hook(completion, READY, before_release);
 
-        let ready = ProcessMainReadyLease {
+        let allocation = ProcessMainAllocationLease {
             storage: self,
             page_map,
             config,
@@ -756,7 +793,7 @@ impl ProcessMainInitializationStorage {
         Ok(ProcessMainThread {
             storage: self,
             attachment: Some(attachment),
-            ready,
+            allocation,
             state: ProcessMainThreadState::Attached,
             _not_send_or_sync: PhantomData,
         })
@@ -794,9 +831,43 @@ impl ProcessMainInitializationStorage {
         })
     }
 
+    /// Returns only the initialized allocation tuple. This capability never
+    /// reads or attests to the later startup-reservation outcomes.
+    pub(crate) fn allocation_lease(
+        &'static self,
+        config: MemoryConfig,
+        subprocess: &'static MainSubprocess,
+    ) -> Result<ProcessMainAllocationLease, ProcessMainInitError> {
+        self.ensure_allocation_ready()?;
+        if self.config() != config {
+            return Err(ProcessMainInitError::ConfigurationMismatch);
+        }
+        if self.subprocess.load(Ordering::Acquire) != subprocess.as_ptr() {
+            return Err(ProcessMainInitError::SubprocessMismatch);
+        }
+        let page_map_storage = NonNull::new(self.page_map_storage.load(Ordering::Acquire))
+            .ok_or(ProcessMainInitError::Retained)?;
+        // SAFETY: the allocation-ready publication follows this immutable
+        // storage pointer and its fully initialized canonical PageMap.
+        let page_map = unsafe { page_map_storage.as_ref() }
+            .initialize(config, subprocess).map_err(ProcessMainInitError::PageMap)?;
+        Ok(ProcessMainAllocationLease { storage: self, config, subprocess, page_map })
+    }
+
+    fn ensure_allocation_ready(&self) -> Result<(), ProcessMainInitError> {
+        match self.state.load(Ordering::Acquire) {
+            READY => Ok(()),
+            SOURCE_ATTACHED if current_thread_identity().is_some_and(|thread| {
+                thread.get() == self.initializing_thread.load(Ordering::Relaxed)
+            }) => Ok(()),
+            COLD | INITIALIZING | SOURCE_ATTACHED => Err(ProcessMainInitError::Initializing),
+            _ => Err(ProcessMainInitError::Retained),
+        }
+    }
+
     #[inline]
     fn config(&self) -> MemoryConfig {
-        // SAFETY: callers first observed READY with Acquire, whose Release
+        // SAFETY: callers first observed allocation-ready with Acquire, whose Release
         // publication follows this final-slot write.
         unsafe { *(*self.config.get()).assume_init_ref() }
     }
@@ -937,7 +1008,7 @@ impl ProcessMainInitializationStorage {
     #[inline]
     fn outcome_after_process_once(&self) -> Result<ProcessMainThread, ProcessMainInitError> {
         match self.state.load(Ordering::Acquire) {
-            COLD | INITIALIZING => Err(ProcessMainInitError::Initializing),
+            COLD | INITIALIZING | SOURCE_ATTACHED => Err(ProcessMainInitError::Initializing),
             READY => Err(ProcessMainInitError::AlreadyInitialized),
             RETAINED | _ => Err(ProcessMainInitError::Retained),
         }
@@ -1087,7 +1158,7 @@ impl ProcessMainBackingBinding {
         process: VmProcess<'static>,
         page_map: ProcessPageMapLease,
     ) -> Self {
-        debug_assert!(matches!(storage.state.load(Ordering::Acquire), INITIALIZING | READY));
+        debug_assert!(matches!(storage.state.load(Ordering::Acquire), INITIALIZING | SOURCE_ATTACHED | READY));
         debug_assert!(core::ptr::eq(
             storage.subprocess.load(Ordering::Acquire),
             process.subprocess().as_ptr(),
@@ -1115,7 +1186,13 @@ impl ProcessMainBackingBinding {
     /// an arbitrary raw pair/map input become a binding capability.
     #[inline]
     pub(crate) fn is_active(self) -> bool {
-        matches!(self.storage.state.load(Ordering::Acquire), INITIALIZING | READY)
+        matches!(self.storage.state.load(Ordering::Acquire), INITIALIZING | SOURCE_ATTACHED | READY)
+    }
+
+    /// Application page ownership requires the source attachment publication;
+    /// metadata construction alone does not grant this authority.
+    pub(crate) fn is_allocation_ready(self) -> bool {
+        self.storage.ensure_allocation_ready().is_ok()
     }
 
     /// Classifies source startup's regular arena outcome for its one bounded
@@ -1150,6 +1227,63 @@ impl ProcessMainBackingBinding {
                 ProcessStartupRegularArenaSelection::ExistingOutsideFirstRegularCapability
             }
         }
+    }
+}
+
+/// The frozen allocation inputs, separately represented from completed
+/// startup. It grants no thread attachment or reservation-outcome access.
+#[derive(Clone, Copy)]
+pub(crate) struct ProcessMainAllocationLease {
+    storage: &'static ProcessMainInitializationStorage,
+    config: MemoryConfig,
+    subprocess: &'static MainSubprocess,
+    page_map: ProcessPageMapLease,
+}
+
+impl ProcessMainAllocationLease {
+    fn ensure_valid(self) -> Result<(), ProcessMainInitError> {
+        self.storage.ensure_allocation_ready()?;
+        if self.storage.config() != self.config {
+            return Err(ProcessMainInitError::ConfigurationMismatch);
+        }
+        if self.storage.subprocess.load(Ordering::Acquire) != self.subprocess.as_ptr() {
+            return Err(ProcessMainInitError::SubprocessMismatch);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn memory_config(self) -> Result<MemoryConfig, ProcessMainInitError> {
+        self.ensure_valid()?;
+        Ok(self.config)
+    }
+
+    pub(crate) fn page_map(self) -> Result<ProcessPageMapLease, ProcessMainInitError> {
+        self.ensure_valid()?;
+        Ok(self.page_map)
+    }
+
+    pub(crate) fn vm_process(self) -> Result<VmProcess<'static>, ProcessMainInitError> {
+        self.ensure_valid()?;
+        let policy = NonNull::new(self.storage.vm_policy_ptr.load(Ordering::Acquire))
+            .ok_or(ProcessMainInitError::VmPolicyUnavailable)?;
+        // SAFETY: allocation-ready publishes the already initialized policy
+        // before any Theap publication; its slot is immutable and process-lived.
+        Ok(VmProcess::new(unsafe { policy.as_ref() }, self.subprocess))
+    }
+
+    pub(crate) fn process_backing(self) -> Result<ProcessMainBackingBinding, ProcessMainInitError> {
+        Ok(ProcessMainBackingBinding::new(self.storage, self.vm_process()?, self.page_map()?))
+    }
+
+    fn ready(self) -> Result<ProcessMainReadyLease, ProcessMainInitError> {
+        self.ensure_valid()?;
+        if self.storage.state.load(Ordering::Acquire) != READY {
+            return Err(ProcessMainInitError::Initializing);
+        }
+        Ok(ProcessMainReadyLease {
+            storage: self.storage, config: self.config,
+            subprocess: self.subprocess, page_map: self.page_map,
+        })
     }
 }
 
@@ -1279,7 +1413,7 @@ enum ProcessMainThreadState {
 pub(crate) struct ProcessMainThread {
     storage: &'static ProcessMainInitializationStorage,
     attachment: Option<MainStaticTheapAttachment>,
-    ready: ProcessMainReadyLease,
+    allocation: ProcessMainAllocationLease,
     state: ProcessMainThreadState,
     _not_send_or_sync: PhantomData<*mut ()>,
 }
@@ -1316,8 +1450,15 @@ impl ProcessMainThread {
         if self.state != ProcessMainThreadState::Attached {
             return Err(ProcessMainInitError::Retained);
         }
-        self.ready.ensure_ready()?;
-        Ok(self.ready)
+        self.allocation.ready()
+    }
+
+    pub(crate) fn allocation(&self) -> Result<ProcessMainAllocationLease, ProcessMainInitError> {
+        if self.state != ProcessMainThreadState::Attached {
+            return Err(ProcessMainInitError::Retained);
+        }
+        self.allocation.ensure_valid()?;
+        Ok(self.allocation)
     }
 
     /// Borrows the ticket-zero attachment for an existing bounded page owner
@@ -1555,6 +1696,33 @@ mod tests {
             MetaAllocator::test_static_owner(),
             ProcessPageMapStorage::test_static_owner(),
         )
+    }
+
+    #[test]
+    fn source_attachment_publishes_allocation_inputs_before_startup_completion() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let (storage, main_static, subprocess, metadata, page_map_storage) = fixture();
+            let mut owner = unsafe {
+                storage.initialize_with_components_at_attachment(
+                    config, VmPolicyStartup::None, main_static, subprocess,
+                    metadata, page_map_storage, || {},
+                    || {
+                        assert!(storage.ready_lease(config, subprocess).is_err(),
+                            "startup outcomes are unavailable before source reservation completion");
+                        let allocation = storage.allocation_lease(config, subprocess)
+                            .expect("the source default Theap already permits allocation");
+                        assert_eq!(allocation.config, config);
+                        assert!(core::ptr::eq(allocation.subprocess, subprocess));
+                        assert!(allocation.page_map.root().is_ok());
+                        assert!(thread::spawn(move || storage.allocation_lease(config, subprocess).is_err())
+                            .join().expect("a distinct thread cannot consume staged initialization"));
+                    }, || {},
+                )
+            }.expect("source startup completes after the staged callback returns");
+            assert!(owner.ready().is_ok());
+            owner.teardown().expect("the isolated ticket-zero owner tears down");
+        }).join().expect("staged allocation inputs remain bound to the initializing thread");
     }
 
     #[test]

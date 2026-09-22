@@ -129,6 +129,7 @@
 
 use core::cell::Cell;
 use core::marker::PhantomData;
+use crate::page_backing::PageBacking;
 use core::mem::ManuallyDrop;
 use core::pin::Pin;
 use core::ptr::NonNull;
@@ -2504,8 +2505,8 @@ pub(crate) type DynamicTheapAllocator<'attach, 'heap, 'arena, 'map> =
 
 /// Persistent later-main specialization whose source attachment is borrowed
 /// only for one synchronous local operation at a time.
-pub(crate) type OwnerLocalMainHeapPageAllocator<'arena, 'map> =
-    PageAllocatorEngine<'arena, 'map, OwnerLocalMainHeapPageSession>;
+pub(crate) type OwnerLocalMainHeapPageAllocator<'arena, 'map, B = ArenaView<'arena>> =
+    PageAllocatorEngine<'arena, 'map, OwnerLocalMainHeapPageSession, B>;
 
 // The selector keeps Copy process/static-Heap leases, so it lives in a child
 // module rather than merely using private fields in this large translation
@@ -2526,13 +2527,18 @@ use super::*;
 /// active, without retaining an overlapping selector-field borrow.
 #[must_use = "a selected mapped-abandoned claim source must remain with its persistent static-main owner"]
 pub(crate) struct StaticMainMappedRegularClaimSelector<'main> {
-    pair: ProcessPageArenaLease,
+    backing: StaticMainMappedRegularBacking,
     main_heap: MainStaticHeapLease<'main>,
     retained: Option<StaticMainMappedRegularClaimRetention>,
     #[cfg(test)]
     test_claim_closure_panic_once: bool,
     #[cfg(test)]
     test_claim_span_validation_failure_once: bool,
+}
+
+enum StaticMainMappedRegularBacking {
+    LegacyPair(ProcessPageArenaLease),
+    Process(crate::process_init::ProcessMainBackingBinding),
 }
 
 /// The fail-closed state after the selected source branch could no longer
@@ -2596,7 +2602,22 @@ impl<'main> StaticMainMappedRegularClaimSelector<'main> {
         main_heap: MainStaticHeapLease<'main>,
     ) -> Self {
         Self {
-            pair,
+            backing: StaticMainMappedRegularBacking::LegacyPair(pair),
+            main_heap,
+            retained: None,
+            #[cfg(test)]
+            test_claim_closure_panic_once: false,
+            #[cfg(test)]
+            test_claim_span_validation_failure_once: false,
+        }
+    }
+
+    pub(crate) const fn for_process(
+        binding: crate::process_init::ProcessMainBackingBinding,
+        main_heap: MainStaticHeapLease<'main>,
+    ) -> Self {
+        Self {
+            backing: StaticMainMappedRegularBacking::Process(binding),
             main_heap,
             retained: None,
             #[cfg(test)]
@@ -2615,8 +2636,9 @@ impl<'main> StaticMainMappedRegularClaimSelector<'main> {
     /// a new arena-selection route.
     #[inline]
     pub(crate) fn matches_pair(&self, candidate: ProcessPageArenaLease) -> bool {
+        let StaticMainMappedRegularBacking::LegacyPair(pair) = self.backing else { return false; };
         let (Ok(current_root), Ok(candidate_root)) =
-            (self.pair.page_map_root(), candidate.page_map_root())
+            (pair.page_map_root(), candidate.page_map_root())
         else {
             return false;
         };
@@ -2624,7 +2646,7 @@ impl<'main> StaticMainMappedRegularClaimSelector<'main> {
             return false;
         }
         let (Ok(current_subprocess), Ok(candidate_subprocess)) =
-            (self.pair.subprocess(), candidate.subprocess())
+            (pair.subprocess(), candidate.subprocess())
         else {
             return false;
         };
@@ -2632,7 +2654,7 @@ impl<'main> StaticMainMappedRegularClaimSelector<'main> {
             return false;
         }
         let (Ok(current_config), Ok(candidate_config)) =
-            (self.pair.memory_config(), candidate.memory_config())
+            (pair.memory_config(), candidate.memory_config())
         else {
             return false;
         };
@@ -2640,7 +2662,7 @@ impl<'main> StaticMainMappedRegularClaimSelector<'main> {
             return false;
         }
         let (Ok(current_arena), Ok(candidate_arena)) =
-            (self.pair.arena(), candidate.arena())
+            (pair.arena(), candidate.arena())
         else {
             return false;
         };
@@ -2846,7 +2868,13 @@ impl StaticMainMappedRegularClaimSource<'_> {
         // here. The caller keeps resolver, adoption, and complete span
         // validation inside the paired closure and consumes every completion
         // before this synchronous callback returns.
-        let outcome = unsafe { self.selector.pair.try_with_mapped_abandoned_claim(operation) };
+        let outcome = match self.selector.backing {
+            StaticMainMappedRegularBacking::LegacyPair(pair) => unsafe { pair.try_with_mapped_abandoned_claim(operation) },
+            StaticMainMappedRegularBacking::Process(binding) if binding.is_allocation_ready() => unsafe {
+                binding.page_map().try_with_owned_mapped_abandoned_claim(operation)
+            },
+            _ => MappedAbandonedClaimOutcome::RootTerminal,
+        };
         self.claim_attempt_active = false;
         outcome
     }
@@ -8853,7 +8881,7 @@ impl<'attachment, 'main, 'arena, 'map>
     }
 }
 
-impl<'arena, 'map> PageAllocatorEngine<'arena, 'map, OwnerLocalMainHeapPageSession> {
+impl<'arena, 'map, B: PageBacking<'arena>> PageAllocatorEngine<'arena, 'map, OwnerLocalMainHeapPageSession, B> {
     /// Activates a continuously stored page engine for one already-attached
     /// later-main owner. The initial source session contributes identity only;
     /// every operation revalidates and binds a new short view of that same
@@ -8868,7 +8896,7 @@ impl<'arena, 'map> PageAllocatorEngine<'arena, 'map, OwnerLocalMainHeapPageSessi
     /// with `arena` and `page_map`.
     pub(crate) unsafe fn activate_owner_local_later_main_thread(
         session: &MainHeapThreadPageSession<'_, '_>,
-        arena: ArenaView<'arena>,
+        arena: B,
         requested_arena: ArenaId,
         page_map: &'map PageMap,
     ) -> Self {
@@ -8921,7 +8949,7 @@ impl<'arena, 'map> PageAllocatorEngine<'arena, 'map, OwnerLocalMainHeapPageSessi
             .arena()
             .expect("the test pair retains one published arena");
         assert!(
-            core::ptr::eq(pair_arena.arena(), self.arena.arena()),
+            core::ptr::eq(pair_arena.arena(), self.arena.selected_arena().expect("a paired fixture has a selected arena").arena()),
             "the test direct-commit mapping uses this engine's exact arena"
         );
         self.page_area_commit_lease = Some(pair);
@@ -8983,7 +9011,7 @@ impl<'arena, 'map> PageAllocatorEngine<'arena, 'map, OwnerLocalMainHeapPageSessi
         self,
         drain: MainHeapThreadPageDrainSession<'attachment, 'main>,
     ) -> (
-        PageAllocatorEngine<'arena, 'map, MainHeapThreadPageDrainSession<'attachment, 'main>>,
+        PageAllocatorEngine<'arena, 'map, MainHeapThreadPageDrainSession<'attachment, 'main>, B>,
         (LiveThreadId, usize),
     ) {
         let (session, state) = self.into_session_and_state();
@@ -8996,7 +9024,7 @@ impl<'arena, 'map> PageAllocatorEngine<'arena, 'map, OwnerLocalMainHeapPageSessi
     /// entered `Terminal`, so this value cannot regain allocation or drain
     /// authority.
     pub(crate) fn from_failed_owner_local_thread_exit<'attachment, 'main>(
-        drain: PageAllocatorEngine<'arena, 'map, MainHeapThreadPageDrainSession<'attachment, 'main>>,
+        drain: PageAllocatorEngine<'arena, 'map, MainHeapThreadPageDrainSession<'attachment, 'main>, B>,
         identity: (LiveThreadId, usize),
     ) -> Self {
         let (_session, state) = drain.into_session_and_state();
@@ -9006,8 +9034,8 @@ impl<'arena, 'map> PageAllocatorEngine<'arena, 'map, OwnerLocalMainHeapPageSessi
     }
 }
 
-impl<'attachment, 'main, 'arena, 'map>
-    PageAllocatorEngine<'arena, 'map, MainHeapThreadPageDrainSession<'attachment, 'main>>
+impl<'attachment, 'main, 'arena, 'map, B: PageBacking<'arena>>
+    PageAllocatorEngine<'arena, 'map, MainHeapThreadPageDrainSession<'attachment, 'main>, B>
 {
     /// Returns whether a source-mutated post-exit route has already retained
     /// this exact post-fast-slot attachment as terminal. The normal all-free
@@ -9075,6 +9103,7 @@ impl<'attachment, 'main, 'arena, 'map>
                 deferred_free,
                 thread,
                 arena: &self.arena,
+                arena_lifetime: PhantomData,
                 page_map: self.page_map,
                 main_heap,
                 heap,
@@ -9086,11 +9115,11 @@ impl<'attachment, 'main, 'arena, 'map>
             };
             let prepass = TheapCollectAbandonPrepass::new(
                 |theap: &mut Theap,
-                 callbacks: &mut ProductionOwnerExitCallbacks<'_, '_, '_, '_>| {
+                 callbacks: &mut ProductionOwnerExitCallbacks<'_, '_, 'arena, '_, B>| {
                     callbacks.collect_deferred_prepass(theap)
                 },
                 |theap: &mut Theap,
-                 callbacks: &mut ProductionOwnerExitCallbacks<'_, '_, '_, '_>| {
+                 callbacks: &mut ProductionOwnerExitCallbacks<'_, '_, 'arena, '_, B>| {
                     callbacks.collect_retired_prepass(theap)
                 },
             );
@@ -9164,6 +9193,12 @@ impl<'attachment, 'main, 'arena, 'map>
         unsafe { attachment.finish_after_detached_process_page_route() }
     }
 
+ }
+
+// Historical typed one-arena post-exit routes retain their selected backing.
+impl<'attachment, 'main, 'arena, 'map>
+    PageAllocatorEngine<'arena, 'map, MainHeapThreadPageDrainSession<'attachment, 'main>>
+{
     /// Completes the first bounded later-main source owner-exit traversal.
     ///
     /// Source `_mi_theap_collect_abandon` force-collects every ordinary and
@@ -39607,10 +39642,11 @@ enum ProductionOwnerExitError {
 /// operations therefore use only the raw field projections in `types.rs`.
 /// Terminal release takes a whole-page mutable reference only after the
 /// source `used == 0` proof excludes a live client and its producer.
-struct ProductionOwnerExitCallbacks<'state, 'main, 'arena, 'map> {
+struct ProductionOwnerExitCallbacks<'state, 'main, 'arena, 'map, B: PageBacking<'arena>> {
     deferred_free: MainHeapThreadOwnerExitDeferredFree,
     thread: LiveThreadId,
-    arena: &'state ArenaView<'arena>,
+    arena: &'state B,
+    arena_lifetime: PhantomData<&'arena ()>,
     page_map: &'map PageMap,
     main_heap: MainStaticHeapLease<'main>,
     heap: NonNull<Heap>,
@@ -39621,7 +39657,7 @@ struct ProductionOwnerExitCallbacks<'state, 'main, 'arena, 'map> {
     page_free_collect_failure_once: &'state mut PageCollectFailureInjection,
 }
 
-impl ProductionOwnerExitCallbacks<'_, '_, '_, '_> {
+impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena, '_, B> {
     #[inline]
     unsafe fn used_at(page: NonNull<Page>) -> usize {
         // SAFETY: the source owner owns this ordinary field while a valid
@@ -39834,7 +39870,11 @@ impl ProductionOwnerExitCallbacks<'_, '_, '_, '_> {
             // and its PageMap transition; this constructor merely validates
             // that pre-existing source mapping image.
             let published = unsafe {
-                PublishedOsAlignedPage::from_page(self.page_map.memory_config(), page)
+                if let Some(process) = self.arena.process() {
+                    PublishedOsAlignedPage::from_page_for_process(process, self.page_map.memory_config(), page)
+                } else {
+                    PublishedOsAlignedPage::from_page(self.page_map.memory_config(), page)
+                }
             }?;
             // SAFETY: this one transition serializes exact PageMap entries.
             if unsafe { !published.page_map_entries_match(self.page_map) } {
@@ -39843,13 +39883,12 @@ impl ProductionOwnerExitCallbacks<'_, '_, '_, '_> {
             return Some(ReleaseSpan::Os(published));
         }
         let arena_memory = memory.arena_memory()?;
-        if arena_memory.arena != core::ptr::from_ref(self.arena.arena()).cast_mut() {
-            return None;
-        }
+        // SAFETY: this drain owns the current page and its retained backing.
+        let arena = unsafe { self.arena.arena_for_memory(memory) }?;
         let slice_index = arena_memory.slice_index as usize;
         let slice_count = arena_memory.slice_count as usize;
         let size = slice_count.checked_mul(ARENA_SLICE_SIZE)?;
-        let slice_start = self.arena.slice_start(slice_index)?;
+        let slice_start = arena.slice_start(slice_index)?;
         let block_size = page_ref.block_size();
         let kind = size_class::page_kind_for_block_size(block_size)?;
         let expected_slice_count = match kind {
@@ -39897,13 +39936,14 @@ impl ProductionOwnerExitCallbacks<'_, '_, '_, '_> {
         let Some(arena_memory) = memory.arena_memory() else {
             return false;
         };
-        if arena_memory.arena != core::ptr::from_ref(self.arena.arena()).cast_mut() {
+        // SAFETY: the current page's source MemoryId remains live through release.
+        let Some(arena) = (unsafe { self.arena.arena_for_memory(memory) }) else {
             return false;
-        }
+        };
         // The outer one-way drain already proved this current worker's
         // attachment is in `DrainingPages`.  Preserve source PageMap clear ->
         // `pages_main` clear order without retaining an attachment borrow.
-        unsafe { self.arena.pages() }
+        unsafe { arena.pages() }
             .and_then(|pages| pages.clear_range(arena_memory.slice_index as usize, 1))
             == Some(true)
     }
@@ -39940,6 +39980,13 @@ impl ProductionOwnerExitCallbacks<'_, '_, '_, '_> {
         if !self.clear_main_arena_page(memory) {
             return false;
         }
+        // SAFETY: this detached all-free page still retains its committed
+        // prefix until metadata retirement. Reconcile it with source backing.
+        let committed = usize::from(unsafe { page.as_ref().slice_pcommitted() })
+            * self.page_map.memory_config().page_size().bytes();
+        if !unsafe { self.arena.account_page_commit_before_release(memory, committed) } {
+            return false;
+        }
         // SAFETY: all free, detached, PageMap-unregistered, and ordinary
         // arena-bit-cleared precede metadata reset.  No producer can remain.
         if unsafe { (&mut *page.as_ptr()).retire_exclusive() }.is_none() {
@@ -39947,7 +39994,7 @@ impl ProductionOwnerExitCallbacks<'_, '_, '_, '_> {
         }
         // SAFETY: these are the exact arena slices validated above; every
         // visible PageMap/metadata predecessor has completed.
-        unsafe { release_arena_slices(memory) }
+        unsafe { self.arena.release(memory) }
     }
 
     fn release_detached_os_page(&mut self, page: NonNull<Page>) -> bool {
@@ -40051,7 +40098,7 @@ impl ProductionOwnerExitCallbacks<'_, '_, '_, '_> {
     }
 }
 
-impl TheapCollectAbandonCallbacks for ProductionOwnerExitCallbacks<'_, '_, '_, '_> {
+impl<'arena, B: PageBacking<'arena>> TheapCollectAbandonCallbacks for ProductionOwnerExitCallbacks<'_, '_, 'arena, '_, B> {
     type Error = ProductionOwnerExitError;
     type Retained = TheapCollectAbandonTerminalContext;
 
@@ -40120,8 +40167,10 @@ impl TheapCollectAbandonCallbacks for ProductionOwnerExitCallbacks<'_, '_, '_, '
             && used < reserved
             && page_kind != Some(PageKind::Singleton)
         {
-            let map = self
-                .arena
+            // SAFETY: the detached page retains its exact source arena claim.
+            let arena = unsafe { self.arena.arena_for_memory(state.memid) }
+                .ok_or(ProductionOwnerExitError::UnsupportedPage)?;
+            let map = arena
                 .main_heap_abandoned_page(self.heap, bin)
                 .ok_or(ProductionOwnerExitError::UnsupportedPage)?;
             // SAFETY: source order is force -> false -> queue/direct/count

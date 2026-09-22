@@ -1128,16 +1128,29 @@ impl ProcessPageMapLease {
             MappedAbandonedClaimAccess<'map>,
         ) -> MappedAbandonedClaimCompletion,
     ) -> MappedAbandonedClaimOutcome {
-        let root = match self.root() {
-            Ok(root) => root,
-            Err(_) => return MappedAbandonedClaimOutcome::RootTerminal,
-        };
         let paired_root = match paired.page_map_root() {
             Ok(root) => root,
             Err(_) => return MappedAbandonedClaimOutcome::RootTerminal,
         };
-        if root != paired_root {
+        if self.root().ok() != Some(paired_root) {
             return MappedAbandonedClaimOutcome::PairMismatch;
+        }
+        // SAFETY: the checked pair supplies this canonical root identity.
+        unsafe { self.try_with_owned_mapped_abandoned_claim(operation) }
+    }
+
+    /// Opens the claim transition for an owner already holding this canonical
+    /// process PageMap. The caller must validate the selected source registry
+    /// arena and consume or retain every returned range exactly as required
+    /// by `try_with_validated_mapped_abandoned_claim`.
+    pub(crate) unsafe fn try_with_owned_mapped_abandoned_claim(
+        self,
+        operation: impl for<'map> FnOnce(
+            MappedAbandonedClaimAccess<'map>,
+        ) -> MappedAbandonedClaimCompletion,
+    ) -> MappedAbandonedClaimOutcome {
+        if self.root().is_err() {
+            return MappedAbandonedClaimOutcome::RootTerminal;
         }
 
         let guard = match self.storage.page_lifecycle_lock.try_lock() {

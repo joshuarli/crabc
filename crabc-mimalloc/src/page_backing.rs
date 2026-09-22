@@ -74,6 +74,7 @@ impl<'arena> PageBacking<'arena> for ArenaView<'arena> {
 /// second, private sidecar arena.
 pub(crate) enum RuntimeFirstRegularPageBacking {
     SelectedSidecar(ArenaView<'static>),
+    SourceRegistry { process: VmProcess<'static>, numa_node: i32 },
     SourceStartupRegular {
         process: VmProcess<'static>,
         startup_arena: ArenaView<'static>,
@@ -99,12 +100,19 @@ impl RuntimeFirstRegularPageBacking {
         Self::SourceStartupRegular { process, startup_arena, numa_node }
     }
 
+    /// Uses the process registry with the source search/reserve/search policy.
+    /// No startup reservation outcome or single-parent geometry is required.
+    pub(crate) fn source_registry(process: VmProcess<'static>, numa_node: i32) -> Self {
+        Self::SourceRegistry { process, numa_node }
+    }
+
     #[inline]
     fn selected_matches_memory(&self, memory: MemoryId) -> Option<ArenaView<'static>> {
         let pointer = memory.arena_memory()?.arena;
         let selected = match self {
             Self::SelectedSidecar(arena) => arena,
             Self::SourceStartupRegular { startup_arena, .. } => startup_arena,
+            Self::SourceRegistry { .. } => return None,
         };
         if pointer != core::ptr::from_ref(selected.arena()).cast_mut() {
             return None;
@@ -151,6 +159,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
         match self {
             Self::SelectedSidecar(arena) => Some(arena),
             Self::SourceStartupRegular { startup_arena, .. } => Some(startup_arena),
+            Self::SourceRegistry { .. } => None,
         }
     }
 
@@ -160,7 +169,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
             // SAFETY: the PageBacking caller supplies a current arena MemoryId
             // from this process-owned claim or page; the helper validates its
             // immutable published registry identity before forming a view.
-            Self::SourceStartupRegular { process, .. } => unsafe {
+            Self::SourceStartupRegular { process, .. } | Self::SourceRegistry { process, .. } => unsafe {
                 Self::process_arena_for_memory(*process, memory)
             },
         }
@@ -169,7 +178,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
     fn process(&self) -> Option<VmProcess<'static>> {
         match self {
             Self::SelectedSidecar(_) => None,
-            Self::SourceStartupRegular { process, .. } => Some(*process),
+            Self::SourceStartupRegular { process, .. } | Self::SourceRegistry { process, .. } => Some(*process),
         }
     }
 
@@ -185,7 +194,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
             Self::SelectedSidecar(arena) => {
                 arena.try_claim_suitable_slices(requested, slices, commit, thread_sequence)
             }
-            Self::SourceStartupRegular { process, numa_node, .. } => {
+            Self::SourceStartupRegular { process, numa_node, .. } | Self::SourceRegistry { process, numa_node } => {
                 // Pinned `mi_arenas_page_alloc_fresh_area` reaches
                 // `mi_arenas_try_alloc` with the ticket-zero main heap's zero
                 // sequence and its already-stored TLD NUMA value. Preserve
@@ -225,7 +234,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
                 self.selected_matches_memory(memory).is_some()
                     && unsafe { crate::arena::release_arena_slices(memory) }
             }
-            Self::SourceStartupRegular { process, .. } => {
+            Self::SourceStartupRegular { process, .. } | Self::SourceRegistry { process, .. } => {
                 // SAFETY: `memory` is the current exact page/claim held by
                 // this backing; registry identity is checked before release.
                 unsafe { Self::process_arena_for_memory(*process, memory) }.is_some()
@@ -237,7 +246,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
     unsafe fn account_page_commit_before_release(&self, memory: MemoryId, committed: usize) -> bool {
         match self {
             Self::SelectedSidecar(_) => true,
-            Self::SourceStartupRegular { process, .. } => {
+            Self::SourceStartupRegular { process, .. } | Self::SourceRegistry { process, .. } => {
                 // SAFETY: `memory` belongs to the current live source page;
                 // the helper rejects unregistered/foreign arena identities.
                 unsafe { Self::process_arena_for_memory(*process, memory) }.is_some()
@@ -256,7 +265,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
             Self::SelectedSidecar(arena) => {
                 arena.collect_scheduled_purge(config.page_size(), force)
             }
-            Self::SourceStartupRegular { process, .. } => {
+            Self::SourceStartupRegular { process, .. } | Self::SourceRegistry { process, .. } => {
                 // SAFETY: the page engine retains this process-owned backing
                 // and every page claim it has published; the source backing
                 // performs its normal process-wide purge traversal.
