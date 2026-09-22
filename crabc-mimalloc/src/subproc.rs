@@ -24,10 +24,10 @@
 //! relaxed current-thread count. It is not a Rust layout claim for
 //! `mi_subproc_t`: `theap_meta` and `theap_meta_lock` are one-way
 //! identity/private-futex capabilities, not C byte-layout or normal C backing
-//! routes. It supplies no subprocess list, heap projection, general
-//! `mi_stats_t` layout, or public subprocess API. It owns one source-shaped
-//! process arena-backing registry, plus the bounded VM and bitmap statistic
-//! fields that its staged source paths actually mutate.
+//! routes. It supplies no subprocess list, heap projection, or public
+//! subprocess API. It owns one source-shaped process arena-backing registry,
+//! one complete private `mi_stats_t` image, and the bitmap statistics that its
+//! staged source paths actually mutate.
 //! Its main-Heap slot retains only the canonical
 //! static identity publication from `mi_subproc_t::heap_main`; it is never a
 //! Rust heap accessor.
@@ -114,10 +114,9 @@ pub(crate) struct MainSubprocess {
     /// backing slots for source normal arenas. This is a Rust ownership group,
     /// never a complete `mi_subproc_t` layout projection.
     arena_backing: crate::arena::ProcessArenaBacking,
-    /// The selected source statistics share the subprocess lifetime with the
-    /// VM and arena producers. This is one private source-shaped owner for
-    /// the currently mapped `mi_subproc_t::stats` fields, not a public
-    /// `mi_stats_t` layout, reporting API, or generic event sink.
+    /// The complete source-ordered statistics image shares the subprocess
+    /// lifetime with VM, arena, and Heap producers. This is private state,
+    /// not a public `mi_stats_t` layout, reporting API, or generic sink.
     statistics: crate::statistics::SubprocessStatistics,
     /// Source bitmap events are unconditional even when optional statistics
     /// are disabled. This is a typed subset, not the full `mi_stats_t` ABI.
@@ -325,7 +324,7 @@ impl MainSubprocess {
     /// Returns the VM producer view of this subprocess's one statistics
     /// owner. Kept as a typed source-event boundary for existing OS paths.
     #[inline]
-    pub(crate) fn vm_statistics(&self) -> &crate::statistics::VmStatistics {
+    pub(crate) fn vm_statistics(&self) -> crate::statistics::VmStatistics<'_> {
         self.statistics.vm()
     }
 
@@ -333,8 +332,51 @@ impl MainSubprocess {
     /// owner. Kept as a typed source-event boundary for arena publication and
     /// delayed-purge paths.
     #[inline]
-    pub(crate) fn arena_statistics(&self) -> &crate::statistics::ArenaStatistics {
+    pub(crate) fn arena_statistics(&self) -> crate::statistics::ArenaStatistics<'_> {
         self.statistics.arena()
+    }
+
+    /// Records the completed source `init.c` default-Theap attachment.
+    /// This is separate from the Rust TLD registration count: source updates
+    /// `stats.threads` only after the initialized default Theap is installed.
+    #[inline]
+    pub(crate) fn record_statistics_thread_attached(&self) {
+        self.statistics.thread_attached();
+    }
+
+    /// Records `init.c`'s source thread-exit statistics transition.
+    #[inline]
+    pub(crate) fn record_statistics_thread_detached(&self) {
+        self.statistics.thread_detached();
+    }
+
+    /// Records source Heap list publication/removal after its corresponding
+    /// list/count transition has succeeded.
+    #[inline]
+    pub(crate) fn record_statistics_heap_linked(&self) {
+        self.statistics.heap_linked();
+    }
+
+    #[inline]
+    pub(crate) fn record_statistics_heap_unlinked(&self) {
+        self.statistics.heap_unlinked();
+    }
+
+    /// Records source non-detached Theap publication/release.
+    #[inline]
+    pub(crate) fn record_statistics_theap_linked(&self) {
+        self.statistics.theap_linked();
+    }
+
+    #[inline]
+    pub(crate) fn record_statistics_theap_unlinked(&self) {
+        self.statistics.theap_unlinked();
+    }
+
+    /// Records one source `theaps_lock` teardown retry before its yield.
+    #[inline]
+    pub(crate) fn record_statistics_heap_delete_wait(&self) {
+        self.statistics.heap_delete_waited();
     }
 
     /// Reserves the unique source-static ticket-zero path for a process

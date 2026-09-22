@@ -25,7 +25,10 @@
 // Main-Heap source destruction is in the `heap_destroy` child module.
 // The intrusive membership operations from `src/page-queue.c:40-55,126-423`
 // are isolated in the `page_queue` child module below.
-// `Heap` and `Theap` below are exact source-layout *prefixes* only.
+// `Heap` and `Theap` retain their source-ordered fields through the private
+// `mi_stats_t` tail. The represented statistics tail has its own exact source
+// merge/reset contract in `statistics.rs`; this does not turn either outer
+// Rust object, its private locks, or its lifetime into a public C ABI claim.
 // `ThreadLocalData` preserves all source field ordering and meaning, but its
 // lock is the documented private-futex boundary rather than a pthread ABI
 // object. The bounded process-main identity and its TLD ticket/count contract
@@ -48,6 +51,7 @@ use crate::config::{
 };
 use crate::lock::PrivateLock;
 use crate::random::TheapRandomImage;
+use crate::statistics::{HeapTheapStatistics, HeapTheapStatisticsSnapshot};
 use crate::subproc::MainSubprocess;
 
 pub(crate) type ThreadId = usize;
@@ -156,15 +160,15 @@ impl TheapOwner {
     }
 }
 
-/// Source-ordered prefix of `mi_heap_t` through `memid`.
+/// Source-ordered private image of `mi_heap_t` through its statistics tail.
 ///
 /// The process-static main attachment needs the selected normal-release heap
 /// fields through its theap list lock.  The source abandoned-page, arena-page,
 /// and lock regions are kept as valid zero/deferred state so their later
-/// lifecycle can extend this one image without reordering the prefix.  The
-/// trailing `mi_stats_t` is deliberately absent: statistics needs its own
-/// source merge and subprocess accounting contract, so this remains neither a
-/// complete `mi_heap_t` layout claim nor a first-class heap API.
+/// lifecycle can extend this one image without reordering the fields. The
+/// trailing statistics tail has the source `stats.c` merge/reset contract;
+/// this remains neither a complete `mi_heap_t` ABI claim nor a first-class
+/// heap API.
 #[repr(C)]
 pub(crate) struct Heap {
     subprocess: *mut MainSubprocess,
@@ -182,6 +186,7 @@ pub(crate) struct Heap {
     arena_pages: [AtomicPtr<ArenaPages>; MAX_ARENAS],
     arena_pages_lock: PrivateLock,
     memid: MemoryId,
+    statistics: HeapTheapStatistics,
 }
 
 impl Heap {
@@ -203,7 +208,60 @@ impl Heap {
             arena_pages: [const { AtomicPtr::new(null_mut()) }; MAX_ARENAS],
             arena_pages_lock: PrivateLock::new(),
             memid: MemoryId::none(),
+            statistics: HeapTheapStatistics::new(),
         }
+    }
+
+    /// Merges a detached Theap's source statistics into this owning Heap.
+    ///
+    /// This is only the `heap.c:173-181` statistics transition. The caller
+    /// owns the preceding list detachment and the following reference-count
+    /// transition; this method never changes either one.
+    #[inline]
+    pub(crate) fn merge_detached_theap_statistics(&self, theap: &Theap) {
+        self.statistics.merge_from_and_reset(&theap.statistics);
+    }
+
+    /// Merges a non-main Heap's complete source statistics into the selected
+    /// main Heap before non-main unlink/count teardown.
+    ///
+    /// This is the non-main `heap.c:205-211` branch. The caller supplies the
+    /// already-resolved source main Heap and owns all lifecycle state; this
+    /// method performs only the declaration-order relaxed merge/reset.
+    #[inline]
+    pub(crate) fn merge_non_main_statistics_into_main_heap_before_unlink(
+        &self,
+        main_heap: &Heap,
+    ) {
+        main_heap.statistics.merge_from_and_reset(&self.statistics);
+    }
+
+    /// Merges the main Heap's complete source statistics into its owning
+    /// subprocess immediately before source heap unlink/count teardown.
+    ///
+    /// This is only `heap.c:27-35,205-211`'s statistics transition. The
+    /// caller must have selected the source main-Heap branch; a non-main Heap
+    /// instead merges into the main Heap at `heap.c:205-211`. It owns every
+    /// list, counter, memory, and lifetime transition around this call. A
+    /// Heap with no initialized subprocess has no source destination and
+    /// returns `false` without changing either record.
+    #[inline]
+    pub(crate) fn merge_main_heap_statistics_into_owning_subprocess_before_unlink(&self) -> bool {
+        let Some(subprocess) = NonNull::new(self.subprocess) else {
+            return false;
+        };
+        // SAFETY: the source heap-free caller retains the initialized
+        // subprocess and Heap across this relaxed per-field merge/reset.
+        unsafe { subprocess.as_ref() }
+            .statistics()
+            .merge_heap_and_reset(&self.statistics);
+        true
+    }
+
+    /// Read-only source-event observation for focused differential evidence.
+    #[inline]
+    pub(crate) fn statistics_snapshot(&self) -> HeapTheapStatisticsSnapshot {
+        self.statistics.snapshot()
     }
 
     /// Records just the kind-only `memid_static` image that pinned
@@ -4906,11 +4964,10 @@ const fn detached_thread_local_ptr() -> *mut ThreadLocalData {
 
 /// Source-layout prefix of `mi_theap_t` through `memid`.
 ///
-/// This prefix contains every field required by the default direct-page
-/// cache, page queues, and exclusive local page accounting. `mi_stats_t`
-/// follows `memid` in C but is not represented: statistics require their own
-/// lifecycle and merge contract. Consequently this Rust type intentionally
-/// has no complete-`mi_theap_t` size claim.
+/// This private image contains every source field through the `mi_stats_t`
+/// tail. The tail's producer and merge/reset contract is owned below rather
+/// than being inferred from outer Theap lifetime operations. Consequently this
+/// type still makes no complete-`mi_theap_t` ABI-size or object-lifetime claim.
 #[repr(C)]
 pub(crate) struct Theap {
     // Keep first for `internal.h:_mi_theap_get_free_small_page`.
@@ -4938,6 +4995,7 @@ pub(crate) struct Theap {
     is_detached: bool,
     pages: [PageQueue; BIN_COUNT],
     memid: MemoryId,
+    statistics: HeapTheapStatistics,
 }
 
 impl Theap {
@@ -4972,6 +5030,7 @@ impl Theap {
             is_detached: true,
             pages: EMPTY_PAGE_QUEUES,
             memid: MemoryId::static_empty(),
+            statistics: HeapTheapStatistics::new(),
         }
     }
 
@@ -5742,6 +5801,79 @@ impl Theap {
         self.heap.load(core::sync::atomic::Ordering::Relaxed)
     }
 
+    /// Records `page.c:_mi_page_retire` after its queue eligibility check and
+    /// before the source writes `retire_expire`.
+    #[inline]
+    pub(crate) fn record_page_retired(&self) {
+        self.statistics.page_retired();
+    }
+
+    /// Records the completed `mi_page_queue_find_free_ex` scan in source
+    /// order: total visited pages first, then one scan invocation.
+    #[inline]
+    pub(crate) fn record_page_search(&self, count: usize) {
+        self.statistics.pages_searched(count);
+    }
+
+    /// Records the successful fresh `arena.c` registration after its PageMap
+    /// range is visible. `bin` is the source page-statistics bin.
+    #[inline]
+    pub(crate) fn record_page_registered(&self, bin: usize) -> bool {
+        self.statistics.page_registered(bin)
+    }
+
+    /// Records `_mi_arenas_page_free` before it returns the source span.
+    #[inline]
+    pub(crate) fn record_page_released(&self, bin: usize) -> bool {
+        self.statistics.page_released(bin)
+    }
+
+    /// Records the successful mapped abandoned-page claim in
+    /// `arena.c:761-765` for this new owning Theap.
+    #[inline]
+    pub(crate) fn record_mapped_page_reclaimed_on_alloc(&self) {
+        self.statistics.mapped_page_reclaimed_on_alloc();
+    }
+
+    /// Records one completed source abandonment publication for this Theap.
+    #[inline]
+    pub(crate) fn record_page_abandoned(&self) {
+        self.statistics.page_abandoned();
+    }
+
+    /// Records the pre-abandon part of
+    /// `_mi_arenas_page_try_reabandon_to_mapped`.
+    #[inline]
+    pub(crate) fn record_page_reabandoned_from_full(&self) {
+        self.statistics.page_reabandoned_from_full();
+    }
+
+    /// Merges this Theap's source statistics into its currently attached Heap
+    /// after a complete source collection. This mirrors
+    /// `theap.c:_mi_theap_merge_stats`; it performs no callback, queue, arena,
+    /// list, reference-count, or attachment transition.
+    ///
+    /// The caller must retain the initialized Theap and its Heap for the
+    /// complete call, as the source collector does. A detached/unpublished
+    /// Theap has no destination and returns `false` without changing either
+    /// statistics record.
+    #[inline]
+    pub(crate) fn merge_statistics_into_owning_heap_after_collection(&self) -> bool {
+        let Some(heap) = NonNull::new(self.heap()) else {
+            return false;
+        };
+        // SAFETY: the source collector's caller owns the same initialized
+        // Theap/Heap lifetime exclusion required by `_mi_theap_merge_stats`.
+        unsafe { heap.as_ref() }.statistics.merge_from_and_reset(&self.statistics);
+        true
+    }
+
+    /// Read-only source-event observation for focused differential evidence.
+    #[inline]
+    pub(crate) fn statistics_snapshot(&self) -> HeapTheapStatisticsSnapshot {
+        self.statistics.snapshot()
+    }
+
     /// Checks the exact TLD pointer saved by source `_mi_theap_init`.
     ///
     /// This is intentionally narrower than owner identity matching: the
@@ -6014,7 +6146,7 @@ const _: [(); 8] = [(); align_of::<Page>()];
 // layout assertion.
 const _: [(); 136] = [(); size_of::<TheapRandomImage>()];
 const _: [(); 4] = [(); align_of::<TheapRandomImage>()];
-const _: [(); 3736] = [(); size_of::<Theap>()];
+const _: [(); 8104] = [(); size_of::<Theap>()];
 const _: [(); 8] = [(); align_of::<Theap>()];
 const _: [(); 129] = [(); PAGES_DIRECT];
 const _: [(); 74] = [(); BIN_FULL];
@@ -6770,9 +6902,7 @@ mod tests {
         record!("offsetof.mi_theap_t.page_count", offset_of!(Theap, page_count));
         record!("offsetof.mi_theap_t.pages", offset_of!(Theap, pages));
         record!("offsetof.mi_theap_t.memid", offset_of!(Theap, memid));
-        // This exact prefix ends where the intentionally absent C `stats`
-        // field begins; it is not a complete `sizeof(mi_theap_t)` claim.
-        record!("offsetof.mi_theap_t.stats", size_of::<Theap>());
+        record!("offsetof.mi_theap_t.stats", offset_of!(Theap, statistics));
         record!("sizeof.mi_arena_t", size_of::<Arena>());
         record!("alignof.mi_arena_t", align_of::<Arena>());
         record!("offsetof.mi_arena_t.memid", offset_of!(Arena, memid));
@@ -8021,8 +8151,50 @@ mod tests {
         assert_eq!(offset_of!(Theap, random), 1_080);
         assert_eq!(offset_of!(Theap, pages), 1_312);
         assert_eq!(offset_of!(Theap, memid), 3_712);
-        assert_eq!(size_of::<Theap>(), 3_736);
+        assert_eq!(offset_of!(Theap, statistics), 3_736);
+        assert_eq!(size_of::<Theap>(), 8_104);
         assert_eq!(align_of::<Theap>(), 8);
+    }
+
+    #[test]
+    fn detached_theap_statistics_merge_into_the_heap_and_reset_the_source() {
+        let heap = Heap::bootstrap_empty();
+        let theap = Theap::empty();
+        assert!(theap.record_page_registered(5));
+        theap.record_page_retired();
+        theap.record_page_search(3);
+
+        heap.merge_detached_theap_statistics(&theap);
+
+        let heap_statistics = heap.statistics_snapshot();
+        assert_eq!(heap_statistics.pages_total, 1);
+        assert_eq!(heap_statistics.pages_current, 1);
+        assert_eq!(heap_statistics.pages_retire, 1);
+        assert_eq!(heap_statistics.page_searches, 3);
+        assert_eq!(heap_statistics.page_searches_count, 1);
+        assert_eq!(heap_statistics.page_bin_total[5], 1);
+        assert_eq!(heap_statistics.page_bin_current[5], 1);
+        assert_eq!(theap.statistics_snapshot().pages_total, 0);
+        assert_eq!(theap.statistics_snapshot().page_searches_count, 0);
+    }
+
+    #[test]
+    fn main_heap_statistics_merge_into_the_shared_subprocess_owner_and_reset() {
+        let subprocess = MainSubprocess::new();
+        let mut main_heap = Heap::bootstrap_empty();
+        main_heap.subprocess = core::ptr::from_ref(&subprocess).cast_mut();
+        assert!(main_heap.statistics.page_registered(7));
+        main_heap.statistics.page_retired();
+
+        assert!(main_heap.merge_main_heap_statistics_into_owning_subprocess_before_unlink());
+
+        let subprocess_statistics = subprocess.statistics().source_snapshot();
+        assert_eq!(subprocess_statistics.pages_total, 1);
+        assert_eq!(subprocess_statistics.pages_current, 1);
+        assert_eq!(subprocess_statistics.pages_retire, 1);
+        assert_eq!(subprocess_statistics.page_bin_total[7], 1);
+        assert_eq!(main_heap.statistics_snapshot().pages_total, 0);
+        assert_eq!(main_heap.statistics_snapshot().pages_retire, 0);
     }
 
     fn os_abandoned_test_page(heap: &Heap) -> Page {

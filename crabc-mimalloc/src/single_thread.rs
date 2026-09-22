@@ -237,6 +237,17 @@ fn page_queue_bin(page: &Page) -> Option<usize> {
     }
 }
 
+/// Source `page-queue.c:_mi_page_stats_bin`: full-queue membership does not
+/// change the accounting bin, while a huge page always belongs to `BIN_HUGE`.
+#[inline]
+fn page_statistics_bin(page: &Page) -> Option<usize> {
+    if page_is_huge(page) {
+        Some(BIN_HUGE)
+    } else {
+        size_class::bin(page.block_size())
+    }
+}
+
 /// One failed source owner-side page collection boundary.
 ///
 /// These are private invalid-owner/lifecycle observations. The collector
@@ -35898,6 +35909,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
 
         let mut page = first;
+        let mut search_count = 0usize;
         let mut candidate: *mut Page = core::ptr::null_mut();
         let mut candidate_limit = 0isize;
         let mut page_full_retain = if block_size > SMALL_MAX_OBJ_SIZE {
@@ -35911,6 +35923,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             // before a source transition can move either current or an older
             // candidate to the full queue or release that candidate.
             let next = unsafe { (*page).next() };
+            search_count = search_count.wrapping_add(1);
             candidate_limit -= 1;
             let page_nonnull = match NonNull::new(page) {
                 Some(page) => page,
@@ -35975,6 +35988,11 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             }
             page = next;
         }
+
+        // `mi_page_queue_find_free_ex` records both fields after its scan,
+        // including the zero-visit invocation case, before it selects or
+        // extends the best candidate.
+        self.session.theap().record_page_search(search_count);
 
         if let Some(candidate) = NonNull::new(candidate) {
             let immediate = match self.page_make_immediate(candidate) {
@@ -36166,8 +36184,13 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             if test_panic_claim_closure {
                 panic!("focused mapped-abandoned claim closure unwind");
             }
+            // The source updates the newly selected Theap's statistics after
+            // the matching bitmap/count claim and before false collection.
+            // `target_theap` remains initialized through the complete raw
+            // adoption call by this engine's existing lifetime proof.
+            let statistics_theap = target_theap;
             let adoption = unsafe {
-                abandoned::try_adopt_retained(
+                abandoned::try_adopt_retained_with_after_claim(
                     map,
                     self.thread_sequence,
                     target_theap,
@@ -36175,6 +36198,11 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                     |slice_index| {
                         let start = arena.slice_start(slice_index)?;
                         NonNull::new(access.page_map().checked_lookup(start))
+                    },
+                    || unsafe {
+                        statistics_theap
+                            .as_ref()
+                            .record_mapped_page_reclaimed_on_alloc();
                     },
                 )
             };
@@ -36417,11 +36445,19 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             ));
         }
 
+        // Source `_mi_arenas_page_try_reabandon_to_mapped` first adjusts its
+        // existing record before it calls the ordinary abandonment publisher.
+        self.session.theap().record_page_reabandoned_from_full();
         // SAFETY: source order is false collection, queue detach, then
         // abandoned identity/map publication and low-bit unown. `map` binds
         // this selected static-main arena's exact bitmap/count pair formed
         // under the short static-Heap lock before the A-to-B claim.
-        match unsafe { abandoned::abandon_after_collect(page, Some(map)) } {
+        match unsafe {
+            abandoned::abandon_after_collect_with_before_unown(page, Some(map), || {
+                self.session.theap().record_page_abandoned();
+                Ok(())
+            })
+        } {
             Ok(AbandonResult::UnownedMapped) => {
                 Ok(ReabandonReclaimedRegularOutcome::Reabandoned)
             }
@@ -38608,6 +38644,14 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             return None;
         }
 
+        // `arena.c:1110-1118` records the successful PageMap registration
+        // before the following page-local extension. A later rollback takes
+        // the matched terminal-release record in `rollback_fresh`.
+        let statistics_bin = unsafe { page_statistics_bin(page.as_ref()) }
+            .expect("fresh source page has one statistics bin");
+        let statistics_recorded = self.session.theap().record_page_registered(statistics_bin);
+        debug_assert!(statistics_recorded);
+
         if self.extend_page_before_allocation(page).is_err() {
             self.rollback_fresh(page, slice_start, page_map_size, memory, true, true);
             return None;
@@ -38632,6 +38676,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         arena_registered: bool,
         page_map_registered: bool,
     ) {
+        let statistics_bin = unsafe { page_statistics_bin(page.as_ref()) };
         if page_map_registered {
             // SAFETY: this serial rollback writes the same range just
             // registered above; no allocation was handed out.
@@ -38653,6 +38698,11 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // the pinned session owns its terminal metadata transition.
         if !self.account_page_commit_before_release(page, memory) { return; }
         let _ = unsafe { self.session.retire_page(&mut *page.as_ptr()) };
+        if page_map_registered {
+            let Some(statistics_bin) = statistics_bin else { return; };
+            let statistics_recorded = self.session.theap().record_page_released(statistics_bin);
+            debug_assert!(statistics_recorded);
+        }
         // SAFETY: `memory` is the still-outstanding claim consumed by this
         // failed attempt; no successful page exists for its slices.
         let _ = unsafe { self.arena.release(memory) };
@@ -38841,7 +38891,12 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // SAFETY: false collection, regular queue/direct/count detachment,
         // and this exact static-main bitmap/count capability establish the
         // pinned `page.c` then `arena.c` abandonment order.
-        let result = unsafe { abandoned::abandon_after_collect(page, Some(&map)) };
+        let result = unsafe {
+            abandoned::abandon_after_collect_with_before_unown(page, Some(&map), || {
+                self.session.theap().record_page_abandoned();
+                Ok(())
+            })
+        };
         match result {
             Ok(AbandonResult::UnownedMapped) if used < reserved => Ok(()),
             Ok(AbandonResult::UnownedUnmapped) if used == reserved => Ok(()),
@@ -38912,6 +38967,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             } else {
                 RETIRE_CYCLES / 4
             };
+            // Source increments `pages_retire` before it writes the expiry
+            // byte and publishes the retired-bin bounds.
+            self.session.theap().record_page_retired();
             // SAFETY: callers enter only after source owner accounting proved
             // `used == 0`; this session exclusively owns the ordinary byte.
             unsafe { Page::set_retire_expire_at(page, cycles) };
@@ -38924,6 +38982,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let Some(page_pointer) = NonNull::new(page) else {
             return false;
         };
+        let statistics_bin = unsafe { page_statistics_bin(page_pointer.as_ref()) };
         // SAFETY: the caller retains initialized queue-linked metadata. This
         // short read occurs before link mutation and encodes the source
         // no-live-client condition required before terminal whole-page reset.
@@ -38997,6 +39056,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 if retired.is_none() {
                     return false;
                 }
+                let Some(statistics_bin) = statistics_bin else { return false; };
+                let statistics_recorded = self.session.theap().record_page_released(statistics_bin);
+                debug_assert!(statistics_recorded);
                 // SAFETY: source ordering has unregistered the page before
                 // this exact outstanding external-arena claim is returned to
                 // its free bitmap.
@@ -39048,6 +39110,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 {
                     return false;
                 }
+                let Some(statistics_bin) = statistics_bin else { return false; };
+                let statistics_recorded = self.session.theap().record_page_released(statistics_bin);
+                debug_assert!(statistics_recorded);
                 // SAFETY: `published` owns the unique raw release right and
                 // all map/alias/primary metadata predecessors now completed.
                 match unsafe { published.reclaim() } {
@@ -39115,6 +39180,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         if unsafe { self.session.retire_page(&mut *page.as_ptr()) }.is_none() {
             return false;
         }
+        let Some(statistics_bin) = page_statistics_bin(page_ref) else { return false; };
+        let statistics_recorded = self.session.theap().record_page_released(statistics_bin);
+        debug_assert!(statistics_recorded);
         // SAFETY: map and ordinary page-image removal now precede return of
         // this exact one outstanding external-arena span.
         unsafe { self.arena.release(memory) }
@@ -39181,6 +39249,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         {
             return false;
         }
+        let Some(statistics_bin) = page_statistics_bin(page_ref) else { return false; };
+        let statistics_recorded = self.session.theap().record_page_released(statistics_bin);
+        debug_assert!(statistics_recorded);
         // SAFETY: this token retains the unique published mapping release
         // right after every visible page/metadata predecessor is gone.
         match unsafe { published.reclaim() } {

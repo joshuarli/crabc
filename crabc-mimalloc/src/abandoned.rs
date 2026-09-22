@@ -3107,6 +3107,50 @@ pub(crate) unsafe fn try_adopt_retained<M: MappedAbandonedPages + ?Sized, F>(
 where
     F: FnMut(usize) -> Option<NonNull<Page>>,
 {
+    // SAFETY: this form has no source event between the bitmap/count claim
+    // and the source abandoned-owner collection.
+    unsafe {
+        try_adopt_retained_with_after_claim(
+            map,
+            thread_sequence,
+            target_theap,
+            target_thread,
+            resolve,
+            || {},
+        )
+    }
+}
+
+/// Retained mapped-page adoption with the source event boundary after a
+/// successful bitmap/count claim and before abandoned-owner collection.
+///
+/// `arena.c:761-765` decrements the target Heap's abandoned-count bitmap
+/// accounting, then updates the target Theap's relaxed `pages_abandoned` and
+/// `pages_reclaim_on_alloc` records before `_mi_page_free_collect`.  The
+/// bounded engine has no generic statistics observer, so this private hook
+/// lets its owning event record occupy that exact source position.
+///
+/// # Safety
+///
+/// The requirements are those of [`try_adopt_retained`]. `after_claim` must
+/// neither release, reuse, nor otherwise mutate the selected page; the
+/// winning low owner bit and page lifetime remain exclusively owned here.
+pub(crate) unsafe fn try_adopt_retained_with_after_claim<
+    M: MappedAbandonedPages + ?Sized,
+    F,
+    H,
+>(
+    map: &M,
+    thread_sequence: usize,
+    target_theap: NonNull<Theap>,
+    target_thread: LiveThreadId,
+    mut resolve: F,
+    after_claim: H,
+) -> Result<Option<AdoptedPage>, RetainedAdoptFailure>
+where
+    F: FnMut(usize) -> Option<NonNull<Page>>,
+    H: FnOnce(),
+{
     let mut claimed_page = None;
     let claimed = map.try_claim(thread_sequence, |slice_index| {
         let Some(page) = resolve(slice_index) else {
@@ -3136,6 +3180,8 @@ where
         }
     };
     let fail = |error| RetainedAdoptFailure { page, error };
+
+    after_claim();
 
     // Source arena claim first drains while the page retains its abandoned
     // identity, then page reclaim reassociates and completes its live
