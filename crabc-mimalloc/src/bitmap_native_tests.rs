@@ -45,11 +45,11 @@ impl Transcript {
         }
     }
     fn binned(&mut self, bitmap: &BinnedBitmapView<'_>) {
-        let stats = unsafe { &*bitmap.subprocess() }.bitmap_statistics();
-        for bin in &stats.chunk_bins {
-            self.value(crate::atomic::i64_load_relaxed(&bin.total) as usize);
-            self.value(crate::atomic::i64_load_relaxed(&bin.peak) as usize);
-            self.value(crate::atomic::i64_load_relaxed(&bin.current) as usize);
+        let stats = unsafe { &*bitmap.subprocess() }.bitmap_statistics().snapshot();
+        for bin in stats.chunk_bins.into_iter().take(ChunkBin::MAPPED_COUNT) {
+            self.value(bin.total as usize);
+            self.value(bin.peak as usize);
+            self.value(bin.current as usize);
         }
         self.value(bitmap.max_accessed_chunk());
         self.value(bitmap.highest_clear_relaxed().unwrap_or(usize::MAX));
@@ -74,12 +74,12 @@ fn binned_images_require_live_isolated_statistics_owners() {
         let bitmap = storage.binned(512);
         bitmap.set_range(0, 512).unwrap();
         assert_eq!(bitmap.try_find_and_claim(0, 1), Some(0));
-        let stats = unsafe { &*bitmap.subprocess() }.bitmap_statistics();
-        assert_eq!(crate::atomic::i64_load_relaxed(&stats.chunk_bins[0].current), 1);
+        let stats = unsafe { &*bitmap.subprocess() }.bitmap_statistics().snapshot();
+        assert_eq!(stats.chunk_bins[0].current, 1);
         let mut other_storage = Storage::new();
         let other = other_storage.binned(512);
-        let other_stats = unsafe { &*other.subprocess() }.bitmap_statistics();
-        assert_eq!(crate::atomic::i64_load_relaxed(&other_stats.chunk_bins[0].current), 0);
+        let other_stats = unsafe { &*other.subprocess() }.bitmap_statistics().snapshot();
+        assert_eq!(other_stats.chunk_bins[0].current, 0);
     }
     // A quiesced malformed header must not publish a view whose otherwise
     // safe bin mutation could dereference a missing statistics owner.
@@ -183,18 +183,18 @@ fn emit_native_bitmap_component_trace() {
     }
     let bitmap = storage.bitmap(512);
     let subprocess = crate::subproc::MainSubprocess::new();
-    let counter = &subprocess.bitmap_statistics().pages_unabandon_busy_wait;
+    let statistics = subprocess.bitmap_statistics();
     bitmap.set_range(7, 1).unwrap();
     assert_eq!(bitmap.clear_once_set(&subprocess, 7), Some(()));
-    out.value(crate::atomic::i64_load_relaxed(counter) as usize);
+    out.value(statistics.snapshot().pages_unabandon_busy_wait as usize);
     std::thread::scope(|scope| {
         let waiter = scope.spawn(|| bitmap.clear_once_set(&subprocess, 7));
-        while crate::atomic::i64_load_relaxed(counter) == 0 { std::thread::yield_now(); }
+        while statistics.snapshot().pages_unabandon_busy_wait == 0 { std::thread::yield_now(); }
         bitmap.set_range(7, 1).unwrap();
         assert_eq!(waiter.join().unwrap(), Some(()));
     });
-    out.value(crate::atomic::i64_load_relaxed(counter) as usize);
-    assert_eq!(crate::atomic::i64_load_relaxed(counter), 1);
+    out.value(statistics.snapshot().pages_unabandon_busy_wait as usize);
+    assert_eq!(statistics.snapshot().pages_unabandon_busy_wait, 1);
     out.bitmap(&bitmap, 0, bitmap.max_bits() - 1);
 }
 
@@ -287,11 +287,11 @@ fn concurrent_binned_claims_and_returns_conserve_every_bit_and_reset_bins() {
     });
     assert_eq!(bitmap.is_set_range(0, bitmap.max_bits()), Some(true));
     for chunk in 0..bitmap.chunk_count() { assert_eq!(bitmap.chunk_bin(chunk), Some(ChunkBin::None)); }
-    let stats = unsafe { &*bitmap.subprocess() }.bitmap_statistics();
-    for bin in &stats.chunk_bins {
-        assert_eq!(crate::atomic::i64_load_relaxed(&bin.current), 0);
-        let peak = crate::atomic::i64_load_relaxed(&bin.peak);
-        let total = crate::atomic::i64_load_relaxed(&bin.total);
+    let stats = unsafe { &*bitmap.subprocess() }.bitmap_statistics().snapshot();
+    for bin in stats.chunk_bins.into_iter().take(ChunkBin::MAPPED_COUNT) {
+        assert_eq!(bin.current, 0);
+        let peak = bin.peak;
+        let total = bin.total;
         assert!(peak >= 0 && peak <= total);
     }
 }

@@ -6163,7 +6163,7 @@ mod tests {
     #[test]
     fn oracle_layout_probe_emits_machine_record() {
         macro_rules! record {
-            ($name:literal, $value:expr) => {
+            ($name:expr, $value:expr) => {
                 std::println!("{}={}", $name, $value);
             };
         }
@@ -6903,17 +6903,11 @@ mod tests {
         record!("offsetof.mi_theap_t.pages", offset_of!(Theap, pages));
         record!("offsetof.mi_theap_t.memid", offset_of!(Theap, memid));
         record!("offsetof.mi_theap_t.stats", offset_of!(Theap, statistics));
-        // This is the private source statistics tail, not an outer Heap or
-        // Theap ABI claim.  `LAYOUT_PROBE` reads the same two facts from the
-        // pinned normal-release C `mi_stats_t` image.
-        record!(
-            "sizeof.mi_stats_t",
-            size_of::<HeapTheapStatistics>()
-        );
-        record!(
-            "alignof.mi_stats_t",
-            align_of::<HeapTheapStatistics>()
-        );
+        // These records cover only the private source statistics tail. They
+        // do not promote an outer Heap or Theap ABI claim.
+        for (name, value) in HeapTheapStatistics::layout_records() {
+            record!(name, value);
+        }
         record!("sizeof.mi_arena_t", size_of::<Arena>());
         record!("alignof.mi_arena_t", align_of::<Arena>());
         record!("offsetof.mi_arena_t.memid", offset_of!(Arena, memid));

@@ -118,9 +118,6 @@ pub(crate) struct MainSubprocess {
     /// lifetime with VM, arena, and Heap producers. This is private state,
     /// not a public `mi_stats_t` layout, reporting API, or generic sink.
     statistics: crate::statistics::SubprocessStatistics,
-    /// Source bitmap events are unconditional even when optional statistics
-    /// are disabled. This is a typed subset, not the full `mi_stats_t` ABI.
-    bitmap_statistics: crate::bitmap::BitmapStatistics,
     thread_count: AtomicUsize,
     thread_total_count: AtomicUsize,
     /// The one source `subproc->heap_main` identity selected for this
@@ -276,7 +273,6 @@ impl MainSubprocess {
         Self {
             arena_backing: crate::arena::ProcessArenaBacking::new(),
             statistics: crate::statistics::SubprocessStatistics::new(),
-            bitmap_statistics: crate::bitmap::BitmapStatistics::new(),
             thread_count: AtomicUsize::new(0),
             thread_total_count: AtomicUsize::new(0),
             main_heap: AtomicPtr::new(core::ptr::null_mut()),
@@ -301,8 +297,11 @@ impl MainSubprocess {
         &PROCESS_MAIN_SUBPROCESS
     }
 
-    pub(crate) fn bitmap_statistics(&self) -> &crate::bitmap::BitmapStatistics {
-        &self.bitmap_statistics
+    /// Returns bitmap producers' view into this subprocess's one source
+    /// statistics image. This owns no duplicate bitmap counters.
+    #[inline]
+    pub(crate) fn bitmap_statistics(&self) -> crate::statistics::BitmapStatistics<'_> {
+        self.statistics.bitmap()
     }
 
     /// Returns this subprocess's only source normal-arena backing owner.

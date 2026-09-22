@@ -50,36 +50,9 @@ use crate::atomic::{
 };
 use crate::bits::{bsf, bsr, clz, ctz, popcount};
 use crate::config::BCHUNK_BITS;
-use crate::statistics::StatCount;
-
 #[cfg(test)]
 #[path = "bitmap_native_tests.rs"]
 mod native_tests;
-
-// Statistics translation: Copyright (c) 2018-2026 Microsoft Research, Daan
-// Leijen, MIT. Source: pinned `src/stats.c:25-63`, `include/mimalloc-stats.h:
-// 29-116`, and `include/mimalloc/internal.h:394-398`.
-/// The unconditional bitmap subset of `mi_subproc_t::stats`, not a
-/// `mi_stats_t` ABI image. Even `MI_STAT=0` executes these source events.
-/// `stats.c::mi_stat_update_mt` updates current, then peak, then positive
-/// total with relaxed signed 64-bit atomics; observations are not snapshots.
-pub(crate) struct BitmapStatistics {
-    chunk_bins: [StatCount; 5],
-    pages_unabandon_busy_wait: crate::atomic::AtomicI64Value,
-}
-
-impl BitmapStatistics {
-    pub(crate) const fn new() -> Self {
-        Self {
-            chunk_bins: [const { StatCount::new() }; 5],
-            pages_unabandon_busy_wait: crate::atomic::AtomicI64Value::new(0),
-        }
-    }
-
-    fn busy_wait(&self) {
-        crate::atomic::i64_add_relaxed(&self.pages_unabandon_busy_wait, 1);
-    }
-}
 
 /// `MI_BFIELD_BITS` for the configured 64-bit Linux target profiles.
 pub(crate) const BFIELD_BITS: usize = usize::BITS as usize;
@@ -2062,11 +2035,11 @@ impl<'storage> BinnedBitmapView<'storage> {
             let bin = ChunkBin::from_index(index);
             if bin == selected {
                 if self.bin_map(bin).set_run(chunk_index, 1).is_some_and(|change| change.all_transitioned()) {
-                    stats.chunk_bins[index].update(1);
+                    assert!(stats.chunk_bin_update(index, 1));
                 }
             } else {
                 if self.bin_map(bin).clear_run(chunk_index, 1).is_some_and(|change| change.all_transitioned()) {
-                    stats.chunk_bins[index].update(-1);
+                    assert!(stats.chunk_bin_update(index, -1));
                 }
             }
         }

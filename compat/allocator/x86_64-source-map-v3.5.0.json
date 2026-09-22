@@ -1353,7 +1353,7 @@
     },
     {
       "id": "statistics-collection",
-      "source_scope": "Thread, Heap, and subprocess statistics maintenance and source-order aggregation for the selected unconditional MI_STAT=0 producers.",
+      "source_scope": "Thread, Heap, bitmap, and subprocess statistics maintenance and source-order aggregation for the selected unconditional MI_STAT=0 producers.",
       "source_anchor": {
         "member": "src/stats.c",
         "start_line": 20,
@@ -1363,22 +1363,26 @@
       "rust_modules": [
         "crabc_mimalloc::arena",
         "crabc_mimalloc::arena_owned",
+        "crabc_mimalloc::bitmap",
         "crabc_mimalloc::single_thread",
         "crabc_mimalloc::statistics",
         "crabc_mimalloc::subproc",
         "crabc_mimalloc::types"
       ],
       "status": "partial",
-      "difference": "Each private `Theap`, `Heap`, and `MainSubprocess` owner now stores the complete pinned v3.5.0 `mi_stats_t` image, including its `size`/`version`, every `MI_STAT_FIELDS()` member in declaration order, reserved records, and 74/74/6 bin tails; the native C/Rust layout gate compares its size and alignment to the pinned release image. `MainSubprocess` has one shared image: existing VM and arena APIs are relaxed projections into it, not separate event owners. The selected MI_STAT=0 engine records successful fresh page registration/release, retirement, page-queue scans including zero visits, selected mapped abandoned-page reclaim after bitmap/count claim and before collection, and selected abandonment/reabandon publication; VM and arena producers retain their prior source positions. `HeapTheapStatistics::merge_from_and_reset` uses `src/stats.c`'s per-field relaxed sampling/add/reset order, so a merge is not an atomic snapshot. Theap-to-Heap, non-main-Heap-to-main-Heap, and main-Heap-to-subprocess hooks carry only their source merge/reset transitions; their lifecycle callers are separate. No public `mi_stats_t` ABI, statistics reporting/formatting/callback API, complete subprocess or general Heap/Theap lifecycle, MI_STAT>0 allocation/page-commit producers, all free/reclaim/unabandon/arena-transfer producers, M2 completion, or M7 completion is claimed.",
+      "difference": "Each private `Theap`, `Heap`, and `MainSubprocess` owner now stores the complete pinned v3.5.0 `mi_stats_t` image, including its `size`/`version`, every `MI_STAT_FIELDS()` member in declaration order, reserved records, and 74/74/6 bin tails; the native C/Rust layout gate compares every member and tail offset plus count/counter and complete image sizes/alignment to the pinned release image. `MainSubprocess` has one shared image: existing VM and arena APIs are relaxed projections into it, not separate event owners. The selected MI_STAT=0 engine records successful fresh page registration/release, retirement, page-queue scans including zero visits, selected mapped abandoned-page reclaim after bitmap/count claim and before collection, and selected abandonment/reabandon publication, clear-once bitmap busy waits, and mapped binned bitmap chunk-bin transitions; VM and arena producers retain their prior source positions. `HeapTheapStatistics::merge_from_and_reset` uses `src/stats.c`'s per-field relaxed sampling/add/reset order, so a merge is not an atomic snapshot. Theap-to-Heap, non-main-Heap-to-main-Heap, and main-Heap-to-subprocess hooks carry only their source merge/reset transitions; their lifecycle callers are separate. No public `mi_stats_t` ABI, statistics reporting/formatting/callback API, complete subprocess or general Heap/Theap lifecycle, MI_STAT>0 allocation/page-commit producers, all other free/reclaim/unabandon/arena-transfer producers, M2 completion, or M7 completion is claimed.",
       "evidence": [
         "compat/allocator/m2-vm-x86_64-v3.5.0.fragment.json",
         "compat/allocator/m2_arena_owned_x86_64.c",
         "compat/allocator/m2_vm_x86_64.py",
+        "compat/allocator/run.py",
         "compat/allocator/test_m2_vm_x86_64.py",
         "crabc-mimalloc/src/abandoned.rs",
         "crabc-mimalloc/src/arena.rs",
         "crabc-mimalloc/src/arena_owned.rs",
         "crabc-mimalloc/src/arena_purge.rs",
+        "crabc-mimalloc/src/bitmap.rs",
+        "crabc-mimalloc/src/bitmap_native_tests.rs",
         "crabc-mimalloc/src/single_thread.rs",
         "crabc-mimalloc/src/statistics.rs",
         "crabc-mimalloc/src/subproc.rs",
@@ -1637,6 +1641,6 @@
     "unfinished_unit_count": 28,
     "unit_count": 34,
     "unit_ids_sha256": "dca679d8587cb38bcf6e6c62379284ed35a55d1b7991d07b0d30eac767670052",
-    "units_sha256": "0c4c355ec5a63f2c63263426919d3a0c0048fc5f0c6745728cfb55eac368044b"
+    "units_sha256": "66115c832bb171e721bb6370b2e2a89c64592aa75a66c23780d1cfcd4bcc44af"
   }
 }

@@ -164,6 +164,87 @@ impl<'statistics> ArenaStatistics<'statistics> {
     }
 }
 
+/// The source bitmap producers' typed view into the one subprocess image.
+///
+/// Pinned `src/bitmap.c:109-129` increases `pages_unabandon_busy_wait` when
+/// the clear-once reader has to wait, and `src/bitmap.c:1643-1647` updates
+/// the first five `chunk_bins` records as bin-map bits transition. Both write
+/// `mi_subproc_t::stats`; this view deliberately owns no duplicate record.
+#[derive(Clone, Copy)]
+pub(crate) struct BitmapStatistics<'statistics> {
+    statistics: &'statistics HeapTheapStatistics,
+}
+
+/// One relaxed observation of a source chunk-bin count record.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct BitmapChunkStatisticsSnapshot {
+    pub(crate) total: i64,
+    pub(crate) peak: i64,
+    pub(crate) current: i64,
+}
+
+/// Read-only bitmap statistics from the shared subprocess source image.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct BitmapStatisticsSnapshot {
+    pub(crate) chunk_bins: [BitmapChunkStatisticsSnapshot; STAT_CHUNK_BIN_COUNT],
+    pub(crate) pages_unabandon_busy_wait: i64,
+}
+
+impl<'statistics> BitmapStatistics<'statistics> {
+    #[inline]
+    const fn from_statistics(statistics: &'statistics HeapTheapStatistics) -> Self {
+        Self { statistics }
+    }
+
+    /// Records the source's one clear-once reader busy-wait observation.
+    #[inline]
+    pub(crate) fn busy_wait(&self) {
+        self.statistics.pages_unabandon_busy_wait.increase(1);
+    }
+
+    /// Records one binned-bitmap source transition in its existing chunk bin.
+    ///
+    /// `MI_CBIN_NONE` has no producer in `mi_bbitmap_set_chunk_bin`, so the
+    /// caller may mutate only the five mapped source bins.
+    #[inline]
+    pub(crate) fn chunk_bin_update(&self, index: usize, amount: i64) -> bool {
+        let Some(bin) = self.statistics.chunk_bins.get(index) else {
+            return false;
+        };
+        if index >= STAT_CHUNK_BIN_COUNT - 1 {
+            return false;
+        }
+        bin.update(amount);
+        true
+    }
+
+    #[inline]
+    pub(crate) fn snapshot(&self) -> BitmapStatisticsSnapshot {
+        let mut chunk_bins = [
+            BitmapChunkStatisticsSnapshot {
+                total: 0,
+                peak: 0,
+                current: 0,
+            };
+            STAT_CHUNK_BIN_COUNT
+        ];
+        for (index, snapshot) in chunk_bins.iter_mut().enumerate() {
+            let bin = &self.statistics.chunk_bins[index];
+            *snapshot = BitmapChunkStatisticsSnapshot {
+                total: i64_load_relaxed(&bin.total),
+                peak: i64_load_relaxed(&bin.peak),
+                current: i64_load_relaxed(&bin.current),
+            };
+        }
+        BitmapStatisticsSnapshot {
+            chunk_bins,
+            pages_unabandon_busy_wait: i64_load_relaxed(
+                &self.statistics.pages_unabandon_busy_wait.total,
+            ),
+        }
+    }
+}
+
 impl StatCounter {
     pub(crate) const fn new() -> Self {
         Self {
@@ -325,6 +406,135 @@ impl HeapTheapStatistics {
             page_bins: [const { StatCount::new() }; STAT_BIN_COUNT],
             chunk_bins: [const { StatCount::new() }; STAT_CHUNK_BIN_COUNT],
         }
+    }
+
+    /// Test-only source-layout records for the pinned native C/Rust
+    /// differential. The complete field sequence and both tail arrays are
+    /// recorded so matching `sizeof` alone cannot hide a reordered member.
+    #[cfg(test)]
+    pub(crate) fn layout_records() -> [(&'static str, usize); 47] {
+        use core::mem::{align_of, offset_of, size_of};
+
+        [
+            ("sizeof.mi_stat_count_t", size_of::<StatCount>()),
+            ("alignof.mi_stat_count_t", align_of::<StatCount>()),
+            ("sizeof.mi_stat_counter_t", size_of::<StatCounter>()),
+            ("alignof.mi_stat_counter_t", align_of::<StatCounter>()),
+            ("offsetof.mi_stats_t.size", offset_of!(Self, size)),
+            ("offsetof.mi_stats_t.version", offset_of!(Self, version)),
+            ("offsetof.mi_stats_t.pages", offset_of!(Self, pages)),
+            ("offsetof.mi_stats_t.reserved", offset_of!(Self, reserved)),
+            ("offsetof.mi_stats_t.committed", offset_of!(Self, committed)),
+            ("offsetof.mi_stats_t.reset", offset_of!(Self, reset)),
+            ("offsetof.mi_stats_t.purged", offset_of!(Self, purged)),
+            (
+                "offsetof.mi_stats_t.page_committed",
+                offset_of!(Self, page_committed),
+            ),
+            (
+                "offsetof.mi_stats_t.pages_abandoned",
+                offset_of!(Self, pages_abandoned),
+            ),
+            ("offsetof.mi_stats_t.threads", offset_of!(Self, threads)),
+            (
+                "offsetof.mi_stats_t.malloc_normal",
+                offset_of!(Self, malloc_normal),
+            ),
+            ("offsetof.mi_stats_t.malloc_huge", offset_of!(Self, malloc_huge)),
+            (
+                "offsetof.mi_stats_t.malloc_requested",
+                offset_of!(Self, malloc_requested),
+            ),
+            ("offsetof.mi_stats_t.mmap_calls", offset_of!(Self, mmap_calls)),
+            (
+                "offsetof.mi_stats_t.commit_calls",
+                offset_of!(Self, commit_calls),
+            ),
+            ("offsetof.mi_stats_t.reset_calls", offset_of!(Self, reset_calls)),
+            ("offsetof.mi_stats_t.purge_calls", offset_of!(Self, purge_calls)),
+            ("offsetof.mi_stats_t.arena_count", offset_of!(Self, arena_count)),
+            (
+                "offsetof.mi_stats_t.malloc_normal_count",
+                offset_of!(Self, malloc_normal_count),
+            ),
+            (
+                "offsetof.mi_stats_t.malloc_huge_count",
+                offset_of!(Self, malloc_huge_count),
+            ),
+            (
+                "offsetof.mi_stats_t.malloc_guarded_count",
+                offset_of!(Self, malloc_guarded_count),
+            ),
+            (
+                "offsetof.mi_stats_t.arena_rollback_count",
+                offset_of!(Self, arena_rollback_count),
+            ),
+            ("offsetof.mi_stats_t.arena_purges", offset_of!(Self, arena_purges)),
+            (
+                "offsetof.mi_stats_t.pages_extended",
+                offset_of!(Self, pages_extended),
+            ),
+            ("offsetof.mi_stats_t.pages_retire", offset_of!(Self, pages_retire)),
+            (
+                "offsetof.mi_stats_t.page_searches",
+                offset_of!(Self, page_searches),
+            ),
+            (
+                "offsetof.mi_stats_t.page_searches_count",
+                offset_of!(Self, page_searches_count),
+            ),
+            ("offsetof.mi_stats_t.segments", offset_of!(Self, segments)),
+            (
+                "offsetof.mi_stats_t.segments_abandoned",
+                offset_of!(Self, segments_abandoned),
+            ),
+            (
+                "offsetof.mi_stats_t.segments_cache",
+                offset_of!(Self, segments_cache),
+            ),
+            (
+                "offsetof.mi_stats_t._segments_reserved",
+                offset_of!(Self, segments_reserved),
+            ),
+            ("offsetof.mi_stats_t.heaps", offset_of!(Self, heaps)),
+            ("offsetof.mi_stats_t.theaps", offset_of!(Self, theaps)),
+            (
+                "offsetof.mi_stats_t.pages_reclaim_on_alloc",
+                offset_of!(Self, pages_reclaim_on_alloc),
+            ),
+            (
+                "offsetof.mi_stats_t.pages_reclaim_on_free",
+                offset_of!(Self, pages_reclaim_on_free),
+            ),
+            (
+                "offsetof.mi_stats_t.pages_reabandon_full",
+                offset_of!(Self, pages_reabandon_full),
+            ),
+            (
+                "offsetof.mi_stats_t.pages_unabandon_busy_wait",
+                offset_of!(Self, pages_unabandon_busy_wait),
+            ),
+            (
+                "offsetof.mi_stats_t.heaps_delete_wait",
+                offset_of!(Self, heaps_delete_wait),
+            ),
+            (
+                "offsetof.mi_stats_t._stat_reserved",
+                offset_of!(Self, stat_reserved),
+            ),
+            (
+                "offsetof.mi_stats_t._stat_counter_reserved",
+                offset_of!(Self, stat_counter_reserved),
+            ),
+            (
+                "offsetof.mi_stats_t.malloc_bins",
+                offset_of!(Self, malloc_bins),
+            ),
+            ("offsetof.mi_stats_t.page_bins", offset_of!(Self, page_bins)),
+            ("offsetof.mi_stats_t.chunk_bins", offset_of!(Self, chunk_bins)),
+            ("sizeof.mi_stats_t", size_of::<Self>()),
+            ("alignof.mi_stats_t", align_of::<Self>()),
+        ]
     }
 
     /// Ports `mi_stats_add` followed by `mi_stats_init` in
@@ -667,6 +877,12 @@ impl SubprocessStatistics {
         ArenaStatistics::from_statistics(&self.statistics)
     }
 
+    /// Returns the bitmap producer view of this same subprocess image.
+    #[inline]
+    pub(crate) fn bitmap(&self) -> BitmapStatistics<'_> {
+        BitmapStatistics::from_statistics(&self.statistics)
+    }
+
     #[inline]
     pub(crate) fn snapshot(&self) -> SubprocessStatisticsSnapshot {
         SubprocessStatisticsSnapshot {
@@ -853,6 +1069,32 @@ mod tests {
     }
 
     #[test]
+    fn bitmap_producers_and_heap_merges_share_the_one_subprocess_image() {
+        let destination = SubprocessStatistics::new();
+        let bitmap = destination.bitmap();
+        assert!(bitmap.chunk_bin_update(0, 1));
+        assert!(bitmap.chunk_bin_update(0, -1));
+        assert!(bitmap.chunk_bin_update(4, 1));
+        assert!(!bitmap.chunk_bin_update(STAT_CHUNK_BIN_COUNT - 1, 1));
+        bitmap.busy_wait();
+
+        let source = HeapTheapStatistics::new();
+        source.chunk_bins[4].update(2);
+        source.pages_unabandon_busy_wait.increase(3);
+        destination.merge_heap_and_reset(&source);
+
+        let snapshot = destination.bitmap().snapshot();
+        assert_eq!(snapshot.chunk_bins[0].total, 1);
+        assert_eq!(snapshot.chunk_bins[0].current, 0);
+        assert_eq!(snapshot.chunk_bins[4].total, 3);
+        assert_eq!(snapshot.chunk_bins[4].current, 3);
+        assert_eq!(snapshot.chunk_bins[STAT_CHUNK_BIN_COUNT - 1].total, 0);
+        assert_eq!(snapshot.pages_unabandon_busy_wait, 4);
+        assert_eq!(i64_load_relaxed(&source.chunk_bins[4].current), 0);
+        assert_eq!(i64_load_relaxed(&source.pages_unabandon_busy_wait.total), 0);
+    }
+
+    #[test]
     fn vm_statistics_exposes_only_named_vm_source_events() {
         let statistics = SubprocessStatistics::new();
         let stats = statistics.vm();
@@ -865,14 +1107,14 @@ mod tests {
         stats.reset(512);
         stats.purge(256);
 
-        assert_eq!(i64_load_relaxed(&stats.mmap_calls.total), 1);
-        assert_eq!(i64_load_relaxed(&stats.reserved.current), 3584);
-        assert_eq!(i64_load_relaxed(&stats.committed.current), 3072);
-        assert_eq!(i64_load_relaxed(&stats.commit_calls.total), 1);
-        assert_eq!(i64_load_relaxed(&stats.reset.total), 512);
-        assert_eq!(i64_load_relaxed(&stats.reset_calls.total), 1);
-        assert_eq!(i64_load_relaxed(&stats.purged.total), 256);
-        assert_eq!(i64_load_relaxed(&stats.purge_calls.total), 1);
+        assert_eq!(i64_load_relaxed(&stats.statistics.mmap_calls.total), 1);
+        assert_eq!(i64_load_relaxed(&stats.statistics.reserved.current), 3584);
+        assert_eq!(i64_load_relaxed(&stats.statistics.committed.current), 3072);
+        assert_eq!(i64_load_relaxed(&stats.statistics.commit_calls.total), 1);
+        assert_eq!(i64_load_relaxed(&stats.statistics.reset.total), 512);
+        assert_eq!(i64_load_relaxed(&stats.statistics.reset_calls.total), 1);
+        assert_eq!(i64_load_relaxed(&stats.statistics.purged.total), 256);
+        assert_eq!(i64_load_relaxed(&stats.statistics.purge_calls.total), 1);
     }
 
     #[test]

@@ -933,9 +933,10 @@ v3.5.0 `mi_stats_t` image: its source `size` and `version`, every
 `MI_STAT_FIELDS()` member in declaration order, the reserved records, and the
 74 allocation, 74 page, and six chunk bins. This supplies the exact internal
 shape needed by `src/stats.c` aggregation. The native layout differential
-compares this image's size and alignment to the pinned C release image. It
-does not claim an outer C `mi_theap_t`, `mi_heap_t`, or `mi_subproc_t` layout,
-nor a public statistics ABI.
+compares its count/counter sizes and alignment, every source member and tail
+offset, and its complete size/alignment to the pinned C release image. It does
+not claim an outer C `mi_theap_t`, `mi_heap_t`, or `mi_subproc_t` layout, nor
+a public statistics ABI.
 
 `MainSubprocess` owns the sole subprocess image. Its existing VM and arena
 snapshot APIs are typed relaxed projections into that shared image; they do
@@ -963,11 +964,18 @@ non-main `Heap` to main `Heap`, and main `Heap` to `MainSubprocess` helpers
 perform only the source declaration-order merge and reset. Their collection
 and teardown callers retain list, count, reference, and lifetime ownership.
 
+The same shared subprocess image also records the selected bitmap events:
+the `src/bitmap.c` clear-once reader increments
+`pages_unabandon_busy_wait` after its Acquire recheck finds the bit still
+clear, and binned bitmap map transitions update only the five mapped
+`chunk_bins`. `MI_CBIN_NONE` remains present as the sixth source bin but has
+no producer in that loop.
+
 The remaining zero-valued fields are intentional rather than alternate
 counters: their source producers have not yet been attached. This includes
 thread/Heap/Theap lifecycle counts and teardown waits, free-side reclaim and
-unabandon paths, arena page transfer/destroy paths, and the `MI_STAT>0` page
-extension, commitment, allocation, request, and malloc-bin producers. No
+other unabandon paths, arena page transfer/destroy paths, and the `MI_STAT>0`
+page extension, commitment, allocation, request, and malloc-bin producers. No
 public statistics collection/reporting/formatting/callback API, general arena
 lifecycle qualification, M2 completion, or M7 completion follows from this
 private source-event work. The pinned C fixture invokes
