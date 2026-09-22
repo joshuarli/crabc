@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
-"""Link one stock-Rust executable only against declared owned runtime inputs.
+"""Link one owned Rust executable while isolating Cargo host build scripts.
 
 ``owned_cleanup.py`` is the sole caller.  Rust invokes this program as its
 linker, but it cannot select a linker search path or a native fallback: this
 file replaces Rust's target ``libunwind``/compiler-builtins inputs and native
 ``-l`` requests with the explicitly supplied provider and product files.
+
+Cargo's host and requested target triples are both x86_64-musl in the native
+image.  Cargo therefore applies the target linker override to build-script
+executables as well as the final target artifact.  A narrowly identified
+``build_script_build-*`` output below the separately declared Cargo host-build
+root delegates to the pinned container GCC and is logged as host tooling.  It
+never enters the owned target link parser or receipt; every application and
+cdylib output still takes the closed owned-runtime path below.
 """
 from __future__ import annotations
 
@@ -32,6 +40,7 @@ CANONICAL_FLAGS = frozenset({
 })
 METADATA_MEMBERS = frozenset({"lib.rmeta", "lib.rmeta-link"})
 RUST_CDYLIB_EXPORT = "crabc_owned_cleanup_dso"
+HOST_BUILD_SCRIPT_OUTPUT = re.compile(r"build_script_build-[0-9a-f]+\Z")
 
 
 class LinkError(RuntimeError):
@@ -101,6 +110,41 @@ def confined_output(path: str, root: Path) -> Path:
     if ".." in Path(path).parts or not candidate.is_relative_to(root):
         raise LinkError(f"Rust output is outside the declared application root: {path}")
     physical_directory(candidate.parent, "Rust output parent")
+    return candidate
+
+
+def host_build_script_output(arguments: list[str], host_build_root: Path) -> Path | None:
+    """Return the one Cargo host build-script output, if this is one.
+
+    The source-built consumer names a fresh physical ``target/release/build``
+    root.  Only Cargo's hash-named build-script executable may be linked
+    outside the final target release root.  This prevents the same-triple host
+    exception from admitting a second application or cdylib link path.
+    """
+
+    output: str | None = None
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        index += 1
+        if argument != "-o":
+            continue
+        if index == len(arguments) or output is not None:
+            raise LinkError("Cargo host build-script link has an invalid output")
+        output = arguments[index]
+        index += 1
+    if output is None:
+        return None
+    candidate = _absolute(Path(output))
+    if not candidate.is_relative_to(host_build_root):
+        return None
+    if ".." in Path(output).parts:
+        raise LinkError(f"Cargo host build-script output has parent traversal: {output}")
+    physical_directory(candidate.parent, "Cargo host build-script output parent")
+    if HOST_BUILD_SCRIPT_OUTPUT.fullmatch(candidate.name) is None:
+        raise LinkError(f"Cargo host build-script output is not an admitted build script: {output}")
+    if candidate.exists() or candidate.is_symlink():
+        raise LinkError(f"Cargo host build-script output must be fresh: {output}")
     return candidate
 
 
@@ -300,6 +344,42 @@ def run(command: list[str | Path]) -> str:
     return result.stdout
 
 
+def delegate_host_build_script(arguments: list[str], output: Path) -> None:
+    """Run one explicitly separated Cargo host build-script link and retain it.
+
+    This route exists only because the pinned native toolchain's host and
+    requested target have the same Rust triple.  It is a build-tool executable,
+    not a target consumer input, and cannot share the owned final-link receipt.
+    """
+
+    linker_value = os.environ.get("CRABC_OWNED_RUST_HOST_BUILD_LINKER")
+    log_value = os.environ.get("CRABC_OWNED_RUST_HOST_BUILD_LOG")
+    if not linker_value or not log_value:
+        raise LinkError("missing owned Rust host build-script linker evidence")
+    linker = physical_regular(Path(linker_value), "pinned Cargo host build-script linker")
+    log = physical_regular(Path(log_value), "Cargo host build-script link log")
+    environment = dict(os.environ)
+    environment.pop("CARGO_MAKEFLAGS", None)
+    environment.pop("MAKEFLAGS", None)
+    completed = subprocess.run(
+        [str(linker), *arguments], env=environment, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+    )
+    if completed.returncode:
+        raise LinkError(f"Cargo host build-script linker exited {completed.returncode}: {completed.stdout}")
+    output = physical_regular(output, "Cargo host build-script output")
+    record = {
+        "schema": 1,
+        "kind": "cargo-host-build-script",
+        "linker": {"path": str(linker), "sha256": sha256(linker)},
+        "command": [str(linker), *arguments],
+        "output": {"path": str(output), "sha256": sha256(output)},
+    }
+    with log.open("a", encoding="utf-8") as stream:
+        json.dump(record, stream, sort_keys=True)
+        stream.write("\n")
+
+
 def audit_rust_archive(path: Path, ar: Path) -> list[str]:
     physical_regular(path, "Rust archive")
     members = run([ar, "t", path]).splitlines()
@@ -434,6 +514,15 @@ def link(arguments: list[str]) -> None:
         physical_directory(Path(source_built_value), "source-built Rust target library root")
         if source_built_value else None
     )
+    if source_built_root is not None:
+        host_build_value = os.environ.get("CRABC_OWNED_RUST_HOST_BUILD_ROOT")
+        if not host_build_value:
+            raise LinkError("missing owned Rust host build-script root")
+        host_build_root = physical_directory(Path(host_build_value), "Cargo host build-script root")
+        host_output = host_build_script_output(arguments, host_build_root)
+        if host_output is not None:
+            delegate_host_build_script(arguments, host_output)
+            return
     if source_built_root is None:
         stock_value = os.environ.get("CRABC_OWNED_RUST_STOCK_LIBDIR")
         if not stock_value:

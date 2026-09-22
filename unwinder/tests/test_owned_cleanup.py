@@ -102,6 +102,36 @@ class OwnedCleanupContract(unittest.TestCase):
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "stock Rust runtime"):
             owned_cleanup.source_built_link_receipt(receipt, binary, source, "test source-built link")
 
+    def test_host_build_script_link_cannot_be_reclassified_as_a_final_target_link(self):
+        host_root = Path(self.temporary.name) / "cargo-target/release/build"
+        package = host_root / "compiler_builtins-0123456789abcdef"
+        package.mkdir(parents=True)
+        build_script = package / "build_script_build-0123456789abcdef"
+        build_script.write_bytes(b"host build script")
+        build_script.chmod(0o755)
+        log = Path(self.temporary.name) / "host-build-links.jsonl"
+        record = {
+            "schema": 1,
+            "kind": "cargo-host-build-script",
+            "linker": owned_cleanup.record_file(
+                owned_cleanup.HOST_BUILD_LINKER, "pinned Cargo host build-script linker"
+            ),
+            "command": [str(owned_cleanup.HOST_BUILD_LINKER), "-o", str(build_script)],
+            "output": owned_cleanup.record_file(build_script, "Cargo host build-script output"),
+        }
+        log.write_text(json.dumps(record) + "\n")
+        self.assertEqual(
+            owned_cleanup.host_build_script_links(log, host_root), [record]
+        )
+
+        final = Path(self.temporary.name) / "final-cleanup"
+        final.write_bytes(b"not a host build script")
+        final.chmod(0o755)
+        record["output"] = owned_cleanup.record_file(final, "Cargo host build-script output")
+        log.write_text(json.dumps(record) + "\n")
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "outside the declared host root"):
+            owned_cleanup.host_build_script_links(log, host_root)
+
     def test_cargo_artifact_accepts_only_the_declared_fixture_target(self):
         package = Path(self.temporary.name) / "package"
         source = package / "src"

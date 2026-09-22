@@ -39,6 +39,7 @@ BUILD_STD_BINARY = "crabc-owned-cleanup-build-std"
 BUILD_STD_DSO_HOST = "crabc-owned-cleanup-dso-host"
 BUILD_STD_DSO_LIBRARY = "libcrabc_owned_cleanup_plugin.so"
 BUILD_STD_CRATES = ("std", "core", "alloc", "panic_unwind", "unwind", "compiler_builtins")
+HOST_BUILD_LINKER = Path("/usr/bin/gcc")
 SERIAL_BUILD_ENVIRONMENT = {
     "CARGO_BUILD_JOBS": "1",
     "CMAKE_BUILD_PARALLEL_LEVEL": "1",
@@ -308,6 +309,43 @@ def source_build_log_contract(log: str, rust_source: Path) -> None:
             "Cargo build-std log does not retain the requested fat-LTO profile")
 
 
+def host_build_script_links(path: Path, root: Path) -> list[dict[str, Any]]:
+    """Audit the same-triple Cargo host-tool exception outside final links."""
+
+    path = physical(path, "Cargo host build-script link log")
+    root = physical(root, "Cargo host build-script root", directory=True)
+    records: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise OwnedCleanupError("Cargo host build-script link log is not JSON lines") from error
+        require(isinstance(record, dict), "Cargo host build-script link record is not an object")
+        require(set(record) == {"schema", "kind", "linker", "command", "output"},
+                "Cargo host build-script link record fields drifted")
+        require(record["schema"] == 1 and record["kind"] == "cargo-host-build-script",
+                "Cargo host build-script link record identity drifted")
+        linker = record["linker"]
+        command = record["command"]
+        output = record["output"]
+        require(
+            linker == record_file(HOST_BUILD_LINKER, "pinned Cargo host build-script linker")
+            and isinstance(command, list) and all(isinstance(item, str) for item in command)
+            and command and command[0] == str(HOST_BUILD_LINKER),
+            "Cargo host build-script linker identity drifted",
+        )
+        require(isinstance(output, dict) and isinstance(output.get("path"), str),
+                "Cargo host build-script output record is malformed")
+        candidate = physical(Path(output["path"]), "Cargo host build-script output", executable=True)
+        require(candidate.is_relative_to(root) and candidate.name.startswith("build_script_build-"),
+                "Cargo host build-script output is outside the declared host root")
+        require(output == record_file(candidate, "Cargo host build-script output"),
+                "Cargo host build-script output identity drifted")
+        records.append(record)
+    require(records, "Cargo build-std did not retain its same-triple host build-script links")
+    return records
+
+
 def provider_snapshot(provider: Path, toolchain: str) -> dict[str, Any]:
     archive = physical(provider / "libcrabc-unwind.a", "selected provider archive")
     provenance_path = physical(provider / "provenance.json", "selected provider provenance")
@@ -406,10 +444,14 @@ def compile_source_built_mode(
     target = application / "cargo-target"
     release = target / TARGET / "release"
     source_library_root = release / "deps"
+    host_build_root = target / "release/build"
     temporary = application / "tmp"
     cargo_home = application / "cargo-home"
-    for directory in (source_library_root, temporary, cargo_home):
+    for directory in (source_library_root, host_build_root, temporary, cargo_home):
         directory.mkdir(parents=True, mode=0o755)
+    host_build_log = application / "host-build-links.jsonl"
+    with host_build_log.open("x", encoding="utf-8"):
+        pass
     rust_sysroot = Path(run_logged(
         ["rustup", "run", channel, "rustc", "--print", "sysroot"], clean_environment(),
         application / "rust-sysroot.log", f"{label} Rust sysroot discovery",
@@ -439,6 +481,9 @@ def compile_source_built_mode(
         "CRABC_OWNED_RUST_PROVIDER": str(provider["archive"]["path"]),
         "CRABC_OWNED_RUST_SOURCE_BUILT_LIBDIR": str(source_library_root),
         "CRABC_OWNED_RUST_APPLICATION_ROOT": str(release),
+        "CRABC_OWNED_RUST_HOST_BUILD_ROOT": str(host_build_root),
+        "CRABC_OWNED_RUST_HOST_BUILD_LINKER": str(HOST_BUILD_LINKER),
+        "CRABC_OWNED_RUST_HOST_BUILD_LOG": str(host_build_log),
         "CRABC_OWNED_RUST_CHANNEL": channel,
         "TMPDIR": str(temporary),
     })
@@ -454,6 +499,7 @@ def compile_source_built_mode(
         f"{label} source-built Rust std cleanup compile",
     )
     source_build_log_contract(stdout + stderr, rust_source)
+    host_build_script_links(host_build_log, host_build_root)
     binary = cargo_artifact(stdout, package=package, target=target, name=binary_name, crate_type="bin")
     binary = physical(binary, f"{label} source-built cleanup executable", executable=True)
     binary_receipt_path, binary_link_output = cargo_link_receipt_for_artifact(
@@ -473,6 +519,7 @@ def compile_source_built_mode(
         "rust_source_library": str(rust_source),
         "rust_source_lock": record_file(rust_source_lock, f"{label} pinned rust-src lock"),
         "source_built_target_library_root": str(source_library_root),
+        "host_build_script_links": record_file(host_build_log, f"{label} Cargo host build-script links"),
         "binary": record_file(binary, f"{label} source-built cleanup executable"),
         "link_receipt": record_file(binary_receipt_path, f"{label} source-built cleanup link receipt"),
         "link_command": binary_receipt["command"],

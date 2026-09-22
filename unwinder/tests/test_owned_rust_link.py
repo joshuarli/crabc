@@ -25,6 +25,8 @@ class OwnedRustLinkContract(unittest.TestCase):
         self.stock.mkdir()
         self.source_built = root / "source-built"
         self.source_built.mkdir()
+        self.host_build = root / "cargo-target/release/build"
+        self.host_build.mkdir(parents=True)
         (self.application / "fixture.o").write_bytes(b"object")
         (self.application / "libapp-0123456789abcdef.rlib").write_bytes(b"archive")
         (self.stock / "libstd-0123456789abcdef.rlib").write_bytes(b"archive")
@@ -105,6 +107,18 @@ class OwnedRustLinkContract(unittest.TestCase):
         self.assertEqual(parsed["rust_library_origin"], "source-built")
         self.assertTrue(any(path.name.startswith("libstd-") for path in parsed["archives"]))
         self.assertTrue(any(path.name.startswith("libcore-") for path in parsed["archives"]))
+
+    def test_source_built_host_build_script_is_separate_from_the_final_owned_link(self):
+        """Cargo must not send its same-triple host build script to the target linker."""
+
+        package = self.host_build / "compiler_builtins-0123456789abcdef"
+        package.mkdir()
+        output = package / "build_script_build-0123456789abcdef"
+        selected = linker.host_build_script_output(
+            ["-m64", str(self.application / "fixture.o"), "-o", str(output), "-static-pie"],
+            self.host_build,
+        )
+        self.assertEqual(selected, output)
 
     def test_source_built_std_rejects_stock_target_archives(self):
         arguments = self.source_built_arguments()
