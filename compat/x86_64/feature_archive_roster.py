@@ -21,6 +21,13 @@ ROOT = Path(__file__).resolve().parents[2]
 CARGO_MANIFEST_PATH = ROOT / "libc" / "Cargo.toml"
 LEDGER_PATH = ROOT / "compat" / "x86_64" / "parity.toml"
 VALID_STATES = {"planned", "verified"}
+# These two target/product-matched alternatives reuse symbol ownership only.
+# They do not inherit provider receipts, status, or semantic qualification.
+NATIVE_PROVIDER_PROFILES = {
+    "x86-owned-static-native-shadow": "x86-owned-static-runtime",
+    "x86-owned-dynamic-native-shadow": "x86-owned-dynamic-runtime",
+}
+
 VALID_ALIAS_BINDINGS = {"weak-same-address"}
 SYMBOL_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 COMMAND_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
@@ -61,6 +68,7 @@ class FeatureArchive:
     aliases: tuple[ArchiveAlias, ...]
     feature_selection_source: str | None = None
     abi_only_callables: tuple[str, ...] = ()
+    provider_profile: str | None = None
 
 
 @dataclass(frozen=True)
@@ -224,6 +232,8 @@ def parse_feature_archive_roster(
         state = raw.get("state")
         require(state in VALID_STATES, f"{location}.state is invalid")
         expected_keys = set(common_keys)
+        if "provider_profile" in raw:
+            expected_keys.add("provider_profile")
         if "abi_only_callables" in raw:
             expected_keys.add("abi_only_callables")
         if state == "verified":
@@ -331,6 +341,7 @@ def parse_feature_archive_roster(
                 aliases=tuple(aliases),
                 feature_selection_source=feature_selection_source,
                 abi_only_callables=abi_only_callables,
+                provider_profile=raw.get("provider_profile"),
             )
         )
 
@@ -342,6 +353,28 @@ def parse_feature_archive_roster(
         tuple(row.identifier for row in rows) == tuple(cargo_features),
         "feature archive roster order must match libc Cargo feature order",
     )
+    by_id = {row.identifier: row for row in rows}
+    for row in rows:
+        expected_profile = NATIVE_PROVIDER_PROFILES.get(row.identifier)
+        require(row.provider_profile == expected_profile,
+                f"feature archive {row.identifier} has an unknown or mismatched provider profile")
+        if row.provider_profile is not None:
+            require(row.provider_profile in by_id, "native provider profile is absent")
+            provider = by_id[row.provider_profile]
+            require(provider.provider_profile is None, "provider profile chains or cycles are forbidden")
+            require(row.state == "planned" and row.evidence_record is None and row.dispatch_command is None,
+                    "native provider alternatives cannot inherit C qualification or evidence")
+            require(not (row.additive_callables or row.replacement_callables or row.abi_only_callables or row.aliases),
+                    "native provider alternatives cannot duplicate callable ownership")
+            if row.identifier == "x86-owned-static-native-shadow":
+                c_clients = {"x86-allocator-runtime", "x86-allocator-observability",
+                             "x86-allocator-string-duplication", "x86-environment-runtime",
+                             "x86-temporary-names", "x86-scandir", "x86-crypt-allocator-composition"}
+                expected_leaves = (set(cargo_features[provider.identifier]) - c_clients) | {"x86-crypt", "native-mimalloc-shadow"}
+            else:
+                expected_leaves = {"x86-owned-static-native-shadow"}
+            require(set(cargo_features[row.identifier]) == expected_leaves,
+                    "native provider source capabilities differ from the C callable profile")
     for row in rows:
         enabled_closure = set(feature_closure(row.enabled_features, cargo_features))
         baseline_closure = set(feature_closure(row.baseline_features, cargo_features))
@@ -370,7 +403,7 @@ def load_feature_archive_roster(
 def selected_baseline_callables(
     archive: FeatureArchive, rows: Sequence[FeatureArchive], static_exports: Iterable[str]
 ) -> set[str]:
-    """Resolve only providers already selected by an archive's dependencies.
+    """Resolve selected dependencies and the exact alternate callable profile.
 
     A replacement preserves the unique original provider in callable accounting.
     Its variant can replace either a default symbol or a dependency's addition;
@@ -379,6 +412,8 @@ def selected_baseline_callables(
     by_id = {row.identifier: row for row in rows}
     selected = set(static_exports)
     pending = list(archive.baseline_features)
+    if archive.provider_profile is not None:
+        pending.append(archive.provider_profile)
     visited: set[str] = set()
     while pending:
         identifier = pending.pop()
@@ -390,6 +425,8 @@ def selected_baseline_callables(
         selected.update(dependency.additive_callables)
         selected.update(dependency.abi_only_callables)
         pending.extend(dependency.baseline_features)
+        if dependency.provider_profile is not None:
+            pending.append(dependency.provider_profile)
     return selected
 
 

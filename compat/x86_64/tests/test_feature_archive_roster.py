@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import importlib.util
+import copy
+import tomllib
 import sys
 import unittest
 from pathlib import Path
@@ -939,11 +941,55 @@ class FeatureArchiveRosterTests(unittest.TestCase):
         self.assertEqual(
             report,
             {
-                "feature_archive_count": 32,
-                "planned_feature_archive_count": 3,
+                "feature_archive_count": 35,
+                "planned_feature_archive_count": 6,
                 "verified_feature_archive_count": 29,
             },
         )
+
+    def test_native_profiles_preserve_callable_sets_without_inheriting_evidence(self) -> None:
+        rows = ROSTER.load_feature_archive_roster()
+        by_id = {row.identifier: row for row in rows}
+        exports = (ROOT / 'compat/x86_64/static_c_abi_exports.txt').read_text().split()
+        for native, c_profile in ROSTER.NATIVE_PROVIDER_PROFILES.items():
+            candidate, provider = by_id[native], by_id[c_profile]
+            self.assertEqual(candidate.provider_profile, c_profile)
+            self.assertEqual(candidate.state, 'planned')
+            self.assertIsNone(candidate.evidence_record)
+            self.assertIsNone(candidate.dispatch_command)
+            expected = ROSTER.selected_baseline_callables(provider, rows, exports)
+            expected.update(provider.additive_callables)
+            expected.update(provider.abi_only_callables)
+            self.assertEqual(ROSTER.selected_baseline_callables(candidate, rows, exports), expected)
+
+    def test_native_profiles_reject_wrong_kind_chains_ownership_and_c_receipts(self) -> None:
+        raw = tomllib.loads((ROOT / 'compat/x86_64/parity.toml').read_text())['feature_archive']
+        features = ROSTER.load_cargo_x86_features()
+        native_id = 'x86-owned-static-native-shadow'
+        mutations = [
+            {'provider_profile': 'x86-unknown'},
+            {'provider_profile': 'x86-owned-dynamic-runtime'},
+            {'provider_profile': 'x86-owned-dynamic-native-shadow'},
+            {'provider_profile': native_id},
+            {'additive_callables': ['malloc']},
+            {'replacement_callables': ['malloc']},
+            {'abi_only_callables': ['private_native_entry']},
+            {'state': 'verified', 'evidence_record': 'static-c-allocator-wrapper',
+             'dispatch_command': 'libc-allocator-runtime'},
+        ]
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                changed = copy.deepcopy(raw)
+                row = next(row for row in changed if row['id'] == native_id)
+                row.update(mutation)
+                if row['state'] == 'verified':
+                    row.pop('feature_selection_source')
+                with self.assertRaises(ROSTER.FeatureArchiveRosterError):
+                    ROSTER.parse_feature_archive_roster(changed, features)
+        changed = dict(features)
+        changed[native_id] = tuple(feature for feature in changed[native_id] if feature != 'x86-memory-special')
+        with self.assertRaisesRegex(ROSTER.FeatureArchiveRosterError, 'source capabilities'):
+            ROSTER.parse_feature_archive_roster(raw, changed)
 
     def test_dependent_feature_requires_its_exact_cargo_baseline(self) -> None:
         cargo_features = {

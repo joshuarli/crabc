@@ -43,6 +43,11 @@ from the accepted-C aggregate and selects the Rust allocator;
 the C/native nonallocator leaf lists to remain equivalent. `libc/build.rs`
 emits fixed Linux/x86-64 capability cfgs and rejects native/C overlap. It
 never manufactures Cargo feature flags. The AArch64 dependency table is unchanged.
+The two native `feature_archive` rows name exact `provider_profile` alternatives
+for the corresponding C static/dynamic callable contracts. This shares symbol
+ownership accounting only: native rows remain planned, own no duplicate names,
+and cannot inherit C receipts or qualification. Their source capability lists
+and installed public callable sets must match the referenced profiles.
 
 Both owned builders accept explicit `--allocator-backend native-shadow` while
 keeping accepted C as the default. They attest Cargo's target normal/build

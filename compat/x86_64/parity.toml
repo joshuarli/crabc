@@ -20521,6 +20521,44 @@ additive_callables = []
 replacement_callables = []
 aliases = []
 
+# Native allocator selections reuse callable ownership, never C evidence.
+[[feature_archive]]
+id = "x86-owned-static-native-shadow"
+state = "planned"
+runner = "compat/x86_64/run_owned_static_sysroot.sh"
+feature_selection_source = "scripts/build_x86_64_owned_sysroot.py"
+provider_profile = "x86-owned-static-runtime"
+baseline_features = ["x86-a64l", "x86-crypt", "x86-file-handles", "x86-filesystem-traversal", "x86-h-errno", "x86-interval-timers", "x86-io-permissions", "x86-kernel-admin", "x86-legacy-des-compat", "x86-legacy-misc", "x86-math-long-double-completion", "x86-memory-special", "x86-netdb-setent", "x86-process-exec", "x86-resolver-runtime", "x86-sched-rr-interval", "x86-stdio-permanent-format-scan", "x86-ualarm"]
+enabled_features = ["x86-owned-static-native-shadow"]
+additive_callables = []
+replacement_callables = []
+aliases = []
+
+[[feature_archive]]
+id = "x86-owned-dynamic-native-shadow"
+state = "planned"
+runner = "compat/x86_64/run_materialized_dynamic_sysroot.sh"
+feature_selection_source = "scripts/build_x86_64_owned_dynamic_sysroot.py"
+provider_profile = "x86-owned-dynamic-runtime"
+baseline_features = ["x86-owned-static-native-shadow"]
+enabled_features = ["x86-owned-dynamic-native-shadow"]
+additive_callables = []
+replacement_callables = []
+aliases = []
+
+[[feature_archive]]
+id = "x86-owned-allocator-lifecycle-test-audit"
+state = "planned"
+runner = "compat/x86_64/run_materialized_dynamic_sysroot.sh"
+feature_selection_source = "scripts/build_x86_64_owned_dynamic_sysroot.py"
+baseline_features = []
+enabled_features = ["x86-owned-allocator-lifecycle-test-audit"]
+# The phase scalar exists only when composed with an owned runtime; this
+# standalone test instrumentation selector adds no callable provider.
+additive_callables = []
+replacement_callables = []
+aliases = []
+
 [[feature_archive]]
 id = "x86-temporary-names"
 state = "verified"
