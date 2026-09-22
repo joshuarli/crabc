@@ -6903,6 +6903,17 @@ mod tests {
         record!("offsetof.mi_theap_t.pages", offset_of!(Theap, pages));
         record!("offsetof.mi_theap_t.memid", offset_of!(Theap, memid));
         record!("offsetof.mi_theap_t.stats", offset_of!(Theap, statistics));
+        // This is the private source statistics tail, not an outer Heap or
+        // Theap ABI claim.  `LAYOUT_PROBE` reads the same two facts from the
+        // pinned normal-release C `mi_stats_t` image.
+        record!(
+            "sizeof.mi_stats_t",
+            size_of::<HeapTheapStatistics>()
+        );
+        record!(
+            "alignof.mi_stats_t",
+            align_of::<HeapTheapStatistics>()
+        );
         record!("sizeof.mi_arena_t", size_of::<Arena>());
         record!("alignof.mi_arena_t", align_of::<Arena>());
         record!("offsetof.mi_arena_t.memid", offset_of!(Arena, memid));

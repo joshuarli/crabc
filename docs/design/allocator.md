@@ -928,11 +928,21 @@ leaves the mapping accessible and committed while restoring availability and
 consuming the already-cleared purge work. Only the external owner may unmap
 the complete mapping.
 
-`MainSubprocess` owns one private `SubprocessStatistics` subset for its
-source-shaped `mi_subproc_t::stats` event owner. It retains only the current
-production producers: VM `reserved`, `committed`, `reset`, `purged`,
-`mmap_calls`, `commit_calls`, `reset_calls`, and `purge_calls`, plus the two
-unconditional arena counters used by this bounded lifecycle.
+`Theap`, `Heap`, and `MainSubprocess` each retain the same private, complete
+v3.5.0 `mi_stats_t` image: its source `size` and `version`, every
+`MI_STAT_FIELDS()` member in declaration order, the reserved records, and the
+74 allocation, 74 page, and six chunk bins. This supplies the exact internal
+shape needed by `src/stats.c` aggregation. The native layout differential
+compares this image's size and alignment to the pinned C release image. It
+does not claim an outer C `mi_theap_t`, `mi_heap_t`, or `mi_subproc_t` layout,
+nor a public statistics ABI.
+
+`MainSubprocess` owns the sole subprocess image. Its existing VM and arena
+snapshot APIs are typed relaxed projections into that shared image; they do
+not retain duplicate counters. VM producers remain `reserved`, `committed`,
+`reset`, `purged`, `mmap_calls`, `commit_calls`, `reset_calls`, and
+`purge_calls`, plus the two unconditional arena counters used by this bounded
+lifecycle.
 `ArenaRegistry::insert` increments `arena_count` only after its Release
 publication of a fresh high-water slot; reused NULL slots and every failed
 preparation/publication leave it unchanged. `ProcessArenaBacking` no longer
@@ -941,13 +951,26 @@ expiry with Release ordering and then increments the same process owner's
 `arena_purges` before it visits any range. Each update uses the pinned relaxed
 multi-thread source operation. Selected aggregation follows
 `MI_STAT_FIELDS()` declaration order and `src/stats.c`'s relaxed total/current/
-peak algorithm, so it is deliberately not a transactional snapshot. The staged
-port has no non-main subprocess destruction caller, so its source merge/reset
-transition remains unimplemented. This is a private source-event subset for
-focused C/Rust evidence, not a public
-`mi_stats_t` layout/header, complete heap/Theap aggregation or reset,
-statistics collection/reporting/formatting/callback API, general arena
-lifecycle qualification, M2 completion, or M7 completion. The pinned C fixture invokes
+peak algorithm, so it is deliberately not a transactional snapshot.
+
+The selected `MI_STAT=0` page engine records each source event at its source
+boundary: successful fresh PageMap registration and its matched terminal
+release; page retirement before expiry publication; every page-queue scan,
+including a zero-visit scan; mapped abandoned-page reclaim after the
+bitmap/count claim and before collection; and selected abandonment/reabandon
+publication before the abandoned owner-bit release. `Theap` to `Heap`,
+non-main `Heap` to main `Heap`, and main `Heap` to `MainSubprocess` helpers
+perform only the source declaration-order merge and reset. Their collection
+and teardown callers retain list, count, reference, and lifetime ownership.
+
+The remaining zero-valued fields are intentional rather than alternate
+counters: their source producers have not yet been attached. This includes
+thread/Heap/Theap lifecycle counts and teardown waits, free-side reclaim and
+unabandon paths, arena page transfer/destroy paths, and the `MI_STAT>0` page
+extension, commitment, allocation, request, and malloc-bin producers. No
+public statistics collection/reporting/formatting/callback API, general arena
+lifecycle qualification, M2 completion, or M7 completion follows from this
+private source-event work. The pinned C fixture invokes
 `_mi_auto_process_init` only to reproduce `src/init.c`'s source-loader
 preloading transition before delayed-purge scheduling; that direct fixture is
 not evidence of an installed CRT or loader integration.

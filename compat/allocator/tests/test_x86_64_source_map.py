@@ -264,7 +264,7 @@ class X86_64SourceMapTests(unittest.TestCase):
         with self.assertRaisesRegex(SOURCE_MAP.SourceMapError, "reviewed ratchet expansion"):
             SOURCE_MAP.validate_units(changed, self.sources)
 
-    def test_statistics_collection_maps_only_the_selected_private_subprocess_events(self) -> None:
+    def test_statistics_collection_maps_the_selected_private_owner_events(self) -> None:
         statistics = next(
             unit for unit in self.contract["units"] if unit["id"] == "statistics-collection"
         )
@@ -274,20 +274,24 @@ class X86_64SourceMapTests(unittest.TestCase):
             [
                 "crabc_mimalloc::arena",
                 "crabc_mimalloc::arena_owned",
+                "crabc_mimalloc::single_thread",
                 "crabc_mimalloc::statistics",
                 "crabc_mimalloc::subproc",
+                "crabc_mimalloc::types",
             ],
         )
         for fragment in (
-            "one selected `mi_subproc_t::stats` event subset",
+            "Each private `Theap`, `Heap`, and `MainSubprocess` owner",
             "reserved",
             "purge_calls",
             "arena_count",
             "arena_purges",
-            "fresh high-water",
-            "eligible delayed-purge expiry",
-            "selected `MI_STAT_FIELDS()` declaration order",
-            "No public `mi_stats_t` layout/header, complete heap/Theap aggregation or reset",
+            "complete pinned v3.5.0 `mi_stats_t` image",
+            "native C/Rust layout gate",
+            "selected MI_STAT=0 engine records",
+            "selected mapped abandoned-page reclaim",
+            "per-field relaxed sampling/add/reset order",
+            "No public `mi_stats_t` ABI",
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, statistics["difference"])
@@ -299,8 +303,11 @@ class X86_64SourceMapTests(unittest.TestCase):
             "crabc-mimalloc/src/arena.rs",
             "crabc-mimalloc/src/arena_owned.rs",
             "crabc-mimalloc/src/arena_purge.rs",
+            "crabc-mimalloc/src/abandoned.rs",
+            "crabc-mimalloc/src/single_thread.rs",
             "crabc-mimalloc/src/statistics.rs",
             "crabc-mimalloc/src/subproc.rs",
+            "crabc-mimalloc/src/types.rs",
         ):
             with self.subTest(evidence=evidence):
                 self.assertIn(evidence, statistics["evidence"])
