@@ -331,7 +331,6 @@ M2_X86_64_VM_FRAGMENT_DIGEST = "41d7449d49f027992f139cd92ad43f49f5ae25ebcbe8e150
 # success post-state while preserving later publication and automatic-teardown
 # nonclaims. It does not promote M2.
 M2_X86_64_INITIALIZATION_FRAGMENT_DIGEST = "8ffe77f67c90df875bb1de6e0ae6921ca299bc240712480f119b3d0d437d0a3b"
-M2_X86_64_FAULT_FRAGMENT_DIGEST = "7eca87cb7f02667ef25f23c7910a15bef44c57f1433e294de10529eda73aef07"
 M2_X86_64_FAULT_FRAGMENT_DIGEST = "6953c3c95e08600b4b1abba64e017a6ca8e3e9d584a68dd67e8de6ecebb7704c"
 M2_X86_64_PAGE_MAP_CHECK_IDS = (
     "successful-page-map-lifecycle",
