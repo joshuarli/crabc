@@ -2714,9 +2714,17 @@ mod tests {
                         attachment.prevalidate_owner_local_callback_reentry().is_ok(),
                         "only the current attached source generation with its live recurse marker may reenter"
                     );
+                    assert!(matches!(
+                        attachment.current_tld_mut(),
+                        Err(MainHeapThreadAttachmentError::ThreadLocalData(
+                            crate::tld::ThreadLocalDataError::Projection
+                        ))
+                    ),
+                        "ordinary TLD projection stays unavailable while the callback owns recurse"
+                    );
                     attachment
-                        .current_tld_mut()
-                        .expect("the callback source TLD remains current")
+                        .current_deferred_callback_tld_mut()
+                        .expect("the callback projection retains its source TLD")
                         .end_deferred_callback();
 
                     let theap = NonNull::new(
