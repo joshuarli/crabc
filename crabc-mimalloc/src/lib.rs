@@ -121,11 +121,13 @@ pub mod __crabc_runtime {
     pub use crate::diagnostic_output::RuntimeStderrOutput;
     #[cfg(feature = "native-runtime-test-audit")]
     pub use crate::runtime_lifecycle::{
-        NativeRuntimeFirstArenaPolicyAudit, NativeRuntimeForkAdmissionAudit, NativeRuntimeLifecycleAudit,
+        NativeRuntimeCurrentThreadAttachmentAudit, NativeRuntimeFirstArenaPolicyAudit,
+        NativeRuntimeForkAdmissionAudit, NativeRuntimeLifecycleAudit,
         NativeRuntimeLiveClientPageAudit, NativeRuntimeLiveClientPageMapSpanAudit,
         NativeRuntimeProcessDoneRetainedLocalPageAudit,
         NativeRuntimeProcessDoneTerminalPurgeAudit,
         NativeRuntimeOwnerExitCollectionRendezvous,
+        native_runtime_current_thread_attachment_test_audit,
         native_runtime_first_arena_policy_test_audit, native_runtime_fork_admission_test_audit,
         native_runtime_current_local_page_test_audit,
         native_runtime_current_local_page_same_test_audit,

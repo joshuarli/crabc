@@ -11,7 +11,8 @@ use std::sync::{Arc, Barrier, mpsc};
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
     attach_current_thread, finish_current_thread_native_after_user_destructors,
-    native_allocate_aligned, native_free, native_reallocate, native_runtime_fork_admission_test_audit,
+    native_allocate_aligned, native_free, native_reallocate,
+    native_runtime_current_thread_attachment_test_audit, native_runtime_fork_admission_test_audit,
     native_runtime_lifecycle_test_audit, native_usable_size, prepare_native_later_thread_arena,
 };
 
@@ -268,4 +269,80 @@ fn persistent_workers_keep_independent_local_engines_through_normal_teardown() {
             );
         }
     }
+}
+
+/// A successful source later-thread attach owns its TLD/Theap immediately,
+/// before a first allocator request may lazily bind page-engine state. This
+/// checks that ordinary pthread creation itself neither reserves an
+/// application page nor needs the first-page arena/PageMap transition, and
+/// that an all-free no-allocation worker follows the normal source teardown.
+#[test]
+fn attach_pins_a_page_empty_owner_until_normal_no_allocation_teardown() {
+    assert!(
+        native_runtime_test_support::initialize(current_page_size()),
+        "the private native runtime initializes before the source attachment"
+    );
+    assert!(
+        prepare_native_later_thread_arena(),
+        "ticket zero leaves the first arena dormant before a worker attaches"
+    );
+    let before = native_runtime_lifecycle_test_audit()
+        .expect("the initialized process has a quiescent baseline");
+
+    let attached = std::thread::spawn(move || {
+        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        let audit = native_runtime_current_thread_attachment_test_audit();
+        assert_eq!(
+            audit.persistent_owner_installed, 1,
+            "source TLD/Theap attachment is pinned before the first native allocation"
+        );
+        assert_eq!(
+            audit.page_engine_active, 0,
+            "pthread attach does not eagerly create a page engine or application page"
+        );
+        assert_eq!(
+            audit.owner_local_operation_count, before.native_owner_local_operation_count,
+            "pthread attach itself does not enter the owner-local allocation path"
+        );
+        assert_eq!(
+            finish_current_thread_native_after_user_destructors(),
+            ThreadFinishResult::Finished,
+            "a page-empty persistent owner reaches normal source TLD/Theap teardown"
+        );
+    });
+    attached
+        .join()
+        .expect("the page-empty worker completes normal teardown");
+
+    let after = native_runtime_lifecycle_test_audit()
+        .expect("the completed no-allocation worker restores a quiescent audit");
+    // The source TLD/Theap constructor legitimately uses metadata and its
+    // PageMap registrations are not application-page claims. The persistent
+    // owner state above proves the page engine remains dormant; these existing
+    // process-backing counters independently prove that attach did not begin
+    // or reserve an application arena before the no-allocation teardown.
+    assert_eq!(
+        after.process_backing_first_arena_begin_count,
+        before.process_backing_first_arena_begin_count,
+        "thread attach does not begin a first application arena"
+    );
+    assert_eq!(
+        after.process_backing_vm_reservation_count,
+        before.process_backing_vm_reservation_count,
+        "thread attach does not reserve an application arena mapping"
+    );
+    assert_eq!(
+        after.arena_registry_count, before.arena_registry_count,
+        "thread attach does not register an application arena owner"
+    );
+    assert_eq!(
+        after.metadata_live_capability_count, before.metadata_live_capability_count,
+        "normal teardown releases the worker TLD/Theap metadata ownership"
+    );
+    assert_eq!(after.shared_later_theap_count, 0);
+    assert_eq!(
+        native_runtime_fork_admission_test_audit().active_later_thread_count,
+        0,
+        "normal no-allocation teardown releases the worker admission"
+    );
 }

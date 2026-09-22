@@ -16,12 +16,13 @@
 //! source-shaped ticket-zero `ProcessMainThread` and the main-thread-minted
 //! `MainStaticHeapLease` for the process lifetime, then places one no-page
 //! `MainHeapThreadAttachment` in compiler TLS for each pthread worker that
-//! successfully enters through the runtime. An ordinary later-thread native
-//! allocation promotes that attachment once into an inline compiler-TLS owner
-//! containing the attachment and continuously stored owner-local page engine;
-//! later local calls use short in-place borrows and never park or resume it.
-//! The worker consumes that owner only after libc has run user cleanup handlers
-//! and pthread TSD destructors. Historical typed post-exit fixtures are
+//! successfully enters through the runtime. Successful publication immediately
+//! pins that source TLD/Theap attachment in its inline compiler-TLS owner;
+//! the first ordinary later-thread native allocation alone promotes it to the
+//! continuously stored owner-local page engine. Later local calls use short
+//! in-place borrows and never park or resume the engine. The worker consumes
+//! the same owner only after libc has run user cleanup handlers and pthread TSD
+//! destructors. Historical typed post-exit fixtures are
 //! `#[cfg(test)]` oracles; selected native free, reallocation, and usable-size
 //! paths use pointer-first PageMap/W03 and abandoned-state behavior.
 //!
@@ -4709,6 +4710,26 @@ pub struct NativeRuntimeForkAdmissionAudit {
     pub active_later_thread_count: usize,
 }
 
+/// Read-only current-thread state for the native later-thread source owner.
+///
+/// This default-off audit distinguishes the completed `src/init.c` TLD/Theap
+/// attachment from the first lazy page-engine activation. It exposes no
+/// owner, root, metadata, PageMap, arena, allocator, or client capability;
+/// callers receive only scalar state for their own compiler-TLS image.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeRuntimeCurrentThreadAttachmentAudit {
+    /// The current thread has pinned its source TLD/Theap owner in the
+    /// runtime's compiler-TLS cell.
+    pub persistent_owner_installed: usize,
+    /// The current source owner has crossed the lazy first-page boundary.
+    pub page_engine_active: usize,
+    /// The monotonic production local-operation count sampled with this
+    /// attachment state. Thread attach itself must not increase it.
+    pub owner_local_operation_count: usize,
+}
+
 /// One exact live retained old-Theap page's source queue image.
 ///
 /// This is a fixture-only scalar observation used to prove the selected
@@ -5798,6 +5819,44 @@ pub fn native_runtime_fork_admission_test_audit() -> NativeRuntimeForkAdmissionA
     }
 }
 
+/// Returns scalar state for the current worker's native source attachment.
+///
+/// This makes one scoped state projection without transferring, retaining, or
+/// finishing the owner. In particular, it does not access the process PageMap
+/// or arena pair, so it remains valid for checking the no-page interval
+/// immediately after thread attach.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub fn native_runtime_current_thread_attachment_test_audit(
+) -> NativeRuntimeCurrentThreadAttachmentAudit {
+    let persistent_owner_installed = {
+        let slot = current_thread_slot();
+        usize::from(
+            slot.native_persistent_owner_installed
+                && matches!(slot.state, ThreadLifecycleState::Attached | ThreadLifecycleState::Retained),
+        )
+    };
+    let page_engine_active = if persistent_owner_installed == 0 {
+        0
+    } else {
+        usize::from(
+            current_thread_native_persistent_owner_cell()
+                .with_owner(|owner| {
+                    matches!(
+                        owner.get_mut().state,
+                        NativePersistentThreadOwnerExitState::PreDrain(_)
+                    )
+                })
+                .unwrap_or(false),
+        )
+    };
+    NativeRuntimeCurrentThreadAttachmentAudit {
+        persistent_owner_installed,
+        page_engine_active,
+        owner_local_operation_count: NATIVE_OWNER_LOCAL_OPERATION_COUNT.load(Ordering::Acquire),
+    }
+}
+
 /// Runs the selected source's no-callback purge consequence after process
 /// done, over one temporary mapping owned by the retained process pair.
 ///
@@ -6407,6 +6466,18 @@ enum NativePersistentThreadOwnerExitState {
     AttachmentOnly,
 }
 
+/// Why an installed native source owner could not enter one local allocator
+/// operation.
+///
+/// `AttachmentOnly` is the one normal lazy boundary: the source TLD/Theap is
+/// already continuously owned, but its first page-engine activation has not
+/// yet happened. Every other error is terminal for ordinary allocator work.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativePersistentThreadOwnerLocalAccessError {
+    AttachmentOnly,
+    Terminal,
+}
+
 impl NativePersistentThreadOwner {
     /// Binds one short attachment view to the continuously stored engine.
     /// The scalar audit advances only after both the compiler-TLS projection
@@ -6414,13 +6485,19 @@ impl NativePersistentThreadOwner {
     fn with_local_allocator<R>(
         &mut self,
         operation: impl FnOnce(&mut MainHeapThreadOwnerLocalAllocator<'_>) -> R,
-    ) -> Result<R, ()> {
-        let NativePersistentThreadOwnerExitState::PreDrain(engine) = &mut self.state else {
-            return Err(());
+    ) -> Result<R, NativePersistentThreadOwnerLocalAccessError> {
+        let engine = match &mut self.state {
+            NativePersistentThreadOwnerExitState::PreDrain(engine) => engine,
+            NativePersistentThreadOwnerExitState::AttachmentOnly => {
+                return Err(NativePersistentThreadOwnerLocalAccessError::AttachmentOnly);
+            }
+            NativePersistentThreadOwnerExitState::RetainedTerminalEngine(_) => {
+                return Err(NativePersistentThreadOwnerLocalAccessError::Terminal);
+            }
         };
         let result = engine
             .with_local_allocator(&mut self.attachment, operation)
-            .map_err(|_| ())?;
+            .map_err(|_| NativePersistentThreadOwnerLocalAccessError::Terminal)?;
         #[cfg(feature = "native-runtime-test-audit")]
         NATIVE_OWNER_LOCAL_OPERATION_COUNT.fetch_add(1, Ordering::AcqRel);
         Ok(result)
@@ -6497,6 +6574,29 @@ impl NativePersistentThreadOwner {
             NativePersistentThreadOwnerExitState::RetainedTerminalEngine(_)
             | NativePersistentThreadOwnerExitState::AttachmentOnly => false,
         }
+    }
+
+    /// Crosses the lazy source-page boundary after an ordinary allocation
+    /// request selected this already-installed owner. This is deliberately
+    /// absent from pthread attach: the pinned C `_mi_theap_init` transaction
+    /// owns TLD/Theap metadata and root publication, while the Rust-only
+    /// PageMap/arena engine stays dormant until native allocation needs it.
+    fn activate_page_engine(
+        &mut self,
+        pair: ProcessPageArenaLease,
+    ) -> Result<(), MainHeapThreadOwnerLocalPageEngineBeginError> {
+        match &self.state {
+            NativePersistentThreadOwnerExitState::AttachmentOnly => {}
+            NativePersistentThreadOwnerExitState::PreDrain(_) => return Ok(()),
+            NativePersistentThreadOwnerExitState::RetainedTerminalEngine(_) => {
+                return Err(MainHeapThreadOwnerLocalPageEngineBeginError::Attachment(
+                    MainHeapThreadAttachmentError::OwnerLocalPageEngineTerminal,
+                ));
+            }
+        }
+        let engine = MainHeapThreadOwnerLocalPageEngine::begin(&mut self.attachment, pair)?;
+        self.state = NativePersistentThreadOwnerExitState::PreDrain(engine);
+        Ok(())
     }
 }
 
@@ -6676,10 +6776,11 @@ struct ThreadLifecycleSlot {
     /// TLS carries only scalar lifecycle accounting, never a route or client.
     pending_post_exit_route_completion_count: usize,
     attachment: Option<MainHeapThreadAttachment<'static>>,
-    /// Ordinary C-shaped later-thread operations promote `attachment` into
-    /// this address-stable cell once, then use only in-place scoped borrows.
-    /// Legacy typed owner-exit fixtures continue to use `attachment` plus
-    /// `page_owner` until their separate migration lands.
+    /// Production pthread attach pins the complete source TLD/Theap owner in
+    /// this address-stable cell before user code. Its first native allocation
+    /// later installs page-engine state in place and all local calls use
+    /// scoped borrows. Legacy typed owner-exit fixtures continue to use
+    /// `attachment` plus `page_owner` until their separate migration lands.
     native_persistent_owner: PersistentCompilerTlsOwnerCell<NativePersistentThreadOwner>,
     /// Distinguishes the cell's installed/retained payload from the other
     /// lifecycle shapes whose attachment and page-owner fields are empty.
@@ -7276,11 +7377,47 @@ fn current_native_process_page_arena_pair() -> Option<ProcessPageArenaLease> {
     ProcessPageArenaLease::join(page_map, arena).ok()
 }
 
+/// Pins a successfully published source attachment in the current thread's
+/// compiler-TLS owner without observing PageMap, arena, or page state.
+///
+/// Pinned `src/init.c:305-360` publishes the later TLD/Theap before a client
+/// page exists. Keeping that complete source owner continuously represented
+/// here makes normal `_mi_thread_done` available even if no allocator request
+/// follows pthread attach. The offered attachment is returned intact if this
+/// exact TLS cell was unexpectedly not vacant; the caller retains it and
+/// rejects the worker rather than dropping published source state.
+fn install_native_attachment_only_owner(
+    owner_cell: Pin<&PersistentCompilerTlsOwnerCell<NativePersistentThreadOwner>>,
+    attachment: MainHeapThreadAttachment<'static>,
+) -> Result<(), MainHeapThreadAttachment<'static>> {
+    let owner = NativePersistentThreadOwner {
+        attachment,
+        state: NativePersistentThreadOwnerExitState::AttachmentOnly,
+    };
+    match owner_cell.initialize(owner, |_| {
+        Ok::<(), Infallible>(())
+    }) {
+        Ok(()) => Ok(()),
+        Err(PersistentCompilerTlsOwnerInitializeError::Owner(never)) => match never {},
+        Err(PersistentCompilerTlsOwnerInitializeError::State { owner, .. }) => {
+            let NativePersistentThreadOwner { attachment, state } = owner;
+            debug_assert!(matches!(
+                state,
+                NativePersistentThreadOwnerExitState::AttachmentOnly
+            ));
+            drop(state);
+            Err(attachment)
+        }
+    }
+}
+
 /// Promotes the attached worker exactly once into its inline native owner.
 ///
-/// The offered attachment is moved from the legacy slot only after the
-/// process pair is ready. A lower initialization failure leaves that exact
-/// attachment/engine payload pinned in the cell's retained state.
+/// This is retained for direct `#[cfg(test)]` lifecycle fixtures whose legacy
+/// slot still stages the attachment. Production pthread attach first installs
+/// an attachment-only persistent owner, then
+/// [`activate_current_thread_native_persistent_owner`] performs this same
+/// page-engine transition only after a native allocation selects it.
 fn begin_current_thread_native_persistent_owner(
 ) -> Result<(), NativePersistentThreadOwnerAccessError> {
     let Some(pair) = current_native_process_page_arena_pair() else {
@@ -7340,6 +7477,32 @@ fn begin_current_thread_native_persistent_owner(
     }
 }
 
+/// Activates page-engine state for the already-installed native source owner.
+///
+/// The process pair is intentionally read only here, never from pthread
+/// attach. A failure after the attachment-only TLD/Theap publication retains
+/// that exact owner for source-ordered teardown and exposes no allocator
+/// fallback or replacement owner.
+fn activate_current_thread_native_persistent_owner(
+) -> Result<(), NativePersistentThreadOwnerAccessError> {
+    let Some(pair) = current_native_process_page_arena_pair() else {
+        return Err(NativePersistentThreadOwnerAccessError::Unavailable);
+    };
+    match with_current_thread_native_persistent_owner(|owner| owner.activate_page_engine(pair)) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(_)) => {
+            retain_current_thread_native_persistent_owner_for_teardown();
+            Err(NativePersistentThreadOwnerAccessError::Retained)
+        }
+        // Only legacy direct fixtures still reach this path. Production
+        // attach has already installed the source owner before user code.
+        Err(NativePersistentThreadOwnerAccessError::NotInstalled) => {
+            begin_current_thread_native_persistent_owner()
+        }
+        Err(error) => Err(error),
+    }
+}
+
 fn with_current_thread_native_persistent_allocator<R>(
     create_if_absent: bool,
     mut operation: impl FnMut(&mut MainHeapThreadOwnerLocalAllocator<'_>) -> R,
@@ -7350,7 +7513,12 @@ fn with_current_thread_native_persistent_allocator<R>(
             owner.with_local_allocator(|allocator| operation(allocator))
         }) {
             Ok(Ok(result)) => return Ok(result),
-            Ok(Err(())) => {
+            Ok(Err(NativePersistentThreadOwnerLocalAccessError::AttachmentOnly)) if may_create => {
+                activate_current_thread_native_persistent_owner()?;
+                may_create = false;
+            }
+            Ok(Err(NativePersistentThreadOwnerLocalAccessError::AttachmentOnly))
+            | Ok(Err(NativePersistentThreadOwnerLocalAccessError::Terminal)) => {
                 retain_current_thread_native_persistent_owner_for_teardown();
                 return Err(NativePersistentThreadOwnerAccessError::Retained);
             }
@@ -13602,11 +13770,41 @@ pub fn attach_current_thread() -> ThreadAttachResult {
     // this slice, and no other code may mutate the allocator TLS roots.
     match unsafe { MainHeapThreadAttachment::begin(main_heap, config) } {
         Ok(attachment) => {
-            slot.attachment = Some(attachment);
+            #[cfg(not(test))]
+            // SAFETY: the caller's mutable TLS-slot borrow proves this field
+            // has its final native-thread address. This finite reborrow is
+            // consumed by installation before the slot's scalar state is
+            // changed below; it never derives a second whole-slot access.
+            let native_owner_cell = unsafe { Pin::new_unchecked(&slot.native_persistent_owner) };
+            #[cfg(not(test))]
+            match install_native_attachment_only_owner(native_owner_cell, attachment) {
+                Ok(()) => {
+                    slot.native_persistent_owner_installed = true;
+                    slot.state = ThreadLifecycleState::Attached;
+                    ThreadAttachResult::Attached
+                }
+                Err(attachment) => {
+                    // The source attachment has published roots and must stay
+                    // represented until its explicit finish. A non-vacant
+                    // compiler-TLS cell therefore rejects this worker without
+                    // replacing or dropping that exact source state.
+                    slot.attachment = Some(attachment);
+                    slot.state = ThreadLifecycleState::Retained;
+                    RUNTIME_PROCESS.retain();
+                    ThreadAttachResult::Retained
+                }
+            }
             #[cfg(test)]
-            slot.begin_post_exit_route_completion_lifecycle(completion_generation);
-            slot.state = ThreadLifecycleState::Attached;
-            ThreadAttachResult::Attached
+            {
+                // Direct typed lifecycle fixtures still stage their attachment
+                // in the historical slot while their separate migration
+                // preserves source-owner/session test geometry. Production
+                // pthread attach uses the attachment-only owner above.
+                slot.attachment = Some(attachment);
+                slot.begin_post_exit_route_completion_lifecycle(completion_generation);
+                slot.state = ThreadLifecycleState::Attached;
+                ThreadAttachResult::Attached
+            }
         }
         Err(MainHeapThreadAttachmentBeginError::Rejected(_)) => {
             // A foreign root or pre-publication failure cannot safely become
@@ -14736,7 +14934,7 @@ mod tests {
             let allocation_entered = core::cell::Cell::new(false);
             assert_eq!(
                 owner.with_local_allocator(|_| allocation_entered.set(true)),
-                Err(()),
+                Err(NativePersistentThreadOwnerLocalAccessError::Terminal),
                 "the terminal owner never reopens allocation authority"
             );
             assert!(
@@ -14777,7 +14975,7 @@ mod tests {
             let allocation_entered = core::cell::Cell::new(false);
             assert_eq!(
                 owner.with_local_allocator(|_| allocation_entered.set(true)),
-                Err(()),
+                Err(NativePersistentThreadOwnerLocalAccessError::AttachmentOnly),
                 "attachment-only continuation has no page engine to borrow"
             );
             assert!(
