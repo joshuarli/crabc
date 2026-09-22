@@ -1016,14 +1016,16 @@ def cargo_source_lto_extern_closure(
                        for index, argument in enumerate(arguments)
                        if argument == "-C" and index + 1 < len(arguments)
                        and arguments[index + 1].startswith("extra-filename=")]
-    require(len(extra_filenames) == 1 and re.fullmatch(r"-[0-9a-f]+", extra_filenames[0]) is not None,
-            "Cargo primary consumer rustc extra filename drifted")
     if binary_name is not None:
+        require(len(extra_filenames) == 1 and re.fullmatch(r"-[0-9a-f]+", extra_filenames[0]) is not None,
+                "Cargo primary consumer rustc extra filename drifted")
         expected_output = physical(output_directory / f"{crate_name}{extra_filenames[0]}",
                                    "Cargo primary consumer expected linker output")
         require(expected_output == link_output,
                 "Cargo primary consumer rustc does not bind the final linker output")
     else:
+        require(not extra_filenames,
+                "Cargo primary cdylib rustc has an unapproved extra filename")
         require(link_output.parent == output_directory,
                 "Cargo primary cdylib rustc output directory differs from its final linker output")
 

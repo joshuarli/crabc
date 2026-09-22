@@ -894,6 +894,26 @@ class OwnedCleanupContract(unittest.TestCase):
         )
         self.assertEqual(closure["linker_output"], owned_cleanup.record_file(output, "test fused output"))
         self.assertEqual(closure["externs"], {**runtime_records, "crabc_unwinder": provider_record})
+        plugin_output = target / "libcrabc_owned_cleanup_plugin.so"
+        plugin_output.write_bytes(b"fused plugin output")
+        plugin_log = (
+            "     Running `CARGO_PRIMARY_PACKAGE=1 CARGO_CRATE_NAME=crabc_owned_cleanup_plugin "
+            "rustc --crate-name crabc_owned_cleanup_plugin --out-dir "
+            f"{target} {' '.join(externs)}`\n"
+        )
+        plugin_closure = owned_cleanup.cargo_source_lto_extern_closure(
+            plugin_log, target_name="crabc_owned_cleanup_plugin", binary_name=None,
+            link_output=plugin_output, source_library_root=target, runtime_artifacts=runtime_records,
+            cargo_provider=provider_record, built_unwind=built_unwind_record,
+        )
+        self.assertEqual(plugin_closure["linker_output"], owned_cleanup.record_file(plugin_output, "test fused plugin output"))
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "cdylib rustc has an unapproved extra filename"):
+            owned_cleanup.cargo_source_lto_extern_closure(
+                plugin_log.replace(f"--out-dir {target}", f"--out-dir {target} -C extra-filename=-deadbeef"),
+                target_name="crabc_owned_cleanup_plugin", binary_name=None,
+                link_output=plugin_output, source_library_root=target, runtime_artifacts=runtime_records,
+                cargo_provider=provider_record, built_unwind=built_unwind_record,
+            )
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "unselected source-built libunwind"):
             owned_cleanup.cargo_source_lto_extern_closure(
                 log.replace(f"--extern crabc_unwinder={provider}",
