@@ -20,6 +20,17 @@ Run it through the architecture-specific Docker entry point:
 python3 -m unittest discover -s compat/lua/tests -p 'test_*.py'
 ```
 
+`run_x86_dynamic_supplied.py` is the separate consumer entry point for an
+already sealed dynamic cohort. It takes the frozen cohort checkout and its
+`qualification.json`, the exact installed and extracted roots declared by that
+receipt, and a physical verified `lua-5.4.8.tar.gz` seed. It first runs the
+originating checkout's qualification reader, then copies that seed into a new
+private cache and invokes the existing dynamic lane twice in offline mode. It
+does not invoke the sysroot builder, package tool, extractor, public dynamic
+dispatcher, or latest-report publication. Its report records the consumer's
+own clean source separately from the product cohort; passing it is a live Lua
+source-consumer result, not a transfer of product qualification or support.
+
 The AArch64 command builds `target/crabc-sysroot/` first. The x86 static and
 dynamic commands materialize their corresponding sealed sysroots first. Each
 x86 dispatcher invocation gets a distinct physical
