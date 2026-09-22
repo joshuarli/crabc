@@ -2444,8 +2444,8 @@ mod tests {
             as for<'owner> unsafe fn(
                 &'owner OutputOwner,
             ) -> Result<Option<FinalStatisticsOutputPermit<'owner>>, FinalDiagnosticOutputError>;
-        let _ = FinalStatisticsOutputPermit::<'_>::emit
-            as unsafe fn(FinalStatisticsOutputPermit<'_>, FinalProcessDiagnosticView);
+        let _: unsafe fn(FinalStatisticsOutputPermit<'static>, FinalProcessDiagnosticView) =
+            FinalStatisticsOutputPermit::<'static>::emit;
         let _ = OutputOwner::final_process_done_message
             as unsafe fn(&OutputOwner, usize) -> Result<bool, FinalDiagnosticOutputError>;
     }
