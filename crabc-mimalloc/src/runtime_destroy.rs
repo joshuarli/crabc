@@ -294,6 +294,10 @@ mod tests {
                 while !ready.load(Ordering::Acquire) { std::thread::yield_now(); }
                 assert!(unsafe { core::slice::from_raw_parts(initial_client.as_ptr(), 80) }.iter().all(|byte| *byte == 0x35));
                 let registry = PinnedFixtureRegistry { initial: admission::native_allocator_initial_thread_descriptor().unwrap(), worker: &descriptor };
+                let thread_count_before = crate::subproc::MainSubprocess::global().live_thread_count();
+                let mut before_resident = 0u8;
+                let before_mapped = unsafe { crabc_core::mm::mincore_raw(
+                    (initial_client.as_ptr().addr() & !4095) as *mut u8, 4096, &mut before_resident) }.is_ok();
                 let prepared = unsafe { prepare_native_process_destroy(&registry) }
                     .expect("all source owners transfer while both TLS mappings are pinned");
                 // This fixture's registry pin is the worker stop condition;
@@ -318,6 +322,15 @@ mod tests {
                 }
                 assert!(unsafe { core::slice::from_raw_parts(owners.tracking, owners.tracking_len) }
                     .iter().any(MainHeapDestroyTracking::retains_tld));
+                let subprocess = crate::subproc::MainSubprocess::global();
+                let values = [thread_count_before, usize::from(before_mapped), usize::from(mapping_observation.is_ok()),
+                    subprocess.arena_backing().registry().count(),
+                    usize::from(!subprocess.test_has_published_metadata_theap()),
+                    subprocess.heap_list().test_counts().0,
+                    usize::from(!crate::process_page_map::ProcessPageMapStorage::global().test_has_published_root())];
+                for (index, value) in values.into_iter().enumerate() {
+                    std::println!("m2.process.destroy.{index}={value}");
+                }
                 stop.store(true, Ordering::Release);
                 worker.join().expect("transferred worker returns without source access");
             });
