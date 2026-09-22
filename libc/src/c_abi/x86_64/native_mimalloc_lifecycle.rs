@@ -5,11 +5,11 @@
 //! destructor.  The Rust engine instead needs libc to retain its compiler-TLS
 //! owner until after user cleanup and pthread TSD destructors.  This bridge
 //! supplies that real selected-worker boundary; it is not a pthread-key
-//! registry, and it does not touch mimalloc's internal dynamic TLS-key
-//! registry or process shutdown.
+//! registry. Process initialization and the same-image ELF finalizer below
+//! retain the source default-release lifecycle for both owned products.
 
 use core::ffi::{c_char, c_int, c_void};
-#[cfg(feature = "native-mimalloc-shadow-process-done-exit-test-audit")]
+#[cfg(any(feature = "native-mimalloc-shadow-process-done-exit-test-audit", feature = "x86-owned-allocator-lifecycle-test-audit"))]
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use crabc_mimalloc::__crabc_runtime::{
@@ -67,17 +67,18 @@ unsafe extern "C" fn runtime_stderr_output(message: *const c_char) {
 /// Start the selected native process owner after x86 startup has installed
 /// validated `environ`, `AT_PAGESZ`, initial TLS, and permanent `stderr`.
 ///
-/// A false result makes selected static startup reject before constructors:
+/// A false result makes selected owned startup reject before constructors:
 /// process initialization can have published an owner before its later-arena
 /// preparation discovers a retained source state. It must not continue with a
 /// partially active native lifecycle, substitute C for a native pointer, or
-/// admit workers. This bridge intentionally installs no process exit callback:
-/// upstream process teardown deletes its automatic key, but default teardown
-/// does not free live allocations, and this worker slice has no process-
-/// shutdown qualification.
+/// admit workers. The same-image `.fini_array` entry below owns logical
+/// process finalization; default teardown preserves live allocation backing.
 pub(super) unsafe fn initialize_selected_process(page_size: usize) -> bool {
     let stderr_output = unsafe { RuntimeStderrOutput::new(runtime_stderr_output) };
-    initialize_process(page_size, stderr_output) && prepare_native_later_thread_arena()
+    let ready = initialize_process(page_size, stderr_output) && prepare_native_later_thread_arena();
+    #[cfg(feature = "x86-owned-allocator-lifecycle-test-audit")]
+    if ready { ALLOCATOR_LIFECYCLE_PHASE.store(1, Ordering::Release); }
+    ready
 }
 
 /// Attach one selected child before libc can invoke its user start routine.
@@ -152,10 +153,12 @@ pub(super) unsafe fn reinitialize_selected_final_worker_for_ordinary_exit() {
 /// Pinned `src/prim/prim.c:30-46` installs `_mi_auto_process_done` through a
 /// compiler destructor. The selected C producer defines
 /// `MI_PRIM_HAS_PROCESS_ATTACH=1`, suppressing that exact entry. This bridge
-/// is its owned-static replacement: the CRT first drains ordinary `atexit`,
-/// then its already-registered executable `fini` walks `.fini_array` in
-/// reverse. The bridge leaves physical process backing and live-allocation
-/// routing intact; the following `_exit` owns process termination.
+/// retains that same-image ELF transport: the static CRT walks the executable
+/// array; the dynamic loader walks libc's array at its real dependency-graph
+/// position, after ordinary atexit/main fini and before stdio flush. Independent
+/// DSOs can finalize later than libc. Keep the source process backing and
+/// allocation routes live for their destructors and buffered stream callbacks;
+/// this logical process-done boundary must not be moved after those callbacks.
 unsafe extern "C" fn finish_selected_process_in_fini_array() {
     #[cfg(feature = "native-mimalloc-shadow-process-done-exit-test-audit")]
     if unsafe { crabc_x86_64_native_mimalloc_shadow_normal_main_user_atexit_observed() } != 1 {
@@ -172,15 +175,18 @@ unsafe extern "C" fn finish_selected_process_in_fini_array() {
         SelectedProcessDoneResult::AlreadyCompleted => {}
         SelectedProcessDoneResult::Retained => super::immediate_termination::_Exit(134),
     }
+    #[cfg(feature = "x86-owned-allocator-lifecycle-test-audit")]
+    ALLOCATOR_LIFECYCLE_PHASE.store(2, Ordering::Release);
 }
 
-// This module is pulled into the selected static archive by startup and worker
-// lifecycle calls. `#[used]` preserves the private replacement entry through
-// that archive member until the CRT-owned executable fini walk reaches it.
-// It has no public ABI spelling and is absent with the default C allocator.
+// Startup and worker calls retain this module in the selected Rust object.
+// `#[used]` preserves the private replacement entry for the CRT or loader fini
+// walk. The dynamic local symbol permits producer verification; it is not a
+// public ABI export. This entry is absent with the default C allocator.
 #[used]
 #[linkage = "internal"]
 #[link_section = ".fini_array"]
+#[cfg_attr(feature = "x86-owned-dynamic-runtime", export_name = "__crabc_x86_native_mimalloc_process_finalizer")]
 static SELECTED_PROCESS_DONE_FINI_ARRAY: unsafe extern "C" fn() =
     finish_selected_process_in_fini_array;
 
@@ -545,4 +551,14 @@ pub unsafe extern "C" fn __crabc_x86_native_mimalloc_process_done_retained_page_
             remote_free_published != 0,
         )
     })
+}
+
+// Phase-only development evidence; absent from ordinary allocator products.
+#[cfg(feature = "x86-owned-allocator-lifecycle-test-audit")]
+static ALLOCATOR_LIFECYCLE_PHASE: AtomicU8 = AtomicU8::new(0);
+
+#[cfg(feature = "x86-owned-allocator-lifecycle-test-audit")]
+#[no_mangle]
+pub extern "C" fn __crabc_x86_owned_allocator_lifecycle_test_phase() -> c_int {
+    c_int::from(ALLOCATOR_LIFECYCLE_PHASE.load(Ordering::Acquire))
 }

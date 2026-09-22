@@ -3,8 +3,9 @@
 
 Tool attestation, header provenance and Cargo archive membership classification
 are shared with the static producer. Final shared linkage is separate: every
-member is explicit and the sole accepted foreign implementation is the pinned
-existing C mimalloc backend. This is not dynamic-product campaign completion.
+member is explicit. The default retains only the accepted pinned C mimalloc
+implementation; explicit native shadow selection excludes that exact member.
+Neither selection is dynamic-product campaign completion.
 """
 from __future__ import annotations
 
@@ -265,7 +266,7 @@ def shared_libc_errno_private_aliases(stage: Path) -> dict[str, object]:
 def shared_libc_link_command(
     lld: Path,
     dynamic_list: Path,
-    mimalloc_hidden_exports: Path,
+    mimalloc_hidden_exports: Path | None,
     errno_private_aliases: Path,
     objects: Path,
     selected: tuple[str, ...],
@@ -279,7 +280,8 @@ def shared_libc_link_command(
 
     return [
         str(lld), "-shared", "--hash-style=sysv", "-soname", "libc.so",
-        f"--dynamic-list={dynamic_list}", f"--version-script={mimalloc_hidden_exports}",
+        f"--dynamic-list={dynamic_list}",
+        *([f"--version-script={mimalloc_hidden_exports}"] if mimalloc_hidden_exports is not None else []),
         f"--version-script={errno_private_aliases}",
         "--exclude-libs=" + SHARED_LIBC_COMPILER_HELPER_ARCHIVE,
         "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
@@ -401,8 +403,45 @@ def loader_provenance(
     }
 
 
-def build(output: Path) -> None:
+ALLOCATOR_BACKENDS = ("accepted-c", "native-shadow")
+
+
+def select_allocator_members(members, allocator_member: str, allocator_backend: str):
+    """Classify every Cargo member, then exclude the attested C shadow input.
+
+    The native Rust code is in libc's fat-LTO Rust object. Cargo still builds
+    the existing C dependency through the shared leaf feature graph; its exact
+    attested object is never selected into the native shared runtime.
+    """
+    if allocator_backend not in ALLOCATOR_BACKENDS:
+        raise common.BuildError("unknown dynamic allocator backend")
+    selected, excluded = common.classify_libc_members(members, allocator_member=allocator_member)
+    if allocator_backend == "native-shadow":
+        selected = tuple(member for member in selected if member != allocator_member)
+        excluded = tuple(member for member in members if member not in selected)
+    return selected, excluded
+
+
+def validate_native_allocator_symbols(definitions, imports, loader_symbols) -> None:
+    """No selected C allocator implementation or loader/libc heap crossing."""
+    c_symbols = sorted(symbol for symbol in definitions | imports
+                       if symbol.startswith(("mi_", "_mi_")))
+    allocator_edges = {"malloc", "calloc", "realloc", "reallocarray", "free",
+                       "aligned_alloc", "memalign", "posix_memalign", "malloc_usable_size",
+                       "__libc_malloc", "__libc_calloc", "__libc_realloc", "__libc_free"}
+    if c_symbols or loader_symbols & allocator_edges:
+        raise common.BuildError(f"native allocator ownership violated: C={c_symbols}, loader={sorted(loader_symbols & allocator_edges)}")
+
+
+def elf_symbols(nm: str, artifact: Path, selector: str) -> set[str]:
+    return {line.split()[-1] for line in common.run([nm, selector, str(artifact)]).decode().splitlines()
+            if len(line.split()) >= 2 and not line.endswith(":")}
+
+
+def build(output: Path, *, allocator_backend: str = "accepted-c", lifecycle_test_audit: bool = False) -> None:
     common.assert_native_target()
+    if allocator_backend not in ALLOCATOR_BACKENDS:
+        raise common.BuildError("unknown dynamic allocator backend")
     source_before_build = qualification.source_digest()
     output = common.validate_output_path(output)
     if not output.is_relative_to(ROOT / ".work"):
@@ -414,7 +453,7 @@ def build(output: Path) -> None:
         raise common.BuildError("dynamic build state already exists; choose a fresh owned output")
     stage.mkdir(parents=True, mode=0o700)
     staged_output = stage / "installed"
-    build_staged_payload(staged_output, stage)
+    build_staged_payload(staged_output, stage, allocator_backend=allocator_backend, lifecycle_test_audit=lifecycle_test_audit)
     if qualification.source_digest() != source_before_build:
         raise common.BuildError("source changed during dynamic product build")
     try:
@@ -424,7 +463,7 @@ def build(output: Path) -> None:
         raise common.BuildError(str(error)) from error
 
 
-def build_staged_payload(output: Path, stage: Path) -> None:
+def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = "accepted-c", lifecycle_test_audit: bool = False) -> None:
     """Build the complete candidate privately; only build() may publish it.
 
     Failure retains diagnostic/build state under the dedicated .build owner,
@@ -432,6 +471,7 @@ def build_staged_payload(output: Path, stage: Path) -> None:
     the installed driver's exact validation before atomic no-replace rename.
     """
     environment = common.deterministic_environment()
+    environment["CARGO_BUILD_JOBS"] = "2"
     tools = common.resolve_pinned_producer_tools()
     rustup = tools["rustup"]["path"]
     ar = common.producer_tool_path(tools, "llvm-ar")
@@ -440,7 +480,8 @@ def build_staged_payload(output: Path, stage: Path) -> None:
     rust_sysroot = common.pinned_rustc_sysroot(Path(rustup))
     lld = rust_sysroot / "lib/rustlib" / common.TARGET / "bin/gcc-ld/ld.lld"
     shared_dynamic_list = shared_libc_dynamic_list()
-    shared_mimalloc_hidden_exports = shared_libc_mimalloc_hidden_exports(stage)
+    shared_mimalloc_hidden_exports = (shared_libc_mimalloc_hidden_exports(stage)
+        if allocator_backend == "accepted-c" else {"status": "not-selected-native-shadow"})
     shared_compiler_helper_policy = shared_libc_compiler_helper_archive_policy()
     shared_errno_private_aliases = shared_libc_errno_private_aliases(stage)
     run = common.run
@@ -455,8 +496,11 @@ def build_staged_payload(output: Path, stage: Path) -> None:
                         "CFLAGS_x86_64_unknown_linux_musl": shlex.join(c_flags),
                         "CC_SHELL_ESCAPED_FLAGS": "1"})
     cargo = [rustup, "run", common.PINNED_TOOLCHAIN, "cargo"]
+    features = ["x86-owned-dynamic-runtime" if allocator_backend == "accepted-c" else "x86-owned-dynamic-native-shadow"]
+    if lifecycle_test_audit:
+        features.append("x86-owned-allocator-lifecycle-test-audit")
     libc_command = [*cargo, "rustc", "--locked", "-p", "crabc-libc", "--lib", "--release",
-         "--features", "x86-owned-dynamic-runtime", "--target", common.TARGET,
+         "--features", ",".join(features), "--target", common.TARGET,
          "--target-dir", str(stage / "cargo"), "--", "--cfg", "crabc_owned_static_sysroot",
          "--cfg", common.MIMALLOC_LIFECYCLE_RUST_CFG,
          "-C", "relocation-model=pic", "-C", "panic=abort", "-Ztls-model=initial-exec",
@@ -468,11 +512,16 @@ def build_staged_payload(output: Path, stage: Path) -> None:
     backends = list((stage / "cargo" / common.TARGET / "release/build").glob("libmimalloc-sys-*/out/libmimalloc.a"))
     if len(backends) != 1:
         raise common.BuildError("expected one accepted C allocator archive")
-    allocator_lifecycle = common.owned_mimalloc_lifecycle_profile(
+    allocator_lifecycle = (common.owned_mimalloc_lifecycle_profile(
         c_flags, libc_command, backends[0], raw,
         llvm_ar=ar, llvm_nm=nm, llvm_objdump=objdump,
         stage=stage / "allocator-lifecycle-profile",
-    )
+    ) if allocator_backend == "accepted-c" else {
+        "initialization": "owned_dynamic_runtime::prepare-before-constructors",
+        "process_done": "libc-fini-array-at-loader-graph-position-before-stdio-flush",
+        "post_done_backing": "source-default-release-retained",
+        "loader_allocator_pointer_transfer": False,
+    })
     backend_members = run([ar, "t", str(backends[0])]).decode().splitlines()
     if len(backend_members) != 1:
         raise common.BuildError("accepted allocator archive must have one object")
@@ -480,7 +529,7 @@ def build_staged_payload(output: Path, stage: Path) -> None:
     if run([ar, "p", str(raw), member]) != run([ar, "p", str(backends[0]), member]):
         raise common.BuildError("Cargo allocator member differs from attested backend")
     members = tuple(run([ar, "t", str(raw)]).decode().splitlines())
-    selected, excluded = common.classify_libc_members(members, allocator_member=member)
+    selected, excluded = select_allocator_members(members, member, allocator_backend)
     objects = stage / "objects"
     objects.mkdir()
     run([ar, "x", str(raw), *selected], cwd=objects)
@@ -498,7 +547,7 @@ def build_staged_payload(output: Path, stage: Path) -> None:
     # one weak alias needs LLD localization after its allocator object edge
     # has resolved.
     libc_shared_link_command = shared_libc_link_command(
-        lld, SHARED_LIBC_DYNAMIC_LIST, stage / "libc-mimalloc-hidden.exports",
+        lld, SHARED_LIBC_DYNAMIC_LIST, (stage / "libc-mimalloc-hidden.exports" if allocator_backend == "accepted-c" else None),
         stage / "libc-errno-private.exports", objects, selected, builtins, library
     )
     run(libc_shared_link_command)
@@ -534,6 +583,7 @@ def build_staged_payload(output: Path, stage: Path) -> None:
     (library / "crabc-dynamic-attach.o").chmod(0o644)
     common.copy_artifact(builtins, library / builtins.name)
     loader_env = common.deterministic_environment()
+    loader_env["CARGO_BUILD_JOBS"] = "2"
     loader_env["RUSTFLAGS"] = "-C link-dead-code -C target-feature=-crt-static -C relocation-model=pic"
     loader_command = [*cargo, "build", "--locked", "-p", "crabc-ldso", "--release", "--target", common.TARGET,
                       "--target-dir", str(stage / "loader"), "--no-default-features", "--features",
@@ -543,11 +593,25 @@ def build_staged_payload(output: Path, stage: Path) -> None:
     loader_artifact = stage / "loader" / common.TARGET / "release/libldso.so"
     common.copy_artifact(loader_artifact, interpreter)
     interpreter.chmod(0o755)
+    if allocator_backend == "native-shadow":
+        native_definitions = elf_symbols(nm, library / "libc.so", "--defined-only")
+        native_imports = elf_symbols(nm, library / "libc.so", "--undefined-only")
+        loader_imports = elf_symbols(nm, interpreter, "--undefined-only")
+        loader_definitions = elf_symbols(nm, interpreter, "--defined-only")
+        validate_native_allocator_symbols(native_definitions, native_imports, loader_imports | loader_definitions)
+        if "__crabc_x86_native_mimalloc_process_finalizer" not in native_definitions:
+            raise common.BuildError("native shared libc lost its private ELF process finalizer")
+        common.write_json(stage / "native-allocator-symbols.json", {
+            "definitions": sorted(native_definitions), "imports": sorted(native_imports),
+            "loader_imports": sorted(loader_imports), "loader_definitions": sorted(loader_definitions),
+        })
     libc_elf = audit_shared_elf(library / "libc.so")
     loader_elf = audit_shared_elf(interpreter)
     (interpreter.parent / "ld-musl-x86_64.so.1").symlink_to(interpreter.name)
     metadata = output / "share/crabc"
     metadata.mkdir(parents=True)
+    if allocator_backend == "native-shadow":
+        common.copy_artifact(stage / "native-allocator-symbols.json", metadata / "native-allocator-symbols.json")
     common.copy_artifact(crt / "objects.json", metadata / "crt.provenance.json")
     common.copy_artifact(crt / "commands.json", metadata / "crt.commands.json")
     common.copy_artifact(stage / "builtins.json", metadata / "builtins.provenance.json")
@@ -564,7 +628,13 @@ def build_staged_payload(output: Path, stage: Path) -> None:
         common.copy_artifact(source, output / name)
     (output / "bin/crabc-cc-dynamic").chmod(0o755)
     provenance = {"selected_members": {item: common.sha256_file(objects / item) for item in selected},
-                  "excluded_members": list(excluded), "accepted_allocator": common.accepted_allocator_pin(),
+                  "excluded_members": list(excluded),
+                  "allocator_backend": allocator_backend,
+                  "allocator_lifecycle_test_audit": lifecycle_test_audit,
+                  "accepted_allocator": (common.accepted_allocator_pin() if allocator_backend == "accepted-c" else None),
+                  "native_allocator": (_source_file_identity(ROOT / "crabc-mimalloc/UPSTREAM.md", "fixed native allocator provenance") if allocator_backend == "native-shadow" else None),
+                  "excluded_c_allocator": ({"pin": common.accepted_allocator_pin(), "member": member,
+                      "archive_sha256": common.sha256_file(backends[0])} if allocator_backend == "native-shadow" else None),
                   "allocator_headers": common.allocator_header_provenance(dependency_file, Path(environment["CARGO_HOME"])),
                   "allocator_compiler": common.executable_identity(Path("/usr/bin/gcc"), "pinned allocator C compiler"),
                   "allocator_flags": [flag.replace(str(stage), "$BUILD").replace(str(ROOT), "$SOURCE") for flag in c_flags],
@@ -582,6 +652,8 @@ def build_staged_payload(output: Path, stage: Path) -> None:
     common.write_json(metadata / "dynamic-product-state.json", {
         "schema": "crabc.x86_64-owned-dynamic-materialization/v1",
         "status": "materialized-unqualified", "source_sha256": qualification.source_digest(),
+        "allocator_backend": allocator_backend, "allocator_lifecycle_test_audit": lifecycle_test_audit,
+        "allocator_promoted": False,
         "contracts": qualification.contract_digests(), "payload_files": payload_files,
         "runtime_v1_published": False, "campaign_complete": False, "public_support": False,
         "modes": ["dynamic-pie", "dynamic-non-pie", "dynamic-shared-object"],
@@ -597,9 +669,11 @@ def build_staged_payload(output: Path, stage: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--allocator-backend", choices=ALLOCATOR_BACKENDS, default="accepted-c")
+    parser.add_argument("--allocator-lifecycle-test-audit", action="store_true")
     args = parser.parse_args()
     try:
-        build(args.output)
+        build(args.output, allocator_backend=args.allocator_backend, lifecycle_test_audit=args.allocator_lifecycle_test_audit)
     except (common.BuildError, OSError) as error:
         print(f"owned dynamic sysroot: {error}", file=sys.stderr)
         return 1

@@ -16,6 +16,8 @@
 //! exact upstream automatic process operations.
 
 use super::errno;
+#[cfg(feature = "x86-owned-allocator-lifecycle-test-audit")]
+use core::sync::atomic::{AtomicU8, Ordering};
 
 unsafe extern "C" {
     // These internal upstream operations are the complete bodies called by
@@ -28,12 +30,16 @@ unsafe extern "C" {
 unsafe extern "C" fn initialize() {
     let saved_errno = unsafe { errno::get_errno() };
     unsafe { _mi_auto_process_init() };
+    #[cfg(feature = "x86-owned-allocator-lifecycle-test-audit")]
+    ALLOCATOR_LIFECYCLE_PHASE.store(1, Ordering::Release);
     unsafe { errno::set_errno(saved_errno) };
 }
 
 unsafe extern "C" fn finalize() {
     let saved_errno = unsafe { errno::get_errno() };
     unsafe { _mi_auto_process_done() };
+    #[cfg(feature = "x86-owned-allocator-lifecycle-test-audit")]
+    ALLOCATOR_LIFECYCLE_PHASE.store(2, Ordering::Release);
     unsafe { errno::set_errno(saved_errno) };
 }
 
@@ -51,3 +57,13 @@ static AUTOMATIC_PROCESS_INITIALIZER: unsafe extern "C" fn() = initialize;
 #[export_name = "__crabc_x86_owned_mimalloc_process_finalizer"]
 #[link_section = ".fini_array"]
 static AUTOMATIC_PROCESS_FINALIZER: unsafe extern "C" fn() = finalize;
+
+// Phase-only development evidence; absent from ordinary allocator products.
+#[cfg(feature = "x86-owned-allocator-lifecycle-test-audit")]
+static ALLOCATOR_LIFECYCLE_PHASE: AtomicU8 = AtomicU8::new(0);
+
+#[cfg(feature = "x86-owned-allocator-lifecycle-test-audit")]
+#[no_mangle]
+pub extern "C" fn __crabc_x86_owned_allocator_lifecycle_test_phase() -> core::ffi::c_int {
+    core::ffi::c_int::from(ALLOCATOR_LIFECYCLE_PHASE.load(Ordering::Acquire))
+}

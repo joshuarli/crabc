@@ -20,6 +20,18 @@ pub(super) unsafe fn prepare(argc: core::ffi::c_int, argv: *const *const core::f
     // state before process globals or executable constructors are visible;
     // the signal handler and delivery transaction remain a separate owner.
     unsafe { super::pthread_create_join::publish_initial_selected_pthread_cancellation_state() };
+    // The authenticated loader handoff owns TLS mappings only. No allocator
+    // pointer crosses it. Publish the native process owner after startup's
+    // environment/auxv/security handoff, before preinit or DSO constructors.
+    #[cfg(feature = "x86-owned-dynamic-native-shadow")]
+    {
+        let saved_errno = unsafe { errno::get_errno() };
+        let ready = auxv_observation::initial_page_size().is_some_and(|page_size| unsafe {
+            super::native_mimalloc_lifecycle::initialize_selected_process(page_size)
+        });
+        unsafe { errno::set_errno(saved_errno) };
+        if !ready { return false; }
+    }
     unsafe { super::process_globals::install(argc, argv) };
     true
 }

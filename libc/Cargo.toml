@@ -64,6 +64,12 @@ x86-owned-static-runtime = [
 # Share the owned leaf roster; process linkage is selected independently in
 # the target root. This does not select the static startup or TLS owner.
 x86-owned-dynamic-runtime = ["x86-owned-static-runtime"]
+# Nondefault dynamic ownership proof: loader TLS, libc native process/worker
+# lifecycle, and libc's own ELF finalizer select one native pointer owner.
+x86-owned-dynamic-native-shadow = ["x86-owned-dynamic-runtime", "native-mimalloc-shadow"]
+# Scalar initialization/finalization phase for installed C/native differential
+# fixtures. No callbacks, allocator pointers, or default product selection.
+x86-owned-allocator-lifecycle-test-audit = []
 # Legacy C temporary-name generation returns an allocator-owned pathname from
 # tempnam while tmpnam retains its source-compatible static-buffer path. Keep
 # both opt-in over the already audited strdup client so the default archive
@@ -187,7 +193,7 @@ x86-pthread-spin-operations = []
 # runtime selection or fallback and is not promotion evidence. On x86 this
 # additionally selects the private engine dependency; the target-local source
 # root rejects use without the owned static runtime and rejects the dynamic
-# product until its allocator-owner audit exists.
+# product unless its explicit dynamic native-owner feature is selected.
 native-mimalloc-shadow = ["dep:crabc-mimalloc"]
 # Test-only x86 native-worker lifecycle observation. The bridge stays absent
 # from ordinary selected-native archives and exposes no public C ABI.

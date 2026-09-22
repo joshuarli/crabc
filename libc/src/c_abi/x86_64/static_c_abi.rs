@@ -648,10 +648,11 @@ mod posix_spawnattr_getschedparam;
 #[cfg(not(feature = "x86-owned-dynamic-runtime"))]
 #[path = "static_startup.rs"]
 mod static_startup;
-// The x86 native shadow is a selected owned-static worker lifecycle slice.
-// Its dynamic composition still needs a separate loader/libc allocator-owner
-// audit; rejecting it here prevents a feature combination from silently
-// mixing native allocations with unreviewed loader-owned allocation paths.
+// Native shadow selection requires the owned startup and worker lifecycle.
+// Dynamic selection additionally names the loader/libc ownership seam: the
+// loader retains its raw mappings, while libc owns the sole native allocator
+// and dispatches its finalizer at libc's dependency-graph position. Combining
+// generic native and dynamic features must not select that seam implicitly.
 #[cfg(all(
     feature = "native-mimalloc-shadow",
     not(feature = "x86-owned-static-runtime"),
@@ -662,9 +663,10 @@ compile_error!(
 #[cfg(all(
     feature = "native-mimalloc-shadow",
     feature = "x86-owned-dynamic-runtime",
+    not(feature = "x86-owned-dynamic-native-shadow"),
 ))]
 compile_error!(
-    "native-mimalloc-shadow on Linux/x86-64 does not yet admit x86-owned-dynamic-runtime; loader/libc allocator ownership is not qualified"
+    "native-mimalloc-shadow with x86-owned-dynamic-runtime requires the explicit x86-owned-dynamic-native-shadow ownership selection"
 );
 #[cfg(feature = "native-mimalloc-shadow")]
 #[path = "native_mimalloc_lifecycle.rs"]
