@@ -4271,10 +4271,17 @@ static RUNTIME_PROCESS: RuntimeProcessStorage = RuntimeProcessStorage::new();
 struct RuntimeForkAdmission {
     state: AtomicUsize,
     /// A copied phase-B claim must not release a reset child counter after
-    /// `after_fork_child`. Zero is a terminal child-invalidated value rather
-    /// than a wrapping generation: this incomplete lifecycle never revives a
-    /// callback admission in that child.
+    /// `after_fork_child`. Zero is a raw-child-invalidated value rather than
+    /// a wrapping generation: only a separately proven process-owned source
+    /// repair may replace it with the distinct successor recorded below.
     callback_claim_generation: AtomicUsize,
+    /// The one successor identity a completed child-source repair may consume.
+    ///
+    /// This remains zero until `after_fork_child` invalidates a nonzero parent
+    /// claim. It is deliberately distinct from live claim authority: the raw
+    /// copied child cannot use it to invoke a callback before the process-owned
+    /// repair has proved its surviving source image.
+    callback_child_rearm_generation: AtomicUsize,
 }
 
 /// One linear claim in the runtime's later-worker admission count.
@@ -4343,6 +4350,7 @@ impl RuntimeForkAdmission {
         Self {
             state: AtomicUsize::new(0),
             callback_claim_generation: AtomicUsize::new(1),
+            callback_child_rearm_generation: AtomicUsize::new(0),
         }
     }
 
@@ -4570,15 +4578,82 @@ impl RuntimeForkAdmission {
     /// copied gate bits for its own proof.
     fn after_fork_child(&self, fork_was_prepared: bool) -> bool {
         let observed = self.state.swap(0, Ordering::AcqRel);
-        // Never revive a copied callback token into child authority. Its Drop
-        // sees this mismatch and cannot alter the reset word; every new
-        // phase-B claim refuses until a separately proven child-repair route
-        // establishes a legitimate callback capability.
-        self.callback_claim_generation.store(0, Ordering::Release);
+        // SAFETY: this raw-child transition owns the copied gate after its
+        // atomic reset. No normal admission can begin until its child result
+        // is consumed, so it is the required child-exclusive invalidator.
+        unsafe { self.invalidate_callback_identity_for_source_child_repair() };
         fork_was_prepared
             && (observed & (FORK_GATE_HELD | FORK_GATE_PRESERVE))
             == (FORK_GATE_HELD | FORK_GATE_PRESERVE)
             && observed & FORK_GATE_COUNTER_MASK == 0
+    }
+
+    /// Restores deferred-free phase-B admission only after source-specific
+    /// child repair has re-established a valid callback owner.
+    ///
+    /// # Safety
+    ///
+    /// The caller must hold the process-owned child repair epoch closed,
+    /// prove the fork gate is neither held nor preserved and has no selected
+    /// callback, and finish every required source repair before the epoch can
+    /// reopen. A separately proved surviving later-owner count may remain.
+    /// Raw child repair must not invoke foreign callback code. This method is
+    /// not a generic fork recovery path.
+    #[inline]
+    unsafe fn rearm_deferred_free_callback_after_source_child_repair(&self) -> bool {
+        // SAFETY: caller proves no entry can race this checked, one-shot
+        // rearm. The atomics make a violated or repeated protocol refuse
+        // rather than restore a copied token accidentally.
+        let state = self.state.load(Ordering::Acquire);
+        if state & (FORK_GATE_HELD | FORK_GATE_PRESERVE | FORK_GATE_CALLBACK_COUNT_MASK) != 0
+            || self.callback_claim_generation.load(Ordering::Acquire) != 0
+        {
+            return false;
+        }
+        let generation = self.callback_child_rearm_generation.load(Ordering::Acquire);
+        if generation == 0 {
+            return false;
+        }
+        if self
+            .callback_claim_generation
+            .compare_exchange(0, generation, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return false;
+        }
+        self.callback_child_rearm_generation.store(0, Ordering::Release);
+        true
+    }
+
+    /// Invalidates copied callback tokens while preserving the admission word
+    /// that a child source repair has already proved survives.
+    ///
+    /// A legacy raw child calls this after it resets the whole word. A complete
+    /// process-owned repair instead calls it under its closed epoch before it
+    /// retires vanished owners; that path may retain one surviving later-owner
+    /// count and must not manufacture a new callback count or clear it.
+    ///
+    /// # Safety
+    ///
+    /// The caller must hold the child-exclusive repair epoch closed, prevent
+    /// every normal callback claim, and call this at most once for the copied
+    /// child identity before any rearm. It must not invoke foreign callback
+    /// code while this invalidated image is being repaired.
+    #[inline]
+    unsafe fn invalidate_callback_identity_for_source_child_repair(&self) {
+        // Never revive a copied callback token into child authority. Its Drop
+        // sees this mismatch and cannot alter the reset word. Capture only a
+        // distinct successor identity for a separately proven child-repair
+        // route; every new phase-B claim refuses until that route consumes it.
+        // A repeated raw-child fork never derives generation one from zero,
+        // because an old copied token could still carry that identity.
+        let generation = self.callback_claim_generation.swap(0, Ordering::AcqRel);
+        if generation != 0 {
+            self.callback_child_rearm_generation.store(
+                generation.checked_add(1).unwrap_or(0),
+                Ordering::Release,
+            );
+        }
     }
 }
 
@@ -18115,6 +18190,169 @@ mod tests {
             admissions.try_claim_deferred_free_callback(),
             Err(DeferredFreeCallbackAdmissionRefusal::ChildInvalidated)
         ));
+    }
+
+    #[test]
+    fn repaired_child_callback_admission_uses_a_generation_distinct_from_copied_claims() {
+        let admissions = RuntimeForkAdmission::new();
+        let copied_claim = admissions
+            .try_claim_deferred_free_callback()
+            .expect("the parent creates one selected callback claim before raw fork");
+        let copied_generation = copied_claim.generation;
+        admissions.before_fork(false);
+        assert!(
+            !admissions.after_fork_child(true),
+            "a copied live callback makes the initial raw child image non-preserving"
+        );
+        assert!(matches!(
+            admissions.try_claim_deferred_free_callback(),
+            Err(DeferredFreeCallbackAdmissionRefusal::ChildInvalidated)
+        ));
+
+        // SAFETY: this focused fixture has the reset zero gate and models the
+        // process-owned child repair after every source owner was repaired.
+        assert!(unsafe {
+            admissions.rearm_deferred_free_callback_after_source_child_repair()
+        });
+        let repaired_claim = admissions
+            .try_claim_deferred_free_callback()
+            .expect("only the completed child repair restores selected phase-B admission");
+        assert_ne!(
+            repaired_claim.generation, copied_generation,
+            "a copied parent token cannot share the repaired child identity"
+        );
+
+        drop(copied_claim);
+        assert_eq!(
+            RuntimeForkAdmission::callback_count(admissions.state.load(Ordering::Acquire)),
+            1,
+            "a copied token that returns after child repair cannot subtract the repaired claim"
+        );
+        drop(repaired_claim);
+        assert_eq!(admissions.state.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn repeated_unrepaired_child_fork_preserves_its_callback_rearm_floor() {
+        let admissions = RuntimeForkAdmission::new();
+        let copied_claim = admissions
+            .try_claim_deferred_free_callback()
+            .expect("the parent creates one selected callback claim before raw fork");
+        let copied_generation = copied_claim.generation;
+        admissions.before_fork(false);
+        assert!(!admissions.after_fork_child(true));
+        let first_rearm_generation = admissions
+            .callback_child_rearm_generation
+            .load(Ordering::Acquire);
+        assert_ne!(first_rearm_generation, 0);
+
+        // A still-unrepaired copied child has no live claim generation. Its
+        // next raw fork must preserve the first successor rather than turn
+        // zero into one and collide with `copied_claim`.
+        assert!(!admissions.after_fork_child(false));
+        assert_eq!(
+            admissions
+                .callback_child_rearm_generation
+                .load(Ordering::Acquire),
+            first_rearm_generation
+        );
+        // SAFETY: the fixture remains at the exact reset zero gate and models
+        // completed process-owned source repair after the repeated child fork.
+        assert!(unsafe {
+            admissions.rearm_deferred_free_callback_after_source_child_repair()
+        });
+        let repaired_claim = admissions
+            .try_claim_deferred_free_callback()
+            .expect("the preserved successor is the only rearmed child identity");
+        assert_ne!(repaired_claim.generation, copied_generation);
+        drop(copied_claim);
+        assert_eq!(
+            RuntimeForkAdmission::callback_count(admissions.state.load(Ordering::Acquire)),
+            1
+        );
+        drop(repaired_claim);
+    }
+
+    #[test]
+    fn repaired_child_callback_admission_preserves_a_surviving_later_owner_count() {
+        let admissions = RuntimeForkAdmission::new();
+        let copied_claim = admissions
+            .try_claim_deferred_free_callback()
+            .expect("the parent creates one selected callback claim before raw fork");
+        admissions.before_fork(false);
+        assert!(!admissions.after_fork_child(true));
+
+        assert_ne!(
+            admissions
+                .callback_child_rearm_generation
+                .load(Ordering::Acquire),
+            0
+        );
+        admissions.state.store(FORK_GATE_HELD, Ordering::Release);
+        // SAFETY: this fixture intentionally proves the held gate refuses a
+        // premature rearm without consuming the successor identity.
+        assert!(!unsafe {
+            admissions.rearm_deferred_free_callback_after_source_child_repair()
+        });
+        admissions
+            .state
+            .store(FORK_GATE_CALLBACK_ONE, Ordering::Release);
+        // SAFETY: this fixture intentionally proves an outstanding callback
+        // count also refuses before the process repair can reopen entry.
+        assert!(!unsafe {
+            admissions.rearm_deferred_free_callback_after_source_child_repair()
+        });
+
+        // The low count models the independently retained surviving worker
+        // token. Its source repair is already complete, so rearming callback
+        // identity must retain this count instead of resetting the gate.
+        admissions.state.store(1, Ordering::Release);
+        // SAFETY: the fixture now has the exact unheld/no-callback gate and a
+        // separately proved surviving later owner.
+        assert!(unsafe {
+            admissions.rearm_deferred_free_callback_after_source_child_repair()
+        });
+        let repaired_claim = admissions
+            .try_claim_deferred_free_callback()
+            .expect("the repaired child permits a selected callback beside its surviving owner");
+        let entered = admissions.state.load(Ordering::Acquire);
+        assert_eq!(entered & FORK_GATE_COUNT_MASK, 1);
+        assert_eq!(RuntimeForkAdmission::callback_count(entered), 1);
+        drop(copied_claim);
+        assert_eq!(
+            admissions.state.load(Ordering::Acquire),
+            1 | FORK_GATE_CALLBACK_ONE,
+            "a late copied claim cannot disturb either the retained worker or repaired callback"
+        );
+        drop(repaired_claim);
+        assert_eq!(admissions.state.load(Ordering::Acquire), 1);
+    }
+
+    #[test]
+    fn child_callback_repair_refuses_generation_overflow() {
+        let admissions = RuntimeForkAdmission::new();
+        admissions
+            .callback_claim_generation
+            .store(usize::MAX, Ordering::Release);
+        let copied_claim = admissions
+            .try_claim_deferred_free_callback()
+            .expect("the synthetic maximum generation is still an existing parent claim");
+        admissions.before_fork(false);
+        assert!(!admissions.after_fork_child(true));
+        assert_eq!(
+            admissions
+                .callback_child_rearm_generation
+                .load(Ordering::Acquire),
+            0,
+            "generation overflow leaves the raw child permanently callback-invalidated"
+        );
+        // SAFETY: the fixture supplies the required closed zero gate; overflow
+        // itself must remain a terminal refusal rather than wrap identity.
+        assert!(!unsafe {
+            admissions.rearm_deferred_free_callback_after_source_child_repair()
+        });
+        drop(copied_claim);
+        assert_eq!(admissions.state.load(Ordering::Acquire), 0);
     }
 
     #[test]
