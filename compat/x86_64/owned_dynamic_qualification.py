@@ -28,6 +28,15 @@ ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = "crabc.x86_64-owned-dynamic-qualification/v1"
 PRODUCTS = ("installed", "second", "extracted")
 PUBLICATION = ROOT / ".work/x86_64/owned-dynamic-qualification.json"
+MATERIALIZATION_ALLOCATOR_BACKEND = "accepted-c"
+MATERIALIZATION_ALLOCATOR_LIFECYCLE_TEST_AUDIT = False
+MATERIALIZATION_ALLOCATOR_PROMOTED = False
+MATERIALIZATION_STATE_FIELDS = frozenset({
+    "schema", "status", "source_sha256", "contracts", "payload_files",
+    "allocator_backend", "allocator_lifecycle_test_audit", "allocator_promoted",
+    "runtime_v1_published", "campaign_complete", "public_support", "modes",
+    "runtime_profile", "qualification",
+})
 # The finite roster is the executable coverage map. A leaf may cover multiple
 # behaviors, but no omitted product, alternate mode or required leaf is implied.
 CASES = {
@@ -211,15 +220,19 @@ def product_identity(product: Path) -> str:
     except driver.shared.DriverError as error:
         raise QualificationError(f"installed product invalid: {error}") from error
     state = read(product / "share/crabc/dynamic-product-state.json")
-    require(set(state) == {"schema", "status", "source_sha256", "contracts", "payload_files",
-            "runtime_v1_published", "campaign_complete", "public_support", "modes", "runtime_profile", "qualification"},
-            "materialization fields drifted")
+    require(set(state) == MATERIALIZATION_STATE_FIELDS, "materialization fields drifted")
     require(state.get("schema") == "crabc.x86_64-owned-dynamic-materialization/v1", "wrong materialization schema")
     require(state.get("payload_files") == {name: value for name, value in manifest["files"].items()
             if name != "share/crabc/dynamic-product-state.json"}, "materialization payload binding drifted")
     require(state.get("status") == "materialized-unqualified", "builder state must remain unqualified")
     require(state.get("source_sha256") == source_digest(), "installed product source is stale")
     require(state.get("contracts") == contract_digests(), "installed product contracts are stale")
+    require(
+        state.get("allocator_backend") == MATERIALIZATION_ALLOCATOR_BACKEND
+        and state.get("allocator_lifecycle_test_audit") is MATERIALIZATION_ALLOCATOR_LIFECYCLE_TEST_AUDIT
+        and state.get("allocator_promoted") is MATERIALIZATION_ALLOCATOR_PROMOTED,
+        "materialization allocator provenance drifted",
+    )
     require(state.get("runtime_v1_published") is False and state.get("public_support") is False
             and state.get("campaign_complete") is False,
             "builder cannot publish runtime or public support")

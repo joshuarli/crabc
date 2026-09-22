@@ -234,6 +234,9 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
             "schema": "crabc.x86_64-owned-dynamic-materialization/v1",
             "status": "materialized-unqualified", "source_sha256": self.source,
             "contracts": {"contracts": "c" * 64}, "payload_files": payloads,
+            "allocator_backend": qualification.MATERIALIZATION_ALLOCATOR_BACKEND,
+            "allocator_lifecycle_test_audit": qualification.MATERIALIZATION_ALLOCATOR_LIFECYCLE_TEST_AUDIT,
+            "allocator_promoted": qualification.MATERIALIZATION_ALLOCATOR_PROMOTED,
             "runtime_v1_published": False, "campaign_complete": False, "public_support": False,
             "modes": ["dynamic-pie", "dynamic-non-pie", "dynamic-shared-object"],
             "runtime_profile": qualification.MATERIALIZATION_PROFILE,
@@ -245,6 +248,9 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
             self.assertEqual(REAL_PRODUCT_IDENTITY(product), qualification.digest(product / "share/crabc/manifest.json"))
             for key, value in (("status", "verified"), ("source_sha256", "0" * 64),
                                ("contracts", {}), ("payload_files", {}),
+                               ("allocator_backend", "native-shadow"),
+                               ("allocator_lifecycle_test_audit", True),
+                               ("allocator_promoted", True),
                                ("runtime_v1_published", True), ("campaign_complete", True)):
                 with self.subTest(field=key):
                     path.write_text(json.dumps({**state, key: value}))

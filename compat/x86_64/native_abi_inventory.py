@@ -1478,11 +1478,7 @@ def _validate_static_preparation_file(output_root: Path, record: object) -> dict
 def _materialization_state_shape(state: object) -> dict[str, Any]:
     state = require_exact_keys(
         state,
-        {
-            "schema", "status", "source_sha256", "contracts", "payload_files",
-            "runtime_v1_published", "campaign_complete", "public_support", "modes",
-            "runtime_profile", "qualification",
-        },
+        dynamic_materialization.MATERIALIZATION_STATE_FIELDS,
         "dynamic materialization state",
     )
     require(
@@ -1503,6 +1499,12 @@ def _materialization_state_shape(state: object) -> dict[str, Any]:
     for name, digest in payload_files.items():
         relative = _relative_path(name, "dynamic materialization payload")
         require(isinstance(digest, str) and _SHA256.fullmatch(digest) is not None, f"dynamic materialization payload digest is invalid: {relative}")
+    require(
+        state["allocator_backend"] == dynamic_materialization.MATERIALIZATION_ALLOCATOR_BACKEND
+        and state["allocator_lifecycle_test_audit"] is dynamic_materialization.MATERIALIZATION_ALLOCATOR_LIFECYCLE_TEST_AUDIT
+        and state["allocator_promoted"] is dynamic_materialization.MATERIALIZATION_ALLOCATOR_PROMOTED,
+        "dynamic materialization allocator provenance drifted",
+    )
     require(
         state["runtime_v1_published"] is False
         and state["campaign_complete"] is False

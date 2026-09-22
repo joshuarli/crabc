@@ -438,11 +438,23 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
         state = {
             "schema": receipt.DYNAMIC_STATE_SCHEMA, "status": "materialized-unqualified",
             "source_sha256": source["content_sha256"], "contracts": {}, "payload_files": {},
+            "allocator_backend": "accepted-c", "allocator_lifecycle_test_audit": False,
+            "allocator_promoted": False,
             "runtime_v1_published": False, "campaign_complete": False, "public_support": False,
             "modes": ["dynamic-pie", "dynamic-non-pie", "dynamic-shared-object"],
             "runtime_profile": "fixture", "qualification": "fixture",
         }
         receipt._validate_dynamic_source_epoch(state, source)
+        for field, replacement in (
+            ("allocator_backend", "native-shadow"),
+            ("allocator_lifecycle_test_audit", True),
+            ("allocator_promoted", True),
+        ):
+            with self.subTest(field=field):
+                forged = dict(state)
+                forged[field] = replacement
+                with self.assertRaisesRegex(receipt.ReceiptError, "source cohort"):
+                    receipt._validate_dynamic_source_epoch(forged, source)
         state["source_sha256"] = "c" * 64
         with self.assertRaisesRegex(receipt.ReceiptError, "source cohort"):
             receipt._validate_dynamic_source_epoch(state, source)

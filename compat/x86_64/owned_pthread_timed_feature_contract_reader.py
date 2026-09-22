@@ -27,6 +27,7 @@ import tempfile
 import tomllib
 from typing import Any, NamedTuple
 
+import owned_dynamic_qualification as dynamic_materialization
 from owned_syscall_alias_authority import (RELOCATION_NAMES, archive_members, capture_git_objects, elf_bytes,
                                            require_symbol_stream, section_name, source_tree)
 from owned_static_link_authority import (StaticFunctionContract, StaticLinkAuthorityError,
@@ -321,11 +322,7 @@ ROOT_TREES = (
     "dynamic-pie-root",
     "dynamic-non-pie-root",
 )
-DYNAMIC_STATE_FIELDS = {
-    "schema", "status", "source_sha256", "contracts", "payload_files",
-    "runtime_v1_published", "campaign_complete", "public_support", "modes",
-    "runtime_profile", "qualification",
-}
+DYNAMIC_STATE_FIELDS = dynamic_materialization.MATERIALIZATION_STATE_FIELDS
 DYNAMIC_STATE_CONTRACTS = {
     "compat/x86_64/dynamic-product.toml",
     "compat/x86_64/loader-libc-tls-runtime-v1.toml",
@@ -921,6 +918,12 @@ def _validate_dynamic_materialization_state(
     }
     require(payload_files == expected_payloads,
             f"{label} payload binding changed")
+    require(
+        state["allocator_backend"] == dynamic_materialization.MATERIALIZATION_ALLOCATOR_BACKEND
+        and state["allocator_lifecycle_test_audit"] is dynamic_materialization.MATERIALIZATION_ALLOCATOR_LIFECYCLE_TEST_AUDIT
+        and state["allocator_promoted"] is dynamic_materialization.MATERIALIZATION_ALLOCATOR_PROMOTED,
+        f"{label} allocator provenance changed",
+    )
     require(state["runtime_v1_published"] is False
             and state["campaign_complete"] is False
             and state["public_support"] is False,
@@ -1327,8 +1330,12 @@ def evaluate_feature_source(root: Path) -> dict[str, object]:
     require(re.search(r"^x86-owned-static-runtime\s*=\s*\[", cargo, re.MULTILINE) is not None,
             "timed feature Cargo route differs")
     builder = (root / "scripts/build_x86_64_owned_sysroot.py").read_text(encoding="utf-8")
-    require('"--features",\n        "x86-owned-static-runtime",' in builder,
-            "timed feature builder argv source differs")
+    require(
+        'accepted_c = allocator_backend == "accepted-c"' in builder
+        and 'selected_feature = "x86-owned-static-runtime" if accepted_c else "x86-owned-static-native-shadow"' in builder
+        and '"--features",\n        selected_feature,' in builder,
+        "timed feature builder argv source differs",
+    )
     module_root = (root / "libc/src/c_abi/x86_64/static_c_abi.rs").read_text(encoding="utf-8")
     for leaf in ("pthread_create_join.rs", "pthread_mutex.rs", "pthread_cond.rs"):
         require(f'#[path = "{leaf}"]' in module_root,
@@ -1350,7 +1357,10 @@ def evaluate_feature_source(root: Path) -> dict[str, object]:
     return {
         "feature": FEATURE,
         "aliases": [{"public": public, "provider": provider} for public, provider in ALIASES],
-        "builder_argv_source": ["--features", FEATURE],
+        "builder_feature_selection": {
+            "accepted-c": FEATURE,
+            "native-shadow": "x86-owned-static-native-shadow",
+        },
         "product_build_invocation_proven": False,
         "scope": "source feature mapping only; supplied product bytes and final-link rows are separately sealed",
     }

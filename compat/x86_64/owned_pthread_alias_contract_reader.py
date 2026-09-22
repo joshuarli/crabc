@@ -24,6 +24,7 @@ import stat
 import subprocess
 import sys
 from typing import Any, NamedTuple
+import owned_dynamic_qualification as dynamic_materialization
 
 
 SCHEMA = "crabc.x86_64-owned-pthread-alias-contract/v1"
@@ -200,11 +201,7 @@ ROOT_TREES = (
     "dynamic-pie-root",
     "dynamic-non-pie-root",
 )
-DYNAMIC_STATE_FIELDS = {
-    "schema", "status", "source_sha256", "contracts", "payload_files",
-    "runtime_v1_published", "campaign_complete", "public_support", "modes",
-    "runtime_profile", "qualification",
-}
+DYNAMIC_STATE_FIELDS = dynamic_materialization.MATERIALIZATION_STATE_FIELDS
 DYNAMIC_STATE_CONTRACTS = {
     "compat/x86_64/dynamic-product.toml",
     "compat/x86_64/loader-libc-tls-runtime-v1.toml",
@@ -570,6 +567,12 @@ def _validate_dynamic_materialization_state(
     }
     require(payload_files == expected_payloads,
             f"{label} payload binding changed")
+    require(
+        state["allocator_backend"] == dynamic_materialization.MATERIALIZATION_ALLOCATOR_BACKEND
+        and state["allocator_lifecycle_test_audit"] is dynamic_materialization.MATERIALIZATION_ALLOCATOR_LIFECYCLE_TEST_AUDIT
+        and state["allocator_promoted"] is dynamic_materialization.MATERIALIZATION_ALLOCATOR_PROMOTED,
+        f"{label} allocator provenance changed",
+    )
     require(state["runtime_v1_published"] is False
             and state["campaign_complete"] is False
             and state["public_support"] is False,

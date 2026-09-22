@@ -90,6 +90,9 @@ class OwnedPthreadAliasContractReaderTests(unittest.TestCase):
             "source_sha256": source,
             "contracts": {name: "e" * 64 for name in DYNAMIC_STATE_CONTRACTS},
             "payload_files": {"usr/lib/libc.so": "c" * 64},
+            "allocator_backend": "accepted-c",
+            "allocator_lifecycle_test_audit": False,
+            "allocator_promoted": False,
             "runtime_v1_published": False,
             "campaign_complete": False,
             "public_support": False,
@@ -98,6 +101,16 @@ class OwnedPthreadAliasContractReaderTests(unittest.TestCase):
             "qualification": DYNAMIC_STATE_QUALIFICATION,
         }
         _validate_dynamic_materialization_state(state, source, files, "test dynamic state")
+        for field, replacement in (
+            ("allocator_backend", "native-shadow"),
+            ("allocator_lifecycle_test_audit", True),
+            ("allocator_promoted", True),
+        ):
+            with self.subTest(field=field):
+                forged = dict(state)
+                forged[field] = replacement
+                with self.assertRaisesRegex(ReceiptError, "allocator provenance"):
+                    _validate_dynamic_materialization_state(forged, source, files, "test dynamic state")
         state["payload_files"] = {}
         with self.assertRaisesRegex(ReceiptError, "payload binding"):
             _validate_dynamic_materialization_state(state, source, files, "test dynamic state")

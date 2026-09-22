@@ -27,6 +27,7 @@ from typing import Any, Mapping
 # This module is the host's trusted reader.  It must never import retained
 # receipt source: that would turn a tampered source snapshot into host code.
 import owned_posix_product_evidence as retained_link_reader
+import owned_dynamic_qualification as dynamic_materialization
 from loader_debug_abi_evidence import Elf
 from owned_static_link_authority import (
     StaticFunctionContract,
@@ -1083,11 +1084,13 @@ def _validate_static_preparation(preparation: Mapping[str, Any], workspace: Path
 
 def _validate_dynamic_source_epoch(state: Mapping[str, Any], source: Mapping[str, str]) -> None:
     """Reject a dynamic materialization whose whole-source hash names another cohort."""
-    required = {"schema", "status", "source_sha256", "contracts", "payload_files", "runtime_v1_published",
-                "campaign_complete", "public_support", "modes", "runtime_profile", "qualification"}
-    require(set(state) == required and state["schema"] == DYNAMIC_STATE_SCHEMA
+    require(set(state) == dynamic_materialization.MATERIALIZATION_STATE_FIELDS
+            and state["schema"] == DYNAMIC_STATE_SCHEMA
             and state["status"] == "materialized-unqualified"
             and state["source_sha256"] == source["content_sha256"]
+            and state["allocator_backend"] == dynamic_materialization.MATERIALIZATION_ALLOCATOR_BACKEND
+            and state["allocator_lifecycle_test_audit"] is dynamic_materialization.MATERIALIZATION_ALLOCATOR_LIFECYCLE_TEST_AUDIT
+            and state["allocator_promoted"] is dynamic_materialization.MATERIALIZATION_ALLOCATOR_PROMOTED
             and state["runtime_v1_published"] is False and state["campaign_complete"] is False
             and state["public_support"] is False
             and state["modes"] == ["dynamic-pie", "dynamic-non-pie", "dynamic-shared-object"]

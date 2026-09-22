@@ -438,6 +438,9 @@ class NativeAbiInventoryRetainedInputTests(unittest.TestCase):
             "source_sha256": source,
             "contracts": {name: "e" * 64 for name in inventory.dynamic_materialization.CONTRACTS},
             "payload_files": {"usr/lib/libc.so": "f" * 64},
+            "allocator_backend": inventory.dynamic_materialization.MATERIALIZATION_ALLOCATOR_BACKEND,
+            "allocator_lifecycle_test_audit": inventory.dynamic_materialization.MATERIALIZATION_ALLOCATOR_LIFECYCLE_TEST_AUDIT,
+            "allocator_promoted": inventory.dynamic_materialization.MATERIALIZATION_ALLOCATOR_PROMOTED,
             "runtime_v1_published": False,
             "campaign_complete": False,
             "public_support": False,
@@ -445,6 +448,17 @@ class NativeAbiInventoryRetainedInputTests(unittest.TestCase):
             "runtime_profile": inventory.dynamic_materialization.MATERIALIZATION_PROFILE,
             "qualification": inventory.dynamic_materialization.MATERIALIZATION_QUALIFICATION,
         }
+        self.assertEqual(inventory._materialization_state_shape(state), state)
+        for field, replacement in (
+            ("allocator_backend", "native-shadow"),
+            ("allocator_lifecycle_test_audit", True),
+            ("allocator_promoted", True),
+        ):
+            with self.subTest(field=field):
+                forged = dict(state)
+                forged[field] = replacement
+                with self.assertRaisesRegex(inventory.InventoryError, "allocator provenance"):
+                    inventory._materialization_state_shape(forged)
         dynamic_product = {
             "manifest": {"sha256": dynamic_manifest},
             "payload_files": {inventory.DYNAMIC_STATE_RELATIVE: state_payload},

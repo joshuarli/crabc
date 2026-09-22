@@ -31,10 +31,48 @@ class TimedFeatureReceiptBoundaryTests(unittest.TestCase):
             ("FUNC", "LOCAL", "DEFAULT"),
         )
 
+    def test_dynamic_materialization_provenance_is_exact_and_nonpromoting(self) -> None:
+        reader = importlib.import_module("owned_pthread_timed_feature_contract_reader")
+        source = "a" * 64
+        files = {
+            "usr/lib/libc.so": "b" * 64,
+            reader.DYNAMIC_STATE_PATH: "c" * 64,
+        }
+        state = {
+            "schema": "crabc.x86_64-owned-dynamic-materialization/v1",
+            "status": "materialized-unqualified",
+            "source_sha256": source,
+            "contracts": {name: "d" * 64 for name in reader.DYNAMIC_STATE_CONTRACTS},
+            "payload_files": {"usr/lib/libc.so": "b" * 64},
+            "allocator_backend": "accepted-c",
+            "allocator_lifecycle_test_audit": False,
+            "allocator_promoted": False,
+            "runtime_v1_published": False,
+            "campaign_complete": False,
+            "public_support": False,
+            "modes": reader.DYNAMIC_STATE_MODES,
+            "runtime_profile": reader.DYNAMIC_STATE_PROFILE,
+            "qualification": reader.DYNAMIC_STATE_QUALIFICATION,
+        }
+        reader._validate_dynamic_materialization_state(state, source, files, "test dynamic state")
+        for field, replacement in (
+            ("allocator_backend", "native-shadow"),
+            ("allocator_lifecycle_test_audit", True),
+            ("allocator_promoted", True),
+        ):
+            with self.subTest(field=field):
+                forged = dict(state)
+                forged[field] = replacement
+                with self.assertRaisesRegex(reader.ReceiptError, "allocator provenance"):
+                    reader._validate_dynamic_materialization_state(forged, source, files, "test dynamic state")
+
     def test_feature_source_route_is_present_and_does_not_claim_a_build_invocation(self) -> None:
         reader = importlib.import_module("owned_pthread_timed_feature_contract_reader")
         record = reader.evaluate_feature_source(ROOT)
-        self.assertEqual(record["builder_argv_source"], ["--features", "x86-owned-static-runtime"])
+        self.assertEqual(record["builder_feature_selection"], {
+            "accepted-c": "x86-owned-static-runtime",
+            "native-shadow": "x86-owned-static-native-shadow",
+        })
         self.assertFalse(record["product_build_invocation_proven"])
         self.assertEqual(record["aliases"], [
             {"public": public, "provider": provider}
