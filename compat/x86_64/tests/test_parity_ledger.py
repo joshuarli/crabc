@@ -19138,7 +19138,7 @@ class X86ParityLedgerTests(unittest.TestCase):
 
     def test_rejects_a_dependency_that_is_not_earlier(self) -> None:
         data = self.data()
-        self.family(data, "core.architecture")["depends_on"] = ["performance.release"]
+        self.family(data, "capability.accounting")["depends_on"] = ["performance.release"]
         with self.assertRaisesRegex(ledger.LedgerError, "is not earlier"):
             ledger.validate_ledger(data)
 
