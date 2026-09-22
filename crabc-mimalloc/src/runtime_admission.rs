@@ -247,6 +247,18 @@ pub unsafe fn with_native_allocator_callback_boundary<R>(callback: impl FnOnce()
     unsafe { with_callback_boundary_at(&EPOCH, current_native_allocator_thread_descriptor(), callback) }
 }
 
+/// Samples only the current descriptor's callback handoff atomics for the
+/// dispatcher integration regression. It exposes no owner, TLS, source, or
+/// admission capability.
+#[cfg(test)]
+#[inline]
+pub(super) fn current_native_allocator_callback_boundary_state() -> (bool, bool) {
+    (
+        DESCRIPTOR.entered.load(Ordering::SeqCst),
+        DESCRIPTOR.callback.load(Ordering::SeqCst),
+    )
+}
+
 unsafe fn with_callback_boundary_at<R>(
     epoch: &NativeAllocatorEpoch,
     pointer: NonNull<NativeAllocatorThreadDescriptor>,

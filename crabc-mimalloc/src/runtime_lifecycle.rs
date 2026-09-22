@@ -8427,10 +8427,31 @@ fn run_current_thread_native_deferred_free_phase(
                 // no mutable engine, session, attachment, Theap, or TLD
                 // projection remains live while user code can reenter.
                 let invokes_user_callback = call.invokes_user_callback();
-                let Some((_heartbeat, lease)) = invoke_deferred_free_callback_after_fork_admission(
+                let Some(Ok((_heartbeat, lease))) = invoke_deferred_free_callback_after_fork_admission(
                     invokes_user_callback,
-                    || unsafe { call.invoke() },
+                    || {
+                        if invokes_user_callback {
+                            // SAFETY: phase A ended every source projection
+                            // before this closure. The callback may allocate
+                            // only through a fresh guarded native entry; its
+                            // outer operation is suspended until this exact
+                            // A-to-C caller-stack lease can be resumed.
+                            unsafe {
+                                with_native_allocator_callback_boundary(|| unsafe {
+                                    call.invoke()
+                                })
+                            }
+                        } else {
+                            // An unregistered source transition advances its
+                            // heartbeat without exposing foreign code, so the
+                            // ordinary outer operation remains admitted.
+                            Ok(unsafe { call.invoke() })
+                        }
+                    },
                 ) else {
+                    // A fork claim refusal or failed operation-boundary
+                    // resume retains the descriptor/owner. Do not enter
+                    // phase C or touch source state after either failure.
                     retain_current_thread_native_persistent_owner_for_teardown();
                     return Err(NativePersistentThreadOwnerAccessError::Retained);
                 };
@@ -8534,10 +8555,28 @@ fn run_current_thread_native_initial_deferred_free_aligned_allocation(
                 // optional linear active lease, never an owner/engine/TLD
                 // borrow, so user code may reenter ordinary allocation.
                 let invokes_user_callback = call.invokes_user_callback();
-                let Some((_heartbeat, lease)) = invoke_deferred_free_callback_after_fork_admission(
+                let Some(Ok((_heartbeat, lease))) = invoke_deferred_free_callback_after_fork_admission(
                     invokes_user_callback,
-                    || unsafe { call.invoke() },
+                    || {
+                        if invokes_user_callback {
+                            // SAFETY: this phase-A initial owner projection
+                            // has returned to idle. The boundary releases the
+                            // outer operation before user code, then validates
+                            // its epoch before phase C may reacquire the same
+                            // static source owner.
+                            unsafe {
+                                with_native_allocator_callback_boundary(|| unsafe {
+                                    call.invoke()
+                                })
+                            }
+                        } else {
+                            Ok(unsafe { call.invoke() })
+                        }
+                    },
                 ) else {
+                    // The callback boundary preserves its live A-to-C lease
+                    // on failure. Phase C must not inspect this initial
+                    // owner after a closed or invalidated resume.
                     return Err(NativeInitialPersistentThreadOwnerAccessError::Retained);
                 };
                 resume_current_thread_native_initial_deferred_free_allocation(
@@ -16093,6 +16132,7 @@ mod tests {
     static NATIVE_DEFERRED_FREE_CALLBACK_COUNT: AtomicUsize = AtomicUsize::new(0);
     static NATIVE_DEFERRED_FREE_CALLBACK_FORCE: AtomicUsize = AtomicUsize::new(usize::MAX);
     static NATIVE_DEFERRED_FREE_CALLBACK_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static NATIVE_DEFERRED_FREE_RUNTIME_DRIVER_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     #[thread_local]
     static mut NATIVE_DEFERRED_FREE_TEST_THREAD_ACTIVE: bool = false;
 
@@ -16111,6 +16151,91 @@ mod tests {
         }
         NATIVE_DEFERRED_FREE_CALLBACK_FORCE.store(usize::from(force), Ordering::Release);
         NATIVE_DEFERRED_FREE_CALLBACK_COUNT.fetch_add(1, Ordering::AcqRel);
+    }
+
+    struct NativeDeferredFreeBoundaryObservation {
+        callback_count: AtomicUsize,
+        outer_operation_suspended: AtomicUsize,
+        callback_marker_live: AtomicUsize,
+        nested_native_round_trips: AtomicUsize,
+    }
+
+    unsafe extern "C" fn observe_native_deferred_free_boundary_callback(
+        _force: bool,
+        _heartbeat: u64,
+        context: *mut core::ffi::c_void,
+    ) {
+        // SAFETY: the focused driver test owns this stack observation until
+        // both selected source callbacks returned and unregisters only after
+        // its initial thread and joined worker have completed phase C.
+        let observation = unsafe { &*context.cast::<NativeDeferredFreeBoundaryObservation>() };
+        let (outer_entered, callback_marker) =
+            admission::current_native_allocator_callback_boundary_state();
+        observation
+            .outer_operation_suspended
+            .fetch_add(usize::from(!outer_entered), Ordering::AcqRel);
+        observation
+            .callback_marker_live
+            .fetch_add(usize::from(callback_marker), Ordering::AcqRel);
+
+        // This is a normal native boundary entry, not a direct owner-cell or
+        // page-engine projection. It must acquire a fresh nested operation
+        // while the outer B operation is suspended, then free the exact live
+        // client through the same guarded native interface.
+        let completed = match native_allocate_aligned(16, NATIVE_C_MALLOC_ALIGNMENT, false) {
+            NativePageAllocationResult::Allocated(block) => {
+                matches!(unsafe { native_free(block) }, NativePageFreeResult::Freed)
+            }
+            NativePageAllocationResult::Unavailable
+            | NativePageAllocationResult::AllocationFailed
+            | NativePageAllocationResult::Retained => false,
+        };
+        observation
+            .nested_native_round_trips
+            .fetch_add(usize::from(completed), Ordering::AcqRel);
+        observation.callback_count.fetch_add(1, Ordering::AcqRel);
+    }
+
+    fn native_deferred_free_boundary_outer_round_trip() -> bool {
+        match native_allocate_aligned(2048, NATIVE_C_MALLOC_ALIGNMENT, false) {
+            NativePageAllocationResult::Allocated(block) => {
+                matches!(unsafe { native_free(block) }, NativePageFreeResult::Freed)
+            }
+            NativePageAllocationResult::Unavailable
+            | NativePageAllocationResult::AllocationFailed
+            | NativePageAllocationResult::Retained => false,
+        }
+    }
+
+    fn drive_native_deferred_free_boundary_callback_once() {
+        // The native source counter can enter with a nonzero startup value,
+        // but any consecutive 1,000 generic requests select exactly one Mini
+        // administration. Each request frees its exact current client before
+        // the next, so this does not test arena exhaustion or page retirement.
+        for _ in 0..1_000 {
+            assert!(
+                native_deferred_free_boundary_outer_round_trip(),
+                "the outer native driver retains its exact source client through phase C"
+            );
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" {
+        fn fputs(message: *const core::ffi::c_char, stream: *mut core::ffi::c_void) -> core::ffi::c_int;
+        static mut stderr: *mut core::ffi::c_void;
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn deferred_free_boundary_test_stderr(
+        message: *const core::ffi::c_char,
+    ) {
+        // SAFETY: the pinned native x86 test image supplies musl's process
+        // lifetime `stderr`; this is the same private FILE capability used
+        // by the integration-native runtime support.
+        unsafe {
+            let _ = fputs(message, stderr);
+        }
     }
 
     fn memory_config() -> MemoryConfig {
@@ -16294,7 +16419,7 @@ mod tests {
             ) + Send
             + 'static,
     ) {
-        with_native_persistent_owner_fixture_owner(move |owner| {
+        with_native_persistent_owner_value_fixture(move |owner| {
             let cell = std::boxed::Box::pin(
                 crate::thread_local::PersistentCompilerTlsOwnerCell::new(),
             );
@@ -16786,6 +16911,103 @@ mod tests {
             }
             std::println!("CRABC_MI_DEFERRED_FREE_TRACE_END");
         });
+    }
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn native_deferred_free_callback_boundary_runs_initial_and_later_phase_abc() {
+        let _runtime_driver = NATIVE_DEFERRED_FREE_RUNTIME_DRIVER_LOCK.lock().expect(
+            "the process-lifetime native driver regression has one initializer",
+        );
+        let _registration = NATIVE_DEFERRED_FREE_CALLBACK_LOCK.lock().expect(
+            "the callback registration remains exclusive through both source owners",
+        );
+        std::thread::spawn(|| {
+            // SAFETY: the focused native x86 test links the pinned musl FILE
+            // fixture; its selected stderr remains live until this isolated
+            // test process exits. No runtime test has initialized this static
+            // source owner before this exact filtered regression.
+            assert!(initialize_process(
+                4096,
+                unsafe { RuntimeStderrOutput::new(deferred_free_boundary_test_stderr) },
+            ));
+
+            let observation = NativeDeferredFreeBoundaryObservation {
+                callback_count: AtomicUsize::new(0),
+                outer_operation_suspended: AtomicUsize::new(0),
+                callback_marker_live: AtomicUsize::new(0),
+                nested_native_round_trips: AtomicUsize::new(0),
+            };
+            // SAFETY: this private registration remains test-only. Its code
+            // and stack context survive the initial driver's A/B/C sequence
+            // and the scoped later worker, then it is cleared after both
+            // callback intervals ended.
+            unsafe {
+                crate::deferred_free::register_process_callback(
+                    Some(observe_native_deferred_free_boundary_callback),
+                    core::ptr::from_ref(&observation).cast_mut().cast(),
+                )
+            };
+
+            drive_native_deferred_free_boundary_callback_once();
+            assert_eq!(
+                observation.callback_count.load(Ordering::Acquire),
+                1,
+                "the real initial dispatcher selects one user callback then resumes phase C",
+            );
+
+            std::thread::scope(|scope| {
+                let worker = scope.spawn(|| {
+                    let descriptor = admission::current_native_allocator_thread_descriptor();
+                    // SAFETY: this scoped worker is its exact current TLS
+                    // descriptor, and the test retains its control mapping
+                    // through attachment, nested callback, and normal finish.
+                    assert!(unsafe {
+                        admission::register_current_native_allocator_worker_descriptor(descriptor)
+                    });
+                    assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+
+                    drive_native_deferred_free_boundary_callback_once();
+                    assert_eq!(
+                        observation.callback_count.load(Ordering::Acquire),
+                        2,
+                        "the real later dispatcher selects one callback and reaches its own phase C",
+                    );
+                    assert_eq!(
+                        finish_current_thread_native_after_user_destructors(),
+                        ThreadFinishResult::Finished,
+                        "a boundary-resumed later owner stays ordinary-finishable rather than retained",
+                    );
+                });
+                worker
+                    .join()
+                    .expect("the later source owner completes its callback boundary on its own thread");
+            });
+
+            assert_eq!(
+                observation.outer_operation_suspended.load(Ordering::Acquire),
+                2,
+                "both actual drivers clear the outer native operation before user callback entry",
+            );
+            assert_eq!(
+                observation.callback_marker_live.load(Ordering::Acquire),
+                2,
+                "the callback marker bridges both phase-B intervals while their outer entries are absent",
+            );
+            assert_eq!(
+                observation.nested_native_round_trips.load(Ordering::Acquire),
+                2,
+                "each callback can complete one freshly guarded native allocation/free round trip",
+            );
+
+            // SAFETY: both source drivers resumed phase C and the later worker
+            // joined, so no callback can still read this test context.
+            unsafe {
+                crate::deferred_free::register_process_callback(None, core::ptr::null_mut())
+            };
+        })
+        .join()
+        .expect("the exact initial source thread completes its guarded callback regression");
     }
 
     #[test]
