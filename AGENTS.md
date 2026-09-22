@@ -21,22 +21,6 @@ and behavior oracle for tests only. Glibc is never an oracle or fallback.
 Read [`SCOPE.md`](SCOPE.md), [`COMPATIBILITY-PROFILE.md`](COMPATIBILITY-PROFILE.md),
 and [`STATUS.md`](STATUS.md) before selecting new work.
 
-## Native completion campaign routing
-
-For `plan.md` and all delegated campaign work, read and follow the exact local
-skill [crabc-orchestrate](.agents/skills/crabc-orchestrate/SKILL.md). The user's
-GPT 6 Astra session coordinates implementation, staffed integration, and frozen
-product-cohort qualification. This campaign policy supersedes the global
-`orchestrate` cost/minimal-fan-out defaults; unrelated requests retain their
-ordinary policy. Leave the user's global skills unchanged.
-
-Use continuous useful parallelism within the actual session limit, with a
-separate host build/test budget. The user's September 22 update selects 16
-child slots in project configuration; verify effective capacity instead of
-assuming a running session reloaded it. Model routing and execution budgets
-belong to the local skill, not a second table here. Preserve running frozen
-qualification checkouts while the integration branch advances.
-
 ## Code map
 
 | Path | Contract |

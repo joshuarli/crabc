@@ -2,9 +2,8 @@
 
 ## Active program
 
-Work follows the current native completion execution policy in [`plan.md`](plan.md)
-and [`crabc-orchestrate`](.agents/skills/crabc-orchestrate/SKILL.md). The prior
-wind-down plan is historical evidence in [its preserved snapshot](docs/history/plan-before-throughput-reset-dd8d03ef9c7528f36f90ac9b8c34be6c13b12a88.md),
+Work follows the current native completion execution policy in [`plan.md`](plan.md).
+The prior wind-down plan is historical evidence in [its preserved snapshot](docs/history/plan-before-throughput-reset-dd8d03ef9c7528f36f90ac9b8c34be6c13b12a88.md),
 not the current execution contract. The combined goal remains incomplete.
 
 Implement [`plan.md`](plan.md): native Linux/x86-64 runtime parity and native

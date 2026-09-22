@@ -12,13 +12,6 @@ Optimize **elapsed time to integrated, qualified behavior**, not commit count,
 agent count, individual witness count, or documentation volume. This is a
 throughput-oriented execution contract, not a request to reduce correctness.
 
-For this goal and all its descendants, use
-[crabc-orchestrate](.agents/skills/crabc-orchestrate/SKILL.md). It supersedes the
-user-global `orchestrate` skill's cost-minimization and smallest-fan-out defaults
-for this campaign. The coordinator is the user's GPT 6 Astra session. Model
-routing, concurrency budgets, and delegation mechanics have one owner: that
-local skill. Do not copy a second competing policy into the allocator plan.
-
 This plan authorizes in-scope changes to execution order, work decomposition,
 intermediate development checks, and build/test throughput. It does not waive
 final requirements, authorize external spending or machine reconfiguration, or
