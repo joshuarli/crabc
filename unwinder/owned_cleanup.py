@@ -532,19 +532,28 @@ def provider_registry_unwinding_source(application: Path, offline_sources: dict[
             "private provider registry source must be fresh")
     destination.parent.mkdir(mode=0o755)
     shutil.copytree(source, destination, copy_function=shutil.copy2)
-    checksum = physical(destination / ".cargo-checksum.json", "private provider directory-source checksum")
-    checksum.unlink()
-    markers: dict[str, dict[str, str]] = {}
-    for relative, contents in CARGO_REGISTRY_UNWINDING_MARKERS.items():
-        marker = destination / relative
-        require(not marker.exists() and not marker.is_symlink(),
-                f"private provider registry marker already exists: {relative}")
-        marker.write_bytes(contents)
-        markers[relative] = record_file(marker, f"private provider registry marker {relative}")
     destination = physical(destination, "private provider registry source", directory=True)
-    upstream_tree_sha256 = build.tree_digest(destination)
-    require(upstream_tree_sha256 == build.PATCHED_UNWINDING_UPSTREAM_TREE_SHA256,
-            "offline provider vendor does not reconstruct the pinned upstream identity")
+    destination_mode = stat.S_IMODE(destination.stat().st_mode)
+    # The vendor input may intentionally be read-only. Its fresh private copy
+    # needs one owner-write transition for the declared transport conversion;
+    # always restore the copied source mode before returning or propagating an
+    # error so later staging cannot inherit write authority from this step.
+    try:
+        destination.chmod(destination_mode | stat.S_IWUSR)
+        checksum = physical(destination / ".cargo-checksum.json", "private provider directory-source checksum")
+        checksum.unlink()
+        markers: dict[str, dict[str, str]] = {}
+        for relative, contents in CARGO_REGISTRY_UNWINDING_MARKERS.items():
+            marker = destination / relative
+            require(not marker.exists() and not marker.is_symlink(),
+                    f"private provider registry marker already exists: {relative}")
+            marker.write_bytes(contents)
+            markers[relative] = record_file(marker, f"private provider registry marker {relative}")
+        upstream_tree_sha256 = build.tree_digest(destination)
+        require(upstream_tree_sha256 == build.PATCHED_UNWINDING_UPSTREAM_TREE_SHA256,
+                "offline provider vendor does not reconstruct the pinned upstream identity")
+    finally:
+        destination.chmod(destination_mode)
     return {
         "source": str(source),
         "removed_directory_checksum": record_file(

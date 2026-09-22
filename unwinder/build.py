@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import platform
 import shutil
+import stat
 import subprocess
 import tempfile
 import tomllib
@@ -189,10 +190,24 @@ def stage_patched_unwinding(packages):
         shutil.copytree(ROOT / 'src', staged_root / 'src')
         (staged_root / 'Cargo.toml').write_text(staged_manifest_text())
         shutil.copy2(ROOT / 'Cargo.lock', staged_root / 'Cargo.lock')
-        for target, overlay in overlays.items():
-            shutil.copyfile(overlay, staged_unwinding / target)
-        if tree_digest(staged_unwinding) != patched_tree_sha256:
-            raise ValueError('unwinding bounds overlay was not staged exactly')
+        staged_modes = {}
+        try:
+            # The registry derivative may preserve the supplied vendor's
+            # read-only modes. Only the two checked overlay targets need a
+            # temporary owner-write bit, and every original mode is restored
+            # whether copying or the post-copy digest check succeeds.
+            for target in overlays:
+                staged_target = staged_unwinding / target
+                staged_mode = stat.S_IMODE(staged_target.stat().st_mode)
+                staged_modes[staged_target] = staged_mode
+                staged_target.chmod(staged_mode | stat.S_IWUSR)
+            for target, overlay in overlays.items():
+                shutil.copyfile(overlay, staged_unwinding / target)
+            if tree_digest(staged_unwinding) != patched_tree_sha256:
+                raise ValueError('unwinding bounds overlay was not staged exactly')
+        finally:
+            for staged_target, staged_mode in staged_modes.items():
+                staged_target.chmod(staged_mode)
     return {
         'manifest': staged_root / 'Cargo.toml',
         'upstream': upstream,

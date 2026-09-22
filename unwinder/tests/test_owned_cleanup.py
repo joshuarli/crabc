@@ -258,12 +258,21 @@ class OwnedCleanupContract(unittest.TestCase):
         version, checksum = build.PINS[build.PATCHED_UNWINDING]
         source = self.write_vendor_package(vendor, build.PATCHED_UNWINDING, version, checksum,
                                            directory_name=build.PATCHED_UNWINDING)
+        source_checksum = source / ".cargo-checksum.json"
         expected = Path(self.temporary.name) / "registry-shape"
         shutil.copytree(source, expected)
         (expected / ".cargo-checksum.json").unlink()
         for relative, contents in owned_cleanup.CARGO_REGISTRY_UNWINDING_MARKERS.items():
             (expected / relative).write_bytes(contents)
         expected_tree = build.tree_digest(expected)
+        source_bytes = {
+            path.relative_to(source).as_posix(): path.read_bytes()
+            for path in source.rglob("*") if path.is_file()
+        }
+        original_source_mode = source.stat().st_mode & 0o777
+        original_checksum_mode = source_checksum.stat().st_mode & 0o777
+        source.chmod(0o555)
+        source_checksum.chmod(0o444)
         application = Path(self.temporary.name) / "application"
         application.mkdir()
         offline_sources = {
@@ -276,13 +285,31 @@ class OwnedCleanupContract(unittest.TestCase):
                 }],
             },
         }
-        with mock.patch.object(build, "PATCHED_UNWINDING_UPSTREAM_TREE_SHA256", expected_tree):
-            record = owned_cleanup.provider_registry_unwinding_source(application, offline_sources)
-        registry = Path(record["registry_source"])
-        self.assertEqual(record["upstream_tree_sha256"], expected_tree)
-        self.assertTrue((source / ".cargo-checksum.json").exists())
-        self.assertFalse((registry / ".cargo-checksum.json").exists())
-        self.assertEqual((registry / ".cargo-ok").read_bytes(), b'{"v":1}')
+        try:
+            with mock.patch.object(build, "PATCHED_UNWINDING_UPSTREAM_TREE_SHA256", expected_tree):
+                record = owned_cleanup.provider_registry_unwinding_source(application, offline_sources)
+            registry = Path(record["registry_source"])
+            self.assertEqual(record["upstream_tree_sha256"], expected_tree)
+            self.assertEqual(source.stat().st_mode & 0o777, 0o555)
+            self.assertEqual(source_checksum.stat().st_mode & 0o777, 0o444)
+            self.assertEqual({
+                path.relative_to(source).as_posix(): path.read_bytes()
+                for path in source.rglob("*") if path.is_file()
+            }, source_bytes)
+            self.assertEqual(registry.stat().st_mode & 0o777, 0o555)
+            self.assertTrue(source_checksum.exists())
+            self.assertFalse((registry / ".cargo-checksum.json").exists())
+            self.assertEqual((registry / ".cargo-ok").read_bytes(), b'{"v":1}')
+            failed_application = Path(self.temporary.name) / "failed-application"
+            failed_application.mkdir()
+            with mock.patch.object(build, "PATCHED_UNWINDING_UPSTREAM_TREE_SHA256", "0" * 64), \
+                 self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "does not reconstruct"):
+                owned_cleanup.provider_registry_unwinding_source(failed_application, offline_sources)
+            failed_registry = failed_application / "provider-registry-source" / f"{source.name}-{version}"
+            self.assertEqual(failed_registry.stat().st_mode & 0o777, 0o555)
+        finally:
+            source.chmod(original_source_mode)
+            source_checksum.chmod(original_checksum_mode)
 
     def test_generated_source_graph_manifest_accepts_the_staged_unwinding_directory(self):
         application = Path(self.temporary.name) / "application"

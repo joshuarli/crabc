@@ -2,6 +2,7 @@
 import copy
 import importlib.util
 from pathlib import Path
+import shutil
 import unittest
 import unittest.mock
 import tempfile
@@ -91,6 +92,76 @@ class DependencyBoundary(unittest.TestCase):
             target.write_text('source changed while compiling\n')
             with self.assertRaisesRegex(ValueError, 'compiled unwinding source'):
                 builder.verify_staged_patched_unwinding(staged)
+
+    def test_staged_overlay_preserves_read_only_private_source_modes(self):
+        scratch = builder.ROOT.parent / '.work/x86_64/unwinder-output-tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            root = Path(temporary) / 'crabc-unwinder'
+            (root / 'src').mkdir(parents=True)
+            (root / 'Cargo.toml').write_text('[package]\nname = "crabc-unwinder"\n')
+            (root / 'Cargo.lock').write_text('version = 4\n')
+            (root / 'src/lib.rs').write_text('#![no_std]\n')
+            upstream = Path(temporary) / 'unwinding-0.2.10'
+            target = upstream / 'src/unwinder/find_fde/phdr.rs'
+            target.parent.mkdir(parents=True)
+            target.write_text('unpatched\n')
+            (upstream / 'Cargo.toml').write_text('[package]\nname = "unwinding"\n')
+            overlay = Path(temporary) / 'overlay.rs'
+            overlay.write_text('patched\n')
+            patches = {
+                'src/unwinder/find_fde/phdr.rs': {
+                    'overlay': overlay,
+                    'upstream_sha256': builder.digest(target),
+                },
+            }
+            input_paths = (upstream, upstream / 'src', upstream / 'src/unwinder',
+                           upstream / 'src/unwinder/find_fde', target)
+            input_bytes = {path: path.read_bytes() for path in input_paths if path.is_file()}
+            input_modes = {path: path.stat().st_mode & 0o777 for path in input_paths}
+            for path in input_paths:
+                path.chmod(0o555 if path.is_dir() else 0o444)
+            packages = {
+                builder.PATCHED_UNWINDING: {
+                    'source': builder.CRATES_IO_REGISTRY,
+                    'manifest_path': str(upstream / 'Cargo.toml'),
+                },
+            }
+            try:
+                with unittest.mock.patch.object(builder, 'ROOT', root), \
+                     unittest.mock.patch.object(builder, 'PATCHES', patches), \
+                     unittest.mock.patch.object(
+                         builder, 'PATCHED_UNWINDING_UPSTREAM_TREE_SHA256', builder.tree_digest(upstream),
+                     ):
+                    staged = builder.stage_patched_unwinding(packages)
+                staged_target = Path(staged['staged']) / 'src/unwinder/find_fde/phdr.rs'
+                self.assertEqual(staged_target.read_bytes(), overlay.read_bytes())
+                self.assertEqual(staged_target.stat().st_mode & 0o777, 0o444)
+                self.assertEqual({path: path.read_bytes() for path in input_bytes}, input_bytes)
+                self.assertEqual({path: path.stat().st_mode & 0o777 for path in input_paths},
+                                 {path: 0o555 if path.is_dir() else 0o444 for path in input_paths})
+                failed_root = Path(temporary) / 'failed/crabc-unwinder'
+                shutil.copytree(root, failed_root)
+                copyfile = builder.shutil.copyfile
+
+                def fail_overlay_copy(source, destination, *arguments, **keywords):
+                    if Path(source) == overlay:
+                        raise OSError('overlay copy failed')
+                    return copyfile(source, destination, *arguments, **keywords)
+
+                with unittest.mock.patch.object(builder, 'ROOT', failed_root), \
+                     unittest.mock.patch.object(builder, 'PATCHES', patches), \
+                     unittest.mock.patch.object(
+                         builder, 'PATCHED_UNWINDING_UPSTREAM_TREE_SHA256', builder.tree_digest(upstream),
+                     ), \
+                     unittest.mock.patch.object(builder.shutil, 'copyfile', side_effect=fail_overlay_copy), \
+                     self.assertRaisesRegex(OSError, 'overlay copy failed'):
+                    builder.stage_patched_unwinding(packages)
+                failed_target = next((failed_root.parent / '.work/x86_64/unwinder-source-inputs').rglob('phdr.rs'))
+                self.assertEqual(failed_target.stat().st_mode & 0o777, 0o444)
+            finally:
+                for path, mode in input_modes.items():
+                    path.chmod(mode)
 
     def test_new_dependency_cannot_enter_normal_graph(self):
         self.metadata['packages'].append({
