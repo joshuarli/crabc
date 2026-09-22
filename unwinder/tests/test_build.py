@@ -128,13 +128,16 @@ class DependencyBoundary(unittest.TestCase):
                 },
             }
             try:
+                private_stage_root = Path(temporary) / 'private-output/source-inputs'
+                private_stage_root.parent.mkdir()
                 with unittest.mock.patch.object(builder, 'ROOT', root), \
                      unittest.mock.patch.object(builder, 'PATCHES', patches), \
                      unittest.mock.patch.object(
                          builder, 'PATCHED_UNWINDING_UPSTREAM_TREE_SHA256', builder.tree_digest(upstream),
                      ):
-                    staged = builder.stage_patched_unwinding(packages)
+                    staged = builder.stage_patched_unwinding(packages, stage_root=private_stage_root)
                 staged_target = Path(staged['staged']) / 'src/unwinder/find_fde/phdr.rs'
+                self.assertTrue(Path(staged['source_input']).is_relative_to(private_stage_root))
                 self.assertEqual(staged_target.read_bytes(), overlay.read_bytes())
                 self.assertEqual(staged_target.stat().st_mode & 0o777, 0o444)
                 self.assertEqual({path: path.read_bytes() for path in input_bytes}, input_bytes)
@@ -142,6 +145,8 @@ class DependencyBoundary(unittest.TestCase):
                                  {path: 0o555 if path.is_dir() else 0o444 for path in input_paths})
                 failed_root = Path(temporary) / 'failed/crabc-unwinder'
                 shutil.copytree(root, failed_root)
+                failed_stage_root = Path(temporary) / 'failed/private-output/source-inputs'
+                failed_stage_root.parent.mkdir(parents=True)
                 copyfile = builder.shutil.copyfile
 
                 def fail_overlay_copy(source, destination, *arguments, **keywords):
@@ -156,12 +161,29 @@ class DependencyBoundary(unittest.TestCase):
                      ), \
                      unittest.mock.patch.object(builder.shutil, 'copyfile', side_effect=fail_overlay_copy), \
                      self.assertRaisesRegex(OSError, 'overlay copy failed'):
-                    builder.stage_patched_unwinding(packages)
-                failed_target = next((failed_root.parent / '.work/x86_64/unwinder-source-inputs').rglob('phdr.rs'))
+                    builder.stage_patched_unwinding(packages, stage_root=failed_stage_root)
+                failed_target = next(failed_stage_root.rglob('phdr.rs'))
                 self.assertEqual(failed_target.stat().st_mode & 0o777, 0o444)
             finally:
                 for path, mode in input_modes.items():
                     path.chmod(mode)
+
+    def test_private_build_paths_cannot_escape_the_evidence_output(self):
+        scratch = builder.ROOT.parent / '.work/x86_64/unwinder-output-tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            root = Path(temporary)
+            with self.assertRaisesRegex(ValueError, 'stage root must remain below'):
+                builder.build(root / 'stage-escape', stage_root=root / 'outside')
+            cargo_home = root / 'outside' / 'provider-cargo-home'
+            cargo_home.parent.mkdir()
+            cargo_home.mkdir()
+            with self.assertRaisesRegex(ValueError, 'Cargo home must remain beside'):
+                builder.build(root / 'cargo-escape', cargo_home=cargo_home)
+            output = root / 'not-a-directory-cargo-home'
+            output.mkdir()
+            with self.assertRaisesRegex(ValueError, 'Cargo home must be a physical directory'):
+                builder.build(output, cargo_home=output.parent / 'missing-cargo-home')
 
     def test_new_dependency_cannot_enter_normal_graph(self):
         self.metadata['packages'].append({

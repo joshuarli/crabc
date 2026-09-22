@@ -83,6 +83,15 @@ directory = \"{directory}\"
 [net]
 offline = true
 """
+CARGO_PROVIDER_VENDOR_CONFIG = """[source.crates-io]
+replace-with = \"crabc-owned-provider-vendor\"
+
+[source.crabc-owned-provider-vendor]
+directory = \"{directory}\"
+
+[net]
+offline = true
+"""
 # Cargo's extracted registry tree carries two transport markers which Cargo
 # omits from a directory source.  ``build.py`` pins the extracted-tree digest,
 # so restore these fixed markers only in a private derivative after the vendor
@@ -372,6 +381,31 @@ def provider_vendor(provider_vendor: Path) -> tuple[dict[str, Any], dict[str, tu
         for name, (version, checksum) in build.PINS.items()
     }
     return cargo_vendor_tree(provider_vendor, expected, "owned Rust provider vendor input"), expected
+
+
+def prepare_standalone_provider_cargo_home(output: Path, provider_vendor_root: Path) -> dict[str, Any]:
+    """Bind the stock-provider build to the same verified offline vendor input."""
+
+    output = physical(output, "owned Rust cleanup output", directory=True)
+    provider, _expected = provider_vendor(provider_vendor_root)
+    cargo_home = output / "provider-cargo-home"
+    require(not cargo_home.exists() and not cargo_home.is_symlink(),
+            "private standalone provider Cargo home must be fresh")
+    cargo_home.mkdir(mode=0o755)
+    cargo_home = physical(cargo_home, "private standalone provider Cargo home", directory=True)
+    config = cargo_home / "config.toml"
+    config.write_text(
+        CARGO_PROVIDER_VENDOR_CONFIG.format(
+            directory=_toml_path(Path(provider["root"]), "owned Rust provider vendor input", directory=True),
+        ),
+        encoding="utf-8",
+    )
+    config = physical(config, "private standalone provider Cargo source config")
+    return {
+        "provider_vendor": provider,
+        "cargo_home": str(cargo_home),
+        "cargo_config": record_file(config, "private standalone provider Cargo source config"),
+    }
 
 
 def prepare_offline_cargo_sources(
@@ -1523,6 +1557,7 @@ def source_graph_provider(
 ) -> dict[str, Any]:
     """Stage and audit one patched provider as a dependency of one consumer workspace."""
 
+    application = physical(application, "source-built provider application", directory=True)
     source_manifest = physical(ROOT / "Cargo.toml", "checked-in crabc-unwinder manifest")
     source_lock = physical(ROOT / "Cargo.lock", "checked-in crabc-unwinder lock")
     source_command: list[str | Path] = [
@@ -1543,7 +1578,11 @@ def source_graph_provider(
     offline_sources["provider_registry_source"] = registry_source
     source_packages[build.PATCHED_UNWINDING] = dict(source_packages[build.PATCHED_UNWINDING])
     source_packages[build.PATCHED_UNWINDING]["manifest_path"] = registry_source["registry_manifest"]["path"]
-    staged = build.stage_patched_unwinding(source_packages)
+    # The checkout is read-only for supplied-product consumers. Keep this
+    # second private provider derivative beside the authenticated Cargo vendor
+    # conversion, beneath the already validated per-consumer application.
+    stage_root = work_child(application / "unwinder-source-inputs", "private patched unwinding stage root")
+    staged = build.stage_patched_unwinding(source_packages, stage_root=stage_root)
     build.verify_staged_patched_unwinding(staged)
     prepared = prepare_source_graph_package(application, package, staged, with_plugin)
     generated_manifest = Path(prepared["root"]) / "Cargo.toml"
@@ -2137,7 +2176,12 @@ def run(static_root: Path, dynamic_root: Path, provider_vendor_root: Path, outpu
         ["rustup", "run", channel, "rustc", "-Vv"], environment, output / "toolchain.log",
         "consumer compiler identity",
     )
-    run_logged([sys.executable, "-B", ROOT / "build.py", "--output", output / "provider"], environment,
+    standalone_provider_sources = prepare_standalone_provider_cargo_home(output, provider_vendor_root)
+    run_logged([
+        sys.executable, "-B", ROOT / "build.py", "--output", output / "provider",
+        "--stage-root", output / "provider" / "source-inputs",
+        "--cargo-home", standalone_provider_sources["cargo_home"],
+    ], environment,
                output / "provider-build.log", "selected unwind provider build")
     provider = provider_snapshot(output / "provider", toolchain)
     stock_consumers: dict[str, dict[str, Any]] = {}
@@ -2193,6 +2237,7 @@ def run(static_root: Path, dynamic_root: Path, provider_vendor_root: Path, outpu
         "fixture": record_file(FIXTURE, "full Rust cleanup fixture"),
         "products": {"static": static, "dynamic": dynamic},
         "provider": provider,
+        "standalone_provider_sources": standalone_provider_sources,
         "stock_consumers": stock_consumers,
         "source_built_consumers": {"static": source_static, "dynamic_dso": source_dynamic_dso},
         "qualified": False,

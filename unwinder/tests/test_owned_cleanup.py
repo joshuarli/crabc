@@ -228,6 +228,39 @@ class OwnedCleanupContract(unittest.TestCase):
         self.assertIn("crabc-owned-composite-vendor", config)
         self.assertIn("offline = true", config)
 
+    def test_standalone_provider_cargo_home_uses_the_verified_read_only_vendor(self):
+        vendor = WORK / f"standalone-provider-vendor-{Path(self.temporary.name).name}"
+        vendor.mkdir()
+        for name, (version, checksum) in build.PINS.items():
+            self.write_vendor_package(vendor, name, version, checksum)
+        files = tuple(path for path in vendor.rglob("*") if path.is_file())
+        directories = tuple(path for path in vendor.rglob("*") if path.is_dir()) + (vendor,)
+        input_bytes = {path: path.read_bytes() for path in files}
+        original_modes = {path: path.stat().st_mode & 0o777 for path in (*files, *directories)}
+        for path in files:
+            path.chmod(0o444)
+        for path in directories:
+            path.chmod(0o555)
+        output = Path(self.temporary.name) / "consumer-output"
+        output.mkdir()
+        try:
+            prepared = owned_cleanup.prepare_standalone_provider_cargo_home(output, vendor)
+            config = Path(prepared["cargo_config"]["path"])
+            self.assertEqual(Path(prepared["cargo_home"]), output / "provider-cargo-home")
+            self.assertEqual(prepared["provider_vendor"]["root"], str(vendor))
+            self.assertIn("crabc-owned-provider-vendor", config.read_text())
+            self.assertIn(f'directory = "{vendor}"', config.read_text())
+            self.assertIn("offline = true", config.read_text())
+            self.assertEqual({path: path.read_bytes() for path in files}, input_bytes)
+            self.assertEqual({path: path.stat().st_mode & 0o777 for path in files},
+                             {path: 0o444 for path in files})
+            self.assertEqual({path: path.stat().st_mode & 0o777 for path in directories},
+                             {path: 0o555 for path in directories})
+        finally:
+            for path, mode in original_modes.items():
+                path.chmod(mode)
+            shutil.rmtree(vendor)
+
     def test_composite_vendor_binds_declared_custom_build_sources(self):
         vendor = Path(self.temporary.name) / "vendor"
         package = vendor / "fixture-1.2.3"
@@ -310,6 +343,133 @@ class OwnedCleanupContract(unittest.TestCase):
         finally:
             source.chmod(original_source_mode)
             source_checksum.chmod(original_checksum_mode)
+
+    def test_source_graph_stages_the_overlay_below_its_writable_application(self):
+        """A read-only checkout cannot redirect private provider preparation."""
+
+        checkout = Path(self.temporary.name) / "checkout"
+        provider_root = checkout / "unwinder"
+        provider_source = provider_root / "src/lib.rs"
+        provider_source.parent.mkdir(parents=True)
+        (provider_root / "Cargo.toml").write_text('[package]\nname = "crabc-unwinder"\nversion = "0.1.0"\n')
+        (provider_root / "Cargo.lock").write_text("version = 4\n")
+        provider_source.write_text("#![no_std]\n")
+        patches_root = provider_root / "patches"
+        patches_root.mkdir()
+        overlay = patches_root / "phdr.rs"
+        overlay.write_text("patched\n")
+
+        work = checkout / ".work/x86_64"
+        application = work / "owned-rust-std-cleanup/run/source-built-static"
+        application.mkdir(parents=True)
+        source = work / "inputs/provider-vendor/unwinding-0.2.10"
+        target = source / "src/unwinder/find_fde/phdr.rs"
+        target.parent.mkdir(parents=True)
+        target.write_text("upstream\n")
+        (source / "Cargo.toml").write_text('[package]\nname = "unwinding"\nversion = "0.2.10"\n')
+        source_checksum = source / ".cargo-checksum.json"
+        source_checksum.write_text("directory-source checksum\n")
+
+        registry = Path(self.temporary.name) / "registry-tree"
+        shutil.copytree(source, registry)
+        (registry / ".cargo-checksum.json").unlink()
+        for relative, contents in owned_cleanup.CARGO_REGISTRY_UNWINDING_MARKERS.items():
+            (registry / relative).write_bytes(contents)
+        expected_tree = build.tree_digest(registry)
+        shutil.rmtree(registry)
+        patches = {
+            "src/unwinder/find_fde/phdr.rs": {
+                "overlay": overlay,
+                "upstream_sha256": build.digest(target),
+            },
+        }
+        source_files = tuple(path for path in source.rglob("*") if path.is_file())
+        source_bytes = {path: path.read_bytes() for path in source_files}
+        source_modes = {path: path.stat().st_mode & 0o777 for path in source_files}
+        directories = (checkout / ".work", work, source, source / "src", source / "src/unwinder",
+                       source / "src/unwinder/find_fde")
+        directory_modes = {path: path.stat().st_mode & 0o777 for path in directories}
+        for path in source_files:
+            path.chmod(0o444)
+        for path in directories:
+            path.chmod(0o555)
+
+        offline_sources = {
+            "provider_vendor": {
+                "packages": [{
+                    "name": build.PATCHED_UNWINDING,
+                    "version": build.PINS[build.PATCHED_UNWINDING][0],
+                    "directory": str(source),
+                    "checksum": owned_cleanup.record_file(source_checksum, "test provider vendor checksum"),
+                }],
+            },
+        }
+
+        def streams(_command, _environment, stdout, stderr, _description):
+            stdout.write_text("{}\n")
+            stderr.write_text("")
+            return "{}\n", ""
+
+        def command(_command, _environment, log, _description):
+            log.write_text("")
+            return ""
+
+        observed = {}
+
+        def prepare(application_root, _package, staged, _with_plugin):
+            root = application_root / "cargo-package"
+            root.mkdir()
+            manifest = root / "Cargo.toml"
+            lock = root / "Cargo.lock"
+            manifest.write_text('[package]\nname = "fixture"\nversion = "0.1.0"\n')
+            lock.write_text("version = 4\n")
+            self.assertTrue(Path(staged["source_input"]).is_relative_to(application_root / "unwinder-source-inputs"))
+            observed["staged"] = staged
+            return {
+                "root": root,
+                "fixture_manifest": owned_cleanup.record_file(provider_root / "Cargo.toml", "test fixture manifest"),
+                "fixture_lock": owned_cleanup.record_file(provider_root / "Cargo.lock", "test fixture lock"),
+                "generated_manifest": owned_cleanup.record_file(manifest, "test generated manifest"),
+                "sources": [],
+            }
+
+        packages = {
+            build.PATCHED_UNWINDING: {
+                "source": build.CRATES_IO_REGISTRY,
+                "manifest_path": str(source / "Cargo.toml"),
+            },
+        }
+        try:
+            with mock.patch.object(owned_cleanup, "ROOT", provider_root), \
+                 mock.patch.object(owned_cleanup, "CHECKOUT", checkout), \
+                 mock.patch.object(build, "ROOT", provider_root), \
+                 mock.patch.object(build, "PATCHES", patches), \
+                 mock.patch.object(build, "PATCHED_UNWINDING_UPSTREAM_TREE_SHA256", expected_tree), \
+                 mock.patch.object(build, "audit_graph", return_value=packages), \
+                 mock.patch.object(owned_cleanup, "run_logged_streams", side_effect=streams), \
+                 mock.patch.object(owned_cleanup, "run_logged", side_effect=command), \
+                 mock.patch.object(owned_cleanup, "prepare_source_graph_package", side_effect=prepare), \
+                 mock.patch.object(
+                     owned_cleanup, "audit_source_graph",
+                     return_value={"provider_custom_builds": [], "provider_package_id": "test-provider"},
+                 ):
+                result = owned_cleanup.source_graph_provider(
+                    application=application, package=provider_root, channel="test", environment={}, with_plugin=False,
+                    offline_sources=offline_sources,
+                )
+            stage_root = application / "unwinder-source-inputs"
+            staged_unwinding = Path(observed["staged"]["staged"])
+            self.assertTrue(staged_unwinding.is_relative_to(stage_root))
+            self.assertEqual((staged_unwinding / "src/unwinder/find_fde/phdr.rs").read_bytes(), overlay.read_bytes())
+            self.assertFalse((work / "unwinder-source-inputs").exists())
+            self.assertEqual({path: path.read_bytes() for path in source_files}, source_bytes)
+            self.assertEqual({path: path.stat().st_mode & 0o777 for path in source_files},
+                             {path: 0o444 for path in source_files})
+        finally:
+            for path, mode in directory_modes.items():
+                path.chmod(mode)
+            for path, mode in source_modes.items():
+                path.chmod(mode)
 
     def test_generated_source_graph_manifest_accepts_the_staged_unwinding_directory(self):
         application = Path(self.temporary.name) / "application"

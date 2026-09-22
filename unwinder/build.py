@@ -144,7 +144,32 @@ def staged_manifest_text():
     )
 
 
-def stage_patched_unwinding(packages):
+def private_stage_root(stage_root):
+    """Create one explicit fresh physical root for a private provider stage."""
+
+    candidate = Path(os.path.abspath(stage_root))
+    if ".." in Path(stage_root).parts:
+        raise ValueError('private unwinding stage root has parent traversal')
+    if candidate.exists() or candidate.is_symlink():
+        raise ValueError('private unwinding stage root must be fresh')
+    parent = candidate.parent
+    current = Path(candidate.anchor)
+    try:
+        for part in candidate.parts[1:-1]:
+            current /= part
+            if current.is_symlink():
+                raise ValueError('private unwinding stage root traverses a symlink')
+        if not parent.is_dir() or parent.is_symlink():
+            raise ValueError('private unwinding stage root parent is not a physical directory')
+        if not os.access(parent, os.W_OK | os.X_OK):
+            raise ValueError('private unwinding stage root parent is not writable')
+        candidate.mkdir(mode=0o755)
+    except OSError as error:
+        raise ValueError('private unwinding stage root is not writable') from error
+    return candidate
+
+
+def stage_patched_unwinding(packages, *, stage_root=None):
     package = packages[PATCHED_UNWINDING]
     if package.get('source') != CRATES_IO_REGISTRY:
         raise ValueError('unwinding source is not the pinned crates.io registry package')
@@ -172,7 +197,15 @@ def stage_patched_unwinding(packages):
     ):
         input_identity.update(value.encode())
         input_identity.update(b'\0')
-    source_root = ROOT.parent / '.work/x86_64/unwinder-source-inputs' / input_identity.hexdigest()
+    # A direct provider build keeps the historical shared content-addressed
+    # checkout input.  Consumers with a read-only checkout supply one fresh
+    # evidence-local root so every copied/overlaid source remains writable
+    # without relaxing their input mounts.
+    if stage_root is None:
+        inputs_root = ROOT.parent / '.work/x86_64/unwinder-source-inputs'
+    else:
+        inputs_root = private_stage_root(stage_root)
+    source_root = inputs_root / input_identity.hexdigest()
     staged_unwinding = source_root / f'{PATCHED_UNWINDING}-0.2.10'
     staged_root = source_root / 'crabc-unwinder'
     if source_root.exists():
@@ -244,7 +277,7 @@ def verify_staged_patched_unwinding(staged):
         if digest(staged['staged'] / patch['target']) != patch['compiled_sha256']:
             raise ValueError('compiled unwinding overlay differs from the staged patch record')
 
-def build(output):
+def build(output, *, stage_root=None, cargo_home=None):
     if (platform.system(), platform.machine()) != ('Linux', 'x86_64'):
         raise ValueError('native Linux/x86-64 required')
     output = output.resolve()
@@ -253,13 +286,25 @@ def build(output):
     if output.exists() and (not output.is_dir() or any(output.iterdir())):
         raise ValueError('build output is nonempty; preserve its existing evidence')
     output.mkdir(parents=True, exist_ok=True)
+    if stage_root is not None:
+        stage_root = Path(os.path.abspath(stage_root))
+        if not stage_root.is_relative_to(output):
+            raise ValueError('private unwinding stage root must remain below build output')
+    if cargo_home is None:
+        cargo_home = ROOT.parent / '.work/x86_64/cargo'
+    else:
+        cargo_home = Path(os.path.abspath(cargo_home))
+        if cargo_home.parent != output.parent:
+            raise ValueError('private Cargo home must remain beside build output')
+        if cargo_home.is_symlink() or not cargo_home.is_dir():
+            raise ValueError('private Cargo home must be a physical directory')
     temporary = output / 'tmp'
     temporary.mkdir(exist_ok=True)
     channel = tomllib.loads((ROOT.parent / 'rust-toolchain.toml').read_text())['toolchain']['channel']
     cargo = ['rustup', 'run', channel, 'cargo']
     rustc = ['rustup', 'run', channel, 'rustc']
     environment = {k: v for k, v in os.environ.items() if not k.startswith(('CARGO_', 'RUSTFLAGS', 'RUSTUP_TOOLCHAIN'))}
-    environment.update(CARGO_HOME=str(ROOT.parent / '.work/x86_64/cargo'),
+    environment.update(CARGO_HOME=str(cargo_home),
         CARGO_TARGET_DIR=str(output / 'target'), TMPDIR=str(temporary),
         CARGO_ENCODED_RUSTFLAGS='\x1f'.join(['-Crelocation-model=pic', '-Cembed-bitcode=yes',
             '-Cforce-unwind-tables=yes', '--remap-path-prefix', f'{ROOT.parent}=/crabc']),
@@ -268,7 +313,7 @@ def build(output):
     source_manifest = ['--manifest-path', str(ROOT / 'Cargo.toml'), '--locked']
     metadata = json.loads(run([*cargo, 'metadata', *source_manifest, '--format-version=1', '--filter-platform', TARGET], **kwargs))
     packages = audit_graph(metadata, tomllib.loads((ROOT / 'Cargo.lock').read_text()))
-    staged = stage_patched_unwinding(packages)
+    staged = stage_patched_unwinding(packages, stage_root=stage_root)
     staged_kwargs = {'cwd': staged['manifest'].parent, 'env': environment}
     run([*cargo, 'generate-lockfile', '--offline', '--manifest-path', staged['manifest']], **staged_kwargs)
     manifest = ['--manifest-path', str(staged['manifest']), '--locked']
@@ -346,7 +391,12 @@ def build(output):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, help='fresh or empty checkout-local output directory')
-    output = parser.parse_args().output
+    parser.add_argument('--stage-root', type=Path,
+                        help='fresh private provider-source root below --output')
+    parser.add_argument('--cargo-home', type=Path,
+                        help='existing private Cargo home below --output')
+    arguments = parser.parse_args()
+    output = arguments.output
     if output is None:
         runs = ROOT.parent / '.work/x86_64/unwinder-builds'
         runs.mkdir(parents=True, exist_ok=True)
@@ -354,4 +404,4 @@ if __name__ == '__main__':
         # The pinned container builds as root; retain public build evidence
         # readable by the invoking host user, like the installed-product jobs.
         output.chmod(0o755)
-    build(output)
+    build(output, stage_root=arguments.stage_root, cargo_home=arguments.cargo_home)
