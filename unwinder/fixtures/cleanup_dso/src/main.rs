@@ -51,7 +51,7 @@ fn main() {
         // The host's last handle is gone. The loader contract retains the
         // admitted mapping, so these saved function pointers may finish the
         // in-flight internal cleanup and exercise it once more after close.
-        if release() != 0 || running.join() != Ok(0) || run() != 0 {
+        if release() != 0 || !matches!(running.join(), Ok(0)) || run() != 0 {
             std::process::exit(5);
         }
     }

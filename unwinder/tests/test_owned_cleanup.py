@@ -106,6 +106,47 @@ class OwnedCleanupContract(unittest.TestCase):
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "real _Unwind_RaiseException link anchor"):
             owned_cleanup.source_provider_link_anchor(missing)
 
+    def test_dso_thread_join_contract_matches_thread_completion_without_result_equality(self):
+        host = owned_cleanup.BUILD_STD_DSO_FIXTURE / "src/main.rs"
+        plugin = owned_cleanup.BUILD_STD_DSO_FIXTURE / "src/plugin.rs"
+        self.assertEqual(
+            owned_cleanup.dso_thread_join_contract(host, plugin),
+            {
+                "host_post_close": owned_cleanup.record_file(host, "cleanup DSO host post-close result contract"),
+                "plugin_worker": owned_cleanup.record_file(plugin, "cleanup DSO plugin worker result contract"),
+            },
+        )
+        invalid = Path(self.temporary.name) / "invalid-dso-host.rs"
+        invalid.write_text("if release() != 0 || running.join() != Ok(0) || run() != 0 {\n")
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "does not match its first post-close plugin result"):
+            owned_cleanup.dso_thread_join_contract(invalid, plugin)
+        invalid.write_text("if worker.join() != Ok(true) {\n")
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "does not match its worker cleanup result"):
+            owned_cleanup.dso_thread_join_contract(host, invalid)
+
+    def test_mixed_source_generated_compile_diagnostics_compile_both_fixture_shapes_without_execution(self):
+        output = WORK / f"mixed-source-diagnostics-{Path(self.temporary.name).name}"
+        static = {"root": str(Path(self.temporary.name) / "static"), "manifest": {"path": "static"}, "files": {}}
+        dynamic = {"root": str(Path(self.temporary.name) / "dynamic"), "manifest": {"path": "dynamic"}, "files": {}}
+        consumers = [{"fixture": "static"}, {"fixture": "dynamic-dso"}]
+        with mock.patch.object(owned_cleanup, "product_snapshot", side_effect=[static, dynamic]), \
+             mock.patch.object(owned_cleanup, "compile_source_built_mode", side_effect=consumers) as compile_source, \
+             mock.patch.object(owned_cleanup, "assert_same_product"):
+            result = owned_cleanup.run_mixed_source_generated_compile_diagnostics(
+                Path("unused-static"), Path("unused-dynamic"), Path("unused-vendor"), output,
+            )
+        self.assertEqual(result, output)
+        self.assertEqual([call.kwargs["package"] for call in compile_source.call_args_list], [
+            owned_cleanup.BUILD_STD_FIXTURE, owned_cleanup.BUILD_STD_DSO_FIXTURE,
+        ])
+        self.assertEqual([call.kwargs["with_plugin"] for call in compile_source.call_args_list], [False, True])
+        receipt = json.loads((output / "generated-source-compile-diagnostics.json").read_text())
+        self.assertEqual(receipt["source_product_relation"], "mixed-source development diagnostics only")
+        self.assertEqual(receipt["source_built_generated_consumers"], {
+            "static": consumers[0], "dynamic_dso": consumers[1],
+        })
+        self.assertFalse(receipt["qualified"])
+
     def write_vendor_package(
         self, root, name, version, package_checksum, source="pub fn source() {}\n", directory_name=None,
     ):

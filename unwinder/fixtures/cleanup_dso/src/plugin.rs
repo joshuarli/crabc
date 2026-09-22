@@ -58,7 +58,7 @@ pub extern "C" fn crabc_owned_cleanup_dso() -> i32 {
         return 1;
     }
     let worker = std::thread::spawn(catches_cleanup);
-    if worker.join() != Ok(true) {
+    if !matches!(worker.join(), Ok(true)) {
         return 2;
     }
     println!("unwind: backtrace cleanup payload main thread dso");

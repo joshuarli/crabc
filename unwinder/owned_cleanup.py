@@ -71,6 +71,9 @@ PROVIDER_LINK_ANCHOR_DEFINITION = (
     '    unwinding::abi::_Unwind_RaiseException\n'
     '}'
 )
+DSO_HOST_POST_CLOSE_SUCCESS = "if release() != 0 || !matches!(running.join(), Ok(0)) || run() != 0 {"
+DSO_PLUGIN_WORKER_SUCCESS = "if !matches!(worker.join(), Ok(true)) {"
+DSO_RESULT_EQUALITIES = ("running.join() != Ok(0)", "worker.join() != Ok(true)")
 CARGO_VENDOR_CONFIG = """[source.crates-io]
 replace-with = \"crabc-owned-composite-vendor\"
 
@@ -1256,6 +1259,29 @@ def source_provider_link_anchor(provider_source: Path) -> dict[str, str]:
     return record_file(provider_source, "staged crabc-unwinder source link anchor")
 
 
+def dso_thread_join_contract(host_source: Path, plugin_source: Path) -> dict[str, dict[str, str]]:
+    """Require each DSO thread result to distinguish panic from expected success."""
+
+    host_source = physical(host_source, "cleanup DSO host source")
+    plugin_source = physical(plugin_source, "cleanup DSO plugin source")
+    host_contents = host_source.read_text(encoding="utf-8")
+    plugin_contents = plugin_source.read_text(encoding="utf-8")
+    require(
+        host_contents.count(DSO_HOST_POST_CLOSE_SUCCESS) == 1
+        and not any(pattern in host_contents for pattern in DSO_RESULT_EQUALITIES),
+        "cleanup DSO host does not match its first post-close plugin result",
+    )
+    require(
+        plugin_contents.count(DSO_PLUGIN_WORKER_SUCCESS) == 1
+        and not any(pattern in plugin_contents for pattern in DSO_RESULT_EQUALITIES),
+        "cleanup DSO plugin does not match its worker cleanup result",
+    )
+    return {
+        "host_post_close": record_file(host_source, "cleanup DSO host post-close result contract"),
+        "plugin_worker": record_file(plugin_source, "cleanup DSO plugin worker result contract"),
+    }
+
+
 def _unique_packages(metadata: dict[str, Any], description: str) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
     packages = metadata.get("packages")
     require(isinstance(packages, list) and all(isinstance(package, dict) for package in packages),
@@ -1416,6 +1442,7 @@ def prepare_source_graph_package(
     if package == BUILD_STD_FIXTURE:
         sources.append(_write_anchored_source(FIXTURE, root / "src/main.rs", "fn main() {", "cleanup fixture"))
     elif package == BUILD_STD_DSO_FIXTURE and with_plugin:
+        thread_join_contracts = dso_thread_join_contract(package / "src/main.rs", package / "src/plugin.rs")
         sources.append(_write_anchored_source(package / "src/main.rs", root / "src/main.rs", "fn main() {", "cleanup DSO host"))
         sources.append(_write_anchored_source(
             package / "src/plugin.rs", root / "src/plugin.rs",
@@ -1423,13 +1450,16 @@ def prepare_source_graph_package(
         ))
     else:
         raise OwnedCleanupError("source-built fixture has no approved Cargo graph adapter")
-    return {
+    result = {
         "root": physical(root, "generated source-built consumer package", directory=True),
         "fixture_manifest": record_file(manifest_source, "source-built fixture manifest"),
         "fixture_lock": record_file(lock_source, "source-built fixture lock"),
         "generated_manifest": record_file(generated_manifest, "generated source-built consumer manifest"),
         "sources": sources,
     }
+    if package == BUILD_STD_DSO_FIXTURE and with_plugin:
+        result["thread_join_contracts"] = thread_join_contracts
+    return result
 
 
 def cargo_graph_provider_artifact(
@@ -1558,6 +1588,8 @@ def source_graph_provider(
             "generated_metadata": [str(item) for item in metadata_command],
         },
     }
+    if "thread_join_contracts" in prepared:
+        receipt["fixture"]["thread_join_contracts"] = prepared["thread_join_contracts"]
     return {
         "package": prepared,
         "graph": graph,
@@ -2008,6 +2040,68 @@ def run_source_built_static(static_root: Path, provider_vendor_root: Path, outpu
     return output
 
 
+def run_mixed_source_generated_compile_diagnostics(
+    static_root: Path, dynamic_root: Path, provider_vendor_root: Path, output: Path | None = None,
+) -> Path:
+    """Compile both generated Cargo fixtures against retained older products.
+
+    This catches generator and Rust type errors before a new same-source product
+    cohort is admitted. It deliberately performs neither fixture execution nor
+    a normal consumer collection, and records the product/source relationship
+    as mixed-source development diagnostics.
+    """
+
+    require((platform.system(), platform.machine()) == ("Linux", "x86_64"), "native Linux/x86-64 required")
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    source_before = source_snapshot()
+    static = product_snapshot(static_root, "static")
+    dynamic = product_snapshot(dynamic_root, "dynamic")
+    require(static["root"] != dynamic["root"], "static and dynamic product roots must be distinct")
+    WORK.mkdir(parents=True, exist_ok=True)
+    if output is None:
+        output = Path(tempfile.mkdtemp(prefix="mixed-source-generated-compile-", dir=WORK))
+        output.chmod(0o755)
+    else:
+        output = work_child(output, "mixed-source generated compile diagnostics output")
+        output.mkdir(mode=0o755)
+    output = physical(output, "mixed-source generated compile diagnostics output", directory=True)
+    channel = tomllib.loads((CHECKOUT / "rust-toolchain.toml").read_text(encoding="utf-8"))["toolchain"]["channel"]
+    source_static = compile_source_built_mode(
+        label="source-built-static", mode="static", root=Path(static["root"]), channel=channel,
+        output=output, package=BUILD_STD_FIXTURE, binary_name=BUILD_STD_BINARY, with_plugin=False,
+        provider_vendor_root=provider_vendor_root,
+    )
+    source_dynamic_dso = compile_source_built_mode(
+        label="source-built-dynamic-dso", mode="dynamic", root=Path(dynamic["root"]), channel=channel,
+        output=output, package=BUILD_STD_DSO_FIXTURE, binary_name=BUILD_STD_DSO_HOST, with_plugin=True,
+        provider_vendor_root=provider_vendor_root,
+    )
+    assert_same_product(static, "static")
+    assert_same_product(dynamic, "dynamic")
+    require(source_snapshot() == source_before, "source changed during mixed-source generated compile diagnostics")
+    receipt = {
+        "schema": 1,
+        "scope": "mixed-source generated Rust consumer compile diagnostics",
+        "source_product_relation": "mixed-source development diagnostics only",
+        "source_inputs": source_before,
+        "products": {"static": static, "dynamic": dynamic},
+        "source_built_generated_consumers": {"static": source_static, "dynamic_dso": source_dynamic_dso},
+        "qualified": False,
+        "family_completion": False,
+        "promotion_ready": False,
+        "public_support": False,
+        "limitations": [
+            "this compiles generated source-built fixtures against supplied older products without executing either fixture",
+            "a fresh same-source static/dynamic product cohort and full consumer matrix remain required",
+        ],
+    }
+    receipt_path = output / "generated-source-compile-diagnostics.json"
+    with receipt_path.open("x", encoding="utf-8") as stream:
+        json.dump(receipt, stream, indent=2, sort_keys=True)
+        stream.write("\n")
+    return output
+
+
 def run(static_root: Path, dynamic_root: Path, provider_vendor_root: Path, output: Path | None = None) -> Path:
     require((platform.system(), platform.machine()) == ("Linux", "x86_64"), "native Linux/x86-64 required")
     # Retain failed executions through their logs, never checkout-root cores.
@@ -2116,11 +2210,14 @@ def main() -> int:
                         help="run the generated Cargo provider graph metadata/lock preflight without compiling")
     parser.add_argument("--source-built-static-only", action="store_true",
                         help="run only the source-built static Cargo/provider consumer")
+    parser.add_argument("--mixed-source-generated-compile-diagnostics-only", action="store_true",
+                        help="compile both generated Cargo consumers against supplied older products without execution")
     parser.add_argument("--output", type=Path, help="fresh checkout .work child for retained consumer evidence")
     arguments = parser.parse_args()
     try:
-        require(not (arguments.source_graph_preflight_only and arguments.source_built_static_only),
-                "Cargo provider preflight and source-built static cleanup are separate modes")
+        selected_modes = sum((arguments.source_graph_preflight_only, arguments.source_built_static_only,
+                              arguments.mixed_source_generated_compile_diagnostics_only))
+        require(selected_modes <= 1, "owned Rust cleanup modes are mutually exclusive")
         if arguments.source_graph_preflight_only:
             require(arguments.static_sysroot is None and arguments.dynamic_sysroot is None,
                     "Cargo provider preflight does not accept supplied sysroots")
@@ -2129,6 +2226,12 @@ def main() -> int:
             require(arguments.static_sysroot is not None and arguments.dynamic_sysroot is None,
                     "source-built static-only cleanup requires exactly one static sysroot")
             print(run_source_built_static(arguments.static_sysroot, arguments.provider_vendor, arguments.output))
+        elif arguments.mixed_source_generated_compile_diagnostics_only:
+            require(arguments.static_sysroot is not None and arguments.dynamic_sysroot is not None,
+                    "mixed-source generated compile diagnostics require static and dynamic sysroots")
+            print(run_mixed_source_generated_compile_diagnostics(
+                arguments.static_sysroot, arguments.dynamic_sysroot, arguments.provider_vendor, arguments.output,
+            ))
         else:
             require(arguments.static_sysroot is not None and arguments.dynamic_sysroot is not None,
                     "full owned Rust cleanup requires static and dynamic sysroots")
