@@ -6,6 +6,7 @@ mod native_runtime_test_support;
 
 
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Barrier, Condvar, Mutex, mpsc};
 
 use crabc_mimalloc::__crabc_runtime::{
@@ -14,6 +15,7 @@ use crabc_mimalloc::__crabc_runtime::{
     native_allocate_aligned, native_free, native_reallocate,
     native_runtime_current_thread_attachment_test_audit, native_runtime_fork_admission_test_audit,
     native_runtime_lifecycle_test_audit, native_runtime_metadata_page_map_test_audit,
+    native_runtime_live_client_page_test_audit, native_runtime_live_client_page_map_span_test_audit,
     native_usable_size, prepare_native_later_thread_arena,
 };
 
@@ -73,7 +75,7 @@ fn run_independent_local_worker(
     start: Arc<Barrier>,
     teardown: WorkerTeardown,
     reclaim_turn: Option<Arc<(Mutex<usize>, Condvar)>>,
-) {
+) -> Option<usize> {
     assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
 
     let anchor = allocate_local(ANCHOR_REQUEST);
@@ -146,6 +148,9 @@ fn run_independent_local_worker(
         *current.lock().unwrap() += 1;
         changed.notify_all();
     }
+    // The test transfers only the still-live client to its coordinator. This
+    // is a test-owned pointer list, never a production owner/route registry.
+    (teardown != WorkerTeardown::AllFree).then(|| anchor.as_ptr().expose_provenance())
 }
 
 fn run_width(width: usize, teardown: WorkerTeardown) {
@@ -195,10 +200,14 @@ fn run_width(width: usize, teardown: WorkerTeardown) {
     );
     start.wait();
 
-    for worker in workers {
-        worker
+    let mut live_anchors = Vec::new();
+    for (worker_index, worker) in workers.into_iter().enumerate() {
+        let anchor = worker
             .join()
             .expect("each independent local persistent worker reaches normal teardown");
+        if let Some(address) = anchor {
+            live_anchors.push((worker_index, address));
+        }
     }
 
     let after = native_runtime_lifecycle_test_audit()
@@ -257,18 +266,63 @@ fn run_width(width: usize, teardown: WorkerTeardown) {
             );
         }
         WorkerTeardown::CollectAbandon | WorkerTeardown::CollectAbandonReclaim => {
-            assert!(
-                after.main_heap_abandoned_page_count
-                    >= baseline.main_heap_abandoned_page_count + width,
-                "each worker's live local anchor crosses its own source collect-abandon traversal"
+            assert_eq!(live_anchors.len(), width);
+            let mut client_addresses = BTreeSet::new();
+            let mut live_pages = BTreeMap::new();
+            for (worker, address) in live_anchors {
+                assert!(client_addresses.insert(address), "live worker clients never alias");
+                let anchor = core::ptr::NonNull::new(
+                    core::ptr::with_exposed_provenance_mut::<u8>(address),
+                ).expect("the joined worker transferred its nonnull live anchor");
+                // SAFETY: all workers joined; each exact client was deliberately
+                // left live and exclusively transferred to this coordinator.
+                // No allocator operation can now mutate its page or ownership.
+                let page = unsafe {
+                    assert_eq!(anchor.as_ptr().read(), worker as u8);
+                    assert_eq!(
+                        anchor.as_ptr().add(REALLOCATED_ANCHOR_REQUEST - 1).read(),
+                        (worker as u8) ^ 0x5a,
+                    );
+                    assert!(native_usable_size(anchor)
+                        .is_some_and(|size| size >= REALLOCATED_ANCHOR_REQUEST));
+                    native_runtime_live_client_page_test_audit(anchor)
+                }.expect("every live anchor retains its actual source PageMap identity");
+                if let Some(previous) = live_pages.insert(page.page_address(), page) {
+                    assert_eq!(previous, page, "clients sharing a page agree on its exact span");
+                }
+            }
+            let mut live_registered_slices = 0;
+            for page in live_pages.values() {
+                // SAFETY: the live anchors above retain every observed page;
+                // workers remain joined and no free or ownership mutation runs.
+                let span = unsafe { native_runtime_live_client_page_map_span_test_audit(*page) }
+                    .expect("each retained page remains fully registered");
+                assert_eq!(span.matching_page_entry_count, page.registered_slice_count());
+                assert_eq!(span.non_null_entry_count, page.registered_slice_count());
+                live_registered_slices += page.registered_slice_count();
+            }
+            // Pinned page.c::mi_page_fresh_alloc can reclaim an earlier
+            // worker's abandoned page for a later realloc. Several live
+            // anchors may therefore share one final source page; worker
+            // count is not the net abandoned-page count. Preserve that legal
+            // interleaving and account for every exact live page instead.
+            assert_eq!(
+                after.main_heap_abandoned_page_count,
+                baseline.main_heap_abandoned_page_count + live_pages.len(),
+                "all and only the distinct live client pages remain abandoned"
             );
-            assert!(
-                after.page_map_registered_entry_count
-                    - after_metadata_entries
-                    >= baseline.page_map_registered_entry_count
-                        - baseline_metadata_entries + width,
-                "each independently abandoned local page remains PageMap-addressable after normal owner teardown"
+            assert_eq!(
+                after.page_map_registered_entry_count - after_metadata_entries,
+                baseline.page_map_registered_entry_count - baseline_metadata_entries
+                    + live_registered_slices,
+                "all application registrations match the exact live client page spans"
             );
+            if teardown == WorkerTeardown::CollectAbandonReclaim && width > 1 {
+                assert!(
+                    live_pages.len() < width,
+                    "the scheduled source reclaim consolidates multiple live anchors onto fewer pages"
+                );
+            }
         }
     }
     assert_eq!(after.live_thread_count, baseline.live_thread_count);
@@ -281,9 +335,12 @@ fn run_width(width: usize, teardown: WorkerTeardown) {
 
 /// Later-thread local allocation uses one persistent TLD/Theap page engine per
 /// worker. The fresh-process widths exercise both all-free and live
-/// collect-abandon teardown through the ordinary direct API only: no test
-/// geometry route, PageMap mutation lease, scheduler transition, or client
-/// ledger participates in the workload.
+/// collect-abandon teardown through the ordinary direct API only. The
+/// concurrent schedule remains unconstrained; an additional source-reclaim
+/// schedule makes net-page consolidation deterministic. After joining, the
+/// coordinator verifies every live payload and exact PageMap page/span.
+/// No test geometry route, PageMap mutation lease, scheduler transition, or
+/// production client ledger participates in the workload.
 #[test]
 fn persistent_workers_keep_independent_local_engines_through_normal_teardown() {
     if let (Some(width), Some(teardown)) = (
