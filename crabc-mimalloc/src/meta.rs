@@ -2818,6 +2818,33 @@ mod tests {
     }
 
     #[test]
+    fn process_metadata_terminal_close_retains_source_direct_os_mapping() {
+        let allocator = static_allocator();
+        let binding = process_binding_fixture(
+            allocator.test_default_subprocess(), incremental_process_options(true),
+        );
+        allocator.bind_process_backing(binding).unwrap();
+        let allocation = allocator.zalloc(config(), 64).unwrap();
+        let map = unsafe { binding.page_map().page_map_for_owned_ranges() }.unwrap();
+        let page = unsafe { map.checked_lookup(allocation.pointer().as_ptr()) };
+        assert!(!page.is_null());
+        let malloc_owned = usize::from(allocation.memory_id().kind() == MemoryKind::Malloc);
+        let os_backed = usize::from(unsafe { (*page).memid().kind() } == MemoryKind::Os);
+        let address = allocation.pointer().as_ptr().map_addr(|value| value & !4095);
+        let mut residency = 0_u8;
+        let before = usize::from(unsafe { crabc_core::mm::mincore_raw(address, 4096, &mut residency) }.is_ok());
+        // SAFETY: isolated permanently quiescent fixture retains the exact
+        // capability and pinned source images; no typed page borrow escaped.
+        unsafe { allocator.close_process_engine_quiescent() }.unwrap();
+        let after = usize::from(unsafe { crabc_core::mm::mincore_raw(address, 4096, &mut residency) }.is_ok());
+        let values = [malloc_owned, os_backed, before, after];
+        assert_eq!(values, [1, 1, 1, 1]);
+        for (index, value) in values.into_iter().enumerate() {
+            std::println!("m2.metadata.retirement.{index}={value}");
+        }
+    }
+
+    #[test]
     fn process_metadata_terminal_close_seals_live_capabilities_and_retains_poison() {
         let allocator = static_allocator();
         let binding = process_binding_fixture(
