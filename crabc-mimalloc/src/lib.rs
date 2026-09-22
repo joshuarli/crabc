@@ -38,6 +38,8 @@
 
 #[cfg(feature = "test-adapter")]
 extern crate alloc as rust_alloc;
+#[cfg(test)]
+extern crate std;
 
 // These are the explicit allocator-engine target profiles. The AArch64
 // profile is the production-integration target; the x86-64 profile is native
