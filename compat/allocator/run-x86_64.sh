@@ -64,7 +64,7 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator-dynamic-os-aligned-singleton
   allocator-dynamic-arena-singleton-post-exit
   allocator-mapped-post-exit
-  allocator-retired-prepass | allocator-aggregate-post-exit
+  allocator-retired-prepass | allocator-deferred-free-callback | allocator-aggregate-post-exit
   allocator-aggregate-still-live | allocator-aggregate-same-bin-still-live
   allocator-perf --smoke|--full [options]
   allocator-huge-registry | allocator-huge-reservation | allocator-huge-numa-qualification [--reader-tests]
@@ -698,6 +698,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "allocator-retired-prepass takes no arguments"
         ensure_image
         run_in_container python3 compat/allocator/x86_64_retired_prepass_evidence.py --offline
+        ;;
+    allocator-deferred-free-callback)
+        [ "$#" -eq 0 ] || fail "allocator-deferred-free-callback takes no arguments"
+        ensure_image
+        run_in_container python3 compat/allocator/x86_64_deferred_free_callback_evidence.py --offline
         ;;
     allocator-aggregate-post-exit)
         [ "$#" -eq 0 ] || fail "allocator-aggregate-post-exit takes no arguments"
