@@ -1439,6 +1439,8 @@ pub(super) fn c_off_status(result: i64) -> i64 {
 // The selected archive builds with panic=abort and its C entry points avoid
 // normal Rust panic paths. Keep this terminal fallback local to the static
 // target root so linking a selected leaf cannot acquire an ambient runtime.
+// Rust std owns rust_eh_personality in consumers; this C runtime must not
+// define a competing personality or hide a missing unwind owner.
 #[cfg(not(test))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
@@ -1446,9 +1448,3 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
         core::hint::spin_loop();
     }
 }
-
-// Linker personality stub for the abort-only static archive. No unwinding ABI
-// or dynamic C++ runtime is selected by the currently admitted C leaves.
-#[cfg(not(test))]
-#[no_mangle]
-pub extern "C" fn rust_eh_personality() {}

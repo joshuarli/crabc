@@ -960,7 +960,6 @@ rmdir
 round
 roundf
 roundl
-rust_eh_personality
 scalb
 scalbf
 scalbln

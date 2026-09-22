@@ -5013,7 +5013,6 @@ unsafe fn join_selected_worker_inner(
             'fn c_status',
             'fn c_ssize_status',
             'fn c_off_status',
-            'fn rust_eh_personality',
         ):
             self.assertIn(composition_member, static_c_abi)
         self.assertIn('#[thread_local]', errno)
@@ -5053,8 +5052,11 @@ unsafe fn join_selected_worker_inner(
         ):
             self.assertIn(syscall, credentials)
         self.assertIn('EOPNOTSUPP', credentials)
+        # These independent leaves remain dependency-free. The target root
+        # also selects the separately checked native-mimalloc-shadow feature;
+        # its feature-gated allocator references are not leaf dependencies.
+        self.assertNotIn('crabc_core', static_c_abi)
         for static_source in (
-            static_c_abi,
             stat_compat,
             credentials,
             process_context,
@@ -5113,9 +5115,10 @@ unsafe fn join_selected_worker_inner(
             "memcpy",
             "feclearexcept",
             "setjmp",
-            "rust_eh_personality",
         ):
             self.assertIn(symbol, static_export_names)
+        self.assertNotIn("rust_eh_personality", static_export_names)
+        self.assertNotIn("fn rust_eh_personality", static_c_abi)
         self.assertIn("raw_syscall::SYS_GETPID", process_context)
         self.assertIn("raw_syscall::SYS_SETPGID", process_context)
         self.assertIn("raw_syscall::SYS_UMASK", process_context)

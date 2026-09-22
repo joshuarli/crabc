@@ -148,6 +148,15 @@ runtime DSO discovery, and complete malformed-metadata handling.
 
 ## Source and ownership
 
+The owned consumer disables rustc's musl self-contained link inputs and
+`crt-static` selection before invoking its explicit owned linker. That linker
+selects the installed static or dynamic crabc runtime itself; bundled Rust
+CRT objects remain rejected. The abort-only x86 libc supplies no
+`rust_eh_personality` definition or fallback. Rust std supplies the real
+personality, while the selected provider supplies `_Unwind_*`. The complete
+cleanup fixture is the regression for this boundary: admitting both libc's
+former placeholder and std's personality produced a duplicate-symbol error.
+
 The exact normal graph is:
 
 - `unwinding 0.2.10`, upstream commit

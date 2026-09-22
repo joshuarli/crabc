@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import resource
 import stat
 import subprocess
 import sys
@@ -214,6 +215,10 @@ def compile_mode(
     rust_arguments: list[str | Path] = [
         "rustup", "run", channel, "rustc", "--edition=2024", "--target", TARGET,
         "-C", "panic=unwind", "-C", "force-unwind-tables=yes",
+        # The owned linker selects either static or dynamic crabc inputs.
+        # Rust's musl defaults would inject its bundled CRT objects and native
+        # unwind archive before that boundary, which must reject them.
+        "-C", "link-self-contained=no", "-C", "target-feature=-crt-static",
         "-C", f"linker={ROOT / 'owned_rust_link.py'}", "-C", "link-arg=-Wl,--eh-frame-hdr",
     ]
     if mode == "static":
@@ -287,6 +292,8 @@ def source_snapshot() -> list[dict[str, str]]:
 
 def run(static_root: Path, dynamic_root: Path, output: Path | None = None) -> Path:
     require((platform.system(), platform.machine()) == ("Linux", "x86_64"), "native Linux/x86-64 required")
+    # Retain failed executions through their logs, never checkout-root cores.
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     source_before = source_snapshot()
     static = product_snapshot(static_root, "static")
     dynamic = product_snapshot(dynamic_root, "dynamic")

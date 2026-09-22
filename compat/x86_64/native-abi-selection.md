@@ -733,9 +733,15 @@ lifecycle beyond that bounded receipt, family completion, promotion, and
 public support remain open.
 
 The private feature witnesses have actual evidence consumers. Crypt helper
-names, private musl alias targets, process/runtime seams, compiler helpers,
-and `rust_eh_personality` also require their own physical visibility and
-consumer decisions. They do not inherit the allocator decision. Compiler
+names, private musl alias targets, process/runtime seams, and compiler helpers
+also require their own physical visibility and consumer decisions. They do
+not inherit the allocator decision. The x86 abort-only libc root no longer
+defines `rust_eh_personality`: stock Rust std owns the real personality in
+Rust consumers. The owned Rust cleanup consumer rejects ambient native
+unwind inputs and exercises that ownership; ordinary installed C consumers
+must retain link closure without a libc personality definition or dependency.
+This does not change the paused AArch64 root or the isolated legacy proof
+roots. Compiler
 helpers in the installed builtins archive remain a consumer link-closure
 contract even if a shared export is eventually removed. An implementation
 classification by itself neither approves a public export nor authorizes
