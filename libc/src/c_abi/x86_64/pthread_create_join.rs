@@ -94,6 +94,20 @@ compile_error!("the x86 pthread create/join leaf requires little-endian Linux/x8
 use core::ffi::{c_int, c_long, c_void};
 use core::mem::{align_of, size_of};
 use core::sync::atomic::{AtomicI32, AtomicU8, AtomicUsize, Ordering};
+#[cfg(feature = "native-mimalloc-shadow")]
+use core::ptr::NonNull;
+#[cfg(feature = "native-mimalloc-shadow")]
+use core::sync::atomic::AtomicPtr;
+
+#[cfg(feature = "native-mimalloc-shadow")]
+use crabc_mimalloc::__crabc_runtime::{
+    current_native_allocator_thread_descriptor,
+    native_allocator_descriptor_retirement,
+    native_allocator_initial_thread_descriptor,
+    register_current_native_allocator_worker_descriptor,
+    NativeAllocatorDescriptorRetirement, NativeAllocatorPinnedThreadRegistry,
+    NativeAllocatorThreadDescriptor,
+};
 
 use super::{
     pthread_cancel, pthread_cond, pthread_identity, pthread_mutex, pthread_tsd, raw_syscall,
@@ -488,6 +502,14 @@ struct ThreadControl {
     // handshake. The callback stays closed until the child reports Attached.
     #[cfg(feature = "native-mimalloc-shadow")]
     native_mimalloc_attach: AtomicI32,
+    // This is the exact descriptor in the selected allocator image's TLS,
+    // never a reconstructed owner or a libc-local copy. The child publishes
+    // it after this control is linked and before it can enter native source
+    // state. The registry visitor holds the worker-list lock while borrowing
+    // this pointer, so clear-child-tid reclamation cannot unmap either the
+    // control record or the descriptor's TLS image during a visit.
+    #[cfg(feature = "native-mimalloc-shadow")]
+    native_allocator_descriptor: AtomicPtr<NativeAllocatorThreadDescriptor>,
     #[cfg(crabc_x86_owned_runtime)]
     startup_signal_mask: Option<u64>,
     #[cfg(crabc_x86_owned_runtime)]
@@ -596,6 +618,12 @@ const NATIVE_MIMALLOC_ATTACH_ATTACHED: i32 = 1;
 const NATIVE_MIMALLOC_ATTACH_REJECTED: i32 = 2;
 #[cfg(feature = "native-mimalloc-shadow")]
 const NATIVE_MIMALLOC_ATTACH_FATAL: i32 = 3;
+
+// This is an external audit witness because the reclaimed control page is no
+// longer readable after its final munmap. It counts only descriptor-bearing
+// workers whose TLS, stack, and control mappings all released successfully.
+#[cfg(feature = "native-mimalloc-shadow-test-audit")]
+static NATIVE_MIMALLOC_RECLAIMED_WORKER_DESCRIPTOR_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[cfg(feature = "native-mimalloc-shadow")]
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -1376,6 +1404,112 @@ fn release_selected_worker(control: *mut ThreadControl) -> bool {
     released
 }
 
+/// One borrowed view of the existing selected-worker registry for the native
+/// allocator's terminal/fork admission. It owns no list, control record, TLS
+/// mapping, epoch, or allocator state. The allocator can only inspect opaque
+/// descriptors while this view pins their containing control mappings.
+#[cfg(feature = "native-mimalloc-shadow")]
+struct SelectedWorkerNativeAllocatorRegistry;
+
+// SAFETY: [`with_selected_native_allocator_pinned_registry`] holds
+// `SELECTED_WORKER_REGISTRY_LOCK` throughout the synchronous callback. That
+// lock pins every linked `ThreadControl`; list withdrawal is required before
+// its TLS/control mappings can be reclaimed. Each child stores its descriptor
+// before registration/allocator entry, and the process descriptor is
+// separately process-lifetime. `visit_descriptors` itself permits only its
+// internal synchronous atomic inspection: no allocation, user callback,
+// source projection, syscall, or outer lock acquisition can occur while the
+// worker-list lock is held.
+#[cfg(feature = "native-mimalloc-shadow")]
+unsafe impl NativeAllocatorPinnedThreadRegistry for SelectedWorkerNativeAllocatorRegistry {
+    fn visit_descriptors(
+        &self,
+        visitor: &mut dyn FnMut(NonNull<NativeAllocatorThreadDescriptor>),
+    ) {
+        // The allocator publishes this only from selected process
+        // initialization. It has no `ThreadControl`, is not reclaimable, and
+        // appears exactly once ahead of every linked worker descriptor.
+        if let Some(initial) = native_allocator_initial_thread_descriptor() {
+            visitor(initial);
+        }
+        let mut control = SELECTED_WORKER_REGISTRY_HEAD.load(Ordering::Acquire)
+            as *mut ThreadControl;
+        while !control.is_null() {
+            // SAFETY: membership under this lock pins `control`; an acquire
+            // observes the child's descriptor store before its registration
+            // release. A null value means this pre-clone/early child has not
+            // registered and cannot have entered source state.
+            let descriptor = unsafe {
+                (*control).native_allocator_descriptor.load(Ordering::Acquire)
+            };
+            if let Some(descriptor) = NonNull::new(descriptor) {
+                visitor(descriptor);
+            }
+            // SAFETY: the lock keeps the intrusive next link and successor
+            // mapping valid for this bounded atomic-only traversal.
+            control = unsafe { (*control).registry_next };
+        }
+    }
+}
+
+/// Lend the complete selected native descriptor graph to one allocator-owned
+/// operation. This does not create a second registry or pin: the existing
+/// worker-list lock keeps every linked TLS/control mapping live for the whole
+/// callback, including a minimal exact source-owner transfer after a future
+/// admission guard has drained the descriptor visitor.
+///
+/// # Safety
+/// `operation` may call only allocator-internal synchronous code that honors
+/// [`NativeAllocatorPinnedThreadRegistry`]'s atomic-only visitor contract. It
+/// does not linearize worker registration against terminal closure: a future
+/// writer must first obtain the process-owned guarded admission that does so,
+/// and this bridge cannot itself prove terminal or fork quiescence. Once that
+/// guard has drained the visitor, it may make its minimal exact source-owner
+/// transfer while the pin remains live, then release this pin before acquiring
+/// Heap/meta locks or releasing OS arena/PageMap state. It must not allocate,
+/// invoke user code, wait on a syscall, acquire another outer lock, or let a
+/// visitor/capability escape this callback or unwind: the selected x86
+/// products use `panic=abort`, so an abort cannot leave this lock live in a
+/// continuing process. The caller supplies the established native terminal/fork
+/// lock ordering.
+#[cfg(feature = "native-mimalloc-shadow")]
+pub(super) unsafe fn with_selected_native_allocator_pinned_registry<R>(
+    operation: impl FnOnce(&dyn NativeAllocatorPinnedThreadRegistry) -> R,
+) -> R {
+    lock_selected_worker_registry();
+    let registry = SelectedWorkerNativeAllocatorRegistry;
+    let result = operation(&registry);
+    unlock_selected_worker_registry();
+    result
+}
+
+/// Test-only scalar proof that every selected native worker exposes its exact
+/// allocator-owned descriptor while it is linked, alongside the one initial
+/// process descriptor. It exposes neither descriptor addresses nor ownership
+/// fields and is absent from ordinary selected-native products.
+#[cfg(feature = "native-mimalloc-shadow-test-audit")]
+#[no_mangle]
+pub extern "C" fn __crabc_x86_native_mimalloc_registered_thread_descriptor_count_test_audit() -> usize {
+    let mut count = 0_usize;
+    // SAFETY: this audit invokes only the trait's local synchronous counter;
+    // it allocates nothing and neither calls C nor retains a descriptor.
+    unsafe {
+        with_selected_native_allocator_pinned_registry(|registry| {
+            registry.visit_descriptors(&mut |_| count += 1);
+        });
+    }
+    count
+}
+
+/// Test-only witness that the final control-mapping release completed for a
+/// descriptor-bearing worker. This is deliberately a count rather than an
+/// address: the relevant TLS/control pages have already been unmapped.
+#[cfg(feature = "native-mimalloc-shadow-test-audit")]
+#[no_mangle]
+pub extern "C" fn __crabc_x86_native_mimalloc_reclaimed_worker_descriptor_count_test_audit() -> usize {
+    NATIVE_MIMALLOC_RECLAIMED_WORKER_DESCRIPTOR_COUNT.load(Ordering::Acquire)
+}
+
 /// Claim the one selected worker named by its public x86 `pthread_t` value.
 ///
 /// A lifecycle claim under the list lock gives the caller sole ownership until
@@ -1530,6 +1664,25 @@ unsafe fn reclaim_withdrawn_selected_worker(control: *mut ThreadControl) -> Resu
         core::hint::spin_loop();
     }
 
+    // The current allocator image owns this TLS descriptor. A clone failure
+    // and scheduler-aborted child leave the field null because neither can
+    // reach descriptor publication. Otherwise only `Ready`, observed after
+    // clear-child-tid and list withdrawal, permits libc to release TLS and
+    // then its control mapping. A terminal writer can retain source fields
+    // through the descriptor, so PendingTerminal/Retained deliberately leave
+    // the withdrawn mappings intact for that terminal owner instead of
+    // creating a dangling foreign TLS pointer.
+    #[cfg(feature = "native-mimalloc-shadow")]
+    if let Some(descriptor) = NonNull::new(unsafe {
+        (*control).native_allocator_descriptor.load(Ordering::Acquire)
+    }) {
+        match unsafe { native_allocator_descriptor_retirement(descriptor) } {
+            NativeAllocatorDescriptorRetirement::Ready => {}
+            NativeAllocatorDescriptorRetirement::PendingTerminal
+            | NativeAllocatorDescriptorRetirement::Retained => return Err(EBUSY),
+        }
+    }
+
     // SAFETY: the caller proves the record remains mapped for this first read.
     let tls_block = unsafe { (*control).tls_block };
     if unsafe { (*control).tls_released.load(Ordering::Acquire) } == 0 {
@@ -1557,9 +1710,20 @@ unsafe fn reclaim_withdrawn_selected_worker(control: *mut ThreadControl) -> Resu
         unsafe { (*control).stack_released.store(1, Ordering::Release) };
     }
     let control_mapping = unsafe { (*control).control_mapping };
+    #[cfg(feature = "native-mimalloc-shadow-test-audit")]
+    let reclaimed_native_descriptor = unsafe {
+        !(*control)
+            .native_allocator_descriptor
+            .load(Ordering::Acquire)
+            .is_null()
+    };
     let unmap_result = unsafe { unmap_worker(control_mapping, CONTROL_REGION_SIZE) };
     if is_linux_error(unmap_result) {
         return Err(positive_linux_error(unmap_result));
+    }
+    #[cfg(feature = "native-mimalloc-shadow-test-audit")]
+    if reclaimed_native_descriptor {
+        NATIVE_MIMALLOC_RECLAIMED_WORKER_DESCRIPTOR_COUNT.fetch_add(1, Ordering::Release);
     }
     Ok(())
 }
@@ -1955,7 +2119,26 @@ unsafe fn exit_selected_linux_task() -> ! {
 /// the kernel's clear-child-tid lifecycle confirms the child has stopped.
 #[cfg(feature = "native-mimalloc-shadow")]
 unsafe fn attach_selected_worker_native_mimalloc(control: *mut ThreadControl) -> bool {
-    let result = super::native_mimalloc_lifecycle::attach_selected_worker();
+    // The control was linked before clone, and `worker_entry` acquired the
+    // creator's complete initialization publication before this child can
+    // store its actual allocator-TLS descriptor. Publishing under the same
+    // lock used by the pinned visitor excludes a terminal scan's null record
+    // from racing this store. Registration stays outside the lock: it is the
+    // final no-source-entry boundary, so a just-closed terminal epoch rejects
+    // this child before allocator attachment or any user callback starts.
+    let descriptor = current_native_allocator_thread_descriptor();
+    lock_selected_worker_registry();
+    unsafe {
+        (*control)
+            .native_allocator_descriptor
+            .store(descriptor.as_ptr(), Ordering::Release);
+    }
+    unlock_selected_worker_registry();
+    let result = if unsafe { register_current_native_allocator_worker_descriptor(descriptor) } {
+        super::native_mimalloc_lifecycle::attach_selected_worker()
+    } else {
+        super::native_mimalloc_lifecycle::SelectedWorkerNativeAttach::Rejected
+    };
     let state = match result {
         super::native_mimalloc_lifecycle::SelectedWorkerNativeAttach::Attached => {
             NATIVE_MIMALLOC_ATTACH_ATTACHED
@@ -2322,6 +2505,8 @@ unsafe fn create_selected_worker_with_attributes(
                 start_ready: AtomicU8::new(0),
                 #[cfg(feature = "native-mimalloc-shadow")]
                 native_mimalloc_attach: AtomicI32::new(NATIVE_MIMALLOC_ATTACH_PENDING),
+                #[cfg(feature = "native-mimalloc-shadow")]
+                native_allocator_descriptor: AtomicPtr::new(core::ptr::null_mut()),
                 #[cfg(crabc_x86_owned_runtime)]
                 startup_signal_mask: None,
                 #[cfg(crabc_x86_owned_runtime)]

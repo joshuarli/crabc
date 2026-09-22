@@ -17,7 +17,7 @@ use crabc_mimalloc::__crabc_runtime::{
     ThreadFinalProcessExitOwnerResult, ThreadFinishResult,
     attach_current_thread, finish_current_thread_native_after_user_destructors,
     finish_selected_default_release_process_after_user_atexit,
-    initialize_process, prepare_native_later_thread_arena, process_is_active,
+    initialize_process, prepare_native_later_thread_arena,
     retain_current_thread_native_owner_after_process_done_nonfinal,
     reinitialize_current_thread_native_owner_for_final_process_exit,
 };
@@ -88,13 +88,12 @@ pub(super) unsafe fn initialize_selected_process(page_size: usize) -> bool {
 /// `Fatal` terminates instead of reclaiming the child's mapped TLS/control
 /// state because that image may still retain a native owner.
 pub(super) fn attach_selected_worker() -> SelectedWorkerNativeAttach {
-    if !process_is_active() {
-        return SelectedWorkerNativeAttach::Rejected;
-    }
     match attach_current_thread() {
         ThreadAttachResult::Attached => SelectedWorkerNativeAttach::Attached,
-        // `Inactive` returns before attachment/admission installation. It is
-        // the sole runtime result whose native TLS owner is proved absent.
+        // `attach_current_thread` marks the just-published descriptor retired
+        // when it observes Inactive. It returns before attachment/admission
+        // installation, so this is the sole result whose native TLS owner is
+        // proved absent and can enter the rejected-create reclaim path.
         ThreadAttachResult::Inactive => SelectedWorkerNativeAttach::Rejected,
         // A fresh Static Initial TLS v1 child cannot legitimately carry any
         // of these states. In particular Retained may still own a partial

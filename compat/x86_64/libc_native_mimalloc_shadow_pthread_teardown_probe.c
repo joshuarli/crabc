@@ -120,6 +120,8 @@ static volatile int final_worker_ready;
 
 #ifdef CRABC_NATIVE_MIMALLOC_SHADOW_TEST_AUDIT
 extern size_t __crabc_x86_native_mimalloc_active_later_thread_count_test_audit(void);
+extern size_t __crabc_x86_native_mimalloc_registered_thread_descriptor_count_test_audit(void);
+extern size_t __crabc_x86_native_mimalloc_reclaimed_worker_descriptor_count_test_audit(void);
 extern int __crabc_x86_native_mimalloc_process_done_retained_worker_matches_current_thread_test_audit(void);
 extern int __crabc_x86_native_mimalloc_process_done_retained_local_preflight_test_audit(void *block);
 struct process_done_local_page_audit {
@@ -244,11 +246,26 @@ static int prepare_worker_teardown(struct teardown_round *round)
     return install_worker_teardown_tsd(round) == 0 ? 0 : 2;
 }
 
+/* This private scalar cannot reveal a descriptor address or source owner. It
+ * proves the real worker's allocator-TLS record was published before the
+ * callback and stays registered through normal return, pthread_exit, and
+ * deferred cancellation until clear-child-tid plus pthread_join reclaim it. */
+#ifdef CRABC_NATIVE_MIMALLOC_SHADOW_TEST_AUDIT
+static int native_worker_descriptor_is_registered(void)
+{
+    return __crabc_x86_native_mimalloc_registered_thread_descriptor_count_test_audit() == 2;
+}
+#endif
+
 static void *normal_return_worker(void *opaque)
 {
     struct teardown_round *round = opaque;
 
-    if (prepare_worker_teardown(round) != 0) {
+    if (prepare_worker_teardown(round) != 0
+#ifdef CRABC_NATIVE_MIMALLOC_SHADOW_TEST_AUDIT
+            || !native_worker_descriptor_is_registered()
+#endif
+    ) {
         record_failure(round, 1);
         return 0;
     }
@@ -259,7 +276,11 @@ static void *explicit_exit_worker(void *opaque)
 {
     struct teardown_round *round = opaque;
 
-    if (prepare_worker_teardown(round) != 0) {
+    if (prepare_worker_teardown(round) != 0
+#ifdef CRABC_NATIVE_MIMALLOC_SHADOW_TEST_AUDIT
+            || !native_worker_descriptor_is_registered()
+#endif
+    ) {
         record_failure(round, 2);
         return 0;
     }
@@ -319,7 +340,11 @@ static void *deferred_cancel_worker(void *opaque)
 {
     struct teardown_round *round = opaque;
 
-    if (prepare_worker_teardown(round) != 0) {
+    if (prepare_worker_teardown(round) != 0
+#ifdef CRABC_NATIVE_MIMALLOC_SHADOW_TEST_AUDIT
+            || !native_worker_descriptor_is_registered()
+#endif
+    ) {
         record_failure(round, 3);
         return 0;
     }
@@ -697,8 +722,17 @@ int crabc_x86_64_native_mimalloc_shadow_prestart_rejection(void)
     result = pthread_create(&thread, 0, prestart_callback, 0);
     if (result != EAGAIN)
         return 1;
-    return __atomic_load_n(&prestart_callback_count, __ATOMIC_ACQUIRE) == 0
-        ? 0 : 2;
+    if (__atomic_load_n(&prestart_callback_count, __ATOMIC_ACQUIRE) != 0)
+        return 2;
+#ifdef CRABC_NATIVE_MIMALLOC_SHADOW_TEST_AUDIT
+    /* The rejected child published a descriptor before attach. The native
+     * inactive path must retire it, then the parent must unmap all three
+     * child mappings before this pre-start caller continues. */
+    if (__crabc_x86_native_mimalloc_reclaimed_worker_descriptor_count_test_audit()
+            != 1)
+        return 3;
+#endif
+    return 0;
 }
 
 #ifdef CRABC_NATIVE_MIMALLOC_SHADOW_NORMAL_MAIN_RETURN_PROBE
@@ -826,6 +860,10 @@ int main(void)
 #ifdef CRABC_NATIVE_MIMALLOC_SHADOW_TEST_AUDIT
     const size_t baseline_later_thread_count =
         __crabc_x86_native_mimalloc_active_later_thread_count_test_audit();
+    const size_t baseline_native_descriptor_count =
+        __crabc_x86_native_mimalloc_registered_thread_descriptor_count_test_audit();
+    const size_t baseline_native_descriptor_reclaim_count =
+        __crabc_x86_native_mimalloc_reclaimed_worker_descriptor_count_test_audit();
     struct process_done_client_page normal_source_page;
     struct process_done_client_page aligned_fast_source_page;
     struct process_done_client_page aligned_interior_source_page;
@@ -835,6 +873,10 @@ int main(void)
      * startup must therefore begin these three attached rounds at zero. */
     if (baseline_later_thread_count != 0)
         return 9;
+    if (baseline_native_descriptor_count != 1)
+        return 10;
+    if (baseline_native_descriptor_reclaim_count != 1)
+        return 11;
 #endif
     if (pthread_key_create(&teardown_key, native_allocation_tsd_destructor) != 0)
         return 10;
@@ -845,6 +887,12 @@ int main(void)
     if (__crabc_x86_native_mimalloc_active_later_thread_count_test_audit() !=
             baseline_later_thread_count)
         return 18;
+    if (__crabc_x86_native_mimalloc_registered_thread_descriptor_count_test_audit() !=
+            baseline_native_descriptor_count)
+        return 19;
+    if (__crabc_x86_native_mimalloc_reclaimed_worker_descriptor_count_test_audit() !=
+            baseline_native_descriptor_reclaim_count + 1)
+        return 17;
 #endif
     result = run_return_round(explicit_exit_worker, CRABC_EXPLICIT_MARKER, 20);
     if (result != 0)
@@ -853,6 +901,12 @@ int main(void)
     if (__crabc_x86_native_mimalloc_active_later_thread_count_test_audit() !=
             baseline_later_thread_count)
         return 28;
+    if (__crabc_x86_native_mimalloc_registered_thread_descriptor_count_test_audit() !=
+            baseline_native_descriptor_count)
+        return 29;
+    if (__crabc_x86_native_mimalloc_reclaimed_worker_descriptor_count_test_audit() !=
+            baseline_native_descriptor_reclaim_count + 2)
+        return 27;
 #endif
     {
         pthread_t thread;
@@ -921,6 +975,13 @@ int main(void)
     if (__crabc_x86_native_mimalloc_active_later_thread_count_test_audit() !=
             baseline_later_thread_count)
         return 38;
+    if (__crabc_x86_native_mimalloc_registered_thread_descriptor_count_test_audit() !=
+            baseline_native_descriptor_count)
+        return 39;
+    if (__crabc_x86_native_mimalloc_reclaimed_worker_descriptor_count_test_audit() !=
+            /* normal, explicit-exit, TSD-first, realloc, and cancellation */
+            baseline_native_descriptor_reclaim_count + 5)
+        return 37;
 #endif
     if (pthread_key_delete(teardown_key) != 0)
         return 40;
