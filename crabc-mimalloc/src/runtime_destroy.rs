@@ -252,7 +252,7 @@ mod tests {
         fn drop(&mut self) { self.0.store(true, Ordering::Release); }
     }
 
-    fn physical_destroy_fixture(os_only: bool) {
+    fn physical_destroy_fixture(os_only: bool, fail_tracking_map: bool) {
         // These filters run in separate native test processes: the process
         // owner and Terminal state intentionally cannot be reinitialized.
         unsafe {
@@ -302,7 +302,36 @@ mod tests {
                     .expect("all source owners transfer while both TLS mappings are pinned");
                 // This fixture's registry pin is the worker stop condition;
                 // no registry/source lock spans the physical successor.
-                unsafe { prepared.finish() }.expect("source ordered physical retirement");
+                let fault = if fail_tracking_map {
+                    Some(crate::os::fault::install(crate::os::fault::Plan::at(
+                        crate::os::fault::Point::Map, 1, crabc_core::Errno::NOMEM)))
+                } else { None };
+                let result = unsafe { prepared.finish() };
+                drop(fault);
+                if fail_tracking_map {
+                    assert_eq!(result, Err(NativeProcessDestroyError::TrackingStorage));
+                    assert!(!process_is_active());
+                    assert!(!RUNTIME_PROCESS.logical_process_done_is_complete());
+                    let owners = unsafe { &*DESTROY_OWNERS.0.get() };
+                    assert!(owners.tracking_mapping.is_none());
+                    assert!(owners.arenas.is_none());
+                    assert!(matches!(owners.failure, Some(RetainedDestroyFailure::Storage(crabc_core::Errno::NOMEM))));
+                    let mut resident = 0u8;
+                    assert!(unsafe { crabc_core::mm::mincore_raw(
+                        (initial_client.as_ptr().addr() & !4095) as *mut u8, 4096, &mut resident) }.is_ok());
+                    // No Heap mutation occurred: the exact transferred Malloc
+                    // Theap/TLD images remain linked and recoverable by their
+                    // source ownership contract, not a dropped TLS wrapper.
+                    let heap = unsafe { RUNTIME_PROCESS.active_main_heap() }.unwrap();
+                    let mut guard = heap.lock_heap().unwrap();
+                    let (dynamic, attached, total) = guard.heap_mut().test_destroy_graph_counts();
+                    guard.unlock().unwrap();
+                    assert_eq!((dynamic, attached, total), (1, 1, 3));
+                    stop.store(true, Ordering::Release);
+                    worker.join().expect("failure retains source backing but denies new worker entry");
+                    return;
+                }
+                result.expect("source ordered physical retirement");
                 assert!(!process_is_active());
                 assert!(RUNTIME_PROCESS.logical_process_done_is_complete());
                 assert!(matches!(native_allocate_aligned(32, 16, false), NativePageAllocationResult::Unavailable));
@@ -339,12 +368,17 @@ mod tests {
 
     #[test]
     fn physical_destroy_transfers_live_worker_before_arena_and_page_map_release() {
-        physical_destroy_fixture(false);
+        physical_destroy_fixture(false, false);
     }
 
     #[test]
     fn physical_destroy_os_only_retains_source_pages_but_seals_all_native_access() {
-        physical_destroy_fixture(true);
+        physical_destroy_fixture(true, false);
+    }
+
+    #[test]
+    fn physical_destroy_tracking_oom_retains_transferred_graph_and_permanent_seal() {
+        physical_destroy_fixture(false, true);
     }
 
     #[test]
