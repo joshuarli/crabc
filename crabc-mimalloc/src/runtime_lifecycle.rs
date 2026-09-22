@@ -6605,8 +6605,14 @@ impl NativePersistentThreadOwner {
             NativePersistentThreadOwnerExitState::PreDrain(engine) => {
                 engine.permits_process_done_source_retention(&self.attachment)
             }
-            NativePersistentThreadOwnerExitState::RetainedTerminalEngine(_)
-            | NativePersistentThreadOwnerExitState::AttachmentOnly => false,
+            // Source process done disables automatic thread cleanup even
+            // when the attached Theap has never requested an application
+            // page. Its TLD/Theap are already fully owned; absence of a lazy
+            // Rust page engine is not an incomplete source attachment.
+            NativePersistentThreadOwnerExitState::AttachmentOnly => {
+                self.attachment.permits_process_done_source_retention()
+            }
+            NativePersistentThreadOwnerExitState::RetainedTerminalEngine(_) => false,
         }
     }
 

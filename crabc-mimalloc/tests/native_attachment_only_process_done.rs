@@ -20,6 +20,7 @@ const CHILD: &str = "CRABC_NATIVE_ATTACHMENT_ONLY_PROCESS_DONE_CHILD";
 fn attachment_only_worker_may_run_source_process_done() {
     if std::env::var_os(CHILD).is_none() {
         let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("--nocapture")
             .arg("--exact")
             .arg("attachment_only_worker_may_run_source_process_done")
             .env(CHILD, "1")
