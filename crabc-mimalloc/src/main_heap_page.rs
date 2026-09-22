@@ -7807,6 +7807,7 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     use crate::types::THREAD_ID_ABANDONED;
     use crabc_core::Errno;
+    use std::format;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{mpsc, Arc};
     use std::thread;
