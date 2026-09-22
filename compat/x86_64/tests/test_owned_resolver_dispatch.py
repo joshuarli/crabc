@@ -103,6 +103,74 @@ class OwnedResolverDispatchTests(unittest.TestCase):
             for invocation in (prepare, execute):
                 self.assertIn("TMPDIR=/workspace/.work/x86_64/tmp", invocation)
 
+    def test_protocol_database_uses_only_six_supplied_products_and_a_private_receipt_workdir(self):
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work = Path(temporary)
+            capture = work / "docker.jsonl"
+            docker = work / "docker"
+            docker.write_text(
+                f"#!{sys.executable}\n"
+                "import json, os, sys\n"
+                "if sys.argv[1:3] == ['image', 'inspect']:\n"
+                "    print('linux/amd64')\n"
+                "elif sys.argv[1] == 'run':\n"
+                "    with open(os.environ['DISPATCH_CAPTURE'], 'a') as output:\n"
+                "        output.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+                "else:\n"
+                "    raise SystemExit('unexpected Docker operation')\n"
+            )
+            docker.chmod(0o755)
+            state = work / "state"
+            roots = {name: state / "products" / name for name in (
+                "installed-static", "installed-dynamic", "reproduction-static",
+                "reproduction-dynamic", "extracted-static", "extracted-dynamic",
+            )}
+            for root in roots.values():
+                root.mkdir(parents=True)
+            environment = {
+                **os.environ,
+                "PATH": f"{work}{os.pathsep}{os.environ['PATH']}",
+                "DISPATCH_CAPTURE": str(capture),
+                "CRABC_X86_64_WORK_DIR": str(state),
+            }
+            command = ["bash", str(ROOT / "scripts/dev-x86_64.sh"), "owned-protocol-database"]
+            arguments = [
+                "--installed-static-sysroot", str(roots["installed-static"]),
+                "--installed-dynamic-sysroot", str(roots["installed-dynamic"]),
+                "--reproduction-static-sysroot", str(roots["reproduction-static"]),
+                "--reproduction-dynamic-sysroot", str(roots["reproduction-dynamic"]),
+                "--extracted-static-sysroot", str(roots["extracted-static"]),
+                "--extracted-dynamic-sysroot", str(roots["extracted-dynamic"]),
+            ]
+            invalid = subprocess.run(command + arguments[:-1], cwd=ROOT,
+                                     env=environment, capture_output=True, text=True)
+            self.assertEqual(invalid.returncode, 2)
+            self.assertFalse(capture.exists())
+            result = subprocess.run(command + arguments, cwd=ROOT,
+                                    env=environment, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr[:300])
+            invocation = json.loads(capture.read_text().strip())
+            self.assertEqual(invocation[invocation.index("--network") + 1], "none")
+            self.assertIn("--cap-add=SYS_CHROOT", invocation)
+            self.assertNotIn("--cap-add=SYS_ADMIN", invocation)
+            self.assertNotIn("--privileged", invocation)
+            self.assertIn("/workspace/compat/x86_64/owned_protocol_database.py", invocation)
+            workdir = invocation[invocation.index("--work") + 1]
+            self.assertTrue(workdir.startswith("/workspace/.work/x86_64/tmp/owned-protocol-database."))
+            expected = {
+                "--installed-static-sysroot": "/workspace/.work/x86_64/products/installed-static",
+                "--installed-dynamic-sysroot": "/workspace/.work/x86_64/products/installed-dynamic",
+                "--reproduction-static-sysroot": "/workspace/.work/x86_64/products/reproduction-static",
+                "--reproduction-dynamic-sysroot": "/workspace/.work/x86_64/products/reproduction-dynamic",
+                "--extracted-static-sysroot": "/workspace/.work/x86_64/products/extracted-static",
+                "--extracted-dynamic-sysroot": "/workspace/.work/x86_64/products/extracted-dynamic",
+            }
+            for option, product in expected.items():
+                self.assertEqual(invocation[invocation.index(option) + 1], product)
+            self.assertIn("TMPDIR=/workspace/.work/x86_64/tmp", invocation)
+
 
 if __name__ == "__main__":
     unittest.main()

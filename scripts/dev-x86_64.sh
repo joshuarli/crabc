@@ -564,6 +564,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-resolver-network  compare owned products with musl in isolated loopback DNS fixtures
   owned-classic-netdb [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  compare installed host/service C APIs in isolated loopback DNS fixtures
   owned-resolver-cancellation [DYNAMIC_SYSROOT]  compare installed DNS cancellation and descriptor cleanup
+  owned-protocol-database --installed-static-sysroot STATIC --installed-dynamic-sysroot DYNAMIC --reproduction-static-sysroot STATIC --reproduction-dynamic-sysroot DYNAMIC --extracted-static-sysroot STATIC --extracted-dynamic-sysroot DYNAMIC  retain a non-promoting fixed protocol-table receipt from three supplied product pairs
   owned-dynamic-io-cancellation [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify shared-runtime cancellation through kernel and direct entry
 
   owned-crypt-runtime [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  prove bounded SHA-crypt through installed owned products
@@ -3747,7 +3748,7 @@ run_in_chroot_cap_container() {
     # archive closure and an explicit runtime. Their roots need no network.
     local -a execution_network=()
     case "$command" in
-        owned-package-corpus|owned-loader-synthetic) execution_network+=(--network none) ;;
+        owned-package-corpus|owned-loader-synthetic|owned-protocol-database) execution_network+=(--network none) ;;
     esac
     prepare_work_dir
     docker run --rm --init \
@@ -6135,6 +6136,43 @@ run_owned_resolver_network_probe() {
         --work-root "$container_state/execution"
 }
 
+prepare_owned_protocol_database_arguments() {
+    local expected='usage: ./scripts/dev-x86_64.sh owned-protocol-database --installed-static-sysroot STATIC --installed-dynamic-sysroot DYNAMIC --reproduction-static-sysroot STATIC --reproduction-dynamic-sysroot DYNAMIC --extracted-static-sysroot STATIC --extracted-dynamic-sysroot DYNAMIC'
+    [ "$#" -eq 12 ] \
+        && [ "$1" = --installed-static-sysroot ] && [ -n "$2" ] && [[ "$2" != -* ]] \
+        && [ "$3" = --installed-dynamic-sysroot ] && [ -n "$4" ] && [[ "$4" != -* ]] \
+        && [ "$5" = --reproduction-static-sysroot ] && [ -n "$6" ] && [[ "$6" != -* ]] \
+        && [ "$7" = --reproduction-dynamic-sysroot ] && [ -n "$8" ] && [[ "$8" != -* ]] \
+        && [ "$9" = --extracted-static-sysroot ] && [ -n "${10}" ] && [[ "${10}" != -* ]] \
+        && [ "${11}" = --extracted-dynamic-sysroot ] && [ -n "${12}" ] && [[ "${12}" != -* ]] \
+        || fail "$expected"
+
+    local installed_static installed_dynamic reproduction_static reproduction_dynamic extracted_static extracted_dynamic
+    installed_static="$(translate_owned_posix_product "$2")" || exit 2
+    installed_dynamic="$(translate_owned_posix_product "$4")" || exit 2
+    reproduction_static="$(translate_owned_posix_product "$6")" || exit 2
+    reproduction_dynamic="$(translate_owned_posix_product "$8")" || exit 2
+    extracted_static="$(translate_owned_posix_product "${10}")" || exit 2
+    extracted_dynamic="$(translate_owned_posix_product "${12}")" || exit 2
+    OWNED_PROTOCOL_DATABASE_ARGUMENTS=(
+        --installed-static-sysroot "$installed_static"
+        --installed-dynamic-sysroot "$installed_dynamic"
+        --reproduction-static-sysroot "$reproduction_static"
+        --reproduction-dynamic-sysroot "$reproduction_dynamic"
+        --extracted-static-sysroot "$extracted_static"
+        --extracted-dynamic-sysroot "$extracted_dynamic"
+    )
+}
+
+run_owned_protocol_database_probe() {
+    prepare_work_dir
+    local state container_state
+    state="$(mktemp -d "$TMP_DIR/owned-protocol-database.XXXXXX")"
+    container_state="/workspace/.work/x86_64/tmp/${state##*/}"
+    run_in_chroot_cap_container python3 -B /workspace/compat/x86_64/owned_protocol_database.py \
+        --work "$container_state" "${OWNED_PROTOCOL_DATABASE_ARGUMENTS[@]}"
+}
+
 run_lua_dynamic_source_build_probe() {
     # The dynamic candidate enters its copied product root through the kernel
     # interpreter and needs only chroot authority for that private execution.
@@ -6852,7 +6890,7 @@ case "$command" in
     owned-syslog) ;;
     owned-error-reporting|owned-stdio-allocator-interposition|owned-mimalloc-startup-errno|owned-signal-handler-fork|owned-c-allocation-interposition) ;;
     owned-io-cancellation) ;;
-    owned-resolver-network|owned-classic-netdb|owned-resolver-cancellation) ;;
+    owned-resolver-network|owned-classic-netdb|owned-resolver-cancellation|owned-protocol-database) ;;
     owned-package-corpus|owned-loader-synthetic|owned-loader-inventory|owned-loader-libc-identity|owned-loader-family) ;;
     owned-dynamic-io-cancellation) ;;
     owned-posix-timers|owned-pthread-scheduling|owned-pthread-cpuclock|owned-message-queues|owned-named-ipc|owned-fcntl|owned-static-dl-iterate-phdr|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex) ;;
@@ -9113,6 +9151,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "owned-resolver-network takes no arguments"
         ensure_image
         run_owned_resolver_network_probe
+        ;;
+    owned-protocol-database)
+        prepare_owned_protocol_database_arguments "$@"
+        ensure_image
+        run_owned_protocol_database_probe
         ;;
     owned-dynamic-io-cancellation)
         ensure_image

@@ -2062,7 +2062,7 @@ unsafe fn join_selected_worker_inner(
             'owned-syslog',
             'owned-error-reporting|owned-stdio-allocator-interposition|owned-mimalloc-startup-errno|owned-signal-handler-fork|owned-c-allocation-interposition',
             'owned-io-cancellation',
-            'owned-resolver-network|owned-classic-netdb|owned-resolver-cancellation',
+            'owned-resolver-network|owned-classic-netdb|owned-resolver-cancellation|owned-protocol-database',
             'owned-package-corpus|owned-loader-synthetic|owned-loader-inventory|owned-loader-libc-identity|owned-loader-family',
             'owned-dynamic-io-cancellation',
             'owned-posix-timers|owned-pthread-scheduling|owned-pthread-cpuclock|owned-message-queues|owned-named-ipc|owned-fcntl|owned-static-dl-iterate-phdr|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex',
