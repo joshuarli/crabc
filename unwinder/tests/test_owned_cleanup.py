@@ -646,6 +646,36 @@ class OwnedCleanupContract(unittest.TestCase):
             binary,
         )
 
+    def test_cargo_graph_provider_uses_the_declared_rlib_target_kind(self):
+        target = Path(self.temporary.name) / "target"
+        target.mkdir()
+        provider = Path(self.temporary.name) / "provider"
+        source = provider / "src/lib.rs"
+        source.parent.mkdir(parents=True)
+        source.write_text("#![no_std]\n")
+        archive = target / "libcrabc_unwinder-0123456789abcdef.rlib"
+        archive.write_bytes(b"provider")
+        record = {
+            "reason": "compiler-artifact",
+            "package_id": "path+file:///provider#0.1.0",
+            "target": {
+                "name": "crabc_unwinder", "kind": ["rlib"], "crate_types": ["rlib"],
+                "src_path": str(source),
+            },
+            "filenames": [str(archive)],
+            "executable": None,
+        }
+        self.assertEqual(
+            owned_cleanup.cargo_graph_provider_artifact(
+                json.dumps(record), target=target, provider_package_id=record["package_id"], provider_source=source,
+            ), archive,
+        )
+        record["target"]["kind"] = ["lib"]
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "provider artifact identity drifted"):
+            owned_cleanup.cargo_graph_provider_artifact(
+                json.dumps(record), target=target, provider_package_id=record["package_id"], provider_source=source,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

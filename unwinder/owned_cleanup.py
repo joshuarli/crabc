@@ -1409,7 +1409,7 @@ def cargo_graph_provider_artifact(
         if record.get("package_id") != provider_package_id or not isinstance(target_record, dict):
             continue
         require(
-            target_record.get("name") == "crabc_unwinder" and target_record.get("kind") == ["lib"]
+            target_record.get("name") == "crabc_unwinder" and target_record.get("kind") == ["rlib"]
             and target_record.get("crate_types") == ["rlib"] and target_record.get("src_path") == str(provider_source),
             "Cargo provider artifact identity drifted",
         )
