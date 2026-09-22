@@ -48,6 +48,16 @@ SERIAL_BUILD_ENVIRONMENT = {
     "MAKEFLAGS": "-j1",
     "NINJAFLAGS": "-j1",
 }
+SOURCE_BUILD_PROFILE = {
+    "CARGO_PROFILE_RELEASE_CODEGEN_UNITS": "1",
+    "CARGO_PROFILE_RELEASE_LTO": "fat",
+}
+# Cargo coordinates fat LTO with its embed-bitcode setting. Duplicating these
+# profile settings in CARGO_ENCODED_RUSTFLAGS makes rustc reject the build.
+SOURCE_BUILD_RUSTFLAGS = (
+    "-C", "panic=unwind", "-C", "force-unwind-tables=yes", "-C", "link-self-contained=no",
+    "-C", "target-feature=-crt-static", "-C", "link-arg=-Wl,--eh-frame-hdr",
+)
 SOURCE_INPUTS = (
     ROOT / "owned_cleanup.py", ROOT / "owned_rust_link.py", ROOT / "cleanup.py",
     ROOT / "build.py", FIXTURE,
@@ -624,20 +634,14 @@ def compile_source_built_mode(
     )
     rust_source_lock = physical(rust_source / "Cargo.lock", f"{label} pinned rust-src lock")
     environment = clean_environment()
-    flags = (
-        "-C", "panic=unwind", "-C", "force-unwind-tables=yes", "-C", "link-self-contained=no",
-        "-C", "target-feature=-crt-static", "-C", "lto=fat", "-C", "codegen-units=1",
-        "-C", "link-arg=-Wl,--eh-frame-hdr",
-    )
     environment.update({
         **SERIAL_BUILD_ENVIRONMENT,
+        **SOURCE_BUILD_PROFILE,
         "CARGO_HOME": str(cargo_home),
         "CARGO_INCREMENTAL": "0",
         "CARGO_TARGET_DIR": str(target),
         "CARGO_TERM_COLOR": "never",
-        "CARGO_ENCODED_RUSTFLAGS": "\x1f".join(flags),
-        "CARGO_PROFILE_RELEASE_CODEGEN_UNITS": "1",
-        "CARGO_PROFILE_RELEASE_LTO": "fat",
+        "CARGO_ENCODED_RUSTFLAGS": "\x1f".join(SOURCE_BUILD_RUSTFLAGS),
         "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER": str(ROOT / "owned_rust_link.py"),
         "CRABC_OWNED_RUST_LINK_MODE": mode,
         "CRABC_OWNED_RUST_PRODUCT": str(root),

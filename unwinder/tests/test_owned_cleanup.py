@@ -68,6 +68,14 @@ class OwnedCleanupContract(unittest.TestCase):
                 "test receipt",
             )
 
+    def test_source_build_lto_is_owned_by_the_cargo_profile(self):
+        self.assertEqual(owned_cleanup.SOURCE_BUILD_PROFILE, {
+            "CARGO_PROFILE_RELEASE_CODEGEN_UNITS": "1",
+            "CARGO_PROFILE_RELEASE_LTO": "fat",
+        })
+        self.assertNotIn("lto=fat", owned_cleanup.SOURCE_BUILD_RUSTFLAGS)
+        self.assertNotIn("codegen-units=1", owned_cleanup.SOURCE_BUILD_RUSTFLAGS)
+
     def test_source_built_receipt_requires_source_runtime_omissions(self):
         source = Path(self.temporary.name) / "source-built"
         source.mkdir()
