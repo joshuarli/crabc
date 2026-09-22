@@ -667,6 +667,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   unwinder-dynamic-bounds  run the standalone guarded PT_DYNAMIC regression
   unwinder-indirect-personality-bounds  run the standalone guarded late indirect CIE/FDE metadata regression
   unwinder-metadata-target-bounds  run the standalone guarded direct CIE/FDE metadata target regression
+  unwinder-frame-bounds  run the standalone CFI and DWARF expression regression
   crt-dynamic-startup  run the private x86 Scrt1.o dynamic-PIE startup artifact
   crt-dynamic-link-contract  audit the closed x86 Rust CRT dynamic-PIE link boundary
   consumer-static-pie-lto  run the private no-std crabc-rs O3/full-LTO owned-runtime consumer
@@ -6866,7 +6867,7 @@ case "$command" in
     owned-dynamic-fork) ;;
     materialized-dynamic-sysroot) ;;
     crt-object-bundle) ;;
-    unwinder-build|unwinder-cleanup|unwinder-owned-cleanup|unwinder-metadata-bounds|unwinder-eh-frame-bounds|unwinder-dynamic-bounds|unwinder-indirect-personality-bounds|unwinder-metadata-target-bounds) ;;
+    unwinder-build|unwinder-cleanup|unwinder-owned-cleanup|unwinder-metadata-bounds|unwinder-eh-frame-bounds|unwinder-dynamic-bounds|unwinder-indirect-personality-bounds|unwinder-metadata-target-bounds|unwinder-frame-bounds) ;;
     crt-dynamic-startup|crt-dynamic-link-contract|consumer-static-pie-lto|consumer-native-facade-lto) ;;
     linux-5-10-uapi) ;;
     candidate-header-closure) ;;
@@ -9562,6 +9563,11 @@ PY
         [ "$#" -eq 0 ] || fail "unwinder-metadata-target-bounds takes no arguments"
         ensure_image
         run_in_container python3 -B /workspace/unwinder/metadata_target_bounds.py
+        ;;
+    unwinder-frame-bounds)
+        [ "$#" -eq 0 ] || fail "unwinder-frame-bounds takes no arguments"
+        ensure_image
+        run_in_container python3 -B /workspace/unwinder/frame_bounds.py
         ;;
     crt-object-bundle)
         [ "$#" -eq 0 ] || fail "crt-object-bundle takes no arguments"
