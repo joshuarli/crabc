@@ -37,7 +37,7 @@ class X86LibcAllocatorRuntimeTests(unittest.TestCase):
         self.assertIn('target_arch = "x86_64"', crate_root)
         self.assertIn('mod x86_64_static_c_abi;', crate_root)
         self.assertNotIn('crabc_x86_allocator_runtime', crate_root)
-        self.assertIn('#[cfg(crabc_x86_allocator_runtime)]', target_root)
+        self.assertIn('#[cfg(all(\n    crabc_x86_allocator_runtime,\n    not(feature = "native-mimalloc-shadow"),\n))]', target_root)
         self.assertIn('include!("../../allocator_mimalloc.rs");', target_root)
         self.assertIn("__crabc_x86_allocator_runtime_v1", target_root)
         self.assertIn("cabi_set_allocator_errno(EINVAL);", wrapper)

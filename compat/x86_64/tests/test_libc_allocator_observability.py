@@ -41,7 +41,7 @@ class X86LibcAllocatorObservabilityTests(unittest.TestCase):
         self.assertIn(
             'x86-allocator-observability = ["x86-allocator-runtime"]', manifest
         )
-        self.assertIn('#[cfg(crabc_x86_allocator_observability)]', target)
+        self.assertIn('#[cfg(all(\n    crabc_x86_allocator_observability,\n    not(feature = "native-mimalloc-shadow"),\n))]', target)
         self.assertIn(
             'include!("../../allocator_observability_mimalloc.rs");', target
         )

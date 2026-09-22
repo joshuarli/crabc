@@ -64,9 +64,29 @@ x86-owned-static-runtime = [
 # Share the owned leaf roster; process linkage is selected independently in
 # the target root. This does not select the static startup or TLS owner.
 x86-owned-dynamic-runtime = ["x86-owned-static-runtime"]
-# Nondefault dynamic ownership proof: loader TLS, libc native process/worker
-# lifecycle, and libc's own ELF finalizer select one native pointer owner.
-x86-owned-dynamic-native-shadow = ["x86-owned-dynamic-runtime", "native-mimalloc-shadow"]
+# Explicit native products repeat only the fixed backend-neutral leaf edges.
+# The selection regression keeps these leaves equivalent to the C aggregate;
+# allocator client capabilities are shared through target-local build.rs cfgs.
+x86-owned-static-native-shadow = [
+    "native-mimalloc-shadow",
+    "x86-kernel-admin",
+    "x86-crypt",
+    "x86-math-long-double-completion",
+    "x86-file-handles",
+    "x86-filesystem-traversal",
+    "x86-process-exec",
+    "x86-stdio-permanent-format-scan",
+    "x86-resolver-runtime",
+    "x86-interval-timers",
+    "x86-ualarm",
+    "x86-sched-rr-interval",
+    "x86-netdb-setent",
+    "x86-legacy-misc",
+    "x86-a64l",
+    "x86-memory-special",
+    "dep:rand_pcg",
+]
+x86-owned-dynamic-native-shadow = ["x86-owned-static-native-shadow"]
 # Scalar initialization/finalization phase for installed C/native differential
 # fixtures. No callbacks, allocator pointers, or default product selection.
 x86-owned-allocator-lifecycle-test-audit = []

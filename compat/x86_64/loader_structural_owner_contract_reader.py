@@ -117,7 +117,7 @@ REVIEWED_FUNCTION_FINGERPRINTS = {
     "lock_runtime_acquire": "bba026a7267826ec2cb081217ee6d493ba3586a330b047d0c8b5c01e377b95be",
     "lock_runtime_drop": "6e5de7aff25767e3a28ed117c8ed37d13cc3a94ac1d8b8a928749bd2f7b91f46",
     "worker_tls_allocate": "28bd02edb866ccf4967b0b9088714ddbac5a2bc8125a0ca9f2da68a799265ade",
-    "pthread_creator": "bd5e3c65105a1a20c158bd90cca9bd4244783aec5e983e66c362540bea2f2cee",
+    "pthread_creator": "0a808c2cf24262701fdff727c5a6fd9b6fc2a2b24871b405e5b5391fff887487",
     "registry_runtime_function": "65032fa5c8f30985477192262e23cf77cff3b84b5a9ebf8a0dfbd0df70ecbf4d",
     "dlfcn_dlopen": "490cf95c67cec7a8c8197d7a9cef2309888f4d02349f0170f1edb57e33db488c",
     "dlfcn_dlsym": "4614bddb7798e9fbf0073bea8f13d7f94dc56ef60b99311ad9d71e41072083ed",

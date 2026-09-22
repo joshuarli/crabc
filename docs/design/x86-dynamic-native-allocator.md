@@ -36,13 +36,24 @@ finalizer and source default-release backing retention, allowing subsequent
 DSO and buffered-stream callbacks to allocate. This does not select the
 separate destroy-on-exit path or retire arenas with live owners.
 
-The builder classifies every Cargo archive member using the existing strict
-roster. Cargo still builds the pinned C dependency through shared features;
-when Cargo retains its member in `libc.a`, native selection byte-attests and
-excludes that member from the final link. Cargo may omit the unused member;
-then every actual member still passes the strict Rust/compiler-helper roster,
-and provenance records its absence. Accepted-C selection requires its member.
-Native code resides in the Rust fat-LTO object. The C-specific hidden-symbol
+The existing C feature entrypoints retain their dependency contracts.
+`x86-owned-static-native-shadow` repeats the fixed backend-neutral leaves
+from the accepted-C aggregate and selects the Rust allocator;
+`x86-owned-dynamic-native-shadow` adds dynamic linkage. A regression requires
+the C/native nonallocator leaf lists to remain equivalent. `libc/build.rs`
+emits fixed Linux/x86-64 capability cfgs and rejects native/C overlap. It
+never manufactures Cargo feature flags. The AArch64 dependency table is unchanged.
+
+Both owned builders accept explicit `--allocator-backend native-shadow` while
+keeping accepted C as the default. They attest Cargo's target normal/build
+dependency graph, require the native allocator and forbid `libmimalloc-sys` in
+that graph, then reject any C allocator archive in the fresh build. Every raw
+libc archive member still passes the existing strict Rust/compiler-helper
+classification. The native selected archive is Rust-only; native provenance
+has no C compiler, header, or excluded-backend record. The pinned C oracle
+remains isolated in the allocator test harness, and accepted-C products still
+compile and byte-attest their own backend. Native code resides in the Rust
+fat-LTO object. The C-specific hidden-symbol
 list is applied only to C products. The existing musl dynamic list and private
 errno/compiler-helper policies remain in both products. Native ELF inspection
 rejects C `mi_`/`_mi_` symbols and loader allocator definitions/imports, and

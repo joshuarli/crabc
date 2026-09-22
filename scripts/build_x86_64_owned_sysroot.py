@@ -650,10 +650,16 @@ def regular_file_hashes(root: Path, *, exclude: frozenset[str] = frozenset()) ->
 
 
 def installed_manifest(
-    payload_hashes: dict[str, str], producer_tools: dict[str, object]
+    payload_hashes: dict[str, str], producer_tools: dict[str, object],
+    *, allocator_backend: str = "accepted-c",
 ) -> dict[str, object]:
     """Describe the bounded installed contract without promoting either family."""
 
+    if allocator_backend not in ALLOCATOR_BACKENDS:
+        raise BuildError("unknown owned allocator backend")
+    target_inputs = list(TARGET_RUNTIME_INPUTS)
+    if allocator_backend == "native-shadow":
+        target_inputs[3] = "fixed-upstream Rust mimalloc in the selected crabc-libc Rust object"
     return {
         "schema": 1,
         "format": FORMAT,
@@ -661,6 +667,7 @@ def installed_manifest(
         "toolchain": PINNED_TOOLCHAIN,
         "producer_tools": producer_tools,
         "scope": SCOPE,
+        "allocator_backend": allocator_backend,
         "package": {
             "format": PACKAGE_FORMAT,
             "archive_root": PACKAGE_ARCHIVE_ROOT,
@@ -699,7 +706,7 @@ def installed_manifest(
             ],
         },
         "purity": {
-            "target_runtime_inputs": list(TARGET_RUNTIME_INPUTS),
+            "target_runtime_inputs": target_inputs,
             "stock_compiler_builtins_members_installed": False,
             "ambient_target_crt_or_library_installed": False,
             "symlinks_installed": False,
@@ -750,7 +757,41 @@ def allocator_header_provenance(dependencies: Path, cargo_home: Path) -> dict[st
     return records
 
 
-def build_runtime_inputs(stage: Path) -> dict[str, object]:
+ALLOCATOR_BACKENDS = ("accepted-c", "native-shadow")
+
+
+def allocator_dependency_graph(cargo: list[str], features: str, allocator_backend: str,
+                               environment: dict[str, str]) -> dict[str, object]:
+    """Attest Cargo's selected target normal/build edges, excluding test oracles."""
+    if allocator_backend not in ALLOCATOR_BACKENDS:
+        raise BuildError("unknown owned allocator backend")
+    command = [*cargo, "tree", "--locked", "--offline", "-p", "crabc-libc",
+               "--target", TARGET, "--no-default-features", "--features", features,
+               "--edges", "normal,build", "--prefix", "none", "--format", "{p}"]
+    packages = sorted(set(run(command, environment=environment).decode().splitlines()))
+    c_selected = any(line.startswith("libmimalloc-sys ") for line in packages)
+    native_selected = any(line.startswith("crabc-mimalloc ") for line in packages)
+    if allocator_backend == "native-shadow" and (c_selected or not native_selected):
+        raise BuildError("native production dependency graph must select Rust mimalloc without C mimalloc")
+    if allocator_backend == "accepted-c" and (not c_selected or native_selected):
+        raise BuildError("accepted-C production dependency graph selected an unexpected allocator")
+    return {"target": TARGET, "edges": ["normal", "build"], "features": features.split(","),
+            "packages": [line.replace(str(ROOT), "$SOURCE") for line in packages],
+            "c_allocator_selected": c_selected, "native_allocator_selected": native_selected}
+
+
+def selected_allocator_archive(cargo_root: Path, allocator_backend: str) -> Path | None:
+    archives = list((cargo_root / TARGET / "release/build").glob("libmimalloc-sys-*/out/libmimalloc.a"))
+    if allocator_backend == "native-shadow":
+        if archives:
+            raise BuildError("native production build contains a C mimalloc archive")
+        return None
+    if allocator_backend != "accepted-c" or len(archives) != 1:
+        raise BuildError("Cargo did not produce one unambiguous accepted allocator archive")
+    return archives[0]
+
+
+def build_runtime_inputs(stage: Path, *, allocator_backend: str = "accepted-c") -> dict[str, object]:
     producer_tools = resolve_pinned_producer_tools()
     rustup_record = producer_tools["rustup"]
     if not isinstance(rustup_record, dict):
@@ -763,8 +804,11 @@ def build_runtime_inputs(stage: Path) -> dict[str, object]:
     llvm_objdump = producer_tool_path(producer_tools, "llvm-objdump")
     python = sys.executable
     cargo_root = stage / "cargo"
-    allocator_pin = accepted_allocator_pin()
-    c_compiler = executable_identity(Path("/usr/bin/gcc"), "pinned-image allocator C compiler")
+    if allocator_backend not in ALLOCATOR_BACKENDS:
+        raise BuildError("unknown owned allocator backend")
+    accepted_c = allocator_backend == "accepted-c"
+    allocator_pin = accepted_allocator_pin() if accepted_c else None
+    c_compiler = executable_identity(Path("/usr/bin/gcc"), "pinned-image allocator C compiler") if accepted_c else None
     dependency_file = stage / "allocator.d"
     c_flags = [
         "-nostdinc", "-isystem", str(ROOT / "include"),
@@ -775,11 +819,15 @@ def build_runtime_inputs(stage: Path) -> dict[str, object]:
         f"-ffile-prefix-map={ROOT}=/crabc", "-MD", "-MF", str(dependency_file),
     ]
     environment = deterministic_environment()
-    environment.update({
+    if accepted_c:
+        environment.update({
         "CC_x86_64_unknown_linux_musl": str(c_compiler["path"]),
         "CFLAGS_x86_64_unknown_linux_musl": shlex.join(c_flags),
         "CC_SHELL_ESCAPED_FLAGS": "1",
     })
+    selected_feature = "x86-owned-static-runtime" if accepted_c else "x86-owned-static-native-shadow"
+    dependency_graph = allocator_dependency_graph([rustup, "run", PINNED_TOOLCHAIN, "cargo"],
+                                                 selected_feature, allocator_backend, environment)
     cargo_command = [
         rustup,
         "run",
@@ -791,8 +839,9 @@ def build_runtime_inputs(stage: Path) -> dict[str, object]:
         "crabc-libc",
         "--lib",
         "--release",
+        "--no-default-features",
         "--features",
-        "x86-owned-static-runtime",
+        selected_feature,
         "--target",
         TARGET,
         "--target-dir",
@@ -816,15 +865,16 @@ def build_runtime_inputs(stage: Path) -> dict[str, object]:
     raw_libc = cargo_root / TARGET / "release" / "libc.a"
     if not raw_libc.is_file():
         raise BuildError("Cargo did not produce the x86 crabc-libc static archive")
-    allocator_archives = list((cargo_root / TARGET / "release/build").glob("libmimalloc-sys-*/out/libmimalloc.a"))
-    if len(allocator_archives) != 1:
-        raise BuildError("Cargo did not produce one unambiguous accepted allocator archive")
-    allocator_headers = allocator_header_provenance(dependency_file, Path(environment["CARGO_HOME"]))
-    allocator_lifecycle = owned_mimalloc_lifecycle_profile(
-        c_flags, cargo_command, allocator_archives[0], raw_libc,
+    allocator_archive = selected_allocator_archive(cargo_root, allocator_backend)
+    allocator_headers = (allocator_header_provenance(dependency_file, Path(environment["CARGO_HOME"]))
+                         if accepted_c else None)
+    allocator_lifecycle = (owned_mimalloc_lifecycle_profile(
+        c_flags, cargo_command, allocator_archive, raw_libc,
         llvm_ar=llvm_ar, llvm_nm=llvm_nm, llvm_objdump=llvm_objdump,
         stage=stage / "allocator-lifecycle-profile",
-    )
+    ) if accepted_c else {"initialization": "owned-static-startup-before-constructors",
+                          "process_done": "same-image-fini-array-before-stdio-flush",
+                          "post_done_backing": "source-default-release-retained"})
 
     crt_root = stage / "crt"
     run(
@@ -858,12 +908,21 @@ def build_runtime_inputs(stage: Path) -> dict[str, object]:
         libc,
         llvm_ar=llvm_ar,
         llvm_nm=llvm_nm,
-        allocator_archive=allocator_archives[0],
+        allocator_archive=allocator_archive,
     )
+    if not accepted_c:
+        symbols = archive_defined_symbols(llvm_nm, libc)
+        if any(name.startswith(("mi_", "_mi_")) for name in symbols):
+            raise BuildError("native static archive defines C mimalloc symbols")
+        libc_provenance["allocator_backend"] = {
+            "implementation": "native Rust shadow; promotion remains separate",
+            "upstream_sha256": sha256_file(ROOT / "crabc-mimalloc/UPSTREAM.md"),
+        }
+    libc_provenance["dependency_graph"] = dependency_graph
     libc_provenance["allocator_backend"].update({
         "crate": allocator_pin,
         "compiler": c_compiler,
-        "target_flags": [flag.replace(str(stage), "$CRABC_X86_BUILD").replace(str(ROOT), "$CRABC_SOURCE") for flag in c_flags],
+        "target_flags": [flag.replace(str(stage), "$CRABC_X86_BUILD").replace(str(ROOT), "$CRABC_SOURCE") for flag in c_flags] if accepted_c else [],
         "source_and_header_sha256": allocator_headers,
         "lifecycle_profile": allocator_lifecycle,
     })
@@ -879,8 +938,9 @@ def build_runtime_inputs(stage: Path) -> dict[str, object]:
             "crabc-libc",
             "--lib",
             "--release",
+            "--no-default-features",
             "--features",
-            "x86-owned-static-runtime",
+            selected_feature,
             "--target",
             TARGET,
             "--target-dir",
@@ -900,6 +960,7 @@ def build_runtime_inputs(stage: Path) -> dict[str, object]:
             "--remap-path-prefix",
             "$CRABC_SOURCE=/crabc",
         ],
+        "allocator_backend": allocator_backend,
         "crt_root": crt_root,
         "builtins": builtins,
         "builtins_provenance": builtins_provenance,
@@ -990,7 +1051,7 @@ def assemble(output: Path, inputs: dict[str, object]) -> dict[str, object]:
         output,
         exclude=frozenset({manifest_path.relative_to(output).as_posix()}),
     )
-    manifest = installed_manifest(payload_hashes, producer_tools)
+    manifest = installed_manifest(payload_hashes, producer_tools, allocator_backend=inputs.get("allocator_backend", "accepted-c"))
     write_json(manifest_path, manifest)
     installed_hashes = regular_file_hashes(output)
     expected = set(payload_hashes) | {manifest_path.relative_to(output).as_posix()}
@@ -999,13 +1060,13 @@ def assemble(output: Path, inputs: dict[str, object]) -> dict[str, object]:
     return manifest
 
 
-def build(output: Path) -> dict[str, object]:
+def build(output: Path, *, allocator_backend: str = "accepted-c") -> dict[str, object]:
     assert_native_target()
     output = validate_output_path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="crabc-x86-owned-sysroot.", dir=output.parent) as temporary:
         temporary_root = Path(temporary)
-        inputs = build_runtime_inputs(temporary_root)
+        inputs = build_runtime_inputs(temporary_root, allocator_backend=allocator_backend)
         staged_output = temporary_root / "installed"
         manifest = assemble(staged_output, inputs)
         remove_owned_output(output)
@@ -1016,13 +1077,14 @@ def build(output: Path) -> dict[str, object]:
 def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--allocator-backend", choices=ALLOCATOR_BACKENDS, default="accepted-c")
     return parser.parse_args(arguments)
 
 
 def main(arguments: Sequence[str] | None = None) -> int:
     try:
         parsed = parse_args(arguments)
-        manifest = build(parsed.output)
+        manifest = build(parsed.output, allocator_backend=parsed.allocator_backend)
     except BuildError as error:
         print(f"x86 owned static sysroot failed: {error}", file=sys.stderr)
         return 1

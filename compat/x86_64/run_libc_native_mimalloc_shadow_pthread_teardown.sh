@@ -298,7 +298,7 @@ fi
 CARGO_ENCODED_RUSTFLAGS="$NATIVE_ENCODED_RUSTFLAGS" CARGO_TARGET_DIR="$cargo_target" \
     cargo rustc --locked -p crabc-libc --lib \
     --target x86_64-unknown-linux-musl \
-    --features x86-owned-static-runtime,native-mimalloc-shadow,native-mimalloc-shadow-test-audit -- \
+    --features x86-owned-static-native-shadow,native-mimalloc-shadow-test-audit -- \
     -C relocation-model=static -C code-model=small -C panic=abort
 [ -f "$archive" ] || fail "cargo did not emit the selected static libc archive"
 
@@ -418,7 +418,7 @@ fi
 CARGO_ENCODED_RUSTFLAGS="$NATIVE_ENCODED_RUSTFLAGS" CARGO_TARGET_DIR="$cargo_target" \
     cargo rustc --locked -p crabc-libc --lib \
     --target x86_64-unknown-linux-musl \
-    --features x86-owned-static-runtime,native-mimalloc-shadow,native-mimalloc-shadow-process-done-exit-test-audit -- \
+    --features x86-owned-static-native-shadow,native-mimalloc-shadow-process-done-exit-test-audit -- \
     -C relocation-model=static -C code-model=small -C panic=abort
 [ -f "$archive" ] || fail "cargo did not emit the normal-main selected static libc archive"
 nm -A --defined-only "$archive" >"$normal_main_archive_symbols"

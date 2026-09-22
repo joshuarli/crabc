@@ -16,9 +16,22 @@ fn x86_runtime_capabilities() {
     let selected_x86 = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux")
         && std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("x86_64")
         && std::env::var("CARGO_CFG_TARGET_ENDIAN").as_deref() == Ok("little");
+    let enabled = |feature| std::env::var_os(feature).is_some();
+    let owned = enabled("CARGO_FEATURE_X86_OWNED_STATIC_RUNTIME")
+        || enabled("CARGO_FEATURE_X86_OWNED_STATIC_NATIVE_SHADOW");
+    let native = enabled("CARGO_FEATURE_NATIVE_MIMALLOC_SHADOW");
+    let c_backend = enabled("CARGO_FEATURE_X86_ALLOCATOR_RUNTIME");
+    if selected_x86 {
+        assert!(!(native && c_backend), "native x86 allocator and accepted C allocator selections are mutually exclusive");
+    }
     for (cfg, feature) in CAPABILITIES {
         println!("cargo::rustc-check-cfg=cfg({cfg})");
-        if selected_x86 && std::env::var_os(feature).is_some() {
+        let capability = if *cfg == "crabc_x86_dynamic_runtime" {
+            enabled(feature) || enabled("CARGO_FEATURE_X86_OWNED_DYNAMIC_NATIVE_SHADOW")
+        } else {
+            enabled(feature) || owned
+        };
+        if selected_x86 && capability {
             println!("cargo::rustc-cfg={cfg}");
         }
     }

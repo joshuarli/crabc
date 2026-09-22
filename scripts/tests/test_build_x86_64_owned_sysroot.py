@@ -491,7 +491,7 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
             self.assertIn('"relocation-model=pic"', command)
             self.assertIn('"-Ztls-model=initial-exec"', command)
             self.assertIn('"--features"', command)
-            self.assertIn('x86-owned-static-runtime', command)
+            self.assertIn('selected_feature', command)
             self.assertNotIn('x86-environment-runtime', command)
             self.assertNotIn('x86-resolver-runtime', command)
 

@@ -658,7 +658,7 @@ mod static_startup;
     not(crabc_x86_owned_runtime),
 ))]
 compile_error!(
-    "native-mimalloc-shadow on Linux/x86-64 requires x86-owned-static-runtime"
+    "native-mimalloc-shadow on Linux/x86-64 requires an explicit owned native runtime"
 );
 #[cfg(all(
     feature = "native-mimalloc-shadow",

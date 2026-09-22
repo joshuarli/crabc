@@ -403,16 +403,15 @@ def loader_provenance(
     }
 
 
-ALLOCATOR_BACKENDS = ("accepted-c", "native-shadow")
+ALLOCATOR_BACKENDS = common.ALLOCATOR_BACKENDS
 
 
-def select_allocator_members(members, allocator_member: str, allocator_backend: str):
+def select_allocator_members(members, allocator_member: str | None, allocator_backend: str):
     """Classify every Cargo member, then exclude the attested C shadow input.
 
-    The native Rust code is in libc's fat-LTO Rust object. Cargo still builds
-    the existing C dependency through the shared leaf feature graph; its exact
-    attested object, when Cargo retains it, is never selected into the native
-    shared runtime. An omitted C object leaves the same strict Rust roster.
+    The native Rust code is in libc's fat-LTO Rust object. Its producer rejects
+    any C dependency archive before this strict Rust-only roster is selected.
+    Retained legacy archive inputs still require exact member classification.
     """
     if allocator_backend not in ALLOCATOR_BACKENDS:
         raise common.BuildError("unknown dynamic allocator backend")
@@ -499,14 +498,16 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
                # let the fixed C backend install a second hidden constructor.
                common.MIMALLOC_LIFECYCLE_C_FLAG,
                f"-ffile-prefix-map={ROOT}=/crabc", "-MD", "-MF", str(dependency_file)]
-    environment.update({"CC_x86_64_unknown_linux_musl": "/usr/bin/gcc",
+    if allocator_backend == "accepted-c":
+        environment.update({"CC_x86_64_unknown_linux_musl": "/usr/bin/gcc",
                         "CFLAGS_x86_64_unknown_linux_musl": shlex.join(c_flags),
                         "CC_SHELL_ESCAPED_FLAGS": "1"})
     cargo = [rustup, "run", common.PINNED_TOOLCHAIN, "cargo"]
     features = ["x86-owned-dynamic-runtime" if allocator_backend == "accepted-c" else "x86-owned-dynamic-native-shadow"]
     if lifecycle_test_audit:
         features.append("x86-owned-allocator-lifecycle-test-audit")
-    libc_command = [*cargo, "rustc", "--locked", "-p", "crabc-libc", "--lib", "--release",
+    dependency_graph = common.allocator_dependency_graph(cargo, ",".join(features), allocator_backend, environment)
+    libc_command = [*cargo, "rustc", "--locked", "-p", "crabc-libc", "--lib", "--release", "--no-default-features",
          "--features", ",".join(features), "--target", common.TARGET,
          "--target-dir", str(stage / "cargo"), "--", "--cfg", "crabc_owned_static_sysroot",
          "--cfg", common.MIMALLOC_LIFECYCLE_RUST_CFG,
@@ -516,11 +517,9 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     # static cfg remains for other shared source-owner visibility choices.
     run(libc_command, environment=environment)
     raw = stage / "cargo" / common.TARGET / "release/libc.a"
-    backends = list((stage / "cargo" / common.TARGET / "release/build").glob("libmimalloc-sys-*/out/libmimalloc.a"))
-    if len(backends) != 1:
-        raise common.BuildError("expected one accepted C allocator archive")
+    backend_archive = common.selected_allocator_archive(stage / "cargo", allocator_backend)
     allocator_lifecycle = (common.owned_mimalloc_lifecycle_profile(
-        c_flags, libc_command, backends[0], raw,
+        c_flags, libc_command, backend_archive, raw,
         llvm_ar=ar, llvm_nm=nm, llvm_objdump=objdump,
         stage=stage / "allocator-lifecycle-profile",
     ) if allocator_backend == "accepted-c" else {
@@ -529,14 +528,16 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
         "post_done_backing": "source-default-release-retained",
         "loader_allocator_pointer_transfer": False,
     })
-    backend_members = run([ar, "t", str(backends[0])]).decode().splitlines()
-    if len(backend_members) != 1:
-        raise common.BuildError("accepted allocator archive must have one object")
-    member = backend_members[0]
+    member = None
+    if backend_archive is not None:
+        backend_members = run([ar, "t", str(backend_archive)]).decode().splitlines()
+        if len(backend_members) != 1:
+            raise common.BuildError("accepted allocator archive must have one object")
+        member = backend_members[0]
     members = tuple(run([ar, "t", str(raw)]).decode().splitlines())
     selected, excluded = select_allocator_members(members, member, allocator_backend)
-    if member in members:
-        if run([ar, "p", str(raw), member]) != run([ar, "p", str(backends[0]), member]):
+    if member is not None:
+        if run([ar, "p", str(raw), member]) != run([ar, "p", str(backend_archive), member]):
             raise common.BuildError("Cargo allocator member differs from attested backend")
     objects = stage / "objects"
     objects.mkdir()
@@ -641,12 +642,11 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
                   "allocator_lifecycle_test_audit": lifecycle_test_audit,
                   "accepted_allocator": (common.accepted_allocator_pin() if allocator_backend == "accepted-c" else None),
                   "native_allocator": (_source_file_identity(ROOT / "crabc-mimalloc/UPSTREAM.md", "fixed native allocator provenance") if allocator_backend == "native-shadow" else None),
-                  "excluded_c_allocator": ({"pin": common.accepted_allocator_pin(), "member": member,
-                      "present_in_cargo_libc": member in members,
-                      "archive_sha256": common.sha256_file(backends[0])} if allocator_backend == "native-shadow" else None),
-                  "allocator_headers": common.allocator_header_provenance(dependency_file, Path(environment["CARGO_HOME"])),
-                  "allocator_compiler": common.executable_identity(Path("/usr/bin/gcc"), "pinned allocator C compiler"),
-                  "allocator_flags": [flag.replace(str(stage), "$BUILD").replace(str(ROOT), "$SOURCE") for flag in c_flags],
+                  "dependency_graph": dependency_graph,
+                  "excluded_c_allocator": None,
+                  "allocator_headers": (common.allocator_header_provenance(dependency_file, Path(environment["CARGO_HOME"])) if allocator_backend == "accepted-c" else None),
+                  "allocator_compiler": (common.executable_identity(Path("/usr/bin/gcc"), "pinned allocator C compiler") if allocator_backend == "accepted-c" else None),
+                  "allocator_flags": ([flag.replace(str(stage), "$BUILD").replace(str(ROOT), "$SOURCE") for flag in c_flags] if allocator_backend == "accepted-c" else []),
                   "allocator_lifecycle_profile": allocator_lifecycle,
                   "libc_command": [arg.replace(str(stage), "$BUILD").replace(str(ROOT), "$SOURCE") for arg in libc_command],
                   "libc_shared_link_command": [_normalized_loader_argument(arg, stage) for arg in libc_shared_link_command],

@@ -1884,7 +1884,7 @@ The separate feature-gated x86 owned-static integration receipt is:
 ```
 
 It runs a real `__libc_start_main` candidate with
-`native-mimalloc-shadow,x86-owned-static-runtime`. A failed process-owner or
+`x86-owned-static-native-shadow`. A failed process-owner or
 later-arena setup rejects selected startup before constructors, so it cannot
 continue with a partly active native owner. Before startup installs that owner,
 its child attach returns only recoverable `Inactive`; the parent reclaims that
