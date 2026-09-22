@@ -53,11 +53,18 @@ fi
         uname.write_text("#!/bin/sh\nprintf 'x86_64\\n'\n")
         uname.chmod(0o755)
 
-    def launch(self, *arguments: str, work: str | None = None):
+    def launch(self, *arguments: str, work: str | None = None,
+               cpu_limit: str | None = None, cargo_build_jobs: str | None = None):
         env = os.environ.copy()
         env.pop("CRABC_ALLOCATOR_X86_64_WORK_DIR", None)
+        env.pop("CRABC_ALLOCATOR_X86_64_CPU_LIMIT", None)
+        env.pop("CARGO_BUILD_JOBS", None)
         if work is not None:
             env["CRABC_ALLOCATOR_X86_64_WORK_DIR"] = work
+        if cpu_limit is not None:
+            env["CRABC_ALLOCATOR_X86_64_CPU_LIMIT"] = cpu_limit
+        if cargo_build_jobs is not None:
+            env["CARGO_BUILD_JOBS"] = cargo_build_jobs
         env.update(PATH=f"{self.bin}:{env['PATH']}", DOCKER_CAPTURE=str(self.capture))
         return subprocess.run(
             ["bash", str(self.launcher), *arguments], cwd=self.checkout,
@@ -101,6 +108,30 @@ fi
             b"python3", b"compat/allocator/run_unit_x86_64.py", name.encode(),
         ])
         self.assertIn(f"{self.boundary / 'target'}:/workspace/target".encode(), args)
+
+    def test_opt_in_allocator_budget_forwards_cargo_and_caps_the_container(self):
+        result = self.launch(
+            "allocator-unit", "--filter", "os::tests::native_large_page_retry_suppression",
+            cpu_limit="2", cargo_build_jobs="2",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        args = self.capture.read_bytes().split(b"\0")
+        self.assertIn(b"--cpus", args)
+        self.assertEqual(args[args.index(b"--cpus") + 1], b"2")
+        self.assertIn(b"CARGO_BUILD_JOBS=2", args)
+
+    def test_allocator_budget_rejects_invalid_limits_before_docker(self):
+        for cpu_limit, cargo_build_jobs in (
+            ("0", None), ("-1", None), ("1.5", None), ("workers", None),
+            (None, "0"), (None, "-1"), (None, "1.5"), (None, "workers"),
+        ):
+            with self.subTest(cpu_limit=cpu_limit, cargo_build_jobs=cargo_build_jobs):
+                result = self.launch(
+                    "allocator-unit", "--filter", "os::tests::native_large_page_retry_suppression",
+                    cpu_limit=cpu_limit, cargo_build_jobs=cargo_build_jobs,
+                )
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertFalse(self.capture.with_suffix(".calls").exists())
 
     def test_huge_numa_qualification_uses_only_ipc_lock_and_the_resolved_image_id(self):
         result = self.launch("allocator-huge-numa-qualification")

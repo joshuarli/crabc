@@ -20,6 +20,12 @@ Mutable evidence, Cargo state, sources, and scratch stay under
 .work/allocator-x86_64. CRABC_ALLOCATOR_X86_64_WORK_DIR may select a physical
 descendant of that directory; external paths and named volumes are rejected.
 
+For an execution-owner-admitted development run, an explicitly set
+CRABC_ALLOCATOR_X86_64_CPU_LIMIT supplies Docker's finite CPU quota and an
+explicit CARGO_BUILD_JOBS is forwarded to Cargo. Each value must be a positive
+integer. Omitting either value preserves the canonical command's existing
+resource semantics.
+
 Private native Linux/x86-64 mimalloc evidence commands:
   image
   allocator --quick
@@ -72,6 +78,24 @@ EOF
 fail() {
     printf 'ERROR: %s\n' "$*" >&2
     exit 2
+}
+
+validate_positive_integer() {
+    local name="$1"
+    local value="$2"
+    [[ "$value" =~ ^[1-9][0-9]*$ ]] || fail "$name must be a positive integer"
+}
+
+configure_execution_budget() {
+    EXECUTION_BUDGET_ARGS=()
+    if [[ -v CRABC_ALLOCATOR_X86_64_CPU_LIMIT ]]; then
+        validate_positive_integer CRABC_ALLOCATOR_X86_64_CPU_LIMIT "$CRABC_ALLOCATOR_X86_64_CPU_LIMIT"
+        EXECUTION_BUDGET_ARGS+=(--cpus "$CRABC_ALLOCATOR_X86_64_CPU_LIMIT")
+    fi
+    if [[ -v CARGO_BUILD_JOBS ]]; then
+        validate_positive_integer CARGO_BUILD_JOBS "$CARGO_BUILD_JOBS"
+        EXECUTION_BUDGET_ARGS+=(--env "CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS")
+    fi
 }
 
 normalize_absolute_path() {
@@ -286,7 +310,7 @@ run_in_container() {
         execution_image="$image_id"
         qualification_identity_args=(--env CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID="$image_id")
     fi
-    docker run --rm --init "${capability_args[@]}" \
+    docker run --rm --init "${capability_args[@]}" "${EXECUTION_BUDGET_ARGS[@]}" \
         --platform "$PLATFORM" \
         --workdir /workspace \
         --env CARGO_HOME=/workspace/.work/allocator-x86_64/cargo \
@@ -341,6 +365,7 @@ case "$command" in
         ;;
 esac
 
+configure_execution_budget
 require_native_x86_64_host
 
 case "$command" in
