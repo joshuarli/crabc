@@ -1165,6 +1165,14 @@ pub(super) fn current_source_is_retired() -> bool {
     matches!(DESCRIPTOR.registration.load(Ordering::Acquire), RETIRED | TRANSFERRED)
 }
 
+/// Test-only scalar observation for a current later descriptor. It carries no
+/// owner, TLS slot, or source borrow; lifecycle fixtures use it to distinguish
+/// a closed-epoch refusal from descriptor retirement.
+#[cfg(test)]
+pub(super) fn current_source_descriptor_is_registered() -> bool {
+    DESCRIPTOR.registration.load(Ordering::Acquire) == REGISTERED
+}
+
 pub(super) fn native_source_entry_is_terminal() -> bool {
     EPOCH.state.load(Ordering::SeqCst) & MODE_MASK >= TERMINAL_CLOSING
 }

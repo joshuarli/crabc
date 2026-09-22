@@ -16741,6 +16741,20 @@ mod tests {
     #[thread_local]
     static mut NATIVE_DEFERRED_FREE_TEST_THREAD_ACTIVE: bool = false;
 
+    struct CurrentThreadDescriptorRegistry(NonNull<admission::NativeAllocatorThreadDescriptor>);
+
+    // SAFETY: the fresh-process fixture retains this current TLS descriptor
+    // and its owning thread slot for the synchronous terminal scan. It starts
+    // no other thread and invokes no source owner transfer.
+    unsafe impl admission::NativeAllocatorPinnedThreadRegistry for CurrentThreadDescriptorRegistry {
+        fn visit_descriptors(
+            &self,
+            visitor: &mut dyn FnMut(NonNull<admission::NativeAllocatorThreadDescriptor>),
+        ) {
+            visitor(self.0);
+        }
+    }
+
     unsafe extern "C" fn observe_native_deferred_free_callback(
         force: bool,
         _heartbeat: u64,
@@ -17771,6 +17785,43 @@ mod tests {
             assert_eq!(current_thread_slot().state, ThreadLifecycleState::Fresh);
             assert!(current_thread_slot().admission.is_none());
         }).join().expect("recursive entry cannot poison the later attachment attempt");
+    }
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn worker_attachment_guard_refusal_preserves_registered_later_descriptor() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::worker_attachment_guard_refusal_preserves_registered_later_descriptor",
+            || {
+                let descriptor = admission::current_native_allocator_thread_descriptor();
+                // SAFETY: this fresh test process owns its one current TLS
+                // descriptor and keeps its control mapping live through the
+                // terminal admission observation.
+                assert!(unsafe {
+                    admission::register_current_native_allocator_worker_descriptor(descriptor)
+                });
+                assert!(admission::current_source_descriptor_is_registered());
+
+                let registry = CurrentThreadDescriptorRegistry(descriptor);
+                // SAFETY: the fixture has no source operation or callback in
+                // flight; its registry contains the complete one-descriptor
+                // image and remains pinned through this terminal seal.
+                let _terminal = unsafe {
+                    admission::begin_native_allocator_terminal_quiescence(&registry)
+                }
+                .expect("a quiescent registered later descriptor reaches the terminal gate");
+
+                assert_eq!(attach_current_thread(), ThreadAttachResult::Inactive);
+                assert!(
+                    admission::current_source_descriptor_is_registered(),
+                    "a terminal admission refusal is not a source completion and must not retire a live later descriptor",
+                );
+                assert!(
+                    !admission::current_source_is_retired(),
+                    "the denied attach preserves the registered descriptor rather than acknowledging a source exit",
+                );
+            },
+        );
     }
 
     #[test]
