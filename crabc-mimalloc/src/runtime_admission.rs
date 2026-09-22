@@ -46,6 +46,8 @@ pub struct NativeAllocatorThreadDescriptor {
     // terminal writer consumes other, disjoint source-owner fields remotely.
     nesting: UnsafeCell<usize>,
     callback_nesting: UnsafeCell<usize>,
+    // Current terminal writer only; never inspected by a registry visitor.
+    terminal_diagnostic_scope: UnsafeCell<bool>,
 }
 
 // SAFETY: foreign access is restricted to atomics. Current-thread nesting is
@@ -56,7 +58,8 @@ impl NativeAllocatorThreadDescriptor {
     const fn new() -> Self {
         Self { entered: AtomicBool::new(false), callback: AtomicBool::new(false),
             registration: AtomicU8::new(UNPUBLISHED), owner_slot: AtomicPtr::new(core::ptr::null_mut()),
-            nesting: UnsafeCell::new(0), callback_nesting: UnsafeCell::new(0) }
+            nesting: UnsafeCell::new(0), callback_nesting: UnsafeCell::new(0),
+            terminal_diagnostic_scope: UnsafeCell::new(false) }
     }
 }
 
@@ -242,7 +245,9 @@ impl Drop for DiagnosticCallbackPresence {
 ///
 /// # Safety
 /// The caller is the current thread inside a guarded native allocator source
-/// operation. The closure is exactly its synchronous diagnostic output call,
+/// operation or the transferred terminal writer's final-diagnostic scope.
+/// The latter permits output only, never source entry or retired-owner views.
+/// The closure is exactly its synchronous diagnostic output call,
 /// and must not transfer source ownership or outlive the ordinary entry. Any
 /// foreign lock acquisition belongs inside this closure, after publication.
 /// A writer refusing this marker must release its outer locks before invoking
@@ -251,15 +256,20 @@ impl Drop for DiagnosticCallbackPresence {
 pub unsafe fn with_native_allocator_diagnostic_callback<R>(
     callback: impl FnOnce() -> R,
 ) -> Result<R, NativeAllocatorCallbackBoundaryError> {
-    unsafe { with_diagnostic_callback_at(current_native_allocator_thread_descriptor(), callback) }
+    unsafe { with_diagnostic_callback_at(&EPOCH, current_native_allocator_thread_descriptor(), callback) }
 }
 
 unsafe fn with_diagnostic_callback_at<R>(
+    epoch: &NativeAllocatorEpoch,
     pointer: NonNull<NativeAllocatorThreadDescriptor>,
     callback: impl FnOnce() -> R,
 ) -> Result<R, NativeAllocatorCallbackBoundaryError> {
     let record = unsafe { pointer.as_ref() };
-    if unsafe { *record.nesting.get() } == 0 || !record.entered.load(Ordering::SeqCst) {
+    let terminal_output = unsafe { *record.terminal_diagnostic_scope.get() }
+        && epoch.state.load(Ordering::SeqCst) & MODE_MASK == TERMINAL
+        && record.registration.load(Ordering::Acquire) == TRANSFERRED;
+    if !terminal_output
+        && (unsafe { *record.nesting.get() } == 0 || !record.entered.load(Ordering::SeqCst)) {
         return Err(NativeAllocatorCallbackBoundaryError::NoOperation);
     }
     let previous_callbacks = unsafe { *record.callback_nesting.get() };
@@ -477,7 +487,72 @@ pub struct NativeAllocatorTerminalQuiescence<'registry> {
 /// into the source graph. This authority carries no TLS reference; the pinned
 /// registry borrow may end before Heap/meta locks and OS release begin.
 pub(super) struct NativeAllocatorTransferredProcessOwners {
+    writer: NonNull<NativeAllocatorThreadDescriptor>,
     _not_send_sync: PhantomData<*mut ()>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum NativeAllocatorTerminalDiagnosticError {
+    WrongWriter,
+    NotTerminal,
+    InvalidDescriptor,
+    Reentrant,
+}
+
+impl NativeAllocatorTransferredProcessOwners {
+    /// Grants only synchronous final diagnostic delivery on the terminal
+    /// writer. Ordinary allocator entry remains permanently closed.
+    ///
+    /// # Safety
+    /// The registry pin and all source/OS/libc outer locks have been released.
+    /// The callback retains only process-static output state or copied scalars;
+    /// it must not dereference any retired source owner or backing. Its foreign
+    /// output adapter uses `with_native_allocator_diagnostic_callback`; all
+    /// reentrant allocation still uses ordinary admission and must be denied.
+    /// Invoke before changing the source output owner to preloading mode.
+    pub(super) unsafe fn with_final_diagnostic_output<R>(
+        &self, output: impl FnOnce() -> R,
+    ) -> Result<R, NativeAllocatorTerminalDiagnosticError> {
+        if self.writer != current_native_allocator_thread_descriptor() {
+            return Err(NativeAllocatorTerminalDiagnosticError::WrongWriter);
+        }
+        unsafe { with_terminal_diagnostic_output_at(&EPOCH, self.writer, output) }
+    }
+}
+
+struct TerminalDiagnosticScope {
+    descriptor: NonNull<NativeAllocatorThreadDescriptor>,
+    _not_send_sync: PhantomData<*mut ()>,
+}
+impl Drop for TerminalDiagnosticScope {
+    fn drop(&mut self) {
+        // The non-Send caller-stack scope ends before this writer can retire
+        // its TLS mapping. It changes no admission or registration state.
+        unsafe { *self.descriptor.as_ref().terminal_diagnostic_scope.get() = false; }
+    }
+}
+
+unsafe fn with_terminal_diagnostic_output_at<R>(
+    epoch: &NativeAllocatorEpoch,
+    pointer: NonNull<NativeAllocatorThreadDescriptor>,
+    output: impl FnOnce() -> R,
+) -> Result<R, NativeAllocatorTerminalDiagnosticError> {
+    if epoch.state.load(Ordering::SeqCst) & MODE_MASK != TERMINAL {
+        return Err(NativeAllocatorTerminalDiagnosticError::NotTerminal);
+    }
+    let record = unsafe { pointer.as_ref() };
+    if record.registration.load(Ordering::Acquire) != TRANSFERRED
+        || record.entered.load(Ordering::SeqCst)
+        || unsafe { *record.nesting.get() != 0 || *record.callback_nesting.get() != 0 }
+    { return Err(NativeAllocatorTerminalDiagnosticError::InvalidDescriptor); }
+    if unsafe { *record.terminal_diagnostic_scope.get() } {
+        return Err(NativeAllocatorTerminalDiagnosticError::Reentrant);
+    }
+    unsafe { *record.terminal_diagnostic_scope.get() = true; }
+    let scope = TerminalDiagnosticScope { descriptor: pointer, _not_send_sync: PhantomData };
+    let result = output();
+    drop(scope);
+    Ok(result)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -527,7 +602,7 @@ impl NativeAllocatorTerminalQuiescence<'_> {
             }
         });
         if let Some(error) = failure { return Err(error); }
-        Ok(NativeAllocatorTransferredProcessOwners { _not_send_sync: PhantomData })
+        Ok(NativeAllocatorTransferredProcessOwners { writer: current_native_allocator_thread_descriptor(), _not_send_sync: PhantomData })
     }
 }
 
@@ -893,10 +968,48 @@ mod tests {
     }
 
     #[test]
+    fn terminal_writer_output_scope_never_reopens_source_or_other_descriptors() {
+        let epoch = NativeAllocatorEpoch::new();
+        let record = registered_record();
+        let other = registered_record();
+        let pointer = NonNull::from(&record);
+        let invoked = core::cell::Cell::new(0);
+        assert_eq!(unsafe { with_terminal_diagnostic_output_at(&epoch, pointer, || invoked.set(99)) },
+            Err(NativeAllocatorTerminalDiagnosticError::NotTerminal));
+        epoch.close_terminal(&Registry(&record)).unwrap();
+        assert_eq!(unsafe { with_terminal_diagnostic_output_at(&epoch, pointer, || invoked.set(99)) },
+            Err(NativeAllocatorTerminalDiagnosticError::InvalidDescriptor));
+        record.registration.store(TRANSFERRED, Ordering::Release);
+        other.registration.store(TRANSFERRED, Ordering::Release);
+        unsafe { with_terminal_diagnostic_output_at(&epoch, pointer, || {
+            assert!(!record.entered.load(Ordering::SeqCst));
+            assert!(matches!(NativeAllocatorOperationGuard::enter_at(&epoch, pointer),
+                Err(NativeAllocatorEntryError::Closed)));
+            assert_eq!(with_diagnostic_callback_at(&epoch, NonNull::from(&other), || invoked.set(99)),
+                Err(NativeAllocatorCallbackBoundaryError::NoOperation));
+            assert_eq!(with_terminal_diagnostic_output_at(&epoch, pointer, || invoked.set(99)),
+                Err(NativeAllocatorTerminalDiagnosticError::Reentrant));
+            with_diagnostic_callback_at(&epoch, pointer, || {
+                assert!(record.callback.load(Ordering::SeqCst));
+                assert!(!record.entered.load(Ordering::SeqCst));
+                invoked.set(invoked.get() + 1);
+            }).unwrap();
+            assert!(!record.callback.load(Ordering::SeqCst));
+        }) }.unwrap();
+        assert_eq!(invoked.get(), 1);
+        assert!(!unsafe { *record.terminal_diagnostic_scope.get() });
+        assert_eq!(epoch.state.load(Ordering::SeqCst) & MODE_MASK, TERMINAL);
+        assert_eq!(unsafe { with_diagnostic_callback_at(&epoch, pointer, || invoked.set(99)) },
+            Err(NativeAllocatorCallbackBoundaryError::NoOperation));
+        assert!(!record.entered.load(Ordering::SeqCst));
+    }
+
+    #[test]
     fn diagnostic_without_source_entry_never_invokes_foreign_output() {
+        let epoch = NativeAllocatorEpoch::new();
         let record = registered_record();
         let invoked = core::cell::Cell::new(false);
-        let result = unsafe { with_diagnostic_callback_at(NonNull::from(&record), || invoked.set(true)) };
+        let result = unsafe { with_diagnostic_callback_at(&epoch, NonNull::from(&record), || invoked.set(true)) };
         assert_eq!(result, Err(NativeAllocatorCallbackBoundaryError::NoOperation));
         assert!(!invoked.get());
         assert!(!record.entered.load(Ordering::SeqCst));
@@ -944,13 +1057,13 @@ mod tests {
             });
             while !scanned.load(Ordering::SeqCst) { core::hint::spin_loop(); }
             assert!(!record.callback.load(Ordering::SeqCst));
-            unsafe { with_diagnostic_callback_at(NonNull::from(&record), || {
+            unsafe { with_diagnostic_callback_at(&epoch, NonNull::from(&record), || {
                 assert!(record.entered.load(Ordering::SeqCst));
                 assert!(record.callback.load(Ordering::SeqCst));
                 let diagnostic_stdio = stdio.lock().unwrap();
                 assert!(record.entered.load(Ordering::SeqCst));
                 // Nested diagnostics preserve the outer callback marker.
-                with_diagnostic_callback_at(NonNull::from(&record), || {}).unwrap();
+                with_diagnostic_callback_at(&epoch, NonNull::from(&record), || {}).unwrap();
                 assert!(record.callback.load(Ordering::SeqCst));
                 drop(diagnostic_stdio);
             }).unwrap(); }
