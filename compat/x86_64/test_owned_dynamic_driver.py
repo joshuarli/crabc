@@ -937,7 +937,9 @@ class InstalledDynamicDriverTests(unittest.TestCase):
 
     def test_producer_failure_keeps_partial_payload_private(self):
         output = Path(self.temporary.name) / "produced"
-        def fail(staged, build):
+        def fail(staged, build, *, allocator_backend, lifecycle_test_audit):
+            self.assertEqual(allocator_backend, "accepted-c")
+            self.assertFalse(lifecycle_test_audit)
             staged.mkdir()
             (staged / "partial-libc.so").write_bytes(b"partial")
             self.assertFalse(output.exists())
@@ -1030,7 +1032,9 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         for failure in ("invalid-payload", "competing-publication"):
             with self.subTest(failure=failure):
                 output = Path(self.temporary.name) / failure
-                def finish(staged, build):
+                def finish(staged, build, *, allocator_backend, lifecycle_test_audit):
+                    self.assertEqual(allocator_backend, "accepted-c")
+                    self.assertFalse(lifecycle_test_audit)
                     staged.mkdir()
                     (staged / "payload").write_bytes(b"private candidate")
                     if failure == "competing-publication":
