@@ -75,6 +75,7 @@ enum MainHeapThreadAttachmentState {
     /// drain has released every page.
     DrainingPages,
     TornDown,
+    SourceRetained,
     Poisoned,
 }
 
@@ -445,6 +446,52 @@ impl<'main> MainHeapThreadAttachment<'main> {
             && !self.page_engine_suspended
             && tld_matches
             && theap_matches
+    }
+
+    /// Hands the metadata release rights to the persistent source Heap/Theap
+    /// graph before libc releases this worker's TLS mapping. This changes no
+    /// source roots, lists, reference counts, live-thread count, or pages.
+    ///
+    /// # Safety
+    /// The caller has selected the nonfinal post-process-done exit and must
+    /// permanently disable this wrapper and its page engine before TLS is
+    /// released. The process graph must remain live until a quiescent source
+    /// heap destruction recovers each transferred metadata owner once.
+    pub(crate) unsafe fn transfer_source_state_after_process_done(
+        &mut self,
+    ) -> Result<(), MainHeapThreadAttachmentError> {
+        if !self.permits_process_done_source_retention() {
+            return Err(MainHeapThreadAttachmentError::PageDrainState);
+        }
+        if !self.theap.as_ref().is_some_and(MetaAllocation::can_transfer_source_retained_theap)
+            || !self.tld.as_mut().is_some_and(DynamicAttachedThreadLocalData::can_transfer_source_state_after_process_done)
+        {
+            return Err(MainHeapThreadAttachmentError::TheapProjection);
+        }
+        let allocation = self.theap.take().ok_or(MainHeapThreadAttachmentError::TheapProjection)?;
+        match allocation.into_source_retained_theap() {
+            Ok(_theap) => {}
+            Err(allocation) => {
+                self.theap = Some(allocation);
+                return Err(MainHeapThreadAttachmentError::TheapProjection);
+            }
+        }
+        let result = unsafe {
+            self.tld.as_mut().expect("retention preflight validated TLD")
+                .transfer_source_state_after_process_done()
+        };
+        if let Err(error) = result {
+            // Both exact capabilities were preflighted without intervening
+            // source mutation. An inconsistent second transfer is terminal:
+            // the Heap still owns the source Theap, while this wrapper keeps
+            // the refused TLD capability. Do not recover a raw owner before
+            // whole-process quiescence or allow libc to release this TLS.
+            self.state = MainHeapThreadAttachmentState::Poisoned;
+            return Err(MainHeapThreadAttachmentError::ThreadLocalData(error));
+        }
+        self.tld = None;
+        self.state = MainHeapThreadAttachmentState::SourceRetained;
+        Ok(())
     }
 
     /// Installs one attachment-local deferred-free observer for a focused
@@ -901,7 +948,7 @@ impl<'main> MainHeapThreadAttachment<'main> {
             MainHeapThreadAttachmentState::DrainingPages => {
                 Err(MainHeapThreadAttachmentError::PageDrainState)
             }
-            MainHeapThreadAttachmentState::Preparing | MainHeapThreadAttachmentState::Poisoned => {
+            MainHeapThreadAttachmentState::Preparing | MainHeapThreadAttachmentState::SourceRetained | MainHeapThreadAttachmentState::Poisoned => {
                 Err(MainHeapThreadAttachmentError::Poisoned)
             }
         }
@@ -918,7 +965,7 @@ impl<'main> MainHeapThreadAttachment<'main> {
             MainHeapThreadAttachmentState::Attached => {
                 Err(MainHeapThreadAttachmentError::PageDrainState)
             }
-            MainHeapThreadAttachmentState::Preparing | MainHeapThreadAttachmentState::Poisoned => {
+            MainHeapThreadAttachmentState::Preparing | MainHeapThreadAttachmentState::SourceRetained | MainHeapThreadAttachmentState::Poisoned => {
                 Err(MainHeapThreadAttachmentError::Poisoned)
             }
         }
@@ -1801,6 +1848,62 @@ mod tests {
             MainStaticAttachmentStorage::test_static_owner(),
             MainSubprocess::test_static_owner(),
         )
+    }
+
+    #[test]
+    fn source_retained_workers_transfer_before_tls_exit_and_force_destroy_reclaims_all_theaps() {
+        thread::spawn(|| {
+            let (storage, subprocess) = fixture();
+            let metadata = MetaAllocator::test_static_owner();
+            let main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }.expect("main source owner");
+            let heap = main.shared_main_heap_lease().expect("main Heap");
+            thread::scope(|scope| {
+                for _ in 0..3 {
+                    scope.spawn(move || {
+                        let mut owner = match unsafe {
+                            MainHeapThreadAttachment::begin_with_test_metadata(heap, metadata, memory_config())
+                        } {
+                            Ok(owner) => owner,
+                            Err(_) => panic!("later source owner"),
+                        };
+                        let pointer = owner.theap_pointer().expect("live Theap");
+                        let thread = owner.thread;
+                        assert!(owner.permits_process_done_source_retention());
+                        unsafe { owner.transfer_source_state_after_process_done() }
+                            .expect("explicit metadata transfer precedes TLS loss");
+                        assert!(owner.theap.is_none());
+                        assert!(owner.tld.is_none());
+                        assert!(!owner.permits_process_done_source_retention());
+                        assert!(owner.finish_after_user_destructors().is_err());
+                        // The transfer does not impersonate thread_done: the
+                        // source image and TLS roots remain usable until this
+                        // worker exits. No wrapper retains its release right.
+                        assert_eq!(default_theap().as_ptr(), pointer);
+                        assert!(unsafe { &*pointer }.matches_thread(thread));
+                    }).join().expect("source-retained worker exits");
+                }
+            });
+            assert_eq!(metadata.test_allocation_audit().live_capability_count, 6);
+            assert_eq!(subprocess.live_thread_count(), 4);
+            crate::compiler_tls::clear_main_static_attachment_roots();
+            let tracking = std::boxed::Box::leak(std::boxed::Box::new([
+                const { crate::types::heap_destroy::MainHeapDestroyTracking::empty() }; 4
+            ]));
+            // SAFETY: all workers joined after transferring their owners;
+            // the remaining initial roots are clear, and this test never
+            // accesses the old main attachment or any earlier Heap projection.
+            unsafe { heap.force_destroy_source_owned_theaps(metadata, tracking) }
+                .expect("the complete main Heap list is destroyed");
+            assert!(heap.lock_heap().is_err(), "copied leases cannot reopen a retired Heap");
+            assert_eq!(tracking.iter().filter(|slot| slot.retains_theap()).count(), 0);
+            assert_eq!(tracking.iter().filter(|slot| slot.retains_tld()).count(), 3);
+            assert_eq!(metadata.test_allocation_audit().live_capability_count, 3);
+            assert_eq!(subprocess.live_thread_count(), 4, "source Heap destruction does not free TLDs");
+            // The fixture retains the detached TLD owners in external leaked
+            // storage; arena/process destruction is a separate transition.
+        }).join().expect("quiescent Heap destruction lifecycle");
     }
 
     #[test]

@@ -22,6 +22,7 @@
 // publication), `src/page.c:214-243,574-644,708-757` (false-force owner-local
 // collection and fresh-page local-state invariants),
 // and `src/arena.c:199-219` (arena memory-ID construction and projection).
+// Main-Heap source destruction is in the `heap_destroy` child module.
 // The intrusive membership operations from `src/page-queue.c:40-55,126-423`
 // are isolated in the `page_queue` child module below.
 // `Heap` and `Theap` below are exact source-layout *prefixes* only.
@@ -8399,3 +8400,6 @@ mod tests {
 
 #[path = "page_queue.rs"]
 pub(crate) mod page_queue;
+
+#[path = "heap_destroy.rs"]
+pub(crate) mod heap_destroy;

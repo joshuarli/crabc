@@ -551,6 +551,41 @@ pub(crate) struct MainStaticHeapGuard<'main> {
 }
 
 impl<'main> MainStaticHeapLease<'main> {
+    /// Closes every safe Heap projection before the source force-destruction
+    /// Theap pass. This terminal boundary does not release arenas/PageMap or
+    /// imply that the surrounding process shutdown has completed.
+    ///
+    /// # Safety
+    /// The caller permanently quiesces and invalidates every main attachment,
+    /// page engine, TLS root, and copied Heap lease; no concurrent caller may
+    /// retain a previously obtained projection. Every dynamic source member
+    /// must have explicitly transferred its metadata owners. The caller also
+    /// upholds `Heap::force_destroy_main_heap_theaps_quiescent`'s complete
+    /// metadata, external tracking-storage, and failure-retention contract.
+    pub(crate) unsafe fn force_destroy_source_owned_theaps(
+        self,
+        metadata: core::pin::Pin<&'static crate::meta::MetaAllocator>,
+        tracking: &mut [crate::types::heap_destroy::MainHeapDestroyTracking],
+    ) -> Result<(), crate::types::heap_destroy::MainHeapDestroyError> {
+        use crate::types::heap_destroy::MainHeapDestroyError;
+        let guard = self.storage.shared_heap_projection_lock.try_lock()
+            .ok_or(MainHeapDestroyError::Busy)?;
+        if self.storage.state.compare_exchange(
+            THREAD_READY, TORN_DOWN, Ordering::AcqRel, Ordering::Acquire,
+        ).is_err() {
+            let _ = guard.unlock();
+            return Err(MainHeapDestroyError::Inactive);
+        }
+        // SAFETY: exclusive process authority retires every earlier borrow;
+        // the terminal state prevents any new safe lease projection.
+        let result = unsafe {
+            (&mut *self.storage.heap.image.get())
+                .force_destroy_main_heap_theaps_quiescent(metadata, tracking)
+        };
+        let unlocked = guard.unlock().map_err(MainHeapDestroyError::Lock);
+        result.and(unlocked)
+    }
+
     /// Returns the main subprocess identity selected by the ticket-zero
     /// attachment.  Later-thread TLD construction must use this exact
     /// identity rather than a separately chosen process counter.

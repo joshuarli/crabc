@@ -6616,6 +6616,18 @@ impl NativePersistentThreadOwner {
         }
     }
 
+    /// Transfers the concrete TLD/Theap release capabilities before the
+    /// enclosing TLS cell disables this wrapper permanently. The source
+    /// engine remains represented by its live process Heap and PageMap.
+    unsafe fn transfer_source_state_after_process_done(&mut self) -> bool {
+        if !self.permits_process_done_source_retention() {
+            return false;
+        }
+        // SAFETY: the outer nonfinal process-done transition disables this
+        // TLS owner immediately after the transfer, before libc unmaps TLS.
+        unsafe { self.attachment.transfer_source_state_after_process_done() }.is_ok()
+    }
+
     /// Crosses the lazy source-page boundary after an ordinary allocation
     /// request selected this already-installed owner. This is deliberately
     /// absent from pthread attach: the pinned C `_mi_theap_init` transaction
@@ -14089,8 +14101,9 @@ pub fn finish_current_thread_native_after_user_destructors() -> ThreadFinishResu
 ///
 /// Libc calls this only after its locked task registry proved that another
 /// task remains. The cell transition deliberately leaves the source
-/// TLD/Theap/PageMap/metadata and `ThreadRegistrationLease` intact in the
-/// departing ELF TLS image; it releases only this runtime's admission claim.
+/// TLD/Theap/PageMap state intact, transferring metadata/registration release
+/// rights into the source graph before discarding the departing TLS wrapper.
+/// It releases only this runtime's admission claim.
 /// A final task must not call this: it keeps the same active owner through
 /// ordinary-exit callbacks and `_exit`.
 #[doc(hidden)]
@@ -14122,7 +14135,11 @@ pub fn retain_current_thread_native_owner_after_process_done_nonfinal() -> bool 
 
     if native_owner_installed {
         let permitted = match current_thread_native_persistent_owner_cell()
-            .with_owner(|owner| owner.get_mut().permits_process_done_source_retention())
+            .with_owner(|owner| {
+                // SAFETY: libc selected the nonfinal post-done path; the
+                // following cell transition permanently disables this owner.
+                unsafe { owner.get_mut().transfer_source_state_after_process_done() }
+            })
         {
             Ok(permitted) => permitted,
             Err(_) => false,
@@ -14137,10 +14154,16 @@ pub fn retain_current_thread_native_owner_after_process_done_nonfinal() -> bool 
             return false;
         }
     } else {
-        let attachment = current_thread_slot()
+        let mut attachment = current_thread_slot()
             .attachment
             .take()
             .expect("the checked post-process-done attachment remains installed");
+        // SAFETY: the checked attachment is exclusive on this departing
+        // thread and is never projected again after this source transfer.
+        if unsafe { attachment.transfer_source_state_after_process_done() }.is_err() {
+            current_thread_slot().attachment = Some(attachment);
+            return false;
+        }
         // `MainHeapThreadAttachment` intentionally has no destructor that
         // clears roots, list membership, or metadata. Do not run a generic
         // Rust Drop here: pinned C leaves the source image live after deleting

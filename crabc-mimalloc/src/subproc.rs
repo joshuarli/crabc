@@ -1485,6 +1485,29 @@ pub(crate) struct ThreadRegistrationLease {
 }
 
 impl ThreadRegistrationLease {
+    /// Moves the registration's release obligation into the live source TLD.
+    /// The matching metadata transfer preserves that TLD's identity and
+    /// subprocess fields; no thread-count decrement happens here.
+    pub(crate) fn into_source_retained(self) {}
+
+    /// Recovers the registration paired with an explicitly transferred TLD.
+    ///
+    /// # Safety
+    /// The caller has exclusive process quiescence, recovered this exact TLD
+    /// metadata once, and proves its original lease crossed
+    /// `into_source_retained` without release or prior recovery. The source
+    /// TLD and subprocess must remain live for the returned lease.
+    pub(crate) unsafe fn recover_source_retained(
+        subprocess: &'static MainSubprocess,
+        tld: &ThreadLocalData,
+    ) -> Option<Self> {
+        let thread = LiveThreadId::new(tld.thread_id())?;
+        if !tld.matches_subprocess_attached_lifecycle(thread, tld.thread_sequence(), subprocess) {
+            return None;
+        }
+        Some(Self { subprocess, _not_send_or_sync: PhantomData })
+    }
+
     #[inline]
     pub(crate) fn release(self) {
         self.subprocess.decrement_live_thread_count();

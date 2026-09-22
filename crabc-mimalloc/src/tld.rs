@@ -79,6 +79,7 @@ pub(crate) enum ThreadLocalDataError {
 enum ThreadLocalDataState {
     Active,
     TornDown,
+    SourceRetained,
     Poisoned,
 }
 
@@ -473,7 +474,7 @@ impl ThreadLocalDataOwner {
         match self.state {
             ThreadLocalDataState::Active => self.ensure_current_thread(),
             ThreadLocalDataState::TornDown => Err(ThreadLocalDataError::TornDown),
-            ThreadLocalDataState::Poisoned => Err(ThreadLocalDataError::Poisoned),
+            ThreadLocalDataState::SourceRetained | ThreadLocalDataState::Poisoned => Err(ThreadLocalDataError::Poisoned),
         }
     }
 
@@ -557,6 +558,42 @@ pub(crate) struct DynamicAttachedThreadLocalData {
 }
 
 impl DynamicAttachedThreadLocalData {
+    pub(crate) fn can_transfer_source_state_after_process_done(&mut self) -> bool {
+        self.current_mut().is_ok()
+            && self.registration.is_some()
+            && self.allocation.as_ref().is_some_and(MetaAllocation::can_transfer_source_retained_tld)
+    }
+
+    /// Transfers this live TLD's metadata and registration to the source
+    /// Theap/TLD graph before its Rust TLS wrapper disappears. No source
+    /// counter, list, identity, or allocation changes. The containing Theap
+    /// owner must perform the matching transfer before releasing its TLS.
+    ///
+    /// # Safety
+    /// The source Theap graph must retain this exact TLD and its subprocess
+    /// after this wrapper is discarded. Only an exclusive, quiescent source
+    /// teardown may recover its allocation and registration, exactly once.
+    pub(crate) unsafe fn transfer_source_state_after_process_done(
+        &mut self,
+    ) -> Result<core::ptr::NonNull<ThreadLocalData>, ThreadLocalDataError> {
+        if !self.can_transfer_source_state_after_process_done() {
+            return Err(ThreadLocalDataError::Projection);
+        }
+        let allocation = self.allocation.take().ok_or(ThreadLocalDataError::Projection)?;
+        let pointer = match allocation.into_source_retained_tld() {
+            Ok(pointer) => pointer,
+            Err(allocation) => {
+                self.allocation = Some(allocation);
+                return Err(ThreadLocalDataError::Projection);
+            }
+        };
+        // This lease has no Drop side effect. The source TLD remains live and
+        // registered; the exclusive source owner now owes its eventual release.
+        self.registration.take().expect("preflight retained registration").into_source_retained();
+        self.state = ThreadLocalDataState::SourceRetained;
+        Ok(pointer)
+    }
+
     #[inline]
     pub(crate) const fn thread(&self) -> LiveThreadId {
         self.thread
@@ -665,7 +702,7 @@ impl DynamicAttachedThreadLocalData {
                 None => Err(ThreadLocalDataError::InvalidCurrentThread),
             },
             ThreadLocalDataState::TornDown => Err(ThreadLocalDataError::TornDown),
-            ThreadLocalDataState::Poisoned => Err(ThreadLocalDataError::Poisoned),
+            ThreadLocalDataState::SourceRetained | ThreadLocalDataState::Poisoned => Err(ThreadLocalDataError::Poisoned),
         }
     }
 }
