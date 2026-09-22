@@ -223,6 +223,19 @@ impl Heap {
         self.statistics.merge_from_and_reset(&theap.statistics);
     }
 
+    /// Source `_mi_theap_merge_stats` using only the statistics field. This
+    /// does not create a whole-Theap observation that could alias concurrent
+    /// source Heap link updates or an owner-local queue projection.
+    ///
+    /// # Safety
+    /// `theap` is a live, initialized member of this exact Heap, retained for
+    /// the call. Its statistics field permits relaxed shared sampling/reset;
+    /// the caller excludes destruction and holds the Heap's source lock.
+    pub(crate) unsafe fn merge_attached_theap_statistics_at(&self, theap: NonNull<Theap>) {
+        let statistics = unsafe { &*core::ptr::addr_of!((*theap.as_ptr()).statistics) };
+        self.statistics.merge_from_and_reset(statistics);
+    }
+
     /// Merges a non-main Heap's complete source statistics into the selected
     /// main Heap before non-main unlink/count teardown.
     ///

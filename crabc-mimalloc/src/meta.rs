@@ -1466,6 +1466,26 @@ impl MetaAllocator {
         })
     }
 
+    /// Source process-done metadata-Theap merge, before the default Theap and
+    /// main Heap merge. Entry and source metadata locks exclude metadata
+    /// engine mutation; the nested canonical Heap lock scopes only fieldwise
+    /// statistics access. Every lock ends before final output can call libc.
+    pub(crate) fn merge_process_done_metadata_statistics(
+        self: Pin<&'static Self>, subprocess: &'static MainSubprocess,
+    ) -> Result<(), MetaError> {
+        let _entry = self.enter_for_main_subprocess(subprocess)?;
+        self.validate_bound_detached_metadata_theap(subprocess)?;
+        let heap = unsafe { *self.get_ref().canonical_heap.get() }
+            .ok_or(MetaError::InitializationRetained)?;
+        let pointer = NonNull::new(self.get_ref().detached_metadata_theap.load(Ordering::Acquire))
+            .ok_or(MetaError::InitializationRetained)?;
+        heap.with_heap(|canonical| {
+            // SAFETY: canonical binding and metadata entry retain the exact
+            // source member; with_heap owns its Heap lock through this merge.
+            unsafe { canonical.merge_attached_theap_statistics_at(pointer); }
+        }).map_err(|_| MetaError::InitializationRetained)
+    }
+
     #[cfg(test)]
     pub(crate) fn test_canonical_metadata_heap_membership(self: Pin<&'static Self>) -> bool {
         let Ok(_entry) = self.enter() else { return false; };
