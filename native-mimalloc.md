@@ -69,7 +69,8 @@ compatibility engineering, not allocator research.
    fixing the pinned-source behavior. Use focused checks during development;
    batch expensive suites at integration and milestone checkpoints as defined
    by `plan.md`. Do not invent a new failing test for a behavior-neutral change.
-5. Follow the current user-authorized `orchestrate` skill for agent routing.
+5. Follow the repository-local [crabc-orchestrate](.agents/skills/crabc-orchestrate/SKILL.md)
+   skill for this campaign's agent routing and execution budgets.
    Use independent workers when useful, with explicit ownership and isolated
    worktrees for implementation. The ownership rules in §6 apply to any wave.
 6. Prefer deleting or bypassing temporary allocator-control scaffolding over
