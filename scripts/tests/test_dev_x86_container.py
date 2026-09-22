@@ -161,9 +161,10 @@ exit 64
             self.assertFalse(capture.exists())
 
     def test_unwinder_owned_cleanup_forwards_the_compile_diagnostic_mode(self):
-        with self.tempdir() as td, tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as inputs:
+        with self.tempdir() as td, tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as work:
             bindir, capture = self.fake_docker(Path(td))
-            input_root = Path(inputs)
+            work_root = Path(work)
+            input_root = work_root / "inputs"; input_root.mkdir()
             provider = input_root / "provider-vendor"; provider.mkdir()
             static = input_root / "static-product"; static.mkdir()
             dynamic = input_root / "dynamic-product"; dynamic.mkdir()
@@ -171,6 +172,7 @@ exit 64
                 bindir, capture, "unwinder-owned-cleanup",
                 ("--provider-vendor", str(provider), "--static-sysroot", str(static), "--dynamic-sysroot", str(dynamic),
                  "--mixed-source-generated-compile-diagnostics-only"),
+                CRABC_X86_64_WORK_DIR=str(work_root),
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             arguments = [argument.decode() for argument in capture.read_bytes().split(b"\0") if argument]
