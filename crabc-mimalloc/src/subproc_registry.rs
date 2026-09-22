@@ -65,7 +65,7 @@ impl SourceSubprocessRegistry {
             .map_err(|_| SourceSubprocessRegistryError::InvalidMembership)?;
         // Source assigns static memid/parent/sequence before list locking.
         unsafe {
-            *member.memory.get() = MemoryId::static_allocation(NonNull::from(subprocess).cast(), size_of::<MainSubprocess>());
+            *member.memory.get() = MemoryId::static_allocation(NonNull::from(subprocess).cast().as_ptr(), size_of::<MainSubprocess>());
             *member.parent.get() = core::ptr::null_mut();
             *member.sequence.get() = self.total_count.fetch_add(1, Ordering::Relaxed);
         }

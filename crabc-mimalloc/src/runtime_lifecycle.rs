@@ -42,6 +42,7 @@ use core::convert::Infallible;
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 use core::pin::Pin;
+use core::ptr::NonNull;
 #[cfg(test)]
 use core::sync::atomic::AtomicPtr;
 #[cfg(feature = "native-runtime-test-audit")]

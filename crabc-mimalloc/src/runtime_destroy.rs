@@ -8,6 +8,7 @@
 
 use super::*;
 use crate::arena::DestroyedArenas;
+use crate::os::{MapAccess, Mapping};
 use crate::process_init::ProcessMainReadyLease;
 use crate::types::heap_destroy::{MainHeapDestroyError, MainHeapDestroyTracking};
 
