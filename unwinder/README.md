@@ -294,10 +294,11 @@ and supplies that copy to LLD; the reader rehashes the durable copy while the
 receipt retains the original Cargo path. The generated workspace lock, exact pinned provider features and
 staged overlay sources are audited before compiling. The provider therefore
 inherits the consumer's `panic=unwind`, fat-LTO, and codegen-unit profile
-rather than its standalone producer profile. A schema-5 link receipt excludes
-stock target rlibs and direct source rlibs. For a plugin it also binds Cargo's
-transient version script to the retained link input before Cargo may erase it.
-Cargo artifact JSON, verbose build
+rather than its standalone producer profile. A schema-6 link receipt excludes
+stock target rlibs and direct source rlibs. For a plugin it binds Cargo's
+transient version script to the retained link input before Cargo may erase it,
+and records the exact three cleanup exports plus the provider's 17
+`_Unwind_*` exports from the linked cdylib. Cargo artifact JSON, verbose build
 records, the pinned `rust-src` library lock, and the linker-side receipt bind
 the source graph to the final executable or plugin even where Cargo hard-links
 an artifact into its release directory.

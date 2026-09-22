@@ -197,7 +197,36 @@ def _linker_option_value(argument: str, name: str) -> str | None:
     return None
 
 
-def audit_rust_cdylib_export_script(path: Path) -> None:
+def source_lto_unwind_abi() -> tuple[str, ...]:
+    """Read the exact source-provider ABI the runner passed to the linker."""
+
+    encoded = os.environ.get(SOURCE_LTO_UNWIND_ABI_ENV)
+    if encoded is None:
+        raise LinkError("missing source-built Cargo LTO unwind ABI")
+    try:
+        expected_value = json.loads(encoded)
+    except json.JSONDecodeError as error:
+        raise LinkError("source-built Cargo LTO unwind ABI is not JSON") from error
+    if (
+        not isinstance(expected_value, list) or not expected_value
+        or any(not isinstance(symbol, str) or re.fullmatch(r"_Unwind_[A-Za-z0-9_]+", symbol) is None
+               for symbol in expected_value)
+        or len(set(expected_value)) != len(expected_value)
+    ):
+        raise LinkError("source-built Cargo LTO unwind ABI is malformed")
+    return tuple(sorted(expected_value))
+
+
+def rust_cdylib_export_symbols(source_unwind_abi: tuple[str, ...] = ()) -> tuple[str, ...]:
+    """Return the finite plugin ABI plus its source-provider C unwind ABI."""
+
+    exports = (*RUST_CDYLIB_EXPORTS, *source_unwind_abi)
+    if len(set(exports)) != len(exports):
+        raise LinkError("Rust cdylib export ABI repeats a symbol")
+    return exports
+
+
+def audit_rust_cdylib_export_script(path: Path, expected_exports: tuple[str, ...]) -> None:
     """Keep the plugin's Rust-generated export policy as one finite input."""
 
     try:
@@ -207,10 +236,24 @@ def audit_rust_cdylib_export_script(path: Path) -> None:
     if len(contents) > 4096:
         raise LinkError("Rust cdylib export script is too large")
     without_comments = re.sub(r"/\*.*?\*/", "", contents, flags=re.DOTALL)
-    exports = "\\s*;\\s*".join(RUST_CDYLIB_EXPORTS)
+    exports = "\\s*;\\s*".join(expected_exports)
     expected = rf"\s*\{{\s*global\s*:\s*{exports}\s*;\s*local\s*:\s*\*\s*;\s*\}}\s*;\s*"
     if re.fullmatch(expected, without_comments) is None:
         raise LinkError("Rust cdylib export script differs from the cleanup plugin contract")
+
+
+def audit_rust_cdylib_dynamic_exports(output: Path, nm: Path, expected_exports: tuple[str, ...]) -> list[str]:
+    """Require the final cdylib's visible definitions to equal its version script."""
+
+    names: list[str] = []
+    for line in run([nm, "--dynamic", "--defined-only", "--extern-only", output]).splitlines():
+        fields = line.split()
+        if len(fields) < 3:
+            raise LinkError("Rust cdylib dynamic-symbol inventory is malformed")
+        names.append(fields[-1])
+    if len(names) != len(set(names)) or set(names) != set(expected_exports):
+        raise LinkError("Rust cdylib dynamic exports differ from the cleanup plugin contract")
+    return sorted(names)
 
 
 def retain_rust_cdylib_export_script(
@@ -430,7 +473,10 @@ def retain_source_lto_object(cargo_object: Path, output: Path, application_root:
     return original, retained
 
 
-def source_lto_object_receipt(cargo_object: dict[str, object], retained_object: Path, nm: Path) -> dict[str, object]:
+def source_lto_object_receipt(
+    cargo_object: dict[str, object], retained_object: Path, nm: Path,
+    expected_unwind_abi: tuple[str, ...] | None = None,
+) -> dict[str, object]:
     """Prove the retained fused Cargo object retains the provider ABI before LLD.
 
     Fat LTO intentionally removes Rust standard-library and provider rlibs
@@ -438,27 +484,15 @@ def source_lto_object_receipt(cargo_object: dict[str, object], retained_object: 
     provider contract; its reader compares this record with that contract.
     """
 
-    encoded = os.environ.get(SOURCE_LTO_UNWIND_ABI_ENV)
-    if encoded is None:
-        raise LinkError("missing source-built Cargo LTO unwind ABI")
-    try:
-        expected_value = json.loads(encoded)
-    except json.JSONDecodeError as error:
-        raise LinkError("source-built Cargo LTO unwind ABI is not JSON") from error
-    if (
-        not isinstance(expected_value, list) or not expected_value
-        or any(not isinstance(symbol, str) or re.fullmatch(r"_Unwind_[A-Za-z0-9_]+", symbol) is None
-               for symbol in expected_value)
-        or len(set(expected_value)) != len(expected_value)
-    ):
-        raise LinkError("source-built Cargo LTO unwind ABI is malformed")
+    if expected_unwind_abi is None:
+        expected_unwind_abi = source_lto_unwind_abi()
     symbols = {
         line.split()[-1]
         for line in run([nm, "--defined-only", retained_object]).splitlines()
         if len(line.split()) >= 3
     }
     defined_unwind = sorted(symbol for symbol in symbols if symbol.startswith("_Unwind_"))
-    if set(defined_unwind) != set(expected_value):
+    if set(defined_unwind) != set(expected_unwind_abi):
         raise LinkError("source-built Cargo LTO object does not retain the declared unwind ABI")
     if "rust_eh_personality" not in symbols:
         raise LinkError("source-built Cargo LTO object lacks rust_eh_personality")
@@ -707,18 +741,24 @@ def link(arguments: list[str]) -> None:
         input_records.append(_record_input(archive, members=audit_rust_archive(archive, ar)))
     source_lto_object: dict[str, object] | None = None
     rust_cdylib_export_script: dict[str, object] | None = None
+    source_unwind_abi: tuple[str, ...] | None = None
+    cdylib_exports: tuple[str, ...] | None = None
     if version_script is not None:
         # Do this before auditing so Cargo cannot erase a rejected generated
         # script with the rest of its transient target directory.
         rust_cdylib_export_script, version_script = retain_rust_cdylib_export_script(
             version_script, output, application_root,
         )
-        audit_rust_cdylib_export_script(version_script)
+        source_unwind_abi = source_lto_unwind_abi() if source_built_root is not None else ()
+        cdylib_exports = rust_cdylib_export_symbols(source_unwind_abi)
+        audit_rust_cdylib_export_script(version_script, cdylib_exports)
     if source_built_root is not None:
         if len(objects) != 1:
             raise LinkError("source-built Cargo fat-LTO final link must contain one fused Rust object")
         cargo_object, retained_object = retain_source_lto_object(objects[0], output, application_root)
-        source_lto_object = source_lto_object_receipt(cargo_object, retained_object, nm)
+        source_lto_object = source_lto_object_receipt(
+            cargo_object, retained_object, nm, source_unwind_abi,
+        )
         objects = [retained_object]
         input_records = [_record_input(retained_object)]
     command = link_command(
@@ -730,9 +770,14 @@ def link(arguments: list[str]) -> None:
     runtime = _product_inputs(root, mode)
     validate_trace(trace, {*objects, *archives, *runtime, *( [provider] if provider is not None else [] )})
     dynamic, segments = _elf_facts(output, mode, rust_mode)
+    if rust_cdylib_export_script is not None:
+        assert cdylib_exports is not None
+        rust_cdylib_export_script["dynamic_exports"] = audit_rust_cdylib_dynamic_exports(
+            output, nm, cdylib_exports,
+        )
     record = {
-        "schema": 5 if source_built_root is not None else 1,
-        "format": "crabc-owned-rust-source-build-link/v4" if source_built_root is not None else "crabc-owned-rust-std-link/v1",
+        "schema": 6 if source_built_root is not None else 1,
+        "format": "crabc-owned-rust-source-build-link/v5" if source_built_root is not None else "crabc-owned-rust-std-link/v1",
         "target": TARGET,
         "mode": mode,
         "rust_requested_mode": parsed["rust_mode"],

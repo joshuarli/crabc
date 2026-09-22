@@ -17,6 +17,19 @@ linker = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(linker)
 
 WORK = Path(__file__).parents[2] / ".work/x86_64/unwinder-output-tests"
+PINNED_CDYLIB_EXPORT_SCRIPT = (
+    "{\n  global:\n    crabc_owned_cleanup_dso;\n"
+    "    crabc_owned_cleanup_dso_ready;\n    crabc_owned_cleanup_dso_release;\n"
+    "    _Unwind_Backtrace;\n    _Unwind_DeleteException;\n"
+    "    _Unwind_FindEnclosingFunction;\n    _Unwind_ForcedUnwind;\n"
+    "    _Unwind_GetCFA;\n    _Unwind_GetDataRelBase;\n    _Unwind_GetGR;\n"
+    "    _Unwind_GetIP;\n    _Unwind_GetIPInfo;\n"
+    "    _Unwind_GetLanguageSpecificData;\n    _Unwind_GetRegionStart;\n"
+    "    _Unwind_GetTextRelBase;\n    _Unwind_RaiseException;\n"
+    "    _Unwind_Resume;\n    _Unwind_Resume_or_Rethrow;\n"
+    "    _Unwind_SetGR;\n    _Unwind_SetIP;\n\n  local:\n    *;\n};\n"
+)
+PINNED_CDYLIB_EXPORT_SCRIPT_SHA256 = "5ffdc0a045a216d75978a24d62fee6494ab9d4693609946f6670a3c52a152f1f"
 
 
 class OwnedRustLinkContract(unittest.TestCase):
@@ -86,6 +99,16 @@ class OwnedRustLinkContract(unittest.TestCase):
             str(self.application / "cleanup"), "-Wl,--gc-sections", "-pie", "-Wl,-z,relro,-z,now",
             "-Wl,-O1", "-Wl,--strip-debug", "-nodefaultlibs",
         ]
+
+    def source_cdylib_exports(self):
+        unwind_abi = (
+            "_Unwind_Backtrace", "_Unwind_DeleteException", "_Unwind_FindEnclosingFunction",
+            "_Unwind_ForcedUnwind", "_Unwind_GetCFA", "_Unwind_GetDataRelBase", "_Unwind_GetGR",
+            "_Unwind_GetIP", "_Unwind_GetIPInfo", "_Unwind_GetLanguageSpecificData",
+            "_Unwind_GetRegionStart", "_Unwind_GetTextRelBase", "_Unwind_RaiseException",
+            "_Unwind_Resume", "_Unwind_Resume_or_Rethrow", "_Unwind_SetGR", "_Unwind_SetIP",
+        )
+        return linker.rust_cdylib_export_symbols(unwind_abi)
 
     def test_complete_stock_input_replaces_both_ambient_unwind_paths(self):
         parsed = self.parse()
@@ -294,7 +317,58 @@ class OwnedRustLinkContract(unittest.TestCase):
         self.assertEqual(record["cargo_script"]["sha256"], record["retained_script"]["sha256"])
         self.assertEqual(retained.name, "libcleanup.so.crabc-owned-rust-export-script.map")
         with self.assertRaisesRegex(linker.LinkError, "export script differs"):
-            linker.audit_rust_cdylib_export_script(retained)
+            linker.audit_rust_cdylib_export_script(retained, self.source_cdylib_exports())
+
+    def test_source_cdylib_export_script_matches_the_pinned_compiler_rendering(self):
+        """The 5fed public diagnostic preserved this exact nightly script."""
+
+        script = self.application / "rust-cdylib.map"
+        script.write_text(PINNED_CDYLIB_EXPORT_SCRIPT, encoding="ascii")
+        self.assertEqual(hashlib.sha256(script.read_bytes()).hexdigest(), PINNED_CDYLIB_EXPORT_SCRIPT_SHA256)
+        linker.audit_rust_cdylib_export_script(script, self.source_cdylib_exports())
+
+    def test_source_cdylib_export_script_rejects_wrong_export_roster_or_local_scope(self):
+        script = self.application / "rust-cdylib.map"
+        expected = self.source_cdylib_exports()
+        malformed = {
+            "extra": PINNED_CDYLIB_EXPORT_SCRIPT.replace(
+                "\n\n  local:", "\n    unapproved_export;\n\n  local:",
+            ),
+            "missing": PINNED_CDYLIB_EXPORT_SCRIPT.replace("    _Unwind_RaiseException;\n", ""),
+            "duplicate": PINNED_CDYLIB_EXPORT_SCRIPT.replace(
+                "    _Unwind_RaiseException;\n",
+                "    _Unwind_RaiseException;\n    _Unwind_RaiseException;\n",
+            ),
+            "case": PINNED_CDYLIB_EXPORT_SCRIPT.replace(
+                "    crabc_owned_cleanup_dso;\n", "    CRABC_OWNED_CLEANUP_DSO;\n",
+            ),
+            "local": PINNED_CDYLIB_EXPORT_SCRIPT.replace("    *;\n};\n", "    unapproved_export;\n};\n"),
+        }
+        for name, contents in malformed.items():
+            with self.subTest(name=name):
+                script.write_text(contents, encoding="ascii")
+                with self.assertRaisesRegex(linker.LinkError, "export script differs"):
+                    linker.audit_rust_cdylib_export_script(script, expected)
+
+    def test_source_cdylib_dynamic_exports_match_the_same_exact_roster(self):
+        expected = self.source_cdylib_exports()
+        nm_output = "\n".join(f"0000000000000000 T {symbol}" for symbol in expected) + "\n"
+        with patch.object(linker, "run", return_value=nm_output):
+            exports = linker.audit_rust_cdylib_dynamic_exports(
+                self.application / "libcleanup.so", Path("/pinned/llvm-nm"), expected,
+            )
+        self.assertEqual(exports, sorted(expected))
+        malformed = {
+            "extra": nm_output + "0000000000000000 T unapproved_export\n",
+            "missing": "\n".join(f"0000000000000000 T {symbol}" for symbol in expected[:-1]) + "\n",
+            "duplicate": nm_output + f"0000000000000000 T {expected[0]}\n",
+        }
+        for name, output in malformed.items():
+            with self.subTest(name=name), patch.object(linker, "run", return_value=output):
+                with self.assertRaisesRegex(linker.LinkError, "dynamic exports differ"):
+                    linker.audit_rust_cdylib_dynamic_exports(
+                        self.application / "libcleanup.so", Path("/pinned/llvm-nm"), expected,
+                    )
 
     def test_shared_rust_plugin_admits_the_saved_pointer_close_handshake_exports(self):
         self.application.joinpath("rust-cdylib.map").write_text(

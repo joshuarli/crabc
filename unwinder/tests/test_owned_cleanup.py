@@ -535,8 +535,8 @@ class OwnedCleanupContract(unittest.TestCase):
         shutil.copyfile(fused, retained)
         retained_record = owned_cleanup.record_file(retained, "test retained fused Cargo LTO object")
         record = {
-            "schema": 5,
-            "format": "crabc-owned-rust-source-build-link/v4",
+            "schema": 6,
+            "format": "crabc-owned-rust-source-build-link/v5",
             "rust_library_origin": "source-built",
             "source_built_target_library_root": str(source),
             "declared_toolchain_search_root": str(toolchain_search),
@@ -571,16 +571,20 @@ class OwnedCleanupContract(unittest.TestCase):
             owned_cleanup.source_built_link_receipt(receipt, binary, source, "test source-built link")
         record["command"].append("--no-undefined-version")
         cargo_script = Path(self.temporary.name) / "cargo-rust-list"
-        cargo_script.write_text(
-            "{\n  global:\n    crabc_owned_cleanup_dso;\n"
-            "    crabc_owned_cleanup_dso_ready;\n    crabc_owned_cleanup_dso_release;\n"
-            "  local:\n    *;\n};\n",
+        expected_dynamic_exports = sorted({*owned_cleanup.owned_rust_link.RUST_CDYLIB_EXPORTS, *build.UNWIND_ABI})
+        cargo_script_contents = (
+            "{\n  global:\n"
+            + "".join(f"    {symbol};\n" for symbol in owned_cleanup.owned_rust_link.RUST_CDYLIB_EXPORTS)
+            + "".join(f"    {symbol};\n" for symbol in sorted(build.UNWIND_ABI))
+            + "\n  local:\n    *;\n};\n"
         )
+        cargo_script.write_text(cargo_script_contents)
         retained_script = binary.with_name(binary.name + ".crabc-owned-rust-export-script.map")
         shutil.copyfile(cargo_script, retained_script)
         record["rust_cdylib_export_script"] = {
             "cargo_script": owned_cleanup.record_file(cargo_script, "test Cargo cdylib export script"),
             "retained_script": owned_cleanup.record_file(retained_script, "test retained cdylib export script"),
+            "dynamic_exports": expected_dynamic_exports,
         }
         record["command"].extend(("--version-script", str(retained_script)))
         receipt.write_text(json.dumps(record))
@@ -589,14 +593,16 @@ class OwnedCleanupContract(unittest.TestCase):
         # independently rehashing the confined copy LLD received.
         cargo_script.unlink()
         owned_cleanup.source_built_link_receipt(receipt, binary, source, "test source-built link")
+        record["rust_cdylib_export_script"]["dynamic_exports"] = expected_dynamic_exports[:-1]
+        receipt.write_text(json.dumps(record))
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "retained cdylib export script"):
+            owned_cleanup.source_built_link_receipt(receipt, binary, source, "test source-built link")
+        record["rust_cdylib_export_script"]["dynamic_exports"] = expected_dynamic_exports
+        receipt.write_text(json.dumps(record))
         retained_script.write_text("tampered cdylib export script\n")
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "retained cdylib export script"):
             owned_cleanup.source_built_link_receipt(receipt, binary, source, "test source-built link")
-        retained_script.write_text(
-            "{\n  global:\n    crabc_owned_cleanup_dso;\n"
-            "    crabc_owned_cleanup_dso_ready;\n    crabc_owned_cleanup_dso_release;\n"
-            "  local:\n    *;\n};\n",
-        )
+        retained_script.write_text(cargo_script_contents)
         record.pop("rust_requested_mode")
         record["command"].pop()
         record["command"].pop()
