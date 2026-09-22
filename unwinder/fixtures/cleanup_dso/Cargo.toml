@@ -1,0 +1,22 @@
+[package]
+name = "crabc-owned-cleanup-dso"
+version = "0.0.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+name = "crabc_owned_cleanup_plugin"
+path = "src/plugin.rs"
+
+[[bin]]
+name = "crabc-owned-cleanup-dso-host"
+path = "src/main.rs"
+
+[workspace]
+
+[profile.release]
+codegen-units = 1
+debug = 0
+incremental = false
+lto = "fat"
+panic = "unwind"

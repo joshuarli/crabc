@@ -31,6 +31,7 @@ CANONICAL_FLAGS = frozenset({
     "-Wl,-z,relro,-z,now", "-Wl,-O1", "-Wl,--strip-debug",
 })
 METADATA_MEMBERS = frozenset({"lib.rmeta", "lib.rmeta-link"})
+RUST_CDYLIB_EXPORT = "crabc_owned_cleanup_dso"
 
 
 class LinkError(RuntimeError):
@@ -94,13 +95,12 @@ def confined(path: str, roots: Iterable[Path], description: str, *, directory: b
 
 
 def confined_output(path: str, root: Path) -> Path:
-    """Accept one not-yet-created output without permitting symlink traversal."""
+    """Accept one not-yet-created output below an already-physical root."""
 
     candidate = _absolute(Path(path))
     if ".." in Path(path).parts or not candidate.is_relative_to(root):
         raise LinkError(f"Rust output is outside the declared application root: {path}")
-    if candidate.parent != root:
-        physical_directory(candidate.parent, "Rust output parent")
+    physical_directory(candidate.parent, "Rust output parent")
     return candidate
 
 
@@ -130,9 +130,50 @@ def _stock_archive(path: Path, stock_root: Path, expression: re.Pattern[str]) ->
     return path.parent == stock_root and expression.fullmatch(path.name) is not None
 
 
-def parse_arguments(arguments: list[str], application_root: Path, stock_root: Path) -> dict[str, object]:
+def _linker_option_value(argument: str, name: str) -> str | None:
+    """Read the two finite GCC spellings Rust emits for one linker option."""
+
+    equals = f"-Wl,{name}="
+    comma = f"-Wl,{name},"
+    if argument.startswith(equals):
+        return argument.removeprefix(equals)
+    if argument.startswith(comma):
+        return argument.removeprefix(comma)
+    return None
+
+
+def audit_rust_cdylib_export_script(path: Path) -> None:
+    """Keep the plugin's Rust-generated export policy as one finite input."""
+
+    try:
+        contents = path.read_text(encoding="ascii")
+    except (OSError, UnicodeDecodeError) as error:
+        raise LinkError(f"Rust cdylib export script is unreadable: {path}") from error
+    if len(contents) > 4096:
+        raise LinkError("Rust cdylib export script is too large")
+    without_comments = re.sub(r"/\*.*?\*/", "", contents, flags=re.DOTALL)
+    expected = rf"\s*\{{\s*global\s*:\s*{RUST_CDYLIB_EXPORT}\s*;\s*local\s*:\s*\*\s*;\s*\}}\s*;\s*"
+    if re.fullmatch(expected, without_comments) is None:
+        raise LinkError("Rust cdylib export script differs from the cleanup plugin contract")
+
+
+def parse_arguments(
+    arguments: list[str], application_root: Path, stock_root: Path | None,
+    source_built_root: Path | None = None,
+) -> dict[str, object]:
     """Parse the finite rustc linker dialect without forwarding any raw flag."""
 
+    source_built = source_built_root is not None
+    if source_built:
+        search_roots = [application_root, source_built_root]
+        archive_roots = [source_built_root]
+        archive_description = "source-built Rust archive"
+    else:
+        if stock_root is None:
+            raise LinkError("missing stock Rust target library root")
+        search_roots = [application_root, stock_root]
+        archive_roots = search_roots
+        archive_description = "Rust archive"
     objects: list[Path] = []
     archives: list[Path] = []
     search_paths: list[Path] = []
@@ -141,6 +182,8 @@ def parse_arguments(arguments: list[str], application_root: Path, stock_root: Pa
     compiler_builtins: Path | None = None
     output: Path | None = None
     rust_mode: str | None = None
+    shared_soname: str | None = None
+    version_script: Path | None = None
     export_dynamic = False
     index = 0
     while index < len(arguments):
@@ -157,26 +200,38 @@ def parse_arguments(arguments: list[str], application_root: Path, stock_root: Pa
                     raise LinkError("duplicate output")
                 output = confined_output(value, application_root)
             else:
-                search_paths.append(confined(value, [application_root, stock_root], "Rust search path", directory=True))
-        elif argument in {"-pie", "-no-pie"}:
+                search_paths.append(confined(value, search_roots, "Rust search path", directory=True))
+        elif argument in {"-pie", "-no-pie", "-shared"}:
             if rust_mode is not None:
                 raise LinkError("duplicate or conflicting Rust executable mode")
             rust_mode = argument.removeprefix("-")
         elif argument == "-Wl,--export-dynamic":
             export_dynamic = True
+        elif (value := _linker_option_value(argument, "-soname")) is not None:
+            if not value or "/" in value or "\0" in value or shared_soname is not None:
+                raise LinkError("Rust shared-object SONAME is invalid")
+            shared_soname = value
+        elif (value := _linker_option_value(argument, "--version-script")) is not None:
+            if not value or version_script is not None:
+                raise LinkError("Rust cdylib export script is invalid")
+            version_script = confined(value, [application_root], "Rust cdylib export script")
         elif argument in NATIVE_REQUESTS:
             native_requests.append(argument)
         elif argument in CANONICAL_FLAGS:
             pass
         elif argument.endswith(".rlib"):
-            archive = confined(argument, [application_root, stock_root], "Rust archive")
-            if _stock_archive(archive, stock_root, STOCK_RUST_UNWIND_ARCHIVE):
+            archive = confined(argument, archive_roots, archive_description)
+            runtime_root = source_built_root if source_built else stock_root
+            assert runtime_root is not None
+            if _stock_archive(archive, runtime_root, STOCK_RUST_UNWIND_ARCHIVE):
                 if stock_unwind is not None:
-                    raise LinkError("duplicate stock Rust libunwind archive")
+                    raise LinkError("duplicate source-built Rust libunwind archive" if source_built else
+                                    "duplicate stock Rust libunwind archive")
                 stock_unwind = archive
-            elif _stock_archive(archive, stock_root, COMPILER_BUILTINS_ARCHIVE):
+            elif _stock_archive(archive, runtime_root, COMPILER_BUILTINS_ARCHIVE):
                 if compiler_builtins is not None:
-                    raise LinkError("duplicate Rust compiler-builtins archive")
+                    raise LinkError("duplicate source-built Rust compiler-builtins archive" if source_built else
+                                    "duplicate Rust compiler-builtins archive")
                 compiler_builtins = archive
             elif is_foreign_native_runtime(str(archive)):
                 raise LinkError(f"foreign native runtime archive: {archive}")
@@ -189,13 +244,30 @@ def parse_arguments(arguments: list[str], application_root: Path, stock_root: Pa
         else:
             raise LinkError(f"unrecognized Rust link argument: {argument}")
     if output is None or rust_mode is None or not objects:
-        raise LinkError("expected output, executable mode, and Rust application objects")
+        raise LinkError("expected output, Rust link mode, and Rust application objects")
     if stock_unwind is None:
-        raise LinkError("missing exact stock Rust libunwind archive")
+        raise LinkError("missing exact source-built Rust libunwind archive" if source_built else
+                        "missing exact stock Rust libunwind archive")
     if compiler_builtins is None:
-        raise LinkError("missing exact Rust compiler-builtins archive")
+        raise LinkError("missing exact source-built Rust compiler-builtins archive" if source_built else
+                        "missing exact Rust compiler-builtins archive")
     if "-lc" not in native_requests or not set(native_requests) & {"-lgcc", "-lgcc_s"}:
         raise LinkError("missing Rust libc or libgcc request")
+    if (shared_soname is not None or version_script is not None) and rust_mode != "shared":
+        raise LinkError("Rust shared-object option used for a non-shared link")
+    if rust_mode == "shared":
+        if shared_soname is not None and shared_soname != output.name:
+            raise LinkError("Rust shared-object SONAME differs from its output")
+        if source_built and version_script is None:
+            raise LinkError("source-built Rust cdylib lacks its export script")
+        if version_script is not None:
+            audit_rust_cdylib_export_script(version_script)
+    if source_built:
+        required = ("libstd-", "libcore-", "liballoc-", "libpanic_unwind-")
+        present = {archive.name.split("-", 1)[0] + "-" for archive in archives}
+        missing = [prefix for prefix in required if prefix not in present]
+        if missing:
+            raise LinkError(f"source-built Rust standard-library closure is incomplete: {missing!r}")
     all_inputs = [*objects, *archives]
     if output in all_inputs or len(all_inputs) != len(set(all_inputs)):
         raise LinkError("output aliases or Rust repeats an application input")
@@ -209,6 +281,11 @@ def parse_arguments(arguments: list[str], application_root: Path, stock_root: Pa
         "output": output,
         "rust_mode": rust_mode,
         "export_dynamic": export_dynamic,
+        "rust_library_origin": "source-built" if source_built else "stock",
+        "source_built_unwind": stock_unwind if source_built else None,
+        "source_built_compiler_builtins": compiler_builtins if source_built else None,
+        "shared_soname": shared_soname,
+        "version_script": version_script,
     }
 
 
@@ -261,11 +338,23 @@ def _product_inputs(root: Path, mode: str) -> list[Path]:
 
 def link_command(
     *, linker: Path, root: Path, mode: str, provider: Path, objects: list[Path], archives: list[Path], output: Path,
-    export_dynamic: bool,
+    export_dynamic: bool, rust_mode: str = "executable", version_script: Path | None = None,
 ) -> list[str]:
     """Return the entire native command; there are no library-search holes."""
 
     runtime = _product_inputs(root, mode)
+    if rust_mode == "shared":
+        if mode != "dynamic":
+            raise LinkError("a Rust shared object requires the owned dynamic product")
+        return [
+            str(linker), "-shared", "-soname", output.name, "--hash-style=sysv", "--eh-frame-hdr", "--gc-sections",
+            "--no-undefined", "--allow-shlib-undefined", "-z", "text", "-z", "noexecstack", "-z", "relro", "-z", "now",
+            *( ["--version-script", str(version_script)] if version_script is not None else [] ),
+            "--trace", "-o", str(output), str(runtime[1]), *map(str, objects), *map(str, archives), str(provider),
+            str(runtime[3]), str(runtime[4]), str(runtime[5]),
+        ]
+    if rust_mode not in {"executable", "pie", "no-pie"}:
+        raise LinkError(f"unsupported Rust link mode: {rust_mode}")
     if mode == "static":
         return [
             str(linker), "-static", "--no-dynamic-linker", "--no-undefined", "--eh-frame-hdr",
@@ -298,12 +387,17 @@ def validate_trace(trace: str, admitted: set[Path]) -> None:
             raise LinkError(f"link trace admits ambient native runtime: {line}")
 
 
-def _elf_facts(output: Path, mode: str) -> tuple[str, str]:
+def _elf_facts(output: Path, mode: str, rust_mode: str) -> tuple[str, str]:
     dynamic = run(["readelf", "-dW", output])
     segments = run(["readelf", "-lW", output])
     if "GNU_EH_FRAME" not in segments or "GNU_RELRO" not in segments:
         raise LinkError("owned Rust executable lacks EH-frame header or RELRO")
-    if mode == "static":
+    if rust_mode == "shared":
+        needed = re.findall(r"\(NEEDED\).*\[([^]]+)\]", dynamic)
+        sonames = re.findall(r"\(SONAME\).*\[([^]]+)\]", dynamic)
+        if mode != "dynamic" or "INTERP" in segments or needed != ["libc.so"] or sonames != [output.name] or "TEXTREL" in dynamic:
+            raise LinkError("owned Rust shared object has unapproved runtime dependencies")
+    elif mode == "static":
         if "INTERP" in segments or "(NEEDED)" in dynamic:
             raise LinkError("static owned Rust executable admits an interpreter or DSO")
     else:
@@ -325,7 +419,7 @@ def link(arguments: list[str]) -> None:
 
     required = (
         "CRABC_OWNED_RUST_LINK_MODE", "CRABC_OWNED_RUST_PRODUCT", "CRABC_OWNED_RUST_PROVIDER",
-        "CRABC_OWNED_RUST_STOCK_LIBDIR", "CRABC_OWNED_RUST_APPLICATION_ROOT",
+        "CRABC_OWNED_RUST_APPLICATION_ROOT",
     )
     missing = [name for name in required if not os.environ.get(name)]
     if missing:
@@ -335,10 +429,21 @@ def link(arguments: list[str]) -> None:
         raise LinkError(f"unsupported owned Rust link mode: {mode}")
     root = physical_directory(Path(os.environ["CRABC_OWNED_RUST_PRODUCT"]), "owned product root")
     application_root = physical_directory(Path(os.environ["CRABC_OWNED_RUST_APPLICATION_ROOT"]), "Rust application root")
-    stock_root = physical_directory(Path(os.environ["CRABC_OWNED_RUST_STOCK_LIBDIR"]), "stock Rust target library root")
+    source_built_value = os.environ.get("CRABC_OWNED_RUST_SOURCE_BUILT_LIBDIR")
+    source_built_root = (
+        physical_directory(Path(source_built_value), "source-built Rust target library root")
+        if source_built_value else None
+    )
+    if source_built_root is None:
+        stock_value = os.environ.get("CRABC_OWNED_RUST_STOCK_LIBDIR")
+        if not stock_value:
+            raise LinkError("missing owned Rust linker environment: CRABC_OWNED_RUST_STOCK_LIBDIR")
+        stock_root: Path | None = physical_directory(Path(stock_value), "stock Rust target library root")
+    else:
+        stock_root = None
     provider = physical_regular(Path(os.environ["CRABC_OWNED_RUST_PROVIDER"]), "selected unwind provider")
     manifest, manifest_files = _read_product(root, mode)
-    parsed = parse_arguments(arguments, application_root, stock_root)
+    parsed = parse_arguments(arguments, application_root, stock_root, source_built_root)
     output = parsed["output"]
     assert isinstance(output, Path)
     if output.exists() or output.is_symlink():
@@ -351,7 +456,10 @@ def link(arguments: list[str]) -> None:
     ar = physical_regular(rust_sysroot / "lib/rustlib" / TARGET / "bin/llvm-ar", "pinned Rust llvm-ar")
     objects = parsed["objects"]
     archives = parsed["archives"]
-    assert isinstance(objects, list) and isinstance(archives, list)
+    rust_mode = parsed["rust_mode"]
+    version_script = parsed["version_script"]
+    assert isinstance(objects, list) and isinstance(archives, list) and isinstance(rust_mode, str)
+    assert version_script is None or isinstance(version_script, Path)
     input_records: list[dict[str, object]] = []
     for object_path in objects:
         if object_path.read_bytes()[:20][18:20] != b"\x3e\x00":
@@ -361,22 +469,22 @@ def link(arguments: list[str]) -> None:
         input_records.append(_record_input(archive, members=audit_rust_archive(archive, ar)))
     command = link_command(
         linker=linker, root=root, mode=mode, provider=provider, objects=objects, archives=archives,
-        output=output, export_dynamic=bool(parsed["export_dynamic"]),
+        output=output, export_dynamic=bool(parsed["export_dynamic"]), rust_mode=rust_mode,
+        version_script=version_script,
     )
     trace = run(command)
     runtime = _product_inputs(root, mode)
     validate_trace(trace, {provider, *objects, *archives, *runtime})
-    dynamic, segments = _elf_facts(output, mode)
+    dynamic, segments = _elf_facts(output, mode, rust_mode)
     record = {
-        "schema": 1,
-        "format": "crabc-owned-rust-std-link/v1",
+        "schema": 2 if source_built_root is not None else 1,
+        "format": "crabc-owned-rust-source-build-link/v1" if source_built_root is not None else "crabc-owned-rust-std-link/v1",
         "target": TARGET,
         "mode": mode,
         "rust_requested_mode": parsed["rust_mode"],
         "product": {"root": str(root), "manifest": _record_input(manifest), "files": manifest_files},
         "provider_archive": _record_input(provider),
-        "omitted_stock_rust_unwind": _record_input(parsed["stock_unwind"]),
-        "omitted_compiler_builtins": _record_input(parsed["compiler_builtins"]),
+        "rust_library_origin": parsed["rust_library_origin"],
         "replaced_native_requests": parsed["native_requests"],
         "unused_search_paths": [str(path) for path in parsed["search_paths"]],
         "application_inputs": input_records,
@@ -391,6 +499,18 @@ def link(arguments: list[str]) -> None:
         "promotion_ready": False,
         "public_support": False,
     }
+    if source_built_root is None:
+        record["omitted_stock_rust_unwind"] = _record_input(parsed["stock_unwind"])
+        record["omitted_compiler_builtins"] = _record_input(parsed["compiler_builtins"])
+    else:
+        source_unwind = parsed["source_built_unwind"]
+        source_compiler_builtins = parsed["source_built_compiler_builtins"]
+        assert isinstance(source_unwind, Path) and isinstance(source_compiler_builtins, Path)
+        record["source_built_target_library_root"] = str(source_built_root)
+        record["omitted_source_built_rust_unwind"] = _record_input(source_unwind)
+        record["omitted_source_built_compiler_builtins"] = _record_input(source_compiler_builtins)
+    if version_script is not None:
+        record["rust_cdylib_export_script"] = _record_input(version_script)
     with receipt.open("x", encoding="utf-8") as stream:
         json.dump(record, stream, indent=2, sort_keys=True)
         stream.write("\n")

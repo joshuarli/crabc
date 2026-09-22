@@ -1,0 +1,13 @@
+[package]
+name = "crabc-owned-cleanup-build-std"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]
+
+[profile.release]
+codegen-units = 1
+debug = 0
+incremental = false
+lto = "fat"
+panic = "unwind"

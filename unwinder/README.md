@@ -155,10 +155,10 @@ root from its existing evidence before using this replay. The consumer refuses
 missing, duplicate, symlinked, or manifest-mismatched roots, and revalidates
 both complete payloads after collection.
 
-For each mode the runner invokes the existing `unwinder/build.py` producer into
-a fresh checkout-local evidence directory, retains the exact provider archive
-and provenance, then compiles the unmodified full `fixtures/cleanup.rs`
-stock-Rust fixture. Its finite linker wrapper omits the one stock
+For each stock-Rust mode the runner invokes the existing `unwinder/build.py`
+producer into a fresh checkout-local evidence directory, retains the exact
+provider archive and provenance, then compiles the unmodified full
+`fixtures/cleanup.rs` fixture. Its finite linker wrapper omits the one stock
 `libunwind-*.rlib` and compiler-builtins archive, replaces Rust's native
 libc/libgcc requests with explicit product files, and rejects ambient libc,
 CRT, libgcc, libunwind, response-file, and native-library-search inputs. The
@@ -168,12 +168,32 @@ roots/manifests, provider provenance/archive, complete linker command/trace,
 and executable digest before checking main and worker-thread panic cleanup plus
 backtrace behavior.
 
+The same run then builds two checked-in Cargo fixtures with
+`--locked -Zbuild-std=std,panic_unwind`, fresh checkout-local Cargo home,
+target, and temporary directories, `CARGO_BUILD_JOBS=1`, and fat LTO. The
+source-built static fixture repeats the complete cleanup/backtrace check. The
+dynamic fixture builds a Rust `cdylib` plugin which performs that check itself;
+its Rust host resolves the plugin's exported entry with `dlopen`/`dlsym` and
+loads the plugin by basename through the selected loader's explicit library
+path. This exercises owned dynamic DSO discovery without a direct-path open.
+
+For a source-built final link the wrapper admits only the Cargo application
+root and its declared target `release/deps` root. It requires the freshly
+built `std`, `core`, `alloc`, and `panic_unwind` archives, omits the
+source-built `libunwind` and compiler-builtins archives in favor of the
+selected provider and product archive, and records a separate schema-2 link
+receipt. Stock target rlibs are outside that boundary. Cargo artifact JSON,
+verbose build records, the pinned `rust-src` library lock, and the linker-side
+receipt bind the build to the final executable or plugin even where Cargo
+hard-links an artifact into its release directory.
+
 This is non-promoting consumer-development evidence: its receipt keeps all
 qualification, family-completion, promotion, and public-support flags false.
 The separately supplied archive/provenance is **not** installed-product
 packaging. Installing it into a product and then repeating source-bound
-consumer qualification remains required, as do build-std/core matching, LTO,
-runtime DSO discovery, and complete malformed-metadata handling.
+consumer qualification remains required, as do installed/extracted executable
+modes, broader initial/runtime DSO behavior, and complete malformed-metadata
+handling.
 
 ## Source and ownership
 
@@ -214,15 +234,16 @@ or panic-handler implementation.
 
 ## Qualification boundary
 
-The producer records `qualified: false`. Stock-std ordinary application and
-main/worker-thread panic cleanup/backtrace checks have run against the owned
-runtime during development; reproducible consumer qualification is separate.
-`fixtures/cleanup.rs` preserves both cleanup frames, payload identity and
-backtrace capture as observable requirements.
+The producer records `qualified: false`. The development receipt covers stock
+std static/dynamic cleanup, source-built full-std fat-LTO static cleanup, and
+a source-built fat-LTO Rust plugin discovered by the owned dynamic loader. The
+stock and plugin fixtures preserve both cleanup frames, payload identity,
+worker cleanup, and backtrace capture as observable requirements. Reproducible
+consumer qualification is separate.
 
-Build-std requires matching core linkage. Initial/runtime DSO unwind,
-installed/extracted PIE/non-PIE, consumer LTO and malformed metadata checks
-remain required by the approved design before qualification is complete.
+Initial/runtime DSO unwind beyond the loaded plugin, installed/extracted
+PIE/non-PIE, provider packaging, and malformed metadata checks remain required
+by the approved design before qualification is complete.
 The local overlay bounds the declared `PT_GNU_EH_FRAME` header, decoded
 `.eh_frame` entry range, `PT_DYNAMIC` tag table, and complete native words of
 late indirect CIE personality and FDE LSDA cells before they are dereferenced.
