@@ -10,7 +10,8 @@ and one retained loader inventory for each of the qualification's `installed`,
 The coordinator covers the four capability rows owned by the family:
 `runtime.loader`, `runtime.private-facades`, `loader.dlfcn-basic`, and
 `loader.dlfcn-introspection`. The exact behavior map is
-[`loader-family.toml`](loader-family.toml). It records the §7 process entry,
+[`loader-family.toml`](loader-family.toml). It records the Loader row's
+(`plan.md`, Families and public ABI) process entry,
 graph/search/mapping/RELRO, relocation and scope, RuntimeV1/TLS/thread,
 lifecycle/finalization, `dl*`, fork/callback/rollback, synthetic-loader, and
 real-package-corpus boundaries.

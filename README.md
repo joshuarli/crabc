@@ -5,8 +5,9 @@ CRT/compiler helpers, and an idiomatic, capability-accounted Rust facade.
 
 Public support remains **Linux/AArch64 little-endian**, with **Linux 5.10** as
 the kernel minimum. The active work is native Linux/x86-64 runtime parity and
-a faithful Rust port of fixed mimalloc v3.5.0. x86 becomes publicly supported, and the native allocator becomes its default,
-only after their respective qualification gates.
+a faithful Rust port of fixed mimalloc v3.5.0. x86 becomes publicly supported,
+and the native allocator becomes its default, only after their respective
+qualification gates.
 AArch64 implementation and qualification are paused, not discarded.
 
 The goal is exact modern Unix behavior without an unlimited historical libc

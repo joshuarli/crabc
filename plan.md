@@ -21,9 +21,12 @@ explicit, never be converted into a pass or a smaller completion claim.
 Update this section in place when the frontier changes. Recorded checkpoints
 are not transferable passes for a different revision.
 
-- **Runtime:** Frozen accounting validates; `libc.headers-layouts` is
-  `foundation-verified`. Substantial POSIX/pthread/text/stdio/resolver/loader
-  and installed-product work is integrated. Complete the actual remaining
+- **Runtime:** Frozen accounting validates. `campaign-status` reports 9 of 26
+  families `foundation-verified` (including `libc.headers-layouts`) and
+  capabilities 180 `implemented-foundation`, 26 `selected-private`, 17
+  `missing`; all eight qualification gates are incomplete. Substantial
+  POSIX/pthread/text/stdio/resolver/loader and installed-product work is
+  integrated. Complete the actual remaining
   aggregate/family admissions from `campaign-status`, not another symbol sweep.
 - **Allocator:** M1's six bounded components passed at `0daef148bd20dc2bef2ac9dc34af4f3dd0e99d7a`.
   M2 PageMap and scalar bitmaps qualified at `62d6435c772e9ddc144de302cc54ad78cea720e9`;
@@ -36,8 +39,10 @@ are not transferable passes for a different revision.
   ordered consumer gates and release performance remain open. The 114-row
   collector and bounded replay are not performance qualification. Hardware
   prerequisites are recorded below.
-- **Preservation:** Reconcile unfinished local work before duplicating it,
-  including `x86/reboot-feature-20260904` if present. AArch64 remains paused;
+- **Preservation:** Reconcile unfinished local work before duplicating it:
+  many sibling worktrees and branches not merged into `main` may exist
+  (`git worktree list`, `git branch --no-merged main`); check for the
+  subsystem at hand rather than auditing all of them. AArch64 remains paused;
   its public profile, selected C backend and qualified records stay unchanged.
 
 ## Fixed contracts

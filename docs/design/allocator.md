@@ -2,8 +2,8 @@
 
 ## Purpose and status
 
-> **Status: native x86-64 active; AArch64 paused.** The execution contract and
-> architecture-qualified live queue are in
+> **Status: native x86-64 active; AArch64 paused.** The execution contract,
+> milestones, and progress status are in
 > [`plan.md`](../../plan.md#native-allocator-completion). This document preserves
 > provenance, boundaries, and implementation context; its older evidence
 > records do not transfer milestone completion between architectures.

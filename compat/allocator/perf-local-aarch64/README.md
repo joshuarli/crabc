@@ -36,8 +36,9 @@ published without those raw samples and provenance.
 This is an early architecture smoke. Its `0.25` ratio is the local ratchet in
 `plan.md` (Allocator verification and performance), not a final band. The
 report always records `final_promotion_qualified: false`. Apple-Silicon Docker is useful for this
-development smoke but is explicitly unqualified for promotion; §19.2 requires
-a recorded native Linux/AArch64 final-performance environment.
+development smoke but is explicitly unqualified for promotion. Final allocator
+performance bands (`plan.md`, Allocator verification and performance) require a
+qualified native host; this AArch64 lane is paused and supplies no x86 evidence.
 
 The harness requires an existing owned sysroot and its staged loader because
 the selected Rust C-ABI fixture must run through crabc's real pthread/runtime

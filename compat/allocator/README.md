@@ -1,8 +1,8 @@
 # Allocator-port evidence contract
 
 > **Status: native x86-64 active; AArch64 paused.**
-> [`plan.md`](../../plan.md#native-allocator-completion) owns the live x86 queue and
-> preserved AArch64 handoff. Existing x86 quick/check evidence is not x86 M1/M2
+> [`plan.md`](../../plan.md#native-allocator-completion) owns the x86 milestones
+> and progress status. Existing x86 quick/check evidence is not x86 M1/M2
 > closure. AArch64 milestone records remain tied to their original target and
 > revision; neither target's reports promote the other.
 
@@ -952,9 +952,8 @@ and is never reported as a Miri pass.
 ## Recorded AArch64 reproduction commands (paused)
 
 These are preserved AArch64 reproduction commands, not the active work queue.
-For native x86, follow the Commands and evidence and Progress status sections of
-`plan.md` using the contained
-allocator launcher described above.
+For native x86, follow the Commands and evidence and Progress status sections
+of `plan.md` using the contained allocator launcher described above.
 The historical AArch64 harness uses the pinned Linux/AArch64 development image:
 
 ```sh
