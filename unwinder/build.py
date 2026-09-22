@@ -394,7 +394,7 @@ if __name__ == '__main__':
     parser.add_argument('--stage-root', type=Path,
                         help='fresh private provider-source root below --output')
     parser.add_argument('--cargo-home', type=Path,
-                        help='existing private Cargo home below --output')
+                        help='existing private Cargo home beside --output')
     arguments = parser.parse_args()
     output = arguments.output
     if output is None:
