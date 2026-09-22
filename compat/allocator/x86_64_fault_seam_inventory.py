@@ -29,11 +29,29 @@ from typing import Any, Mapping, Sequence
 SCHEMA = "crabc-mimalloc-x86_64-fault-seam-inventory-evidence"
 # Format 2 adds the current validated fragment projection. A format-1 C-only
 # receipt cannot be replayed as the selected private diagnostic receiver.
-FORMAT = 2
+FORMAT = 3
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "compat/allocator/m2_vm_x86_64.c"
 REPORT_DEFAULT = ROOT / "compat/reports/allocator/x86_64/fault-seam-inventory.json"
 CANONICAL_M2_VM_FIXTURE = ROOT / "compat/allocator/m2_vm_x86_64.c"
+OS_PUBLICATION_PROFILE_DEFINE = "-DCRABC_M2_OS_PUBLICATION_PROFILE=1"
+OS_PUBLICATION_TARGET = "os_page::tests::emit_os_publication_fault_receiver_trace"
+OS_PUBLICATION_BEGIN = "CRABC_MI_M2_OS_PUBLICATION_TRACE_BEGIN"
+OS_PUBLICATION_END = "CRABC_MI_M2_OS_PUBLICATION_TRACE_END"
+OS_PUBLICATION_KEYS = tuple(
+    f"os_publication.{selected}.{field}" for selected in range(1, 8)
+    for field in ("page_result", "commit_branch", "map_branch", "release_once",
+                  "cleanup_retention", "unreachable", "raw_retry", "retry_statistics")
+)
+OS_PUBLICATION_BOUNDARY = {
+    "source": "src/arena.c:781-1120,1220-1297; src/page-map.c:391-515; src/os.c:240-294",
+    "cases": ["map-failure", "metadata-commit-failure", "block-commit-failure",
+              "page-map-publication-failure", "metadata-commit-and-cleanup-failure",
+              "page-map-and-cleanup-failure", "published-page-release-failure"],
+    "c_release": "void upper free; failed range captured only for exact lower primitive fixture cleanup",
+    "rust_release": "one typed Claim or Published owner; raw retry never repeats source accounting",
+    "excluded": "corrupted-alias provenance refusal, general metadata allocator, hardware huge/NUMA, and complete M2",
+}
 FAULT_PROFILE_DEFINE = "-DCRABC_M2_FAULT_SEAM_INVENTORY_PROFILE=1"
 HUGE_RETRY_HELPER_TEST_DEFINE = "-DCRABC_M2_FAULT_SEAM_RETRY_HELPER_TEST=1"
 HUGE_TIMEOUT_CLOCK_HELPER_TEST_DEFINE = "-DCRABC_M2_FAULT_SEAM_TIMEOUT_CLOCK_HELPER_TEST=1"
@@ -186,6 +204,8 @@ RUST_TRACE_SOURCE_FILES = (
     "crabc-mimalloc/src/lib.rs", "crabc-mimalloc/src/lock.rs",
     "crabc-mimalloc/src/os.rs", "crabc-mimalloc/src/random.rs",
     "crabc-mimalloc/src/subproc.rs", "crabc-mimalloc/src/types.rs",
+    "crabc-mimalloc/src/os_page.rs", "crabc-mimalloc/src/page_map.rs",
+    "crabc-mimalloc/src/bootstrap.rs", "crabc-mimalloc/src/single_thread.rs",
 )
 # This receipt reconstructs one selected C/Rust fault receiver and the private
 # caller-supplied default sink. The target still does not qualify general FILE
@@ -2081,6 +2101,104 @@ def _validate_reused_vm_receipt(vm: object) -> dict[str, Any]:
     return dict(vm)
 
 
+def _os_publication_c_command(runner: Any, compiler: str, source: Path, binary: Path) -> list[str]:
+    command = _canonical_m2_vm_c_compile_command(runner, compiler, source, binary)
+    command.insert(8, OS_PUBLICATION_PROFILE_DEFINE)
+    return command
+
+
+def validate_os_publication_report(report: Mapping[str, Any]) -> dict[str, Any]:
+    """Replay the independent ordinary OS receiver from retained C/Rust streams."""
+    expected = {"schema", "format", "profile", "status", "boundary", "upstream",
+        "source_state_before", "source_state_after", "c_build", "c_run", "c_source_files",
+        "fixture", "rust_build", "rust_run", "rust_source_files"}
+    if set(report) != expected or report.get("schema") != SCHEMA or report.get("format") != FORMAT:
+        raise ValueError("OS publication receiver schema changed")
+    if (report.get("profile") != "os-aligned-page-publication" or report.get("status") != "passed"
+        or report.get("boundary") != OS_PUBLICATION_BOUNDARY):
+        raise ValueError("OS publication receiver boundary changed")
+    runner = _load_runner()
+    pin = runner.load_pin()
+    if report.get("upstream") != {"archive_sha256": pin["sha256"], "revision": pin["revision"]}:
+        raise ValueError("OS publication upstream changed")
+    c_build = _validate_process_record(report.get("c_build"), label="OS publication C build")
+    c_run = _validate_process_record(report.get("c_run"), label="OS publication C run")
+    source = Path(c_build["cwd"])
+    command = c_build["command"]
+    if (source.name != "mimalloc-3.5.0" or Path(command[0]).name != "musl-gcc"
+        or len(command) < 3 or command[-2] != "-o"
+        or command != _os_publication_c_command(runner, command[0], source, Path(command[-1]))):
+        raise ValueError("OS publication C source command changed")
+    if c_run["cwd"] != str(source) or c_run["command"] != [command[-1]]:
+        raise ValueError("OS publication C execution changed")
+    if report.get("c_source_files") != list(PINNED_C_SOURCE_FILES) or report.get("fixture") != _local_file_record(FIXTURE):
+        raise ValueError("OS publication C source identity changed")
+    rust_build = _validate_process_record(report.get("rust_build"), label="OS publication Rust build")
+    rust_run = _validate_process_record(report.get("rust_run"), label="OS publication Rust run")
+    if (Path(rust_build["command"][0]).name != "cargo"
+        or rust_build["command"][1:] != runner._m2_x86_64_vm_rust_build_command()[1:]
+        or rust_build["cwd"] != str(ROOT)):
+        raise ValueError("OS publication Rust build changed")
+    if (rust_run["cwd"] != str(ROOT) or len(rust_run["command"]) != 5
+        or rust_run["command"][1:] != [OS_PUBLICATION_TARGET, "--exact", "--test-threads=1", "--nocapture"]
+        or not runner._m2_x86_64_vm_rust_binary_path_is_bound(rust_run["command"][0])
+        or runner.parse_rust_test_count(_combined_output(rust_run)) != 1
+        or report.get("rust_source_files") != _rust_trace_source_files()):
+        raise ValueError("OS publication Rust receiver changed")
+    for language, record in (("C", c_run), ("Rust", rust_run)):
+        _parse_fixed_trace(_combined_output(record), begin=OS_PUBLICATION_BEGIN,
+            end=OS_PUBLICATION_END, keys=OS_PUBLICATION_KEYS, source=language)
+    before = runner.validate_runtime_ticket_zero_soak_source_state(report.get("source_state_before"), "OS receiver before")
+    after = runner.validate_runtime_ticket_zero_soak_source_state(report.get("source_state_after"), "OS receiver after")
+    if not before["worktree_clean"] or before != after:
+        raise ValueError("OS publication requires one clean unchanged source revision")
+    return dict(report)
+
+
+def run_os_publication_receiver(*, offline: bool, test_program: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Run the ordinary receiver independently; hardware receivers stay required elsewhere."""
+    runner = _load_runner()
+    try:
+        runner.require_native_x86_64()
+        before = runner.m2_memory_substrate_source_state()
+        pin = runner.load_pin()
+        archive = runner.fetch_archive(pin, offline)
+        artifacts = runner.ARTIFACT_ROOT / "x86_64/fault-seam-inventory"
+        artifacts.mkdir(parents=True, exist_ok=True)
+        with runner.temporary_directory(prefix="crabc-os-publication-source-") as temporary:
+            source = runner.safe_extract(archive, Path(temporary), pin["archive_root"])
+            c_files = _source_files(runner, source)
+            binary = artifacts / "m2-os-publication-oracle"
+            build = runner.command_record(_os_publication_c_command(runner, runner.require_tool("musl-gcc"), source, binary), cwd=source, timeout_seconds=300)
+            runner.write_json(artifacts / "os-publication-c-build.json", build)
+            runner.require_success(build, "OS publication C build")
+            c_run = runner.command_record([str(binary)], cwd=source, timeout_seconds=90)
+            runner.write_json(artifacts / "os-publication-c-run.json", c_run)
+            runner.require_success(c_run, "OS publication C receiver")
+            c_build = {**build, "cwd": str(source)}
+            c_run = {**c_run, "cwd": str(source)}
+        if test_program is None:
+            test_program = runner._x86_64_unit_test_program(runner._m2_x86_64_vm_rust_execution(),
+                runner.M2_X86_64_MEMORY_SUBSTRATE_CARGO_TARGET, gate_name="OS publication receiver")
+        rust_run = runner.command_record(runner._x86_64_program_check_command(test_program,
+            OS_PUBLICATION_TARGET, nocapture=True, gate_name="OS publication receiver"), cwd=ROOT, timeout_seconds=300)
+        runner.write_json(artifacts / "os-publication-rust-run.json", rust_run)
+        runner.require_success(rust_run, "OS publication Rust receiver")
+        report = {"schema": SCHEMA, "format": FORMAT, "profile": "os-aligned-page-publication",
+            "status": "passed", "boundary": OS_PUBLICATION_BOUNDARY,
+            "upstream": {"archive_sha256": pin["sha256"], "revision": pin["revision"]},
+            "source_state_before": before, "source_state_after": runner.m2_memory_substrate_source_state(),
+            "c_build": c_build, "c_run": c_run, "c_source_files": c_files,
+            "fixture": runner.artifact_record(FIXTURE),
+            "rust_build": {**test_program["build"], "cwd": str(ROOT)},
+            "rust_run": {**rust_run, "cwd": str(ROOT)}, "rust_source_files": _rust_trace_source_files()}
+        validate_os_publication_report(report)
+        runner.write_json(artifacts / "os-publication.json", report)
+        return report
+    except runner.HarnessError as error:
+        raise EvidenceError(str(error)) from error
+
+
 def run_evidence(
     *,
     offline: bool,
@@ -2220,6 +2338,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--compile-only", action="store_true")
+    parser.add_argument("--os-publication-receiver", action="store_true")
     parser.add_argument("--canonical-m2-vm-c-compile-regression", action="store_true")
     parser.add_argument("--retry-helper-regression", action="store_true")
     parser.add_argument("--timeout-clock-helper-regression", action="store_true")
@@ -2231,6 +2350,7 @@ def main() -> int:
     try:
         selected_modes = sum((
             arguments.compile_only,
+            arguments.os_publication_receiver,
             arguments.canonical_m2_vm_c_compile_regression,
             arguments.retry_helper_regression,
             arguments.timeout_clock_helper_regression,
@@ -2240,6 +2360,10 @@ def main() -> int:
         ))
         if selected_modes > 1:
             raise EvidenceError("fault inventory accepts one focused mode")
+        if arguments.os_publication_receiver:
+            run_os_publication_receiver(offline=arguments.offline)
+            print("allocator x86-64 fault seam inventory: OS publication C/Rust receiver PASS (56 relations)")
+            return 0
         if arguments.compile_only:
             compile_huge_branch_profile(offline=arguments.offline)
             print("allocator x86-64 fault seam inventory: C profile compile PASS")

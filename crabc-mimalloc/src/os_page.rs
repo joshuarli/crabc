@@ -1367,6 +1367,112 @@ mod tests {
         assert_eq!(process.subprocess().vm_statistics().snapshot(), after_map_failure);
     }
 
+    /// The same seven legal source transitions as the direct-included C
+    /// arena/page-map receiver. C's void failed free exposes no retry owner;
+    /// Rust must preserve an exact Claim or Published token and account once.
+    #[test]
+    fn emit_os_publication_fault_receiver_trace() {
+        use crate::bootstrap::ExclusiveTheapBootstrap;
+        use crate::page_map::PageMap;
+        let fault = fault::install(fault::Plan::disabled());
+        std::println!("CRABC_MI_M2_OS_PUBLICATION_TRACE_BEGIN");
+        for selected in 1..=7 {
+            let process = process(false);
+            let mut map = PageMap::initialize(config(4 * KIB), 0, true).unwrap();
+            let mut bootstrap = std::boxed::Box::pin(ExclusiveTheapBootstrap::new());
+            let mut session = bootstrap.as_mut()
+                .activate_detached_for_main_subprocess(process.subprocess()).unwrap();
+            let commit_ordinal = match selected { 2 | 5 => 1, 3 => 2, _ => usize::MAX };
+            fault.set(if selected == 1 {
+                fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM)
+            } else {
+                fault::Plan::at_pair(fault::Point::Commit, commit_ordinal,
+                    fault::Point::Unmap, if selected == 5 { 1 } else { usize::MAX }, Errno::NOMEM)
+            });
+            let allocation = OsAlignedPageClaim::allocate_for_process(process, config(4 * KIB),
+                128 * KIB, 128 * KIB, crate::arena::ArenaId::none());
+            let mut facts = [false; 8];
+            let owner = match allocation {
+                Err(failure) => {
+                    let expected_stage = match selected {
+                        1 => OsAlignedPageFailureStage::Map,
+                        2 | 5 => OsAlignedPageFailureStage::MetadataCommit,
+                        3 => OsAlignedPageFailureStage::BlockCommit,
+                        _ => panic!("unexpected early OS claim failure"),
+                    };
+                    assert_eq!(failure.error().stage(), expected_stage);
+                    assert_eq!(failure.error().operation(), Errno::NOMEM);
+                    facts[0] = true;
+                    facts[1] = selected == 1 || fault.observed() == commit_ordinal;
+                    facts[2] = selected != 1 || fault.observed() == 1;
+                    facts[3] = selected == 1 || fault.secondary_observed() == 1;
+                    facts[4] = failure.error().cleanup().is_some() == (selected == 5);
+                    facts[5] = true; // no primary, aliases, or PageMap publication occurred
+                    let owner = failure.into_owner();
+                    assert_eq!(owner.is_some(), selected == 5);
+                    if let Some(OsAlignedPageOwner::Claim(claim)) = owner.as_ref() {
+                        assert!(claim.memory_id().is_err());
+                    }
+                    owner
+                }
+                Ok(claim) => {
+                    assert!(matches!(selected, 4 | 6 | 7));
+                    facts[1] = fault.observed() == 2;
+                    let layout = claim.layout();
+                    let start = claim.slice_start().unwrap();
+                    let memory = claim.memory_id().unwrap();
+                    let mut primary = unsafe { session.publish_fresh_page(claim.metadata().unwrap(),
+                        layout.block_size(), layout.page_offset(), layout.reserved(), 0,
+                        memory.initially_zero(), memory) }.unwrap();
+                    assert!(unsafe { claim.publish_secondary_metadata(primary) });
+                    fault.set(if selected == 7 { fault::Plan::disabled() } else {
+                        fault::Plan::at_pair(fault::Point::Map, 1, fault::Point::Unmap,
+                            if selected == 6 { 1 } else { usize::MAX }, Errno::NOMEM)
+                    });
+                    let registered = unsafe {
+                        map.register_range(start.as_ptr(), layout.page_map_size(), primary)
+                    }.is_ok();
+                    facts[0] = registered == (selected == 7);
+                    facts[2] = selected == 7 || fault.observed() >= 1;
+                    let published = if registered {
+                        let published = unsafe { PublishedOsAlignedPage::from_page_for_process(
+                            process, config(4 * KIB), primary) }.unwrap();
+                        unsafe { map.unregister_range(start.as_ptr(), layout.page_map_size()) }.unwrap();
+                        Some(published)
+                    } else { None };
+                    assert!(unsafe { claim.clear_secondary_metadata(primary) });
+                    assert!(session.retire_page(unsafe { primary.as_mut() }).is_some());
+                    facts[5] = unsafe { map.checked_lookup(start.as_ptr()) }.is_null();
+                    let release = if let Some(published) = published {
+                        claim.into_published().unwrap();
+                        fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+                        unsafe { published.reclaim() }
+                    } else { claim.release() };
+                    facts[3] = if selected == 7 { fault.observed() == 1 }
+                        else { fault.secondary_observed() == 1 };
+                    facts[4] = release.is_err() == (selected >= 5);
+                    release.err().map(|failure| failure.into_owner())
+                }
+            };
+            let before_retry = process.subprocess().vm_statistics().snapshot();
+            fault.set(fault::Plan::disabled());
+            facts[6] = match owner {
+                Some(owner) => unsafe { owner.release() }.is_ok(),
+                None => true,
+            };
+            facts[7] = process.subprocess().vm_statistics().snapshot() == before_retry;
+            assert!(facts.iter().all(|fact| *fact), "OS publication case {selected}: {facts:?}");
+            for (field, value) in ["page_result", "commit_branch", "map_branch", "release_once",
+                "cleanup_retention", "unreachable", "raw_retry", "retry_statistics"]
+                .into_iter().zip(facts) {
+                std::println!("os_publication.{selected}.{field}={}", u8::from(value));
+            }
+            // Each case has no live page, alias, map entry, or retained claim.
+            unsafe { map.destroy() }.unwrap();
+        }
+        std::println!("CRABC_MI_M2_OS_PUBLICATION_TRACE_END");
+    }
+
     #[test]
     fn emit_native_fresh_os_page_ownership_trace() {
         use crate::bootstrap::ExclusiveTheapBootstrap;

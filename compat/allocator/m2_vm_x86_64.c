@@ -770,7 +770,35 @@ int __wrap_prctl(int option, ...) {
   return thp_direct_policy_error(EINVAL);
 }
 
+/* The OS publication profile selects only unchanged mmap/mprotect/munmap
+ * imports. The full pinned arena/page-map bodies still decide publication,
+ * rollback, and void free. Captured failed ranges are fixture cleanup facts,
+ * never a substitute C allocator owner. */
+#if defined(CRABC_M2_OS_PUBLICATION_PROFILE)
+static struct {
+  unsigned selected;
+  size_t commits;
+  size_t map_faults;
+  size_t releases;
+  void* base;
+  size_t length;
+  bool active;
+  bool retained;
+} os_publication_probe;
+#endif
+
 int __wrap_munmap(void* address, size_t length) {
+#if defined(CRABC_M2_OS_PUBLICATION_PROFILE)
+  if (os_publication_probe.active && address == os_publication_probe.base) {
+    os_publication_probe.releases++;
+    os_publication_probe.length = length;
+    if (os_publication_probe.selected >= 5) {
+      os_publication_probe.retained = true;
+      errno = ENOMEM;
+      return -1;
+    }
+  }
+#endif
   wrapped_munmap_calls++;
   if (huge_branch_probe.active) {
     const size_t index = huge_branch_probe.munmap_calls;
@@ -833,6 +861,15 @@ int __wrap_munmap(void* address, size_t length) {
 
 void* __wrap_mmap(void* address, size_t length, int protection, int flags,
                   int descriptor, off_t offset) {
+#if defined(CRABC_M2_OS_PUBLICATION_PROFILE)
+  if (os_publication_probe.active && (os_publication_probe.selected == 1
+      || ((os_publication_probe.selected == 4 || os_publication_probe.selected == 6)
+          && os_publication_probe.commits >= 2 && protection == (PROT_READ | PROT_WRITE)))) {
+    os_publication_probe.map_faults++;
+    errno = ENOMEM;
+    return MAP_FAILED;
+  }
+#endif
   if (large_only_failure_probe.active) {
     const size_t index = large_only_failure_probe.mmap_calls;
     if (index < sizeof(large_only_failure_probe.hints)
@@ -971,6 +1008,18 @@ void* __wrap_mmap(void* address, size_t length, int protection, int flags,
 }
 
 int __wrap_mprotect(void* address, size_t length, int protection) {
+#if defined(CRABC_M2_OS_PUBLICATION_PROFILE)
+  if (os_publication_probe.active) {
+    os_publication_probe.commits++;
+    if (os_publication_probe.commits == 1) os_publication_probe.base = address;
+    const unsigned selected = os_publication_probe.selected;
+    if (((selected == 2 || selected == 5) && os_publication_probe.commits == 1)
+        || (selected == 3 && os_publication_probe.commits == 2)) {
+      errno = ENOMEM;
+      return -1;
+    }
+  }
+#endif
   if (capture_transition_mprotect && captured_transition_mprotect_calls < 4) {
     captured_transition_protections[captured_transition_mprotect_calls] = protection;
     captured_transition_mprotect_calls++;
@@ -3667,7 +3716,78 @@ static bool capture_aligned_overmap_matrix_child(
   return captured;
 }
 
-#if defined(CRABC_M2_FAULT_SEAM_MBIND_BOUNDARY_TEST)
+#if defined(CRABC_M2_OS_PUBLICATION_PROFILE)
+/* Each case starts from the same real process initialization in a COW child.
+ * A PageMap fault requires a previously absent lazy submap. If the source's
+ * normal high hint shares an already present submap, release that successful
+ * setup page and ask the unmodified allocator for the next page. No pointer,
+ * metadata, source function, or PageMap slot is fabricated. */
+static unsigned os_publication_case;
+static int run_os_publication_child(int descriptor) {
+  mi_process_init();
+  mi_option_set(mi_option_disallow_arena_alloc, 1);
+  mi_option_set(mi_option_allow_large_os_pages, 0);
+  mi_option_set(mi_option_show_errors, 0);
+  mi_theap_t* const theap = _mi_subproc_main()->theap_meta;
+  bool facts[8] = {0};
+  for (unsigned attempt = 0; attempt < 16; attempt++) {
+    memset(&os_publication_probe, 0, sizeof(os_publication_probe));
+    os_publication_probe.selected = os_publication_case;
+    os_publication_probe.active = true;
+    mi_page_t* page = _mi_arenas_page_alloc(theap, 128 * MI_KiB, 128 * MI_KiB);
+    if ((os_publication_case == 4 || os_publication_case == 6)
+        && os_publication_probe.map_faults == 0 && page != NULL) {
+      os_publication_probe.active = false;
+      _mi_arenas_page_free(page, theap);
+      continue;
+    }
+    const bool returned_page = page != NULL;
+    if (page != NULL) _mi_arenas_page_free(page, theap);
+    os_publication_probe.active = false;
+    const size_t expected_commits = (os_publication_case == 1 ? 0
+        : (os_publication_case == 2 || os_publication_case == 5 ? 1 : 2));
+    facts[0] = returned_page == (os_publication_case == 7);
+    facts[1] = os_publication_probe.commits == expected_commits;
+    facts[2] = (os_publication_probe.map_faults != 0)
+        == (os_publication_case == 1 || os_publication_case == 4 || os_publication_case == 6);
+    facts[3] = os_publication_probe.releases == (os_publication_case == 1 ? 0 : 1);
+    facts[4] = os_publication_probe.retained == (os_publication_case >= 5);
+    facts[5] = os_publication_probe.base == NULL
+        || _mi_safe_ptr_page((uint8_t*)os_publication_probe.base + 128 * MI_KiB) == NULL;
+    facts[6] = true;
+    facts[7] = true;
+    if (os_publication_probe.retained) {
+      const int64_t reserved = _mi_subproc_main()->stats.reserved.current;
+      const int64_t committed = _mi_subproc_main()->stats.committed.current;
+      /* C's upper free is void and retains no retry token. This exact lower
+       * primitive cleanup discharges only the fixture's observed failed range;
+       * reentering upper free would repeat source statistics. */
+      facts[6] = _mi_prim_free(os_publication_probe.base, os_publication_probe.length) == 0;
+      facts[7] = reserved == _mi_subproc_main()->stats.reserved.current
+          && committed == _mi_subproc_main()->stats.committed.current;
+    }
+    for (size_t i = 0; i < 8; i++) if (!facts[i]) return (int)(20 + i);
+    return write(descriptor, facts, sizeof(facts)) == sizeof(facts) ? 0 : 40;
+  }
+  return 41;
+}
+
+int main(void) {
+  const char* fields[] = {"page_result", "commit_branch", "map_branch", "release_once",
+      "cleanup_retention", "unreachable", "raw_retry", "retry_statistics"};
+  puts("CRABC_MI_M2_OS_PUBLICATION_TRACE_BEGIN");
+  for (unsigned selected = 1; selected <= 7; selected++) {
+    bool facts[8] = {0};
+    os_publication_case = selected;
+    if (!capture_large_page_retry_child("OS publication child", run_os_publication_child,
+        facts, sizeof(facts))) return 1;
+    for (size_t i = 0; i < 8; i++)
+      printf("os_publication.%u.%s=%u\n", selected, fields[i], (unsigned)facts[i]);
+  }
+  puts("CRABC_MI_M2_OS_PUBLICATION_TRACE_END");
+  return 0;
+}
+#elif defined(CRABC_M2_FAULT_SEAM_MBIND_BOUNDARY_TEST)
 
 int main(void) {
   huge_branch_probe = (huge_branch_probe_t){

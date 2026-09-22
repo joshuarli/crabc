@@ -223,6 +223,63 @@ def _valid_mbind_boundary_report(runner: object, profile: dict[str, object]) -> 
     }
 
 
+def _valid_os_publication_report() -> dict[str, object]:
+    runner = INVENTORY._load_runner()
+    source = Path("/evidence/mimalloc-3.5.0")
+    binary = Path("/evidence/os-publication")
+    rust_binary = runner.M2_X86_64_MEMORY_SUBSTRATE_CARGO_TARGET / runner.X86_64_RUST_TARGET / "debug/deps/crabc_mimalloc-aaaaaaaa"
+    stream = _trace(INVENTORY.OS_PUBLICATION_BEGIN, INVENTORY.OS_PUBLICATION_END, INVENTORY.OS_PUBLICATION_KEYS)
+    pin = runner.load_pin()
+    return {
+        "schema": INVENTORY.SCHEMA, "format": INVENTORY.FORMAT,
+        "profile": "os-aligned-page-publication", "status": "passed",
+        "boundary": copy.deepcopy(INVENTORY.OS_PUBLICATION_BOUNDARY),
+        "upstream": {"archive_sha256": pin["sha256"], "revision": pin["revision"]},
+        "source_state_before": _clean_source_state(), "source_state_after": _clean_source_state(),
+        "c_build": {"command": INVENTORY._os_publication_c_command(runner, "musl-gcc", source, binary),
+            "cwd": str(source), "status": 0, "stdout": "", "stderr": ""},
+        "c_run": {"command": [str(binary)], "cwd": str(source), "status": 0, "stdout": stream, "stderr": ""},
+        "c_source_files": list(INVENTORY.PINNED_C_SOURCE_FILES),
+        "fixture": INVENTORY._local_file_record(INVENTORY.FIXTURE),
+        "rust_build": {"command": runner._m2_x86_64_vm_rust_build_command(), "cwd": str(INVENTORY.ROOT),
+            "status": 0, "stdout": "", "stderr": ""},
+        "rust_run": {"command": [str(rust_binary), INVENTORY.OS_PUBLICATION_TARGET, "--exact", "--test-threads=1", "--nocapture"],
+            "cwd": str(INVENTORY.ROOT), "status": 0, "stdout": stream + "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n", "stderr": ""},
+        "rust_source_files": INVENTORY._rust_trace_source_files(),
+    }
+
+
+class OsPublicationReceiverTests(unittest.TestCase):
+    def test_independent_ordinary_receiver_requires_both_exact_streams(self) -> None:
+        report = _valid_os_publication_report()
+        self.assertEqual(INVENTORY.validate_os_publication_report(report), report)
+        for language in ("c_run", "rust_run"):
+            rejected = copy.deepcopy(report)
+            rejected[language]["stdout"] = rejected[language]["stdout"].replace("os_publication.6.cleanup_retention=1", "os_publication.6.cleanup_retention=0")
+            with self.subTest(language=language), self.assertRaises((ValueError, INVENTORY.EvidenceError)):
+                INVENTORY.validate_os_publication_report(rejected)
+
+    def test_receiver_rejects_huge_profile_substitution_and_wrong_rust_filter(self) -> None:
+        report = _valid_os_publication_report()
+        report["c_build"]["command"][8] = INVENTORY.FAULT_PROFILE_DEFINE
+        with self.assertRaises((ValueError, INVENTORY.EvidenceError)):
+            INVENTORY.validate_os_publication_report(report)
+        report = _valid_os_publication_report()
+        report["rust_run"]["command"][1] = INVENTORY.RUST_TARGET
+        with self.assertRaises((ValueError, INVENTORY.EvidenceError)):
+            INVENTORY.validate_os_publication_report(report)
+
+    def test_receiver_rejects_omitted_case_and_changed_owner_contract(self) -> None:
+        report = _valid_os_publication_report()
+        report["c_run"]["stdout"] = report["c_run"]["stdout"].replace("os_publication.7.raw_retry=1\n", "")
+        with self.assertRaises((ValueError, INVENTORY.EvidenceError)):
+            INVENTORY.validate_os_publication_report(report)
+        report = _valid_os_publication_report()
+        report["boundary"]["c_release"] = "C retains a retry token"
+        with self.assertRaises((ValueError, INVENTORY.EvidenceError)):
+            INVENTORY.validate_os_publication_report(report)
+
+
 class FaultInventoryShapeTests(unittest.TestCase):
     def test_huge_branch_diagnosis_retains_raw_run_before_parser_admission(self) -> None:
         """A malformed diagnosis stream keeps command/stdout/status without a passed receipt."""
