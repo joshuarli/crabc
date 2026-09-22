@@ -45,20 +45,25 @@ mkdir -p "$work_dir/tmp"
 export TMPDIR="$work_dir/tmp"
 export CARGO_HOME="$ROOT_DIR/.work/x86_64/cargo"
 mkdir -p "$CARGO_HOME"
+case_exit_dir="$work_dir/case-exits"
+mkdir -p "$case_exit_dir"
 cleanup() {
     status=$?
-    if [ "$status" -eq 0 ] && [ "$physical_process_destroy_only" -eq 0 ]; then
-        rm -rf -- "$work_dir"
-    else
-        # The focused physical-destroy lane retains the source-runtime receipt,
-        # link map, and trace even on success. They prove its static closure
-        # without retaining a broad worker-teardown cohort.
-        printf 'x86 selected native-mimalloc pthread teardown retained evidence: %s\n' \
-            "$work_dir" >&2
-    fi
+    # The normal raw-copy cohort needs its source-runtime receipts, final-link
+    # maps/traces, and individual execution exits after a successful run. The
+    # focused physical-destroy lane already has the same provenance need.
+    printf 'x86 selected native-mimalloc pthread teardown retained evidence: %s\n' \
+        "$work_dir" >&2
     exit "$status"
 }
 trap cleanup EXIT
+
+record_case_exit() {
+    local case_name="$1"
+    local status="$2"
+
+    printf '%s\n' "$status" >"$case_exit_dir/$case_name.exit"
+}
 
 # The fixture's final worker must not return until the bootstrapped task has
 # actually become a zombie. An in-process release flag would race the selected
@@ -144,9 +149,17 @@ run_final_worker_atexit_probe() {
     # `timeout` owns the whole parent/child handshake, including the wait after
     # FIFO release. It signals the inner process group, so it never races a
     # later PID reuse by separately killing a raw child PID.
-    timeout "$EXECUTION_TIMEOUT" bash -c \
+    local status
+
+    if timeout "$EXECUTION_TIMEOUT" bash -c \
         'run_final_worker_atexit_probe_inner "$@"' \
-        run_final_worker_atexit_probe_inner "$1" "$2" "$3" "$work_dir"
+        run_final_worker_atexit_probe_inner "$1" "$2" "$3" "$work_dir"; then
+        status=0
+    else
+        status=$?
+    fi
+    record_case_exit "$4" "$status"
+    return "$status"
 }
 
 run_normal_main_return_process_done_probe() {
@@ -156,6 +169,7 @@ run_normal_main_return_process_done_probe() {
     local stderr_log="$4"
     local expected_log="$stderr_log.expected"
     local status
+    local case_name="$5"
 
     if timeout "$EXECUTION_TIMEOUT" "$executable" 2>"$stderr_log"; then
         status=0
@@ -164,14 +178,31 @@ run_normal_main_return_process_done_probe() {
     fi
     if [ "$status" -ne 0 ]; then
         printf '%s normal-main-return status: %s\n' "$label" "$status" >&2
+        record_case_exit "$case_name" "$status"
         return "$status"
     fi
     printf '%s' "$expected_trace" >"$expected_log"
     if ! cmp -s "$expected_log" "$stderr_log"; then
         printf '%s normal-main-return trace mismatch (expected %s)\n' \
             "$label" "$expected_trace" >&2
+        record_case_exit "$case_name" 1
         return 1
     fi
+    record_case_exit "$case_name" 0
+}
+
+run_recorded_timeout_case() {
+    local case_name="$1"
+    local executable="$2"
+    local status
+
+    if timeout "$EXECUTION_TIMEOUT" "$executable"; then
+        status=0
+    else
+        status=$?
+    fi
+    record_case_exit "$case_name" "$status"
+    return "$status"
 }
 
 run_final_worker_atexit_probe_regressions() {
@@ -184,7 +215,8 @@ run_final_worker_atexit_probe_regressions() {
 exit 0
 EOF
     chmod 700 "$early_zero"
-    if run_final_worker_atexit_probe "$early_zero" "early-zero regression" R; then
+    if run_final_worker_atexit_probe "$early_zero" "early-zero regression" R \
+        "probe-regression-early-zero"; then
         printf 'early-zero regression unexpectedly passed\n' >&2
         return 1
     else
@@ -223,7 +255,8 @@ int main(void)
 EOF
     "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread \
         "$work_dir/final-worker-post-release-stall.c" -o "$post_release_stall"
-    if run_final_worker_atexit_probe "$post_release_stall" "post-release-stall regression" R; then
+    if run_final_worker_atexit_probe "$post_release_stall" "post-release-stall regression" R \
+        "probe-regression-post-release-stall"; then
         printf 'post-release-stall regression unexpectedly passed\n' >&2
         return 1
     else
@@ -315,10 +348,12 @@ if [ "$physical_process_destroy_only" -eq 0 ]; then
         -fno-stack-protector -I"$ROOT_DIR/include" \
         compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_probe.c \
         -o "$reference"
-    if ! run_final_worker_atexit_probe "$reference" "pinned-musl reference normal-return" R; then
+    if ! run_final_worker_atexit_probe "$reference" "pinned-musl reference normal-return" R \
+        "musl-worker-normal-return"; then
         fail "pinned-musl reference execution failed"
     fi
-    if ! run_final_worker_atexit_probe "$reference" "pinned-musl reference explicit-exit" E; then
+    if ! run_final_worker_atexit_probe "$reference" "pinned-musl reference explicit-exit" E \
+        "musl-worker-explicit-exit"; then
         fail "pinned-musl reference execution failed"
     fi
 fi
@@ -468,13 +503,16 @@ if grep -Eq '[[:space:]](mi_(malloc|free|calloc|realloc)|_mi_malloc_generic)$' \
     fail "candidate extracted a C mimalloc allocation entry"
 fi
 
-if ! run_final_worker_atexit_probe "$candidate" "selected native candidate normal-return" R; then
+if ! run_final_worker_atexit_probe "$candidate" "selected native candidate normal-return" R \
+    "native-worker-normal-return"; then
     fail "selected native candidate execution failed"
 fi
-if ! run_final_worker_atexit_probe "$candidate" "selected native candidate explicit-exit" E; then
+if ! run_final_worker_atexit_probe "$candidate" "selected native candidate explicit-exit" E \
+    "native-worker-explicit-exit"; then
     fail "selected native candidate execution failed"
 fi
-if ! timeout "$EXECUTION_TIMEOUT" "$internal_allocator_override_candidate"; then
+if ! run_recorded_timeout_case "native-internal-allocator-override" \
+    "$internal_allocator_override_candidate"; then
     fail "native internal allocation selected a strong public malloc replacement"
 fi
 
@@ -492,7 +530,7 @@ fi
     -o "$normal_main_reference"
 if ! run_normal_main_return_process_done_probe "$normal_main_reference" \
     "pinned-musl normal-main-return reference" AD \
-    "$work_dir/normal-main-reference.stderr"; then
+    "$work_dir/normal-main-reference.stderr" "musl-normal-main-return"; then
     fail "pinned-musl normal-main-return execution failed"
 fi
 
@@ -530,7 +568,7 @@ python3 "$source_runtime_helper" audit-final-link \
     fail "normal-main source-built native static runtime final link audit failed"
 if ! run_normal_main_return_process_done_probe "$normal_main_candidate" \
     "selected native normal-main-return candidate" AMD \
-    "$work_dir/normal-main-candidate.stderr"; then
+    "$work_dir/normal-main-candidate.stderr" "native-normal-main-return"; then
     fail "selected native normal-main-return execution failed"
 fi
 

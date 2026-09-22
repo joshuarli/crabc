@@ -8388,6 +8388,54 @@ unsafe fn join_selected_worker_inner(
             fixture_runner,
         )
 
+    def test_native_mimalloc_normal_runner_retains_complete_case_evidence(self) -> None:
+        """A successful normal raw-copy cohort leaves reviewable receipts."""
+        fixture_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_libc_native_mimalloc_shadow_pthread_teardown.sh"
+        ).read_text(encoding="utf-8")
+        cleanup = fixture_runner.split("cleanup() {", 1)[1].split(
+            "trap cleanup EXIT", 1
+        )[0]
+
+        self.assertNotIn('rm -rf -- "$work_dir"', cleanup)
+        self.assertIn("retained evidence", cleanup)
+        self.assertIn('case_exit_dir="$work_dir/case-exits"', fixture_runner)
+        self.assertIn("record_case_exit()", fixture_runner)
+        worker_probe = fixture_runner.split(
+            "run_final_worker_atexit_probe() {", 1
+        )[1].split("run_normal_main_return_process_done_probe()", 1)[0]
+        normal_main_probe = fixture_runner.split(
+            "run_normal_main_return_process_done_probe() {", 1
+        )[1].split("run_recorded_timeout_case()", 1)[0]
+        timeout_probe = fixture_runner.split(
+            "run_recorded_timeout_case() {", 1
+        )[1].split("run_final_worker_atexit_probe_regressions()", 1)[0]
+        self.assertIn('record_case_exit "$4" "$status"', worker_probe)
+        self.assertIn('record_case_exit "$case_name" "$status"', normal_main_probe)
+        self.assertIn('record_case_exit "$case_name" 1', normal_main_probe)
+        self.assertIn('record_case_exit "$case_name" "$status"', timeout_probe)
+        for case in (
+            "musl-worker-normal-return",
+            "musl-worker-explicit-exit",
+            "native-worker-normal-return",
+            "native-worker-explicit-exit",
+            "native-internal-allocator-override",
+            "musl-normal-main-return",
+            "native-normal-main-return",
+        ):
+            self.assertIn(f'"{case}"', fixture_runner)
+
+        for evidence in (
+            'source_runtime_primary_receipt="$work_dir/source-runtime-primary/receipt.json"',
+            'source_runtime_normal_receipt="$work_dir/source-runtime-normal-main/receipt.json"',
+            'candidate_link_map="$work_dir/candidate-link.map"',
+            'candidate_link_trace="$work_dir/candidate-link.trace"',
+            'normal_main_link_map="$work_dir/normal-main-link.map"',
+            'normal_main_link_trace="$work_dir/normal-main-link.trace"',
+        ):
+            self.assertIn(evidence, fixture_runner)
+
     def test_native_mimalloc_physical_destroy_fixture_stays_out_of_normal_raw_copy_runner(
         self,
     ) -> None:
