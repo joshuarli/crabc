@@ -2093,26 +2093,30 @@ The initialization TLD admission is a separate native x86-64 receipt:
 ./compat/allocator/run-x86_64.sh allocator-initialization-tld
 ```
 
-It compiles the existing pinned-C direct fixtures with the release
-initial-exec musl profile and compares their complete address-independent
-records with four exact Rust emitters. The fixed rows are the detached static
-preimage, a caller-owned normal direct `mi_tld_init` image, the first-main
-static `mi_tld_create` arm, and the generic later-main metadata-allocation
-failure before normal TLD registration. The same receipt embeds the explicit
-worker init/repeat-init/done/repeat-done/recovery sequence and its seven fixed
-Rust ownership and failure filters. In particular, the retained PageMap filter
-is `process_main_binds_metadata_before_global_page_map_failure`; it is a
-Rust lifecycle guarantee and is not claimed as a selected pinned-C fault
+It compiles the pinned-C direct fixtures with the release initial-exec musl
+profile and compares their complete address-independent records with seven
+exact Rust emitters. The fixed rows cover the detached static preimage, a
+caller-owned normal direct `mi_tld_init` image, the first-main static
+`mi_tld_create` arm, selected generic later-TLD metadata success and failure,
+and the ordinary later-main `_mi_thread_init_with_heap(mi_heap_main())` Theap
+success/failure transaction. The success row reaches Malloc TLD and Theap
+backing, both intrusive lists, the default root, the fixed main-Heap TLS root,
+and explicit finish. The same receipt embeds the explicit worker
+init/repeat-init/done/repeat-done/recovery sequence and its seven fixed Rust
+ownership and failure filters. In particular, the retained PageMap filter is
+`process_main_binds_metadata_before_global_page_map_failure`; it is a Rust
+lifecycle guarantee and is not claimed as a selected pinned-C fault
 equivalence. The report is
 `compat/reports/allocator/x86_64/initialization-tld-matrix.json`.
 
-This finite source matrix does not cover successful generic or later TLD
-creation, metadata or `OsAligned` publication, automatic pthread teardown or
-process shutdown, allocator-recursion completion, public/runtime integration,
-or AArch64 status. The generic later failure compares C/Rust
-pre-registration NULL/ENOMEM state only. Its C fixture independently checks
-the source event order; the Rust trace does not claim event-order
-instrumentation. It admits the initialization component as partial M2 evidence.
+This finite source matrix does not cover non-main Heap and DynamicTheap cache
+routes, exclusive-arena or `OsAligned` publication, automatic pthread teardown,
+process shutdown, fork, allocator-recursion completion, public/runtime
+integration, or AArch64 status. Each C fixture independently checks its
+selected source event order. Rust traces record only independently observed
+state and do not claim event-order instrumentation or infer allocation attempts
+from thread tickets. It admits the initialization component as partial M2
+evidence.
 
 The separate bounded fault-injection judge is also native x86-only:
 

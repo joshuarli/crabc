@@ -68,7 +68,7 @@ class InitializationTldMatrixReaderTests(unittest.TestCase):
             with self.subTest(rows=malformed), self.assertRaises(EvidenceError):
                 validate_initialization_tld_branch_rows(malformed)
 
-    def test_later_tld_metadata_rows_do_not_claim_unobserved_rust_events(self) -> None:
+    def test_later_tld_and_ordinary_main_rows_do_not_claim_unobserved_rust_events(self) -> None:
         success_keys = branch_trace_keys("later-main-tld-metadata-allocation-success")
         self.assertFalse(any(".order." in key for key in success_keys))
         self.assertNotIn(
@@ -81,6 +81,25 @@ class InitializationTldMatrixReaderTests(unittest.TestCase):
             "m2.initialization.later_tld_metadata_failure.post.metadata_attempted_once",
             failure_keys,
         )
+        publication_keys = branch_trace_keys(
+            "later-main-theap-metadata-list-and-root-publication-success"
+        )
+        failure_keys = branch_trace_keys("later-main-theap-metadata-allocation-failure")
+        for keys in (publication_keys, failure_keys):
+            self.assertFalse(any(".order." in key for key in keys))
+            self.assertFalse(any("attempt" in key for key in keys))
+
+    def test_later_main_c_source_closures_use_the_producer_path_order(self) -> None:
+        """Match `source_file_records`' canonical record order for both new rows."""
+
+        for branch_id in (
+            "later-main-theap-metadata-list-and-root-publication-success",
+            "later-main-theap-metadata-allocation-failure",
+        ):
+            index = INITIALIZATION_TLD_BRANCH_IDS.index(branch_id)
+            paths = [record["path"] for record in BRANCH_C_SOURCE_FILE_RECORDS[index]]
+            with self.subTest(branch=branch_id):
+                self.assertEqual(paths, sorted(paths))
 
     @staticmethod
     def c_probe(branch_id: str) -> dict:
@@ -169,22 +188,24 @@ class InitializationM2FragmentReaderTests(unittest.TestCase):
         path.write_text(json.dumps(fragment), encoding="utf-8")
         return path
 
-    def test_fragment_includes_the_fixed_later_tld_metadata_outcomes(self) -> None:
+    def test_fragment_includes_the_complete_ordinary_later_attachment_transaction(self) -> None:
         loaded = load_fragment(self.write_fragment(self.fragment))
         self.assertEqual(
             [
                 branch["id"]
                 for branch in loaded["component"]["branch_matrix"]
-                if branch["id"].startswith("later-main-tld-metadata-allocation-")
+                if branch["id"].startswith("later-main-")
             ],
             [
                 "later-main-tld-metadata-allocation-success",
                 "later-main-tld-metadata-allocation-failure",
+                "later-main-theap-metadata-list-and-root-publication-success",
+                "later-main-theap-metadata-allocation-failure",
             ],
         )
         self.assertEqual(
             [check["expected_passed_test_count"] for check in loaded["component"]["checks"]],
-            [5, 1],
+            [7, 1],
         )
 
     def test_fragment_rejects_changed_anchor_definition_or_missing_direct_branch(self) -> None:

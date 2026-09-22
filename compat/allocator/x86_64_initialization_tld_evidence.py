@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Native x86-64 evidence for five fixed mimalloc initialization TLD arms.
+"""Native x86-64 evidence for seven fixed mimalloc initialization arms.
 
 This private producer compiles the pinned C direct fixtures for the detached
 static preimage, direct normal TLD initialization, and first-main static TLD
-creation, plus successful and failed generic later-TLD metadata allocation.
-It compares each complete address-independent record with the existing Rust
-emitter, then embeds the current native init-recursion receipt. The successful
-later row compares independently observed post-state only: its direct C
-fixture separately checks source event order. The selected branch matrix is
-intentionally finite: later Theap/list/TLS publication, automatic teardown,
-and allocator-recursion completion remain outside this initialization
-admission.
+creation, successful and failed generic later-TLD metadata allocation, and the
+ordinary later-main `_mi_thread_init_with_heap` Theap transaction. It compares
+each complete address-independent record with the existing Rust emitter, then
+embeds the current native init-recursion receipt. The ordinary later-main C
+fixture separately checks its source event order; Rust records independently
+observed post-state only. The selected branch matrix is intentionally finite:
+automatic teardown and allocator-recursion completion remain outside this
+initialization admission.
 """
 
 from __future__ import annotations
@@ -35,8 +35,8 @@ REPORT_DEFAULT = ROOT / "compat/reports/allocator/x86_64/initialization-tld-matr
 TARGET = "x86_64-unknown-linux-musl"
 NORMALIZED_EVIDENCE_ROOT = "<temporary-evidence-root>"
 NORMALIZED_PINNED_SOURCE = "<temporary-pinned-mimalloc-source>"
-EVIDENCE_KIND = "mimalloc-x86_64-initialization-five-fixed-tld-arms-and-explicit-worker-recovery-evidence"
-EVIDENCE_PROFILE = "release-initial-exec-direct-tld-static-normal-first-main-later-success-failure-and-explicit-worker-recovery"
+EVIDENCE_KIND = "mimalloc-x86_64-initialization-seven-fixed-tld-and-ordinary-later-main-arms-and-explicit-worker-recovery-evidence"
+EVIDENCE_PROFILE = "release-initial-exec-direct-tld-static-normal-first-main-later-tld-and-ordinary-later-main-success-failure-and-explicit-worker-recovery"
 TEMPORARY_PREFIX = "crabc-mimalloc-x86-initialization-tld-"
 
 INITIALIZATION_TLD_BRANCH_IDS = (
@@ -45,6 +45,8 @@ INITIALIZATION_TLD_BRANCH_IDS = (
     "first-main-static-tld-create",
     "later-main-tld-metadata-allocation-success",
     "later-main-tld-metadata-allocation-failure",
+    "later-main-theap-metadata-list-and-root-publication-success",
+    "later-main-theap-metadata-allocation-failure",
 )
 BRANCH_TARGETS = (
     "types::tests::emit_m2_detached_tld_static_preimage_c_rust_trace",
@@ -52,12 +54,16 @@ BRANCH_TARGETS = (
     "main_theap::tests::emit_m2_static_first_tld_create_c_rust_trace",
     "tld::tests::emit_m2_later_tld_metadata_success_c_rust_trace",
     "main_heap_thread::tests::emit_m2_later_tld_metadata_failure_c_rust_trace",
+    "main_heap_thread::tests::emit_m2_later_main_theap_publication_success_c_rust_trace",
+    "main_heap_thread::tests::emit_m2_later_main_theap_metadata_failure_c_rust_trace",
 )
 BRANCH_RUST_SOURCES = (
     "crabc-mimalloc/src/types.rs",
     "crabc-mimalloc/src/subproc.rs",
     "crabc-mimalloc/src/main_theap.rs",
     "crabc-mimalloc/src/tld.rs",
+    "crabc-mimalloc/src/main_heap_thread.rs",
+    "crabc-mimalloc/src/main_heap_thread.rs",
     "crabc-mimalloc/src/main_heap_thread.rs",
 )
 BRANCH_C_SOURCE_FILE_RECORDS = (
@@ -97,19 +103,48 @@ BRANCH_C_SOURCE_FILE_RECORDS = (
         {"path": "src/subproc.c", "bytes": 11458, "sha256": "39ab44c15b0dd91a53268fd52590d681e3c62e1930144b9392db0fde44439054"},
     ),
 )
-# The source closure is identical to the static `mi_tld_create` producer:
-# each direct fixture supplies its own `src/init.c` definition and retains all
-# remaining release translation units, including the real main-subprocess
-# identity from `src/subproc.c`.
+# The existing later-TLD fixtures retain the static-create closure. The two
+# complete ordinary later-main fixtures directly include `src/init.c` and keep
+# its real Theap, Heap, and compiler-TLS translation units in the closure.
+# `source_file_records` canonically orders its records by source path, so the
+# retained direct-producer closure must use that order too.
+_MAIN_THEAP_C_SOURCE_FILE_RECORDS = tuple(sorted((
+    {"path": "include/mimalloc.h", "bytes": 49389, "sha256": "af34f215cb6fe9e4e97bf08d78bfda877ab4cdd63c9222640c483d7d6a4488a5"},
+    {"path": "include/mimalloc/atomic.h", "bytes": 24497, "sha256": "106b267e98ccc5e01b48252c9742584cd5c914f309e7f4a4413ad85e65063d41"},
+    {"path": "include/mimalloc/internal.h", "bytes": 60106, "sha256": "4fd7b1dd450989b1a8a5b4cb54e163a36d932bbf7e341abcd882763251252852"},
+    {"path": "include/mimalloc/prim.h", "bytes": 6403, "sha256": "1987e8e2eedc07bb181bf2a11a27bec80a5309c32cfa66a56900fb4cbb64b172"},
+    {"path": "include/mimalloc/prim-tls.h", "bytes": 19214, "sha256": "46d871923b38c9463da985c54503cd5cb64bb2c91008f3d35bcbaae2a11c31c2"},
+    {"path": "include/mimalloc/types.h", "bytes": 40624, "sha256": "6a81148760be95f8fc8a2b7694f29e0f1f153b4c871ddd808e63cb0bbb9c3bae"},
+    {"path": "src/init.c", "bytes": 25096, "sha256": "e22486042ba132e002822315ccd4b24738fc3a151fc14172e5e45426e8add299"},
+    {"path": "src/heap.c", "bytes": 11303, "sha256": "c788b309cf5208f72679b81b00f0a68b59b8c01da6bebc891d3e4154857d0989"},
+    {"path": "src/theap.c", "bytes": 26240, "sha256": "2f1a4fddb96cb2da91433221976a0a3b6b8c923c0c38c9bc20b4f2420cb3e845"},
+    {"path": "src/threadlocal.c", "bytes": 12029, "sha256": "b3f140f7fbfa2ce8796dc397626b3a768285e2a17533cae8f0dbb19e4e4831f2"},
+    {"path": "src/subproc.c", "bytes": 11458, "sha256": "39ab44c15b0dd91a53268fd52590d681e3c62e1930144b9392db0fde44439054"},
+    {"path": "src/os.c", "bytes": 39093, "sha256": "8410b04c2d5b37e59fff1854364fed1fba873133b064cfe02083277038388548"},
+    {"path": "src/prim/prim-tls.c", "bytes": 10103, "sha256": "4970ab233c499a1080db2fa77386439cd35a029a9be7ce25eef817e281ad8d70"},
+    {"path": "src/prim/prim.c", "bytes": 2449, "sha256": "241b1087a0e22609de71b2deba6c771135dd37e756ea89ba79b5900165b4f229"},
+    {"path": "src/prim/unix/prim.c", "bytes": 36822, "sha256": "8efeac14a9952aa7c3117ce2d9d801f93692bda6cd80e09a51ddca398d7ac774"},
+), key=lambda record: record["path"]))
 BRANCH_C_SOURCE_FILE_RECORDS = (
     *BRANCH_C_SOURCE_FILE_RECORDS,
     BRANCH_C_SOURCE_FILE_RECORDS[2],
     BRANCH_C_SOURCE_FILE_RECORDS[2],
+    _MAIN_THEAP_C_SOURCE_FILE_RECORDS,
+    _MAIN_THEAP_C_SOURCE_FILE_RECORDS,
 )
 EXPECTED_ANCHORS = (
     ("src/init.c", 192, 192, "a91cd5dc5550b774d82d31c371386cec7bc67cdafd9fe643af3b8c57c796f3d1"),
     ("src/init.c", 236, 250, "25b55becf855281d82750d46dcd93ab6e8786453295b7eb34b4648ace45fc455"),
     ("src/init.c", 253, 272, "077d0451e7d7a572cdb1cfd6ff9b95bd43e06c22345679faf1c8e7e16f70b9d8"),
+    ("src/init.c", 305, 360, "8b5a6af8d90da7f2cb33cf5c6211c9325234840d57a54c25be891e49e4d354e5"),
+    ("src/theap.c", 228, 306, "af740edab362563857dc282c571e7074d5578ecc293cfc0c7a38d9e4db7d38f5"),
+    ("src/theap.c", 308, 334, "d6e71583d409ba3cb913dd7876efe829f9e4450d5d21706a1627ea541667a72f"),
+    ("src/heap.c", 37, 42, "1f47d10a7cb963ba51d3f8062ca09690c453721e72341b5e634c989ff7411495"),
+    ("src/threadlocal.c", 165, 172, "1dc2343422b9d6b45bb868574dfc12b22658b1d0858da7e6d305a568c5510dfb"),
+    ("src/init.c", 452, 481, "d5c23fd8ad3a571437117546584550e53c23bd7366df7689678317e637a2f64e"),
+    ("src/init.c", 377, 421, "5b55d25943fc70dab37a7d64c842c304411f8742ad77ccf912827e2518b04e8f"),
+    ("src/theap.c", 414, 450, "f118f2b4bf34099f31d2742f99e252202caf5ed92c1d13748f077e8a91ce99eb"),
+    ("src/threadlocal.c", 205, 214, "f15d366c5bf21e176e97e68da940447dd55a4966c5787874c7e3f130c4e329c1"),
 )
 EXPECTED_REQUIRED_DEFINITIONS = (
     ("mi_tld_detached.memid = memid_static",),
@@ -123,14 +158,65 @@ EXPECTED_REQUIRED_DEFINITIONS = (
         "mi_atomic_increment_relaxed(&subproc->thread_total_count)",
         "return mi_tld_init(tld,tseq,subproc)",
     ),
+    (
+        "mi_theap_t* _mi_thread_init_with_heap(mi_heap_t* heap_main)",
+        "mi_tld_t* tld = mi_tld_create(heap_main->subproc)",
+        "_mi_theap_default_set(theap)",
+        "_mi_heap_theap_set(heap_main, theap)",
+    ),
+    (
+        "void _mi_theap_init(mi_theap_t* theap, mi_heap_t* heap, mi_tld_t* tld)",
+        "theap->tld->theaps = theap",
+        "heap->theaps = theap",
+    ),
+    (
+        "mi_theap_t* _mi_theap_alloc(mi_heap_t* heap, mi_tld_t* tld)",
+        "theap = (mi_theap_t*)_mi_meta_zalloc(heap->subproc, sizeof(mi_theap_t), &memid)",
+        "theap->memid = memid",
+    ),
+    (
+        "bool _mi_heap_theap_set(mi_heap_t* heap, mi_theap_t* theap)",
+        "return _mi_thread_local_set(heap->theap,theap)",
+    ),
+    (
+        "bool _mi_thread_local_set( mi_thread_local_t key, void* val )",
+        "if (key == mi_thread_local_key_fast)",
+        "return mi_slot_fast_set(val)",
+    ),
+    (
+        "void _mi_thread_done(mi_theap_t* _theap_main)",
+        "_mi_thread_locals_thread_done()",
+        "mi_thread_theaps_done(tld)",
+        "mi_tld_free(tld)",
+    ),
+    (
+        "static void mi_thread_theaps_done(mi_tld_t* tld)",
+        "_mi_theap_default_set((mi_theap_t*)&_mi_theap_empty)",
+        "_mi_tld_detach_theaps(tld)",
+        "_mi_theap_decref(theap)",
+    ),
+    (
+        "void _mi_tld_detach_theaps( mi_tld_t* tld )",
+        "heap->theaps = theap->hnext",
+        "mi_atomic_store_ptr_release(mi_heap_t, &theap->heap, NULL)",
+    ),
+    (
+        "void _mi_thread_locals_thread_done(void)",
+        "if (mi_slot_fast_peek() != NULL)",
+        "mi_slot_fast_set(NULL)",
+    ),
 )
 EXPECTED_SCOPE = {
     "aarch64_status_reused": False,
     "allocator_recursion_completion_claimed": False,
     "automatic_pthread_destructor_claimed": False,
+    "automatic_process_shutdown_claimed": False,
+    "fork_claimed": False,
     "generic_or_later_tld_create_claimed": True,
     "later_tld_metadata_success_c_rust_poststate_parity_claimed": True,
     "later_tld_metadata_failure_c_rust_parity_claimed": True,
+    "ordinary_later_main_theap_explicit_finish_claimed": True,
+    "ordinary_later_main_theap_publication_c_rust_poststate_parity_claimed": True,
     "metadata_or_os_aligned_publication_claimed": False,
     "native_linux_x86_64_required": True,
     "private_engine_evidence_only": True,
@@ -154,6 +240,8 @@ BRANCH_C_PROBE_NAMES = (
     "m2-static-first-tld-create-trace-probe",
     "m2-later-tld-metadata-success-trace-probe",
     "m2-later-tld-metadata-failure-trace-probe",
+    "m2-later-main-theap-publication-success-trace-probe",
+    "m2-later-main-theap-metadata-failure-trace-probe",
 )
 # Each direct fixture includes `src/init.c` itself, so the compile closure
 # deliberately omits it while the retained source-file inventory includes it.
@@ -163,6 +251,8 @@ BRANCH_C_ORACLE_SOURCES = (
     tuple(run.M2_STATIC_FIRST_TLD_CREATE_ORACLE_SOURCES),
     tuple(run.M2_LATER_TLD_METADATA_SUCCESS_ORACLE_SOURCES),
     tuple(run.M2_LATER_TLD_METADATA_FAILURE_ORACLE_SOURCES),
+    tuple(run.M2_LATER_MAIN_THEAP_ORACLE_SOURCES),
+    tuple(run.M2_LATER_MAIN_THEAP_ORACLE_SOURCES),
 )
 BRANCH_C_SOURCE_FILES = (
     tuple(sorted((
@@ -191,6 +281,18 @@ BRANCH_C_SOURCE_FILES = (
         "include/mimalloc/prim.h", "include/mimalloc/prim-tls.h", "include/mimalloc/types.h",
         "src/init.c", "src/os.c", "src/prim/prim-tls.c", "src/prim/prim.c", "src/prim/unix/prim.c",
         "src/subproc.c",
+    ))),
+    tuple(sorted((
+        "include/mimalloc.h", "include/mimalloc/atomic.h", "include/mimalloc/internal.h",
+        "include/mimalloc/prim.h", "include/mimalloc/prim-tls.h", "include/mimalloc/types.h",
+        "src/init.c", "src/heap.c", "src/theap.c", "src/threadlocal.c", "src/subproc.c", "src/os.c",
+        "src/prim/prim-tls.c", "src/prim/prim.c", "src/prim/unix/prim.c",
+    ))),
+    tuple(sorted((
+        "include/mimalloc.h", "include/mimalloc/atomic.h", "include/mimalloc/internal.h",
+        "include/mimalloc/prim.h", "include/mimalloc/prim-tls.h", "include/mimalloc/types.h",
+        "src/init.c", "src/heap.c", "src/theap.c", "src/threadlocal.c", "src/subproc.c", "src/os.c",
+        "src/prim/prim-tls.c", "src/prim/prim.c", "src/prim/unix/prim.c",
     ))),
 )
 class EvidenceError(RuntimeError):
@@ -273,7 +375,15 @@ def branch_c_fixture(branch_id: str) -> str:
         return run.M2_STATIC_FIRST_TLD_CREATE_TRACE_PROBE
     if index == 3:
         return run.M2_LATER_TLD_METADATA_SUCCESS_TRACE_PROBE
-    return run.M2_LATER_TLD_METADATA_FAILURE_TRACE_PROBE
+    if index == 4:
+        return run.M2_LATER_TLD_METADATA_FAILURE_TRACE_PROBE
+    if index == 5:
+        return (ROOT / "compat/allocator/m2_later_main_theap_publication_success_x86_64.c").read_text(
+            encoding="utf-8"
+        )
+    return (ROOT / "compat/allocator/m2_later_main_theap_metadata_failure_x86_64.c").read_text(
+        encoding="utf-8"
+    )
 
 
 def branch_trace_keys(branch_id: str) -> tuple[str, ...]:
@@ -286,7 +396,11 @@ def branch_trace_keys(branch_id: str) -> tuple[str, ...]:
         return tuple(run.M2_STATIC_FIRST_TLD_CREATE_TRACE_KEYS)
     if index == 3:
         return tuple(run.M2_LATER_TLD_METADATA_SUCCESS_TRACE_KEYS)
-    return tuple(run.M2_LATER_TLD_METADATA_FAILURE_TRACE_KEYS)
+    if index == 4:
+        return tuple(run.M2_LATER_TLD_METADATA_FAILURE_TRACE_KEYS)
+    if index == 5:
+        return tuple(run.M2_LATER_MAIN_THEAP_PUBLICATION_SUCCESS_TRACE_KEYS)
+    return tuple(run.M2_LATER_MAIN_THEAP_METADATA_FAILURE_TRACE_KEYS)
 
 
 def parse_branch_trace(branch_id: str, output: str, *, source: str) -> dict[str, int]:
@@ -300,7 +414,11 @@ def parse_branch_trace(branch_id: str, output: str, *, source: str) -> dict[str,
             return run.parse_m2_static_first_tld_create_trace(output, source=source)
         if index == 3:
             return run.parse_m2_later_tld_metadata_success_trace(output, source=source)
-        return run.parse_m2_later_tld_metadata_failure_trace(output, source=source)
+        if index == 4:
+            return run.parse_m2_later_tld_metadata_failure_trace(output, source=source)
+        if index == 5:
+            return run.parse_m2_later_main_theap_publication_success_trace(output, source=source)
+        return run.parse_m2_later_main_theap_metadata_failure_trace(output, source=source)
     except run.HarnessError as error:
         raise EvidenceError(str(error)) from error
 
@@ -316,8 +434,12 @@ def validate_branch_trace(branch_id: str, trace: Mapping[str, int], *, source: s
             run.validate_m2_static_first_tld_create_trace(trace, source=source)
         elif index == 3:
             run.validate_m2_later_tld_metadata_success_trace(trace, source=source)
-        else:
+        elif index == 4:
             run.validate_m2_later_tld_metadata_failure_trace(trace, source=source)
+        elif index == 5:
+            run.validate_m2_later_main_theap_publication_success_trace(trace, source=source)
+        else:
+            run.validate_m2_later_main_theap_metadata_failure_trace(trace, source=source)
     except run.HarnessError as error:
         raise EvidenceError(str(error)) from error
 
@@ -472,8 +594,16 @@ def build_c_branch(compiler: str, source: Path, temporary: Path, branch_id: str)
             built = run.build_m2_static_first_tld_create_trace(compiler, source, profile_dir, profile)
         elif index == 3:
             built = run.build_m2_later_tld_metadata_success_trace(compiler, source, profile_dir, profile)
-        else:
+        elif index == 4:
             built = run.build_m2_later_tld_metadata_failure_trace(compiler, source, profile_dir, profile)
+        elif index == 5:
+            built = run.build_m2_later_main_theap_publication_success_trace(
+                compiler, source, profile_dir, profile
+            )
+        else:
+            built = run.build_m2_later_main_theap_metadata_failure_trace(
+                compiler, source, profile_dir, profile
+            )
     except run.HarnessError as error:
         raise EvidenceError(str(error)) from error
     c_trace = built.get("record")
@@ -505,6 +635,8 @@ def source_input_records() -> list[dict[str, str]]:
         "Cargo.lock",
         "compat/allocator/run.py",
         "compat/allocator/m2-initialization-x86_64-v3.5.0.fragment.json",
+        "compat/allocator/m2_later_main_theap_metadata_failure_x86_64.c",
+        "compat/allocator/m2_later_main_theap_publication_success_x86_64.c",
         "compat/allocator/x86_64_initialization_tld_evidence.py",
         "compat/allocator/x86_64_init_recursion_evidence.py",
         "compat/allocator/x86_64-init-recursion-evidence-v3.5.0.json",
@@ -590,16 +722,25 @@ def load_fragment(path: Path = FRAGMENT_PATH) -> dict[str, Any]:
         raise EvidenceError("initialization M2 component fragment schema changed")
     if component.get("id") != "initialization" or component.get("completion_status") != "partial":
         raise EvidenceError("initialization M2 component state changed")
-    if component.get("source_units") != ["src/init.c", "src/prim/prim.c", "src/prim/prim-tls.c"]:
+    if component.get("source_units") != [
+        "src/init.c",
+        "src/heap.c",
+        "src/theap.c",
+        "src/threadlocal.c",
+        "src/prim/prim.c",
+        "src/prim/prim-tls.c",
+    ]:
         raise EvidenceError("initialization M2 source-unit roster changed")
     if component.get("source_map_records") != [
         {"required_status": "partial", "unit_id": "process-and-thread-initialization"},
         {"required_status": "partial", "unit_id": "c-support-and-once"},
         {"required_status": "partial", "unit_id": "tls-interface-and-thread-identity"},
+        {"required_status": "partial", "unit_id": "heap-lifecycle"},
+        {"required_status": "partial", "unit_id": "thread-local-heap-lifecycle"},
     ]:
         raise EvidenceError("initialization M2 source-map roster changed")
     expected_checks = (
-        ("initialization-tld-direct-source-matrix", "c-rust-initialization-tld-source-matrix", "x86_64_initialization_tld_evidence::five_fixed_direct_tld_branches", 5),
+        ("initialization-tld-direct-source-matrix", "c-rust-initialization-tld-source-matrix", "x86_64_initialization_tld_evidence::seven_fixed_direct_tld_and_ordinary_later_main_branches", 7),
         ("initialization-explicit-worker-recovery-lifecycle", "c-rust-init-recursion-lifecycle", "main_heap_thread::tests::emit_x86_64_init_recursion_teardown_c_rust_trace", 1),
     )
     checks = component.get("checks")
@@ -621,6 +762,18 @@ def load_fragment(path: Path = FRAGMENT_PATH) -> dict[str, Any]:
         (EXPECTED_ANCHORS[2],),
         (EXPECTED_ANCHORS[2],),
         (EXPECTED_ANCHORS[2],),
+        (
+            EXPECTED_ANCHORS[3],
+            EXPECTED_ANCHORS[4],
+            EXPECTED_ANCHORS[5],
+            EXPECTED_ANCHORS[6],
+            EXPECTED_ANCHORS[7],
+            EXPECTED_ANCHORS[8],
+            EXPECTED_ANCHORS[9],
+            EXPECTED_ANCHORS[10],
+            EXPECTED_ANCHORS[11],
+        ),
+        (EXPECTED_ANCHORS[3], EXPECTED_ANCHORS[5]),
     )
     if not isinstance(branches, list) or len(branches) != len(INITIALIZATION_TLD_BRANCH_IDS):
         raise EvidenceError("initialization M2 branch matrix changed")

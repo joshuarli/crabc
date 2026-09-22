@@ -2177,6 +2177,360 @@ mod tests {
         .expect("the later-Theap allocation failure lifecycle completes");
     }
 
+    /// Emits the failure post-state for the second metadata request in the
+    /// ordinary later-main attachment. Pinned C injects the selected
+    /// `_mi_theap_alloc` failure at the direct caller and verifies its own
+    /// TLD-cleanup order. Rust observes only the retained source facts after
+    /// the typed allocator rejects the exact Theap-size request; it does not
+    /// claim C event ordering or infer an allocation attempt from a ticket.
+    #[test]
+    fn emit_m2_later_main_theap_metadata_failure_c_rust_trace() {
+        macro_rules! record {
+            ($name:literal, $value:expr) => {
+                std::println!("{}={}", $name, $value as usize);
+            };
+        }
+
+        thread::spawn(|| {
+            let (storage, subprocess) = fixture();
+            let metadata = MetaAllocator::test_static_owner();
+            let mut main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the process main images");
+            let main_heap = main
+                .shared_main_heap_lease()
+                .expect("the live main attachment lends its heap");
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let pre_total_thread_count_one = subprocess.total_thread_count() == 1;
+                    let pre_live_thread_count_one = subprocess.live_thread_count() == 1;
+                    assert!(pre_total_thread_count_one);
+                    assert!(pre_live_thread_count_one);
+                    assert!(roots_are_pristine_for_later_main_attachment());
+                    assert_ne!(
+                        core::mem::size_of::<Theap>(),
+                        core::mem::size_of::<crate::types::ThreadLocalData>(),
+                        "the selected fault must follow the successful later TLD allocation"
+                    );
+
+                    metadata
+                        .get_ref()
+                        .test_fail_next_direct_zeroed_size(core::mem::size_of::<Theap>());
+                    let rejected = unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(
+                            main_heap,
+                            metadata,
+                            memory_config(),
+                        )
+                    };
+                    let result_unavailable = matches!(
+                        rejected,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(
+                            MainHeapThreadAttachmentError::TheapMetadata(
+                                MetaError::AllocationUnavailable
+                            )
+                        ))
+                    );
+                    let total_thread_count_two = subprocess.total_thread_count() == 2;
+                    let live_thread_count_one = subprocess.live_thread_count() == 1;
+                    let no_shared_theap_list_member = storage.test_shared_later_theap_count() == 0;
+                    let roots_remain_empty = roots_are_pristine_for_later_main_attachment();
+                    let tld_metadata_released_before_root_publication =
+                        metadata.test_allocation_audit().live_capability_count == 0;
+
+                    assert!(result_unavailable);
+                    assert!(total_thread_count_two);
+                    assert!(live_thread_count_one);
+                    assert!(no_shared_theap_list_member);
+                    assert!(roots_remain_empty);
+                    assert!(tld_metadata_released_before_root_publication);
+
+                    std::println!(
+                        "CRABC_MI_M2_LATER_MAIN_THEAP_METADATA_FAILURE_TRACE_BEGIN"
+                    );
+                    record!(
+                        "m2.initialization.later_main_theap_failure.pre.total_thread_count_one",
+                        pre_total_thread_count_one
+                    );
+                    record!(
+                        "m2.initialization.later_main_theap_failure.pre.live_thread_count_one",
+                        pre_live_thread_count_one
+                    );
+                    record!(
+                        "m2.initialization.later_main_theap_failure.post.result_unavailable",
+                        result_unavailable
+                    );
+                    record!(
+                        "m2.initialization.later_main_theap_failure.post.total_thread_count_two",
+                        total_thread_count_two
+                    );
+                    record!(
+                        "m2.initialization.later_main_theap_failure.post.live_thread_count_one",
+                        live_thread_count_one
+                    );
+                    record!(
+                        "m2.initialization.later_main_theap_failure.post.no_shared_theap_list_member",
+                        no_shared_theap_list_member
+                    );
+                    record!(
+                        "m2.initialization.later_main_theap_failure.post.roots_remain_empty",
+                        roots_remain_empty
+                    );
+                    record!(
+                        "m2.initialization.later_main_theap_failure.post.tld_metadata_released_before_root_publication",
+                        tld_metadata_released_before_root_publication
+                    );
+                    std::println!(
+                        "CRABC_MI_M2_LATER_MAIN_THEAP_METADATA_FAILURE_TRACE_END"
+                    );
+                });
+                worker
+                    .join()
+                    .expect("the ordinary later Theap failure trace completes");
+            });
+
+            assert_eq!(subprocess.total_thread_count(), 2);
+            assert_eq!(subprocess.live_thread_count(), 1);
+            main.teardown()
+                .expect("the ticket-zero main owner retires after the failed later attachment");
+        })
+        .join()
+        .expect("the ordinary later Theap failure trace finishes");
+    }
+
+    /// Emits independently observed state for the complete ordinary
+    /// `_mi_thread_init_with_heap(mi_heap_main())` later-thread transaction.
+    ///
+    /// The paired pinned-C fixture invokes that exact source caller on a
+    /// later pthread and checks its own call order through TLD allocation,
+    /// Theap allocation/initialization, default-root publication, and the
+    /// fixed main-Heap TLS store. This typed test records only the resulting
+    /// metadata, list, root, counter, and explicit-finish state; it has no
+    /// C-call hooks and must not present those facts as order equivalence.
+    /// Its finish is an explicit owner call after the attached post-state was
+    /// observed. It does not claim automatic pthread destruction, process
+    /// shutdown, fork, or recursion behavior.
+    #[test]
+    fn emit_m2_later_main_theap_publication_success_c_rust_trace() {
+        macro_rules! record {
+            ($name:literal, $value:expr) => {
+                std::println!("{}={}", $name, $value as usize);
+            };
+        }
+
+        thread::spawn(|| {
+            let (storage, subprocess) = fixture();
+            let metadata = MetaAllocator::test_static_owner();
+            let mut main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the process main images");
+            let main_heap = main
+                .shared_main_heap_lease()
+                .expect("the live main attachment lends its heap");
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let pre_total_thread_count_one = subprocess.total_thread_count() == 1;
+                    let pre_live_thread_count_one = subprocess.live_thread_count() == 1;
+                    assert!(pre_total_thread_count_one);
+                    assert!(pre_live_thread_count_one);
+                    assert!(roots_are_pristine_for_later_main_attachment());
+
+                    let mut owner = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(
+                            main_heap,
+                            metadata,
+                            memory_config(),
+                        )
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("the ordinary later attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("the ordinary later attachment retained: {error:?}")
+                        }
+                    };
+                    let theap_pointer = owner
+                        .theap_pointer()
+                        .expect("the metadata Theap remains owned while attached");
+                    let result_available = true;
+                    let tld_metadata_malloc = {
+                        let tld = owner
+                            .current_tld_mut()
+                            .expect("the later metadata TLD remains current");
+                        let memory = tld.memory_id();
+                        memory.kind() == crate::types::MemoryKind::Malloc
+                            && memory.malloc_memory().is_some_and(|allocation| {
+                                allocation.base
+                                    == (tld as *const crate::types::ThreadLocalData)
+                                        .cast_mut()
+                                        .cast()
+                                    && allocation.size
+                                        == core::mem::size_of::<crate::types::ThreadLocalData>()
+                            })
+                    };
+                    let (theap_metadata_malloc, theap_initialized) = {
+                        let allocation = owner
+                            .theap
+                            .as_ref()
+                            .expect("the attached owner retains its metadata capability");
+                        let memory = allocation.memory_id();
+                        (
+                            memory.kind() == crate::types::MemoryKind::Malloc
+                                && memory.malloc_memory().is_some_and(|allocation_memory| {
+                                    allocation_memory.base == allocation.pointer().as_ptr().cast()
+                                        && allocation_memory.size == core::mem::size_of::<Theap>()
+                                }),
+                            allocation
+                                .dynamic_theap()
+                                .is_some_and(Theap::is_initialized),
+                        )
+                    };
+                    let tld_list_contains_theap = unsafe {
+                        owner
+                            .current_tld_mut()
+                            .expect("the attached TLD remains current")
+                            .has_exact_theap_member(theap_pointer)
+                    };
+                    let heap_list_contains_theap = {
+                        let mut heap = main_heap
+                            .lock_heap()
+                            .expect("the source main heap remains live");
+                        let member = heap
+                            .heap_mut()
+                            .has_shared_theap_member_blocking(theap_pointer)
+                            .expect("the source shared heap list stays valid");
+                        heap.unlock().expect("shared heap inspection unlocks");
+                        member
+                    };
+                    let default_root_matches_theap =
+                        core::ptr::eq(default_theap().as_ptr(), theap_pointer);
+                    let fast_root_matches_theap = fast_slot_peek()
+                        .is_some_and(|fast| fast.as_ptr().cast::<Theap>() == theap_pointer);
+                    let total_thread_count_two = subprocess.total_thread_count() == 2;
+                    let live_thread_count_two = subprocess.live_thread_count() == 2;
+                    let attached_metadata_capabilities_two =
+                        metadata.test_allocation_audit().live_capability_count == 2;
+
+                    assert!(result_available);
+                    assert!(tld_metadata_malloc);
+                    assert!(theap_metadata_malloc);
+                    assert!(theap_initialized);
+                    assert!(tld_list_contains_theap);
+                    assert!(heap_list_contains_theap);
+                    assert!(default_root_matches_theap);
+                    assert!(fast_root_matches_theap);
+                    assert_eq!(cached_theap().as_ptr(), empty_default_theap_ptr());
+                    assert!(total_thread_count_two);
+                    assert!(live_thread_count_two);
+                    assert!(attached_metadata_capabilities_two);
+
+                    owner
+                        .finish_after_user_destructors()
+                        .expect("the explicit ordinary no-page finish releases the later owner");
+                    let finish_default_root_empty =
+                        core::ptr::eq(default_theap().as_ptr(), empty_default_theap_ptr());
+                    let finish_fast_root_empty = fast_slot_peek().is_none();
+                    let finish_live_thread_count_one = subprocess.live_thread_count() == 1;
+                    let finish_heap_list_released = storage.test_shared_later_theap_count() == 0;
+                    let finish_metadata_capabilities_released =
+                        metadata.test_allocation_audit().live_capability_count == 0;
+
+                    assert!(finish_default_root_empty);
+                    assert!(finish_fast_root_empty);
+                    assert!(finish_live_thread_count_one);
+                    assert!(finish_heap_list_released);
+                    assert!(finish_metadata_capabilities_released);
+
+                    std::println!(
+                        "CRABC_MI_M2_LATER_MAIN_THEAP_PUBLICATION_SUCCESS_TRACE_BEGIN"
+                    );
+                    record!(
+                        "m2.initialization.later_main_theap_success.pre.total_thread_count_one",
+                        pre_total_thread_count_one
+                    );
+                    record!(
+                        "m2.initialization.later_main_theap_success.pre.live_thread_count_one",
+                        pre_live_thread_count_one
+                    );
+                    record!(
+                        "m2.initialization.later_main_theap_success.post.result_available",
+                        result_available
+                    );
+                    record!(
+                        "m2.initialization.later_main_theap_success.post.tld_metadata_malloc",
+                        tld_metadata_malloc
+                    );
+                    record!(
+                        "m2.initialization.later_main_theap_success.post.theap_metadata_malloc",
+                        theap_metadata_malloc
+                    );
+                    record!(
+                        "m2.initialization.later_main_theap_success.post.theap_initialized",
+                        theap_initialized
+                    );
+                    record!(
+                        "m2.initialization.later_main_theap_success.post.tld_list_contains_theap",
+                        tld_list_contains_theap
+                    );
+                    record!(
+                        "m2.initialization.later_main_theap_success.post.heap_list_contains_theap",
+                        heap_list_contains_theap
+                    );
+                    record!(
+                        "m2.initialization.later_main_theap_success.post.default_root_matches_theap",
+                        default_root_matches_theap
+                    );
+                    record!(
+                        "m2.initialization.later_main_theap_success.post.fast_root_matches_theap",
+                        fast_root_matches_theap
+                    );
+                    record!(
+                        "m2.initialization.later_main_theap_success.post.total_thread_count_two",
+                        total_thread_count_two
+                    );
+                    record!(
+                        "m2.initialization.later_main_theap_success.post.live_thread_count_two",
+                        live_thread_count_two
+                    );
+                    record!(
+                        "m2.initialization.later_main_theap_success.finish.default_root_empty",
+                        finish_default_root_empty
+                    );
+                    record!(
+                        "m2.initialization.later_main_theap_success.finish.fast_root_empty",
+                        finish_fast_root_empty
+                    );
+                    record!(
+                        "m2.initialization.later_main_theap_success.finish.live_thread_count_one",
+                        finish_live_thread_count_one
+                    );
+                    record!(
+                        "m2.initialization.later_main_theap_success.finish.heap_list_released",
+                        finish_heap_list_released
+                    );
+                    std::println!(
+                        "CRABC_MI_M2_LATER_MAIN_THEAP_PUBLICATION_SUCCESS_TRACE_END"
+                    );
+                });
+                worker
+                    .join()
+                    .expect("the ordinary later attachment trace completes");
+            });
+
+            assert_eq!(subprocess.total_thread_count(), 2);
+            assert_eq!(subprocess.live_thread_count(), 1);
+            main.teardown()
+                .expect("the ticket-zero main owner retires after the explicit later finish");
+        })
+        .join()
+        .expect("the ordinary later attachment trace finishes");
+    }
+
     /// Pinned `_mi_thread_init_with_heap` first creates its later TLD through
     /// `mi_tld_create`.  A failed metadata allocation at that first step has
     /// no TLD capability to clean up, so it must return before either Theap

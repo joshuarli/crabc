@@ -327,10 +327,10 @@ M2_X86_64_BITMAP_FRAGMENT_DIGEST = "dbb2bc7d34762819f7ed76c3b50fd3d8599d46b0ba7b
 # `subproc.c`, and `stats.c` source boundary to the existing VM inventory.
 # These source-inventory changes do not promote M2.
 M2_X86_64_VM_FRAGMENT_DIGEST = "41d7449d49f027992f139cd92ad43f49f5ae25ebcbe8e15039a811b4e742c2d9"
-# The initialization inventory separately binds selected generic/later metadata
-# success post-state while preserving later publication and automatic-teardown
-# nonclaims. It does not promote M2.
-M2_X86_64_INITIALIZATION_FRAGMENT_DIGEST = "8ffe77f67c90df875bb1de6e0ae6921ca299bc240712480f119b3d0d437d0a3b"
+# The initialization inventory binds the selected ordinary later-main Theap
+# transaction while retaining non-main, automatic-teardown, and fork nonclaims.
+# It does not promote M2.
+M2_X86_64_INITIALIZATION_FRAGMENT_DIGEST = "605ec5f0ec43f983c796f180608c8ed01ba806e9f89b90c6755eef832567a984"
 M2_X86_64_FAULT_FRAGMENT_DIGEST = "6953c3c95e08600b4b1abba64e017a6ca8e3e9d584a68dd67e8de6ecebb7704c"
 M2_X86_64_PAGE_MAP_CHECK_IDS = (
     "successful-page-map-lifecycle",
@@ -377,6 +377,8 @@ M2_X86_64_SOURCE_MAP_REFERENCES: Mapping[str, tuple[dict[str, str], ...]] = {
         {"unit_id": "process-and-thread-initialization", "required_status": "partial"},
         {"unit_id": "c-support-and-once", "required_status": "partial"},
         {"unit_id": "tls-interface-and-thread-identity", "required_status": "partial"},
+        {"unit_id": "heap-lifecycle", "required_status": "partial"},
+        {"unit_id": "thread-local-heap-lifecycle", "required_status": "partial"},
     ),
     "fault-injection": (
         {"unit_id": "page-map-lifecycle", "required_status": "partial"},
@@ -662,6 +664,40 @@ M2_LATER_TLD_METADATA_SUCCESS_TRACE_KEYS = (
     "m2.initialization.later_tld_metadata_success.post.total_thread_count_incremented",
     "m2.initialization.later_tld_metadata_success.post.live_thread_count_two",
     "m2.initialization.later_tld_metadata_success.post.live_thread_count_incremented",
+)
+# The ordinary later-main source caller spans `src/init.c`'s generic TLD and
+# Theap branches, `_mi_theap_init`'s two intrusive-list publications, and the
+# default/fixed-TLS roots. The paired C fixture verifies that source event
+# order privately. Rust emits only the independently observed metadata,
+# list, root, counter, and explicit-finish relations below; no Rust relation
+# stands in for C call order or derives an allocation attempt from a ticket.
+M2_LATER_MAIN_THEAP_PUBLICATION_SUCCESS_TRACE_KEYS = (
+    "m2.initialization.later_main_theap_success.pre.total_thread_count_one",
+    "m2.initialization.later_main_theap_success.pre.live_thread_count_one",
+    "m2.initialization.later_main_theap_success.post.result_available",
+    "m2.initialization.later_main_theap_success.post.tld_metadata_malloc",
+    "m2.initialization.later_main_theap_success.post.theap_metadata_malloc",
+    "m2.initialization.later_main_theap_success.post.theap_initialized",
+    "m2.initialization.later_main_theap_success.post.tld_list_contains_theap",
+    "m2.initialization.later_main_theap_success.post.heap_list_contains_theap",
+    "m2.initialization.later_main_theap_success.post.default_root_matches_theap",
+    "m2.initialization.later_main_theap_success.post.fast_root_matches_theap",
+    "m2.initialization.later_main_theap_success.post.total_thread_count_two",
+    "m2.initialization.later_main_theap_success.post.live_thread_count_two",
+    "m2.initialization.later_main_theap_success.finish.default_root_empty",
+    "m2.initialization.later_main_theap_success.finish.fast_root_empty",
+    "m2.initialization.later_main_theap_success.finish.live_thread_count_one",
+    "m2.initialization.later_main_theap_success.finish.heap_list_released",
+)
+M2_LATER_MAIN_THEAP_METADATA_FAILURE_TRACE_KEYS = (
+    "m2.initialization.later_main_theap_failure.pre.total_thread_count_one",
+    "m2.initialization.later_main_theap_failure.pre.live_thread_count_one",
+    "m2.initialization.later_main_theap_failure.post.result_unavailable",
+    "m2.initialization.later_main_theap_failure.post.total_thread_count_two",
+    "m2.initialization.later_main_theap_failure.post.live_thread_count_one",
+    "m2.initialization.later_main_theap_failure.post.no_shared_theap_list_member",
+    "m2.initialization.later_main_theap_failure.post.roots_remain_empty",
+    "m2.initialization.later_main_theap_failure.post.tld_metadata_released_before_root_publication",
 )
 M2_PAGE_MAP_TRACE_KEYS = (
     "m2.page_map.control.page_size",
@@ -1669,6 +1705,20 @@ M2_LATER_TLD_METADATA_SUCCESS_ORACLE_SOURCES = tuple(
 )
 M2_LATER_TLD_METADATA_FAILURE_ORACLE_SOURCES = tuple(
     item for item in ORACLE_SOURCES if item != "src/init.c"
+)
+
+# The complete ordinary later-main fixtures directly include only init.c so
+# their wrappers reach the real source-private caller. The normal closure
+# retains the actual Theap, Heap, and compiler-TLS translation units that the
+# caller reaches; no fixture replacement supplies those transitions.
+M2_LATER_MAIN_THEAP_ORACLE_SOURCES = tuple(
+    item for item in ORACLE_SOURCES if item != "src/init.c"
+)
+M2_LATER_MAIN_THEAP_PUBLICATION_SUCCESS_FIXTURE = (
+    ALLOCATOR_ROOT / "m2_later_main_theap_publication_success_x86_64.c"
+)
+M2_LATER_MAIN_THEAP_METADATA_FAILURE_FIXTURE = (
+    ALLOCATOR_ROOT / "m2_later_main_theap_metadata_failure_x86_64.c"
 )
 
 # The selected M2 PageMap producer directly includes the three source units
@@ -12563,7 +12613,7 @@ def validate_x86_64_m2_memory_substrate_contract(
         "x86-64-bitmap-source-and-native-evidence",
         "x86-64-vm-primitives-fixed-profile-c-rust-and-owner-evidence",
         "x86-64-runtime-source-environment-thp-configuration-admission",
-        "x86-64-initialization-five-fixed-tld-and-worker-recovery-admission",
+        "x86-64-initialization-seven-fixed-tld-and-ordinary-later-main-worker-recovery-admission",
         "x86-64-source-indexed-fault-seam-inventory-admission",
     ]:
         raise HarnessError("native x86 M2 global evidence inventory changed")
@@ -12733,7 +12783,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                 or type(raw_check.get("expected_passed_test_count")) is not int
                 or raw_check.get("expected_passed_test_count") != (
                     41 if component_id == "bitmaps" else (
-                        5 if raw_check.get("kind") == "c-rust-initialization-tld-source-matrix" else 1
+                        7 if raw_check.get("kind") == "c-rust-initialization-tld-source-matrix" else 1
                     )
                 )
             ):
@@ -12759,7 +12809,7 @@ def validate_x86_64_m2_memory_substrate_contract(
             }:
                 expected_initialization_targets = {
                     "initialization-tld-direct-source-matrix": (
-                        "x86_64_initialization_tld_evidence::five_fixed_direct_tld_branches"
+                        "x86_64_initialization_tld_evidence::seven_fixed_direct_tld_and_ordinary_later_main_branches"
                     ),
                     "initialization-explicit-worker-recovery-lifecycle": (
                         "main_heap_thread::tests::emit_x86_64_init_recursion_teardown_c_rust_trace"
@@ -13658,7 +13708,7 @@ def _m2_x86_64_initialization_check_records(
             "comparison_status": "matched",
             "component": "initialization",
             "command": list(rust_probes[0]["command"]),
-            "evidence_scope": "five-fixed-direct-pinned-c-rust-tld-source-matrix",
+            "evidence_scope": "seven-fixed-direct-pinned-c-rust-tld-and-ordinary-later-main-source-matrix",
             "id": matrix["id"],
             "passed_test_count": matrix["expected_passed_test_count"],
             "target": matrix["target"],
@@ -13946,7 +13996,7 @@ def m2_x86_64_memory_substrate_report(
             "x86-64-runtime-source-environment-thp-configuration-admission": dict(
                 runtime_thp_evidence
             ) if runtime_thp_evidence is not None else {},
-            "x86-64-initialization-five-fixed-tld-and-worker-recovery-admission": dict(
+            "x86-64-initialization-seven-fixed-tld-and-ordinary-later-main-worker-recovery-admission": dict(
                 initialization_evidence
             ) if initialization_evidence is not None else {},
             "x86-64-source-indexed-fault-seam-inventory-admission": dict(
@@ -18190,6 +18240,170 @@ def compare_m2_later_tld_metadata_failure_trace(
     }
 
 
+def _parse_m2_later_main_theap_trace(
+    output: str,
+    *,
+    source: str,
+    begin: str,
+    end: str,
+    description: str,
+    keys: Sequence[str],
+) -> dict[str, int]:
+    """Parse one fixed ordinary later-main source post-state record."""
+
+    trace = parse_address_independent_trace(
+        output,
+        begin=begin,
+        end=end,
+        description=f"{source} {description}",
+    )
+    if set(trace) != set(keys):
+        missing = sorted(set(keys) - set(trace))
+        unexpected = sorted(set(trace) - set(keys))
+        problems: list[str] = []
+        if missing:
+            problems.append("missing: " + ", ".join(missing))
+        if unexpected:
+            problems.append("unexpected: " + ", ".join(unexpected))
+        raise HarnessError(
+            f"{source} {description} does not match the fixed schema: "
+            + "; ".join(problems)
+        )
+    return trace
+
+
+def _validate_m2_later_main_theap_trace(
+    trace: Mapping[str, int], *, source: str, description: str, keys: Sequence[str]
+) -> None:
+    """Require every independently observable later-main relation."""
+
+    if source not in {"pinned C", "Rust"}:
+        raise HarnessError(f"unknown {description} source: {source}")
+    if set(trace) != set(keys):
+        raise HarnessError(f"{source} {description} keys differ from the fixed contract")
+    for key in keys:
+        if type(trace[key]) is not int:
+            raise HarnessError(
+                f"{source} {description} field is not an integer: {key}"
+            )
+        if trace[key] != 1:
+            raise HarnessError(
+                f"{source} {description} contains an unmet relation: {key}"
+            )
+
+
+def _compare_m2_later_main_theap_trace(
+    c_trace: Mapping[str, int],
+    rust_trace: Mapping[str, int],
+    *,
+    description: str,
+    keys: Sequence[str],
+    validator: Callable[[Mapping[str, int], str], None],
+) -> dict[str, Any]:
+    """Compare a C-only-order / Rust-post-state ordinary attachment record."""
+
+    validator(c_trace, "pinned C")
+    validator(rust_trace, "Rust")
+    mismatches = [
+        f"{key} (C={c_trace[key]}, Rust={rust_trace[key]})"
+        for key in keys
+        if c_trace[key] != rust_trace[key]
+    ]
+    if mismatches:
+        raise HarnessError(
+            f"Rust {description} differs from pinned C: " + "; ".join(mismatches)
+        )
+    return {"compared_value_count": len(keys), "status": "matched"}
+
+
+def parse_m2_later_main_theap_publication_success_trace(
+    output: str, *, source: str
+) -> dict[str, int]:
+    """Parse the complete ordinary later-main attached and explicit-finish state."""
+
+    return _parse_m2_later_main_theap_trace(
+        output,
+        source=source,
+        begin="CRABC_MI_M2_LATER_MAIN_THEAP_PUBLICATION_SUCCESS_TRACE_BEGIN",
+        end="CRABC_MI_M2_LATER_MAIN_THEAP_PUBLICATION_SUCCESS_TRACE_END",
+        description="M2 ordinary later-main Theap publication success trace",
+        keys=M2_LATER_MAIN_THEAP_PUBLICATION_SUCCESS_TRACE_KEYS,
+    )
+
+
+def validate_m2_later_main_theap_publication_success_trace(
+    trace: Mapping[str, int], *, source: str
+) -> None:
+    """Require the metadata/list/root and explicit ordinary-finish post-state."""
+
+    _validate_m2_later_main_theap_trace(
+        trace,
+        source=source,
+        description="M2 ordinary later-main Theap publication success trace",
+        keys=M2_LATER_MAIN_THEAP_PUBLICATION_SUCCESS_TRACE_KEYS,
+    )
+
+
+def compare_m2_later_main_theap_publication_success_trace(
+    c_trace: Mapping[str, int], rust_trace: Mapping[str, int]
+) -> dict[str, Any]:
+    """Compare only independently observable full ordinary-attachment state."""
+
+    return _compare_m2_later_main_theap_trace(
+        c_trace,
+        rust_trace,
+        description="M2 ordinary later-main Theap publication success trace",
+        keys=M2_LATER_MAIN_THEAP_PUBLICATION_SUCCESS_TRACE_KEYS,
+        validator=lambda trace, source: validate_m2_later_main_theap_publication_success_trace(
+            trace, source=source
+        ),
+    )
+
+
+def parse_m2_later_main_theap_metadata_failure_trace(
+    output: str, *, source: str
+) -> dict[str, int]:
+    """Parse the source later-main Theap-allocation cleanup post-state."""
+
+    return _parse_m2_later_main_theap_trace(
+        output,
+        source=source,
+        begin="CRABC_MI_M2_LATER_MAIN_THEAP_METADATA_FAILURE_TRACE_BEGIN",
+        end="CRABC_MI_M2_LATER_MAIN_THEAP_METADATA_FAILURE_TRACE_END",
+        description="M2 ordinary later-main Theap metadata failure trace",
+        keys=M2_LATER_MAIN_THEAP_METADATA_FAILURE_TRACE_KEYS,
+    )
+
+
+def validate_m2_later_main_theap_metadata_failure_trace(
+    trace: Mapping[str, int], *, source: str
+) -> None:
+    """Require source cleanup before any list or root becomes reachable."""
+
+    _validate_m2_later_main_theap_trace(
+        trace,
+        source=source,
+        description="M2 ordinary later-main Theap metadata failure trace",
+        keys=M2_LATER_MAIN_THEAP_METADATA_FAILURE_TRACE_KEYS,
+    )
+
+
+def compare_m2_later_main_theap_metadata_failure_trace(
+    c_trace: Mapping[str, int], rust_trace: Mapping[str, int]
+) -> dict[str, Any]:
+    """Compare failure cleanup without asserting cross-language fault order."""
+
+    return _compare_m2_later_main_theap_trace(
+        c_trace,
+        rust_trace,
+        description="M2 ordinary later-main Theap metadata failure trace",
+        keys=M2_LATER_MAIN_THEAP_METADATA_FAILURE_TRACE_KEYS,
+        validator=lambda trace, source: validate_m2_later_main_theap_metadata_failure_trace(
+            trace, source=source
+        ),
+    )
+
+
 def parse_m2_page_map_trace(output: str, *, source: str) -> dict[str, int]:
     """Parse the fixed address-free selected PageMap lifecycle record."""
 
@@ -20447,6 +20661,132 @@ def build_m2_later_tld_metadata_failure_trace(
             ),
         ),
     }
+
+
+def _build_m2_later_main_theap_trace(
+    compiler: str,
+    source: Path,
+    profile_dir: Path,
+    profile_flags: Sequence[str],
+    *,
+    fixture_path: Path,
+    probe_name: str,
+    description: str,
+    parser: Callable[[str], dict[str, int]],
+    validator: Callable[[Mapping[str, int]], None],
+) -> dict[str, Any]:
+    """Build one direct ordinary later-main source caller fixture."""
+
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        fixture = fixture_path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise HarnessError(f"cannot read {description} fixture") from error
+    trace_source = profile_dir / f"{probe_name}.c"
+    trace_binary = profile_dir / probe_name
+    trace_source.write_text(fixture, encoding="utf-8")
+    command = [
+        compiler,
+        "-std=c11",
+        "-fPIC",
+        "-ftls-model=initial-exec",
+        "-DMI_SHARED_LIB",
+        "-DMI_SHARED_LIB_EXPORT",
+        "-DMI_LIBC_MUSL=1",
+        # The fixture invokes its process and later-thread source callers
+        # explicitly. No automatic constructor/destructor participates.
+        "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
+        "-I",
+        str(source / "include"),
+        "-I",
+        str(source / "src"),
+        *profile_flags,
+        str(trace_source),
+        *(str(source / item) for item in M2_LATER_MAIN_THEAP_ORACLE_SOURCES),
+        "-pthread",
+        "-o",
+        str(trace_binary),
+    ]
+    build = command_record(command, cwd=source)
+    require_success(build, f"pinned C {description} build")
+    execution = command_record((str(trace_binary),), cwd=source)
+    require_success(execution, f"pinned C {description} execution")
+    record = parser(str(execution["stdout"]))
+    validator(record)
+    return {
+        "command": command,
+        "record": record,
+        "source_files": source_file_records(
+            source,
+            (
+                "include/mimalloc.h",
+                "include/mimalloc/atomic.h",
+                "include/mimalloc/internal.h",
+                "include/mimalloc/prim.h",
+                "include/mimalloc/prim-tls.h",
+                "include/mimalloc/types.h",
+                "src/init.c",
+                "src/heap.c",
+                "src/theap.c",
+                "src/threadlocal.c",
+                "src/subproc.c",
+                "src/os.c",
+                "src/prim/prim-tls.c",
+                "src/prim/prim.c",
+                "src/prim/unix/prim.c",
+            ),
+        ),
+    }
+
+
+def build_m2_later_main_theap_publication_success_trace(
+    compiler: str,
+    source: Path,
+    profile_dir: Path,
+    profile_flags: Sequence[str],
+) -> dict[str, Any]:
+    """Build the full ordinary later-main publication and explicit-finish producer."""
+
+    return _build_m2_later_main_theap_trace(
+        compiler,
+        source,
+        profile_dir,
+        profile_flags,
+        fixture_path=M2_LATER_MAIN_THEAP_PUBLICATION_SUCCESS_FIXTURE,
+        probe_name="m2-later-main-theap-publication-success-trace-probe",
+        description="M2 ordinary later-main Theap publication success trace",
+        parser=lambda output: parse_m2_later_main_theap_publication_success_trace(
+            output, source="pinned C"
+        ),
+        validator=lambda trace: validate_m2_later_main_theap_publication_success_trace(
+            trace, source="pinned C"
+        ),
+    )
+
+
+def build_m2_later_main_theap_metadata_failure_trace(
+    compiler: str,
+    source: Path,
+    profile_dir: Path,
+    profile_flags: Sequence[str],
+) -> dict[str, Any]:
+    """Build the direct caller's selected Theap-failure cleanup producer."""
+
+    return _build_m2_later_main_theap_trace(
+        compiler,
+        source,
+        profile_dir,
+        profile_flags,
+        fixture_path=M2_LATER_MAIN_THEAP_METADATA_FAILURE_FIXTURE,
+        probe_name="m2-later-main-theap-metadata-failure-trace-probe",
+        description="M2 ordinary later-main Theap metadata failure trace",
+        parser=lambda output: parse_m2_later_main_theap_metadata_failure_trace(
+            output, source="pinned C"
+        ),
+        validator=lambda trace: validate_m2_later_main_theap_metadata_failure_trace(
+            trace, source="pinned C"
+        ),
+    )
 
 
 def build_m2_bitmap_abandoned_claim_trace(

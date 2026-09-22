@@ -18,13 +18,18 @@
     "completion_status": "partial",
     "source_units": [
       "src/init.c",
+      "src/heap.c",
+      "src/theap.c",
+      "src/threadlocal.c",
       "src/prim/prim.c",
       "src/prim/prim-tls.c"
     ],
     "source_map_records": [
       { "required_status": "partial", "unit_id": "process-and-thread-initialization" },
       { "required_status": "partial", "unit_id": "c-support-and-once" },
-      { "required_status": "partial", "unit_id": "tls-interface-and-thread-identity" }
+      { "required_status": "partial", "unit_id": "tls-interface-and-thread-identity" },
+      { "required_status": "partial", "unit_id": "heap-lifecycle" },
+      { "required_status": "partial", "unit_id": "thread-local-heap-lifecycle" }
     ],
     "bounded_source_definitions": [
       {
@@ -67,6 +72,143 @@
           "static mi_tld_t* mi_tld_create",
           "mi_atomic_increment_relaxed(&subproc->thread_total_count)",
           "return mi_tld_init(tld,tseq,subproc)"
+        ],
+        "evidence_check_ids": ["initialization-tld-direct-source-matrix"]
+      },
+      {
+        "id": "ordinary-later-main-thread-initialization",
+        "source_anchor": {
+          "member": "src/init.c",
+          "start_line": 305,
+          "end_line": 360,
+          "sha256": "8b5a6af8d90da7f2cb33cf5c6211c9325234840d57a54c25be891e49e4d354e5"
+        },
+        "required_definitions": [
+          "mi_theap_t* _mi_thread_init_with_heap(mi_heap_t* heap_main)",
+          "mi_tld_t* tld = mi_tld_create(heap_main->subproc)",
+          "_mi_theap_default_set(theap)",
+          "_mi_heap_theap_set(heap_main, theap)"
+        ],
+        "evidence_check_ids": ["initialization-tld-direct-source-matrix"]
+      },
+      {
+        "id": "ordinary-later-main-theap-list-initialization",
+        "source_anchor": {
+          "member": "src/theap.c",
+          "start_line": 228,
+          "end_line": 306,
+          "sha256": "af740edab362563857dc282c571e7074d5578ecc293cfc0c7a38d9e4db7d38f5"
+        },
+        "required_definitions": [
+          "void _mi_theap_init(mi_theap_t* theap, mi_heap_t* heap, mi_tld_t* tld)",
+          "theap->tld->theaps = theap",
+          "heap->theaps = theap"
+        ],
+        "evidence_check_ids": ["initialization-tld-direct-source-matrix"]
+      },
+      {
+        "id": "ordinary-later-main-theap-metadata-allocation",
+        "source_anchor": {
+          "member": "src/theap.c",
+          "start_line": 308,
+          "end_line": 334,
+          "sha256": "d6e71583d409ba3cb913dd7876efe829f9e4450d5d21706a1627ea541667a72f"
+        },
+        "required_definitions": [
+          "mi_theap_t* _mi_theap_alloc(mi_heap_t* heap, mi_tld_t* tld)",
+          "theap = (mi_theap_t*)_mi_meta_zalloc(heap->subproc, sizeof(mi_theap_t), &memid)",
+          "theap->memid = memid"
+        ],
+        "evidence_check_ids": ["initialization-tld-direct-source-matrix"]
+      },
+      {
+        "id": "ordinary-later-main-heap-root-publication",
+        "source_anchor": {
+          "member": "src/heap.c",
+          "start_line": 37,
+          "end_line": 42,
+          "sha256": "1f47d10a7cb963ba51d3f8062ca09690c453721e72341b5e634c989ff7411495"
+        },
+        "required_definitions": [
+          "bool _mi_heap_theap_set(mi_heap_t* heap, mi_theap_t* theap)",
+          "return _mi_thread_local_set(heap->theap,theap)"
+        ],
+        "evidence_check_ids": ["initialization-tld-direct-source-matrix"]
+      },
+      {
+        "id": "ordinary-later-main-fast-tls-root-publication",
+        "source_anchor": {
+          "member": "src/threadlocal.c",
+          "start_line": 165,
+          "end_line": 172,
+          "sha256": "1dc2343422b9d6b45bb868574dfc12b22658b1d0858da7e6d305a568c5510dfb"
+        },
+        "required_definitions": [
+          "bool _mi_thread_local_set( mi_thread_local_t key, void* val )",
+          "if (key == mi_thread_local_key_fast)",
+          "return mi_slot_fast_set(val)"
+        ],
+        "evidence_check_ids": ["initialization-tld-direct-source-matrix"]
+      },
+      {
+        "id": "ordinary-later-main-explicit-thread-finish",
+        "source_anchor": {
+          "member": "src/init.c",
+          "start_line": 452,
+          "end_line": 481,
+          "sha256": "d5c23fd8ad3a571437117546584550e53c23bd7366df7689678317e637a2f64e"
+        },
+        "required_definitions": [
+          "void _mi_thread_done(mi_theap_t* _theap_main)",
+          "_mi_thread_locals_thread_done()",
+          "mi_thread_theaps_done(tld)",
+          "mi_tld_free(tld)"
+        ],
+        "evidence_check_ids": ["initialization-tld-direct-source-matrix"]
+      },
+      {
+        "id": "ordinary-later-main-explicit-theap-finish",
+        "source_anchor": {
+          "member": "src/init.c",
+          "start_line": 377,
+          "end_line": 421,
+          "sha256": "5b55d25943fc70dab37a7d64c842c304411f8742ad77ccf912827e2518b04e8f"
+        },
+        "required_definitions": [
+          "static void mi_thread_theaps_done(mi_tld_t* tld)",
+          "_mi_theap_default_set((mi_theap_t*)&_mi_theap_empty)",
+          "_mi_tld_detach_theaps(tld)",
+          "_mi_theap_decref(theap)"
+        ],
+        "evidence_check_ids": ["initialization-tld-direct-source-matrix"]
+      },
+      {
+        "id": "ordinary-later-main-explicit-heap-list-detach",
+        "source_anchor": {
+          "member": "src/theap.c",
+          "start_line": 414,
+          "end_line": 450,
+          "sha256": "f118f2b4bf34099f31d2742f99e252202caf5ed92c1d13748f077e8a91ce99eb"
+        },
+        "required_definitions": [
+          "void _mi_tld_detach_theaps( mi_tld_t* tld )",
+          "heap->theaps = theap->hnext",
+          "mi_atomic_store_ptr_release(mi_heap_t, &theap->heap, NULL)"
+        ],
+        "evidence_check_ids": ["initialization-tld-direct-source-matrix"]
+      },
+      {
+        "id": "ordinary-later-main-explicit-fast-root-clear",
+        "source_anchor": {
+          "member": "src/threadlocal.c",
+          "start_line": 205,
+          "end_line": 214,
+          "sha256": "f15d366c5bf21e176e97e68da940447dd55a4966c5787874c7e3f130c4e329c1"
+        },
+        "required_definitions": [
+          "void _mi_thread_locals_thread_done(void)",
+          "if (mi_slot_fast_peek() != NULL)",
+          "mi_slot_fast_set(NULL)"
         ],
         "evidence_check_ids": ["initialization-tld-direct-source-matrix"]
       }
@@ -122,13 +264,42 @@
         ],
         "evidence_check_ids": ["initialization-tld-direct-source-matrix"],
         "missing_conditions": ["This one direct allocation-failure arm does not qualify the later Theap/list/TLS/root publication receiving routes, automatic teardown, or runtime ownership."]
+      },
+      {
+        "id": "later-main-theap-metadata-list-and-root-publication-success",
+        "disposition": "bounded-direct-source-differential",
+        "source_scope": "src/init.c:305-360 ordinary later `_mi_thread_init_with_heap(mi_heap_main())` caller through generic TLD creation, Malloc Theap allocation, `_mi_theap_init` TLD and Heap list membership, default root, fixed main-Heap TLS root, then the explicitly invoked source `_mi_thread_done` finish at src/init.c:452-481: fast-root clear, default/cached reset, list detach, metadata release, and live-count release. src/theap.c:228-334 and 414-450, src/heap.c:37-42, and src/threadlocal.c:165-172 and 205-214 provide the reached source definitions.",
+        "source_anchors": [
+          { "member": "src/init.c", "start_line": 305, "end_line": 360, "sha256": "8b5a6af8d90da7f2cb33cf5c6211c9325234840d57a54c25be891e49e4d354e5" },
+          { "member": "src/theap.c", "start_line": 228, "end_line": 306, "sha256": "af740edab362563857dc282c571e7074d5578ecc293cfc0c7a38d9e4db7d38f5" },
+          { "member": "src/theap.c", "start_line": 308, "end_line": 334, "sha256": "d6e71583d409ba3cb913dd7876efe829f9e4450d5d21706a1627ea541667a72f" },
+          { "member": "src/heap.c", "start_line": 37, "end_line": 42, "sha256": "1f47d10a7cb963ba51d3f8062ca09690c453721e72341b5e634c989ff7411495" },
+          { "member": "src/threadlocal.c", "start_line": 165, "end_line": 172, "sha256": "1dc2343422b9d6b45bb868574dfc12b22658b1d0858da7e6d305a568c5510dfb" },
+          { "member": "src/init.c", "start_line": 452, "end_line": 481, "sha256": "d5c23fd8ad3a571437117546584550e53c23bd7366df7689678317e637a2f64e" },
+          { "member": "src/init.c", "start_line": 377, "end_line": 421, "sha256": "5b55d25943fc70dab37a7d64c842c304411f8742ad77ccf912827e2518b04e8f" },
+          { "member": "src/theap.c", "start_line": 414, "end_line": 450, "sha256": "f118f2b4bf34099f31d2742f99e252202caf5ed92c1d13748f077e8a91ce99eb" },
+          { "member": "src/threadlocal.c", "start_line": 205, "end_line": 214, "sha256": "f15d366c5bf21e176e97e68da940447dd55a4966c5787874c7e3f130c4e329c1" }
+        ],
+        "evidence_check_ids": ["initialization-tld-direct-source-matrix"],
+        "missing_conditions": ["Pinned C separately verifies this selected source call order. Rust compares independently observed metadata, list, root, counter, and explicit-finish post-state only; it does not claim automatic pthread destruction, process shutdown, fork, recursion, non-main Heap routing, or generic DynamicTheap cache behavior."]
+      },
+      {
+        "id": "later-main-theap-metadata-allocation-failure",
+        "disposition": "bounded-direct-source-differential",
+        "source_scope": "src/init.c:305-360 selected ordinary later-main `_mi_thread_init_with_heap(mi_heap_main())` Theap-allocation failure, `mi_tld_free` cleanup, and NULL return before `_mi_theap_init` or default/fixed-TLS root publication; src/theap.c:308-334 pins the requested Theap Malloc branch.",
+        "source_anchors": [
+          { "member": "src/init.c", "start_line": 305, "end_line": 360, "sha256": "8b5a6af8d90da7f2cb33cf5c6211c9325234840d57a54c25be891e49e4d354e5" },
+          { "member": "src/theap.c", "start_line": 308, "end_line": 334, "sha256": "d6e71583d409ba3cb913dd7876efe829f9e4450d5d21706a1627ea541667a72f" }
+        ],
+        "evidence_check_ids": ["initialization-tld-direct-source-matrix"],
+        "missing_conditions": ["The C fixture injects its source-specific direct caller failure and separately verifies cleanup order. Rust's exact-size typed allocation fault compares retained post-state only; no cross-language fault mechanism equivalence, automatic teardown, process shutdown, fork, recursion, non-main Heap, or DynamicTheap behavior is claimed."]
       }
     ],
     "unqualified_failure_matrix": [
       {
-        "id": "generic-later-tld-creation-and-metadata-publication",
-        "source_scope": "src/init.c generic/later mi_tld_create receiving routes after the selected no-Theap TLD success/failure records, including later Theap/list/TLS/root publication.",
-        "required_evidence": ["typed metadata/publication owners", "native generic/later attached-publication matrix"]
+        "id": "non-main-heap-later-attachment-and-dynamic-cache-publication",
+        "source_scope": "src/heap.c `_mi_heap_theap_get_or_init` and the remaining generic/later Heap keys, exclusive-arena allocation, regular TLS, cached Theap, and DynamicTheapAttachment routes beyond the selected ordinary main Heap fixed-root caller.",
+        "required_evidence": ["typed non-main Heap/DynamicTheap storage owner", "native generic later-Heap publication matrix"]
       },
       {
         "id": "automatic-thread-and-process-teardown",
@@ -145,8 +316,8 @@
       {
         "id": "initialization-tld-direct-source-matrix",
         "kind": "c-rust-initialization-tld-source-matrix",
-        "target": "x86_64_initialization_tld_evidence::five_fixed_direct_tld_branches",
-        "expected_passed_test_count": 5
+        "target": "x86_64_initialization_tld_evidence::seven_fixed_direct_tld_and_ordinary_later_main_branches",
+        "expected_passed_test_count": 7
       },
       {
         "id": "initialization-explicit-worker-recovery-lifecycle",
@@ -156,8 +327,8 @@
       }
     ],
     "remaining_conditions": [
-      "The selected later-TLD success record compares the direct pinned-C source arm's metadata-backed normal-TLD post-state with Rust's production no-Theap typed owner. Its C fixture separately verifies the source event order; Rust does not alias that order or infer metadata attempts from tickets. Later Theap/list/TLS/root publication remains outside this bounded direct-source matrix. The selected failure record compares pinned-C/Rust pre-registration NULL/ENOMEM state under the same order boundary.",
-      "Automatic pthread-destructor and process-shutdown routes remain unqualified.",
+      "The selected ordinary later-main rows compare the direct pinned-C `_mi_thread_init_with_heap(mi_heap_main())` caller's Malloc TLD/Theap, dual list, default/fixed-TLS root, counter, and explicit-finish post-state with Rust's `MainHeapThreadAttachment`. The C fixtures separately verify source order. Rust does not alias that order or infer allocation attempts from tickets. The paired Theap-failure row compares only retained failure post-state under source-specific C and typed Rust faults.",
+      "Automatic pthread-destructor, process-shutdown, and fork routes remain unqualified.",
       "The retained explicit worker recovery receipt does not complete allocator-recursion or make Rust-only failure checks C fault equivalence."
     ]
   }
