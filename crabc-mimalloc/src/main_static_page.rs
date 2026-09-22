@@ -174,6 +174,17 @@ impl<'main> MainStaticProcessPageAllocator<'main> {
         self.engine.allocate(request, zero)
     }
 
+    /// Allocates one aligned main-static block through the same source page
+    /// engine as [`Self::allocate`].
+    #[inline]
+    pub(crate) fn allocate_aligned(
+        &mut self,
+        request: usize,
+        alignment: usize,
+    ) -> Option<NonNull<u8>> {
+        self.engine.allocate_aligned(request, alignment)
+    }
+
     /// Reallocates one ordinary main-static allocation through the source page
     /// engine.
     ///
@@ -2466,7 +2477,7 @@ mod tests {
     };
     use crate::main_theap::{MainStaticAttachmentStorage, MainStaticTheapAttachment};
     use crate::meta::MetaAllocator;
-    use crate::os::{MapAccess, Mapping, MemoryConfig, PageSize};
+    use crate::os::{fault, MapAccess, Mapping, MemoryConfig, PageSize};
     use crate::process_init::ProcessMainInitializationStorage;
     use crate::process_arena::{ProcessSharedArenaLease, ProcessSharedArenaStorage};
     use crate::process_page_map::{ProcessPageMapLease, ProcessPageMapStorage};
@@ -3177,8 +3188,197 @@ mod tests {
         .expect("the policy-bound fixture remains on its ticket-zero thread");
     }
 
+    /// Pinned `page.c:mi_page_to_full` takes the same ordinary abandonment
+    /// branch for ticket zero as for a later attached owner. Two full aligned
+    /// OS singletons prove that the first direct free removes a non-head
+    /// private-list member under Heap authority before the second head follows
+    /// the PageMap -> metadata -> mapping terminal release order.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_initial_os_singletons_free_non_head_then_head() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let (page_map, process_arena) = paired_process_owner(config, subprocess);
+            let mut owner = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("the ticket-zero source owner attaches");
+            let mut allocator = MainStaticProcessPageAllocator::begin(
+                &mut owner,
+                ProcessPageArenaLease::join(page_map, process_arena)
+                    .expect("the initial PageMap and arena name one process image"),
+            )
+            .expect("the selected initial engine opens");
+            let request = crate::config::SMALL_MAX_OBJ_SIZE + 1;
+            let first = allocator
+                .allocate_aligned(request, 128 * 1024)
+                .expect("the initial owner allocates its full OS singleton");
+            let first_page = NonNull::new(unsafe { allocator.test_page_for_block(first) })
+                .expect("the first OS singleton is PageMap-published");
+            let second = allocator
+                .allocate_aligned(request, 256 * 1024)
+                .expect("the initial owner allocates its second full OS singleton");
+            let second_page = NonNull::new(unsafe { allocator.test_page_for_block(second) })
+                .expect("the second OS singleton is PageMap-published");
+            for page in [first_page, second_page] {
+                let page = unsafe { page.as_ref() };
+                assert!(page.memid().is_os());
+                assert_eq!(page.reserved(), 1);
+                assert_eq!(page.used(), 1);
+                assert_eq!(
+                    page.abandoned_test_thread_id(),
+                    crate::types::THREAD_ID_ABANDONED,
+                    "the selected initial owner applies source OS-list abandonment",
+                );
+            }
+            // The second splice makes this exact first client non-head. Its
+            // links belong to Heap's private OS list, so the direct free may
+            // consult only provenance and the atomic abandoned identity until
+            // the locked exact-member removal.
+            unsafe { allocator.free(first) }
+                .expect("the initial non-head OS singleton releases directly");
+            unsafe { allocator.free(second) }
+                .expect("the remaining head OS singleton releases directly");
+            assert!(
+                unsafe { page_map.page_map().unwrap().checked_lookup(first.as_ptr()) }.is_null(),
+                "the initial non-head free unregisters its complete PageMap span",
+            );
+            assert!(
+                unsafe { page_map.page_map().unwrap().checked_lookup(second.as_ptr()) }.is_null(),
+                "the initial head free unregisters its complete PageMap span",
+            );
+            assert!(matches!(allocator.finish(), Ok(())));
+            owner
+                .teardown()
+                .expect("the all-free initial OS-singleton route restores static teardown");
+        })
+        .join()
+        .expect("the initial OS-singleton regression remains current-thread local");
+    }
+
+    /// A failed terminal OS unmap follows PageMap unregistration and metadata
+    /// retirement, then preserves its sole mapping owner. The borrowed initial
+    /// session must retain that incomplete transition instead of reopening its
+    /// ticket-zero teardown path.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_initial_os_singleton_direct_free_retains_failed_unmap_owner() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let (page_map, process_arena) = paired_process_owner(config, subprocess);
+            let mut owner = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("the ticket-zero source owner attaches");
+            let mut allocator = MainStaticProcessPageAllocator::begin(
+                &mut owner,
+                ProcessPageArenaLease::join(page_map, process_arena)
+                    .expect("the initial PageMap and arena name one process image"),
+            )
+            .expect("the selected initial engine opens");
+            let fault = fault::install(fault::Plan::disabled());
+            let block = allocator
+                .allocate_aligned(crate::config::SMALL_MAX_OBJ_SIZE + 1, 128 * 1024)
+                .expect("the initial owner allocates its full OS singleton");
+            fault.set(fault::Plan::at(fault::Point::Unmap, 1, crabc_core::Errno::NOMEM));
+            unsafe { allocator.free(block) }
+                .expect("a failed terminal unmap still consumes the exact initial client");
+            assert_eq!(fault.observed(), 1, "the initial terminal path attempts one source unmap");
+            fault.set(fault::Plan::disabled());
+            assert!(
+                unsafe { page_map.page_map().unwrap().checked_lookup(block.as_ptr()) }.is_null(),
+                "the failed initial unmap retains only its mapping owner after PageMap release",
+            );
+            let retained = match allocator.finish() {
+                Err(MainStaticProcessPageAllocatorFinishError::Retained(retained)) => retained,
+                Ok(()) => panic!("the failed initial unmap must retain its mapping owner"),
+                Err(MainStaticProcessPageAllocatorFinishError::PageMap(error)) => {
+                    panic!("the source mapping failure must not become a PageMap wake error: {error:?}")
+                }
+            };
+            core::mem::forget(retained);
+            assert_eq!(
+                owner.teardown(),
+                Err(crate::main_theap::MainStaticTheapError::Poisoned),
+                "the retained initial mapping owner closes normal ticket-zero teardown",
+            );
+        })
+        .join()
+        .expect("the initial failed-unmap regression remains current-thread local");
+    }
+
+    /// The continuous ticket-zero owner uses `MainStaticProcessPageSession`,
+    /// whose shared-main projection can coexist with later attachment leases.
+    /// Exercise its own two-live OS-list sequence so the process-backed native
+    /// path removes a non-head and then the remaining head under the same
+    /// locked Heap authority as an ordinary later owner.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_persistent_initial_os_singletons_free_non_head_then_head() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let subprocess = MainSubprocess::test_static_owner();
+            let owner = process_main_with_first_arena_options(
+                config,
+                subprocess,
+                128 * 1024 * 1024,
+                2,
+                1,
+            );
+            let binding = owner
+                .ready()
+                .expect("the source coordinator publishes READY before ticket-zero ownership")
+                .process_backing()
+                .expect("the ready coordinator exposes the canonical process backing");
+            let page_map = binding.page_map();
+            let arena_storage = ProcessSharedArenaStorage::test_static_owner();
+            let session = owner
+                .begin_process_lifetime_page_session()
+                .expect("the empty ticket-zero image becomes its permanent page owner");
+            let mut allocator = MainStaticRuntimeFirstArenaPageAllocator::begin_for_process(
+                session,
+                binding,
+                arena_storage,
+            )
+            .expect("the continuous native initial owner opens from its canonical backing");
+            let request = crate::config::SMALL_MAX_OBJ_SIZE + 1;
+            let first = allocator
+                .allocate_aligned_current_initial_thread_local(request, 128 * 1024, false)
+                .expect("the continuous initial owner allocates its first OS singleton");
+            let second = allocator
+                .allocate_aligned_current_initial_thread_local(request, 256 * 1024, false)
+                .expect("the continuous initial owner allocates its second OS singleton");
+            // The second source list splice makes the first page non-head.
+            // The direct initial-owner free must claim it by atomic identity,
+            // then let Heap validate/remove the exact member while locked.
+            unsafe { allocator.free_current_initial_thread_local(first) }
+                .expect("the continuous initial owner frees the non-head OS singleton");
+            unsafe { allocator.free_current_initial_thread_local(second) }
+                .expect("the continuous initial owner frees the remaining head OS singleton");
+            assert!(
+                unsafe { page_map.page_map().unwrap().checked_lookup(first.as_ptr()) }.is_null(),
+                "the persistent initial non-head free unregisters its complete PageMap span",
+            );
+            assert!(
+                unsafe { page_map.page_map().unwrap().checked_lookup(second.as_ptr()) }.is_null(),
+                "the persistent initial head free unregisters its complete PageMap span",
+            );
+            // A process-lifetime ticket-zero image intentionally remains
+            // retained after this local regression; its dedicated lifecycle
+            // owns later process teardown rather than this direct-free test.
+            core::mem::forget(allocator);
+            core::mem::forget(owner);
+        })
+        .join()
+        .expect("the persistent initial OS-list regression remains current-thread local");
+    }
+
     /// Pinned `src/page.c:mi_page_to_full` abandons an exhausted ordinary
-    /// medium page; it does not place it in `BIN_FULL`.  Ticket zero has the
+    /// medium page; it does not place it in `BIN_FULL`. Ticket zero has the
     /// same ordinary Theap option image as a selected initial native owner,
     /// so this catches a generic allocation transition that would otherwise
     /// be hidden behind the later worker's page-owner boundary.

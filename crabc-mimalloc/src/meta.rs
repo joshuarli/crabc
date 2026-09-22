@@ -2569,6 +2569,78 @@ mod tests {
         std::println!("m2.metadata.capacity.zeroed_malloc_released=1");
     }
 
+    /// The canonical detached metadata Theap owns ordinary OS-backed pages
+    /// under the metadata entry lock. Its no-live-thread session identity is
+    /// `THREAD_ID_DETACHED`, which public free must distinguish from a
+    /// selected main Heap's abandoned OS-list identity.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn canonical_metadata_os_singleton_frees_with_detached_identity() {
+        thread::spawn(|| {
+            let config = config();
+            let allocator = MetaAllocator::test_static_owner();
+            let process = crate::process_init::ProcessMainInitializationStorage::test_static_owner();
+            let main_static = crate::main_theap::MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = allocator.test_default_subprocess();
+            let page_map_storage = crate::process_page_map::ProcessPageMapStorage::test_static_owner();
+            let mut options = crate::config::VmOptions::uninitialized();
+            options.initialize_all(|_| crate::config::VmOptionEnvironment::Absent);
+            options.set(crate::config::VmOption::ArenaReserve, 64 * 1024);
+            let owner = unsafe {
+                process.initialize_with_test_components_and_vm_options(
+                    config,
+                    options,
+                    main_static,
+                    subprocess,
+                    allocator,
+                    page_map_storage,
+                )
+            }
+            .expect("the source process publishes canonical metadata backing");
+            let binding = owner
+                .ready()
+                .expect("the ticket-zero source owner reaches READY")
+                .process_backing()
+                .expect("READY retains the canonical policy and PageMap binding");
+            let mut allocation = allocator
+                .zalloc_aligned(config, 7, 128 * 1024)
+                .expect("canonical detached metadata allocates one direct OS singleton");
+            {
+                let mut entry = allocator
+                    .enter()
+                    .expect("the metadata entry remains available for canonical observation");
+                assert!(
+                    matches!(entry.allocator(), MetadataPageAllocator::CanonicalProcess(_)),
+                    "policy-backed metadata uses its canonical detached session"
+                );
+            }
+            let page_map = unsafe { binding.page_map().page_map_for_owned_ranges() }
+                .expect("the canonical process PageMap remains observable");
+            let page = unsafe { page_map.checked_lookup(allocation.pointer().as_ptr()) };
+            assert!(!page.is_null(), "the canonical OS singleton is PageMap-published");
+            let page = unsafe { &*page };
+            assert!(page.memid().is_os());
+            assert_eq!(
+                page.abandoned_test_thread_id(),
+                crate::types::THREAD_ID_DETACHED,
+                "canonical metadata retains source detached page identity"
+            );
+            let pointer = allocation.pointer();
+            allocator
+                .free(&mut allocation)
+                .expect("canonical detached metadata frees its direct OS singleton locally");
+            assert!(
+                unsafe { page_map.checked_lookup(pointer.as_ptr()) }.is_null(),
+                "canonical metadata local free unregisters the OS singleton"
+            );
+            // The process owner and canonical metadata engine intentionally
+            // remain process-lived beyond this direct-free regression.
+            core::mem::forget(owner);
+        })
+        .join()
+        .expect("the canonical metadata OS singleton regression remains current-thread local");
+    }
+
     #[test]
     fn source_retained_metadata_transfer_preserves_typed_owner_across_thread_handoff() {
         let allocator = static_allocator();

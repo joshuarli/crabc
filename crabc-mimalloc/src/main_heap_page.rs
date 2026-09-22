@@ -8983,43 +8983,152 @@ mod tests {
         });
     }
 
+    /// The selected static-main capability does not imply that every
+    /// OS-backed page is abandoned. A non-abandoning later attachment keeps
+    /// this direct-OS singleton locally owned, so public free must first
+    /// prove its current atomic identity and then take the normal local
+    /// release path instead of treating it as a private-list member.
     #[test]
-    fn persistent_owner_local_os_singleton_full_abandons_then_direct_free_releases() {
+    fn persistent_owner_local_non_abandoning_os_singleton_frees_locally() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let (page_map, process_arena) = paired_process_owner(config, subprocess);
+            let pair = ProcessPageArenaLease::join(page_map, process_arena)
+                .expect("the selected map and arena form one process image");
+            let mut main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the source-static main images");
+            let main_heap = main
+                .shared_main_heap_lease()
+                .expect("the live main attachment lends its static heap");
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let mut attachment = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(
+                            main_heap, metadata, config,
+                        )
+                    } {
+                        Ok(attachment) => attachment,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("non-abandoning OS attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("non-abandoning OS attachment retained: {error:?}")
+                        }
+                    };
+                    let mut owner = MainHeapThreadOwnerLocalPageEngine::begin(
+                        &mut attachment,
+                        pair,
+                    )
+                    .expect("the non-abandoning attachment opens one local engine");
+                    let block = owner
+                        .with_local_allocator(&mut attachment, |allocator| {
+                            let block = allocator
+                                .allocate_aligned(SMALL_MAX_OBJ_SIZE + 1, 128 * 1024)
+                                .expect("the selected fresh-page fallback creates one OS singleton");
+                            let page = NonNull::new(
+                                // SAFETY: this exact current block remains in the bound owner operation.
+                                unsafe { allocator.engine.page_for_block(block) },
+                            )
+                            .expect("the local OS singleton is PageMap-published");
+                            let page = unsafe { page.as_ref() };
+                            assert!(page.memid().is_os());
+                            assert_eq!(page.reserved(), 1);
+                            assert_eq!(page.used(), 1);
+                            assert_ne!(
+                                page.abandoned_test_thread_id(),
+                                THREAD_ID_ABANDONED,
+                                "allow_page_abandon=false leaves the OS singleton locally owned"
+                            );
+                            // SAFETY: `block` is the exact current local client.
+                            unsafe { allocator.free(block) }
+                                .expect("the non-abandoned OS singleton uses normal local free");
+                            block
+                        })
+                        .expect("the local OS fallback stays within one current owner operation");
+                    let page_map = unsafe { pair.page_map_for_owned_ranges() }
+                        .expect("the process map remains observable after local release");
+                    assert!(
+                        unsafe { page_map.checked_lookup(block.as_ptr()) }.is_null(),
+                        "ordinary local release unregisters the non-abandoned OS singleton"
+                    );
+                    owner
+                        .finish(&mut attachment)
+                        .expect("the non-abandoning local engine becomes quiescent");
+                    attachment
+                        .finish_after_user_destructors()
+                        .expect("the non-abandoning attachment tears down normally");
+                });
+                worker
+                    .join()
+                    .expect("the non-abandoning OS fallback remains current-thread local");
+            });
+            main.teardown()
+                .expect("the non-abandoning OS fallback leaves the static main image quiescent");
+        })
+        .join()
+        .expect("the non-abandoning OS fallback fixture remains source-thread local");
+    }
+
+    #[test]
+    fn persistent_owner_local_os_singletons_free_non_head_then_head() {
         with_owner_local_fixture(true, |attachment, mut owner, pair| {
-            let block = owner
+            let (first, second) = owner
                 .with_local_allocator(attachment, |allocator| {
-                    let block = allocator
+                    let first = allocator
                         .allocate_aligned(SMALL_MAX_OBJ_SIZE + 1, 128 * 1024)
                         .expect("the ordinary later owner allocates its full OS singleton");
-                    let page = NonNull::new(
+                    let first_page = NonNull::new(
                         // SAFETY: `block` is current in this bound local operation.
-                        unsafe { allocator.engine.page_for_block(block) },
+                        unsafe { allocator.engine.page_for_block(first) },
                     )
                     .expect("the full OS singleton is PageMap-published");
-                    let page = unsafe { page.as_ref() };
-                    assert!(page.memid().is_os());
-                    assert_eq!(page.reserved(), 1);
-                    assert_eq!(page.used(), 1);
-                    assert!(page.is_queue_detached());
-                    assert_eq!(
-                        page.xthread_id.load(Ordering::Acquire) & !crate::types::PAGE_FLAG_MASK,
-                        THREAD_ID_ABANDONED,
-                        "the ordinary abandoning option applies page.c:_mi_page_abandon to an OS singleton"
-                    );
-                    // SAFETY: `block` is the exact once-live client in the
-                    // current owner-local operation; its full transition has
-                    // detached the source BIN_HUGE member and linked the
-                    // non-arena abandoned-list predecessor.
-                    unsafe { allocator.free(block) }
-                        .expect("the detached OS singleton completes its source direct-free tail");
-                    block
+                    let second = allocator
+                        .allocate_aligned(SMALL_MAX_OBJ_SIZE + 1, 256 * 1024)
+                        .expect("the ordinary later owner allocates its second full OS singleton");
+                    let second_page = NonNull::new(
+                        // SAFETY: `second` is current in this bound local operation.
+                        unsafe { allocator.engine.page_for_block(second) },
+                    )
+                    .expect("the second full OS singleton is PageMap-published");
+                    for page in [first_page, second_page] {
+                        let page = unsafe { page.as_ref() };
+                        assert!(page.memid().is_os());
+                        assert_eq!(page.reserved(), 1);
+                        assert_eq!(page.used(), 1);
+                        assert_eq!(
+                            page.abandoned_test_thread_id(),
+                            THREAD_ID_ABANDONED,
+                            "the ordinary abandoning option applies page.c:_mi_page_abandon to each OS singleton"
+                        );
+                    }
+                    // The second source list splice makes `first` the
+                    // non-head member. Its intrusive prev/next links now
+                    // belong to the Heap list, so direct free must classify
+                    // it by immutable provenance and atomic identity only.
+                    // SAFETY: `first` is the exact once-live non-head client.
+                    unsafe { allocator.free(first) }
+                        .expect("the non-head detached OS singleton completes its source direct-free tail");
+                    // SAFETY: `second` is now the exact once-live head client.
+                    unsafe { allocator.free(second) }
+                        .expect("the head detached OS singleton completes its source direct-free tail");
+                    (first, second)
                 })
                 .expect("the complete OS singleton transition stays in one current owner operation");
             let page_map = unsafe { pair.page_map_for_owned_ranges() }
                 .expect("the process map remains available for the released owned range");
             assert!(
-                unsafe { page_map.checked_lookup(block.as_ptr()) }.is_null(),
-                "direct free unregisters the OS singleton before the owner can finish"
+                unsafe { page_map.checked_lookup(first.as_ptr()) }.is_null(),
+                "non-head direct free unregisters its OS singleton before the owner can finish"
+            );
+            assert!(
+                unsafe { page_map.checked_lookup(second.as_ptr()) }.is_null(),
+                "head direct free unregisters its OS singleton before the owner can finish"
             );
             owner
                 .finish(attachment)
@@ -9028,6 +9137,142 @@ mod tests {
                 .finish_after_user_destructors()
                 .expect("the completed OS singleton transition leaves normal later teardown quiescent");
         });
+    }
+
+    /// The source private OS list belongs to the static Heap, while each
+    /// ordinary later Theap has its own page engine. Worker A publishes one
+    /// member, worker B prepends another, then A frees its now non-head page
+    /// before B releases the remaining head. This exercises list mutation by
+    /// two live owners without ever observing another owner's intrusive links
+    /// outside Heap's locked exact-member splice.
+    #[test]
+    fn persistent_owner_local_os_singletons_cross_owner_non_head_then_head_free() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let (page_map, process_arena) = paired_process_owner(config, subprocess);
+            let pair = ProcessPageArenaLease::join(page_map, process_arena)
+                .expect("the selected map and arena form one process image");
+            let mut main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the source-static main images");
+            let main_heap = main
+                .shared_main_heap_lease()
+                .expect("the live main attachment lends its static heap");
+            let a_published = Arc::new(Barrier::new(2));
+            let b_published = Arc::new(Barrier::new(2));
+            let a_released = Arc::new(Barrier::new(2));
+
+            thread::scope(|scope| {
+                let a_published_for_a = Arc::clone(&a_published);
+                let b_published_for_a = Arc::clone(&b_published);
+                let a_released_for_a = Arc::clone(&a_released);
+                let first_owner = scope.spawn(move || {
+                    let mut attachment = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(
+                            main_heap,
+                            metadata,
+                            config,
+                        )
+                    } {
+                        Ok(attachment) => attachment,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("first OS-list owner attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("first OS-list owner attachment retained: {error:?}")
+                        }
+                    };
+                    let mut owner = MainHeapThreadOwnerLocalPageEngine::begin(&mut attachment, pair)
+                        .expect("the first owner opens its persistent engine");
+                    let first = owner
+                        .with_local_allocator(&mut attachment, |allocator| {
+                            allocator.allocate_aligned(SMALL_MAX_OBJ_SIZE + 1, 128 * 1024)
+                        })
+                        .expect("the first owner keeps its local operation bound")
+                        .expect("the first owner publishes one OS singleton");
+                    a_published_for_a.wait();
+                    b_published_for_a.wait();
+                    // Worker B has prepended its own live OS singleton. A's
+                    // direct free must remove only this exact non-head member.
+                    owner
+                        .with_local_allocator(&mut attachment, |allocator| {
+                            // SAFETY: `first` is this exact owner's current
+                            // client and has not crossed a producer boundary.
+                            unsafe { allocator.free(first) }
+                        })
+                        .expect("the first owner keeps the free bound")
+                        .expect("the first owner frees the cross-owner non-head member");
+                    a_released_for_a.wait();
+                    owner
+                        .finish(&mut attachment)
+                        .expect("the first owner reaches an empty engine after its direct free");
+                    attachment
+                        .finish_after_user_destructors()
+                        .expect("the first owner completes normal later teardown");
+                });
+
+                let a_published_for_b = Arc::clone(&a_published);
+                let b_published_for_b = Arc::clone(&b_published);
+                let a_released_for_b = Arc::clone(&a_released);
+                let second_owner = scope.spawn(move || {
+                    let mut attachment = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(
+                            main_heap,
+                            metadata,
+                            config,
+                        )
+                    } {
+                        Ok(attachment) => attachment,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("second OS-list owner attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("second OS-list owner attachment retained: {error:?}")
+                        }
+                    };
+                    let mut owner = MainHeapThreadOwnerLocalPageEngine::begin(&mut attachment, pair)
+                        .expect("the second owner opens its persistent engine");
+                    a_published_for_b.wait();
+                    let second = owner
+                        .with_local_allocator(&mut attachment, |allocator| {
+                            allocator.allocate_aligned(SMALL_MAX_OBJ_SIZE + 1, 256 * 1024)
+                        })
+                        .expect("the second owner keeps its local operation bound")
+                        .expect("the second owner prepends one OS singleton");
+                    b_published_for_b.wait();
+                    a_released_for_b.wait();
+                    owner
+                        .with_local_allocator(&mut attachment, |allocator| {
+                            // SAFETY: `second` is this exact owner's current
+                            // remaining head client and has no producer.
+                            unsafe { allocator.free(second) }
+                        })
+                        .expect("the second owner keeps the free bound")
+                        .expect("the second owner frees the remaining head member");
+                    owner
+                        .finish(&mut attachment)
+                        .expect("the second owner reaches an empty engine after its direct free");
+                    attachment
+                        .finish_after_user_destructors()
+                        .expect("the second owner completes normal later teardown");
+                });
+
+                first_owner
+                    .join()
+                    .expect("the first cross-owner list transition remains current-thread local");
+                second_owner
+                    .join()
+                    .expect("the second cross-owner list transition remains current-thread local");
+            });
+            main.teardown()
+                .expect("both completed OS-list owners leave the static main image quiescent");
+        })
+        .join()
+        .expect("the cross-owner OS-list regression remains source-thread local");
     }
 
     #[test]

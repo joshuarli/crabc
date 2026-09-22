@@ -191,6 +191,7 @@ use crate::types::{
     EMPTY_PAGE, GenericAllocationAdministration, Heap, HeapOsAbandonedPageListError,
     HeapOsAbandonedPageRemovalOutcome, LiveThreadId, MemoryId, MemoryKind, Page, PageKind,
     PageRemoteFreeProducerState, Theap, PAGE_FLAG_MASK, THREAD_ID_ABANDONED,
+    THREAD_ID_DETACHED,
 };
 use crate::types::page_queue::{
     page_is_in_full, theap_collect_abandon_queues, TheapCollectAbandonAbandonedPage,
@@ -37975,16 +37976,48 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // Pinned `mi_free_nonnull` chooses its multi-threaded
         // `allow_collect` branch once `_mi_page_abandon` has changed the
         // source page identity, even when this same engine still carries the
-        // original Theap pointer. Check the detached non-arena and arena
-        // singleton states before the ordinary Theap-pointer owner predicate:
-        // neither remains owned by its former BIN_HUGE queue.
-        if self.selected_main_abandoned_os_singleton_can_free(page) {
-            // SAFETY: the checked PageMap entry and the caller's exact live
-            // allocation contract retain this singleton metadata and its one
-            // current client through the source allow-collect transition.
-            let base = unsafe { Page::canonical_remote_block_for_live_client_at(page, block) }
-                .ok_or(FreeError::InvalidBlock(FreeListError::InvalidBlock))?;
-            return self.free_selected_main_abandoned_os_singleton(page, base);
+        // original Theap pointer. A selected OS page may already be linked in
+        // Heap's shared private list, whose intrusive links another owner can
+        // mutate. Inspect its raw atomic identity first: only an abandoned
+        // OS page enters the list route. A live OS page must prove the exact
+        // current Theap and thread identity before the ordinary owner path
+        // may form `&Page`.
+        let selected_main = self
+            .session
+            .permits_selected_main_arena_ordinary_full_abandonment();
+        // SAFETY: this reads only immutable provenance and the source atomic
+        // identity. It never observes an intrusive OS-list link or creates a
+        // whole-page reference.
+        let os_abandoned = unsafe {
+            let state = Page::abandonment_state_at(page);
+            state.memid.is_os()
+                && state.xthread_id.as_ref().load(Ordering::Acquire) & !PAGE_FLAG_MASK
+                    == THREAD_ID_ABANDONED
+        };
+        if os_abandoned {
+            if selected_main && self.selected_main_abandoned_os_singleton_can_free(page) {
+                // SAFETY: the checked PageMap entry and the caller's exact
+                // allocation contract retain this singleton metadata and its
+                // one current client through the source allow-collect tail.
+                let base = unsafe { Page::canonical_remote_block_for_live_client_at(page, block) }
+                    .ok_or(FreeError::InvalidBlock(FreeListError::InvalidBlock))?;
+                return self.free_selected_main_abandoned_os_singleton(page, base);
+            }
+            // An abandoned OS identity can be linked in another selected
+            // main Heap's private list. No ordinary owner predicate may
+            // inspect that linked page outside the source lock.
+            return Err(FreeError::ForeignPage);
+        }
+        // An OS-backed page that is still live takes the ordinary local path
+        // only after its atomic owner and immutable former-Theap association
+        // both name this exact current session. This keeps a foreign live OS
+        // page from becoming a whole-page borrow merely because the selected
+        // static-main policy is enabled.
+        // SAFETY: the checked PageMap entry and exact current client retain
+        // initialized metadata during this atomic/provenance observation.
+        let is_os = unsafe { Page::abandonment_state_at(page).memid.is_os() };
+        if is_os && !self.selected_main_os_page_is_current_local_owner(page) {
+            return Err(FreeError::ForeignPage);
         }
         if self.selected_main_arena_abandoned_singleton_can_free(page) {
             // SAFETY: the checked PageMap entry and the caller's exact live
@@ -40049,12 +40082,17 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         {
             return false;
         }
-        // SAFETY: `free` has one checked PageMap result for the caller's exact
-        // current allocation and its exclusive session contract excludes a
-        // concurrent plain-field transition through this direct boundary.
+        // SAFETY: the raw immutable memory kind distinguishes a shared
+        // OS-list member before this arena-only classifier can form `&Page`.
+        // No list link is observed by this projection.
+        if unsafe { Page::abandonment_state_at(page).memid.kind() } != MemoryKind::Arena {
+            return false;
+        }
+        // SAFETY: the preceding provenance check excludes the OS-list case;
+        // this exact arena direct-free session excludes a concurrent ordinary
+        // page transition through the remaining classifier reads.
         let page_ref = unsafe { page.as_ref() };
-        if page_ref.memid().kind() != MemoryKind::Arena
-            || size_class::page_kind_for_block_size(page_ref.block_size())
+        if size_class::page_kind_for_block_size(page_ref.block_size())
                 != Some(PageKind::Singleton)
             || size_class::bin(page_ref.block_size()) != Some(BIN_HUGE)
             || !page_ref.is_queue_detached()
@@ -40083,24 +40121,71 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             return false;
         }
         // SAFETY: `free` holds the checked PageMap result for its exact live
-        // client, and this short classification reads only immutable geometry
-        // plus the source atomic identity.
-        let page_ref = unsafe { page.as_ref() };
-        if !page_ref.memid().is_os()
-            || size_class::page_kind_for_block_size(page_ref.block_size())
+        // client. Other selected-main owners may concurrently splice this
+        // page's intrusive OS-list links, so this projection deliberately
+        // forms no `&Page` and never observes `prev` or `next`. The geometry
+        // and original Theap association are immutable source provenance;
+        // only the remote identity is atomic.
+        let state = unsafe { Page::abandonment_state_at(page) };
+        if !state.memid.is_os()
+            || size_class::page_kind_for_block_size(state.block_size)
                 != Some(PageKind::Singleton)
-            || size_class::bin(page_ref.block_size()) != Some(BIN_HUGE)
-            || page_ref.reserved() != 1
-            || !page_ref.is_queue_detached()
-            || page_ref.theap() != self.session.theap() as *const _ as *mut _
+            || size_class::bin(state.block_size) != Some(BIN_HUGE)
+            || state.reserved != 1
+            // SAFETY: `theap` is a raw pointer projection to the immutable
+            // association established when this page was published. It is
+            // read by value without creating a whole-page reference.
+            || unsafe { state.theap.as_ptr().read() }
+                != self.session.theap() as *const _ as *mut _
         {
             return false;
         }
-        // SAFETY: this touches only the source identity atomic; the original
-        // Theap association remains valid provenance for reclaim-on-free.
-        let state = unsafe { Page::abandonment_state_at(page) };
+        // SAFETY: this touches only the source identity atomic. The exact
+        // private-list membership is validated and removed under the Heap's
+        // lock only after the allow-collect transition has claimed its low
+        // owner bit.
         unsafe { state.xthread_id.as_ref() }.load(Ordering::Acquire) & !PAGE_FLAG_MASK
             == THREAD_ID_ABANDONED
+    }
+
+    /// Proves that an OS-backed page is still locally owned before the
+    /// ordinary local-free path creates a whole-page borrow. This is separate
+    /// from the abandoned-list classifier: a selected main session may carry
+    /// non-abandoning options, source fresh-page fallback may still yield an
+    /// ordinary OS-backed page, and the canonical metadata Theap has the
+    /// source `THREAD_ID_DETACHED` identity under its metadata entry lock.
+    fn selected_main_os_page_is_current_local_owner(&self, page: NonNull<Page>) -> bool {
+        // SAFETY: the checked PageMap entry and current client keep the
+        // metadata initialized for this bounded raw check. No OS-list link is
+        // accessed and no whole-page reference is formed.
+        let state = unsafe { Page::abandonment_state_at(page) };
+        if !state.memid.is_os()
+            // SAFETY: the Theap association is immutable live-page
+            // provenance. Read it by value through the raw field projection.
+            || unsafe { state.theap.as_ptr().read() }
+                != self.session.theap() as *const _ as *mut _
+        {
+            return false;
+        }
+        match self.session.thread_id() {
+            Some(thread) => {
+                // SAFETY: this helper reads only the source atomic owner
+                // fields and rejects an abandoned, stale, or foreign live
+                // thread identity.
+                unsafe { Page::is_live_owner_for_thread_at(page, thread) }
+            }
+            None => {
+                // SAFETY: canonical metadata entry serialization supplies
+                // the exclusive ordinary-page authority. Read only the
+                // source detached identity and remote-head owner bit before
+                // the ordinary local path forms a whole-page reference.
+                unsafe {
+                    state.xthread_id.as_ref().load(Ordering::Acquire) & !PAGE_FLAG_MASK
+                        == THREAD_ID_DETACHED
+                        && state.xthread_free.as_ref().load(Ordering::Acquire) & 1 != 0
+                }
+            }
+        }
     }
 
     /// Completes `free.c:mi_free_block_mt(..., allow_collect=true)` for an
@@ -40450,10 +40535,15 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         };
         // SAFETY: the linear mapped-page handoff remains the sole owner of
         // this initialized page until this terminal transition completes.
-        let page_ref = unsafe { page.as_ref() };
-        if page_ref.used() != 0 || !page_ref.is_queue_detached() {
-            return false;
-        }
+        // Snapshot release accounting before the later exclusive retirement
+        // and keep this shared observation in the nested scope only.
+        let statistics_bin = {
+            let page_ref = unsafe { page.as_ref() };
+            if page_ref.used() != 0 || !page_ref.is_queue_detached() {
+                return false;
+            }
+            page_statistics_bin(page_ref)
+        };
         let Some(page_map_size) = arena_page_map_size(page, slice_start, size) else {
             return false;
         };
@@ -40477,7 +40567,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         if unsafe { self.session.retire_page(&mut *page.as_ptr()) }.is_none() {
             return false;
         }
-        let Some(statistics_bin) = page_statistics_bin(page_ref) else { return false; };
+        let Some(statistics_bin) = statistics_bin else { return false; };
         let statistics_recorded = self.session.theap().record_page_released(statistics_bin);
         debug_assert!(statistics_recorded);
         // SAFETY: map and ordinary page-image removal now precede return of
@@ -40500,13 +40590,18 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let Some(ReleaseSpan::Os(published)) = self.release_span(page.as_ptr()) else {
             return false;
         };
-        // SAFETY: the consuming singleton handoff retains exclusive metadata
-        // ownership until this method has completed or recorded its terminal
-        // OS-release owner.
-        let page_ref = unsafe { page.as_ref() };
-        if page_ref.used() != 0 || !page_ref.is_queue_detached() {
-            return false;
-        }
+        // SAFETY: list removal and the claimed low owner bit leave this
+        // terminal handoff with exclusive ordinary-page authority. Capture
+        // the statistics geometry before retirement clears it, and end the
+        // shared page observation before forming the exclusive retirement
+        // reference below.
+        let statistics_bin = {
+            let page_ref = unsafe { page.as_ref() };
+            if page_ref.used() != 0 || !page_ref.is_queue_detached() {
+                return false;
+            }
+            page_statistics_bin(page_ref)
+        };
         let layout = published.layout();
         let expected_memory = published.memory_id();
         // SAFETY: `release_span` proved the exact complete clipped map range
@@ -40546,7 +40641,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         {
             return false;
         }
-        let Some(statistics_bin) = page_statistics_bin(page_ref) else { return false; };
+        let Some(statistics_bin) = statistics_bin else { return false; };
         let statistics_recorded = self.session.theap().record_page_released(statistics_bin);
         debug_assert!(statistics_recorded);
         // SAFETY: this token retains the unique published mapping release
@@ -45751,6 +45846,28 @@ mod tests {
             // SAFETY: detached rejection did not publish or transfer the
             // client allocation, so ordinary local free remains valid.
             unsafe { allocator.free(block).unwrap() };
+        });
+    }
+
+    /// A detached metadata Theap still owns its ordinary local OS page under
+    /// the metadata-entry lock. The generic public free dispatch must accept
+    /// its raw `THREAD_ID_DETACHED` identity rather than treating every
+    /// no-thread session as a foreign private-list member.
+    #[test]
+    fn detached_metadata_os_singleton_frees_with_detached_identity() {
+        with_detached_allocator(|allocator| {
+            let block = allocator
+                .allocate_aligned(7, 128 * KIB)
+                .expect("the detached metadata fixture creates one direct OS singleton");
+            let page = NonNull::new(unsafe { allocator.page_for_block(block) })
+                .expect("the detached OS singleton is PageMap-published");
+            let page = unsafe { page.as_ref() };
+            assert!(page.memid().is_os());
+            assert_eq!(page.abandoned_test_thread_id(), THREAD_ID_DETACHED);
+            // SAFETY: the detached metadata entry remains externally
+            // serialized and `block` is its exact current local client.
+            unsafe { allocator.free(block) }
+                .expect("the detached metadata OS singleton takes normal local free");
         });
     }
 

@@ -2753,6 +2753,14 @@ impl<'main> MainStaticPageSession<'main> {
         unsafe { &*self.attachment.storage.heap.image.get() }
     }
 
+    #[inline]
+    fn heap_mut(&mut self) -> &mut Heap {
+        // SAFETY: `begin` requires no later shared Theap and retains this
+        // attachment mutably for the complete page session. No shared main
+        // Heap lease can coexist with this exclusive ticket-zero projection.
+        unsafe { &mut *self.attachment.storage.heap.image.get() }
+    }
+
 }
 
 impl theap_page_session_sealed::Sealed for MainStaticPageSession<'_> {}
@@ -3175,6 +3183,28 @@ unsafe impl TheapPageSession for MainStaticPageSession<'_> {
         true
     }
 
+    fn push_selected_main_os_abandoned_page(&mut self, page: NonNull<Page>) -> bool {
+        // SAFETY: this borrowed session is the sole static Heap projection;
+        // the full-page transition retains the exact detached page while
+        // Heap serializes its source-private OS-list splice.
+        let linked = unsafe { self.heap_mut().push_os_abandoned_page(page) }.is_ok();
+        if !linked {
+            self.attachment.poison();
+        }
+        linked
+    }
+
+    fn remove_selected_main_os_abandoned_page(&mut self, page: NonNull<Page>) -> bool {
+        // SAFETY: the raw all-free result owns this exact page's low owner
+        // bit. The private Heap primitive validates exact membership under
+        // its OS-list lock before clearing the intrusive links.
+        let removed = unsafe { self.heap_mut().remove_os_abandoned_page(page) }.is_ok();
+        if !removed {
+            self.attachment.poison();
+        }
+        removed
+    }
+
     #[inline]
     fn queue(&self, bin: usize) -> Option<&PageQueue> { self.theap().queue(bin) }
 
@@ -3382,6 +3412,50 @@ unsafe impl TheapPageSession for MainStaticProcessPageSession {
                 &self.static_main_mapped_regular_claim,
                 StaticMainMappedRegularClaimSlot::Bound
             )
+    }
+
+    fn push_selected_main_os_abandoned_page(&mut self, page: NonNull<Page>) -> bool {
+        if !self.is_current() {
+            self.latch();
+            return false;
+        }
+        let linked = match self.shared_main_heap_lease().lock_heap() {
+            Ok(mut heap) => {
+                // SAFETY: the selected full-page transition retains this
+                // exact queue-detached page; the short main-Heap projection
+                // and Heap's private list lock serialize both source levels.
+                let linked = unsafe { heap.heap_mut().push_os_abandoned_page(page) };
+                let unlocked = heap.unlock();
+                linked.is_ok() && unlocked.is_ok()
+            }
+            Err(_) => false,
+        };
+        if !linked {
+            self.latch();
+        }
+        linked
+    }
+
+    fn remove_selected_main_os_abandoned_page(&mut self, page: NonNull<Page>) -> bool {
+        if !self.is_current() {
+            self.latch();
+            return false;
+        }
+        let removed = match self.shared_main_heap_lease().lock_heap() {
+            Ok(mut heap) => {
+                // SAFETY: the source all-free transition holds this page's
+                // low owner bit. Heap validates its exact private-list
+                // membership while locked before terminal release can begin.
+                let removed = unsafe { heap.heap_mut().remove_os_abandoned_page(page) };
+                let unlocked = heap.unlock();
+                removed.is_ok() && unlocked.is_ok()
+            }
+            Err(_) => false,
+        };
+        if !removed {
+            self.latch();
+        }
+        removed
     }
 
     #[inline]
