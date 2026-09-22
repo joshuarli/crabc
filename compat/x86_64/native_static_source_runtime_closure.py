@@ -20,7 +20,7 @@ import subprocess
 import sys
 import tomllib
 from collections.abc import Iterable, Sequence
-from typing import Any
+from typing import Any, NamedTuple
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -59,10 +59,46 @@ FORBIDDEN_FINAL_SYMBOL = re.compile(r"(?:rust_eh_personality|_Unwind_|panic_(?:a
 # Accept only that current renderer shape, then let shlex parse the command itself.
 CARGO_RUNNING = re.compile(r"(?m)^ {5}Running `")
 CARGO_NEXT_RECORD = re.compile(r"(?: {5}Running `| {3}Compiling |warning: | {4}Finished |error(?:\[|:))")
+# These are the only source-runtime --extern spellings retained by the
+# authenticated Cargo stream. The matrix is deliberately per audited rustc
+# edge: accepting a modifier grammar without binding the modifier to its
+# logical crate would permit an unrecorded compiler-selection change.
+EXTERN_MODIFIER_MATRIX: dict[str, dict[str, tuple[str, ...]]] = {
+    "core": {},
+    "compiler_builtins": {"core": ()},
+    "alloc": {"compiler_builtins": ("priv",), "core": ()},
+    "crabc-mimalloc": {
+        "alloc": ("noprelude", "nounused"),
+        "chacha20": (),
+        "compiler_builtins": ("noprelude", "nounused"),
+        "core": ("noprelude", "nounused"),
+        "crabc_core": (),
+        "zeroize": (),
+    },
+    "crabc-libc": {
+        "alloc": ("noprelude", "nounused"),
+        "base64ct": (),
+        "compiler_builtins": ("noprelude", "nounused"),
+        "core": ("noprelude", "nounused"),
+        "crabc_core": (),
+        "crabc_mimalloc": (),
+        "rand_pcg": (),
+        "sha_crypt": (),
+    },
+}
+SUPPORTED_EXTERN_MODIFIERS = {(), ("priv",), ("noprelude", "nounused")}
 
 
 class ClosureError(RuntimeError):
     """The source-runtime closure did not meet its narrow evidence contract."""
+
+
+class CargoExtern(NamedTuple):
+    """One Cargo-rendered rustc extern with its exact compiler modifiers."""
+
+    logical_name: str
+    modifiers: tuple[str, ...]
+    path: pathlib.Path
 
 
 def fail(message: str) -> None:
@@ -447,39 +483,77 @@ def invocation_for(commands: Sequence[list[str]], crate: str) -> list[str]:
     return matches[0]
 
 
-def externs(command: Sequence[str], description: str) -> dict[str, pathlib.Path]:
-    result: dict[str, pathlib.Path] = {}
+def externs(command: Sequence[str], description: str) -> dict[str, CargoExtern]:
+    """Parse only the modifier spellings retained by the audited Cargo graph."""
+
+    result: dict[str, CargoExtern] = {}
     for value in option_values(command, "--extern"):
-        name, delimiter, raw_path = value.partition("=")
+        spelling, delimiter, raw_path = value.partition("=")
+        modifier_spelling, colon, name = spelling.partition(":")
+        if not colon:
+            name = spelling
+            modifiers = ()
+        else:
+            modifiers = tuple(modifier_spelling.split(","))
         if not delimiter or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
             fail(f"{description} has malformed --extern {value!r}")
+        if modifiers not in SUPPORTED_EXTERN_MODIFIERS:
+            fail(f"{description} has unsupported --extern modifier sequence: {spelling!r}")
         path = physical(pathlib.Path(raw_path), f"{description} {name} extern")
         if name in result:
             fail(f"{description} repeats --extern {name}")
-        result[name] = path
+        result[name] = CargoExtern(logical_name=name, modifiers=modifiers, path=path)
     return result
 
 
-def command_record(command: Sequence[str], target: pathlib.Path, expected_runtime: dict[str, pathlib.Path],
+def require_extern_modifier_matrix(crate: str, crate_externs: dict[str, CargoExtern]) -> None:
+    """Require the retained compiler modifier on every audited logical extern edge."""
+
+    expected = EXTERN_MODIFIER_MATRIX.get(crate)
+    if expected is None:
+        fail(f"Cargo {crate} rustc has no source-runtime extern modifier contract")
+    if set(crate_externs) != set(expected):
+        missing = sorted(set(expected) - set(crate_externs))
+        unexpected = sorted(set(crate_externs) - set(expected))
+        fail(f"Cargo {crate} rustc extern logical-name matrix differs: missing={missing!r} unexpected={unexpected!r}")
+    for name, modifiers in expected.items():
+        actual = crate_externs[name]
+        if actual.modifiers != modifiers:
+            fail(f"Cargo {crate} rustc {name} extern modifier sequence differs: "
+                 f"expected={list(modifiers)!r} actual={list(actual.modifiers)!r}")
+
+
+def command_record(command: Sequence[str], target: pathlib.Path, expected_runtime_sources: dict[str, pathlib.Path],
                    emitted: dict[pathlib.Path, dict[str, object]], crate: str, source: pathlib.Path) -> dict[str, object]:
     """Bind one target rustc command to source and Cargo-declared artifacts."""
 
-    command_has_source(command, source, f"Cargo {crate} rustc")
+    source_identity = command_source_identity(command, source, f"Cargo {crate} rustc")
     values = [*option_values(command, "-C"), *option_values(command, "-Z")]
     missing = [flag for flag in RUNTIME_FLAGS if flag.removeprefix("-C").removeprefix("-Z") not in values]
     if missing:
         fail(f"Cargo {crate} rustc invocation omits source-runtime flags: {missing!r}")
     crate_externs = externs(command, f"Cargo {crate} rustc")
+    require_extern_modifier_matrix(crate, crate_externs)
     selected: dict[str, dict[str, object]] = {}
-    for name, artifact in expected_runtime.items():
+    for name, expected_source in expected_runtime_sources.items():
         actual = crate_externs.get(name)
         if actual is None:
             fail(f"Cargo {crate} rustc invocation omits --extern {name}")
-        if actual != artifact:
-            fail(f"Cargo {crate} rustc {name} extern differs from the source-built artifact")
-        selected[name] = file_record(actual, f"Cargo {crate} {name} extern")
+        identity = emitted.get(actual.path)
+        if identity is None:
+            fail(f"Cargo {crate} rustc {name} extern does not bind an emitted Cargo artifact")
+        if identity.get("target_name") != name or identity.get("source") != str(physical(
+                expected_source, f"Cargo {crate} {name} source-runtime source")):
+            fail(f"Cargo {crate} rustc {name} extern differs from the source-built compiler artifact")
+        selected[name] = {
+            "logical_name": actual.logical_name,
+            "modifiers": list(actual.modifiers),
+            **file_record(actual.path, f"Cargo {crate} {name} extern"),
+            "artifact": identity,
+        }
     all_externs: dict[str, dict[str, object]] = {}
-    for name, artifact in crate_externs.items():
+    for name, external in crate_externs.items():
+        artifact = external.path
         try:
             artifact.relative_to(target)
         except ValueError as error:
@@ -492,8 +566,18 @@ def command_record(command: Sequence[str], target: pathlib.Path, expected_runtim
             fail(f"Cargo {crate} rustc {name} extern has malformed emitted target identity")
         if FORBIDDEN_RUNTIME_NAMES.search(name) or FORBIDDEN_RUNTIME_NAMES.search(target_name):
             fail(f"Cargo {crate} rustc admits forbidden runtime extern {name} from {target_name}")
-        all_externs[name] = {**file_record(artifact, f"Cargo {crate} {name} extern"), "artifact": identity}
-    return {"arguments": list(command), "runtime_externs": selected, "all_externs": all_externs}
+        all_externs[name] = {
+            "logical_name": external.logical_name,
+            "modifiers": list(external.modifiers),
+            **file_record(artifact, f"Cargo {crate} {name} extern"),
+            "artifact": identity,
+        }
+    return {
+        "arguments": list(command),
+        "source": source_identity,
+        "runtime_externs": selected,
+        "all_externs": all_externs,
+    }
 
 
 def required_tool(sysroot: pathlib.Path, name: str) -> pathlib.Path:
@@ -533,10 +617,27 @@ def pinned_environment() -> tuple[dict[str, str], dict[str, str]]:
     }
 
 
-def command_has_source(command: Sequence[str], source: pathlib.Path, description: str) -> None:
-    expected = str(source)
-    if expected not in command:
+def command_source_identity(command: Sequence[str], source: pathlib.Path, description: str) -> dict[str, str]:
+    """Bind Cargo's physical or frozen-root-relative source spelling to one file."""
+
+    source = physical(source, f"{description} checked source")
+    accepted = {str(source)}
+    root = physical(ROOT, "frozen source root", directory=True)
+    try:
+        relative = source.relative_to(root)
+    except ValueError:
+        pass
+    else:
+        lexical = pathlib.PurePosixPath(relative.as_posix())
+        if lexical.is_absolute() or not lexical.parts or any(part in ("", ".", "..") for part in lexical.parts):
+            fail(f"{description} checked source has no canonical frozen-root spelling")
+        if physical(root / lexical, f"{description} frozen-root source") != source:
+            fail(f"{description} frozen-root source differs from its physical identity")
+        accepted.add(lexical.as_posix())
+    matches = [argument for argument in command if argument in accepted]
+    if len(matches) != 1:
         fail(f"{description} does not compile its exact checked-in source")
+    return {"lexical_path": matches[0], "physical_path": str(source)}
 
 
 def archive_members(ar: pathlib.Path, archive: pathlib.Path, destination: pathlib.Path,
@@ -673,7 +774,7 @@ def build(arguments: argparse.Namespace) -> pathlib.Path:
     libc_source = physical(ROOT / "libc" / "src" / "lib.rs", "crabc-libc source")
     archive = artifact_for_source(records, libc_source, "c", target, ".a")
     commands = cargo_commands(stderr_path)
-    expected_runtime = dict(rlibs)
+    expected_runtime_sources = dict(runtime_sources)
     source_runtime_rustc = {
         name: command_record(
             invocation_for(commands, name), target, {}, emitted, name, source,
@@ -681,10 +782,10 @@ def build(arguments: argparse.Namespace) -> pathlib.Path:
         for name, source in runtime_sources.items()
     }
     primary = command_record(
-        invocation_for(commands, "c"), target, expected_runtime, emitted, "crabc-libc", libc_source,
+        invocation_for(commands, "c"), target, expected_runtime_sources, emitted, "crabc-libc", libc_source,
     )
     allocator = command_record(
-        invocation_for(commands, "crabc_mimalloc"), target, expected_runtime, emitted, "crabc-mimalloc",
+        invocation_for(commands, "crabc_mimalloc"), target, expected_runtime_sources, emitted, "crabc-mimalloc",
         physical(ROOT / "crabc-mimalloc" / "src" / "lib.rs", "crabc-mimalloc source"),
     )
     ar, nm = required_tool(sysroot, "llvm-ar"), required_tool(sysroot, "llvm-nm")
