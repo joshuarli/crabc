@@ -97,7 +97,7 @@ RUST_TRACE_FIELDS = (
     "registry_after_init",
     "client_is_arena_backed",
     "client_startup_identity",
-    "sidecar_vm_reservations",
+    "process_backing_published_os_arena_count",
     "registry_after_allocation",
     "arena_size_after_allocation",
     "arena_initially_committed",
@@ -246,10 +246,7 @@ RUST_EXPECTED: Mapping[str, Mapping[str, int]] = {
             "ineligible-disallow-os": 1,
         }[scenario],
         **COMMON_EXPECTED[scenario],
-        "sidecar_vm_reservations": 0 if scenario in {
-            "reuse", "reuse-disallow-os", "absent-disallow-os", "ineligible",
-            "ineligible-disallow-os",
-        } else 1,
+        "process_backing_published_os_arena_count": 0 if scenario == "absent-disallow-os" else 1,
         "page_map_entries_after_free": 0,
     }
     for scenario in SCENARIOS

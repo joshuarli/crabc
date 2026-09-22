@@ -284,7 +284,7 @@ fn runtime_process_uses_source_vm_policy_for_ticket_zero_first_arena_and_client_
         .expect("the active policy-bound first arena exposes a scalar audit");
     assert_eq!(live.process_active, 1);
     assert_eq!(live.process_backing_first_arena_begin_count, 1);
-    assert_eq!(live.process_backing_vm_reservation_count, 1);
+    assert_eq!(live.process_backing_published_os_arena_count, 1);
     assert_eq!(live.vm_policy_arena_reserve_bytes, ARENA_RESERVE_BYTES);
     assert_eq!(live.vm_policy_arena_eager_commit, 2);
     assert_eq!(live.vm_policy_allow_large_os_pages, 0);
@@ -332,7 +332,7 @@ fn runtime_process_uses_source_vm_policy_for_ticket_zero_first_arena_and_client_
     let after = native_runtime_lifecycle_test_audit()
         .expect("the freed first-arena client leaves the runtime auditable");
     assert_eq!(after.process_backing_first_arena_begin_count, 1);
-    assert_eq!(after.process_backing_vm_reservation_count, 1);
+    assert_eq!(after.process_backing_published_os_arena_count, 1);
     assert_eq!(after.vm_policy_arena_reserve_bytes, ARENA_RESERVE_BYTES);
     assert_eq!(after.vm_policy_arena_is_numa_local, 1);
     assert_eq!(after.process_arena_size, ARENA_RESERVE_BYTES);

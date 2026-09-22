@@ -4583,7 +4583,12 @@ pub struct NativeRuntimeLifecycleAudit {
     pub process_active: usize,
     pub page_owner_ready: usize,
     pub process_backing_first_arena_begin_count: usize,
-    pub process_backing_vm_reservation_count: usize,
+    /// Count of currently published canonical process-registry arenas whose
+    /// immutable `MemoryId` is OS-backed. This includes `Os`, `OsHuge`, and
+    /// `OsRemap`, and excludes external/static registrations. It is a
+    /// quiescent source-provenance observation, never a mapping-attempt or
+    /// legacy-sidecar counter.
+    pub process_backing_published_os_arena_count: usize,
     /// Source-start `mimalloc_reserve_os_memory` result retained before the
     /// first ticket-zero request: zero means absent, one means published, and
     /// two means the source attempted the reservation but continued after its
@@ -4647,7 +4652,9 @@ pub struct NativeRuntimeFirstArenaPolicyAudit {
     pub vm_policy_disallow_arena_alloc: usize,
     pub vm_policy_disallow_os_alloc: usize,
     pub process_backing_first_arena_begin_count: usize,
-    pub process_backing_vm_reservation_count: usize,
+    /// Published canonical process-registry OS-backed arena parents. See
+    /// [`NativeRuntimeLifecycleAudit::process_backing_published_os_arena_count`].
+    pub process_backing_published_os_arena_count: usize,
     pub process_arena_size: usize,
     pub process_arena_initially_committed: usize,
     pub page_map_registered_entry_count: usize,
@@ -5531,6 +5538,34 @@ pub unsafe fn native_runtime_metadata_page_map_test_audit() -> Option<usize> {
     unsafe { page_map.test_metadata_registered_entry_count(subprocess) }.ok()
 }
 
+/// Counts immutable OS-backed parents presently published in the canonical
+/// process arena registry.
+///
+/// The surrounding native audit APIs require process-wide quiescence. That
+/// condition keeps each published arena image alive and prevents registry
+/// publication/removal while this scalar walk acquires the source slots. A
+/// null slot is not a published arena and therefore contributes nothing.
+#[cfg(feature = "native-runtime-test-audit")]
+fn native_process_backing_published_os_arena_count(
+    process_backing: crate::process_init::ProcessMainBackingBinding,
+) -> usize {
+    let registry = process_backing
+        .process()
+        .subprocess()
+        .arena_backing()
+        .registry();
+    let published_count = registry.count();
+    (0..published_count)
+        .filter(|&index| {
+            // SAFETY: the caller's whole-runtime quiescence holds every
+            // published source arena alive while this audit reads its
+            // immutable MemoryId classification.
+            unsafe { registry.arena_at(index) }
+                .is_some_and(|arena| arena.memid.is_os())
+        })
+        .count()
+}
+
 /// Returns scalar-only lifecycle accounting for the process-global runtime.
 ///
 /// A `None` result means the source process image is not active and quiescent
@@ -5594,8 +5629,9 @@ pub fn native_runtime_lifecycle_test_audit() -> Option<NativeRuntimeLifecycleAud
     let (main_heap_abandoned_page_count, main_heap_os_abandoned_pages_empty) =
         native_runtime_main_heap_lifecycle_audit(main_heap)?;
     let metadata = MetaAllocator::global().test_allocation_audit();
-    let (process_backing_first_arena_begin_count, process_backing_vm_reservation_count) =
-        native_process_backing_first_arena_audit();
+    let process_backing_first_arena_begin_count = native_process_backing_first_arena_audit();
+    let process_backing_published_os_arena_count =
+        native_process_backing_published_os_arena_count(process_backing);
 
     Some(NativeRuntimeLifecycleAudit {
         process_active: usize::from(process_active),
@@ -5609,7 +5645,7 @@ pub fn native_runtime_lifecycle_test_audit() -> Option<NativeRuntimeLifecycleAud
             PAGE_OWNER_READY | PAGE_OWNER_INITIAL_PERSISTENT
         )),
         process_backing_first_arena_begin_count,
-        process_backing_vm_reservation_count,
+        process_backing_published_os_arena_count,
         startup_regular_reservation_outcome,
         vm_policy_arena_reserve_bytes: vm_policy.arena_reserve_bytes(),
         vm_policy_arena_eager_commit: vm_policy.arena_eager_commit(),
@@ -5707,15 +5743,16 @@ pub fn native_runtime_first_arena_policy_test_audit() -> Option<NativeRuntimeFir
                 | crate::process_init::ProcessStartupRegularArenaSelection::Retained => return None,
             },
         };
-    let (process_backing_first_arena_begin_count, process_backing_vm_reservation_count) =
-        native_process_backing_first_arena_audit();
+    let process_backing_first_arena_begin_count = native_process_backing_first_arena_audit();
+    let process_backing_published_os_arena_count =
+        native_process_backing_published_os_arena_count(process_backing);
     Some(NativeRuntimeFirstArenaPolicyAudit {
         process_active: usize::from(process_active),
         startup_regular_reservation_outcome,
         vm_policy_disallow_arena_alloc: usize::from(policy.disallow_arena_alloc()),
         vm_policy_disallow_os_alloc: usize::from(policy.disallow_os_alloc()),
         process_backing_first_arena_begin_count,
-        process_backing_vm_reservation_count,
+        process_backing_published_os_arena_count,
         process_arena_size,
         process_arena_initially_committed,
         page_map_registered_entry_count: page_map.test_registered_entry_count().ok()?,

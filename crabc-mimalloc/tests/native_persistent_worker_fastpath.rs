@@ -432,17 +432,17 @@ fn attach_pins_a_page_empty_owner_until_normal_no_allocation_teardown() {
     // The source TLD/Theap constructor legitimately uses metadata and its
     // PageMap registrations are not application-page claims. The persistent
     // owner state above proves the page engine remains dormant; these existing
-    // process-backing counters independently prove that attach did not begin
-    // or reserve an application arena before the no-allocation teardown.
+    // process-backing observations independently prove that attach did not
+    // begin or publish an application arena before the no-allocation teardown.
     assert_eq!(
         after.process_backing_first_arena_begin_count,
         before.process_backing_first_arena_begin_count,
         "thread attach does not begin a first application arena"
     );
     assert_eq!(
-        after.process_backing_vm_reservation_count,
-        before.process_backing_vm_reservation_count,
-        "thread attach does not reserve an application arena mapping"
+        after.process_backing_published_os_arena_count,
+        before.process_backing_published_os_arena_count,
+        "thread attach does not publish an OS-backed application arena parent"
     );
     assert_eq!(
         after.arena_registry_count, before.arena_registry_count,

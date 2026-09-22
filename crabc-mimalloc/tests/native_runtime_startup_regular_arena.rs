@@ -257,7 +257,7 @@ fn append_trace(scenario: Scenario, values: [usize; 11]) {
         "registry_after_init",
         "client_is_arena_backed",
         "client_startup_identity",
-        "sidecar_vm_reservations",
+        "process_backing_published_os_arena_count",
         "registry_after_allocation",
         "arena_size_after_allocation",
         "arena_initially_committed",
@@ -320,7 +320,7 @@ fn runtime_ticket_zero_uses_source_startup_regular_arena_and_source_fallbacks() 
         let retry = ticket_zero_allocate(79, false);
         assert!(
             matches!(&retry, TicketZeroPageAllocationResult::AllocationFailed),
-            "the source policy refusal remains retryable and must not retain a fresh sidecar owner",
+            "the source policy refusal remains retryable and must not publish a fresh canonical arena parent",
         );
         let after = native_runtime_first_arena_policy_test_audit()
             .expect("a failed first allocation leaves the process policy auditable");
@@ -329,7 +329,11 @@ fn runtime_ticket_zero_uses_source_startup_regular_arena_and_source_fallbacks() 
         assert_eq!(after.vm_policy_disallow_arena_alloc, usize::from(scenario.disallows_arena_alloc()));
         assert_eq!(after.vm_policy_disallow_os_alloc, 1);
         assert_eq!(after.process_backing_first_arena_begin_count, 1);
-        assert_eq!(after.process_backing_vm_reservation_count, 0);
+        assert_eq!(
+            after.process_backing_published_os_arena_count,
+            usize::from(scenario.expects_startup_parent()),
+            "a failed first request preserves only an already-published source OS arena parent",
+        );
         assert_eq!(after.arena_registry_count, usize::from(scenario.expects_startup_parent()));
         assert_eq!(
             after.process_arena_size,
@@ -348,7 +352,7 @@ fn runtime_ticket_zero_uses_source_startup_regular_arena_and_source_fallbacks() 
                 registry_after_init,
                 0,
                 2,
-                after.process_backing_vm_reservation_count,
+                after.process_backing_published_os_arena_count,
                 after.arena_registry_count,
                 after.process_arena_size,
                 after.process_arena_initially_committed,
@@ -395,11 +399,14 @@ fn runtime_ticket_zero_uses_source_startup_regular_arena_and_source_fallbacks() 
     assert_eq!(live.process_arena_initially_committed, 1);
     assert_eq!(live.arena_registry_count, 1);
 
+    assert_eq!(
+        live.process_backing_published_os_arena_count,
+        1,
+        "every successful selected route retains exactly one published OS-backed source arena parent",
+    );
     if scenario.expects_startup_parent() {
-        assert_eq!(live.process_backing_vm_reservation_count, 0);
         assert_eq!(live.process_arena_size, STARTUP_RESERVE_BYTES);
     } else {
-        assert_eq!(live.process_backing_vm_reservation_count, 1);
         assert_eq!(live.process_arena_size, LAZY_RESERVE_BYTES);
     }
     if scenario.expects_direct_os_client() {
@@ -419,7 +426,7 @@ fn runtime_ticket_zero_uses_source_startup_regular_arena_and_source_fallbacks() 
     let after = native_runtime_first_arena_policy_test_audit()
         .expect("the retained process arena remains auditable after client free");
     assert_eq!(after.startup_regular_reservation_outcome, scenario.expected_startup_outcome());
-    assert_eq!(after.process_backing_vm_reservation_count, live.process_backing_vm_reservation_count);
+    assert_eq!(after.process_backing_published_os_arena_count, live.process_backing_published_os_arena_count);
     assert_eq!(after.process_arena_size, live.process_arena_size);
     assert_eq!(after.process_arena_initially_committed, 1);
     assert_eq!(after.arena_registry_count, 1);
@@ -433,7 +440,7 @@ fn runtime_ticket_zero_uses_source_startup_regular_arena_and_source_fallbacks() 
             registry_after_init,
             client_is_arena_backed,
             client_startup_identity,
-            live.process_backing_vm_reservation_count,
+            live.process_backing_published_os_arena_count,
             live.arena_registry_count,
             live.process_arena_size,
             live.process_arena_initially_committed,
