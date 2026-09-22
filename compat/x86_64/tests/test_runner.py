@@ -8388,6 +8388,53 @@ unsafe fn join_selected_worker_inner(
             fixture_runner,
         )
 
+    def test_native_mimalloc_physical_destroy_fixture_stays_out_of_normal_raw_copy_runner(
+        self,
+    ) -> None:
+        """Keep the disabled physical audit out of the ordinary fork cohort."""
+        fixture_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_libc_native_mimalloc_shadow_pthread_teardown.sh"
+        ).read_text(encoding="utf-8")
+        physical_symbol = "__crabc_x86_native_mimalloc_process_destroy_test_audit"
+
+        primary_symbol_check = fixture_runner.split(
+            'nm -A --defined-only "$archive" >"$archive_symbols"', 1
+        )[1].split(
+            'if [ "$physical_process_destroy_only" -eq 1 ]; then', 1
+        )[0]
+        self.assertNotIn(physical_symbol, primary_symbol_check)
+
+        physical = fixture_runner.split(
+            '# This focused private program calls the dedicated explicit physical-destroy', 1
+        )[1]
+        physical_branch = physical.split(
+            'if [ "$physical_process_destroy_only" -eq 1 ]; then', 1
+        )[1]
+        self.assertLess(
+            physical.index('if [ "$physical_process_destroy_only" -eq 1 ]; then'),
+            physical.index('"$ORACLE_CC"'),
+        )
+        for required in (
+            physical_symbol,
+            '"$physical_process_destroy_link_map"',
+            '"$physical_process_destroy_link_trace"',
+            '--label selected-native-explicit-process-destroy',
+            'for destroy_on_exit in 1 2 -1; do',
+            'exit 0',
+        ):
+            self.assertIn(required, physical_branch)
+        self.assertLess(
+            physical_branch.index('exit 0'),
+            physical_branch.index('readelf --symbols --wide "$candidate"'),
+        )
+
+        normal_candidate_check = fixture_runner.split(
+            'readelf --symbols --wide "$candidate" >"$candidate_symbols"', 1
+        )[1].split('# `main` return takes static_startup::exit', 1)[0]
+        self.assertNotIn(physical_symbol, normal_candidate_check)
+        self.assertNotIn('"$physical_process_destroy_candidate"', normal_candidate_check)
+
     def test_libc_static_c_abi_pthread_affinity_stays_bounded(self) -> None:
         affinity = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" /

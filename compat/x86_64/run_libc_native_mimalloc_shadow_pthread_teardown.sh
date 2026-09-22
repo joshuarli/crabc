@@ -338,7 +338,6 @@ for symbol in __crabc_x86_native_mimalloc_shadow_v1 \
     __crabc_x86_native_mimalloc_registered_thread_descriptor_count_test_audit \
     __crabc_x86_native_mimalloc_reclaimed_worker_descriptor_count_test_audit \
     __crabc_x86_native_mimalloc_process_done_test_audit \
-    __crabc_x86_native_mimalloc_process_destroy_test_audit \
     __crabc_x86_native_mimalloc_process_done_retained_worker_matches_current_thread_test_audit \
     __crabc_x86_native_mimalloc_process_done_retained_local_preflight_test_audit \
     __crabc_x86_native_mimalloc_current_local_page_test_audit \
@@ -352,6 +351,45 @@ for symbol in __crabc_x86_native_mimalloc_shadow_v1 \
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "selected archive does not define ${symbol}"
 done
+
+# This focused private program calls the dedicated explicit physical-destroy
+# audit only after normal selected startup. Each fresh process supplies one signed
+# source option value: `1` and `2` distinguish explicit from automatic
+# dispatch, and `-1` confirms that nonzero is not flattened to a bool. The
+# audit returns from the pinned descriptor transfer before the allocator's
+# physical Heap/metadata/arena/PageMap successor runs; it then observes the
+# source once no-op and exits without invoking the still-disabled automatic
+# physical finalizer.
+if [ "$physical_process_destroy_only" -eq 1 ]; then
+    grep -Eq "[[:space:]][TW][[:space:]]__crabc_x86_native_mimalloc_process_destroy_test_audit$" \
+        "$archive_symbols" ||
+        fail "selected physical process-destroy archive does not define __crabc_x86_native_mimalloc_process_destroy_test_audit"
+    "$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
+        -DCRABC_NATIVE_MIMALLOC_SHADOW_PHYSICAL_PROCESS_DESTROY_PROBE \
+        -DCRABC_NATIVE_MIMALLOC_SHADOW_TEST_AUDIT \
+        -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie \
+        -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start \
+        -Wl,--no-undefined -Wl,--gc-sections \
+        -Wl,-Map,"$physical_process_destroy_link_map" -Wl,--trace-symbol=rust_eh_personality \
+        -Wl,-u,__crabc_x86_native_mimalloc_shadow_v1 \
+        "$fixture_crt1" "$crt_output/crti.o" \
+        compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_probe.c \
+        compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_start.S \
+        "$archive" "$crt_output/crtn.o" -o "$physical_process_destroy_candidate" >"$physical_process_destroy_link_trace" 2>&1
+    python3 "$source_runtime_helper" audit-final-link \
+        --receipt "$source_runtime_primary_receipt" --candidate "$physical_process_destroy_candidate" \
+        --link-map "$physical_process_destroy_link_map" --trace "$physical_process_destroy_link_trace" \
+        --label selected-native-explicit-process-destroy ||
+        fail "source-built native static runtime physical process-destroy final link audit failed"
+    for destroy_on_exit in 1 2 -1; do
+        if ! env "mimalloc_destroy_on_exit=$destroy_on_exit" \
+            timeout "$EXECUTION_TIMEOUT" "$physical_process_destroy_candidate"; then
+            fail "selected native explicit process-destroy candidate failed for destroy_on_exit=$destroy_on_exit"
+        fi
+    done
+    printf 'x86 selected native-mimalloc explicit process-destroy fixture: PASS\n'
+    exit 0
+fi
 
 if [ "$physical_process_destroy_only" -eq 0 ]; then
     "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_NATIVE_MIMALLOC_SHADOW_TEST_AUDIT \
@@ -385,43 +423,6 @@ if [ "$physical_process_destroy_only" -eq 0 ]; then
         "$archive" "$crt_output/crtn.o" -o "$internal_allocator_override_candidate"
 fi
 
-# This focused private program calls the dedicated explicit physical-destroy
-# audit only after normal selected startup. Each fresh process supplies one signed
-# source option value: `1` and `2` distinguish explicit from automatic
-# dispatch, and `-1` confirms that nonzero is not flattened to a bool. The
-# audit returns from the pinned descriptor transfer before the allocator's
-# physical Heap/metadata/arena/PageMap successor runs; it then observes the
-# source once no-op and exits without invoking the still-disabled automatic
-# physical finalizer.
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
-    -DCRABC_NATIVE_MIMALLOC_SHADOW_PHYSICAL_PROCESS_DESTROY_PROBE \
-    -DCRABC_NATIVE_MIMALLOC_SHADOW_TEST_AUDIT \
-    -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie \
-    -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start \
-    -Wl,--no-undefined -Wl,--gc-sections \
-    -Wl,-Map,"$physical_process_destroy_link_map" -Wl,--trace-symbol=rust_eh_personality \
-    -Wl,-u,__crabc_x86_native_mimalloc_shadow_v1 \
-    "$fixture_crt1" "$crt_output/crti.o" \
-    compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_probe.c \
-    compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_start.S \
-    "$archive" "$crt_output/crtn.o" -o "$physical_process_destroy_candidate" >"$physical_process_destroy_link_trace" 2>&1
-python3 "$source_runtime_helper" audit-final-link \
-    --receipt "$source_runtime_primary_receipt" --candidate "$physical_process_destroy_candidate" \
-    --link-map "$physical_process_destroy_link_map" --trace "$physical_process_destroy_link_trace" \
-    --label selected-native-explicit-process-destroy ||
-    fail "source-built native static runtime physical process-destroy final link audit failed"
-
-if [ "$physical_process_destroy_only" -eq 1 ]; then
-    for destroy_on_exit in 1 2 -1; do
-        if ! env "mimalloc_destroy_on_exit=$destroy_on_exit" \
-            timeout "$EXECUTION_TIMEOUT" "$physical_process_destroy_candidate"; then
-            fail "selected native explicit process-destroy candidate failed for destroy_on_exit=$destroy_on_exit"
-        fi
-    done
-    printf 'x86 selected native-mimalloc explicit process-destroy fixture: PASS\n'
-    exit 0
-fi
-
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
@@ -431,7 +432,6 @@ for symbol in __crabc_x86_native_mimalloc_shadow_v1 \
     __crabc_x86_native_mimalloc_registered_thread_descriptor_count_test_audit \
     __crabc_x86_native_mimalloc_reclaimed_worker_descriptor_count_test_audit \
     __crabc_x86_native_mimalloc_process_done_test_audit \
-    __crabc_x86_native_mimalloc_process_destroy_test_audit \
     __crabc_x86_native_mimalloc_process_done_retained_worker_matches_current_thread_test_audit \
     __crabc_x86_native_mimalloc_process_done_retained_local_preflight_test_audit \
     __crabc_x86_native_mimalloc_current_local_page_test_audit \
@@ -477,12 +477,6 @@ fi
 if ! timeout "$EXECUTION_TIMEOUT" "$internal_allocator_override_candidate"; then
     fail "native internal allocation selected a strong public malloc replacement"
 fi
-for destroy_on_exit in 1 2 -1; do
-    if ! env "mimalloc_destroy_on_exit=$destroy_on_exit" \
-        timeout "$EXECUTION_TIMEOUT" "$physical_process_destroy_candidate"; then
-        fail "selected native explicit process-destroy candidate failed for destroy_on_exit=$destroy_on_exit"
-    fi
-done
 
 # `main` return takes static_startup::exit rather than the final-worker path.
 # The reference records application `atexit` then application fini (`AD`). The
