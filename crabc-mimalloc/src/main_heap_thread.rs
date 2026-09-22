@@ -1109,6 +1109,11 @@ impl<'main> MainHeapThreadAttachment<'main> {
         // slot.  Cached stays the canonical empty source image.
         set_default_theap(theap_pointer);
         set_fast_slot(Some(theap_pointer.cast()));
+        // `init.c:358` records the source thread only after both default and
+        // fast roots publish the initialized Theap.
+        self.main_heap
+            .subprocess()
+            .record_statistics_thread_attached();
         Ok(())
     }
 
@@ -1412,6 +1417,11 @@ impl<'main> MainHeapThreadAttachment<'main> {
             return Err(MainHeapThreadAttachmentError::Poisoned);
         }
         set_fast_slot(None);
+        // `init.c:471` adjusts `stats.threads` after the source fast/TLS
+        // clear and before the later Theap/page-drain work begins.
+        self.main_heap
+            .subprocess()
+            .record_statistics_thread_detached();
         self.state = MainHeapThreadAttachmentState::DrainingPages;
         Ok(())
     }
@@ -1840,6 +1850,13 @@ impl MainHeapThreadOwnerLocalPageEngineLease {
             return Err(MainHeapThreadAttachmentError::Poisoned);
         }
         set_fast_slot(None);
+        // This normal A/B/C route has the same `init.c:471` source event as
+        // the no-page drain, but reaches its callback before phase C consumes
+        // the attachment. Neither route can enter the other's clear prefix.
+        attachment
+            .main_heap
+            .subprocess()
+            .record_statistics_thread_detached();
         attachment.state = MainHeapThreadAttachmentState::DrainingPages;
         match attachment.begin_thread_exit_deferred_free_callback(true) {
             Ok(call) => Ok(call),
@@ -2871,6 +2888,60 @@ mod tests {
         })
         .join()
         .expect("main-heap later-thread lifecycle completes");
+    }
+
+    #[test]
+    fn later_thread_no_page_statistics_follow_source_attach_and_direct_finish() {
+        thread::spawn(|| {
+            let (storage, subprocess) = fixture();
+            let metadata = MetaAllocator::test_static_owner();
+            let mut main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the focused main image");
+            // This direct test fixture deliberately bypasses process_init's
+            // existing initial attachment event. Establish that process-main
+            // baseline before the real later attachment below.
+            subprocess.record_statistics_thread_attached();
+            let main_heap = main
+                .shared_main_heap_lease()
+                .expect("the focused later worker borrows the static Heap");
+
+            thread::scope(|scope| {
+                scope.spawn(move || {
+                    let mut attachment = unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(
+                            main_heap,
+                            metadata,
+                            memory_config(),
+                        )
+                    }
+                    .expect("the focused later thread attaches");
+                    let attached = subprocess.statistics().source_snapshot();
+                    assert_eq!(
+                        (attached.threads_total, attached.threads_peak, attached.threads_current),
+                        (2, 2, 2),
+                        "the initial and later source attachment events share one subprocess statistics image"
+                    );
+
+                    attachment
+                        .finish_after_user_destructors()
+                        .expect("the no-page direct source finish clears the later attachment");
+                    let detached = subprocess.statistics().source_snapshot();
+                    assert_eq!(
+                        (detached.threads_total, detached.threads_peak, detached.threads_current),
+                        (2, 2, 1),
+                        "the no-page source clear balances only the later attachment before its drain"
+                    );
+                })
+                .join()
+                .expect("the focused later worker remains current-thread local");
+            });
+            main.teardown()
+                .expect("the ticket-zero owner retires after the later source drain");
+        })
+        .join()
+        .expect("the focused no-page thread-statistics lifecycle completes");
     }
 
     #[test]

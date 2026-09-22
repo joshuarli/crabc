@@ -3726,6 +3726,21 @@ stress_verified = false
 performance_qualified = false
 
 [[item]]
+upstream = "src/init.c"
+name = "later-thread-statistics-source-events"
+source_region = "mimalloc v3.5.0 src/init.c:351-358 `_mi_thread_init_with_heap` default-Theap then heap-TLS publication followed by `mi_subproc_stat_increase(..., threads, 1)`; and :464-471 `_mi_thread_done` `_mi_thread_locals_thread_done` followed by `mi_subproc_stat_decrease(..., threads, 1)` before thread-id, Theap, and TLD teardown; paired src/stats.c:425 process `threads` export field"
+rust_module = "crabc_mimalloc::main_heap_thread, crabc_mimalloc::process_init, crabc_mimalloc::subproc, and crabc_mimalloc::statistics"
+rust_item = "ProcessMainInitializationStorage initial attachment producer; MainHeapThreadAttachment::initialize_and_publish/begin_page_drain; MainHeapThreadOwnerLocalPageEngineLease::begin_thread_exit_deferred_free_phase; MainSubprocess::{record_statistics_thread_attached,record_statistics_thread_detached}; and HeapTheapStatistics::threads relaxed source snapshot"
+intentional_difference = "This selected event slice keeps the complete private source-ordered mi_stats_t record and its per-field Relaxed StatCount update semantics, but exposes only a private three-scalar lifecycle observation. The initial process producer remains in ProcessMainInitializationStorage. A normal selected later worker enters the A/B/C owner-exit prefix and decrements after its fast root clears, before callback selection and phase-C collection; the separately typed no-page finish decrements at its own mutually exclusive fast-root clear. The record neither exposes a public statistics callback/export API nor claims full stats.c formatting, coherent snapshots, general thread teardown, or MI_STAT profile coverage."
+tests = ["crabc-mimalloc/src/statistics.rs", "crabc-mimalloc/src/process_init.rs", "crabc-mimalloc/src/main_heap_thread.rs", "crabc-mimalloc/src/runtime_lifecycle.rs"]
+exported = false
+implemented = true
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
 upstream = "src/free.c"
 name = "pointer-first-native-free-page-state-dispatch"
 source_region = "mimalloc v3.5.0 src/free.c:100-160 _mi_page_ptr_unalign, mi_free_generic_local, and mi_free_generic_mt; 170-255 pointer-to-page validation, mi_free_nonnull source xthread_id local-versus-remote selection, and mi_free entry. The claimed post-owner-exit collection/release tail remains separately mapped by page-owned-post-owner-exit-exact-remote-claim-terminal-tail."
