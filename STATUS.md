@@ -2,8 +2,10 @@
 
 ## Active program
 
-Work has resumed from the committed wind-down handoff in [`plan.md`](plan.md).
-The combined goal remains incomplete.
+Work follows the current native completion execution policy in [`plan.md`](plan.md)
+and [`crabc-orchestrate`](.agents/skills/crabc-orchestrate/SKILL.md). The prior
+wind-down plan is historical evidence in [its preserved snapshot](docs/history/plan-before-throughput-reset-dd8d03ef9c7528f36f90ac9b8c34be6c13b12a88.md),
+not the current execution contract. The combined goal remains incomplete.
 
 Implement [`plan.md`](plan.md): native Linux/x86-64 runtime parity and native
 x86-64 mimalloc, in parallel where dependencies permit. AArch64 implementation
@@ -41,13 +43,12 @@ owners:
    workload matrix now have installed/extracted evidence and host replay,
    alongside the installed pthread and loader component receipts. Complete
    native aggregate evidence remains required for family closure; see
-   [`owned-posix-runtime.md`](compat/x86_64/owned-posix-runtime.md) and `plan.md`
-   for exact revisions and subsequent source changes.
+   [`owned-posix-runtime.md`](compat/x86_64/owned-posix-runtime.md) and its
+   retained reports for exact source identities and subsequent source changes.
    Full native OS-test and libc-test runners now expose the remaining runtime
    and fixture failures through independently checked source/object/link and
    execution-root evidence. Their incomplete results do not close the native
-   aggregate; current measurements and the integration sequence are in
-   `plan.md`.
+   aggregate; current measurements are retained under `compat/reports/`.
    The native performance collector now covers the complete 114-row definition
    with separate memory observers and an isolated timing launcher. Its bounded
    native smokes and host replay pass; complete correctness-chain admission and
