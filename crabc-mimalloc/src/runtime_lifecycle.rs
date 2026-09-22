@@ -20209,7 +20209,11 @@ mod tests {
                     let main_heap = unsafe { runtime.active_main_heap() }
                         .expect("owner-exit A copies the ticket-zero main Heap witness");
                     let mut attachment = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(
+                            main_heap,
+                            metadata,
+                            config,
+                        )
                     } {
                         Ok(attachment) => attachment,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -20219,6 +20223,22 @@ mod tests {
                             panic!("owner-exit A cannot retain during attachment: {error:?}")
                         }
                     };
+                    let source_theap = unsafe {
+                        attachment
+                            .test_theap_pointer()
+                            .expect("the full-queue attachment retains its exact Theap")
+                            .as_ref()
+                            .expect("the full-queue attachment Theap pointer remains non-null")
+                    };
+                    assert!(
+                        !source_theap.allows_page_abandon(),
+                        "the mixed owner-exit source must use C's non-abandoning full-queue option"
+                    );
+                    assert_eq!(
+                        source_theap.page_full_retain(),
+                        -1,
+                        "the full-queue fixture keeps C's selected page-full-retain image"
+                    );
                     let admissions = RuntimeForkAdmission::new();
 
                     let completed = runtime.with_dormant_page_pair(|pair| {
