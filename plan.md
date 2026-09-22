@@ -116,6 +116,15 @@ including clean before/after revisions, exit status and raw output (stdout
 SHA-256 `301956b6a31c1ae08998d7972d33bd7cccaa5a6153cefeb3b9cd278b46c34bb3`).
 An earlier handwritten summary had an inconsistent timestamp and is marked
 superseded; it is not the qualification basis.
+The preceding later-TLD metadata-allocation failure is now covered by
+`f5a4aaf5`, from clean worker `64f3f85d`: the failed source ticket is consumed,
+no TLD/Theap/root is published, and a subsequent attachment completes. That
+worker's expanded `allocator-init-recursion` receipt passes seven paired C/Rust
+trace values and eight separate Rust lifecycle checks. It is retained at
+`.work/allocator-next-source-parity/.work/allocator-x86_64/later-tld-failure-receipt/reports/allocator/x86_64/init-recursion.json`
+(SHA-256 `9072da31dce0981db0961f1a4512be3b348da1e848f286c7ef34dc8e93067227`).
+The new failure check is explicitly Rust-only; it does not establish paired C
+fault injection or M2 completion. Four receipt-reader tests pass on main.
 
 The preserved approved standalone unwinder provider is now present on main
 (`fbf8837e`, from `d3ca0e79`), without selecting it in runtime products. At
