@@ -15444,7 +15444,13 @@ pub fn attach_current_thread() -> ThreadAttachResult {
     let Some(entry) = ThreadAttachmentEntry::claim() else {
         return ThreadAttachResult::Reentrant;
     };
-    let result = attach_current_thread_after_entry(entry, || {});
+    // A refused operation guard was historically a direct `Inactive` return:
+    // it means a live source operation owns the descriptor, not that this
+    // thread's source has reached retirement. Only the source continuation
+    // below can make the pre-existing retirement decision.
+    let Some(result) = attach_current_thread_after_entry(entry, || {}) else {
+        return ThreadAttachResult::Inactive;
+    };
     if result == ThreadAttachResult::Inactive { admission::mark_current_source_retired(); }
     result
 }
@@ -15454,6 +15460,7 @@ fn attach_current_thread_with_entry(before_source: impl FnOnce()) -> ThreadAttac
         return ThreadAttachResult::Reentrant;
     };
     attach_current_thread_after_entry(entry, before_source)
+        .unwrap_or(ThreadAttachResult::Inactive)
 }
 
 /// Continues attachment after the caller has claimed the current TLS entry.
@@ -15466,24 +15473,24 @@ fn attach_current_thread_with_entry(before_source: impl FnOnce()) -> ThreadAttac
 fn attach_current_thread_after_entry(
     _entry: ThreadAttachmentEntry,
     before_source: impl FnOnce(),
-) -> ThreadAttachResult {
+) -> Option<ThreadAttachResult> {
     #[cfg(target_arch = "x86_64")]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
-        return ThreadAttachResult::Inactive;
+        return None;
     };
     before_source();
     let slot = current_thread_slot();
     match slot.state {
-        ThreadLifecycleState::Attached => return ThreadAttachResult::AlreadyAttached,
-        ThreadLifecycleState::Finished => return ThreadAttachResult::Finished,
+        ThreadLifecycleState::Attached => return Some(ThreadAttachResult::AlreadyAttached),
+        ThreadLifecycleState::Finished => return Some(ThreadAttachResult::Finished),
         ThreadLifecycleState::Retained | ThreadLifecycleState::ProcessDoneRetained => {
-            return ThreadAttachResult::Retained;
+            return Some(ThreadAttachResult::Retained);
         }
         ThreadLifecycleState::Fresh => {}
     }
 
     if !RUNTIME_PROCESS.is_active() {
-        return ThreadAttachResult::Inactive;
+        return Some(ThreadAttachResult::Inactive);
     }
     let Some(admission) = RUNTIME_FORK_ADMISSION.claim_later_thread() else {
         // A count overflow cannot be mistaken for a fresh process state. It
@@ -15491,7 +15498,7 @@ fn attach_current_thread_after_entry(
         // bridge's precise fork-admission accounting.
         slot.state = ThreadLifecycleState::Retained;
         RUNTIME_PROCESS.retain();
-        return ThreadAttachResult::Retained;
+        return Some(ThreadAttachResult::Retained);
     };
     slot.admission = Some(admission);
 
@@ -15503,21 +15510,21 @@ fn attach_current_thread_after_entry(
             .take()
             .expect("a claimed worker admission remains in its fresh TLS slot");
         match RUNTIME_FORK_ADMISSION.release_later_thread(admission) {
-            Ok(()) => return ThreadAttachResult::Inactive,
+            Ok(()) => return Some(ThreadAttachResult::Inactive),
             Err(admission) => {
                 slot.admission = Some(admission);
             }
         }
         slot.state = ThreadLifecycleState::Retained;
         RUNTIME_PROCESS.retain();
-        return ThreadAttachResult::Retained;
+        return Some(ThreadAttachResult::Retained);
     };
     let ready = match process_owner.ready() {
         Ok(ready) => ready,
         Err(_) => {
             slot.state = ThreadLifecycleState::Retained;
             RUNTIME_PROCESS.retain();
-            return ThreadAttachResult::Retained;
+            return Some(ThreadAttachResult::Retained);
         }
     };
     let config = match ready.memory_config() {
@@ -15525,13 +15532,13 @@ fn attach_current_thread_after_entry(
         Err(_) => {
             slot.state = ThreadLifecycleState::Retained;
             RUNTIME_PROCESS.retain();
-            return ThreadAttachResult::Retained;
+            return Some(ThreadAttachResult::Retained);
         }
     };
     let Some(main_heap) = (unsafe { RUNTIME_PROCESS.active_main_heap() }) else {
         slot.state = ThreadLifecycleState::Retained;
         RUNTIME_PROCESS.retain();
-        return ThreadAttachResult::Retained;
+        return Some(ThreadAttachResult::Retained);
     };
     #[cfg(test)]
     let Some(completion_generation) = claim_native_post_exit_completion_owner_generation() else {
@@ -15541,7 +15548,7 @@ fn attach_current_thread_after_entry(
         // witness treat two attachments as one.
         slot.state = ThreadLifecycleState::Retained;
         RUNTIME_PROCESS.retain();
-        return ThreadAttachResult::Retained;
+        return Some(ThreadAttachResult::Retained);
     };
 
     // SAFETY: libc installed this child TLS image and calls before user code;
@@ -15554,7 +15561,7 @@ fn attach_current_thread_after_entry(
     // prevents those callbacks from beginning a second attachment.
     let attachment = unsafe { MainHeapThreadAttachment::begin(main_heap, config) };
     let slot = current_thread_slot();
-    match attachment {
+    Some(match attachment {
         Ok(attachment) => {
             #[cfg(not(test))]
             // SAFETY: the caller's mutable TLS-slot borrow proves this field
@@ -15608,7 +15615,7 @@ fn attach_current_thread_after_entry(
             RUNTIME_PROCESS.retain();
             ThreadAttachResult::Retained
         }
-    }
+    })
 }
 
 /// Creates the one fresh native owner permitted for selected ordinary-exit
