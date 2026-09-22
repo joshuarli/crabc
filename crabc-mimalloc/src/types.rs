@@ -5051,7 +5051,7 @@ impl Theap {
     /// initially-committed concrete-static-image provenance. It accepts only
     /// the untouched `Theap::empty` static image before heap publication.
     #[inline]
-    fn set_detached_main_metadata_static_memid(&mut self) -> bool {
+    pub(crate) fn set_detached_main_metadata_static_memid(&mut self) -> bool {
         let Some(static_memory) = self.memid.static_memory() else {
             return false;
         };
@@ -5146,11 +5146,26 @@ impl Theap {
         heap: &mut Heap,
         tld: &mut ThreadLocalData,
     ) -> Result<(), TheapMainStaticInitError> {
+        let owner = TheapOwner::Live(
+            LiveThreadId::new(tld.thread_id()).ok_or(TheapMainStaticInitError::InvalidInput)?,
+        );
+        self.initialize_static_for_owner(heap, tld, owner)
+    }
+
+    /// Source `_mi_theap_init` for the process-static detached metadata image.
+    /// The caller keeps both source list owners pinned through destruction.
+    pub(crate) fn initialize_metadata_static(
+        &mut self, heap: &mut Heap, tld: &mut ThreadLocalData,
+    ) -> Result<(), TheapMainStaticInitError> {
+        self.initialize_static_for_owner(heap, tld, TheapOwner::Detached)
+    }
+
+    fn initialize_static_for_owner(
+        &mut self, heap: &mut Heap, tld: &mut ThreadLocalData, owner: TheapOwner,
+    ) -> Result<(), TheapMainStaticInitError> {
         if self.is_initialized()
             || !tld.is_subprocess_attached_no_theap()
-            || !tld.matches_owner(TheapOwner::Live(
-                LiveThreadId::new(tld.thread_id()).ok_or(TheapMainStaticInitError::InvalidInput)?,
-            ))
+            || !tld.matches_owner(owner)
             || heap.subprocess.is_null()
             || !core::ptr::eq(heap.subprocess, tld.subprocess)
         {
@@ -5174,9 +5189,9 @@ impl Theap {
         // `page_reclaim_on_free >= 0`, `page_full_retain == 2`, and a live
         // TLD rather than the detached metadata identity.
         self.allow_page_reclaim = true;
-        self.allow_page_abandon = true;
+        self.allow_page_abandon = owner != TheapOwner::Detached;
         self.page_full_retain = 2;
-        self.is_detached = false;
+        self.is_detached = owner == TheapOwner::Detached;
 
         let self_pointer = core::ptr::from_mut(self);
         let head_random = tld
@@ -8630,3 +8645,6 @@ pub(crate) mod page_queue;
 
 #[path = "heap_destroy.rs"]
 pub(crate) mod heap_destroy;
+
+#[path = "metadata_session.rs"]
+pub(crate) mod metadata_session;

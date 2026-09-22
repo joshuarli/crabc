@@ -1855,10 +1855,17 @@ mod tests {
         thread::spawn(|| {
             let (storage, subprocess) = fixture();
             let metadata = MetaAllocator::test_static_owner();
-            let main = unsafe {
-                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
-            }.expect("main source owner");
-            let heap = main.shared_main_heap_lease().expect("main Heap");
+            let process = crate::process_init::ProcessMainInitializationStorage::test_static_owner();
+            let page_map = crate::process_page_map::ProcessPageMapStorage::test_static_owner();
+            let mut options = crate::config::VmOptions::uninitialized();
+            options.initialize_all(|_| crate::config::VmOptionEnvironment::Absent);
+            options.set(crate::config::VmOption::ArenaReserve, 64 * 1024);
+            let mut main = unsafe {
+                process.initialize_with_test_components_and_vm_options(memory_config(), options,
+                    storage, subprocess, metadata, page_map)
+            }.expect("canonical source process owner");
+            assert!(metadata.test_canonical_metadata_heap_membership());
+            let heap = main.attachment_mut().unwrap().shared_main_heap_lease().expect("main Heap");
             thread::scope(|scope| {
                 for _ in 0..3 {
                     scope.spawn(move || {
@@ -1896,7 +1903,7 @@ mod tests {
             };
             crate::compiler_tls::clear_main_static_attachment_roots();
             let tracking = std::boxed::Box::leak(std::boxed::Box::new([
-                const { crate::types::heap_destroy::MainHeapDestroyTracking::empty() }; 4
+                const { crate::types::heap_destroy::MainHeapDestroyTracking::empty() }; 5
             ]));
             // SAFETY: all workers joined after transferring their owners;
             // the remaining initial roots are clear, and this test never
@@ -1914,6 +1921,10 @@ mod tests {
                 usize::from(heap.test_destroyed_heap_list_empty()), detached, subprocess.live_thread_count()].into_iter().enumerate() {
                 std::println!("m2.heap.destroy.{index}={value}");
             }
+            // Source static metadata is now detached along with the ordinary
+            // static and dynamic members. All dynamic metadata releases above
+            // ran through its canonical raw field session after TLD detachment.
+            unsafe { metadata.close_process_engine_quiescent() }.expect("metadata session retires");
             // The fixture retains the detached TLD owners in external leaked
             // storage; arena/process destruction is a separate transition.
         }).join().expect("quiescent Heap destruction lifecycle");

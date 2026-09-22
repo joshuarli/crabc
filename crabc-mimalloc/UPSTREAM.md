@@ -954,7 +954,7 @@ page destruction or arena destruction.
 
 The focused regression exercises live capability sealing and complete engine
 retention on commit poison. This phase does not yet clear `theap_meta`, retire
-the separate Rust bootstrap Heap, merge source Heap statistics, remove source
+the canonical static metadata image, merge source Heap statistics, remove source
 Heap bookkeeping, or invoke arena/PageMap release. It is not a completed
 `destroy_on_exit` caller; those ordering and source-list prerequisites remain.
 
@@ -966,5 +966,30 @@ ordinary-Theap observation during locked source prepend. Detached/exclusive
 initialization and terminal test observations retain their existing exclusive
 ownership proof. The focused prepend and force-destruction refusal regressions
 pass; this is representation/ownership evidence, not a dynamic Rust alias-model
-checker result. Canonical metadata page sessions still require separate scoped
-local-field ownership before joining the source main Heap list.
+checker result. Canonical metadata page sessions use the separate scoped local-field ownership
+described below when joining the source main Heap list.
+
+### Canonical process metadata Heap membership
+
+The policy-bound production startup now uses `MetaAllocator::prepare_for_main_heap`
+and `ExclusiveTheapBootstrap::bind_detached_for_main_heap` for the source
+`init.c:200-205` static metadata Theap. Its detached TLD and Heap intrusive
+memberships name the real canonical main Heap. Historical explicit-config
+fixtures retain their separately named private bootstrap/backing branch; a
+live legacy owner is never silently migrated.
+
+`types::metadata_session::CanonicalMetadataTheapSession` carries process-static
+raw local-field authority, not a surviving `&mut` bootstrap/Theap. Queue,
+direct-cache, count, and retirement writes project their exact fields. Fresh
+page association borrows the full Theap only while the main Heap projection
+lock excludes source link mutation. Shared Theap observations remain scoped to
+the session borrow; raw authority does not permit writing plain fields behind
+a surviving shared reference. Metadata entry serializes local operations.
+
+The source-retained main-Heap lifecycle regression now initializes this actual
+production graph: three dynamic worker Theaps plus the main and metadata static
+Theaps. Force destruction detaches every TLD first, then frees dynamic metadata
+through the canonical session, then closes that session under permanent
+quiescence. Its six compared observations remain unchanged. This establishes
+canonical metadata ownership in the real caller path; it still does not claim
+source Heap count/unlink/statistics completion or a physical process destructor.

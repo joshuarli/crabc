@@ -614,7 +614,15 @@ impl ProcessMainInitializationStorage {
                 return Err(ProcessMainInitError::HeapFoundation(error));
             }
         };
-        let metadata_bound = match metadata.prepare_for_main_subprocess(config, subprocess) {
+        // The production policy-bound process uses the canonical source
+        // Heap. Historical explicit-config fixtures keep their visibly
+        // separate private metadata backing and bootstrap ownership.
+        let metadata_prepared = if vm_process.is_some() {
+            metadata.prepare_for_main_heap(config, subprocess, foundation)
+        } else {
+            metadata.prepare_for_main_subprocess(config, subprocess)
+        };
+        let metadata_bound = match metadata_prepared {
             Ok(bound) => bound,
             Err(error) => {
                 selection.retain();

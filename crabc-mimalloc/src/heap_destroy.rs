@@ -10,7 +10,7 @@
 //! consumes that backing. Failed Theap frees also remain represented there.
 //! The current Theap prefix omits source statistics, so the source per-Theap
 //! statistics merge remains unimplemented. Main-Heap unlink/count bookkeeping,
-//! the detached metadata bootstrap Heap, arena release, and global PageMap
+//! arena release and global PageMap
 //! destruction are separate required predecessors/successors of full teardown.
 
 use super::{Heap, MemoryKind, Theap, ThreadLocalData};

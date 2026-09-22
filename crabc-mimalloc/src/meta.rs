@@ -53,7 +53,7 @@ use crate::config::{ARENA_ALIGNMENT, ARENA_BIN_COUNT, ARENA_MIN_SIZE, MAX_VABITS
 use crate::lock::{PrivateLock, PrivateLockGuard};
 use crate::os::{MapAccess, Mapping, MemoryConfig};
 use crate::page_map::{PageMap, PageMapInitializationError};
-use crate::single_thread::{FreeError, SingleThreadAllocator, ProcessMetadataPageAllocator};
+use crate::single_thread::{FreeError, SingleThreadAllocator, ProcessMetadataPageAllocator, CanonicalProcessMetadataPageAllocator};
 use crate::size_class;
 use crate::types::{
     ArenaPages, LiveThreadId, MemoryId, MemoryKind, Page, Theap, ThreadLocalData,
@@ -1070,6 +1070,7 @@ pub(crate) struct MetaAllocator {
     bootstrap: UnsafeCell<MaybeUninit<ExclusiveTheapBootstrap>>,
     allocator: UnsafeCell<MaybeUninit<MetadataPageAllocator>>,
     process_backing: UnsafeCell<Option<MetadataProcessBacking>>,
+    canonical_heap: UnsafeCell<Option<crate::main_theap::MainStaticMetadataHeapLease>>,
     subprocess: AtomicPtr<MainSubprocess>,
     /// The exact detached static Theap address successfully published through
     /// `subprocess->theap_meta`. This is identity-only: the allocator never
@@ -1110,24 +1111,39 @@ struct MetadataProcessBacking {
 enum MetadataPageAllocator {
     LegacySelectedArena(SingleThreadAllocator<'static, 'static, 'static>),
     Process(ProcessMetadataPageAllocator<'static, 'static>),
+    CanonicalProcess(CanonicalProcessMetadataPageAllocator<'static>),
 }
 
 impl MetadataPageAllocator {
+    unsafe fn retire_process_quiescent(self) -> Result<(), Self> {
+        match self {
+            Self::Process(engine) => unsafe { engine.retire_process_metadata_quiescent() }
+                .map_err(Self::Process),
+            Self::CanonicalProcess(engine) => unsafe { engine.retire_process_metadata_quiescent() }
+                .map_err(Self::CanonicalProcess),
+            other => Err(other),
+        }
+    }
+
     fn allocate_zeroed(&mut self, size: usize) -> Option<NonNull<u8>> {
         match self { Self::LegacySelectedArena(engine) => engine.allocate_zeroed(size),
-            Self::Process(engine) => engine.allocate_zeroed(size) }
+            Self::Process(engine) => engine.allocate_zeroed(size),
+            Self::CanonicalProcess(engine) => engine.allocate_zeroed(size) }
     }
     fn allocate_aligned_zeroed(&mut self, size: usize, alignment: usize) -> Option<NonNull<u8>> {
         match self { Self::LegacySelectedArena(engine) => engine.allocate_aligned_zeroed(size, alignment),
-            Self::Process(engine) => engine.allocate_aligned_zeroed(size, alignment) }
+            Self::Process(engine) => engine.allocate_aligned_zeroed(size, alignment),
+            Self::CanonicalProcess(engine) => engine.allocate_aligned_zeroed(size, alignment) }
     }
     unsafe fn usable_size(&self, pointer: NonNull<u8>) -> Option<usize> {
         match self { Self::LegacySelectedArena(engine) => unsafe { engine.usable_size(pointer) },
-            Self::Process(engine) => unsafe { engine.usable_size(pointer) } }
+            Self::Process(engine) => unsafe { engine.usable_size(pointer) },
+            Self::CanonicalProcess(engine) => unsafe { engine.usable_size(pointer) } }
     }
     unsafe fn free(&mut self, pointer: NonNull<u8>) -> Result<(), FreeError> {
         match self { Self::LegacySelectedArena(engine) => unsafe { engine.free(pointer) },
-            Self::Process(engine) => unsafe { engine.free(pointer) } }
+            Self::Process(engine) => unsafe { engine.free(pointer) },
+            Self::CanonicalProcess(engine) => unsafe { engine.free(pointer) } }
     }
 }
 
@@ -1205,6 +1221,7 @@ impl MetaAllocator {
             bootstrap: UnsafeCell::new(MaybeUninit::uninit()),
             allocator: UnsafeCell::new(MaybeUninit::uninit()),
             process_backing: UnsafeCell::new(None),
+            canonical_heap: UnsafeCell::new(None),
             subprocess: AtomicPtr::new(core::ptr::null_mut()),
             detached_metadata_theap: AtomicPtr::new(core::ptr::null_mut()),
             #[cfg(test)]
@@ -1445,6 +1462,34 @@ impl MetaAllocator {
         })
     }
 
+    #[cfg(test)]
+    pub(crate) fn test_canonical_metadata_heap_membership(self: Pin<&'static Self>) -> bool {
+        let Ok(_entry) = self.enter() else { return false; };
+        let Some(heap) = (unsafe { *self.get_ref().canonical_heap.get() }) else { return false; };
+        let pointer = self.get_ref().detached_metadata_theap.load(Ordering::Acquire);
+        heap.with_heap(|canonical| {
+            !pointer.is_null()
+                && core::ptr::eq(unsafe { (*pointer).heap() }, core::ptr::from_mut(canonical))
+                && canonical.has_shared_theap_member_blocking(pointer) == Ok(true)
+        }) == Ok(true)
+    }
+
+    /// Binds the actual source static metadata Theap to the startup-selected
+    /// canonical main Heap before metadata allocation can begin.
+    pub(crate) fn prepare_for_main_heap(
+        self: Pin<&'static Self>, config: MemoryConfig, subprocess: &'static MainSubprocess,
+        foundation: crate::main_theap::MainStaticHeapFoundation,
+    ) -> Result<MetaAllocatorBound, MetaError> {
+        if !core::ptr::eq(foundation.subprocess(), subprocess) { return Err(MetaError::SubprocessMismatch); }
+        let mut entry = self.enter()?;
+        if entry.status() != COLD { return Err(MetaError::BackingAlreadySelected); }
+        // Startup owns the final source image; no prior metadata allocation
+        // or source identity is silently migrated to the canonical Heap.
+        unsafe { *self.get_ref().canonical_heap.get() = Some(foundation.metadata_heap()); }
+        entry.ensure_bound(config, subprocess)?;
+        Ok(MetaAllocatorBound { allocator: self, config, subprocess })
+    }
+
     /// Permanently seals the metadata allocation boundary and ends the
     /// process engine's exclusive bootstrap and shared PageMap borrows.
     ///
@@ -1484,17 +1529,10 @@ impl MetaAllocator {
         this.status.store(CLOSE_RETAINED, Ordering::Release);
         if status == READY {
             let allocator = unsafe { (*this.allocator.get()).assume_init_read() };
-            let engine = match allocator {
-                MetadataPageAllocator::Process(engine) => engine,
-                other => {
-                    unsafe { (*this.allocator.get()).write(other); }
-                    return Err(MetaCloseError::NotProcessBacking);
-                }
-            };
-            // SAFETY: exactly the permanent quiescence stated above; this
-            // consumes only engine-held references, not its source pages.
-            if let Err(engine) = unsafe { engine.retire_process_metadata_quiescent() } {
-                unsafe { (*this.allocator.get()).write(MetadataPageAllocator::Process(engine)); }
+            // SAFETY: permanent process quiescence ends only engine-held
+            // session/Map authority and retains all represented source pages.
+            if let Err(allocator) = unsafe { allocator.retire_process_quiescent() } {
+                unsafe { (*this.allocator.get()).write(allocator); }
                 return Err(MetaCloseError::UnfinishedEngine);
             }
         }
@@ -2036,11 +2074,12 @@ impl MetaAllocator {
         let mut bootstrap = unsafe {
             Pin::new_unchecked((&mut *this.bootstrap.get()).assume_init_mut())
         };
-        if bootstrap
-            .as_mut()
-            .bind_detached_for_main_subprocess(subprocess)
-            .is_err()
-        {
+        let bound = if let Some(heap) = unsafe { *this.canonical_heap.get() } {
+            bootstrap.as_mut().bind_detached_for_main_heap(heap)
+        } else {
+            bootstrap.as_mut().bind_detached_for_main_subprocess(subprocess)
+        };
+        if bound.is_err() {
             // Binding a valid static detached image cannot normally fail. If
             // a Rust guard nevertheless rejects it, its final slot may have
             // been touched; retain rather than overwrite that process state.
@@ -2096,6 +2135,21 @@ impl MetaAllocator {
         // The source process path takes its first page through the ordinary
         // arena/OS selector, not a private map and a fixed-capacity arena.
         if let Some(backing) = unsafe { *this.process_backing.get() } {
+            if unsafe { (*this.canonical_heap.get()).is_some() } {
+                // No whole-bootstrap reference is formed after source list
+                // publication. The session owns only metadata-local fields.
+                let pointer = unsafe { NonNull::new_unchecked(this.bootstrap.get().cast::<ExclusiveTheapBootstrap>()) };
+                let session = unsafe { ExclusiveTheapBootstrap::begin_canonical_metadata_session_at(pointer) }
+                    .map_err(|_| {
+                        this.status.store(FAILED, Ordering::Release);
+                        MetaError::InitializationRetained
+                    })?;
+                let allocator = unsafe { CanonicalProcessMetadataPageAllocator::activate_canonical_process_metadata(
+                    session, backing.binding.process(), backing.page_map) };
+                unsafe { (*this.allocator.get()).write(MetadataPageAllocator::CanonicalProcess(allocator)); }
+                this.status.store(READY, Ordering::Release);
+                return Ok(());
+            }
             let bootstrap = unsafe { Pin::new_unchecked((&mut *this.bootstrap.get()).assume_init_mut()) };
             let allocator = unsafe { ProcessMetadataPageAllocator::activate_process_metadata(
                 bootstrap, backing.binding.process(), backing.page_map) }

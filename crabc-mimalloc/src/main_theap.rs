@@ -488,6 +488,12 @@ impl MainStaticHeapFoundation {
         Ok(Self { storage, subprocess })
     }
 
+    /// Shares only short, guarded main-Heap projections with the process
+    /// metadata owner. It owns no TLD, TLS root, or ordinary thread session.
+    pub(crate) fn metadata_heap(self) -> MainStaticMetadataHeapLease {
+        MainStaticMetadataHeapLease { storage: self.storage, subprocess: self.subprocess }
+    }
+
     #[inline]
     pub(crate) const fn subprocess(self) -> &'static MainSubprocess {
         self.subprocess
@@ -507,6 +513,35 @@ impl MainStaticHeapFoundation {
     #[inline]
     fn test_heap_is_initialized(self) -> bool {
         self.storage.state_is_heap_ready()
+    }
+}
+
+/// Process-static canonical Heap identity for the detached metadata session.
+/// Every projection holds the same aliasing guard as normal Heap operations;
+/// source Heap retirement prevents further ordinary metadata publication.
+#[derive(Clone, Copy)]
+pub(crate) struct MainStaticMetadataHeapLease {
+    storage: &'static MainStaticAttachmentStorage,
+    subprocess: &'static MainSubprocess,
+}
+
+impl MainStaticMetadataHeapLease {
+    pub(crate) fn subprocess(self) -> &'static MainSubprocess { self.subprocess }
+
+    pub(crate) fn with_heap<R>(self, operation: impl FnOnce(&mut Heap) -> R)
+        -> Result<R, MainStaticHeapLeaseError>
+    {
+        let guard = self.storage.shared_heap_projection_lock.lock()
+            .map_err(MainStaticHeapLeaseError::Lock)?;
+        if !matches!(self.storage.state.load(Ordering::Acquire), HEAP_READY | THREAD_READY) {
+            drop(guard);
+            return Err(MainStaticHeapLeaseError::Inactive);
+        }
+        // SAFETY: the outer projection guard excludes all other whole-Heap
+        // projections, and the callback cannot retain this mutable borrow.
+        let result = operation(unsafe { &mut *self.storage.heap.image.get() });
+        guard.unlock().map_err(MainStaticHeapLeaseError::Lock)?;
+        Ok(result)
     }
 }
 
@@ -566,8 +601,12 @@ impl<'main> MainStaticHeapLease<'main> {
     ///
     /// # Safety
     /// The caller permanently quiesces and invalidates every main attachment,
-    /// page engine, TLS root, and copied Heap lease; no concurrent caller may
-    /// retain a previously obtained projection. Every dynamic source member
+    /// ordinary page engine, TLS root, and copied Heap lease; no concurrent
+    /// caller may retain a previously obtained projection. The detached
+    /// metadata engine remains exclusively admitted only for this pass's
+    /// source metadata releases; its canonical session retains raw local-field
+    /// authority, and no metadata projection may span a list mutation.
+    /// Every dynamic source member
     /// must have explicitly transferred its metadata owners. The caller also
     /// upholds `Heap::force_destroy_main_heap_theaps_quiescent`'s complete
     /// metadata, external tracking-storage, and failure-retention contract.

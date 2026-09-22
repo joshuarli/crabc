@@ -2401,7 +2401,12 @@ pub(crate) type SingleThreadAllocator<'bootstrap, 'arena, 'map> =
 pub(crate) type ProcessMetadataPageAllocator<'bootstrap, 'map> = PageAllocatorEngine<
     'static, 'map, ExclusiveTheapSession<'bootstrap>, crate::page_backing::ProcessMetadataPageBacking>;
 
-impl<'bootstrap, 'map> ProcessMetadataPageAllocator<'bootstrap, 'map> {
+pub(crate) type CanonicalProcessMetadataPageAllocator<'map> = PageAllocatorEngine<
+    'static, 'map, crate::types::metadata_session::CanonicalMetadataTheapSession,
+    crate::page_backing::ProcessMetadataPageBacking>;
+
+impl<'map, Session: TheapPageSession> PageAllocatorEngine<
+    'static, 'map, Session, crate::page_backing::ProcessMetadataPageBacking> {
     #[cfg(test)]
     pub(crate) fn test_latch_metadata_commit_poison(&mut self) { self.page_commit_poison = true; }
 
@@ -2429,23 +2434,9 @@ impl<'bootstrap, 'map> ProcessMetadataPageAllocator<'bootstrap, 'map> {
         Ok(())
     }
 
-    /// Activates the already bound source process-main metadata Theap without
-    /// reserving a private arena or constructing another PageMap.
-    ///
-    /// # Safety
-    ///
-    /// The caller holds this metadata owner's lock and retains its pinned
-    /// bootstrap and exact process pair. `page_map` is that process's shared
-    /// root; this engine owns disjoint ranges, serializes their plain entries,
-    /// and removes every entry/alias before returning its arena/OS backing.
-    /// No overlapping whole-PageMap mutable reference or process teardown may
-    /// coexist with this lifetime.
-    pub(crate) unsafe fn activate_process_metadata(
-        bootstrap: Pin<&'bootstrap mut ExclusiveTheapBootstrap>,
-        process: crate::os::VmProcess<'static>, page_map: &'map PageMap,
-    ) -> Result<Self, BootstrapError> {
-        let session = bootstrap.begin_bound_detached_session(process.subprocess())?;
-        Ok(Self {
+    fn from_process_metadata_session(session: Session, process: crate::os::VmProcess<'static>,
+        page_map: &'map PageMap) -> Self {
+        Self {
             session,
             arena: crate::page_backing::ProcessMetadataPageBacking::new(process),
             arena_lifetime: PhantomData,
@@ -2470,7 +2461,40 @@ impl<'bootstrap, 'map> ProcessMetadataPageAllocator<'bootstrap, 'map> {
             #[cfg(test)]
             page_area_commit_lease: None,
             shutdown_complete: false,
-        })
+        }
+    }
+}
+
+impl<'map> CanonicalProcessMetadataPageAllocator<'map> {
+    /// # Safety
+    /// The canonical metadata session and map belong to this exact process;
+    /// metadata entry serializes all engine operations and retains the map.
+    pub(crate) unsafe fn activate_canonical_process_metadata(
+        session: crate::types::metadata_session::CanonicalMetadataTheapSession,
+        process: crate::os::VmProcess<'static>, page_map: &'map PageMap,
+    ) -> Self {
+        Self::from_process_metadata_session(session, process, page_map)
+    }
+}
+
+impl<'bootstrap, 'map> ProcessMetadataPageAllocator<'bootstrap, 'map> {
+    /// Activates the already bound source process-main metadata Theap without
+    /// reserving a private arena or constructing another PageMap.
+    ///
+    /// # Safety
+    ///
+    /// The caller holds this metadata owner's lock and retains its pinned
+    /// bootstrap and exact process pair. `page_map` is that process's shared
+    /// root; this engine owns disjoint ranges, serializes their plain entries,
+    /// and removes every entry/alias before returning its arena/OS backing.
+    /// No overlapping whole-PageMap mutable reference or process teardown may
+    /// coexist with this lifetime.
+    pub(crate) unsafe fn activate_process_metadata(
+        bootstrap: Pin<&'bootstrap mut ExclusiveTheapBootstrap>,
+        process: crate::os::VmProcess<'static>, page_map: &'map PageMap,
+    ) -> Result<Self, BootstrapError> {
+        let session = bootstrap.begin_bound_detached_session(process.subprocess())?;
+        Ok(Self::from_process_metadata_session(session, process, page_map))
     }
 }
 

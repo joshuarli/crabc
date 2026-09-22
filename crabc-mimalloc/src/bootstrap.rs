@@ -105,6 +105,7 @@ pub(crate) struct ExclusiveTheapBootstrap {
     /// the detached static image is deliberately separate from issuing that
     /// session so `mi_heap_main_init_once` can precede first metadata demand.
     session_issued: bool,
+    canonical_heap: Option<crate::main_theap::MainStaticMetadataHeapLease>,
     // Raw-pointer marker prevents accidental Send/Sync claims for this
     // exclusive mutable state; `PhantomPinned` makes pointer wiring durable.
     _not_send_or_sync: PhantomData<*mut ()>,
@@ -125,6 +126,7 @@ impl ExclusiveTheapBootstrap {
             theap: Theap::empty(),
             bound_owner: None,
             session_issued: false,
+            canonical_heap: None,
             _not_send_or_sync: PhantomData,
             _pin: PhantomPinned,
         }
@@ -136,7 +138,8 @@ impl ExclusiveTheapBootstrap {
         &self,
         subprocess: &MainSubprocess,
     ) -> bool {
-        self.heap.is_bound_to_main_subprocess(subprocess)
+        (self.canonical_heap.is_some_and(|heap| core::ptr::eq(heap.subprocess(), subprocess))
+            || self.heap.is_bound_to_main_subprocess(subprocess))
             && self.tld.is_attached_to_main_subprocess(subprocess)
             && self.tld.numa_node() == -1
             && self.theap.is_bound_to_main_subprocess(subprocess)
@@ -230,6 +233,46 @@ impl ExclusiveTheapBootstrap {
             return Err(BootstrapError::InvalidThreadState);
         }
         self.begin_bound_session(TheapOwner::Detached)
+    }
+
+    /// Initializes the source metadata Theap on the canonical Heap rather
+    /// than the legacy isolated fixture Heap. This is startup-only, before
+    /// any page session or other Theap observer may exist.
+    pub(crate) fn bind_detached_for_main_heap(
+        self: Pin<&mut Self>, heap: crate::main_theap::MainStaticMetadataHeapLease,
+    ) -> Result<(), BootstrapError> {
+        let state = unsafe { self.get_unchecked_mut() };
+        if state.bound_owner.is_some() { return Err(BootstrapError::AlreadyInitialized); }
+        if !state.tld.prepare_detached_static_memid()
+            || !state.tld.initialize_detached_after_static_memid(heap.subprocess())
+            || !state.theap.set_detached_main_metadata_static_memid()
+        {
+            return Err(BootstrapError::InvalidThreadState);
+        }
+        heap.with_heap(|canonical| state.theap.initialize_metadata_static(canonical, &mut state.tld))
+            .map_err(|_| BootstrapError::InvalidThreadState)?
+            .map_err(|_| BootstrapError::InvalidThreadState)?;
+        state.canonical_heap = Some(heap);
+        state.bound_owner = Some(TheapOwner::Detached);
+        Ok(())
+    }
+
+    /// # Safety
+    /// The pointer is this process's pinned initialized canonical metadata
+    /// bootstrap. The metadata entry grants unique session issuance and
+    /// serializes every subsequent session operation. No whole-bootstrap
+    /// reference or mutable Theap borrow may survive canonical publication.
+    pub(crate) unsafe fn begin_canonical_metadata_session_at(
+        pointer: NonNull<Self>,
+    ) -> Result<crate::types::metadata_session::CanonicalMetadataTheapSession, BootstrapError> {
+        let state = pointer.as_ptr();
+        let Some(heap) = (unsafe { (*state).canonical_heap }) else {
+            return Err(BootstrapError::InvalidThreadState);
+        };
+        if unsafe { (*state).session_issued } { return Err(BootstrapError::AlreadyInitialized); }
+        unsafe { (*state).session_issued = true; }
+        let theap = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*state).theap)) };
+        Ok(unsafe { crate::types::metadata_session::CanonicalMetadataTheapSession::new(theap, heap) })
     }
 
     fn bind_owner(
