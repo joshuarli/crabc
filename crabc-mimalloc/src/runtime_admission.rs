@@ -3,6 +3,18 @@
 //! This is runtime coordination, not a mimalloc allocator algorithm. Ordinary
 //! operations write only their own TLS cache line; the shared epoch is read-only.
 //! A registry writer pins existing libc thread records before scanning them.
+//!
+//! Production native entry guards cover startup, allocation/free/reallocation,
+//! usable-size observations, attachment/finish, logical process-done, and the
+//! source-reading audit adapters before any owner-presence or PageMap access.
+//! They preserve ordinary default process-done allocation: only an explicitly
+//! closed native epoch denies entry. Registration is not source admission.
+//!
+//! This module does not yet enable a physical destroy caller: foreign callback
+//! sites must compose the suspended-borrow boundary, fork must share the epoch,
+//! and terminal ownership transfer must consume or retain every TLS engine.
+//! Standalone source fixtures which export raw page/owner capabilities retain
+//! their separate lifetime contracts and cannot authorize native destruction.
 
 use core::cell::UnsafeCell;
 use core::marker::PhantomData;
@@ -72,13 +84,35 @@ pub fn current_native_allocator_thread_descriptor() -> NonNull<NativeAllocatorTh
 pub unsafe fn register_current_native_allocator_worker_descriptor(
     descriptor: NonNull<NativeAllocatorThreadDescriptor>,
 ) -> bool {
-    if descriptor != current_native_allocator_thread_descriptor()
-        || EPOCH.state.load(Ordering::SeqCst) & MODE_MASK >= TERMINAL_CLOSING
-    { return false; }
-    match DESCRIPTOR.registration.compare_exchange(UNPUBLISHED, REGISTERED, Ordering::Release, Ordering::Acquire) {
-        Ok(_) | Err(REGISTERED) => true,
-        Err(_) => false,
+    if descriptor != current_native_allocator_thread_descriptor() { return false; }
+    register_worker_at(&EPOCH, &DESCRIPTOR, || {})
+}
+
+fn register_worker_at(
+    epoch: &NativeAllocatorEpoch,
+    record: &NativeAllocatorThreadDescriptor,
+    before_registration: impl FnOnce(),
+) -> bool {
+    if epoch.state.load(Ordering::SeqCst) & MODE_MASK >= TERMINAL_CLOSING { return false; }
+    before_registration();
+    let newly_registered = match record.registration.compare_exchange(UNPUBLISHED, REGISTERED, Ordering::Release, Ordering::Acquire) {
+        Ok(_) => true,
+        Err(REGISTERED) => false,
+        Err(_) => return false,
+    };
+    // A terminal scan may have observed this already-published record while
+    // it was still UNPUBLISHED. Registration grants no source authority: the
+    // post-publication epoch check rejects that race, and attach independently
+    // publishes ordinary entry and rechecks the same epoch before TLS access.
+    if epoch.state.load(Ordering::SeqCst) & MODE_MASK >= TERMINAL_CLOSING {
+        if newly_registered {
+            // This exact fresh worker has never entered source. A failed
+            // idempotent registration must not retire an existing live owner.
+            let _ = record.registration.compare_exchange(REGISTERED, RETIRED, Ordering::Release, Ordering::Acquire);
+        }
+        return false;
     }
+    true
 }
 
 /// Returns the initial process-owned TLS record for exactly-once inclusion in
@@ -208,7 +242,16 @@ impl Drop for CallbackSuspension {
 /// On error the caller retains the owner and must not enter phase C or otherwise
 /// touch source state. The A-to-C caller-stack owner lease remains alive.
 pub unsafe fn with_native_allocator_callback_boundary<R>(callback: impl FnOnce() -> R) -> Result<R, NativeAllocatorCallbackBoundaryError> {
-    let pointer = current_native_allocator_thread_descriptor();
+    // SAFETY: the public caller supplies the suspended-borrow and lock-order
+    // contract; this pointer names only its current pinned TLS record.
+    unsafe { with_callback_boundary_at(&EPOCH, current_native_allocator_thread_descriptor(), callback) }
+}
+
+unsafe fn with_callback_boundary_at<R>(
+    epoch: &NativeAllocatorEpoch,
+    pointer: NonNull<NativeAllocatorThreadDescriptor>,
+    callback: impl FnOnce() -> R,
+) -> Result<R, NativeAllocatorCallbackBoundaryError> {
     let record = unsafe { pointer.as_ref() };
     let saved = unsafe { *record.nesting.get() };
     if saved == 0 { return Err(NativeAllocatorCallbackBoundaryError::NoOperation); }
@@ -224,7 +267,7 @@ pub unsafe fn with_native_allocator_callback_boundary<R>(callback: impl FnOnce()
     // same caller-stack token/heartbeat while waiting outside source borrows;
     // never duplicate phase A or call foreign code under a closed epoch.
     loop {
-        match EPOCH.state.load(Ordering::SeqCst) & MODE_MASK {
+        match epoch.state.load(Ordering::SeqCst) & MODE_MASK {
             OPEN => break,
             TERMINAL => return Err(NativeAllocatorCallbackBoundaryError::Closed),
             _ => core::hint::spin_loop(),
@@ -234,7 +277,7 @@ pub unsafe fn with_native_allocator_callback_boundary<R>(callback: impl FnOnce()
     if unsafe { *record.nesting.get() } != 0 {
         return Err(NativeAllocatorCallbackBoundaryError::InvalidNesting);
     }
-    match NativeAllocatorOperationGuard::enter() {
+    match NativeAllocatorOperationGuard::enter_at(epoch, pointer) {
         Ok(guard) => {
             core::mem::forget(guard);
             unsafe { *record.nesting.get() = saved; *record.callback_nesting.get() = callbacks; }
@@ -383,6 +426,79 @@ mod tests {
     }
 
     #[test]
+    fn registration_racing_terminal_scan_retires_only_the_unattached_worker() {
+        let epoch = NativeAllocatorEpoch::new();
+        let record = registered_record();
+        record.registration.store(UNPUBLISHED, Ordering::Relaxed);
+        assert!(!register_worker_at(&epoch, &record, || {
+            // The published descriptor is visible, but its registration CAS
+            // has not run. Force the exact losing registration interleaving.
+            epoch.close_terminal(&Registry(&record)).unwrap();
+        }));
+        assert_eq!(record.registration.load(Ordering::Acquire), RETIRED);
+        assert!(matches!(NativeAllocatorOperationGuard::enter_at(&epoch, NonNull::from(&record)), Err(NativeAllocatorEntryError::Unregistered)));
+        assert!(!record.entered.load(Ordering::SeqCst));
+
+        let epoch = NativeAllocatorEpoch::new();
+        let live = registered_record();
+        assert!(!register_worker_at(&epoch, &live, || {
+            epoch.close_terminal(&Registry(&live)).unwrap();
+        }));
+        assert_eq!(live.registration.load(Ordering::Acquire), REGISTERED,
+            "idempotent registration cannot revoke an existing source owner");
+    }
+
+    #[test]
+    fn callback_boundary_keeps_one_marker_through_nested_allocation_and_resume() {
+        let epoch = NativeAllocatorEpoch::new();
+        let record = registered_record();
+        let pointer = NonNull::from(&record);
+        let operation = NativeAllocatorOperationGuard::enter_at(&epoch, pointer).unwrap();
+        // SAFETY: no source borrow or lock exists in this isolated fixture;
+        // both nested operations use the same thread-local record and epoch.
+        let result = unsafe { with_callback_boundary_at(&epoch, pointer, || {
+            assert!(!record.entered.load(Ordering::SeqCst));
+            assert!(record.callback.load(Ordering::SeqCst));
+            assert_eq!(epoch.close_terminal(&Registry(&record)), Err(NativeAllocatorQuiescenceError::CallbackActive));
+            let nested = NativeAllocatorOperationGuard::enter_at(&epoch, pointer).unwrap();
+            assert!(record.entered.load(Ordering::SeqCst));
+            with_callback_boundary_at(&epoch, pointer, || {
+                assert!(record.callback.load(Ordering::SeqCst));
+                assert!(!record.entered.load(Ordering::SeqCst));
+            }).unwrap();
+            assert!(record.callback.load(Ordering::SeqCst));
+            drop(nested);
+            assert!(!record.entered.load(Ordering::SeqCst));
+            17
+        }) };
+        assert_eq!(result, Ok(17));
+        assert!(record.entered.load(Ordering::SeqCst));
+        assert!(!record.callback.load(Ordering::SeqCst));
+        drop(operation);
+        epoch.close_terminal(&Registry(&record)).unwrap();
+    }
+
+    #[test]
+    fn closing_writer_observes_callback_handoff_before_entry_withdrawal() {
+        let epoch = NativeAllocatorEpoch::new();
+        let record = registered_record();
+        let operation = NativeAllocatorOperationGuard::enter_at(&epoch, NonNull::from(&record)).unwrap();
+        std::thread::scope(|scope| {
+            let writer = scope.spawn(|| epoch.close_terminal(&Registry(&record)));
+            while epoch.state.load(Ordering::SeqCst) & MODE_MASK != TERMINAL_CLOSING {
+                core::hint::spin_loop();
+            }
+            // The real A-to-B ordering: publishing callback before clearing
+            // entry makes this writer refuse rather than mint quiescence.
+            record.callback.store(true, Ordering::SeqCst);
+            drop(operation);
+            assert_eq!(writer.join().unwrap(), Err(NativeAllocatorQuiescenceError::CallbackActive));
+        });
+        record.callback.store(false, Ordering::SeqCst);
+        epoch.close_terminal(&Registry(&record)).unwrap();
+    }
+
+    #[test]
     fn nested_entry_keeps_outer_record_published_until_last_guard_returns() {
         let epoch = NativeAllocatorEpoch::new();
         let record = registered_record();
@@ -442,4 +558,14 @@ pub(super) fn rearm_current_source_descriptor() -> bool {
         Ok(_) | Err(REGISTERED) | Err(UNPUBLISHED) => true,
         Err(_) => false,
     }
+}
+
+/// Descriptor-only idempotent finish observation; it never projects a source
+/// slot which a terminal writer may already have consumed.
+pub(super) fn current_source_is_retired() -> bool {
+    matches!(DESCRIPTOR.registration.load(Ordering::Acquire), RETIRED | TRANSFERRED)
+}
+
+pub(super) fn native_source_entry_is_terminal() -> bool {
+    EPOCH.state.load(Ordering::SeqCst) & MODE_MASK >= TERMINAL_CLOSING
 }

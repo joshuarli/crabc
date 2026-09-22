@@ -5558,6 +5558,10 @@ static NATIVE_POST_EXIT_ROUTE: NativePostExitRouteRegistry = NativePostExitRoute
 #[cfg(feature = "native-runtime-test-audit")]
 #[doc(hidden)]
 pub unsafe fn native_runtime_metadata_page_map_test_audit() -> Option<usize> {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return None;
+    };
     // SAFETY: the caller retains the initialized, quiescent runtime owner.
     let owner = unsafe { RUNTIME_PROCESS.active_owner() }?;
     let ready = owner.ready().ok()?;
@@ -5696,6 +5700,10 @@ fn native_process_backing_first_arena_policy_audit(
 #[cfg(feature = "native-runtime-test-audit")]
 #[doc(hidden)]
 pub fn native_runtime_lifecycle_test_audit() -> Option<NativeRuntimeLifecycleAudit> {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return None;
+    };
     let process_active = RUNTIME_PROCESS.is_active();
     if !process_active {
         return None;
@@ -5806,6 +5814,10 @@ pub fn native_runtime_lifecycle_test_audit() -> Option<NativeRuntimeLifecycleAud
 #[cfg(feature = "native-runtime-test-audit")]
 #[doc(hidden)]
 pub fn native_runtime_first_arena_policy_test_audit() -> Option<NativeRuntimeFirstArenaPolicyAudit> {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return None;
+    };
     let process_active = RUNTIME_PROCESS.is_active();
     if !process_active {
         return None;
@@ -5878,6 +5890,10 @@ pub fn native_runtime_first_arena_policy_test_audit() -> Option<NativeRuntimeFir
 pub unsafe fn native_runtime_live_client_page_test_audit(
     client: core::ptr::NonNull<u8>,
 ) -> Option<NativeRuntimeLiveClientPageAudit> {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return None;
+    };
     let page_map = RUNTIME_PROCESS.page_map_for_live_native_allocation()?;
     // SAFETY: the caller's exact-live-client and quiescent-owner proofs are
     // the same narrowed PageMap contract as the normal pointer-first lookup.
@@ -5931,6 +5947,10 @@ pub unsafe fn native_runtime_live_client_page_test_audit(
 pub unsafe fn native_runtime_live_client_uses_startup_regular_arena_test_audit(
     client: core::ptr::NonNull<u8>,
 ) -> Option<bool> {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return None;
+    };
     // SAFETY: the caller supplies the same exact-live-client and quiescent
     // PageMap facts documented above; the owner access only copies immutable
     // process-ready witnesses.
@@ -5975,6 +5995,10 @@ pub unsafe fn native_runtime_live_client_uses_startup_regular_arena_test_audit(
 pub unsafe fn native_runtime_live_client_page_map_span_test_audit(
     source: NativeRuntimeLiveClientPageAudit,
 ) -> Option<NativeRuntimeLiveClientPageMapSpanAudit> {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return None;
+    };
     if source.registered_slice_count == 0
         || source.registered_slice_count > source.arena_slice_count
     {
@@ -6030,6 +6054,10 @@ pub fn native_runtime_fork_admission_test_audit() -> NativeRuntimeForkAdmissionA
 #[doc(hidden)]
 pub fn native_runtime_current_thread_attachment_test_audit(
 ) -> NativeRuntimeCurrentThreadAttachmentAudit {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return NativeRuntimeCurrentThreadAttachmentAudit { persistent_owner_installed: 0, page_engine_active: 0, owner_local_operation_count: NATIVE_OWNER_LOCAL_OPERATION_COUNT.load(Ordering::Acquire) };
+    };
     let persistent_owner_installed = {
         let slot = current_thread_slot();
         usize::from(
@@ -6070,6 +6098,10 @@ pub fn native_runtime_current_thread_attachment_test_audit(
 #[doc(hidden)]
 pub fn native_runtime_process_done_terminal_purge_test_audit(
 ) -> Result<NativeRuntimeProcessDoneTerminalPurgeAudit, i32> {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return Err(-127);
+    };
     if !RUNTIME_PROCESS.logical_process_done_is_complete() {
         return Err(-1);
     }
@@ -6151,6 +6183,10 @@ pub fn native_runtime_process_done_terminal_purge_test_audit(
 #[cfg(feature = "native-runtime-test-audit")]
 #[doc(hidden)]
 pub fn native_runtime_process_done_retained_worker_matches_current_thread_test_audit() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return false;
+    };
     RUNTIME_PROCESS.logical_process_done_is_complete()
         && current_thread_identity().is_some_and(|current| {
             RUNTIME_PROCESS.process_done_retained_worker_identity() == Some(current)
@@ -6177,6 +6213,10 @@ pub fn native_runtime_process_done_retained_worker_matches_current_thread_test_a
 pub unsafe fn native_runtime_process_done_retained_local_preflight_test_audit(
     block: core::ptr::NonNull<u8>,
 ) -> i32 {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return -127;
+    };
     let Some(page_map) = RUNTIME_PROCESS.page_map_for_live_native_allocation() else {
         return -1;
     };
@@ -6291,6 +6331,10 @@ unsafe fn native_runtime_local_page_test_audit_for_owner(
 pub unsafe fn native_runtime_current_local_page_test_audit(
     live_sibling: core::ptr::NonNull<u8>,
 ) -> Result<NativeRuntimeProcessDoneRetainedLocalPageAudit, i32> {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return Err(-127);
+    };
     let Some(owner) = current_thread_identity() else {
         return Err(-2);
     };
@@ -6318,6 +6362,10 @@ pub unsafe fn native_runtime_current_local_page_same_test_audit(
     first: core::ptr::NonNull<u8>,
     second: core::ptr::NonNull<u8>,
 ) -> Result<bool, i32> {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return Err(-127);
+    };
     let Some(owner) = current_thread_identity() else {
         return Err(-2);
     };
@@ -6364,6 +6412,10 @@ pub unsafe fn native_runtime_current_local_page_same_test_audit(
 pub unsafe fn native_runtime_process_done_retained_local_page_test_audit(
     live_sibling: core::ptr::NonNull<u8>,
 ) -> Result<NativeRuntimeProcessDoneRetainedLocalPageAudit, i32> {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return Err(-127);
+    };
     if !RUNTIME_PROCESS.logical_process_done_is_complete() {
         return Err(-2);
     }
@@ -6402,6 +6454,10 @@ pub unsafe fn native_runtime_process_done_retained_page_retired_test_audit(
     former_client: core::ptr::NonNull<u8>,
     expected_reserved: usize,
 ) -> bool {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return false;
+    };
     if !matches!(expected_reserved, 25 | 42)
         || !RUNTIME_PROCESS.logical_process_done_is_complete()
         || RUNTIME_PROCESS
@@ -6495,6 +6551,10 @@ pub unsafe fn native_runtime_process_done_retained_live_page_test_audit(
     second: core::ptr::NonNull<u8>,
     remote_free_published: bool,
 ) -> bool {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return false;
+    };
     if !RUNTIME_PROCESS.logical_process_done_is_complete()
         || RUNTIME_PROCESS
             .process_done_retained_worker_count
@@ -7880,6 +7940,7 @@ fn with_current_thread_native_persistent_pointer<R>(
 #[cfg(target_arch = "x86_64")]
 pub fn initialize_process(page_size_bytes: usize, stderr_output: RuntimeStderrOutput) -> bool {
     if !admission::register_initial_descriptor() { return false; }
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else { return false; };
     RUNTIME_PROCESS.initialize(page_size_bytes, stderr_output)
 }
 
@@ -7892,6 +7953,8 @@ pub fn initialize_process(page_size_bytes: usize) -> bool {
 #[doc(hidden)]
 #[inline]
 pub fn process_is_active() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    if admission::native_source_entry_is_terminal() { return false; }
     RUNTIME_PROCESS.is_active()
 }
 
@@ -7907,6 +7970,10 @@ pub fn process_is_active() -> bool {
 /// outside this bounded selected-native slice.
 #[doc(hidden)]
 pub fn finish_selected_default_release_process_after_user_atexit() -> SelectedProcessDoneResult {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return SelectedProcessDoneResult::Retained;
+    };
     let slot = current_thread_slot();
     let current_owner_is_safe = match slot.state {
         ThreadLifecycleState::Fresh | ThreadLifecycleState::Finished => true,
@@ -7939,6 +8006,10 @@ pub fn finish_selected_default_release_process_after_user_atexit() -> SelectedPr
 /// existing no-page runtime lifecycle.
 #[doc(hidden)]
 pub fn ticket_zero_allocate(request: usize, zero: bool) -> TicketZeroPageAllocationResult {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return TicketZeroPageAllocationResult::Unavailable;
+    };
     if !crate::size_class::request_size_is_valid(request) {
         return TicketZeroPageAllocationResult::AllocationFailed;
     }
@@ -7965,6 +8036,10 @@ pub fn ticket_zero_allocate_aligned(
     alignment: usize,
     zero: bool,
 ) -> TicketZeroPageAllocationResult {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return TicketZeroPageAllocationResult::Unavailable;
+    };
     if !crate::size_class::request_size_is_valid(request)
         || !crate::size_class::alignment_is_valid(alignment)
     {
@@ -8132,6 +8207,10 @@ pub unsafe fn ticket_zero_reallocate(
     block: Option<core::ptr::NonNull<u8>>,
     new_size: usize,
 ) -> TicketZeroPageAllocationResult {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return TicketZeroPageAllocationResult::Retained;
+    };
     if !crate::size_class::request_size_is_valid(new_size) {
         return TicketZeroPageAllocationResult::AllocationFailed;
     }
@@ -8167,6 +8246,10 @@ pub unsafe fn ticket_zero_reallocate(
 /// [`ticket_zero_reallocate`]. It must not be a libc/C-backend pointer.
 #[doc(hidden)]
 pub unsafe fn ticket_zero_free(block: core::ptr::NonNull<u8>) -> TicketZeroPageFreeResult {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return TicketZeroPageFreeResult::Retained;
+    };
     if current_thread_has_native_initial_persistent_owner() {
         // SAFETY: forwarded unchanged from this private current-block
         // contract to the direct persistent initial owner.
@@ -8220,6 +8303,10 @@ pub unsafe fn ticket_zero_free(block: core::ptr::NonNull<u8>) -> TicketZeroPageF
 /// reinterpret a foreign C-backend allocation.
 #[doc(hidden)]
 pub unsafe fn ticket_zero_usable_size(block: core::ptr::NonNull<u8>) -> Option<usize> {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return None;
+    };
     if current_thread_has_native_initial_persistent_owner() {
         // SAFETY: forwarded unchanged from this private current-block
         // contract to the direct persistent initial owner.
@@ -8433,6 +8520,10 @@ unsafe fn native_initial_thread_usable_size(block: core::ptr::NonNull<u8>) -> Op
 /// C backend never calls this boundary.
 #[doc(hidden)]
 pub fn prepare_native_later_thread_arena() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return false;
+    };
     if !RUNTIME_PROCESS.is_on_initial_thread() {
         return false;
     }
@@ -8456,6 +8547,10 @@ pub fn native_allocate_aligned(
     alignment: usize,
     zero: bool,
 ) -> NativePageAllocationResult {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return NativePageAllocationResult::Unavailable;
+    };
     if !crate::size_class::request_size_is_valid(request)
         || !crate::size_class::alignment_is_valid(alignment)
     {
@@ -8724,6 +8819,10 @@ pub unsafe fn native_reallocate(
     block: Option<core::ptr::NonNull<u8>>,
     new_size: usize,
 ) -> NativePageAllocationResult {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return NativePageAllocationResult::Retained;
+    };
     if !crate::size_class::request_size_is_valid(new_size) {
         return NativePageAllocationResult::AllocationFailed;
     }
@@ -8775,6 +8874,10 @@ pub unsafe fn native_reallocate(
 /// C allocator as recovery.
 #[doc(hidden)]
 pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return NativePageFreeResult::Retained;
+    };
     let Some(page_map) = RUNTIME_PROCESS.page_map_for_live_native_allocation() else {
         // The pointer contract could not obtain its one process-published
         // PageMap witness. No caller-local fallback can establish a source
@@ -9100,11 +9203,15 @@ fn native_free_pointer_first_nonlocal(
 ///
 /// This follows pinned `mi_usable_size`'s pointer/page geometry calculation:
 /// one immutable PageMap lookup captures the source extent, which this
-/// boundary returns directly. Unlike realloc, usable-size has no current-owner
-/// operation to select, so it performs no identity, TLS owner, route, registry,
-/// scheduler, or page-engine query.
+/// boundary returns directly. Native admission pins the observation against
+/// terminal teardown; no current allocation owner, route, or page engine is
+/// selected to calculate the extent.
 #[doc(hidden)]
 pub unsafe fn native_usable_size(block: core::ptr::NonNull<u8>) -> Option<usize> {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return None;
+    };
     let Some(page_map) = RUNTIME_PROCESS.page_map_for_live_native_allocation() else {
         // `mi_usable_size` turns a missing validated page into its zero-sized
         // result. This is a read-only pointer observation, so an unavailable
@@ -14041,6 +14148,8 @@ pub fn ticket_zero_later_thread_page_roundtrip(
 #[doc(hidden)]
 #[inline]
 pub fn before_fork() {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else { return; };
     RUNTIME_FORK_ADMISSION.before_fork_with(|| {
         RUNTIME_PROCESS.prepare_quiescent_on_initial_thread_for_held_fork_gate()
     });
@@ -14063,6 +14172,10 @@ pub fn after_fork_parent() {
 /// [`ThreadAttachResult::Attached`].
 #[doc(hidden)]
 pub fn attach_current_thread() -> ThreadAttachResult {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return ThreadAttachResult::Inactive;
+    };
     let result = attach_current_thread_with_entry(|| {});
     if result == ThreadAttachResult::Inactive { admission::mark_current_source_retired(); }
     result
@@ -14229,6 +14342,10 @@ fn attach_current_thread_with_entry(before_source: impl FnOnce()) -> ThreadAttac
 pub fn reinitialize_current_thread_native_owner_for_final_process_exit(
 ) -> ThreadFinalProcessExitOwnerResult {
     if !admission::rearm_current_source_descriptor() { return ThreadFinalProcessExitOwnerResult::Retained; }
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return ThreadFinalProcessExitOwnerResult::Retained;
+    };
     {
         let slot = current_thread_slot();
         match slot.state {
@@ -14303,6 +14420,14 @@ pub fn reinitialize_current_thread_native_owner_for_final_process_exit(
 #[doc(hidden)]
 #[cfg(not(test))]
 pub fn finish_current_thread_after_user_destructors() -> ThreadFinishResult {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return if admission::current_source_is_retired() {
+            ThreadFinishResult::AlreadyFinished
+        } else {
+            ThreadFinishResult::Retained
+        };
+    };
     if RUNTIME_PROCESS.logical_process_done_is_complete() {
         let slot = current_thread_slot();
         return match slot.state {
@@ -14329,6 +14454,14 @@ pub fn finish_current_thread_after_user_destructors() -> ThreadFinishResult {
 #[doc(hidden)]
 #[cfg(test)]
 pub fn finish_current_thread_after_user_destructors() -> ThreadFinishResult {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return if admission::current_source_is_retired() {
+            ThreadFinishResult::AlreadyFinished
+        } else {
+            ThreadFinishResult::Retained
+        };
+    };
     if RUNTIME_PROCESS.logical_process_done_is_complete() {
         let slot = current_thread_slot();
         return match slot.state {
@@ -14392,6 +14525,10 @@ pub fn finish_current_thread_native_after_user_destructors() -> ThreadFinishResu
 /// ordinary-exit callbacks and `_exit`.
 #[doc(hidden)]
 pub fn retain_current_thread_native_owner_after_process_done_nonfinal() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return false;
+    };
     if !RUNTIME_PROCESS.logical_process_done_is_complete() {
         return false;
     }
@@ -15148,6 +15285,8 @@ fn finish_current_thread_page_owner_after_user_destructors(
 /// ownership.
 #[doc(hidden)]
 pub fn after_fork_child(fork_was_prepared: bool) {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else { return; };
     if RUNTIME_FORK_ADMISSION.after_fork_child(fork_was_prepared) {
         return;
     }
