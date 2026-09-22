@@ -649,6 +649,7 @@ def _dlfcn_streams(work: Path, output: Path) -> dict[str, dict[str, object]]:
     names = (
         "consumer.stdout", "tbss-candidate.stdout", "tbss-oracle.stdout", "growth.stdout", "oracle.stdout",
         "iterate-candidate.stdout", "iterate-oracle.stdout",
+        "iterate-worker-candidate.stdout", "iterate-worker-oracle.stdout",
         "scope.stdout", "oracle-scope.stdout", "oracle-failure-ie.stdout", "oracle-failure-unresolved.stdout",
         *(f"failure-{case}.stdout" for case in ("ie", "unresolved", "array-half", "tls-filesz", "relocation-kind")),
     )
@@ -666,6 +667,10 @@ def _dlfcn_streams(work: Path, output: Path) -> dict[str, dict[str, object]]:
             "general dlfcn iterate callback output drifted")
     require(bytes_by_name["iterate-candidate.stdout"] == bytes_by_name["iterate-oracle.stdout"],
             "general dlfcn iterate differential drifted")
+    require(bytes_by_name["iterate-worker-candidate.stdout"] == EXPECTED_ITERATE,
+            "general dlfcn iterate worker callback output drifted")
+    require(bytes_by_name["iterate-worker-candidate.stdout"] == bytes_by_name["iterate-worker-oracle.stdout"],
+            "general dlfcn iterate worker differential drifted")
     validate_growth_output(bytes_by_name["growth.stdout"], bytes_by_name["oracle.stdout"])
     for case in ("ie", "unresolved"):
         require(bytes_by_name[f"failure-{case}.stdout"] == bytes_by_name[f"oracle-failure-{case}.stdout"],

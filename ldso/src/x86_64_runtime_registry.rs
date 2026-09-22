@@ -913,6 +913,11 @@ unsafe extern "C" fn runtime_information(handle: *mut c_void, output: *mut *mut 
 /// Calls application code without the loader lock. Like musl, the next link
 /// is read after each callback, so a nested dlopen can extend this traversal.
 /// Retained dlclose mappings make the current node safe across that callback.
+/// The approved unwinder also borrows FDE/LSDA/text after this function returns:
+/// published nodes have relinquished their UnpublishedObjects rollback owner,
+/// and runtime_close never unlinks, unmaps, or rewrites their names. Initial
+/// objects borrow the permanent GeneralInitialLoaderState. The stack info is
+/// callback-local; its thread-owned TLS pointer has a separate lifetime.
 unsafe extern "C" fn runtime_iterate(callback: ProgramHeaderCallback, data: *mut c_void) -> i32 {
     let mut node = {
         let _guard = RuntimeGuard::acquire();

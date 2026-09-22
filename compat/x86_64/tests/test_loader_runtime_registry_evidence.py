@@ -262,6 +262,8 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
                 "oracle.stdout": EVIDENCE.EXPECTED_GROWTH,
                 "iterate-candidate.stdout": EVIDENCE.EXPECTED_ITERATE,
                 "iterate-oracle.stdout": EVIDENCE.EXPECTED_ITERATE,
+                "iterate-worker-candidate.stdout": EVIDENCE.EXPECTED_ITERATE,
+                "iterate-worker-oracle.stdout": EVIDENCE.EXPECTED_ITERATE,
                 "scope.stdout": b"scope=first\n",
                 "oracle-scope.stdout": b"scope=first\n",
                 "failure-ie.stdout": b"failure=ie\n",
@@ -279,6 +281,7 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
             for name, altered, message in (
                 ("tbss-oracle.stdout", b"wrong\n", "TBSS differential"),
                 ("iterate-oracle.stdout", b"wrong\n", "iterate differential"),
+                ("iterate-worker-oracle.stdout", b"wrong\n", "iterate worker differential"),
                 ("oracle-scope.stdout", b"wrong\n", "scope differential"),
                 ("oracle-failure-ie.stdout", b"wrong\n", "failure ie differential"),
             ):

@@ -134,6 +134,10 @@ cp "$work/iterate" "$work/execution-root/iterate"
 timeout 20 chroot "$work/execution-root" /iterate >"$work/iterate-candidate.stdout"
 LD_LIBRARY_PATH="$work/oracle" timeout 20 "$work/oracle/iterate" >"$work/iterate-oracle.stdout"
 cmp "$work/iterate-oracle.stdout" "$work/iterate-candidate.stdout"
+# A separate process keeps both DSOs runtime-new for the cross-thread append.
+timeout 20 chroot "$work/execution-root" /iterate worker >"$work/iterate-worker-candidate.stdout"
+LD_LIBRARY_PATH="$work/oracle" timeout 20 "$work/oracle/iterate" worker >"$work/iterate-worker-oracle.stdout"
+cmp "$work/iterate-worker-oracle.stdout" "$work/iterate-worker-candidate.stdout"
 [ "$(<"$work/iterate-candidate.stdout")" = 'dl_iterate_phdr: nested callback, retained mapping, bounded append' ]
 printf 'general runtime iterate: PASS (nested callback, retained close, bounded appended DSO); evidence: %s\n' "$work"
 "$driver" "$entry_mode" "$ROOT/compat/x86_64/general_dynamic_scope_consumer.c" -o "$work/scope"

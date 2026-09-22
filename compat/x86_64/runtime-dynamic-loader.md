@@ -28,7 +28,34 @@ program-header mapping afterward, opens `libscope-second.so` exactly once,
 and performs a nested enumeration that returns a sentinel at the retained
 target. The outer walk must subsequently observe that appended DSO, while a
 separate one-callback early-return probe proves return propagation. It does
-not claim async-signal safety or unwind-provider qualification.
+not claim async-signal safety or unwind-provider qualification. A separate
+`worker` invocation closes the target and opens/closes/reopens the second DSO
+on a pthread joined inside the callback. Both invocations must complete and
+match pinned musl; the component reader authenticates both output pairs.
+
+The native entry is `x86_64_runtime_registry::runtime_iterate`, reached by
+libc's `general_dlfcn::dl_iterate_phdr` private bridge. It snapshots one
+`ProgramHeaderInfo` under `RuntimeGuard`, drops that guard before application
+code, then reacquires it to read the current node's successor. Completed
+appends can join the walk; this is not an atomic graph snapshot. The paused
+AArch64 implementation in `ldso/src/loader.rs` is a separate owner.
+
+The approved unwinder retains borrowed `.eh_frame`, LSDA and personality/text
+addresses beyond the discovery callback. Native `RuntimeObject` nodes own
+immutable names and retain mapped ELF objects for process lifetime.
+`open_transaction` completes fallible relocation, protection and all-thread
+TLS preparation before appending `UnpublishedObjects` under `RuntimeGuard`;
+`relinquish` removes the appended nodes from the rollback owner's destructor.
+Before publication, that destructor unmaps only its private runtime maps and
+nodes. Initial objects borrow the permanent `GeneralInitialLoaderState`.
+`runtime_close` only validates a handle, as pinned musl does: it neither
+unlinks nor destroys those nodes/maps. Process finalization owns destructors.
+This supplies the provider's post-callback mapping lifetime without a frame
+registry or per-unwind pin. The stack descriptor is callback-local and TLS
+data belongs to the calling thread; neither gets the ELF mapping guarantee.
+The worker fixture checks the borrowed PHDR/name and read-only image bytes
+after close and callback return. It is loader evidence; provider metadata
+bounds and actual concurrent backtrace consumers remain separate requirements.
 
 ## Conventional musl main startup
 

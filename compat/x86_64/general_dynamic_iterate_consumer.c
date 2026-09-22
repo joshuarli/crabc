@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <link.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,7 +16,11 @@ struct iterate_state {
     const ElfW(Phdr) *retained_phdr;
     ElfW(Half) retained_phnum;
     uintptr_t retained_address;
+    const unsigned char *retained_readonly_image;
+    size_t retained_readonly_size;
+    unsigned retained_readonly_checksum;
     int mutations;
+    int worker_mutation;
     int outer_callbacks;
     int appended_callbacks;
     int nested_callbacks;
@@ -33,6 +38,14 @@ static int valid_info(const struct dl_phdr_info *info, size_t size)
         && info->dlpi_phnum;
 }
 
+static unsigned image_checksum(const unsigned char *bytes, size_t size)
+{
+    unsigned result = 0;
+    for (size_t i = 0; i < size; ++i)
+        result = result * 33 + bytes[i];
+    return result;
+}
+
 /* dlclose in the pinned musl profile retains loader mappings. This reads the
  * borrowed name and program-header view after the callback has closed its
  * handle, rather than treating the callback's dl_phdr_info record itself as
@@ -41,6 +54,10 @@ static int retained_mapping_is_live(const struct iterate_state *state)
 {
     if (!state->retained_name || !state->retained_phdr || !state->retained_phnum
         || !strstr(state->retained_name, "libscope-first.so"))
+        return 0;
+    if (!state->retained_readonly_image || !state->retained_readonly_size
+        || image_checksum(state->retained_readonly_image, state->retained_readonly_size)
+            != state->retained_readonly_checksum)
         return 0;
     for (ElfW(Half) index = 0; index < state->retained_phnum; ++index)
         if (state->retained_phdr[index].p_type == PT_LOAD)
@@ -62,6 +79,22 @@ static int nested_visit(struct dl_phdr_info *info, size_t size, void *argument)
     return 0;
 }
 
+/* Joining here requires enumeration to release loader ownership around the
+ * callback. The worker also closes the saved handle while this thread keeps
+ * reading the borrowed ELF view after the callback returns. */
+static void *mutate_on_worker(void *argument)
+{
+    struct iterate_state *state = argument;
+    CHECK(!dlclose(state->closed_handle));
+    state->opened_handle = dlopen("libscope-second.so", RTLD_NOW | RTLD_LOCAL);
+    CHECK(state->opened_handle);
+    CHECK(dlsym(state->opened_handle, "scope_value"));
+    CHECK(!dlclose(state->opened_handle));
+    state->opened_handle = dlopen("libscope-second.so", RTLD_NOW | RTLD_LOCAL);
+    CHECK(state->opened_handle);
+    return 0;
+}
+
 static int outer_visit(struct dl_phdr_info *info, size_t size, void *argument)
 {
     struct iterate_state *state = argument;
@@ -80,11 +113,28 @@ static int outer_visit(struct dl_phdr_info *info, size_t size, void *argument)
         state->retained_phdr = info->dlpi_phdr;
         state->retained_phnum = info->dlpi_phnum;
         state->retained_address = info->dlpi_addr;
-        CHECK(!dlclose(state->closed_handle));
+        for (ElfW(Half) i = 0; i < info->dlpi_phnum; ++i) {
+            if (info->dlpi_phdr[i].p_type == PT_LOAD
+                && !(info->dlpi_phdr[i].p_flags & PF_W)) {
+                state->retained_readonly_image = (const unsigned char *)
+                    (info->dlpi_addr + info->dlpi_phdr[i].p_vaddr);
+                state->retained_readonly_size = info->dlpi_phdr[i].p_memsz;
+                state->retained_readonly_checksum = image_checksum(
+                    state->retained_readonly_image, state->retained_readonly_size);
+            }
+        }
         CHECK(retained_mapping_is_live(state));
-        state->opened_handle = dlopen("libscope-second.so", RTLD_NOW | RTLD_LOCAL);
-        CHECK(state->opened_handle);
-        CHECK(dlsym(state->opened_handle, "scope_value"));
+        if (state->worker_mutation) {
+            pthread_t worker;
+            CHECK(!pthread_create(&worker, 0, mutate_on_worker, state));
+            CHECK(!pthread_join(worker, 0));
+        } else {
+            CHECK(!dlclose(state->closed_handle));
+            CHECK(retained_mapping_is_live(state));
+            state->opened_handle = dlopen("libscope-second.so", RTLD_NOW | RTLD_LOCAL);
+            CHECK(state->opened_handle);
+            CHECK(dlsym(state->opened_handle, "scope_value"));
+        }
         CHECK(retained_mapping_is_live(state));
         CHECK(dl_iterate_phdr(nested_visit, state) == NESTED_STOP);
         CHECK(state->nested_callbacks && state->nested_target_callbacks == 1);
@@ -107,12 +157,13 @@ static int early_stop(struct dl_phdr_info *info, size_t size, void *argument)
     return EARLY_STOP;
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
     int baseline = 0;
     CHECK(!dl_iterate_phdr(count_visit, &baseline) && baseline > 0);
 
     struct iterate_state state = {0};
+    state.worker_mutation = argc == 2 && !strcmp(argv[1], "worker");
     state.closed_handle = dlopen("libscope-first.so", RTLD_NOW | RTLD_LOCAL);
     CHECK(state.closed_handle);
     CHECK(!dl_iterate_phdr(outer_visit, &state));
