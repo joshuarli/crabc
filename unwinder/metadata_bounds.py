@@ -20,8 +20,10 @@ import tomllib
 ROOT = Path(__file__).resolve().parent
 TARGET = 'x86_64-unknown-linux-musl'
 EXPECTED_OUTPUT = 'truncated EH header rejected\n'
-PATCH_PATH = 'unwinder/patches/unwinding-0.2.10-phdr-bounds.rs'
-PATCH_TARGET = 'src/unwinder/find_fde/phdr.rs'
+PATCHES = {
+    'src/unwinder/find_fde/phdr.rs': 'unwinder/patches/unwinding-0.2.10-phdr-bounds.rs',
+    'src/unwinder/frame.rs': 'unwinder/patches/unwinding-0.2.10-frame-bounds.rs',
+}
 
 
 def digest(path: Path) -> str:
@@ -59,25 +61,27 @@ def assert_patched_provider(provenance: dict, archive_sha256: str) -> None:
     if provenance['archive']['sha256'] != archive_sha256:
         raise RuntimeError('provider provenance does not identify the selected archive')
     patches = provenance['patched_unwinding']['patches']
-    if len(patches) != 1:
-        raise RuntimeError('provider provenance does not identify one bounded-header overlay')
-    patch = patches[0]
-    patch_digest = digest(ROOT / 'patches/unwinding-0.2.10-phdr-bounds.rs')
-    if (
-        patch['path'] != PATCH_PATH
-        or patch['target'] != PATCH_TARGET
-        or patch['sha256'] != patch_digest
-        or patch['compiled_sha256'] != patch_digest
-        or patch['license'] != 'MIT OR Apache-2.0'
-    ):
-        raise RuntimeError('provider provenance does not identify the compiled bounded-header overlay')
+    targets = [patch['target'] for patch in patches]
+    if len(targets) != len(PATCHES) or set(targets) != set(PATCHES):
+        raise RuntimeError('provider provenance does not identify the bounded-metadata overlay roster')
     dependencies = {dependency['name']: dependency for dependency in provenance['dependencies']}
     compiled = {
         entry['path']: entry['sha256']
         for entry in dependencies['unwinding']['files']
     }
-    if compiled.get(PATCH_TARGET) != patch_digest:
-        raise RuntimeError('provider source audit does not match the compiled bounded-header overlay')
+    by_target = {patch['target']: patch for patch in patches}
+    for target, path in PATCHES.items():
+        patch = by_target[target]
+        patch_digest = digest(ROOT.parent / path)
+        if (
+            patch['path'] != path
+            or patch['sha256'] != patch_digest
+            or patch['compiled_sha256'] != patch_digest
+            or patch['license'] != 'MIT OR Apache-2.0'
+        ):
+            raise RuntimeError('provider provenance does not identify the compiled bounded-metadata overlay')
+        if compiled.get(target) != patch_digest:
+            raise RuntimeError('provider source audit does not match the compiled bounded-metadata overlay')
 
 
 def run_fixture(

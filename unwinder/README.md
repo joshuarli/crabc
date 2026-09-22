@@ -14,6 +14,7 @@ Build from the checkout through the pinned native dispatcher:
 ./scripts/dev-x86_64.sh unwinder-metadata-bounds
 ./scripts/dev-x86_64.sh unwinder-eh-frame-bounds
 ./scripts/dev-x86_64.sh unwinder-dynamic-bounds
+./scripts/dev-x86_64.sh unwinder-indirect-personality-bounds
 python3 -B -m unittest discover -s unwinder/tests
 ```
 
@@ -34,12 +35,12 @@ Before compiling, `build.py` verifies the normal checked-in registry lock and
 the complete cached `unwinding 0.2.10` source tree. It creates or reuses only
 an exact content-addressed input beneath `.work/x86_64/unwinder-source-inputs/`,
 copies that verified source, and replaces
-`src/unwinder/find_fde/phdr.rs` with the checked-in MIT OR Apache-2.0 bounds
-overlay. Cargo resolves the same version/features from that local staged source
-only for this producer input. The original registry source is never modified.
-`provenance.json` separately records the pristine-tree and patched-tree hashes,
-overlay/license/digests, staged input identity, and the actual compiled source
-file inventory.
+`src/unwinder/find_fde/phdr.rs` and `src/unwinder/frame.rs` with checked-in
+MIT OR Apache-2.0 bounds overlays. Cargo resolves the same version/features
+from that local staged source only for this producer input. The original
+registry source is never modified. `provenance.json` separately records the
+pristine-tree and patched-tree hashes, overlays/licenses/digests, staged input
+identity, and the actual compiled source-file inventory.
 
 `unwinder-metadata-bounds` links the selected provider into a guard-page
 fixture with a one-byte `PT_GNU_EH_FRAME` header. Its declared readable
@@ -73,6 +74,18 @@ places an unterminated record at a guard-page boundary, then separately proves
 a valid `DT_NULL` table without a GOT and a `DT_PLTGOT` table supplying the
 data-relative FDE base. It does not validate later pointer-derived metadata or
 loader mapping lifetime.
+
+`unwinder-indirect-personality-bounds` exercises the later CIE `zP` indirect
+personality boundary. The selected finder has no retained `PT_LOAD` identity
+once it hands an FDE to `Frame`, where upstream would otherwise dereference the
+encoded cell. The frame overlay re-enumerates program headers and reads an
+indirect CIE personality or FDE LSDA cell only when its complete native word is
+within a readable `PT_LOAD` during that callback. The fixture routes
+`_Unwind_RaiseException` through a matching FDE whose personality cell occupies
+a protected page; the rejected cell yields `END_OF_STACK` without a fault. The
+cleanup fixture continues to use its valid indirect metadata. This does not
+validate the target pointer, DWARF-expression memory reads, later CFI register
+loads, or loader mapping lifetime.
 
 ## Standalone cleanup regression
 
@@ -174,12 +187,14 @@ features rather than silently admitting Cargo feature unification.
 Upstream `src/unwinder/mod.rs` owns the exported unwind ABI;
 `src/unwinder/arch/x86_64.rs` owns register save/restore through audited Rust
 inline/naked assembly. `src/unwinder/find_fde/phdr.rs` obtains frame metadata
-from owned `dl_iterate_phdr`, `PT_LOAD` and `PT_GNU_EH_FRAME`. Consumers must
-request `--eh-frame-hdr`. No C/C++/standalone assembly object, prebuilt target
-unwinder, libgcc or compiler-rt archive is included. libc's Rust cfg-discovery
-build script is the sole admitted build executable. The selected path has no
-allocation, registry, mutable global frame state, thread creation, personality
-or panic-handler implementation.
+from owned `dl_iterate_phdr`, `PT_LOAD` and `PT_GNU_EH_FRAME`; the frame overlay
+also resolves late indirect personality and LSDA cells during a bounded
+`dl_iterate_phdr` callback. Consumers must request `--eh-frame-hdr`. No
+C/C++/standalone assembly object, prebuilt target unwinder, libgcc or
+compiler-rt archive is included. libc's Rust cfg-discovery build script is the
+sole admitted build executable. The selected path has no allocation, registry,
+mutable global frame state, thread creation, personality or panic-handler
+implementation.
 
 ## Qualification boundary
 
@@ -193,9 +208,11 @@ Build-std requires matching core linkage. Initial/runtime DSO unwind,
 installed/extracted PIE/non-PIE, consumer LTO and malformed metadata checks
 remain required by the approved design before qualification is complete.
 The local overlay bounds the declared `PT_GNU_EH_FRAME` header, decoded
-`.eh_frame` entry range, and `PT_DYNAMIC` tag table only. It does not validate
-every FDE/CIE/DWARF record, every later indirect pointer, or later metadata
-read. Source pinning and the guarded metadata regressions do not establish safe
-failure for malicious or truncated mapped unwind metadata generally. Those
+`.eh_frame` entry range, `PT_DYNAMIC` tag table, and complete native words of
+late indirect CIE personality and FDE LSDA cells before they are dereferenced.
+It does not validate every FDE/CIE/DWARF record, pointer targets,
+DWARF-expression memory reads, later CFI register loads, or loader mapping
+lifetime. Source pinning and the guarded metadata regressions do not establish
+safe failure for malicious or truncated mapped unwind metadata generally. Those
 boundaries must be fixed and tested before this provider is promoted.
 Enumeration is not claimed async-signal-safe.

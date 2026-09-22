@@ -33,9 +33,16 @@ UNWIND_ABI = {
     '_Unwind_Resume', '_Unwind_Resume_or_Rethrow', '_Unwind_DeleteException', '_Unwind_Backtrace',
 }
 PATCHED_UNWINDING = 'unwinding'
-PATCH_TARGET = 'src/unwinder/find_fde/phdr.rs'
-PATCH_OVERLAY = ROOT / 'patches/unwinding-0.2.10-phdr-bounds.rs'
-PATCHED_UNWINDING_ORIGINAL_SHA256 = '5c462a8ea77cd67c8cd2c248671b74ac3df475ea134f7ff578a79a0ab0398a68'
+PATCHES = {
+    'src/unwinder/find_fde/phdr.rs': {
+        'overlay': ROOT / 'patches/unwinding-0.2.10-phdr-bounds.rs',
+        'upstream_sha256': '5c462a8ea77cd67c8cd2c248671b74ac3df475ea134f7ff578a79a0ab0398a68',
+    },
+    'src/unwinder/frame.rs': {
+        'overlay': ROOT / 'patches/unwinding-0.2.10-frame-bounds.rs',
+        'upstream_sha256': '26f18f4097b32972b1c7ce95ba31abe31201301dee2bac7f794a9f2da4e7f5d7',
+    },
+}
 PATCHED_UNWINDING_UPSTREAM_TREE_SHA256 = '8ce98e8ae23314ff1312aec0c3f6c627df256a61e212923a6cd70fd53a0990d9'
 PATCHED_UNWINDING_LICENSE = 'MIT OR Apache-2.0'
 CRATES_IO_REGISTRY = 'registry+https://github.com/rust-lang/crates.io-index'
@@ -141,15 +148,19 @@ def stage_patched_unwinding(packages):
     if package.get('source') != CRATES_IO_REGISTRY:
         raise ValueError('unwinding source is not the pinned crates.io registry package')
     upstream = Path(package['manifest_path']).parent
-    source = upstream / PATCH_TARGET
-    if source.is_symlink() or not source.is_file() or digest(source) != PATCHED_UNWINDING_ORIGINAL_SHA256:
-        raise ValueError('unwinding patch target differs from the pinned upstream source')
+    overlays = {}
+    for target, patch in PATCHES.items():
+        source = upstream / target
+        overlay = patch['overlay']
+        if source.is_symlink() or not source.is_file() or digest(source) != patch['upstream_sha256']:
+            raise ValueError(f'unwinding patch target differs from the pinned upstream source: {target}')
+        if overlay.is_symlink() or not overlay.is_file():
+            raise ValueError(f'unwinding bounds overlay is not a regular checked-in source: {target}')
+        overlays[target] = overlay
     upstream_tree_sha256 = tree_digest(upstream)
     if upstream_tree_sha256 != PATCHED_UNWINDING_UPSTREAM_TREE_SHA256:
         raise ValueError('unwinding source tree differs from the pinned upstream identity')
-    if PATCH_OVERLAY.is_symlink() or not PATCH_OVERLAY.is_file():
-        raise ValueError('unwinding bounds overlay is not a regular checked-in source')
-    patched_tree_sha256 = tree_digest(upstream, {PATCH_TARGET: PATCH_OVERLAY})
+    patched_tree_sha256 = tree_digest(upstream, overlays)
     input_identity = hashlib.sha256()
     for value in (
         upstream_tree_sha256,
@@ -178,8 +189,8 @@ def stage_patched_unwinding(packages):
         shutil.copytree(ROOT / 'src', staged_root / 'src')
         (staged_root / 'Cargo.toml').write_text(staged_manifest_text())
         shutil.copy2(ROOT / 'Cargo.lock', staged_root / 'Cargo.lock')
-        patched_target = staged_unwinding / PATCH_TARGET
-        shutil.copyfile(PATCH_OVERLAY, patched_target)
+        for target, overlay in overlays.items():
+            shutil.copyfile(overlay, staged_unwinding / target)
         if tree_digest(staged_unwinding) != patched_tree_sha256:
             raise ValueError('unwinding bounds overlay was not staged exactly')
     return {
@@ -189,14 +200,14 @@ def stage_patched_unwinding(packages):
         'source_input': source_root,
         'upstream_tree_sha256': upstream_tree_sha256,
         'patched_tree_sha256': patched_tree_sha256,
-        'patch': {
-            'path': str(PATCH_OVERLAY.relative_to(ROOT.parent)),
-            'sha256': digest(PATCH_OVERLAY),
-            'target': PATCH_TARGET,
-            'upstream_sha256': PATCHED_UNWINDING_ORIGINAL_SHA256,
-            'compiled_sha256': digest(staged_unwinding / PATCH_TARGET),
+        'patches': [{
+            'path': str(overlay.relative_to(ROOT.parent)),
+            'sha256': digest(overlay),
+            'target': target,
+            'upstream_sha256': PATCHES[target]['upstream_sha256'],
+            'compiled_sha256': digest(staged_unwinding / target),
             'license': PATCHED_UNWINDING_LICENSE,
-        },
+        } for target, overlay in overlays.items()],
     }
 
 
@@ -204,11 +215,19 @@ def verify_staged_patched_unwinding(staged):
     """Reject provenance if the staged source changes before it is recorded."""
     if tree_digest(staged['staged']) != staged['patched_tree_sha256']:
         raise ValueError('compiled unwinding source differs from the reviewed overlay')
-    patch = staged['patch']
-    if digest(PATCH_OVERLAY) != patch['sha256']:
-        raise ValueError('checked-in unwinding overlay differs from the staged patch record')
-    if digest(staged['staged'] / patch['target']) != patch['compiled_sha256']:
-        raise ValueError('compiled unwinding overlay differs from the staged patch record')
+    patches = staged['patches']
+    targets = [patch['target'] for patch in patches]
+    if len(targets) != len(PATCHES) or set(targets) != set(PATCHES):
+        raise ValueError('staged unwinding patch roster differs from the reviewed overlays')
+    for patch in patches:
+        configured = PATCHES.get(patch['target'])
+        if configured is None:
+            raise ValueError('staged unwinding patch target is not reviewed')
+        overlay = configured['overlay']
+        if digest(overlay) != patch['sha256']:
+            raise ValueError('checked-in unwinding overlay differs from the staged patch record')
+        if digest(staged['staged'] / patch['target']) != patch['compiled_sha256']:
+            raise ValueError('compiled unwinding overlay differs from the staged patch record')
 
 def build(output):
     if (platform.system(), platform.machine()) != ('Linux', 'x86_64'):
@@ -301,7 +320,7 @@ def build(output):
             'source_input': str(staged['source_input'].relative_to(ROOT.parent)),
             'upstream_tree_sha256': staged['upstream_tree_sha256'],
             'patched_tree_sha256': staged['patched_tree_sha256'],
-            'patches': [staged['patch']],
+            'patches': staged['patches'],
         },
         'unwind_abi': sorted(UNWIND_ABI), 'members': [{'name': p.name, 'sha256': digest(p)} for p in members],
         'native_build_products': False, 'personality_owner': 'consumer Rust std',

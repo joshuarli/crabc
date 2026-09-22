@@ -30,27 +30,37 @@ class MetadataBoundsExecutionContract(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'status'):
             metadata_bounds.assert_execution(-11, '', expected)
 
+    def test_guarded_indirect_personality_returns_end_of_stack_without_a_fault(self):
+        expected = 'indirect personality pointer rejected\n'
+        metadata_bounds.assert_execution(0, expected, expected)
+        with self.assertRaisesRegex(RuntimeError, 'status'):
+            metadata_bounds.assert_execution(-11, '', expected)
+
     def test_provider_provenance_must_name_the_compiled_overlay(self):
-        patch = metadata_bounds.digest(
-            Path(__file__).parents[1] / 'patches/unwinding-0.2.10-phdr-bounds.rs'
-        )
-        provenance = {
-            'archive': {'sha256': 'archive'},
-            'patched_unwinding': {'patches': [{
-                'path': metadata_bounds.PATCH_PATH,
-                'target': metadata_bounds.PATCH_TARGET,
+        patches = []
+        files = []
+        for target, path in metadata_bounds.PATCHES.items():
+            patch = metadata_bounds.digest(Path(__file__).parents[2] / path)
+            patches.append({
+                'path': path,
+                'target': target,
                 'sha256': patch,
                 'compiled_sha256': patch,
                 'license': 'MIT OR Apache-2.0',
-            }]},
-            'dependencies': [{'name': 'unwinding', 'files': [{
-                'path': metadata_bounds.PATCH_TARGET,
-                'sha256': patch,
-            }]}],
+            })
+            files.append({'path': target, 'sha256': patch})
+        provenance = {
+            'archive': {'sha256': 'archive'},
+            'patched_unwinding': {'patches': patches},
+            'dependencies': [{'name': 'unwinding', 'files': files}],
         }
         metadata_bounds.assert_patched_provider(provenance, 'archive')
         provenance['dependencies'][0]['files'][0]['sha256'] = 'unpatched'
         with self.assertRaisesRegex(RuntimeError, 'source audit'):
+            metadata_bounds.assert_patched_provider(provenance, 'archive')
+        provenance['dependencies'][0]['files'][0]['sha256'] = patches[0]['sha256']
+        provenance['patched_unwinding']['patches'].pop()
+        with self.assertRaisesRegex(RuntimeError, 'overlay roster'):
             metadata_bounds.assert_patched_provider(provenance, 'archive')
 
 

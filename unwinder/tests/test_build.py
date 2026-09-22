@@ -67,19 +67,27 @@ class DependencyBoundary(unittest.TestCase):
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             staged_source = Path(temporary) / 'unwinding-0.2.10'
-            target = staged_source / builder.PATCH_TARGET
-            target.parent.mkdir(parents=True)
-            target.write_bytes(builder.PATCH_OVERLAY.read_bytes())
+            patches = []
+            for relative, configured in builder.PATCHES.items():
+                target = staged_source / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(configured['overlay'].read_bytes())
+                patches.append({
+                    'sha256': builder.digest(configured['overlay']),
+                    'target': relative,
+                    'compiled_sha256': builder.digest(target),
+                })
             staged = {
                 'staged': staged_source,
                 'patched_tree_sha256': builder.tree_digest(staged_source),
-                'patch': {
-                    'sha256': builder.digest(builder.PATCH_OVERLAY),
-                    'target': builder.PATCH_TARGET,
-                    'compiled_sha256': builder.digest(target),
-                },
+                'patches': patches,
             }
             builder.verify_staged_patched_unwinding(staged)
+            staged['patches'].append(dict(staged['patches'][0]))
+            with self.assertRaisesRegex(ValueError, 'patch roster'):
+                builder.verify_staged_patched_unwinding(staged)
+            staged['patches'].pop()
+            target = staged_source / next(iter(builder.PATCHES))
             target.write_text('source changed while compiling\n')
             with self.assertRaisesRegex(ValueError, 'compiled unwinding source'):
                 builder.verify_staged_patched_unwinding(staged)
