@@ -1222,7 +1222,7 @@ impl<'main> MainHeapThreadAttachment<'main> {
         // Preserve its exact attached-owner error for the caller's retained
         // boundary; otherwise a poisoned/replaced TLD could be misreported as
         // an ordinary callback that merely cannot reenter.
-        let current_callback_reentry = self.current_deferred_callback_tld_mut()?.recursing();
+        let current_callback_reentry = self.current_deferred_callback_recurse()?;
         if !current_callback_reentry {
             return Err(MainHeapThreadAttachmentError::DeferredFreeCallbackNotRecursing);
         }
@@ -1496,6 +1496,20 @@ impl<'main> MainHeapThreadAttachment<'main> {
             .as_mut()
             .ok_or(MainHeapThreadAttachmentError::Poisoned)?
             .current_deferred_callback_mut()
+            .map_err(MainHeapThreadAttachmentError::ThreadLocalData)
+    }
+
+    /// Observes the recurse marker after validating the exact current callback
+    /// TLD identity. This leaves callback allocation itself behind
+    /// `current_deferred_callback_tld_mut`, which still requires `recurse`.
+    #[inline]
+    fn current_deferred_callback_recurse(
+        &mut self,
+    ) -> Result<bool, MainHeapThreadAttachmentError> {
+        self.tld
+            .as_mut()
+            .ok_or(MainHeapThreadAttachmentError::Poisoned)?
+            .current_deferred_callback_recurse()
             .map_err(MainHeapThreadAttachmentError::ThreadLocalData)
     }
 

@@ -724,6 +724,40 @@ impl DynamicAttachedThreadLocalData {
             .ok_or(ThreadLocalDataError::Projection)
     }
 
+    /// Reads the source recurse marker only after proving this dynamic TLD is
+    /// the current callback-boundary image. This is a diagnostic observation,
+    /// not a callback allocation projection: a false result lets the caller
+    /// report a missing recurse marker without treating a foreign or replaced
+    /// TLD as an ordinary non-recursing callback.
+    #[inline]
+    pub(crate) fn current_deferred_callback_recurse(
+        &mut self,
+    ) -> Result<bool, ThreadLocalDataError> {
+        self.ensure_active_current()?;
+        let allocation = self
+            .allocation
+            .as_mut()
+            .ok_or(ThreadLocalDataError::Projection)?;
+        let (matches_callback_boundary, recurse, memory) = {
+            let tld = allocation
+                .thread_local_data_mut()
+                .ok_or(ThreadLocalDataError::Projection)?;
+            (
+                tld.matches_subprocess_attached_callback_boundary(
+                    self.thread,
+                    self.sequence,
+                    self.subprocess,
+                ),
+                tld.recursing(),
+                tld.memory_id(),
+            )
+        };
+        if !matches_callback_boundary || !allocation.matches_memory_id(memory) {
+            return Err(ThreadLocalDataError::Projection);
+        }
+        Ok(recurse)
+    }
+
     /// Retires this TLD only after its dynamic Theap was fully detached from
     /// both intrusive lists. After validating the empty-list state, this
     /// follows `mi_tld_free` order: release the live registration, invalidate

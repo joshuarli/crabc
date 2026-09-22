@@ -2514,11 +2514,32 @@ impl ThreadLocalData {
         thread_sequence: ThreadSequence,
         subprocess: &MainSubprocess,
     ) -> bool {
+        self.matches_subprocess_attached_callback_boundary(
+            thread_id,
+            thread_sequence,
+            subprocess,
+        ) && !self.recurse
+    }
+
+    /// Checks the attached-TLD identity which remains stable across the
+    /// selected deferred-free callback boundary.
+    ///
+    /// This deliberately says nothing about `recurse`: callers that are
+    /// diagnosing a selected callback must first prove that this is the same
+    /// source TLD before they can distinguish a missing recurse marker from a
+    /// replaced or foreign TLD. Ordinary lifecycle and callback allocation
+    /// keep their stricter predicates below.
+    #[inline]
+    pub(crate) fn matches_subprocess_attached_callback_boundary(
+        &self,
+        thread_id: LiveThreadId,
+        thread_sequence: ThreadSequence,
+        subprocess: &MainSubprocess,
+    ) -> bool {
         self.thread_id == thread_id.get()
             && self.thread_seq == thread_sequence.get()
             && !self.subprocess.is_null()
             && self.is_attached_to_main_subprocess(subprocess)
-            && !self.recurse
             // This is the pinned Unix primitive result, not a guessed policy.
             && !self.is_in_threadpool
     }
@@ -2535,12 +2556,11 @@ impl ThreadLocalData {
         thread_sequence: ThreadSequence,
         subprocess: &MainSubprocess,
     ) -> bool {
-        self.thread_id == thread_id.get()
-            && self.thread_seq == thread_sequence.get()
-            && !self.subprocess.is_null()
-            && self.is_attached_to_main_subprocess(subprocess)
-            && self.recurse
-            && !self.is_in_threadpool
+        self.matches_subprocess_attached_callback_boundary(
+            thread_id,
+            thread_sequence,
+            subprocess,
+        ) && self.recurse
     }
 
     /// Executes the `mi_tld_free` identity invalidation after its owner has

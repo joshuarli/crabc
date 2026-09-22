@@ -472,7 +472,10 @@ mod tests {
     }
 
     fn paired_source_metadata() -> (Heap, ThreadLocalData, Theap) {
-        let thread = LiveThreadId::new(17).expect("the test thread identity is nonzero");
+        // The source `mi_threadid_t` reserves its low two bits for page
+        // flags. Keep this test's synthetic owner above the sentinel range
+        // and aligned like a live source identity.
+        let thread = LiveThreadId::new(16).expect("the test thread identity is source-valid");
         let mut heap = Heap::bootstrap_empty();
         let mut tld = ThreadLocalData::detached();
         tld.attach_bootstrap_exclusive(thread);

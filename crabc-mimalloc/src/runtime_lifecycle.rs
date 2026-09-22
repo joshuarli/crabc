@@ -4570,18 +4570,11 @@ impl RuntimeForkAdmission {
     /// copied gate bits for its own proof.
     fn after_fork_child(&self, fork_was_prepared: bool) -> bool {
         let observed = self.state.swap(0, Ordering::AcqRel);
-        // Never wrap a copied callback token back into authority. Once the
-        // child invalidates claims, phase B remains unavailable in this
-        // incomplete fork image instead of subtracting from reset state.
-        let generation = self.callback_claim_generation.load(Ordering::Acquire);
-        if generation != 0 {
-            if generation == usize::MAX {
-                self.callback_claim_generation.store(0, Ordering::Release);
-            } else {
-                self.callback_claim_generation
-                    .store(generation + 1, Ordering::Release);
-            }
-        }
+        // Never revive a copied callback token into child authority. Its Drop
+        // sees this mismatch and cannot alter the reset word; every new
+        // phase-B claim refuses until a separately proven child-repair route
+        // establishes a legitimate callback capability.
+        self.callback_claim_generation.store(0, Ordering::Release);
         fork_was_prepared
             && (observed & (FORK_GATE_HELD | FORK_GATE_PRESERVE))
             == (FORK_GATE_HELD | FORK_GATE_PRESERVE)
