@@ -160,7 +160,7 @@ use crate::main_heap_thread::{
     MainHeapThreadPageDrainSession, MainHeapThreadPageSession,
 };
 use crate::main_theap::{
-    MainStaticHeapLease, MainStaticHeapLeaseError, MainStaticProcessPageSession,
+    MainStaticHeapLease, MainStaticHeapLeaseError, MainStaticPageSession, MainStaticProcessPageSession,
     MainStaticTheapPageSession,
 };
 use crate::config::{
@@ -41542,6 +41542,33 @@ impl<'arena, B: PageBacking<'arena>> TheapCollectAbandonCallbacks for Production
         // avoids a raw reborrow of its whole engine/session while the generic
         // coordinator still owns `&mut Theap`.
         terminal
+    }
+}
+
+impl<'main> PageAllocatorEngine<'static, 'static, MainStaticPageSession<'main>> {
+    /// Makes one refused borrowed ticket-zero finish terminal before its
+    /// retained engine can be handed back to a caller.
+    ///
+    /// The generic engine's [`Drop`] normally transfers a detached failed OS
+    /// unmap owner into the borrowed attachment and latches that attachment.
+    /// A `finish` error returns the engine instead, so the transfer must occur
+    /// here before a caller can retain or forget that error value. The engine
+    /// and its surrounding PageMap lease remain intact for the terminal owner
+    /// decision; only the unique OS release owner moves to the attachment's
+    /// dedicated terminal slot.
+    #[must_use = "a refused borrowed ticket-zero finish still owns its engine and PageMap lifecycle"]
+    pub(crate) fn terminalize_borrowed_main_static_finish_failure(mut self) -> Self {
+        if let Some(owner) = self.pending_os_release.take() {
+            if let Err(owner) = self.session.retain_unfinished_os_release(owner) {
+                // A prior terminal owner already occupies the attachment's
+                // one slot. This newly detached mapping has no second safe
+                // release path, so preserve its unique owner exactly as the
+                // generic unfinished-engine Drop does.
+                core::mem::forget(owner);
+            }
+        }
+        self.session.latch_unfinished_page_engine();
+        self
     }
 }
 

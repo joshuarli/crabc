@@ -114,8 +114,10 @@ pub(crate) enum MainStaticProcessPageAllocatorBeginError {
 #[must_use = "a retained main-static page allocator still owns live page state"]
 pub(crate) enum MainStaticProcessPageAllocatorFinishError<'main> {
     /// One page, queue, producer, or OS-release owner remains live. The exact
-    /// engine and its PageMap mutation lease remain together for retry or a
-    /// terminal owner decision.
+    /// engine and its PageMap mutation lease remain together for the terminal
+    /// owner decision. Before this result returns, the borrowed ticket-zero
+    /// attachment receives any detached OS release owner and is latched, so a
+    /// retained or forgotten error cannot reopen normal teardown.
     Retained(MainStaticProcessPageAllocator<'main>),
     /// The engine reached an empty source state, but releasing the private
     /// PageMap lifecycle lock reported a post-Release wake failure. The map
@@ -237,7 +239,9 @@ impl<'main> MainStaticProcessPageAllocator<'main> {
     }
 
     /// Finishes only after every source page/queue/map/arena transition is
-    /// empty, then releases the process map mutation lifetime.
+    /// empty, then releases the process map mutation lifetime. A refused
+    /// finish latches the borrowed ticket-zero attachment before it returns
+    /// the retained engine and map lifecycle.
     pub(crate) fn finish(
         self,
     ) -> Result<(), MainStaticProcessPageAllocatorFinishError<'main>> {
@@ -250,7 +254,7 @@ impl<'main> MainStaticProcessPageAllocator<'main> {
                 .finish()
                 .map_err(MainStaticProcessPageAllocatorFinishError::PageMap),
             Err(engine) => Err(MainStaticProcessPageAllocatorFinishError::Retained(Self {
-                engine,
+                engine: engine.terminalize_borrowed_main_static_finish_failure(),
                 page_map_lifecycle,
             })),
         }
