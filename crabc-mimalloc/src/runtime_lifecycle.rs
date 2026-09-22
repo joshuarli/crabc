@@ -36,7 +36,7 @@
 //! no-page process owner. Every other child disables this incomplete lifecycle
 //! without traversing inherited locks, roots, or page state.
 
-use core::cell::UnsafeCell;
+use core::cell::{Cell, UnsafeCell};
 use core::convert::Infallible;
 #[cfg(test)]
 use core::marker::PhantomData;
@@ -2028,6 +2028,7 @@ impl<'main> TicketZeroOwnerExitFreeRoute<'main> {
         match attach_current_thread() {
             ThreadAttachResult::Attached => {}
             ThreadAttachResult::Inactive
+            | ThreadAttachResult::Reentrant
             | ThreadAttachResult::AlreadyAttached
             | ThreadAttachResult::Finished
             | ThreadAttachResult::Retained => {
@@ -2116,6 +2117,7 @@ impl TicketZeroOwnerExitReclaimRoute {
         match attach_current_thread() {
             ThreadAttachResult::Attached => {}
             ThreadAttachResult::Inactive
+            | ThreadAttachResult::Reentrant
             | ThreadAttachResult::AlreadyAttached
             | ThreadAttachResult::Finished
             | ThreadAttachResult::Retained => {
@@ -2359,6 +2361,9 @@ pub enum ThreadAttachResult {
     AlreadyAttached,
     /// A prior terminal transition leaves this thread's retained owner live.
     Retained,
+    /// Another attachment entry is still preparing this thread's source owner.
+    /// No TLS-slot borrow or new admission is formed by the recursive call.
+    Reentrant,
     /// A completed worker lifecycle cannot be reattached on the same thread.
     Finished,
 }
@@ -7039,6 +7044,35 @@ impl DetachedOwnerExit {
             }
         }
         self.clients.free_locals(allocator)
+    }
+}
+
+/// Rust attachment ownership is stricter than the source's idempotent
+/// `_mi_thread_init_with_heap`: recursion must not manufacture another mutable
+/// TLS-slot reference while the outer entry prepares its owner. This claim is
+/// separate from the slot so it can be checked before any slot projection.
+/// It is not the optional source `MI_TLS_RECURSE_GUARD` (disabled on our Linux
+/// release profile), nor permission to allocate before source publication.
+#[thread_local]
+static THREAD_ATTACHMENT_ENTRY: Cell<bool> = Cell::new(false);
+
+struct ThreadAttachmentEntry {
+    _not_send_or_sync: core::marker::PhantomData<*mut ()>,
+}
+
+impl ThreadAttachmentEntry {
+    fn claim() -> Option<Self> {
+        if THREAD_ATTACHMENT_ENTRY.replace(true) {
+            None
+        } else {
+            Some(Self { _not_send_or_sync: core::marker::PhantomData })
+        }
+    }
+}
+
+impl Drop for ThreadAttachmentEntry {
+    fn drop(&mut self) {
+        THREAD_ATTACHMENT_ENTRY.set(false);
     }
 }
 
@@ -12418,6 +12452,7 @@ pub fn ticket_zero_later_thread_mapped_regular_owner_exit_through_normal_finish(
         ThreadAttachResult::Attached => {}
         ThreadAttachResult::Retained => return TicketZeroLaterThreadPageResult::Retained,
         ThreadAttachResult::Inactive
+        | ThreadAttachResult::Reentrant
         | ThreadAttachResult::AlreadyAttached
         | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
     }
@@ -12571,6 +12606,7 @@ fn ticket_zero_later_thread_session_owner_exit_through_normal_finish_with_post_e
         ThreadAttachResult::Attached => {}
         ThreadAttachResult::Retained => return TicketZeroLaterThreadPageResult::Retained,
         ThreadAttachResult::Inactive
+        | ThreadAttachResult::Reentrant
         | ThreadAttachResult::AlreadyAttached
         | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
     }
@@ -12724,6 +12760,7 @@ pub fn ticket_zero_later_thread_retired_then_live_session_owner_exit_through_nor
         ThreadAttachResult::Attached => {}
         ThreadAttachResult::Retained => return TicketZeroLaterThreadPageResult::Retained,
         ThreadAttachResult::Inactive
+        | ThreadAttachResult::Reentrant
         | ThreadAttachResult::AlreadyAttached
         | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
     }
@@ -12802,6 +12839,7 @@ pub fn ticket_zero_later_thread_all_free_session_through_normal_finish(
         ThreadAttachResult::Attached => {}
         ThreadAttachResult::Retained => return TicketZeroLaterThreadPageResult::Retained,
         ThreadAttachResult::Inactive
+        | ThreadAttachResult::Reentrant
         | ThreadAttachResult::AlreadyAttached
         | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
     }
@@ -12864,6 +12902,7 @@ pub fn ticket_zero_later_thread_source_published_session_through_normal_finish(
         ThreadAttachResult::Attached => {}
         ThreadAttachResult::Retained => return TicketZeroLaterThreadPageResult::Retained,
         ThreadAttachResult::Inactive
+        | ThreadAttachResult::Reentrant
         | ThreadAttachResult::AlreadyAttached
         | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
     }
@@ -12938,6 +12977,7 @@ pub fn ticket_zero_later_thread_single_source_published_session_through_normal_f
         ThreadAttachResult::Attached => {}
         ThreadAttachResult::Retained => return TicketZeroLaterThreadPageResult::Retained,
         ThreadAttachResult::Inactive
+        | ThreadAttachResult::Reentrant
         | ThreadAttachResult::AlreadyAttached
         | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
     }
@@ -13006,6 +13046,7 @@ pub fn ticket_zero_later_thread_active_session_rejects_normal_finish(
         ThreadAttachResult::Attached => {}
         ThreadAttachResult::Retained => return TicketZeroLaterThreadPageResult::Retained,
         ThreadAttachResult::Inactive
+        | ThreadAttachResult::Reentrant
         | ThreadAttachResult::AlreadyAttached
         | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
     }
@@ -13093,6 +13134,7 @@ fn ticket_zero_later_thread_owner_exit_reclaim_through_normal_finish(
         ThreadAttachResult::Attached => {}
         ThreadAttachResult::Retained => return TicketZeroLaterThreadPageResult::Retained,
         ThreadAttachResult::Inactive
+        | ThreadAttachResult::Reentrant
         | ThreadAttachResult::AlreadyAttached
         | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
     }
@@ -13177,6 +13219,7 @@ pub fn ticket_zero_later_thread_mapped_regular_owner_exit(
         ThreadAttachResult::Attached => {}
         ThreadAttachResult::Retained => return TicketZeroLaterThreadPageResult::Retained,
         ThreadAttachResult::Inactive
+        | ThreadAttachResult::Reentrant
         | ThreadAttachResult::AlreadyAttached
         | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
     }
@@ -13381,6 +13424,7 @@ pub fn ticket_zero_later_thread_mapped_regular_owner_exit_reclaim(
         ThreadAttachResult::Attached => {}
         ThreadAttachResult::Retained => return TicketZeroLaterThreadPageResult::Retained,
         ThreadAttachResult::Inactive
+        | ThreadAttachResult::Reentrant
         | ThreadAttachResult::AlreadyAttached
         | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
     }
@@ -13529,6 +13573,7 @@ pub fn ticket_zero_later_thread_persistent_local_workload() -> TicketZeroLaterTh
         ThreadAttachResult::Attached => {}
         ThreadAttachResult::Retained => return TicketZeroLaterThreadPageResult::Retained,
         ThreadAttachResult::Inactive
+        | ThreadAttachResult::Reentrant
         | ThreadAttachResult::AlreadyAttached
         | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
     }
@@ -13577,6 +13622,7 @@ pub fn ticket_zero_later_thread_remote_free_roundtrip(
         ThreadAttachResult::Attached => {}
         ThreadAttachResult::Retained => return TicketZeroLaterThreadPageResult::Retained,
         ThreadAttachResult::Inactive
+        | ThreadAttachResult::Reentrant
         | ThreadAttachResult::AlreadyAttached
         | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
     }
@@ -13634,6 +13680,7 @@ pub fn ticket_zero_later_thread_page_roundtrip(
         ThreadAttachResult::Attached => {}
         ThreadAttachResult::Retained => return TicketZeroLaterThreadPageResult::Retained,
         ThreadAttachResult::Inactive
+        | ThreadAttachResult::Reentrant
         | ThreadAttachResult::AlreadyAttached
         | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
     }
@@ -13721,6 +13768,14 @@ pub fn after_fork_parent() {
 /// [`ThreadAttachResult::Attached`].
 #[doc(hidden)]
 pub fn attach_current_thread() -> ThreadAttachResult {
+    attach_current_thread_with_entry(|| {})
+}
+
+fn attach_current_thread_with_entry(before_source: impl FnOnce()) -> ThreadAttachResult {
+    let Some(_entry) = ThreadAttachmentEntry::claim() else {
+        return ThreadAttachResult::Reentrant;
+    };
+    before_source();
     let slot = current_thread_slot();
     match slot.state {
         ThreadLifecycleState::Attached => return ThreadAttachResult::AlreadyAttached,
@@ -13797,7 +13852,13 @@ pub fn attach_current_thread() -> ThreadAttachResult {
     // `slot` retains the returned current-thread owner until its explicit
     // post-destructor finish. The static process owner is never torn down by
     // this slice, and no other code may mutate the allocator TLS roots.
-    match unsafe { MainHeapThreadAttachment::begin(main_heap, config) } {
+    // End the slot borrow before metadata/TLD/Theap construction. Its
+    // diagnostic callbacks may enter native allocation, which must be free
+    // to observe this still-Fresh slot. The independent entry claim above
+    // prevents those callbacks from beginning a second attachment.
+    let attachment = unsafe { MainHeapThreadAttachment::begin(main_heap, config) };
+    let slot = current_thread_slot();
+    match attachment {
         Ok(attachment) => {
             #[cfg(not(test))]
             // SAFETY: the caller's mutable TLS-slot borrow proves this field
@@ -13925,7 +13986,7 @@ pub fn reinitialize_current_thread_native_owner_for_final_process_exit(
         ThreadAttachResult::Attached => ThreadFinalProcessExitOwnerResult::Reinitialized,
         ThreadAttachResult::Inactive => ThreadFinalProcessExitOwnerResult::Invalid,
         ThreadAttachResult::Retained => ThreadFinalProcessExitOwnerResult::Retained,
-        ThreadAttachResult::AlreadyAttached | ThreadAttachResult::Finished => {
+        ThreadAttachResult::AlreadyAttached | ThreadAttachResult::Reentrant | ThreadAttachResult::Finished => {
             // The direct `Fresh -> attach` call has no user-code or allocator
             // boundary. A different result would mean the current TLS image
             // changed while this exact lifecycle transition was in progress.
@@ -14888,6 +14949,25 @@ mod tests {
         })
         .join()
         .expect("the focused persistent-owner fixture remains current-thread local");
+    }
+
+    #[test]
+    fn worker_attachment_recursive_entry_does_not_borrow_tls_and_recovers() {
+        std::thread::spawn(|| {
+            let outer = attach_current_thread_with_entry(|| {
+                let slot = current_thread_slot();
+                assert_eq!(attach_current_thread(), ThreadAttachResult::Reentrant);
+                assert_eq!(slot.state, ThreadLifecycleState::Fresh);
+                assert!(matches!(
+                    native_allocate_aligned(32, 16, false),
+                    NativePageAllocationResult::Unavailable
+                ));
+            });
+            assert_eq!(outer, ThreadAttachResult::Inactive);
+            assert_eq!(attach_current_thread(), ThreadAttachResult::Inactive);
+            assert_eq!(current_thread_slot().state, ThreadLifecycleState::Fresh);
+            assert!(current_thread_slot().admission.is_none());
+        }).join().expect("recursive entry cannot poison the later attachment attempt");
     }
 
     #[test]

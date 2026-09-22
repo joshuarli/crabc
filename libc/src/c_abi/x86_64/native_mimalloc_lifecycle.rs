@@ -100,6 +100,7 @@ pub(super) fn attach_selected_worker() -> SelectedWorkerNativeAttach {
         // of these states. In particular Retained may still own a partial
         // attachment/admission, so it must fail-stop before TLS reclamation.
         ThreadAttachResult::AlreadyAttached
+        | ThreadAttachResult::Reentrant
         | ThreadAttachResult::Finished
         | ThreadAttachResult::Retained => SelectedWorkerNativeAttach::Fatal,
     }

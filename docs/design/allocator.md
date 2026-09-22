@@ -103,6 +103,25 @@ attach a fresh pthread; any other child disables the bridge. This is not
 inherited-lock, root, pointer, or page-state repair, and it does not claim
 general fork recovery.
 
+Worker attachment has a separate Rust borrow boundary in
+`runtime_lifecycle.rs::attach_current_thread`: a compiler-TLS entry claim
+refuses recursive attachment before borrowing the lifecycle slot or claiming
+another fork admission. The claim is released when the outer call returns,
+including an inactive-process refusal. The metadata/TLD/Theap constructor runs
+without a mutable lifecycle-slot reference, so an allocator callback can
+observe the still-unattached thread without aliasing the outer slot. The
+selected pthread handshake treats a recursive entry as a fatal lifecycle
+mismatch, never as proof that its TLS image can be reclaimed.
+
+This is Rust ownership protection, not a port of `MI_TLS_RECURSE_GUARD`:
+pinned Linux release `src/init.c:324-332` does not enable that conditional
+source branch. The process initializer still publishes its runtime owner only
+after the complete source setup. Allocation from callbacks during earlier
+process initialization therefore needs staged source-owner publication and
+reentrant page-operation ownership before general initialization recursion can
+be qualified. The explicit worker recovery C/Rust receipt does not establish
+that behavior.
+
 The default allocator remains that C backend. The explicit nondefault
 `crabc-libc` feature `native-mimalloc-shadow` selects
 `libc/src/allocator_native_mimalloc.rs` instead of the C malloc wrapper. Its
