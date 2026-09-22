@@ -69,6 +69,10 @@ const BOUND: u8 = 1;
 /// allocation/free operations.
 const READY: u8 = 2;
 const FAILED: u8 = 3;
+// Both terminal states forbid new entries and safe capability projections.
+// RETAINED preserves an engine whose exact unfinished ownership could not end.
+const CLOSED: u8 = 4;
+const CLOSE_RETAINED: u8 = 5;
 
 const ALLOCATION_LIVE: u8 = 0;
 const ALLOCATION_MOVING: u8 = 1;
@@ -115,6 +119,8 @@ pub(crate) enum MetaError {
     /// The direct target thread pointer was zero or not a valid live source
     /// identity, so entering the process lock would not be recursion-safe.
     InvalidEntryThread,
+    /// Permanent process teardown has sealed this metadata owner.
+    Closed,
     /// This thread already owns the metadata lock; waiting would deadlock the
     /// source nonrecursive lock.
     RecursiveEntry,
@@ -728,6 +734,10 @@ impl<'owner> MetaAllocation<'owner> {
     #[inline]
     fn is_live(&self) -> bool {
         self.state.load(Ordering::Acquire) == ALLOCATION_LIVE
+            // SAFETY: the capability retains the pinned owner lifetime even
+            // when its allocation backing has been terminally revoked.
+            && !matches!(unsafe { self.owner.as_ref() }.status.load(Ordering::Acquire),
+                CLOSED | CLOSE_RETAINED)
     }
 
     #[inline]
@@ -1121,6 +1131,14 @@ impl MetadataPageAllocator {
     }
 }
 
+/// Exact reason why terminal metadata engine retirement retained its owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MetaCloseError {
+    Entry(MetaError),
+    NotProcessBacking,
+    UnfinishedEngine,
+}
+
 /// Read-only test audit of caller-visible metadata capabilities.
 ///
 /// This deliberately counts only live [`MetaAllocation`] capabilities, not
@@ -1425,6 +1443,64 @@ impl MetaAllocator {
             config,
             subprocess,
         })
+    }
+
+    /// Permanently seals the metadata allocation boundary and ends the
+    /// process engine's exclusive bootstrap and shared PageMap borrows.
+    ///
+    /// This is the Rust ownership prerequisite for `subproc.c`'s destruction
+    /// after main-Heap Theap retirement and before clearing `theap_meta` and
+    /// releasing arenas. It does not perform those later source transitions.
+    /// Live TLD capabilities remain external obligations; their safe typed
+    /// projections reject after sealing. Static bootstrap source page images
+    /// remain in this pinned owner. In particular, direct OS pages are not
+    /// falsely claimed to have been released by arena bulk destruction.
+    ///
+    /// An unfinished engine remains in its exact slot under CLOSE_RETAINED;
+    /// no partially consumed ownership is discarded and entry never reopens.
+    ///
+    /// # Safety
+    ///
+    /// The caller has permanently stopped every metadata user and all page
+    /// readers, ended every previously returned typed reference, and sealed
+    /// every runtime admission path. All live metadata capabilities must be
+    /// retained outside backing that will be released. Ending this engine's
+    /// borrows does not revoke any external reference. The caller must retain
+    /// this pinned owner, the process, and all backing on failure, and must
+    /// separately retire the detached bootstrap image before physical release.
+    pub(crate) unsafe fn close_process_engine_quiescent(
+        self: Pin<&'static Self>,
+    ) -> Result<(), MetaCloseError> {
+        let entry = self.enter().map_err(MetaCloseError::Entry)?;
+        let this = self.get_ref();
+        let status = entry.status();
+        // SAFETY: permanent caller quiescence and the backing entry exclude
+        // every observation of these process-owned mutable slots.
+        if !matches!(status, BOUND | READY)
+            || unsafe { (*this.process_backing.get()).is_none() }
+        {
+            return Err(MetaCloseError::NotProcessBacking);
+        }
+        this.status.store(CLOSE_RETAINED, Ordering::Release);
+        if status == READY {
+            let allocator = unsafe { (*this.allocator.get()).assume_init_read() };
+            let engine = match allocator {
+                MetadataPageAllocator::Process(engine) => engine,
+                other => {
+                    unsafe { (*this.allocator.get()).write(other); }
+                    return Err(MetaCloseError::NotProcessBacking);
+                }
+            };
+            // SAFETY: exactly the permanent quiescence stated above; this
+            // consumes only engine-held references, not its source pages.
+            if let Err(engine) = unsafe { engine.retire_process_metadata_quiescent() } {
+                unsafe { (*this.allocator.get()).write(MetadataPageAllocator::Process(engine)); }
+                return Err(MetaCloseError::UnfinishedEngine);
+            }
+        }
+        unsafe { *this.process_backing.get() = None; }
+        this.status.store(CLOSED, Ordering::Release);
+        Ok(())
     }
 
     /// Selects the actual process VM/arena owner and shared PageMap after
@@ -1798,6 +1874,7 @@ impl MetaAllocator {
         subprocess: &'static MainSubprocess,
     ) -> Result<(), MetaError> {
         match self.get_ref().status.load(Ordering::Acquire) {
+            CLOSED | CLOSE_RETAINED => Err(MetaError::Closed),
             COLD => Err(MetaError::TheapMetaUnpublished),
             BOUND | READY => {
                 if !core::ptr::eq(
@@ -1837,8 +1914,11 @@ impl MetaAllocator {
     }
 
     fn enter(self: Pin<&'static Self>) -> Result<MetaEntry, MetaError> {
-        let thread = current_entry_thread()?;
         let this = self.get_ref();
+        if matches!(this.status.load(Ordering::Acquire), CLOSED | CLOSE_RETAINED) {
+            return Err(MetaError::Closed);
+        }
+        let thread = current_entry_thread()?;
         #[cfg(test)]
         this.test_entry_attempt_count.fetch_add(1, Ordering::Relaxed);
         if this.active_entry_thread.load(Ordering::Acquire) == thread {
@@ -1848,6 +1928,10 @@ impl MetaAllocator {
         if this.active_entry_thread.load(Ordering::Acquire) == thread {
             drop(guard);
             return Err(MetaError::RecursiveEntry);
+        }
+        if matches!(this.status.load(Ordering::Acquire), CLOSED | CLOSE_RETAINED) {
+            drop(guard);
+            return Err(MetaError::Closed);
         }
         this.active_entry_thread.store(thread, Ordering::Release);
         Ok(MetaEntry {
@@ -2731,6 +2815,56 @@ mod tests {
         assert!(unsafe { map.checked_lookup(pointer.as_ptr()) }.is_null());
         let after_release = process.subprocess().vm_statistics().snapshot();
         assert_eq!(before_release.committed_current - after_release.committed_current, committed as i64);
+    }
+
+    #[test]
+    fn process_metadata_terminal_close_seals_live_capabilities_and_retains_poison() {
+        let allocator = static_allocator();
+        let binding = process_binding_fixture(
+            allocator.test_default_subprocess(), incremental_process_options(false),
+        );
+        allocator.bind_process_backing(binding).unwrap();
+        let mut allocation = allocator.zalloc(config(),
+            DynamicThreadLocalBacking::allocation_size(1).unwrap()).unwrap();
+        assert!(allocation.dynamic_thread_local_backing_mut(1).is_some());
+        assert!(allocation.is_live());
+        let audit = allocator.test_allocation_audit();
+        // SAFETY: this isolated fixture has no thread or escaped typed view;
+        // its leaked backing and exact capability remain retained below.
+        unsafe { allocator.close_process_engine_quiescent() }.unwrap();
+        assert_eq!(allocator.status.load(Ordering::Acquire), CLOSED);
+        assert!(!allocation.is_live());
+        assert!(allocation.dynamic_thread_local_backing_mut(1).is_none());
+        assert!(matches!(allocator.zalloc(config(), 64), Err(MetaError::Closed)));
+        assert_eq!(allocator.free(&mut allocation), Err(MetaError::Closed));
+        assert_eq!(allocator.test_allocation_audit(), audit);
+        assert!(unsafe { (*allocator.process_backing.get()).is_none() });
+        assert_eq!(unsafe { allocator.close_process_engine_quiescent() },
+            Err(MetaCloseError::Entry(MetaError::Closed)));
+
+        let retained = static_allocator();
+        let binding = process_binding_fixture(
+            retained.test_default_subprocess(), incremental_process_options(false),
+        );
+        retained.bind_process_backing(binding).unwrap();
+        let capability = retained.zalloc(config(), 64).unwrap();
+        {
+            let mut entry = retained.enter().unwrap();
+            let MetadataPageAllocator::Process(engine) = entry.allocator() else { panic!("process"); };
+            engine.test_latch_metadata_commit_poison();
+        }
+        assert_eq!(unsafe { retained.close_process_engine_quiescent() },
+            Err(MetaCloseError::UnfinishedEngine));
+        assert_eq!(retained.status.load(Ordering::Acquire), CLOSE_RETAINED);
+        assert!(!capability.is_live());
+        assert!(unsafe { (*retained.process_backing.get()).is_some() });
+        // Only this isolated test inspects the terminal owner's retained slot.
+        // Production has no safe engine entry after CLOSE_RETAINED.
+        let MetadataPageAllocator::Process(engine) = (unsafe {
+            (*retained.allocator.get()).assume_init_ref()
+        }) else { panic!("exact process engine retained"); };
+        assert!(engine.test_metadata_commit_poison());
+        assert!(matches!(retained.zalloc(config(), 64), Err(MetaError::Closed)));
     }
 
     #[test]

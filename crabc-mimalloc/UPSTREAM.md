@@ -938,3 +938,22 @@ release, and PageMap root retirement remain required composition work.
 `src/arena.c:2640-2643` deliberately skips individual page destruction for a
 main Heap. This prerequisite does not implement `destroy_on_exit`, add a
 process-destruction caller, or change ordinary process-done retention.
+
+### Terminal process metadata engine ownership
+
+`MetaAllocator::close_process_engine_quiescent` is the Rust lifetime prerequisite
+between the source main-Heap Theap pass and `subproc.c:233-255` metadata publication,
+arena, and PageMap retirement. It permanently seals metadata entry and safe typed
+capability projections. `ProcessMetadataPageAllocator::retire_process_metadata_quiescent`
+ends only the engine's bootstrap/PageMap borrows; it does not revoke external
+references. Pending OS release, collection poison, or commit poison retains the
+exact complete engine in a terminal owner. Live metadata capabilities remain
+external obligations, and the pinned bootstrap retains its source page images.
+Direct OS pages are not described as released by the source main Heap's no-op
+page destruction or arena destruction.
+
+The focused regression exercises live capability sealing and complete engine
+retention on commit poison. This phase does not yet clear `theap_meta`, retire
+the separate Rust bootstrap Heap, merge source Heap statistics, remove source
+Heap bookkeeping, or invoke arena/PageMap release. It is not a completed
+`destroy_on_exit` caller; those ordering and source-list prerequisites remain.

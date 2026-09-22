@@ -2402,6 +2402,33 @@ pub(crate) type ProcessMetadataPageAllocator<'bootstrap, 'map> = PageAllocatorEn
     'static, 'map, ExclusiveTheapSession<'bootstrap>, crate::page_backing::ProcessMetadataPageBacking>;
 
 impl<'bootstrap, 'map> ProcessMetadataPageAllocator<'bootstrap, 'map> {
+    #[cfg(test)]
+    pub(crate) fn test_latch_metadata_commit_poison(&mut self) { self.page_commit_poison = true; }
+
+    #[cfg(test)]
+    pub(crate) fn test_metadata_commit_poison(&self) -> bool { self.page_commit_poison }
+
+    /// Ends only this engine's borrows before source process bulk teardown.
+    /// Exact unfinished OS-release/collection/commit ownership refuses the
+    /// transition and returns the entire engine unchanged.
+    ///
+    /// # Safety
+    /// The process is permanently quiescent, all allocation entry is sealed,
+    /// and the caller retains the pinned bootstrap source page images and
+    /// backing until the surrounding source destruction finishes. No external
+    /// reference is revoked by consuming this engine.
+    pub(crate) unsafe fn retire_process_metadata_quiescent(self) -> Result<(), Self> {
+        if self.pending_os_release.is_some() || self.collection_poison.is_some()
+            || self.page_commit_poison
+        {
+            return Err(self);
+        }
+        let (session, state) = self.into_session_and_state();
+        drop(state);
+        drop(session);
+        Ok(())
+    }
+
     /// Activates the already bound source process-main metadata Theap without
     /// reserving a private arena or constructing another PageMap.
     ///
