@@ -162,6 +162,18 @@ All three provider archives have SHA-256
 `d16a2f6a54ac65d3b736ed7a080c1357c86eb74ed484f6fb998bb178ef17914b`;
 28 focused tests pass on main. Later indirect accesses and the dynamic-tag
 scan remain open; this is still standalone, non-promoting evidence.
+The dynamic-tag slice is now integrated as `88e3037f` from clean preserved
+`596d62e2`. Its regression reproduces a guard-page fault against `487ebe33`
+before the fix; the bounded scan preserves `DT_NULL` and first-`DT_PLTGOT`
+behavior. Under `.work/worktrees/unwinder_resume/.work/x86_64/`, the dynamic
+receipt is `unwinder-dynamic-bounds-runs/run-st0m9jc7/receipt.json`; sibling
+header, decoded-frame, and cleanup receipts are in
+`unwinder-metadata-bounds-runs/run-339lgw2p`,
+`unwinder-eh-frame-bounds-runs/run-7kdxmnqd`, and
+`unwinder-cleanup-runs/run-xgavwmf_`. All four retain provider archive SHA-256
+`706049bd6512aa576920b65cc463ac9ae4bde9c93b6805515f00408fc33bfaad`.
+All 29 focused host tests pass on main. Later pointer-derived metadata and
+owned-runtime/DSO/build-std/LTO qualification remain open.
 
 Family admission machinery (`6110739d`) now reconstructs the existing matrix
 and native aggregate, all 9 capabilities / 149 spellings, actual ledger
