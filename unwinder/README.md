@@ -103,6 +103,30 @@ page. The check covers the target's one-byte entry range only. It does not
 validate a personality's ABI, an LSDA's contents, DWARF-expression memory
 reads, later CFI register loads, or loader mapping lifetime.
 
+`unwinder/frame_bounds.py` exercises CFI and DWARF-expression evaluation
+through the selected provider. Metadata register IDs must belong to the actual
+x86 context (integer registers 0–16, MXCSR and FCW); unsupported IDs, expression
+states and result kinds return a phase error instead of invoking a panic inside
+the unwinder. Expression slice errors also propagate. `DW_OP_addr` resumes
+with the relocated address itself; it does not dereference that address.
+`DW_OP_deref_size` reads exactly 1–8 specified bytes and zero-extends them for
+the little-endian target. Non-default address spaces and typed operations
+remain unsupported and return an error.
+
+The expression interpreter permits at most 4096 operations per expression.
+This finite bound supplements its existing 64-value stack and single-result
+storage, leaves room for compiler-generated CFI arithmetic, and prevents an
+unconditional backward branch from hanging an unwind phase. Exhaustion returns
+`gimli::Error::TooManyIterations` through the existing phase error path. The
+fixture checks invalid CFA/source/destination/expression registers, unsupported
+states/results, a backward loop, valid register arithmetic, an address pointing
+into a guard page without dereferencing it, and every 1–8-byte read width ending
+exactly at that page boundary. These corrections do **not** establish arbitrary
+address readability: CFI register restoration and expression memory reads still
+need a fault-contained memory owner, and LSDA parsing remains the consuming
+personality's responsibility. No broader malformed-metadata safety claim
+follows from this regression.
+
 ## Standalone cleanup regression
 
 Run the existing full cleanup fixture through the pinned native dispatcher:

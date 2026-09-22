@@ -31,6 +31,21 @@ use crate::abi::PersonalityRoutine;
 use crate::arch::*;
 use crate::util::*;
 
+// The selected x86 context stores integer registers 0..=16, MXCSR and FCW.
+// Validate metadata IDs before Index/IndexMut, whose upstream catch-all panics.
+fn validate_register(register: Register) -> Result<(), gimli::Error> {
+    match register {
+        Register(0..=16) | gimli::X86_64::MXCSR | gimli::X86_64::FCW => Ok(()),
+        _ => Err(gimli::Error::UnsupportedRegister(register.0 as u64)),
+    }
+}
+
+// Bound the interpreter independently of its existing fixed stack storage.
+// 4096 operations admits compiler CFI arithmetic with ample headroom while
+// ensuring a backward DW_OP_skip cannot hold an unwind phase indefinitely.
+// Exhaustion is gimli::Error::TooManyIterations, propagated as a phase error.
+const MAX_EXPRESSION_OPERATIONS: u32 = 4096;
+
 struct StoreOnStack;
 
 // gimli's MSRV doesn't allow const generics, so we need to pick a supported array size.
@@ -276,26 +291,48 @@ impl Frame {
         ctx: &Context,
         expr: UnwindExpression<usize>,
     ) -> Result<usize, gimli::Error> {
-        let expr = expr.get(&self.fde_result.eh_frame).unwrap();
+        let expr = expr.get(&self.fde_result.eh_frame)?;
         let mut eval =
             Evaluation::<_, StoreOnStack>::new_in(expr.0, self.fde_result.fde.cie().encoding());
+        eval.set_max_iterations(MAX_EXPRESSION_OPERATIONS);
         let mut result = eval.evaluate()?;
         loop {
             match result {
                 EvaluationResult::Complete => break,
-                EvaluationResult::RequiresMemory { address, .. } => {
-                    let value = unsafe { (address as usize as *const usize).read_unaligned() };
-                    result = eval.resume_with_memory(Value::Generic(value as _))?;
+                EvaluationResult::RequiresMemory { address, size, space, base_type } => {
+                    if space.is_some() || base_type.0 != 0 {
+                        return Err(gimli::Error::UnsupportedEvaluation);
+                    }
+                    // DW_OP_deref_size reads exactly its encoded width, not a
+                    // native word. Address readability remains a caller
+                    // obligation until a fault-contained memory owner exists.
+                    if !(1..=8).contains(&size) {
+                        return Err(gimli::Error::UnsupportedEvaluation);
+                    }
+                    let mut bytes = [0u8; 8];
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(
+                            address as *const u8,
+                            bytes.as_mut_ptr(),
+                            size as usize,
+                        );
+                    }
+                    result = eval.resume_with_memory(Value::Generic(u64::from_le_bytes(bytes)))?;
                 }
-                EvaluationResult::RequiresRegister { register, .. } => {
+                EvaluationResult::RequiresRegister { register, base_type } => {
+                    if base_type.0 != 0 {
+                        return Err(gimli::Error::UnsupportedEvaluation);
+                    }
+                    validate_register(register)?;
                     let value = ctx[register];
                     result = eval.resume_with_register(Value::Generic(value as _))?;
                 }
                 EvaluationResult::RequiresRelocatedAddress(address) => {
-                    let value = unsafe { (address as usize as *const usize).read_unaligned() };
-                    result = eval.resume_with_memory(Value::Generic(value as _))?;
+                    // ELF relocations have already been applied by the loader.
+                    // This operation pushes an address; it does not dereference it.
+                    result = eval.resume_with_relocated_address(address)?;
                 }
-                _ => unreachable!(),
+                _ => return Err(gimli::Error::UnsupportedEvaluation),
             }
         }
 
@@ -307,7 +344,7 @@ impl Frame {
                 .location
             {
                 Location::Address { address } => address as usize,
-                _ => unreachable!(),
+                _ => return Err(gimli::Error::UnsupportedEvaluation),
             },
         )
     }
@@ -332,6 +369,7 @@ impl Frame {
 
         let cfa = match *row.cfa() {
             CfaRule::RegisterAndOffset { register, offset } => {
+                validate_register(register)?;
                 ctx[register].wrapping_add(offset as usize)
             }
             CfaRule::Expression(expr) => self.evaluate_expression(ctx, expr)?,
@@ -341,6 +379,7 @@ impl Frame {
         new_ctx[Arch::RA] = 0;
 
         for (reg, rule) in row.registers() {
+            validate_register(*reg)?;
             let value = match *rule {
                 // For most registers, `Undefined` indicates the value does not need to
                 // be preserved so the value content does not matter. However when RA is
@@ -351,13 +390,16 @@ impl Frame {
                     *((cfa.wrapping_add(offset as usize)) as *const usize)
                 },
                 RegisterRule::ValOffset(offset) => cfa.wrapping_add(offset as usize),
-                RegisterRule::Register(r) => ctx[r],
+                RegisterRule::Register(r) => {
+                    validate_register(r)?;
+                    ctx[r]
+                },
                 RegisterRule::Expression(expr) => {
                     let addr = self.evaluate_expression(ctx, expr)?;
                     unsafe { *(addr as *const usize) }
                 }
                 RegisterRule::ValExpression(expr) => self.evaluate_expression(ctx, expr)?,
-                RegisterRule::Architectural => unreachable!(),
+                RegisterRule::Architectural => return Err(gimli::Error::UnsupportedEvaluation),
                 RegisterRule::Constant(value) => value as usize,
             };
             new_ctx[*reg] = value;
