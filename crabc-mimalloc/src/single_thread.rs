@@ -24,6 +24,7 @@
 // small partial-head collection, non-abandoning post-enqueue full-page collection,
 // full-page collection, free-page search, full-page retention,
 // retirement, forced retry, regular and huge page selection),
+// `src/theap.c:29-49,97-148` (forced OOM queue visitation and empty-page release),
 // `src/page-queue.c:64-121,126-423` (size-bin/direct-cache selection and
 // queue mutations), `src/arena.c:631-778,870-1037,950-1283` (heap-local arena-pages
 // selection, fresh regular/singleton metadata, arena-page registration,
@@ -35748,7 +35749,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
 
     /// The no-direct-cache half of `mi_find_page` plus
     /// `mi_malloc_generic_fallback`. A failed fresh claim is retried once
-    /// after forced retired-page collection, exactly at the generic OOM
+    /// after forced whole-Theap page collection, exactly at the generic OOM
     /// boundary; a non-huge queue is otherwise searched by its source bin.
     fn allocate_generic(&mut self, request: usize, zero: bool) -> Option<NonNull<u8>> {
         let bin = size_class::bin(request)?;
@@ -35788,7 +35789,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 Err(_) => return None,
                 Ok(None) => {}
             }
-            if attempt == 0 && !self.collect_retired(true) {
+            if attempt == 0 && !self.collect_all_pages_for_allocation_retry() {
                 return None;
             }
         }
@@ -37551,8 +37552,10 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
 
     /// Stores the only outstanding OS-aligned mapping release right.
     ///
-    /// Every creation path retries this slot before it can claim a second OS
-    /// mapping, so two pending owners are an internal-state impossibility.
+    /// Creation retries this slot before claiming another OS mapping.
+    /// Existing-page release checks it before detaching a second OS page;
+    /// batch collectors stop immediately after it fills. A later explicit
+    /// collection resumes the parked owner at its existing entry boundary.
     fn park_pending_os_release(&mut self, owner: OsAlignedPageOwner) {
         assert!(
             self.pending_os_release.is_none(),
@@ -37624,6 +37627,64 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// producer may race the detach or later queue transition through only
     /// its atomics; owner local fields and links use raw disjoint projections.
     pub(crate) fn collect_retired(&mut self, force: bool) -> bool {
+        self.collect_retired_pages(force)
+            && self.arena.collect(self.page_map.memory_config(), force, self.thread_sequence)
+    }
+
+    /// Source `page.c:mi_malloc_generic_fallback` retries OOM only after
+    /// `theap.c:mi_theap_page_collect(MI_FORCE)` visits every owned queue.
+    /// A last remote free does not retire its page: scanning only retired
+    /// bins cannot release that page's backing for an allocation in another
+    /// bin. Keep this page traversal distinct from ordinary retirement.
+    ///
+    /// This is the page/backing portion of `mi_theap_collect_ex(MI_FORCE)`;
+    /// generic deferred-callback administration and statistics registration
+    /// remain outside this engine. The retired prepass and all queue visits
+    /// precede the forced arena purge, matching the source release order.
+    fn collect_all_pages_for_allocation_retry(&mut self) -> bool {
+        if !self.collect_retired_pages(true) {
+            return false;
+        }
+        for bin in 0..=BIN_FULL {
+            let mut page = match self.session.queue(bin) {
+                Some(queue) => queue.first(),
+                None => return false,
+            };
+            while let Some(current) = NonNull::new(page) {
+                // SAFETY: this session owns the source queue links. Save the
+                // successor before collection can release the current page;
+                // concurrent clients can publish only to its remote atomics.
+                let next = unsafe { (*page).next() };
+                if let Err(error) = self.page_free_collect_force(current) {
+                    self.retain_page_collect_poison(current, error, None);
+                    return false;
+                }
+                // SAFETY: the current owner just completed remote and local
+                // collection. Zero use excludes every remaining legal client
+                // publisher before queue/map/metadata/backing release.
+                if unsafe { Page::owner_used_at(current) } == 0
+                    && !self.release_page(bin, page)
+                {
+                    // Release may have detached metadata already. Retain the
+                    // engine terminally without inspecting that page again.
+                    self.retain_page_collect_poison(current, PageCollectError::Lifecycle, None);
+                    return false;
+                }
+                // A successful semantic free can still retain its detached
+                // OS mapping after failed unmap. Stop without another release
+                // or allocation retry; the next page keeps all its ownership.
+                if self.pending_os_release.is_some() {
+                    return false;
+                }
+                page = next;
+            }
+        }
+        self.arena.collect(self.page_map.memory_config(), true, self.thread_sequence)
+    }
+
+    /// `_mi_theap_collect_retired` ends after the optional non-abandoning
+    /// full-queue scan. Its caller selects when to perform arena collection.
+    fn collect_retired_pages(&mut self, force: bool) -> bool {
         #[cfg(test)]
         if force {
             self.forced_collect_retired_call_count += 1;
@@ -37681,10 +37742,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 }
             }
         }
-        if !self.collect_full_pages_non_abandoning() {
-            return false;
-        }
-        self.arena.collect(self.page_map.memory_config(), force, self.thread_sequence)
+        self.collect_full_pages_non_abandoning()
     }
 
     /// Ports `mi_theap_collect_full_pages` for this explicitly
@@ -37719,6 +37777,12 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             if used != reserved {
                 if used == 0 {
                     if !self.release_page(BIN_FULL, page) {
+                        self.retain_page_collect_poison(page_nonnull, PageCollectError::Lifecycle, None);
+                        return false;
+                    }
+                    // As with the force visitor, preserve the one detached
+                    // OS release owner and leave the next page queue-linked.
+                    if self.pending_os_release.is_some() {
                         return false;
                     }
                 } else {
@@ -38857,6 +38921,13 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let Some(span) = self.release_span(page) else {
             return false;
         };
+        // A prior OS unmap failure already owns the sole pending slot. Do
+        // not detach another OS page or discard its PageMap/metadata while
+        // that owner exists. The current empty page remains fully linked for
+        // a later explicit collection after the pending release succeeds.
+        if matches!(&span, ReleaseSpan::Os(_)) && self.pending_os_release.is_some() {
+            return false;
+        }
         let queue = match self.session.queue_mut(bin) {
             Some(queue) => queue as *mut _,
             None => return false,
@@ -43462,6 +43533,180 @@ mod tests {
         fn assert_send<T: Send>() {}
 
         assert_send::<RemoteFreeProducer<'static>>();
+    }
+
+    #[test]
+    fn generic_forced_collection_preserves_live_clients_and_releases_empty_successors() {
+        for request in [SMALL_MAX_OBJ_SIZE, SMALL_MAX_OBJ_SIZE + 1] {
+            with_allocator(|allocator| {
+                let first = allocator.allocate(request, false).unwrap();
+                let first_page = NonNull::new(unsafe { allocator.page_for_block(first) }).unwrap();
+                let reserved = unsafe { first_page.as_ref().reserved() as usize };
+                let mut blocks = Vec::with_capacity(2 * reserved + 1);
+                blocks.push(first);
+                for _ in 1..(2 * reserved + 1) {
+                    blocks.push(allocator.allocate(request, false).unwrap());
+                }
+                // Retain one legal client; the remaining pages are remotely
+                // emptied while still queue members. All source successors must
+                // survive traversal even when their predecessor is released.
+                let survivor = blocks[0];
+                unsafe { survivor.as_ptr().write(0xa7) };
+                for block in blocks.into_iter().skip(1) {
+                    let producer = unsafe { allocator.begin_remote_free(block) }.unwrap();
+                    thread::scope(|scope| {
+                        assert!(scope.spawn(move || producer.publish()).join().unwrap().is_ok());
+                    });
+                }
+                assert!(allocator.collect_all_pages_for_allocation_retry());
+                assert_eq!(allocator.session.theap().page_count(), 1);
+                assert_eq!(unsafe { survivor.as_ptr().read() }, 0xa7);
+                assert_eq!(unsafe { first_page.as_ref().used() }, 1);
+                // Force collection appends local_free to the immediate list; the
+                // surviving page still supports ordinary allocation and release.
+                let reused = allocator.allocate(request, false).unwrap();
+                assert_eq!(unsafe { allocator.page_for_block(reused) }, first_page.as_ptr());
+                unsafe { allocator.free(reused).unwrap() };
+                unsafe { allocator.free(survivor).unwrap() };
+            });
+        }
+    }
+
+    #[test]
+    fn generic_forced_collection_stops_at_one_pending_os_release() {
+        let fault = fault::install(fault::Plan::disabled());
+        for request in [7, SMALL_MAX_OBJ_SIZE + 1] {
+            with_allocator(|allocator| {
+                let blocks = [
+                    allocator.allocate_aligned(request, 128 * KIB).unwrap(),
+                    allocator.allocate_aligned(request, 128 * KIB).unwrap(),
+                ];
+                let bin = if request == 7 { BIN_HUGE } else { BIN_FULL };
+                assert_eq!(allocator.queue_count(bin), Some(2));
+                for block in blocks {
+                    let page = NonNull::new(unsafe { allocator.page_for_block(block) }).unwrap();
+                    // The new force visitor supplies the singleton collection
+                    // route. Keep this exact source producer scoped and joined;
+                    // the older public preparation helper admits regular pages
+                    // only, so construct its atomic projection here explicitly.
+                    let producer = RemoteFreeProducer {
+                        producer: unsafe { Page::remote_free_producer_state_at(page) },
+                        canonical_block: unsafe {
+                            Page::canonical_remote_block_for_live_client_at(page, block)
+                        }.unwrap(),
+                        client_block: block,
+                        _owner: PhantomData,
+                        _not_sync: PhantomData,
+                    };
+                    thread::scope(|scope| {
+                        assert!(scope.spawn(move || producer.publish()).join().unwrap().is_ok());
+                    });
+                }
+                fault.set(fault::Plan::at_pair(
+                    fault::Point::Unmap, 1, fault::Point::Unmap, 1, Errno::NOMEM,
+                ));
+                assert!(!allocator.collect_all_pages_for_allocation_retry());
+                assert!(allocator.has_pending_os_release());
+                assert_eq!(fault.observed(), 1);
+                assert_eq!(fault.secondary_observed(), 0, "no second release or inline retry");
+                assert_eq!(allocator.queue_count(bin), Some(1));
+                assert_eq!(allocator.session.theap().page_count(), 1);
+                let remaining = allocator.session.queue(bin).unwrap().first();
+                assert!(!remaining.is_null());
+                assert_eq!(unsafe { (*remaining).used() }, 1);
+                assert_eq!(blocks.into_iter().filter(|block| {
+                    !unsafe { allocator.page_map.checked_lookup(block.as_ptr()) }.is_null()
+                }).count(), 1, "the next page retains its complete lookup and queue ownership");
+
+                // An explicit later collection resumes only the existing
+                // parked mapping owner. A repeated failure still leaves the
+                // next page linked; disabling the fault then drains both.
+                assert!(!allocator.collect_all_pages_for_allocation_retry());
+                assert_eq!(fault.secondary_observed(), 1);
+                assert_eq!(allocator.queue_count(bin), Some(1));
+                fault.set(fault::Plan::disabled());
+                assert!(allocator.collect_all_pages_for_allocation_retry());
+                assert!(!allocator.has_pending_os_release());
+                assert_eq!(allocator.session.theap().page_count(), 0);
+            });
+        }
+        with_allocator(|allocator| {
+            let first = allocator.allocate_aligned(7, 128 * KIB).unwrap();
+            let second = allocator.allocate_aligned(7, 128 * KIB).unwrap();
+            fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+            unsafe { allocator.free(first).unwrap() };
+            assert!(allocator.has_pending_os_release());
+            // A second legal local free cannot overwrite the detached owner
+            // either. Its block is consumed but its empty page stays linked
+            // and mapped, with a lifecycle error instead of a lost release.
+            assert_eq!(unsafe { allocator.free(second) }, Err(FreeError::Lifecycle));
+            assert_eq!(allocator.queue_count(BIN_HUGE), Some(1));
+            let page = unsafe { allocator.page_map.checked_lookup(second.as_ptr()) };
+            assert!(!page.is_null());
+            assert_eq!(unsafe { (*page).used() }, 0);
+            fault.set(fault::Plan::disabled());
+            assert!(allocator.collect_all_pages_for_allocation_retry());
+            assert!(!allocator.has_pending_os_release());
+            assert_eq!(allocator.session.theap().page_count(), 0);
+        });
+    }
+
+    #[test]
+    fn generic_forced_collection_failure_retains_the_owner_before_retry() {
+        with_allocator(|allocator| {
+            let block = allocator.allocate(32, false).unwrap();
+            allocator.inject_page_free_collect_failure_once();
+            assert!(!allocator.collect_all_pages_for_allocation_retry());
+            let retained = allocator.retained_page_collect_poison().unwrap();
+            assert_eq!(retained.error, PageCollectError::InjectedBeforeDetach);
+            assert!(allocator.allocate(64, false).is_none());
+            assert_eq!(unsafe { allocator.free(block) }, Err(FreeError::CollectionPoisoned));
+            assert!(!allocator.collect_all_pages_for_allocation_retry());
+            // Only this existing pre-detach test injection is recoverable;
+            // a real collection/release failure cannot clear its poison.
+            assert!(allocator.take_page_collect_poison_for_fixture_cleanup().is_some());
+            unsafe { allocator.free(block).unwrap() };
+        });
+    }
+
+    #[test]
+    fn generic_oom_retry_collects_remote_frees_across_regular_bins() {
+        with_allocator(|allocator| {
+            let block = allocator.allocate(32, false).unwrap();
+            let page = NonNull::new(unsafe { allocator.page_for_block(block) }).unwrap();
+            let old_bin = size_class::bin(32).unwrap();
+            assert_eq!(allocator.queue_count(old_bin), Some(1));
+            assert_eq!(unsafe { page.as_ref().retire_expire() }, 0);
+
+            // Reserve the remaining external arena as independent live backing
+            // claims. This models genuine resource exhaustion without a VM
+            // fault hook or a fixture-specific allocator allocation rule.
+            let mut pressure = Vec::new();
+            while let Some(claim) = allocator.arena.try_claim_suitable_slices(
+                ArenaId::none(), 1, true, 0,
+            ) {
+                pressure.push(claim);
+            }
+            assert!(!pressure.is_empty());
+            let producer = unsafe { allocator.begin_remote_free(block) }.unwrap();
+            thread::scope(|scope| {
+                assert!(scope.spawn(move || producer.publish()).join().unwrap().is_ok());
+            });
+            // The source page is not retired: only its remote head knows the
+            // last client has returned. A different bin cannot find it during
+            // its ordinary queue search or the retired-bin prepass.
+            assert_eq!(unsafe { page.as_ref().used() }, 1);
+            let replacement = allocator.allocate(64, false);
+            for claim in pressure {
+                assert!(claim.release());
+            }
+            let replacement = replacement.expect(
+                "the OOM retry must force-collect other regular bins before retrying fresh allocation",
+            );
+            assert_eq!(allocator.queue_count(old_bin), Some(0));
+            std::println!("oom_retry_released_remote_empty_other_bin=1");
+            unsafe { allocator.free(replacement).unwrap() };
+        });
     }
 
     #[test]

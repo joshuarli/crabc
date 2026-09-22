@@ -2957,3 +2957,27 @@ An entry cannot replace the exact pinned C implementation as a differential
 oracle or justify a runtime fallback. Accepted differences require the design,
 differential, and performance evidence specified in
 [`docs/design/allocator.md`](../../docs/design/allocator.md).
+
+### `CRABC-MI-FORCED-COLLECTION-OS-RELEASE-OWNER` — private failure-retention boundary
+
+Pinned `src/theap.c:mi_theap_collect_ex(MI_FORCE)` visits all owned queues
+before arena collection; `src/page.c:mi_malloc_generic_fallback` then retries
+allocation. `PageAllocatorEngine::collect_all_pages_for_allocation_retry`
+preserves that page/backing order. Generic callback administration and
+statistics merging are still separate incomplete behavior.
+
+Unlike C's void, best-effort OS free, Rust retains a failed mapping release in
+`pending_os_release`. Both the full-queue prepass and forced traversal stop
+immediately when this slot becomes occupied: the OOM allocation returns no
+block, and the next page retains its queue, PageMap, metadata, and remote head.
+`release_page` also rejects a second OS release before queue mutation while
+that owner exists. A later explicit collection retries the parked mapping
+through the existing entry boundary before visiting another page; a repeated
+failure preserves both owners. Ordinary arena operations retain their prior
+independent behavior. This is ownership-safety strengthening, not C unmap-error
+parity or a new inline unmap-retry algorithm.
+
+The focused regression
+`single_thread::tests::generic_forced_collection_stops_at_one_pending_os_release`
+covers two remotely emptied OS singletons in both huge and full queues, paired
+release failures, preservation of the next registered page, and explicit retry.

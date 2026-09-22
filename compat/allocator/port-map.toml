@@ -3723,5 +3723,17 @@ exported = false
 implemented = true
 unit_verified = true
 differential_verified = true
+[[unit]]
+upstream = "src/theap.c"
+source_region = "mi_theap_page_collect(MI_FORCE), mi_theap_visit_pages, and the page/backing phases of mi_theap_collect_ex (29-49,97-148), reached by src/page.c:mi_malloc_generic_fallback (1048-1059)"
+rust_module = "crabc_mimalloc::single_thread"
+rust_item = "PageAllocatorEngine::{collect_all_pages_for_allocation_retry,collect_retired_pages,allocate_generic_with_retry}"
+intentional_difference = "The generic OOM retry now visits every owned ordinary/full queue after the retired prepass, force-collects remote/local frees, releases every empty page through existing PageMap/metadata/backing ownership, and purges arenas only after that traversal. Failed collection or release retains the engine instead of retrying a partially mutated image. An OS unmap failure stops at the existing single pending owner; the next page remains linked until explicit later collection retries the parked mapping, as documented by CRABC-MI-FORCED-COLLECTION-OS-RELEASE-OWNER. This covers the page/backing transition only; generic deferred callback administration, public collection APIs, statistics merging, and full allocator qualification remain separate. Ordinary collect_retired callers retain their existing purge behavior. No additional page geometry or client routing restriction is introduced."
+tests = ["crabc-mimalloc/src/single_thread.rs", "compat/allocator/x86_64_oom_collect_oracle.c"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+>>>>>>> ab0ac52b (fix(allocator): force page collection before OOM retry)
 stress_verified = false
 performance_qualified = false
