@@ -15100,78 +15100,78 @@ impl<'attachment, 'main, 'arena, 'map>
     /// deferred-free phase and before it visits ordinary/full queues. It must
     /// force-release an already-empty, locally retired regular page before
     /// generic traversal decides whether a live page is released, retained,
-    /// or enters a process route. The shared-main later Theap is constructed
-    /// in the normal `allow_page_abandon` mode, so the source's non-abandoning
-    /// full-queue branch is unreachable here; running the generic
-    /// [`Self::collect_retired`] helper would incorrectly add its arena-purge
-    /// work to an `MI_ABANDON` transition.
+    /// or enters a process route. When the frozen Theap option image disables
+    /// abandonment, `page.c:_mi_theap_collect_retired` also performs its
+    /// `BIN_FULL` false-collection pass before the generic visitor. Running
+    /// the generic [`Self::collect_retired`] helper would incorrectly add its
+    /// arena-purge work to an `MI_ABANDON` transition.
     ///
     /// This is shared by the aggregate's validated registry and the all-free
-    /// drain. It visits only source-tracked regular bins and directly releases
-    /// an empty member; a caller retains its exact post-fast-slot owner if the
-    /// queue or release boundary is malformed or fails.
+    /// drain. It visits source-tracked regular bins, then the source
+    /// non-abandoning full queue when selected, and directly releases an empty
+    /// member; a caller retains its exact post-fast-slot owner if the queue or
+    /// release boundary is malformed or fails.
     fn collect_retired_before_thread_exit_page_traversal(
         &mut self,
     ) -> Result<(), ThreadExitRetiredPagePrepassError> {
-        debug_assert!(
-            self.session.theap().allows_page_abandon(),
-            "the shared-main later Theap has the source abandoning option image"
-        );
-
+        let allows_page_abandon = self.session.theap().allows_page_abandon();
         let (minimum, maximum) = self.session.retired_bounds();
         self.session.reset_retired_bounds();
-        if minimum >= BIN_FULL || minimum > maximum {
-            return Ok(());
-        }
-
-        for bin in minimum..=maximum {
-            let mut page = match self.session.queue(bin) {
-                Some(queue) => queue.first(),
-                None => return Err(ThreadExitRetiredPagePrepassError::Queue),
-            };
-            let mut visited = 0usize;
-            while !page.is_null() && visited < RETIRE_MAX_PAGES {
-                visited += 1;
-                let page_nonnull = match NonNull::new(page) {
-                    Some(page) => page,
+        if minimum < BIN_FULL && minimum <= maximum {
+            for bin in minimum..=maximum {
+                let mut page = match self.session.queue(bin) {
+                    Some(queue) => queue.first(),
                     None => return Err(ThreadExitRetiredPagePrepassError::Queue),
                 };
-                // SAFETY: the structural preflight retains exclusive queue
-                // ownership. Preserve the successor before source release can
-                // retire this page's metadata and arena span.
-                let next = unsafe { page_nonnull.as_ref().next() };
-                let expire = unsafe { page_nonnull.as_ref().retire_expire() };
-                if expire == 0 {
-                    break;
-                }
-                if unsafe { page_nonnull.as_ref().used() } == 0 {
-                    // `_mi_page_try_retire` decrements first, even when the
-                    // forced source branch immediately frees the page.
-                    // SAFETY: the drain exclusively owns this ordinary byte;
-                    // the raw setter avoids borrowing the complete live page.
-                    unsafe { Page::set_retire_expire_at(page_nonnull, expire - 1) };
-                    if !self.release_page(bin, page_nonnull.as_ptr()) {
-                        // `release_page` can fail after it has removed this
-                        // page from its queue and PageMap. The shared prepass
-                        // cannot expose a drain that might retry that
-                        // irreversible source transition through a later
-                        // aggregate or all-free continuation.
-                        self.retain_page_collect_poison(
-                            page_nonnull,
-                            PageCollectError::Lifecycle,
-                            None,
-                        );
-                        return Err(ThreadExitRetiredPagePrepassError::Release);
+                let mut visited = 0usize;
+                while !page.is_null() && visited < RETIRE_MAX_PAGES {
+                    visited += 1;
+                    let page_nonnull = match NonNull::new(page) {
+                        Some(page) => page,
+                        None => return Err(ThreadExitRetiredPagePrepassError::Queue),
+                    };
+                    // SAFETY: the structural preflight retains exclusive queue
+                    // ownership. Preserve the successor before source release can
+                    // retire this page's metadata and arena span.
+                    let next = unsafe { page_nonnull.as_ref().next() };
+                    let expire = unsafe { page_nonnull.as_ref().retire_expire() };
+                    if expire == 0 {
+                        break;
                     }
-                } else {
-                    // A page revived before this source pass is no longer
-                    // retired; the later normal traversal still validates and
-                    // abandons it as one live regular page.
-                    // SAFETY: same owner-only retirement-byte contract.
-                    unsafe { Page::set_retire_expire_at(page_nonnull, 0) };
+                    if unsafe { page_nonnull.as_ref().used() } == 0 {
+                        // `_mi_page_try_retire` decrements first, even when the
+                        // forced source branch immediately frees the page.
+                        // SAFETY: the drain exclusively owns this ordinary byte;
+                        // the raw setter avoids borrowing the complete live page.
+                        unsafe { Page::set_retire_expire_at(page_nonnull, expire - 1) };
+                        if !self.release_page(bin, page_nonnull.as_ptr()) {
+                            // `release_page` can fail after it has removed this
+                            // page from its queue and PageMap. The shared prepass
+                            // cannot expose a drain that might retry that
+                            // irreversible source transition through a later
+                            // aggregate or all-free continuation.
+                            self.retain_page_collect_poison(
+                                page_nonnull,
+                                PageCollectError::Lifecycle,
+                                None,
+                            );
+                            return Err(ThreadExitRetiredPagePrepassError::Release);
+                        }
+                    } else {
+                        // A page revived before this source pass is no longer
+                        // retired; the later normal traversal still validates and
+                        // abandons it as one live regular page.
+                        // SAFETY: same owner-only retirement-byte contract.
+                        unsafe { Page::set_retire_expire_at(page_nonnull, 0) };
+                    }
+                    page = next;
                 }
-                page = next;
             }
+        }
+        // `page.c:_mi_theap_collect_retired` enters this false-collection
+        // pass regardless of whether its retired-bin range was empty.
+        if !allows_page_abandon && !self.collect_full_pages_non_abandoning() {
+            return Err(ThreadExitRetiredPagePrepassError::Release);
         }
         Ok(())
     }
