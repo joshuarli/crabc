@@ -76,18 +76,19 @@ class DeferredFreeCallbackEvidenceTests(unittest.TestCase):
     def test_schema_pins_source_callback_and_private_boundary(self) -> None:
         schema = evidence.load_schema()
         self.assertEqual(schema, evidence.schema_template())
-        self.assertEqual(len(schema["source_anchors"]), 3)
-        self.assertEqual(schema["source_anchors"][0]["member"], "src/page.c")
-        self.assertEqual(schema["source_anchors"][0]["end_line"], 1117)
-        self.assertEqual(len(schema["trace"]["expected_values"]), 11)
-        self.assertTrue(schema["scope"]["registration_remains_crate_private"])
+        self.assertEqual(len(schema["source_anchors"]), 6)
+        self.assertEqual(schema["source_anchors"][0]["member"], "src/alloc.c")
+        self.assertEqual(schema["source_anchors"][0]["end_line"], 258)
+        self.assertEqual(len(schema["trace"]["expected_values"]), 15)
+        self.assertFalse(schema["scope"]["registration_remains_crate_private"])
+        self.assertTrue(schema["scope"]["runtime_registration_adapter_exposed"])
         self.assertFalse(schema["scope"]["emulation_accepted"])
 
     def test_schema_rejects_source_scope_and_trace_drift(self) -> None:
         mutations = (
             lambda value: value.update({"format": True}),
             lambda value: value["scope"].update({"public_mi_api_claimed": True}),
-            lambda value: value["source_anchors"][0].update({"end_line": 1116}),
+            lambda value: value["source_anchors"][0].update({"end_line": 257}),
             lambda value: value["trace"]["expected_values"].pop("trace.deferred_free.force_heartbeat_advanced"),
         )
         for mutate in mutations:
@@ -121,7 +122,7 @@ class DeferredFreeCallbackEvidenceTests(unittest.TestCase):
         report = self.complete_report()
         evidence.validate_report(report)
         weakened = copy.deepcopy(report)
-        weakened["scope"]["registration_remains_crate_private"] = False
+        weakened["scope"]["runtime_registration_adapter_exposed"] = False
         with self.assertRaises(evidence.EvidenceError):
             evidence.validate_report(weakened)
 

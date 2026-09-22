@@ -673,24 +673,36 @@ Those distinctions remain beneath one coordinator.
 The current bounded implementation connects that coordinator only for a
 later `NativePersistentThreadOwner` and its independently held process
 `PageMap`/arena pair. Its concrete path is
-`NativePersistentThreadOwner::teardown` through
-`MainHeapThreadOwnerLocalPageEngine::finish_after_collect_abandon` to
-`PageAllocatorEngine<MainHeapThreadPageDrainSession>::collect_abandon_owner_exit`.
-Before the coordinator receives its exclusive `Theap`,
-`MainHeapThreadOwnerExitDeferredFree` and `ProductionOwnerExitCallbacks` split
-out only the disjoint TLD deferred-free cursor, PageMap/arena facts, static-main
-Heap lease, and terminal scalar slots. They retain neither a whole engine nor a
-whole `Page`; while a live remote producer remains legal, page reads use raw
-owner-field or intrusive-link projections and may overlap only the producer's
-atomic subobject.
+`NativePersistentThreadOwner::begin_owner_exit_deferred_free_phase`, the
+caller-stack callback boundary, and
+`MainHeapThreadOwnerLocalPageEngine::finish_after_owner_exit_deferred_free_phase`
+to `PageAllocatorEngine<MainHeapThreadPageDrainSession>::collect_abandon_owner_exit`.
+Phase A clears the pinned fixed fast TLS slot and selects `_mi_deferred_free`.
+Phase B holds only the value callback token, runs outside every owner, engine,
+attachment, Theap, and TLD projection, and uses the existing allocator-operation
+admission boundary. Pinned `threadlocal.c` clears `mi_slot_fast`, not
+`_mi_theap_default`; therefore a legal nested allocation in Phase B uses the old
+still-live default Theap. Phase C revalidates the exact attachment generation
+before it forms the exclusive drain and begins retired/page collection.
+
+`ProductionOwnerExitCallbacks` begins only after Phase C. It contains
+PageMap/arena/Heap facts and terminal scalar slots, but no deferred-free cursor,
+whole engine, or whole `Page`; while a live remote producer remains legal, page
+reads use raw owner-field or intrusive-link projections and may overlap only the
+producer's atomic subobject. Its no-op deferred prepass is an explicit proof
+that the caller-stack callback already occupied that source position, rather
+than a second callback invocation under the coordinator's exclusive Theap
+borrow.
 
 The one-way wrapper makes failure ownership explicit:
 
-- `PreDrain(engine)` is retryable because attachment/root preflight failed
-  before fast-slot or owner-local state changed;
-- `RetainedTerminalEngine(engine)` retains the exact drained engine after a
-  queue, abandonment, or release transition may have changed state and may not
-  enter collection again; and
+- `PreDrain(engine)` is retryable before the fast-slot transition;
+- `DeferredFreePending(engine)` retains the exact engine from phase A through
+  phase C and refuses ordinary teardown or terminal transfer while the callback
+  lease is live;
+- `RetainedTerminalEngine(engine)` is fail-closed after an ownership or
+  collector transition may have changed state and may not enter collection
+  again; and
 - `AttachmentOnly` proves the page engine was consumed, leaving only the
   no-page attachment boundary retryable.
 

@@ -1,5 +1,5 @@
 {
-  "c_probe_sha256": "4da8f91be650928cf4ad85186d8ebf1fc9c725fbfcc817af06016e444de7ef55",
+  "c_probe_sha256": "2b86bbc724d38a3dad5ff67e8145c84a6b6ce98bb163347488bd3d16828a8bb5",
   "compile_definitions": [
     "-DMI_SHARED_LIB",
     "-DMI_SHARED_LIB_EXPORT",
@@ -22,7 +22,7 @@
   "rust_test": {
     "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
     "target_arch": "x86_64",
-    "test_filter": "runtime_lifecycle::tests::native_deferred_free_callback_trace_matches_pinned_generic_timing"
+    "test_filter": "runtime_lifecycle::tests::native_deferred_free_callback_trace_matches_pinned_generic_and_owner_exit_timing"
   },
   "schema": "crabc-mimalloc-x86_64-deferred-free-callback-evidence",
   "scope": {
@@ -33,10 +33,17 @@
     "public_crabc_support": false,
     "public_mi_api_claimed": false,
     "public_x86_libc_or_ldso_support": false,
-    "registration_remains_crate_private": true,
+    "registration_remains_crate_private": false,
+    "runtime_registration_adapter_exposed": true,
     "single_callback_context_and_one_same_thread_owner_only": true
   },
   "source_anchors": [
+    {
+      "end_line": 258,
+      "member": "src/alloc.c",
+      "sha256": "f7cf8091d585299a8a7e411d0a070416d490604a500fda8a7dbda309841b88ac",
+      "start_line": 256
+    },
     {
       "end_line": 1117,
       "member": "src/page.c",
@@ -48,6 +55,18 @@
       "member": "src/theap.c",
       "sha256": "c04f23536687d633723539e9ea53296c2c0e39db4cafb3e20ef491c41ccc5807",
       "start_line": 89
+    },
+    {
+      "end_line": 480,
+      "member": "src/init.c",
+      "sha256": "0b3c815bfa1e9098204924adbaa9afccca4ae1089f409421d986fd8d69132d5b",
+      "start_line": 377
+    },
+    {
+      "end_line": 214,
+      "member": "src/threadlocal.c",
+      "sha256": "f15d366c5bf21e176e97e68da940447dd55a4966c5787874c7e3f130c4e329c1",
+      "start_line": 205
     },
     {
       "end_line": 44,
@@ -66,7 +85,7 @@
     "begin": "CRABC_MI_DEFERRED_FREE_TRACE_BEGIN",
     "end": "CRABC_MI_DEFERRED_FREE_TRACE_END",
     "expected_values": {
-      "trace.deferred_free.callback_count": 11,
+      "trace.deferred_free.callback_count": 12,
       "trace.deferred_free.context_matches": 1,
       "trace.deferred_free.first_heartbeat": 1,
       "trace.deferred_free.force_callbacks": 1,
@@ -76,7 +95,11 @@
       "trace.deferred_free.mini_callbacks": 9,
       "trace.deferred_free.nested_allocation_completed": 1,
       "trace.deferred_free.nested_heartbeat": 2,
-      "trace.deferred_free.nested_reentry_suppressed": 1
+      "trace.deferred_free.nested_reentry_suppressed": 1,
+      "trace.deferred_free.owner_exit_callback_count": 1,
+      "trace.deferred_free.owner_exit_default_identity_preserved": 1,
+      "trace.deferred_free.owner_exit_force": 1,
+      "trace.deferred_free.owner_exit_nested_allocation_completed": 1
     }
   },
   "upstream": {

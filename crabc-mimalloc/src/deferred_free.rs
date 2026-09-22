@@ -370,9 +370,10 @@ impl DeferredFreeTestObserver {
 
 /// Runs `_mi_deferred_free` with one attachment-local observer.
 ///
-/// This is test-only because the current native engine has not yet established
-/// the public, whole-process callback registration and allocator re-entry
-/// contract. It preserves the source heartbeat and recursion ordering exactly.
+/// This remains test-only because it bypasses the normal caller-stack A/B/C
+/// continuation. The doc-hidden native registration adapter uses that
+/// continuation for allocator re-entry; this observer preserves only a local
+/// heartbeat/recursion ordering probe.
 #[cfg(test)]
 pub(crate) fn collect_with_test_observer(
     mut theap: NonNull<Theap>,

@@ -6880,6 +6880,12 @@ struct NativePersistentThreadOwner {
 /// raw pointer capability.
 enum NativePersistentThreadOwnerExitState {
     PreDrain(MainHeapThreadOwnerLocalPageEngine<'static>),
+    /// Phase A cleared the fixed fast root and selected the source
+    /// deferred-free boundary, but its foreign callback has not yet returned
+    /// through phase C. The engine remains in this owner so the pinned
+    /// callback may allocate through the still-live default Theap; terminal
+    /// transfer and ordinary teardown must retain it.
+    DeferredFreePending(MainHeapThreadOwnerLocalPageEngine<'static>),
     RetainedTerminalEngine(MainHeapThreadOwnerLocalPageEngine<'static>),
     AttachmentOnly,
 }
@@ -6911,6 +6917,15 @@ enum NativeDeferredFreeAllocationPhase {
         collection: GenericAllocationCollection,
         continuation: DeferredFreeAllocationContinuation,
     },
+}
+
+/// One source `_mi_theap_collect_abandon` callback boundary.  Its call holds
+/// only the recurse token and, when selected, the attachment generation; the
+/// persistent owner keeps the page engine in `DeferredFreePending` until the
+/// caller-stack phase C revalidates that identity.
+#[must_use = "an owner-exit deferred-free call must be invoked and resumed"]
+enum NativeOwnerExitDeferredFreePhase {
+    Call(crate::main_heap_thread::MainHeapThreadDeferredFreeCall),
 }
 
 impl NativePersistentThreadOwner {
@@ -6948,7 +6963,8 @@ impl NativePersistentThreadOwner {
         operation: impl FnOnce(&mut MainHeapThreadOwnerLocalAllocator<'_>) -> R,
     ) -> Result<R, NativePersistentThreadOwnerLocalAccessError> {
         let engine = match &mut self.state {
-            NativePersistentThreadOwnerExitState::PreDrain(engine) => engine,
+            NativePersistentThreadOwnerExitState::PreDrain(engine)
+            | NativePersistentThreadOwnerExitState::DeferredFreePending(engine) => engine,
             NativePersistentThreadOwnerExitState::AttachmentOnly => {
                 return Err(NativePersistentThreadOwnerLocalAccessError::AttachmentOnly);
             }
@@ -7040,6 +7056,118 @@ impl NativePersistentThreadOwner {
         }
     }
 
+    /// Starts the owner-exit source callback prefix after clearing only the
+    /// fixed fast root. The returned phase contains no owner, engine,
+    /// attachment, Theap, or TLD borrow, while this owner retains the exact
+    /// engine in `DeferredFreePending` for legal callback allocation.
+    fn begin_owner_exit_deferred_free_phase(
+        &mut self,
+        pair: Option<ProcessPageBackingLease>,
+    ) -> Result<NativeOwnerExitDeferredFreePhase, ()> {
+        // `_mi_thread_done` invokes `_mi_theap_collect_abandon` even when the
+        // attached source has not allocated a page. Materialize the existing
+        // Rust page engine while the normal fast root is still live, so a
+        // selected exit callback can allocate through the same default Theap
+        // after phase A clears that root. This creates no second Theap or
+        // alternate default owner.
+        if matches!(&self.state, NativePersistentThreadOwnerExitState::AttachmentOnly) {
+            let Some(pair) = pair else {
+                return Err(());
+            };
+            if self.activate_page_engine(pair).is_err() {
+                return Err(());
+            }
+        }
+        let state = core::mem::replace(
+            &mut self.state,
+            NativePersistentThreadOwnerExitState::AttachmentOnly,
+        );
+        let NativePersistentThreadOwnerExitState::PreDrain(mut engine) = state else {
+            self.state = state;
+            return Err(());
+        };
+        match engine.begin_owner_exit_deferred_free_phase(&mut self.attachment) {
+            Ok(call) => {
+                self.state = NativePersistentThreadOwnerExitState::DeferredFreePending(engine);
+                Ok(NativeOwnerExitDeferredFreePhase::Call(call))
+            }
+            Err(_) => {
+                // The lower phase marks an error after fast-slot removal
+                // terminal. A preflight failure before that boundary is also
+                // retained here because the enclosing native destructor can
+                // no longer safely proceed through another owner cell entry.
+                self.state = NativePersistentThreadOwnerExitState::RetainedTerminalEngine(engine);
+                Err(())
+            }
+        }
+    }
+
+    /// Re-enters the pending owner only after its caller-stack callback has
+    /// returned. It consumes the matching attachment lease before it forms
+    /// the non-allocating drain and preserves the existing terminal failure
+    /// variants for every collector error.
+    fn resume_owner_exit_deferred_free_phase(
+        &mut self,
+        lease: Option<crate::main_heap_thread::MainHeapThreadDeferredFreeCallbackLease>,
+    ) -> Result<(), ()> {
+        let state = core::mem::replace(
+            &mut self.state,
+            NativePersistentThreadOwnerExitState::AttachmentOnly,
+        );
+        let NativePersistentThreadOwnerExitState::DeferredFreePending(engine) = state else {
+            self.state = state;
+            return Err(());
+        };
+        if let Some(lease) = lease {
+            if self.attachment.complete_deferred_free_callback(lease).is_err() {
+                self.state = NativePersistentThreadOwnerExitState::RetainedTerminalEngine(engine);
+                return Err(());
+            }
+        }
+        match engine.finish_after_owner_exit_deferred_free_phase(&mut self.attachment) {
+            Ok(()) => {
+                self.state = NativePersistentThreadOwnerExitState::AttachmentOnly;
+                Ok(())
+            }
+            Err(
+                crate::main_heap_page::MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure::AttachmentOnly,
+            ) => {
+                self.state = NativePersistentThreadOwnerExitState::AttachmentOnly;
+                Err(())
+            }
+            Err(
+                crate::main_heap_page::MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure::PreDrain(
+                    engine,
+                ),
+            ) => {
+                self.state = NativePersistentThreadOwnerExitState::PreDrain(engine);
+                Err(())
+            }
+            Err(
+                crate::main_heap_page::MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure::RetainedTerminalEngine(
+                    engine,
+                ),
+            ) => {
+                self.state = NativePersistentThreadOwnerExitState::RetainedTerminalEngine(engine);
+                Err(())
+            }
+        }
+    }
+
+    /// Drops the persistent owner shell only after owner-exit phase C reached
+    /// the attachment's final source teardown.  A pending, retained, or
+    /// merely attachment-only owner still needs its ordinary terminal path
+    /// and must not be mistaken for this completed split transition.
+    fn teardown_after_owner_exit_deferred_free_phase(&mut self) -> Result<(), ()> {
+        if matches!(&self.state, NativePersistentThreadOwnerExitState::AttachmentOnly)
+            && self.attachment.is_torn_down_after_owner_exit()
+        {
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+
     /// Completes source collect-abandon then the final attachment boundary.
     ///
     /// Only `PreDrain` may enter the source queue traversal. A terminal
@@ -7080,6 +7208,13 @@ impl NativePersistentThreadOwner {
                 self.state = NativePersistentThreadOwnerExitState::RetainedTerminalEngine(engine);
                 return Err(());
             }
+            NativePersistentThreadOwnerExitState::DeferredFreePending(engine) => {
+                // A callback can still allocate through this exact default
+                // Theap. No teardown, process-done transfer, or second drain
+                // may consume it until its caller-stack phase C returns.
+                self.state = NativePersistentThreadOwnerExitState::DeferredFreePending(engine);
+                return Err(());
+            }
             NativePersistentThreadOwnerExitState::AttachmentOnly => {}
         }
 
@@ -7115,7 +7250,8 @@ impl NativePersistentThreadOwner {
             NativePersistentThreadOwnerExitState::AttachmentOnly => {
                 self.attachment.permits_process_done_source_retention()
             }
-            NativePersistentThreadOwnerExitState::RetainedTerminalEngine(_) => false,
+            NativePersistentThreadOwnerExitState::DeferredFreePending(_)
+            | NativePersistentThreadOwnerExitState::RetainedTerminalEngine(_) => false,
         }
     }
 
@@ -7143,7 +7279,8 @@ impl NativePersistentThreadOwner {
         match &self.state {
             NativePersistentThreadOwnerExitState::AttachmentOnly => {}
             NativePersistentThreadOwnerExitState::PreDrain(_) => return Ok(()),
-            NativePersistentThreadOwnerExitState::RetainedTerminalEngine(_) => {
+            NativePersistentThreadOwnerExitState::DeferredFreePending(_)
+            | NativePersistentThreadOwnerExitState::RetainedTerminalEngine(_) => {
                 return Err(MainHeapThreadOwnerLocalPageEngineBeginError::Attachment(
                     MainHeapThreadAttachmentError::OwnerLocalPageEngineTerminal,
                 ));
@@ -15539,6 +15676,117 @@ pub fn retain_current_thread_native_owner_after_process_done_nonfinal() -> bool 
         }
     }
 }
+/// Source-compatible callback type for the doc-hidden native runtime boundary.
+///
+/// It is the direct Rust representation of pinned
+/// `mi_deferred_free_fun(bool, unsigned long long, void*)`. The callback may
+/// allocate and free through the selected native runtime, but it must not
+/// unwind through this C ABI or consume an allocation retained by an enclosing
+/// realloc operation.
+pub type NativeDeferredFreeCallback = unsafe extern "C" fn(bool, u64, *mut core::ffi::c_void);
+
+/// Registers the one process deferred-free callback used by the native runtime.
+///
+/// This is a documentation-hidden libc friend boundary, not a public allocator
+/// C ABI. It writes the same source registration pair as
+/// `mi_register_deferred_free`: context Release before callback Release; each
+/// source invocation advances its Theap heartbeat before Acquire-loading the
+/// pair. Normal initial allocation, later allocation, and normal later owner
+/// exit all use caller-stack A/B/C continuations before they invoke a non-null
+/// callback.
+///
+/// # Safety
+///
+/// `callback`, if present, and every object reachable through `context` must
+/// remain valid until every in-flight source callback that could have
+/// Acquire-loaded this or an earlier registration has returned. Replacing or
+/// clearing this pair does not recall a copied callback token. The caller must
+/// serialize registration replacement with any destruction of either old
+/// callback/context object and must not let the callback unwind across the C
+/// ABI. A callback may allocate or free normally; it must not free, reallocate,
+/// or otherwise consume an allocation retained by an enclosing native realloc.
+/// The caller also supplies the process-level policy for concurrent callback
+/// registration, exactly as the pinned process-global API does.
+#[doc(hidden)]
+pub unsafe fn register_native_deferred_free_callback(
+    callback: Option<NativeDeferredFreeCallback>,
+    context: *mut core::ffi::c_void,
+) {
+    // SAFETY: this friend boundary forwards its explicit source callback and
+    // lifetime contract unchanged to the process-global source storage.
+    unsafe { crate::deferred_free::register_process_callback(callback, context) };
+}
+
+/// Starts the source owner-exit deferred-free phase through one short owner
+/// cell projection. The returned value holds no owner, engine, attachment,
+/// Theap, or TLD borrow; the exact engine remains parked in the cell's
+/// `DeferredFreePending` state for legal callback reentry.
+fn begin_current_thread_native_owner_exit_deferred_free_phase(
+) -> Result<NativeOwnerExitDeferredFreePhase, NativePersistentThreadOwnerAccessError> {
+    // A page-bearing owner already carries its engine and needs no backing
+    // lease.  The lazy no-page case consumes this only before phase A clears
+    // the fast root, so failure to obtain it remains fail-closed without
+    // asking a post-clear callback to manufacture a new default Theap.
+    let pair = current_native_process_page_backing();
+    match with_current_thread_native_persistent_owner(|owner| {
+        owner.begin_owner_exit_deferred_free_phase(pair)
+    }) {
+        Ok(Ok(phase)) => Ok(phase),
+        Ok(Err(())) | Err(_) => {
+            retain_current_thread_native_persistent_owner_for_teardown();
+            Err(NativePersistentThreadOwnerAccessError::Retained)
+        }
+    }
+}
+
+/// Re-enters the exact pending owner after the foreign callback returned and
+/// validates its source generation before it forms the page-drain collector.
+fn resume_current_thread_native_owner_exit_deferred_free_phase(
+    lease: Option<crate::main_heap_thread::MainHeapThreadDeferredFreeCallbackLease>,
+) -> Result<(), NativePersistentThreadOwnerAccessError> {
+    match with_current_thread_native_persistent_owner(|owner| {
+        owner.resume_owner_exit_deferred_free_phase(lease)
+    }) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(())) | Err(_) => {
+            retain_current_thread_native_persistent_owner_for_teardown();
+            Err(NativePersistentThreadOwnerAccessError::Retained)
+        }
+    }
+}
+
+/// Delivers the owner-exit `_mi_deferred_free` callback after phase A returned
+/// its owner cell to idle, then resumes source collection through phase C.
+/// The same descriptor/fork boundary used by allocation suspends the outer
+/// operation around user code; a failed boundary retains the pending owner
+/// and deliberately never starts the collector.
+fn run_current_thread_native_owner_exit_deferred_free_phase(
+    phase: NativeOwnerExitDeferredFreePhase,
+) -> Result<(), NativePersistentThreadOwnerAccessError> {
+    let NativeOwnerExitDeferredFreePhase::Call(call) = phase;
+    let invokes_user_callback = call.invokes_user_callback();
+    let Some(Ok((_heartbeat, lease))) = invoke_deferred_free_callback_after_fork_admission(
+        invokes_user_callback,
+        || {
+            if invokes_user_callback {
+                // SAFETY: phase A ended every attachment/engine/TLD
+                // projection. The pending owner remains only as a cell value;
+                // legal nested allocation enters it through a fresh guarded
+                // operation and the exact recurse generation.
+                unsafe {
+                    with_native_allocator_callback_boundary(|| unsafe { call.invoke() })
+                }
+            } else {
+                Ok(unsafe { call.invoke() })
+            }
+        },
+    ) else {
+        retain_current_thread_native_persistent_owner_for_teardown();
+        return Err(NativePersistentThreadOwnerAccessError::Retained);
+    };
+    resume_current_thread_native_owner_exit_deferred_free_phase(lease)
+}
+
 /// Consumes the continuously stored native owner at the source destructor
 /// boundary. No client ledger participates: the lower engine follows source
 /// collect-abandon, releasing all-free pages and abandoning surviving live
@@ -15549,8 +15797,19 @@ pub fn retain_current_thread_native_owner_after_process_done_nonfinal() -> bool 
 /// retained payload cannot become a normal thread-return result.
 fn finish_current_thread_native_persistent_owner_after_user_destructors(
 ) -> ThreadFinishResult {
-    let teardown = current_thread_native_persistent_owner_cell()
-        .teardown(|mut owner| owner.as_mut().get_mut().teardown());
+    let phase = match begin_current_thread_native_owner_exit_deferred_free_phase() {
+        Ok(phase) => phase,
+        Err(_) => fail_stop_with_current_thread_native_owner(),
+    };
+    if run_current_thread_native_owner_exit_deferred_free_phase(phase).is_err() {
+        fail_stop_with_current_thread_native_owner();
+    }
+    let teardown = current_thread_native_persistent_owner_cell().teardown(|mut owner| {
+        owner
+            .as_mut()
+            .get_mut()
+            .teardown_after_owner_exit_deferred_free_phase()
+    });
     match teardown {
         Ok(()) => {}
         Err(
@@ -16541,7 +16800,14 @@ mod tests {
             }
             operation(cell.as_ref());
             cell.as_ref()
-                .teardown(|owner| owner.get_mut().teardown())
+                .teardown(|owner| {
+                    let owner = owner.get_mut();
+                    if owner.teardown_after_owner_exit_deferred_free_phase().is_ok() {
+                        Ok(())
+                    } else {
+                        owner.teardown()
+                    }
+                })
                 .expect("the fixture releases every page before cell teardown");
         });
     }
@@ -16613,7 +16879,7 @@ mod tests {
         // only updates static atomics, so every concurrent source invocation
         // remains valid until the test unregisters it below.
         unsafe {
-            crate::deferred_free::register_process_callback(
+            crate::__crabc_runtime::register_native_deferred_free_callback(
                 Some(observe_native_deferred_free_callback),
                 core::ptr::null_mut(),
             )
@@ -16689,7 +16955,7 @@ mod tests {
         // every invocation. Clearing the process slot after the focused
         // fixture leaves unrelated tests with the source default null pair.
         unsafe {
-            crate::deferred_free::register_process_callback(None, core::ptr::null_mut())
+            crate::__crabc_runtime::register_native_deferred_free_callback(None, core::ptr::null_mut())
         };
     }
 
@@ -16703,7 +16969,7 @@ mod tests {
             // for the complete synchronous process-registration interval.
             unsafe { NATIVE_DEFERRED_FREE_TEST_THREAD_ACTIVE = true };
             unsafe {
-                crate::deferred_free::register_process_callback(
+                crate::__crabc_runtime::register_native_deferred_free_callback(
                     Some(observe_native_deferred_free_callback),
                     core::ptr::null_mut(),
                 )
@@ -16783,7 +17049,7 @@ mod tests {
             // callback lease as a permanent allocator or teardown refusal.
             fault.set(fault::Plan::disabled());
             unsafe {
-                crate::deferred_free::register_process_callback(None, core::ptr::null_mut())
+                crate::__crabc_runtime::register_native_deferred_free_callback(None, core::ptr::null_mut())
             };
             let NativeInitialDeferredFreeAllocationPhase::Complete(Some(block)) = owner
                 .begin_deferred_free_aligned_allocation(16, 16, false)
@@ -16806,9 +17072,13 @@ mod tests {
         nested_heartbeat: AtomicUsize,
         last_heartbeat: AtomicUsize,
         force_callback_count: AtomicUsize,
-        cell: *const crate::thread_local::PersistentCompilerTlsOwnerCell<
-            NativePersistentThreadOwner,
-        >,
+        owner_exit_phase: AtomicUsize,
+        owner_exit_callback_count: AtomicUsize,
+        owner_exit_force: AtomicUsize,
+        owner_exit_nested_allocation_completed: AtomicUsize,
+        owner_exit_default_theap: AtomicUsize,
+        owner_exit_default_identity_preserved: AtomicUsize,
+        cell: *const crate::thread_local::PersistentCompilerTlsOwnerCell<NativePersistentThreadOwner>,
     }
 
     unsafe extern "C" fn observe_native_deferred_free_trace_callback(
@@ -16830,6 +17100,31 @@ mod tests {
             )),
             Ordering::Release,
         );
+        if observation.owner_exit_phase.load(Ordering::Acquire) != 0 {
+            // Phase A of `_mi_thread_done` has cleared only the fixed fast
+            // slot. The default Theap is still the old attached source owner
+            // until phase C completes the source traversal, so this normal
+            // callback allocation must enter that same pending engine.
+            let cell = unsafe { core::pin::Pin::new_unchecked(&*observation.cell) };
+            let (nested, nested_collection) =
+                run_native_deferred_free_fixture_allocation(cell, 16);
+            let nested_completed = nested_collection.is_none()
+                && nested.is_some_and(|block| free_native_deferred_free_fixture_block(cell, block));
+            observation.owner_exit_callback_count.fetch_add(1, Ordering::AcqRel);
+            observation.owner_exit_force.store(usize::from(force), Ordering::Release);
+            observation.owner_exit_nested_allocation_completed.store(
+                usize::from(nested_completed),
+                Ordering::Release,
+            );
+            observation.owner_exit_default_identity_preserved.store(
+                usize::from(
+                    default_theap().as_ptr() as usize
+                        == observation.owner_exit_default_theap.load(Ordering::Acquire),
+                ),
+                Ordering::Release,
+            );
+            return;
+        }
         if callback_index == 0 {
             observation
                 .first_heartbeat
@@ -16885,7 +17180,7 @@ mod tests {
     }
 
     #[test]
-    fn native_deferred_free_callback_trace_matches_pinned_generic_timing() {
+    fn native_deferred_free_callback_trace_matches_pinned_generic_and_owner_exit_timing() {
         let _registration_guard = NATIVE_DEFERRED_FREE_CALLBACK_LOCK.lock().expect(
             "deferred-free registration tests serialize the process callback lifetime",
         );
@@ -16915,13 +17210,19 @@ mod tests {
                 nested_heartbeat: AtomicUsize::new(0),
                 last_heartbeat: AtomicUsize::new(0),
                 force_callback_count: AtomicUsize::new(0),
+                owner_exit_phase: AtomicUsize::new(0),
+                owner_exit_callback_count: AtomicUsize::new(0),
+                owner_exit_force: AtomicUsize::new(0),
+                owner_exit_nested_allocation_completed: AtomicUsize::new(0),
+                owner_exit_default_theap: AtomicUsize::new(0),
+                owner_exit_default_identity_preserved: AtomicUsize::new(0),
                 cell: cell.get_ref(),
             };
             // SAFETY: the static function and stack observation remain valid
             // through all selected callbacks, and the mutex excludes another
             // test from replacing the process registration meanwhile.
             unsafe {
-                crate::deferred_free::register_process_callback(
+                crate::__crabc_runtime::register_native_deferred_free_callback(
                     Some(observe_native_deferred_free_trace_callback),
                     core::ptr::from_ref(&observation).cast_mut().cast(),
                 )
@@ -16980,13 +17281,47 @@ mod tests {
             .expect("phase C reacquires the force source owner")
             .expect("the forced callback returns to its matching attachment");
 
+            // The source `mi_thread_done` transition first clears its fast
+            // root, then force-collects this same default Theap before it
+            // resets default/cached roots. Run that actual A/B/C prefix with
+            // the persistent cell idle during B; the callback's ordinary
+            // nested allocation must reenter only the matching pending owner.
+            observation.owner_exit_default_theap.store(
+                default_theap().as_ptr() as usize,
+                Ordering::Release,
+            );
+            observation.owner_exit_phase.store(1, Ordering::Release);
+            let exit_phase = cell
+                .with_owner(|owner| {
+                    owner
+                        .get_mut()
+                        .begin_owner_exit_deferred_free_phase(None)
+                })
+                .expect("owner-exit phase A returns the cell to idle")
+                .expect("the fixture's pre-existing engine needs no new backing lease");
+            let NativeOwnerExitDeferredFreePhase::Call(exit_call) = exit_phase;
+            // SAFETY: phase A has returned the owner cell and every engine,
+            // attachment, TLD, and Theap projection before this source user
+            // callback. The phase-C lease is value-only.
+            let (_exit_heartbeat, exit_lease) = unsafe { exit_call.invoke() };
+            cell.with_owner(|owner| {
+                owner
+                    .get_mut()
+                    .resume_owner_exit_deferred_free_phase(exit_lease)
+            })
+            .expect("owner-exit phase C reopens the exact pending cell")
+            .expect("owner-exit collection finishes after its callback returned");
+
             // SAFETY: every selected callback has returned and this test owns
             // the registration mutex, so clearing the source pair cannot race
             // a future invocation.
             unsafe {
-                crate::deferred_free::register_process_callback(None, core::ptr::null_mut())
+                crate::__crabc_runtime::register_native_deferred_free_callback(None, core::ptr::null_mut())
             };
-            assert!(free_native_deferred_free_fixture_block(cell, anchor));
+            // `mi_thread_done` abandons the still-live direct-small anchor
+            // during phase C. Its former client address must not be released
+            // through the old owner after source cleared its roots.
+            let _ = anchor;
 
             let trace = [
                 ("trace.deferred_free.context_matches", observation.context_matches.load(Ordering::Acquire)),
@@ -16999,6 +17334,10 @@ mod tests {
                 ("trace.deferred_free.full_heartbeat", 11),
                 ("trace.deferred_free.force_callbacks", observation.force_callback_count.load(Ordering::Acquire)),
                 ("trace.deferred_free.force_heartbeat_advanced", 1),
+                ("trace.deferred_free.owner_exit_callback_count", observation.owner_exit_callback_count.load(Ordering::Acquire)),
+                ("trace.deferred_free.owner_exit_force", observation.owner_exit_force.load(Ordering::Acquire)),
+                ("trace.deferred_free.owner_exit_nested_allocation_completed", observation.owner_exit_nested_allocation_completed.load(Ordering::Acquire)),
+                ("trace.deferred_free.owner_exit_default_identity_preserved", observation.owner_exit_default_identity_preserved.load(Ordering::Acquire)),
                 ("trace.deferred_free.callback_count", observation.callback_count.load(Ordering::Acquire)),
             ];
             assert_eq!(trace, [
@@ -17012,7 +17351,11 @@ mod tests {
                 ("trace.deferred_free.full_heartbeat", 11),
                 ("trace.deferred_free.force_callbacks", 1),
                 ("trace.deferred_free.force_heartbeat_advanced", 1),
-                ("trace.deferred_free.callback_count", 11),
+                ("trace.deferred_free.owner_exit_callback_count", 1),
+                ("trace.deferred_free.owner_exit_force", 1),
+                ("trace.deferred_free.owner_exit_nested_allocation_completed", 1),
+                ("trace.deferred_free.owner_exit_default_identity_preserved", 1),
+                ("trace.deferred_free.callback_count", 12),
             ]);
             std::println!("CRABC_MI_DEFERRED_FREE_TRACE_BEGIN");
             for (name, value) in trace {
@@ -17024,7 +17367,7 @@ mod tests {
 
     #[test]
     #[cfg(target_arch = "x86_64")]
-    fn native_deferred_free_callback_boundary_runs_initial_and_later_phase_abc() {
+    fn native_deferred_free_callback_boundary_runs_initial_later_and_owner_exit_phase_abc() {
         let _runtime_driver = NATIVE_DEFERRED_FREE_RUNTIME_DRIVER_LOCK.lock().expect(
             "the process-lifetime native driver regression has one initializer",
         );
@@ -17047,12 +17390,12 @@ mod tests {
                 callback_marker_live: AtomicUsize::new(0),
                 nested_native_round_trips: AtomicUsize::new(0),
             };
-            // SAFETY: this private registration remains test-only. Its code
-            // and stack context survive the initial driver's A/B/C sequence
+            // SAFETY: the adapter's callback/context lifetime contract holds:
+            // this stack context survives the initial driver's A/B/C sequence
             // and the scoped later worker, then it is cleared after both
             // callback intervals ended.
             unsafe {
-                crate::deferred_free::register_process_callback(
+                crate::__crabc_runtime::register_native_deferred_free_callback(
                     Some(observe_native_deferred_free_boundary_callback),
                     core::ptr::from_ref(&observation).cast_mut().cast(),
                 )
@@ -17085,7 +17428,12 @@ mod tests {
                     assert_eq!(
                         finish_current_thread_native_after_user_destructors(),
                         ThreadFinishResult::Finished,
-                        "a boundary-resumed later owner stays ordinary-finishable rather than retained",
+                        "the owner-exit callback resumes phase C before its source collector finishes",
+                    );
+                    assert_eq!(
+                        observation.callback_count.load(Ordering::Acquire),
+                        3,
+                        "the same registration runs once from the later owner-exit force collector",
                     );
                 });
                 worker
@@ -17095,24 +17443,24 @@ mod tests {
 
             assert_eq!(
                 observation.outer_operation_suspended.load(Ordering::Acquire),
-                2,
-                "both actual drivers clear the outer native operation before user callback entry",
+                3,
+                "initial, later, and later owner-exit drivers clear the outer operation before user callback entry",
             );
             assert_eq!(
                 observation.callback_marker_live.load(Ordering::Acquire),
-                2,
-                "the callback marker bridges both phase-B intervals while their outer entries are absent",
+                3,
+                "the callback marker bridges every phase-B interval while its outer entry is absent",
             );
             assert_eq!(
                 observation.nested_native_round_trips.load(Ordering::Acquire),
-                2,
-                "each callback can complete one freshly guarded native allocation/free round trip",
+                3,
+                "the owner-exit callback can allocate/free through the live default Theap before phase C drains it",
             );
 
             // SAFETY: both source drivers resumed phase C and the later worker
             // joined, so no callback can still read this test context.
             unsafe {
-                crate::deferred_free::register_process_callback(None, core::ptr::null_mut())
+                crate::__crabc_runtime::register_native_deferred_free_callback(None, core::ptr::null_mut())
             };
         })
         .join()

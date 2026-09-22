@@ -2463,6 +2463,73 @@ impl<'main> MainHeapThreadOwnerLocalPageEngine<'main> {
         Ok(())
     }
 
+    /// Starts phase A of source `_mi_theap_collect_abandon` before the
+    /// collector borrows the old Theap.  The returned call is value-only; the
+    /// persistent engine stays in its owner and remains available for the
+    /// pinned callback's legal allocation reentry until phase C consumes it.
+    pub(crate) fn begin_owner_exit_deferred_free_phase(
+        &mut self,
+        attachment: &mut MainHeapThreadAttachment<'main>,
+    ) -> Result<crate::main_heap_thread::MainHeapThreadDeferredFreeCall, MainHeapThreadAttachmentError> {
+        if self.mapped_abandoned_claim.is_terminal() {
+            return Err(MainHeapThreadAttachmentError::OwnerLocalPageEngineTerminal);
+        }
+        self.lifecycle
+            .begin_thread_exit_deferred_free_phase(attachment)
+    }
+
+    /// Runs the post-callback source collector.  Phase C must already have
+    /// consumed the exact active attachment generation; this method forms the
+    /// non-allocating drain only afterward, preserving the source order
+    /// `_mi_deferred_free` -> retired collection -> page traversal.
+    pub(crate) fn finish_after_owner_exit_deferred_free_phase(
+        mut self,
+        attachment: &mut MainHeapThreadAttachment<'main>,
+    ) -> Result<(), MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure<'main>> {
+        if self.mapped_abandoned_claim.is_terminal() {
+            return Err(
+                MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure::RetainedTerminalEngine(
+                    self,
+                ),
+            );
+        }
+        let drain = match self.lifecycle.finish_thread_exit_deferred_free_phase(attachment) {
+            Ok(drain) => drain,
+            Err(_) => {
+                self.lifecycle.retain_terminal_after_thread_exit_failure();
+                return Err(
+                    MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure::RetainedTerminalEngine(
+                        self,
+                    ),
+                );
+            }
+        };
+        let Some(engine) = self.engine.take() else {
+            return Err(MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure::AttachmentOnly);
+        };
+        let (drain, identity) = engine.into_owner_local_thread_exit_drain(drain);
+        let drain = match drain.collect_abandon_owner_exit() {
+            Ok(drain) => drain,
+            Err(drain) => {
+                self.lifecycle.retain_terminal_after_thread_exit_failure();
+                self.engine = Some(
+                    OwnerLocalMainHeapPageAllocator::from_failed_owner_local_thread_exit(
+                        drain, identity,
+                    ),
+                );
+                return Err(
+                    MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure::RetainedTerminalEngine(
+                        self,
+                    ),
+                );
+            }
+        };
+        if drain.finish_after_collect_abandon().is_err() {
+            return Err(MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure::AttachmentOnly);
+        }
+        Ok(())
+    }
+
     #[cfg(test)]
     pub(crate) fn test_begin_borrowed_state(&mut self) {
         self.lifecycle.test_begin_borrowed_state();

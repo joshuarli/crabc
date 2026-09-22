@@ -2752,28 +2752,44 @@ Theap page-count decrement -> terminal release or abandonment callback`.
 The callback cannot select a geometry, alter queue state, or reorder the
 terminal transition.
 
+`runtime_lifecycle.rs::NativePersistentThreadOwner` performs the
+owner-exit deferred-free source prefix before
 `single_thread.rs::PageAllocatorEngine<MainHeapThreadPageDrainSession>::collect_abandon_owner_exit`
-supplies the current source-specific callbacks for one later persistent
-worker's independent process PageMap/arena pair. Its
-`ProductionOwnerExitCallbacks` contains only a field-level deferred-free cursor,
-PageMap/arena/Heap facts, and terminal scalar slots; it retains no whole
-`PageAllocatorEngine`, drain session, attachment, or `Page`. Consequently a
-live remote producer may retain only its page atomic projection while owner-side
-queue links and ordinary fields are accessed through raw disjoint projections.
-Whole-page mutable access begins only after the source all-free proof excludes
-the producer. Arena and OS tails keep the source order, including OS abandoned
-list insertion before unown and removal before PageMap/metadata/mapping release.
+supplies the later persistent worker's PageMap/arena callbacks. The split is
+explicit: phase A clears the fixed fast TLS root and selects the deferred
+callback; phase B runs the value-only token through the existing allocator
+operation/fork admission boundary after every owner, engine, attachment, Theap,
+and TLD projection ended; and phase C revalidates its attachment generation
+before it forms the exclusive drain. Pinned `src/threadlocal.c` clears only
+`mi_slot_fast`; `src/alloc.c` continues to use `_mi_theap_default()` until
+`src/init.c` resets it after all collect-abandon calls return. A callback's legal
+nested allocation therefore remains on the old default Theap, without routing
+through the draining collector.
 
-`main_heap_page.rs::MainHeapThreadOwnerLocalPageEngine::finish_after_collect_abandon`
+`ProductionOwnerExitCallbacks` begins after phase C and contains only
+PageMap/arena/Heap facts and terminal scalar slots; it has no deferred-free
+cursor, whole `PageAllocatorEngine`, drain session, attachment, or `Page`. Its
+no-op deferred prepass records that the caller-stack A/B/C sequence already
+occupied the source deferred-free position before the coordinator took its
+exclusive Theap borrow. Consequently a live remote producer may retain only its
+page atomic projection while owner-side queue links and ordinary fields are
+accessed through raw disjoint projections. Whole-page mutable access begins
+only after the source all-free proof excludes the producer. Arena and OS tails
+keep the source order, including OS abandoned list insertion before unown and
+removal before PageMap/metadata/mapping release.
+
+`main_heap_page.rs::MainHeapThreadOwnerLocalPageEngine::finish_after_owner_exit_deferred_free_phase`
 and `runtime_lifecycle.rs::NativePersistentThreadOwnerExitState` make the
 one-way failure table explicit: `PreDrain(engine)` remains retryable before the
-fast-slot transition, `RetainedTerminalEngine(engine)` is fail-closed and never
-drains again, and `AttachmentOnly` retains only the final no-page attachment
-boundary. This direct connector neither parks nor schedules the worker and
-does not use a global owner/client registry or a post-exit route. Ticket zero
-therefore remains independently live across the worker's exit. It is not a
-claim of general public allocator routing, post-exit free/reclaim, concurrent
-queue traversal, or complete source thread teardown.
+fast-slot transition, `DeferredFreePending(engine)` blocks teardown and
+terminal transfer while phase B is live, `RetainedTerminalEngine(engine)` is
+fail-closed and never drains again, and `AttachmentOnly` retains only the final
+no-page attachment boundary. This direct connector neither parks nor schedules
+the worker and does not use a global owner/client registry or a post-exit route.
+Ticket zero therefore remains independently live across the worker's exit. It
+is not a claim of general public allocator routing, post-exit free/reclaim,
+concurrent queue traversal, fork-child callback delivery, or public callback
+registration.
 
 ## Scope boundary
 

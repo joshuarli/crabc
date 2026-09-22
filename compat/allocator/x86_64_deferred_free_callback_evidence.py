@@ -3,12 +3,13 @@
 
 This private native Linux/x86-64 fixture executes fixed v3.5.0 C code, not a
 model: the C side registers one context, runs `_mi_malloc_generic` through its
-1,000/10,000 administrative boundaries, and then exhausts a bounded arena so
-`mi_malloc_generic_fallback` performs its single forced retry. The callback
-makes a legal nested allocation and invokes `_mi_deferred_free` while its TLD
-recursion marker is live. The Rust side drives the same selected phase through
-the persistent owner cell; its callback re-enters through `with_owner`, so no
-outer engine/TLD borrow survives user code.
+1,000/10,000 administrative boundaries, then exhausts a bounded arena so
+`mi_malloc_generic_fallback` performs its single forced retry. A second owner
+calls `mi_thread_done`, whose `_mi_theap_collect_abandon` prefix selects the
+same callback after source cleared only its fast slot. Both callback phases
+make legal nested allocations. The Rust side drives the corresponding generic
+and owner-exit phases through a persistent owner cell, so no outer engine/TLD
+borrow survives user code.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ REPORT_DEFAULT = ROOT / "compat/reports/allocator/x86_64/deferred-free-callback.
 LOCKFILE = ROOT / "Cargo.lock"
 RUST_TEST_SOURCE = ROOT / "crabc-mimalloc/src/runtime_lifecycle.rs"
 TARGET = "x86_64-unknown-linux-musl"
-RUST_TEST_FILTER = "runtime_lifecycle::tests::native_deferred_free_callback_trace_matches_pinned_generic_timing"
+RUST_TEST_FILTER = "runtime_lifecycle::tests::native_deferred_free_callback_trace_matches_pinned_generic_and_owner_exit_timing"
 TRACE_BEGIN = "CRABC_MI_DEFERRED_FREE_TRACE_BEGIN"
 TRACE_END = "CRABC_MI_DEFERRED_FREE_TRACE_END"
 NORMALIZED_EVIDENCE_ROOT = "<temporary-evidence-root>"
@@ -65,7 +66,8 @@ EXPECTED_SCOPE = {
     "public_crabc_support": False,
     "public_mi_api_claimed": False,
     "public_x86_libc_or_ldso_support": False,
-    "registration_remains_crate_private": True,
+    "registration_remains_crate_private": False,
+    "runtime_registration_adapter_exposed": True,
     "single_callback_context_and_one_same_thread_owner_only": True,
 }
 EXPECTED_COMPILE_DEFINITIONS = (
@@ -79,8 +81,11 @@ EXPECTED_C_ELF = {
     "machine": "Advanced Micro Devices X86-64",
 }
 EXPECTED_SOURCE_ANCHORS = (
+    ("src/alloc.c", 256, 258, "f7cf8091d585299a8a7e411d0a070416d490604a500fda8a7dbda309841b88ac"),
     ("src/page.c", 987, 1117, "edc368582efb777195f6a0e47eab72c47bdfaf0394d378c2854c1b231e62d6e0"),
     ("src/theap.c", 89, 155, "c04f23536687d633723539e9ea53296c2c0e39db4cafb3e20ef491c41ccc5807"),
+    ("src/init.c", 377, 480, "0b3c815bfa1e9098204924adbaa9afccca4ae1089f409421d986fd8d69132d5b"),
+    ("src/threadlocal.c", 205, 214, "f15d366c5bf21e176e97e68da940447dd55a4966c5787874c7e3f130c4e329c1"),
     ("src/static.c", 19, 44, "2a0ce462658c70ce646ba04347dd89cb2d868c84a7ae4173b7f4edf86efca6d2"),
 )
 EXPECTED_TRACE_VALUES = {
@@ -94,7 +99,11 @@ EXPECTED_TRACE_VALUES = {
     "trace.deferred_free.full_heartbeat": 11,
     "trace.deferred_free.force_callbacks": 1,
     "trace.deferred_free.force_heartbeat_advanced": 1,
-    "trace.deferred_free.callback_count": 11,
+    "trace.deferred_free.owner_exit_callback_count": 1,
+    "trace.deferred_free.owner_exit_force": 1,
+    "trace.deferred_free.owner_exit_nested_allocation_completed": 1,
+    "trace.deferred_free.owner_exit_default_identity_preserved": 1,
+    "trace.deferred_free.callback_count": 12,
 }
 
 # The fixed upstream amalgamation gives this probe the source's complete
@@ -122,6 +131,7 @@ C_TRACE_PROBE = r'''
 
 typedef struct trace_s {
   mi_theap_t* theap;
+  mi_theap_t* owner_exit_theap;
   size_t callback_count;
   size_t context_matches;
   size_t nested_allocation_completed;
@@ -133,12 +143,34 @@ typedef struct trace_s {
   size_t full_heartbeat;
   size_t force_callbacks;
   size_t force_heartbeat_advanced;
+  size_t owner_exit_phase;
+  size_t owner_exit_callback_count;
+  size_t owner_exit_force;
+  size_t owner_exit_nested_allocation_completed;
+  size_t owner_exit_default_identity_preserved;
+  size_t owner_exit_started;
+  size_t owner_exit_returned;
 } trace_t;
 
 static void deferred_callback(bool force, unsigned long long heartbeat, void* argument) {
   trace_t* const trace = (trace_t*)argument;
   const size_t index = trace->callback_count++;
   trace->context_matches = trace->context_matches && (argument == trace);
+  if (trace->owner_exit_phase != 0) {
+    trace->owner_exit_callback_count++;
+    trace->owner_exit_force = (size_t)force;
+    // `_mi_thread_done` clears the fast slot before it visits this Theap,
+    // but source does not reset the default until after the traversal. A
+    // normal callback allocation must therefore use this same old owner.
+    void* const nested = mi_malloc(16);
+    if (nested != NULL) {
+      mi_free(nested);
+      trace->owner_exit_nested_allocation_completed = 1;
+    }
+    trace->owner_exit_default_identity_preserved =
+      (size_t)(_mi_theap_default() == trace->owner_exit_theap);
+    return;
+  }
   if (index == 0) {
     trace->first_heartbeat = (size_t)heartbeat;
     // A direct-small anchor is kept live by `main`, so this is a normal
@@ -168,6 +200,21 @@ static void deferred_callback(bool force, unsigned long long heartbeat, void* ar
     // comparing raw counters from two unrelated Theaps.
     trace->force_heartbeat_advanced = ((size_t)heartbeat == 1);
   }
+}
+
+static void* owner_exit_thread(void* argument) {
+  trace_t* const trace = (trace_t*)argument;
+  mi_thread_init();
+  void* const anchor = mi_malloc(16);
+  if (anchor == NULL) return NULL;
+  trace->owner_exit_theap = _mi_theap_default();
+  if (trace->owner_exit_theap == NULL
+      || !mi_theap_is_initialized(trace->owner_exit_theap)) return NULL;
+  trace->owner_exit_started = 1;
+  trace->owner_exit_phase = 1;
+  mi_thread_done();
+  trace->owner_exit_returned = 1;
+  return NULL;
 }
 
 static void* remote_free(void* block) {
@@ -248,6 +295,16 @@ int main(void) {
   if (replacement == NULL) goto cleanup;
 
   stage = 9;
+  // `mi_thread_done` calls `_mi_thread_locals_thread_done` first, then visits
+  // every current Theap through `_mi_theap_collect_abandon`. The selected
+  // callback proves its force argument, fast-slot/default ordering, legal
+  // same-owner reentry, and return before the worker's source teardown ends.
+  if (pthread_create(&thread, NULL, owner_exit_thread, &trace) != 0) goto cleanup;
+  started = true;
+  if (pthread_join(thread, NULL) != 0) goto cleanup;
+  started = false;
+
+  stage = 10;
   valid = trace.context_matches == 1
     && trace.nested_allocation_completed == 1
     && trace.nested_reentry_suppressed == 1
@@ -258,7 +315,13 @@ int main(void) {
     && trace.full_heartbeat == 11
     && trace.force_callbacks == 1
     && trace.force_heartbeat_advanced == 1
-    && trace.callback_count == 11;
+    && trace.owner_exit_started == 1
+    && trace.owner_exit_returned == 1
+    && trace.owner_exit_callback_count == 1
+    && trace.owner_exit_force == 1
+    && trace.owner_exit_nested_allocation_completed == 1
+    && trace.owner_exit_default_identity_preserved == 1
+    && trace.callback_count == 12;
 cleanup:
   mi_register_deferred_free(NULL, NULL);
   if (started) pthread_join(thread, NULL);
@@ -290,6 +353,10 @@ cleanup:
   printf("trace.deferred_free.full_heartbeat=%zu\n", trace.full_heartbeat);
   printf("trace.deferred_free.force_callbacks=%zu\n", trace.force_callbacks);
   printf("trace.deferred_free.force_heartbeat_advanced=%zu\n", trace.force_heartbeat_advanced);
+  printf("trace.deferred_free.owner_exit_callback_count=%zu\n", trace.owner_exit_callback_count);
+  printf("trace.deferred_free.owner_exit_force=%zu\n", trace.owner_exit_force);
+  printf("trace.deferred_free.owner_exit_nested_allocation_completed=%zu\n", trace.owner_exit_nested_allocation_completed);
+  printf("trace.deferred_free.owner_exit_default_identity_preserved=%zu\n", trace.owner_exit_default_identity_preserved);
   printf("trace.deferred_free.callback_count=%zu\n", trace.callback_count);
   printf("CRABC_MI_DEFERRED_FREE_TRACE_END\n");
   return 0;

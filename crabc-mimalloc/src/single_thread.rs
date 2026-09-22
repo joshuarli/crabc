@@ -156,8 +156,8 @@ use crate::dynamic_theap::{
 #[cfg(test)]
 use crate::deferred_free::DeferredFreeTestCallback;
 use crate::main_heap_thread::{
-    MainHeapThreadAttachment, MainHeapThreadAttachmentError, MainHeapThreadOwnerExitDeferredFree,
-    MainHeapThreadPageDrainSession, MainHeapThreadPageSession,
+    MainHeapThreadAttachment, MainHeapThreadAttachmentError, MainHeapThreadPageDrainSession,
+    MainHeapThreadPageSession,
 };
 use crate::main_theap::{
     MainStaticHeapLease, MainStaticHeapLeaseError, MainStaticPageSession, MainStaticProcessPageSession,
@@ -9281,10 +9281,12 @@ impl<'attachment, 'main, 'arena, 'map, B: PageBacking<'arena>>
     /// Runs the source `MI_ABANDON` owner-exit traversal for the persistent
     /// later worker's own process PageMap/arena pair.
     ///
-    /// This is deliberately a consuming, one-way transition.  The callback
-    /// object below owns only field-level projections disjoint from the
-    /// coordinator's exclusive `Theap` borrow: the deferred-free TLD cursor,
-    /// PageMap/arena facts, static-main Heap lease, and terminal scalar slots.
+    /// This is deliberately a consuming, one-way transition. The source
+    /// deferred-free phase was completed through its A/B/C caller-stack
+    /// continuation before this collector begins. The callback object below
+    /// owns only field-level projections disjoint from the coordinator's
+    /// exclusive `Theap` borrow: PageMap/arena facts, static-main Heap lease,
+    /// and terminal scalar slots.
     /// It never holds this engine, the attachment, or a whole `Page` borrow.
     /// That separation matters while a valid live client may still retain its
     /// atomic remote-free producer projection into a page being collected or
@@ -9297,8 +9299,8 @@ impl<'attachment, 'main, 'arena, 'map, B: PageBacking<'arena>>
             return Err(self);
         }
 
-        let deferred_free = match self.session.owner_exit_deferred_free_cursor() {
-            Ok(cursor) => cursor,
+        let theap = match self.session.owner_exit_theap_pointer() {
+            Ok(theap) => theap,
             Err(_) => return Err(self),
         };
         let thread = match self.session.thread_id() {
@@ -9306,9 +9308,8 @@ impl<'attachment, 'main, 'arena, 'map, B: PageBacking<'arena>>
             None => return Err(self),
         };
         let main_heap = self.session.main_heap_lease();
-        let theap = deferred_free.theap();
-        // SAFETY: `owner_exit_deferred_free_cursor` proved this exact live
-        // attachment/Theap pairing.  This is a scalar Heap identity read
+        // SAFETY: `owner_exit_theap_pointer` proved this exact live draining
+        // attachment/Theap pairing. This is a scalar Heap identity read
         // before the exclusive coordinator borrow begins.
         let heap = match NonNull::new(unsafe { theap.as_ref().heap() }) {
             Some(heap) => heap,
@@ -9323,7 +9324,6 @@ impl<'attachment, 'main, 'arena, 'map, B: PageBacking<'arena>>
 
         let result = {
             let mut callbacks = ProductionOwnerExitCallbacks {
-                deferred_free,
                 thread,
                 arena: &self.arena,
                 arena_lifetime: PhantomData,
@@ -9337,10 +9337,13 @@ impl<'attachment, 'main, 'arena, 'map, B: PageBacking<'arena>>
                 page_free_collect_failure_once: &mut self.page_free_collect_failure_once,
             };
             let prepass = TheapCollectAbandonPrepass::new(
-                |theap: &mut Theap,
-                 callbacks: &mut ProductionOwnerExitCallbacks<'_, '_, 'arena, '_, B>| {
-                    callbacks.collect_deferred_prepass(theap)
-                },
+                // The caller-stack phase ran `_mi_deferred_free` before this
+                // coordinator formed its exclusive Theap borrow. Re-running
+                // it here would select a second foreign callback while queue
+                // state is borrowed, so retain its source position as an
+                // explicit completed prepass.
+                |_theap: &mut Theap,
+                 _callbacks: &mut ProductionOwnerExitCallbacks<'_, '_, 'arena, '_, B>| Ok(()),
                 |theap: &mut Theap,
                  callbacks: &mut ProductionOwnerExitCallbacks<'_, '_, 'arena, '_, B>| {
                     callbacks.collect_retired_prepass(theap)
@@ -40948,7 +40951,6 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
 /// parked session, or a replacement route.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ProductionOwnerExitError {
-    Deferred,
     Retired,
     Collection,
     Release,
@@ -40967,7 +40969,6 @@ enum ProductionOwnerExitError {
 /// Terminal release takes a whole-page mutable reference only after the
 /// source `used == 0` proof excludes a live client and its producer.
 struct ProductionOwnerExitCallbacks<'state, 'main, 'arena, 'map, B: PageBacking<'arena>> {
-    deferred_free: MainHeapThreadOwnerExitDeferredFree,
     thread: LiveThreadId,
     arena: &'state B,
     arena_lifetime: PhantomData<&'arena ()>,
@@ -41025,15 +41026,6 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
             #[cfg(test)]
             selected_main_full_preflight: None,
         });
-    }
-
-    fn collect_deferred_prepass(
-        &mut self,
-        theap: &mut Theap,
-    ) -> Result<(), ProductionOwnerExitError> {
-        self.deferred_free
-            .collect(theap, true)
-            .map_err(|_| ProductionOwnerExitError::Deferred)
     }
 
     /// Ports the `MI_ABANDON` retired-page phase before the generic visitor.

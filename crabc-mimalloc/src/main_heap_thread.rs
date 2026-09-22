@@ -705,6 +705,15 @@ impl<'main> MainHeapThreadAttachment<'main> {
         self.deferred_free_callback_active.load(Ordering::Acquire) != 0
     }
 
+    /// Reports that the source collector and the final attachment boundary
+    /// have both completed.  This is intentionally narrower than a generic
+    /// attachment-state accessor: the persistent TLS cell uses it only before
+    /// dropping the already-drained owner shell after owner-exit phase C.
+    #[inline]
+    pub(crate) fn is_torn_down_after_owner_exit(&self) -> bool {
+        self.state == MainHeapThreadAttachmentState::TornDown
+    }
+
     /// Selects the source `_mi_deferred_free` callback after the allocator's
     /// phase-A counter decision and before its corresponding mini, full, or
     /// forced collector. It performs no user callback while borrowing this
@@ -725,6 +734,39 @@ impl<'main> MainHeapThreadAttachment<'main> {
         } else {
             self.prevalidate_page_drain_common(false, true)?;
         }
+        self.select_deferred_free_callback(force, callback_reentry)
+    }
+
+    /// Selects the source `_mi_deferred_free` callback after the thread-exit
+    /// transition cleared only the fixed fast root.  Pinned
+    /// `threadlocal.c:_mi_thread_locals_thread_done` clears that fast slot,
+    /// while `alloc.c:mi_malloc` still selects `_mi_theap_default()` and
+    /// `init.c:mi_thread_theaps_done` resets default only after every
+    /// `_mi_theap_collect_abandon` call returned. The callback therefore
+    /// makes a normal nested allocation through this same old default owner;
+    /// it must nevertheless return its invocation token before any drain
+    /// session or queue collector is formed.
+    pub(crate) fn begin_thread_exit_deferred_free_callback(
+        &mut self,
+        force: bool,
+    ) -> Result<MainHeapThreadDeferredFreeCall, MainHeapThreadAttachmentError> {
+        if self.has_active_deferred_free_callback() {
+            return Err(MainHeapThreadAttachmentError::DeferredFreeCallbackActive);
+        }
+        self.ensure_draining_current()?;
+        self.prevalidate_page_drain_common(false, false)?;
+        self.select_deferred_free_callback(force, false)
+    }
+
+    /// Selects one deferred-free source boundary after its caller proved the
+    /// attached or post-fast-slot root image.  This performs only the source
+    /// heartbeat, registration load, and recurse-marker selection; it never
+    /// invokes foreign code while borrowing this attachment.
+    fn select_deferred_free_callback(
+        &mut self,
+        force: bool,
+        callback_reentry: bool,
+    ) -> Result<MainHeapThreadDeferredFreeCall, MainHeapThreadAttachmentError> {
         let theap = NonNull::new(self.theap_pointer()?)
             .ok_or(MainHeapThreadAttachmentError::TheapProjection)?;
         let tld = if callback_reentry {
@@ -793,7 +835,23 @@ impl<'main> MainHeapThreadAttachment<'main> {
         // clearing it first would reopen teardown and ordinary admission while
         // the actual callback's caller-stack lease may still be live. Every
         // error below deliberately retains this fail-closed marker.
-        self.prevalidate_page_drain_common(false, true)?;
+        match self.state {
+            MainHeapThreadAttachmentState::Attached => {
+                self.prevalidate_page_drain_common(false, true)?;
+            }
+            MainHeapThreadAttachmentState::DrainingPages => {
+                self.ensure_draining_current()?;
+                self.prevalidate_page_drain_common(false, false)?;
+            }
+            MainHeapThreadAttachmentState::TornDown => {
+                return Err(MainHeapThreadAttachmentError::TornDown);
+            }
+            MainHeapThreadAttachmentState::Preparing
+            | MainHeapThreadAttachmentState::SourceRetained
+            | MainHeapThreadAttachmentState::Poisoned => {
+                return Err(MainHeapThreadAttachmentError::Poisoned);
+            }
+        }
         // Capture the attachment thread identity before projecting its TLD.
         // The callback boundary must not retain an outer attachment borrow
         // while user code runs, and phase C checks the saved scalar identity
@@ -1138,7 +1196,28 @@ impl<'main> MainHeapThreadAttachment<'main> {
         if active_generation != self.deferred_free_callback_generation {
             return Err(MainHeapThreadAttachmentError::DeferredFreeCallbackGeneration);
         }
-        self.ensure_attached_current()?;
+        let expect_fast_owner = match self.state {
+            MainHeapThreadAttachmentState::Attached => {
+                self.ensure_attached_current()?;
+                true
+            }
+            // `mi_thread_theaps_done` clears the fixed fast root before it
+            // enters `_mi_theap_collect_abandon`. The selected callback still
+            // owns the default root/TLD/list and may allocate through the
+            // exact persistent engine until phase C resumes that drain.
+            MainHeapThreadAttachmentState::DrainingPages => {
+                self.ensure_draining_current()?;
+                false
+            }
+            MainHeapThreadAttachmentState::TornDown => {
+                return Err(MainHeapThreadAttachmentError::TornDown);
+            }
+            MainHeapThreadAttachmentState::Preparing
+            | MainHeapThreadAttachmentState::SourceRetained
+            | MainHeapThreadAttachmentState::Poisoned => {
+                return Err(MainHeapThreadAttachmentError::Poisoned);
+            }
+        };
         // A projection failure is not equivalent to a non-recursing TLD.
         // Preserve its exact attached-owner error for the caller's retained
         // boundary; otherwise a poisoned/replaced TLD could be misreported as
@@ -1150,7 +1229,7 @@ impl<'main> MainHeapThreadAttachment<'main> {
         if self.page_engine_suspended {
             return Err(MainHeapThreadAttachmentError::PersistentPageEngineSuspended);
         }
-        self.prevalidate_page_drain_common_callback_reentry(false, true)
+        self.prevalidate_page_drain_common_callback_reentry(false, expect_fast_owner)
     }
 
     /// Validates the exact opposite half of the persistent-engine handoff.
@@ -1731,6 +1810,55 @@ impl MainHeapThreadOwnerLocalPageEngineLease {
         Ok(MainHeapThreadPageDrainSession { attachment })
     }
 
+    /// Starts the source thread-exit deferred-free phase without forming a
+    /// draining session.  The fixed fast root is cleared first, exactly as
+    /// `mi_thread_theaps_done` does before `_mi_theap_collect_abandon`; the
+    /// owner-local claim stays idle so the selected callback can reenter the
+    /// same default Theap.  Only phase C may later consume this claim into
+    /// the non-allocating page-drain session.
+    pub(crate) fn begin_thread_exit_deferred_free_phase(
+        &mut self,
+        attachment: &mut MainHeapThreadAttachment<'_>,
+    ) -> Result<MainHeapThreadDeferredFreeCall, MainHeapThreadAttachmentError> {
+        self.precheck_access()?;
+        attachment.prevalidate_attached_page_drain_without_owner_local(false)?;
+        if attachment.terminal_os_release.is_some() {
+            return Err(MainHeapThreadAttachmentError::Poisoned);
+        }
+        set_fast_slot(None);
+        attachment.state = MainHeapThreadAttachmentState::DrainingPages;
+        match attachment.begin_thread_exit_deferred_free_callback(true) {
+            Ok(call) => Ok(call),
+            Err(error) => {
+                // Fast-slot removal is a one-way source transition.  The
+                // caller must retain the exact engine instead of recreating
+                // an attached owner after a failed phase-A selection.
+                self.retain_terminal_after_thread_exit_failure();
+                attachment.state = MainHeapThreadAttachmentState::Poisoned;
+                Err(error)
+            }
+        }
+    }
+
+    /// Consumes the idle claim into the page-drain session after the
+    /// caller-stack deferred-free invocation completed and phase C cleared
+    /// the matching attachment generation.  No callback token, TLD, engine,
+    /// or attachment borrow crosses the foreign call.
+    pub(crate) fn finish_thread_exit_deferred_free_phase<'attachment, 'main>(
+        &mut self,
+        attachment: &'attachment mut MainHeapThreadAttachment<'main>,
+    ) -> Result<MainHeapThreadPageDrainSession<'attachment, 'main>, MainHeapThreadAttachmentError> {
+        self.precheck_access()?;
+        if attachment.has_active_deferred_free_callback() {
+            return Err(MainHeapThreadAttachmentError::DeferredFreeCallbackActive);
+        }
+        attachment.ensure_draining_current()?;
+        attachment.prevalidate_page_drain_common(false, false)?;
+        set_owner_local_page_engine_state(MainHeapThreadOwnerLocalPageEngineState::Missing);
+        self.finished = true;
+        Ok(MainHeapThreadPageDrainSession { attachment })
+    }
+
     /// Checks the compiler-TLS linear/reentry state before the caller forms a
     /// new mutable attachment or page-session projection.
     pub(crate) fn precheck_access(&self) -> Result<(), MainHeapThreadAttachmentError> {
@@ -1832,52 +1960,6 @@ pub(crate) struct MainHeapThreadPageDrainSession<'attachment, 'main> {
     attachment: &'attachment mut MainHeapThreadAttachment<'main>,
 }
 
-/// The disjoint TLD half of a source owner-exit deferred-free invocation.
-///
-/// It is created before the queue coordinator lends its exclusive `Theap`.
-/// The cursor contains only the matching TLD projection and scalar observer;
-/// it cannot form an attachment, queue, PageMap, arena, or allocator borrow
-/// while that coordinator owns the Theap reference.
-pub(crate) struct MainHeapThreadOwnerExitDeferredFree {
-    theap: NonNull<Theap>,
-    tld: NonNull<crate::types::ThreadLocalData>,
-    #[cfg(test)]
-    observer: Option<DeferredFreeTestObserver>,
-}
-
-impl MainHeapThreadOwnerExitDeferredFree {
-    #[inline]
-    pub(crate) const fn theap(&self) -> NonNull<Theap> { self.theap }
-
-    /// Runs the source heartbeat phase through the coordinator's exact Theap
-    /// borrow. The stored TLD is a disjoint attachment field and remains
-    /// valid until the enclosing drain finishes or is retained. This legacy
-    /// owner-exit cursor requires an inert process registration; a future
-    /// registered callback must use an A/B/C continuation after the queue
-    /// coordinator returned its source borrow.
-    pub(crate) fn collect(
-        &mut self,
-        theap: &mut Theap,
-        force: bool,
-    ) -> Result<(), MainHeapThreadAttachmentError> {
-        if !core::ptr::eq(core::ptr::from_mut(theap), self.theap.as_ptr()) {
-            return Err(MainHeapThreadAttachmentError::TheapProjection);
-        }
-        #[cfg(test)]
-        let collect = crate::deferred_free::collect_with_test_observer(
-            self.theap,
-            self.tld,
-            force,
-            self.observer,
-        );
-        #[cfg(not(test))]
-        let collect = crate::deferred_free::collect(self.theap, self.tld, force);
-        collect
-            .map(|_| ())
-            .map_err(MainHeapThreadAttachmentError::DeferredFree)
-    }
-}
-
 impl<'attachment, 'main> MainHeapThreadPageDrainSession<'attachment, 'main> {
     /// Returns the process-static main Heap lifetime witness retained by this
     /// still-linked later Theap. A post-exit route may keep this copy after
@@ -1913,13 +1995,12 @@ impl<'attachment, 'main> MainHeapThreadPageDrainSession<'attachment, 'main> {
     /// images remain live, after the fixed fast slot has cleared and before a
     /// page collector can retire, release, or queue-detach a page.
     ///
-    /// The callback registration ABI remains absent. This legacy owner-exit
-    /// call is valid only while the process registration is inert: production
-    /// still takes the source heartbeat step, and a private test observer
-    /// proves ordering without giving arbitrary code allocator mutation
-    /// authority. Any future registration export must replace this direct
-    /// invocation with the normal A/B/C continuation after the drain released
-    /// its source borrows; it must not deliver user code from owner exit.
+    /// This legacy direct-drain helper is valid only while the process
+    /// registration is inert. The doc-hidden native registration adapter uses
+    /// the normal A/B/C continuation before it creates a drain session; this
+    /// helper still holds its source session and must never dispatch an
+    /// arbitrary registered callback. Its test observer proves only the local
+    /// heartbeat/recursion order and is not a registration substitute.
     pub(crate) fn collect_deferred_free_before_page_collection(
         &mut self,
         force: bool,
@@ -1942,26 +2023,16 @@ impl<'attachment, 'main> MainHeapThreadPageDrainSession<'attachment, 'main> {
         collect.map_err(MainHeapThreadAttachmentError::DeferredFree)
     }
 
-    /// Splits out only the TLD side of the deferred-free source phase before
-    /// the generic queue coordinator borrows this session's Theap. This is a
-    /// field-level separation: no whole attachment reference is retained by
-    /// the returned cursor.
-    pub(crate) fn owner_exit_deferred_free_cursor(
+    /// Returns the exact live Theap address for the post-callback owner-exit
+    /// collector. The deferred-free phase has already completed through its
+    /// caller-stack continuation before this draining session exists, so this
+    /// accessor deliberately carries no TLD or callback authority.
+    pub(crate) fn owner_exit_theap_pointer(
         &mut self,
-    ) -> Result<MainHeapThreadOwnerExitDeferredFree, MainHeapThreadAttachmentError> {
+    ) -> Result<NonNull<Theap>, MainHeapThreadAttachmentError> {
         self.attachment.ensure_draining_current()?;
-        let theap = NonNull::new(self.attachment.theap_pointer()?)
-            .ok_or(MainHeapThreadAttachmentError::TheapProjection)?;
-        let tld = {
-            let tld = self.attachment.current_tld_mut()?;
-            NonNull::from(tld)
-        };
-        Ok(MainHeapThreadOwnerExitDeferredFree {
-            theap,
-            tld,
-            #[cfg(test)]
-            observer: self.attachment.deferred_free_test_observer,
-        })
+        NonNull::new(self.attachment.theap_pointer()?)
+            .ok_or(MainHeapThreadAttachmentError::TheapProjection)
     }
 
     /// Consumes this empty post-fast-slot session into its underlying later

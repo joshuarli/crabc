@@ -187,6 +187,7 @@ pub mod __crabc_runtime {
         retain_current_thread_native_owner_after_process_done_nonfinal,
         reinitialize_current_thread_native_owner_for_final_process_exit,
         native_allocate_aligned, native_free, native_reallocate, native_usable_size,
+        NativeDeferredFreeCallback, register_native_deferred_free_callback,
         ticket_zero_allocate, ticket_zero_free,
         ticket_zero_allocate_aligned, ticket_zero_usable_size,
         ticket_zero_later_thread_page_roundtrip,
