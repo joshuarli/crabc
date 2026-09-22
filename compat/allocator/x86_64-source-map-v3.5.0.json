@@ -1401,18 +1401,18 @@
         "compat/allocator/m2_vm_x86_64.py",
         "compat/allocator/run.py",
         "compat/allocator/test_m2_vm_x86_64.py",
+        "compat/allocator/tests/test_x86_64_diagnostic_output_owner_evidence.py",
+        "compat/allocator/x86_64_diagnostic_output_owner_evidence.py",
+        "compat/allocator/x86_64_diagnostic_output_owner_oracle.c",
         "crabc-mimalloc/src/abandoned.rs",
         "crabc-mimalloc/src/arena.rs",
         "crabc-mimalloc/src/arena_owned.rs",
         "crabc-mimalloc/src/arena_purge.rs",
         "crabc-mimalloc/src/bitmap.rs",
         "crabc-mimalloc/src/bitmap_native_tests.rs",
+        "crabc-mimalloc/src/diagnostic_output.rs",
         "crabc-mimalloc/src/single_thread.rs",
         "crabc-mimalloc/src/statistics.rs",
-        "crabc-mimalloc/src/diagnostic_output.rs",
-        "compat/allocator/tests/test_x86_64_diagnostic_output_owner_evidence.py",
-        "compat/allocator/x86_64_diagnostic_output_owner_evidence.py",
-        "compat/allocator/x86_64_diagnostic_output_owner_oracle.c",
         "crabc-mimalloc/src/subproc.rs",
         "crabc-mimalloc/src/types.rs"
       ]
@@ -1669,6 +1669,6 @@
     "unfinished_unit_count": 28,
     "unit_count": 34,
     "unit_ids_sha256": "dca679d8587cb38bcf6e6c62379284ed35a55d1b7991d07b0d30eac767670052",
-    "units_sha256": "c4924d7acf7d164f053b1d82f98ee41420bde7f6bd6eef549b9619be76cde6ba"
+    "units_sha256": "18b306699c04b0c57a6431ad4b60a68649e3a55dd0c06049b743bbce6875f8bc"
   }
 }
