@@ -957,3 +957,14 @@ retention on commit poison. This phase does not yet clear `theap_meta`, retire
 the separate Rust bootstrap Heap, merge source Heap statistics, remove source
 Heap bookkeeping, or invoke arena/PageMap release. It is not a completed
 `destroy_on_exit` caller; those ordering and source-list prerequisites remain.
+
+The source `mi_theap_t::hnext/hprev` fields use same-layout `UnsafeCell<*mut
+Theap>` in Rust. The source Heap-list lock still controls every published
+link read/write; this introduces no atomic list algorithm or new ordering.
+Neighbour updates project only the individual link cell, preserving a shared
+ordinary-Theap observation during locked source prepend. Detached/exclusive
+initialization and terminal test observations retain their existing exclusive
+ownership proof. The focused prepend and force-destruction refusal regressions
+pass; this is representation/ownership evidence, not a dynamic Rust alias-model
+checker result. Canonical metadata page sessions still require separate scoped
+local-field ownership before joining the source main Heap list.

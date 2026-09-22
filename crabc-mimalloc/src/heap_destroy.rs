@@ -116,7 +116,7 @@ impl Heap {
                 dynamic += 1;
                 attached += usize::from(!theap.tld.is_null());
             }
-            current = theap.hnext;
+            current = unsafe { *theap.hnext.get() };
         }
         guard.unlock().expect("source graph audit unlock");
         (dynamic, attached)
@@ -157,7 +157,7 @@ impl Heap {
         // SAFETY: the caller owns the complete valid, quiescent source list.
         while let Some(theap) = NonNull::new(current) {
             count = count.checked_add(1).ok_or(MainHeapDestroyError::InvalidOwnership)?;
-            current = unsafe { theap.as_ref() }.hnext;
+            current = unsafe { *(*theap.as_ptr()).hnext.get() };
         }
         if tracking.len() < count {
             return Err(MainHeapDestroyError::TrackingCapacity { required: count });
@@ -193,7 +193,7 @@ impl Heap {
             }
             tracking[index].pointer = Some(pointer);
             tracking[index].tld_pointer = tld_pointer;
-            current = theap.hnext;
+            current = unsafe { *theap.hnext.get() };
         }
 
         // Source first detaches *all* TLD relations, then frees the Heap list.
@@ -224,8 +224,8 @@ impl Heap {
         for slot in &mut tracking[..count] {
             let mut pointer = slot.pointer.expect("recovered list member");
             let theap = unsafe { pointer.as_mut() };
-            theap.hnext = core::ptr::null_mut();
-            theap.hprev = core::ptr::null_mut();
+            *theap.hnext.get_mut() = core::ptr::null_mut();
+            *theap.hprev.get_mut() = core::ptr::null_mut();
             if let Some(TrackedTheap::Recovered(allocation)) = slot.theap.take() {
                 let previous = theap.refcount.fetch_sub(1, Ordering::AcqRel);
                 if previous == 0 {

@@ -39,6 +39,7 @@
 // all C ABI-size claims remain absent. No code may treat a Rust type here as
 // `sizeof(mi_heap_t)`, `sizeof(mi_tld_t)`, or `sizeof(mi_theap_t)`.
 
+use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::mem::{align_of, size_of};
 use core::num::NonZeroUsize;
@@ -780,10 +781,10 @@ impl Heap {
         // serializes the source intrusive heap-list update.
         unsafe {
             let head = self.theaps;
-            (*theap).hprev = null_mut();
-            (*theap).hnext = head;
+            (*(*theap).hprev.get()) = null_mut();
+            (*(*theap).hnext.get()) = head;
             if !head.is_null() {
-                (*head).hprev = theap;
+                (*(*head).hprev.get()) = theap;
             }
             self.theaps = theap;
         }
@@ -804,8 +805,8 @@ impl Heap {
         unsafe {
             self.theaps == theap
                 && !theap.is_null()
-                && (*theap).hprev.is_null()
-                && (*theap).hnext.is_null()
+                && (*(*theap).hprev.get()).is_null()
+                && (*(*theap).hnext.get()).is_null()
                 && core::ptr::eq((*theap).heap.load(Ordering::Acquire), core::ptr::from_ref(self).cast_mut())
         }
     }
@@ -835,11 +836,13 @@ impl Heap {
                 core::ptr::from_ref(self).cast_mut(),
             ) {
                 false
-            } else if (*theap).hprev.is_null() {
+            } else if (*(*theap).hprev.get()).is_null() {
                 self.theaps == theap
             } else {
-                (*(*theap).hprev).hnext == theap
-                    && ((*theap).hnext.is_null() || (*(*theap).hnext).hprev == theap)
+                let previous = *(*theap).hprev.get();
+                let next = *(*theap).hnext.get();
+                *(*previous).hnext.get() == theap
+                    && (next.is_null() || *(*next).hprev.get() == theap)
             }
         };
         guard.unlock().map_err(HeapTheapListError::Lock)?;
@@ -889,7 +892,7 @@ impl Heap {
                     break;
                 }
                 found |= current == target;
-                current = (*current).hnext;
+                current = (*(*current).hnext.get());
             }
         }
         if !current.is_null() {
@@ -938,20 +941,22 @@ impl Heap {
         // detachment discipline before this method clears the Release heap
         // publication.
         unsafe {
-            if (*theap).hprev.is_null() && self.theaps != theap {
+            if (*(*theap).hprev.get()).is_null() && self.theaps != theap {
                 let _ = guard.unlock();
                 return Err(HeapTheapListError::Membership);
             }
-            if !(*theap).hnext.is_null() {
-                (*(*theap).hnext).hprev = (*theap).hprev;
+            let next = *(*theap).hnext.get();
+            let previous = *(*theap).hprev.get();
+            if !next.is_null() {
+                *(*next).hprev.get() = previous;
             }
-            if !(*theap).hprev.is_null() {
-                (*(*theap).hprev).hnext = (*theap).hnext;
+            if !previous.is_null() {
+                *(*previous).hnext.get() = next;
             } else {
-                self.theaps = (*theap).hnext;
+                self.theaps = next;
             }
-            (*theap).hnext = null_mut();
-            (*theap).hprev = null_mut();
+            (*(*theap).hnext.get()) = null_mut();
+            (*(*theap).hprev.get()) = null_mut();
             (*theap).heap.store(null_mut(), Ordering::Release);
         }
         guard.unlock().map_err(HeapTheapListError::Lock)
@@ -2746,8 +2751,8 @@ impl ThreadLocalData {
                 && (*main_default).tnext.is_null()
                 && core::ptr::eq((*main_default).tld, self_pointer)
                 && heap.theaps == theap
-                && (*theap).hprev.is_null()
-                && (*theap).hnext.is_null()
+                && (*(*theap).hprev.get()).is_null()
+                && (*(*theap).hnext.get()).is_null()
                 && core::ptr::eq((*theap).heap.load(Ordering::Acquire), heap_pointer)
         };
         if !valid_member {
@@ -2775,8 +2780,8 @@ impl ThreadLocalData {
         // explicit Rust typed-prefix retirement noted above.
         unsafe {
             heap.theaps = null_mut();
-            (*theap).hnext = null_mut();
-            (*theap).hprev = null_mut();
+            (*(*theap).hnext.get()) = null_mut();
+            (*(*theap).hprev.get()) = null_mut();
             (*theap).heap.store(null_mut(), Ordering::Release);
         }
         heap_guard
@@ -4987,8 +4992,11 @@ pub(crate) struct Theap {
     generic_collect_count: isize,
     tnext: *mut Theap,
     tprev: *mut Theap,
-    hnext: *mut Theap,
-    hprev: *mut Theap,
+    // Source Heap links may change under the Heap list lock while the owner
+    // reads ordinary Theap state. Interior mutability preserves that source
+    // split; access must use raw field projections with list-lock authority.
+    hnext: UnsafeCell<*mut Theap>,
+    hprev: UnsafeCell<*mut Theap>,
     page_full_retain: isize,
     allow_page_reclaim: bool,
     allow_page_abandon: bool,
@@ -5022,8 +5030,8 @@ impl Theap {
             generic_collect_count: 0,
             tnext: null_mut(),
             tprev: null_mut(),
-            hnext: null_mut(),
-            hprev: null_mut(),
+            hnext: UnsafeCell::new(null_mut()),
+            hprev: UnsafeCell::new(null_mut()),
             page_full_retain: 0,
             allow_page_reclaim: false,
             allow_page_abandon: true,
@@ -5500,8 +5508,8 @@ impl Theap {
             || !self.tld.is_null()
             || !self.tnext.is_null()
             || !self.tprev.is_null()
-            || !self.hnext.is_null()
-            || !self.hprev.is_null()
+            || !self.hnext.get_mut().is_null()
+            || !self.hprev.get_mut().is_null()
         {
             return false;
         }
@@ -5570,8 +5578,8 @@ impl Theap {
             && self.tld.is_null()
             && self.tnext.is_null()
             && self.tprev.is_null()
-            && self.hnext.is_null()
-            && self.hprev.is_null()
+            && unsafe { (*self.hnext.get()).is_null() }
+            && unsafe { (*self.hprev.get()).is_null() }
             && self.memid.kind() == memory_kind
             && self.refcount.load(Ordering::Acquire) == 1
     }
@@ -5917,13 +5925,17 @@ impl Theap {
     #[cfg(test)]
     #[inline]
     pub(crate) fn test_m1_terminal_fields(&self) -> M1TerminalTheapFields {
+        assert!(self.heap.load(Ordering::Acquire).is_null(),
+            "terminal fixture observations require source Heap detachment");
+        // No published Heap can mutate the terminal link cells in this
+        // exclusive fixture; ordinary shared observations take its list lock.
         M1TerminalTheapFields {
             heap_is_null: self.heap.load(Ordering::Acquire).is_null(),
             tld_is_null: self.tld.is_null(),
             tnext_is_null: self.tnext.is_null(),
             tprev_is_null: self.tprev.is_null(),
-            hnext_is_null: self.hnext.is_null(),
-            hprev_is_null: self.hprev.is_null(),
+            hnext_is_null: unsafe { (*self.hnext.get()).is_null() },
+            hprev_is_null: unsafe { (*self.hprev.get()).is_null() },
             subproc_is_nonnull: !self.subproc.load(Ordering::Acquire).is_null(),
             refcount: self.refcount(),
             page_count: self.page_count,
@@ -6159,6 +6171,33 @@ mod tests {
     use crate::free_list::LocalFreeList;
     use crate::remote_free;
     use core::mem::{align_of, offset_of, size_of, MaybeUninit};
+
+    #[test]
+    fn shared_theap_observation_survives_locked_source_heap_prepend() {
+        let mut heap = std::boxed::Box::new(Heap::bootstrap_empty());
+        let mut first = std::boxed::Box::new(Theap::empty());
+        let mut second = std::boxed::Box::new(Theap::empty());
+        let heap_pointer = core::ptr::from_mut(&mut *heap);
+        let first_pointer = core::ptr::from_mut(&mut *first);
+        let second_pointer = core::ptr::from_mut(&mut *second);
+        first.heap.store(heap_pointer, Ordering::Release);
+        second.heap.store(heap_pointer, Ordering::Release);
+        heap.attach_theap_after_heap_publication(first_pointer).unwrap();
+        let observed = &*first;
+        let cookie = observed.cookie;
+        // The new source head changes the existing head's hprev under the
+        // Heap lock while its independent ordinary fields remain observable.
+        heap.attach_theap_after_heap_publication(second_pointer).unwrap();
+        assert_eq!(observed.cookie, cookie);
+        assert_eq!(observed.heap(), heap_pointer);
+        assert!(heap.has_shared_theap_member_blocking(first_pointer).unwrap());
+        assert!(heap.has_shared_theap_member_blocking(second_pointer).unwrap());
+        let guard = heap.theaps_lock.lock().unwrap();
+        assert_eq!(unsafe { *observed.hprev.get() }, second_pointer);
+        assert!(unsafe { (*observed.hnext.get()).is_null() });
+        assert_eq!(unsafe { *second.hnext.get() }, first_pointer);
+        guard.unlock().unwrap();
+    }
 
     #[test]
     fn oracle_layout_probe_emits_machine_record() {
@@ -6670,11 +6709,11 @@ mod tests {
         );
         record!(
             "m1.bootstrap.empty_theap.hnext_is_null",
-            empty_theap.hnext.is_null() as usize
+            unsafe { (*empty_theap.hnext.get()).is_null() } as usize
         );
         record!(
             "m1.bootstrap.empty_theap.hprev_is_null",
-            empty_theap.hprev.is_null() as usize
+            unsafe { (*empty_theap.hprev.get()).is_null() } as usize
         );
         record!(
             "m1.bootstrap.empty_theap.page_full_retain",
@@ -7672,8 +7711,8 @@ mod tests {
         assert_eq!(empty_theap.generic_collect_count, 0);
         assert!(empty_theap.tnext.is_null());
         assert!(empty_theap.tprev.is_null());
-        assert!(empty_theap.hnext.is_null());
-        assert!(empty_theap.hprev.is_null());
+        assert!(unsafe { (*empty_theap.hnext.get()).is_null() });
+        assert!(unsafe { (*empty_theap.hprev.get()).is_null() });
         assert_eq!(empty_theap.page_full_retain, 0);
         assert!(!empty_theap.allow_page_reclaim);
         assert!(empty_theap.allow_page_abandon);
