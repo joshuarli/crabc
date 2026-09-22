@@ -194,6 +194,44 @@ class SuppliedDynamicCohortIdentityTests(unittest.TestCase):
         with self.assertRaisesRegex(RUNNER.LUA.RunnerError, "wrong dynamic product roster"):
             RUNNER._read_qualification_receipt(receipt)
 
+    def test_linked_cohort_reader_uses_current_mount_git_metadata(self) -> None:
+        checkout = self.temporary / ".work/worktrees/frozen-cohort"
+        checkout.mkdir(parents=True)
+        metadata = self.temporary / ".git/worktrees/frozen-cohort"
+        metadata.mkdir(parents=True)
+        pointer = checkout / ".git"
+        pointer.write_text("gitdir: /host/crabc/.git/worktrees/frozen-cohort\n", encoding="utf-8")
+        metadata_pointer = metadata / "gitdir"
+        metadata_pointer.write_text(
+            "/host/crabc/.work/worktrees/frozen-cohort/.git\n", encoding="utf-8"
+        )
+
+        with mock.patch.object(RUNNER, "ROOT", self.temporary):
+            environment, context = RUNNER._cohort_git_context(checkout, self.temporary / "state")
+
+        self.assertEqual(environment["GIT_DIR"], str(metadata))
+        self.assertEqual(environment["GIT_WORK_TREE"], str(checkout))
+        self.assertEqual(context["git_dir"], str(metadata))
+        self.assertEqual(context["git_work_tree"], str(checkout))
+        self.assertEqual(context["worktree_pointer"]["sha256"], RUNNER.LUA.sha256_file(pointer))
+        self.assertEqual(context["metadata_pointer"]["sha256"], RUNNER.LUA.sha256_file(metadata_pointer))
+
+    def test_linked_cohort_reader_rejects_metadata_for_another_checkout(self) -> None:
+        checkout = self.temporary / ".work/worktrees/frozen-cohort"
+        checkout.mkdir(parents=True)
+        metadata = self.temporary / ".git/worktrees/frozen-cohort"
+        metadata.mkdir(parents=True)
+        (checkout / ".git").write_text(
+            "gitdir: /host/crabc/.git/worktrees/frozen-cohort\n", encoding="utf-8"
+        )
+        (metadata / "gitdir").write_text(
+            "/host/crabc/.work/worktrees/other-cohort/.git\n", encoding="utf-8"
+        )
+
+        with mock.patch.object(RUNNER, "ROOT", self.temporary):
+            with self.assertRaisesRegex(RUNNER.LUA.RunnerError, "names a different checkout"):
+                RUNNER._cohort_git_context(checkout, self.temporary / "state")
+
 
 if __name__ == "__main__":
     unittest.main()

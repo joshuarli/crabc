@@ -84,6 +84,64 @@ def _cohort_path(checkout: Path, path: Path, description: str, *, directory: boo
     return candidate
 
 
+def _cohort_git_context(checkout: Path, state: Path) -> tuple[dict[str, str], dict[str, object]]:
+    """Bind the frozen worktree reader to its mounted Git metadata.
+
+    A linked worktree stores host-absolute paths in both of its Git pointer
+    files.  The supplied consumer runs in a container where the primary
+    checkout is mounted at a different absolute path, so invoking the frozen
+    reader without an explicit worktree context makes its source seal fail
+    before it reaches the retained receipt.  Derive the matching metadata
+    beneath this consumer checkout's ``.git/worktrees`` directory, preserve
+    the frozen pointer files, and let Git use that read-only context.
+    """
+
+    try:
+        relative_checkout = checkout.relative_to(ROOT)
+    except ValueError as error:
+        raise LUA.RunnerError("supplied Lua cohort checkout is not beneath this checkout") from error
+    require(
+        len(relative_checkout.parts) == 3 and relative_checkout.parts[:2] == (".work", "worktrees"),
+        "supplied Lua cohort checkout is not a linked worktree",
+    )
+    pointer = LUA.require_physical_regular_file(checkout / ".git", "supplied Lua cohort Git pointer")
+    try:
+        pointer_text = pointer.read_text(encoding="utf-8")
+    except OSError as error:
+        raise LUA.RunnerError("cannot read supplied Lua cohort Git pointer") from error
+    require(pointer_text.startswith("gitdir: ") and pointer_text.count("\n") == 1,
+            "supplied Lua cohort Git pointer is malformed")
+    recorded_git_dir = Path(pointer_text.removeprefix("gitdir: ").strip())
+    require(recorded_git_dir.is_absolute() and recorded_git_dir.parent.name == "worktrees",
+            "supplied Lua cohort Git pointer is not a linked-worktree reference")
+    name = recorded_git_dir.name
+    require(name == relative_checkout.name and name not in {"", ".", ".."},
+            "supplied Lua cohort Git pointer names a different worktree")
+    metadata = LUA.require_physical_directory(
+        ROOT / ".git/worktrees" / name, "supplied Lua cohort Git metadata"
+    )
+    metadata_pointer = LUA.require_physical_regular_file(
+        metadata / "gitdir", "supplied Lua cohort Git metadata pointer"
+    )
+    try:
+        metadata_text = metadata_pointer.read_text(encoding="utf-8").strip()
+    except OSError as error:
+        raise LUA.RunnerError("cannot read supplied Lua cohort Git metadata pointer") from error
+    expected_tail = (*relative_checkout.parts, ".git")
+    require(
+        tuple(Path(metadata_text).parts[-len(expected_tail):]) == expected_tail,
+        "supplied Lua cohort Git metadata names a different checkout",
+    )
+    environment = DYNAMIC.dynamic_environment(state)
+    environment.update({"GIT_DIR": str(metadata), "GIT_WORK_TREE": str(checkout)})
+    return environment, {
+        "git_dir": str(metadata),
+        "git_work_tree": str(checkout),
+        "worktree_pointer": LUA.artifact_record(pointer),
+        "metadata_pointer": LUA.artifact_record(metadata_pointer),
+    }
+
+
 def _read_qualification_receipt(path: Path) -> dict[str, object]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -138,9 +196,10 @@ def validate_cohort(
     reader = LUA.require_physical_regular_file(
         checkout / "compat/x86_64/owned_dynamic_qualification.py", "supplied Lua cohort receipt reader"
     )
-    validation = DYNAMIC.command(
-        [sys.executable, "-B", str(reader), "validate", "--receipt", str(receipt)],
-        work=checkout, state=state / "cohort-reader", timeout=timeout,
+    environment, git_context = _cohort_git_context(checkout, state / "cohort-reader")
+    validation = LUA.command_record(
+        [sys.executable, "-B", str(reader), "validate", "--receipt", str(receipt.relative_to(checkout))],
+        cwd=checkout, environment=environment, timeout=timeout,
     )
     DYNAMIC.require_success(validation, "supplied Lua cohort receipt reader")
     payload = _read_qualification_receipt(receipt)
@@ -154,6 +213,7 @@ def validate_cohort(
         "checkout": str(checkout),
         "receipt": LUA.artifact_record(receipt),
         "reader": LUA.artifact_record(reader),
+        "git_context": git_context,
         "source_sha256": payload["source_sha256"],
         "products": products,
         "roots": roots,
