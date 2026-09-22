@@ -41595,7 +41595,6 @@ where
     /// `session`, `arena`, and `page_map` must name the same process image.
     /// The caller must uphold the exact-owned-range PageMap contract above for
     /// this engine's complete lifetime, including every scoped producer.
-    #[cfg(not(test))]
     pub(crate) unsafe fn activate_main_static_for_owned_ranges(
         session: MainStaticProcessPageSession,
         arena: Backing,
