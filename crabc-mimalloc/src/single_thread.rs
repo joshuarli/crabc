@@ -217,12 +217,27 @@ const PAGE_MAX_CANDIDATES: isize = 4;
 /// though `reserved == used == 1` and its ordinary size class is small.
 #[inline]
 fn page_is_huge(page: &Page) -> bool {
-    page.capacity() == 1
+    page.reserved() == 1
         && (page.block_size() > LARGE_MAX_OBJ_SIZE
             || page
                 .memid()
                 .os_memory()
                 .is_some_and(|memory| memory.base.addr() < (page as *const Page).addr()))
+}
+
+/// Raw form of [`page_is_huge`] for a page already published into the shared
+/// selected-main OS abandoned list. It reads only immutable geometry and the
+/// copied OS mapping provenance, never the list's repurposed links or a whole
+/// `Page` reference. `reserved == 1` is the source singleton shape; an OS
+/// mapping base below page metadata is the aligned huge route.
+#[inline]
+fn page_is_huge_at(page: NonNull<Page>, state: &crate::types::PageAbandonmentState) -> bool {
+    state.reserved == 1
+        && (state.block_size > LARGE_MAX_OBJ_SIZE
+            || state
+                .memid
+                .os_memory()
+                .is_some_and(|memory| memory.base.addr() < page.as_ptr().addr()))
 }
 
 /// Returns the source queue that currently owns `page`.
@@ -39576,18 +39591,24 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             // Pinned `mi_page_to_full` gives every selected page to
             // `_mi_page_abandon`. The subsequent arena/non-arena choice comes
             // from the page's original memory provenance, never from this
-            // session's ordinary abandoning option alone.
+            // session's ordinary abandoning option alone. In particular,
+            // `mi_page_is_huge` routes an aligned OS singleton through
+            // `BIN_HUGE` even when its block size has an ordinary class.
+            let is_os_huge_singleton = unsafe {
+                let page_ref = page.as_ref();
+                page_ref.memid().is_os() && page_is_huge(page_ref)
+            };
+            if is_os_huge_singleton {
+                return self.abandon_selected_main_os_singleton_page_from_full(
+                    bin,
+                    page,
+                    popped_block,
+                );
+            }
             if matches!(
                 size_class::page_kind_for_block_size(unsafe { page.as_ref() }.block_size()),
                 Some(PageKind::Singleton)
             ) {
-                if unsafe { page.as_ref() }.memid().is_os() {
-                    return self.abandon_selected_main_os_singleton_page_from_full(
-                        bin,
-                        page,
-                        popped_block,
-                    );
-                }
                 return self.abandon_selected_main_arena_singleton_page_from_full(
                     bin,
                     page,
@@ -39752,10 +39773,10 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         if !page.memid().is_os() {
             return Err(SelectedMainArenaRegularFullPreflightError::MemoryIsNotOs);
         }
-        if size_class::page_kind_for_block_size(page.block_size()) != Some(PageKind::Singleton) {
-            return Err(SelectedMainArenaRegularFullPreflightError::PageKindIsNotSingleton);
-        }
-        if page.reserved() != 1 || size_class::bin(page.block_size()) != Some(BIN_HUGE) {
+        // `mi_page_is_huge` selects `BIN_HUGE` from singleton geometry and
+        // OS mapping placement. Its block size can still be Small, Medium, or
+        // Large, so a request-size class cannot prove or reject this route.
+        if !page_is_huge(page) {
             return Err(SelectedMainArenaRegularFullPreflightError::SingletonQueueIsNotHuge);
         }
         Ok(())
@@ -40128,10 +40149,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // only the remote identity is atomic.
         let state = unsafe { Page::abandonment_state_at(page) };
         if !state.memid.is_os()
-            || size_class::page_kind_for_block_size(state.block_size)
-                != Some(PageKind::Singleton)
-            || size_class::bin(state.block_size) != Some(BIN_HUGE)
-            || state.reserved != 1
+            || !page_is_huge_at(page, &state)
             // SAFETY: `theap` is a raw pointer projection to the immutable
             // association established when this page was published. It is
             // read by value without creating a whole-page reference.

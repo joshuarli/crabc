@@ -7808,8 +7808,9 @@ mod tests {
     use crate::types::THREAD_ID_ABANDONED;
     use crabc_core::Errno;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, Barrier};
+    use std::sync::{mpsc, Arc};
     use std::thread;
+    use std::time::Duration;
 
     fn memory_config() -> MemoryConfig {
         MemoryConfig::from_observations(
@@ -9142,11 +9143,48 @@ mod tests {
     /// The source private OS list belongs to the static Heap, while each
     /// ordinary later Theap has its own page engine. Worker A publishes one
     /// member, worker B prepends another, then A frees its now non-head page
-    /// before B releases the remaining head. This exercises list mutation by
-    /// two live owners without ever observing another owner's intrusive links
-    /// outside Heap's locked exact-member splice.
+    /// before B releases the remaining head. The explicit bounded handoff
+    /// preserves two live concurrent owners but reports the exact peer phase
+    /// that refused or stalled rather than hiding it as a barrier deadlock.
     #[test]
     fn persistent_owner_local_os_singletons_cross_owner_non_head_then_head_free() {
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        enum CrossOwnerOsListPhase {
+            FirstPublished,
+            SecondPublished,
+            FirstReleased,
+        }
+
+        fn send_cross_owner_phase(
+            sender: &mpsc::Sender<Result<CrossOwnerOsListPhase, String>>,
+            phase: CrossOwnerOsListPhase,
+            owner: &str,
+        ) -> Result<(), String> {
+            sender
+                .send(Ok(phase))
+                .map_err(|_| format!("{owner} could not publish {phase:?}: peer disconnected"))
+        }
+
+        fn receive_cross_owner_phase(
+            receiver: &mpsc::Receiver<Result<CrossOwnerOsListPhase, String>>,
+            expected: CrossOwnerOsListPhase,
+            owner: &str,
+        ) -> Result<(), String> {
+            match receiver.recv_timeout(Duration::from_secs(2)) {
+                Ok(Ok(actual)) if actual == expected => Ok(()),
+                Ok(Ok(actual)) => Err(format!(
+                    "{owner} expected peer phase {expected:?}, received {actual:?}"
+                )),
+                Ok(Err(error)) => Err(format!("{owner} received peer failure: {error}")),
+                Err(mpsc::RecvTimeoutError::Timeout) => Err(format!(
+                    "{owner} timed out waiting for peer phase {expected:?}"
+                )),
+                Err(mpsc::RecvTimeoutError::Disconnected) => Err(format!(
+                    "{owner} lost peer before phase {expected:?}"
+                )),
+            }
+        }
+
         thread::spawn(|| {
             let config = memory_config();
             let storage = MainStaticAttachmentStorage::test_static_owner();
@@ -9162,111 +9200,184 @@ mod tests {
             let main_heap = main
                 .shared_main_heap_lease()
                 .expect("the live main attachment lends its static heap");
-            let a_published = Arc::new(Barrier::new(2));
-            let b_published = Arc::new(Barrier::new(2));
-            let a_released = Arc::new(Barrier::new(2));
+            let (first_to_second_tx, first_to_second_rx) = mpsc::channel();
+            let (second_to_first_tx, second_to_first_rx) = mpsc::channel();
+            let first_phase = Arc::new(AtomicUsize::new(0));
+            let second_phase = Arc::new(AtomicUsize::new(0));
 
             thread::scope(|scope| {
-                let a_published_for_a = Arc::clone(&a_published);
-                let b_published_for_a = Arc::clone(&b_published);
-                let a_released_for_a = Arc::clone(&a_released);
+                let first_phase_for_owner = Arc::clone(&first_phase);
                 let first_owner = scope.spawn(move || {
-                    let mut attachment = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(
-                            main_heap,
-                            metadata,
-                            config,
+                    let result = (|| -> Result<(), String> {
+                        let mut attachment = unsafe {
+                            MainHeapThreadAttachment::begin_with_test_metadata(
+                                main_heap,
+                                metadata,
+                                config,
+                            )
+                        }
+                        .map_err(|error| {
+                            format!("first owner attachment did not begin: {error:?}")
+                        })?;
+                        first_phase_for_owner.store(1, Ordering::Release);
+                        let mut owner = MainHeapThreadOwnerLocalPageEngine::begin(
+                            &mut attachment,
+                            pair,
                         )
-                    } {
-                        Ok(attachment) => attachment,
-                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
-                            panic!("first OS-list owner attachment rejected: {error:?}")
-                        }
-                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
-                            panic!("first OS-list owner attachment retained: {error:?}")
-                        }
-                    };
-                    let mut owner = MainHeapThreadOwnerLocalPageEngine::begin(&mut attachment, pair)
-                        .expect("the first owner opens its persistent engine");
-                    let first = owner
-                        .with_local_allocator(&mut attachment, |allocator| {
-                            allocator.allocate_aligned(SMALL_MAX_OBJ_SIZE + 1, 128 * 1024)
-                        })
-                        .expect("the first owner keeps its local operation bound")
-                        .expect("the first owner publishes one OS singleton");
-                    a_published_for_a.wait();
-                    b_published_for_a.wait();
-                    // Worker B has prepended its own live OS singleton. A's
-                    // direct free must remove only this exact non-head member.
-                    owner
-                        .with_local_allocator(&mut attachment, |allocator| {
-                            // SAFETY: `first` is this exact owner's current
-                            // client and has not crossed a producer boundary.
-                            unsafe { allocator.free(first) }
-                        })
-                        .expect("the first owner keeps the free bound")
-                        .expect("the first owner frees the cross-owner non-head member");
-                    a_released_for_a.wait();
-                    owner
-                        .finish(&mut attachment)
-                        .expect("the first owner reaches an empty engine after its direct free");
-                    attachment
-                        .finish_after_user_destructors()
-                        .expect("the first owner completes normal later teardown");
+                        .map_err(|error| format!("first owner engine did not begin: {error:?}"))?;
+                        first_phase_for_owner.store(2, Ordering::Release);
+                        let first = owner
+                            .with_local_allocator(&mut attachment, |allocator| {
+                                allocator.allocate_aligned(SMALL_MAX_OBJ_SIZE + 1, 128 * 1024)
+                            })
+                            .map_err(|error| {
+                                format!("first owner allocation operation failed: {error:?}")
+                            })?
+                            .ok_or_else(|| {
+                                "first owner aligned OS singleton allocation returned None".to_owned()
+                            })?;
+                        first_phase_for_owner.store(3, Ordering::Release);
+                        send_cross_owner_phase(
+                            &first_to_second_tx,
+                            CrossOwnerOsListPhase::FirstPublished,
+                            "first owner",
+                        )?;
+                        // The second engine was already opened on its own
+                        // thread. It now prepends its page, making `first`
+                        // the non-head shared-list member.
+                        receive_cross_owner_phase(
+                            &second_to_first_rx,
+                            CrossOwnerOsListPhase::SecondPublished,
+                            "first owner",
+                        )?;
+                        first_phase_for_owner.store(4, Ordering::Release);
+                        owner
+                            .with_local_allocator(&mut attachment, |allocator| {
+                                // SAFETY: `first` is this exact owner's
+                                // current client and has not crossed a
+                                // producer boundary.
+                                unsafe { allocator.free(first) }
+                            })
+                            .map_err(|error| {
+                                format!("first owner free operation failed: {error:?}")
+                            })?
+                            .map_err(|error| {
+                                format!("first owner non-head direct free failed: {error:?}")
+                            })?;
+                        first_phase_for_owner.store(5, Ordering::Release);
+                        send_cross_owner_phase(
+                            &first_to_second_tx,
+                            CrossOwnerOsListPhase::FirstReleased,
+                            "first owner",
+                        )?;
+                        owner
+                            .finish(&mut attachment)
+                            .map_err(|error| format!("first owner finish failed: {error:?}"))?;
+                        attachment
+                            .finish_after_user_destructors()
+                            .map_err(|error| format!("first attachment finish failed: {error:?}"))?;
+                        first_phase_for_owner.store(6, Ordering::Release);
+                        Ok(())
+                    })();
+                    if let Err(error) = &result {
+                        let _ = first_to_second_tx.send(Err(format!(
+                            "first owner reached phase {}: {error}",
+                            first_phase_for_owner.load(Ordering::Acquire),
+                        )));
+                    }
+                    result
                 });
 
-                let a_published_for_b = Arc::clone(&a_published);
-                let b_published_for_b = Arc::clone(&b_published);
-                let a_released_for_b = Arc::clone(&a_released);
+                let second_phase_for_owner = Arc::clone(&second_phase);
                 let second_owner = scope.spawn(move || {
-                    let mut attachment = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(
-                            main_heap,
-                            metadata,
-                            config,
+                    let result = (|| -> Result<(), String> {
+                        let mut attachment = unsafe {
+                            MainHeapThreadAttachment::begin_with_test_metadata(
+                                main_heap,
+                                metadata,
+                                config,
+                            )
+                        }
+                        .map_err(|error| {
+                            format!("second owner attachment did not begin: {error:?}")
+                        })?;
+                        second_phase_for_owner.store(1, Ordering::Release);
+                        let mut owner = MainHeapThreadOwnerLocalPageEngine::begin(
+                            &mut attachment,
+                            pair,
                         )
-                    } {
-                        Ok(attachment) => attachment,
-                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
-                            panic!("second OS-list owner attachment rejected: {error:?}")
-                        }
-                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
-                            panic!("second OS-list owner attachment retained: {error:?}")
-                        }
-                    };
-                    let mut owner = MainHeapThreadOwnerLocalPageEngine::begin(&mut attachment, pair)
-                        .expect("the second owner opens its persistent engine");
-                    a_published_for_b.wait();
-                    let second = owner
-                        .with_local_allocator(&mut attachment, |allocator| {
-                            allocator.allocate_aligned(SMALL_MAX_OBJ_SIZE + 1, 256 * 1024)
-                        })
-                        .expect("the second owner keeps its local operation bound")
-                        .expect("the second owner prepends one OS singleton");
-                    b_published_for_b.wait();
-                    a_released_for_b.wait();
-                    owner
-                        .with_local_allocator(&mut attachment, |allocator| {
-                            // SAFETY: `second` is this exact owner's current
-                            // remaining head client and has no producer.
-                            unsafe { allocator.free(second) }
-                        })
-                        .expect("the second owner keeps the free bound")
-                        .expect("the second owner frees the remaining head member");
-                    owner
-                        .finish(&mut attachment)
-                        .expect("the second owner reaches an empty engine after its direct free");
-                    attachment
-                        .finish_after_user_destructors()
-                        .expect("the second owner completes normal later teardown");
+                        .map_err(|error| format!("second owner engine did not begin: {error:?}"))?;
+                        second_phase_for_owner.store(2, Ordering::Release);
+                        receive_cross_owner_phase(
+                            &first_to_second_rx,
+                            CrossOwnerOsListPhase::FirstPublished,
+                            "second owner",
+                        )?;
+                        let second = owner
+                            .with_local_allocator(&mut attachment, |allocator| {
+                                allocator.allocate_aligned(SMALL_MAX_OBJ_SIZE + 1, 256 * 1024)
+                            })
+                            .map_err(|error| {
+                                format!("second owner allocation operation failed: {error:?}")
+                            })?
+                            .ok_or_else(|| {
+                                "second owner aligned OS singleton allocation returned None".to_owned()
+                            })?;
+                        second_phase_for_owner.store(3, Ordering::Release);
+                        send_cross_owner_phase(
+                            &second_to_first_tx,
+                            CrossOwnerOsListPhase::SecondPublished,
+                            "second owner",
+                        )?;
+                        receive_cross_owner_phase(
+                            &first_to_second_rx,
+                            CrossOwnerOsListPhase::FirstReleased,
+                            "second owner",
+                        )?;
+                        second_phase_for_owner.store(4, Ordering::Release);
+                        owner
+                            .with_local_allocator(&mut attachment, |allocator| {
+                                // SAFETY: `second` is this exact owner's
+                                // remaining head client and has no producer.
+                                unsafe { allocator.free(second) }
+                            })
+                            .map_err(|error| {
+                                format!("second owner free operation failed: {error:?}")
+                            })?
+                            .map_err(|error| {
+                                format!("second owner head direct free failed: {error:?}")
+                            })?;
+                        second_phase_for_owner.store(5, Ordering::Release);
+                        owner
+                            .finish(&mut attachment)
+                            .map_err(|error| format!("second owner finish failed: {error:?}"))?;
+                        attachment
+                            .finish_after_user_destructors()
+                            .map_err(|error| format!("second attachment finish failed: {error:?}"))?;
+                        second_phase_for_owner.store(6, Ordering::Release);
+                        Ok(())
+                    })();
+                    if let Err(error) = &result {
+                        let _ = second_to_first_tx.send(Err(format!(
+                            "second owner reached phase {}: {error}",
+                            second_phase_for_owner.load(Ordering::Acquire),
+                        )));
+                    }
+                    result
                 });
 
-                first_owner
+                let first_result = first_owner
                     .join()
-                    .expect("the first cross-owner list transition remains current-thread local");
-                second_owner
+                    .expect("the first cross-owner worker does not panic");
+                let second_result = second_owner
                     .join()
-                    .expect("the second cross-owner list transition remains current-thread local");
+                    .expect("the second cross-owner worker does not panic");
+                assert!(
+                    first_result.is_ok() && second_result.is_ok(),
+                    "cross-owner OS list transition failed: first phase {} result {first_result:?}; second phase {} result {second_result:?}",
+                    first_phase.load(Ordering::Acquire),
+                    second_phase.load(Ordering::Acquire),
+                );
             });
             main.teardown()
                 .expect("both completed OS-list owners leave the static main image quiescent");
