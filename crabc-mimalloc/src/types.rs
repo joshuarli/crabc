@@ -5925,6 +5925,13 @@ impl Theap {
         self.statistics.mapped_page_reclaimed_on_alloc();
     }
 
+    /// Records `mi_abandoned_page_try_reclaim` only after the source page has
+    /// been reassociated, false-collected, and inserted into its Theap queue.
+    #[inline]
+    pub(crate) fn record_page_reclaimed_on_free(&self) {
+        self.statistics.page_reclaimed_on_free();
+    }
+
     /// Records one completed source abandonment publication for this Theap.
     #[inline]
     pub(crate) fn record_page_abandoned(&self) {

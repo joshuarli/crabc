@@ -35541,6 +35541,7 @@ impl<'attach, 'heap, 'arena, 'map>
                     self.terminal = true;
                     return Err(terminal(self, DynamicMappedRemoteFreeError::Queue));
                 }
+                self.engine.session.theap().record_page_reclaimed_on_free();
                 Ok(self.engine)
             }
             Ok(abandoned::MappedAbandonedFreeResult::PublishedToExistingOwner) => {

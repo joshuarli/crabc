@@ -355,6 +355,7 @@ pub(crate) struct HeapTheapStatisticsSnapshot {
     pub(crate) pages_abandoned_total: i64,
     pub(crate) pages_abandoned_current: i64,
     pub(crate) pages_reclaim_on_alloc: i64,
+    pub(crate) pages_reclaim_on_free: i64,
     pub(crate) page_bin_total: [i64; STAT_BIN_COUNT],
     pub(crate) page_bin_current: [i64; STAT_BIN_COUNT],
 }
@@ -689,6 +690,13 @@ impl HeapTheapStatistics {
         self.pages_reclaim_on_alloc.increase(1);
     }
 
+    /// Records the source free-triggered abandoned-page reclaim after its
+    /// reassociation, false collection, and queue insertion have completed.
+    #[inline]
+    pub(crate) fn page_reclaimed_on_free(&self) {
+        self.pages_reclaim_on_free.increase(1);
+    }
+
     #[inline]
     pub(crate) fn page_abandoned(&self) {
         self.pages_abandoned.update(1);
@@ -719,6 +727,7 @@ impl HeapTheapStatistics {
             pages_abandoned_total: i64_load_relaxed(&self.pages_abandoned.total),
             pages_abandoned_current: i64_load_relaxed(&self.pages_abandoned.current),
             pages_reclaim_on_alloc: i64_load_relaxed(&self.pages_reclaim_on_alloc.total),
+            pages_reclaim_on_free: i64_load_relaxed(&self.pages_reclaim_on_free.total),
             page_bin_total,
             page_bin_current,
         }
@@ -1000,6 +1009,7 @@ mod tests {
         source.pages_searched(2);
         source.page_abandoned();
         source.mapped_page_reclaimed_on_alloc();
+        source.page_reclaimed_on_free();
         source.page_reabandoned_from_full();
         source.page_abandoned();
 
@@ -1016,6 +1026,7 @@ mod tests {
                 pages_abandoned_total: 1,
                 pages_abandoned_current: 0,
                 pages_reclaim_on_alloc: 1,
+                pages_reclaim_on_free: 1,
                 page_bin_total: {
                     let mut bins = [0; STAT_BIN_COUNT];
                     bins[3] = 2;
@@ -1037,6 +1048,7 @@ mod tests {
             pages_abandoned_total: 0,
             pages_abandoned_current: 0,
             pages_reclaim_on_alloc: 0,
+            pages_reclaim_on_free: 0,
             page_bin_total: [0; STAT_BIN_COUNT],
             page_bin_current: [0; STAT_BIN_COUNT],
         });

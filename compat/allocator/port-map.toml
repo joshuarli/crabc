@@ -668,6 +668,21 @@ stress_verified = false
 performance_qualified = false
 
 [[item]]
+upstream = "src/free.c"
+name = "same-origin-mapped-remote-free-reclaim-statistics-event"
+source_region = "mimalloc v3.5.0 src/free.c:427-475 mi_abandoned_page_try_reclaim, including the pages_reclaim_on_free counter after src/page.c:276-289 _mi_theap_page_reclaim"
+rust_module = "crabc_mimalloc::statistics, crabc_mimalloc::types, crabc_mimalloc::single_thread, and crabc_mimalloc::dynamic_theap"
+rust_item = "HeapTheapStatistics::page_reclaimed_on_free; Theap::record_page_reclaimed_on_free; DynamicMappedPageHandoff::remote_free_and_reclaim after requeue_reclaimed"
+intentional_difference = "The selected private dynamic same-origin mapped regular handoff is the only represented free-triggered reclaim caller. Its lower abandoned helper deliberately has no statistics update because it returns before the caller restores the Theap queue. The event occurs only after the existing Rust requeue has reassociated the page, completed false collection, inserted the page, restored its count/direct cache, and returned success; a failed queue restoration remains terminal and records nothing. The private snapshot uses one relaxed source-field load and the existing Theap-to-Heap-to-subprocess merge/reset image; it is not a public statistics or reporting API. Cross-thread reclaim, generic abandoned-page routing, and an MI_STAT output implementation remain unrepresented."
+tests = ["crabc-mimalloc/src/statistics.rs", "crabc-mimalloc/src/types.rs", "crabc-mimalloc/src/single_thread.rs", "crabc-mimalloc/src/dynamic_theap.rs"]
+exported = false
+implemented = true
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
 upstream = "src/arena.c"
 name = "dynamic-thread-exit-os-aligned-singleton-abandon-list-and-terminal-release"
 source_region = "dynamic post-TLS owner-exit ordering from src/threadlocal.c:205-214 and src/init.c:377-421,448-481; force collection and page abandonment from src/theap.c:89-152 and src/page.c:291-303; non-arena _mi_arenas_page_abandon list insertion and _mi_arenas_page_unabandon removal from src/arena.c:1304-1355,1383-1424; failed-reclaim empty tail from src/free.c:371-379; and clipped PageMap/alias/primary/mapping release from the OS-aligned page path"

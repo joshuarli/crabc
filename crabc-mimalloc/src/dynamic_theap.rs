@@ -3586,7 +3586,7 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_mapped_regular_remote_free_reclaims_to_its_same_origin() {
+    fn dynamic_mapped_regular_remote_free_reclaims_to_its_same_origin_and_records_free_reclaim_statistics() {
         with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
             let session = owner
                 .page_session()
@@ -3608,6 +3608,7 @@ mod tests {
             let memory = unsafe { (*page).memid() };
             let bin = crate::size_class::bin(unsafe { (*page).block_size() })
                 .expect("the dynamic fixture allocated a regular size class");
+            let statistics_before = unsafe { (*allocator.theap_identity()).statistics_snapshot() };
 
             // SAFETY: both client blocks are live allocations of the exact
             // active regular page, and this consuming handoff admits no
@@ -3634,6 +3635,12 @@ mod tests {
             };
             assert_eq!(unsafe { (*page).theap() }, allocator.theap_identity());
             assert!(allocator.test_dynamic_abandoned_page_is_clear(bin, memory));
+            let statistics_after = unsafe { (*allocator.theap_identity()).statistics_snapshot() };
+            assert_eq!(
+                statistics_after.pages_reclaim_on_free,
+                statistics_before.pages_reclaim_on_free + 1,
+                "only a successful same-origin remote-free reclaim after queue restoration records free reclamation"
+            );
 
             // SAFETY: `second` remains the one live client allocation after
             // the source remote free was collected into owner-local state.
