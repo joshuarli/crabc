@@ -819,6 +819,7 @@ def build_runtime_inputs(stage: Path, *, allocator_backend: str = "accepted-c") 
         f"-ffile-prefix-map={ROOT}=/crabc", "-MD", "-MF", str(dependency_file),
     ]
     environment = deterministic_environment()
+    environment["CARGO_BUILD_JOBS"] = "2"
     if accepted_c:
         environment.update({
         "CC_x86_64_unknown_linux_musl": str(c_compiler["path"]),
