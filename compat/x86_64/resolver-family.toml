@@ -1,0 +1,192 @@
+# This is the fixed native-x86 resolver-family admission roster.  It maps the
+# frozen AArch64 semantic capabilities to behavior evidence; it is deliberately
+# not a symbol inventory and cannot be used to promote the family.
+schema = "crabc.x86_64-owned-resolver-family-roster/v1"
+family = "libc.resolver"
+baseline_capability_ledger = "compat/crabc-rs/coverage.toml"
+frozen_baseline = "compat/x86_64/aarch64_frozen_baseline.json"
+
+frozen_capabilities = [
+  "network.resolver-transport",
+  "network.resolver",
+  "network.netdb",
+]
+
+# A resolver behavior that crosses the public C runtime must execute each
+# installed product as static ET_EXEC, static PIE, dynamic PIE through kernel
+# and direct-interpreter entry, and dynamic non-PIE through both entries.
+six_modes = [
+  "static-et-exec",
+  "static-pie",
+  "dynamic-pie-kernel",
+  "dynamic-pie-direct",
+  "dynamic-non-pie-kernel",
+  "dynamic-non-pie-direct",
+]
+
+[[component]]
+id = "resolver-network-physical"
+state = "reader"
+reader = "compat/x86_64/resolver_network_component_receipt.py"
+request_fields = ["report"]
+products = ["installed", "extracted"]
+modes = [
+  "static-et-exec",
+  "static-pie",
+  "dynamic-pie-kernel",
+  "dynamic-pie-direct",
+  "dynamic-non-pie-kernel",
+  "dynamic-non-pie-direct",
+]
+role = "controlled local DNS differential and retained raw physical receipt"
+
+[[component]]
+id = "classic-netdb"
+state = "reader"
+reader = "compat/x86_64/owned_classic_netdb_component_receipt.py"
+request_fields = ["report"]
+products = ["supplied-static-and-dynamic-pair"]
+modes = [
+  "static-et-exec",
+  "static-pie",
+  "dynamic-pie-kernel",
+  "dynamic-pie-direct",
+  "dynamic-non-pie-kernel",
+  "dynamic-non-pie-direct",
+]
+role = "classic host/service and owned modern lookup lifetime differential"
+
+[[component]]
+id = "resolver-alias-private-bodies"
+state = "reader"
+reader = "compat/x86_64/owned_resolver_alias_contract_reader.py"
+request_fields = [
+  "report",
+  "static_product",
+  "dynamic_product",
+  "product_report",
+  "static_preparation",
+  "elf_facts",
+  "base_inventory",
+]
+products = ["one-current-static-and-dynamic-cohort"]
+modes = ["static-et-exec", "static-pie", "dynamic-pie-kernel", "dynamic-non-pie-kernel"]
+role = "source-bound resolver state, weak aliases, private bodies, and product-provider boundary"
+
+# The producer executes this behavior, but it has no retained public receipt
+# reader.  A printed PASS or an unstructured work directory is not admissible
+# family evidence.
+[[component]]
+id = "resolver-cancellation"
+state = "missing-reader"
+required_reader = "a public read-only receipt reader for owned_resolver_cancellation.py"
+products = ["installed", "reproduction", "extracted"]
+modes = [
+  "static-et-exec",
+  "static-pie",
+  "dynamic-pie-kernel",
+  "dynamic-pie-direct",
+  "dynamic-non-pie-kernel",
+  "dynamic-non-pie-direct",
+]
+role = "cancellation, wait-state ordering, UDP/TCP cleanup, descriptor retirement, and retry lifecycle"
+
+# The static provider slice proves only its own archive boundary.  There is no
+# installed/extracted six-mode protocol-database behavior receipt yet.
+[[component]]
+id = "protocol-database-product"
+state = "missing-reader"
+required_reader = "an installed/extracted six-mode protocol-database behavior receipt"
+products = ["installed", "reproduction", "extracted"]
+modes = [
+  "static-et-exec",
+  "static-pie",
+  "dynamic-pie-kernel",
+  "dynamic-pie-direct",
+  "dynamic-non-pie-kernel",
+  "dynamic-non-pie-direct",
+]
+role = "conventional /etc/protocols lookup and protocol result lifetime"
+
+# The family needs a common current source/product cohort before component
+# receipts may be combined.  This coordinator intentionally records the gap;
+# it does not infer cohort identity from unrelated historical reports.
+[[component]]
+id = "resolver-family-cohort"
+state = "missing-reader"
+required_reader = "a common current-source primary/reproduction/extracted product-cohort receipt"
+products = ["installed", "reproduction", "extracted"]
+modes = [
+  "static-et-exec",
+  "static-pie",
+  "dynamic-pie-kernel",
+  "dynamic-pie-direct",
+  "dynamic-non-pie-kernel",
+  "dynamic-non-pie-direct",
+]
+role = "one source-bound product cohort shared by every admitted resolver behavior"
+
+[[proof]]
+id = "transport-controlled-network"
+component = "resolver-network-physical"
+capabilities = ["network.resolver-transport", "network.resolver"]
+behaviors = [
+  "A and AAAA answers",
+  "CNAME processing",
+  "wrong-ID and malformed-response rejection",
+  "search behavior",
+  "timeout, retry, and server failover",
+  "UDP truncation and TCP fallback",
+]
+
+[[proof]]
+id = "netdb-classic-and-modern"
+component = "classic-netdb"
+capabilities = ["network.resolver", "network.netdb"]
+behaviors = [
+  "/etc/hosts and /etc/services behavior",
+  "forward and reverse legacy lookup errors",
+  "getaddrinfo/getnameinfo allocation and errors",
+  "DNS record order, batch association, and mixed-family precedence",
+  "result lifetime, concurrency, and fork isolation",
+]
+
+[[proof]]
+id = "resolver-public-state-and-aliases"
+component = "resolver-alias-private-bodies"
+capabilities = ["network.resolver"]
+behaviors = [
+  "res_mkquery to __res_mkquery weak same-address binding",
+  "res_send to __res_send weak same-address binding",
+  "res_search to res_query weak same-address binding",
+  "public caller and private-body provider separation",
+]
+
+[[proof]]
+id = "resolver-cancellation-and-retirement"
+component = "resolver-cancellation"
+capabilities = ["network.resolver-transport", "network.resolver"]
+behaviors = [
+  "enabled, disabled, and masked cancellation",
+  "UDP, TCP, paired A/AAAA, retry, and socket-failure paths",
+  "wait-state ordering and descriptor retirement before caller cleanup",
+]
+
+[[proof]]
+id = "protocol-database-installed-behavior"
+component = "protocol-database-product"
+capabilities = ["network.netdb"]
+behaviors = [
+  "/etc/protocols lookup behavior",
+  "protocol result lifetime and selected public netdb interfaces",
+]
+
+[[proof]]
+id = "common-current-product-cohort"
+component = "resolver-family-cohort"
+capabilities = ["network.resolver-transport", "network.resolver", "network.netdb"]
+behaviors = [
+  "one current source identity",
+  "primary, reproduction, and extracted products",
+  "the required six entry modes for every C-runtime behavior",
+]
