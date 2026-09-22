@@ -15437,18 +15437,39 @@ pub fn after_fork_parent() {
 /// [`ThreadAttachResult::Attached`].
 #[doc(hidden)]
 pub fn attach_current_thread() -> ThreadAttachResult {
-    #[cfg(target_arch = "x86_64")]
-    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
-        return ThreadAttachResult::Inactive;
+    // Claim the current-thread recursion boundary before allocator-operation
+    // admission. An outer attachment may be preparing this exact TLS slot;
+    // a nested call must then report `Reentrant` without asking the operation
+    // guard to classify the still-borrowed owner as an inactive allocator.
+    let Some(entry) = ThreadAttachmentEntry::claim() else {
+        return ThreadAttachResult::Reentrant;
     };
-    let result = attach_current_thread_with_entry(|| {});
+    let result = attach_current_thread_after_entry(entry, || {});
     if result == ThreadAttachResult::Inactive { admission::mark_current_source_retired(); }
     result
 }
 
 fn attach_current_thread_with_entry(before_source: impl FnOnce()) -> ThreadAttachResult {
-    let Some(_entry) = ThreadAttachmentEntry::claim() else {
+    let Some(entry) = ThreadAttachmentEntry::claim() else {
         return ThreadAttachResult::Reentrant;
+    };
+    attach_current_thread_after_entry(entry, before_source)
+}
+
+/// Continues attachment after the caller has claimed the current TLS entry.
+///
+/// The linear entry remains live through the operation guard and every source
+/// projection below. Keeping this separate lets the public entry reject a
+/// recursive call before `NativeAllocatorOperationGuard` observes an outer
+/// in-progress attachment, while the test-only pre-source seam shares the
+/// exact same ordering.
+fn attach_current_thread_after_entry(
+    _entry: ThreadAttachmentEntry,
+    before_source: impl FnOnce(),
+) -> ThreadAttachResult {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return ThreadAttachResult::Inactive;
     };
     before_source();
     let slot = current_thread_slot();
