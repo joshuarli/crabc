@@ -2979,6 +2979,7 @@ mod tests {
                 .expect("the source coordinator publishes READY before ticket-zero page ownership")
                 .process_backing()
                 .expect("the ready coordinator exposes its canonical policy/PageMap binding");
+            let process = binding.process();
             let arena_storage = ProcessSharedArenaStorage::test_static_owner();
             let session = owner
                 .begin_process_lifetime_page_session()
@@ -2993,14 +2994,19 @@ mod tests {
             let block = allocator
                 .allocate(37, false)
                 .expect("the first valid miss reserves through the retained process policy");
-            let arena = arena_storage
-                .ready_lease()
-                .expect("the policy-bound reservation publishes one arena")
-                .arena()
-                .expect("the published source arena remains observable");
-            assert_eq!(arena.size(), Some(128 * 1024 * 1024));
+            assert!(arena_storage.test_is_cold(),
+                "the process-bound route must not relabel its canonical registry arena as a legacy sidecar");
+            let registry = process.subprocess().arena_backing().registry();
+            assert_eq!(registry.count(), 1,
+                "source arena.c searches, reserves, and searches the canonical process registry");
+            // SAFETY: this fixture retains the process owner and its active
+            // ticket-zero allocator. The registry's one published arena
+            // remains live while the test reads its immutable source image.
+            let arena = unsafe { registry.arena_at(0) }
+                .expect("the canonical source registry publishes the first arena");
+            assert_eq!(arena.total_size, 128 * 1024 * 1024);
             assert!(
-                arena.arena().memid.initially_committed(),
+                arena.memid.initially_committed(),
                 "allow_large_os_pages plus eager-commit=2 selects the source committed first map"
             );
 
