@@ -164,7 +164,7 @@ the provider:
 ./scripts/dev-x86_64.sh unwinder-owned-cleanup \
   --provider-vendor .work/x86_64/RUN/provider-vendor \
   --static-sysroot .work/x86_64/RUN/static-product \
-  .work/x86_64/RUN/dynamic-product
+  --dynamic-sysroot .work/x86_64/RUN/dynamic-product
 ```
 
 The existing static preparation producer is, for example:
@@ -232,21 +232,20 @@ static fixture and the DSO host/plugin pair before a fresh producer cohort is
 started:
 
 ```sh
-python3 -B unwinder/owned_cleanup.py \
+./scripts/dev-x86_64.sh unwinder-owned-cleanup \
   --provider-vendor .work/x86_64/RUN/provider-vendor \
   --static-sysroot .work/x86_64/OLD/static-product \
   --dynamic-sysroot .work/x86_64/OLD/dynamic-product \
-  --mixed-source-generated-compile-diagnostics-only \
-  --output .work/x86_64/RUN/generated-source-compile-diagnostics
+  --mixed-source-generated-compile-diagnostics-only
 ```
 
 Its `generated-source-compile-diagnostics.json` records the mixed source/product
-relation and all promotion flags as false. It executes neither fixture and
-cannot reuse those older products for the required fresh same-source full
-consumer matrix. The DSO host's post-close condition and the plugin's worker
-condition each accept only their expected `Ok` value. They keep a panic distinct
-from a nonzero plugin result without relying on `PartialEq` for its panic
-payload.
+relation and all promotion flags as false; the command prints its fresh output
+directory. It executes neither fixture and cannot reuse those older products
+for the required fresh same-source full consumer matrix. The DSO host's
+post-close condition and the plugin's worker condition each accept only their
+expected `Ok` value. They keep a panic distinct from a nonzero plugin result
+without relying on `PartialEq` for its panic payload.
 
 Cargo may also pass the pinned toolchain target library directory with
 `-L`. The runner derives that one directory from the same `rustc --print

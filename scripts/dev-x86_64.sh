@@ -662,7 +662,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   crt-object-bundle  stage and audit the private five-object x86 Rust CRT bundle
   unwinder-build  build and audit the pinned standalone Rust unwind archive (not runtime qualification)
   unwinder-cleanup  run the standalone pinned-musl Rust cleanup unwind regression
-  unwinder-owned-cleanup --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT  run full stock-Rust cleanup through supplied owned products
+  unwinder-owned-cleanup --provider-vendor VENDOR --static-sysroot STATIC_SYSROOT --dynamic-sysroot DYNAMIC_SYSROOT [--mixed-source-generated-compile-diagnostics-only]  run supplied owned-product Rust cleanup
   unwinder-metadata-bounds  run the standalone guarded EH-header provider regression
   unwinder-eh-frame-bounds  run the standalone guarded decoded-EH-frame regression
   unwinder-dynamic-bounds  run the standalone guarded PT_DYNAMIC regression
@@ -9574,13 +9574,29 @@ PY
         run_in_container python3 -B /workspace/unwinder/cleanup.py
         ;;
     unwinder-owned-cleanup)
-        [ "$#" -eq 3 ] && [ "$1" = --static-sysroot ] && [ -n "$2" ] && [ -n "$3" ] || \
-            fail "usage: ./scripts/dev-x86_64.sh unwinder-owned-cleanup --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT"
-        owned_rust_static="$(translate_owned_posix_product "$2")" || exit 2
-        owned_rust_dynamic="$(translate_owned_posix_product "$3")" || exit 2
+        case "$#" in
+            6) owned_rust_cleanup_mode=() ;;
+            7)
+                [ "$7" = --mixed-source-generated-compile-diagnostics-only ] || \
+                    fail "usage: ./scripts/dev-x86_64.sh unwinder-owned-cleanup --provider-vendor VENDOR --static-sysroot STATIC_SYSROOT --dynamic-sysroot DYNAMIC_SYSROOT [--mixed-source-generated-compile-diagnostics-only]"
+                owned_rust_cleanup_mode=(--mixed-source-generated-compile-diagnostics-only)
+                ;;
+            *)
+                fail "usage: ./scripts/dev-x86_64.sh unwinder-owned-cleanup --provider-vendor VENDOR --static-sysroot STATIC_SYSROOT --dynamic-sysroot DYNAMIC_SYSROOT [--mixed-source-generated-compile-diagnostics-only]"
+                ;;
+        esac
+        [ "$1" = --provider-vendor ] && [ -n "$2" ] && [[ "$2" != -* ]] \
+            && [ "$3" = --static-sysroot ] && [ -n "$4" ] && [[ "$4" != -* ]] \
+            && [ "$5" = --dynamic-sysroot ] && [ -n "$6" ] && [[ "$6" != -* ]] || \
+            fail "usage: ./scripts/dev-x86_64.sh unwinder-owned-cleanup --provider-vendor VENDOR --static-sysroot STATIC_SYSROOT --dynamic-sysroot DYNAMIC_SYSROOT [--mixed-source-generated-compile-diagnostics-only]"
+        owned_rust_provider_vendor="$(translate_owned_posix_product "$2")" || exit 2
+        owned_rust_static="$(translate_owned_posix_product "$4")" || exit 2
+        owned_rust_dynamic="$(translate_owned_posix_product "$6")" || exit 2
         ensure_image
         run_in_container python3 -B /workspace/unwinder/owned_cleanup.py \
-            --static-sysroot "$owned_rust_static" --dynamic-sysroot "$owned_rust_dynamic"
+            --provider-vendor "$owned_rust_provider_vendor" \
+            --static-sysroot "$owned_rust_static" --dynamic-sysroot "$owned_rust_dynamic" \
+            "${owned_rust_cleanup_mode[@]}"
         ;;
     unwinder-metadata-bounds)
         [ "$#" -eq 0 ] || fail "unwinder-metadata-bounds takes no arguments"

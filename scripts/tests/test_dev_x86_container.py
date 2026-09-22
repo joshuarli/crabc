@@ -28,12 +28,12 @@ exit 64
         docker.chmod(docker.stat().st_mode | stat.S_IXUSR)
         return bindir, capture
 
-    def invoke(self, bindir, capture, command="musl-oracle", **overrides):
+    def invoke(self, bindir, capture, command="musl-oracle", arguments=(), **overrides):
         env = os.environ.copy()
         for key in ("CRABC_X86_64_WORK_DIR", "CRABC_X86_64_CORE_TARGET_VOLUME", "CRABC_X86_64_CORE_CARGO_VOLUME"):
             env.pop(key, None)
         env.update(overrides, PATH=f"{bindir}:{env['PATH']}", FAKE_DOCKER_ARGS=str(capture))
-        return subprocess.run(["bash", str(DISPATCHER), command], cwd=ROOT, env=env,
+        return subprocess.run(["bash", str(DISPATCHER), command, *arguments], cwd=ROOT, env=env,
                               text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     def test_default_mounts_are_local_and_legacy_tmp_is_bound(self):
@@ -89,6 +89,54 @@ exit 64
                     self.assertNotEqual(result.returncode, 0, option)
                     self.assertFalse(capture.exists())
                     self.assertFalse(capture.with_suffix(".calls").exists())
+
+    def test_unwinder_owned_cleanup_forwards_the_required_provider_vendor(self):
+        with self.tempdir() as td, tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as inputs:
+            bindir, capture = self.fake_docker(Path(td))
+            input_root = Path(inputs)
+            provider = input_root / "provider-vendor"; provider.mkdir()
+            static = input_root / "static-product"; static.mkdir()
+            dynamic = input_root / "dynamic-product"; dynamic.mkdir()
+            result = self.invoke(
+                bindir, capture, "unwinder-owned-cleanup",
+                ("--provider-vendor", str(provider), "--static-sysroot", str(static), "--dynamic-sysroot", str(dynamic)),
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            arguments = [argument.decode() for argument in capture.read_bytes().split(b"\0") if argument]
+            command = arguments[arguments.index("python3"):]
+            self.assertEqual(command, [
+                "python3", "-B", "/workspace/unwinder/owned_cleanup.py",
+                "--provider-vendor", f"/workspace/.work/x86_64/{input_root.name}/provider-vendor",
+                "--static-sysroot", f"/workspace/.work/x86_64/{input_root.name}/static-product",
+                "--dynamic-sysroot", f"/workspace/.work/x86_64/{input_root.name}/dynamic-product",
+            ])
+
+    def test_unwinder_owned_cleanup_rejects_a_missing_provider_vendor_before_docker(self):
+        with self.tempdir() as td:
+            bindir, capture = self.fake_docker(Path(td))
+            result = self.invoke(
+                bindir, capture, "unwinder-owned-cleanup",
+                ("--static-sysroot", ".work/x86_64/static", "--dynamic-sysroot", ".work/x86_64/dynamic"),
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("--provider-vendor", result.stderr)
+            self.assertFalse(capture.exists())
+
+    def test_unwinder_owned_cleanup_forwards_the_compile_diagnostic_mode(self):
+        with self.tempdir() as td, tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as inputs:
+            bindir, capture = self.fake_docker(Path(td))
+            input_root = Path(inputs)
+            provider = input_root / "provider-vendor"; provider.mkdir()
+            static = input_root / "static-product"; static.mkdir()
+            dynamic = input_root / "dynamic-product"; dynamic.mkdir()
+            result = self.invoke(
+                bindir, capture, "unwinder-owned-cleanup",
+                ("--provider-vendor", str(provider), "--static-sysroot", str(static), "--dynamic-sysroot", str(dynamic),
+                 "--mixed-source-generated-compile-diagnostics-only"),
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            arguments = [argument.decode() for argument in capture.read_bytes().split(b"\0") if argument]
+            self.assertEqual(arguments[-1], "--mixed-source-generated-compile-diagnostics-only")
 
 if __name__ == "__main__":
     unittest.main()
