@@ -108,14 +108,16 @@ modes = [
 ]
 role = "fixed musl proto.c table, shared result lifetime, and selected public netdb interfaces"
 
-# The family needs a common current source/product cohort before component
-# receipts may be combined.  This coordinator intentionally records the gap;
-# it does not infer cohort identity from unrelated historical reports.
+# The cohort reader joins the canonical static preparation and dynamic
+# qualification receipts, then binds every behavior reader's declared roots to
+# those exact primary/reproduction/extracted products.  It cannot infer a
+# cohort from equal source hashes or historical component reports alone.
 [[component]]
 id = "resolver-family-cohort"
-state = "missing-reader"
-required_reader = "a common current-source primary/reproduction/extracted product-cohort receipt"
-products = ["installed", "reproduction", "extracted"]
+state = "reader"
+reader = "compat/x86_64/owned_resolver_family_cohort.py"
+request_fields = ["static_preparation", "dynamic_qualification"]
+products = ["primary", "reproduction", "extracted"]
 modes = [
   "static-et-exec",
   "static-pie",

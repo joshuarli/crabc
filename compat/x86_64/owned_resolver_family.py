@@ -64,8 +64,9 @@ EXPECTED_COMPONENTS = {
         ("installed", "reproduction", "extracted"), SIX_MODES,
     ),
     "resolver-family-cohort": (
-        "missing-reader", None, "a common current-source primary/reproduction/extracted product-cohort receipt", (),
-        ("installed", "reproduction", "extracted"), SIX_MODES,
+        "reader", "compat/x86_64/owned_resolver_family_cohort.py", None,
+        ("static_preparation", "dynamic_qualification"),
+        ("primary", "reproduction", "extracted"), SIX_MODES,
     ),
 }
 EXPECTED_PROOFS = {
@@ -452,6 +453,132 @@ def _protocol_database_reader(root: Path, paths: Mapping[str, Path]) -> dict[str
     }
 
 
+def _cohort_product_path(root: Path, path: Path, description: str) -> str:
+    """Return one reader-validated product root in assessment-safe form."""
+
+    path = _physical(path, description, directory=True)
+    require(path.is_relative_to(root / ".work"), f"{description} escapes checkout .work")
+    return path.relative_to(root).as_posix()
+
+
+def _resolver_family_component_products(
+    root: Path, replays: Mapping[str, tuple[Mapping[str, Path], Mapping[str, object]]],
+) -> dict[str, object]:
+    """Recover only roots already validated by the five behavior readers.
+
+    The cohort reader does not reinterpret retained behavior output.  It gets
+    the exact product roots that each component reader just accepted, then
+    binds them to one current static/dynamic product preparation.
+    """
+
+    expected = {
+        "resolver-network-physical", "classic-netdb", "resolver-alias-private-bodies",
+        "resolver-cancellation", "protocol-database-product",
+    }
+    require(set(replays) == expected, "resolver cohort requires every behavior component replay")
+
+    network_paths, network_result = replays["resolver-network-physical"]
+    network_report = network_result.get("report")
+    require(isinstance(network_report, dict), "resolver-network reader has no accepted report")
+    network_module = importlib.import_module("resolver_network_component_receipt")
+    network_products = network_module.product_paths(root, network_report)
+    network = {
+        "primary": {
+            kind: _cohort_product_path(root, network_products["installed"][kind],
+                                       f"resolver-network installed {kind} product")
+            for kind in ("static", "dynamic")
+        },
+        "extracted": {
+            kind: _cohort_product_path(root, network_products["extracted"][kind],
+                                       f"resolver-network extracted {kind} product")
+            for kind in ("static", "dynamic")
+        },
+    }
+    require(network_paths["report"].is_file(), "resolver-network report changed after replay")
+
+    classic_paths, classic_result = replays["classic-netdb"]
+    classic_report = classic_result.get("report")
+    require(isinstance(classic_report, dict), "classic-netdb reader has no accepted report")
+    classic_module = importlib.import_module("owned_classic_netdb_component_receipt")
+    classic_values = classic_report.get("products")
+    require(isinstance(classic_values, dict) and set(classic_values) == {"static", "dynamic"},
+            "classic-netdb accepted report lacks the static/dynamic pair")
+    classic = {"selected": {
+        kind: _cohort_product_path(
+            root,
+            classic_module.checkout_directory(root, classic_values[kind], f"classic-netdb {kind} product"),
+            f"classic-netdb {kind} product",
+        )
+        for kind in ("static", "dynamic")
+    }}
+    require(classic_paths["report"].is_file(), "classic-netdb report changed after replay")
+
+    alias_paths, _alias_result = replays["resolver-alias-private-bodies"]
+    alias = {"selected": {
+        kind: _cohort_product_path(root, alias_paths[f"{kind}_product"], f"resolver alias {kind} product")
+        for kind in ("static", "dynamic")
+    }}
+
+    cancellation_paths, _cancellation_result = replays["resolver-cancellation"]
+    cancellation = {"selected": {
+        kind: _cohort_product_path(root, cancellation_paths[f"{kind}_product"],
+                                   f"resolver cancellation {kind} product")
+        for kind in ("static", "dynamic")
+    }}
+
+    protocol_paths, _protocol_result = replays["protocol-database-product"]
+    protocol_report = _read_json(protocol_paths["report"], "protocol-database accepted report")
+    protocol_products = protocol_report.get("products")
+    require(isinstance(protocol_products, dict) and set(protocol_products) == {"before", "after"}
+            and protocol_products["before"] == protocol_products["after"],
+            "protocol-database accepted report product seal differs")
+    protocol_before = protocol_products["before"]
+    require(isinstance(protocol_before, dict) and set(protocol_before) == {"installed", "reproduction", "extracted"},
+            "protocol-database accepted report product arms differ")
+    protocol: dict[str, object] = {}
+    for source_arm, cohort_arm in (("installed", "primary"), ("reproduction", "reproduction"),
+                                   ("extracted", "extracted")):
+        arm = protocol_before[source_arm]
+        require(isinstance(arm, dict) and set(arm) == {"static", "dynamic"},
+                f"protocol-database {source_arm} product kind roster differs")
+        products: dict[str, str] = {}
+        for kind in ("static", "dynamic"):
+            record = arm[kind]
+            require(isinstance(record, dict) and isinstance(record.get("path"), str),
+                    f"protocol-database {source_arm} {kind} path differs")
+            path = _relative_path(root, record["path"], f"protocol-database {source_arm} {kind} product",
+                                  directory=True)
+            expected_manifest = _identity(root, path / "share/crabc/manifest.json")
+            require(record.get("manifest") == expected_manifest,
+                    f"protocol-database {source_arm} {kind} manifest identity differs")
+            products[kind] = _cohort_product_path(root, path, f"protocol-database {source_arm} {kind} product")
+        protocol[cohort_arm] = products
+
+    return {
+        "resolver-network-physical": network,
+        "classic-netdb": classic,
+        "resolver-alias-private-bodies": alias,
+        "resolver-cancellation": cancellation,
+        "protocol-database-product": protocol,
+    }
+
+
+def _resolver_family_cohort_reader(
+    root: Path, paths: Mapping[str, Path], replays: Mapping[str, tuple[Mapping[str, Path], Mapping[str, object]]],
+) -> dict[str, object]:
+    module = importlib.import_module("owned_resolver_family_cohort")
+    report = module.validate(
+        root,
+        static_preparation=paths["static_preparation"],
+        dynamic_qualification=paths["dynamic_qualification"],
+        component_products=_resolver_family_component_products(root, replays),
+    )
+    require(report.get("schema") == module.SCHEMA and report.get("family_completion") is False
+            and report.get("promotion_ready") is False and report.get("public_support") is False,
+            "resolver cohort reader result differs")
+    return report
+
+
 Reader = Callable[[Path, Mapping[str, Path]], dict[str, object]]
 READERS: dict[str, Reader] = {
     "resolver-network-physical": _network_reader,
@@ -460,6 +587,8 @@ READERS: dict[str, Reader] = {
     "resolver-cancellation": _cancellation_reader,
     "protocol-database-product": _protocol_database_reader,
 }
+CohortReader = Callable[[Path, Mapping[str, Path], Mapping[str, tuple[Mapping[str, Path], Mapping[str, object]]]],
+                        dict[str, object]]
 DIRECTORY_INPUTS = {
     "resolver-alias-private-bodies": frozenset(("static_product", "dynamic_product")),
     "resolver-cancellation": frozenset(("work", "static_product", "dynamic_product")),
@@ -484,7 +613,8 @@ def _component_paths(root: Path, component: Component, value: object) -> dict[st
             for name in component.request_fields}
 
 
-def collect(root: Path, request_path: Path, *, readers: Mapping[str, Reader] | None = None) -> dict[str, object]:
+def collect(root: Path, request_path: Path, *, readers: Mapping[str, Reader] | None = None,
+            cohort_reader: CohortReader | None = None) -> dict[str, object]:
     """Reconstruct named component receipts and return an explicit family assessment."""
 
     root = _physical(root, "checkout root", directory=True)
@@ -496,23 +626,11 @@ def collect(root: Path, request_path: Path, *, readers: Mapping[str, Reader] | N
     assert isinstance(declared, dict)
     require(set(declared).issubset(set(components)), "resolver family request names an unknown component")
     reader_map = READERS if readers is None else readers
+    selected_cohort_reader = _resolver_family_cohort_reader if cohort_reader is None else cohort_reader
     component_results: dict[str, object] = {}
     gaps: list[dict[str, object]] = []
+    successful_replays: dict[str, tuple[Mapping[str, Path], Mapping[str, object]]] = {}
     for identifier, component in components.items():
-        if component.state == "missing-reader":
-            gap = {"component": identifier, "reason": "missing-public-reader",
-                   "required_reader": component.required_reader, "products": list(component.products),
-                   "modes": list(component.modes)}
-            component_results[identifier] = {
-                "state": component.state,
-                "role": component.role,
-                "products": list(component.products),
-                "modes": list(component.modes),
-                "admitted": False,
-                "gap": gap,
-            }
-            gaps.append(gap)
-            continue
         _reader_path(root, component)
         if identifier not in declared:
             gap = {"component": identifier, "reason": "missing-component-report",
@@ -530,7 +648,8 @@ def collect(root: Path, request_path: Path, *, readers: Mapping[str, Reader] | N
         try:
             paths = _component_paths(root, component, declared[identifier])
             before = {name: _input_identity(root, path) for name, path in paths.items()}
-            result = reader_map[identifier](root, paths)
+            result = (selected_cohort_reader(root, paths, successful_replays)
+                      if identifier == "resolver-family-cohort" else reader_map[identifier](root, paths))
             require(before == {name: _input_identity(root, path) for name, path in paths.items()},
                     f"resolver component {identifier} input changed during reader replay")
         except (ResolverFamilyError, OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
@@ -545,6 +664,9 @@ def collect(root: Path, request_path: Path, *, readers: Mapping[str, Reader] | N
             }
             gaps.append(gap)
             continue
+        if identifier != "resolver-family-cohort":
+            require(isinstance(result, dict), f"resolver component {identifier} reader result differs")
+            successful_replays[identifier] = (paths, result)
         component_results[identifier] = {
             "state": component.state,
             "role": component.role,

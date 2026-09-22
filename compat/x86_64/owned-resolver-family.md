@@ -36,11 +36,22 @@ six-mode contracts.
 | `resolver-alias-private-bodies` | [`owned_resolver_alias_contract_reader.py`](owned_resolver_alias_contract_reader.py) replays one source-bound static/dynamic cohort for `res_mkquery`, `res_send`, `res_search`, their private bodies, and protected controls. | Required ABI corroboration. It does not replace an entry-mode behavior matrix. |
 | `resolver-cancellation` | [`owned_resolver_cancellation_receipt.py`](owned_resolver_cancellation_receipt.py) replays one explicitly named source-bound static/dynamic receipt. It validates all 847 raw oracle/candidate observations, isolation, the application object, product trees, driver/ELF audits, and provider symbols. | Required reader. It proves one supplied product pair; it cannot substitute for the shared primary/reproduction/extracted cohort. |
 | `protocol-database-product` | [`owned_protocol_database_receipt.py`](owned_protocol_database_receipt.py) reconstructs the pinned-musl `proto.c` oracle, one project-header object, provider symbols, isolated roots, and raw observations for installed, reproduction, and extracted products across all eighteen C-runtime executions. | Required reader. It proves the fixed C table, never a `/etc/protocols` parser. |
-| `resolver-family-cohort` | Existing receipts may name different source/product cohorts. | Hard gap: no reader proves one current source plus primary, reproduction, and extracted products shared by every required behavior. |
+| `resolver-family-cohort` | [`owned_resolver_family_cohort.py`](owned_resolver_family_cohort.py) validates the canonical static-preparation and dynamic-qualification receipts, then joins their primary/reproduction/extracted roots to every other reader's declared product roots and manifest identities. | Required reader. It accepts no source or product compatibility exception. |
 
-The remaining cohort gap is intentional, not an exclusion. It keeps a
-historical component pass from completing a capability whose remaining behavior
-has not been read from physical evidence.
+The cohort reader is intentionally narrower than a product builder or a
+generic receipt framework. The static-preparation and dynamic-qualification
+owners remain responsible for validating the products. The resolver adapter
+requires their current source identities to agree, recovers exactly the three
+static/dynamic pairs, and rejects a reader whose declared roots combine members
+from different pairs. It records the canonical roots and their manifests in the
+assessment, but does not make the family promoting.
+
+Each behavior reader must still reconstruct its own retained evidence before
+the cohort reader runs. The network reader binds primary plus extracted; the
+protocol-table reader binds primary, reproduction, and extracted; classic
+netdb, alias/private-body, and cancellation readers bind their one declared
+static/dynamic pair. Equal source hashes, byte-identical payloads, or an old
+report are never substitutes for those exact physical root and manifest joins.
 
 ## Fixed protocol-table receipt
 
@@ -94,6 +105,10 @@ and inventory inputs because its public reader authenticates that cohort.
     },
     "protocol-database-product": {
       "report": ".work/x86_64/protocol-database/current/owned-protocol-database-products.json"
+    },
+    "resolver-family-cohort": {
+      "static_preparation": ".work/x86_64/posix-static/current/preparation.json",
+      "dynamic_qualification": ".work/x86_64/dynamic/current/qualification.json"
     }
   }
 }
@@ -121,7 +136,7 @@ python3 -B compat/x86_64/owned_resolver_family.py validate \
   --assessment .work/x86_64/resolver-family/assessment.json
 ```
 
-The final command currently fails by design until every required reader is
-named from one current source-bound product set. The separate common
-product-cohort reader remains a hard prerequisite; this component's three-pair
-receipt cannot infer that unrelated resolver observations used the same cohort.
+The final command fails until every required reader is named and the cohort
+reader can bind their declared roots to one current source-bound product set.
+The protocol component's three-pair receipt cannot by itself infer that
+unrelated resolver observations used those same roots.

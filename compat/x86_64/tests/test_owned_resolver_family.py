@@ -50,6 +50,8 @@ class OwnedResolverFamilyTests(unittest.TestCase):
         cancellation_dynamic = self._relative(self._directory("cancellation-dynamic"))
         protocol = self._relative(self._file("protocol-database.json"))
         cohort = self._relative(self._file("cohort.json"))
+        static_preparation = self._relative(self._file("static-preparation.json"))
+        dynamic_qualification = self._relative(self._file("dynamic-qualification.json"))
         return {
             "resolver-network-physical": {"report": report},
             "classic-netdb": {"report": report},
@@ -68,6 +70,10 @@ class OwnedResolverFamilyTests(unittest.TestCase):
                 "dynamic_product": cancellation_dynamic,
             },
             "protocol-database-product": {"report": protocol},
+            "resolver-family-cohort": {
+                "static_preparation": static_preparation,
+                "dynamic_qualification": dynamic_qualification,
+            },
         }
 
     def test_roster_maps_each_frozen_capability_to_behavior_proofs(self) -> None:
@@ -85,6 +91,10 @@ class OwnedResolverFamilyTests(unittest.TestCase):
         for identifier in ("resolver-network-physical", "classic-netdb", "resolver-cancellation",
                            "protocol-database-product", "resolver-family-cohort"):
             self.assertEqual(components[identifier].modes, family.SIX_MODES)
+        self.assertEqual(
+            components["resolver-family-cohort"].request_fields,
+            ("static_preparation", "dynamic_qualification"),
+        )
         for capability in family.FROZEN_CAPABILITIES:
             self.assertTrue(any(capability in proof.capabilities for proof in proofs), capability)
 
@@ -107,11 +117,23 @@ class OwnedResolverFamilyTests(unittest.TestCase):
         )
         self.assertFalse(report["capabilities"]["network.resolver"]["admitted"])
 
-    def test_existing_readers_cannot_hide_the_unreadable_required_components(self) -> None:
+    def test_existing_readers_and_cohort_reader_require_one_complete_request(self) -> None:
         calls: list[str] = []
 
         def valid_reader(_root: Path, paths: dict[str, Path]) -> dict[str, object]:
             calls.append(next(iter(paths)))
+            return {"replayed": True}
+
+        def valid_cohort_reader(_root: Path, paths: dict[str, Path],
+                                replays: dict[str, tuple[dict[str, Path], dict[str, object]]]) -> dict[str, object]:
+            self.assertEqual(set(paths), {"static_preparation", "dynamic_qualification"})
+            self.assertEqual(
+                set(replays),
+                {
+                    "resolver-network-physical", "classic-netdb", "resolver-alias-private-bodies",
+                    "resolver-cancellation", "protocol-database-product",
+                },
+            )
             return {"replayed": True}
 
         request = self._request(self._all_reader_request())
@@ -125,6 +147,7 @@ class OwnedResolverFamilyTests(unittest.TestCase):
                 "resolver-cancellation": valid_reader,
                 "protocol-database-product": valid_reader,
             },
+            cohort_reader=valid_cohort_reader,
         )
 
         self.assertEqual(len(calls), 5)
@@ -133,10 +156,13 @@ class OwnedResolverFamilyTests(unittest.TestCase):
         self.assertTrue(report["components"]["resolver-alias-private-bodies"]["admitted"])
         self.assertTrue(report["components"]["resolver-cancellation"]["admitted"])
         self.assertTrue(report["components"]["protocol-database-product"]["admitted"])
+        self.assertTrue(report["components"]["resolver-family-cohort"]["admitted"])
         self.assertTrue(report["proofs"]["resolver-cancellation-and-retirement"]["admitted"])
         self.assertTrue(report["proofs"]["protocol-database-installed-behavior"]["admitted"])
-        self.assertFalse(report["proofs"]["common-current-product-cohort"]["admitted"])
-        self.assertFalse(report["family_complete"])
+        self.assertTrue(report["proofs"]["common-current-product-cohort"]["admitted"])
+        self.assertTrue(report["family_complete"])
+        self.assertFalse(report["promotion_ready"])
+        self.assertFalse(report["public_support"])
 
     def test_unknown_or_incomplete_component_input_fails_before_reader_replay(self) -> None:
         unknown = self._request({"not-resolver": {}})
