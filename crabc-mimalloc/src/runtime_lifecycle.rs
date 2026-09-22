@@ -7879,6 +7879,7 @@ fn with_current_thread_native_persistent_pointer<R>(
 #[inline]
 #[cfg(target_arch = "x86_64")]
 pub fn initialize_process(page_size_bytes: usize, stderr_output: RuntimeStderrOutput) -> bool {
+    if !admission::register_initial_descriptor() { return false; }
     RUNTIME_PROCESS.initialize(page_size_bytes, stderr_output)
 }
 
@@ -14062,7 +14063,9 @@ pub fn after_fork_parent() {
 /// [`ThreadAttachResult::Attached`].
 #[doc(hidden)]
 pub fn attach_current_thread() -> ThreadAttachResult {
-    attach_current_thread_with_entry(|| {})
+    let result = attach_current_thread_with_entry(|| {});
+    if result == ThreadAttachResult::Inactive { admission::mark_current_source_retired(); }
+    result
 }
 
 fn attach_current_thread_with_entry(before_source: impl FnOnce()) -> ThreadAttachResult {
@@ -14225,6 +14228,7 @@ fn attach_current_thread_with_entry(before_source: impl FnOnce()) -> ThreadAttac
 #[doc(hidden)]
 pub fn reinitialize_current_thread_native_owner_for_final_process_exit(
 ) -> ThreadFinalProcessExitOwnerResult {
+    if !admission::rearm_current_source_descriptor() { return ThreadFinalProcessExitOwnerResult::Retained; }
     {
         let slot = current_thread_slot();
         match slot.state {
@@ -14370,7 +14374,11 @@ pub fn finish_current_thread_after_user_destructors() -> ThreadFinishResult {
 /// point therefore shares the ordinary finalizer.
 #[doc(hidden)]
 pub fn finish_current_thread_native_after_user_destructors() -> ThreadFinishResult {
-    finish_current_thread_after_user_destructors()
+    let result = finish_current_thread_after_user_destructors();
+    if matches!(result, ThreadFinishResult::Finished | ThreadFinishResult::AlreadyFinished | ThreadFinishResult::NotAttached) {
+        admission::mark_current_source_retired();
+    }
+    result
 }
 
 /// Completes the nonfinal half of a selected post-process-done worker exit.
@@ -14458,6 +14466,7 @@ pub fn retain_current_thread_native_owner_after_process_done_nonfinal() -> bool 
             slot.state = ThreadLifecycleState::ProcessDoneRetained;
             #[cfg(feature = "native-runtime-test-audit")]
             RUNTIME_PROCESS.note_process_done_retained_worker(source_retained_identity);
+            admission::mark_current_source_retired();
             true
         }
         Err(admission) => {
@@ -18989,3 +18998,14 @@ mod tests {
         .expect("the isolated retryable-contention runtime remains thread-local");
     }
 }
+
+#[path = "runtime_admission.rs"]
+mod admission;
+pub use admission::{
+    NativeAllocatorThreadDescriptor, NativeAllocatorPinnedThreadRegistry,
+    NativeAllocatorDescriptorRetirement, native_allocator_descriptor_retirement,
+    NativeAllocatorCallbackBoundaryError, NativeAllocatorQuiescenceError,
+    NativeAllocatorTerminalQuiescence, current_native_allocator_thread_descriptor,
+    native_allocator_initial_thread_descriptor, register_current_native_allocator_worker_descriptor,
+    with_native_allocator_callback_boundary, begin_native_allocator_terminal_quiescence,
+};

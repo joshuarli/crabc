@@ -117,6 +117,15 @@ pub use test_context::{
 // source-shaped owners without depending on libc or public pthread APIs.
 #[doc(hidden)]
 pub mod __crabc_runtime {
+    pub use crate::runtime_lifecycle::{
+        NativeAllocatorThreadDescriptor, NativeAllocatorPinnedThreadRegistry,
+        NativeAllocatorDescriptorRetirement, native_allocator_descriptor_retirement,
+        NativeAllocatorCallbackBoundaryError, NativeAllocatorQuiescenceError,
+        NativeAllocatorTerminalQuiescence, current_native_allocator_thread_descriptor,
+        native_allocator_initial_thread_descriptor, register_current_native_allocator_worker_descriptor,
+        with_native_allocator_callback_boundary, begin_native_allocator_terminal_quiescence,
+    };
+
     #[cfg(target_arch = "x86_64")]
     pub use crate::diagnostic_output::RuntimeStderrOutput;
     #[cfg(feature = "native-runtime-test-audit")]
