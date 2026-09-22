@@ -446,6 +446,9 @@ impl Heap {
             && self.memid.kind() == MemoryKind::None
     }
 
+    /// The source regular TLS key retained by this caller-owned Heap.
+    pub(crate) const fn regular_theap_slot(&self) -> usize { self.theap_slot }
+
     /// Verifies the bounded caller Heap image remains bound to this exact
     /// selected requested parent. It deliberately validates no generic heap
     /// list or TLS state: those are separate source owners and must not be
@@ -5126,10 +5129,10 @@ impl Theap {
             .map_err(TheapMainStaticInitError::HeapList)
     }
 
-    /// Initializes one direct-zeroed metadata Theap for a caller-pinned heap.
+    /// Initializes one typed Malloc or requested-arena Theap for a caller-pinned heap.
     ///
     /// This preserves the `_mi_theap_init` sequence independently of the
-    /// process-static branch: concrete Malloc `memid`, empty image, TLD,
+    /// process-static branch: exact producer `memid`, empty image, TLD,
     /// Release refcount/subprocess, normal option image, locked TLD list,
     /// random/cookie, Release heap publication, then locked heap list. A
     /// fallible private-list boundary has no rollback in this bounded owner;
@@ -5150,8 +5153,16 @@ impl Theap {
         tld: &mut ThreadLocalData,
         page_mode: DynamicTheapPageMode,
     ) -> Result<(), TheapDynamicInitError> {
+        let storage_matches_heap = match self.memid.kind() {
+            MemoryKind::Malloc => heap.exclusive_arena.is_null(),
+            MemoryKind::Arena => self.memid.initially_committed()
+                && self.memid.arena_memory().is_some_and(|arena|
+                    !arena.arena.is_null() && arena.arena == heap.exclusive_arena
+                    && arena.slice_count as usize == crate::config::ARENA_MIN_OBJ_SLICES),
+            _ => false,
+        };
         if self.is_initialized()
-            || self.memid.kind() != MemoryKind::Malloc
+            || !storage_matches_heap
             || !tld.is_subprocess_attached_no_theap()
             || !tld.matches_owner(TheapOwner::Live(
                 LiveThreadId::new(tld.thread_id()).ok_or(TheapDynamicInitError::InvalidInput)?,
@@ -5511,14 +5522,14 @@ impl Theap {
     /// This is deliberately not a general Theap refcount API. Its sole
     /// production caller, `DynamicTheapAttachment`, and the exact `cfg(test)`
     /// M1 same-TLD fixture each source-order the compiler-TLS cached-root
-    /// store from the canonical empty Theap to this exact Malloc-backed image
+    /// store from the canonical empty Theap to this exact Malloc or Arena image
     /// and retain exclusive current-thread/lifecycle ownership until they
     /// reverse that store. The exact 1 -> 2 CAS turns a violated
     /// owner/refcount invariant into a retained terminal state rather than
     /// silently composing with an unknown reference.
     #[inline]
     pub(crate) fn acquire_dynamic_cached_reference(&self) -> bool {
-        self.memid.kind() == MemoryKind::Malloc
+        matches!(self.memid.kind(), MemoryKind::Malloc | MemoryKind::Arena)
             && self.is_initialized()
             && self
                 .refcount
@@ -5534,7 +5545,7 @@ impl Theap {
     /// invalid-owner state and must retain the allocated image terminally.
     #[inline]
     pub(crate) fn release_dynamic_cached_reference(&self) -> bool {
-        self.memid.kind() == MemoryKind::Malloc
+        matches!(self.memid.kind(), MemoryKind::Malloc | MemoryKind::Arena)
             && self.is_initialized()
             && self
                 .refcount

@@ -1646,6 +1646,17 @@ pub(crate) struct ExclusiveArenaTheapReservation<'arena, 'subprocess> {
     subprocess: &'subprocess MainSubprocess,
 }
 
+/// Exact source reservation retained after a possibly mutating release
+/// invariant failure. It exposes provenance only; no retry, typed prefix, or
+/// slice-release capability can be recovered through this terminal state.
+pub(crate) struct TerminalArenaTheapReservation<'arena, 'subprocess> {
+    reservation: ExclusiveArenaTheapReservation<'arena, 'subprocess>,
+}
+
+impl TerminalArenaTheapReservation<'_, '_> {
+    pub(crate) fn memory_id(&self) -> MemoryId { self.reservation.memory_id() }
+}
+
 impl<'arena, 'subprocess> ExclusiveArenaTheapReservation<'arena, 'subprocess> {
     /// Returns the selected source `mi_memid_t` result that a future complete
     /// Theap owner must store before `_mi_theap_init` copies its empty image.
@@ -1679,6 +1690,23 @@ impl<'arena, 'subprocess> ExclusiveArenaTheapReservation<'arena, 'subprocess> {
             Ok(released) => Ok(released),
             Err(claim) => Err(Self { claim, subprocess }),
         }
+    }
+
+    /// Preserves the exact reservation if the source release invariant fails.
+    /// The returned owner is terminal diagnostic ownership, never permission
+    /// to repeat a possibly partially applied bitmap/purge transition.
+    pub(crate) fn release_retaining_failure(self)
+        -> Result<(), TerminalArenaTheapReservation<'arena, 'subprocess>> {
+        let arena = unsafe { self.claim.arena.as_ref() };
+        if !core::ptr::eq(arena.subprocess, self.subprocess.as_ptr()) {
+            return Err(TerminalArenaTheapReservation { reservation: self });
+        }
+        let released = if let Some(backing) = self.claim.backing {
+            unsafe { backing.release_slices(self.claim.memory) }
+        } else {
+            unsafe { release_arena_slices(self.claim.memory) }
+        };
+        if released { Ok(()) } else { Err(TerminalArenaTheapReservation { reservation: self }) }
     }
 
     /// Materializes the bounded Rust [`Theap`] prefix in this exact source
@@ -1749,6 +1777,24 @@ impl<'arena, 'subprocess> ExclusiveArenaTheapStorage<'arena, 'subprocess> {
         // SAFETY: `materialize_rust_theap_prefix` initialized exactly this
         // object, and the linear owner supplies the only safe mutable route.
         unsafe { self.prefix.as_mut() }
+    }
+
+    /// Borrows the initialized source image while the exact arena claim lives.
+    pub(crate) fn prefix(&self) -> &Theap {
+        // SAFETY: materialization wrote the prefix and this owner retains it.
+        unsafe { self.prefix.as_ref() }
+    }
+
+    /// Drops a detached prefix while retaining its raw arena release owner.
+    ///
+    /// # Safety
+    /// Both lists, all pages and references must be detached; the final
+    /// refcount transition must have completed, with no surviving aliases.
+    pub(crate) unsafe fn drop_prefix_for_release(self)
+        -> ExclusiveArenaTheapReservation<'arena, 'subprocess> {
+        let Self { reservation, prefix } = self;
+        unsafe { core::ptr::drop_in_place(prefix.as_ptr()) };
+        reservation
     }
 
     /// Test-only address observation for the typed Rust prefix. It does not

@@ -8204,6 +8204,7 @@ impl<'attach, 'heap, 'arena, 'map>
         page_map: &'map mut PageMap,
     ) -> Self {
         let thread_sequence = session.thread_sequence();
+        let requested_arena = session.exclusive_arena().unwrap_or(requested_arena);
         Self {
             session,
             arena,

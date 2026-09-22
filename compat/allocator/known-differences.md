@@ -87,6 +87,41 @@ is not a valid C-program observable difference and has no C differential
 entry; the selected arena witness is source-level safety evidence over C's
 assertion-invalid input, not C/Rust invalid-input parity.
 
+### Metadata release provenance and exclusive-arena Theaps
+
+Pinned `src/subproc.c:29-81` returns Malloc IDs for every ordinary metadata
+allocation/replacement. Static main TLD/Theap/subprocess images take its
+no-free branch. The freeing non-Malloc producer is
+`src/theap.c:318-325`: an exclusive-arena Heap allocates its Theap through
+`_mi_arenas_alloc` with a non-null requested arena. That exact request forbids
+both fresh-arena reservation and OS fallback (`src/arena.c:549,578`), so its
+result is Arena or failure. OS, huge-OS, and remapped-OS release algorithms are
+not reachable metadata producers in this profile; the standalone
+`MetaRelease::RegularOs` witness does not establish such a caller.
+
+`DynamicTheapAttachment::begin_in_arena_non_abandoning` retains that exact
+arena and process policy. `DynamicTheapStorage` owns either the ordinary
+Malloc capability or `ExclusiveArenaTheapStorage`; both use the existing
+regular TLS key, cached reference, TLD/Heap lists, heap-local arena-page image,
+and `DynamicTheapPageSession`. The page engine derives the required arena
+from the session, including when its caller supplies no selector. Constructor
+failure after arena exhaustion or disabled arena allocation releases the
+already-created TLD/TLS/key state without publishing a Theap or substituting
+another arena/OS allocation. A nonnegative NUMA observation admits the source
+second requested-parent search pass. After clients are freed and the generic
+engine finishes collection, teardown removes roots and lists before clearing
+and releasing the exact Arena Theap slice. A failed final release retains
+terminal provenance rather than granting a second release attempt.
+
+`m2_metadata_arena_x86_64.c` exercises the pinned producer with live pages,
+forced collection preserving clients, final Theap-slice reuse, and requested
+arena exhaustion. The Rust tests use the same generic dynamic engine. This
+extends real Arena-backed metadata lifetime beyond the earlier page-free
+`RequestedParentArenaTheap` owner. It retains the existing explicit
+non-abandoning option mode; ordinary dynamic abandonment, concurrent heap
+force-destruction, public heap APIs, and whole-process shutdown require their
+separate lifecycle owners and qualification.
+
 ### `CRABC-LIBC-SHADOW-ABI-REALLOC-NULL-ZERO-ALIGNMENT` — observed public-C ABI known red
 
 - **Backends:** `libc/src/allocator_mimalloc.rs:realloc` through the ordinary

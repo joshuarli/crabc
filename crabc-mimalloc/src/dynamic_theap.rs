@@ -14,8 +14,8 @@
 //!
 //! This is a deliberately narrow first-class-heap binding: a caller provides
 //! one address-stable `Heap::bootstrap_empty()` image, this owner claims one
-//! regular TLS key, and it attaches one direct-zeroed metadata Theap to one
-//! later-ticket metadata TLD. It does not implement `mi_heap_new/delete`,
+//! regular TLS key, and it attaches one typed Malloc or exclusive-arena
+//! Theap to one later-ticket metadata TLD. It does not implement `mi_heap_new/delete`,
 //! subprocess heap lists/counters, general cached-root switching, pthread
 //! hooks, or public allocation APIs. Ordinary dynamic begin uses the source
 //! abandoning `true`/`2` option image and rejects a page session. The private
@@ -84,7 +84,8 @@ use crate::compiler_tls::{
     cached_theap, current_thread_identity, default_theap, fast_slot_peek, set_cached_theap,
 };
 use crate::arena::{
-    ArenaView, DynamicArenaMappedAbandonedPage,
+    ArenaView, ArenaId, ExclusiveArenaTheapStorage, TerminalArenaTheapReservation,
+    DynamicArenaMappedAbandonedPage,
     DynamicArenaPagesOwner, DynamicArenaPagesOwnerCreateError,
     DynamicArenaPagesOwnerError,
 };
@@ -138,6 +139,8 @@ pub(crate) enum DynamicTheapError {
     Backing(ThreadLocalBackingError),
     TheapMetadata(MetaError),
     TheapProjection,
+    TheapArenaUnavailable,
+    TheapArenaRelease,
     TheapInit(TheapDynamicInitError),
     RootOwnership,
     CachedReference,
@@ -263,6 +266,79 @@ impl UnrelatedRoots {
     }
 }
 
+/// `_mi_theap_alloc` selects ordinary Malloc metadata or the exact requested
+/// arena. The arena arm never falls back to OS or another arena. Both storage
+/// forms feed the same dynamic attachment and page session; only their final
+/// `_mi_meta_free` release authority differs.
+enum DynamicTheapStorage<'arena> {
+    Malloc(MetaAllocation<'static>),
+    Arena {
+        storage: Option<ExclusiveArenaTheapStorage<'arena, 'static>>,
+        terminal: Option<TerminalArenaTheapReservation<'arena, 'static>>,
+    },
+}
+
+impl DynamicTheapStorage<'_> {
+    fn memory_id(&self) -> MemoryId {
+        match self {
+            Self::Malloc(allocation) => allocation.memory_id(),
+            Self::Arena { storage, terminal } => storage.as_ref().map(|s| s.memory_id())
+                .or_else(|| terminal.as_ref().map(|r| r.memory_id()))
+                .expect("released Theap storage cannot be projected"),
+        }
+    }
+    fn initialize_dynamic_theap_metadata(&mut self) -> Option<&mut Theap> {
+        match self {
+            Self::Malloc(allocation) => allocation.initialize_dynamic_theap_metadata(),
+            Self::Arena { storage, .. } => {
+                let storage = storage.as_mut()?;
+                let memory = storage.memory_id();
+                let theap = storage.prefix_mut();
+                theap.set_requested_arena_metadata_memid(memory).then_some(theap)
+            }
+        }
+    }
+    fn dynamic_theap(&self) -> Option<&Theap> {
+        match self {
+            Self::Malloc(allocation) => allocation.dynamic_theap(),
+            Self::Arena { storage, .. } => storage.as_ref().map(|s| s.prefix()),
+        }
+    }
+    fn dynamic_theap_mut(&mut self) -> Option<&mut Theap> {
+        match self {
+            Self::Malloc(allocation) => allocation.dynamic_theap_mut(),
+            Self::Arena { storage, .. } => storage.as_mut().map(|s| s.prefix_mut()),
+        }
+    }
+    fn clear_after_detach(&mut self) -> Option<bool> {
+        match self {
+            Self::Malloc(allocation) => allocation.dynamic_theap_mut()
+                .map(Theap::clear_dynamic_metadata_after_detach),
+            Self::Arena { storage, .. } => storage.as_mut()
+                .map(|s| s.prefix_mut().clear_requested_arena_after_detach()),
+        }
+    }
+    fn release(&mut self, metadata: Pin<&'static MetaAllocator>) -> Result<(), DynamicTheapError> {
+        match self {
+            Self::Malloc(allocation) => metadata.free(allocation).map_err(DynamicTheapError::TheapMetadata),
+            Self::Arena { storage, terminal } => {
+                if terminal.is_some() { return Err(DynamicTheapError::TheapArenaRelease); }
+                let storage = storage.take().ok_or(DynamicTheapError::TheapArenaRelease)?;
+                // SAFETY: attachment release follows page collection, both
+                // list removals, cached/root release and final refcount clear.
+                let reservation = unsafe { storage.drop_prefix_for_release() };
+                match reservation.release_retaining_failure() {
+                    Ok(()) => Ok(()),
+                    Err(reservation) => {
+                        *terminal = Some(reservation);
+                        Err(DynamicTheapError::TheapArenaRelease)
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// The exact private owner of one current-thread regular-key Theap.
 ///
 /// The caller's `Pin<&mut Heap>` proves the heap address stays stable while
@@ -281,7 +357,8 @@ pub(crate) struct DynamicTheapAttachment<'heap> {
     binding: Option<DynamicHeapBinding>,
     backing: Option<ThreadLocalBackingOwner>,
     tld: Option<DynamicAttachedThreadLocalData>,
-    theap: Option<MetaAllocation<'static>>,
+    theap: Option<DynamicTheapStorage<'heap>>,
+    requested_arena: Option<ArenaView<'heap>>,
     roots: UnrelatedRoots,
     cached_root_bound: bool,
     page_mode: DynamicTheapPageMode,
@@ -866,6 +943,34 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         registry: &'static OwnedThreadLocalKeyRegistry,
         page_mode: DynamicTheapPageMode,
     ) -> Result<Self, DynamicTheapBeginError<'heap>> {
+        unsafe { Self::begin_with_components_arena(config, heap, subprocess, metadata, registry, page_mode, None, true) }
+    }
+
+    /// Begins a real dynamic attachment in a caller-retained exclusive arena.
+    ///
+    /// # Safety
+    /// All `begin_non_abandoning` obligations apply. `arena` must be registered
+    /// to this process and remain live through final Theap/page release; its
+    /// underlying storage must not be destroyed while the attachment exists.
+    /// `process`, the global metadata owner and global key registry must name
+    /// this same subprocess; its immutable policy governs arena admission.
+    pub(crate) unsafe fn begin_in_arena_non_abandoning(
+        config: MemoryConfig, heap: Pin<&'heap mut Heap>, arena: ArenaView<'heap>,
+        process: crate::os::VmProcess<'static>,
+    ) -> Result<Self, DynamicTheapBeginError<'heap>> {
+        unsafe { Self::begin_with_components_arena(config, heap, process.subprocess(),
+            MetaAllocator::global(), OwnedThreadLocalKeyRegistry::global(),
+            DynamicTheapPageMode::NonAbandoningPageSession, Some(arena),
+            !process.policy().disallow_arena_alloc()) }
+    }
+
+    unsafe fn begin_with_components_arena(
+        config: MemoryConfig, heap: Pin<&'heap mut Heap>,
+        subprocess: &'static MainSubprocess, metadata: Pin<&'static MetaAllocator>,
+        registry: &'static OwnedThreadLocalKeyRegistry, page_mode: DynamicTheapPageMode,
+        requested_arena: Option<ArenaView<'heap>>,
+        arena_allocation_allowed: bool,
+    ) -> Result<Self, DynamicTheapBeginError<'heap>> {
         let thread = current_thread_identity()
             .ok_or(DynamicTheapBeginError::Rejected(DynamicTheapError::InvalidCurrentThread))?;
         let roots = UnrelatedRoots::capture();
@@ -896,12 +1001,15 @@ impl<'heap> DynamicTheapAttachment<'heap> {
                 ));
             }
         };
+        let requested_arena_pointer = requested_arena.as_ref()
+            .map(|arena| core::ptr::from_ref(arena.arena()).cast_mut());
         let mut attachment = Self {
             heap: Some(heap),
             binding: None,
             backing: None,
             tld: Some(tld),
             theap: None,
+            requested_arena,
             roots,
             cached_root_bound: false,
             page_mode,
@@ -945,18 +1053,48 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             let heap = attachment.heap_mut();
             // SAFETY: the outer unsafe constructor carries the unique pristine
             // caller-heap image proof required by this narrow initializer.
-            unsafe { heap.initialize_dynamic_binding(subprocess, key.raw() as usize) }
+            unsafe {
+                match requested_arena_pointer {
+                    Some(arena) => heap.initialize_dynamic_binding_for_requested_arena(
+                        subprocess, key.raw() as usize, arena),
+                    None => heap.initialize_dynamic_binding(subprocess, key.raw() as usize),
+                }
+            }
         };
         if !heap_initialized {
             return Err(attachment.into_retained_begin_failure(DynamicTheapError::HeapBinding));
         }
 
-        let allocation = match metadata.zalloc_for_main_subprocess(config, subprocess, size_of::<Theap>()) {
+        let selected_allocation = match attachment.requested_arena.as_ref() {
+            Some(arena) => {
+                let tld = attachment.tld.as_mut().unwrap().current_mut().unwrap();
+                let sequence = tld.thread_sequence();
+                let numa_node = tld.numa_node();
+                let reservation = if arena_allocation_allowed {
+                    arena.try_reserve_exclusive_theap(subprocess, sequence).or_else(|| {
+                        // Source mi_forall_suitable_arenas repeats the exact
+                        // requested parent on its unrestricted NUMA pass.
+                        if numa_node >= 0 { arena.try_reserve_exclusive_theap(subprocess, sequence) }
+                        else { None }
+                    })
+                } else { None };
+                reservation
+                    .map(|reservation| DynamicTheapStorage::Arena {
+                        // SAFETY: this fresh exclusive claim contains no live
+                        // Rust image; the attachment retains its typed owner.
+                        storage: Some(unsafe { reservation.materialize_rust_theap_prefix() }),
+                        terminal: None,
+                    }).ok_or(DynamicTheapError::TheapArenaUnavailable)
+            }
+            None => metadata.zalloc_for_main_subprocess(config, subprocess, size_of::<Theap>())
+                .map(DynamicTheapStorage::Malloc).map_err(DynamicTheapError::TheapMetadata),
+        };
+        let allocation = match selected_allocation {
             Ok(allocation) => allocation,
             Err(error) => {
                 return match attachment.cancel_before_theap_publication() {
                     Ok(()) => Err(DynamicTheapBeginError::Rejected(
-                        DynamicTheapError::TheapMetadata(error),
+                        error,
                     )),
                     Err(cleanup) => Err(attachment.into_retained_begin_failure(cleanup)),
                 };
@@ -1027,7 +1165,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         let theap = self
             .theap
             .as_mut()
-            .and_then(MetaAllocation::dynamic_theap_mut)
+            .and_then(DynamicTheapStorage::dynamic_theap_mut)
             .map(|theap| core::ptr::from_mut(theap).addr())
             .ok_or(DynamicTheapError::TheapProjection)?;
         Ok(PersistentWorkerTheapAddresses { heap, tld, theap })
@@ -1312,7 +1450,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         let cached_refcount = match self
             .theap
             .as_mut()
-            .and_then(MetaAllocation::dynamic_theap_mut)
+            .and_then(DynamicTheapStorage::dynamic_theap_mut)
             .map(|theap| theap.refcount())
         {
             Some(refcount) => refcount,
@@ -1342,8 +1480,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         let clear_theap = self
             .theap
             .as_mut()
-            .and_then(MetaAllocation::dynamic_theap_mut)
-            .map(Theap::clear_dynamic_metadata_after_detach);
+            .and_then(DynamicTheapStorage::clear_after_detach);
         match clear_theap {
             Some(true) => {}
             Some(false) => return Err(self.poison(DynamicTheapError::TheapClear)),
@@ -1366,8 +1503,9 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             Some(tld) => tld.metadata(),
             None => return Err(self.poison(DynamicTheapError::Poisoned)),
         };
-        if let Err(error) = metadata.free(&mut theap) {
-            return Err(self.poison(DynamicTheapError::TheapMetadata(error)));
+        if let Err(error) = theap.release(metadata) {
+            self.theap = Some(theap);
+            return Err(self.poison(error));
         }
 
         let tld_teardown = match self.tld.as_mut() {
@@ -1446,8 +1584,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         let clear_theap = self
             .theap
             .as_mut()
-            .and_then(MetaAllocation::dynamic_theap_mut)
-            .map(Theap::clear_dynamic_metadata_after_detach);
+            .and_then(DynamicTheapStorage::clear_after_detach);
         match clear_theap {
             Some(true) => {}
             Some(false) => return Err(self.poison(DynamicTheapError::TheapClear)),
@@ -1462,8 +1599,9 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             Some(tld) => tld.metadata(),
             None => return Err(self.poison(DynamicTheapError::Poisoned)),
         };
-        if let Err(error) = metadata.free(&mut theap) {
-            return Err(self.poison(DynamicTheapError::TheapMetadata(error)));
+        if let Err(error) = theap.release(metadata) {
+            self.theap = Some(theap);
+            return Err(self.poison(error));
         }
         let tld_teardown = match self.tld.as_mut() {
             Some(tld) => tld.teardown_after_theap_detached(),
@@ -1578,7 +1716,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             let theap = self
                 .theap
                 .as_mut()
-                .and_then(MetaAllocation::dynamic_theap_mut)
+                .and_then(DynamicTheapStorage::dynamic_theap_mut)
                 .ok_or(DynamicTheapError::TheapProjection)?;
             (
                 theap.page_count(),
@@ -1626,10 +1764,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             // SAFETY: this attachment retains the exact live typed image and
             // its private Heap list has no competing owner at this boundary.
             || !unsafe { heap.has_exact_theap_member(theap_pointer) }
-            || !heap.matches_dynamic_binding(
-                subprocess,
-                key.raw() as usize,
-            )
+            || !self.matches_heap_binding(subprocess, key.raw() as usize)
         {
             return Err(DynamicTheapError::ListOwnership);
         }
@@ -1668,7 +1803,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             let theap = self
                 .theap
                 .as_mut()
-                .and_then(MetaAllocation::dynamic_theap_mut)
+                .and_then(DynamicTheapStorage::dynamic_theap_mut)
                 .ok_or(DynamicTheapError::TheapProjection)?;
             (
                 theap.page_count(),
@@ -1714,10 +1849,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             // SAFETY: this attachment retains the exact live typed image and
             // its private Heap list has no competing owner at this boundary.
             || !unsafe { heap.has_exact_theap_member(theap_pointer) }
-            || !heap.matches_dynamic_binding(
-                subprocess,
-                key.raw() as usize,
-            )
+            || !self.matches_heap_binding(subprocess, key.raw() as usize)
         {
             return Err(DynamicTheapError::ListOwnership);
         }
@@ -1758,7 +1890,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             let theap = self
                 .theap
                 .as_mut()
-                .and_then(MetaAllocation::dynamic_theap_mut)
+                .and_then(DynamicTheapStorage::dynamic_theap_mut)
                 .ok_or(DynamicTheapError::TheapProjection)?;
             (
                 theap.page_count(),
@@ -1811,7 +1943,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             // SAFETY: this attachment retains the exact live typed image and
             // its private Heap list has no competing owner at this boundary.
             || !unsafe { heap.has_exact_theap_member(theap_pointer) }
-            || !heap.matches_dynamic_binding(subprocess, key.raw() as usize)
+            || !self.matches_heap_binding(subprocess, key.raw() as usize)
         {
             return Err(DynamicTheapError::ListOwnership);
         }
@@ -1832,7 +1964,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         let theap_image = self
             .theap
             .as_mut()
-            .and_then(MetaAllocation::dynamic_theap_mut)
+            .and_then(DynamicTheapStorage::dynamic_theap_mut)
             .ok_or(DynamicTheapError::TheapProjection)?;
         if !core::ptr::eq(core::ptr::from_mut(theap_image), theap.as_ptr()) {
             return Err(DynamicTheapError::TheapProjection);
@@ -1870,7 +2002,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         let theap = self
             .theap
             .as_mut()
-            .and_then(MetaAllocation::dynamic_theap_mut)
+            .and_then(DynamicTheapStorage::dynamic_theap_mut)
             .ok_or(DynamicTheapError::TheapProjection)?;
         if !core::ptr::eq(core::ptr::from_mut(theap), theap_pointer) {
             return Err(DynamicTheapError::TheapProjection);
@@ -2080,7 +2212,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         (
             &mut Heap,
             &mut crate::types::ThreadLocalData,
-            &mut MetaAllocation<'static>,
+            &mut DynamicTheapStorage<'heap>,
         ),
         DynamicTheapError,
     > {
@@ -2104,6 +2236,14 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         Ok((heap, tld, theap))
     }
 
+    fn matches_heap_binding(&self, subprocess: &MainSubprocess, key: usize) -> bool {
+        match self.requested_arena.as_ref() {
+            Some(arena) => self.heap_ref().matches_dynamic_binding_for_requested_arena(subprocess, core::ptr::from_ref(arena.arena()).cast_mut())
+                && self.heap_ref().regular_theap_slot() == key,
+            None => self.heap_ref().matches_dynamic_binding(subprocess, key),
+        }
+    }
+
     fn theap_pointer(&mut self) -> Result<*mut Theap, DynamicTheapError> {
         // The address is derived only from the retained typed dynamic-Theap
         // metadata capability. It is used as an intrusive-list witness while
@@ -2112,7 +2252,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         let theap = self
             .theap
             .as_mut()
-            .and_then(MetaAllocation::dynamic_theap_mut)
+            .and_then(DynamicTheapStorage::dynamic_theap_mut)
             .ok_or(DynamicTheapError::TheapProjection)?;
         Ok(core::ptr::from_mut(theap))
     }
@@ -2131,6 +2271,16 @@ pub(crate) struct DynamicTheapPageSession<'attach, 'heap> {
 }
 
 impl<'attach, 'heap> DynamicTheapPageSession<'attach, 'heap> {
+    /// A source exclusive arena constrains every page request, including when
+    /// an engine caller supplies no explicit arena selector.
+    pub(crate) fn exclusive_arena(&self) -> Option<ArenaId> {
+        self.attachment.requested_arena.as_ref().map(|arena|
+            // SAFETY: the attachment retained this registry-published parent
+            // and rejected child/foreign storage before publication.
+            unsafe { ArenaId::from_arena(core::ptr::from_ref(arena.arena()).cast_mut()) }
+                .expect("the selected exclusive arena is a source parent"))
+    }
+
     fn begin(
         attachment: &'attach mut DynamicTheapAttachment<'heap>,
     ) -> Result<Self, DynamicTheapPageSessionError> {
@@ -2140,7 +2290,7 @@ impl<'attach, 'heap> DynamicTheapPageSession<'attach, 'heap> {
         let theap = attachment
             .theap
             .as_ref()
-            .and_then(MetaAllocation::dynamic_theap)
+            .and_then(DynamicTheapStorage::dynamic_theap)
             .ok_or(DynamicTheapPageSessionError::Attachment(
                 DynamicTheapError::TheapProjection,
             ))?;
@@ -2164,7 +2314,7 @@ impl<'attach, 'heap> DynamicTheapPageSession<'attach, 'heap> {
         let theap = attachment
             .theap
             .as_ref()
-            .and_then(MetaAllocation::dynamic_theap)
+            .and_then(DynamicTheapStorage::dynamic_theap)
             .ok_or(DynamicTheapPageSessionError::Attachment(
                 DynamicTheapError::TheapProjection,
             ))?;
@@ -2204,7 +2354,7 @@ impl<'attach, 'heap> DynamicTheapPageSession<'attach, 'heap> {
         self.attachment
             .theap
             .as_ref()
-            .and_then(MetaAllocation::dynamic_theap)
+            .and_then(DynamicTheapStorage::dynamic_theap)
             .expect("a validated borrowed dynamic page session retains its typed Theap")
     }
 
@@ -2213,7 +2363,7 @@ impl<'attach, 'heap> DynamicTheapPageSession<'attach, 'heap> {
         self.attachment
             .theap
             .as_mut()
-            .and_then(MetaAllocation::dynamic_theap_mut)
+            .and_then(DynamicTheapStorage::dynamic_theap_mut)
             .expect("a validated borrowed dynamic page session retains its typed Theap")
     }
 
@@ -2316,7 +2466,7 @@ impl<'attach, 'heap> DynamicTheapPageDrainSession<'attach, 'heap> {
         self.attachment
             .theap
             .as_ref()
-            .and_then(MetaAllocation::dynamic_theap)
+            .and_then(DynamicTheapStorage::dynamic_theap)
             .expect("a draining dynamic page session retains its typed Theap")
     }
 
@@ -2325,7 +2475,7 @@ impl<'attach, 'heap> DynamicTheapPageDrainSession<'attach, 'heap> {
         self.attachment
             .theap
             .as_mut()
-            .and_then(MetaAllocation::dynamic_theap_mut)
+            .and_then(DynamicTheapStorage::dynamic_theap_mut)
             .expect("a draining dynamic page session retains its typed Theap")
     }
 
@@ -2612,7 +2762,7 @@ unsafe impl TheapPageSession for DynamicTheapPageSession<'_, '_> {
         };
         let theap = theap
             .as_mut()
-            .and_then(MetaAllocation::dynamic_theap_mut)?;
+            .and_then(DynamicTheapStorage::dynamic_theap_mut)?;
         unsafe {
             Page::publish_fresh_exclusive_owner_at(
                 metadata,
@@ -3096,7 +3246,7 @@ mod tests {
             let fields = owner
                 .theap
                 .as_mut()
-                .and_then(MetaAllocation::dynamic_theap_mut)
+                .and_then(DynamicTheapStorage::dynamic_theap_mut)
                 .expect("the ordinary dynamic fixture retains its typed Theap")
                 .test_main_static_fields();
             assert!(fields.allows_page_abandon);
@@ -3182,6 +3332,116 @@ mod tests {
     }
 
     #[test]
+    fn requested_arena_dynamic_owner_collects_live_pages_before_typed_metadata_release() {
+        thread::spawn(|| {
+            let (subprocess, metadata, keys) = fixture();
+            consume_static_ticket(subprocess, metadata);
+            let roots = UnrelatedRoots::capture();
+            let mut region = DynamicArenaRegion::zeroed();
+            let arenas = ArenaRegistry::new(null_mut());
+            assert!(unsafe { arenas.bind_subprocess_before_publication(subprocess.as_ptr()) });
+            let managed = unsafe { manage_external_in_place(&arenas, region.as_ptr(),
+                ARENA_MIN_SIZE, PageSize::new(4096).unwrap(), true, true, true,
+                -1, true, None) }.unwrap();
+            let id = managed.arena_id();
+            let arena = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+            let observation = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+            let mut heap = Box::pin(Heap::bootstrap_empty());
+            let mut owner = match unsafe { DynamicTheapAttachment::begin_with_components_arena(
+                memory_config(), heap.as_mut(), subprocess, metadata, keys,
+                DynamicTheapPageMode::NonAbandoningPageSession, Some(arena), true) } {
+                Ok(owner) => owner, Err(_) => panic!("exclusive arena attachment"),
+            };
+            let theap_memory = owner.theap.as_ref().unwrap().dynamic_theap().unwrap().memory_id();
+            let theap_span = theap_memory.arena_memory().unwrap();
+            assert_eq!(theap_span.arena, id.as_ptr());
+            let free = unsafe { observation.slices_free() }.unwrap();
+            assert_eq!(free.is_clear_range(theap_span.slice_index as usize, theap_span.slice_count as usize), Some(true));
+            let mut page_map = PageMap::initialize(memory_config(), 0, true).unwrap();
+            let session = owner.page_session().unwrap();
+            let mut engine = DynamicTheapAllocator::activate_dynamic(session,
+                unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap(), ArenaId::none(), &mut page_map);
+            let mut blocks = std::vec::Vec::new();
+            for index in 0..192 {
+                let size = [37, 1025, 8193, 131073][index % 4];
+                let block = engine.allocate(size, true).expect("ordinary requested-arena page allocation");
+                let page = unsafe { engine.page_for_block(block) };
+                assert_eq!(unsafe { (*page).memid().arena_memory().unwrap().arena }, id.as_ptr());
+                assert!(engine.test_dynamic_arena_pages_image(unsafe { (*page).memid() }).unwrap().3);
+                unsafe { core::ptr::write_bytes(block.as_ptr(), 0xa5, size) };
+                blocks.push((block, size));
+            }
+            assert!(engine.collect_retired(true));
+            assert_eq!(engine.test_attachment_teardown_preflight(), Err(DynamicTheapError::PageCountNonZero));
+            for (block, size) in blocks {
+                assert!(unsafe { core::slice::from_raw_parts(block.as_ptr(), size) }.iter().all(|b| *b == 0xa5));
+                unsafe { engine.free(block) }.unwrap();
+            }
+            assert!(engine.finish().is_ok());
+            owner.teardown().unwrap();
+            assert_eq!(free.is_set_range(theap_span.slice_index as usize, theap_span.slice_count as usize), Some(true));
+            assert!(roots.still_matches());
+            assert_eq!(subprocess.live_thread_count(), 0);
+            assert_eq!(keys.test_live_lease_count(), 0);
+            drop(owner);
+            keys.shutdown().unwrap();
+            assert_eq!(metadata.test_allocation_audit().live_capability_count, 0);
+            unsafe { page_map.destroy() }.unwrap();
+            std::println!("m2.metadata.arena.live_clients=192");
+            std::println!("m2.metadata.arena.preserved_through_collect=1");
+            std::println!("m2.metadata.arena.typed_release_reusable=1");
+        }).join().unwrap();
+    }
+
+    #[test]
+    fn exhausted_requested_arena_rejects_theap_without_fallback_or_published_roots() {
+        thread::spawn(|| {
+            let (subprocess, metadata, keys) = fixture();
+            consume_static_ticket(subprocess, metadata);
+            let roots = UnrelatedRoots::capture();
+            let mut region = DynamicArenaRegion::zeroed();
+            let arenas = ArenaRegistry::new(null_mut());
+            assert!(unsafe { arenas.bind_subprocess_before_publication(subprocess.as_ptr()) });
+            let managed = unsafe { manage_external_in_place(&arenas, region.as_ptr(),
+                ARENA_MIN_SIZE, PageSize::new(4096).unwrap(), true, true, true,
+                -1, true, None) }.unwrap();
+            let id = managed.arena_id();
+            let observation = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+            let mut claims = std::vec::Vec::new();
+            while let Some(claim) = observation.try_claim_suitable_slices(id, 1, true, 0) {
+                claims.push(claim);
+            }
+            assert!(!claims.is_empty());
+            let mut heap = Box::pin(Heap::bootstrap_empty());
+            match unsafe { DynamicTheapAttachment::begin_with_components_arena(
+                memory_config(), heap.as_mut(), subprocess, metadata, keys,
+                DynamicTheapPageMode::NonAbandoningPageSession,
+                Some(ArenaView::from_ptr(id.as_ptr()).unwrap()), true) } {
+                Err(DynamicTheapBeginError::Rejected(DynamicTheapError::TheapArenaUnavailable)) => {},
+                _ => panic!("an exhausted exclusive arena must not fall back"),
+            }
+            assert!(roots.still_matches());
+            assert_eq!(subprocess.live_thread_count(), 0);
+            assert_eq!(keys.test_live_lease_count(), 0);
+            for claim in claims { assert!(claim.release()); }
+            match unsafe { DynamicTheapAttachment::begin_with_components_arena(
+                memory_config(), heap.as_mut(), subprocess, metadata, keys,
+                DynamicTheapPageMode::NonAbandoningPageSession,
+                Some(ArenaView::from_ptr(id.as_ptr()).unwrap()), false) } {
+                Err(DynamicTheapBeginError::Rejected(DynamicTheapError::TheapArenaUnavailable)) => {},
+                _ => panic!("disabled arena allocation must not use free requested storage"),
+            }
+            assert!(roots.still_matches());
+            assert_eq!(subprocess.live_thread_count(), 0);
+            assert_eq!(keys.test_live_lease_count(), 0);
+            std::println!("m2.metadata.arena.disallowed_no_fallback=1");
+            keys.shutdown().unwrap();
+            assert_eq!(metadata.test_allocation_audit().live_capability_count, 0);
+            std::println!("m2.metadata.arena.exhausted_no_fallback=1");
+        }).join().unwrap();
+    }
+
+    #[test]
     fn ordinary_dynamic_attachment_rejects_page_session_without_arena_or_map_mutation() {
         thread::spawn(|| {
             let (subprocess, metadata, registry) = fixture();
@@ -3206,7 +3466,7 @@ mod tests {
             let fields = owner
                 .theap
                 .as_mut()
-                .and_then(MetaAllocation::dynamic_theap_mut)
+                .and_then(DynamicTheapStorage::dynamic_theap_mut)
                 .expect("the attached dynamic owner retains its typed Theap")
                 .test_main_static_fields();
             assert_eq!(fields.page_full_retain, -1);
@@ -21472,7 +21732,7 @@ mod tests {
                 owner
                     .theap
                     .as_mut()
-                    .and_then(MetaAllocation::dynamic_theap_mut)
+                    .and_then(DynamicTheapStorage::dynamic_theap_mut)
                     .unwrap()
                     .page_count(),
                 0,
@@ -21650,7 +21910,7 @@ mod tests {
                 owner
                     .theap
                     .as_mut()
-                    .and_then(MetaAllocation::dynamic_theap_mut)
+                    .and_then(DynamicTheapStorage::dynamic_theap_mut)
                     .unwrap()
                     .page_count(),
                 1
@@ -21933,7 +22193,7 @@ mod tests {
             let fields = owner
                 .theap
                 .as_mut()
-                .and_then(MetaAllocation::dynamic_theap_mut)
+                .and_then(DynamicTheapStorage::dynamic_theap_mut)
                 .expect("the retained attachment keeps its typed dynamic Theap")
                 .test_main_static_fields();
             assert_eq!(fields.refcount, 2);
@@ -21941,7 +22201,7 @@ mod tests {
                 owner
                     .theap
                     .as_ref()
-                    .and_then(MetaAllocation::dynamic_theap)
+                    .and_then(DynamicTheapStorage::dynamic_theap)
                     .expect("the retained attachment keeps its dynamic Theap projection")
                     .page_count(),
                 0
@@ -22136,7 +22396,7 @@ mod tests {
             let enter_refcount = owner
                 .theap
                 .as_mut()
-                .and_then(MetaAllocation::dynamic_theap_mut)
+                .and_then(DynamicTheapStorage::dynamic_theap_mut)
                 .expect("the typed attachment projects its dynamic Theap")
                 .refcount();
             let cached_is_dynamic = core::ptr::eq(cached_theap().as_ptr(), theap_pointer);
@@ -22160,7 +22420,7 @@ mod tests {
             let reset_refcount = owner
                 .theap
                 .as_mut()
-                .and_then(MetaAllocation::dynamic_theap_mut)
+                .and_then(DynamicTheapStorage::dynamic_theap_mut)
                 .expect("the dynamic Theap remains typed through cached reset")
                 .refcount();
             let empty_reset = crate::bootstrap::empty_default_theap().refcount();
