@@ -984,7 +984,7 @@ mod tests {
         unsafe { with_terminal_diagnostic_output_at(&epoch, pointer, || {
             assert!(!record.entered.load(Ordering::SeqCst));
             assert!(matches!(NativeAllocatorOperationGuard::enter_at(&epoch, pointer),
-                Err(NativeAllocatorEntryError::Closed)));
+                Err(NativeAllocatorEntryError::Unregistered)));
             assert_eq!(with_diagnostic_callback_at(&epoch, NonNull::from(&other), || invoked.set(99)),
                 Err(NativeAllocatorCallbackBoundaryError::NoOperation));
             assert_eq!(with_terminal_diagnostic_output_at(&epoch, pointer, || invoked.set(99)),
