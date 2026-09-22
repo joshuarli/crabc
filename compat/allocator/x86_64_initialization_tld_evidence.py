@@ -6,11 +6,12 @@ static preimage, direct normal TLD initialization, and first-main static TLD
 creation, successful and failed generic later-TLD metadata allocation, and the
 ordinary later-main `_mi_thread_init_with_heap` Theap transaction. It compares
 each complete address-independent record with the existing Rust emitter, then
-embeds the current native init-recursion receipt. The ordinary later-main C
-fixture separately checks its source event order; Rust records independently
-observed post-state only. The selected branch matrix is intentionally finite:
-automatic teardown and allocator-recursion completion remain outside this
-initialization admission.
+embeds the current native init-recursion receipt, including its separately
+scoped startup-output callback record. The ordinary later-main C fixture
+separately checks its source event order; the startup callback relation likewise
+keeps C startup delivery distinct from Rust's delayed post-init output. The
+selected branch matrix is intentionally finite: automatic teardown and general
+allocator-recursion completion remain outside this initialization admission.
 """
 
 from __future__ import annotations
@@ -643,6 +644,7 @@ def source_input_records() -> list[dict[str, str]]:
         "compat/upstreams.toml",
         *BRANCH_RUST_SOURCES,
         relative(recursion.RUST_TRACE_SOURCE),
+        relative(recursion.STARTUP_CALLBACK_RUST_SOURCE),
         *(str(check["source"]) for check in recursion.EXPECTED_LIFECYCLE_CHECKS),
     }
     return [
@@ -912,6 +914,7 @@ def validate_report(report: Mapping[str, Any]) -> None:
         raise EvidenceError("embedded init-recursion source-input binding changed")
     recursion_sources = {
         relative(recursion.RUST_TRACE_SOURCE),
+        relative(recursion.STARTUP_CALLBACK_RUST_SOURCE),
         *(str(check["source"]) for check in recursion.EXPECTED_LIFECYCLE_CHECKS),
     }
     if not recursion_sources.issubset(set(expected_input_paths)):
@@ -998,6 +1001,8 @@ def main() -> int:
         "allocator x86-64 initialization TLD evidence: PASS "
         f"({len(report['branch_rows'])} direct C/Rust rows; {compared} values; "
         f"{len(report['init_recursion']['lifecycle_checks'])} retained lifecycle checks; "
+        f"{report['init_recursion']['startup_callback']['comparison']['compared_value_count']} "
+        "separately scoped startup callback values; "
         f"report: {relative(arguments.report)})"
     )
     return 0

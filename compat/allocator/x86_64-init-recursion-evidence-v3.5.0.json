@@ -1,7 +1,7 @@
 {
-  "format": 1,
+  "format": 2,
   "schema": "crabc-mimalloc-x86_64-init-recursion-evidence",
-  "profile": "linux-x86_64-private-explicit-init-recursion-teardown",
+  "profile": "linux-x86_64-private-explicit-init-recursion-and-startup-output",
   "target": {
     "architecture": "x86_64",
     "endianness": "little",
@@ -16,11 +16,11 @@
   "scope": {
     "aarch64_status_reused": false,
     "automatic_pthread_destructor_claimed": false,
-    "constructor_or_callback_integration_claimed": false,
     "emulation_accepted": false,
-    "explicit_process_and_worker_thread_route_only": true,
+    "explicit_worker_recovery_route_recorded": true,
     "failure_and_ownership_matrix_recorded": true,
     "general_allocator_or_api_claimed": false,
+    "general_constructor_or_callback_integration_claimed": false,
     "general_process_shutdown_claimed": false,
     "initial_thread_auto_init_claimed": false,
     "metadata_completion_claimed": false,
@@ -32,6 +32,9 @@
     "runtime_lifecycle_callback_parity_claimed": false,
     "rust_failure_matrix_c_equivalence_claimed": false,
     "rust_direct_second_mutable_owner_refused": true,
+    "source_startup_output_callback_common_scalars_recorded": true,
+    "startup_output_callback_timing_equivalence_claimed": false,
+    "startup_output_callback_general_completion_claimed": false,
     "thread_recovery_after_explicit_teardown_only": true
   },
   "compile_definitions": [
@@ -112,6 +115,36 @@
       "start_line": 536,
       "end_line": 592,
       "sha256": "1f3a0d2b3751b4d3270abe60c46aeef48ef78de91fe1dcfb6d5cc802a5d1480e"
+    },
+    {
+      "member": "src/options.c",
+      "start_line": 302,
+      "end_line": 316,
+      "sha256": "76a7223e1d448ddaba2746d524324c7362a1d179454f0e11b77e8bfa490b6efd"
+    },
+    {
+      "member": "src/options.c",
+      "start_line": 413,
+      "end_line": 428,
+      "sha256": "73511a81539e1030a24f2c89b5a2cb3c94c1d285a6901650699f03947a599d21"
+    },
+    {
+      "member": "src/arena.c",
+      "start_line": 1885,
+      "end_line": 1906,
+      "sha256": "270a2796108460298cddeab922edf4f1ed49b124b5304acd5dbd8af2b937da0d"
+    },
+    {
+      "member": "src/alloc.c",
+      "start_line": 250,
+      "end_line": 258,
+      "sha256": "a76faaec588e332f8d244c9d9ecce34f28ddf7cfb79866831770f1aae962e324"
+    },
+    {
+      "member": "include/mimalloc/internal.h",
+      "start_line": 640,
+      "end_line": 642,
+      "sha256": "f047486d1fc4de3acbc9a77344f42cf419119a3bed8c8e65a9b26a4960e4aefa"
     }
   ],
   "trace": {
@@ -127,5 +160,43 @@
       "trace.init_recursion.valid": 1
     }
   },
-  "c_probe_sha256": "86af4227da81190ecb3c9edaf02542b8fb43b73392baf54773517d21f1b3d7de"
+  "c_probe_sha256": "86af4227da81190ecb3c9edaf02542b8fb43b73392baf54773517d21f1b3d7de",
+  "startup_callback": {
+    "c_probe_sha256": "3ec725d46c7c59a4acd27d6106b7e57528cdae4dd8037276a740d79562fc8dfc",
+    "c_trace": {
+      "begin": "CRABC_MI_STARTUP_OUTPUT_CALLBACK_TRACE_BEGIN",
+      "end": "CRABC_MI_STARTUP_OUTPUT_CALLBACK_TRACE_END",
+      "expected_values": {
+        "trace.startup_output.pre_default_delivery_ignored": 1,
+        "trace.startup_output.default_initialized_on_allocation": 1,
+        "trace.startup_output.oversized_request_refused": 1,
+        "trace.startup_output.valid_client_pattern_survived": 1,
+        "trace.startup_output.startup_reservation_failure_ignored": 1,
+        "trace.startup_output.callback_reentry_suppressed": 1,
+        "trace.startup_output.valid": 1
+      }
+    },
+    "common_trace_keys": [
+      "trace.startup_output.default_initialized_on_allocation",
+      "trace.startup_output.oversized_request_refused",
+      "trace.startup_output.valid_client_pattern_survived",
+      "trace.startup_output.startup_reservation_failure_ignored"
+    ],
+    "rust_trace": {
+      "begin": "CRABC_MI_STARTUP_OUTPUT_CALLBACK_RUST_TRACE_BEGIN",
+      "end": "CRABC_MI_STARTUP_OUTPUT_CALLBACK_RUST_TRACE_END",
+      "expected_values": {
+        "trace.startup_output.default_initialized_on_allocation": 1,
+        "trace.startup_output.oversized_request_refused": 1,
+        "trace.startup_output.valid_client_pattern_survived": 1,
+        "trace.startup_output.startup_reservation_failure_ignored": 1,
+        "trace.startup_output.reserve_zero_outcome_absent": 1,
+        "trace.startup_output.reserve_one_kib_outcome_error": 1,
+        "trace.startup_output.nested_borrow_refused": 1,
+        "trace.startup_output.post_init_callback": 1,
+        "trace.startup_output.later_owner_71_byte_client_released": 1,
+        "trace.startup_output.valid": 1
+      }
+    }
+  }
 }

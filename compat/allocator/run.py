@@ -13691,6 +13691,7 @@ def _m2_x86_64_initialization_check_records(
     rows = evidence.get("branch_rows")
     rust_probes = evidence.get("rust_probes")
     recursion = evidence.get("init_recursion")
+    startup_callback = recursion.get("startup_callback") if isinstance(recursion, Mapping) else None
     if (
         not isinstance(rows, list)
         or len(rows) != matrix["expected_passed_test_count"]
@@ -13699,6 +13700,10 @@ def _m2_x86_64_initialization_check_records(
         or not isinstance(recursion, Mapping)
         or not isinstance(recursion.get("rust_probe"), Mapping)
         or not isinstance(recursion["rust_probe"].get("cargo_command"), list)
+        or not isinstance(startup_callback, Mapping)
+        or not isinstance(startup_callback.get("c_probe"), Mapping)
+        or not isinstance(startup_callback.get("rust_probe"), Mapping)
+        or not isinstance(startup_callback["rust_probe"].get("cargo_command"), list)
         or not isinstance(rust_probes[0], Mapping)
         or not isinstance(rust_probes[0].get("command"), list)
     ):

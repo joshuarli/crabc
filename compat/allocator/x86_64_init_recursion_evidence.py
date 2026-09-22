@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare one explicit pinned-C initialization recovery route with Rust.
+"""Collect two bounded pinned-C/Rust initialization relations.
 
 The pinned C fixture explicitly initializes the process, then gives one native
 worker the sequence ``mi_thread_init`` -> repeated ``mi_thread_init`` ->
@@ -20,10 +20,21 @@ constructor, but it does not inject the allocation failure.  These are
 separate ownership and failure matrices, not additional C/Rust fault
 equivalences.
 
-This is private native Linux/x86-64 evidence for the named source paths.  It
-does not claim a public allocator API, runtime callback integration, automatic
+The second record is a separately scoped startup-output callback relation. Its
+constructor-suppressed C route registers one output callback before explicit
+process initialization, asks source startup to reserve one KiB, and allocates
+only after it observes an initialized default Theap. Rust flushes the real
+delayed output in ``OutputOwner::post_init`` after source attachment while
+runtime authority remains withheld. The records compare only initialized-default,
+oversized-request refusal, 37-byte client survival, and ignored one-KiB
+reservation-failure scalars.
+They deliberately do not compare callback timing, Rust's nested-borrow refusal,
+or Rust's later 71-byte canonical-owner release.
+
+This is private native Linux/x86-64 evidence for the named source paths. It
+does not claim a public allocator API, general callback integration, automatic
 pthread cleanup, process-shutdown parity, or completion of the metadata and
-runtime-owner work that remains outside this source-owner slice.
+runtime-owner work outside this source-owner slice.
 """
 
 from __future__ import annotations
@@ -49,10 +60,18 @@ RUST_TRACE_SOURCE = ROOT / "crabc-mimalloc/src/main_heap_thread.rs"
 TRACE_FILTER = "main_heap_thread::tests::emit_x86_64_init_recursion_teardown_c_rust_trace"
 TRACE_BEGIN = "CRABC_MI_INIT_RECURSION_TRACE_BEGIN"
 TRACE_END = "CRABC_MI_INIT_RECURSION_TRACE_END"
+STARTUP_CALLBACK_RUST_SOURCE = ROOT / "crabc-mimalloc/src/runtime_lifecycle.rs"
+STARTUP_CALLBACK_FILTER = (
+    "runtime_lifecycle::tests::source_staged_delayed_output_recovers_allocation_and_later_owner_uses_same_registry"
+)
+STARTUP_CALLBACK_C_BEGIN = "CRABC_MI_STARTUP_OUTPUT_CALLBACK_TRACE_BEGIN"
+STARTUP_CALLBACK_C_END = "CRABC_MI_STARTUP_OUTPUT_CALLBACK_TRACE_END"
+STARTUP_CALLBACK_RUST_BEGIN = "CRABC_MI_STARTUP_OUTPUT_CALLBACK_RUST_TRACE_BEGIN"
+STARTUP_CALLBACK_RUST_END = "CRABC_MI_STARTUP_OUTPUT_CALLBACK_RUST_TRACE_END"
 NORMALIZED_EVIDENCE_ROOT = "<temporary-evidence-root>"
 NORMALIZED_PINNED_SOURCE = "<temporary-pinned-mimalloc-source>"
 EVIDENCE_LABEL = "init-recursion"
-EVIDENCE_KIND = "mimalloc-x86_64-explicit-init-recursion-teardown-differential-evidence"
+EVIDENCE_KIND = "mimalloc-x86_64-explicit-init-recursion-and-startup-output-differential-evidence"
 TEMPORARY_PREFIX = "crabc-mimalloc-x86-init-recursion-"
 
 spec = importlib.util.spec_from_file_location("crabc_allocator_run", RUNNER_PATH)
@@ -77,15 +96,15 @@ EXPECTED_UPSTREAM = {
     "version": "3.5.0",
 }
 EXPECTED_ARCHIVE_SHA256 = "1e432f0559a4ab512143b9bff7a700541a2c8d4712b26a72de3e0222790da305"
-EXPECTED_PROFILE = "linux-x86_64-private-explicit-init-recursion-teardown"
+EXPECTED_PROFILE = "linux-x86_64-private-explicit-init-recursion-and-startup-output"
 EXPECTED_SCOPE = {
     "aarch64_status_reused": False,
     "automatic_pthread_destructor_claimed": False,
-    "constructor_or_callback_integration_claimed": False,
     "emulation_accepted": False,
-    "explicit_process_and_worker_thread_route_only": True,
+    "explicit_worker_recovery_route_recorded": True,
     "failure_and_ownership_matrix_recorded": True,
     "general_allocator_or_api_claimed": False,
+    "general_constructor_or_callback_integration_claimed": False,
     "general_process_shutdown_claimed": False,
     "initial_thread_auto_init_claimed": False,
     "metadata_completion_claimed": False,
@@ -97,6 +116,9 @@ EXPECTED_SCOPE = {
     "runtime_lifecycle_callback_parity_claimed": False,
     "rust_failure_matrix_c_equivalence_claimed": False,
     "rust_direct_second_mutable_owner_refused": True,
+    "source_startup_output_callback_common_scalars_recorded": True,
+    "startup_output_callback_timing_equivalence_claimed": False,
+    "startup_output_callback_general_completion_claimed": False,
     "thread_recovery_after_explicit_teardown_only": True,
 }
 EXPECTED_COMPILE_DEFINITIONS = (
@@ -119,6 +141,11 @@ EXPECTED_SOURCE_ANCHORS = (
     ("src/init.c", 377, 422, "eaa34dbcd2df052853490df70c9f8ed19b481bb9d1363a0bf61331758f2fb165"),
     ("src/init.c", 448, 481, "478b40823b940f620731b48121f6da86b4c288c97b9ddddcd03e915e92b11a25"),
     ("src/init.c", 536, 592, "1f3a0d2b3751b4d3270abe60c46aeef48ef78de91fe1dcfb6d5cc802a5d1480e"),
+    ("src/options.c", 302, 316, "76a7223e1d448ddaba2746d524324c7362a1d179454f0e11b77e8bfa490b6efd"),
+    ("src/options.c", 413, 428, "73511a81539e1030a24f2c89b5a2cb3c94c1d285a6901650699f03947a599d21"),
+    ("src/arena.c", 1885, 1906, "270a2796108460298cddeab922edf4f1ed49b124b5304acd5dbd8af2b937da0d"),
+    ("src/alloc.c", 250, 258, "a76faaec588e332f8d244c9d9ecce34f28ddf7cfb79866831770f1aae962e324"),
+    ("include/mimalloc/internal.h", 640, 642, "f047486d1fc4de3acbc9a77344f42cf419119a3bed8c8e65a9b26a4960e4aefa"),
 )
 EXPECTED_TRACE_VALUES = {
     "trace.init_recursion.first_default_initialized": 1,
@@ -129,6 +156,33 @@ EXPECTED_TRACE_VALUES = {
     "trace.init_recursion.final_teardown_clears_default": 1,
     "trace.init_recursion.valid": 1,
 }
+EXPECTED_STARTUP_CALLBACK_C_TRACE_VALUES = {
+    "trace.startup_output.pre_default_delivery_ignored": 1,
+    "trace.startup_output.default_initialized_on_allocation": 1,
+    "trace.startup_output.oversized_request_refused": 1,
+    "trace.startup_output.valid_client_pattern_survived": 1,
+    "trace.startup_output.startup_reservation_failure_ignored": 1,
+    "trace.startup_output.callback_reentry_suppressed": 1,
+    "trace.startup_output.valid": 1,
+}
+EXPECTED_STARTUP_CALLBACK_RUST_TRACE_VALUES = {
+    "trace.startup_output.default_initialized_on_allocation": 1,
+    "trace.startup_output.oversized_request_refused": 1,
+    "trace.startup_output.valid_client_pattern_survived": 1,
+    "trace.startup_output.startup_reservation_failure_ignored": 1,
+    "trace.startup_output.reserve_zero_outcome_absent": 1,
+    "trace.startup_output.reserve_one_kib_outcome_error": 1,
+    "trace.startup_output.nested_borrow_refused": 1,
+    "trace.startup_output.post_init_callback": 1,
+    "trace.startup_output.later_owner_71_byte_client_released": 1,
+    "trace.startup_output.valid": 1,
+}
+STARTUP_CALLBACK_COMMON_TRACE_KEYS = (
+    "trace.startup_output.default_initialized_on_allocation",
+    "trace.startup_output.oversized_request_refused",
+    "trace.startup_output.valid_client_pattern_survived",
+    "trace.startup_output.startup_reservation_failure_ignored",
+)
 EXPECTED_LIFECYCLE_CHECKS = (
     {
         "filter": "once::tests::recursive_entry_is_nonblocking_and_does_not_complete",
@@ -258,6 +312,106 @@ done:
 '''
 
 
+STARTUP_CALLBACK_C_PROBE = r'''
+#include "mimalloc.h"
+#include "mimalloc/internal.h"
+#include "mimalloc/prim-tls.h"
+
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+#if !defined(__linux__) || !defined(__x86_64__)
+#error this private startup-output fixture requires native Linux/x86_64
+#endif
+#if MI_BUILD_RELEASE != 1 || MI_DEBUG != 0 || MI_STAT != 0 || MI_SECURE != 0 || MI_GUARDED != 0
+#error this private startup-output fixture requires the fixed release profile
+#endif
+
+typedef struct startup_output_trace_s {
+  bool pre_default_delivery_ignored;
+  bool reservation_failure_delivery_seen;
+  bool default_initialized_on_allocation;
+  bool oversized_request_refused;
+  bool valid_client_pattern_survived;
+  bool callback_reentry_suppressed;
+  bool startup_reservation_failure_ignored;
+} startup_output_trace_t;
+
+static void startup_output_callback(const char* message, void* argument) {
+  startup_output_trace_t* const trace = (startup_output_trace_t*)argument;
+  static bool callback_active;
+  static bool allocated_once;
+
+  if (callback_active) {
+    trace->callback_reentry_suppressed = true;
+    return;
+  }
+  const bool default_initialized = mi_theap_is_initialized(_mi_theap_default());
+  if (!default_initialized) {
+    trace->pre_default_delivery_ignored = true;
+    return;
+  }
+  if (message != NULL && strstr(message, "failed to reserve") != NULL) {
+    trace->reservation_failure_delivery_seen = true;
+  }
+  if (allocated_once) return;
+
+  callback_active = true;
+  allocated_once = true;
+  trace->default_initialized_on_allocation = default_initialized;
+  void* const oversized = mi_malloc(SIZE_MAX);
+  trace->oversized_request_refused = (oversized == NULL);
+  if (oversized != NULL) mi_free(oversized);
+
+  uint8_t* const client = (uint8_t*)mi_malloc(37);
+  if (client != NULL) {
+    memset(client, 0x51, 37);
+    bool intact = true;
+    for (size_t index = 0; index < 37; index++) {
+      if (client[index] != 0x51) { intact = false; break; }
+    }
+    trace->valid_client_pattern_survived = intact;
+    mi_free(client);
+  }
+  callback_active = false;
+}
+
+int main(void) {
+  startup_output_trace_t trace = { 0 };
+
+  // `MI_PRIM_HAS_PROCESS_ATTACH` suppresses the compiler constructor. Source
+  // init sets the default Theap before its one-KiB reserve failure; this
+  // callback refuses to allocate before that source-visible state exists.
+  mi_option_set(mi_option_verbose, 1);
+  mi_option_set(mi_option_reserve_os_memory, 1);
+  mi_register_output(&startup_output_callback, &trace);
+  mi_process_init();
+  trace.startup_reservation_failure_ignored =
+      trace.reservation_failure_delivery_seen && mi_theap_is_initialized(_mi_theap_default())
+      && trace.valid_client_pattern_survived;
+
+  const bool valid = trace.pre_default_delivery_ignored
+      && trace.default_initialized_on_allocation
+      && trace.oversized_request_refused
+      && trace.valid_client_pattern_survived
+      && trace.startup_reservation_failure_ignored
+      && trace.callback_reentry_suppressed;
+  printf("CRABC_MI_STARTUP_OUTPUT_CALLBACK_TRACE_BEGIN\n");
+  printf("trace.startup_output.pre_default_delivery_ignored=%d\n", trace.pre_default_delivery_ignored);
+  printf("trace.startup_output.default_initialized_on_allocation=%d\n", trace.default_initialized_on_allocation);
+  printf("trace.startup_output.oversized_request_refused=%d\n", trace.oversized_request_refused);
+  printf("trace.startup_output.valid_client_pattern_survived=%d\n", trace.valid_client_pattern_survived);
+  printf("trace.startup_output.startup_reservation_failure_ignored=%d\n", trace.startup_reservation_failure_ignored);
+  printf("trace.startup_output.callback_reentry_suppressed=%d\n", trace.callback_reentry_suppressed);
+  printf("trace.startup_output.valid=%d\n", valid);
+  printf("CRABC_MI_STARTUP_OUTPUT_CALLBACK_TRACE_END\n");
+  return valid ? 0 : 2;
+}
+'''
+
+
 def sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
@@ -314,6 +468,28 @@ def validate_probe_source(probe: str = C_TRACE_PROBE) -> None:
         raise EvidenceError("init-recursion C probe widens into a callback claim")
 
 
+def validate_startup_callback_c_probe(probe: str = STARTUP_CALLBACK_C_PROBE) -> None:
+    required = (
+        "MI_PRIM_HAS_PROCESS_ATTACH",
+        "mi_option_set(mi_option_verbose, 1);",
+        "mi_option_set(mi_option_reserve_os_memory, 1);",
+        "mi_register_output(&startup_output_callback, &trace);",
+        "mi_process_init();",
+        "mi_theap_is_initialized(_mi_theap_default())",
+        "trace->default_initialized_on_allocation = default_initialized;",
+        "mi_malloc(SIZE_MAX)",
+        "memset(client, 0x51, 37);",
+        "mi_free(client);",
+        "CRABC_MI_STARTUP_OUTPUT_CALLBACK_TRACE_BEGIN",
+    )
+    if not all(fragment in probe for fragment in required):
+        raise EvidenceError("startup-output C probe loses its source callback route")
+    if probe.index("mi_register_output(&startup_output_callback, &trace);") > probe.index("mi_process_init();"):
+        raise EvidenceError("startup-output C probe registers after explicit process initialization")
+    if "_mi_auto_process_init" in probe or "pthread_key" in probe:
+        raise EvidenceError("startup-output C probe widens beyond the explicit source route")
+
+
 def load_schema(path: Path | None = None) -> dict[str, Any]:
     path = SCHEMA_PATH if path is None else path
     try:
@@ -322,11 +498,12 @@ def load_schema(path: Path | None = None) -> dict[str, Any]:
         raise EvidenceError("cannot read x86-64 init-recursion schema") from error
     expected_fields = {
         "c_probe_sha256", "compile_definitions", "format", "profile", "release_flags",
-        "release_source_set", "schema", "scope", "source_anchors", "target", "trace", "upstream",
+        "release_source_set", "schema", "scope", "source_anchors", "startup_callback", "target",
+        "trace", "upstream",
     }
     if not isinstance(schema, dict) or set(schema) != expected_fields:
         raise EvidenceError("init-recursion schema fields drifted")
-    if type(schema["format"]) is not int or schema["format"] != 1:
+    if type(schema["format"]) is not int or schema["format"] != 2:
         raise EvidenceError("unsupported init-recursion evidence format")
     if schema["schema"] != "crabc-mimalloc-x86_64-init-recursion-evidence":
         raise EvidenceError("unsupported init-recursion evidence schema")
@@ -355,7 +532,23 @@ def load_schema(path: Path | None = None) -> dict[str, Any]:
         "begin": TRACE_BEGIN, "end": TRACE_END, "expected_values": EXPECTED_TRACE_VALUES,
     }):
         raise EvidenceError("init-recursion trace contract drifted")
+    if not exactly_matches(schema["startup_callback"], {
+        "c_probe_sha256": sha256_bytes(STARTUP_CALLBACK_C_PROBE.encode("utf-8")),
+        "c_trace": {
+            "begin": STARTUP_CALLBACK_C_BEGIN,
+            "end": STARTUP_CALLBACK_C_END,
+            "expected_values": EXPECTED_STARTUP_CALLBACK_C_TRACE_VALUES,
+        },
+        "common_trace_keys": list(STARTUP_CALLBACK_COMMON_TRACE_KEYS),
+        "rust_trace": {
+            "begin": STARTUP_CALLBACK_RUST_BEGIN,
+            "end": STARTUP_CALLBACK_RUST_END,
+            "expected_values": EXPECTED_STARTUP_CALLBACK_RUST_TRACE_VALUES,
+        },
+    }):
+        raise EvidenceError("startup-output callback trace contract drifted")
     validate_probe_source()
+    validate_startup_callback_c_probe()
     if schema["c_probe_sha256"] != sha256_bytes(C_TRACE_PROBE.encode("utf-8")):
         raise EvidenceError("init-recursion C probe hash drifted")
     anchors = schema["source_anchors"]
@@ -384,13 +577,30 @@ def validate_source_anchors(schema: Mapping[str, Any], source: Path) -> list[dic
     return validated
 
 
-def parse_trace(output: str, *, description: str) -> dict[str, int]:
+def parse_marker_trace(output: str, *, begin: str, end: str, description: str) -> dict[str, int]:
     try:
         return run.parse_address_independent_trace(
-            output, begin=TRACE_BEGIN, end=TRACE_END, description=description,
+            output, begin=begin, end=end, description=description,
         )
     except run.HarnessError as error:
         raise EvidenceError(str(error)) from error
+
+
+def parse_trace(output: str, *, description: str) -> dict[str, int]:
+    return parse_marker_trace(output, begin=TRACE_BEGIN, end=TRACE_END, description=description)
+
+
+def parse_startup_callback_c_trace(output: str, *, description: str) -> dict[str, int]:
+    return parse_marker_trace(
+        output, begin=STARTUP_CALLBACK_C_BEGIN, end=STARTUP_CALLBACK_C_END, description=description,
+    )
+
+
+def parse_startup_callback_rust_trace(output: str, *, description: str) -> dict[str, int]:
+    return parse_marker_trace(
+        output, begin=STARTUP_CALLBACK_RUST_BEGIN, end=STARTUP_CALLBACK_RUST_END,
+        description=description,
+    )
 
 
 def validate_trace(trace: Mapping[str, int], *, description: str) -> None:
@@ -410,6 +620,39 @@ def compare_traces(c_trace: Mapping[str, int], rust_trace: Mapping[str, int]) ->
     if dict(c_trace) != dict(rust_trace):
         raise EvidenceError("C and Rust init-recursion traces differ")
     return {"compared_value_count": len(EXPECTED_TRACE_VALUES), "status": "matched"}
+
+
+def validate_startup_callback_trace(
+    trace: Mapping[str, int], *, expected: Mapping[str, int], description: str,
+) -> None:
+    missing = sorted(set(expected) - set(trace))
+    unexpected = sorted(set(trace) - set(expected))
+    mismatches = sorted(
+        key for key, value in expected.items() if type(trace.get(key)) is int and trace[key] != value
+    )
+    if missing or unexpected or mismatches:
+        raise EvidenceError(f"{description} violates its fixed {len(expected)}-field trace contract")
+
+
+def compare_startup_callback_traces(
+    c_trace: Mapping[str, int], rust_trace: Mapping[str, int],
+) -> dict[str, Any]:
+    validate_startup_callback_trace(
+        c_trace, expected=EXPECTED_STARTUP_CALLBACK_C_TRACE_VALUES,
+        description="pinned C startup-output callback trace",
+    )
+    validate_startup_callback_trace(
+        rust_trace, expected=EXPECTED_STARTUP_CALLBACK_RUST_TRACE_VALUES,
+        description="Rust startup-output callback trace",
+    )
+    for key in STARTUP_CALLBACK_COMMON_TRACE_KEYS:
+        if c_trace[key] != rust_trace[key]:
+            raise EvidenceError(f"C and Rust startup-output callback scalar differs: {key}")
+    return {
+        "compared_scalar_keys": list(STARTUP_CALLBACK_COMMON_TRACE_KEYS),
+        "compared_value_count": len(STARTUP_CALLBACK_COMMON_TRACE_KEYS),
+        "status": "matched",
+    }
 
 
 def normalize_command(command: Sequence[str], temporary: Path, source: Path | None) -> list[str]:
@@ -448,14 +691,22 @@ def validate_c_command(command: Sequence[str], schema: Mapping[str, Any]) -> Non
 
 
 def validate_normalized_c_command(command: object, schema: Mapping[str, Any]) -> None:
+    validate_normalized_c_command_for(
+        command, schema, probe_name="init-recursion.c", binary_name="init-recursion-c",
+    )
+
+
+def validate_normalized_c_command_for(
+    command: object, schema: Mapping[str, Any], *, probe_name: str, binary_name: str,
+) -> None:
     if not isinstance(command, list) or not command or Path(command[0]).name != "musl-gcc":
         raise EvidenceError("init-recursion C compiler drifted")
     expected = [
         "-std=c11", "-fPIC", "-ftls-model=initial-exec", *schema["compile_definitions"],
         "-I", f"{NORMALIZED_PINNED_SOURCE}/include", "-I", f"{NORMALIZED_PINNED_SOURCE}/src",
-        *schema["release_flags"], f"{NORMALIZED_EVIDENCE_ROOT}/init-recursion.c",
+        *schema["release_flags"], f"{NORMALIZED_EVIDENCE_ROOT}/{probe_name}",
         *(f"{NORMALIZED_PINNED_SOURCE}/{member}" for member in schema["release_source_set"]),
-        "-pthread", "-o", f"{NORMALIZED_EVIDENCE_ROOT}/init-recursion-c",
+        "-pthread", "-o", f"{NORMALIZED_EVIDENCE_ROOT}/{binary_name}",
     ]
     if command[1:] != expected:
         raise EvidenceError("init-recursion normalized C command drifted")
@@ -489,6 +740,45 @@ def build_c_trace(
         "elf": elf,
         "run_command": [f"{NORMALIZED_EVIDENCE_ROOT}/init-recursion-c"],
         "source_sha256": sha256_bytes(C_TRACE_PROBE.encode("utf-8")),
+        "trace": trace,
+    }
+
+
+def build_startup_callback_c_trace(
+    compiler: str, readelf: str, source: Path, temporary: Path, schema: Mapping[str, Any],
+) -> dict[str, Any]:
+    probe_source = temporary / "startup-output-callback.c"
+    binary = temporary / "startup-output-callback-c"
+    probe_source.write_text(STARTUP_CALLBACK_C_PROBE, encoding="utf-8")
+    command = c_trace_command(compiler, source, probe_source, binary, schema)
+    validate_c_command(command, schema)
+    try:
+        run.require_success(
+            run.command_record(command, cwd=source), "pinned C startup-output callback fixture build",
+        )
+        header = run.command_record((readelf, "-h", str(binary)), cwd=source)
+        run.require_success(header, "pinned C startup-output callback ELF identity")
+        elf = run.parse_elf_identity(str(header["stdout"]), "x86_64")
+        execution = run.command_record((str(binary),), cwd=source)
+        if int(execution["status"]) != 0:
+            raise EvidenceError(
+                f"pinned C startup-output callback fixture failed ({execution['status']}):\n"
+                f"{execution['stdout']}{execution['stderr']}"
+            )
+    except run.HarnessError as error:
+        raise EvidenceError(str(error)) from error
+    trace = parse_startup_callback_c_trace(
+        str(execution["stdout"]), description="pinned C startup-output callback trace",
+    )
+    validate_startup_callback_trace(
+        trace, expected=EXPECTED_STARTUP_CALLBACK_C_TRACE_VALUES,
+        description="pinned C startup-output callback trace",
+    )
+    return {
+        "build_command": normalize_command(command, temporary, source),
+        "elf": elf,
+        "run_command": [f"{NORMALIZED_EVIDENCE_ROOT}/startup-output-callback-c"],
+        "source_sha256": sha256_bytes(STARTUP_CALLBACK_C_PROBE.encode("utf-8")),
         "trace": trace,
     }
 
@@ -534,6 +824,32 @@ def build_rust_trace(cargo: str, temporary: Path) -> dict[str, Any]:
     }
 
 
+def build_startup_callback_rust_trace(cargo: str, temporary: Path) -> dict[str, Any]:
+    target_dir = temporary / "rust-startup-output-target"
+    command, output = run_rust_test(cargo, target_dir, STARTUP_CALLBACK_FILTER)
+    trace = parse_startup_callback_rust_trace(
+        output, description="Rust startup-output callback trace",
+    )
+    validate_startup_callback_trace(
+        trace, expected=EXPECTED_STARTUP_CALLBACK_RUST_TRACE_VALUES,
+        description="Rust startup-output callback trace",
+    )
+    return {
+        "cargo_command": normalize_command(command, temporary, None),
+        "lockfile": {"path": relative(LOCKFILE), "sha256": sha256_file(LOCKFILE)},
+        "passed_test_count": 1,
+        "source": {
+            "path": relative(STARTUP_CALLBACK_RUST_SOURCE),
+            "sha256": sha256_file(STARTUP_CALLBACK_RUST_SOURCE),
+        },
+        "target_dir": {
+            "isolated": True, "retained": False,
+            "value": f"{NORMALIZED_EVIDENCE_ROOT}/rust-startup-output-target",
+        },
+        "trace": trace,
+    }
+
+
 def build_lifecycle_checks(cargo: str, temporary: Path) -> list[dict[str, Any]]:
     target_dir = temporary / "rust-target"
     records = []
@@ -556,16 +872,21 @@ def build_lifecycle_checks(cargo: str, temporary: Path) -> list[dict[str, Any]]:
 def report_from_results(
     *, schema: Mapping[str, Any], provenance: Mapping[str, str], archive_sha256: str,
     anchors: Sequence[Mapping[str, Any]], c_probe: Mapping[str, Any],
-    rust_probe: Mapping[str, Any], lifecycle_checks: Sequence[Mapping[str, Any]],
+    rust_probe: Mapping[str, Any], startup_callback_c_probe: Mapping[str, Any],
+    startup_callback_rust_probe: Mapping[str, Any], lifecycle_checks: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
     c_trace = c_probe.get("trace")
     rust_trace = rust_probe.get("trace")
     if not isinstance(c_trace, Mapping) or not isinstance(rust_trace, Mapping):
         raise EvidenceError("init-recursion evidence inputs lack trace records")
+    startup_c_trace = startup_callback_c_probe.get("trace")
+    startup_rust_trace = startup_callback_rust_probe.get("trace")
+    if not isinstance(startup_c_trace, Mapping) or not isinstance(startup_rust_trace, Mapping):
+        raise EvidenceError("startup-output evidence inputs lack trace records")
     report = {
         "c_probe": dict(c_probe),
         "comparison": compare_traces(c_trace, rust_trace),
-        "format": 1,
+        "format": 2,
         "kind": EVIDENCE_KIND,
         "lifecycle_checks": [dict(check) for check in lifecycle_checks],
         "profile": schema["profile"],
@@ -579,6 +900,11 @@ def report_from_results(
             "release_source_set": list(schema["release_source_set"]),
         },
         "status": "passed",
+        "startup_callback": {
+            "c_probe": dict(startup_callback_c_probe),
+            "comparison": compare_startup_callback_traces(startup_c_trace, startup_rust_trace),
+            "rust_probe": dict(startup_callback_rust_probe),
+        },
         "target": schema["target"],
         "trace": schema["trace"],
         "upstream": schema["upstream"],
@@ -599,15 +925,70 @@ def validate_rust_command(command: object, target_name: str, test_filter: str) -
         raise EvidenceError("init-recursion Rust command drifted")
 
 
+def validate_startup_callback_report(record: object, schema: Mapping[str, Any]) -> None:
+    if not isinstance(record, Mapping) or set(record) != {"c_probe", "comparison", "rust_probe"}:
+        raise EvidenceError("startup-output callback report record drifted")
+    c_probe = record["c_probe"]
+    rust_probe = record["rust_probe"]
+    if not isinstance(c_probe, Mapping) or set(c_probe) != {
+        "build_command", "elf", "run_command", "source_sha256", "trace",
+    }:
+        raise EvidenceError("startup-output callback C probe record drifted")
+    if not isinstance(rust_probe, Mapping) or set(rust_probe) != {
+        "cargo_command", "lockfile", "passed_test_count", "source", "target_dir", "trace",
+    }:
+        raise EvidenceError("startup-output callback Rust probe record drifted")
+    if (
+        not exactly_matches(c_probe["elf"], EXPECTED_C_ELF)
+        or c_probe["run_command"] != [f"{NORMALIZED_EVIDENCE_ROOT}/startup-output-callback-c"]
+        or c_probe["source_sha256"] != sha256_bytes(STARTUP_CALLBACK_C_PROBE.encode("utf-8"))
+    ):
+        raise EvidenceError("startup-output callback C probe identity drifted")
+    validate_normalized_c_command_for(
+        c_probe["build_command"], schema,
+        probe_name="startup-output-callback.c", binary_name="startup-output-callback-c",
+    )
+    if type(rust_probe["passed_test_count"]) is not int or rust_probe["passed_test_count"] != 1:
+        raise EvidenceError("startup-output callback Rust trace selection drifted")
+    if not exactly_matches(rust_probe["lockfile"], {
+        "path": relative(LOCKFILE), "sha256": sha256_file(LOCKFILE),
+    }):
+        raise EvidenceError("startup-output callback Rust lockfile drifted")
+    if not exactly_matches(rust_probe["source"], {
+        "path": relative(STARTUP_CALLBACK_RUST_SOURCE),
+        "sha256": sha256_file(STARTUP_CALLBACK_RUST_SOURCE),
+    }):
+        raise EvidenceError("startup-output callback Rust source drifted")
+    if not exactly_matches(rust_probe["target_dir"], {
+        "isolated": True, "retained": False,
+        "value": f"{NORMALIZED_EVIDENCE_ROOT}/rust-startup-output-target",
+    }):
+        raise EvidenceError("startup-output callback Rust target directory drifted")
+    validate_rust_command(
+        rust_probe["cargo_command"], "rust-startup-output-target", STARTUP_CALLBACK_FILTER,
+    )
+    validate_startup_callback_trace(
+        c_probe["trace"], expected=EXPECTED_STARTUP_CALLBACK_C_TRACE_VALUES,
+        description="recorded C startup-output callback trace",
+    )
+    validate_startup_callback_trace(
+        rust_probe["trace"], expected=EXPECTED_STARTUP_CALLBACK_RUST_TRACE_VALUES,
+        description="recorded Rust startup-output callback trace",
+    )
+    expected_comparison = compare_startup_callback_traces(c_probe["trace"], rust_probe["trace"])
+    if not exactly_matches(record["comparison"], expected_comparison):
+        raise EvidenceError("startup-output callback comparison drifted")
+
+
 def validate_report(report: Mapping[str, Any]) -> None:
     required = {
         "c_probe", "comparison", "format", "kind", "lifecycle_checks", "profile", "provenance",
-        "rust_probe", "scope", "source", "status", "target", "trace", "upstream",
+        "rust_probe", "scope", "source", "startup_callback", "status", "target", "trace", "upstream",
     }
     if not isinstance(report, dict) or set(report) != required:
         raise EvidenceError("init-recursion report schema drifted")
-    if type(report["format"]) is not int or report["format"] != 1 or report["status"] != "passed":
-        raise EvidenceError("init-recursion report must record a passing format-1 result")
+    if type(report["format"]) is not int or report["format"] != 2 or report["status"] != "passed":
+        raise EvidenceError("init-recursion report must record a passing format-2 result")
     if report["kind"] != EVIDENCE_KIND or report["profile"] != EXPECTED_PROFILE:
         raise EvidenceError("init-recursion report identity drifted")
     if (not exactly_matches(report["target"], EXPECTED_TARGET)
@@ -659,6 +1040,7 @@ def validate_report(report: Mapping[str, Any]) -> None:
         "compared_value_count": len(EXPECTED_TRACE_VALUES), "status": "matched",
     }):
         raise EvidenceError("init-recursion report comparison drifted")
+    validate_startup_callback_report(report["startup_callback"], schema)
     checks = report["lifecycle_checks"]
     if not isinstance(checks, list) or len(checks) != len(EXPECTED_LIFECYCLE_CHECKS):
         raise EvidenceError("init-recursion lifecycle batch drifted")
@@ -712,10 +1094,17 @@ def run_evidence(*, offline: bool, report_path: Path) -> dict[str, Any]:
         anchors = validate_source_anchors(schema, source)
         c_probe = build_c_trace(compiler, readelf, source, temporary, schema)
         rust_probe = build_rust_trace(cargo, temporary)
+        startup_callback_c_probe = build_startup_callback_c_trace(
+            compiler, readelf, source, temporary, schema,
+        )
+        startup_callback_rust_probe = build_startup_callback_rust_trace(cargo, temporary)
         lifecycle_checks = build_lifecycle_checks(cargo, temporary)
         report = report_from_results(
             schema=schema, provenance=provenance, archive_sha256=pin["sha256"], anchors=anchors,
-            c_probe=c_probe, rust_probe=rust_probe, lifecycle_checks=lifecycle_checks,
+            c_probe=c_probe, rust_probe=rust_probe,
+            startup_callback_c_probe=startup_callback_c_probe,
+            startup_callback_rust_probe=startup_callback_rust_probe,
+            lifecycle_checks=lifecycle_checks,
         )
     run.write_json(report_path, report)
     return report
@@ -733,7 +1122,9 @@ def main() -> int:
         return 1
     print(
         f"allocator x86-64 {EVIDENCE_LABEL} evidence: PASS "
-        f"({report['comparison']['compared_value_count']} values; report: {relative(arguments.report)})"
+        f"({report['comparison']['compared_value_count']} worker values; "
+        f"{report['startup_callback']['comparison']['compared_value_count']} startup callback values; "
+        f"report: {relative(arguments.report)})"
     )
     return 0
 

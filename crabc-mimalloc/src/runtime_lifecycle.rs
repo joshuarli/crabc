@@ -15064,6 +15064,7 @@ mod tests {
     extern crate std;
 
     use super::*;
+    use crate::compiler_tls::default_theap;
     use crate::config::{ARENA_ALIGNMENT, ARENA_MIN_SIZE};
     use crate::main_heap_page::MainHeapThreadOwnerLocalPageEngine;
     use crate::main_heap_thread::{
@@ -15947,6 +15948,7 @@ mod tests {
         arena_storage: &'static ProcessSharedArenaStorage,
         block: Cell<Option<core::ptr::NonNull<u8>>>,
         calls: Cell<usize>,
+        default_initialized_on_allocation: Cell<bool>,
         rejected_request: Cell<bool>,
         nested_borrow_refused: Cell<bool>,
     }
@@ -15961,6 +15963,14 @@ mod tests {
         STAGED_OUTPUT_ALLOCATION.with(|slot| {
             let Some(context) = (unsafe { slot.get().as_ref() }) else { return; };
             context.calls.set(context.calls.get() + 1);
+            // This callback runs only after the source-attached default Theap
+            // is published. Keep that source-visible condition explicit in
+            // the trace instead of inferring it from a successful allocation.
+            let default_initialized = unsafe { default_theap().as_ref().is_initialized() };
+            context.default_initialized_on_allocation.set(default_initialized);
+            if !default_initialized {
+                return;
+            }
             let rejected = context.runtime.with_ticket_zero_page_owner_with_storage(
                 context.arena_storage, |owner| owner.allocate(usize::MAX, false));
             context.rejected_request.set(matches!(rejected, Some(None)));
@@ -15983,8 +15993,17 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn source_staged_delayed_output_recovers_allocation_and_later_owner_uses_same_registry() {
+        let mut default_initialized_on_allocation = false;
+        let mut oversized_request_refused = false;
+        let mut valid_client_pattern_survived = false;
+        let mut startup_reservation_failure_ignored = false;
+        let mut reserve_zero_outcome_absent = false;
+        let mut reserve_one_kib_outcome_error = false;
+        let mut nested_borrow_refused = false;
+        let mut post_init_callback = false;
+        let mut later_owner_71_byte_client_released = false;
         for reserve_kib in [0, 1] {
-        thread::spawn(move || {
+        let observed = thread::spawn(move || {
             use crate::diagnostic_output::{OutputOwner, SourceFormattedMessage};
             let process_storage = ProcessMainInitializationStorage::test_static_owner();
             let main_static = MainStaticAttachmentStorage::test_static_owner();
@@ -16018,28 +16037,35 @@ mod tests {
             let arena_storage = ProcessSharedArenaStorage::test_static_owner();
             let context = StagedOutputAllocation { runtime, arena_storage,
                 block: Cell::new(None), calls: Cell::new(0),
+                default_initialized_on_allocation: Cell::new(false),
                 rejected_request: Cell::new(false), nested_borrow_refused: Cell::new(false) };
             STAGED_OUTPUT_ALLOCATION.with(|slot| slot.set(&context));
             startup.complete().expect("real post-init output returns to the source continuation");
             STAGED_OUTPUT_ALLOCATION.with(|slot| slot.set(core::ptr::null()));
             assert_eq!(context.calls.get(), 1);
+            assert!(context.default_initialized_on_allocation.get(),
+                "the delayed source output observes the published default Theap before allocation");
             assert!(context.rejected_request.get(), "an invalid request does not poison startup");
             assert!(context.nested_borrow_refused.get(), "outstanding owner projections remain exclusive");
             assert!(!runtime.is_active(), "the output callback cannot grant final runtime authority");
             runtime.state.store(PROCESS_ACTIVE, Ordering::Release);
             let reservation = process_storage.ready_lease(memory_config(), subprocess).unwrap()
                 .startup_reservation_outcomes().unwrap().regular;
-            assert!(match (reserve_kib, reservation) {
-                (0, None) => true,
-                (1, Some(Err(_))) => true,
-                _ => false,
-            }, "an absent or source-rejected 1-KiB startup parent still completes");
+            let reserve_zero_outcome_absent = reserve_kib == 0 && reservation.is_none();
+            let reserve_one_kib_outcome_error = reserve_kib == 1
+                && matches!(reservation.as_ref(), Some(Err(_)));
+            assert!(reserve_zero_outcome_absent || reserve_one_kib_outcome_error,
+                "an absent or source-rejected 1-KiB startup parent still completes");
             let block = context.block.get().expect("the following callback allocation succeeds");
-            assert_eq!(unsafe { core::slice::from_raw_parts(block.as_ptr(), 37) }, &[0x51; 37]);
+            let valid_client_pattern_survived =
+                unsafe { core::slice::from_raw_parts(block.as_ptr(), 37) } == &[0x51; 37];
+            assert!(valid_client_pattern_survived,
+                "the delayed callback client remains intact after startup completion");
             let owner = unsafe { runtime.allocation_owner() }.unwrap();
             let binding = owner.allocation().unwrap().process_backing().unwrap();
             let main_heap = unsafe { runtime.allocation_main_heap() }.unwrap();
-            thread::scope(|scope| scope.spawn(move || {
+            let later_owner_71_byte_client_released = thread::scope(|scope| {
+                scope.spawn(move || {
                 let mut attachment = match unsafe {
                     MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, memory_config())
                 } {
@@ -16054,12 +16080,63 @@ mod tests {
                 }).unwrap();
                 assert!(engine.finish(&mut attachment).is_ok());
                 assert!(attachment.finish_after_user_destructors().is_ok());
-            }).join().unwrap());
+                }).join().unwrap();
+                true
+            });
             assert!(runtime.with_ticket_zero_page_owner_with_storage(arena_storage,
                 |owner| unsafe { owner.free(block) }).unwrap().is_ok());
             assert!(arena_storage.test_is_cold(), "both owners use source registry, never sidecar");
+            (
+                context.default_initialized_on_allocation.get(),
+                context.rejected_request.get(),
+                valid_client_pattern_survived,
+                reserve_zero_outcome_absent,
+                reserve_one_kib_outcome_error,
+                context.nested_borrow_refused.get(),
+                context.calls.get() == 1,
+                later_owner_71_byte_client_released,
+            )
         }).join().expect("source delayed output and later owner retain the canonical allocation lifetime");
+            default_initialized_on_allocation |= observed.0;
+            oversized_request_refused |= observed.1;
+            valid_client_pattern_survived |= observed.2;
+            reserve_zero_outcome_absent |= observed.3;
+            reserve_one_kib_outcome_error |= observed.4;
+            startup_reservation_failure_ignored |= observed.4 && observed.2;
+            nested_borrow_refused |= observed.5;
+            post_init_callback |= observed.6;
+            later_owner_71_byte_client_released |= observed.7;
         }
+        let valid = default_initialized_on_allocation
+            && oversized_request_refused
+            && valid_client_pattern_survived
+            && startup_reservation_failure_ignored
+            && reserve_zero_outcome_absent
+            && reserve_one_kib_outcome_error
+            && nested_borrow_refused
+            && post_init_callback
+            && later_owner_71_byte_client_released;
+        assert!(valid, "the source-delayed output fixture records every selected startup outcome");
+        std::println!("CRABC_MI_STARTUP_OUTPUT_CALLBACK_RUST_TRACE_BEGIN");
+        std::println!("trace.startup_output.default_initialized_on_allocation={}",
+            usize::from(default_initialized_on_allocation));
+        std::println!("trace.startup_output.oversized_request_refused={}",
+            usize::from(oversized_request_refused));
+        std::println!("trace.startup_output.valid_client_pattern_survived={}",
+            usize::from(valid_client_pattern_survived));
+        std::println!("trace.startup_output.startup_reservation_failure_ignored={}",
+            usize::from(startup_reservation_failure_ignored));
+        std::println!("trace.startup_output.reserve_zero_outcome_absent={}",
+            usize::from(reserve_zero_outcome_absent));
+        std::println!("trace.startup_output.reserve_one_kib_outcome_error={}",
+            usize::from(reserve_one_kib_outcome_error));
+        std::println!("trace.startup_output.nested_borrow_refused={}",
+            usize::from(nested_borrow_refused));
+        std::println!("trace.startup_output.post_init_callback={}", usize::from(post_init_callback));
+        std::println!("trace.startup_output.later_owner_71_byte_client_released={}",
+            usize::from(later_owner_71_byte_client_released));
+        std::println!("trace.startup_output.valid={}", usize::from(valid));
+        std::println!("CRABC_MI_STARTUP_OUTPUT_CALLBACK_RUST_TRACE_END");
     }
 
     #[test]
