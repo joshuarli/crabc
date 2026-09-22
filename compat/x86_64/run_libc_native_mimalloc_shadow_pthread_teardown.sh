@@ -353,35 +353,37 @@ for symbol in __crabc_x86_native_mimalloc_shadow_v1 \
         fail "selected archive does not define ${symbol}"
 done
 
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_NATIVE_MIMALLOC_SHADOW_TEST_AUDIT \
-    -I"$ROOT_DIR/include" \
-    -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin \
-    -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined -Wl,--gc-sections \
-    -Wl,-Map,"$candidate_link_map" -Wl,--trace-symbol=rust_eh_personality \
-    -Wl,-u,__crabc_x86_native_mimalloc_shadow_v1 \
-    "$fixture_crt1" "$crt_output/crti.o" \
-    compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_probe.c \
-    compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_start.S \
-    "$archive" "$crt_output/crtn.o" -o "$candidate" >"$candidate_link_trace" 2>&1
-python3 "$source_runtime_helper" audit-final-link \
-    --receipt "$source_runtime_primary_receipt" --candidate "$candidate" \
-    --link-map "$candidate_link_map" --trace "$candidate_link_trace" \
-    --label selected-native-pthread-teardown ||
-    fail "source-built native static runtime final link audit failed"
+if [ "$physical_process_destroy_only" -eq 0 ]; then
+    "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_NATIVE_MIMALLOC_SHADOW_TEST_AUDIT \
+        -I"$ROOT_DIR/include" \
+        -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin \
+        -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined -Wl,--gc-sections \
+        -Wl,-Map,"$candidate_link_map" -Wl,--trace-symbol=rust_eh_personality \
+        -Wl,-u,__crabc_x86_native_mimalloc_shadow_v1 \
+        "$fixture_crt1" "$crt_output/crti.o" \
+        compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_probe.c \
+        compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_start.S \
+        "$archive" "$crt_output/crtn.o" -o "$candidate" >"$candidate_link_trace" 2>&1
+    python3 "$source_runtime_helper" audit-final-link \
+        --receipt "$source_runtime_primary_receipt" --candidate "$candidate" \
+        --link-map "$candidate_link_map" --trace "$candidate_link_trace" \
+        --label selected-native-pthread-teardown ||
+        fail "source-built native static runtime final link audit failed"
 
-# A caller-owned strong malloc returns null. `pthread_atfork` is an existing
-# private allocator client, so successful registration proves its node uses
-# the native internal seam rather than the weak public symbol.
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_NATIVE_INTERNAL_MALLOC_OVERRIDE \
-    -DCRABC_NATIVE_MIMALLOC_SHADOW_TEST_AUDIT \
-    -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie \
-    -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start \
-    -Wl,--no-undefined -Wl,--gc-sections \
-    -Wl,-u,__crabc_x86_native_mimalloc_shadow_v1 \
-    "$fixture_crt1" "$crt_output/crti.o" \
-    compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_probe.c \
-    compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_start.S \
-    "$archive" "$crt_output/crtn.o" -o "$internal_allocator_override_candidate"
+    # A caller-owned strong malloc returns null. `pthread_atfork` is an existing
+    # private allocator client, so successful registration proves its node uses
+    # the native internal seam rather than the weak public symbol.
+    "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_NATIVE_INTERNAL_MALLOC_OVERRIDE \
+        -DCRABC_NATIVE_MIMALLOC_SHADOW_TEST_AUDIT \
+        -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie \
+        -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start \
+        -Wl,--no-undefined -Wl,--gc-sections \
+        -Wl,-u,__crabc_x86_native_mimalloc_shadow_v1 \
+        "$fixture_crt1" "$crt_output/crti.o" \
+        compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_probe.c \
+        compat/x86_64/libc_native_mimalloc_shadow_pthread_teardown_start.S \
+        "$archive" "$crt_output/crtn.o" -o "$internal_allocator_override_candidate"
+fi
 
 # This focused private program calls the dedicated explicit physical-destroy
 # audit only after normal selected startup. Each fresh process supplies one signed
