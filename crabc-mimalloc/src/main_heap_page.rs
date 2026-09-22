@@ -3165,6 +3165,18 @@ impl<'attachment, 'main> MainHeapThreadProcessPageExitDrain<'attachment, 'main> 
         }
     }
 
+    #[cfg(test)]
+    #[inline]
+    fn test_has_pending_os_release(&self) -> bool {
+        self.engine.has_pending_os_release()
+    }
+
+    #[cfg(test)]
+    #[inline]
+    fn test_page_count(&self) -> usize {
+        self.engine.test_page_count()
+    }
+
     /// Detaches the one source full-singleton owner-exit case after the fixed
     /// main fast slot is clear. The returned handoff retains the exact process
     /// PageMap mutation lease, so no later page owner can observe a live
@@ -28133,6 +28145,18 @@ mod tests {
                     assert_eq!(page_ref.used(), 1);
                     let published = unsafe { PublishedOsAlignedPage::from_page(config, page) }
                         .expect("the OS singleton retains its clipped terminal-release proof");
+                    // Keep one separate live regular member behind the full
+                    // singleton. A parked OS release owner must stop this
+                    // source traversal before it collects or detaches that
+                    // later member.
+                    let later = allocator
+                        .allocate(SMALL_MAX_OBJ_SIZE + 1, false)
+                        .expect("the fixture creates one later live medium member");
+                    let later_page = NonNull::new(unsafe { allocator.test_page_for_block(later) })
+                        .expect("the later medium member remains PageMap-published");
+                    assert_ne!(later_page, page);
+                    assert!(!unsafe { later_page.as_ref() }.memid().is_os());
+                    assert_eq!(unsafe { later_page.as_ref() }.used(), 1);
 
                     let producer = unsafe { allocator.begin_remote_free(block) }
                         .expect("the full OS singleton admits a joined remote publication");
@@ -28226,6 +28250,14 @@ mod tests {
                         "the force-empty aggregate attempts exactly one source unmap"
                     );
                     fault.set(fault::Plan::disabled());
+                    assert!(
+                        drain.test_has_pending_os_release(),
+                        "the completed source release retains its unique failed OS mapping owner"
+                    );
+                    assert!(
+                        drain.engine.thread_exit_route_is_terminal(),
+                        "the parked owner cannot expose the ordinary all-free finalizer"
+                    );
                     for offset in (0..published.layout().page_map_size())
                         .step_by(crate::config::ARENA_SLICE_SIZE)
                     {
@@ -28239,6 +28271,17 @@ mod tests {
                             "the retained OS terminal has already removed every clipped PageMap entry"
                         );
                     }
+                    assert_eq!(unsafe { later_page.as_ref() }.used(), 1);
+                    assert_eq!(
+                        unsafe { page_map.page_map().unwrap().checked_lookup(later.as_ptr()) },
+                        later_page.as_ptr(),
+                        "the pending OS owner stops before the later regular member is detached"
+                    );
+                    assert_eq!(
+                        drain.test_page_count(),
+                        1,
+                        "only the failed OS singleton leaves the source queue before terminal retention"
+                    );
 
                     // The drain alone retains the private pending mapping
                     // owner. It cannot retry source collection, teardown, or

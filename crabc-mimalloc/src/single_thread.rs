@@ -6122,6 +6122,18 @@ enum ThreadExitRetiredPagePrepassError {
     Release,
 }
 
+/// The completed retired-page prepass may have to stop at one retained OS
+/// mapping owner.  Pinned `arena.c:_mi_arenas_page_free_prim` reaches the void
+/// `_mi_arenas_free`/`_mi_os_free` tail after it has detached the page; a raw
+/// release failure cannot turn that completed page transition back into a
+/// source release error.  Rust keeps the unique retry owner, so the caller
+/// must retain its post-fast-slot state without visiting another page.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ThreadExitRetiredPagePrepassOutcome {
+    Complete,
+    PendingOsRelease,
+}
+
 /// The retained source owner after an aggregate mapped regular-page
 /// owner-exit traversal attempt.
 #[must_use = "a failed aggregate mapped regular-page post-exit transition retains its draining engine"]
@@ -9344,11 +9356,13 @@ impl<'attachment, 'main, 'arena, 'map>
         // `_mi_page_free_collect` phase below. The same prepass resets the
         // Theap's source retirement bounds before this drain checks every
         // remaining queue.
-        if self
-            .collect_retired_before_thread_exit_page_traversal()
-            .is_err()
-        {
-            return Err(self);
+        match self.collect_retired_before_thread_exit_page_traversal() {
+            Ok(ThreadExitRetiredPagePrepassOutcome::Complete) => {}
+            // The completed source release retained its one raw OS owner.
+            // Keep this all-free drain terminal; no later queue visit may
+            // expose a second mapping release before the parked owner clears.
+            Ok(ThreadExitRetiredPagePrepassOutcome::PendingOsRelease) => return Err(self),
+            Err(_) => return Err(self),
         }
 
         // Source visits every queue before it starts the broader live-page
@@ -15182,7 +15196,7 @@ impl<'attachment, 'main, 'arena, 'map>
     /// release boundary is malformed or fails.
     fn collect_retired_before_thread_exit_page_traversal(
         &mut self,
-    ) -> Result<(), ThreadExitRetiredPagePrepassError> {
+    ) -> Result<ThreadExitRetiredPagePrepassOutcome, ThreadExitRetiredPagePrepassError> {
         let allows_page_abandon = self.session.theap().allows_page_abandon();
         let (minimum, maximum) = self.session.retired_bounds();
         self.session.reset_retired_bounds();
@@ -15238,11 +15252,19 @@ impl<'attachment, 'main, 'arena, 'map>
             }
         }
         // `page.c:_mi_theap_collect_retired` enters this false-collection
-        // pass regardless of whether its retired-bin range was empty.
+        // pass regardless of whether its retired-bin range was empty. A
+        // parked OS mapping owner means that the source page transition did
+        // complete, but this Rust port cannot continue to another page while
+        // it owns the one failed raw release. Preserve that distinct terminal
+        // outcome instead of reporting the source page release as failed.
         if !allows_page_abandon && !self.collect_full_pages_non_abandoning() {
-            return Err(ThreadExitRetiredPagePrepassError::Release);
+            return if self.pending_os_release.is_some() {
+                Ok(ThreadExitRetiredPagePrepassOutcome::PendingOsRelease)
+            } else {
+                Err(ThreadExitRetiredPagePrepassError::Release)
+            };
         }
-        Ok(())
+        Ok(ThreadExitRetiredPagePrepassOutcome::Complete)
     }
 
     /// Traverses every live mapped regular small, medium, or large page and
@@ -15652,16 +15674,29 @@ impl<'attachment, 'main, 'arena, 'map>
         // this separate from `collect_retired`: abandoning a later owner must
         // not run its generic arena-purge pass. A failed release may already
         // have changed queue/map/arena ownership, so retain this drain.
-        if let Err(error) = self.collect_retired_before_thread_exit_page_traversal() {
-            let error = match error {
-                ThreadExitRetiredPagePrepassError::Queue => {
-                    ThreadExitMappedRegularPagesPostExitAbandonError::Queue
-                }
-                ThreadExitRetiredPagePrepassError::Release => {
-                    ThreadExitMappedRegularPagesPostExitAbandonError::Release
-                }
-            };
-            return Err(retained(self, error));
+        match self.collect_retired_before_thread_exit_page_traversal() {
+            Ok(ThreadExitRetiredPagePrepassOutcome::Complete) => {}
+            // The page has completed the source queue/map/metadata transition
+            // and retained its sole raw OS release owner. Do not visit a next
+            // page; the ordinary aggregate post-detach terminal class records
+            // that exact completed-but-unreleasable state.
+            Ok(ThreadExitRetiredPagePrepassOutcome::PendingOsRelease) => {
+                return Err(retained(
+                    self,
+                    ThreadExitMappedRegularPagesPostExitAbandonError::PostDetachState,
+                ));
+            }
+            Err(error) => {
+                let error = match error {
+                    ThreadExitRetiredPagePrepassError::Queue => {
+                        ThreadExitMappedRegularPagesPostExitAbandonError::Queue
+                    }
+                    ThreadExitRetiredPagePrepassError::Release => {
+                        ThreadExitMappedRegularPagesPostExitAbandonError::Release
+                    }
+                };
+                return Err(retained(self, error));
+            }
         }
 
         let mut detached_pages = 0usize;
@@ -37820,6 +37855,12 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     #[cfg(test)]
     pub(crate) fn has_pending_os_release(&self) -> bool {
         self.pending_os_release.is_some()
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_page_count(&self) -> usize {
+        self.session.theap().page_count()
     }
 
     #[cfg(test)]
