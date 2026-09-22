@@ -590,9 +590,10 @@ def execute_dso_mode(consumer: dict[str, Any], dynamic_root: Path, output: Path)
     (output / "execution.stdout").write_text(result.stdout, encoding="utf-8")
     (output / "execution.stderr").write_text(result.stderr, encoding="utf-8")
     require(
-        result.returncode == 0 and result.stdout == "unwind: backtrace cleanup payload main thread dso\n"
+        result.returncode == 0
+        and result.stdout == "unwind: backtrace cleanup payload main thread dso\n" * 2
         and result.stderr == "",
-        "source-built Rust cleanup DSO execution did not prove owned loader discovery and cleanup",
+        "source-built Rust cleanup DSO execution did not prove retained post-close cleanup",
     )
     consumer["execution"] = {
         "command": [str(item) for item in command],

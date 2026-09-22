@@ -200,7 +200,11 @@ source-built static fixture repeats the complete cleanup/backtrace check. The
 dynamic fixture builds a Rust `cdylib` plugin which performs that check itself;
 its Rust host resolves the plugin's exported entry with `dlopen`/`dlsym` and
 loads the plugin by basename through the selected loader's explicit library
-path. This exercises owned dynamic DSO discovery without a direct-path open.
+path. The host starts the plugin's first internal cleanup, has a host worker
+`dlclose` its final handle, then uses saved release and entry pointers to
+complete and repeat internal cleanup after close. This exercises retained
+owned-loader mapping discovery without a direct-path open or an exception
+crossing the DSO ABI.
 
 For a source-built final link the wrapper admits only the Cargo application
 root and its declared target `release/deps` root. It requires the freshly

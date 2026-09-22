@@ -43,7 +43,10 @@ class OwnedRustLinkContract(unittest.TestCase):
             (self.source_built / name).write_bytes(b"archive")
         (self.application / "raw-dylibs").mkdir()
         (self.application / "rust-cdylib.map").write_text(
-            "{\n  global:\n    crabc_owned_cleanup_dso;\n  local:\n    *;\n};\n"
+            "{\n  global:\n    crabc_owned_cleanup_dso;\n"
+            "    crabc_owned_cleanup_dso_ready;\n"
+            "    crabc_owned_cleanup_dso_release;\n"
+            "  local:\n    *;\n};\n"
         )
 
     def tearDown(self):
@@ -162,6 +165,25 @@ class OwnedRustLinkContract(unittest.TestCase):
         ))
         parsed = linker.parse_arguments(arguments, self.application, self.stock, self.source_built)
         self.assertEqual(parsed["shared_soname"], "libcleanup.so")
+        self.assertEqual(parsed["version_script"], self.application / "rust-cdylib.map")
+
+    def test_shared_rust_plugin_admits_the_saved_pointer_close_handshake_exports(self):
+        self.application.joinpath("rust-cdylib.map").write_text(
+            "{\n  global:\n    crabc_owned_cleanup_dso;\n"
+            "    crabc_owned_cleanup_dso_ready;\n"
+            "    crabc_owned_cleanup_dso_release;\n"
+            "  local:\n    *;\n};\n"
+        )
+        nested = self.application / "deps"
+        nested.mkdir()
+        arguments = self.source_built_arguments()
+        arguments[arguments.index("-pie")] = "-shared"
+        arguments[arguments.index(str(self.application / "cleanup"))] = str(nested / "libcleanup.so")
+        arguments.extend((
+            "-Wl,-soname=libcleanup.so",
+            f"-Wl,--version-script={self.application / 'rust-cdylib.map'}",
+        ))
+        parsed = linker.parse_arguments(arguments, self.application, self.stock, self.source_built)
         self.assertEqual(parsed["version_script"], self.application / "rust-cdylib.map")
 
     def test_direct_or_forwarded_native_fallback_cannot_escape_translation(self):

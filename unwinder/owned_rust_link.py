@@ -39,7 +39,11 @@ CANONICAL_FLAGS = frozenset({
     "-Wl,-z,relro,-z,now", "-Wl,-O1", "-Wl,--strip-debug",
 })
 METADATA_MEMBERS = frozenset({"lib.rmeta", "lib.rmeta-link"})
-RUST_CDYLIB_EXPORT = "crabc_owned_cleanup_dso"
+RUST_CDYLIB_EXPORTS = (
+    "crabc_owned_cleanup_dso",
+    "crabc_owned_cleanup_dso_ready",
+    "crabc_owned_cleanup_dso_release",
+)
 HOST_BUILD_SCRIPT_OUTPUT = re.compile(r"build_script_build-[0-9a-f]+\Z")
 
 
@@ -196,7 +200,8 @@ def audit_rust_cdylib_export_script(path: Path) -> None:
     if len(contents) > 4096:
         raise LinkError("Rust cdylib export script is too large")
     without_comments = re.sub(r"/\*.*?\*/", "", contents, flags=re.DOTALL)
-    expected = rf"\s*\{{\s*global\s*:\s*{RUST_CDYLIB_EXPORT}\s*;\s*local\s*:\s*\*\s*;\s*\}}\s*;\s*"
+    exports = "\\s*;\\s*".join(RUST_CDYLIB_EXPORTS)
+    expected = rf"\s*\{{\s*global\s*:\s*{exports}\s*;\s*local\s*:\s*\*\s*;\s*\}}\s*;\s*"
     if re.fullmatch(expected, without_comments) is None:
         raise LinkError("Rust cdylib export script differs from the cleanup plugin contract")
 
