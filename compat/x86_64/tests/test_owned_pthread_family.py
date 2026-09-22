@@ -368,6 +368,10 @@ class PthreadFamilyCoverageTests(unittest.TestCase):
         (product / "usr/include").mkdir(parents=True)
         (product / "bin/crabc-cc-dynamic").chmod(0o755)
         (product / "lib/ld-crabc-x86_64.so.1").chmod(0o755)
+        # The copied execution-root reader validates the supplied dynamic
+        # product through the common installed link-input contract.  libc.so
+        # is executable there, just as it is in a materialized product.
+        (product / "usr/lib/libc.so").chmod(0o755)
         (product / "lib/ld-musl-x86_64.so.1").symlink_to("ld-crabc-x86_64.so.1")
         files = {
             path.relative_to(product).as_posix(): family.family.digest(path)
