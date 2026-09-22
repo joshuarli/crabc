@@ -19,7 +19,7 @@ Musl 1.2.6 is the C/POSIX compatibility oracle. Rustix is a pinned native-API
 and behavior oracle for tests only. Glibc is never an oracle or fallback.
 
 Read [`SCOPE.md`](SCOPE.md), [`COMPATIBILITY-PROFILE.md`](COMPATIBILITY-PROFILE.md),
-and [`STATUS.md`](STATUS.md) before selecting new work.
+and [`plan.md`](plan.md) before selecting new work.
 
 ## Code map
 
@@ -47,7 +47,7 @@ and [`STATUS.md`](STATUS.md) before selecting new work.
 | --- | --- |
 | Governing scope and non-goals | [`SCOPE.md`](SCOPE.md) |
 | Public support/limitation boundary | [`COMPATIBILITY-PROFILE.md`](COMPATIBILITY-PROFILE.md) |
-| Current completion state and roadmap router | [`STATUS.md`](STATUS.md) |
+| Current completion state and roadmap router | The in-place Progress status section in [`plan.md`](plan.md) |
 | Combined native x86-64 execution goal | [`plan.md`](plan.md), [`x86-64.md`](x86-64.md), and [`native-mimalloc.md`](native-mimalloc.md) |
 | Runtime ownership and dependency architecture | [`docs/design/architecture.md`](docs/design/architecture.md) |
 | Owned application CRT/sysroot design and purity boundary | [`docs/design/crt-and-sysroot.md`](docs/design/crt-and-sysroot.md) and [`docs/evidence/crabc-owned-sysroot.md`](docs/evidence/crabc-owned-sysroot.md) |
@@ -70,8 +70,9 @@ When documentation disagrees, use this precedence:
 
 1. Explicit user direction and this working contract.
 2. `SCOPE.md`, then `COMPATIBILITY-PROFILE.md`, then `plan.md` and the
-   applicable execution or machine-readable contract. `STATUS.md` routes
-   current work; it cannot override acceptance criteria.
+   applicable execution or machine-readable contract. The Progress status
+   section in `plan.md` reports the current frontier; detailed contracts define
+   acceptance criteria.
 3. Executable and machine-readable contracts: manifests, headers, pins,
    ledgers, scripts, and focused tests.
 4. Musl/POSIX/source-oracle evidence for the named behavior.

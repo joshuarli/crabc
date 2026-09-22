@@ -2,7 +2,8 @@
 
 This concise record preserves the rationale for the completed M0–M12
 `crabc-rs` delivery sequence. It is historical provenance, not a current
-queue. [`STATUS.md`](../../STATUS.md) routes current completion and roadmaps;
+queue. The Progress status section in [`plan.md`](../../plan.md) routes current
+completion; detailed acceptance remains in the roadmaps and owning contracts.
 `docs/design/crabc-rs.md` owns present architecture, and
 `compat/crabc-rs/coverage.toml` owns exact capability
 classification.
@@ -79,6 +80,6 @@ global coordination abstraction disguised as a safe API.
 ## How to use this record
 
 Read it for historical design rationale. For current behavior read the design
-document and capability ledger; for current status read
-[`STATUS.md`](../../STATUS.md); and for future acceptance contracts read
-`docs/roadmap/`.
+document and capability ledger; for current status read the Progress status
+section in [`plan.md`](../../plan.md); and for future acceptance contracts
+read `docs/roadmap/`.

@@ -87,7 +87,7 @@ class OwnedPosixRuntimeCatalogTests(unittest.TestCase):
             self.validate()
 
     def test_source_binding_cannot_escape_checkout_or_point_to_missing_source(self):
-        for source in ("../STATUS.md", "libc/src/imagined-provider.rs"):
+        for source in ("../plan.md", "libc/src/imagined-provider.rs"):
             with self.subTest(source=source):
                 self.document["capability"][0]["source_bindings"] = [source]
                 with self.assertRaisesRegex(catalog.CatalogError, "source binding"):

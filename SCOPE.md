@@ -1314,7 +1314,8 @@ The goal is:
 
 > Completed on 2026-08-21. This records the reset that governed the native-capability and LTO delivery sequence; it
 > is not an open implementation checklist. Current completion and future
-> acceptance contracts are routed by [`STATUS.md`](STATUS.md).
+> acceptance contracts are routed by the Progress status section in
+> [`plan.md`](plan.md).
 
 Before continuing broad implementation work:
 

@@ -70,7 +70,7 @@ source_owners = [
   "compat/x86_64/aarch64_parity_inventory.py",
   "compat/x86_64/aarch64_parity_inventory.json",
   "compat/x86_64/README.md",
-  "STATUS.md",
+  "plan.md",
   "x86-64.md",
   "scripts/dev-x86_64.sh",
 ]

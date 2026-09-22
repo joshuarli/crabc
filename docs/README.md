@@ -10,10 +10,10 @@ them; this router should explain ownership, not duplicate command contracts.
   program, and non-goals.
 - [Compatibility profile](../COMPATIBILITY-PROFILE.md) — supported and
   intentionally limited behavior.
-- [Project status](../STATUS.md) — current completion state and roadmap router.
-- [Combined native Linux/x86-64 completion goal](../plan.md), [runtime parity](../x86-64.md),
-  and [native mimalloc](../native-mimalloc.md) — active target-specific
-  implementation and promotion contracts; not current public support.
+- [Combined native Linux/x86-64 completion goal](../plan.md) — execution
+  contract and in-place current progress status; alongside [runtime parity](../x86-64.md)
+  and [native mimalloc](../native-mimalloc.md), it defines active target-specific
+  implementation and promotion contracts, not current public support.
 - [Private x86-64 owned static sysroot evidence](../compat/x86_64/owned-static-sysroot.md)
   — reproducible installed static artifact and real pthread/TLS consumer;
   neither sysroot-family completion nor public support.
@@ -111,8 +111,9 @@ them; this router should explain ownership, not duplicate command contracts.
 - [Semantic migration record](history/semantic-migration.md) — original blob
   IDs, loss-prevention ledger, and milestone-to-semantic rename map.
 
-Historical records never override root policy, [`STATUS.md`](../STATUS.md),
-machine-readable contracts, or generated evidence.
+Historical records never override root policy, the execution and progress
+status in [`plan.md`](../plan.md), machine-readable contracts, or generated
+evidence.
 
 Keep live documents short: each fact has one owning contract, design note, or
 report. Guides link to those owners instead of repeating per-leaf scope and

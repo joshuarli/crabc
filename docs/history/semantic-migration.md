@@ -3,8 +3,9 @@
 This record preserves the 2026-08-22 migration from delivery-milestone names
 and chronology-led planning to semantic identifiers and purpose-led documents.
 It is deliberately a loss-prevention ledger, not a new backlog. Current
-completion and future acceptance contracts are routed by
-[`STATUS.md`](../../STATUS.md).
+completion is summarized in the Progress status section of
+[`plan.md`](../../plan.md); detailed acceptance remains with its owning
+contracts.
 
 ## Baseline and recovery
 
@@ -35,7 +36,7 @@ The classifications below are intentionally narrow:
 | Source | Subject and exact retained content | Status | Evidence | Scope disposition | Destination and action | Confidence | Old/new mapping |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `SCOPE.md` §§1–35; `COMPATIBILITY-PROFILE.md` | Linux/AArch64/5.10 boundary; musl-only C oracle; narrow locale, resolver, allocator, crypto, dependency, and framework limits; vertical-slice evidence rule. | implemented-current | Governing documents and capability ledger. | In scope or explicit boundary as stated. | Retain at repository root; current design documents link to them. | Proven | No identifier change. |
-| Former backlog: current status | Current generated ABI/libc-test/corpus measurements are evidence, not claims of complete historical breadth; typed page-size and loader cases are completed scope records. | generated-measurement / implemented-current | Dashboard, tests, and `coverage.toml`. | In scope. | Current owner: `COMPATIBILITY.md` and `STATUS.md`; historical snapshots remain here only. | Proven for present owner; old snapshots remain historical. | Milestone wording becomes semantic historical-delivery wording. |
+| Former backlog: current status | Current generated ABI/libc-test/corpus measurements are evidence, not claims of complete historical breadth; typed page-size and loader cases are completed scope records. | generated-measurement / implemented-current | Dashboard, tests, and `coverage.toml`. | In scope. | Current owner: `COMPATIBILITY.md` and the Progress status section in `plan.md`; historical snapshots remain here only. | Proven for present owner; old snapshots remain historical. | Milestone wording becomes semantic historical-delivery wording. |
 | Former backlog: P0 | Shared Linux/AArch64 vDSO time route is implemented, but the selected `clock_gettime` CPU row remains red and must retain forced-fallback, malformed-vDSO, error, and marked-loop evidence. | unimplemented-active | `docs/design/performance.md`, performance reports, direct regressions. | In scope. | Current owner: `docs/roadmap/performance-completion.md`. | Proven. | No path identity; historical `M` label removed. |
 | Former backlog: P1 loader | Handle-local GNU/SYSV lookup is CPU-green, while whole-process syscall cost and five-DSO graph CPU remain red; preserve interposition, mutable-name, and loader lifecycle contracts. | partially-implemented | Loader tests and performance evidence. | In scope. | Current owner: performance roadmap. | Proven. | No path identity; historical `M` label removed. |
 | Former backlog: P1 scalar primitives | `memcpy` and `memset` scorecard rows are red; `strlen`, `memchr`, `strstr`, and `memmem` are green. Guard-page, alignment, and span evidence remains mandatory before any SIMD decision. | partially-implemented | Direct differential tests and performance matrix. | In scope. | Current owner: performance design and roadmap. | Proven. | No path identity. |

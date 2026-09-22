@@ -23,6 +23,60 @@ and its local skill for execution; executable contracts and pinned-source
 behavior for implementation. Reconcile conflicting old scheduling prose once.
 Do not repeatedly ask permission for ordinary implementation or batching.
 
+## Progress status (update in place)
+
+This is the sole repository-wide current-status handoff. Replace this section
+in place as the frontier changes; do not append dated updates or per-leaf
+histories. Detailed acceptance remains in `x86-64.md`, `native-mimalloc.md`,
+their machine-readable contracts, and exact-revision reports. The combined goal
+is incomplete.
+
+- **Runtime:** The frozen 223-capability/26-family baseline validates, but
+  current accounting does not establish full parity. The header declaration
+  foundation is `foundation-verified`. Wide stdio, scalar math, signal
+  transactions, semaphore cancellation, loader search/direct-interpreter
+  entry, timed/shared conditions, resolver differential evidence, and
+  priority-inheritance mutexes are integrated. Priority-protect retains
+  musl's unsupported status. Residual POSIX workloads and shared-state
+  composition are integrated into the expanded dynamic catalog. The complete
+  three-product gate and POSIX workload matrix have installed/extracted
+  evidence and host replay, alongside pthread and loader component receipts;
+  complete native aggregate evidence and ordered qualification remain open
+  for family closure. Do not restart an export-by-export queue.
+- **Allocator:** Use `compat/allocator/run-x86_64.sh` and complete native x86
+  M2 qualification; AArch64 milestone passes do not transfer. Native M1 passed
+  all six bounded components and source contracts at `0daef148`. Native M2
+  qualifies PageMap and scalar bitmaps at `62d6435c`; the other six memory
+  substrate components remain partial. The selected production backend stays
+  C mimalloc until native Rust mimalloc passes its promotion gates.
+- **Integration:** Continue runtime development with the accepted C backend.
+  Installed static/static-PIE consumers cover allocator, TLS, POSIX, wide and
+  byte stdio, filesystem traversal, IPC, spawn, selected fork/exit, and normal,
+  recursive, and error-checking robust mutexes. Priority-inheritance mutexes
+  have focused installed-product evidence; refreshed aggregate checks,
+  runtime composition, and allocator lifecycle remain open. Installed and
+  extracted dynamic PIE/non-PIE consumers cover runtime-new dependency graphs,
+  DTV growth, retained close, scope, rollback, constructor exit, deferred
+  GOT/PLT binding, kernel-main `dladdr`, musl search policy, direct interpreter
+  entry, and dynamic fork ownership. Campaign-level product publication
+  remains open. Requalify installed x86 products after allocator promotion.
+- **Consumers and performance:** Full native OS-test and libc-test runner
+  results remain incomplete and do not close the native aggregate; retained
+  reports are under `compat/reports/`. The performance collector covers the
+  complete 114-row definition with separate memory observers and an isolated
+  timing launcher. Bounded native smokes and host replay pass; correctness-chain
+  admission and performance qualification remain open.
+- **External work and paused target:** The existing huge-page/NUMA request and
+  qualification job are described in §8; use that job after authorized
+  provisioning and continue independent work meanwhile. Preserve and reconcile
+  the unfinished uncommitted work in the legacy
+  `x86/reboot-feature-20260904` worktree before duplicating it; create no new
+  external scratch or worktrees. AArch64 implementation and qualification
+  remain paused, public support remains Linux/AArch64, and the x86 gates have
+  not promoted x86 support. The recorded AArch64 owned CRT/sysroot and Lua
+  deliverables are complete at their documented evidence boundary; full target
+  runtime Rust purity remains blocked by the C allocator.
+
 ## 1. Fixed boundaries
 
 - Target **native Linux/x86-64 little-endian, Linux >= 5.10**, in the pinned
@@ -47,9 +101,11 @@ Do not repeatedly ask permission for ordinary implementation or batching.
 - No unrelated cleanup, formatting/lint campaigns, pre-commit hooks, remote
   pushes, CI-workflow work, new architectures, or new product scope.
 
-The earlier AArch64 `sysroot.md` delivery is historical input, not a dependency
-that postpones the x86 sysroot until after mimalloc. Both x86 products belong
-inside this goal and must be requalified after native allocator promotion.
+The completed AArch64 sysroot delivery is historical input, not a dependency
+that postpones the x86 sysroot until after mimalloc. Its durable design and
+evidence live in `docs/design/crt-and-sysroot.md` and
+`docs/evidence/crabc-owned-sysroot.md`. Both x86 products belong inside this
+goal and must be requalified after native allocator promotion.
 
 ## 2. Starting evidence, not a permanent backlog
 
@@ -72,11 +128,11 @@ contracts and the archived previous plan. Verify actual files before reuse;
 missing local receipts are unavailable evidence, not implied passes. Never
 transfer a worker/checkpoint pass to a different revision.
 
-Keep `plan.md` as the execution contract. Put the current concise frontier in
-`STATUS.md`, source requirements in their existing manifests, and execution
-records in ignored reports. Archive the previous plan before replacing it;
-retain its unique resource request and unfinished obligations. Stop appending
-per-commit biographies to this file.
+Keep `plan.md` as the execution contract and current-status handoff. Maintain
+the Progress status section above in place, keep source requirements in their
+existing manifests, and keep execution records in ignored reports. Archive the
+previous plan before replacing it; retain its unique resource request and
+unfinished obligations. Stop appending per-commit biographies to this file.
 
 ## 3. Two dependency graphs, one continuously running campaign
 
@@ -348,11 +404,12 @@ If the fleet produces more unintegrated work than it lands, fix integration;
 if jobs spend time waiting on cache/build locks, fix execution admission;
 if components pass but families cannot close, fix the missing admission path.
 
-Update `STATUS.md` when the actual frontier changes, not after every witness.
-Routine explanation belongs with the code or owning test. Fold small narrative
-updates into the relevant implementation/batch; do not manufacture a follow-on
-`docs(plan): retain ...` commit for every test. Preserve substantial design and
-provenance changes, but do not make documentation churn a qualification trigger.
+Update the Progress status section at the top of `plan.md` in place when the
+actual frontier changes, not after every witness. Routine explanation belongs
+with the code or owning test. Fold small narrative updates into the relevant
+implementation/batch; do not manufacture a follow-on `docs(plan): retain ...`
+commit for every test. Preserve substantial design and provenance changes, but
+do not make documentation churn a qualification trigger.
 
 ## 10. Final convergence and exact joint completion
 

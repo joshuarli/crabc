@@ -17,8 +17,8 @@ The live x86 queue and acceptance contract are in
 Resume this AArch64 queue only after explicit future user direction. The
 following is its preserved state at suspension. It supersedes older
 "current" wording in the historical chronologies below; those records remain
-provenance, not a live work queue. `STATUS.md` is not the native allocator
-status record.
+provenance, not a live work queue. The Progress status section in `plan.md`
+is repository-wide and is not the native allocator status record.
 
 **Last integrated implementation.** `8db445ea3cbc75da59b283fc2f40905b9f0131a5`
 adds a sealed `NormalOsBaseAllocation` handoff for one selected

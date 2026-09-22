@@ -7,9 +7,9 @@
 passing focused scorecard for every mandatory row.
 
 This roadmap owns the detailed C0–C4 corpus acceptance contract; the current
-completion and roadmap router is [`STATUS.md`](../../STATUS.md). It does not
-turn existing compatibility cases into performance claims or create a second
-backlog.
+completion handoff is the Progress status section in [`plan.md`](../../plan.md).
+It does not turn existing compatibility cases into performance claims or
+create a second backlog.
 
 ## Position in the roadmap
 

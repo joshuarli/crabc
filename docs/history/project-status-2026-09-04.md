@@ -5,7 +5,7 @@ details and evidence references. Statements such as "current", "active", and
 "next" below are contemporaneous records, not present instructions or passes
 for a later revision. Do not append new work here.
 
-Start with [the live status](../../STATUS.md) and [the combined goal](../../plan.md).
+Start with the current Progress status section in [the combined goal](../../plan.md).
 Paths in backticks are repository-relative; Markdown links have been rebased
 from the original file's location. No evidence or completion claim was
 upgraded by moving this snapshot.

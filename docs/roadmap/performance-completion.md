@@ -13,7 +13,8 @@ both passing and red rows; no performance-completion claim is available while a
 mandatory row is red, omitted, or unsupported.
 
 This roadmap owns the detailed release scorecard and its evidence requirements;
-[`STATUS.md`](../../STATUS.md) is the current completion and roadmap router.
+the Progress status section in [`plan.md`](../../plan.md) is the current
+completion handoff.
 Stable measurement semantics and the current cost model live in
 [`docs/design/performance.md`](../design/performance.md), while detailed runner
 mechanics live in [`compat/perf/README.md`](../../compat/perf/README.md).

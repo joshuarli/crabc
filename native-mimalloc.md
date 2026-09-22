@@ -57,7 +57,8 @@ compatibility engineering, not allocator research.
 
 ## 0. Immediate interpretation and execution rules
 
-1. Read this file, `STATUS.md`, `docs/design/allocator.md`,
+1. Read this file, the Progress status section in `plan.md`,
+   `docs/design/allocator.md`,
    `crabc-mimalloc/UPSTREAM.md`, `compat/allocator/port-map.toml`,
    `compat/allocator/known-differences.md`, the current allocator gate
    manifests, and the pinned upstream source before changing production code.
@@ -1053,8 +1054,8 @@ Use these records for distinct purposes:
 - gate manifests: authoritative only for the exact evidence scope recorded in
   the manifest;
 - generated compatibility reports: aggregate evidence, never hand-edited;
-- `STATUS.md`: repository-wide status; it does not close or advance native
-  mimalloc milestones;
+- the Progress status section in `plan.md`: repository-wide frontier; it does
+  not close or advance native mimalloc milestones;
 - the live ledger in [§26](#26-native-mimalloc-live-ledger): authoritative
   native-mimalloc milestone status and execution order;
 - `docs/design/allocator.md`: durable current architecture;
@@ -2440,8 +2441,9 @@ This is the native-mimalloc progress record, with an active x86-64 queue and
 a separately preserved, paused AArch64 closure record.
 `compat/allocator/port-map.toml` remains the machine-readable per-source status;
 source coverage does not establish target-qualified runtime behavior.
-Generated native reports provide that evidence. `STATUS.md` is repository-wide
-status and does not close or advance allocator milestones.
+Generated native reports provide that evidence. The Progress status section
+in `plan.md` reports the repository-wide frontier and does not close or advance
+allocator milestones.
 
 ## Active x86-64 handoff — 2026-09-04
 

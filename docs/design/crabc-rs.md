@@ -51,7 +51,8 @@ a wrapper count.
 
 The exact classification and scope limits for deferred groups are in
 [`compat/crabc-rs/coverage.toml`](../../compat/crabc-rs/coverage.toml); the
-relevant acceptance contract is selected through [`STATUS.md`](../../STATUS.md).
+current completion frontier is in the Progress status section of
+[`plan.md`](../../plan.md), and acceptance remains in the relevant contract.
 Completed delivery rationale is preserved in the
 [historical `crabc-rs` record](../history/crabc-rs-delivery-plan.md).
 
