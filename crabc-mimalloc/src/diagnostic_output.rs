@@ -1084,13 +1084,20 @@ impl OutputOwner {
             if let Some(invalid) = invalid_show_stats {
                 unsafe { self.collect_invalid_source_option_unlocked(invalid, &mut pending) };
             }
-            let (verbose, invalid_verbose) = unsafe {
-                self.source_option_get_unlocked(DIAGNOSTIC_VERBOSE)
-            };
-            if let Some(invalid) = invalid_verbose {
-                unsafe { self.collect_invalid_source_option_unlocked(invalid, &mut pending) };
+            if show_stats != 0 {
+                // This is source `||`, not a two-option snapshot: a signed
+                // nonzero show_stats must not initialize, retry, or stage an
+                // invalid warning for verbose.
+                true
+            } else {
+                let (verbose, invalid_verbose) = unsafe {
+                    self.source_option_get_unlocked(DIAGNOSTIC_VERBOSE)
+                };
+                if let Some(invalid) = invalid_verbose {
+                    unsafe { self.collect_invalid_source_option_unlocked(invalid, &mut pending) };
+                }
+                verbose != 0
             }
-            show_stats != 0 || verbose != 0
         };
 
         // SAFETY: descriptor serialization ended above; the caller owns the
@@ -2164,6 +2171,49 @@ mod tests {
         for (index, expected) in expected.iter().enumerate() {
             assert_eq!(capture.message(index), *expected, "source final line {index}");
         }
+    }
+
+    #[test]
+    fn signed_show_stats_short_circuits_an_uninitialized_invalid_verbose_descriptor() {
+        let _environment_guard = DIAGNOSTIC_ENVIRONMENT_TEST_LOCK
+            .lock()
+            .expect("diagnostic environment test lock is not poisoned");
+        let show_errors = b"mimalloc_show_errors=0\0";
+        let show_stats = b"mimalloc_show_stats=-7\0";
+        let verbose = b"mimalloc_verbose=not-a-number\0";
+        let max_warnings = b"mimalloc_max_warnings=32\0";
+        // Leave every source descriptor UNINIT during startup. The final
+        // source `show_stats || verbose` condition must resolve show_stats
+        // alone and must neither read nor stage verbose's invalid warning.
+        unsafe {
+            install_diagnostic_test_environment(
+                DIAGNOSTIC_ENV_FOUR_UNAVAILABLE_THEN_VERBOSE,
+                [
+                    show_errors.as_ptr().cast(),
+                    show_stats.as_ptr().cast(),
+                    verbose.as_ptr().cast(),
+                    max_warnings.as_ptr().cast(),
+                    core::ptr::null(),
+                ],
+            )
+        };
+        let mut owner = output_owner();
+        // SAFETY: the raw fixture environment is locked and remains live.
+        unsafe { owner.initialize_source_options(diagnostic_test_environment_reader) };
+        let capture = Capture::new();
+        // SAFETY: this test owns the callback and serializes the final phase.
+        unsafe { owner.register_output(Some(capture_output), capture_argument(&capture)) };
+        capture.reset();
+
+        // SAFETY: the scalar view is complete and output is serialized.
+        assert!(unsafe { owner.final_statistics_output(final_process_view()) });
+        assert_eq!(DIAGNOSTIC_ENVIRONMENT_CALLS.load(Ordering::Relaxed), 5);
+        assert_eq!(capture.count(), 35);
+        assert_eq!(capture.message(0), b"subproc 7\n");
+        assert!(
+            !capture.message(0).starts_with(b"mimalloc: warning:"),
+            "the unread verbose descriptor cannot stage a source warning"
+        );
     }
 
     #[test]

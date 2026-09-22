@@ -198,11 +198,11 @@ EXPECTED_RUST_FINAL_STATISTICS_TRACE = tuple(
 )
 FINAL_STATIC_PREFIX_COUNT = 31
 FINAL_PROCESS_ROWS = (
-    re.compile(r"  numa nodes: +[0-9]+\\n\\Z"),
-    re.compile(r"  elapsed   : +[0-9]+\\.[0-9]{3} s\\n\\Z"),
+    re.compile(r"  numa nodes: +[0-9]+\n\Z"),
+    re.compile(r"  elapsed   : +[0-9]+\.[0-9]{3} s\n\Z"),
     re.compile(
-        r"  process   : user: [0-9]+\\.[0-9]{3} s, system: [0-9]+\\.[0-9]{3} s, "
-        r"faults: [0-9]+, peak rss: .+\\n\\Z"
+        r"  process   : user: [0-9]+\.[0-9]{3} s, system: [0-9]+\.[0-9]{3} s, "
+        r"faults: [0-9]+, peak rss: .+\n\Z"
     ),
 )
 def expected_trace_for_thread_identity(identity: int) -> dict[str, list[str]]:
