@@ -8704,6 +8704,7 @@ mod tests {
         assert!(theap.record_page_registered(5));
         theap.record_page_retired();
         theap.record_page_search(3);
+        theap.record_page_reclaimed_on_free();
 
         heap.merge_detached_theap_statistics(&theap);
 
@@ -8713,10 +8714,12 @@ mod tests {
         assert_eq!(heap_statistics.pages_retire, 1);
         assert_eq!(heap_statistics.page_searches, 3);
         assert_eq!(heap_statistics.page_searches_count, 1);
+        assert_eq!(heap_statistics.pages_reclaim_on_free, 1);
         assert_eq!(heap_statistics.page_bin_total[5], 1);
         assert_eq!(heap_statistics.page_bin_current[5], 1);
         assert_eq!(theap.statistics_snapshot().pages_total, 0);
         assert_eq!(theap.statistics_snapshot().page_searches_count, 0);
+        assert_eq!(theap.statistics_snapshot().pages_reclaim_on_free, 0);
     }
 
     #[test]
@@ -8726,6 +8729,7 @@ mod tests {
         main_heap.subprocess = core::ptr::from_ref(&subprocess).cast_mut();
         assert!(main_heap.statistics.page_registered(7));
         main_heap.statistics.page_retired();
+        main_heap.statistics.page_reclaimed_on_free();
 
         assert!(main_heap.merge_main_heap_statistics_into_owning_subprocess_before_unlink());
 
@@ -8733,9 +8737,11 @@ mod tests {
         assert_eq!(subprocess_statistics.pages_total, 1);
         assert_eq!(subprocess_statistics.pages_current, 1);
         assert_eq!(subprocess_statistics.pages_retire, 1);
+        assert_eq!(subprocess_statistics.pages_reclaim_on_free, 1);
         assert_eq!(subprocess_statistics.page_bin_total[7], 1);
         assert_eq!(main_heap.statistics_snapshot().pages_total, 0);
         assert_eq!(main_heap.statistics_snapshot().pages_retire, 0);
+        assert_eq!(main_heap.statistics_snapshot().pages_reclaim_on_free, 0);
     }
 
     fn os_abandoned_test_page(heap: &Heap) -> Page {
