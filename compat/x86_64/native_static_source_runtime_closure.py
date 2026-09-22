@@ -25,6 +25,9 @@ from typing import Any
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 TARGET = "x86_64-unknown-linux-musl"
 TOOLCHAIN = "nightly-2026-07-24"
+PINNED_CARGO_BIN = pathlib.Path("/opt/cargo/bin")
+PINNED_RUSTUP_HOME = pathlib.Path("/opt/rustup")
+FIXED_HOST_PATH = "/usr/bin:/bin"
 REGISTRY = "registry+https://github.com/rust-lang/crates.io-index"
 RUNTIME_SOURCES = {
     "core": pathlib.PurePosixPath("core/src/lib.rs"),
@@ -350,6 +353,8 @@ def option_values(command: Sequence[str], option: str) -> list[str]:
         prefix = option + "="
         if item.startswith(prefix):
             values.append(item[len(prefix):])
+        elif option in ("-C", "-Z") and item.startswith(option) and len(item) > len(option):
+            values.append(item[len(option):])
         index += 1
     return values
 
@@ -376,7 +381,8 @@ def externs(command: Sequence[str], description: str) -> dict[str, pathlib.Path]
 
 
 def command_record(command: Sequence[str], target: pathlib.Path, expected_runtime: dict[str, pathlib.Path],
-                   crate: str) -> dict[str, object]:
+                   crate: str, source: pathlib.Path) -> dict[str, object]:
+    command_has_source(command, source, f"Cargo {crate} rustc")
     values = [*option_values(command, "-C"), *option_values(command, "-Z")]
     missing = [flag for flag in RUNTIME_FLAGS if flag.removeprefix("-C").removeprefix("-Z") not in values]
     if missing:
@@ -401,6 +407,26 @@ def command_record(command: Sequence[str], target: pathlib.Path, expected_runtim
 
 def required_tool(sysroot: pathlib.Path, name: str) -> pathlib.Path:
     return physical(sysroot / "lib" / "rustlib" / TARGET / "bin" / name, f"pinned Rust {name}")
+
+
+def pinned_environment() -> tuple[pathlib.Path, dict[str, str]]:
+    """Select the image-owned frontend without inheriting host Cargo state."""
+
+    rustup = physical(PINNED_CARGO_BIN / "rustup", "pinned rustup")
+    rustup_root = physical(PINNED_RUSTUP_HOME, "pinned rustup home", directory=True)
+    return rustup, {
+        "LC_ALL": "C",
+        "PATH": f"{PINNED_CARGO_BIN}:{FIXED_HOST_PATH}",
+        "RUSTUP_HOME": str(rustup_root),
+        "SOURCE_DATE_EPOCH": "1",
+        "TZ": "UTC",
+    }
+
+
+def command_has_source(command: Sequence[str], source: pathlib.Path, description: str) -> None:
+    expected = str(source)
+    if expected not in command:
+        fail(f"{description} does not compile its exact checked-in source")
 
 
 def archive_members(ar: pathlib.Path, archive: pathlib.Path, destination: pathlib.Path,
@@ -483,12 +509,17 @@ def build(arguments: argparse.Namespace) -> pathlib.Path:
     work_root = ROOT / ".work" / "x86_64"
     work = work_child(work_root, pathlib.Path(arguments.work), "source-runtime closure work")
     work.mkdir(mode=0o755)
-    sysroot_result = subprocess.run(["rustup", "run", TOOLCHAIN, "rustc", "--print", "sysroot"], cwd=ROOT,
-                                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                    text=True, check=False)
+    rustup, base_environment = pinned_environment()
+    sysroot_result = subprocess.run([str(rustup), "run", TOOLCHAIN, "rustc", "--print", "sysroot"], cwd=ROOT,
+                                    env=base_environment, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, text=True, check=False)
     if sysroot_result.returncode != 0:
         fail(f"pinned rustc sysroot discovery failed: {sysroot_result.stderr}")
     sysroot = physical(pathlib.Path(sysroot_result.stdout.strip()), "pinned Rust sysroot", directory=True)
+    try:
+        sysroot.relative_to(physical(PINNED_RUSTUP_HOME / "toolchains", "pinned Rust toolchain root", directory=True))
+    except ValueError as error:
+        raise ClosureError(f"pinned Rust sysroot escapes the image toolchain root: {sysroot}") from error
     if not sysroot.name.startswith(TOOLCHAIN):
         fail(f"pinned Rust sysroot drifted: {sysroot}")
     rust_source = physical(sysroot / "lib" / "rustlib" / "src" / "rust" / "library", "pinned rust-src library", directory=True)
@@ -499,20 +530,17 @@ def build(arguments: argparse.Namespace) -> pathlib.Path:
     target.mkdir(mode=0o755)
     temporary.mkdir(mode=0o755)
     environment = {
+        **base_environment,
         "CARGO_HOME": str(work / "cargo-home"),
         "CARGO_NET_OFFLINE": "true",
         "CARGO_INCREMENTAL": "0",
         "CARGO_TARGET_DIR": str(target),
         "CARGO_TERM_COLOR": "never",
         "CARGO_ENCODED_RUSTFLAGS": "\x1f".join(RUNTIME_FLAGS),
-        "LC_ALL": "C",
-        "PATH": os.environ.get("PATH", ""),
-        "RUSTUP_HOME": os.environ.get("RUSTUP_HOME", ""),
         "TMPDIR": str(temporary),
-        "TZ": "UTC",
     }
     command = [
-        "rustup", "run", TOOLCHAIN, "cargo", "-Zbuild-std=core,alloc,compiler_builtins", "rustc",
+        str(rustup), "run", TOOLCHAIN, "cargo", "-Zbuild-std=core,alloc,compiler_builtins", "rustc",
         "--locked", "--offline", "-vv", "--message-format=json-render-diagnostics", "-p", "crabc-libc", "--lib",
         "--target", TARGET, "--features", arguments.features,
     ]
@@ -527,8 +555,13 @@ def build(arguments: argparse.Namespace) -> pathlib.Path:
     archive = artifact_for_source(records, libc_source, "c", target, ".a")
     commands = cargo_commands(stderr_path)
     expected_runtime = dict(rlibs)
-    primary = command_record(invocation_for(commands, "c"), target, expected_runtime, "crabc-libc")
-    allocator = command_record(invocation_for(commands, "crabc_mimalloc"), target, expected_runtime, "crabc-mimalloc")
+    primary = command_record(
+        invocation_for(commands, "c"), target, expected_runtime, "crabc-libc", libc_source,
+    )
+    allocator = command_record(
+        invocation_for(commands, "crabc_mimalloc"), target, expected_runtime, "crabc-mimalloc",
+        physical(ROOT / "crabc-mimalloc" / "src" / "lib.rs", "crabc-mimalloc source"),
+    )
     ar, nm = required_tool(sysroot, "llvm-ar"), required_tool(sysroot, "llvm-nm")
     closure = staticlib_closure(ar, nm, archive, rlibs, work)
     receipt = {
