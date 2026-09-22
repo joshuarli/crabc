@@ -262,10 +262,13 @@ contains no direct Rust rlib; the wrapper records that object's complete
 `_Unwind_*` ABI and `rust_eh_personality` before linking. The fixture's real
 `_Unwind_RaiseException` address keeps the provider live in the same Cargo/LTO
 graph as the source-built `core`; no standalone provider archive is passed to
-this link. The generated workspace lock, exact pinned provider features and
+this link. Before Cargo can remove its transient `*.rcgu.o`, the wrapper makes
+one exclusive confined copy, verifies that its digest matches the Cargo input,
+and supplies that copy to LLD; the reader rehashes the durable copy while the
+receipt retains the original Cargo path. The generated workspace lock, exact pinned provider features and
 staged overlay sources are audited before compiling. The provider therefore
 inherits the consumer's `panic=unwind`, fat-LTO, and codegen-unit profile
-rather than its standalone producer profile. A schema-3 link receipt excludes
+rather than its standalone producer profile. A schema-4 link receipt excludes
 stock target rlibs and direct source rlibs. Cargo artifact JSON, verbose build
 records, the pinned `rust-src` library lock, and the linker-side receipt bind
 the source graph to the final executable or plugin even where Cargo hard-links

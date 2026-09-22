@@ -146,6 +146,13 @@ class OwnedRustLinkContract(unittest.TestCase):
 
     def test_source_built_fat_lto_object_must_retain_the_declared_abi_and_personality(self):
         object_file = self.application / "fixture.o"
+        cargo_object, retained_object = linker.retain_source_lto_object(
+            object_file, self.application / "cleanup", self.application,
+        )
+        self.assertTrue(retained_object.name.endswith(".crabc-owned-source-lto.o"))
+        self.assertEqual(cargo_object["sha256"], linker.sha256(retained_object))
+        with self.assertRaisesRegex(linker.LinkError, "evidence object must be fresh"):
+            linker.retain_source_lto_object(object_file, self.application / "cleanup", self.application)
         expected = ["_Unwind_Backtrace", "_Unwind_RaiseException"]
         nm_output = "\n".join([
             "00000000 T _Unwind_Backtrace",
@@ -154,13 +161,19 @@ class OwnedRustLinkContract(unittest.TestCase):
         ]) + "\n"
         with patch.dict(os.environ, {linker.SOURCE_LTO_UNWIND_ABI_ENV: json.dumps(expected)}), \
              patch.object(linker, "run", return_value=nm_output):
-            receipt = linker.source_lto_object_receipt([object_file], Path("/pinned/llvm-nm"))
+            receipt = linker.source_lto_object_receipt(cargo_object, retained_object, Path("/pinned/llvm-nm"))
         self.assertEqual(receipt["defined_unwind_abi"], expected)
         self.assertTrue(receipt["rust_eh_personality"])
+        self.assertEqual(receipt["cargo_object"], cargo_object)
+        self.assertEqual(receipt["retained_object"], {
+            "path": str(retained_object), "sha256": linker.sha256(retained_object),
+        })
+        object_file.unlink()
+        self.assertEqual(cargo_object["sha256"], linker.sha256(retained_object))
         with patch.dict(os.environ, {linker.SOURCE_LTO_UNWIND_ABI_ENV: json.dumps(expected)}), \
              patch.object(linker, "run", return_value=nm_output.replace("rust_eh_personality\n", "")):
             with self.assertRaisesRegex(linker.LinkError, "rust_eh_personality"):
-                linker.source_lto_object_receipt([object_file], Path("/pinned/llvm-nm"))
+                linker.source_lto_object_receipt(cargo_object, retained_object, Path("/pinned/llvm-nm"))
 
     def test_source_built_host_build_script_is_separate_from_the_final_owned_link(self):
         """Cargo must not send its same-triple host build script to the target linker."""

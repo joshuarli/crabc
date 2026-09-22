@@ -632,7 +632,7 @@ def source_built_link_receipt(
     """Read one source-built fat-LTO link without admitting stock target rlibs."""
 
     record = json_object(path, description)
-    require(record.get("schema") == 3 and record.get("format") == "crabc-owned-rust-source-build-link/v2",
+    require(record.get("schema") == 4 and record.get("format") == "crabc-owned-rust-source-build-link/v3",
             f"{description} has the wrong source-built link schema")
     require(record.get("rust_library_origin") == "source-built"
             and record.get("source_built_target_library_root") == str(source_library_root),
@@ -675,19 +675,36 @@ def source_built_link_receipt(
     input_paths = [value.get("path") for value in inputs if isinstance(value.get("path"), str)]
     require(len(inputs) == 1 and len(input_paths) == 1 and input_paths[0].endswith(".o"),
             f"{description} does not retain one fused Cargo LTO object")
-    application_root = source_library_root.parent
-    lto_object = physical(Path(input_paths[0]), f"{description} fused Cargo LTO object")
+    # Cargo may remove its original rcgu.o after rustc returns.  The owned
+    # linker must therefore preserve a byte-identical, confined copy and use
+    # that copy for LLD.  Rehash the durable link input here; the original
+    # Cargo path remains a recorded source fact rather than a live file.
+    lto_object = physical(Path(input_paths[0]), f"{description} retained fused Cargo LTO object")
     require(lto_object.is_relative_to(application_root),
             f"{description} fused Cargo LTO object escapes its application root")
     require(not any(path.endswith(".rlib") for path in input_paths),
             f"{description} retains a direct Rust archive after LTO")
+    retained_object = record_file(lto_object, f"{description} retained fused Cargo LTO object")
     source_lto = record.get("source_lto_object")
+    cargo_object = source_lto.get("cargo_object") if isinstance(source_lto, dict) else None
+    cargo_path = cargo_object.get("path") if isinstance(cargo_object, dict) else None
+    cargo_digest = cargo_object.get("sha256") if isinstance(cargo_object, dict) else None
+    cargo_input = Path(cargo_path) if isinstance(cargo_path, str) else None
     require(
         isinstance(source_lto, dict)
-        and source_lto.get("object") == record_file(lto_object, f"{description} fused Cargo LTO object")
+        and set(source_lto) == {
+            "cargo_object", "retained_object", "defined_unwind_abi", "rust_eh_personality",
+        }
+        and isinstance(cargo_object, dict)
+        and set(cargo_object) == {"path", "sha256"}
+        and cargo_input is not None and cargo_input.is_absolute() and ".." not in cargo_input.parts
+        and cargo_input.suffix == ".o" and cargo_input.is_relative_to(application_root)
+        and isinstance(cargo_digest, str) and re.fullmatch(r"[0-9a-f]{64}", cargo_digest) is not None
+        and cargo_digest == retained_object["sha256"]
+        and source_lto.get("retained_object") == retained_object
         and source_lto.get("defined_unwind_abi") == sorted(build.UNWIND_ABI)
         and source_lto.get("rust_eh_personality") is True,
-        f"{description} does not prove the fused Cargo LTO unwind ABI",
+        f"{description} does not prove the retained fused Cargo LTO unwind ABI",
     )
     if built_unwind is not None:
         built_path = built_unwind.get("path")

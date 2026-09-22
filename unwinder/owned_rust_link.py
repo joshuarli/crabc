@@ -22,6 +22,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -365,8 +366,35 @@ def run(command: list[str | Path]) -> str:
     return result.stdout
 
 
-def source_lto_object_receipt(objects: list[Path], nm: Path) -> dict[str, object]:
-    """Prove the fused Cargo object retains the provider ABI before LLD.
+def retain_source_lto_object(cargo_object: Path, output: Path, application_root: Path) -> tuple[dict[str, object], Path]:
+    """Copy Cargo's transient LTO object into the declared final-link evidence.
+
+    Cargo is allowed to remove its ``*.rcgu.o`` after rustc finishes.  The
+    owned link therefore feeds LLD an exclusive copy below the same confined
+    application root and records both the original Cargo input and that copy.
+    The later reader can rehash the copy after Cargo has cleaned its transient
+    output, while the equal digests bind it to the object Cargo supplied here.
+    """
+
+    original = _record_input(cargo_object)
+    retained = confined_output(
+        str(output.with_name(output.name + ".crabc-owned-source-lto.o")), application_root,
+    )
+    if retained.exists() or retained.is_symlink():
+        raise LinkError(f"source-built Cargo LTO evidence object must be fresh: {retained}")
+    try:
+        with cargo_object.open("rb") as source, retained.open("xb") as destination:
+            shutil.copyfileobj(source, destination, length=1024 * 1024)
+    except OSError as error:
+        raise LinkError(f"cannot retain source-built Cargo LTO object: {cargo_object}") from error
+    retained = physical_regular(retained, "retained source-built Cargo LTO object")
+    if original["sha256"] != sha256(retained):
+        raise LinkError("retained source-built Cargo LTO object differs from Cargo input")
+    return original, retained
+
+
+def source_lto_object_receipt(cargo_object: dict[str, object], retained_object: Path, nm: Path) -> dict[str, object]:
+    """Prove the retained fused Cargo object retains the provider ABI before LLD.
 
     Fat LTO intentionally removes Rust standard-library and provider rlibs
     from the native argv. The runner supplies the precise ABI from the pinned
@@ -387,11 +415,9 @@ def source_lto_object_receipt(objects: list[Path], nm: Path) -> dict[str, object
         or len(set(expected_value)) != len(expected_value)
     ):
         raise LinkError("source-built Cargo LTO unwind ABI is malformed")
-    if len(objects) != 1:
-        raise LinkError("source-built Cargo fat-LTO final link must contain one fused Rust object")
     symbols = {
         line.split()[-1]
-        for line in run([nm, "--defined-only", objects[0]]).splitlines()
+        for line in run([nm, "--defined-only", retained_object]).splitlines()
         if len(line.split()) >= 3
     }
     defined_unwind = sorted(symbol for symbol in symbols if symbol.startswith("_Unwind_"))
@@ -400,7 +426,8 @@ def source_lto_object_receipt(objects: list[Path], nm: Path) -> dict[str, object
     if "rust_eh_personality" not in symbols:
         raise LinkError("source-built Cargo LTO object lacks rust_eh_personality")
     return {
-        "object": _record_input(objects[0]),
+        "cargo_object": cargo_object,
+        "retained_object": _record_input(retained_object),
         "defined_unwind_abi": defined_unwind,
         "rust_eh_personality": True,
     }
@@ -639,7 +666,12 @@ def link(arguments: list[str]) -> None:
         input_records.append(_record_input(archive, members=audit_rust_archive(archive, ar)))
     source_lto_object: dict[str, object] | None = None
     if source_built_root is not None:
-        source_lto_object = source_lto_object_receipt(objects, nm)
+        if len(objects) != 1:
+            raise LinkError("source-built Cargo fat-LTO final link must contain one fused Rust object")
+        cargo_object, retained_object = retain_source_lto_object(objects[0], output, application_root)
+        source_lto_object = source_lto_object_receipt(cargo_object, retained_object, nm)
+        objects = [retained_object]
+        input_records = [_record_input(retained_object)]
     command = link_command(
         linker=linker, root=root, mode=mode, provider=provider, objects=objects, archives=archives,
         output=output, export_dynamic=bool(parsed["export_dynamic"]), rust_mode=rust_mode,
@@ -650,8 +682,8 @@ def link(arguments: list[str]) -> None:
     validate_trace(trace, {*objects, *archives, *runtime, *( [provider] if provider is not None else [] )})
     dynamic, segments = _elf_facts(output, mode, rust_mode)
     record = {
-        "schema": 3 if source_built_root is not None else 1,
-        "format": "crabc-owned-rust-source-build-link/v2" if source_built_root is not None else "crabc-owned-rust-std-link/v1",
+        "schema": 4 if source_built_root is not None else 1,
+        "format": "crabc-owned-rust-source-build-link/v3" if source_built_root is not None else "crabc-owned-rust-std-link/v1",
         "target": TARGET,
         "mode": mode,
         "rust_requested_mode": parsed["rust_mode"],

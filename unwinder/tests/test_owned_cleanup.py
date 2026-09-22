@@ -277,7 +277,7 @@ class OwnedCleanupContract(unittest.TestCase):
         self.assertEqual(receipt["provider_graph"], provider_graph["receipt"])
         self.assertFalse(receipt["qualified"])
 
-    def test_source_built_receipt_requires_fused_lto_abi_and_no_direct_libunwind(self):
+    def test_source_built_receipt_retains_fused_lto_abi_after_cargo_removes_the_object(self):
         source = Path(self.temporary.name) / "source-built"
         source.mkdir()
         toolchain_search = Path(self.temporary.name) / "toolchain-target-lib"
@@ -289,35 +289,47 @@ class OwnedCleanupContract(unittest.TestCase):
         built_unwind.write_bytes(b"source-built unwind")
         built_unwind_record = owned_cleanup.record_file(built_unwind, "test source-built unwind")
         fused = Path(self.temporary.name) / "cleanup.cgu.0.rcgu.o"
-        fused.write_bytes(b"fused Cargo LTO object")
+        fused_bytes = b"fused Cargo LTO object"
+        fused.write_bytes(fused_bytes)
         fused_record = owned_cleanup.record_file(fused, "test fused Cargo LTO object")
+        retained = Path(str(binary) + ".crabc-owned-source-lto.o")
+        shutil.copyfile(fused, retained)
+        retained_record = owned_cleanup.record_file(retained, "test retained fused Cargo LTO object")
         record = {
-            "schema": 3,
-            "format": "crabc-owned-rust-source-build-link/v2",
+            "schema": 4,
+            "format": "crabc-owned-rust-source-build-link/v3",
             "rust_library_origin": "source-built",
             "source_built_target_library_root": str(source),
             "declared_toolchain_search_root": str(toolchain_search),
             "unused_search_paths": [str(toolchain_search)],
             "omitted_source_built_compiler_builtins": {"path": str(source / "libcompiler_builtins-hash.rlib")},
-            "application_inputs": [fused_record],
+            "application_inputs": [retained_record],
             "source_lto_object": {
-                "object": fused_record,
+                "cargo_object": fused_record,
+                "retained_object": retained_record,
                 "defined_unwind_abi": sorted(build.UNWIND_ABI),
                 "rust_eh_personality": True,
             },
             "output": {"path": str(binary), "sha256": hashlib.sha256(binary.read_bytes()).hexdigest()},
-            "command": ["/pinned/ld.lld", str(fused)],
-            "resolved_input_trace": str(fused),
+            "command": ["/pinned/ld.lld", str(retained)],
+            "resolved_input_trace": str(retained),
             "qualified": False,
             "family_completion": False,
             "promotion_ready": False,
             "public_support": False,
         }
         receipt.write_text(json.dumps(record))
+        # Cargo removes its intermediate after the wrapper retained and linked
+        # the confined evidence copy.
+        fused.unlink()
         selected = owned_cleanup.source_built_link_receipt(
             receipt, binary, source, "test source-built link", built_unwind=built_unwind_record,
         )
         self.assertEqual(selected["rust_library_origin"], "source-built")
+        retained.write_bytes(b"tampered retained Cargo LTO object")
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "fused Cargo LTO unwind ABI"):
+            owned_cleanup.source_built_link_receipt(receipt, binary, source, "test source-built link")
+        retained.write_bytes(fused_bytes)
         record["provider_archive"] = {"path": str(self.archive)}
         receipt.write_text(json.dumps(record))
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "standalone provider"):
@@ -338,6 +350,11 @@ class OwnedCleanupContract(unittest.TestCase):
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "fused Cargo LTO unwind ABI"):
             owned_cleanup.source_built_link_receipt(receipt, binary, source, "test source-built link")
         record["source_lto_object"]["defined_unwind_abi"] = sorted(build.UNWIND_ABI)
+        record["source_lto_object"]["cargo_object"] = {**fused_record, "sha256": "0" * 64}
+        receipt.write_text(json.dumps(record))
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "fused Cargo LTO unwind ABI"):
+            owned_cleanup.source_built_link_receipt(receipt, binary, source, "test source-built link")
+        record["source_lto_object"]["cargo_object"] = fused_record
         record["unused_search_paths"].append("/unapproved/search")
         receipt.write_text(json.dumps(record))
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "search path"):
