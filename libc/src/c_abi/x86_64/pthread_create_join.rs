@@ -1416,10 +1416,12 @@ struct SelectedWorkerNativeAllocatorRegistry;
 // lock pins every linked `ThreadControl`; list withdrawal is required before
 // its TLS/control mappings can be reclaimed. Each child stores its descriptor
 // before registration/allocator entry, and the process descriptor is
-// separately process-lifetime. `visit_descriptors` itself permits only its
-// internal synchronous atomic inspection: no allocation, user callback,
-// source projection, syscall, or outer lock acquisition can occur while the
-// worker-list lock is held.
+// separately process-lifetime. An ordinary `visit_descriptors` pass is an
+// internal synchronous atomic scan. After the allocator's separately proved
+// terminal epoch has committed and drained that scan, a second synchronous
+// pass may project and transfer its exact source-owner fields under this same
+// pin. Neither pass may allocate, invoke a user callback, issue a syscall, or
+// acquire an outer/source lock while the worker-list lock is held.
 #[cfg(feature = "native-mimalloc-shadow")]
 unsafe impl NativeAllocatorPinnedThreadRegistry for SelectedWorkerNativeAllocatorRegistry {
     fn visit_descriptors(
@@ -1459,15 +1461,17 @@ unsafe impl NativeAllocatorPinnedThreadRegistry for SelectedWorkerNativeAllocato
 /// admission guard has drained the descriptor visitor.
 ///
 /// # Safety
-/// `operation` may call only allocator-internal synchronous code that honors
-/// [`NativeAllocatorPinnedThreadRegistry`]'s atomic-only visitor contract. It
-/// does not linearize worker registration against terminal closure: a future
-/// writer must first obtain the process-owned guarded admission that does so,
-/// and this bridge cannot itself prove terminal or fork quiescence. Once that
-/// guard has drained the visitor, it may make its minimal exact source-owner
-/// transfer while the pin remains live, then release this pin before acquiring
-/// Heap/meta locks or releasing OS arena/PageMap state. It must not allocate,
-/// invoke user code, wait on a syscall, acquire another outer lock, or let a
+/// `operation` may call only allocator-internal synchronous code. Its first
+/// [`NativeAllocatorPinnedThreadRegistry::visit_descriptors`] pass is an
+/// atomic admission scan. This bridge does not linearize worker registration
+/// against terminal closure: a future writer must first obtain the
+/// process-owned guarded admission that does so, and this bridge cannot itself
+/// prove terminal or fork quiescence. Only after that guard has committed the
+/// epoch and drained the scan may a second synchronous visitor pass project,
+/// validate, and transfer the exact source-owner fields while the pin remains
+/// live. It must then release this pin before acquiring Heap/meta locks or
+/// releasing OS arena/PageMap state. Neither pass may allocate, invoke user
+/// code, wait on a syscall, acquire an outer/source lock, or let a
 /// visitor/capability escape this callback or unwind: the selected x86
 /// products use `panic=abort`, so an abort cannot leave this lock live in a
 /// continuing process. The caller supplies the established native terminal/fork
