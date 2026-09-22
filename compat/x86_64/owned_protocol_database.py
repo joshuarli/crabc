@@ -124,6 +124,23 @@ def source_records(root: Path = ROOT) -> dict[str, dict[str, object]]:
     return {path.as_posix(): artifact(root, root / path) for path in SOURCE_FILES}
 
 
+def canonical_pinned_musl_archive(raw: str) -> Path:
+    """Normalize only lexical components in the pinned compiler's archive path.
+
+    ``-print-file-name`` is a compiler-owned diagnostic, not a user-supplied
+    product path. Alpine GCC currently emits its libc archive with literal
+    ``..`` components; producer and independent reader must seal the same
+    physical spelling before the usual no-symlink regular-file check. This
+    does not resolve or admit a symlink.
+    """
+
+    value = raw.strip()
+    require(value, "pinned musl archive query returned no path")
+    path = Path(value)
+    require(path.is_absolute(), "pinned musl archive query returned a relative path")
+    return Path(os.path.normpath(value))
+
+
 def _run(arguments: Sequence[str | Path], *, cwd: Path, timeout: float, description: str) -> tuple[int, bytes, bytes]:
     try:
         result = subprocess.run([str(argument) for argument in arguments], cwd=cwd,
@@ -179,7 +196,7 @@ def _oracle_object(work: Path, timeout: float) -> dict[str, object]:
     _physical(MUSL_CC, "pinned musl compiler")
     _status, stdout, _stderr = _run((MUSL_CC, "-print-file-name=libc.a"), cwd=ROOT, timeout=timeout,
                                     description="pinned musl archive query")
-    archive = Path(stdout.decode("utf-8").strip())
+    archive = canonical_pinned_musl_archive(stdout.decode("utf-8"))
     _physical(archive, "pinned musl archive")
     object_file = work / "oracle-proto.lo"
     _status, payload, _stderr = _run(("ar", "p", archive, "proto.lo"), cwd=ROOT, timeout=timeout,

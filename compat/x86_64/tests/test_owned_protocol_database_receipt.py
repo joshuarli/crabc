@@ -64,6 +64,16 @@ class OwnedProtocolDatabaseReceiptTests(unittest.TestCase):
         self.assertEqual(receipt.COMPONENT, "protocol-database-product")
         self.assertEqual(receipt.REPORT_NAME, "owned-protocol-database-products.json")
 
+    def test_pinned_musl_archive_path_normalizes_compiler_lexical_parent_components(self) -> None:
+        raw = "/usr/lib/gcc/x86_64-alpine-linux-musl/15.2.0/../../../../lib/libc.a\n"
+
+        self.assertEqual(
+            producer.canonical_pinned_musl_archive(raw),
+            Path("/usr/lib/libc.a"),
+        )
+        with self.assertRaisesRegex(producer.ProtocolDatabaseError, "relative path"):
+            producer.canonical_pinned_musl_archive("lib/libc.a")
+
     def test_product_arms_admit_byte_identical_extraction_directory_modes(self) -> None:
         """Extraction may preserve setgid header directories without changing payload bytes."""
 

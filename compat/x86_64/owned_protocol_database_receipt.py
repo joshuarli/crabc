@@ -166,7 +166,7 @@ def _oracle(root: Path, work: Path, value: object) -> None:
     except (OSError, subprocess.TimeoutExpired) as error:
         raise ReceiptError("cannot query pinned musl archive") from error
     require(output.returncode == 0 and not output.stderr, "cannot query pinned musl archive")
-    archive = physical(Path(output.stdout.decode("utf-8").strip()), "pinned musl archive")
+    archive = physical(producer.canonical_pinned_musl_archive(output.stdout.decode("utf-8")), "pinned musl archive")
     observed_archive = {"path": str(archive), "sha256": sha256(archive.read_bytes()).hexdigest(),
                         "byte_length": archive.stat().st_size, "mode": stat.S_IMODE(archive.stat().st_mode)}
     require(archive_record == observed_archive, "protocol receipt musl archive differs")
