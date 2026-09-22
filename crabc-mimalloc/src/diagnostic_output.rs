@@ -27,7 +27,9 @@
 use crate::config::VmOptionEnvironmentReader;
 use crate::lock::PrivateLock;
 use crate::os::ProcessUsage;
-use crate::statistics::{FinalStatCount, FinalStatisticsSnapshot};
+use crate::statistics::{
+    FinalStatCount, FinalStatisticsSnapshot, ProcessInfoCommittedDefaults,
+};
 use crabc_core::{Errno, thread::thread_pointer_identity};
 use core::cell::UnsafeCell;
 use core::ffi::{c_char, c_void, CStr};
@@ -365,10 +367,6 @@ impl DiagnosticOptionSnapshot {
         self.verbose != 0
     }
 
-    #[inline]
-    const fn show_stats_enabled(self) -> bool {
-        self.show_stats != 0
-    }
 }
 
 /// Scalar process information captured before final diagnostic output.
@@ -407,6 +405,30 @@ impl FinalProcessInfo {
             source_process_milliseconds(usage.system_milliseconds),
             usage.peak_resident_bytes,
             usage.major_page_faults,
+            numa_nodes,
+        )
+    }
+
+    /// Captures `mi_process_info`'s Unix-primitive failure defaults.
+    ///
+    /// Pinned `stats.c:568-588` starts user time, system time, and page faults
+    /// at zero and seeds peak RSS from the committed peak before
+    /// `_mi_prim_process_info`. On Linux a failed `getrusage` leaves that
+    /// scalar image intact. The process owner retains the paired current
+    /// committed default for its source process-info record; this final
+    /// renderer needs the corresponding peak RSS only.
+    #[inline]
+    pub(crate) fn from_source_committed_defaults(
+        elapsed_milliseconds: i64,
+        committed: ProcessInfoCommittedDefaults,
+        numa_nodes: usize,
+    ) -> Self {
+        Self::new(
+            source_process_milliseconds(elapsed_milliseconds),
+            0,
+            0,
+            committed.peak_bytes,
+            0,
             numa_nodes,
         )
     }
@@ -455,6 +477,52 @@ pub(crate) struct FinalProcessDiagnosticView {
     subprocess_sequence: usize,
     statistics: FinalStatisticsSnapshot,
     process: FinalProcessInfo,
+}
+
+/// A final source-diagnostic phase could not inspect its owner.
+///
+/// Source-disabled output is deliberately not an error: it is represented by
+/// `Ok(None)` from [`OutputOwner::final_statistics_enabled`] and `Ok(false)`
+/// from [`OutputOwner::final_process_done_message`]. The process lifecycle
+/// must instead retain after either error, because it has already crossed its
+/// one-way process-done boundary and must not turn an unavailable descriptor
+/// owner or a private-lock failure into silently disabled source output.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum FinalDiagnosticOutputError {
+    SourceOptionsUnavailable,
+    SourceOptionsLock(Errno),
+}
+
+/// Proof that pinned `show_stats || verbose` enabled one final statistics
+/// phase for this exact output owner.
+///
+/// The private lifetime binds this one-shot permit to the owner which read the
+/// descriptors. Only [`OutputOwner::final_statistics_enabled`] can construct
+/// it, so its emitter cannot repeat or substitute source option reads after
+/// the process caller completes its merge and sampling boundary.
+#[must_use]
+pub(crate) struct FinalStatisticsOutputPermit<'owner> {
+    output_owner: &'owner OutputOwner,
+}
+
+impl<'owner> FinalStatisticsOutputPermit<'owner> {
+    /// Emits the source-selected statistics from the already-captured scalar
+    /// view without inspecting any option descriptor.
+    ///
+    /// # Safety
+    ///
+    /// The caller must hold the existing ordinary retained diagnostic marker,
+    /// or the process owner's exact terminal descriptor-local diagnostic
+    /// scope. It must also satisfy [`OutputOwner::raw_message`]'s serialized
+    /// registration and in-flight callback lifetime obligations. The caller
+    /// must capture `view` after its source-prescribed merge and sampling
+    /// boundary, and call this in the retained or physical source print phase.
+    #[inline]
+    pub(crate) unsafe fn emit(self, view: FinalProcessDiagnosticView) {
+        // SAFETY: the permit was issued by this exact owner after source
+        // option selection, and the caller upholds the output lifetime above.
+        unsafe { render_final_statistics(self.output_owner, view) };
+    }
 }
 
 impl FinalProcessDiagnosticView {
@@ -1040,41 +1108,48 @@ impl OutputOwner {
         self.fputs_default(None, message.as_c_str());
     }
 
-    /// Emits the selected process-end statistics from an already-captured
-    /// scalar view.
+    /// Selects whether the current source process-final phase prints
+    /// statistics.
     ///
-    /// This is the Rust adapter for pinned `stats.c:356-430` and its two
-    /// source callers at `init.c:633-640` and `subproc.c:241-245`. It reads
-    /// only this owner's signed `show_stats` and `verbose` descriptors,
-    /// renders stack-bounded fragments, and dispatches through the existing
-    /// default output route. It never reads allocator state or obtains a
-    /// normal operation guard.
+    /// This is pinned `init.c:636-640` and `subproc.c:241-245`'s exact signed
+    /// `mi_option_is_enabled(show_stats) || mi_option_is_enabled(verbose)`
+    /// condition. The process caller must invoke it before its retained
+    /// Theap/Heap merges or physical process sampling: source performs no such
+    /// work when this condition is false. A nonzero `show_stats`, including a
+    /// negative signed value, short-circuits without reading, retrying, or
+    /// warning for `verbose`.
     ///
-    /// The caller determines the source phase. In particular, this must run
-    /// after the retained path's prescribed Theap/Heap merges, or after the
-    /// physical path's arena retirement, and before that path destroys its
-    /// PageMap. [`Self::final_process_done_message`] is intentionally a
-    /// separate later phase: its source caller is `init.c:646`, after the
-    /// final PageMap work.
+    /// A source-disabled gate returns `Ok(None)`. An unavailable option owner
+    /// or a private lock failure returns [`FinalDiagnosticOutputError`], so the
+    /// one-way process caller can retain instead of treating a broken source
+    /// boundary as disabled output. On `Ok(Some(_))` the opaque one-shot permit's
+    /// [`FinalStatisticsOutputPermit::emit`] method performs the later
+    /// source-selected print from an already-captured scalar image, without
+    /// rereading descriptors. This keeps the source gate before state work and
+    /// prevents the emitter from making a second option decision after the source
+    /// boundary.
     ///
     /// # Safety
     ///
     /// The caller must hold the existing ordinary retained diagnostic marker,
     /// or the process owner's exact terminal descriptor-local diagnostic
     /// scope. It must also satisfy [`Self::raw_message`]'s serialized
-    /// registration and in-flight callback lifetime obligations. The view
-    /// must have been captured after the caller's source-prescribed merge
-    /// order; this method does not validate, repeat, or reorder those merges.
-    pub(crate) unsafe fn final_statistics_output(&self, view: FinalProcessDiagnosticView) -> bool {
+    /// registration and in-flight callback lifetime obligations because an
+    /// invalid selected descriptor can deliver a source warning after this
+    /// method releases the descriptor lock.
+    pub(crate) unsafe fn final_statistics_enabled(
+        &self,
+    ) -> Result<Option<FinalStatisticsOutputPermit<'_>>, FinalDiagnosticOutputError> {
         if self.source_options_ready.load(Ordering::Acquire) != 1 {
-            return false;
+            return Err(FinalDiagnosticOutputError::SourceOptionsUnavailable);
         }
 
         let mut pending = PendingSourceWarnings::new();
         let enabled = {
-            let Ok(_guard) = self.source_options_lock.lock() else {
-                return false;
-            };
+            let _guard = self
+                .source_options_lock
+                .lock()
+                .map_err(FinalDiagnosticOutputError::SourceOptionsLock)?;
             // Pinned `||` reads show_stats first and only then verbose. Each
             // lazy descriptor retry remains serialized, and any invalid-value
             // warning is staged until after the descriptor lock is released.
@@ -1104,19 +1179,16 @@ impl OutputOwner {
         // same serialized output scope required by raw_message.
         unsafe { pending.deliver(self) };
         if !enabled {
-            return false;
+            return Ok(None);
         }
-        // SAFETY: each bounded line remains live for this synchronous default
-        // output dispatch and the enclosing caller owns it.
-        unsafe { render_final_statistics(self, view) };
-        true
+        Ok(Some(FinalStatisticsOutputPermit { output_owner: self }))
     }
 
     /// Emits only the common source final verbose tail.
     ///
     /// This is pinned `init.c:646`'s `_mi_verbose_message("process done
     /// %zu\n", sizeof(mi_page_t))` path. It is separate from
-    /// [`Self::final_statistics_output`] because the source places it after
+    /// [`Self::final_statistics_enabled`] because the source places it after
     /// the process's final PageMap/allocator cleanup and just before it marks
     /// preloading. It needs only the caller-captured page-record size, never a
     /// source owner, heap, TLS image, VM state, or normal operation guard.
@@ -1125,19 +1197,23 @@ impl OutputOwner {
     ///
     /// The caller must hold the same retained or exact terminal diagnostic
     /// authority and serialized output lifetime described by
-    /// [`Self::final_statistics_output`]. It must call this only at the
+    /// [`Self::final_statistics_enabled`]. It must call this only at the
     /// source's common final-tail point, after any applicable final statistics
     /// phase and PageMap retirement.
-    pub(crate) unsafe fn final_process_done_message(&self, page_record_bytes: usize) -> bool {
+    pub(crate) unsafe fn final_process_done_message(
+        &self,
+        page_record_bytes: usize,
+    ) -> Result<bool, FinalDiagnosticOutputError> {
         if self.source_options_ready.load(Ordering::Acquire) != 1 {
-            return false;
+            return Err(FinalDiagnosticOutputError::SourceOptionsUnavailable);
         }
 
         let mut pending = PendingSourceWarnings::new();
         let verbose = {
-            let Ok(_guard) = self.source_options_lock.lock() else {
-                return false;
-            };
+            let _guard = self
+                .source_options_lock
+                .lock()
+                .map_err(FinalDiagnosticOutputError::SourceOptionsLock)?;
             let (verbose, invalid_verbose) = unsafe {
                 self.source_option_get_unlocked(DIAGNOSTIC_VERBOSE)
             };
@@ -1149,11 +1225,11 @@ impl OutputOwner {
         // SAFETY: the descriptor lock was released before any foreign output.
         unsafe { pending.deliver(self) };
         if verbose == 0 {
-            return false;
+            return Ok(false);
         }
         // SAFETY: caller owns the current phase's diagnostic output authority.
         unsafe { render_final_verbose_tail(self, page_record_bytes) };
-        true
+        Ok(true)
     }
 
     /// Emits the selected `_mi_warning_message` path.
@@ -1684,8 +1760,9 @@ mod tests {
     extern crate std;
 
     use super::{
-        DiagnosticOptionSnapshot, FinalProcessDiagnosticView, FinalProcessInfo, OutputCallback,
-        OutputOwner, SourceFormattedMessage, ThreadWarningPrefix,
+        DiagnosticOptionSnapshot, FinalProcessDiagnosticView, FinalProcessInfo,
+        FinalStatisticsOutputPermit, OutputCallback, OutputOwner, SourceFormattedMessage,
+        ThreadWarningPrefix,
     };
     use crate::{
         os::ProcessUsage,
@@ -1873,6 +1950,14 @@ mod tests {
             final_statistics_fixture(),
             FinalProcessInfo::new(12_345, 5_678, 91_011, 4_096, 12, 3),
         )
+    }
+
+    fn final_statistics_permit(owner: &OutputOwner) -> FinalStatisticsOutputPermit<'_> {
+        // SAFETY: every caller owns the selected final output phase and its
+        // serialized callback lifetime through the permit's later emission.
+        unsafe { owner.final_statistics_enabled() }
+            .expect("the selected source final statistics gate must inspect its owner")
+            .expect("the selected source final statistics gate must be enabled")
     }
 
     fn install_final_output_environment(show_stats: &[u8], verbose: &[u8]) {
@@ -2109,6 +2194,20 @@ mod tests {
     }
 
     #[test]
+    fn final_process_info_uses_the_committed_defaults_when_unix_sampling_fails() {
+        let mut statistics = final_statistics_fixture();
+        statistics.committed = final_stat_count(-1, 0, i64::MAX);
+        let committed = statistics.process_info_committed_defaults();
+        assert_eq!(committed.current_bytes, 0);
+        assert_eq!(committed.peak_bytes, isize::MAX as usize);
+        assert_eq!(
+            FinalProcessInfo::from_source_committed_defaults(-1, committed, 3),
+            FinalProcessInfo::new(0, 0, 0, isize::MAX as usize, 0, 3),
+            "stats.c keeps its committed RSS/default counters when getrusage fails",
+        );
+    }
+
+    #[test]
     fn signed_show_stats_emits_the_pinned_final_statistics_layout() {
         let _environment_guard = DIAGNOSTIC_ENVIRONMENT_TEST_LOCK
             .lock()
@@ -2124,11 +2223,14 @@ mod tests {
         unsafe { owner.register_output(Some(capture_output), capture_argument(&capture)) };
         capture.reset();
 
+        // SAFETY: this selects source output before the caller performs the
+        // state work and sampling that construct the later scalar view.
+        let permit = final_statistics_permit(&owner);
         // SAFETY: this test supplies the completed source-order scalar image
         // and serializes final output with registration.
-        assert!(unsafe { owner.final_statistics_output(final_process_view()) });
+        unsafe { permit.emit(final_process_view()) };
         // SAFETY: verbose is zero in the same selected source option image.
-        assert!(!unsafe { owner.final_process_done_message(97) });
+        assert_eq!(unsafe { owner.final_process_done_message(97) }, Ok(false));
 
         let expected: &[&[u8]] = &[
             b"subproc 7\n",
@@ -2205,9 +2307,16 @@ mod tests {
         unsafe { owner.register_output(Some(capture_output), capture_argument(&capture)) };
         capture.reset();
 
-        // SAFETY: the scalar view is complete and output is serialized.
-        assert!(unsafe { owner.final_statistics_output(final_process_view()) });
+        // SAFETY: this runs the source gate before the later scalar capture.
+        let permit = final_statistics_permit(&owner);
         assert_eq!(DIAGNOSTIC_ENVIRONMENT_CALLS.load(Ordering::Relaxed), 5);
+        // SAFETY: the scalar view is complete and output is serialized.
+        unsafe { permit.emit(final_process_view()) };
+        assert_eq!(
+            DIAGNOSTIC_ENVIRONMENT_CALLS.load(Ordering::Relaxed),
+            5,
+            "the permit emitter must not revisit a source option after the merge/sampling boundary",
+        );
         assert_eq!(capture.count(), 35);
         assert_eq!(capture.message(0), b"subproc 7\n");
         assert!(
@@ -2232,11 +2341,13 @@ mod tests {
         unsafe { owner.register_output(Some(capture_output), capture_argument(&capture)) };
         capture.reset();
 
+        // SAFETY: the source gate precedes this test's later scalar view.
+        let permit = final_statistics_permit(&owner);
         // SAFETY: the view is complete and this test owns the current output phase.
-        assert!(unsafe { owner.final_statistics_output(final_process_view()) });
+        unsafe { permit.emit(final_process_view()) };
         let statistics_lines = capture.count();
         // SAFETY: this is the later init.c common-tail phase, after statistics.
-        assert!(unsafe { owner.final_process_done_message(97) });
+        assert_eq!(unsafe { owner.final_process_done_message(97) }, Ok(true));
         assert_eq!(statistics_lines, 35);
         assert_eq!(capture.count(), statistics_lines + 1);
         assert_eq!(capture.message(statistics_lines - 1), b"\n");
@@ -2268,8 +2379,10 @@ mod tests {
         };
         capture.capture.reset();
 
+        // SAFETY: this selects output before the test constructs its scalar image.
+        let permit = final_statistics_permit(&owner);
         // SAFETY: no registration overlaps this completed scalar output phase.
-        assert!(unsafe { owner.final_statistics_output(final_process_view()) });
+        unsafe { permit.emit(final_process_view()) };
         assert_eq!(capture.capture.count(), 35);
         assert!(capture.observed_available.load(Ordering::Relaxed));
     }
@@ -2291,10 +2404,32 @@ mod tests {
         capture.reset();
 
         // SAFETY: these source phases are serialized with registration.
-        assert!(!unsafe { owner.final_statistics_output(final_process_view()) });
+        assert!(matches!(
+            unsafe { owner.final_statistics_enabled() },
+            Ok(None)
+        ));
         // SAFETY: these source phases are serialized with registration.
-        assert!(!unsafe { owner.final_process_done_message(97) });
+        assert_eq!(unsafe { owner.final_process_done_message(97) }, Ok(false));
         assert_eq!(capture.count(), 0);
+    }
+
+    #[test]
+    fn unavailable_source_options_are_not_final_output_disabled() {
+        let owner = output_owner();
+
+        // SAFETY: these both stop before source output because the option
+        // owner is not initialized. An unavailable owner must remain
+        // distinguishable from source-disabled output so the one-way process
+        // caller retains rather than completing a partial transition.
+        assert!(matches!(
+            unsafe { owner.final_statistics_enabled() },
+            Err(FinalDiagnosticOutputError::SourceOptionsUnavailable)
+        ));
+        // SAFETY: same owner and no callback dispatch occur before this error.
+        assert!(matches!(
+            unsafe { owner.final_process_done_message(97) },
+            Err(FinalDiagnosticOutputError::SourceOptionsUnavailable)
+        ));
     }
 
     #[test]
@@ -2305,9 +2440,14 @@ mod tests {
         let _ = OutputOwner::raw_message as unsafe fn(&OutputOwner, SourceFormattedMessage);
         let _ = OutputOwner::warning
             as unsafe fn(&OutputOwner, DiagnosticOptionSnapshot, SourceFormattedMessage);
-        let _ = OutputOwner::final_statistics_output
-            as unsafe fn(&OutputOwner, FinalProcessDiagnosticView) -> bool;
-        let _ = OutputOwner::final_process_done_message as unsafe fn(&OutputOwner, usize) -> bool;
+        let _ = OutputOwner::final_statistics_enabled
+            as for<'owner> unsafe fn(
+                &'owner OutputOwner,
+            ) -> Result<Option<FinalStatisticsOutputPermit<'owner>>, FinalDiagnosticOutputError>;
+        let _ = FinalStatisticsOutputPermit::emit
+            as for<'owner> unsafe fn(FinalStatisticsOutputPermit<'owner>, FinalProcessDiagnosticView);
+        let _ = OutputOwner::final_process_done_message
+            as unsafe fn(&OutputOwner, usize) -> Result<bool, FinalDiagnosticOutputError>;
     }
 
     #[test]
@@ -2842,10 +2982,12 @@ mod tests {
         // overlaps either source-ordered final output phase.
         unsafe { final_owner.register_output(Some(capture_output), capture_argument(&final_capture)) };
         final_capture.reset();
+        // SAFETY: source selects this phase before its merge/sampling work.
+        let permit = final_statistics_permit(&final_owner);
         // SAFETY: this test passes the already captured scalar image through
         // the distinct stats.c and init.c tail phases in source order.
-        assert!(unsafe { final_owner.final_statistics_output(final_process_view()) });
-        assert!(unsafe { final_owner.final_process_done_message(97) });
+        unsafe { permit.emit(final_process_view()) };
+        assert_eq!(unsafe { final_owner.final_process_done_message(97) }, Ok(true));
         std::println!("CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_FINAL_STATISTICS_BEGIN");
         print_trace_capture("final_stats", &final_capture);
         std::println!("CRABC_MI_DIAGNOSTIC_OUTPUT_OWNER_FINAL_STATISTICS_END");

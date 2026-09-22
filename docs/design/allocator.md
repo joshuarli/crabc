@@ -497,11 +497,15 @@ prerequisite rather than closing it.
 The source map keeps `option-processing` partial. This private x86 relation
 covers only four signed descriptors, one source-formatted failed-`mbind`
 receiver, and a mandatory caller-supplied capability held before VM/OS/arena
-setup. The selected process-final adapter additionally uses `show_stats` or
-`verbose` to render the fixed `MI_STAT=0` process view after its caller has
-completed the pinned merge boundary. It preserves `stats.c`'s 255-byte output
-fragments and keeps the later `init.c` verbose `process done` message as a
-separate post-PageMap phase. It does not establish selected x86 libc startup,
+setup. The selected process-final adapter first evaluates the signed source
+`show_stats || verbose` condition, before its caller performs the pinned
+retaining merge or physical process sampling. Its opaque one-shot permit then
+renders the fixed `MI_STAT=0` process view after that selected boundary; its
+emitter does not re-read either descriptor. The captured committed current/peak
+defaults seed the source process-info fallback when Linux `getrusage` does not
+update it. The renderer preserves `stats.c`'s 255-byte output fragments and keeps the
+later `init.c` verbose `process done` message as a separate post-PageMap phase.
+It does not establish selected x86 libc startup,
 production FILE transport, environment parsing beyond the finite reader, the
 rest of the descriptor table, option mutation/public APIs, `mi_register_output`
 ABI, error/deferred-free callbacks, public/general statistics output, modes,

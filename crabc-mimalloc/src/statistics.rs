@@ -409,6 +409,22 @@ pub(crate) struct FinalStatCount {
     pub(crate) current: i64,
 }
 
+/// The committed-memory defaults that pinned `mi_process_info` establishes
+/// before its Unix primitive can overwrite process observations.
+///
+/// Pinned `stats.c:568-588` derives both current and peak commit from the
+/// main subprocess, seeds current/peak RSS from those same values, and then
+/// calls `_mi_prim_process_info`. Linux leaves the current fields alone and
+/// overwrites the peak RSS/user/system/fault fields only when `getrusage`
+/// succeeds.  This renderer-only scalar image lets the process owner retain
+/// those exact defaults when its raw sampler fails; it carries no subprocess
+/// reference or sampling capability.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ProcessInfoCommittedDefaults {
+    pub(crate) current_bytes: usize,
+    pub(crate) peak_bytes: usize,
+}
+
 /// The exact `MI_STAT == 0` field subset consumed by `stats.c`'s process-end
 /// display path.
 ///
@@ -446,6 +462,33 @@ pub(crate) struct FinalStatisticsSnapshot {
     pub(crate) page_searches: i64,
     pub(crate) page_searches_count: i64,
     pub(crate) heaps_delete_wait: i64,
+}
+
+impl FinalStatisticsSnapshot {
+    /// Captures the main-subprocess committed defaults used by
+    /// `mi_process_info` before `_mi_prim_process_info`.
+    ///
+    /// This is deliberately a scalar accessor on an already-captured final
+    /// snapshot. It neither reloads statistics nor obtains a source owner.
+    #[inline]
+    pub(crate) const fn process_info_committed_defaults(&self) -> ProcessInfoCommittedDefaults {
+        ProcessInfoCommittedDefaults {
+            current_bytes: source_process_info_committed_bytes(self.committed.current),
+            peak_bytes: source_process_info_committed_bytes(self.committed.peak),
+        }
+    }
+}
+
+/// Pinned `stats.c:575-576`'s signed `int64_t` to `size_t` conversion.
+#[inline]
+const fn source_process_info_committed_bytes(value: i64) -> usize {
+    if value < 0 {
+        0
+    } else if value < isize::MAX as i64 {
+        value as usize
+    } else {
+        isize::MAX as usize
+    }
 }
 
 #[inline]
