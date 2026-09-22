@@ -184,8 +184,10 @@ pub(crate) enum MetaBitmapProjectionError {
 /// address prevent it being released through a different detached metadata
 /// theap. A later TLD/theap lifecycle owner that needs to retain metadata
 /// must store and move this exact capability with its owner; it must not
-/// reconstruct ownership from the raw pointer. There is deliberately no
-/// raw-parts escape hatch before that lifecycle exists.
+/// reconstruct ownership from an arbitrary raw pointer. Process-done
+/// retention has a separate role-specific consume/recover boundary for TLD
+/// and Theap images; its unsafe inverse requires an earlier explicit transfer
+/// and exclusive source ownership, never just a matching pointer or memory ID.
 #[must_use = "metadata allocation capabilities must be released through their owning MetaAllocator"]
 pub(crate) struct MetaAllocation<'owner> {
     pointer: NonNull<u8>,
@@ -809,6 +811,115 @@ impl<'owner> MetaAllocation<'owner> {
             return Err(MetaBitmapProjectionError::InvalidImage);
         }
         Ok(())
+    }
+}
+
+impl MetaAllocation<'static> {
+    /// Whether the exact initialized dynamic-Theap capability can transfer
+    /// into its source image. This preflight does not consume ownership.
+    pub(crate) fn can_transfer_source_retained_theap(&self) -> bool {
+        self.dynamic_theap().is_some_and(|theap| self.matches_memory_id(theap.memory_id()))
+    }
+
+    /// Whether the exact initialized TLD capability can transfer into its
+    /// source image. This preflight does not consume ownership.
+    pub(crate) fn can_transfer_source_retained_tld(&self) -> bool {
+        if !self.is_live()
+            || !self.thread_local_data_initialized
+            || self.dynamic_theap_initialized
+            || self.dynamic_thread_local_backing_projected
+            || self.dynamic_arena_pages_initialized
+            || self.requested_size != size_of::<ThreadLocalData>()
+            || self.pointer.as_ptr().addr() % align_of::<ThreadLocalData>() != 0
+            || !self.has_consistent_malloc_provenance()
+        {
+            return false;
+        }
+        // SAFETY: the private initialized-role marker and exact extent prove
+        // this source image. The capability retains its allocation lifetime.
+        let tld = unsafe { self.pointer.cast::<ThreadLocalData>().as_ref() };
+        self.matches_memory_id(tld.memory_id())
+    }
+
+    /// Consumes the Rust capability into the existing source Theap image.
+    ///
+    /// This is the ownership transfer used before the departing thread's TLS
+    /// wrapper disappears after process done. The image's unchanged Malloc
+    /// memory ID retains base/extent/provenance; the surrounding lifecycle
+    /// retains its selected metadata-owner identity. No allocation is freed,
+    /// no source list is mutated, and the live-allocation audit is unchanged.
+    /// The returned pointer is not a second allocation capability. Recovery
+    /// is possible only through the unsafe, role-specific inverse below.
+    pub(crate) fn into_source_retained_theap(self) -> Result<NonNull<Theap>, Self> {
+        if !self.can_transfer_source_retained_theap() { return Err(self); }
+        let pointer = self.pointer.cast();
+        core::mem::forget(self);
+        Ok(pointer)
+    }
+
+    /// Consumes the Rust capability into the existing source TLD image.
+    /// Source registration, live-thread count, and Theap links remain intact.
+    /// The lifecycle must disable its TLS owner before the TLS mapping is
+    /// released and retain the source image for the eventual terminal owner.
+    pub(crate) fn into_source_retained_tld(self) -> Result<NonNull<ThreadLocalData>, Self> {
+        if !self.can_transfer_source_retained_tld() { return Err(self); }
+        let pointer = self.pointer.cast();
+        core::mem::forget(self);
+        Ok(pointer)
+    }
+
+    /// Recovers only a previously transferred dynamic-Theap capability.
+    ///
+    /// # Safety
+    ///
+    /// `pointer` must be the still-live image returned by exactly one prior
+    /// `into_source_retained_theap` on an allocation belonging to `owner`.
+    /// Its stored memory ID and typed image must remain unchanged and valid.
+    /// That transfer must not already have been recovered; no Rust wrapper,
+    /// page session, callback, or other reference may access the image during
+    /// recovery. The caller must have whole-process quiescence and exclusive
+    /// source-list authority, and must preserve the source lifetime through
+    /// eventual release. Source-list membership alone does not prove transfer.
+    /// A rejected image remains source-owned; rejection grants no raw-free
+    /// authority and must not discard its source owner.
+    pub(crate) unsafe fn recover_source_retained_theap(
+        owner: Pin<&'static MetaAllocator>, pointer: NonNull<Theap>,
+    ) -> Option<Self> {
+        if pointer.as_ptr().addr() % align_of::<Theap>() != 0 { return None; }
+        // SAFETY: the caller proves this exact source image remains valid
+        // and exclusively retained after its explicit capability transfer.
+        let memory = unsafe { pointer.as_ref().memory_id() };
+        let mut allocation = Self::new(owner, pointer.cast(), size_of::<Theap>(),
+            MetaAllocationOrigin::DirectZeroed);
+        if !allocation.matches_memory_id(memory) { return None; }
+        allocation.dynamic_theap_initialized = true;
+        Some(allocation)
+    }
+
+    /// Recovers only a previously transferred TLD capability.
+    ///
+    /// # Safety
+    ///
+    /// `pointer` must be the still-live, unchanged image returned by one prior
+    /// `into_source_retained_tld` belonging to `owner`, never yet recovered.
+    /// The caller must prove whole-process quiescence, exclusive source TLD
+    /// ownership, no surviving TLS wrapper or aliases accessing this image,
+    /// and valid unchanged source memory ID and backing. Source registration
+    /// alone is insufficient. Retain the recovered capability while any
+    /// source Theap still references the TLD; recovery itself does not change
+    /// source registration or counts. A rejected image stays source-owned.
+    pub(crate) unsafe fn recover_source_retained_tld(
+        owner: Pin<&'static MetaAllocator>, pointer: NonNull<ThreadLocalData>,
+    ) -> Option<Self> {
+        if pointer.as_ptr().addr() % align_of::<ThreadLocalData>() != 0 { return None; }
+        // SAFETY: the caller supplies the same explicit-transfer proof as
+        // the Theap inverse, for the separately typed TLD image.
+        let memory = unsafe { pointer.as_ref().memory_id() };
+        let mut allocation = Self::new(owner, pointer.cast(), size_of::<ThreadLocalData>(),
+            MetaAllocationOrigin::DirectZeroed);
+        if !allocation.matches_memory_id(memory) { return None; }
+        allocation.thread_local_data_initialized = true;
+        Some(allocation)
     }
 }
 
@@ -2283,6 +2394,168 @@ mod tests {
         allocator.free(&mut first).unwrap();
         std::println!("m2.metadata.capacity.bytes={size}");
         std::println!("m2.metadata.capacity.zeroed_malloc_released=1");
+    }
+
+    #[test]
+    fn source_retained_metadata_transfer_preserves_typed_owner_across_thread_handoff() {
+        let allocator = static_allocator();
+        bind_process_fixture(allocator, false);
+        let mut theap = allocator.zalloc(config(), size_of::<Theap>()).unwrap();
+        let mut tld = allocator.zalloc(config(), size_of::<ThreadLocalData>()).unwrap();
+        assert!(!theap.can_transfer_source_retained_theap());
+        assert!(!tld.can_transfer_source_retained_tld());
+        assert!(theap.initialize_dynamic_theap_metadata().is_some());
+        assert!(tld.initialize_thread_local_data_subprocess_attached_no_theap(
+            LiveThreadId::new(current_entry_thread().unwrap()).unwrap(),
+            ThreadSequence::from_previous_total_count(9), 0,
+            allocator.test_default_subprocess(),
+        ));
+        assert!(!theap.can_transfer_source_retained_tld());
+        assert!(!tld.can_transfer_source_retained_theap());
+        let theap_memory = theap.memory_id();
+        let tld_memory = tld.memory_id();
+        let theap_pointer = match theap.into_source_retained_theap() {
+            Ok(pointer) => pointer, Err(_) => panic!("typed Theap transfers"),
+        };
+        let tld_pointer = match tld.into_source_retained_tld() {
+            Ok(pointer) => pointer, Err(_) => panic!("typed TLD transfers"),
+        };
+        assert_eq!(allocator.test_allocation_audit().live_capability_count, 2);
+        let published_theap = AtomicPtr::new(core::ptr::null_mut());
+        let published_tld = AtomicPtr::new(core::ptr::null_mut());
+        published_theap.store(theap_pointer.as_ptr(), Ordering::Release);
+        published_tld.store(tld_pointer.as_ptr(), Ordering::Release);
+        let (theap, tld) = thread::scope(|scope| {
+            scope.spawn(|| {
+                // SAFETY: both images were explicitly transferred above;
+                // this sole consumer acquires their publication, and the
+                // isolated process has no other source/TLS/list owner. It
+                // recovers each once before returning either allocation.
+                let mut theap = unsafe { MetaAllocation::recover_source_retained_theap(
+                    allocator, NonNull::new(published_theap.load(Ordering::Acquire)).unwrap(),
+                ) }.unwrap();
+                let mut tld = unsafe { MetaAllocation::recover_source_retained_tld(
+                    allocator, NonNull::new(published_tld.load(Ordering::Acquire)).unwrap(),
+                ) }.unwrap();
+                assert!(theap.dynamic_theap_mut().is_some());
+                assert!(tld.thread_local_data_mut().is_some());
+                assert_eq!(allocator.test_allocation_audit().live_capability_count, 2);
+                (theap, tld)
+            }).join().unwrap()
+        });
+        assert!(theap.matches_memory_id(theap_memory));
+        assert!(tld.matches_memory_id(tld_memory));
+        assert!(MetaRelease::Malloc(theap).release().is_ok());
+        assert!(MetaRelease::Malloc(tld).release().is_ok());
+        assert_eq!(allocator.test_allocation_audit().live_capability_count, 0);
+    }
+
+    #[test]
+    fn rejected_source_metadata_transfer_returns_the_original_live_capability() {
+        let allocator = static_allocator();
+        let block = allocator.zalloc(config(), size_of::<Theap>()).unwrap();
+        let pointer = block.pointer();
+        let memory = block.memory_id();
+        let mut block = match block.into_source_retained_theap() {
+            Err(block) => block, Ok(_) => panic!("uninitialized bytes cannot transfer as a Theap"),
+        };
+        assert!(block.is_live());
+        assert_eq!(block.pointer(), pointer);
+        assert!(block.matches_memory_id(memory));
+        assert!(block.initialize_dynamic_theap_metadata().is_some());
+        let mut block = match block.into_source_retained_tld() {
+            Err(block) => block, Ok(_) => panic!("a Theap cannot transfer as a TLD"),
+        };
+        allocator.free(&mut block).unwrap();
+        assert_eq!(allocator.test_allocation_audit().live_capability_count, 0);
+    }
+
+    /// Direct source metadata calls use the same detached owner after thread
+    /// handoff. The pinned C companion is `m2_metadata_x86_64.c`; this checks
+    /// payload/provenance publication and failed replacement retention through
+    /// the production process backing, without a request-specific fault seam.
+    #[test]
+    fn process_metadata_cross_thread_publication_and_replacement_trace() {
+        let allocator = static_allocator();
+        let binding = bind_process_fixture(allocator, false);
+        let subprocess = binding.process().subprocess();
+        let map = unsafe { binding.page_map().page_map_for_owned_ranges() }.unwrap();
+        let barrier = Barrier::new(4);
+        let completed = AtomicUsize::new(0);
+        thread::scope(|scope| {
+            let mut workers = std::vec::Vec::new();
+            for worker in 0..4 {
+                let barrier = &barrier;
+                let completed = &completed;
+                workers.push(scope.spawn(move || {
+                    barrier.wait();
+                    let mut published = std::vec::Vec::new();
+                    for iteration in 0..24 {
+                        let size = [0, 1, 63, 1025, 4097, 131073][iteration % 6];
+                        let alignment = [8, 64, 4096, 65536][(worker + iteration) % 4];
+                        let block = if iteration % 2 == 0 {
+                            allocator.zalloc(config(), size).unwrap()
+                        } else {
+                            allocator.zalloc_aligned(config(), size, alignment).unwrap()
+                        };
+                        if iteration % 2 != 0 {
+                            assert_eq!(block.pointer().as_ptr().addr() % alignment, 0);
+                        }
+                        assert_eq!(block.memory_id().kind(), MemoryKind::Malloc);
+                        assert_eq!(block.memory_id().size(), Some(size));
+                        assert!(block.memory_id().initially_zero());
+                        let usable = {
+                            let mut entry = allocator.enter().unwrap();
+                            unsafe { entry.allocator().usable_size(block.pointer()) }.unwrap()
+                        };
+                        // SAFETY: the exclusive allocation owns its full usable
+                        // payload. Padding is initialized too because source
+                        // rezalloc copies usable size, not its metadata request.
+                        unsafe {
+                            assert!(core::slice::from_raw_parts(block.pointer().as_ptr(), size)
+                                .iter().all(|byte| *byte == 0));
+                            core::ptr::write_bytes(block.pointer().as_ptr(), 0xa5, usable);
+                        }
+                        published.push((block, usable, iteration));
+                    }
+                    completed.fetch_add(1, Ordering::Release);
+                    published
+                }));
+            }
+            // Join transfers the exact allocation capabilities and establishes
+            // publication of all payload writes from the allocating threads.
+            for worker in workers {
+                for (mut old, usable, iteration) in worker.join().unwrap() {
+                    let pointer = old.pointer();
+                    let memory = old.memory_id();
+                    assert!(matches!(allocator.rezalloc(config(), Some(&mut old), usize::MAX),
+                        Err(MetaError::AllocationUnavailable)));
+                    assert!(old.is_live());
+                    assert_eq!(old.pointer(), pointer);
+                    assert!(old.matches_memory_id(memory));
+                    // SAFETY: the transferred live capability keeps this page
+                    // registered while the lookup and payload reads execute.
+                    let page = unsafe { map.checked_lookup(pointer.as_ptr()) };
+                    assert!(subprocess.is_metadata_page(unsafe { page.as_ref() }));
+                    let new_size = if iteration % 2 == 0 { usable + 47 } else { usable / 2 };
+                    let replacement = allocator.rezalloc(config(), Some(&mut old), new_size).unwrap();
+                    let bytes = unsafe { core::slice::from_raw_parts(replacement.pointer().as_ptr(), new_size) };
+                    assert!(bytes[..usable.min(new_size)].iter().all(|byte| *byte == 0xa5));
+                    assert!(bytes[usable.min(new_size)..].iter().all(|byte| *byte == 0));
+                    assert!(!old.is_live());
+                    assert!(MetaRelease::Malloc(replacement).release().is_ok());
+                }
+            }
+        });
+        assert_eq!(completed.load(Ordering::Acquire), 4);
+        assert_eq!(allocator.test_allocation_audit().live_capability_count, 0);
+        let mut entry = allocator.enter().unwrap();
+        let MetadataPageAllocator::Process(engine) = entry.allocator() else { panic!("process engine"); };
+        assert!(engine.collect_retired(true));
+        std::println!("m2.metadata.lifecycle.workers=4");
+        std::println!("m2.metadata.lifecycle.published=96");
+        std::println!("m2.metadata.lifecycle.failed_replacement_preserved=96");
+        std::println!("m2.metadata.lifecycle.replaced_released=96");
     }
 
     fn bind_process_fixture(allocator: Pin<&'static MetaAllocator>, disallow_arena: bool)

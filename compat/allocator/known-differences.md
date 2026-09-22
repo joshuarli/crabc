@@ -400,12 +400,34 @@ assertion-invalid input, not C/Rust invalid-input parity.
   does not
   claim the rest of `_mi_theap_init`, mutable option/OS processing, TLD/Heap
   list relations or locking, guarded initialization/statistics, or random-split
-  parity. A first valid prepared Rust metadata request forms a private
-  direct-OS PageMap/external-arena backing rather than claiming
-  C's normal `_mi_meta_zalloc` backing route. It exposes
-  only immutable ready witnesses, does not reserve the process-shared arena,
-  initialize pthread or TLS keys, route allocations/frees, coordinate general
-  concurrent startup, or destroy/restart the process. Identity-capable bounded `initialize` callers
+  parity. Historical explicit-config fixtures form a private direct-OS
+  PageMap/external-arena backing. The production process binding instead uses
+  `MetaAllocator::bind_process_backing` and `ProcessMetadataPageAllocator`
+  with the shared PageMap and normal process arena/OS policy. Its private
+  backing lock serializes the detached page engine across threads, including
+  exact-owner free. The direct pinned-C companion
+  `compat/allocator/m2_metadata_x86_64.c` and Rust
+  `meta::tests::process_metadata_cross_thread_publication_and_replacement_trace`
+  exercise concurrent direct/aligned allocation, cross-thread payload and
+  Malloc-provenance transfer, oversized replacement refusal retaining the old
+  allocation, grow/shrink usable-prefix copying, zeroed growth, and typed
+  release. C clears the failed replacement's output memory ID; the test saves
+  the old ID separately, corresponding to Rust retaining the old capability.
+  `MetaAllocation::into_source_retained_theap` and
+  `into_source_retained_tld` explicitly consume only their initialized typed
+  Malloc capabilities into the corresponding source images. Their unsafe
+  role-specific recovery inverses require proof of that earlier transfer,
+  unchanged exact source memory ID, same pinned metadata allocator, exclusive
+  quiescent source ownership, and no surviving or previously recovered wrapper.
+  Transfer and recovery preserve allocation accounting; they neither free an
+  image nor mutate source registration or lists. Rejection preserves the prior
+  capability or source image. This narrow lifetime boundary lets the shutdown
+  owner retain source state before TLS storage disappears; source membership
+  by itself never permits recovery.
+  This does not close generic non-Malloc metadata release or process teardown:
+  the detached bootstrap still owns its own Heap image, and its process-lived
+  engine keeps shared PageMap references. It does not initialize pthread or TLS
+  keys or prove general concurrent startup. Identity-capable bounded `initialize` callers
   do hold the source-shaped once gate through terminal publication and private
   lock release; recursive owner entry returns the typed `Initializing` refusal
   without executing a source body, while a foreign caller waits. The Rust-only
