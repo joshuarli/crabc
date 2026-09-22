@@ -2963,7 +2963,9 @@ differential, and performance evidence specified in
 Pinned `src/theap.c:mi_theap_collect_ex(MI_FORCE)` visits all owned queues
 before arena collection; `src/page.c:mi_malloc_generic_fallback` then retries
 allocation. `PageAllocatorEngine::collect_all_pages_for_allocation_retry`
-preserves that page/backing order. Generic callback administration and
+ports that post-prepass page/backing transition. Its retained Rust prepass also
+has an existing non-abandoning full-page scan, so this is not a claim of an
+exact whole-source collection sequence. Generic callback administration and
 statistics merging are still separate incomplete behavior.
 
 Unlike C's void, best-effort OS free, Rust retains a failed mapping release in

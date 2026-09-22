@@ -37637,10 +37637,12 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// bins cannot release that page's backing for an allocation in another
     /// bin. Keep this page traversal distinct from ordinary retirement.
     ///
-    /// This is the page/backing portion of `mi_theap_collect_ex(MI_FORCE)`;
-    /// generic deferred-callback administration and statistics registration
-    /// remain outside this engine. The retired prepass and all queue visits
-    /// precede the forced arena purge, matching the source release order.
+    /// This ports the post-prepass page/backing portion of the forced
+    /// collection transition. The retained Rust prepass also has an existing
+    /// non-abandoning full-page scan, so it is not asserted to be the exact
+    /// whole-source collection sequence. Generic deferred-callback
+    /// administration and statistics registration remain outside this engine.
+    /// The prepass and all queue visits precede the forced arena purge here.
     fn collect_all_pages_for_allocation_retry(&mut self) -> bool {
         if !self.collect_retired_pages(true) {
             return false;
@@ -37682,8 +37684,11 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         self.arena.collect(self.page_map.memory_config(), true, self.thread_sequence)
     }
 
-    /// `_mi_theap_collect_retired` ends after the optional non-abandoning
-    /// full-queue scan. Its caller selects when to perform arena collection.
+    /// Existing Rust retirement prepass. It also keeps the older
+    /// non-abandoning full-queue scan; the OOM source mapping claims only the
+    /// later all-queue/arena transition in
+    /// [`Self::collect_all_pages_for_allocation_retry`]. Its caller selects
+    /// when to perform arena collection.
     fn collect_retired_pages(&mut self, force: bool) -> bool {
         #[cfg(test)]
         if force {
