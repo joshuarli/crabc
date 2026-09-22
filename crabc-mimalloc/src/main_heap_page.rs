@@ -8983,6 +8983,94 @@ mod tests {
         });
     }
 
+    #[test]
+    fn persistent_owner_local_os_singleton_full_abandons_then_direct_free_releases() {
+        with_owner_local_fixture(true, |attachment, mut owner, pair| {
+            let block = owner
+                .with_local_allocator(attachment, |allocator| {
+                    let block = allocator
+                        .allocate_aligned(SMALL_MAX_OBJ_SIZE + 1, 128 * 1024)
+                        .expect("the ordinary later owner allocates its full OS singleton");
+                    let page = NonNull::new(
+                        // SAFETY: `block` is current in this bound local operation.
+                        unsafe { allocator.engine.page_for_block(block) },
+                    )
+                    .expect("the full OS singleton is PageMap-published");
+                    let page = unsafe { page.as_ref() };
+                    assert!(page.memid().is_os());
+                    assert_eq!(page.reserved(), 1);
+                    assert_eq!(page.used(), 1);
+                    assert!(page.is_queue_detached());
+                    assert_eq!(
+                        page.xthread_id.load(Ordering::Acquire) & !crate::types::PAGE_FLAG_MASK,
+                        THREAD_ID_ABANDONED,
+                        "the ordinary abandoning option applies page.c:_mi_page_abandon to an OS singleton"
+                    );
+                    // SAFETY: `block` is the exact once-live client in the
+                    // current owner-local operation; its full transition has
+                    // detached the source BIN_HUGE member and linked the
+                    // non-arena abandoned-list predecessor.
+                    unsafe { allocator.free(block) }
+                        .expect("the detached OS singleton completes its source direct-free tail");
+                    block
+                })
+                .expect("the complete OS singleton transition stays in one current owner operation");
+            let page_map = unsafe { pair.page_map_for_owned_ranges() }
+                .expect("the process map remains available for the released owned range");
+            assert!(
+                unsafe { page_map.checked_lookup(block.as_ptr()) }.is_null(),
+                "direct free unregisters the OS singleton before the owner can finish"
+            );
+            owner
+                .finish(attachment)
+                .expect("the direct OS singleton release leaves the persistent engine quiescent");
+            attachment
+                .finish_after_user_destructors()
+                .expect("the completed OS singleton transition leaves normal later teardown quiescent");
+        });
+    }
+
+    #[test]
+    fn persistent_owner_local_os_singleton_direct_free_retains_failed_unmap_owner() {
+        with_owner_local_fixture(false, |attachment, mut owner, pair| {
+            let fault = fault::install(fault::Plan::disabled());
+            let block = owner
+                .with_local_allocator(attachment, |allocator| {
+                    allocator
+                        .allocate_aligned(SMALL_MAX_OBJ_SIZE + 1, 128 * 1024)
+                        .expect("the ordinary later owner allocates its full OS singleton")
+                })
+                .expect("the OS singleton allocation stays in one current owner operation");
+            fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+            let audit = owner
+                .with_local_allocator(attachment, |allocator| {
+                    // SAFETY: `block` is the exact once-live OS singleton
+                    // client from the preceding owner-local operation.
+                    unsafe { allocator.free(block) }
+                        .expect("a failed terminal unmap still accepts the source client free");
+                    allocator.engine.test_finish_audit()
+                })
+                .expect("the failed-release observation remains one current owner operation");
+            assert_eq!(fault.observed(), 1, "the terminal path attempts one source unmap");
+            fault.set(fault::Plan::disabled());
+            assert!(audit.pending_os_release);
+            assert_eq!(audit.page_count, 0);
+            assert!(!audit.collection_poisoned);
+            let page_map = unsafe { pair.page_map_for_owned_ranges() }
+                .expect("the process map remains observable after the terminal release boundary");
+            assert!(
+                unsafe { page_map.checked_lookup(block.as_ptr()) }.is_null(),
+                "the retained mapping owner begins only after PageMap unregistration"
+            );
+            drop(owner);
+            assert_eq!(
+                attachment.finish_after_user_destructors(),
+                Err(MainHeapThreadAttachmentError::OwnerLocalPageEngineTerminal),
+                "a failed unmap retains the unique published mapping owner instead of normalizing teardown"
+            );
+        });
+    }
+
     /// A retained post-low-owner range closes the selector before the outer
     /// user callback returns. The second allocation is deliberately Small:
     /// it would otherwise take the direct fresh-page route without touching
