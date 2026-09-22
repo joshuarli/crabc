@@ -68,12 +68,18 @@ class InitializationTldMatrixReaderTests(unittest.TestCase):
             with self.subTest(rows=malformed), self.assertRaises(EvidenceError):
                 validate_initialization_tld_branch_rows(malformed)
 
-    def test_later_tld_failure_row_does_not_claim_unobserved_rust_events(self) -> None:
-        keys = branch_trace_keys("later-main-tld-metadata-allocation-failure")
-        self.assertFalse(any(".order." in key for key in keys))
+    def test_later_tld_metadata_rows_do_not_claim_unobserved_rust_events(self) -> None:
+        success_keys = branch_trace_keys("later-main-tld-metadata-allocation-success")
+        self.assertFalse(any(".order." in key for key in success_keys))
+        self.assertNotIn(
+            "m2.initialization.later_tld_metadata_success.post.metadata_attempted_once",
+            success_keys,
+        )
+        failure_keys = branch_trace_keys("later-main-tld-metadata-allocation-failure")
+        self.assertFalse(any(".order." in key for key in failure_keys))
         self.assertNotIn(
             "m2.initialization.later_tld_metadata_failure.post.metadata_attempted_once",
-            keys,
+            failure_keys,
         )
 
     @staticmethod
@@ -163,15 +169,22 @@ class InitializationM2FragmentReaderTests(unittest.TestCase):
         path.write_text(json.dumps(fragment), encoding="utf-8")
         return path
 
-    def test_fragment_includes_the_fixed_later_tld_metadata_failure(self) -> None:
+    def test_fragment_includes_the_fixed_later_tld_metadata_outcomes(self) -> None:
         loaded = load_fragment(self.write_fragment(self.fragment))
-        self.assertIn(
-            "later-main-tld-metadata-allocation-failure",
-            [branch["id"] for branch in loaded["component"]["branch_matrix"]],
+        self.assertEqual(
+            [
+                branch["id"]
+                for branch in loaded["component"]["branch_matrix"]
+                if branch["id"].startswith("later-main-tld-metadata-allocation-")
+            ],
+            [
+                "later-main-tld-metadata-allocation-success",
+                "later-main-tld-metadata-allocation-failure",
+            ],
         )
         self.assertEqual(
             [check["expected_passed_test_count"] for check in loaded["component"]["checks"]],
-            [4, 1],
+            [5, 1],
         )
 
     def test_fragment_rejects_changed_anchor_definition_or_missing_direct_branch(self) -> None:

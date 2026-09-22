@@ -104,6 +104,16 @@
         "missing_conditions": ["The selected source static arm does not qualify generic/later TLD allocation, metadata backing/publication, or automatic teardown."]
       },
       {
+        "id": "later-main-tld-metadata-allocation-success",
+        "disposition": "bounded-direct-source-differential",
+        "source_scope": "src/init.c:253-272 generic/later mi_tld_create ticket, successful _mi_meta_zalloc Malloc result, normal mi_tld_init, live registration, and returned TLD post-state.",
+        "source_anchors": [
+          { "member": "src/init.c", "start_line": 253, "end_line": 272, "sha256": "077d0451e7d7a572cdb1cfd6ff9b95bd43e06c22345679faf1c8e7e16f70b9d8" }
+        ],
+        "evidence_check_ids": ["initialization-tld-direct-source-matrix"],
+        "missing_conditions": ["The pinned-C fixture separately verifies its selected source event order. Rust compares independently observed metadata-backed no-Theap TLD post-state only; neither automatic teardown nor later Theap/list/TLS/root publication is qualified here."]
+      },
+      {
         "id": "later-main-tld-metadata-allocation-failure",
         "disposition": "bounded-direct-source-differential",
         "source_scope": "src/init.c:253-272 generic/later mi_tld_create ticket, failed _mi_meta_zalloc, ENOMEM report, and NULL return before mi_tld_init.",
@@ -111,14 +121,14 @@
           { "member": "src/init.c", "start_line": 253, "end_line": 272, "sha256": "077d0451e7d7a572cdb1cfd6ff9b95bd43e06c22345679faf1c8e7e16f70b9d8" }
         ],
         "evidence_check_ids": ["initialization-tld-direct-source-matrix"],
-        "missing_conditions": ["This one direct allocation-failure arm does not qualify successful generic/later TLD construction, Theap or metadata publication, automatic teardown, or runtime ownership."]
+        "missing_conditions": ["This one direct allocation-failure arm does not qualify the later Theap/list/TLS/root publication receiving routes, automatic teardown, or runtime ownership."]
       }
     ],
     "unqualified_failure_matrix": [
       {
         "id": "generic-later-tld-creation-and-metadata-publication",
-        "source_scope": "src/init.c generic/later mi_tld_create and its metadata/publication receiving routes.",
-        "required_evidence": ["typed metadata/publication owners", "native generic/later TLD source and failure matrix"]
+        "source_scope": "src/init.c generic/later mi_tld_create receiving routes after the selected no-Theap TLD success/failure records, including later Theap/list/TLS/root publication.",
+        "required_evidence": ["typed metadata/publication owners", "native generic/later attached-publication matrix"]
       },
       {
         "id": "automatic-thread-and-process-teardown",
@@ -135,8 +145,8 @@
       {
         "id": "initialization-tld-direct-source-matrix",
         "kind": "c-rust-initialization-tld-source-matrix",
-        "target": "x86_64_initialization_tld_evidence::four_fixed_direct_tld_branches",
-        "expected_passed_test_count": 4
+        "target": "x86_64_initialization_tld_evidence::five_fixed_direct_tld_branches",
+        "expected_passed_test_count": 5
       },
       {
         "id": "initialization-explicit-worker-recovery-lifecycle",
@@ -146,7 +156,7 @@
       }
     ],
     "remaining_conditions": [
-      "Successful generic/later TLD allocation and its normal Theap/metadata publication transactions remain outside this bounded direct-source matrix. The selected later-TLD metadata-allocation failure compares pinned-C/Rust pre-registration NULL/ENOMEM state; the C fixture separately checks source event order, which the Rust trace does not claim to observe.",
+      "The selected later-TLD success record compares the direct pinned-C source arm's metadata-backed normal-TLD post-state with Rust's production no-Theap typed owner. Its C fixture separately verifies the source event order; Rust does not alias that order or infer metadata attempts from tickets. Later Theap/list/TLS/root publication remains outside this bounded direct-source matrix. The selected failure record compares pinned-C/Rust pre-registration NULL/ENOMEM state under the same order boundary.",
       "Automatic pthread-destructor and process-shutdown routes remain unqualified.",
       "The retained explicit worker recovery receipt does not complete allocator-recursion or make Rust-only failure checks C fault equivalence."
     ]

@@ -678,6 +678,7 @@ mod tests {
     use crate::compiler_tls::{
         cached_theap, default_theap, dynamic_backing_peek, fast_slot_peek,
     };
+    use crate::main_theap::{MainStaticAttachmentStorage, MainStaticTheapAttachment};
     use crate::os::PageSize;
     use crate::subproc::MainSubprocess;
     use crate::types::MemoryKind;
@@ -772,6 +773,245 @@ mod tests {
         })
         .join()
         .expect("the bounded current-thread lifecycle completes");
+    }
+
+    /// Emits the independently observable post-state of one successful
+    /// generic/later `mi_tld_create` metadata arm.
+    ///
+    /// The paired pinned-C producer directly includes `src/init.c` and
+    /// verifies its call order internally. This test takes the existing
+    /// production metadata-backed TLD path after ticket zero is live, then
+    /// observes its returned typed image and allocation provenance. It has no
+    /// instrumentation at the C-equivalent ticket, metadata, lock, NUMA, or
+    /// result events, so neither ticket/counter state nor a terminal boolean
+    /// is presented as cross-language event-order or allocation-attempt
+    /// equivalence. The direct no-Theap owner is intentional: later
+    /// Theap/list/TLS publication remains owned and qualified separately.
+    #[test]
+    fn emit_m2_later_tld_metadata_success_c_rust_trace() {
+        macro_rules! record {
+            ($name:literal, $value:expr) => {
+                std::println!("{}={}", $name, $value as usize);
+            };
+        }
+
+        thread::spawn(|| {
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let mut main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero publishes the source main image before the later TLD");
+            metadata
+                .prepare_for_main_subprocess(memory_config(), subprocess)
+                .expect("the selected detached metadata identity binds before direct TLD demand");
+
+            let pre_main_subprocess_selected = main.shared_main_heap_lease().is_ok();
+            let pre_metadata_owner_ready = metadata.test_is_bound_for(memory_config(), subprocess);
+            let pre_total_thread_count_one = subprocess.total_thread_count() == 1;
+            let pre_live_thread_count_one = subprocess.live_thread_count() == 1;
+            assert!(pre_main_subprocess_selected);
+            assert!(pre_metadata_owner_ready);
+            assert!(pre_total_thread_count_one);
+            assert!(pre_live_thread_count_one);
+            assert_eq!(
+                metadata.test_allocation_audit().live_capability_count,
+                0,
+                "the direct later TLD begins before a caller-visible metadata capability exists"
+            );
+
+            let mut owner = unsafe {
+                ThreadLocalDataOwner::begin_with_test_metadata(
+                    subprocess,
+                    metadata,
+                    memory_config(),
+                )
+            }
+            .expect("the generic ticket-one TLD receives one direct metadata image");
+
+            let (
+                post_result_available,
+                post_metadata_result_is_tld,
+                post_subprocess_matches_input,
+                post_theap_head_null,
+                post_lock_roundtrip,
+                post_numa_node_nonnegative,
+                post_thread_id_live,
+                post_threadpool_false,
+                post_thread_sequence_one,
+                post_recurse_false,
+                post_memid_malloc_kind,
+                post_memid_base_is_result,
+                post_memid_size_is_own_tld_size,
+                post_memid_pinned,
+                post_memid_initially_committed,
+                post_memid_initially_zero,
+            ) = {
+                let tld = owner.current().expect("the successful metadata TLD remains current");
+                let memory = tld.memory_id();
+                let malloc = memory.malloc_memory();
+                let metadata_result_is_tld = malloc.is_some_and(|allocation| {
+                    allocation.base == (tld as *const ThreadLocalData).cast_mut().cast()
+                        && allocation.size == size_of::<ThreadLocalData>()
+                }) && metadata.test_allocation_audit().live_capability_count == 1;
+                (
+                    true,
+                    metadata_result_is_tld,
+                    tld.is_attached_to_main_subprocess(subprocess),
+                    tld.is_subprocess_attached_no_theap(),
+                    tld.test_theaps_lock_starts_and_restores_unlocked(),
+                    tld.numa_node() >= 0,
+                    tld.thread_id() > crate::types::THREAD_ID_DETACHED,
+                    !tld.is_in_threadpool(),
+                    tld.thread_sequence().get() == 1,
+                    !tld.recursing(),
+                    memory.kind() == MemoryKind::Malloc,
+                    malloc.is_some_and(|allocation| {
+                        allocation.base == (tld as *const ThreadLocalData).cast_mut().cast()
+                    }),
+                    malloc.is_some_and(|allocation| {
+                        allocation.size == size_of::<ThreadLocalData>()
+                    }),
+                    memory.is_pinned(),
+                    memory.initially_committed(),
+                    memory.initially_zero(),
+                )
+            };
+            let post_total_thread_count_two = subprocess.total_thread_count() == 2;
+            let post_total_thread_count_incremented = post_total_thread_count_two;
+            let post_live_thread_count_two = subprocess.live_thread_count() == 2;
+            let post_live_thread_count_incremented = post_live_thread_count_two;
+            assert!(post_result_available);
+            assert!(post_metadata_result_is_tld);
+            assert!(post_subprocess_matches_input);
+            assert!(post_theap_head_null);
+            assert!(post_lock_roundtrip);
+            assert!(post_numa_node_nonnegative);
+            assert!(post_thread_id_live);
+            assert!(post_threadpool_false);
+            assert!(post_thread_sequence_one);
+            assert!(post_recurse_false);
+            assert!(post_memid_malloc_kind);
+            assert!(post_memid_base_is_result);
+            assert!(post_memid_size_is_own_tld_size);
+            assert!(post_memid_pinned);
+            assert!(post_memid_initially_committed);
+            assert!(post_memid_initially_zero);
+            assert!(post_total_thread_count_two);
+            assert!(post_live_thread_count_two);
+
+            std::println!("CRABC_MI_M2_LATER_TLD_METADATA_SUCCESS_TRACE_BEGIN");
+            record!(
+                "m2.initialization.later_tld_metadata_success.pre.main_subprocess_selected",
+                pre_main_subprocess_selected
+            );
+            record!(
+                "m2.initialization.later_tld_metadata_success.pre.metadata_owner_ready",
+                pre_metadata_owner_ready
+            );
+            record!(
+                "m2.initialization.later_tld_metadata_success.pre.total_thread_count_one",
+                pre_total_thread_count_one
+            );
+            record!(
+                "m2.initialization.later_tld_metadata_success.pre.live_thread_count_one",
+                pre_live_thread_count_one
+            );
+            record!(
+                "m2.initialization.later_tld_metadata_success.post.result_available",
+                post_result_available
+            );
+            record!(
+                "m2.initialization.later_tld_metadata_success.post.metadata_result_is_tld",
+                post_metadata_result_is_tld
+            );
+            record!(
+                "m2.initialization.later_tld_metadata_success.post.subprocess_matches_input",
+                post_subprocess_matches_input
+            );
+            record!(
+                "m2.initialization.later_tld_metadata_success.post.theap_head_null",
+                post_theap_head_null
+            );
+            record!(
+                "m2.initialization.later_tld_metadata_success.post.lock_roundtrip",
+                post_lock_roundtrip
+            );
+            record!(
+                "m2.initialization.later_tld_metadata_success.post.numa_node_nonnegative",
+                post_numa_node_nonnegative
+            );
+            record!(
+                "m2.initialization.later_tld_metadata_success.post.thread_id_live",
+                post_thread_id_live
+            );
+            record!(
+                "m2.initialization.later_tld_metadata_success.post.threadpool_false",
+                post_threadpool_false
+            );
+            record!(
+                "m2.initialization.later_tld_metadata_success.post.thread_sequence_one",
+                post_thread_sequence_one
+            );
+            record!(
+                "m2.initialization.later_tld_metadata_success.post.recurse_false",
+                post_recurse_false
+            );
+            record!(
+                "m2.initialization.later_tld_metadata_success.post.memid_malloc_kind",
+                post_memid_malloc_kind
+            );
+            record!(
+                "m2.initialization.later_tld_metadata_success.post.memid_base_is_result",
+                post_memid_base_is_result
+            );
+            record!(
+                "m2.initialization.later_tld_metadata_success.post.memid_size_is_own_tld_size",
+                post_memid_size_is_own_tld_size
+            );
+            record!(
+                "m2.initialization.later_tld_metadata_success.post.memid_pinned",
+                post_memid_pinned
+            );
+            record!(
+                "m2.initialization.later_tld_metadata_success.post.memid_initially_committed",
+                post_memid_initially_committed
+            );
+            record!(
+                "m2.initialization.later_tld_metadata_success.post.memid_initially_zero",
+                post_memid_initially_zero
+            );
+            record!(
+                "m2.initialization.later_tld_metadata_success.post.total_thread_count_two",
+                post_total_thread_count_two
+            );
+            record!(
+                "m2.initialization.later_tld_metadata_success.post.total_thread_count_incremented",
+                post_total_thread_count_incremented
+            );
+            record!(
+                "m2.initialization.later_tld_metadata_success.post.live_thread_count_two",
+                post_live_thread_count_two
+            );
+            record!(
+                "m2.initialization.later_tld_metadata_success.post.live_thread_count_incremented",
+                post_live_thread_count_incremented
+            );
+            std::println!("CRABC_MI_M2_LATER_TLD_METADATA_SUCCESS_TRACE_END");
+
+            owner.teardown().expect("the direct no-Theap TLD releases its exact metadata capability");
+            assert_eq!(subprocess.live_thread_count(), 1);
+            assert_eq!(
+                metadata.test_allocation_audit().live_capability_count,
+                0,
+                "the direct TLD receipt retains no metadata capability after its explicit teardown"
+            );
+            main.teardown().expect("the ticket-zero main image retires after the direct later TLD");
+            assert_eq!(subprocess.live_thread_count(), 0);
+        })
+        .join()
+        .expect("the successful later metadata TLD trace completes");
     }
 
     #[test]

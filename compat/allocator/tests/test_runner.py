@@ -3157,6 +3157,39 @@ class ContractTests(unittest.TestCase):
                     RUNNER.parse_m2_static_first_tld_create_trace(output, source="pinned C")
 
     @staticmethod
+    def _m2_later_tld_metadata_success_trace() -> dict[str, int]:
+        return {key: 1 for key in RUNNER.M2_LATER_TLD_METADATA_SUCCESS_TRACE_KEYS}
+
+    def test_m2_later_tld_metadata_success_trace_requires_independent_poststate(self) -> None:
+        c_trace = self._m2_later_tld_metadata_success_trace()
+        output = "CRABC_MI_M2_LATER_TLD_METADATA_SUCCESS_TRACE_BEGIN\n"
+        output += "\n".join(f"{key}={value}" for key, value in c_trace.items())
+        output += "\nCRABC_MI_M2_LATER_TLD_METADATA_SUCCESS_TRACE_END\n"
+        parsed_c = RUNNER.parse_m2_later_tld_metadata_success_trace(
+            output, source="pinned C"
+        )
+        RUNNER.validate_m2_later_tld_metadata_success_trace(parsed_c, source="pinned C")
+        rust_trace = self._m2_later_tld_metadata_success_trace()
+        RUNNER.validate_m2_later_tld_metadata_success_trace(rust_trace, source="Rust")
+        comparison = RUNNER.compare_m2_later_tld_metadata_success_trace(parsed_c, rust_trace)
+
+        self.assertEqual(comparison["status"], "matched")
+        self.assertEqual(
+            comparison["compared_value_count"],
+            len(RUNNER.M2_LATER_TLD_METADATA_SUCCESS_TRACE_KEYS),
+        )
+        self.assertFalse(
+            any(".order." in key for key in RUNNER.M2_LATER_TLD_METADATA_SUCCESS_TRACE_KEYS),
+            "the Rust post-state schema must not alias the C fixture's event order",
+        )
+
+    def test_m2_later_tld_metadata_success_trace_rejects_missing_metadata_provenance(self) -> None:
+        trace = self._m2_later_tld_metadata_success_trace()
+        trace["m2.initialization.later_tld_metadata_success.post.metadata_result_is_tld"] = 0
+        with self.assertRaisesRegex(RUNNER.HarnessError, "unmet relation"):
+            RUNNER.compare_m2_later_tld_metadata_success_trace(trace, trace)
+
+    @staticmethod
     def _m2_bitmap_abandoned_claim_trace() -> dict[str, int]:
         return {
             "m2.bitmap.control.bfield_bits": 64,

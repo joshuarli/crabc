@@ -36,8 +36,8 @@ class NativeInitializationM2AssemblyTests(unittest.TestCase):
                 (
                     "initialization-tld-direct-source-matrix",
                     "c-rust-initialization-tld-source-matrix",
-                    "x86_64_initialization_tld_evidence::four_fixed_direct_tld_branches",
-                    4,
+                    "x86_64_initialization_tld_evidence::five_fixed_direct_tld_branches",
+                    5,
                 ),
                 (
                     "initialization-explicit-worker-recovery-lifecycle",
@@ -53,6 +53,7 @@ class NativeInitializationM2AssemblyTests(unittest.TestCase):
                 "detached-static-preimage",
                 "normal-direct-tld-init",
                 "first-main-static-tld-create",
+                "later-main-tld-metadata-allocation-success",
                 "later-main-tld-metadata-allocation-failure",
             ],
         )
