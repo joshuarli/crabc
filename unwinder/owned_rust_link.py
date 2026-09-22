@@ -213,6 +213,37 @@ def audit_rust_cdylib_export_script(path: Path) -> None:
         raise LinkError("Rust cdylib export script differs from the cleanup plugin contract")
 
 
+def retain_rust_cdylib_export_script(
+    cargo_script: Path, output: Path, application_root: Path,
+) -> tuple[dict[str, object], Path]:
+    """Keep Cargo's transient cdylib export script beside the final output.
+
+    Rust creates its version script in an ephemeral target subdirectory, then
+    removes that directory when its linker returns an error. Retain the exact
+    script before enforcing the finite cleanup-plugin contract, so a rejected
+    same-pinned compiler rendering remains reviewable. LLD receives the
+    retained copy on success; its equal digest binds that durable input to the
+    path Cargo supplied rather than accepting a replacement script.
+    """
+
+    cargo_record = _record_input(cargo_script)
+    retained = confined_output(
+        str(output.with_name(output.name + ".crabc-owned-rust-export-script.map")), application_root,
+    )
+    if retained.exists() or retained.is_symlink():
+        raise LinkError(f"Rust cdylib export-script evidence must be fresh: {retained}")
+    try:
+        with cargo_script.open("rb") as source, retained.open("xb") as destination:
+            shutil.copyfileobj(source, destination, length=1024 * 1024)
+    except OSError as error:
+        raise LinkError(f"cannot retain Rust cdylib export script: {cargo_script}") from error
+    retained = physical_regular(retained, "retained Rust cdylib export script")
+    retained_record = _record_input(retained)
+    if cargo_record["sha256"] != retained_record["sha256"]:
+        raise LinkError("retained Rust cdylib export script differs from Cargo input")
+    return {"cargo_script": cargo_record, "retained_script": retained_record}, retained
+
+
 def parse_arguments(
     arguments: list[str], application_root: Path, stock_root: Path | None,
     source_built_root: Path | None = None, toolchain_search_root: Path | None = None,
@@ -330,8 +361,6 @@ def parse_arguments(
             raise LinkError("Rust shared-object SONAME differs from its output")
         if source_built and version_script is None:
             raise LinkError("source-built Rust cdylib lacks its export script")
-        if version_script is not None:
-            audit_rust_cdylib_export_script(version_script)
     if source_built:
         # Fat LTO consumes the source-built standard libraries and the Cargo
         # provider through rustc's --extern graph, then emits one fused object
@@ -677,6 +706,14 @@ def link(arguments: list[str]) -> None:
     for archive in archives:
         input_records.append(_record_input(archive, members=audit_rust_archive(archive, ar)))
     source_lto_object: dict[str, object] | None = None
+    rust_cdylib_export_script: dict[str, object] | None = None
+    if version_script is not None:
+        # Do this before auditing so Cargo cannot erase a rejected generated
+        # script with the rest of its transient target directory.
+        rust_cdylib_export_script, version_script = retain_rust_cdylib_export_script(
+            version_script, output, application_root,
+        )
+        audit_rust_cdylib_export_script(version_script)
     if source_built_root is not None:
         if len(objects) != 1:
             raise LinkError("source-built Cargo fat-LTO final link must contain one fused Rust object")
@@ -694,8 +731,8 @@ def link(arguments: list[str]) -> None:
     validate_trace(trace, {*objects, *archives, *runtime, *( [provider] if provider is not None else [] )})
     dynamic, segments = _elf_facts(output, mode, rust_mode)
     record = {
-        "schema": 4 if source_built_root is not None else 1,
-        "format": "crabc-owned-rust-source-build-link/v3" if source_built_root is not None else "crabc-owned-rust-std-link/v1",
+        "schema": 5 if source_built_root is not None else 1,
+        "format": "crabc-owned-rust-source-build-link/v4" if source_built_root is not None else "crabc-owned-rust-std-link/v1",
         "target": TARGET,
         "mode": mode,
         "rust_requested_mode": parsed["rust_mode"],
@@ -731,8 +768,8 @@ def link(arguments: list[str]) -> None:
         # unwind ABI, so admitting libunwind here would create a second owner.
         record["omitted_source_built_compiler_builtins"] = _record_input(source_compiler_builtins)
         record["source_lto_object"] = source_lto_object
-    if version_script is not None:
-        record["rust_cdylib_export_script"] = _record_input(version_script)
+    if rust_cdylib_export_script is not None:
+        record["rust_cdylib_export_script"] = rust_cdylib_export_script
     with receipt.open("x", encoding="utf-8") as stream:
         json.dump(record, stream, indent=2, sort_keys=True)
         stream.write("\n")

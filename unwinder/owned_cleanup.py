@@ -685,7 +685,7 @@ def source_built_link_receipt(
     """Read one source-built fat-LTO link without admitting stock target rlibs."""
 
     record = json_object(path, description)
-    require(record.get("schema") == 4 and record.get("format") == "crabc-owned-rust-source-build-link/v3",
+    require(record.get("schema") == 5 and record.get("format") == "crabc-owned-rust-source-build-link/v4",
             f"{description} has the wrong source-built link schema")
     require(record.get("rust_library_origin") == "source-built"
             and record.get("source_built_target_library_root") == str(source_library_root),
@@ -781,6 +781,29 @@ def source_built_link_receipt(
     if record.get("rust_requested_mode") == "shared":
         require("--no-undefined-version" in command,
                 f"{description} does not retain Rust's cdylib version-script safety flag")
+        export_script = record.get("rust_cdylib_export_script")
+        cargo_script = export_script.get("cargo_script") if isinstance(export_script, dict) else None
+        retained_script = export_script.get("retained_script") if isinstance(export_script, dict) else None
+        cargo_path = cargo_script.get("path") if isinstance(cargo_script, dict) else None
+        cargo_digest = cargo_script.get("sha256") if isinstance(cargo_script, dict) else None
+        retained_path = retained_script.get("path") if isinstance(retained_script, dict) else None
+        retained = Path(retained_path) if isinstance(retained_path, str) else None
+        expected_retained = binary.with_name(binary.name + ".crabc-owned-rust-export-script.map")
+        require(
+            isinstance(export_script, dict) and set(export_script) == {"cargo_script", "retained_script"}
+            and isinstance(cargo_script, dict) and set(cargo_script) == {"path", "sha256"}
+            and isinstance(cargo_path, str) and isinstance(cargo_digest, str)
+            and re.fullmatch(r"[0-9a-f]{64}", cargo_digest) is not None
+            and Path(cargo_path).is_absolute() and ".." not in Path(cargo_path).parts
+            and Path(cargo_path).is_relative_to(application_root)
+            and retained is not None and retained == expected_retained
+            and retained.is_relative_to(application_root)
+            and cargo_path != str(retained)
+            and retained_script == record_file(retained, f"{description} retained Rust cdylib export script")
+            and cargo_digest == retained_script["sha256"]
+            and command.count("--version-script") == 1 and command.count(str(retained)) == 1,
+            f"{description} does not bind Cargo's retained cdylib export script",
+        )
     def ambient_runtime(value: str) -> bool:
         name = Path(value).name
         return "libgcc" in value or value in {"-lgcc", "-lgcc_s", "-lunwind", "-lc"} or (

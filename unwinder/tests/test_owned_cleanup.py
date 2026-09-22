@@ -535,8 +535,8 @@ class OwnedCleanupContract(unittest.TestCase):
         shutil.copyfile(fused, retained)
         retained_record = owned_cleanup.record_file(retained, "test retained fused Cargo LTO object")
         record = {
-            "schema": 4,
-            "format": "crabc-owned-rust-source-build-link/v3",
+            "schema": 5,
+            "format": "crabc-owned-rust-source-build-link/v4",
             "rust_library_origin": "source-built",
             "source_built_target_library_root": str(source),
             "declared_toolchain_search_root": str(toolchain_search),
@@ -570,10 +570,37 @@ class OwnedCleanupContract(unittest.TestCase):
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "cdylib version-script safety flag"):
             owned_cleanup.source_built_link_receipt(receipt, binary, source, "test source-built link")
         record["command"].append("--no-undefined-version")
+        cargo_script = Path(self.temporary.name) / "cargo-rust-list"
+        cargo_script.write_text(
+            "{\n  global:\n    crabc_owned_cleanup_dso;\n"
+            "    crabc_owned_cleanup_dso_ready;\n    crabc_owned_cleanup_dso_release;\n"
+            "  local:\n    *;\n};\n",
+        )
+        retained_script = binary.with_name(binary.name + ".crabc-owned-rust-export-script.map")
+        shutil.copyfile(cargo_script, retained_script)
+        record["rust_cdylib_export_script"] = {
+            "cargo_script": owned_cleanup.record_file(cargo_script, "test Cargo cdylib export script"),
+            "retained_script": owned_cleanup.record_file(retained_script, "test retained cdylib export script"),
+        }
+        record["command"].extend(("--version-script", str(retained_script)))
         receipt.write_text(json.dumps(record))
+        # Cargo may delete its generated list as it tears down the target
+        # directory. The receipt keeps that original as a source fact while
+        # independently rehashing the confined copy LLD received.
+        cargo_script.unlink()
         owned_cleanup.source_built_link_receipt(receipt, binary, source, "test source-built link")
+        retained_script.write_text("tampered cdylib export script\n")
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "retained cdylib export script"):
+            owned_cleanup.source_built_link_receipt(receipt, binary, source, "test source-built link")
+        retained_script.write_text(
+            "{\n  global:\n    crabc_owned_cleanup_dso;\n"
+            "    crabc_owned_cleanup_dso_ready;\n    crabc_owned_cleanup_dso_release;\n"
+            "  local:\n    *;\n};\n",
+        )
         record.pop("rust_requested_mode")
         record["command"].pop()
+        record["command"].pop()
+        record.pop("rust_cdylib_export_script")
         retained.write_bytes(b"tampered retained Cargo LTO object")
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "fused Cargo LTO unwind ABI"):
             owned_cleanup.source_built_link_receipt(receipt, binary, source, "test source-built link")

@@ -284,6 +284,18 @@ class OwnedRustLinkContract(unittest.TestCase):
         self.assertEqual(parsed["shared_soname"], "libcleanup.so")
         self.assertEqual(parsed["version_script"], self.application / "rust-cdylib.map")
 
+    def test_shared_rust_plugin_retains_the_raw_cargo_script_before_contract_rejection(self):
+        cargo_script = self.application / "rust-cdylib.map"
+        cargo_script.write_text("{ GLOBAL: unexpected_export; LOCAL: *; };\n", encoding="ascii")
+        output = self.application / "deps/libcleanup.so"
+        output.parent.mkdir()
+        record, retained = linker.retain_rust_cdylib_export_script(cargo_script, output, self.application)
+        self.assertEqual(retained.read_bytes(), cargo_script.read_bytes())
+        self.assertEqual(record["cargo_script"]["sha256"], record["retained_script"]["sha256"])
+        self.assertEqual(retained.name, "libcleanup.so.crabc-owned-rust-export-script.map")
+        with self.assertRaisesRegex(linker.LinkError, "export script differs"):
+            linker.audit_rust_cdylib_export_script(retained)
+
     def test_shared_rust_plugin_admits_the_saved_pointer_close_handshake_exports(self):
         self.application.joinpath("rust-cdylib.map").write_text(
             "{\n  global:\n    crabc_owned_cleanup_dso;\n"
