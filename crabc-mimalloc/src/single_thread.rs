@@ -44919,6 +44919,12 @@ mod tests {
     fn os_aligned_reclaim_failure_parks_the_detached_owner_for_retry() {
         let fault = fault::install(fault::Plan::disabled());
         with_allocator(|allocator| {
+            // Materialize the ordinary direct page before an OS owner can be
+            // parked. A later first generic lookup may source-collect and
+            // retry every pending OS owner before it allocates a fresh page;
+            // this established local page keeps the ordinary free below out
+            // of that unrelated retry path.
+            let arena_block = allocator.allocate(37, false).unwrap();
             let block = allocator.allocate_aligned(7, 128 * KIB).unwrap();
             fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
             // SAFETY: this is the sole live block in the OS singleton. The
@@ -44931,18 +44937,27 @@ mod tests {
             assert_eq!(unsafe { allocator.free(block) }, Err(FreeError::Unmapped));
             // Reclaim must succeed before another OS-aligned claim can begin.
             // Keep the injected `unmap` failure active for this allocation's
-            // mandatory pending-owner retry, while an arena allocation stays
-            // independent of the OS singleton release provenance.
+            // mandatory pending-owner retry.
             fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
             assert!(allocator.allocate_aligned(7, 128 * KIB).is_none());
+            assert_eq!(
+                fault.observed(),
+                1,
+                "a new OS claim retries the parked mapping through the raw unmap seam"
+            );
             assert!(allocator.has_pending_os_release());
-            let arena_block = allocator.allocate(37, false).unwrap();
             // SAFETY: this ordinary block is current and arena-owned.
             unsafe { allocator.free(arena_block).unwrap() };
             // Re-arm the same source `Unmap` seam to prove collection leaves
             // the exact parked owner available while release failure persists.
             fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
             assert!(!allocator.collect_retired(true));
+            assert_eq!(
+                fault.observed(),
+                1,
+                "forced collection retries the parked OS mapping exactly once"
+            );
+            assert!(allocator.has_pending_os_release());
 
             fault.set(fault::Plan::disabled());
             assert!(allocator.collect_retired(true));

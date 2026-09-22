@@ -2136,84 +2136,91 @@ mod tests {
         let (release_sender, release_receiver) = mpsc::channel();
         let (initializer_result_sender, initializer_result_receiver) = mpsc::channel();
 
-        let initializer = thread::spawn(move || {
-            let result = unsafe {
-                storage.initialize_with_test_components_after_claim(
-                    config,
-                    main_static,
-                    subprocess,
-                    metadata,
-                    page_map_storage,
-                    || {
-                        claimed_sender
-                            .send(())
-                            .expect("the failure-race witness remains live");
-                        release_receiver
-                            .recv()
-                            .expect("the failure-race witness releases the initializer");
-                    },
-                )
-            };
-            initializer_result_sender
-                .send(matches!(
-                    result,
-                    Err(ProcessMainInitError::PageMap(
-                        ProcessPageMapError::Initialization(crabc_core::Errno::NOMEM)
+        let racer_observed_retained = thread::scope(|scope| {
+            // The initializer's first selected operation is the PageMap map
+            // itself, so it needs an explicit scoped permit from the parent
+            // test's plan. The racing observer stays unpermitted.
+            let permit = fault.permit();
+            let initializer = scope.spawn(move || permit.run(|| {
+                let result = unsafe {
+                    storage.initialize_with_test_components_after_claim(
+                        config,
+                        main_static,
+                        subprocess,
+                        metadata,
+                        page_map_storage,
+                        || {
+                            claimed_sender
+                                .send(())
+                                .expect("the failure-race witness remains live");
+                            release_receiver
+                                .recv()
+                                .expect("the failure-race witness releases the initializer");
+                        },
+                    )
+                };
+                initializer_result_sender
+                    .send(matches!(
+                        result,
+                        Err(ProcessMainInitError::PageMap(
+                            ProcessPageMapError::Initialization(crabc_core::Errno::NOMEM)
+                        ))
                     ))
-                ))
-                .expect("the failure-race witness remains live");
-        });
+                    .expect("the failure-race witness remains live");
+            }));
 
-        claimed_receiver
-            .recv_timeout(Duration::from_secs(2))
-            .expect("the failing caller holds the source once state before publication");
-
-        let (racer_started_sender, racer_started_receiver) = mpsc::channel();
-        let (racer_result_sender, racer_result_receiver) = mpsc::channel();
-        let racer = thread::spawn(move || {
-            racer_started_sender
-                .send(())
-                .expect("the failure-race witness remains live");
-            let result = unsafe {
-                storage.initialize_with_test_components(
-                    config,
-                    main_static,
-                    subprocess,
-                    metadata,
-                    page_map_storage,
-                )
-            };
-            racer_result_sender
-                .send(matches!(result, Err(ProcessMainInitError::Retained)))
-                .expect("the failure-race witness remains live");
-        });
-        racer_started_receiver
-            .recv_timeout(Duration::from_secs(2))
-            .expect("the distinct caller begins while failure initialization is held");
-        wait_for_process_once_contender(storage);
-        assert!(
-            racer_result_receiver
-                .recv_timeout(Duration::from_millis(50))
-                .is_err(),
-            "a distinct caller must remain blocked until the source once release"
-        );
-        release_sender
-            .send(())
-            .expect("the failing initializer remains held at the source once boundary");
-        assert!(
-            initializer_result_receiver
+            claimed_receiver
                 .recv_timeout(Duration::from_secs(2))
-                .expect("the initializer reaches its injected terminal failure"),
-            "the injected source-order global PageMap failure remains observable"
-        );
-        let racer_observed_retained = racer_result_receiver
-            .recv_timeout(Duration::from_secs(2))
-            .expect("the blocked distinct caller observes the retained process state");
+                .expect("the failing caller holds the source once state before publication");
 
-        racer.join().expect("the distinct failing caller completes");
-        initializer
-            .join()
-            .expect("the failing source initializer completes");
+            let (racer_started_sender, racer_started_receiver) = mpsc::channel();
+            let (racer_result_sender, racer_result_receiver) = mpsc::channel();
+            let racer = scope.spawn(move || {
+                racer_started_sender
+                    .send(())
+                    .expect("the failure-race witness remains live");
+                let result = unsafe {
+                    storage.initialize_with_test_components(
+                        config,
+                        main_static,
+                        subprocess,
+                        metadata,
+                        page_map_storage,
+                    )
+                };
+                racer_result_sender
+                    .send(matches!(result, Err(ProcessMainInitError::Retained)))
+                    .expect("the failure-race witness remains live");
+            });
+            racer_started_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("the distinct caller begins while failure initialization is held");
+            wait_for_process_once_contender(storage);
+            assert!(
+                racer_result_receiver
+                    .recv_timeout(Duration::from_millis(50))
+                    .is_err(),
+                "a distinct caller must remain blocked until the source once release"
+            );
+            release_sender
+                .send(())
+                .expect("the failing initializer remains held at the source once boundary");
+            assert!(
+                initializer_result_receiver
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("the initializer reaches its injected terminal failure"),
+                "the injected source-order global PageMap failure remains observable"
+            );
+            let racer_observed_retained = racer_result_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("the blocked distinct caller observes the retained process state");
+
+            racer.join().expect("the distinct failing caller completes");
+            initializer
+                .join()
+                .expect("the failing source initializer completes");
+            racer_observed_retained
+        });
         fault.set(fault::Plan::disabled());
 
         assert!(

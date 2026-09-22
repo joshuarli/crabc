@@ -4752,6 +4752,16 @@ pub(crate) mod fault {
 
     const ANY_POINT: usize = 0;
     static LOCKED: AtomicBool = AtomicBool::new(false);
+    // A fault plan is process-global because it observes raw Unix seams, but
+    // installing one admits only the installer thread. A distinct test worker
+    // needs a scoped `FaultPermit`; an unrelated worker must execute its real
+    // primitive instead of consuming a one-shot ordinal from another test's
+    // plan. The epoch also makes a stale TLS marker harmless after a guard is
+    // dropped on a different test thread.
+    static NEXT_EPOCH: AtomicUsize = AtomicUsize::new(1);
+    static ACTIVE_EPOCH: AtomicUsize = AtomicUsize::new(0);
+    #[thread_local]
+    static mut CURRENT_EPOCH: usize = 0;
     static SELECTED_POINT: AtomicUsize = AtomicUsize::new(ANY_POINT);
     static FAILURE_ORDINAL: AtomicUsize = AtomicUsize::new(0);
     static OBSERVED: AtomicUsize = AtomicUsize::new(0);
@@ -5088,8 +5098,32 @@ pub(crate) mod fault {
     /// Serializes tests which exercise the process-global injection counters.
     ///
     /// This is test-only spin synchronization over static atomics; it neither
-    /// allocates nor involves the allocator engine under test.
-    pub(crate) struct Guard;
+    /// allocates nor involves the allocator engine under test. The installing
+    /// thread is the sole implicit plan consumer. Tests that deliberately
+    /// inject into a worker must borrow a [`FaultPermit`] from this guard.
+    pub(crate) struct Guard {
+        epoch: usize,
+    }
+
+    /// Scoped admission for one deliberate cross-thread fault injection.
+    ///
+    /// The lifetime keeps the plan guard installed while the worker runs. It
+    /// contains no allocator or mapping capability; it only marks the worker
+    /// as an allowed consumer of this test-only plan.
+    pub(crate) struct FaultPermit<'guard> {
+        epoch: usize,
+        _guard: core::marker::PhantomData<&'guard Guard>,
+    }
+
+    struct CurrentThreadEpochReset {
+        previous: usize,
+    }
+
+    impl Drop for CurrentThreadEpochReset {
+        fn drop(&mut self) {
+            set_current_epoch(self.previous);
+        }
+    }
 
     /// Test-only capture token for two selected `munmap` argument pairs.
     ///
@@ -5144,12 +5178,29 @@ pub(crate) mod fault {
             core::hint::spin_loop();
         }
         set(plan);
-        Guard
+        let epoch = next_epoch();
+        set_current_epoch(epoch);
+        ACTIVE_EPOCH.store(epoch, Ordering::Release);
+        Guard { epoch }
     }
 
     impl Guard {
         pub(crate) fn set(&self, plan: Plan) {
+            // `set` is an explicit test action. Existing worker fixtures that
+            // select their plan inside the worker remain deliberately
+            // admitted without granting unrelated workers access.
+            set_current_epoch(self.epoch);
             set(plan);
+        }
+
+        /// Borrows this serial plan for a worker whose first selected raw
+        /// operation happens before it can call [`Guard::set`].
+        #[inline]
+        pub(crate) fn permit(&self) -> FaultPermit<'_> {
+            FaultPermit {
+                epoch: self.epoch,
+                _guard: core::marker::PhantomData,
+            }
         }
 
         pub(crate) fn observed(&self) -> usize {
@@ -5249,6 +5300,17 @@ pub(crate) mod fault {
                 selected_case,
                 _guard: core::marker::PhantomData,
             }
+        }
+    }
+
+    impl FaultPermit<'_> {
+        /// Runs one deliberate worker operation with this guard's fault plan.
+        #[inline]
+        pub(crate) fn run<T>(&self, operation: impl FnOnce() -> T) -> T {
+            let previous = current_epoch();
+            set_current_epoch(self.epoch);
+            let _reset = CurrentThreadEpochReset { previous };
+            operation()
         }
     }
 
@@ -5390,14 +5452,46 @@ pub(crate) mod fault {
 
     impl Drop for Guard {
         fn drop(&mut self) {
+            ACTIVE_EPOCH.store(0, Ordering::Release);
             UNMAP_RANGE_CAPTURE_ACTIVE.store(false, Ordering::Release);
             ADVICE_RANGE_CAPTURE_ACTIVE.store(false, Ordering::Release);
             POLICY_MMAP_CAPTURE_ACTIVE.store(false, Ordering::Release);
             THP_DIRECT_POLICY_CAPTURE_ACTIVE.store(false, Ordering::Release);
             THP_DIRECT_POLICY_CAPTURE_CASE.store(0, Ordering::Release);
             set(Plan::disabled());
+            if current_epoch() == self.epoch {
+                set_current_epoch(0);
+            }
             LOCKED.store(false, Ordering::Release);
         }
+    }
+
+    #[inline]
+    fn next_epoch() -> usize {
+        let mut epoch = NEXT_EPOCH.fetch_add(1, Ordering::Relaxed);
+        if epoch == 0 {
+            epoch = NEXT_EPOCH.fetch_add(1, Ordering::Relaxed);
+        }
+        epoch
+    }
+
+    #[inline]
+    fn current_epoch() -> usize {
+        // SAFETY: this `#[thread_local]` cell is read and written only by its
+        // current thread through the helpers in this module.
+        unsafe { CURRENT_EPOCH }
+    }
+
+    #[inline]
+    fn set_current_epoch(epoch: usize) {
+        // SAFETY: as above, each thread owns its TLS cell exclusively.
+        unsafe { CURRENT_EPOCH = epoch; }
+    }
+
+    #[inline]
+    fn authorized() -> bool {
+        let active = ACTIVE_EPOCH.load(Ordering::Acquire);
+        active != 0 && current_epoch() == active
     }
 
     #[inline]
@@ -5420,6 +5514,9 @@ pub(crate) mod fault {
 
     #[inline]
     pub(crate) fn before(point: Point) -> Result<()> {
+        if !authorized() {
+            return Ok(());
+        }
         let selected = SELECTED_POINT.load(Ordering::Acquire);
         if selected == ANY_POINT || selected == point as usize {
             let ordinal = FAILURE_ORDINAL.load(Ordering::Acquire);
@@ -5473,7 +5570,7 @@ pub(crate) mod fault {
     /// boundary where `__wrap_munmap` sees both the failing call and retry.
     #[inline]
     pub(crate) fn record_unmap_range(address: *mut u8, length: usize) {
-        if !UNMAP_RANGE_CAPTURE_ACTIVE.load(Ordering::Acquire) {
+        if !authorized() || !UNMAP_RANGE_CAPTURE_ACTIVE.load(Ordering::Acquire) {
             return;
         }
         let index = UNMAP_RANGE_CAPTURE_COUNT.fetch_add(1, Ordering::AcqRel);
@@ -5488,7 +5585,7 @@ pub(crate) mod fault {
     /// capture; it is not a production callback or policy interface.
     #[inline]
     pub(crate) fn record_advice_range(address: *mut u8, length: usize, advice: u32) {
-        if !ADVICE_RANGE_CAPTURE_ACTIVE.load(Ordering::Acquire) {
+        if !authorized() || !ADVICE_RANGE_CAPTURE_ACTIVE.load(Ordering::Acquire) {
             return;
         }
         let index = ADVICE_RANGE_CAPTURE_COUNT.fetch_add(1, Ordering::AcqRel);
@@ -5504,7 +5601,7 @@ pub(crate) mod fault {
     pub(crate) fn record_policy_mmap(
         hint: Option<usize>, length: usize, protection: u32, flags: u32,
     ) {
-        if !POLICY_MMAP_CAPTURE_ACTIVE.load(Ordering::Acquire) {
+        if !authorized() || !POLICY_MMAP_CAPTURE_ACTIVE.load(Ordering::Acquire) {
             return;
         }
         let index = POLICY_MMAP_CAPTURE_COUNT.fetch_add(1, Ordering::AcqRel);
@@ -5523,7 +5620,7 @@ pub(crate) mod fault {
     pub(crate) fn thp_policy_prctl_raw(
         option: i32, argument0: usize, argument1: usize, argument2: usize, argument3: usize,
     ) -> Result<usize> {
-        if !THP_DIRECT_POLICY_CAPTURE_ACTIVE.load(Ordering::Acquire) {
+        if !authorized() || !THP_DIRECT_POLICY_CAPTURE_ACTIVE.load(Ordering::Acquire) {
             // SAFETY: callers use only the two Linux THP constants with their
             // source scalar zero/one arguments.
             return unsafe {
@@ -7685,6 +7782,53 @@ mod tests {
         fault.set(fault::Plan::disabled());
 
         mapping.unmap().expect("the failed commit leaves the reservation owned");
+    }
+
+    #[test]
+    fn fault_plan_requires_worker_admission_before_it_can_consume_an_ordinal() {
+        let fault = fault::install(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+        let startup = current_startup();
+        let page = startup.page_size().bytes();
+
+        // A concurrent ordinary mapping operation reaches the same raw
+        // `munmap` seam, but it has no permit from this plan guard. It must
+        // release normally and leave the selected ordinal for the owner.
+        let unrelated = std::thread::spawn(move || {
+            let mut mapping = Mapping::map_anonymous(startup, page, MapAccess::Reserved)
+                .expect("the unrelated worker maps one page normally");
+            mapping.unmap()
+        });
+        assert_eq!(
+            unrelated.join().expect("the unrelated worker does not panic"),
+            Ok(())
+        );
+        assert_eq!(fault.observed(), 0, "an unpermitted worker cannot steal the plan");
+
+        let mut selected = Mapping::map_anonymous(startup, page, MapAccess::Reserved)
+            .expect("the selected owner maps one page normally");
+        assert_eq!(selected.unmap(), Err(Errno::NOMEM));
+        assert_eq!(fault.observed(), 1, "the installing thread keeps its selected ordinal");
+        fault.set(fault::Plan::disabled());
+        selected
+            .unmap()
+            .expect("the selected owner releases after its injected failure");
+
+        // A test that intentionally exercises a worker can grant precisely
+        // that scoped operation a permit. The worker reaches the selected map
+        // seam before it owns a Mapping, so failure leaves no cleanup owner.
+        fault.set(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+        std::thread::scope(|scope| {
+            let permit = fault.permit();
+            let selected = scope.spawn(move || {
+                permit.run(|| Mapping::map_anonymous(startup, page, MapAccess::Reserved).map(|_| ()))
+            });
+            assert_eq!(
+                selected.join().expect("the permitted worker does not panic"),
+                Err(Errno::NOMEM)
+            );
+        });
+        assert_eq!(fault.observed(), 1, "the explicit permit admits the selected worker");
+        fault.set(fault::Plan::disabled());
     }
 
     #[test]

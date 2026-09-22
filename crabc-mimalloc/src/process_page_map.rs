@@ -2766,25 +2766,31 @@ mod tests {
         // slot, proving the process owner does not leak a competing map.
         let fault = fault::install(fault::Plan::at(fault::Point::Map, 2, Errno::NOMEM));
         let ready = Arc::new(Barrier::new(THREADS));
-        let mut workers = std::vec::Vec::new();
-        for _ in 0..THREADS {
-            let ready = Arc::clone(&ready);
-            workers.push(thread::spawn(move || {
-                ready.wait();
-                storage
-                    .initialize(memory_config(), subprocess)
-                    .expect("the serialized once path succeeds")
-                    .root()
-                    .unwrap()
-                    .as_ptr()
-                    .addr()
-            }));
-        }
+        thread::scope(|scope| {
+            let mut workers = std::vec::Vec::new();
+            for _ in 0..THREADS {
+                let ready = Arc::clone(&ready);
+                // Any one initializer can reach the source map seam. The
+                // permit keeps this deliberately shared race under the
+                // selected fault plan without admitting unrelated workers.
+                let permit = fault.permit();
+                workers.push(scope.spawn(move || permit.run(|| {
+                    ready.wait();
+                    storage
+                        .initialize(memory_config(), subprocess)
+                        .expect("the serialized once path succeeds")
+                        .root()
+                        .unwrap()
+                        .as_ptr()
+                        .addr()
+                })));
+            }
 
-        let first = workers.remove(0).join().unwrap();
-        for worker in workers {
-            assert_eq!(worker.join().unwrap(), first);
-        }
+            let first = workers.remove(0).join().unwrap();
+            for worker in workers {
+                assert_eq!(worker.join().unwrap(), first);
+            }
+        });
         fault.set(fault::Plan::disabled());
     }
 
