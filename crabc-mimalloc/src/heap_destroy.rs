@@ -104,14 +104,16 @@ impl MainHeapDestroyTracking {
 
 impl Heap {
     #[cfg(test)]
-    pub(crate) fn test_destroy_graph_counts(&self) -> (usize, usize) {
+    pub(crate) fn test_destroy_graph_counts(&self) -> (usize, usize, usize) {
         let guard = self.theaps_lock.lock().expect("source graph audit lock");
         let mut dynamic = 0;
         let mut attached = 0;
+        let mut total = 0;
         let mut current = self.theaps;
         while let Some(pointer) = NonNull::new(current) {
             // The held source lock protects each valid intrusive-list member.
             let theap = unsafe { pointer.as_ref() };
+            total += 1;
             if theap.memid.kind() == MemoryKind::Malloc {
                 dynamic += 1;
                 attached += usize::from(!theap.tld.is_null());
@@ -119,7 +121,7 @@ impl Heap {
             current = unsafe { *theap.hnext.get() };
         }
         guard.unlock().expect("source graph audit unlock");
-        (dynamic, attached)
+        (dynamic, attached, total)
     }
 
     /// Applies the source main-Heap Theap-list destruction with exact dynamic

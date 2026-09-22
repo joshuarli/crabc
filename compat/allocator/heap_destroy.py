@@ -16,8 +16,8 @@ def trace(output: str) -> list[int]:
         "", output, count=1, flags=re.MULTILINE,
     )
     rows = re.findall(r"^m2\.heap\.destroy\.(\d+)=(\d+)$", output, re.MULTILINE)
-    if [int(index) for index, _ in rows] != list(range(6)):
-        raise harness.HarnessError("main-Heap destruction trace requires six ordered fields")
+    if [int(index) for index, _ in rows] != list(range(7)):
+        raise harness.HarnessError("main-Heap destruction trace requires seven ordered fields")
     return [int(value) for _, value in rows]
 
 
@@ -48,7 +48,7 @@ def main() -> None:
     harness.require_success(rust, "main-Heap destruction Rust ownership checks")
     if trace(oracle["stdout"]) != trace(rust["stdout"]):
         raise harness.HarnessError("pinned C/Rust main-Heap destruction differs")
-    print(f"main-Heap Theap destruction: six pinned C/Rust values match; {artifacts}")
+    print(f"main-Heap Theap destruction: seven pinned C/Rust values match; {artifacts}")
 
 
 if __name__ == "__main__":

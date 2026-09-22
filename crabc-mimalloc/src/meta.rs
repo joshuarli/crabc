@@ -779,7 +779,7 @@ impl<'owner> MetaAllocation<'owner> {
         if !self.belongs_to(owner) {
             return Err(MetaBitmapProjectionError::ForeignOwner);
         }
-        if self.state.load(Ordering::Acquire) != ALLOCATION_LIVE
+        if !self.is_live()
             || self.origin != MetaAllocationOrigin::AlignedZeroed
             || self.dynamic_arena_pages_initialized
             || self.dynamic_thread_local_backing_projected
@@ -2869,6 +2869,41 @@ mod tests {
         assert!(unsafe { map.checked_lookup(pointer.as_ptr()) }.is_null());
         let after_release = process.subprocess().vm_statistics().snapshot();
         assert_eq!(before_release.committed_current - after_release.committed_current, committed as i64);
+    }
+
+    #[test]
+    fn process_metadata_terminal_close_denies_every_bitmap_projection() {
+        for poison in [false, true] {
+            let allocator = static_allocator();
+            let binding = process_binding_fixture(
+                allocator.test_default_subprocess(), incremental_process_options(false),
+            );
+            allocator.bind_process_backing(binding).unwrap();
+            let layout = BitmapLayout::for_bit_count(1024).unwrap();
+            let mut published = allocator.zalloc_aligned(config(), layout.byte_size(), BCHUNK_SIZE).unwrap();
+            published.initialize_zeroed_bitmap(allocator, layout, |_| ()).unwrap();
+            let mut copied = allocator.zalloc_aligned(config(), layout.byte_size(), BCHUNK_SIZE).unwrap();
+            copied.copy_bitmap_image_from(allocator, layout, &published, layout).unwrap();
+            let mut fresh = allocator.zalloc_aligned(config(), layout.byte_size(), BCHUNK_SIZE).unwrap();
+            if poison {
+                let mut entry = allocator.enter().unwrap();
+                let MetadataPageAllocator::Process(engine) = entry.allocator() else { panic!("process"); };
+                engine.test_latch_metadata_commit_poison();
+            }
+            // The isolated source image remains mapped. No earlier typed
+            // view survives sealing; every following safe projection must
+            // reject before entering a caller callback or copying bytes.
+            let result = unsafe { allocator.close_process_engine_quiescent() };
+            assert_eq!(result, if poison { Err(MetaCloseError::UnfinishedEngine) } else { Ok(()) });
+            assert_eq!(published.with_bitmap_view(allocator, layout, |_| ()),
+                Err(MetaBitmapProjectionError::InvalidImage));
+            assert_eq!(fresh.initialize_zeroed_bitmap(allocator, layout, |_| ()),
+                Err(MetaBitmapProjectionError::InvalidImage));
+            assert_eq!(copied.publish_preserved_bitmap(allocator, layout, |_| ()),
+                Err(MetaBitmapProjectionError::InvalidImage));
+            assert_eq!(fresh.copy_bitmap_image_from(allocator, layout, &published, layout),
+                Err(MetaBitmapProjectionError::InvalidImage));
+        }
     }
 
     #[test]

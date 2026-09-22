@@ -380,7 +380,13 @@ pub(crate) mod theap_page_session_sealed {
 /// projections; select the exact main or heap-local arena-pages bitmap for
 /// fresh, rollback, and release transitions; and prevent
 /// attachment/metadata/list teardown while the engine or a scoped producer
-/// may hold raw page state.
+/// may hold raw page state. The canonical detached metadata session has one
+/// explicit source exception: after permanent process quiescence and with no
+/// outstanding observations, main-Heap destruction may detach its TLD/Heap
+/// links while retaining its static identities/backing and exclusive local
+/// field authority solely for that pass's metadata frees. No fresh allocation,
+/// producer admission, or physical backing retirement overlaps this phase;
+/// terminal metadata close consumes the session before backing destruction.
 /// `publish_fresh_page` must wire only that
 /// exact stable Theap/Heap pair.
 pub(crate) unsafe trait TheapPageSession: theap_page_session_sealed::Sealed {

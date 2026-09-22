@@ -993,3 +993,13 @@ through the canonical session, then closes that session under permanent
 quiescence. Its six compared observations remain unchanged. This establishes
 canonical metadata ownership in the real caller path; it still does not claim
 source Heap count/unlink/statistics completion or a physical process destructor.
+
+The canonical comparison additionally records all five actual source Heap-list
+members, including both static Theaps; it is now a seven-field comparison.
+Review found and repaired the ordinary bitmap validator's raw-LIVE-state
+bypass: all four bitmap projection/copy routes now use the terminal-owner-aware
+`MetaAllocation::is_live` gate. The focused regression observes rejection in
+both CLOSED and CLOSE_RETAINED states before callbacks or byte copies.
+The link-cell change alone does not repair existing whole-`&mut Theap` local
+projections in `MainStaticProcessPageSession`; that adjacent scoped-field
+prerequisite remains explicit until its separate implementation and review.

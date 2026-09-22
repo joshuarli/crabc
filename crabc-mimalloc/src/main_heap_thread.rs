@@ -1895,7 +1895,7 @@ mod tests {
             assert_eq!(metadata.test_allocation_audit().live_capability_count, 6);
             assert_eq!(subprocess.live_thread_count(), 4);
             let before_live = subprocess.live_thread_count();
-            let (dynamic_members, attached_tlds) = {
+            let (dynamic_members, attached_tlds, total_members) = {
                 let mut guard = heap.lock_heap().expect("quiescent main Heap audit");
                 let counts = guard.heap_mut().test_destroy_graph_counts();
                 guard.unlock().expect("main Heap audit releases");
@@ -1918,7 +1918,7 @@ mod tests {
             let detached = tracking.iter_mut().map(|slot| slot.test_retained_tld_is_detached()).filter(|detached| *detached).count();
             assert_eq!(detached, 3);
             for (index, value) in [before_live, dynamic_members, attached_tlds,
-                usize::from(heap.test_destroyed_heap_list_empty()), detached, subprocess.live_thread_count()].into_iter().enumerate() {
+                usize::from(heap.test_destroyed_heap_list_empty()), detached, subprocess.live_thread_count(), total_members].into_iter().enumerate() {
                 std::println!("m2.heap.destroy.{index}={value}");
             }
             // Source static metadata is now detached along with the ordinary

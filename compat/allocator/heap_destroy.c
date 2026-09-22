@@ -29,7 +29,9 @@ int main(void) {
   }
   const size_t before_live = mi_atomic_load_relaxed(&mi_process_subproc_main.thread_count);
   size_t dynamic_members = 0;
+  size_t total_members = 0;
   for (mi_theap_t* theap = heap->theaps; theap != NULL; theap = theap->hnext) {
+    total_members++;
     if (theap->memid.memkind == MI_MEM_MALLOC) dynamic_members++;
   }
   size_t attached_tlds = 0;
@@ -46,7 +48,7 @@ int main(void) {
   }
   const size_t values[] = { before_live, dynamic_members, attached_tlds,
     heap->theaps == NULL, detached_tlds,
-    mi_atomic_load_relaxed(&mi_process_subproc_main.thread_count) };
+    mi_atomic_load_relaxed(&mi_process_subproc_main.thread_count), total_members };
   for (size_t i = 0; i < sizeof(values)/sizeof(values[0]); i++) {
     printf("m2.heap.destroy.%zu=%zu\n", i, values[i]);
   }
