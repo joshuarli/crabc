@@ -437,7 +437,11 @@ def validate_native_allocator_symbols(definitions, imports, loader_symbols) -> N
 
 
 def elf_symbols(nm: str, artifact: Path, selector: str) -> set[str]:
-    return {line.split()[-1] for line in common.run([nm, selector, str(artifact)]).decode().splitlines()
+    # The installed loader can be stripped of its ordinary symbol table.
+    # Inspect dynamic symbols too, while retaining private libc fini entries.
+    return {line.split()[-1]
+            for table in ([], ["--dynamic"])
+            for line in common.run([nm, *table, selector, str(artifact)]).decode().splitlines()
             if len(line.split()) >= 2 and not line.endswith(":")}
 
 

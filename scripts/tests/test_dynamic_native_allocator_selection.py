@@ -1,6 +1,7 @@
 """Dynamic shadow selection must exclude the attested C implementation."""
 import sys
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -40,6 +41,15 @@ class DynamicNativeAllocatorSelectionTests(unittest.TestCase):
     def test_unknown_backend_cannot_fall_back_to_c(self):
         with self.assertRaisesRegex(builder.common.BuildError, 'allocator backend'):
             builder.select_allocator_members(self.roster, 'abc-static.o', 'unknown')
+
+    def test_stripped_loader_dynamic_symbols_are_still_checked(self):
+        def symbols(command):
+            return b'                 U malloc\n' if '--dynamic' in command else b''
+        with patch.object(builder.common, 'run', side_effect=symbols):
+            symbols = builder.elf_symbols('llvm-nm', Path('stripped-loader.so'), '--undefined-only')
+        self.assertEqual(symbols, {'malloc'})
+        with self.assertRaises(builder.common.BuildError):
+            builder.validate_native_allocator_symbols(set(), set(), symbols)
 
     def test_native_symbol_closure_rejects_c_allocator_and_loader_allocation_edges(self):
         builder.validate_native_allocator_symbols({'malloc', 'free', '__libc_start_main'}, {'__tls_get_addr'}, set())
