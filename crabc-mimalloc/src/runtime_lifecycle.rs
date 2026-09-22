@@ -6936,6 +6936,10 @@ impl NativePersistentThreadOwner {
         match &self.state {
             NativePersistentThreadOwnerExitState::PreDrain(engine) => engine.permits_terminal_process_retirement(&self.attachment),
             NativePersistentThreadOwnerExitState::AttachmentOnly => true,
+            // Phase A already cleared the fast slot. Its caller-stack
+            // callback lease and stored engine must complete phase C before
+            // any terminal owner transfer, even if the B marker is not live.
+            NativePersistentThreadOwnerExitState::DeferredFreePending(_) => false,
             NativePersistentThreadOwnerExitState::RetainedTerminalEngine(_) => false,
         }
     }
@@ -6947,6 +6951,7 @@ impl NativePersistentThreadOwner {
                 if !unsafe { engine.retire_terminal_process_engine(&self.attachment) } { return Err(()); }
             }
             NativePersistentThreadOwnerExitState::AttachmentOnly => {}
+            NativePersistentThreadOwnerExitState::DeferredFreePending(_) => return Err(()),
             NativePersistentThreadOwnerExitState::RetainedTerminalEngine(_) => return Err(()),
         }
         // The engine now holds no source borrows, and its TLS lease Drop has
