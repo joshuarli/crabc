@@ -7808,8 +7808,9 @@ mod tests {
     use crate::types::THREAD_ID_ABANDONED;
     use crabc_core::Errno;
     use std::format;
+    use std::string::String;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{mpsc, Arc};
+    use std::sync::{mpsc, Arc, Barrier};
     use std::thread;
     use std::time::Duration;
 
@@ -9217,8 +9218,13 @@ mod tests {
                                 config,
                             )
                         }
-                        .map_err(|error| {
-                            format!("first owner attachment did not begin: {error:?}")
+                        .map_err(|error| match error {
+                            MainHeapThreadAttachmentBeginError::Rejected(error) => {
+                                format!("first owner attachment rejected: {error:?}")
+                            }
+                            MainHeapThreadAttachmentBeginError::Retained { error, .. } => {
+                                format!("first owner attachment retained: {error:?}")
+                            }
                         })?;
                         first_phase_for_owner.store(1, Ordering::Release);
                         let mut owner = MainHeapThreadOwnerLocalPageEngine::begin(
@@ -9235,7 +9241,7 @@ mod tests {
                                 format!("first owner allocation operation failed: {error:?}")
                             })?
                             .ok_or_else(|| {
-                                "first owner aligned OS singleton allocation returned None".to_owned()
+                                String::from("first owner aligned OS singleton allocation returned None")
                             })?;
                         first_phase_for_owner.store(3, Ordering::Release);
                         send_cross_owner_phase(
@@ -9299,8 +9305,13 @@ mod tests {
                                 config,
                             )
                         }
-                        .map_err(|error| {
-                            format!("second owner attachment did not begin: {error:?}")
+                        .map_err(|error| match error {
+                            MainHeapThreadAttachmentBeginError::Rejected(error) => {
+                                format!("second owner attachment rejected: {error:?}")
+                            }
+                            MainHeapThreadAttachmentBeginError::Retained { error, .. } => {
+                                format!("second owner attachment retained: {error:?}")
+                            }
                         })?;
                         second_phase_for_owner.store(1, Ordering::Release);
                         let mut owner = MainHeapThreadOwnerLocalPageEngine::begin(
@@ -9322,7 +9333,7 @@ mod tests {
                                 format!("second owner allocation operation failed: {error:?}")
                             })?
                             .ok_or_else(|| {
-                                "second owner aligned OS singleton allocation returned None".to_owned()
+                                String::from("second owner aligned OS singleton allocation returned None")
                             })?;
                         second_phase_for_owner.store(3, Ordering::Release);
                         send_cross_owner_phase(
