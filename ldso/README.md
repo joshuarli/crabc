@@ -16,6 +16,14 @@ exists only for the staged native evidence lane. It builds one bounded ET_DYN
 interpreter root for a fixed graph; it is not an installed loader target or
 x86-64 support claim.
 
+All x86 graph profiles validate the null `DT_SYMTAB` record against one
+readable file-backed `PT_LOAD` before admitting the symbol table.
+`x86_64_initial_graph.rs::virtual_range_in_readable_file_load` therefore has
+no TLS/lifecycle feature gate: the original no-TLS graph needs it too. The
+`ldso-public-dlfcn` native gate compiles the no-feature parser regression and
+checks file/BSS, permissions, segment-crossing, and overflow boundaries before
+its existing public bridge/oracle consumers.
+
 The separate private `x86_64-general-initial-interpreter` feature is the first
 loader-owned x86 initial-graph package. It discovers an arbitrary bounded
 non-TLS `DT_NEEDED` topology, deduplicates opened DSO identities by

@@ -4520,16 +4520,12 @@ unsafe fn virtual_range_in_page_mapped_load(
     false
 }
 
-/// Require a PT_TLS initialized prefix or initial lifecycle array to be backed by one readable file
-/// segment. `p_memsz` may legitimately extend through BSS, but copying
-/// `p_filesz` from that extension would turn a malformed ELF record into a
-/// speculative read from whatever virtual mapping happens to follow it.
-#[cfg(any(
-    crabc_initial_tls_graph,
-    crabc_initial_exec_tls_graph,
-    crabc_general_initial_tls_materialization_v1,
-    crabc_general_initial_lifecycle
-))]
+/// Require initialized ELF metadata to fit one readable file-backed segment.
+/// Every graph validates its null DT_SYMTAB entry here, including the original
+/// no-TLS graph; TLS prefixes and lifecycle arrays use the same boundary.
+/// `p_memsz` can extend through BSS, but that zero-fill extension cannot back
+/// initialized file metadata. Keep this helper available in every graph rather
+/// than gating it on the optional TLS/lifecycle callers.
 unsafe fn virtual_range_in_readable_file_load(
     phdr: *const u8,
     phnum: usize,
@@ -4891,6 +4887,45 @@ unsafe fn jump(entry: usize, sp: usize) -> ! {
 }
 fn fail(message: &[u8]) -> ! { unsafe { die(message) } }
 unsafe fn die(message: &[u8]) -> ! { let _ = syscall3(SYS_WRITE, 2, message.as_ptr() as i64, message.len() as i64); let _ = syscall1(SYS_EXIT, 127); core::hint::unreachable_unchecked() }
+
+// The no-TLS graph parses DT_SYMTAB too. Compile this without a TLS/lifecycle
+// cfg so its unconditional null-symbol check cannot lose its bounds helper.
+#[cfg(test)]
+mod readable_file_load_tests {
+    use super::*;
+
+    fn load(headers: &mut [u8], index: usize, flags: u32, start: u64, filesz: u64, memsz: u64) {
+        let header = &mut headers[index * 56..][..56];
+        header[..4].copy_from_slice(&PT_LOAD.to_le_bytes());
+        header[4..8].copy_from_slice(&flags.to_le_bytes());
+        header[16..24].copy_from_slice(&start.to_le_bytes());
+        header[32..40].copy_from_slice(&filesz.to_le_bytes());
+        header[40..48].copy_from_slice(&memsz.to_le_bytes());
+    }
+
+    #[test]
+    fn dynamic_symbol_record_requires_one_readable_file_backed_load() {
+        let mut headers = [0u8; 112];
+        load(&mut headers, 0, PF_R, 0x1000, 48, 128);
+        load(&mut headers, 1, PF_R, 0x1030, 48, 48);
+        let fits = |address, size| unsafe {
+            virtual_range_in_readable_file_load(headers.as_ptr(), 2, address, size)
+        };
+        assert!(fits(0x1000, 24));
+        assert!(fits(0x1018, 24));
+        assert!(!fits(0x0fff, 24));
+        // Adjacent mapped segments cannot jointly back one symbol record.
+        assert!(!fits(0x1020, 24));
+        // Mapped zero-fill is not initialized symbol-table storage.
+        assert!(!fits(0x1070, 24));
+        assert!(!fits(u64::MAX - 12, 24));
+
+        load(&mut headers, 0, PF_W, 0x1000, 48, 128);
+        assert!(!unsafe { virtual_range_in_readable_file_load(headers.as_ptr(), 2, 0x1000, 24) });
+        load(&mut headers, 0, PF_R, u64::MAX - 12, 48, 48);
+        assert!(!unsafe { virtual_range_in_readable_file_load(headers.as_ptr(), 2, u64::MAX - 12, 1) });
+    }
+}
 
 #[cfg(test)]
 mod owned_crt_note_tests {

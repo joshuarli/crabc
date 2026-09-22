@@ -24,11 +24,18 @@ for tool in ar awk cargo c++ cc cmp grep nm readelf rustc sort; do require_tool 
 [ -x "$MUSL_LOADER" ] || fail 'missing pinned musl 1.2.6 loader'
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-public-dlfcn.XXXXXX)"
+work_dir="$(mktemp -d "$TMPDIR/crabc-x86-64-public-dlfcn.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 target_dir="$work_dir/cargo-target"
 static_archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 archive="$work_dir/libcrabc-public-dlfcn.a"
+
+# The no-TLS source root must retain the readable file-range guard used by
+# unconditional DT_SYMTAB parsing. No TLS or lifecycle cfg is supplied here.
+rustc --edition=2021 --test "$ROOT_DIR/ldso/src/x86_64_initial_graph.rs" \
+    -o "$work_dir/readable-file-load-tests"
+"$work_dir/readable-file-load-tests" --exact \
+    readable_file_load_tests::dynamic_symbol_record_requires_one_readable_file_backed_load
 
 build_interpreter() {
     local output="$1"
