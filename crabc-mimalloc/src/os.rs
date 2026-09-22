@@ -1231,6 +1231,17 @@ impl VmPolicy {
         self.option_value(VmOption::ReserveOsMemory)
     }
 
+    /// Returns the signed source `destroy_on_exit` descriptor unchanged.
+    ///
+    /// Pinned `src/init.c` distinguishes zero, nonzero explicit destruction,
+    /// and values at least two for automatic-finalization suppression. The
+    /// process finalization owner therefore receives this raw value; this VM
+    /// policy does not select, run, or register any finalization path.
+    #[inline]
+    pub(crate) fn destroy_on_exit_raw(&self) -> i64 {
+        self.option_value(VmOption::DestroyOnExit)
+    }
+
     #[inline]
     fn configured_numa_nodes(&self) -> i64 { self.option_value(VmOption::UseNumaNodes) }
 
@@ -6411,6 +6422,23 @@ mod tests {
             5,
             "the source rejects INT_MAX itself as an explicit option and probes the primitive"
         );
+    }
+
+    #[test]
+    fn vm_policy_exposes_destroy_on_exit_raw_for_the_process_finalization_owner() {
+        for raw in [0, 1, 2, 9, -7] {
+            let mut options = VmOptions::uninitialized();
+            options.initialize_all(|_| VmOptionEnvironment::Absent);
+            options.set(VmOption::DestroyOnExit, raw);
+            let policy = VmPolicy::new(options)
+                .expect("the selected source option image resolves before finalization observes it");
+
+            assert_eq!(
+                policy.destroy_on_exit_raw(),
+                raw,
+                "the policy must not flatten source zero, nonzero, or automatic-finalization values"
+            );
+        }
     }
 
     #[test]

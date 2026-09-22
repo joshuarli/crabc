@@ -271,11 +271,11 @@ performance_qualified = false
 
 [[unit]]
 upstream = "src/options.c"
-source_region = "options, callbacks, and diagnostics"
-rust_module = "crabc_mimalloc::options"
-rust_item = "unimplemented"
-intentional_difference = ""
-tests = []
+source_region = "selected signed VM descriptors in the static table (111-177) and their lazy source-environment initialization/parser (187-190,623-675), plus the separately bounded diagnostic-output owner"
+rust_module = "crabc_mimalloc::config, crabc_mimalloc::diagnostic_output, crabc_mimalloc::os, and crabc_mimalloc::runtime_lifecycle"
+rust_item = "partial: VmOption/VmOptions retain the selected source descriptor order, defaults, lazy signed parser, and raw Unix environment observation; VmPolicy::destroy_on_exit_raw exposes only the selected destroy_on_exit value to the separately owned process finalization path; diagnostic_output retains its separately mapped finite output owner"
+intentional_difference = "The selected image has 18 VM-policy descriptors, including destroy_on_exit after disallow_os_alloc in the source declaration order. The raw getter deliberately preserves zero, signed nonzero, and values at least two without deciding explicit destruction or automatic process-done suppression. Public mi_option APIs, option mutation, callbacks, option printing, and process finalization dispatch remain outside this bounded option binding; the existing diagnostic output record remains separately partial."
+tests = ["crabc-mimalloc/src/config.rs", "crabc-mimalloc/src/diagnostic_output.rs", "crabc-mimalloc/src/os.rs", "compat/allocator/tests/test_x86_64_source_map.py"]
 exported = false
 implemented = false
 unit_verified = false

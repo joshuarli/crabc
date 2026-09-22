@@ -172,7 +172,11 @@ class X86_64SourceMapTests(unittest.TestCase):
         self.assertEqual(option_processing["status"], "partial")
         self.assertEqual(
             option_processing["rust_modules"],
-            ["crabc_mimalloc::diagnostic_output", "crabc_mimalloc::os"],
+            [
+                "crabc_mimalloc::config",
+                "crabc_mimalloc::diagnostic_output",
+                "crabc_mimalloc::os",
+            ],
         )
         self.assertIn("show_errors/verbose/max_warnings", option_processing["difference"])
         self.assertIn("16 KiB delayed output", option_processing["difference"])
@@ -183,6 +187,8 @@ class X86_64SourceMapTests(unittest.TestCase):
         self.assertIn("selected x86 libc startup", option_processing["difference"])
         self.assertIn("mi_register_output ABI", option_processing["difference"])
         self.assertIn("atomic.h", option_processing["difference"])
+        self.assertIn("18 selected signed VM descriptors", option_processing["difference"])
+        self.assertIn("destroy_on_exit_raw", option_processing["difference"])
 
         options = self.sources["src/options.c"]
         atomic = self.sources["include/mimalloc/atomic.h"]
@@ -201,6 +207,7 @@ class X86_64SourceMapTests(unittest.TestCase):
             b"{ 0, MI_OPTION_UNINIT, MI_OPTION(show_errors) },",
             b"{ MI_DEFAULT_VERBOSE, MI_OPTION_UNINIT, MI_OPTION(verbose) },",
             b"{ 32,  MI_OPTION_UNINIT, MI_OPTION(max_warnings) },",
+            b"{ 0,   MI_OPTION_UNINIT, MI_OPTION(destroy_on_exit)},",
             b"#define MI_MAX_DELAY_OUTPUT ((size_t)(16*1024))",
             b"mi_out_buf_flush(out,true,arg);",
             b"if (mi_max_warning_count >= 0 && (long)mi_atomic_increment_acq_rel(&warning_count) > mi_max_warning_count) return;",
@@ -208,6 +215,15 @@ class X86_64SourceMapTests(unittest.TestCase):
         for anchor in anchors:
             with self.subTest(anchor=anchor):
                 assert_contract_bound("src/options.c", options, anchor)
+
+        self.assertLess(
+            options.index(b"MI_OPTION_LEGACY(disallow_os_alloc,limit_os_alloc)"),
+            options.index(b"MI_OPTION(destroy_on_exit)"),
+        )
+        self.assertLess(
+            options.index(b"MI_OPTION(destroy_on_exit)"),
+            options.index(b"MI_OPTION(arena_reserve)"),
+        )
 
         assert_contract_bound(
             "include/mimalloc/atomic.h",

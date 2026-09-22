@@ -146,10 +146,11 @@ pub(crate) enum VmOption {
     ArenaIsNumaLocal = 14,
     MinimalPurgeSize = 15,
     ReserveOsMemory = 16,
+    DestroyOnExit = 17,
 }
 
 impl VmOption {
-    pub(crate) const ALL: [Self; 17] = [
+    pub(crate) const ALL: [Self; 18] = [
         // Keep the selected descriptors in their `src/options.c:111-177`
         // order.  The source initializes every descriptor in declaration
         // order at process start; the omitted non-VM descriptors stay outside
@@ -164,6 +165,7 @@ impl VmOption {
         Self::PurgeDelay,
         Self::UseNumaNodes,
         Self::DisallowOsAlloc,
+        Self::DestroyOnExit,
         Self::ArenaReserve,
         Self::ArenaPurgeMult,
         Self::DisallowArenaAlloc,
@@ -195,6 +197,7 @@ impl VmOption {
             Self::ArenaIsNumaLocal => b"arena_is_numa_local",
             Self::MinimalPurgeSize => b"minimal_purge_size",
             Self::ReserveOsMemory => b"reserve_os_memory",
+            Self::DestroyOnExit => b"destroy_on_exit",
         }
     }
 
@@ -219,7 +222,8 @@ impl VmOption {
             | Self::PageCommitOnDemand
             | Self::ArenaIsNumaLocal
             | Self::MinimalPurgeSize
-            | Self::ReserveOsMemory => None,
+            | Self::ReserveOsMemory
+            | Self::DestroyOnExit => None,
         }
     }
 
@@ -249,11 +253,12 @@ impl VmOption {
             // `MI_SIZE_BITS * MI_ARENA_MAX_CHUNK_OBJ_SIZE / MI_KiB`:
             // `(64 * 32 MiB) / KiB == 2 GiB`, stored in KiB.
             Self::ArenaMaxObjectSize => 2 * 1024 * 1024,
-            // `src/options.c:143,151,168,177`.
+            // `src/options.c:143,147,151,168,177`.
             Self::DisallowArenaAlloc
             | Self::DisallowOsAlloc
             | Self::PageCommitOnDemand
-            | Self::ArenaIsNumaLocal => 0,
+            | Self::ArenaIsNumaLocal
+            | Self::DestroyOnExit => 0,
             // `src/options.c:174`, expressed in KiB like the two arena-size
             // descriptors.
             Self::MinimalPurgeSize => 0,
@@ -335,7 +340,7 @@ impl VmOptionSlot {
 /// copy from silently changing process policy.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct VmOptions {
-    slots: [VmOptionSlot; 17],
+    slots: [VmOptionSlot; 18],
 }
 
 impl VmOptions {
@@ -361,6 +366,7 @@ impl VmOptions {
                 VmOptionSlot::new(VmOption::ArenaIsNumaLocal.default_value()),
                 VmOptionSlot::new(VmOption::MinimalPurgeSize.default_value()),
                 VmOptionSlot::new(VmOption::ReserveOsMemory.default_value()),
+                VmOptionSlot::new(VmOption::DestroyOnExit.default_value()),
             ],
         }
     }
@@ -842,6 +848,7 @@ mod tests {
         options.initialize_one(VmOption::AllowThp, VmOptionEnvironment::Value(b"off"));
         options.initialize_one(VmOption::UseNumaNodes, VmOptionEnvironment::Unavailable);
         options.initialize_one(VmOption::ReserveHugeOsPages, VmOptionEnvironment::Value(b"bogus"));
+        options.initialize_one(VmOption::DestroyOnExit, VmOptionEnvironment::Value(b"-7"));
 
         assert_eq!(options.value(VmOption::AllowLargeOsPages), Some(0));
         assert_eq!(options.state(VmOption::AllowLargeOsPages), VmOptionState::Defaulted);
@@ -853,6 +860,8 @@ mod tests {
         assert_eq!(options.state(VmOption::UseNumaNodes), VmOptionState::Uninitialized);
         assert_eq!(options.value(VmOption::ReserveHugeOsPages), Some(0));
         assert_eq!(options.state(VmOption::ReserveHugeOsPages), VmOptionState::Defaulted);
+        assert_eq!(options.value(VmOption::DestroyOnExit), Some(-7));
+        assert_eq!(options.state(VmOption::DestroyOnExit), VmOptionState::Initialized);
         assert_eq!(options.value(VmOption::ArenaPurgeMult), None);
         assert_eq!(options.value(VmOption::ArenaIsNumaLocal), None);
 
@@ -918,6 +927,7 @@ mod tests {
             b"mimalloc_allow_large_os_pages=0\0".as_ptr().cast(),
             b"MIMALLOC_LARGE_OS_PAGES=1\0".as_ptr().cast(),
             b"MIMALLOC_ALLOW_THP=0\0".as_ptr().cast(),
+            b"mimalloc_destroy_on_exit=-7\0".as_ptr().cast(),
             b"mimalloc_arena_reserve=2MiB\0".as_ptr().cast(),
             b"mimalloc_allow_thp_not_a_descriptor=1\0".as_ptr().cast(),
             core::ptr::null(),
@@ -936,6 +946,7 @@ mod tests {
             "the canonical spelling wins before a legacy spelling is considered"
         );
         assert_eq!(options.value(VmOption::AllowThp), Some(0));
+        assert_eq!(options.value(VmOption::DestroyOnExit), Some(-7));
         assert_eq!(options.value(VmOption::ArenaReserve), Some(2 * 1024));
         assert_eq!(options.state(VmOption::UseNumaNodes), VmOptionState::Defaulted);
     }
@@ -979,6 +990,7 @@ mod tests {
                 VmOption::PurgeDelay,
                 VmOption::UseNumaNodes,
                 VmOption::DisallowOsAlloc,
+                VmOption::DestroyOnExit,
                 VmOption::ArenaReserve,
                 VmOption::ArenaPurgeMult,
                 VmOption::DisallowArenaAlloc,
@@ -1009,6 +1021,27 @@ mod tests {
         assert_eq!(parse_source_option_value(VmOption::AllowThp, b"9223372036854775808"), None);
         assert_eq!(parse_source_option_value(VmOption::AllowThp, b"12x"), None);
         assert_eq!(parse_source_option_value(VmOption::AllowThp, b" + "), None);
+    }
+
+    #[test]
+    fn vm_destroy_on_exit_preserves_the_source_signed_descriptor_values() {
+        let mut defaults = VmOptions::uninitialized();
+        defaults.initialize_one(VmOption::DestroyOnExit, VmOptionEnvironment::Absent);
+        assert_eq!(defaults.value(VmOption::DestroyOnExit), Some(0));
+
+        for (input, expected) in [
+            (b"0".as_slice(), 0),
+            (b"1".as_slice(), 1),
+            (b"2".as_slice(), 2),
+            (b"9".as_slice(), 9),
+            (b"-7".as_slice(), -7),
+        ] {
+            assert_eq!(
+                parse_source_option_value(VmOption::DestroyOnExit, input),
+                Some(expected),
+                "source parser must retain the raw signed destroy_on_exit value"
+            );
+        }
     }
 
     #[test]
