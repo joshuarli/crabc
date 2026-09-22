@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import errno
+import inspect
 from pathlib import Path
 import sys
 import unittest
@@ -12,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[3]
 PROBE = ROOT / 'compat/x86_64/owned_resolver_cancellation_probe.c'
 sys.path.insert(0, str(ROOT / 'compat/x86_64'))
 import owned_resolver_cancellation as cancellation  # noqa: E402
+import owned_resolver_cancellation_receipt as receipt  # noqa: E402
 
 
 BASE_OBSERVATION = {
@@ -77,6 +79,17 @@ class ResolverCancellationObservationContractTests(unittest.TestCase):
         paired_reply = source.index('if(!post_tcp_later_eagain_case) {')
         accept = source.index('accepted=accept(tcp,0,0)')
         self.assertLess(paired_reply, accept)
+
+    def test_dynamic_execution_labels_match_the_public_receipt_matrix(self) -> None:
+        """The producer's retained raw names must be replayable by its reader."""
+
+        producer = inspect.getsource(cancellation.run)
+        self.assertIn("execute('dynamic-'+mode+'-kernel'", producer)
+        self.assertIn("execute('dynamic-'+mode+'-direct'", producer)
+        self.assertEqual(receipt.ENTRY_MODES[2:], (
+            'dynamic-pie-kernel', 'dynamic-pie-direct',
+            'dynamic-non-pie-kernel', 'dynamic-non-pie-direct',
+        ))
 
 
 if __name__ == '__main__':

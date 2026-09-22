@@ -193,8 +193,8 @@ def run(work: Path, static: Path | None, dynamic: Path | None) -> None:
                 'receipt': fixture.dynamic_receipt_audit(dynamic, '--dynamic-'+mode, obj, binary, Path(str(binary)+'.crabc-link.json')),
                 'elf': fixture.elf_audit(binary, mode='dynamic-'+mode, dynamic=True)}
             shutil.copy2(binary, execution / binary.name)
-            execute(mode+'-kernel', ['/'+binary.name])
-            execute(mode+'-direct', ['/lib/ld-crabc-x86_64.so.1', '/'+binary.name])
+            execute('dynamic-'+mode+'-kernel', ['/'+binary.name])
+            execute('dynamic-'+mode+'-direct', ['/lib/ld-crabc-x86_64.so.1', '/'+binary.name])
     if source_digest() != source_sha256 or fixture.artifact_record(obj) != object_record:
         raise RuntimeError('DNS cancellation source or same application object changed during execution')
     for kind, path in (('static', static), ('dynamic', dynamic)):
