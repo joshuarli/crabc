@@ -50,6 +50,28 @@ class NativeStaticSourceRuntimeClosureTests(unittest.TestCase):
             for name, path in runtime.items()
         }
 
+    def test_pinned_rustup_keeps_lexical_frontend_for_bootstrap_target(self) -> None:
+        work = ROOT / ".work"
+        work.mkdir(exist_ok=True)
+        temporary = Path(tempfile.mkdtemp(dir=work))
+        self.addCleanup(lambda: __import__("shutil").rmtree(temporary, ignore_errors=True))
+        target = temporary / "usr" / "bin" / "rustup-init"
+        target.parent.mkdir(parents=True)
+        target.write_text("bootstrap", encoding="utf-8")
+        target.chmod(0o755)
+        frontend = temporary / "opt" / "cargo" / "bin" / "rustup"
+        frontend.parent.mkdir(parents=True)
+        frontend.symlink_to(target)
+
+        identity = CLOSURE.pinned_rustup_frontend(frontend, target)
+
+        self.assertEqual(identity["argv0"], "rustup")
+        self.assertEqual(identity["frontend"], str(frontend))
+        self.assertEqual(identity["resolved_target"], str(target))
+
+        with self.assertRaisesRegex(CLOSURE.ClosureError, "lexical rustup frontend"):
+            CLOSURE.pinned_rustup_frontend(target, target)
+
     def test_project_vendor_requires_exact_versioned_package_directory(self) -> None:
         work = ROOT / ".work"
         work.mkdir(exist_ok=True)

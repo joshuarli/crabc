@@ -26,6 +26,12 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 TARGET = "x86_64-unknown-linux-musl"
 TOOLCHAIN = "nightly-2026-07-24"
 PINNED_CARGO_BIN = pathlib.Path("/opt/cargo/bin")
+PINNED_RUSTUP_FRONTEND = PINNED_CARGO_BIN / "rustup"
+# Alpine packages the installed rustup executable under this bootstrap name.
+# The command must retain the `/opt/cargo/bin/rustup` argv[0], however: that
+# selects manager mode while invoking the resolved bootstrap name re-enters
+# installer mode and rejects `rustup run`.
+PINNED_RUSTUP_TARGET = pathlib.Path("/usr/bin/rustup-init")
 PINNED_RUSTUP_HOME = pathlib.Path("/opt/rustup")
 FIXED_HOST_PATH = "/usr/bin:/bin"
 REGISTRY = "registry+https://github.com/rust-lang/crates.io-index"
@@ -462,10 +468,29 @@ def required_tool(sysroot: pathlib.Path, name: str) -> pathlib.Path:
     return physical(sysroot / "lib" / "rustlib" / TARGET / "bin" / name, f"pinned Rust {name}")
 
 
-def pinned_environment() -> tuple[pathlib.Path, dict[str, str]]:
+def pinned_rustup_frontend(frontend: pathlib.Path, expected_target: pathlib.Path) -> dict[str, str]:
+    """Bind Alpine's installed rustup target without losing the manager argv[0]."""
+
+    if frontend.name != "rustup":
+        fail(f"pinned Rust command must use its lexical rustup frontend: {frontend}")
+    if not frontend.is_file() or not os.access(frontend, os.X_OK):
+        fail(f"pinned Rust lexical frontend is missing or not executable: {frontend}")
+    resolved = physical(frontend, "pinned Rust lexical frontend")
+    target = physical(expected_target, "pinned Rust installed target")
+    if resolved != target:
+        fail(f"pinned Rust lexical frontend resolves to an unexpected target: {resolved}")
+    return {
+        "argv0": frontend.name,
+        "frontend": str(frontend),
+        "resolved_target": str(target),
+        "resolved_target_sha256": digest(target),
+    }
+
+
+def pinned_environment() -> tuple[dict[str, str], dict[str, str]]:
     """Select the image-owned frontend without inheriting host Cargo state."""
 
-    rustup = physical(PINNED_CARGO_BIN / "rustup", "pinned rustup")
+    rustup = pinned_rustup_frontend(PINNED_RUSTUP_FRONTEND, PINNED_RUSTUP_TARGET)
     rustup_root = physical(PINNED_RUSTUP_HOME, "pinned rustup home", directory=True)
     return rustup, {
         "LC_ALL": "C",
@@ -563,7 +588,7 @@ def build(arguments: argparse.Namespace) -> pathlib.Path:
     work = work_child(work_root, pathlib.Path(arguments.work), "source-runtime closure work")
     work.mkdir(mode=0o755)
     rustup, base_environment = pinned_environment()
-    sysroot_result = subprocess.run([str(rustup), "run", TOOLCHAIN, "rustc", "--print", "sysroot"], cwd=ROOT,
+    sysroot_result = subprocess.run([rustup["argv0"], "run", TOOLCHAIN, "rustc", "--print", "sysroot"], cwd=ROOT,
                                     env=base_environment, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE, text=True, check=False)
     if sysroot_result.returncode != 0:
@@ -597,7 +622,7 @@ def build(arguments: argparse.Namespace) -> pathlib.Path:
         "TMPDIR": str(temporary),
     }
     command = [
-        str(rustup), "run", TOOLCHAIN, "cargo", "-Zbuild-std=core,alloc,compiler_builtins", "rustc",
+        rustup["argv0"], "run", TOOLCHAIN, "cargo", "-Zbuild-std=core,alloc,compiler_builtins", "rustc",
         "--locked", "--offline", "-vv", "--message-format=json-render-diagnostics", "-p", "crabc-libc", "--lib",
         "--target", TARGET, "--features", arguments.features,
     ]
@@ -637,6 +662,7 @@ def build(arguments: argparse.Namespace) -> pathlib.Path:
         "scope": "private-native-static-source-runtime-closure-not-product-or-dynamic-qualification",
         "target": TARGET,
         "toolchain": TOOLCHAIN,
+        "pinned_rustup": rustup,
         "immediate_abort_semantics": "development-only Rust panics abort immediately instead of using static_c_abi.rs's nonreturning spin panic handler",
         "cargo_command": command,
         "runtime_flags": list(RUNTIME_FLAGS),
