@@ -798,6 +798,7 @@ impl ProcessMainInitializationStorage {
         // Pinned init.c publishes the default Theap before TLS setup and
         // source startup reservation calls can reenter allocation. This state
         // publishes only the initialized tuple, never reservation outcomes.
+        subprocess.record_statistics_thread_attached();
         self.state.store(SOURCE_ATTACHED, Ordering::Release);
 
         let allocation = ProcessMainAllocationLease {
