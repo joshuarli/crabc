@@ -413,6 +413,71 @@ mod tests {
     }
 
     #[test]
+    fn physical_destroy_refuses_pending_owner_exit_without_a_live_callback_marker() {
+        // A rejected transfer must retain the live TLS mapping, not join/drop
+        // its pending owner. The outer process observes only the exit status;
+        // the isolated child exits with its parked worker still mapped.
+        let child = crabc_core::process::fork_raw().expect("isolated pending-owner fixture");
+        if child == 0 {
+            unsafe { std::env::set_var("mimalloc_destroy_on_exit", "1"); }
+            assert!(initialize_process(4096, unsafe { RuntimeStderrOutput::new(fixture_stderr) }));
+            assert!(prepare_native_later_thread_arena());
+            let NativePageAllocationResult::Allocated(initial_client) = native_allocate_aligned(80, 16, false)
+                else { panic!("initial pending-owner fixture client"); };
+            let descriptor = std::boxed::Box::leak(std::boxed::Box::new(
+                core::sync::atomic::AtomicPtr::new(core::ptr::null_mut())));
+            let ready = std::boxed::Box::leak(std::boxed::Box::new(
+                core::sync::atomic::AtomicBool::new(false)));
+            let descriptor: &'static core::sync::atomic::AtomicPtr<admission::NativeAllocatorThreadDescriptor> = descriptor;
+            let ready: &'static core::sync::atomic::AtomicBool = ready;
+            let worker = std::thread::spawn(move || {
+                let current = admission::current_native_allocator_thread_descriptor();
+                descriptor.store(current.as_ptr(), Ordering::Release);
+                assert!(unsafe { admission::register_current_native_allocator_worker_descriptor(current) });
+                assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+                assert!(matches!(native_allocate_aligned(96, 16, false), NativePageAllocationResult::Allocated(_)));
+                let operation = admission::NativeAllocatorOperationGuard::enter().unwrap();
+                let phase = begin_current_thread_native_owner_exit_deferred_free_phase()
+                    .expect("real source phase A retains its engine");
+                let NativeOwnerExitDeferredFreePhase::Call(call) = phase;
+                assert!(!call.invokes_user_callback(), "no callback registration in this isolated process");
+                assert!(with_current_thread_native_persistent_owner(|owner|
+                    matches!(owner.state, NativePersistentThreadOwnerExitState::DeferredFreePending(_)))
+                    .unwrap());
+                drop(operation);
+                assert_eq!(admission::current_native_allocator_callback_boundary_state(), (false, false));
+                // The value-only phase remains on this stack; there is no
+                // phase C and no lifetime release before the process exits.
+                let _pending_call = call;
+                ready.store(true, Ordering::Release);
+                loop { std::thread::yield_now(); }
+            });
+            while !ready.load(Ordering::Acquire) {
+                if worker.is_finished() { panic!("worker failed before its pending publication"); }
+                std::thread::yield_now();
+            }
+            let request = capture_native_process_destroy_request().unwrap();
+            let registry = PinnedFixtureRegistry {
+                initial: admission::native_allocator_initial_thread_descriptor().unwrap(), worker: descriptor,
+            };
+            assert!(matches!(unsafe { prepare_native_process_destroy(request, &registry) },
+                Err(NativeProcessDestroyError::SourceOwner)));
+            assert!(admission::native_source_entry_is_terminal());
+            assert!(!RUNTIME_PROCESS.logical_process_done_is_complete());
+            assert_eq!(crate::subproc::MainSubprocess::global().live_thread_count(), 2);
+            assert!(unsafe { (&*DESTROY_OWNERS.0.get()).tracking_mapping.is_none() });
+            let mut resident = 0u8;
+            assert!(unsafe { crabc_core::mm::mincore_raw(
+                (initial_client.as_ptr().addr() & !4095) as *mut u8, 4096, &mut resident) }.is_ok());
+            assert!(matches!(native_allocate_aligned(32, 16, false), NativePageAllocationResult::Unavailable));
+            crabc_core::process::exit_immediately(0);
+        }
+        let mut status = 0;
+        assert_eq!(unsafe { crabc_core::process::wait4_raw(child, &mut status, 0) }, Ok(child));
+        assert_eq!(status, 0, "pending owner and backing survive a permanently sealed refusal");
+    }
+
+    #[test]
     fn physical_destroy_transfers_live_worker_before_arena_and_page_map_release() {
         physical_destroy_fixture(false, false);
     }
