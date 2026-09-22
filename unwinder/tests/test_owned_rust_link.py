@@ -246,6 +246,25 @@ class OwnedRustLinkContract(unittest.TestCase):
                 self.assertIn("--dynamic-linker", command)
                 self.assertIn(str(library / "Scrt1.o"), command)
 
+    def test_closed_rust_archive_group_resolves_provider_core_dependencies(self):
+        root = Path(self.temporary.name) / "owned"
+        (root / "usr/lib").mkdir(parents=True)
+        provider = Path(self.temporary.name) / "libcrabc-unwind.a"
+        provider.write_bytes(b"provider")
+        parsed = linker.parse_arguments(
+            self.source_built_arguments(), self.application, self.stock, self.source_built,
+        )
+        command = linker.link_command(
+            linker=Path("/pinned/ld.lld"), root=root, mode="dynamic", provider=provider,
+            objects=parsed["objects"], archives=parsed["archives"],
+            output=self.application / "cleanup", export_dynamic=False,
+        )
+        start = command.index("--start-group")
+        self.assertEqual(
+            command[start:start + len(parsed["archives"]) + 3],
+            ["--start-group", *map(str, parsed["archives"]), str(provider), "--end-group"],
+        )
+
     def test_shared_rust_plugin_uses_dynamic_product_without_executable_crt(self):
         root = Path(self.temporary.name) / "owned"
         library = root / "usr/lib"

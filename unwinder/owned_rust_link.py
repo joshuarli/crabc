@@ -429,9 +429,16 @@ def link_command(
     *, linker: Path, root: Path, mode: str, provider: Path, objects: list[Path], archives: list[Path], output: Path,
     export_dynamic: bool, rust_mode: str = "executable", version_script: Path | None = None,
 ) -> list[str]:
-    """Return the entire native command; there are no library-search holes."""
+    """Return the entire native command; there are no library-search holes.
+
+    The selected provider can be a Rust archive whose unwind implementation
+    calls source-matching ``core`` formatting or panic code.  Rust archives can
+    also refer back to the provider, so keep their closed set and the provider
+    in one linker group instead of making either archive order an ambient ABI.
+    """
 
     runtime = _product_inputs(root, mode)
+    rust_runtime_group = ["--start-group", *map(str, archives), str(provider), "--end-group"]
     if rust_mode == "shared":
         if mode != "dynamic":
             raise LinkError("a Rust shared object requires the owned dynamic product")
@@ -439,7 +446,7 @@ def link_command(
             str(linker), "-shared", "-soname", output.name, "--hash-style=sysv", "--eh-frame-hdr", "--gc-sections",
             "--no-undefined", "--allow-shlib-undefined", "-z", "text", "-z", "noexecstack", "-z", "relro", "-z", "now",
             *( ["--version-script", str(version_script)] if version_script is not None else [] ),
-            "--trace", "-o", str(output), str(runtime[1]), *map(str, objects), *map(str, archives), str(provider),
+            "--trace", "-o", str(output), str(runtime[1]), *map(str, objects), *rust_runtime_group,
             str(runtime[3]), str(runtime[4]), str(runtime[5]),
         ]
     if rust_mode not in {"executable", "pie", "no-pie"}:
@@ -449,14 +456,14 @@ def link_command(
             str(linker), "-static", "--no-dynamic-linker", "--no-undefined", "--eh-frame-hdr",
             "--gc-sections", "-z", "noexecstack", "-z", "relro", "-z", "now", "-e", "_start",
             "--trace", "-o", str(output), str(runtime[0]), str(runtime[1]),
-            *map(str, objects), *map(str, archives), str(provider), str(runtime[2]), str(runtime[3]), str(runtime[4]),
+            *map(str, objects), *rust_runtime_group, str(runtime[2]), str(runtime[3]), str(runtime[4]),
         ]
     return [
         str(linker), "-pie", "--hash-style=sysv", "--eh-frame-hdr", "--gc-sections", "--no-undefined",
         "--allow-shlib-undefined", "-z", "text", "-z", "noexecstack", "-z", "relro", "-z", "now",
         "--dynamic-linker", INTERPRETER, *( ["--export-dynamic"] if export_dynamic else [] ),
         "--trace", "-o", str(output), str(runtime[0]), str(runtime[1]), str(runtime[2]),
-        *map(str, objects), *map(str, archives), str(provider), str(runtime[3]), str(runtime[4]), str(runtime[5]),
+        *map(str, objects), *rust_runtime_group, str(runtime[3]), str(runtime[4]), str(runtime[5]),
     ]
 
 
