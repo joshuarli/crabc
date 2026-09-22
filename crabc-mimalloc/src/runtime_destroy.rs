@@ -62,6 +62,7 @@ pub enum NativeProcessDestroyError {
     Coordinator,
     Arena,
     PageMap,
+    Diagnostic,
 }
 
 /// Source-level failures remain stored beside their surviving owners. Public
@@ -74,6 +75,8 @@ enum RetainedDestroyFailure {
     Coordinator(ProcessMainInitError),
     Arena(crate::arena::ArenaDestroyError),
     PageMap(crate::process_page_map::ProcessPageMapTerminalDestroyError),
+    Diagnostic(admission::NativeAllocatorTerminalDiagnosticError),
+    Output(crate::diagnostic_output::FinalDiagnosticOutputError),
 }
 
 struct ProcessDestroyOwners {
@@ -96,6 +99,15 @@ static DESTROY_OWNERS: ProcessDestroyStorage = ProcessDestroyStorage(UnsafeCell:
 
 /// All TLS engines have relinquished source authority. This value borrows no
 /// libc registry; return it out of the pinned visitor before physical work.
+///
+/// `ready` and the finish-local VmProcess retain immutable identities in
+/// process-static storage outside retiring arenas. Coordinator sealing revokes
+/// their checked ready projections; it does not invalidate Rust references.
+/// These stored identities may span final output, but no Heap/Theap/metadata
+/// projection, PageMap view, mutable retained-owner borrow or lock does. The
+/// shared Terminal epoch denies callback reentry before any native source
+/// access; only the permanent policy's atomic preloading flag is used after
+/// the final message. Diagnostic permission never restores ready access.
 #[must_use = "physical destruction or exact retained failure must follow source transfer"]
 pub struct NativePreparedProcessDestroy {
     ready: ProcessMainReadyLease,
@@ -265,13 +277,69 @@ impl NativePreparedProcessDestroy {
             .map_err(|error| { owners.failure = Some(RetainedDestroyFailure::Arena(error)); NativeProcessDestroyError::Arena })?;
         let all_arenas_released = arenas.is_released();
         owners.arenas = Some(arenas);
+        // Source subproc.c:244 prints after arena destruction and before
+        // PageMap retirement. End the mutable retained-owner projection before
+        // an option warning or output adapter can enter foreign libc code.
+        let _ = owners;
+        if let Some(diagnostics) = self.diagnostics {
+            let permit = unsafe { self._owners.with_final_diagnostic_output(|| {
+                unsafe { diagnostics.output.final_statistics_enabled() }
+            }) }
+                .map_err(retain_diagnostic_failure)?
+                .map_err(retain_output_failure)?;
+            if let Some(permit) = permit {
+                let elapsed = crate::statistics::process_elapsed_msecs();
+                let statistics = process.subprocess().statistics().final_output_snapshot();
+                let nodes = process.policy().numa_node_count();
+                let info = match crate::os::process_usage() {
+                    Ok(usage) => crate::diagnostic_output::FinalProcessInfo::from_source_observations(
+                        elapsed, usage, nodes),
+                    Err(_) => crate::diagnostic_output::FinalProcessInfo::from_source_committed_defaults(
+                        elapsed, statistics.process_info_committed_defaults(), nodes),
+                };
+                let view = crate::diagnostic_output::FinalProcessDiagnosticView::new(
+                    diagnostics.subprocess_sequence, statistics, info);
+                // Only scalar copies, the permanent output identity and the
+                // exact writer authority enter this callback scope.
+                unsafe { self._owners.with_final_diagnostic_output(|| unsafe { permit.emit(view) }) }
+                    .map_err(retain_diagnostic_failure)?;
+            }
+        }
         unsafe { terminal.page_map_storage.destroy_terminal_quiescent() }.map_err(|error| {
+            let owners = unsafe { &mut *DESTROY_OWNERS.0.get() };
             owners.failure = Some(RetainedDestroyFailure::PageMap(error)); NativeProcessDestroyError::PageMap
         })?;
+        // Source init.c:646 is a separate phase after subprocess/PageMap work.
+        // Preloading remains false until its final diagnostic has returned.
+        if let Some(diagnostics) = self.diagnostics {
+            let _emitted = unsafe { self._owners.with_final_diagnostic_output(|| unsafe {
+                diagnostics.output.final_process_done_message(core::mem::size_of::<crate::types::Page>())
+            }) }
+                .map_err(retain_diagnostic_failure)?
+                .map_err(retain_output_failure)?;
+        }
         process.policy().enter_process_done_preloading();
         RUNTIME_PROCESS.logical_process_done.store(PROCESS_DONE_COMPLETE, Ordering::Release);
         if all_arenas_released { Ok(()) } else { Err(NativeProcessDestroyError::Arena) }
     }
+}
+
+fn retain_diagnostic_failure(error: admission::NativeAllocatorTerminalDiagnosticError)
+    -> NativeProcessDestroyError {
+    // The already committed terminal writer is the sole observer/mutator of
+    // this process-static retained owner. No callback is active on this path.
+    unsafe { (*DESTROY_OWNERS.0.get()).failure = Some(RetainedDestroyFailure::Diagnostic(error)); }
+    NativeProcessDestroyError::Diagnostic
+}
+
+fn retain_output_failure(error: crate::diagnostic_output::FinalDiagnosticOutputError)
+    -> NativeProcessDestroyError {
+    // Source-disabled output is `Ok(None)`/`Ok(false)`. This path instead
+    // records an unavailable source descriptor owner or private-lock failure
+    // after Terminal transfer, so physical teardown remains permanently
+    // retained instead of completing an output-incomplete source transition.
+    unsafe { (*DESTROY_OWNERS.0.get()).failure = Some(RetainedDestroyFailure::Output(error)); }
+    NativeProcessDestroyError::Diagnostic
 }
 
 #[cfg(test)]
@@ -298,9 +366,160 @@ mod tests {
         fn fputs(message: *const core::ffi::c_char, stream: *mut core::ffi::c_void) -> core::ffi::c_int;
         static mut stderr: *mut core::ffi::c_void;
     }
+
+    #[derive(Clone, Copy)]
+    enum FinalOutputFixtureMode {
+        Disabled,
+        SignedShowStats,
+        SignedVerbose,
+    }
+
+    impl FinalOutputFixtureMode {
+        const fn show_stats(self) -> &'static str {
+            match self {
+                Self::Disabled | Self::SignedVerbose => "0",
+                Self::SignedShowStats => "-7",
+            }
+        }
+
+        const fn verbose(self) -> &'static str {
+            match self {
+                Self::Disabled => "0",
+                Self::SignedShowStats => "-1",
+                Self::SignedVerbose => "-3",
+            }
+        }
+
+        const fn emits_final_output(self) -> bool {
+            !matches!(self, Self::Disabled)
+        }
+    }
+
+    /// Test-only observation owned outside the sealed PageMap. The C callback
+    /// sees only raw address/atomic state: it cannot borrow a ready owner,
+    /// source Heap/TLS image, PageMap view, or process lock after Terminal.
+    struct FinalOutputObservation {
+        page_map_root: core::sync::atomic::AtomicUsize,
+        statistics_headers: core::sync::atomic::AtomicUsize,
+        process_done_tails: core::sync::atomic::AtomicUsize,
+        statistics_root_mapped: core::sync::atomic::AtomicBool,
+        process_done_root_unmapped: core::sync::atomic::AtomicBool,
+        statistics_native_allocation_denied: core::sync::atomic::AtomicBool,
+        process_done_native_allocation_denied: core::sync::atomic::AtomicBool,
+    }
+
+    impl FinalOutputObservation {
+        const fn new() -> Self {
+            Self {
+                page_map_root: core::sync::atomic::AtomicUsize::new(0),
+                statistics_headers: core::sync::atomic::AtomicUsize::new(0),
+                process_done_tails: core::sync::atomic::AtomicUsize::new(0),
+                statistics_root_mapped: core::sync::atomic::AtomicBool::new(false),
+                process_done_root_unmapped: core::sync::atomic::AtomicBool::new(false),
+                statistics_native_allocation_denied: core::sync::atomic::AtomicBool::new(false),
+                process_done_native_allocation_denied: core::sync::atomic::AtomicBool::new(false),
+            }
+        }
+
+        fn page_map_root_is_mapped(&self) -> bool {
+            let root = self.page_map_root.load(Ordering::Acquire);
+            if root == 0 {
+                return false;
+            }
+            let mut resident = 0_u8;
+            // SAFETY: `root` was captured from the live source ready lease
+            // before Terminal sealing. This raw observation touches one
+            // aligned page only; it neither projects nor reopens PageMap.
+            unsafe {
+                crabc_core::mm::mincore_raw(
+                    (root & !4095) as *mut u8,
+                    4096,
+                    &mut resident,
+                )
+            }
+            .is_ok()
+        }
+
+        unsafe fn observe_source_message(&self, message: *const core::ffi::c_char) {
+            // SAFETY: OutputOwner supplies a non-null, NUL-terminated source
+            // fragment and calls synchronously while this fixture registration
+            // retains the observation in process-external test storage.
+            let message = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+            if message.starts_with(b"subproc ") {
+                self.statistics_headers.fetch_add(1, Ordering::AcqRel);
+                self.statistics_root_mapped
+                    .store(self.page_map_root_is_mapped(), Ordering::Release);
+                self.statistics_native_allocation_denied.store(
+                    matches!(native_allocate_aligned(32, 16, false), NativePageAllocationResult::Unavailable),
+                    Ordering::Release,
+                );
+            } else if message.starts_with(b"mimalloc: process done ") {
+                self.process_done_tails.fetch_add(1, Ordering::AcqRel);
+                self.process_done_root_unmapped
+                    .store(!self.page_map_root_is_mapped(), Ordering::Release);
+                self.process_done_native_allocation_denied.store(
+                    matches!(native_allocate_aligned(32, 16, false), NativePageAllocationResult::Unavailable),
+                    Ordering::Release,
+                );
+            }
+        }
+
+        fn assert_source_order(self: &Self, mode: FinalOutputFixtureMode) {
+            let headers = self.statistics_headers.load(Ordering::Acquire);
+            let tails = self.process_done_tails.load(Ordering::Acquire);
+            if mode.emits_final_output() {
+                assert_eq!(headers, 1, "source final statistics emits one header");
+                assert_eq!(tails, 1, "source final verbose emits one common tail");
+                assert!(self.statistics_root_mapped.load(Ordering::Acquire));
+                assert!(self.process_done_root_unmapped.load(Ordering::Acquire));
+                assert!(self.statistics_native_allocation_denied.load(Ordering::Acquire));
+                assert!(self.process_done_native_allocation_denied.load(Ordering::Acquire));
+            } else {
+                assert_eq!(headers, 0, "disabled source statistics must not emit a header");
+                assert_eq!(tails, 0, "disabled source verbose must not emit a common tail");
+            }
+        }
+    }
+
+    static FINAL_OUTPUT_OBSERVATION: core::sync::atomic::AtomicPtr<FinalOutputObservation> =
+        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+    /// Synchronously exposes exactly one live test sink to `fixture_stderr`.
+    /// Tests run this physical owner in fresh processes, so concurrent output
+    /// registrations would be a fixture bug rather than a supported mode.
+    struct FinalOutputObservationRegistration;
+
+    impl FinalOutputObservationRegistration {
+        fn install(observation: &FinalOutputObservation) -> Self {
+            assert!(FINAL_OUTPUT_OBSERVATION.compare_exchange(
+                core::ptr::null_mut(),
+                core::ptr::from_ref(observation).cast_mut(),
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ).is_ok());
+            Self
+        }
+    }
+
+    impl Drop for FinalOutputObservationRegistration {
+        fn drop(&mut self) {
+            FINAL_OUTPUT_OBSERVATION.store(core::ptr::null_mut(), Ordering::Release);
+        }
+    }
+
     unsafe extern "C" fn fixture_stderr(message: *const core::ffi::c_char) {
-        unsafe { admission::with_native_allocator_diagnostic_callback(|| { let _ = fputs(message, stderr); }) }
-            .expect("native source diagnostics retain ordinary admission");
+        unsafe {
+            admission::with_native_allocator_diagnostic_callback(|| {
+                let observation = FINAL_OUTPUT_OBSERVATION.load(Ordering::Acquire);
+                if let Some(observation) = unsafe { observation.as_ref() } {
+                    // SAFETY: the registration keeps this exact stack value
+                    // live through the synchronous source callback.
+                    unsafe { observation.observe_source_message(message) };
+                }
+                let _ = fputs(message, stderr);
+            })
+        }
+        .expect("native source diagnostics retain ordinary admission");
     }
 
     struct ReleaseFlag<'a>(&'a core::sync::atomic::AtomicBool);
@@ -308,15 +527,25 @@ mod tests {
         fn drop(&mut self) { self.0.store(true, Ordering::Release); }
     }
 
-    fn physical_destroy_fixture(os_only: bool, fail_tracking_map: bool) {
+    fn physical_destroy_fixture(
+        os_only: bool,
+        fail_tracking_map: bool,
+        final_output: FinalOutputFixtureMode,
+    ) {
         // These filters run in separate native test processes: the process
-        // owner and Terminal state intentionally cannot be reinitialized.
+        // owner, Terminal state, and the source environment are intentionally
+        // not reinitialized. The three exact signed-output modes therefore
+        // cannot leak descriptor state into one another.
         unsafe {
             std::env::set_var("mimalloc_destroy_on_exit", "1");
             std::env::set_var("mimalloc_arena_reserve", "65536");
             std::env::set_var("mimalloc_disallow_arena_alloc", if os_only { "1" } else { "0" });
+            std::env::set_var("mimalloc_show_stats", final_output.show_stats());
+            std::env::set_var("mimalloc_verbose", final_output.verbose());
         }
         std::thread::spawn(move || {
+            let observation = FinalOutputObservation::new();
+            let _observation_registration = FinalOutputObservationRegistration::install(&observation);
             assert!(initialize_process(4096, unsafe { RuntimeStderrOutput::new(fixture_stderr) }));
             assert!(prepare_native_later_thread_arena());
             assert_eq!(native_process_done_action(NativeProcessDoneInvocation::Automatic),
@@ -350,6 +579,8 @@ mod tests {
                 while !ready.load(Ordering::Acquire) { std::thread::yield_now(); }
                 assert!(unsafe { core::slice::from_raw_parts(initial_client.as_ptr(), 80) }.iter().all(|byte| *byte == 0x35));
                 let request = capture_native_process_destroy_request().expect("source capture precedes registry pin");
+                let root = request.ready.root().expect("request captures PageMap root before sealing");
+                observation.page_map_root.store(root.as_ptr().addr(), Ordering::Release);
                 let registry = PinnedFixtureRegistry { initial: admission::native_allocator_initial_thread_descriptor().unwrap(), worker: &descriptor };
                 let thread_count_before = crate::subproc::MainSubprocess::global().live_thread_count();
                 let mut before_resident = 0u8;
@@ -389,6 +620,7 @@ mod tests {
                     return;
                 }
                 result.expect("source ordered physical retirement");
+                observation.assert_source_order(final_output);
                 assert!(!process_is_active());
                 assert!(RUNTIME_PROCESS.logical_process_done_is_complete());
                 assert_eq!(native_process_done_action(NativeProcessDoneInvocation::Automatic),
@@ -495,7 +727,7 @@ mod tests {
     fn physical_destroy_transfers_live_worker_before_arena_and_page_map_release() {
         crate::test_process::run_in_fresh_process(
             "runtime_lifecycle::destroy::tests::physical_destroy_transfers_live_worker_before_arena_and_page_map_release",
-            || physical_destroy_fixture(false, false),
+            || physical_destroy_fixture(false, false, FinalOutputFixtureMode::Disabled),
         );
     }
 
@@ -503,7 +735,7 @@ mod tests {
     fn physical_destroy_os_only_retains_source_pages_but_seals_all_native_access() {
         crate::test_process::run_in_fresh_process(
             "runtime_lifecycle::destroy::tests::physical_destroy_os_only_retains_source_pages_but_seals_all_native_access",
-            || physical_destroy_fixture(true, false),
+            || physical_destroy_fixture(true, false, FinalOutputFixtureMode::Disabled),
         );
     }
 
@@ -511,7 +743,23 @@ mod tests {
     fn physical_destroy_tracking_oom_retains_transferred_graph_and_permanent_seal() {
         crate::test_process::run_in_fresh_process(
             "runtime_lifecycle::destroy::tests::physical_destroy_tracking_oom_retains_transferred_graph_and_permanent_seal",
-            || physical_destroy_fixture(false, true),
+            || physical_destroy_fixture(false, true, FinalOutputFixtureMode::Disabled),
+        );
+    }
+
+    #[test]
+    fn physical_destroy_final_output_keeps_page_map_live_for_signed_show_stats_then_releases_it() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::destroy::tests::physical_destroy_final_output_keeps_page_map_live_for_signed_show_stats_then_releases_it",
+            || physical_destroy_fixture(false, false, FinalOutputFixtureMode::SignedShowStats),
+        );
+    }
+
+    #[test]
+    fn physical_destroy_final_output_keeps_page_map_live_for_signed_verbose_then_releases_it() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::destroy::tests::physical_destroy_final_output_keeps_page_map_live_for_signed_verbose_then_releases_it",
+            || physical_destroy_fixture(false, false, FinalOutputFixtureMode::SignedVerbose),
         );
     }
 

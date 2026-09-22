@@ -49,6 +49,8 @@ use core::sync::atomic::AtomicPtr;
 use core::sync::atomic::AtomicI32;
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
+#[cfg(target_arch = "x86_64")]
+use crate::compiler_tls::default_theap;
 use crate::compiler_tls::{current_thread_identity, set_cached_theap};
 use crate::bootstrap::empty_default_theap;
 use crate::config::{
@@ -96,13 +98,15 @@ use crate::main_static_page::native_process_backing_first_arena_audit;
 use crate::main_theap::MainStaticHeapLease;
 #[cfg(test)]
 use crate::meta::MetaAllocation;
-#[cfg(any(test, feature = "native-runtime-test-audit"))]
+#[cfg(any(test, feature = "native-runtime-test-audit", target_arch = "x86_64"))]
 use crate::meta::MetaAllocator;
 use crate::os::{MemoryConfig, PageSize, StartupInput};
 #[cfg(feature = "native-runtime-test-audit")]
 use crate::os::{MapAccess, Mapping};
 #[cfg(target_arch = "x86_64")]
-use crate::diagnostic_output::{ProcessDiagnosticInputs, RuntimeStderrOutput};
+use crate::diagnostic_output::{
+    FinalProcessDiagnosticView, FinalProcessInfo, ProcessDiagnosticInputs, RuntimeStderrOutput,
+};
 use crate::process_init::{
     ProcessMainBackingBinding, ProcessMainInitializationStorage, ProcessMainInitError,
     ProcessMainThread,
@@ -3449,6 +3453,22 @@ impl RuntimeProcessStorage {
         // true` effect. Do this preflight before claiming the one-way logical
         // transition so a missing process backing cannot publish a partial
         // selected process-done state.
+        #[cfg(target_arch = "x86_64")]
+        let Some((vm_process, diagnostics)) = (|| {
+            // Capture only process-static scalar/identity facts before the
+            // one-way CAS. The ready lease itself does not cross diagnostic
+            // delivery, and no source lock or mutable view does either.
+            let owner = unsafe { self.active_owner() }?;
+            let ready = owner.ready().ok()?;
+            let vm_process = ready.vm_process().ok()?;
+            let output = ready.diagnostic_output().ok()?;
+            let sequence = ready.subprocess_sequence().ok()?;
+            let subprocess = ready.subprocess().ok()?;
+            Some((vm_process, output.map(|output| (output, sequence, subprocess))))
+        })() else {
+            return SelectedProcessDoneResult::Retained;
+        };
+        #[cfg(not(target_arch = "x86_64"))]
         let Some(vm_process) = self.active_vm_process() else {
             return SelectedProcessDoneResult::Retained;
         };
@@ -3472,6 +3492,59 @@ impl RuntimeProcessStorage {
         // branch; changing only the root preserves the source-visible cache
         // effect without claiming dynamic-cache teardown.
         set_cached_theap(core::ptr::NonNull::from(empty_default_theap()));
+
+        #[cfg(target_arch = "x86_64")]
+        if let Some((output, subprocess_sequence, subprocess)) = diagnostics {
+            // The pinned signed source gate is before all final source-stat
+            // merges and sampling. Its invalid-option warning releases its
+            // descriptor lock before delivery, so no ready/Heap/TLS/metadata
+            // projection may remain live across this call.
+            let permit = match unsafe { output.final_statistics_enabled() } {
+                Ok(permit) => permit,
+                Err(_) => return self.retain_selected_process_done_transition(),
+            };
+            if let Some(permit) = permit {
+                if MetaAllocator::global()
+                    .merge_process_done_metadata_statistics(subprocess)
+                    .is_err()
+                    || !self.merge_selected_default_process_done_statistics(subprocess)
+                {
+                    return self.retain_selected_process_done_transition();
+                }
+
+                // All source merge locks ended above. `FinalProcessDiagnosticView`
+                // contains scalar copies only, so output cannot retain source
+                // owner, Heap, Theap, PageMap, or TLS access.
+                let statistics = subprocess.final_output_snapshot();
+                let elapsed = crate::statistics::process_elapsed_msecs();
+                let nodes = vm_process.policy().numa_node_count();
+                let process = match crate::os::process_usage() {
+                    Ok(usage) => FinalProcessInfo::from_source_observations(elapsed, usage, nodes),
+                    Err(_) => FinalProcessInfo::from_source_committed_defaults(
+                        elapsed,
+                        statistics.process_info_committed_defaults(),
+                        nodes,
+                    ),
+                };
+                let view = FinalProcessDiagnosticView::new(
+                    subprocess_sequence,
+                    statistics,
+                    process,
+                );
+                // SAFETY: the x86 outer process-done entry retains its
+                // ordinary operation/diagnostic marker. The scalar view was
+                // captured after the source merge boundary and holds no owner.
+                unsafe { permit.emit(view) };
+            }
+
+            // This is source `init.c:649`'s distinct common tail. In the
+            // retaining profile no PageMap is retired, but it still follows
+            // the optional source statistics phase and precedes preloading.
+            if unsafe { output.final_process_done_message(core::mem::size_of::<Page>()) }.is_err() {
+                return self.retain_selected_process_done_transition();
+            }
+        }
+
         // `src/init.c:647` restores the source preloading guard last. Its
         // process-wide once claim already excludes startup re-entry here, so
         // retain the existing AtomicBool rather than inventing a second
@@ -3482,6 +3555,69 @@ impl RuntimeProcessStorage {
         self.logical_process_done
             .store(PROCESS_DONE_COMPLETE, Ordering::Release);
         SelectedProcessDoneResult::Completed
+    }
+
+    /// Retains an already claimed process-done transition permanently.
+    ///
+    /// The logical state intentionally remains `PROCESS_DONE_TRANSITION`: a
+    /// post-CAS source merge, output, or binding failure has consumed the
+    /// one-way boundary, so retrying, preloading, or emitting the common tail
+    /// could complete only a prefix of the pinned source transition.
+    #[inline]
+    fn retain_selected_process_done_transition(&self) -> SelectedProcessDoneResult {
+        self.retain();
+        SelectedProcessDoneResult::Retained
+    }
+
+    /// Performs pinned retained `init.c:636-641` field-only statistics merges.
+    ///
+    /// This forms one transient shared `Theap` observation only to load its
+    /// initialized/Heap atomic fields. The current selected owner has no
+    /// outstanding source borrow, and the exact short main-Heap guard excludes
+    /// concurrent Heap-list writes; no mutable Theap reference or reference
+    /// across output is created. Empty or uninitialized default images are
+    /// skipped; a nonempty image bound to another Heap is a retained failure.
+    #[cfg(target_arch = "x86_64")]
+    fn merge_selected_default_process_done_statistics(
+        &'static self,
+        subprocess: &'static crate::types::MainSubprocess,
+    ) -> bool {
+        let Some(main_heap) = (unsafe { self.active_main_heap() }) else {
+            return false;
+        };
+        if !core::ptr::eq(main_heap.subprocess(), subprocess) {
+            return false;
+        }
+        let Ok(mut main_heap) = main_heap.lock_heap() else {
+            return false;
+        };
+        let merged = {
+            let heap = main_heap.heap_mut();
+            let default = default_theap();
+            let default_is_empty = core::ptr::eq(
+                default.as_ptr().cast_const(),
+                empty_default_theap() as *const crate::types::Theap,
+            );
+            // SAFETY: the selected initial owner retains this default image;
+            // this short shared view reads only the two atomic fields below
+            // while the main-Heap guard excludes a concurrent list mutation.
+            let default_image = unsafe { default.as_ref() };
+            let default_is_initialized = default_image.is_initialized();
+            if !default_is_empty && default_is_initialized {
+                if !core::ptr::eq(default_image.heap(), core::ptr::from_mut(heap)) {
+                    false
+                } else {
+                    // SAFETY: the existing Heap guard serializes this exact
+                    // initialized source member; the merge reads/resets only
+                    // its statistics image before the Heap-to-subprocess step.
+                    unsafe { heap.merge_attached_theap_statistics_at(default) };
+                    heap.merge_main_heap_statistics_into_owning_subprocess_before_unlink()
+                }
+            } else {
+                heap.merge_main_heap_statistics_into_owning_subprocess_before_unlink()
+            }
+        };
+        merged && main_heap.unlock().is_ok()
     }
 
     /// Whether the process is active on the same TPIDR_EL0 image that minted

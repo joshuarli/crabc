@@ -498,14 +498,25 @@ The source map keeps `option-processing` partial. This private x86 relation
 covers only four signed descriptors, one source-formatted failed-`mbind`
 receiver, and a mandatory caller-supplied capability held before VM/OS/arena
 setup. The selected process-final adapter first evaluates the signed source
-`show_stats || verbose` condition, before its caller performs the pinned
-retaining merge or physical process sampling. Its opaque one-shot permit then
-renders the fixed `MI_STAT=0` process view after that selected boundary; its
-emitter does not re-read either descriptor. The captured committed current/peak
-defaults seed the source process-info fallback when Linux `getrusage` does not
-update it. The renderer preserves `stats.c`'s 255-byte output fragments and keeps the
-later `init.c` verbose `process done` message as a separate post-PageMap phase.
-It does not establish selected x86 libc startup,
+`show_stats || verbose` condition, before
+`RuntimeProcessStorage::finish_selected_default_release_process_after_user_atexit`
+performs its retaining metadata/default-Theap/main-Heap field-only merges or
+process sampling. That default-Theap step has one short shared atomic-field
+observation under the existing main-Heap guard; it creates no mutable Theap
+reference and carries no source view into output. A source-disabled decision stays distinct from unavailable
+option-owner/private-lock failure: the former skips output, while the latter
+permanently retains the already claimed process-done transition. Its opaque
+one-shot permit then renders the fixed `MI_STAT=0` process view after that
+selected boundary; its emitter does not re-read either descriptor. The captured
+committed current/peak defaults seed the source process-info fallback when Linux
+`getrusage` does not update it. `NativePreparedProcessDestroy::finish` uses the
+same permit after arena retirement and emits the separate `init.c` verbose
+`process done` tail after PageMap retirement. The renderer preserves `stats.c`'s
+255-byte output fragments. Its test-only physical sink captures the PageMap root
+before sealing, observes it mapped for the statistics header and unmapped for the
+tail, and verifies normal native allocation remains unavailable at both points.
+This is source-order evidence for the disabled physical fixture, not a production
+physical-finalization claim. It does not establish selected x86 libc startup,
 production FILE transport, environment parsing beyond the finite reader, the
 rest of the descriptor table, option mutation/public APIs, `mi_register_output`
 ABI, error/deferred-free callbacks, public/general statistics output, modes,
