@@ -419,6 +419,7 @@ mod tests {
         // the isolated child exits with its parked worker still mapped.
         let child = crabc_core::process::fork_raw().expect("isolated pending-owner fixture");
         if child == 0 {
+            let _ = std::panic::catch_unwind(|| {
             unsafe { std::env::set_var("mimalloc_destroy_on_exit", "1"); }
             assert!(initialize_process(4096, unsafe { RuntimeStderrOutput::new(fixture_stderr) }));
             assert!(prepare_native_later_thread_arena());
@@ -471,6 +472,8 @@ mod tests {
                 (initial_client.as_ptr().addr() & !4095) as *mut u8, 4096, &mut resident) }.is_ok());
             assert!(matches!(native_allocate_aligned(32, 16, false), NativePageAllocationResult::Unavailable));
             crabc_core::process::exit_immediately(0);
+            });
+            crabc_core::process::exit_immediately(126);
         }
         let mut status = 0;
         assert_eq!(unsafe { crabc_core::process::wait4_raw(child, &mut status, 0) }, Ok(child));
