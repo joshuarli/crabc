@@ -5237,7 +5237,7 @@ impl Theap {
         &mut self,
         heap: &mut Heap,
         tld: &mut ThreadLocalData,
-        page_mode: DynamicTheapPageMode,
+        page_mode: TheapPageMode,
     ) -> Result<(), TheapDynamicInitError> {
         let storage_matches_heap = match self.memid.kind() {
             MemoryKind::Malloc => heap.exclusive_arena.is_null(),
@@ -5469,6 +5469,7 @@ impl Theap {
         &mut self,
         heap: &mut Heap,
         tld: &mut ThreadLocalData,
+        page_mode: TheapPageMode,
     ) -> Result<(), TheapDynamicInitError> {
         if self.is_initialized()
             || self.memid.kind() != MemoryKind::Malloc
@@ -5493,11 +5494,14 @@ impl Theap {
         self.tld = core::ptr::from_mut(tld);
         self.refcount.store(1, Ordering::Release);
         self.subproc.store(heap.subprocess, Ordering::Release);
-        // This is the ordinary source option image.  A shared-main later
-        // thread cannot select the private non-abandoning page-session mode.
+        // The source option image is selected before the Release heap
+        // publication.  Production later threads use the ordinary setting;
+        // a focused full-queue fixture may select the source-reachable `-1`
+        // page-full-retain image before this transition and may never toggle
+        // a live Theap.
         self.allow_page_reclaim = true;
-        self.allow_page_abandon = true;
-        self.page_full_retain = 2;
+        self.allow_page_abandon = page_mode.allows_page_abandon();
+        self.page_full_retain = page_mode.page_full_retain();
         self.is_detached = false;
 
         let self_pointer = core::ptr::from_mut(self);
@@ -6174,10 +6178,14 @@ pub(crate) enum TheapMainStaticInitError {
     HeapList(HeapTheapListError),
 }
 
-/// The only dynamic-Theap option images represented before `_mi_theap_init`
-/// Release-publishes its heap pointer.
+/// The source Theap page-full option images represented before
+/// `_mi_theap_init` Release-publishes its heap pointer.
+///
+/// `src/theap.c:228-232` derives both fields from
+/// `mi_option_page_full_retain`. The normal image has value `2`; `-1` keeps
+/// full pages in `BIN_FULL` for a bounded non-abandoning page session.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum DynamicTheapPageMode {
+pub(crate) enum TheapPageMode {
     /// Ordinary source mode: page abandonment remains enabled, so no bounded
     /// local page session may be constructed over this attachment.
     OrdinaryAbandoning,
@@ -6186,7 +6194,7 @@ pub(crate) enum DynamicTheapPageMode {
     NonAbandoningPageSession,
 }
 
-impl DynamicTheapPageMode {
+impl TheapPageMode {
     #[inline]
     pub(crate) const fn allows_page_abandon(self) -> bool {
         matches!(self, Self::OrdinaryAbandoning)

@@ -62,7 +62,7 @@ use crate::os_page::OsAlignedPageOwner;
 use crate::tld::{DynamicAttachedThreadLocalData, ThreadLocalDataError, ThreadLocalDataOwner};
 use crate::types::{
     MemoryId, Page, PageQueue, Theap, TheapDynamicInitError, TheapOwner,
-    ThreadLocalTheapListError,
+    TheapPageMode, ThreadLocalTheapListError,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -210,6 +210,9 @@ pub(crate) struct MainHeapThreadAttachment<'main> {
     main_heap: MainStaticHeapLease<'main>,
     metadata: core::pin::Pin<&'static MetaAllocator>,
     config: MemoryConfig,
+    /// The source `mi_option_page_full_retain` image frozen before this
+    /// later Theap Release-publishes its heap pointer.
+    page_mode: TheapPageMode,
     tld: Option<DynamicAttachedThreadLocalData>,
     theap: Option<MetaAllocation<'static>>,
     thread: crate::types::LiveThreadId,
@@ -259,7 +262,14 @@ impl<'main> MainHeapThreadAttachment<'main> {
     ) -> Result<Self, MainHeapThreadAttachmentBeginError<'main>> {
         // SAFETY: the process-global metadata owner has process lifetime; all
         // remaining lifecycle obligations are forwarded to the shared helper.
-        unsafe { Self::begin_with_metadata(main_heap, MetaAllocator::global(), config) }
+        unsafe {
+            Self::begin_with_metadata(
+                main_heap,
+                MetaAllocator::global(),
+                config,
+                TheapPageMode::OrdinaryAbandoning,
+            )
+        }
     }
 
     /// Builds the same owner over an explicit process-lived metadata fixture.
@@ -274,6 +284,53 @@ impl<'main> MainHeapThreadAttachment<'main> {
         main_heap: MainStaticHeapLease<'main>,
         metadata: core::pin::Pin<&'static MetaAllocator>,
         config: MemoryConfig,
+    ) -> Result<Self, MainHeapThreadAttachmentBeginError<'main>> {
+        // SAFETY: this fixture preserves the ordinary source option image.
+        unsafe {
+            Self::begin_with_test_metadata_mode(
+                main_heap,
+                metadata,
+                config,
+                TheapPageMode::OrdinaryAbandoning,
+            )
+        }
+    }
+
+    /// Builds a focused later-thread fixture whose source
+    /// `mi_option_page_full_retain = -1` image keeps full pages in `BIN_FULL`.
+    ///
+    /// This is only for fixtures that exercise source full-queue collection.
+    /// Production later-thread attachment keeps the ordinary option image.
+    #[cfg(test)]
+    pub(crate) unsafe fn begin_with_test_metadata_non_abandoning_full_queue(
+        main_heap: MainStaticHeapLease<'main>,
+        metadata: core::pin::Pin<&'static MetaAllocator>,
+        config: MemoryConfig,
+    ) -> Result<Self, MainHeapThreadAttachmentBeginError<'main>> {
+        // SAFETY: the full-queue fixture differs only in the frozen source
+        // option image selected before heap publication.
+        unsafe {
+            Self::begin_with_test_metadata_mode(
+                main_heap,
+                metadata,
+                config,
+                TheapPageMode::NonAbandoningPageSession,
+            )
+        }
+    }
+
+    /// Shared test-fixture admission and source option selection.
+    ///
+    /// # Safety
+    ///
+    /// The caller upholds [`Self::begin_with_test_metadata`]'s complete
+    /// current-thread/root/metadata lifetime contract.
+    #[cfg(test)]
+    unsafe fn begin_with_test_metadata_mode(
+        main_heap: MainStaticHeapLease<'main>,
+        metadata: core::pin::Pin<&'static MetaAllocator>,
+        config: MemoryConfig,
+        page_mode: TheapPageMode,
     ) -> Result<Self, MainHeapThreadAttachmentBeginError<'main>> {
         // Preserve the common constructor's no-side-effect admission checks:
         // a rejected current-thread/root image must not even publish the
@@ -301,13 +358,14 @@ impl<'main> MainHeapThreadAttachment<'main> {
             })?;
         // SAFETY: test callers carry the same root/current-thread ownership
         // proof and retain the leaked metadata fixture for the full lifetime.
-        unsafe { Self::begin_with_metadata(main_heap, metadata, config) }
+        unsafe { Self::begin_with_metadata(main_heap, metadata, config, page_mode) }
     }
 
     unsafe fn begin_with_metadata(
         main_heap: MainStaticHeapLease<'main>,
         metadata: core::pin::Pin<&'static MetaAllocator>,
         config: MemoryConfig,
+        page_mode: TheapPageMode,
     ) -> Result<Self, MainHeapThreadAttachmentBeginError<'main>> {
         let thread = current_thread_identity().ok_or(
             MainHeapThreadAttachmentBeginError::Rejected(
@@ -338,6 +396,7 @@ impl<'main> MainHeapThreadAttachment<'main> {
             main_heap,
             metadata,
             config,
+            page_mode,
             tld: Some(tld),
             theap: None,
             thread,
@@ -684,7 +743,9 @@ impl<'main> MainHeapThreadAttachment<'main> {
             let mut heap = main_heap
                 .lock_heap()
                 .map_err(MainHeapThreadAttachmentError::MainHeap)?;
-            let initialize = unsafe { theap.initialize_shared_main_metadata(heap.heap_mut(), tld) };
+            let initialize = unsafe {
+                theap.initialize_shared_main_metadata(heap.heap_mut(), tld, self.page_mode)
+            };
             let unlock = heap.unlock();
             match (initialize, unlock) {
                 (Err(error), _) => return Err(MainHeapThreadAttachmentError::TheapInit(error)),
@@ -1544,7 +1605,9 @@ unsafe impl TheapPageSession for MainHeapThreadPageSession<'_, '_> {
 
     #[cfg(target_arch = "x86_64")]
     #[inline]
-    fn selects_selected_main_arena_source_full_abandonment(&self) -> bool { true }
+    fn selects_selected_main_arena_source_full_abandonment(&self) -> bool {
+        self.theap().allows_page_abandon()
+    }
 
     #[cfg(target_arch = "x86_64")]
     #[inline]
@@ -2033,6 +2096,22 @@ mod tests {
                         dynamic_backing_peek(),
                         Some(backing) if is_empty_dynamic_backing(backing)
                     ));
+                    let ordinary = unsafe {
+                        owner
+                            .test_theap_pointer()
+                            .expect("the attached ordinary Theap remains projected")
+                            .as_ref()
+                    };
+                    assert!(ordinary.allows_page_abandon());
+                    assert_eq!(ordinary.page_full_retain(), 2);
+                    let session = owner
+                        .page_session()
+                        .expect("the ordinary source Theap opens its page session");
+                    assert!(
+                        session.selects_selected_main_arena_source_full_abandonment(),
+                        "the ordinary source image selects page.c full-page abandonment"
+                    );
+                    drop(session);
                     assert_eq!(
                         owner
                             .current_tld_mut()
@@ -2077,6 +2156,70 @@ mod tests {
         })
         .join()
         .expect("main-heap later-thread lifecycle completes");
+    }
+
+    #[test]
+    fn later_thread_full_queue_fixture_selects_source_option_before_heap_publication() {
+        thread::spawn(|| {
+            let (storage, subprocess) = fixture();
+            let metadata = MetaAllocator::test_static_owner();
+            let mut main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the process main images");
+            let main_heap = main
+                .shared_main_heap_lease()
+                .expect("the live main attachment lends its heap");
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let mut owner = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(
+                            main_heap,
+                            metadata,
+                            memory_config(),
+                        )
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("the full-queue fixture rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("the full-queue fixture retained: {error:?}")
+                        }
+                    };
+                    let theap = unsafe {
+                        owner
+                            .test_theap_pointer()
+                            .expect("the attached Theap remains projected")
+                            .as_ref()
+                    };
+                    assert!(!theap.allows_page_abandon());
+                    assert_eq!(
+                        theap.page_full_retain(),
+                        -1,
+                        "the fixture selects the source non-abandoning option before heap publication"
+                    );
+                    let session = owner
+                        .page_session()
+                        .expect("the full-queue source Theap opens its page session");
+                    assert!(
+                        !session.selects_selected_main_arena_source_full_abandonment(),
+                        "the -1 source image leaves full pages in BIN_FULL"
+                    );
+                    drop(session);
+                    owner
+                        .finish_after_user_destructors()
+                        .expect("the no-page fixture retires normally");
+                });
+                worker.join().expect("the full-queue worker remains current");
+            });
+
+            main.teardown()
+                .expect("the main images retire after the fixture");
+        })
+        .join()
+        .expect("the source full-queue option fixture remains thread local");
     }
 
     /// Pinned `_mi_thread_init_with_heap` allocates the later TLD before its

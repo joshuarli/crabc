@@ -40465,14 +40465,14 @@ mod tests {
 
     struct PageMetadataCommitScript {
         calls: AtomicUsize,
-        fail_call: AtomicUsize,
+        fail_from_call: AtomicUsize,
     }
 
     impl PageMetadataCommitScript {
         const fn new() -> Self {
             Self {
                 calls: AtomicUsize::new(0),
-                fail_call: AtomicUsize::new(0),
+                fail_from_call: AtomicUsize::new(0),
             }
         }
     }
@@ -40488,7 +40488,8 @@ mod tests {
         // arena's complete lifetime and the hook makes no aliased mutation.
         let script = unsafe { &*user_argument.cast::<PageMetadataCommitScript>() };
         let call = script.calls.fetch_add(1, Ordering::Relaxed) + 1;
-        if !commit || script.fail_call.load(Ordering::Relaxed) == call {
+        let fail_from = script.fail_from_call.load(Ordering::Relaxed);
+        if !commit || (fail_from != 0 && call >= fail_from) {
             return false;
         }
         if !is_zero.is_null() {
@@ -41614,11 +41615,18 @@ mod tests {
 
         let calls_before_fresh = script.calls.load(Ordering::Relaxed);
         // First the claimed ordinary slice commits, then `page_metadata` tries
-        // the aligned metadata prefix. Fail exactly that second call.
+        // the aligned metadata prefix. The public source allocation retries
+        // once after forced collection (`page.c:1048-1064`), so retain the
+        // hook failure from that second call through its one retry.
         script
-            .fail_call
+            .fail_from_call
             .store(calls_before_fresh + 2, Ordering::Relaxed);
         assert!(allocator.allocate(37, false).is_none());
+        assert_eq!(
+            script.calls.load(Ordering::Relaxed),
+            calls_before_fresh + 3,
+            "the retry reuses the committed ordinary claim then reaches the same metadata hook"
+        );
         let reused = allocator
             .arena
             .try_claim_suitable_slices(ArenaId::none(), 1, false, 0)
@@ -41626,7 +41634,7 @@ mod tests {
         assert_eq!(reused.slice_index(), held.slice_index() + held.slice_count());
         assert!(reused.release());
 
-        script.fail_call.store(0, Ordering::Relaxed);
+        script.fail_from_call.store(0, Ordering::Relaxed);
         let block = allocator.allocate(37, false).unwrap();
         // SAFETY: the retry returned one current local allocation exactly once.
         unsafe { allocator.free(block).unwrap() };

@@ -1091,6 +1091,8 @@ pub(crate) struct MetaAllocator {
     #[cfg(test)]
     fail_next_aligned_zeroed_size: AtomicUsize,
     #[cfg(test)]
+    fail_aligned_zeroed_size_attempts: AtomicUsize,
+    #[cfg(test)]
     test_entry_attempt_count: AtomicUsize,
     #[cfg(any(test, feature = "native-runtime-test-audit"))]
     test_live_allocation_count: AtomicUsize,
@@ -1233,6 +1235,8 @@ impl MetaAllocator {
             fail_next_rezalloc_size: AtomicUsize::new(0),
             #[cfg(test)]
             fail_next_aligned_zeroed_size: AtomicUsize::new(0),
+            #[cfg(test)]
+            fail_aligned_zeroed_size_attempts: AtomicUsize::new(0),
             #[cfg(test)]
             test_entry_attempt_count: AtomicUsize::new(0),
             #[cfg(any(test, feature = "native-runtime-test-audit"))]
@@ -1656,8 +1660,28 @@ impl MetaAllocator {
     #[cfg(test)]
     #[inline]
     pub(crate) fn test_fail_next_aligned_zeroed_size(&self, size: usize) {
+        self.test_fail_aligned_zeroed_size_attempts(size, 1);
+    }
+
+    /// Makes the next `attempts` exact aligned-zeroed metadata requests fail.
+    ///
+    /// The counted plan is needed when the public allocation boundary follows
+    /// pinned `mi_malloc_generic_fallback`: it force-collects and retries one
+    /// source OOM result before it can report allocation failure. It models no
+    /// production retry policy and is consumed only by a matching request.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_fail_aligned_zeroed_size_attempts(&self, size: usize, attempts: usize) {
         assert_ne!(size, 0);
+        assert_ne!(attempts, 0);
+        assert_eq!(
+            self.fail_aligned_zeroed_size_attempts.load(Ordering::Acquire),
+            0,
+            "one metadata fixture owns the selected aligned-zeroed fault plan"
+        );
         self.fail_next_aligned_zeroed_size.store(size, Ordering::Release);
+        self.fail_aligned_zeroed_size_attempts
+            .store(attempts, Ordering::Release);
     }
 
     /// Allocates zeroed metadata with the source alignment contract.
@@ -1688,13 +1712,23 @@ impl MetaAllocator {
         let mut entry = self.enter_for_main_subprocess(subprocess)?;
         entry.ensure_ready(config, subprocess)?;
         #[cfg(test)]
-        if size != 0
-            && self
-                .fail_next_aligned_zeroed_size
-                .compare_exchange(size, 0, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-        {
-            return Err(MetaError::AllocationUnavailable);
+        if size != 0 && self.fail_next_aligned_zeroed_size.load(Ordering::Acquire) == size {
+            let attempts = self.fail_aligned_zeroed_size_attempts.fetch_update(
+                Ordering::AcqRel,
+                Ordering::Acquire,
+                |remaining| remaining.checked_sub(1),
+            );
+            if let Ok(remaining) = attempts {
+                if remaining == 1 {
+                    let _ = self.fail_next_aligned_zeroed_size.compare_exchange(
+                        size,
+                        0,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    );
+                }
+                return Err(MetaError::AllocationUnavailable);
+            }
         }
         let pointer = entry
             .allocator()

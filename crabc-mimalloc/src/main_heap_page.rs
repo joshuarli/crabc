@@ -9708,7 +9708,7 @@ mod tests {
                         .arena()
                         .expect("the paired arena stays published through thread exit");
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -10187,7 +10187,7 @@ mod tests {
                         .arena()
                         .expect("the paired arena stays published through thread exit");
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -10320,7 +10320,7 @@ mod tests {
                         .arena()
                         .expect("the paired arena stays published through thread exit");
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -10489,7 +10489,7 @@ mod tests {
             thread::scope(|scope| {
                 let worker = scope.spawn(move || {
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -10627,7 +10627,7 @@ mod tests {
             thread::scope(|scope| {
                 let worker = scope.spawn(move || {
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -10751,7 +10751,7 @@ mod tests {
                         .arena()
                         .expect("the paired arena stays published through thread exit");
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -10916,7 +10916,7 @@ mod tests {
                         .arena()
                         .expect("the paired arena stays published through thread exit");
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -11016,7 +11016,7 @@ mod tests {
                     );
 
                     let mut target = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -11144,7 +11144,7 @@ mod tests {
                         .arena()
                         .expect("the paired arena stays published through thread exit");
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -11350,7 +11350,7 @@ mod tests {
                         .arena()
                         .expect("the paired arena stays published through thread exit");
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -11698,7 +11698,7 @@ mod tests {
             thread::scope(|scope| {
                 let worker = scope.spawn(move || {
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -11909,7 +11909,7 @@ mod tests {
             thread::scope(|scope| {
                 let worker = scope.spawn(move || {
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -12040,7 +12040,7 @@ mod tests {
             thread::scope(|scope| {
                 let worker = scope.spawn(move || {
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -12193,7 +12193,7 @@ mod tests {
                 let worker = scope.spawn(move || {
                     let fault = fault::install(fault::Plan::disabled());
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -12749,7 +12749,7 @@ mod tests {
                         .arena()
                         .expect("the paired arena stays published through the mixed exit route");
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -12930,7 +12930,7 @@ mod tests {
             thread::scope(|scope| {
                 let worker = scope.spawn(move || {
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -13040,7 +13040,7 @@ mod tests {
                         .arena()
                         .expect("the paired arena stays published through thread exit");
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -17484,7 +17484,7 @@ mod tests {
                         .arena()
                         .expect("the paired arena remains published through the aggregate route");
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -17670,7 +17670,7 @@ mod tests {
             thread::scope(|scope| {
                 let worker = scope.spawn(move || {
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -17733,7 +17733,7 @@ mod tests {
                     );
 
                     let mut target = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -17838,7 +17838,7 @@ mod tests {
                         .arena()
                         .expect("the paired arena remains published through the aggregate route");
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -18094,7 +18094,7 @@ mod tests {
                         .arena()
                         .expect("the paired arena remains published through the route");
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -18375,7 +18375,7 @@ mod tests {
                         .arena()
                         .expect("the paired arena remains published through the route");
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -18666,7 +18666,7 @@ mod tests {
                         .arena()
                         .expect("the paired arena remains published through the route");
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -21056,7 +21056,7 @@ mod tests {
                         .arena()
                         .expect("the paired arena remains published through the route");
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -21421,7 +21421,7 @@ mod tests {
             thread::scope(|scope| {
                 let worker = scope.spawn(move || {
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -21558,7 +21558,7 @@ mod tests {
             thread::scope(|scope| {
                 let worker = scope.spawn(move || {
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -21720,7 +21720,7 @@ mod tests {
             thread::scope(|scope| {
                 let worker = scope.spawn(move || {
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -21872,7 +21872,7 @@ mod tests {
             thread::scope(|scope| {
                 let worker = scope.spawn(move || {
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -22012,7 +22012,7 @@ mod tests {
                         .arena()
                         .expect("the paired arena remains published through the route");
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -22141,7 +22141,7 @@ mod tests {
                     // target page engine, leaving this route as the sole
                     // client-free owner.
                     let mut target = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(
                             main_heap,
                             metadata,
                             config,
@@ -22418,7 +22418,7 @@ mod tests {
             thread::scope(|scope| {
                 let worker = scope.spawn(move || {
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -22570,7 +22570,7 @@ mod tests {
                         .arena()
                         .expect("the paired arena remains published through the route");
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -24497,7 +24497,7 @@ mod tests {
                         .arena()
                         .expect("the paired arena remains published through the route");
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -24643,7 +24643,7 @@ mod tests {
                     // target page engine, leaving this route as the sole
                     // client-free owner.
                     let mut target = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(
                             main_heap,
                             metadata,
                             config,
@@ -24922,7 +24922,7 @@ mod tests {
             thread::scope(|scope| {
                 let worker = scope.spawn(move || {
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -26036,7 +26036,7 @@ mod tests {
             thread::scope(|scope| {
                 let worker = scope.spawn(move || {
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -26960,7 +26960,7 @@ mod tests {
             thread::scope(|scope| {
                 let worker = scope.spawn(move || {
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -27196,7 +27196,7 @@ mod tests {
                         .arena()
                         .expect("the paired arena remains published through the route");
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -27818,7 +27818,7 @@ mod tests {
                         .arena()
                         .expect("the paired arena remains published through the route");
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -28101,7 +28101,7 @@ mod tests {
                 let worker = scope.spawn(move || {
                     let fault = fault::install(fault::Plan::disabled());
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
@@ -30234,7 +30234,7 @@ mod tests {
             thread::scope(|scope| {
                 let worker = scope.spawn(move || {
                     let mut owner = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                        MainHeapThreadAttachment::begin_with_test_metadata_non_abandoning_full_queue(main_heap, metadata, config)
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {

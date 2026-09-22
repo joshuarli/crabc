@@ -103,7 +103,7 @@ use crate::thread_local::{
 };
 use crate::tld::{DynamicAttachedThreadLocalData, ThreadLocalDataError, ThreadLocalDataOwner};
 use crate::types::{
-    DynamicTheapPageMode, Heap, HeapOsAbandonedPageListError, MemoryId, Page, PageQueue,
+    TheapPageMode, Heap, HeapOsAbandonedPageListError, MemoryId, Page, PageQueue,
     LiveThreadId, Theap, TheapDynamicInitError, TheapOwner, ThreadLocalData,
     ThreadLocalTheapListError,
 };
@@ -361,7 +361,7 @@ pub(crate) struct DynamicTheapAttachment<'heap> {
     requested_arena: Option<ArenaView<'heap>>,
     roots: UnrelatedRoots,
     cached_root_bound: bool,
-    page_mode: DynamicTheapPageMode,
+    page_mode: TheapPageMode,
     terminal_os_release: Option<OsAlignedPageOwner>,
     arena_pages: Option<DynamicArenaPagesOwner>,
     thread: crate::types::LiveThreadId,
@@ -848,7 +848,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
                 MainSubprocess::global(),
                 MetaAllocator::global(),
                 OwnedThreadLocalKeyRegistry::global(),
-                DynamicTheapPageMode::OrdinaryAbandoning,
+                TheapPageMode::OrdinaryAbandoning,
             )
         }
     }
@@ -878,7 +878,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
                 MainSubprocess::global(),
                 MetaAllocator::global(),
                 OwnedThreadLocalKeyRegistry::global(),
-                DynamicTheapPageMode::NonAbandoningPageSession,
+                TheapPageMode::NonAbandoningPageSession,
             )
         }
     }
@@ -907,7 +907,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
                 subprocess,
                 metadata,
                 registry,
-                DynamicTheapPageMode::OrdinaryAbandoning,
+                TheapPageMode::OrdinaryAbandoning,
             )
         }
     }
@@ -930,7 +930,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
                 subprocess,
                 metadata,
                 registry,
-                DynamicTheapPageMode::NonAbandoningPageSession,
+                TheapPageMode::NonAbandoningPageSession,
             )
         }
     }
@@ -941,7 +941,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         subprocess: &'static MainSubprocess,
         metadata: Pin<&'static MetaAllocator>,
         registry: &'static OwnedThreadLocalKeyRegistry,
-        page_mode: DynamicTheapPageMode,
+        page_mode: TheapPageMode,
     ) -> Result<Self, DynamicTheapBeginError<'heap>> {
         unsafe { Self::begin_with_components_arena(config, heap, subprocess, metadata, registry, page_mode, None, true) }
     }
@@ -960,14 +960,14 @@ impl<'heap> DynamicTheapAttachment<'heap> {
     ) -> Result<Self, DynamicTheapBeginError<'heap>> {
         unsafe { Self::begin_with_components_arena(config, heap, process.subprocess(),
             MetaAllocator::global(), OwnedThreadLocalKeyRegistry::global(),
-            DynamicTheapPageMode::NonAbandoningPageSession, Some(arena),
+            TheapPageMode::NonAbandoningPageSession, Some(arena),
             !process.policy().disallow_arena_alloc()) }
     }
 
     unsafe fn begin_with_components_arena(
         config: MemoryConfig, heap: Pin<&'heap mut Heap>,
         subprocess: &'static MainSubprocess, metadata: Pin<&'static MetaAllocator>,
-        registry: &'static OwnedThreadLocalKeyRegistry, page_mode: DynamicTheapPageMode,
+        registry: &'static OwnedThreadLocalKeyRegistry, page_mode: TheapPageMode,
         requested_arena: Option<ArenaView<'heap>>,
         arena_allocation_allowed: bool,
     ) -> Result<Self, DynamicTheapBeginError<'heap>> {
@@ -2294,7 +2294,7 @@ impl<'attach, 'heap> DynamicTheapPageSession<'attach, 'heap> {
             .ok_or(DynamicTheapPageSessionError::Attachment(
                 DynamicTheapError::TheapProjection,
             ))?;
-        if attachment.page_mode != DynamicTheapPageMode::NonAbandoningPageSession
+        if attachment.page_mode != TheapPageMode::NonAbandoningPageSession
             || theap.allows_page_abandon()
             || theap.page_full_retain() != -1
         {
@@ -2318,7 +2318,7 @@ impl<'attach, 'heap> DynamicTheapPageSession<'attach, 'heap> {
             .ok_or(DynamicTheapPageSessionError::Attachment(
                 DynamicTheapError::TheapProjection,
             ))?;
-        if attachment.page_mode != DynamicTheapPageMode::OrdinaryAbandoning
+        if attachment.page_mode != TheapPageMode::OrdinaryAbandoning
             || !theap.allows_page_abandon()
             || theap.page_full_retain() != 2
         {
@@ -3349,7 +3349,7 @@ mod tests {
             let mut heap = Box::pin(Heap::bootstrap_empty());
             let mut owner = match unsafe { DynamicTheapAttachment::begin_with_components_arena(
                 memory_config(), heap.as_mut(), subprocess, metadata, keys,
-                DynamicTheapPageMode::NonAbandoningPageSession, Some(arena), true) } {
+                TheapPageMode::NonAbandoningPageSession, Some(arena), true) } {
                 Ok(owner) => owner, Err(_) => panic!("exclusive arena attachment"),
             };
             let theap_memory = owner.theap.as_ref().unwrap().dynamic_theap().unwrap().memory_id();
@@ -3415,7 +3415,7 @@ mod tests {
             let mut heap = Box::pin(Heap::bootstrap_empty());
             match unsafe { DynamicTheapAttachment::begin_with_components_arena(
                 memory_config(), heap.as_mut(), subprocess, metadata, keys,
-                DynamicTheapPageMode::NonAbandoningPageSession,
+                TheapPageMode::NonAbandoningPageSession,
                 Some(ArenaView::from_ptr(id.as_ptr()).unwrap()), true) } {
                 Err(DynamicTheapBeginError::Rejected(DynamicTheapError::TheapArenaUnavailable)) => {},
                 _ => panic!("an exhausted exclusive arena must not fall back"),
@@ -3426,7 +3426,7 @@ mod tests {
             for claim in claims { assert!(claim.release()); }
             match unsafe { DynamicTheapAttachment::begin_with_components_arena(
                 memory_config(), heap.as_mut(), subprocess, metadata, keys,
-                DynamicTheapPageMode::NonAbandoningPageSession,
+                TheapPageMode::NonAbandoningPageSession,
                 Some(ArenaView::from_ptr(id.as_ptr()).unwrap()), false) } {
                 Err(DynamicTheapBeginError::Rejected(DynamicTheapError::TheapArenaUnavailable)) => {},
                 _ => panic!("disabled arena allocation must not use free requested storage"),
@@ -21487,7 +21487,12 @@ mod tests {
             let mut page_map = PageMap::initialize(memory_config(), 0, true).expect("page map");
             let layout = ArenaPagesLayout::for_slice_count(arena.arena().slice_count)
                 .expect("source arena bitmap layout");
-            metadata.test_fail_next_aligned_zeroed_size(layout.byte_size());
+            // `mi_malloc_generic_fallback` force-collects and retries the
+            // first source OOM result (`src/page.c:1048-1064`). Retain the
+            // exact pre-publication metadata fault for both fresh attempts
+            // so this public allocation can prove the retryable null-slot
+            // state before the explicit later retry below.
+            metadata.test_fail_aligned_zeroed_size_attempts(layout.byte_size(), 2);
             let session = owner.page_session().expect("page session");
             let mut allocator = DynamicTheapAllocator::activate_dynamic(
                 session,
