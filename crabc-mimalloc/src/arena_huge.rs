@@ -219,7 +219,7 @@ impl ProcessArenaBacking {
     /// and valid, and this process has not yet been made ready to clients.
     pub(crate) unsafe fn reserve_startup_options(
         &'static self, process: VmProcess<'static>, config: MemoryConfig,
-        metadata: Pin<&'static MetaAllocator>, mut random: Option<&mut TheapRandomImage>,
+        metadata: Pin<&'static MetaAllocator>, mut random: crate::os::OsRandom<'_>,
     ) -> StartupArenaReservationOutcomes {
         let mut results = StartupArenaReservationOutcomes::empty();
         let pages_option = process.policy().reserve_huge_os_pages();
@@ -263,7 +263,7 @@ impl ProcessArenaBacking {
     /// from the retained process diagnostic owner through this full route.
     pub(crate) unsafe fn reserve_startup_options_with_mbind_warning(
         &'static self, process: VmProcess<'static>, config: MemoryConfig,
-        metadata: Pin<&'static MetaAllocator>, mut random: Option<&mut TheapRandomImage>,
+        metadata: Pin<&'static MetaAllocator>, mut random: crate::os::OsRandom<'_>,
         warning: MbindWarningRoute<'_>,
     ) -> StartupArenaReservationOutcomes {
         let mut results = StartupArenaReservationOutcomes::empty();
@@ -310,7 +310,7 @@ impl ProcessArenaBacking {
     pub(crate) unsafe fn reserve_huge_at(
         &'static self, process: VmProcess<'static>, config: MemoryConfig,
         metadata: Pin<&'static MetaAllocator>, pages: usize, numa_node: i32,
-        timeout_milliseconds: usize, exclusive: bool, random: Option<&mut TheapRandomImage>,
+        timeout_milliseconds: usize, exclusive: bool, random: crate::os::OsRandom<'_>,
     ) -> Result<Option<ArenaId>, HugeArenaReserveError> {
         if pages == 0 { return Ok(None); }
         let _guard = self.huge_reservation_lock.lock().map_err(HugeArenaReserveError::Lock)?;
@@ -331,7 +331,7 @@ impl ProcessArenaBacking {
     pub(crate) unsafe fn reserve_huge_at_with_mbind_warning(
         &'static self, process: VmProcess<'static>, config: MemoryConfig,
         metadata: Pin<&'static MetaAllocator>, pages: usize, numa_node: i32,
-        timeout_milliseconds: usize, exclusive: bool, random: Option<&mut TheapRandomImage>,
+        timeout_milliseconds: usize, exclusive: bool, random: crate::os::OsRandom<'_>,
         warning: MbindWarningRoute<'_>,
     ) -> Result<Option<ArenaId>, HugeArenaReserveError> {
         if pages == 0 { return Ok(None); }
@@ -421,7 +421,7 @@ impl ProcessArenaBacking {
     pub(crate) unsafe fn reserve_huge_interleaved(
         &'static self, process: VmProcess<'static>, config: MemoryConfig,
         metadata: Pin<&'static MetaAllocator>, pages: usize, numa_nodes: usize,
-        timeout_milliseconds: usize, mut random: Option<&mut TheapRandomImage>,
+        timeout_milliseconds: usize, mut random: crate::os::OsRandom<'_>,
     ) -> Result<(), HugeArenaReserveError> {
         if pages == 0 { return Ok(()); }
         reserve_huge_interleaved_with(pages, numa_nodes, process.policy().numa_node_count(),
@@ -437,7 +437,7 @@ impl ProcessArenaBacking {
     pub(crate) unsafe fn reserve_huge_interleaved_with_mbind_warning(
         &'static self, process: VmProcess<'static>, config: MemoryConfig,
         metadata: Pin<&'static MetaAllocator>, pages: usize, numa_nodes: usize,
-        timeout_milliseconds: usize, mut random: Option<&mut TheapRandomImage>,
+        timeout_milliseconds: usize, mut random: crate::os::OsRandom<'_>,
         warning: MbindWarningRoute<'_>,
     ) -> Result<(), HugeArenaReserveError> {
         if pages == 0 { return Ok(()); }

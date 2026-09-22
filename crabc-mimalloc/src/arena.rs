@@ -63,7 +63,7 @@ use crate::types::{
 
 #[path = "arena_selection.rs"]
 mod selection;
-pub(crate) use selection::{ArenaReservationPlan, ArenaSearch};
+pub(crate) use selection::{ArenaCandidates, ArenaReservationPlan, ArenaSearch};
 
 #[path = "arena_owned.rs"]
 mod owned;

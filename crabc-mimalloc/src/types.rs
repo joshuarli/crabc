@@ -5771,6 +5771,20 @@ impl Theap {
         operation(random)
     }
 
+    /// Draws only from an initialized current source random field. The
+    /// exclusive field projection ends before returning to any VM operation.
+    ///
+    /// # Safety
+    /// The caller retains this live current-thread source Theap and excludes
+    /// every overlapping whole-Theap or random-field reference for this draw.
+    pub(crate) unsafe fn next_os_reservation_random_at(pointer: NonNull<Self>) -> Option<u64> {
+        // SAFETY: the caller supplies the same field-level owner contract.
+        unsafe { Self::with_os_reservation_random_at(pointer, |random| {
+            let random = random?;
+            random.is_initialized().then(|| random.next())
+        }) }
+    }
+
     /// Returns the concrete source allocation provenance retained across
     /// `_mi_theap_init`'s empty-image copy. This is an observation only; it
     /// does not transfer the matching Malloc/Arena release capability.

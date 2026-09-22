@@ -100,9 +100,9 @@ use crate::os::{MemoryConfig, PageSize, StartupInput};
 use crate::os::{MapAccess, Mapping};
 #[cfg(target_arch = "x86_64")]
 use crate::diagnostic_output::{ProcessDiagnosticInputs, RuntimeStderrOutput};
-use crate::process_init::{ProcessMainInitializationStorage, ProcessMainThread};
+use crate::process_init::{ProcessMainInitializationStorage, ProcessMainThread, ProcessMainInitError};
 use crate::process_arena::{
-    ProcessPageArenaLease, ProcessPageArenaLeaseError, ProcessSharedArenaStorage,
+    ProcessPageArenaLease, ProcessPageArenaLeaseError, ProcessPageBackingLease, ProcessSharedArenaStorage,
 };
 use crate::process_page_map::{
     LiveAllocationPageState, LiveAllocationPointer, ProcessPageMapError, ProcessPageMapLease,
@@ -136,6 +136,7 @@ const PROCESS_COLD: u8 = 0;
 const PROCESS_INITIALIZING: u8 = 1;
 const PROCESS_ACTIVE: u8 = 2;
 const PROCESS_RETAINED: u8 = 3;
+const PROCESS_ALLOCATABLE: u8 = 4;
 /// Private selected-native process-finalizer state. This does not replace the
 /// source process owner state: it records only that libc has mapped pinned
 /// `mi_process_done_once`'s automatic-thread-done-key deletion into its
@@ -3452,6 +3453,48 @@ impl RuntimeProcessStorage {
             && current_thread_identity().is_some_and(|current| current.get() == expected)
     }
 
+    /// Allocation may reenter after the initial default Theap is installed,
+    /// before reservation diagnostics finish. Only its owning thread can
+    /// observe that initialized subset; workers still require PROCESS_ACTIVE.
+    #[inline]
+    fn allocation_is_ready(&self) -> bool {
+        match self.state.load(Ordering::Acquire) {
+            PROCESS_ACTIVE => true,
+            PROCESS_ALLOCATABLE => {
+                let expected = self.initial_thread_identity.load(Ordering::Acquire);
+                expected != 0 && current_thread_identity()
+                    .is_some_and(|current| current.get() == expected)
+            }
+            _ => false,
+        }
+    }
+
+    #[inline]
+    fn is_on_initial_allocation_thread(&self) -> bool {
+        self.allocation_is_ready() && current_thread_identity().is_some_and(|current|
+            current.get() == self.initial_thread_identity.load(Ordering::Acquire))
+    }
+
+    /// Borrows only the permanently published coordinator, never its Theap.
+    ///
+    /// # Safety
+    /// The receiver is process-static; publication writes the final owner
+    /// before admission and no subsequent transition overwrites or drops it.
+    unsafe fn allocation_owner(&'static self) -> Option<&'static ProcessMainThread> {
+        if !self.allocation_is_ready() { return None; }
+        Some(unsafe { (&*self.owner.get()).assume_init_ref() })
+    }
+
+    /// Copies the initialized shared-Heap witness under allocation admission.
+    ///
+    /// # Safety
+    /// The receiver and its never-dropped owner are process-static. The lease
+    /// is written before the same Release publication as `allocation_owner`.
+    unsafe fn allocation_main_heap(&'static self) -> Option<MainStaticHeapLease<'static>> {
+        if !self.allocation_is_ready() { return None; }
+        Some(*unsafe { (&*self.main_heap.get()).assume_init_ref() })
+    }
+
     #[inline]
     fn prepare_quiescent_on_initial_thread_for_held_fork_gate(&self) -> bool {
         if !self.is_on_initial_thread() {
@@ -3515,11 +3558,11 @@ impl RuntimeProcessStorage {
     /// proof consumed by `ProcessPageMapLease::lookup_page_for_live_client`.
     #[inline]
     fn page_map_for_live_native_allocation(&'static self) -> Option<ProcessPageMapLease> {
-        // SAFETY: the process owner is written before PROCESS_ACTIVE and is
-        // never torn down by this bounded runtime. This takes only its
-        // immutable ready witness; it never borrows the permanent page owner.
-        let owner = unsafe { self.active_owner() }?;
-        owner.ready().ok()?.page_map().ok()
+        // SAFETY: allocation admission follows the final owner write and
+        // admits only its initial thread before completed startup. This takes
+        // immutable PageMap facts, never the permanent page owner.
+        let owner = unsafe { self.allocation_owner() }?;
+        owner.allocation().ok()?.page_map().ok()
     }
 
     /// Returns the immutable VM process pair retained by the selected source
@@ -3598,7 +3641,7 @@ impl RuntimeProcessStorage {
         &'static self,
         arena_storage: &'static ProcessSharedArenaStorage,
     ) -> bool {
-        if !self.is_on_initial_thread() {
+        if !self.is_on_initial_allocation_thread() {
             return false;
         }
         match self.page_owner_state.compare_exchange(
@@ -3616,36 +3659,20 @@ impl RuntimeProcessStorage {
             Err(PAGE_OWNER_STARTING | PAGE_OWNER_BUSY | PAGE_OWNER_RETAINED | _) => return false,
         }
 
-        // SAFETY: PROCESS_ACTIVE follows the final owner write. This only
+        // SAFETY: allocation admission follows the final owner write and
         // takes its shared immutable view; `ProcessMainThread` converts the
         // static attachment through its shared permanent-session transition,
         // so it never conflicts with the stored main-Heap lease.
-        let Some(owner) = (unsafe { self.active_owner() }) else {
+        let Some(owner) = (unsafe { self.allocation_owner() }) else {
             self.retain();
             self.page_owner_state.store(PAGE_OWNER_RETAINED, Ordering::Release);
             return false;
         };
-        #[cfg(all(target_arch = "x86_64", not(test)))]
-        let backing = match owner.ready().and_then(|ready| ready.process_backing()) {
-            Ok(backing) => backing,
-            Err(_) => {
-                self.retain();
-                self.page_owner_state.store(PAGE_OWNER_RETAINED, Ordering::Release);
-                return false;
-            }
+        let allocation = match owner.allocation() {
+            Ok(allocation) => allocation,
+            Err(_) => { self.retain_page_owner(); return false; }
         };
-        // The paused AArch64 execution path still owns its explicit-config
-        // runtime transition. It deliberately keeps the legacy constructor
-        // rather than treating a missing VM policy as a native x86 fallback.
-        #[cfg(any(not(target_arch = "x86_64"), test))]
-        let page_map = match owner.ready().and_then(|ready| ready.page_map()) {
-            Ok(page_map) => page_map,
-            Err(_) => {
-                self.retain();
-                self.page_owner_state.store(PAGE_OWNER_RETAINED, Ordering::Release);
-                return false;
-            }
-        };
+        let backing = allocation.process_backing();
         let session = match owner.begin_process_lifetime_page_session() {
             Ok(session) => session,
             Err(_) => {
@@ -3654,18 +3681,23 @@ impl RuntimeProcessStorage {
                 return false;
             }
         };
-        #[cfg(all(target_arch = "x86_64", not(test)))]
-        let page_owner = MainStaticRuntimeFirstArenaPageAllocator::begin_for_process(
-            session,
-            backing,
-            arena_storage,
-        );
-        #[cfg(any(not(target_arch = "x86_64"), test))]
-        let page_owner = MainStaticRuntimeFirstArenaPageAllocator::begin_legacy(
-            session,
-            page_map,
-            arena_storage,
-        );
+        let page_owner = match backing {
+            Ok(backing) => MainStaticRuntimeFirstArenaPageAllocator::begin_for_process(
+                session, backing, arena_storage,
+            ),
+            // Explicit-config fixtures and the paused architecture retain
+            // their historical constructor. Native x86 requires source VM policy.
+            #[cfg(any(not(target_arch = "x86_64"), test))]
+            Err(ProcessMainInitError::VmPolicyUnavailable) => {
+                let Ok(page_map) = allocation.page_map() else {
+                    self.retain_page_owner(); return false;
+                };
+                MainStaticRuntimeFirstArenaPageAllocator::begin_legacy(
+                    session, page_map, arena_storage,
+                )
+            }
+            Err(_) => { self.retain_page_owner(); return false; }
+        };
         let page_owner = match page_owner {
             Ok(owner) => owner,
             Err(_) => {
@@ -3960,6 +3992,34 @@ impl RuntimeProcessStorage {
         }
     }
 
+    /// Moves the source-attached owner into its final slots before callback
+    /// admission. Completed process/fork/worker authority remains unavailable.
+    fn publish_prepared_owner(&'static self, mut owner: ProcessMainThread) -> bool {
+        if self.state.load(Ordering::Acquire) != PROCESS_INITIALIZING
+            || owner.allocation().is_err() || owner.ready().is_ok()
+        {
+            self.retain();
+            core::mem::forget(owner);
+            return false;
+        }
+        #[cfg(feature = "native-runtime-test-audit")]
+        let initial_tld_numa_node = owner.attachment_mut().ok()
+            .and_then(|attachment| attachment.tld().ok()).map(|tld| tld.numa_node())
+            .unwrap_or(INITIAL_TLD_NUMA_NODE_UNAVAILABLE);
+        // SAFETY: INITIALIZING belongs to this one source once winner. It
+        // writes the final slot once and never overwrites or drops the owner.
+        unsafe { (*self.owner.get()).write(owner) };
+        let owner = unsafe { (&*self.owner.get()).assume_init_ref() };
+        let Ok(main_heap) = owner.shared_main_heap_lease() else { self.retain(); return false; };
+        let Some(thread) = current_thread_identity() else { self.retain(); return false; };
+        unsafe { (*self.main_heap.get()).write(main_heap) };
+        self.initial_thread_identity.store(thread.get(), Ordering::Relaxed);
+        #[cfg(feature = "native-runtime-test-audit")]
+        self.initial_tld_numa_node.store(initial_tld_numa_node, Ordering::Relaxed);
+        self.state.store(PROCESS_ALLOCATABLE, Ordering::Release);
+        true
+    }
+
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     fn initialize(&'static self, page_size_bytes: usize, stderr_output: RuntimeStderrOutput) -> bool {
         let default_stderr_output = stderr_output.into_default_stderr_output();
@@ -3971,6 +4031,7 @@ impl RuntimeProcessStorage {
         ) {
             Ok(_) => {}
             Err(PROCESS_ACTIVE) => return true,
+            Err(PROCESS_ALLOCATABLE) => return self.is_on_initial_allocation_thread(),
             Err(_) => return false,
         }
 
@@ -3991,7 +4052,7 @@ impl RuntimeProcessStorage {
         // pass the INITIALIZING state above.
         let owner = unsafe {
             ProcessMainInitializationStorage::global()
-                .initialize_with_vm_options_from_source_environment(
+                .prepare_with_vm_options_from_source_environment(
                     config,
                     options,
                     // SAFETY: the runtime winning startup owns stable raw
@@ -4000,48 +4061,20 @@ impl RuntimeProcessStorage {
                     unsafe { ProcessDiagnosticInputs::new(process_environment_pointer, default_stderr_output) },
                 )
         };
-        let Ok(mut owner) = owner else {
+        let Ok((owner, startup)) = owner else {
             self.retain();
             return false;
         };
-
-        #[cfg(feature = "native-runtime-test-audit")]
-        let initial_tld_numa_node = owner
-            .attachment_mut()
-            .ok()
-            .and_then(|attachment| attachment.tld().ok())
-            .map(|tld| tld.numa_node())
-            .unwrap_or(INITIAL_TLD_NUMA_NODE_UNAVAILABLE);
-
-        // SAFETY: this successful COLD -> INITIALIZING winner is the sole
-        // writer, and `owner` is moved into its final static process slot
-        // before PROCESS_ACTIVE makes it visible to worker threads.
-        unsafe { (*self.owner.get()).write(owner) };
-        // A shared main-Heap lease may only be minted by the ticket-zero
-        // owner on its own thread. Store that immutable process witness now;
-        // later pthread workers may copy it but must never try to mint it
-        // while their TPIDR identity differs from the initial attachment.
-        let owner = unsafe { (&*self.owner.get()).assume_init_ref() };
-        let Ok(main_heap) = owner.shared_main_heap_lease() else {
+        if !self.publish_prepared_owner(owner) { return false; }
+        // No owner/Theap projection survives publication. Reservation and
+        // output callbacks can now allocate through the ordinary initial
+        // owner, while the linear startup continuation alone completes once.
+        if startup.complete().is_err()
+            || self.state.load(Ordering::Acquire) != PROCESS_ALLOCATABLE
+        {
             self.retain();
             return false;
-        };
-        let Some(initial_thread) = current_thread_identity() else {
-            self.retain();
-            return false;
-        };
-        // SAFETY: the same sole initializer writes this second final slot
-        // before the Release publication below.
-        unsafe { (*self.main_heap.get()).write(main_heap) };
-        // The initial thread identity is written before PROCESS_ACTIVE's
-        // Release publication. It is an immutable witness: a quiescent child
-        // retains the copied TPIDR_EL0 image, while every fresh pthread gets a
-        // distinct image and cannot pass the fork-preservation check.
-        self.initial_thread_identity
-            .store(initial_thread.get(), Ordering::Release);
-        #[cfg(feature = "native-runtime-test-audit")]
-        self.initial_tld_numa_node
-            .store(initial_tld_numa_node, Ordering::Release);
+        }
         self.state.store(PROCESS_ACTIVE, Ordering::Release);
         true
     }
@@ -6635,7 +6668,7 @@ impl NativePersistentThreadOwner {
     /// PageMap/arena engine stays dormant until native allocation needs it.
     fn activate_page_engine(
         &mut self,
-        pair: ProcessPageArenaLease,
+        pair: ProcessPageBackingLease,
     ) -> Result<(), MainHeapThreadOwnerLocalPageEngineBeginError> {
         match &self.state {
             NativePersistentThreadOwnerExitState::AttachmentOnly => {}
@@ -6646,7 +6679,10 @@ impl NativePersistentThreadOwner {
                 ));
             }
         }
-        let engine = MainHeapThreadOwnerLocalPageEngine::begin(&mut self.attachment, pair)?;
+        let engine = match pair {
+            ProcessPageBackingLease::LegacyPair(pair) => MainHeapThreadOwnerLocalPageEngine::begin(&mut self.attachment, pair),
+            ProcessPageBackingLease::Process(binding) => MainHeapThreadOwnerLocalPageEngine::begin_for_process(&mut self.attachment, binding),
+        }?;
         self.state = NativePersistentThreadOwnerExitState::PreDrain(engine);
         Ok(())
     }
@@ -7114,6 +7150,44 @@ fn current_thread_slot() -> &'static mut ThreadLifecycleSlot {
     unsafe { &mut *current_thread_slot_pointer().as_ptr() }
 }
 
+/// Independent compiler-TLS admission facts, copied without projecting an
+/// owner cell or the whole lifecycle record. A nested entry can read these
+/// disjoint scalar fields even while the cell holds its unique payload borrow.
+#[derive(Clone, Copy)]
+struct NativeOwnerPresence {
+    initial_installed: bool,
+    later_installed: bool,
+    state: ThreadLifecycleState,
+}
+
+#[inline]
+fn current_thread_native_owner_presence() -> NativeOwnerPresence {
+    let slot = current_thread_slot_pointer().as_ptr();
+    // SAFETY: direct compiler TLS is confined to the current thread. These
+    // initialized scalar fields are disjoint from both guarded owner payloads;
+    // no whole-slot reference, allocation, or callback occurs during the read.
+    unsafe { NativeOwnerPresence {
+        initial_installed: core::ptr::addr_of!((*slot).initial_native_persistent_owner_installed).read(),
+        later_installed: core::ptr::addr_of!((*slot).native_persistent_owner_installed).read(),
+        state: core::ptr::addr_of!((*slot).state).read(),
+    } }
+}
+
+#[inline]
+fn set_current_thread_initial_native_owner_installed(installed: bool) {
+    let slot = current_thread_slot_pointer().as_ptr();
+    // SAFETY: this current-thread publication changes only its scalar flag,
+    // never the pinned cell or an outstanding shared reference to that cell.
+    unsafe { core::ptr::addr_of_mut!((*slot).initial_native_persistent_owner_installed).write(installed) };
+}
+
+#[inline]
+fn set_current_thread_native_owner_installed(installed: bool) {
+    let slot = current_thread_slot_pointer().as_ptr();
+    // SAFETY: same thread confinement and disjoint-field publication above.
+    unsafe { core::ptr::addr_of_mut!((*slot).native_persistent_owner_installed).write(installed) };
+}
+
 /// Pins the initial thread's persistent static-owner cell at its compiler-TLS
 /// address.
 ///
@@ -7132,23 +7206,19 @@ fn current_thread_native_initial_persistent_owner_cell(
 
 #[inline]
 fn current_thread_has_native_initial_persistent_owner() -> bool {
-    RUNTIME_PROCESS.is_on_initial_thread()
-        && current_thread_slot().initial_native_persistent_owner_installed
+    RUNTIME_PROCESS.is_on_initial_allocation_thread()
+        && current_thread_native_owner_presence().initial_installed
 }
 
-/// Returns whether this active process already installed its initial source
-/// owner in this compiler-TLS slot.
-///
-/// This is intentionally a cell-presence check, not an initial-thread
-/// classification. Once cold promotion has published the static source owner,
-/// the cell is the same selected source boundary that pinned
-/// `mi_heap_malloc` receives through its heap/theap argument. The active
-/// check preserves the terminal behavior that previously fell through to the
-/// unavailable later-owner path after process retention.
+/// Returns whether allocation admission and the scalar TLS publication
+/// identify an installed initial owner. After cold promotion this is the
+/// source owner selected before `mi_heap_malloc` enters allocation. The
+/// process admission includes its source-attached initial-thread stage and
+/// excludes terminal retention, without borrowing the pinned payload.
 #[inline]
 fn current_thread_has_active_native_initial_persistent_owner() -> bool {
-    let slot = current_thread_slot();
-    slot.initial_native_persistent_owner_installed && RUNTIME_PROCESS.is_active()
+    current_thread_native_owner_presence().initial_installed
+        && RUNTIME_PROCESS.allocation_is_ready()
 }
 
 /// Prepares the promoted initial owner's source state during the held,
@@ -7189,7 +7259,7 @@ fn current_thread_initial_persistent_owner_prepare_quiescent_for_held_fork_gate(
 fn with_current_thread_native_initial_persistent_owner<R>(
     operation: impl FnOnce(&mut NativeInitialPersistentThreadOwner) -> R,
 ) -> Result<R, NativeInitialPersistentThreadOwnerAccessError> {
-    if !RUNTIME_PROCESS.is_on_initial_thread() {
+    if !RUNTIME_PROCESS.is_on_initial_allocation_thread() {
         return Err(NativeInitialPersistentThreadOwnerAccessError::Unavailable);
     }
     with_pointer_associated_initial_persistent_owner(operation)
@@ -7209,7 +7279,7 @@ fn with_current_thread_native_initial_persistent_owner<R>(
 fn with_pointer_associated_initial_persistent_owner<R>(
     operation: impl FnOnce(&mut NativeInitialPersistentThreadOwner) -> R,
 ) -> Result<R, NativeInitialPersistentThreadOwnerAccessError> {
-    if !current_thread_slot().initial_native_persistent_owner_installed {
+    if !current_thread_native_owner_presence().initial_installed {
         return Err(NativeInitialPersistentThreadOwnerAccessError::NotInstalled);
     }
     match current_thread_native_initial_persistent_owner_cell()
@@ -7254,10 +7324,10 @@ fn with_pointer_associated_initial_persistent_owner<R>(
 /// borrow the vacated static slot rather than recreating a scheduler path.
 fn begin_current_thread_native_initial_persistent_owner(
 ) -> Result<(), NativeInitialPersistentThreadOwnerAccessError> {
-    if !RUNTIME_PROCESS.is_on_initial_thread() {
+    if !RUNTIME_PROCESS.is_on_initial_allocation_thread() {
         return Err(NativeInitialPersistentThreadOwnerAccessError::Unavailable);
     }
-    if current_thread_slot().initial_native_persistent_owner_installed {
+    if current_thread_native_owner_presence().initial_installed {
         return Ok(());
     }
 
@@ -7292,7 +7362,7 @@ fn begin_current_thread_native_initial_persistent_owner(
             |_owner| -> Result<(), Infallible> { Ok(()) },
         ) {
             Ok(()) => {
-                current_thread_slot().initial_native_persistent_owner_installed = true;
+                set_current_thread_initial_native_owner_installed(true);
                 RUNTIME_PROCESS
                     .page_owner_state
                     .store(PAGE_OWNER_INITIAL_PERSISTENT, Ordering::Release);
@@ -7390,7 +7460,10 @@ fn current_thread_native_persistent_owner_cell(
 
 #[inline]
 fn retain_current_thread_native_persistent_owner_for_teardown() {
-    current_thread_slot().state = ThreadLifecycleState::Retained;
+    let slot = current_thread_slot_pointer().as_ptr();
+    // SAFETY: only this independent current-thread lifecycle flag changes;
+    // retaining does not borrow or overwrite the guarded source payload.
+    unsafe { core::ptr::addr_of_mut!((*slot).state).write(ThreadLifecycleState::Retained) };
 }
 
 #[inline]
@@ -7401,10 +7474,10 @@ fn fail_stop_with_current_thread_native_owner() -> ! {
 
 #[inline]
 fn current_thread_has_native_persistent_owner() -> bool {
-    let slot = current_thread_slot();
-    slot.native_persistent_owner_installed
+    let presence = current_thread_native_owner_presence();
+    presence.later_installed
         && matches!(
-            slot.state,
+            presence.state,
             ThreadLifecycleState::Attached | ThreadLifecycleState::Retained
         )
 }
@@ -7412,7 +7485,7 @@ fn current_thread_has_native_persistent_owner() -> bool {
 fn with_current_thread_native_persistent_owner<R>(
     operation: impl FnOnce(&mut NativePersistentThreadOwner) -> R,
 ) -> Result<R, NativePersistentThreadOwnerAccessError> {
-    match current_thread_slot().state {
+    match current_thread_native_owner_presence().state {
         ThreadLifecycleState::Attached => {}
         ThreadLifecycleState::Retained | ThreadLifecycleState::ProcessDoneRetained => {
             return Err(NativePersistentThreadOwnerAccessError::Retained);
@@ -7449,13 +7522,22 @@ fn with_current_thread_native_persistent_owner<R>(
 
 /// Forms the immutable process pair used once during native-owner promotion.
 /// It does not claim or inspect `RuntimeProcessStorage::page_owner_state`.
-fn current_native_process_page_arena_pair() -> Option<ProcessPageArenaLease> {
-    // SAFETY: an active process permanently publishes this owner before any
-    // later thread is admitted.
-    let owner = unsafe { RUNTIME_PROCESS.active_owner() }?;
-    let page_map = owner.ready().ok()?.page_map().ok()?;
-    let arena = ProcessSharedArenaStorage::global().ready_lease().ok()?;
-    ProcessPageArenaLease::join(page_map, arena).ok()
+fn current_native_process_page_backing() -> Option<ProcessPageBackingLease> {
+    // SAFETY: the final process owner is permanently published before use.
+    let owner = unsafe { RUNTIME_PROCESS.allocation_owner() }?;
+    let allocation = owner.allocation().ok()?;
+    match allocation.process_backing() {
+        Ok(binding) => Some(binding.into()),
+        #[cfg(any(test, not(target_arch = "x86_64")))]
+        Err(ProcessMainInitError::VmPolicyUnavailable) => {
+            // Explicit-config fixtures and the paused architecture retain
+            // their typed historical pair; native x86 has no such fallback.
+            let page_map = allocation.page_map().ok()?;
+            let arena = ProcessSharedArenaStorage::global().ready_lease().ok()?;
+            ProcessPageArenaLease::join(page_map, arena).ok().map(Into::into)
+        }
+        Err(_) => None,
+    }
 }
 
 /// Pins a successfully published source attachment in the current thread's
@@ -7501,7 +7583,7 @@ fn install_native_attachment_only_owner(
 /// page-engine transition only after a native allocation selects it.
 fn begin_current_thread_native_persistent_owner(
 ) -> Result<(), NativePersistentThreadOwnerAccessError> {
-    let Some(pair) = current_native_process_page_arena_pair() else {
+    let Some(pair) = current_native_process_page_backing() else {
         return Err(NativePersistentThreadOwnerAccessError::Unavailable);
     };
     let slot = current_thread_slot();
@@ -7524,18 +7606,16 @@ fn begin_current_thread_native_persistent_owner(
         owner,
         |mut owner| -> Result<(), MainHeapThreadOwnerLocalPageEngineBeginError> {
             let owner = owner.as_mut().get_mut();
-            let engine = MainHeapThreadOwnerLocalPageEngine::begin(&mut owner.attachment, pair)?;
-            owner.state = NativePersistentThreadOwnerExitState::PreDrain(engine);
-            Ok(())
+            owner.activate_page_engine(pair)
         },
     );
     match initialized {
         Ok(()) => {
-            current_thread_slot().native_persistent_owner_installed = true;
+            set_current_thread_native_owner_installed(true);
             Ok(())
         }
         Err(PersistentCompilerTlsOwnerInitializeError::Owner(_)) => {
-            current_thread_slot().native_persistent_owner_installed = true;
+            set_current_thread_native_owner_installed(true);
             retain_current_thread_native_persistent_owner_for_teardown();
             Err(NativePersistentThreadOwnerAccessError::Retained)
         }
@@ -7566,7 +7646,7 @@ fn begin_current_thread_native_persistent_owner(
 /// fallback or replacement owner.
 fn activate_current_thread_native_persistent_owner(
 ) -> Result<(), NativePersistentThreadOwnerAccessError> {
-    let Some(pair) = current_native_process_page_arena_pair() else {
+    let Some(pair) = current_native_process_page_backing() else {
         return Err(NativePersistentThreadOwnerAccessError::Unavailable);
     };
     match with_current_thread_native_persistent_owner(|owner| owner.activate_page_engine(pair)) {
@@ -8250,8 +8330,8 @@ pub fn native_allocate_aligned(
     // it enters its allocation control flow. Mirror that selection here: an
     // installed compiler-TLS cell is the current source owner, so ordinary
     // local allocation must not re-open ambient process/thread admission.
-    // `is_active` is part of the installed-initial predicate only to retain
-    // the former post-terminal unavailable behavior.
+    // Allocation admission permits the source-attached initial owner before
+    // final startup and preserves the post-terminal unavailable behavior.
     if current_thread_has_active_native_initial_persistent_owner() {
         return native_initial_thread_allocate_aligned_from_installed_owner(
             request, alignment, zero,
@@ -8262,7 +8342,7 @@ pub fn native_allocate_aligned(
     }
     // Caller identity remains the cold-selection boundary: only a thread
     // without an installed owner may promote the initial static source.
-    if RUNTIME_PROCESS.is_on_initial_thread() {
+    if RUNTIME_PROCESS.is_on_initial_allocation_thread() {
         return native_initial_thread_allocate_aligned(request, alignment, zero);
     }
     // A final B-side free may already have recorded one or more A terminal
@@ -8401,7 +8481,7 @@ fn native_reallocate_pointer_first_local(
 /// must not describe this fallback as a successful cleanup or return the
 /// replacement while the old source remains live.
 fn native_reallocate_release_unpublished_replacement(replacement: core::ptr::NonNull<u8>) {
-    if RUNTIME_PROCESS.is_on_initial_thread() {
+    if RUNTIME_PROCESS.is_on_initial_allocation_thread() {
         let _ = native_initial_thread_free_pointer_first(replacement);
         return;
     }
@@ -8689,12 +8769,12 @@ fn native_free_pointer_first_process_done_local(
     allocation: LiveAllocationPointer,
     current: LiveThreadId,
 ) -> NativePageFreeResult {
-    let Some(pair) = current_native_process_page_arena_pair() else {
+    let Some(pair) = current_native_process_page_backing() else {
         RUNTIME_PROCESS.retain_page_owner();
         return NativePageFreeResult::Retained;
     };
-    let arena = match pair.arena() {
-        Ok(arena) => arena,
+    let backing = match pair.backing(-1) {
+        Ok(backing) => backing,
         Err(_) => {
             RUNTIME_PROCESS.retain_page_owner();
             return NativePageFreeResult::Retained;
@@ -8728,7 +8808,7 @@ fn native_free_pointer_first_process_done_local(
     let Some(mut engine) = (unsafe {
         crate::single_thread::PageAllocatorEngine::activate_source_retained_local_free(
             session,
-            arena,
+            backing,
             crate::arena::ArenaId::none(),
             page_map,
         )
@@ -8832,7 +8912,7 @@ fn native_free_pointer_first_nonlocal(
     allocation: LiveAllocationPointer,
 ) -> NativePageFreeResult {
     let detached = allocation.page_state() == LiveAllocationPageState::Detached;
-    let Some(process) = current_native_process_page_arena_pair() else {
+    let Some(process) = current_native_process_page_backing() else {
         // The PageMap observation cannot safely continue without the paired
         // arena capability. This is not a temporary current-owner result.
         RUNTIME_PROCESS.retain_page_owner();
@@ -8840,7 +8920,7 @@ fn native_free_pointer_first_nonlocal(
     };
     // SAFETY: the active process owns this never-dropped main-Heap lease.
     // `process` was formed from the same active root immediately above.
-    let Some(main_heap) = (unsafe { RUNTIME_PROCESS.active_main_heap() }) else {
+    let Some(main_heap) = (unsafe { RUNTIME_PROCESS.allocation_main_heap() }) else {
         RUNTIME_PROCESS.retain_page_owner();
         return NativePageFreeResult::Retained;
     };
@@ -14925,8 +15005,8 @@ mod tests {
             .expect("the focused persistent-owner test joins its matching PageMap and arena")
     }
 
-    fn with_native_persistent_owner_fixture(
-        operation: impl FnOnce(&mut NativePersistentThreadOwner) + Send + 'static,
+    fn with_native_persistent_owner_value_fixture(
+        operation: impl FnOnce(NativePersistentThreadOwner) + Send + 'static,
     ) {
         thread::spawn(move || {
             let config = memory_config();
@@ -14965,11 +15045,11 @@ mod tests {
                     };
                     let engine = MainHeapThreadOwnerLocalPageEngine::begin(&mut attachment, pair)
                         .expect("the focused attachment creates one persistent owner engine");
-                    let mut owner = NativePersistentThreadOwner {
+                    let owner = NativePersistentThreadOwner {
                         attachment,
                         state: NativePersistentThreadOwnerExitState::PreDrain(engine),
                     };
-                    operation(&mut owner);
+                    operation(owner);
                 });
                 worker
                     .join()
@@ -14978,6 +15058,39 @@ mod tests {
         })
         .join()
         .expect("the focused persistent-owner fixture remains current-thread local");
+    }
+
+    fn with_native_persistent_owner_fixture(
+        operation: impl FnOnce(&mut NativePersistentThreadOwner) + Send + 'static,
+    ) {
+        with_native_persistent_owner_value_fixture(move |mut owner| operation(&mut owner));
+    }
+
+    #[test]
+    fn native_owner_presence_refuses_nested_entry_before_payload_access_and_recovers() {
+        with_native_persistent_owner_value_fixture(|owner| {
+            let slot = current_thread_slot_pointer().as_ptr();
+            let cell = current_thread_native_persistent_owner_cell();
+            assert!(cell.initialize(owner, |_| Ok::<(), ()>(())).is_ok());
+            set_current_thread_native_owner_installed(true);
+            unsafe { core::ptr::addr_of_mut!((*slot).state).write(ThreadLifecycleState::Attached) };
+            cell.with_owner(|mut owner| {
+                assert!(!current_thread_native_owner_presence().initial_installed);
+                assert!(current_thread_has_native_persistent_owner());
+                assert!(matches!(with_current_thread_native_persistent_owner(|_| {
+                    panic!("nested admission cannot project the borrowed payload")
+                }), Err(NativePersistentThreadOwnerAccessError::Unavailable)));
+                // The rejected entry neither reads the payload nor poisons
+                // its outer operation. Exercise the real source engine next.
+                owner.as_mut().get_mut().with_local_allocator(|allocator| {
+                    let block = allocator.allocate(37, false).expect("outer owner remains usable");
+                    unsafe { allocator.free(block) }.unwrap();
+                }).unwrap();
+            }).unwrap();
+            assert!(cell.teardown(|mut owner| owner.as_mut().get_mut().teardown()).is_ok());
+            set_current_thread_native_owner_installed(false);
+            unsafe { core::ptr::addr_of_mut!((*slot).state).write(ThreadLifecycleState::Finished) };
+        });
     }
 
     #[test]
@@ -15681,6 +15794,166 @@ mod tests {
             .initial_thread_identity
             .store(initial_thread.get(), Ordering::Release);
         runtime.state.store(PROCESS_ACTIVE, Ordering::Release);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn source_staged_owner_allocates_before_ready_and_preserves_clients_after_completion() {
+        thread::spawn(|| {
+            let process_storage = ProcessMainInitializationStorage::test_static_owner();
+            let main_static = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let page_map_storage = ProcessPageMapStorage::test_static_owner();
+            let mut options = VmOptions::uninitialized();
+            options.initialize_all(|_| crate::config::VmOptionEnvironment::Absent);
+            options.set(crate::config::VmOption::ArenaReserve, 64 * 1024);
+            let (owner, startup) = unsafe {
+                process_storage.prepare_with_test_components_and_vm_options(
+                    memory_config(), options, main_static, subprocess, metadata, page_map_storage, None,
+                )
+            }.expect("source default Theap exists before startup reservations");
+            let runtime: &'static RuntimeProcessStorage =
+                std::boxed::Box::leak(std::boxed::Box::new(RuntimeProcessStorage::new()));
+            runtime.state.store(PROCESS_INITIALIZING, Ordering::Release);
+            assert!(runtime.publish_prepared_owner(owner));
+            assert!(!runtime.is_active(), "completed startup authority is not fabricated");
+            assert!(process_storage.ready_lease(memory_config(), subprocess).is_err());
+            let arena_storage = ProcessSharedArenaStorage::test_static_owner();
+            let block = runtime.with_ticket_zero_page_owner_with_storage(arena_storage,
+                |owner| owner.allocate(37, false)).flatten()
+                .expect("a staged source callback can allocate from the published default Theap");
+            assert!(arena_storage.test_is_cold(), "canonical allocation never installs the legacy sidecar");
+            unsafe { block.as_ptr().write_bytes(0x73, 37) };
+            assert!(thread::spawn(move || !runtime.is_active()
+                && runtime.page_map_for_live_native_allocation().is_none()).join().unwrap());
+            startup.complete().expect("reservations finish after the callback returns");
+            runtime.state.store(PROCESS_ACTIVE, Ordering::Release);
+            assert!(process_storage.ready_lease(memory_config(), subprocess).is_ok());
+            assert_eq!(unsafe { core::slice::from_raw_parts(block.as_ptr(), 37) }, &[0x73; 37]);
+            assert!(runtime.with_ticket_zero_page_owner_with_storage(arena_storage,
+                |owner| unsafe { owner.free(block) }).unwrap().is_ok());
+        }).join().expect("the staged owner retains one source allocation lifetime");
+    }
+
+    struct StagedOutputAllocation {
+        runtime: &'static RuntimeProcessStorage,
+        arena_storage: &'static ProcessSharedArenaStorage,
+        block: Cell<Option<core::ptr::NonNull<u8>>>,
+        calls: Cell<usize>,
+        rejected_request: Cell<bool>,
+        nested_borrow_refused: Cell<bool>,
+    }
+
+    std::thread_local! {
+        static STAGED_OUTPUT_ALLOCATION: Cell<*const StagedOutputAllocation> = const {
+            Cell::new(core::ptr::null())
+        };
+    }
+
+    unsafe extern "C" fn allocate_from_staged_output(_message: *const core::ffi::c_char) {
+        STAGED_OUTPUT_ALLOCATION.with(|slot| {
+            let Some(context) = (unsafe { slot.get().as_ref() }) else { return; };
+            context.calls.set(context.calls.get() + 1);
+            let rejected = context.runtime.with_ticket_zero_page_owner_with_storage(
+                context.arena_storage, |owner| owner.allocate(usize::MAX, false));
+            context.rejected_request.set(matches!(rejected, Some(None)));
+            let block = context.runtime.with_ticket_zero_page_owner_with_storage(
+                context.arena_storage, |owner| {
+                    // The callback itself starts from an idle owner; a second
+                    // entry while this projection is live must still refuse.
+                    context.nested_borrow_refused.set(context.runtime
+                        .with_ticket_zero_page_owner_with_storage(context.arena_storage,
+                            |nested| nested.allocate(37, false)).is_none());
+                    owner.allocate(37, false)
+                }).flatten();
+            if let Some(block) = block {
+                unsafe { block.as_ptr().write_bytes(0x51, 37) };
+            }
+            context.block.set(block);
+        });
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn source_staged_delayed_output_recovers_allocation_and_later_owner_uses_same_registry() {
+        for reserve_kib in [0, 1] {
+        thread::spawn(move || {
+            use crate::diagnostic_output::{OutputOwner, SourceFormattedMessage};
+            let process_storage = ProcessMainInitializationStorage::test_static_owner();
+            let main_static = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let page_map_storage = ProcessPageMapStorage::test_static_owner();
+            let mut options = VmOptions::uninitialized();
+            options.initialize_all(|_| crate::config::VmOptionEnvironment::Absent);
+            options.set(crate::config::VmOption::ArenaReserve, 64 * 1024);
+            options.set(crate::config::VmOption::ReserveOsMemory, reserve_kib);
+            let output: &'static mut OutputOwner = std::boxed::Box::leak(
+                std::boxed::Box::new(OutputOwner::new(allocate_from_staged_output)));
+            unsafe fn absent_environment() -> *const *const core::ffi::c_char {
+                core::ptr::null()
+            }
+            unsafe { output.initialize_source_options(absent_environment) };
+            // Use the real source delayed-buffer delivery; the message is a
+            // simulated early diagnostic, with no huge-page/mbind hardware.
+            unsafe { output.raw_message(SourceFormattedMessage::from_source_formatted(
+                core::ffi::CStr::from_bytes_with_nul(b"staged diagnostic\n\0").unwrap())) };
+            let (owner, startup) = unsafe {
+                process_storage.prepare_with_test_components_and_vm_options(
+                    memory_config(), options, main_static, subprocess, metadata,
+                    page_map_storage, Some(output),
+                )
+            }.expect("source attachment precedes delayed output");
+            let runtime: &'static RuntimeProcessStorage = std::boxed::Box::leak(
+                std::boxed::Box::new(RuntimeProcessStorage::new()));
+            runtime.state.store(PROCESS_INITIALIZING, Ordering::Release);
+            assert!(runtime.publish_prepared_owner(owner));
+            let arena_storage = ProcessSharedArenaStorage::test_static_owner();
+            let context = StagedOutputAllocation { runtime, arena_storage,
+                block: Cell::new(None), calls: Cell::new(0),
+                rejected_request: Cell::new(false), nested_borrow_refused: Cell::new(false) };
+            STAGED_OUTPUT_ALLOCATION.with(|slot| slot.set(&context));
+            startup.complete().expect("real post-init output returns to the source continuation");
+            STAGED_OUTPUT_ALLOCATION.with(|slot| slot.set(core::ptr::null()));
+            assert_eq!(context.calls.get(), 1);
+            assert!(context.rejected_request.get(), "an invalid request does not poison startup");
+            assert!(context.nested_borrow_refused.get(), "outstanding owner projections remain exclusive");
+            assert!(!runtime.is_active(), "the output callback cannot grant final runtime authority");
+            runtime.state.store(PROCESS_ACTIVE, Ordering::Release);
+            let reservation = process_storage.ready_lease(memory_config(), subprocess).unwrap()
+                .startup_reservation_outcomes().unwrap().regular;
+            assert!(match (reserve_kib, reservation) {
+                (0, None) => true,
+                (1, Some(Err(_))) => true,
+                _ => false,
+            }, "an absent or source-rejected 1-KiB startup parent still completes");
+            let block = context.block.get().expect("the following callback allocation succeeds");
+            assert_eq!(unsafe { core::slice::from_raw_parts(block.as_ptr(), 37) }, &[0x51; 37]);
+            let owner = unsafe { runtime.allocation_owner() }.unwrap();
+            let binding = owner.allocation().unwrap().process_backing().unwrap();
+            let main_heap = unsafe { runtime.allocation_main_heap() }.unwrap();
+            thread::scope(|scope| scope.spawn(move || {
+                let mut attachment = match unsafe {
+                    MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, memory_config())
+                } {
+                    Ok(attachment) => attachment,
+                    Err(_) => panic!("ordinary later Theap attaches after completed startup"),
+                };
+                let mut engine = MainHeapThreadOwnerLocalPageEngine::begin_for_process(
+                    &mut attachment, binding).expect("later owner uses the canonical process binding");
+                engine.with_local_allocator(&mut attachment, |allocator| {
+                    let block = allocator.allocate(71, false).expect("later source allocation succeeds");
+                    unsafe { allocator.free(block) }.expect("later source allocation is freed");
+                }).unwrap();
+                assert!(engine.finish(&mut attachment).is_ok());
+                assert!(attachment.finish_after_user_destructors().is_ok());
+            }).join().unwrap());
+            assert!(runtime.with_ticket_zero_page_owner_with_storage(arena_storage,
+                |owner| unsafe { owner.free(block) }).unwrap().is_ok());
+            assert!(arena_storage.test_is_cold(), "both owners use source registry, never sidecar");
+        }).join().expect("source delayed output and later owner retain the canonical allocation lifetime");
+        }
     }
 
     #[test]

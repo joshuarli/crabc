@@ -502,6 +502,14 @@ impl OsAlignedPageClaim {
         process: VmProcess<'static>, config: MemoryConfig, block_size: usize,
         alignment: usize, requested: crate::arena::ArenaId,
     ) -> Result<Self, OsAlignedPageAllocationFailure> {
+        Self::allocate_for_process_with_random(process, config, block_size, alignment, requested, None)
+    }
+
+    pub(crate) fn allocate_for_process_with_random(
+        process: VmProcess<'static>, config: MemoryConfig, block_size: usize,
+        alignment: usize, requested: crate::arena::ArenaId,
+        random: crate::os::OsRandom<'_>,
+    ) -> Result<Self, OsAlignedPageAllocationFailure> {
         let failed = |error| OsAlignedPageAllocationFailure::released(
             OsAlignedPageError::new(OsAlignedPageFailureStage::Map, error));
         if process.policy().disallow_os_alloc() || !requested.as_ptr().is_null() {
@@ -510,7 +518,7 @@ impl OsAlignedPageClaim {
         let layout = OsAlignedPageLayout::for_fresh_page(config, block_size, alignment)
             .ok_or_else(|| failed(Errno::INVAL))?;
         let allocation = NormalOsAllocation::allocate_aligned_base_for_process(process, config,
-            layout.mapping_length(), PAGE_META_ALIGNMENT, MapAccess::Reserved, false, None);
+            layout.mapping_length(), PAGE_META_ALIGNMENT, MapAccess::Reserved, false, random);
         let mapping = match allocation {
             Ok(allocation) => allocation.into_mapping_and_memory().0,
             Err(failure) => {
@@ -583,6 +591,14 @@ impl OsAlignedPageClaim {
         process: VmProcess<'static>, config: MemoryConfig, block_size: usize,
         alignment: usize, requested: crate::arena::ArenaId,
     ) -> Result<Self, OsAlignedPageAllocationFailure> {
+        Self::allocate_on_demand_for_process_with_random(process, config, block_size, alignment, requested, None)
+    }
+
+    pub(crate) fn allocate_on_demand_for_process_with_random(
+        process: VmProcess<'static>, config: MemoryConfig, block_size: usize,
+        alignment: usize, requested: crate::arena::ArenaId,
+        random: crate::os::OsRandom<'_>,
+    ) -> Result<Self, OsAlignedPageAllocationFailure> {
         let failed = |error| OsAlignedPageAllocationFailure::released(
             OsAlignedPageError::new(OsAlignedPageFailureStage::Map, error));
         if process.policy().disallow_os_alloc() || !requested.as_ptr().is_null() {
@@ -591,7 +607,7 @@ impl OsAlignedPageClaim {
         let layout = OsAlignedPageLayout::for_fresh_page(config, block_size, alignment)
             .ok_or_else(|| failed(Errno::INVAL))?;
         let allocation = NormalOsAllocation::allocate_aligned_base_for_process(process, config,
-            layout.mapping_length(), PAGE_META_ALIGNMENT, MapAccess::Reserved, false, None);
+            layout.mapping_length(), PAGE_META_ALIGNMENT, MapAccess::Reserved, false, random);
         let mapping = match allocation {
             Ok(allocation) => allocation.into_mapping_and_memory().0,
             Err(failure) => {

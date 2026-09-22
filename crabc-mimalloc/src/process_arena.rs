@@ -1456,6 +1456,82 @@ pub(crate) enum ProcessPageArenaLeaseError {
     SubprocessMismatch,
 }
 
+/// Process page facts retained independently of any thread owner. The legacy
+/// pair names one fixture arena; the canonical binding names the source
+/// registry and resolves each page through its actual MemoryId.
+#[derive(Clone, Copy)]
+pub(crate) enum ProcessPageBackingLease {
+    LegacyPair(ProcessPageArenaLease),
+    Process(crate::process_init::ProcessMainBackingBinding),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ProcessPageBackingError {
+    LegacyPair(ProcessPageArenaLeaseError),
+    PageMap(ProcessPageMapError),
+    NotAllocationReady,
+}
+
+impl From<ProcessPageArenaLease> for ProcessPageBackingLease {
+    fn from(pair: ProcessPageArenaLease) -> Self { Self::LegacyPair(pair) }
+}
+
+impl From<crate::process_init::ProcessMainBackingBinding> for ProcessPageBackingLease {
+    fn from(binding: crate::process_init::ProcessMainBackingBinding) -> Self { Self::Process(binding) }
+}
+
+impl ProcessPageBackingLease {
+    pub(crate) fn backing(self, numa_node: i32)
+        -> Result<crate::page_backing::RuntimeFirstRegularPageBacking, ProcessPageBackingError>
+    {
+        use crate::page_backing::RuntimeFirstRegularPageBacking;
+        match self {
+            Self::LegacyPair(pair) => pair.arena()
+                .map(RuntimeFirstRegularPageBacking::selected_sidecar)
+                .map_err(ProcessPageBackingError::LegacyPair),
+            Self::Process(binding) if binding.is_allocation_ready() => {
+                Ok(RuntimeFirstRegularPageBacking::source_registry(binding.process(), numa_node))
+            }
+            Self::Process(_) => Err(ProcessPageBackingError::NotAllocationReady),
+        }
+    }
+
+    pub(crate) fn subprocess(self) -> Result<&'static MainSubprocess, ProcessPageBackingError> {
+        match self {
+            Self::LegacyPair(pair) => pair.subprocess().map_err(ProcessPageBackingError::LegacyPair),
+            Self::Process(binding) => binding.page_map().subprocess().map_err(ProcessPageBackingError::PageMap),
+        }
+    }
+
+    /// # Safety
+    /// The caller owns each accessed range, excludes overlapping plain map
+    /// operations, and retains metadata through unregister and reader quiescence.
+    pub(crate) unsafe fn page_map_for_owned_ranges(self)
+        -> Result<&'static crate::page_map::PageMap, ProcessPageBackingError>
+    {
+        match self {
+            Self::LegacyPair(pair) => unsafe { pair.page_map_for_owned_ranges() }
+                .map_err(ProcessPageBackingError::LegacyPair),
+            Self::Process(binding) => unsafe { binding.page_map().page_map_for_owned_ranges() }
+                .map_err(ProcessPageBackingError::PageMap),
+        }
+    }
+
+    /// # Safety
+    /// The caller has the exact W03 post-CAS terminal page claim. Only its
+    /// unregister/release tail may wait for this exceptional map boundary.
+    pub(crate) unsafe fn begin_blocking_exact_post_owner_exit_mutation(self)
+        -> Result<ProcessPageMapMutationLease, ProcessPageBackingError>
+    {
+        match self {
+            Self::LegacyPair(pair) => unsafe { pair.begin_blocking_exact_post_owner_exit_mutation() }
+                .map_err(ProcessPageBackingError::LegacyPair),
+            Self::Process(binding) => unsafe { binding.page_map().begin_blocking_exact_post_owner_exit_mutation() }
+                .map_err(ProcessPageBackingError::PageMap),
+        }
+    }
+}
+
 /// A source-manage setup failure with no new arena publication.
 ///
 /// The mapping is returned to make its release authority explicit. Callers

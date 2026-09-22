@@ -112,32 +112,68 @@ without a mutable lifecycle-slot reference, so an allocator callback can
 observe the still-unattached thread without aliasing the outer slot. The
 selected pthread handshake treats a recursive entry as a fatal lifecycle
 mismatch, never as proof that its TLS image can be reclaimed.
+Native allocation presence checks copy only the independent compiler-TLS
+flags and lifecycle state through raw field projections before owner-cell
+admission. They never form a mutable reference to the whole TLS record merely
+to reject a nested call while its payload is borrowed. The installed-cell
+regression verifies nested refusal, outer allocation reuse, and teardown.
 
 This is Rust ownership protection, not a port of `MI_TLS_RECURSE_GUARD`:
 pinned Linux release `src/init.c:324-332` does not enable that conditional
-source branch. The process initializer still publishes its runtime owner only
-after the complete source setup. Allocation from callbacks during earlier
-process initialization therefore needs staged source-owner publication and
-reentrant page-operation ownership before general initialization recursion can
-be qualified. The explicit worker recovery C/Rust receipt does not establish
-that behavior.
+source branch. The explicit worker recovery C/Rust receipt remains separate
+from allocation during process initialization.
 
 The process coordinator distinguishes the source-attached allocation inputs
 from completed startup. `ProcessMainAllocationLease` admits the initializing
 thread after static Theap attachment and before reservations; it exposes only
 frozen memory configuration, canonical PageMap, and VM policy/subprocess.
 `ProcessMainReadyLease` still requires completed startup, and another thread
-cannot acquire the earlier lease. This represents pinned `init.c`'s ordering
-without manufacturing a completed reservation outcome.
+cannot acquire the earlier lease. This represents pinned `init.c:548-579`'s
+ordering without manufacturing a completed reservation outcome.
+
+`ProcessMainStartup` is the linear, thread-confined remainder of startup. The
+native runtime moves its `ProcessMainThread` into the permanent owner slot,
+stores the shared main-Heap witness, and release-publishes `PROCESS_ALLOCATABLE`
+before consuming that continuation. Only the saved initial thread can use
+`allocation_owner`, `allocation_main_heap`, or
+`is_on_initial_allocation_thread` at that stage. Worker attachment, process
+shutdown, and fork preservation still require final `PROCESS_ACTIVE`.
+Startup completes huge reservation, regular reservation, and diagnostic
+post-init before publishing final readiness. An ignored reservation failure
+keeps the source continuation usable; dropping an unfinished continuation
+retains the already-published source state. The continuation never holds a
+mutable owner, Theap, or random-field reference across VM/output callbacks.
+The existing source bridge supplies pthread lifetime hooks; this transition
+does not assert literal C pthread-key initialization parity.
 
 `MainHeapThreadOwnerLocalPageEngine::begin_for_process` is the shared activation
-seam for a canonical process backing. The owner-local engine and its consuming
-collect-abandon drain preserve the same backing type. Per-page release resolves
-the actual registry arena and reconciles its committed prefix before retiring
-metadata. The legacy paired-arena constructor remains for typed fixtures. The
-canonical constructor is a prerequisite: native startup publication and
-source-wide mapped-abandoned arena selection must be connected before it
-replaces the existing runtime route or establishes reentrant allocation parity.
+seam for a canonical process backing. Initial and later native owners use the
+same source registry and existing search/reserve/search policy. `ArenaCandidates`
+shares the pinned `mi_forall_suitable_arenas` traversal between fresh allocation
+and mapped-abandoned reclaim, including earlier regular and pinned arenas.
+A simulated mixed-arena test covers traversal; it does not qualify huge-page
+hardware or NUMA placement. Per-page release resolves the actual registry arena
+and reconciles its committed prefix before retiring metadata. The legacy
+paired-arena constructor remains for typed fixtures and the paused architecture;
+it is not the native x86 fallback. `ProcessPageBackingLease` carries either
+that explicit historical pair or the canonical process binding into existing
+post-owner-exit continuation, preserving exact PageMap and source provenance.
+
+`CurrentDefaultTheapRandom` resolves compiler TLS at each source OS-hint draw.
+The lookup itself performs no initialization, allocation, or callback. A short
+exclusive projection uses the existing approved `TheapRandomImage` generator;
+it ends before a VM action or diagnostic delivery. The immutable empty Theap
+has no initialized Heap and is never mutably projected. The cursor holds no
+Theap reference, copied stream, or prefetched word and cannot cross threads.
+
+The staged runtime regression retains a client across allocation admission and
+final startup. A separate real `OutputOwner::post_init` callback exercises a
+rejected request, subsequent allocation, refusal while an owner projection is
+already borrowed, and a later owner using the same canonical registry. These
+are development ownership checks. Delayed-output delivery must not be equated
+with C's earlier startup warning callback timing; coherent native integration,
+source differential, and canonical publication audits remain required before
+general initialization recursion is qualified.
 
 The default allocator remains that C backend. The explicit nondefault
 `crabc-libc` feature `native-mimalloc-shadow` selects
@@ -511,29 +547,17 @@ fragment projection and exact open-boundary statements. The reader rejects a
 legacy format-1/C-only receipt, a changed fragment, or a rewritten nonclaim
 before it reconstructs the retained C and Rust streams.
 
-For one source-start regular parent, `StartupArenaReservationOutcomes` retains
-the successful `mi_reserve_os_memory` arena ID while preserving C's scalar
-failure behavior: `src/init.c:566-579` ignores a rejected regular reservation
-and still publishes READY. At ticket zero,
-`ProcessMainBackingBinding::startup_regular_arena_selection` admits only that
-one committed, non-pinned OS parent when it is the sole registry member bound
-to the same process, subprocess, configuration, and published allocation.
-`RuntimeFirstRegularPageBacking` then calls the existing
-`ProcessArenaBacking::try_allocate_slices` path with the stored initial TLD
-NUMA value. It therefore retains `src/arena.c:470-569,781-821` two-pass
-search, suitability, source reservation, and direct-OS fallback decisions;
-it does not recover an arena from a raw client pointer or create a private
-sidecar simply to consume the startup reservation.
-
-When that source-start selection is absent,
-`MainStaticRuntimeFirstArenaPageAllocator` applies the same
-`src/arena.c:538-550` ordering before its historical lazy sidecar reserve:
-it first gives an eligible parent the complete source search, then
-`disallow_os_alloc` reopens the pre-first-page state without consuming a
-random image, sidecar mapping, or PageMap entry. The existing source-start
-route keeps the independent `src/arena.c:798-871` direct-OS fallback, whose
-`src/arena.c:579-591` guard returns ENOMEM when arena allocation is disabled
-as well.
+`StartupArenaReservationOutcomes` retains successful startup arena IDs while
+preserving C's scalar failure behavior: `src/init.c:566-579` ignores a rejected
+regular reservation and continues startup. Native page ownership no longer
+requires that arena to be the only registry member. Its canonical process
+binding admits the already-published registry and searches with the stored TLD
+NUMA value, preserving `src/arena.c:470-569,781-821` suitability, reservation,
+and direct-OS fallback decisions. An absent, huge, or mixed startup registry
+uses the same source policy. `disallow_os_alloc` and `disallow_arena_alloc`
+remain independent source controls; no absent outcome is fabricated to enter
+a private sidecar. The older `startup_regular_arena_selection` classifier
+remains a finite observation/helper for historical one-parent evidence.
 
 The bounded native `allocator-startup-regular-arena` differential has seven
 fresh source images. A successful 64-MiB startup reservation is reused by the

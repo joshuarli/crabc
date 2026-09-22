@@ -2959,6 +2959,34 @@ impl MainStaticProcessPageSession {
         }
     }
 
+    /// Binds the canonical registry selector before a permanent initial
+    /// engine starts, or verifies the same root when it becomes active again.
+    pub(crate) fn ensure_static_main_mapped_regular_claim_selector_for_process(
+        &mut self,
+        binding: crate::process_init::ProcessMainBackingBinding,
+    ) -> bool {
+        if !self.is_current() || !binding.is_allocation_ready()
+            || !core::ptr::eq(self.subprocess, binding.process().subprocess())
+        {
+            self.latch();
+            return false;
+        }
+        match &self.static_main_mapped_regular_claim {
+            StaticMainMappedRegularClaimSlot::Ready(selector)
+                if selector.matches_process(binding) && !selector.is_terminal() => true,
+            StaticMainMappedRegularClaimSlot::Ready(_) | StaticMainMappedRegularClaimSlot::Bound => {
+                self.latch();
+                false
+            }
+            StaticMainMappedRegularClaimSlot::Unavailable => {
+                self.static_main_mapped_regular_claim = StaticMainMappedRegularClaimSlot::Ready(
+                    StaticMainMappedRegularClaimSelector::for_process(binding, self.shared_main_heap_lease()),
+                );
+                true
+            }
+        }
+    }
+
     /// Returns the exact process identity validated before this permanent
     /// session claimed the ticket-zero static image.
     #[inline]

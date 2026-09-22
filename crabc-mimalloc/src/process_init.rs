@@ -12,20 +12,18 @@
 
 //! Source-ordered main-process initialization.
 //!
-//! The current port has one deliberately bounded process-startup transition:
-//! select the ticket-zero static branch, initialize the source static main
-//! Heap, ready the detached metadata route, publish the process PageMap, and
-//! only then attach the ticket-zero TLD/Theap and compiler-TLS roots. This is
-//! an ordering and ownership coordinator, not a general allocator startup:
-//! it does not choose options, reserve or manage the process-shared arena,
-//! initialize pthread keys, route allocations/frees, run process shutdown,
-//! or expose the metadata allocator's private map/arena as process-global
-//! state. The explicit `initialize_with_vm_options` route additionally
-//! retains one resolved source VM-policy image beside the source subprocess;
-//! the older explicit-config route remains policy-unbound rather than
-//! manufacturing ambient defaults. Its one page-bearing factory only creates
-//! a private first-fresh-page owner; that owner remains arena-free until a
-//! valid allocation miss.
+//! Preparation initializes source policy and main Heap, binds metadata,
+//! publishes the canonical PageMap, and installs the ticket-zero TLD/Theap
+//! and compiler-TLS roots. `ProcessMainAllocationLease` exposes exactly that
+//! initialized subset to its owning thread. The native runtime moves the
+//! owner into its final slot before `ProcessMainStartup` resumes source huge
+//! then regular reservations and diagnostic post-init. No mutable owner or
+//! random projection spans a callback; final process readiness remains a
+//! separate publication. Dropping an unfinished continuation retains source
+//! state rather than reopening initialization. Historical explicit-config
+//! fixtures remain policy-unbound; they do not manufacture ambient defaults.
+//! Pthread lifetime-hook integration and process shutdown belong to the
+//! runtime lifecycle owner, not this initialization coordinator.
 
 #[cfg(test)]
 extern crate std;
@@ -315,6 +313,28 @@ impl ProcessMainInitializationStorage {
         }
     }
 
+    /// Prepares the selected source owner for publication in its final
+    /// runtime slot before any post-attachment VM/output callback.
+    ///
+    /// # Safety
+    /// The caller owns source startup and all `ProcessDiagnosticInputs`
+    /// lifetime obligations. It must retain the returned owner in final
+    /// process storage before completing the linear continuation.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn prepare_with_vm_options_from_source_environment(
+        &'static self, config: MemoryConfig, options: VmOptions,
+        diagnostics: ProcessDiagnosticInputs,
+    ) -> Result<(ProcessMainThread, ProcessMainStartup), ProcessMainInitError> {
+        let environment_reader = diagnostics.environment_reader();
+        let policy = unsafe { VmPolicy::new_with_source_environment(options, environment_reader) }
+            .map_err(ProcessMainInitError::VmPolicy)?;
+        unsafe { self.prepare_with_components_after_claim(
+            config, VmPolicyStartup::ApplyProcessMemoryPolicyWithDiagnostics(policy, diagnostics),
+            MainStaticAttachmentStorage::global(), MainSubprocess::global(),
+            MetaAllocator::global(), ProcessPageMapStorage::global(), || {},
+        ) }
+    }
+
     /// Runs the same transition against isolated process-lifetime owners.
     ///
     /// # Safety
@@ -376,6 +396,27 @@ impl ProcessMainInitializationStorage {
                 || {},
             )
         }
+    }
+
+    /// # Safety
+    /// The isolated test retains every final process owner and owns the
+    /// current roots until the returned source continuation finishes.
+    #[cfg(all(test, target_arch = "x86_64"))]
+    pub(crate) unsafe fn prepare_with_test_components_and_vm_options(
+        &'static self, config: MemoryConfig, options: VmOptions,
+        main_static: &'static MainStaticAttachmentStorage, subprocess: &'static MainSubprocess,
+        metadata: core::pin::Pin<&'static MetaAllocator>, page_map_storage: &'static ProcessPageMapStorage,
+        diagnostics: Option<&'static OutputOwner>,
+    ) -> Result<(ProcessMainThread, ProcessMainStartup), ProcessMainInitError> {
+        let policy = VmPolicy::new(options).map_err(ProcessMainInitError::VmPolicy)?;
+        let (owner, mut startup) = unsafe {
+            self.prepare_with_components_after_claim(config, VmPolicyStartup::RetainOnly(policy),
+                main_static, subprocess, metadata, page_map_storage, || {})
+        }?;
+        if let Some(output) = diagnostics {
+            startup.diagnostics = ProcessStartupDiagnostics::Selected(output);
+        }
+        Ok((owner, startup))
     }
 
     /// Runs the VM-aware transition in a process that the caller has already
@@ -516,6 +557,29 @@ impl ProcessMainInitializationStorage {
         F: FnOnce(),
         H: FnOnce(),
         G: FnOnce(),
+    {
+        // The synchronous fixture API uses the same split transition as the
+        // runtime, with no owner reference spanning the callback or tail.
+        let (owner, startup) = unsafe { self.prepare_with_components_after_claim(
+            config, vm_policy, main_static, subprocess, metadata, page_map_storage, after_claim,
+        ) }?;
+        after_attachment();
+        startup.complete_with_hook(before_release)?;
+        Ok(owner)
+    }
+
+    unsafe fn prepare_with_components_after_claim<F>(
+        &'static self,
+        mut config: MemoryConfig,
+        vm_policy: VmPolicyStartup,
+        main_static: &'static MainStaticAttachmentStorage,
+        subprocess: &'static MainSubprocess,
+        metadata: core::pin::Pin<&'static MetaAllocator>,
+        page_map_storage: &'static ProcessPageMapStorage,
+        after_claim: F,
+    ) -> Result<(ProcessMainThread, ProcessMainStartup), ProcessMainInitError>
+    where
+        F: FnOnce(),
     {
         let observed = self.state.load(Ordering::Acquire);
         let current_thread = match current_thread_identity() {
@@ -735,54 +799,6 @@ impl ProcessMainInitializationStorage {
         // source startup reservation calls can reenter allocation. This state
         // publishes only the initialized tuple, never reservation outcomes.
         self.state.store(SOURCE_ATTACHED, Ordering::Release);
-        after_attachment();
-
-        // Source startup reserves huge memory first and regular memory next,
-        // after the default Theap/TLS attachment exists. Failed reservations
-        // do not prevent READY; their exact cleanup owners remain retained.
-        #[cfg(target_arch = "x86_64")]
-        let reservations = match (vm_process, diagnostics) {
-            (Some(process), ProcessStartupDiagnostics::Selected(output)) => {
-                // SAFETY: this source once winner still owns startup; the
-                // retained output owner predates VM/OS/arena work, and no
-                // process-ready client can race its callback default path.
-                unsafe { attachment.with_startup_vm_random(|random| {
-                    process.subprocess().arena_backing().reserve_startup_options_with_mbind_warning(
-                        process, config, metadata, random, MbindWarningRoute::new(output),
-                    )
-                }) }
-            }
-            (Some(process), ProcessStartupDiagnostics::Unconnected) => {
-                unsafe { attachment.with_startup_vm_random(|random| {
-                    process.subprocess().arena_backing().reserve_startup_options(process,
-                        config, metadata, random)
-                }) }
-            }
-            (None, ProcessStartupDiagnostics::Unconnected) => {
-                crate::arena::StartupArenaReservationOutcomes::empty()
-            }
-            (None, ProcessStartupDiagnostics::Selected(_)) => unreachable!(
-                "mandatory diagnostic startup always owns one source VM process"
-            ),
-        };
-        #[cfg(target_arch = "aarch64")]
-        let reservations = if let Some(process) = vm_process {
-            unsafe { attachment.with_startup_vm_random(|random| {
-                process.subprocess().arena_backing().reserve_startup_options(process,
-                    config, metadata, random)
-            }) }
-        } else { crate::arena::StartupArenaReservationOutcomes::empty() };
-        unsafe { (*self.startup_reservations.get()).write(reservations) };
-
-        #[cfg(target_arch = "x86_64")]
-        if let ProcessStartupDiagnostics::Selected(output) = diagnostics {
-            // SAFETY: source startup still has exclusive dispatch ownership;
-            // this is `_mi_options_post_init` after automatic attachment and
-            // the source startup reservation work.
-            unsafe { output.post_init() };
-        }
-
-        self.publish_terminal_state_and_release_with_hook(completion, READY, before_release);
 
         let allocation = ProcessMainAllocationLease {
             storage: self,
@@ -790,13 +806,20 @@ impl ProcessMainInitializationStorage {
             config,
             subprocess,
         };
-        Ok(ProcessMainThread {
+        let owner = ProcessMainThread {
             storage: self,
             attachment: Some(attachment),
             allocation,
             state: ProcessMainThreadState::Attached,
             _not_send_or_sync: PhantomData,
-        })
+        };
+        let startup = ProcessMainStartup {
+            storage: self, completion: Some(completion), config, vm_process, metadata,
+            #[cfg(target_arch = "x86_64")]
+            diagnostics,
+            _not_send_or_sync: PhantomData,
+        };
+        Ok((owner, startup))
     }
 
     /// Reobtains the immutable process-ready witness for the same frozen
@@ -1006,7 +1029,7 @@ impl ProcessMainInitializationStorage {
     /// INITIALIZING, or during the documented pre-body cancellation handoff;
     /// both retain the same safe reentry meaning.
     #[inline]
-    fn outcome_after_process_once(&self) -> Result<ProcessMainThread, ProcessMainInitError> {
+    fn outcome_after_process_once<T>(&self) -> Result<T, ProcessMainInitError> {
         match self.state.load(Ordering::Acquire) {
             COLD | INITIALIZING | SOURCE_ATTACHED => Err(ProcessMainInitError::Initializing),
             READY => Err(ProcessMainInitError::AlreadyInitialized),
@@ -1050,6 +1073,96 @@ impl ProcessMainInitializationStorage {
         // immutable terminal result and intentionally mirror the source's
         // no-retry release policy.
         let _completion_result = completion.complete();
+    }
+}
+
+/// Linear remainder of pinned process startup after the default Theap is
+/// valid. It owns the source once completion and immutable VM inputs, never
+/// an attachment/Theap/random borrow. Dropping it retains the published owner.
+#[must_use = "source startup must complete or retain its already-published owner"]
+pub(crate) struct ProcessMainStartup {
+    storage: &'static ProcessMainInitializationStorage,
+    completion: Option<AllocatorOnceCompletion<'static>>,
+    config: MemoryConfig,
+    vm_process: Option<VmProcess<'static>>,
+    metadata: core::pin::Pin<&'static MetaAllocator>,
+    #[cfg(target_arch = "x86_64")]
+    diagnostics: ProcessStartupDiagnostics<'static>,
+    _not_send_or_sync: PhantomData<*mut ()>,
+}
+
+impl ProcessMainStartup {
+    pub(crate) fn complete(self) -> Result<(), ProcessMainInitError> {
+        self.complete_with_hook(|| {})
+    }
+
+    fn complete_with_hook(mut self, before_release: impl FnOnce()) -> Result<(), ProcessMainInitError> {
+        self.storage.ensure_allocation_ready()?;
+        if self.storage.state.load(Ordering::Acquire) != SOURCE_ATTACHED {
+            return Err(ProcessMainInitError::Retained);
+        }
+        let config = self.config;
+        let vm_process = self.vm_process;
+        let metadata = self.metadata;
+        #[cfg(target_arch = "x86_64")]
+        let diagnostics = self.diagnostics;
+        // Source startup reserves huge memory first and regular memory next,
+        // after the default Theap/TLS attachment exists. Failed reservations
+        // do not prevent READY; their exact cleanup owners remain retained.
+        // SAFETY: the source startup owner retains the current default root;
+        // this value holds no attachment/Theap borrow across VM callbacks.
+        let mut random = unsafe { crate::os::CurrentDefaultTheapRandom::new() };
+        #[cfg(target_arch = "x86_64")]
+        let reservations = match (vm_process, diagnostics) {
+            (Some(process), ProcessStartupDiagnostics::Selected(output)) => {
+                // SAFETY: this source once winner still owns startup; the
+                // retained output owner predates VM/OS/arena work. Initial-thread
+                // callback allocation is admitted without borrowing this owner.
+                unsafe { process.subprocess().arena_backing().reserve_startup_options_with_mbind_warning(
+                    process, config, metadata, Some(&mut random), MbindWarningRoute::new(output),
+                ) }
+            }
+            (Some(process), ProcessStartupDiagnostics::Unconnected) => {
+                unsafe { process.subprocess().arena_backing().reserve_startup_options(process,
+                    config, metadata, Some(&mut random)) }
+            }
+            (None, ProcessStartupDiagnostics::Unconnected) => {
+                crate::arena::StartupArenaReservationOutcomes::empty()
+            }
+            (None, ProcessStartupDiagnostics::Selected(_)) => unreachable!(
+                "mandatory diagnostic startup always owns one source VM process"
+            ),
+        };
+        #[cfg(target_arch = "aarch64")]
+        let reservations = if let Some(process) = vm_process {
+            unsafe { process.subprocess().arena_backing().reserve_startup_options(process,
+                config, metadata, Some(&mut random)) }
+        } else { crate::arena::StartupArenaReservationOutcomes::empty() };
+        unsafe { (*self.storage.startup_reservations.get()).write(reservations) };
+
+        #[cfg(target_arch = "x86_64")]
+        if let ProcessStartupDiagnostics::Selected(output) = diagnostics {
+            // SAFETY: source startup still has exclusive dispatch ownership;
+            // this is `_mi_options_post_init` after automatic attachment and
+            // the source startup reservation work.
+            unsafe { output.post_init() };
+        }
+
+        if self.storage.state.load(Ordering::Acquire) != SOURCE_ATTACHED {
+            return Err(ProcessMainInitError::Retained);
+        }
+        let completion = self.completion.take().ok_or(ProcessMainInitError::Retained)?;
+        self.storage.publish_terminal_state_and_release_with_hook(completion, READY, before_release);
+        Ok(())
+
+    }
+}
+
+impl Drop for ProcessMainStartup {
+    fn drop(&mut self) {
+        if let Some(completion) = self.completion.take() {
+            self.storage.publish_terminal_state_and_release(completion, RETAINED);
+        }
     }
 }
 

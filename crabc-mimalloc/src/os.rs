@@ -59,6 +59,47 @@ use crate::config::{
 use crate::config::VmOptionEnvironment;
 use crate::invariants;
 use crate::random::TheapRandomImage;
+
+/// Existing source random state for OS hint draws. This interface generates
+/// no independent stream: both implementations use the approved Theap image.
+pub(crate) trait OsRandomSource {
+    fn next_if_initialized(&mut self) -> Option<u64>;
+}
+
+pub(crate) type OsRandom<'a> = Option<&'a mut (dyn OsRandomSource + 'static)>;
+
+impl OsRandomSource for TheapRandomImage {
+    fn next_if_initialized(&mut self) -> Option<u64> {
+        self.is_initialized().then(|| self.next())
+    }
+}
+
+/// A thread-confined source default-Theap lookup at each OS draw. It keeps no
+/// owner, Theap, random-field reference, copied state, or prefetched word.
+pub(crate) struct CurrentDefaultTheapRandom(core::marker::PhantomData<*mut ()>);
+
+impl CurrentDefaultTheapRandom {
+    /// # Safety
+    /// Through every use, the current compiler-TLS default must remain a live
+    /// source Theap (or the immutable empty image). No whole-Theap or random
+    /// field reference may overlap a draw. The caller owns the current thread
+    /// source operation; teardown/default replacement may occur only between
+    /// draws and must preserve compiler-TLS root lifetime rules.
+    pub(crate) unsafe fn new() -> Self { Self(core::marker::PhantomData) }
+}
+
+impl OsRandomSource for CurrentDefaultTheapRandom {
+    fn next_if_initialized(&mut self) -> Option<u64> {
+        // `default_theap` is a direct ELF compiler-TLS pointer load: it has
+        // no initialization, allocation, lock, or callback path. Lookup ends
+        // before the short exclusive random-field projection below.
+        let pointer = crate::compiler_tls::default_theap();
+        // SAFETY: the constructor's operation/lifetime contract retains this
+        // current source image and excludes overlapping random access. The
+        // helper invokes only the existing generator, with no user callback.
+        unsafe { crate::types::Theap::next_os_reservation_random_at(pointer) }
+    }
+}
 use crate::types::{MemoryId, MemoryKind};
 
 // Linux values shared by the exact AArch64 and x86-64 Unix primitive paths.
@@ -1034,7 +1075,7 @@ impl VmPolicy {
         config: MemoryConfig,
         try_alignment: usize,
         size: usize,
-        default_random: Option<&mut TheapRandomImage>,
+        default_random: OsRandom<'_>,
     ) -> Option<usize> {
         self.aligned_hint_for_source_profile(
             config,
@@ -1055,7 +1096,7 @@ impl VmPolicy {
         config: MemoryConfig,
         try_alignment: usize,
         size: usize,
-        mut default_random: Option<&mut TheapRandomImage>,
+        mut default_random: OsRandom<'_>,
         source_profile: AlignedHintSourceProfile,
     ) -> Option<usize> {
         if try_alignment <= config.alloc_granularity()
@@ -1080,10 +1121,7 @@ impl VmPolicy {
         if hint == 0 || hint > HINT_MAX {
             let initial = if source_profile.requires_default_random() {
                 let random = default_random.as_deref_mut()?;
-                if !random.is_initialized() {
-                    return None;
-                }
-                let random_bits = (random.next() >> 17) & 0x3f_ffff;
+                let random_bits = (random.next_if_initialized()? >> 17) & 0x3f_ffff;
                 HINT_BASE.wrapping_add(MIB.wrapping_mul(random_bits as usize) % HINT_AREA)
             } else {
                 HINT_BASE
@@ -1123,7 +1161,7 @@ impl VmPolicy {
     fn claim_huge_pages(
         &self,
         pages: usize,
-        mut default_random: Option<&mut TheapRandomImage>,
+        mut default_random: OsRandom<'_>,
     ) -> Option<(usize, usize)> {
         let size = pages.checked_mul(HUGE_PAGE_SIZE)?;
         let mut observed = self.huge_hint_start.load(Ordering::Relaxed);
@@ -1132,8 +1170,8 @@ impl VmPolicy {
             if start == 0 {
                 start = HUGE_HINT_BASE;
                 if let Some(random) = default_random.as_deref_mut() {
-                    if random.is_initialized() {
-                        let random_bits = (random.next() >> 17) & 0x0fff;
+                    if let Some(word) = random.next_if_initialized() {
+                        let random_bits = (word >> 17) & 0x0fff;
                         start = start.checked_add(HUGE_PAGE_SIZE.checked_mul(random_bits as usize)?)?;
                     }
                 }
@@ -1835,7 +1873,7 @@ impl Mapping {
         try_alignment: usize,
         access: MapAccess,
         allow_large: bool,
-        default_random: Option<&mut TheapRandomImage>,
+        default_random: OsRandom<'_>,
     ) -> Result<Self> {
         validate_mapping_length(config.page_size(), length)?;
         let try_alignment = if try_alignment == 0 { 1 } else { try_alignment };
@@ -1872,7 +1910,7 @@ impl Mapping {
         try_alignment: usize,
         access: MapAccess,
         allow_large: bool,
-        default_random: Option<&mut TheapRandomImage>,
+        default_random: OsRandom<'_>,
     ) -> Result<Self> {
         let mapping = Self::map_for_allocator_with_policy(
             process.policy,
@@ -1909,7 +1947,7 @@ impl Mapping {
         alignment: usize,
         access: MapAccess,
         allow_large: bool,
-        mut default_random: Option<&mut TheapRandomImage>,
+        mut default_random: OsRandom<'_>,
     ) -> core::result::Result<Self, AlignedMappingFailure> {
         let page_size = config.page_size().bytes();
         if alignment < page_size || !alignment.is_power_of_two() {
@@ -2071,7 +2109,7 @@ impl Mapping {
         allow_large: bool,
         large_only: bool,
         explicit_hint: Option<usize>,
-        default_random: Option<&mut TheapRandomImage>,
+        default_random: OsRandom<'_>,
     ) -> Result<Self> {
         fault_before(FaultPoint::Map)?;
         let mut flags = MAP_PRIVATE | MAP_ANONYMOUS;
@@ -3253,7 +3291,7 @@ impl<'a> HugeOsAllocation<'a> {
         pages: usize,
         numa_node: i32,
         max_milliseconds: i64,
-        default_random: Option<&mut TheapRandomImage>,
+        default_random: OsRandom<'_>,
     ) -> HugeOsAllocationOutcome<'a> {
         allocate_huge_pages_with(
             process,
@@ -3277,7 +3315,7 @@ impl<'a> HugeOsAllocation<'a> {
         pages: usize,
         numa_node: i32,
         max_milliseconds: i64,
-        default_random: Option<&mut TheapRandomImage>,
+        default_random: OsRandom<'_>,
         warning: MbindWarningRoute<'_>,
     ) -> HugeOsAllocationOutcome<'a> {
         allocate_huge_pages_with(
@@ -3401,7 +3439,7 @@ fn allocate_huge_pages_with<'a>(
     process: VmProcess<'a>,
     pages: usize,
     max_milliseconds: i64,
-    default_random: Option<&mut TheapRandomImage>,
+    default_random: OsRandom<'_>,
     mut map_page: impl FnMut(usize) -> Result<Mapping>,
     mut clock_start: impl FnMut() -> i64,
     mut clock_end: impl FnMut(i64) -> i64,
@@ -3946,7 +3984,7 @@ impl NormalOsAllocation {
         alignment: usize,
         access: MapAccess,
         allow_large: bool,
-        default_random: Option<&mut TheapRandomImage>,
+        default_random: OsRandom<'_>,
     ) -> core::result::Result<Self, NormalOsAllocationFailure> {
         let mapping = Self::allocate_aligned_mapping_for_process(
             process,
@@ -4011,7 +4049,7 @@ impl NormalOsAllocation {
         alignment: usize,
         access: MapAccess,
         allow_large: bool,
-        default_random: Option<&mut TheapRandomImage>,
+        default_random: OsRandom<'_>,
     ) -> core::result::Result<NormalOsBaseAllocation, NormalOsAllocationFailure> {
         let allocation = Self::allocate_aligned_for_process(
             process,
@@ -4093,7 +4131,7 @@ impl NormalOsAllocation {
         offset: usize,
         access: MapAccess,
         allow_large: bool,
-        mut default_random: Option<&mut TheapRandomImage>,
+        mut default_random: OsRandom<'_>,
     ) -> core::result::Result<Self, NormalOsAllocationFailure> {
         if offset > size {
             return Err(NormalOsAllocationFailure::without_mapping(Errno::INVAL));
@@ -4263,7 +4301,7 @@ impl NormalOsAllocation {
         alignment: usize,
         access: MapAccess,
         allow_large: bool,
-        default_random: Option<&mut TheapRandomImage>,
+        default_random: OsRandom<'_>,
     ) -> core::result::Result<Mapping, NormalOsAllocationFailure> {
         let length = Self::good_allocation_size(config, size)?;
         let alignment = Self::aligned_allocation_alignment(config, alignment)?;

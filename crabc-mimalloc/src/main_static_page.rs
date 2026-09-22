@@ -38,10 +38,7 @@ use crate::process_arena::{
     ProcessPageArenaLease, ProcessPageArenaLeaseError, ProcessSharedArenaReserveFailure,
     ProcessSharedArenaStorage,
 };
-use crate::process_init::{
-    ProcessMainBackingBinding, ProcessStartupRegularArenaLease,
-    ProcessStartupRegularArenaSelection,
-};
+use crate::process_init::ProcessMainBackingBinding;
 use crate::process_page_map::{ProcessPageMapError, ProcessPageMapMutationLease};
 #[cfg(test)]
 use crate::process_page_map::ProcessPageMapSuspendedEngineAccess;
@@ -613,14 +610,14 @@ struct MainStaticRuntimeActiveEngine {
     route: MainStaticRuntimeFirstArenaRoute,
 }
 
-/// The one first-arena identity retained across ticket-zero active/dormant
-/// transitions.  `SourceStartupRegular` is intentionally unavailable to the
-/// later-thread pair bridge: that broader multi-owner routing remains outside
-/// this first-regular capability.
+/// Backing identity retained across ticket-zero active/dormant transitions.
+/// Canonical native owners retain the process registry binding. Only the
+/// historical sidecar route lends an exact one-arena pair to typed fixtures;
+/// native later owners activate independently from the same process binding.
 #[derive(Clone, Copy)]
 enum MainStaticRuntimeFirstArenaRoute {
     Sidecar,
-    SourceStartupRegular(ProcessStartupRegularArenaLease),
+    SourceProcess(ProcessMainBackingBinding),
 }
 
 /// The only two source-backed entry routes for the permanent ticket-zero
@@ -957,7 +954,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 arena_storage,
                 route,
             } => {
-                if matches!(route, MainStaticRuntimeFirstArenaRoute::SourceStartupRegular(_)) {
+                if matches!(route, MainStaticRuntimeFirstArenaRoute::SourceProcess(_)) {
                     // The source-start bridge proves only ticket zero's first
                     // regular owner. It must not manufacture a sidecar pair
                     // for a later worker or silently broaden into general
@@ -998,7 +995,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
             }
             #[cfg(test)]
             MainStaticRuntimeFirstArenaPageAllocatorState::ParkedActive(parked) => {
-                if matches!(parked.route, MainStaticRuntimeFirstArenaRoute::SourceStartupRegular(_)) {
+                if matches!(parked.route, MainStaticRuntimeFirstArenaRoute::SourceProcess(_)) {
                     self.state = MainStaticRuntimeFirstArenaPageAllocatorState::ParkedActive(parked);
                     return Err(());
                 }
@@ -1298,15 +1295,14 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         };
                         (RuntimeFirstRegularPageBacking::selected_sidecar(arena), Some(pair))
                     }
-                    MainStaticRuntimeFirstArenaRoute::SourceStartupRegular(lease) => {
-                        let arena = match lease.arena() {
-                            Some(arena) => arena,
-                            None => {
-                                session.retain_terminal();
-                                self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
-                                return None;
-                            }
-                        };
+                    MainStaticRuntimeFirstArenaRoute::SourceProcess(lease) => {
+                        if !lease.is_allocation_ready()
+                            || !session.ensure_static_main_mapped_regular_claim_selector_for_process(lease)
+                        {
+                            session.retain_terminal();
+                            self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                            return None;
+                        }
                         let numa_node = match session.current_tld_numa_node() {
                             Some(node) => node,
                             None => {
@@ -1315,9 +1311,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                             }
                         };
                         (
-                            RuntimeFirstRegularPageBacking::source_startup_regular(
-                                lease.process(), arena, numa_node,
-                            ),
+                            RuntimeFirstRegularPageBacking::source_registry(lease.process(), numa_node),
                             None,
                         )
                     }
@@ -1356,7 +1350,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                             .page_map_for_owned_ranges()
                             .map_err(|_| ())
                     },
-                    MainStaticRuntimeFirstArenaRoute::SourceStartupRegular(lease) => unsafe {
+                    MainStaticRuntimeFirstArenaRoute::SourceProcess(lease) => unsafe {
                         lease.page_map().page_map_for_owned_ranges()
                             .map_err(|_| ())
                     },
@@ -1422,11 +1416,6 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 reservation,
                 arena_storage,
             } => {
-                #[cfg(feature = "native-runtime-test-audit")]
-                let process_backed_reservation = matches!(
-                    reservation,
-                    MainStaticRuntimeFirstArenaReservation::Process { .. }
-                );
                 if matches!(
                     reservation,
                     MainStaticRuntimeFirstArenaReservation::Process { backing }
@@ -1460,19 +1449,15 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                     self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
                     return None;
                 }
-                let startup_regular = match reservation {
+                let source_process = match reservation {
                     MainStaticRuntimeFirstArenaReservation::Legacy { .. } => None,
                     MainStaticRuntimeFirstArenaReservation::Process { backing } => {
-                        match backing.startup_regular_arena_selection() {
-                            ProcessStartupRegularArenaSelection::Absent => None,
-                            ProcessStartupRegularArenaSelection::Eligible(lease) => Some(lease),
-                            ProcessStartupRegularArenaSelection::ExistingOutsideFirstRegularCapability
-                            | ProcessStartupRegularArenaSelection::Retained => {
-                                session.retain_terminal();
-                                self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
-                                return None;
-                            }
+                        if !backing.is_allocation_ready() {
+                            session.retain_terminal();
+                            self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                            return None;
                         }
+                        Some(backing)
                     }
                 };
                 let page_map_lifecycle = match page_map.begin_page_lifecycle() {
@@ -1491,16 +1476,13 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         return None;
                     }
                 };
-                let (backing, route, pair) = if let Some(lease) = startup_regular {
-                    let arena = match lease.arena() {
-                        Some(arena) => arena,
-                        None => {
-                            let _ = page_map_lifecycle.finish();
-                            session.retain_terminal();
-                            self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
-                            return None;
-                        }
-                    };
+                let (backing, route, pair) = if let Some(lease) = source_process {
+                    if !session.ensure_static_main_mapped_regular_claim_selector_for_process(lease) {
+                        let _ = page_map_lifecycle.finish();
+                        session.retain_terminal();
+                        self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                        return None;
+                    }
                     let numa_node = match session.current_tld_numa_node() {
                         Some(node) => node,
                         None => {
@@ -1510,56 +1492,16 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         }
                     };
                     (
-                        RuntimeFirstRegularPageBacking::source_startup_regular(
-                            lease.process(), arena, numa_node,
-                        ),
-                        MainStaticRuntimeFirstArenaRoute::SourceStartupRegular(lease),
+                        RuntimeFirstRegularPageBacking::source_registry(lease.process(), numa_node),
+                        MainStaticRuntimeFirstArenaRoute::SourceProcess(lease),
                         None,
                     )
                 } else {
-                    let source_disallows_fresh_process_arena = matches!(
-                        reservation,
-                        MainStaticRuntimeFirstArenaReservation::Process { backing }
-                            if backing.process().policy().disallow_os_alloc()
-                    );
-                    if source_disallows_fresh_process_arena {
-                        // Pinned mimalloc v3.5.0 `src/arena.c:538-550` first
-                        // searches an existing arena, then rejects a fresh
-                        // reservation when `disallow_os_alloc` is set. The
-                        // source-start selection above already exhausted the
-                        // one eligible regular parent, so this is the exact
-                        // pre-reservation refusal. Keep the ticket-zero owner
-                        // retryable: no random image, sidecar mapping, or
-                        // PageMap entry has been consumed at this point.
-                        self.state = if page_map_lifecycle.finish().is_ok() {
-                            MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage {
-                                session,
-                                reservation,
-                                arena_storage,
-                            }
-                        } else {
-                            session.retain_terminal();
-                            MainStaticRuntimeFirstArenaPageAllocatorState::Retained
-                        };
-                        return None;
-                    }
-                    let reservation_result = match reservation {
-                        MainStaticRuntimeFirstArenaReservation::Legacy { .. } => {
-                            Some(arena_storage.reserve_default_os_arena(page_map, required_size))
-                        }
-                        MainStaticRuntimeFirstArenaReservation::Process { backing } => {
-                            match session.with_zero_page_vm_random(|random| {
-                                arena_storage.reserve_default_os_arena_for_process(
-                                    backing,
-                                    required_size,
-                                    random,
-                                )
-                            }) {
-                                Ok(result) => Some(result),
-                                Err(_) => None,
-                            }
-                        }
-                    };
+                    // Only the explicit-config fixture route reaches this
+                    // one-arena owner. Canonical process allocation uses the
+                    // source registry's own search/reserve/search transition.
+                    let reservation_result = Some(
+                        arena_storage.reserve_default_os_arena(page_map, required_size));
                     let arena = match reservation_result {
                         None => {
                             let _ = page_map_lifecycle.finish();
@@ -1568,11 +1510,6 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                             return None;
                         }
                         Some(Ok(arena)) => {
-                            #[cfg(feature = "native-runtime-test-audit")]
-                            if process_backed_reservation {
-                                NATIVE_PROCESS_BACKING_VM_RESERVATION_COUNT
-                                    .fetch_add(1, Ordering::AcqRel);
-                            }
                             arena
                         }
                         Some(Err(ProcessSharedArenaReserveFailure::Rejected { .. })) => {
@@ -1641,7 +1578,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                             .page_map_for_owned_ranges()
                             .map_err(|_| ())
                     },
-                    MainStaticRuntimeFirstArenaRoute::SourceStartupRegular(lease) => unsafe {
+                    MainStaticRuntimeFirstArenaRoute::SourceProcess(lease) => unsafe {
                         lease.page_map().page_map_for_owned_ranges().map_err(|_| ())
                     },
                 }) {

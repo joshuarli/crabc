@@ -658,6 +658,36 @@ separate lifecycle owners and qualification.
   races, NUMA discovery/options policy, or allocator integration. Those need
   separate owner-bearing C/Rust evidence.
 
+### `CRABC-MI-STAGED-INITIAL-OWNER` — explicit staged ownership and evidence boundary
+
+- **Upstream/Rust:** pinned `src/init.c:305-360,536-592` installs the source
+  default Theap before key setup and startup reservations. Rust represents the
+  allocation-ready subset with `ProcessMainAllocationLease`, then moves the
+  owner into `RuntimeProcessStorage` before `ProcessMainStartup` performs the
+  remaining reservations and diagnostic post-init. `arena_selection.rs` keeps
+  the shared `mi_forall_suitable_arenas` traversal; initial and later native
+  owners use `ProcessMainBackingBinding` for the same canonical registry.
+- **Representation:** final process-ready authority is distinct from early
+  initial-thread allocation admission. Another thread cannot acquire the
+  staged subset. An outstanding mutable page-owner projection refuses nested
+  entry; callbacks run after that projection ends. An unfinished continuation
+  retains the published owner instead of replaying source initialization.
+  These Rust borrow boundaries are not `MI_TLS_RECURSE_GUARD`, which is disabled
+  in the pinned Linux release profile, and do not introduce allocation policy.
+- **Randomness:** `CurrentDefaultTheapRandom` looks up compiler TLS before each
+  draw and briefly projects the initialized random field. It uses the existing
+  approved generator, never copied/prefetched random state. No owner or random
+  reference survives into VM operations or diagnostic callbacks.
+- **Evidence boundary:** the staged-owner regression covers a live client
+  before and after completed startup. The delayed-output regression uses the
+  real `OutputOwner::post_init` callback, request rejection/recovery, nested
+  borrow refusal, and a later canonical owner. Its simulated early diagnostic
+  does not establish identical C startup-warning delivery timing. Mixed regular
+  and simulated pinned registry traversal does not establish huge-page or NUMA
+  hardware success. The existing explicit-worker C/Rust recursion receipt
+  remains a separate scope; source callback differential and coherent native
+  integration are required before this transition closes general recursion.
+
 ### `CRABC-MI-PROCESS-PAGE-MAP-COLD-ROOT` — accepted bounded cold-root safety divergence
 
 - **Upstream/Rust:** `src/page-map.c:228-365`, especially static

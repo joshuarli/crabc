@@ -116,7 +116,66 @@ impl ArenaSearch {
     }
 }
 
+/// Source `mi_forall_suitable_arenas` traversal. A value retains only the
+/// process registry and copied search inputs, never a page-engine borrow.
+pub(crate) struct ArenaCandidates<'arena> {
+    registry: &'arena ArenaRegistry,
+    search: ArenaSearch,
+    pass: usize,
+    count: usize,
+    turn: usize,
+}
+
+impl<'arena> Iterator for ArenaCandidates<'arena> {
+    type Item = ArenaView<'arena>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let passes = if self.search.numa_node < 0 { 1 } else { 2 };
+        while self.pass < passes {
+            if self.turn >= self.count {
+                self.pass += 1;
+                if self.pass == passes { return None; }
+                self.count = self.registry.count();
+                self.turn = 0;
+                continue;
+            }
+            let turn = self.turn;
+            self.turn += 1;
+            let pointer = if !self.search.requested.as_ptr().is_null() {
+                if turn != 0 { self.turn = self.count; continue; }
+                self.search.requested.as_ptr()
+            } else {
+                let index = self.search.registry_index(self.count, turn)?;
+                // SAFETY: construction retains all published arenas and
+                // excludes destruction for the cursor's complete lifetime.
+                match unsafe { self.registry.arena_at(index) } {
+                    Some(arena) => core::ptr::from_ref(arena).cast_mut(),
+                    None => continue,
+                }
+            };
+            // SAFETY: a requested parent shares that same retained lifetime.
+            let Some(arena) = (unsafe { pointer.as_ref() }) else { continue; };
+            if !self.search.allow_pinned && arena.memid.is_pinned() { continue; }
+            if !unsafe { arena_is_suitable(pointer, self.search.requested) } { continue; }
+            if self.search.requested.as_ptr().is_null() {
+                let numa_suitable = self.search.numa_node < 0 || arena.numa_node < 0
+                    || arena.numa_node == self.search.numa_node;
+                if numa_suitable != (self.pass == 0) { continue; }
+            }
+            return unsafe { ArenaView::from_ptr(pointer) };
+        }
+        None
+    }
+}
+
 impl ArenaRegistry {
+    /// # Safety
+    /// Every published arena and `search.requested` must remain live through
+    /// the cursor and every returned view; exclude registry destruction.
+    pub(crate) unsafe fn suitable_arenas(&self, search: ArenaSearch) -> ArenaCandidates<'_> {
+        ArenaCandidates { registry: self, search, pass: 0, count: self.count(), turn: 0 }
+    }
+
     /// Searches the source NUMA-preferred pass, then only nonpreferred arenas.
     /// The newest slot is tried last. A requested parent is tried once per
     /// pass, including the source's second attempt when NUMA is nonnegative.
@@ -155,34 +214,10 @@ impl ArenaRegistry {
         if alignment > ARENA_SLICE_SIZE || slice_count == 0 {
             return None;
         }
-        let passes = if search.numa_node < 0 { 1 } else { 2 };
-        for pass in 0..passes {
-            // The source takes a new relaxed high-water snapshot per pass.
-            let count = self.count();
-            for turn in 0..count {
-                let pointer = if !search.requested.as_ptr().is_null() {
-                    if turn != 0 { break; }
-                    search.requested.as_ptr()
-                } else {
-                    let index = search.registry_index(count, turn)?;
-                    match unsafe { self.arena_at(index) } {
-                        Some(arena) => core::ptr::from_ref(arena).cast_mut(),
-                        None => continue,
-                    }
-                };
-                let Some(arena) = (unsafe { pointer.as_ref() }) else { continue; };
-                if !search.allow_pinned && arena.memid.is_pinned() { continue; }
-                if !unsafe { arena_is_suitable(pointer, search.requested) } { continue; }
-                if search.requested.as_ptr().is_null() {
-                    let numa_suitable = search.numa_node < 0 || arena.numa_node < 0
-                        || arena.numa_node == search.numa_node;
-                    if numa_suitable != (pass == 0) { continue; }
-                }
-                let view = unsafe { ArenaView::from_ptr(pointer) }?;
-                if let Some(claim) = claim(view) {
-                    return Some(claim);
-                }
-            }
+        // SAFETY: the caller retains the registry and requested parent for
+        // this complete search and any returned live claim.
+        for view in unsafe { self.suitable_arenas(search) } {
+            if let Some(claim) = claim(view) { return Some(claim); }
         }
         None
     }

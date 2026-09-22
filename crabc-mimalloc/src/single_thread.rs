@@ -130,6 +130,7 @@
 use core::cell::Cell;
 use core::marker::PhantomData;
 use crate::page_backing::PageBacking;
+use crate::process_arena::{ProcessPageBackingLease, ProcessPageBackingError};
 use core::mem::ManuallyDrop;
 use core::pin::Pin;
 use core::ptr::NonNull;
@@ -914,7 +915,7 @@ fn terminalize_post_owner_exit_retained(
 enum ProcessPostOwnerExitRemoteClaimError {
     /// The copied process PageMap/arena pair could not provide the exact
     /// process-static source facts needed after the claim.
-    ProcessPageArena(ProcessPageArenaLeaseError),
+    ProcessBacking(ProcessPageBackingError),
     /// The caller joined a PageMap/arena pair to a different process-static
     /// main Heap.  This is an identity failure, never a request to find a
     /// different owner or route.
@@ -954,7 +955,7 @@ enum ProcessPostOwnerExitRemoteClaimError {
 /// it returns.
 unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
     claim: remote_free::ClaimedAbandonedRemoteFree,
-    process: ProcessPageArenaLease,
+    process: ProcessPageBackingLease,
     main_heap: MainStaticHeapLease<'static>,
 ) -> Result<ProcessPostOwnerExitRemoteClaimResult, ProcessPostOwnerExitRemoteClaimFailure> {
     // The exact W07 claim proves this page's range and lifetime. A PageMap
@@ -962,12 +963,12 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
     // `StillLive`, and owner-transfer results do not touch plain PageMap
     // entries. Each terminal callback stages the lease immediately before its
     // source unregister/list-release work instead.
-    let arena = match process.arena() {
-        Ok(arena) => arena,
+    let backing = match process.backing(-1) {
+        Ok(backing) => backing,
         Err(error) => {
             return Err(ProcessPostOwnerExitRemoteClaimFailure {
                 claim,
-                error: ProcessPostOwnerExitRemoteClaimError::ProcessPageArena(error),
+                error: ProcessPostOwnerExitRemoteClaimError::ProcessBacking(error),
             });
         }
     };
@@ -976,7 +977,7 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
         Err(error) => {
             return Err(ProcessPostOwnerExitRemoteClaimFailure {
                 claim,
-                error: ProcessPostOwnerExitRemoteClaimError::ProcessPageArena(error),
+                error: ProcessPostOwnerExitRemoteClaimError::ProcessBacking(error),
             });
         }
     };
@@ -1002,6 +1003,8 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
             abandoned::continue_post_owner_exit_remote_claim(
                 claim,
                 |memory, block_size| {
+                    let arena = backing.arena_for_memory(memory)
+                        .ok_or(AbandonError::ArenaBitmapDoesNotMatchPage)?;
                     select_process_main_mapped_abandoned_page(
                         &arena,
                         main_heap,
@@ -1030,7 +1033,7 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
                     };
                     match release_claimed_process_regular_arena_page(
                         page_map,
-                        &arena,
+                        &backing,
                         release.page(),
                         release.memory(),
                     ) {
@@ -1147,7 +1150,7 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
                 abandoned::ClaimedPostOwnerExitSingletonBacking::Arena => {
                     match release_claimed_process_arena_singleton_page(
                         page_map,
-                        &arena,
+                        &backing,
                         release.page(),
                         release.memory(),
                     ) {
@@ -1186,6 +1189,7 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
                 abandoned::ClaimedPostOwnerExitSingletonBacking::OsOrExternal => {
                     match release_claimed_process_non_arena_singleton_page(
                         page_map,
+                        backing.process(),
                         main_heap,
                         release.page(),
                         release.memory(),
@@ -1310,7 +1314,7 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
 /// caller must not re-publish this allocation through a post-exit tail.
 pub(crate) unsafe fn continue_post_owner_exit_live_allocation_with_process_page_facts(
     allocation: LiveAllocationPointer,
-    process: ProcessPageArenaLease,
+    process: impl Into<ProcessPageBackingLease>,
     main_heap: MainStaticHeapLease<'static>,
 ) -> Result<
     ProcessPostOwnerExitPointerFreeDisposition,
@@ -1337,12 +1341,13 @@ pub(crate) unsafe fn continue_post_owner_exit_live_allocation_with_process_page_
 unsafe fn continue_post_owner_exit_live_allocation_with_terminal_marker(
     marker: &ProcessPostOwnerExitTerminalMarker,
     allocation: LiveAllocationPointer,
-    process: ProcessPageArenaLease,
+    process: impl Into<ProcessPageBackingLease>,
     main_heap: MainStaticHeapLease<'static>,
 ) -> Result<
     ProcessPostOwnerExitPointerFreeDisposition,
     ProcessPostOwnerExitPointerFreeRejection,
 > {
+    let process = process.into();
     if allocation.page_state() == crate::process_page_map::LiveAllocationPageState::Detached {
         // Source `mi_free_block_mt` has no detached producer projection. This
         // is a typed pre-CAS boundary only: preserve the PageMap observation,
@@ -1497,10 +1502,14 @@ enum ClaimedProcessArenaTerminalRelease {
 /// page valid until this returns; `true` means it may now be invalid.
 unsafe fn release_claimed_process_regular_arena_page(
     page_map: &PageMap,
-    arena: &ArenaView<'static>,
+    backing: &impl PageBacking<'static>,
     mut page: NonNull<Page>,
     expected_memory: MemoryId,
 ) -> ClaimedProcessArenaTerminalRelease {
+    // SAFETY: the W07 terminal claim retains this exact arena MemoryId.
+    let Some(arena) = (unsafe { backing.arena_for_memory(expected_memory) }) else {
+        return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
+    };
     // SAFETY: W07 retained this exact page's low owner bit through the
     // all-free result, so its source ordinary fields are stable here.
     let page_ref = unsafe { page.as_ref() };
@@ -1591,6 +1600,11 @@ unsafe fn release_claimed_process_regular_arena_page(
     }
     // SAFETY: queue ownership ended during owner exit; no former Theap is
     // read here, and map/ordinary-bitmap publication now precede retirement.
+    let committed = usize::from(unsafe { page.as_ref().slice_pcommitted() })
+        * page_map.memory_config().page_size().bytes();
+    if !unsafe { backing.account_page_commit_before_release(expected_memory, committed) } {
+        return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapRelease;
+    }
     let Some(retired) = (unsafe { page.as_mut().retire_exclusive() }) else {
         return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapRelease;
     };
@@ -1599,7 +1613,7 @@ unsafe fn release_claimed_process_regular_arena_page(
     }
     // SAFETY: `retired` is the exact arena span after every source-visible
     // PageMap and metadata predecessor has completed.
-    if unsafe { release_arena_slices(retired) } {
+    if unsafe { backing.release(retired) } {
         ClaimedProcessArenaTerminalRelease::Released
     } else {
         ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapRelease
@@ -1610,10 +1624,14 @@ unsafe fn release_claimed_process_regular_arena_page(
 /// `_mi_arenas_page_free` tail for W07's terminal singleton owner.
 unsafe fn release_claimed_process_arena_singleton_page(
     page_map: &PageMap,
-    arena: &ArenaView<'static>,
+    backing: &impl PageBacking<'static>,
     mut page: NonNull<Page>,
     expected_memory: MemoryId,
 ) -> ClaimedProcessArenaTerminalRelease {
+    // SAFETY: the W07 terminal claim retains this exact arena MemoryId.
+    let Some(arena) = (unsafe { backing.arena_for_memory(expected_memory) }) else {
+        return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
+    };
     // SAFETY: W07's release wrapper retains the same low-bit claim while the
     // terminal callback validates the exact arena singleton.
     let page_ref = unsafe { page.as_ref() };
@@ -1682,6 +1700,11 @@ unsafe fn release_claimed_process_arena_singleton_page(
     }
     // SAFETY: all queue/list/map predecessors completed under the exact W07
     // release wrapper; retirement cannot inspect a departed Theap.
+    let committed = usize::from(unsafe { page.as_ref().slice_pcommitted() })
+        * page_map.memory_config().page_size().bytes();
+    if !unsafe { backing.account_page_commit_before_release(expected_memory, committed) } {
+        return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapRelease;
+    }
     let Some(retired) = (unsafe { page.as_mut().retire_exclusive() }) else {
         return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapRelease;
     };
@@ -1689,7 +1712,7 @@ unsafe fn release_claimed_process_arena_singleton_page(
         return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapRelease;
     }
     // SAFETY: this is the exact remaining externally managed arena span.
-    if unsafe { release_arena_slices(retired) } {
+    if unsafe { backing.release(retired) } {
         ClaimedProcessArenaTerminalRelease::Released
     } else {
         ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapRelease
@@ -1833,6 +1856,7 @@ unsafe fn external_singleton_terminal_facts(
 /// the terminal sequence irreversible.
 unsafe fn preflight_non_arena_singleton(
     page_map: &PageMap,
+    process: Option<crate::os::VmProcess<'static>>,
     page: NonNull<Page>,
     expected_memory: MemoryId,
 ) -> Option<ProcessNonArenaSingletonPreflight> {
@@ -1847,7 +1871,9 @@ unsafe fn preflight_non_arena_singleton(
             // SAFETY: the W07 terminal wrapper retains the page and exact
             // source low bit while this validates the one published mapping.
             let published = unsafe {
-                PublishedOsAlignedPage::from_page(page_map.memory_config(), page)
+                if let Some(process) = process {
+                    PublishedOsAlignedPage::from_page_for_process(process, page_map.memory_config(), page)
+                } else { PublishedOsAlignedPage::from_page(page_map.memory_config(), page) }
             }?;
             if !unsafe { non_arena_singleton_liveness_matches(page, expected_memory) }
                 || !same_non_arena_memory(published.memory_id(), expected_memory)
@@ -1926,12 +1952,13 @@ unsafe fn remove_non_arena_singleton_from_main_heap(
 /// owner; no branch returns `Retained(None)` or silently skips the source tail.
 unsafe fn release_claimed_process_non_arena_singleton_page(
     page_map: &PageMap,
+    process: Option<crate::os::VmProcess<'static>>,
     main_heap: MainStaticHeapLease<'static>,
     mut page: NonNull<Page>,
     expected_memory: MemoryId,
 ) -> ClaimedProcessNonArenaSingletonRelease {
     let Some(preflight) = (unsafe {
-        preflight_non_arena_singleton(page_map, page, expected_memory)
+        preflight_non_arena_singleton(page_map, process, page, expected_memory)
     }) else {
         return ClaimedProcessNonArenaSingletonRelease::RetainedBeforeList;
     };
@@ -2527,18 +2554,13 @@ use super::*;
 /// active, without retaining an overlapping selector-field borrow.
 #[must_use = "a selected mapped-abandoned claim source must remain with its persistent static-main owner"]
 pub(crate) struct StaticMainMappedRegularClaimSelector<'main> {
-    backing: StaticMainMappedRegularBacking,
+    backing: ProcessPageBackingLease,
     main_heap: MainStaticHeapLease<'main>,
     retained: Option<StaticMainMappedRegularClaimRetention>,
     #[cfg(test)]
     test_claim_closure_panic_once: bool,
     #[cfg(test)]
     test_claim_span_validation_failure_once: bool,
-}
-
-enum StaticMainMappedRegularBacking {
-    LegacyPair(ProcessPageArenaLease),
-    Process(crate::process_init::ProcessMainBackingBinding),
 }
 
 /// The fail-closed state after the selected source branch could no longer
@@ -2602,7 +2624,7 @@ impl<'main> StaticMainMappedRegularClaimSelector<'main> {
         main_heap: MainStaticHeapLease<'main>,
     ) -> Self {
         Self {
-            backing: StaticMainMappedRegularBacking::LegacyPair(pair),
+            backing: ProcessPageBackingLease::LegacyPair(pair),
             main_heap,
             retained: None,
             #[cfg(test)]
@@ -2617,7 +2639,7 @@ impl<'main> StaticMainMappedRegularClaimSelector<'main> {
         main_heap: MainStaticHeapLease<'main>,
     ) -> Self {
         Self {
-            backing: StaticMainMappedRegularBacking::Process(binding),
+            backing: ProcessPageBackingLease::Process(binding),
             main_heap,
             retained: None,
             #[cfg(test)]
@@ -2636,7 +2658,7 @@ impl<'main> StaticMainMappedRegularClaimSelector<'main> {
     /// a new arena-selection route.
     #[inline]
     pub(crate) fn matches_pair(&self, candidate: ProcessPageArenaLease) -> bool {
-        let StaticMainMappedRegularBacking::LegacyPair(pair) = self.backing else { return false; };
+        let ProcessPageBackingLease::LegacyPair(pair) = self.backing else { return false; };
         let (Ok(current_root), Ok(candidate_root)) =
             (pair.page_map_root(), candidate.page_map_root())
         else {
@@ -2667,6 +2689,14 @@ impl<'main> StaticMainMappedRegularClaimSelector<'main> {
             return false;
         };
         core::ptr::eq(current_arena.arena(), candidate_arena.arena())
+    }
+
+    pub(crate) fn matches_process(&self, candidate: crate::process_init::ProcessMainBackingBinding) -> bool {
+        let ProcessPageBackingLease::Process(current) = self.backing else { return false; };
+        current.is_allocation_ready() && candidate.is_allocation_ready()
+            && core::ptr::eq(current.process().subprocess(), candidate.process().subprocess())
+            && current.page_map().root().ok().zip(candidate.page_map().root().ok())
+                .is_some_and(|(left, right)| left == right)
     }
 
     /// Arms one private source-claim closure unwind regression. This exists
@@ -2833,7 +2863,14 @@ impl StaticMainMappedRegularClaimSource<'_> {
         } else if !unsafe { static_heap.as_ref() }.has_abandoned_page_in_bin(bin) {
             Ok(None)
         } else {
-            arena.main_heap_abandoned_page(static_heap, bin).map(Some).ok_or(())
+            match arena.main_heap_abandoned_page(static_heap, bin) {
+                Some(map) => Ok(Some(map)),
+                // Source skips an arena for which this Heap has no pages.
+                // The historical exact-pair fixture still treats a missing
+                // required identity as a malformed selected source.
+                None if matches!(self.selector.backing, ProcessPageBackingLease::Process(_)) => Ok(None),
+                None => Err(()),
+            }
         };
         if guard.unlock().is_err() {
             self.retain_root();
@@ -2869,8 +2906,8 @@ impl StaticMainMappedRegularClaimSource<'_> {
         // validation inside the paired closure and consumes every completion
         // before this synchronous callback returns.
         let outcome = match self.selector.backing {
-            StaticMainMappedRegularBacking::LegacyPair(pair) => unsafe { pair.try_with_mapped_abandoned_claim(operation) },
-            StaticMainMappedRegularBacking::Process(binding) if binding.is_allocation_ready() => unsafe {
+            ProcessPageBackingLease::LegacyPair(pair) => unsafe { pair.try_with_mapped_abandoned_claim(operation) },
+            ProcessPageBackingLease::Process(binding) if binding.is_allocation_ready() => unsafe {
                 binding.page_map().try_with_owned_mapped_abandoned_claim(operation)
             },
             _ => MappedAbandonedClaimOutcome::RootTerminal,
@@ -3229,7 +3266,7 @@ unsafe impl TheapPageSession for SourceRetainedTheapSession {
     }
 }
 
-impl<'arena, 'map> PageAllocatorEngine<'arena, 'map, SourceRetainedTheapSession> {
+impl<'arena, 'map, B: PageBacking<'arena>> PageAllocatorEngine<'arena, 'map, SourceRetainedTheapSession, B> {
     /// Activates a free-only engine over one retained source Theap.
     ///
     /// # Safety
@@ -3241,7 +3278,7 @@ impl<'arena, 'map> PageAllocatorEngine<'arena, 'map, SourceRetainedTheapSession>
     /// engine.
     pub(crate) unsafe fn activate_source_retained_local_free(
         session: SourceRetainedTheapSession,
-        arena: ArenaView<'arena>,
+        arena: B,
         requested_arena: ArenaId,
         page_map: &'map PageMap,
     ) -> Option<Self> {
@@ -36221,38 +36258,34 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             source.retain_root();
             return Err(GenericPathError::Lifecycle);
         };
-        let Some(selected) = self.arena.selected_arena() else {
-            return Ok(MappedRegularReclaimBeforeFresh::NoCandidate);
-        };
-        let arena = NonNull::from(selected.arena());
-        let mut engine = NonNull::from(&mut *self);
-        match source.with_selected_map(arena, target_heap, bin, |source, map| {
-            // SAFETY: the source callback remains the sole holder of the
-            // selected static Heap/map authority and `engine` remains the
-            // enclosing unique allocation borrow for this synchronous call.
-            unsafe {
-                engine.as_mut().reclaim_selected_mapped_regular_with_source_map(
-                    source,
-                    bin,
-                    block_size,
-                    kind,
-                    target_theap,
-                    target_thread,
-                    &map,
-                )
+        // Copy the search facts into a value before any mutable engine
+        // continuation. The cursor references only the process registry.
+        let candidates = self.arena.reclaim_arenas(self.requested_arena, self.thread_sequence);
+        for selected in candidates {
+            let arena = NonNull::from(selected.arena());
+            let mut engine = NonNull::from(&mut *self);
+            match source.with_selected_map(arena, target_heap, bin, |source, map| {
+                // SAFETY: the source callback uniquely holds the claim
+                // capability, and the owned cursor holds no engine borrow.
+                unsafe {
+                    engine.as_mut().reclaim_selected_mapped_regular_with_source_map(
+                        source, &selected, bin, block_size, kind, target_theap, target_thread, &map,
+                    )
+                }
+            }) {
+                StaticMainMappedRegularSelectedMapOutcome::NoCandidate => {}
+                StaticMainMappedRegularSelectedMapOutcome::Terminal => return Err(GenericPathError::Lifecycle),
+                StaticMainMappedRegularSelectedMapOutcome::Completed(Ok(MappedRegularReclaimBeforeFresh::NoCandidate)) => {}
+                StaticMainMappedRegularSelectedMapOutcome::Completed(result) => return result,
             }
-        }) {
-            StaticMainMappedRegularSelectedMapOutcome::NoCandidate => {
-                Ok(MappedRegularReclaimBeforeFresh::NoCandidate)
-            }
-            StaticMainMappedRegularSelectedMapOutcome::Terminal => Err(GenericPathError::Lifecycle),
-            StaticMainMappedRegularSelectedMapOutcome::Completed(result) => result,
         }
+        Ok(MappedRegularReclaimBeforeFresh::NoCandidate)
     }
 
     fn reclaim_selected_mapped_regular_with_source_map(
         &mut self,
         source: &mut StaticMainMappedRegularClaimSource<'_>,
+        arena: &ArenaView<'arena>,
         bin: usize,
         block_size: usize,
         kind: PageKind,
@@ -36260,7 +36293,6 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         target_thread: LiveThreadId,
         map: &MainArenaMappedAbandonedPage<'_>,
     ) -> Result<MappedRegularReclaimBeforeFresh, GenericPathError> {
-        let arena = self.arena.selected_arena().ok_or(GenericPathError::Lifecycle)?;
         #[cfg(test)]
         let test_panic_claim_closure = source.take_test_claim_closure_panic();
         #[cfg(test)]
@@ -38341,22 +38373,27 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             return None;
         }
         let config = self.page_map.memory_config();
+        // SAFETY: this fresh source operation retains the current default
+        // root, with no whole-Theap/random projection across the VM call.
+        let mut random = unsafe { crate::os::CurrentDefaultTheapRandom::new() };
         let allocation = if let Some(process) = self.arena.process() {
             if commit {
-                OsAlignedPageClaim::allocate_for_process(
+                OsAlignedPageClaim::allocate_for_process_with_random(
                     process,
                     config,
                     block_size,
                     alignment,
                     self.requested_arena,
+                    Some(&mut random),
                 )
             } else {
-                OsAlignedPageClaim::allocate_on_demand_for_process(
+                OsAlignedPageClaim::allocate_on_demand_for_process_with_random(
                     process,
                     config,
                     block_size,
                     alignment,
                     self.requested_arena,
+                    Some(&mut random),
                 )
             }
         } else { OsAlignedPageClaim::allocate(config, block_size, alignment) };
@@ -38576,12 +38613,17 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         #[cfg(not(test))]
         let commit = true;
         let commit = process_commit.unwrap_or(commit);
-        let claim = self.arena.claim(
+        // SAFETY: no Theap projection survives into backing selection. The
+        // current source session retains compiler-TLS root lifetime while
+        // this adapter projects only the random field at individual draws.
+        let mut random = unsafe { crate::os::CurrentDefaultTheapRandom::new() };
+        let claim = self.arena.claim_with_random(
             self.page_map.memory_config(),
             self.requested_arena,
             slice_count,
             commit,
             self.thread_sequence,
+            Some(&mut random),
         );
         let Some(claim) = claim else {
             return self.arena.process().and_then(|_| {
@@ -38962,7 +39004,14 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             return Err(PageToFullError::Collection(PageCollectError::Lifecycle));
         }
 
-        let Some(map) = self.main_heap_abandoned_page(bin) else {
+        // SAFETY: this engine retains the just-detached source page. Resolve
+        // its actual arena rather than assuming a process has only one.
+        let page_arena = unsafe { self.arena.arena_for_memory(page.as_ref().memid()) };
+        let map = page_arena.and_then(|arena| {
+            NonNull::new(self.session.theap().heap())
+                .and_then(|heap| arena.main_heap_abandoned_page(heap, bin))
+        });
+        let Some(map) = map else {
             self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
             return Err(PageToFullError::Collection(PageCollectError::Lifecycle));
         };

@@ -1019,6 +1019,22 @@ impl ProcessArenaBacking {
         &'static self, process: VmProcess<'static>, config: MemoryConfig,
         search: ArenaSearch, slice_count: usize, alignment: usize, commit: bool,
     ) -> Option<ArenaSliceClaim<'static>> {
+        // SAFETY: legacy explicit callers retain the same source owner.
+        unsafe { self.try_allocate_slices_with_random(process, config, search,
+            slice_count, alignment, commit, None) }
+    }
+
+    /// Same source search/reserve/search operation with the current default
+    /// random adapter used only at the existing OS hint draw sites.
+    ///
+    /// # Safety
+    /// The caller must satisfy `try_allocate_slices` and retain the supplied
+    /// source random operation's exclusive-access contract during each draw.
+    pub(crate) unsafe fn try_allocate_slices_with_random(
+        &'static self, process: VmProcess<'static>, config: MemoryConfig,
+        search: ArenaSearch, slice_count: usize, alignment: usize, commit: bool,
+        random: crate::os::OsRandom<'_>,
+    ) -> Option<ArenaSliceClaim<'static>> {
         let requested_size = slice_count.checked_mul(crate::config::ARENA_SLICE_SIZE)?;
         if requested_size == 0 || requested_size > ARENA_MAX_SIZE
             || alignment > crate::config::ARENA_SLICE_SIZE { return None; }
@@ -1033,7 +1049,7 @@ impl ProcessArenaBacking {
             let _guard = self.reserve_lock.lock().ok()?;
             if self.retained_release_error().is_some() { return None; }
             if observed_count == self.registry.count() {
-                let _ = unsafe { self.reserve_locked(process, config, requested_size, search.allow_pinned) };
+                let _ = unsafe { self.reserve_locked(process, config, requested_size, search.allow_pinned, random) };
             }
         }
         unsafe { self.try_find_free(search, slice_count, alignment, commit) }
@@ -1042,7 +1058,7 @@ impl ProcessArenaBacking {
     /// Source `mi_arena_reserve`, called only under the source reserve lock.
     unsafe fn reserve_locked(
         &'static self, process: VmProcess<'static>, config: MemoryConfig,
-        requested_size: usize, allow_large: bool,
+        requested_size: usize, allow_large: bool, mut random: crate::os::OsRandom<'_>,
     ) -> Option<ArenaId> {
         let policy = process.policy();
         let plan = ArenaReservationPlan::new(config, self.registry.count(), requested_size,
@@ -1050,7 +1066,7 @@ impl ProcessArenaBacking {
         for size in [Some(plan.primary_size), plan.fallback_size].into_iter().flatten() {
             let stats = process.subprocess().vm_statistics();
             if plan.adjust_committed { stats.committed_adjust_decrease(size); }
-            let result = unsafe { self.reserve_one_locked(process, config, size, plan.access, allow_large, None) };
+            let result = unsafe { self.reserve_one_locked(process, config, size, plan.access, allow_large, random.as_deref_mut()) };
             if let Some(id) = result { return Some(id); }
             if plan.adjust_committed { stats.committed_adjust_increase(size); }
             if self.retained_release_error().is_some() { return None; }
@@ -1068,7 +1084,7 @@ impl ProcessArenaBacking {
     /// random image is exclusively borrowed from the current default Theap.
     pub(crate) unsafe fn reserve_os_memory_for_process(
         &'static self, process: VmProcess<'static>, config: MemoryConfig, size: usize,
-        access: MapAccess, allow_large: bool, random: Option<&mut crate::random::TheapRandomImage>,
+        access: MapAccess, allow_large: bool, random: crate::os::OsRandom<'_>,
     ) -> Result<ArenaId, Errno> {
         if size > crate::config::MAX_ALLOC_SIZE { return Err(Errno::NOMEM); }
         let size = size.checked_add(crate::config::ARENA_SLICE_SIZE - 1)
@@ -1084,7 +1100,7 @@ impl ProcessArenaBacking {
     /// still-active owner in a terminal slot, never an untracked raw address.
     unsafe fn reserve_one_locked(
         &'static self, process: VmProcess<'static>, config: MemoryConfig,
-        size: usize, access: MapAccess, allow_large: bool, random: Option<&mut crate::random::TheapRandomImage>,
+        size: usize, access: MapAccess, allow_large: bool, random: crate::os::OsRandom<'_>,
     ) -> Option<ArenaId> {
         // Reserve a cleanup slot before acquiring any new OS ownership.
         let slot = self.slots.iter().find(|slot| slot.state.load(Ordering::Relaxed) == EMPTY)?;

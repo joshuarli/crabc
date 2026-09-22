@@ -19,8 +19,28 @@ mod sealed {
     impl Sealed for super::ProcessMetadataPageBacking {}
 }
 
+/// A value-owned candidate cursor. It retains registry/arena lifetime facts,
+/// never a reference to an enclosing mutable page engine.
+pub(crate) enum PageArenaSearch<'arena> {
+    Selected(Option<ArenaView<'arena>>),
+    Registry(crate::arena::ArenaCandidates<'arena>),
+}
+
+impl<'arena> Iterator for PageArenaSearch<'arena> {
+    type Item = ArenaView<'arena>;
+    fn next(&mut self) -> Option<Self::Item> {
+        match self { Self::Selected(arena) => arena.take(), Self::Registry(arenas) => arenas.next() }
+    }
+}
+
 pub(crate) trait PageBacking<'arena>: sealed::Sealed {
     fn selected_arena(&self) -> Option<&ArenaView<'arena>>;
+    fn reclaim_arenas(&self, _requested: ArenaId, _thread_sequence: usize) -> PageArenaSearch<'arena> {
+        PageArenaSearch::Selected(self.selected_arena().and_then(|arena| {
+            // SAFETY: the backing retains this arena throughout the engine operation.
+            unsafe { ArenaView::from_ptr(core::ptr::from_ref(arena.arena()).cast_mut()) }
+        }))
+    }
     /// # Safety
     /// An arena `memory` must come from an outstanding live claim or page
     /// whose arena lifetime the caller retains. This validates source owner
@@ -29,6 +49,12 @@ pub(crate) trait PageBacking<'arena>: sealed::Sealed {
     fn process(&self) -> Option<VmProcess<'static>> { None }
     fn claim(&self, config: MemoryConfig, requested: ArenaId, slices: usize,
         commit: bool, thread_sequence: usize) -> Option<ArenaSliceClaim<'arena>>;
+    fn claim_with_random(&self, config: MemoryConfig, requested: ArenaId, slices: usize,
+        commit: bool, thread_sequence: usize, _random: crate::os::OsRandom<'_>)
+        -> Option<ArenaSliceClaim<'arena>>
+    {
+        self.claim(config, requested, slices, commit, thread_sequence)
+    }
     /// # Safety
     /// `memory` is one outstanding claim of this exact backing owner. All
     /// page-map entries and metadata aliases must be removed, no client or
@@ -163,6 +189,25 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
         }
     }
 
+    fn reclaim_arenas(&self, requested: ArenaId, thread_sequence: usize) -> PageArenaSearch<'static> {
+        match self {
+            Self::SelectedSidecar(arena) => PageArenaSearch::Selected(unsafe {
+                ArenaView::from_ptr(core::ptr::from_ref(arena.arena()).cast_mut())
+            }),
+            Self::SourceStartupRegular { process, .. } | Self::SourceRegistry { process, .. } => {
+                // Pinned arena.c:725-776 searches all NUMA nodes, allowing
+                // pinned arenas, in the same rotated source registry order.
+                let search = ArenaSearch { heap_sequence: 0, heap_count: 0,
+                    thread_sequence, numa_node: -1, requested, allow_pinned: true };
+                // SAFETY: this backing retains the process registry and every
+                // published arena; ordinary allocation cannot destroy them.
+                PageArenaSearch::Registry(unsafe {
+                    process.subprocess().arena_backing().registry().suitable_arenas(search)
+                })
+            }
+        }
+    }
+
     unsafe fn arena_for_memory(&self, memory: MemoryId) -> Option<ArenaView<'static>> {
         match self {
             Self::SelectedSidecar(_) => self.selected_matches_memory(memory),
@@ -189,6 +234,18 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
         slices: usize,
         commit: bool,
         thread_sequence: usize,
+    ) -> Option<ArenaSliceClaim<'static>> {
+        self.claim_with_random(config, requested, slices, commit, thread_sequence, None)
+    }
+
+    fn claim_with_random(
+        &self,
+        config: MemoryConfig,
+        requested: ArenaId,
+        slices: usize,
+        commit: bool,
+        thread_sequence: usize,
+        random: crate::os::OsRandom<'_>,
     ) -> Option<ArenaSliceClaim<'static>> {
         match self {
             Self::SelectedSidecar(arena) => {
@@ -221,8 +278,8 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
                     process
                         .subprocess()
                         .arena_backing()
-                        .try_allocate_slices(*process, config, search, slices,
-                            ARENA_SLICE_SIZE, commit)
+                        .try_allocate_slices_with_random(*process, config, search, slices,
+                            ARENA_SLICE_SIZE, commit, random)
                 }
             }
         }
@@ -320,14 +377,19 @@ impl PageBacking<'static> for ProcessMetadataPageBacking {
     }
     fn claim(&self, config: MemoryConfig, requested: ArenaId, slices: usize,
         commit: bool, thread_sequence: usize) -> Option<ArenaSliceClaim<'static>> {
+        self.claim_with_random(config, requested, slices, commit, thread_sequence, None)
+    }
+
+    fn claim_with_random(&self, config: MemoryConfig, requested: ArenaId, slices: usize,
+        commit: bool, thread_sequence: usize, random: crate::os::OsRandom<'_>) -> Option<ArenaSliceClaim<'static>> {
         if self.process.policy().disallow_arena_alloc()
             || slices > self.max_object_size() / ARENA_SLICE_SIZE { return None; }
         // Source hseq zero selects the thread-sequence branch before reading
         // heap_count. No dynamic heap-count authority is fabricated here.
         let search = ArenaSearch { heap_sequence: 0, heap_count: 0, thread_sequence,
             numa_node: -1, requested, allow_pinned: true };
-        unsafe { self.backing().try_allocate_slices(self.process, config, search,
-            slices, ARENA_SLICE_SIZE, commit) }
+        unsafe { self.backing().try_allocate_slices_with_random(self.process, config, search,
+            slices, ARENA_SLICE_SIZE, commit, random) }
     }
     unsafe fn release(&self, memory: MemoryId) -> bool {
         unsafe { self.arena_for_memory(memory) }.is_some()
@@ -350,6 +412,45 @@ mod tests {
     use crate::os::{PageSize, VmPolicy};
     use crate::subproc::MainSubprocess;
     use std::boxed::Box;
+
+    #[test]
+    fn source_registry_reclaim_visits_prior_regular_and_simulated_huge_arenas() {
+        let mut options = VmOptions::uninitialized();
+        options.initialize_all(|_| VmOptionEnvironment::Absent);
+        let policy = Box::leak(Box::new(VmPolicy::new(options).unwrap()));
+        let subprocess = MainSubprocess::test_static_owner();
+        let process = VmProcess::new(policy, subprocess);
+        let config = MemoryConfig::from_observations(PageSize::new(4096).unwrap(), 1 << 20, true, false);
+        // SAFETY: this private empty registry has no publication or reader.
+        assert!(unsafe { subprocess.arena_backing().registry()
+            .bind_subprocess_before_publication(subprocess.as_ptr()) });
+        let mut mappings = std::vec::Vec::new();
+        let mut identities = std::vec::Vec::new();
+        for pinned in [false, true, false] {
+            let mapping = crate::os::Mapping::map_aligned_for_allocator(config,
+                crate::config::ARENA_MIN_SIZE, crate::config::ARENA_ALIGNMENT,
+                crate::os::MapAccess::Committed).unwrap();
+            // SAFETY: private mappings and the subprocess outlive every view.
+            let managed = unsafe { crate::arena::manage_external_in_place(
+                subprocess.arena_backing().registry(), mapping.base().unwrap(),
+                crate::config::ARENA_MIN_SIZE, config.page_size(),
+                true, false, true, -1, false, None,
+            ) }.unwrap();
+            let identity = managed.arena_id();
+            // Simulate the source huge-arena pinned classification; no huge
+            // mapping or NUMA policy operation participates in this test.
+            unsafe { (*identity.as_ptr()).memid.is_pinned = pinned; }
+            identities.push(identity.as_ptr());
+            mappings.push(mapping);
+        }
+        let backing = RuntimeFirstRegularPageBacking::source_registry(process, -1);
+        let selected: std::vec::Vec<_> = backing.reclaim_arenas(ArenaId::none(), 1)
+            .map(|arena| core::ptr::from_ref(arena.arena()).cast_mut()).collect();
+        assert_eq!(selected, [identities[1], identities[0], identities[2]],
+            "source main-heap reclaim searches older regular and pinned arenas before the newest");
+        drop(backing);
+        for mut mapping in mappings { mapping.unmap().unwrap(); }
+    }
 
     #[test]
     fn collection_propagates_owned_arena_bitmap_invariant_failure() {
