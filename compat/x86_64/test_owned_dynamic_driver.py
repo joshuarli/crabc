@@ -610,6 +610,84 @@ class InstalledDynamicDriverTests(unittest.TestCase):
                     driver.execute(self.root, ["--dynamic-pie", flag, "input.c"])
                 run.assert_not_called()
 
+    def test_compile_only_dependency_file_is_a_sealed_header_diagnostic(self):
+        """A source consumer may retain headers without opening include controls."""
+
+        source = Path(self.temporary.name) / "headers.c"
+        source.write_text("#include <stdio.h>\nint value;\n")
+        output = Path(self.temporary.name) / "headers.o"
+        dependency = Path(self.temporary.name) / "headers.d"
+        with patch.object(driver.shared, "compiler", return_value="/owned/gcc"), \
+             patch.object(driver, "run", return_value="") as run:
+            driver.execute(
+                self.root,
+                [
+                    "--dynamic-shared-object",
+                    "--application-dependency-file",
+                    str(dependency),
+                    "-c",
+                    str(source),
+                    "-o",
+                    str(output),
+                ],
+            )
+        command = run.call_args.args[0]
+        self.assertEqual(command[0], "/owned/gcc")
+        self.assertEqual(command[command.index("-MF") + 1], str(dependency))
+        self.assertIn("-MD", command)
+        self.assertIn("-nostdinc", command)
+        self.assertIn(str(self.root / "usr/include"), command)
+
+    def test_native_compile_only_dependency_file_names_the_installed_header(self):
+        """The real fixed compiler emits the sealed dependency file for one source."""
+
+        header = self.root / "usr/include/owned.h"
+        header.parent.mkdir(parents=True)
+        header.write_text("#define OWNED_HEADER_VALUE 1\n")
+        self.manifest["files"][header.relative_to(self.root).as_posix()] = hashlib.sha256(
+            header.read_bytes()
+        ).hexdigest()
+        self.write_manifest()
+        source = Path(self.temporary.name) / "headers.c"
+        source.write_text("#include <owned.h>\nint value = OWNED_HEADER_VALUE;\n")
+        output = Path(self.temporary.name) / "headers.o"
+        dependency = Path(self.temporary.name) / "headers.d"
+
+        driver.execute(
+            self.root,
+            [
+                "--dynamic-shared-object",
+                "--application-dependency-file",
+                str(dependency),
+                "-c",
+                str(source),
+                "-o",
+                str(output),
+            ],
+        )
+
+        self.assertTrue(output.is_file())
+        recorded = dependency.read_text(encoding="utf-8")
+        self.assertIn(str(source), recorded)
+        self.assertIn(str(header), recorded)
+
+    def test_dependency_file_is_rejected_for_a_link(self):
+        source = Path(self.temporary.name) / "headers.c"
+        source.write_text("int value;\n")
+        dependency = Path(self.temporary.name) / "headers.d"
+        with patch.object(driver, "run") as run:
+            with self.assertRaisesRegex(driver.shared.DriverError, "compile-only"):
+                driver.execute(
+                    self.root,
+                    [
+                        "--dynamic-pie",
+                        "--application-dependency-file",
+                        str(dependency),
+                        str(source),
+                    ],
+                )
+            run.assert_not_called()
+
     def test_quote_include_and_rounding_mode_are_explicit_application_inputs(self):
         """The native libc-test source closure needs only quoted local headers.
 
