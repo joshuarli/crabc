@@ -18,6 +18,7 @@ from pathlib import Path
 import platform
 import resource
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -42,6 +43,13 @@ BUILD_STD_BINARY = "crabc-owned-cleanup-build-std"
 BUILD_STD_DSO_HOST = "crabc-owned-cleanup-dso-host"
 BUILD_STD_DSO_LIBRARY = "libcrabc_owned_cleanup_plugin.so"
 BUILD_STD_CRATES = ("std", "core", "alloc", "panic_unwind", "unwind", "compiler_builtins")
+SOURCE_LTO_RUNTIME_TARGETS = {
+    "core": ("core/src/lib.rs", ["lib"], ["lib"]),
+    "alloc": ("alloc/src/lib.rs", ["lib"], ["lib"]),
+    "panic_unwind": ("panic_unwind/src/lib.rs", ["lib"], ["lib"]),
+    "std": ("std/src/lib.rs", ["rlib"], ["rlib"]),
+    "compiler_builtins": ("compiler-builtins/compiler-builtins/src/lib.rs", ["lib"], ["lib"]),
+}
 SOURCE_GRAPH_PACKAGES = frozenset(build.FEATURES)
 HOST_BUILD_LINKER = Path("/usr/bin/gcc")
 HOST_BUILD_SCRIPT_OUTPUT = re.compile(r"build_script_build-[0-9a-f]+\Z")
@@ -618,13 +626,12 @@ def run_logged_streams(
 
 def source_built_link_receipt(
     path: Path, binary: Path, source_library_root: Path, description: str,
-    cargo_graph_provider: dict[str, str] | None = None, toolchain_search_root: Path | None = None,
-    built_unwind: dict[str, str] | None = None,
+    toolchain_search_root: Path | None = None, built_unwind: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Read one source-built final link without admitting stock target rlibs."""
+    """Read one source-built fat-LTO link without admitting stock target rlibs."""
 
     record = json_object(path, description)
-    require(record.get("schema") == 2 and record.get("format") == "crabc-owned-rust-source-build-link/v1",
+    require(record.get("schema") == 3 and record.get("format") == "crabc-owned-rust-source-build-link/v2",
             f"{description} has the wrong source-built link schema")
     require(record.get("rust_library_origin") == "source-built"
             and record.get("source_built_target_library_root") == str(source_library_root),
@@ -652,6 +659,8 @@ def source_built_link_receipt(
             f"{description} retains a standalone provider beside its Cargo graph")
     require("omitted_source_built_rust_unwind" not in record,
             f"{description} admits a direct source-built Rust libunwind archive")
+    require("cargo_graph_provider" not in record,
+            f"{description} retains a direct Cargo provider archive after LTO")
     compiler_builtins = record.get("omitted_source_built_compiler_builtins")
     require(
         isinstance(compiler_builtins, dict)
@@ -662,12 +671,23 @@ def source_built_link_receipt(
     inputs = record.get("application_inputs")
     require(isinstance(inputs, list) and all(isinstance(value, dict) for value in inputs),
             f"{description} lacks its Rust application inputs")
-    archives = [value.get("path") for value in inputs if isinstance(value.get("path"), str)
-                and value["path"].endswith(".rlib")]
-    require(archives and all(path.startswith(str(source_library_root) + os.sep) for path in archives),
-            f"{description} admits a non-source-built Rust archive")
-    require(not any(Path(path).name.startswith("libunwind-") for path in archives),
-            f"{description} admits a direct source-built Rust libunwind archive")
+    input_paths = [value.get("path") for value in inputs if isinstance(value.get("path"), str)]
+    require(len(inputs) == 1 and len(input_paths) == 1 and input_paths[0].endswith(".o"),
+            f"{description} does not retain one fused Cargo LTO object")
+    application_root = source_library_root.parent
+    lto_object = physical(Path(input_paths[0]), f"{description} fused Cargo LTO object")
+    require(lto_object.is_relative_to(application_root),
+            f"{description} fused Cargo LTO object escapes its application root")
+    require(not any(path.endswith(".rlib") for path in input_paths),
+            f"{description} retains a direct Rust archive after LTO")
+    source_lto = record.get("source_lto_object")
+    require(
+        isinstance(source_lto, dict)
+        and source_lto.get("object") == record_file(lto_object, f"{description} fused Cargo LTO object")
+        and source_lto.get("defined_unwind_abi") == sorted(build.UNWIND_ABI)
+        and source_lto.get("rust_eh_personality") is True,
+        f"{description} does not prove the fused Cargo LTO unwind ABI",
+    )
     if built_unwind is not None:
         built_path = built_unwind.get("path")
         require(isinstance(built_path, str),
@@ -677,22 +697,9 @@ def source_built_link_receipt(
             built_unwind == record_file(built_archive, f"{description} source-built Rust libunwind archive")
             and built_archive.name.startswith("libunwind-")
             and built_archive.is_relative_to(source_library_root)
-            and str(built_archive) not in archives,
+            and str(built_archive) not in input_paths,
             f"{description} does not retain an unselected source-built Rust libunwind archive",
         )
-    required_archives = ("libstd-", "libcore-", "liballoc-", "libpanic_unwind-")
-    require(all(any(Path(path).name.startswith(prefix) for path in archives) for prefix in required_archives),
-            f"{description} lacks the source-built standard-library closure")
-    graph_provider = record.get("cargo_graph_provider")
-    require(
-        isinstance(graph_provider, dict) and graph_provider.get("path") in archives
-        and isinstance(graph_provider["path"], str)
-        and Path(graph_provider["path"]).name.startswith("libcrabc_unwinder-"),
-        f"{description} does not retain its Cargo graph provider",
-    )
-    if cargo_graph_provider is not None:
-        require(graph_provider == cargo_graph_provider,
-                f"{description} graph provider differs from Cargo's declared artifact")
     require(record.get("output") == record_file(binary, f"{description} output"),
             f"{description} does not identify its output")
     assert_nonpromoting(record, description)
@@ -709,9 +716,9 @@ def source_built_link_receipt(
     require(not any(ambient_runtime(item) for item in command),
             f"{description} linker command admits an ambient native runtime request")
     require(
-        "libcrabc-unwind.a" not in trace and Path(graph_provider["path"]).name in trace
+        "libcrabc-unwind.a" not in trace and "libunwind" not in trace and str(lto_object) in trace
         and not ambient_runtime(trace),
-        f"{description} link trace does not prove the Cargo graph provider without ambient unwind runtimes",
+        f"{description} link trace does not prove its fused Cargo LTO object without ambient unwind runtimes",
     )
     return record
 
@@ -828,6 +835,131 @@ def cargo_build_std_unwind_artifact(stream: str, target: Path, rust_source: Path
                 selected.append(artifact)
     require(len(selected) == 1, f"expected one Cargo build-std unwind archive, found {selected!r}")
     return selected[0]
+
+
+def cargo_build_std_runtime_artifacts(stream: str, target: Path, rust_source: Path) -> dict[str, Path]:
+    """Select the full source std closure from Cargo's artifact records.
+
+    The filenames come from the compiler-artifact records, whose target source
+    paths tie each archive to the pinned rust-src tree. They are later tied to
+    the primary consumer rustc invocation, rather than inferred from a target
+    directory scan or from the native linker argv after fat LTO has absorbed
+    them.
+    """
+
+    target = physical(target, "source-built Cargo target", directory=True)
+    rust_source = physical(rust_source, "pinned rust-src library", directory=True)
+    selected: dict[str, list[Path]] = {name: [] for name in SOURCE_LTO_RUNTIME_TARGETS}
+    for record in cargo_json_records(stream, "Cargo build-std runtime artifact stream"):
+        if record.get("reason") != "compiler-artifact":
+            continue
+        target_record = record.get("target")
+        if not isinstance(target_record, dict):
+            continue
+        name = target_record.get("name")
+        if name not in SOURCE_LTO_RUNTIME_TARGETS:
+            continue
+        relative_source, kinds, crate_types = SOURCE_LTO_RUNTIME_TARGETS[name]
+        require(
+            target_record.get("kind") == kinds and target_record.get("crate_types") == crate_types
+            and target_record.get("src_path") == str(rust_source / relative_source),
+            f"Cargo build-std {name} artifact identity drifted",
+        )
+        filenames = record.get("filenames")
+        require(isinstance(filenames, list) and record.get("executable") is None,
+                f"Cargo build-std {name} artifact has malformed outputs")
+        for filename in filenames:
+            if isinstance(filename, str) and filename.endswith(".rlib"):
+                artifact = physical(Path(filename), f"Cargo build-std {name} archive")
+                require(artifact.is_relative_to(target),
+                        f"Cargo build-std {name} archive escapes its target directory")
+                selected[name].append(artifact)
+    missing = [name for name, artifacts in selected.items() if len(artifacts) != 1]
+    require(not missing, f"expected one Cargo build-std runtime archive for each crate, found {missing!r}")
+    return {name: artifacts[0] for name, artifacts in selected.items()}
+
+
+def cargo_source_lto_extern_closure(
+    log: str, *, target_name: str, binary_name: str | None, link_output: Path, source_library_root: Path,
+    runtime_artifacts: dict[str, dict[str, str]], cargo_provider: dict[str, str], built_unwind: dict[str, str],
+) -> dict[str, Any]:
+    """Bind one primary Cargo rustc input graph to its fused native-link output."""
+
+    source_library_root = physical(source_library_root, "source-built Rust target library root", directory=True)
+    link_output = physical(link_output, "Cargo linker-side consumer output")
+    crate_name = target_name.replace("-", "_")
+    prefix = "Running `"
+    invocations = [line.strip() for line in log.splitlines()
+                   if line.strip().startswith(prefix) and f"--crate-name {crate_name}" in line]
+    require(len(invocations) == 1, "Cargo diagnostics do not retain one primary consumer rustc invocation")
+    invocation = invocations[0]
+    require(invocation.endswith("`") and "CARGO_PRIMARY_PACKAGE=1" in invocation
+            and f"CARGO_CRATE_NAME={crate_name}" in invocation
+            and (binary_name is None or f"CARGO_BIN_NAME={binary_name}" in invocation),
+            "Cargo diagnostics primary consumer invocation drifted")
+    try:
+        arguments = shlex.split(invocation[len(prefix):-1])
+    except ValueError as error:
+        raise OwnedCleanupError("Cargo diagnostics primary consumer invocation is not shell-quoted") from error
+
+    def one_value(option: str) -> str:
+        values = [arguments[index + 1] for index, argument in enumerate(arguments)
+                  if argument == option and index + 1 < len(arguments)]
+        require(len(values) == 1, f"Cargo primary consumer rustc has no unique {option} option")
+        return values[0]
+
+    require(one_value("--crate-name") == crate_name,
+            "Cargo primary consumer rustc crate name drifted")
+    output_directory = physical(Path(one_value("--out-dir")), "Cargo primary consumer output directory", directory=True)
+    extra_filenames = [arguments[index + 1].removeprefix("extra-filename=")
+                       for index, argument in enumerate(arguments)
+                       if argument == "-C" and index + 1 < len(arguments)
+                       and arguments[index + 1].startswith("extra-filename=")]
+    require(len(extra_filenames) == 1 and re.fullmatch(r"-[0-9a-f]+", extra_filenames[0]) is not None,
+            "Cargo primary consumer rustc extra filename drifted")
+    if binary_name is not None:
+        expected_output = physical(output_directory / f"{crate_name}{extra_filenames[0]}",
+                                   "Cargo primary consumer expected linker output")
+        require(expected_output == link_output,
+                "Cargo primary consumer rustc does not bind the final linker output")
+    else:
+        require(link_output.parent == output_directory,
+                "Cargo primary cdylib rustc output directory differs from its final linker output")
+
+    externs: dict[str, dict[str, str]] = {}
+    index = 0
+    while index < len(arguments):
+        if arguments[index] != "--extern":
+            index += 1
+            continue
+        require(index + 1 < len(arguments), "Cargo primary consumer rustc has a malformed --extern")
+        specification = arguments[index + 1]
+        name_value = specification.rsplit(":", 1)[-1]
+        name, separator, raw_path = name_value.partition("=")
+        require(separator and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) is not None,
+                "Cargo primary consumer rustc has a malformed --extern")
+        external = physical(Path(raw_path), f"Cargo primary consumer {name} extern")
+        require(external.is_relative_to(source_library_root),
+                "Cargo primary consumer rustc admits an external Rust artifact")
+        require(name not in externs, f"Cargo primary consumer rustc repeats its {name} extern")
+        externs[name] = record_file(external, f"Cargo primary consumer {name} extern")
+        index += 2
+
+    expected = {**runtime_artifacts, "crabc_unwinder": cargo_provider}
+    require(set(expected) <= set(externs),
+            "Cargo primary consumer rustc lacks the source-built standard-library/provider closure")
+    for name, artifact in expected.items():
+        require(externs[name] == artifact,
+                f"Cargo primary consumer rustc {name} extern differs from Cargo's declared artifact")
+    built_unwind_path = built_unwind.get("path")
+    require(isinstance(built_unwind_path, str) and all(
+        record.get("path") != built_unwind_path for record in externs.values()
+    ), "Cargo primary consumer rustc admits the unselected source-built libunwind archive")
+    return {
+        "primary_crate": crate_name,
+        "linker_output": record_file(link_output, "Cargo linker-side consumer output"),
+        "externs": {name: externs[name] for name in sorted(expected)},
+    }
 
 
 def source_build_log_contract(log: str, rust_source: Path) -> None:
@@ -1503,6 +1635,7 @@ def compile_source_built_mode(
         "CRABC_OWNED_RUST_PRODUCT": str(root),
         "CRABC_OWNED_RUST_SOURCE_BUILT_LIBDIR": str(source_library_root),
         "CRABC_OWNED_RUST_TOOLCHAIN_SEARCH_ROOT": str(toolchain_search_root),
+        "CRABC_OWNED_RUST_SOURCE_LTO_UNWIND_ABI": json.dumps(sorted(build.UNWIND_ABI)),
         "CRABC_OWNED_RUST_APPLICATION_ROOT": str(release),
         "CRABC_OWNED_RUST_HOST_BUILD_ROOT": str(host_build_root),
         "CRABC_OWNED_RUST_HOST_BUILD_LINKER": str(HOST_BUILD_LINKER),
@@ -1550,6 +1683,11 @@ def compile_source_built_mode(
         provider_source=Path(provider_graph["graph"]["provider_source"]["path"]),
     )
     cargo_provider_record = record_file(cargo_provider, f"{label} Cargo crabc-unwinder archive")
+    runtime_archives = cargo_build_std_runtime_artifacts(stdout, target, rust_source)
+    runtime_archive_records = {
+        name: record_file(archive, f"{label} Cargo build-std {name} archive")
+        for name, archive in runtime_archives.items()
+    }
     built_unwind = cargo_build_std_unwind_artifact(stdout, target, rust_source)
     built_unwind_record = record_file(built_unwind, f"{label} Cargo build-std unwind archive")
     binary = cargo_artifact(stdout, package=generated_package, target=target, name=binary_name, crate_type="bin")
@@ -1557,9 +1695,14 @@ def compile_source_built_mode(
     binary_receipt_path, binary_link_output = cargo_link_receipt_for_artifact(
         binary, source_library_root, f"{label} source-built cleanup executable",
     )
+    cargo_lto_externs = cargo_source_lto_extern_closure(
+        stderr, target_name=binary_name, binary_name=binary_name, link_output=binary_link_output,
+        source_library_root=source_library_root, runtime_artifacts=runtime_archive_records,
+        cargo_provider=cargo_provider_record, built_unwind=built_unwind_record,
+    )
     binary_receipt = source_built_link_receipt(
         binary_receipt_path, binary_link_output, source_library_root, f"{label} source-built cleanup link receipt",
-        cargo_provider_record, toolchain_search_root, built_unwind_record,
+        toolchain_search_root, built_unwind_record,
     )
     consumer: dict[str, Any] = {
         "mode": mode,
@@ -1577,6 +1720,8 @@ def compile_source_built_mode(
         "rust_source_lock": record_file(rust_source_lock, f"{label} pinned rust-src lock"),
         "source_built_target_library_root": str(source_library_root),
         "offline_sources": offline_sources,
+        "cargo_source_lto_runtime_artifacts": runtime_archive_records,
+        "cargo_source_lto_extern_closure": cargo_lto_externs,
         "cargo_graph_provider": cargo_provider_record,
         "built_but_unselected_source_built_rust_unwind": built_unwind_record,
         "provider_graph": provider_graph["receipt"],
@@ -1598,8 +1743,12 @@ def compile_source_built_mode(
         )
         plugin_receipt = source_built_link_receipt(
             plugin_receipt_path, plugin_link_output, source_library_root,
-            f"{label} source-built cleanup plugin link receipt", cargo_provider_record, toolchain_search_root,
-            built_unwind_record,
+            f"{label} source-built cleanup plugin link receipt", toolchain_search_root, built_unwind_record,
+        )
+        plugin_lto_externs = cargo_source_lto_extern_closure(
+            stderr, target_name="crabc_owned_cleanup_plugin", binary_name=None, link_output=plugin_link_output,
+            source_library_root=source_library_root, runtime_artifacts=runtime_archive_records,
+            cargo_provider=cargo_provider_record, built_unwind=built_unwind_record,
         )
         require(plugin_receipt.get("rust_requested_mode") == "shared",
                 f"{label} source-built cleanup plugin was not linked as a shared object")
@@ -1608,6 +1757,7 @@ def compile_source_built_mode(
             "link_receipt": record_file(plugin_receipt_path, f"{label} source-built cleanup plugin link receipt"),
             "link_command": plugin_receipt["command"],
             "link_trace": plugin_receipt["resolved_input_trace"],
+            "cargo_source_lto_extern_closure": plugin_lto_externs,
         }
     return consumer
 

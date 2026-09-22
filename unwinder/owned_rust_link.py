@@ -32,7 +32,6 @@ TARGET = "x86_64-unknown-linux-musl"
 INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
 STOCK_RUST_UNWIND_ARCHIVE = re.compile(r"libunwind-[0-9a-f]+\.rlib\Z")
 COMPILER_BUILTINS_ARCHIVE = re.compile(r"libcompiler_builtins-[0-9a-f]+\.rlib\Z")
-CARGO_GRAPH_PROVIDER_ARCHIVE = re.compile(r"libcrabc_unwinder-[0-9a-f]+\.rlib\Z")
 FALLBACK_REQUESTS = frozenset({"-lgcc", "-lgcc_s", "-lunwind"})
 NATIVE_REQUESTS = frozenset({"-lc", *FALLBACK_REQUESTS, "-lpthread", "-lm", "-ldl", "-lrt", "-lutil"})
 CANONICAL_FLAGS = frozenset({
@@ -47,6 +46,7 @@ RUST_CDYLIB_EXPORTS = (
     "crabc_owned_cleanup_dso_release",
 )
 HOST_BUILD_SCRIPT_OUTPUT = re.compile(r"build_script_build-[0-9a-f]+\Z")
+SOURCE_LTO_UNWIND_ABI_ENV = "CRABC_OWNED_RUST_SOURCE_LTO_UNWIND_ABI"
 
 
 class LinkError(RuntimeError):
@@ -220,11 +220,11 @@ def parse_arguments(
 
     source_built = source_built_root is not None
     if source_built:
-        # Cargo unconditionally passes its target-libdir with ``-L`` even when
-        # build-std supplied each final Rust archive from the fresh target
-        # directory.  Admit only that declared directory as a *search* path;
-        # archive inputs remain confined to the fresh source-built root and
-        # ``link_command`` never forwards any search path to LLD.
+        # Cargo unconditionally passes its target-libdir with ``-L`` even
+        # though the source graph supplied its Rust archives before fat LTO
+        # emitted this final object. Admit only that declared directory as a
+        # *search* path; no archive input may use it and ``link_command`` never
+        # forwards any search path to LLD.
         search_roots = [application_root, source_built_root]
         if toolchain_search_root is not None:
             search_roots.append(toolchain_search_root)
@@ -324,17 +324,15 @@ def parse_arguments(
             raise LinkError("source-built Rust cdylib lacks its export script")
         if version_script is not None:
             audit_rust_cdylib_export_script(version_script)
-    cargo_graph_provider: Path | None = None
     if source_built:
-        required = ("libstd-", "libcore-", "liballoc-", "libpanic_unwind-")
-        present = {archive.name.split("-", 1)[0] + "-" for archive in archives}
-        missing = [prefix for prefix in required if prefix not in present]
-        if missing:
-            raise LinkError(f"source-built Rust standard-library closure is incomplete: {missing!r}")
-        providers = [archive for archive in archives if CARGO_GRAPH_PROVIDER_ARCHIVE.fullmatch(archive.name)]
-        if len(providers) != 1:
-            raise LinkError(f"source-built Rust graph has {len(providers)} crabc-unwinder archives")
-        cargo_graph_provider = providers[0]
+        # Fat LTO consumes the source-built standard libraries and the Cargo
+        # provider through rustc's --extern graph, then emits one fused object
+        # for this native link. A direct rlib here would bypass that graph and
+        # make archive ordering decide which Rust implementation owns an ABI.
+        if archives:
+            raise LinkError("source-built Cargo fat-LTO final link carries a direct Rust archive")
+        if len(objects) != 1:
+            raise LinkError("source-built Cargo fat-LTO final link must contain one fused Rust object")
     all_inputs = [*objects, *archives]
     if output in all_inputs or len(all_inputs) != len(set(all_inputs)):
         raise LinkError("output aliases or Rust repeats an application input")
@@ -351,7 +349,6 @@ def parse_arguments(
         "rust_library_origin": "source-built" if source_built else "stock",
         "source_built_unwind": None,
         "source_built_compiler_builtins": compiler_builtins if source_built else None,
-        "cargo_graph_provider": cargo_graph_provider,
         "shared_soname": shared_soname,
         "version_script": version_script,
     }
@@ -366,6 +363,47 @@ def run(command: list[str | Path]) -> str:
     if result.returncode:
         raise LinkError(f"link editor exited {result.returncode}: {result.stdout}")
     return result.stdout
+
+
+def source_lto_object_receipt(objects: list[Path], nm: Path) -> dict[str, object]:
+    """Prove the fused Cargo object retains the provider ABI before LLD.
+
+    Fat LTO intentionally removes Rust standard-library and provider rlibs
+    from the native argv. The runner supplies the precise ABI from the pinned
+    provider contract; its reader compares this record with that contract.
+    """
+
+    encoded = os.environ.get(SOURCE_LTO_UNWIND_ABI_ENV)
+    if encoded is None:
+        raise LinkError("missing source-built Cargo LTO unwind ABI")
+    try:
+        expected_value = json.loads(encoded)
+    except json.JSONDecodeError as error:
+        raise LinkError("source-built Cargo LTO unwind ABI is not JSON") from error
+    if (
+        not isinstance(expected_value, list) or not expected_value
+        or any(not isinstance(symbol, str) or re.fullmatch(r"_Unwind_[A-Za-z0-9_]+", symbol) is None
+               for symbol in expected_value)
+        or len(set(expected_value)) != len(expected_value)
+    ):
+        raise LinkError("source-built Cargo LTO unwind ABI is malformed")
+    if len(objects) != 1:
+        raise LinkError("source-built Cargo fat-LTO final link must contain one fused Rust object")
+    symbols = {
+        line.split()[-1]
+        for line in run([nm, "--defined-only", objects[0]]).splitlines()
+        if len(line.split()) >= 3
+    }
+    defined_unwind = sorted(symbol for symbol in symbols if symbol.startswith("_Unwind_"))
+    if set(defined_unwind) != set(expected_value):
+        raise LinkError("source-built Cargo LTO object does not retain the declared unwind ABI")
+    if "rust_eh_personality" not in symbols:
+        raise LinkError("source-built Cargo LTO object lacks rust_eh_personality")
+    return {
+        "object": _record_input(objects[0]),
+        "defined_unwind_abi": defined_unwind,
+        "rust_eh_personality": True,
+    }
 
 
 def delegate_host_build_script(arguments: list[str], output: Path) -> None:
@@ -585,6 +623,7 @@ def link(arguments: list[str]) -> None:
     rust_sysroot = Path(run(["rustup", "run", os.environ["CRABC_OWNED_RUST_CHANNEL"], "rustc", "--print", "sysroot"]).strip())
     linker = physical_regular(rust_sysroot / "lib/rustlib" / TARGET / "bin/gcc-ld/ld.lld", "pinned Rust LLD")
     ar = physical_regular(rust_sysroot / "lib/rustlib" / TARGET / "bin/llvm-ar", "pinned Rust llvm-ar")
+    nm = physical_regular(rust_sysroot / "lib/rustlib" / TARGET / "bin/llvm-nm", "pinned Rust llvm-nm")
     objects = parsed["objects"]
     archives = parsed["archives"]
     rust_mode = parsed["rust_mode"]
@@ -598,6 +637,9 @@ def link(arguments: list[str]) -> None:
         input_records.append(_record_input(object_path))
     for archive in archives:
         input_records.append(_record_input(archive, members=audit_rust_archive(archive, ar)))
+    source_lto_object: dict[str, object] | None = None
+    if source_built_root is not None:
+        source_lto_object = source_lto_object_receipt(objects, nm)
     command = link_command(
         linker=linker, root=root, mode=mode, provider=provider, objects=objects, archives=archives,
         output=output, export_dynamic=bool(parsed["export_dynamic"]), rust_mode=rust_mode,
@@ -608,8 +650,8 @@ def link(arguments: list[str]) -> None:
     validate_trace(trace, {*objects, *archives, *runtime, *( [provider] if provider is not None else [] )})
     dynamic, segments = _elf_facts(output, mode, rust_mode)
     record = {
-        "schema": 2 if source_built_root is not None else 1,
-        "format": "crabc-owned-rust-source-build-link/v1" if source_built_root is not None else "crabc-owned-rust-std-link/v1",
+        "schema": 3 if source_built_root is not None else 1,
+        "format": "crabc-owned-rust-source-build-link/v2" if source_built_root is not None else "crabc-owned-rust-std-link/v1",
         "target": TARGET,
         "mode": mode,
         "rust_requested_mode": parsed["rust_mode"],
@@ -636,8 +678,7 @@ def link(arguments: list[str]) -> None:
         record["omitted_compiler_builtins"] = _record_input(parsed["compiler_builtins"])
     else:
         source_compiler_builtins = parsed["source_built_compiler_builtins"]
-        graph_provider = parsed["cargo_graph_provider"]
-        assert isinstance(source_compiler_builtins, Path) and isinstance(graph_provider, Path)
+        assert isinstance(source_compiler_builtins, Path) and source_lto_object is not None
         record["source_built_target_library_root"] = str(source_built_root)
         assert toolchain_search_root is not None
         record["declared_toolchain_search_root"] = str(toolchain_search_root)
@@ -645,7 +686,7 @@ def link(arguments: list[str]) -> None:
         # final normal Cargo graph. The source provider supplies the approved
         # unwind ABI, so admitting libunwind here would create a second owner.
         record["omitted_source_built_compiler_builtins"] = _record_input(source_compiler_builtins)
-        record["cargo_graph_provider"] = _record_input(graph_provider)
+        record["source_lto_object"] = source_lto_object
     if version_script is not None:
         record["rust_cdylib_export_script"] = _record_input(version_script)
     with receipt.open("x", encoding="utf-8") as stream:

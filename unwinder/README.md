@@ -229,8 +229,9 @@ source-built round trip.
 Cargo may also pass the pinned toolchain target library directory with
 `-L`. The runner derives that one directory from the same `rustc --print
 target-libdir` invocation and records it solely as an unused search path.
-Final Rust archives remain confined to the fresh source-built target directory,
-and no linker search path is forwarded to the owned LLD command. Cargo still
+Rust archives supplied to the primary Cargo graph remain confined to the fresh
+source-built target directory, and no linker search path is forwarded to the
+owned LLD command. Cargo still
 builds its source `libunwind` archive for build-std, which the receipt records
 as unselected; the final normal Cargo graph instead retains the Cargo provider
 archive. A stock `std`, `core`, `unwind`, or other target archive, and any
@@ -250,20 +251,24 @@ owned-loader mapping discovery without a direct-path open or an exception
 crossing the DSO ABI.
 
 For a source-built final link the wrapper admits only the Cargo application
-root and its declared target `release/deps` root. It requires the freshly
-built `std`, `core`, `alloc`, `panic_unwind`, and exactly one
-`crabc-unwinder` rlib, then omits Cargo's `libunwind` and compiler-builtins
-archives. The provider rlib is retained through its real
-`_Unwind_RaiseException` address and is part of the same Cargo/LTO graph as
-the source-built `core`; no standalone provider archive is passed to this
-link. The generated workspace lock, exact pinned provider features and staged
-overlay sources are audited before compiling. The provider therefore inherits
-the consumer's `panic=unwind`, fat-LTO, and codegen-unit profile rather than
-its standalone producer profile. A schema-2 link receipt records this Cargo
-provider artifact and excludes stock target rlibs. Cargo artifact JSON,
-verbose build records, the pinned `rust-src` library lock, and the linker-side
-receipt bind the build to the final executable or plugin even where Cargo
-hard-links an artifact into its release directory.
+root and its declared target `release/deps` root. Cargo's compiler-artifact
+records identify the fresh `std`, `core`, `alloc`, `panic_unwind`,
+`compiler_builtins`, and `crabc-unwinder` rlibs by their pinned source paths.
+The retained primary `rustc` command must pass those exact records through
+`--extern` and must not pass its separately built `libunwind`. Fat LTO then
+absorbs that graph into one native object, so the final owned LLD command
+contains no direct Rust rlib; the wrapper records that object's complete
+`_Unwind_*` ABI and `rust_eh_personality` before linking. The fixture's real
+`_Unwind_RaiseException` address keeps the provider live in the same Cargo/LTO
+graph as the source-built `core`; no standalone provider archive is passed to
+this link. The generated workspace lock, exact pinned provider features and
+staged overlay sources are audited before compiling. The provider therefore
+inherits the consumer's `panic=unwind`, fat-LTO, and codegen-unit profile
+rather than its standalone producer profile. A schema-3 link receipt excludes
+stock target rlibs and direct source rlibs. Cargo artifact JSON, verbose build
+records, the pinned `rust-src` library lock, and the linker-side receipt bind
+the source graph to the final executable or plugin even where Cargo hard-links
+an artifact into its release directory.
 
 The native toolchain's host and requested target are both x86_64-musl, so
 Cargo also routes its `build_script_build-*` host executables through the

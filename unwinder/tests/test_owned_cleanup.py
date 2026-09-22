@@ -277,7 +277,7 @@ class OwnedCleanupContract(unittest.TestCase):
         self.assertEqual(receipt["provider_graph"], provider_graph["receipt"])
         self.assertFalse(receipt["qualified"])
 
-    def test_source_built_receipt_requires_the_compiler_builtins_omission_and_no_direct_libunwind(self):
+    def test_source_built_receipt_requires_fused_lto_abi_and_no_direct_libunwind(self):
         source = Path(self.temporary.name) / "source-built"
         source.mkdir()
         toolchain_search = Path(self.temporary.name) / "toolchain-target-lib"
@@ -288,25 +288,26 @@ class OwnedCleanupContract(unittest.TestCase):
         built_unwind = source / "libunwind-hash.rlib"
         built_unwind.write_bytes(b"source-built unwind")
         built_unwind_record = owned_cleanup.record_file(built_unwind, "test source-built unwind")
+        fused = Path(self.temporary.name) / "cleanup.cgu.0.rcgu.o"
+        fused.write_bytes(b"fused Cargo LTO object")
+        fused_record = owned_cleanup.record_file(fused, "test fused Cargo LTO object")
         record = {
-            "schema": 2,
-            "format": "crabc-owned-rust-source-build-link/v1",
+            "schema": 3,
+            "format": "crabc-owned-rust-source-build-link/v2",
             "rust_library_origin": "source-built",
             "source_built_target_library_root": str(source),
             "declared_toolchain_search_root": str(toolchain_search),
             "unused_search_paths": [str(toolchain_search)],
             "omitted_source_built_compiler_builtins": {"path": str(source / "libcompiler_builtins-hash.rlib")},
-            "application_inputs": [
-                {"path": str(source / "libstd-hash.rlib")},
-                {"path": str(source / "libcore-hash.rlib")},
-                {"path": str(source / "liballoc-hash.rlib")},
-                {"path": str(source / "libpanic_unwind-hash.rlib")},
-                {"path": str(source / "libcrabc_unwinder-hash.rlib")},
-            ],
-            "cargo_graph_provider": {"path": str(source / "libcrabc_unwinder-hash.rlib")},
+            "application_inputs": [fused_record],
+            "source_lto_object": {
+                "object": fused_record,
+                "defined_unwind_abi": sorted(build.UNWIND_ABI),
+                "rust_eh_personality": True,
+            },
             "output": {"path": str(binary), "sha256": hashlib.sha256(binary.read_bytes()).hexdigest()},
-            "command": ["/pinned/ld.lld", str(source / "libcrabc_unwinder-hash.rlib")],
-            "resolved_input_trace": str(source / "libcrabc_unwinder-hash.rlib"),
+            "command": ["/pinned/ld.lld", str(fused)],
+            "resolved_input_trace": str(fused),
             "qualified": False,
             "family_completion": False,
             "promotion_ready": False,
@@ -332,6 +333,11 @@ class OwnedCleanupContract(unittest.TestCase):
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "direct source-built Rust libunwind"):
             owned_cleanup.source_built_link_receipt(receipt, binary, source, "test source-built link")
         record.pop("omitted_source_built_rust_unwind")
+        record["source_lto_object"]["defined_unwind_abi"] = []
+        receipt.write_text(json.dumps(record))
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "fused Cargo LTO unwind ABI"):
+            owned_cleanup.source_built_link_receipt(receipt, binary, source, "test source-built link")
+        record["source_lto_object"]["defined_unwind_abi"] = sorted(build.UNWIND_ABI)
         record["unused_search_paths"].append("/unapproved/search")
         receipt.write_text(json.dumps(record))
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "search path"):
@@ -537,6 +543,68 @@ class OwnedCleanupContract(unittest.TestCase):
             "executable": None,
         })
         self.assertEqual(owned_cleanup.cargo_build_std_unwind_artifact(stream, target, rust_source), archive)
+
+    def test_cargo_primary_rustc_binds_source_runtime_and_provider_externs_to_fused_output(self):
+        target = Path(self.temporary.name) / "target"
+        target.mkdir()
+        rust_source = Path(self.temporary.name) / "rust-src/library"
+        artifacts = {}
+        records = []
+        for name, (relative, kinds, crate_types) in owned_cleanup.SOURCE_LTO_RUNTIME_TARGETS.items():
+            source = rust_source / relative
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_text("#![no_std]\n")
+            artifact = target / f"lib{name}-0123456789abcdef.rlib"
+            artifact.write_bytes(name.encode())
+            artifacts[name] = artifact
+            records.append({
+                "reason": "compiler-artifact",
+                "target": {"name": name, "kind": kinds, "crate_types": crate_types, "src_path": str(source)},
+                "filenames": [str(artifact)],
+                "executable": None,
+            })
+        runtime = owned_cleanup.cargo_build_std_runtime_artifacts(
+            "\n".join(json.dumps(record) for record in records), target, rust_source,
+        )
+        runtime_records = {
+            name: owned_cleanup.record_file(path, f"test source-built {name} archive")
+            for name, path in runtime.items()
+        }
+        provider = target / "libcrabc_unwinder-fedcba9876543210.rlib"
+        provider.write_bytes(b"provider")
+        provider_record = owned_cleanup.record_file(provider, "test Cargo provider archive")
+        built_unwind = target / "libunwind-0011223344556677.rlib"
+        built_unwind.write_bytes(b"unselected unwind")
+        built_unwind_record = owned_cleanup.record_file(built_unwind, "test source-built unwind archive")
+        output = target / "crabc_owned_cleanup_build_std-deadbeef"
+        output.write_bytes(b"fused output")
+        externs = [
+            f"--extern {name}={path}"
+            for name, path in {**runtime, "crabc_unwinder": provider}.items()
+        ]
+        log = (
+            "     Running `CARGO_PRIMARY_PACKAGE=1 CARGO_BIN_NAME=crabc-owned-cleanup-build-std "
+            "CARGO_CRATE_NAME=crabc_owned_cleanup_build_std "
+            "rustc --crate-name crabc_owned_cleanup_build_std --out-dir "
+            f"{target} -C extra-filename=-deadbeef {' '.join(externs)}`\n"
+        )
+        closure = owned_cleanup.cargo_source_lto_extern_closure(
+            log, target_name="crabc-owned-cleanup-build-std", binary_name="crabc-owned-cleanup-build-std",
+            link_output=output,
+            source_library_root=target, runtime_artifacts=runtime_records, cargo_provider=provider_record,
+            built_unwind=built_unwind_record,
+        )
+        self.assertEqual(closure["linker_output"], owned_cleanup.record_file(output, "test fused output"))
+        self.assertEqual(closure["externs"], {**runtime_records, "crabc_unwinder": provider_record})
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "unselected source-built libunwind"):
+            owned_cleanup.cargo_source_lto_extern_closure(
+                log.replace(f"--extern crabc_unwinder={provider}",
+                            f"--extern crabc_unwinder={provider} --extern unwind={built_unwind}"),
+                target_name="crabc-owned-cleanup-build-std", binary_name="crabc-owned-cleanup-build-std",
+                link_output=output,
+                source_library_root=target, runtime_artifacts=runtime_records, cargo_provider=provider_record,
+                built_unwind=built_unwind_record,
+            )
 
     def test_cargo_json_records_ignore_build_script_text_but_reject_malformed_json(self):
         record = {"reason": "compiler-artifact", "target": {"name": "fixture"}}
