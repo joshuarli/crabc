@@ -20,13 +20,15 @@
       "include/mimalloc/prim.h",
       "include/mimalloc/internal.h",
       "include/mimalloc-stats.h",
+      "include/mimalloc/types.h",
       "src/arena.c",
       "src/init.c",
       "src/os.c",
       "src/page.c",
       "src/prim/prim.c",
       "src/prim/unix/prim.c",
-      "src/stats.c"
+      "src/stats.c",
+      "src/subproc.c"
     ],
     "source_map_records": [
       {
@@ -902,6 +904,12 @@
         "expected_passed_test_count": 1
       },
       {
+        "id": "selected-subprocess-statistics-aggregation",
+        "kind": "rust-unit",
+        "target": "statistics::tests::subprocess_statistics_merges_selected_fields_in_source_declaration_order",
+        "expected_passed_test_count": 1
+      },
+      {
         "id": "process-policy-ticket-zero-live-random",
         "kind": "rust-unit",
         "target": "main_static_page::tests::process_bound_runtime_first_arena_uses_its_live_policy_and_random_image",
@@ -1033,7 +1041,7 @@
       "Complete the aligned-overmap substrate beyond the selected native direct map, direct-map fallback, prefix-zero/suffix-only geometry, direct/prefix/suffix success and Reserved/Committed cleanup-failure matrix, and one process-bound suffix terminal receiver: every other receiving allocator caller, callback/counter/error/retry path, and native cleanup differential remains required.",
       "Complete aligned-hint policy beyond the finite normal-release cursor, virtual-address eligibility, strict threshold, one controlled CAS schedule, and selected pinned-C debug/secure source profiles plus one admitted wrapped direct caller: actual secure/debug runtime configuration, ambient source options/attachments, source warning/error reporting, every caller, and broader contention remain required. Also complete Linux THP failed-prctl/production-caller behavior, MAP_HUGETLB/MADV_HUGEPAGE success behavior, and their native differential evidence.",
       "Complete huge-page reservation/free/progress/timeout behavior, high-address hints, mbind and NUMA option/arena-placement policy, plus all associated failure ownership and diagnostics.",
-      "Complete the unconditional subprocess statistics-event owner beyond the private selected `arena_count` fresh-high-water and `arena_purges` eligible-expiry counters, plus the full allocator/arena lifecycle and callback routes beyond the selected fixed normal/offset MemoryId owner, normal-offset release counter/failure retry, contained Linux reuse no-op, reset-advice snapshot, one-page protection retry, first-arena adjustment restoration, one process-lived external mi_manage_memory callback owner with bounded commit/purge results, and selected ordinary/external direct page-extension receivers."
+      "Complete the unconditional subprocess statistics-event owner beyond its private selected VM fields (`reserved`, `committed`, `reset`, `purged`, `mmap_calls`, `commit_calls`, `reset_calls`, and `purge_calls`), `arena_count` fresh-high-water and `arena_purges` eligible-expiry counters, and their filtered source-order aggregation. Non-main subprocess creation/destruction, merge/reset at its source teardown call site, the full `mi_stats_t` layout/header, heap/Theap aggregation and reset, public statistics, formatting/callback APIs, other source fields, and the allocator/arena lifecycle and callback routes beyond the selected fixed normal/offset MemoryId owner, normal-offset release counter/failure retry, contained Linux reuse no-op, reset-advice snapshot, one-page protection retry, first-arena adjustment restoration, one process-lived external mi_manage_memory callback owner with bounded commit/purge results, and selected ordinary/external direct page-extension receivers remain incomplete."
     ]
   }
 }

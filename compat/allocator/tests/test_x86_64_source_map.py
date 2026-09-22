@@ -264,7 +264,7 @@ class X86_64SourceMapTests(unittest.TestCase):
         with self.assertRaisesRegex(SOURCE_MAP.SourceMapError, "reviewed ratchet expansion"):
             SOURCE_MAP.validate_units(changed, self.sources)
 
-    def test_statistics_collection_maps_only_the_selected_private_arena_events(self) -> None:
+    def test_statistics_collection_maps_only_the_selected_private_subprocess_events(self) -> None:
         statistics = next(
             unit for unit in self.contract["units"] if unit["id"] == "statistics-collection"
         )
@@ -279,11 +279,15 @@ class X86_64SourceMapTests(unittest.TestCase):
             ],
         )
         for fragment in (
+            "one selected `mi_subproc_t::stats` event subset",
+            "reserved",
+            "purge_calls",
             "arena_count",
             "arena_purges",
             "fresh high-water",
             "eligible delayed-purge expiry",
-            "No `mi_stats_t` layout, aggregation, collection, reporting, public statistics API",
+            "selected `MI_STAT_FIELDS()` declaration order",
+            "No public `mi_stats_t` layout/header, complete heap/Theap aggregation or reset",
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, statistics["difference"])

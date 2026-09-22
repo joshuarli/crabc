@@ -113,6 +113,11 @@ CHECKS = (
         "process_arena::tests::process_default_os_arena_retained_cleanup_restores_adjusted_statistics_without_a_retry",
     ),
     (
+        "selected-subprocess-statistics-aggregation",
+        "rust-unit",
+        "statistics::tests::subprocess_statistics_merges_selected_fields_in_source_declaration_order",
+    ),
+    (
         "process-policy-ticket-zero-live-random",
         "rust-unit",
         "main_static_page::tests::process_bound_runtime_first_arena_uses_its_live_policy_and_random_image",
@@ -455,6 +460,7 @@ SOURCE_UNITS = (
     "include/mimalloc/prim.h",
     "include/mimalloc/internal.h",
     "include/mimalloc-stats.h",
+    "include/mimalloc/types.h",
     "src/arena.c",
     "src/init.c",
     "src/os.c",
@@ -462,6 +468,7 @@ SOURCE_UNITS = (
     "src/prim/prim.c",
     "src/prim/unix/prim.c",
     "src/stats.c",
+    "src/subproc.c",
 )
 
 

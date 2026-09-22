@@ -77,6 +77,7 @@ EXPECTED_CHECK_IDS = (
     "aligned-overmap-cleanup-c-rust-boundary-matrix",
     "process-policy-first-arena-clean-primary-fallback",
     "process-policy-first-arena-retained-cleanup-statistics",
+    "selected-subprocess-statistics-aggregation",
     "process-policy-ticket-zero-live-random",
     "aligned-map-direct-cleanup-owner",
     "aligned-map-prefix-cleanup-owner",
@@ -134,7 +135,7 @@ def valid_trace() -> str:
 
 
 class NativeM2VmTraceTests(unittest.TestCase):
-    def test_x86_vm_fragment_inventory_matches_the_ef723d8f_statistics_admission(self) -> None:
+    def test_x86_vm_fragment_inventory_matches_the_current_statistics_owner_contract(self) -> None:
         runner = load_allocator_runner()
         fragment = load_fragment(FRAGMENT)
         contract = json.loads(

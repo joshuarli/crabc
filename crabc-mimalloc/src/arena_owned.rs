@@ -2837,7 +2837,7 @@ mod tests {
             (0, false, true), (1000, true, false)] {
             let process = purge_process(delay, decommit);
             let backing = backing();
-            let before_registry_events = process.subprocess().arena_statistics().snapshot();
+            let before_registry_events = process.subprocess().statistics().snapshot().arena;
             let id = install(backing, process, MapAccess::Reserved);
             let claim = unsafe { backing.try_find_free(search(id), 2, ARENA_SLICE_SIZE, !mixed) }.unwrap();
             let start = claim.slice_index();
@@ -2847,12 +2847,12 @@ mod tests {
                 assert!(owner.commit(claim.start(), ARENA_SLICE_SIZE, 0));
                 unsafe { view.slices_committed() }.unwrap().set_range(start, 1).unwrap();
             }
-            let before = process.subprocess().vm_statistics().snapshot();
-            let before_purge_events = process.subprocess().arena_statistics().snapshot();
+            let before = process.subprocess().statistics().snapshot().vm;
+            let before_purge_events = process.subprocess().statistics().snapshot().arena;
             assert!(claim.release());
             assert!(unsafe { backing.collect_purge(process, config(), true, true, 0) });
-            let after = process.subprocess().vm_statistics().snapshot();
-            let after_arena_events = process.subprocess().arena_statistics().snapshot();
+            let after = process.subprocess().statistics().snapshot().vm;
+            let after_arena_events = process.subprocess().statistics().snapshot().arena;
             for value in [after.purge_calls - before.purge_calls, after.purged - before.purged,
                 after.reset_calls - before.reset_calls, after.reset - before.reset,
                 after.committed_current - before.committed_current,
@@ -2923,8 +2923,9 @@ mod tests {
         }
 
         let mut record_stage = |before_arena_purges: i64, before_purge_calls: i64, before_purged: i64| {
-            let arena_events = process.subprocess().arena_statistics().snapshot();
-            let vm_events = process.subprocess().vm_statistics().snapshot();
+            let events = process.subprocess().statistics().snapshot();
+            let arena_events = events.arena;
+            let vm_events = events.vm;
             for value in [
                 arena_events.arena_purges - before_arena_purges,
                 vm_events.purge_calls - before_purge_calls,
@@ -2940,11 +2941,13 @@ mod tests {
             }
         };
 
-        let before_arena = process.subprocess().arena_statistics().snapshot();
-        let before_vm = process.subprocess().vm_statistics().snapshot();
+        let before_events = process.subprocess().statistics().snapshot();
+        let before_arena = before_events.arena;
+        let before_vm = before_events.vm;
         assert!(unsafe { backing.collect_purge(process, config(), false, false, 0) });
-        let after_arena = process.subprocess().arena_statistics().snapshot();
-        let after_vm = process.subprocess().vm_statistics().snapshot();
+        let after_events = process.subprocess().statistics().snapshot();
+        let after_arena = after_events.arena;
+        let after_vm = after_events.vm;
         assert_eq!(after_arena.arena_purges - before_arena.arena_purges, 0);
         assert_eq!(after_vm.purge_calls - before_vm.purge_calls, 0);
         assert_eq!(after_vm.purged - before_vm.purged, 0);
@@ -2955,11 +2958,13 @@ mod tests {
         assert_eq!(bitmap_mask(1), 7);
         record_stage(before_arena.arena_purges, before_vm.purge_calls, before_vm.purged);
 
-        let before_arena = process.subprocess().arena_statistics().snapshot();
-        let before_vm = process.subprocess().vm_statistics().snapshot();
+        let before_events = process.subprocess().statistics().snapshot();
+        let before_arena = before_events.arena;
+        let before_vm = before_events.vm;
         assert!(unsafe { backing.collect_purge(process, config(), false, true, 0) });
-        let after_arena = process.subprocess().arena_statistics().snapshot();
-        let after_vm = process.subprocess().vm_statistics().snapshot();
+        let after_events = process.subprocess().statistics().snapshot();
+        let after_arena = after_events.arena;
+        let after_vm = after_events.vm;
         assert_eq!(after_arena.arena_purges - before_arena.arena_purges, 0);
         assert_eq!(after_vm.purge_calls - before_vm.purge_calls, 0);
         assert_eq!(after_vm.purged - before_vm.purged, 0);
@@ -2970,11 +2975,13 @@ mod tests {
         assert_eq!(bitmap_mask(1), 7);
         record_stage(before_arena.arena_purges, before_vm.purge_calls, before_vm.purged);
 
-        let before_arena = process.subprocess().arena_statistics().snapshot();
-        let before_vm = process.subprocess().vm_statistics().snapshot();
+        let before_events = process.subprocess().statistics().snapshot();
+        let before_arena = before_events.arena;
+        let before_vm = before_events.vm;
         assert!(unsafe { backing.collect_purge(process, config(), true, false, 1) });
-        let after_arena = process.subprocess().arena_statistics().snapshot();
-        let after_vm = process.subprocess().vm_statistics().snapshot();
+        let after_events = process.subprocess().statistics().snapshot();
+        let after_arena = after_events.arena;
+        let after_vm = after_events.vm;
         assert_eq!(after_arena.arena_purges - before_arena.arena_purges, 1);
         assert!(after_vm.purge_calls - before_vm.purge_calls > 0);
         assert!(after_vm.purged - before_vm.purged > 0);
@@ -2987,11 +2994,13 @@ mod tests {
         assert_eq!(bitmap_mask(1), 7);
         record_stage(before_arena.arena_purges, before_vm.purge_calls, before_vm.purged);
 
-        let before_arena = process.subprocess().arena_statistics().snapshot();
-        let before_vm = process.subprocess().vm_statistics().snapshot();
+        let before_events = process.subprocess().statistics().snapshot();
+        let before_arena = before_events.arena;
+        let before_vm = before_events.vm;
         assert!(unsafe { backing.collect_purge(process, config(), true, true, 2) });
-        let after_arena = process.subprocess().arena_statistics().snapshot();
-        let after_vm = process.subprocess().vm_statistics().snapshot();
+        let after_events = process.subprocess().statistics().snapshot();
+        let after_arena = after_events.arena;
+        let after_vm = after_events.vm;
         assert_eq!(after_arena.arena_purges - before_arena.arena_purges, 2);
         assert!(after_vm.purge_calls - before_vm.purge_calls > 0);
         assert!(after_vm.purged - before_vm.purged > 0);
@@ -3003,11 +3012,13 @@ mod tests {
         assert_eq!(bitmap_mask(1), 7);
         record_stage(before_arena.arena_purges, before_vm.purge_calls, before_vm.purged);
 
-        let before_arena = process.subprocess().arena_statistics().snapshot();
-        let before_vm = process.subprocess().vm_statistics().snapshot();
+        let before_events = process.subprocess().statistics().snapshot();
+        let before_arena = before_events.arena;
+        let before_vm = before_events.vm;
         assert!(unsafe { backing.collect_purge(process, config(), true, true, 0) });
-        let after_arena = process.subprocess().arena_statistics().snapshot();
-        let after_vm = process.subprocess().vm_statistics().snapshot();
+        let after_events = process.subprocess().statistics().snapshot();
+        let after_arena = after_events.arena;
+        let after_vm = after_events.vm;
         assert_eq!(after_arena.arena_purges - before_arena.arena_purges, 0);
         assert_eq!(after_vm.purge_calls - before_vm.purge_calls, 0);
         assert_eq!(after_vm.purged - before_vm.purged, 0);
@@ -3063,11 +3074,13 @@ mod tests {
         assert_eq!(before_free_mask, 2);
         assert_eq!(before_purge_mask, 3);
         assert_eq!(before_committed_mask, 3);
-        let before_vm = process.subprocess().vm_statistics().snapshot();
-        let before_arena = process.subprocess().arena_statistics().snapshot();
+        let before_events = process.subprocess().statistics().snapshot();
+        let before_vm = before_events.vm;
+        let before_arena = before_events.arena;
         assert!(unsafe { fallback_backing.collect_purge(process, config(), true, true, 0) });
-        let after_vm = process.subprocess().vm_statistics().snapshot();
-        let after_arena = process.subprocess().arena_statistics().snapshot();
+        let after_events = process.subprocess().statistics().snapshot();
+        let after_vm = after_events.vm;
+        let after_arena = after_events.arena;
         assert_eq!(after_vm.purge_calls - before_vm.purge_calls, 1);
         assert_eq!(after_vm.purged - before_vm.purged, ARENA_SLICE_SIZE as i64);
         assert_eq!(after_vm.reset_calls - before_vm.reset_calls, 0);

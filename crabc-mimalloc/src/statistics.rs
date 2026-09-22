@@ -17,7 +17,7 @@
 //! untracked observer callback.
 
 use crate::atomic::{
-    i64_add_relaxed, i64_load_relaxed, i64_max_relaxed, AtomicI64Value,
+    i64_add_from_relaxed, i64_add_relaxed, i64_load_relaxed, i64_max_relaxed, AtomicI64Value,
 };
 
 /// Source `mi_stat_count_t` using `mi_stat_update_mt`'s relaxed update order.
@@ -64,6 +64,29 @@ impl StatCount {
         if prior_total == peak {
             i64_add_relaxed(&self.peak, amount);
         }
+    }
+
+    /// Adds one selected source record in `mi_stats_add` order.
+    ///
+    /// Pinned `src/stats.c:99-114` first adds `total`, then samples the
+    /// source peak and current values, adds current, and finally raises the
+    /// destination peak from that prior destination current plus source peak.
+    /// These are deliberately relaxed, non-transactional observations: a
+    /// concurrent source update may appear in only part of this aggregation,
+    /// exactly as it may in the C implementation.
+    #[inline]
+    fn add_from(&self, source: &Self) {
+        if core::ptr::eq(self, source) {
+            return;
+        }
+        i64_add_from_relaxed(&self.total, &source.total);
+        let source_peak = i64_load_relaxed(&source.peak);
+        let source_current = i64_load_relaxed(&source.current);
+        let destination_current = i64_add_relaxed(&self.current, source_current);
+        i64_max_relaxed(
+            &self.peak,
+            destination_current.wrapping_add(source_peak),
+        );
     }
 }
 
@@ -140,6 +163,15 @@ impl StatCounter {
         // Both native profiles are two's-complement LP64, so Rust's explicit
         // narrowing cast retains that source bit pattern.
         i64_add_relaxed(&self.total, amount as i64);
+    }
+
+    /// Mirrors `mi_stat_counter_add_mt` for one selected source field.
+    #[inline]
+    fn add_from(&self, source: &Self) {
+        if core::ptr::eq(self, source) {
+            return;
+        }
+        i64_add_from_relaxed(&self.total, &source.total);
     }
 }
 
@@ -272,6 +304,85 @@ impl VmStatistics {
     }
 }
 
+/// The selected process-owned subset of source `mi_subproc_t::stats`.
+///
+/// Pinned `include/mimalloc/types.h:651-680` gives every subprocess one
+/// `mi_stats_t`, rather than independent VM and arena statistic objects.
+/// The staged port represents only the fields its current source-mapped
+/// production paths drive: the `src/os.c` VM fields and the two `src/arena.c`
+/// lifecycle counters. It deliberately excludes the public layout/header,
+/// reporting, callback, heap, and Theap fields.
+pub(crate) struct SubprocessStatistics {
+    vm: VmStatistics,
+    arena: ArenaStatistics,
+}
+
+/// A read-only selected snapshot of one subprocess statistics owner.
+///
+/// Each member is relaxed independently, as are the source reads. Consumers
+/// must not treat this as a consistent point-in-time public `mi_stats_t` ABI.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct SubprocessStatisticsSnapshot {
+    pub(crate) vm: VmStatisticsSnapshot,
+    pub(crate) arena: ArenaStatisticsSnapshot,
+}
+
+impl SubprocessStatistics {
+    pub(crate) const fn new() -> Self {
+        Self {
+            vm: VmStatistics::new(),
+            arena: ArenaStatistics::new(),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn vm(&self) -> &VmStatistics {
+        &self.vm
+    }
+
+    #[inline]
+    pub(crate) fn arena(&self) -> &ArenaStatistics {
+        &self.arena
+    }
+
+    #[inline]
+    pub(crate) fn snapshot(&self) -> SubprocessStatisticsSnapshot {
+        SubprocessStatisticsSnapshot {
+            vm: self.vm.snapshot(),
+            arena: self.arena.snapshot(),
+        }
+    }
+
+    /// Merges the selected fields using the filtered `MI_STAT_FIELDS()` order.
+    ///
+    /// This is the private equivalent of `mi_stats_add` in
+    /// `src/stats.c:121-142`. The source applies it during non-main subprocess
+    /// teardown, which the staged port does not yet model. The field order is
+    /// material: adding a count samples and updates its own relaxed atomics
+    /// before the next field. A future owner may add a source field only at
+    /// its declaration position here, with its real producer and source-level
+    /// evidence; this is not a generic counter registry.
+    #[inline]
+    pub(crate) fn add_from(&self, source: &Self) {
+        if core::ptr::eq(self, source) {
+            return;
+        }
+
+        // Selected `MI_STAT_FIELDS()` declaration order from
+        // `include/mimalloc-stats.h:41-82`.
+        self.vm.reserved.add_from(&source.vm.reserved);
+        self.vm.committed.add_from(&source.vm.committed);
+        self.vm.reset.add_from(&source.vm.reset);
+        self.vm.purged.add_from(&source.vm.purged);
+        self.vm.mmap_calls.add_from(&source.vm.mmap_calls);
+        self.vm.commit_calls.add_from(&source.vm.commit_calls);
+        self.vm.reset_calls.add_from(&source.vm.reset_calls);
+        self.vm.purge_calls.add_from(&source.vm.purge_calls);
+        self.arena.arena_count.add_from(&source.arena.arena_count);
+        self.arena.arena_purges.add_from(&source.arena.arena_purges);
+    }
+}
+
 #[inline]
 fn bytes_to_i64(bytes: usize) -> i64 {
     bytes as i64
@@ -346,5 +457,64 @@ mod tests {
         assert_eq!(i64_load_relaxed(&stats.reset_calls.total), 1);
         assert_eq!(i64_load_relaxed(&stats.purged.total), 256);
         assert_eq!(i64_load_relaxed(&stats.purge_calls.total), 1);
+    }
+
+    #[test]
+    fn subprocess_statistics_merges_selected_fields_in_source_declaration_order() {
+        let destination = SubprocessStatistics::new();
+        destination.vm().reserve_increase(5);
+        destination.vm().reserve_decrease(3);
+        destination.vm().committed_increase(2);
+        destination.vm().reset(3);
+        destination.vm().mmap_call();
+        destination.arena().high_water_arena_published();
+
+        let source = SubprocessStatistics::new();
+        source.vm().reserve_increase(7);
+        source.vm().reserve_decrease(2);
+        source.vm().committed_increase(11);
+        source.vm().commit_call();
+        source.vm().reset(5);
+        source.vm().purge(13);
+        source.arena().high_water_arena_published();
+        source.arena().arena_purge_expiry_consumed();
+
+        destination.add_from(&source);
+        assert_eq!(
+            destination.snapshot(),
+            SubprocessStatisticsSnapshot {
+                vm: VmStatisticsSnapshot {
+                    reserved_total: 12,
+                    reserved_peak: 9,
+                    reserved_current: 7,
+                    committed_total: 13,
+                    committed_peak: 13,
+                    committed_current: 13,
+                    reset: 8,
+                    purged: 13,
+                    mmap_calls: 1,
+                    commit_calls: 1,
+                    reset_calls: 2,
+                    purge_calls: 1,
+                },
+                arena: ArenaStatisticsSnapshot {
+                    arena_count: 2,
+                    arena_purges: 1,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn subprocess_statistics_rejects_self_aggregation_without_double_counting() {
+        let statistics = SubprocessStatistics::new();
+        statistics.vm().reserve_increase(4096);
+        statistics.vm().commit_call();
+        statistics.arena().high_water_arena_published();
+        let before = statistics.snapshot();
+
+        statistics.add_from(&statistics);
+
+        assert_eq!(statistics.snapshot(), before);
     }
 }

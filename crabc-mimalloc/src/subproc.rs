@@ -114,13 +114,11 @@ pub(crate) struct MainSubprocess {
     /// backing slots for source normal arenas. This is a Rust ownership group,
     /// never a complete `mi_subproc_t` layout projection.
     arena_backing: crate::arena::ProcessArenaBacking,
-    /// Source VM events are unconditional at `MI_STAT=0`. This is the exact
-    /// OS-path subset, not a public `mi_stats_t` layout or a generic sink.
-    vm_statistics: crate::statistics::VmStatistics,
-    /// The selected source arena lifecycle events share the subprocess
-    /// lifetime with their arena registry. This remains a two-counter private
-    /// owner, not a general statistics state or public ABI projection.
-    arena_statistics: crate::statistics::ArenaStatistics,
+    /// The selected source statistics share the subprocess lifetime with the
+    /// VM and arena producers. This is one private source-shaped owner for
+    /// the currently mapped `mi_subproc_t::stats` fields, not a public
+    /// `mi_stats_t` layout, reporting API, or generic event sink.
+    statistics: crate::statistics::SubprocessStatistics,
     /// Source bitmap events are unconditional even when optional statistics
     /// are disabled. This is a typed subset, not the full `mi_stats_t` ABI.
     bitmap_statistics: crate::bitmap::BitmapStatistics,
@@ -278,8 +276,7 @@ impl MainSubprocess {
     pub(crate) const fn new() -> Self {
         Self {
             arena_backing: crate::arena::ProcessArenaBacking::new(),
-            vm_statistics: crate::statistics::VmStatistics::new(),
-            arena_statistics: crate::statistics::ArenaStatistics::new(),
+            statistics: crate::statistics::SubprocessStatistics::new(),
             bitmap_statistics: crate::bitmap::BitmapStatistics::new(),
             thread_count: AtomicUsize::new(0),
             thread_total_count: AtomicUsize::new(0),
@@ -317,14 +314,27 @@ impl MainSubprocess {
         &self.arena_backing
     }
 
+    /// Returns the selected private source statistics owner. Its snapshots
+    /// and aggregation have relaxed source semantics; this grants neither a
+    /// public `mi_stats_t` projection nor an event-adjustment capability.
     #[inline]
-    pub(crate) fn vm_statistics(&self) -> &crate::statistics::VmStatistics {
-        &self.vm_statistics
+    pub(crate) fn statistics(&self) -> &crate::statistics::SubprocessStatistics {
+        &self.statistics
     }
 
+    /// Returns the VM producer view of this subprocess's one statistics
+    /// owner. Kept as a typed source-event boundary for existing OS paths.
+    #[inline]
+    pub(crate) fn vm_statistics(&self) -> &crate::statistics::VmStatistics {
+        self.statistics.vm()
+    }
+
+    /// Returns the arena producer view of this subprocess's one statistics
+    /// owner. Kept as a typed source-event boundary for arena publication and
+    /// delayed-purge paths.
     #[inline]
     pub(crate) fn arena_statistics(&self) -> &crate::statistics::ArenaStatistics {
-        &self.arena_statistics
+        self.statistics.arena()
     }
 
     /// Reserves the unique source-static ticket-zero path for a process

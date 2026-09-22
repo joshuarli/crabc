@@ -928,25 +928,35 @@ leaves the mapping accessible and committed while restoring availability and
 consuming the already-cleared purge work. Only the external owner may unmap
 the complete mapping.
 
-`MainSubprocess` also privately owns the two unconditional arena event
-counters used by that bounded lifecycle. `ArenaRegistry::insert` increments
-`arena_count` only after its Release publication of a fresh high-water slot;
-reused NULL slots and every failed preparation/publication leave it unchanged.
-`ProcessArenaBacking` no longer retains a second local purge counter:
-`try_purge_arena` clears an eligible expiry with Release ordering and then
-increments the same process owner's `arena_purges` before it visits any range.
-Those updates use the pinned relaxed `mi_subproc_stat_counter_increase` route.
-They are private source-event observations for focused C/Rust evidence, not a
-`mi_stats_t` layout, statistics collection/reporting API, general arena
-lifecycle qualification, or M2 completion. The pinned C fixture invokes
+`MainSubprocess` owns one private `SubprocessStatistics` subset for its
+source-shaped `mi_subproc_t::stats` event owner. It retains only the current
+production producers: VM `reserved`, `committed`, `reset`, `purged`,
+`mmap_calls`, `commit_calls`, `reset_calls`, and `purge_calls`, plus the two
+unconditional arena counters used by this bounded lifecycle.
+`ArenaRegistry::insert` increments `arena_count` only after its Release
+publication of a fresh high-water slot; reused NULL slots and every failed
+preparation/publication leave it unchanged. `ProcessArenaBacking` no longer
+retains a second local purge counter: `try_purge_arena` clears an eligible
+expiry with Release ordering and then increments the same process owner's
+`arena_purges` before it visits any range. Each update uses the pinned relaxed
+multi-thread source operation. Selected aggregation follows
+`MI_STAT_FIELDS()` declaration order and `src/stats.c`'s relaxed total/current/
+peak algorithm, so it is deliberately not a transactional snapshot. The staged
+port has no non-main subprocess destruction caller, so its source merge/reset
+transition remains unimplemented. This is a private source-event subset for
+focused C/Rust evidence, not a public
+`mi_stats_t` layout/header, complete heap/Theap aggregation or reset,
+statistics collection/reporting/formatting/callback API, general arena
+lifecycle qualification, M2 completion, or M7 completion. The pinned C fixture invokes
 `_mi_auto_process_init` only to reproduce `src/init.c`'s source-loader
 preloading transition before delayed-purge scheduling; that direct fixture is
 not evidence of an installed CRT or loader integration.
 
 The native x86 M2 producer compares a further bounded process-wide purge
 relation. Three regular process-owned arenas begin with future per-arena and
-global expiries. Its 80-value C/Rust trace retains 32 established local purge
-fields and adds 48 process-wide observations: current registry count,
+global expiries. Its 99-value C/Rust trace retains 32 established local purge
+fields, 48 process-wide observations, and a 19-field two-slice fallback:
+current registry count,
 per-arena free/committed/purge and expiry-zero masks, and each stage's
 `arena_purges`, VM `purge_calls`, and VM `purged` deltas. Ordinary collection
 skips; `visit_all` rebases only the global expiry; the rotated normal budget

@@ -323,14 +323,13 @@ M2_X86_64_FAULT_FRAGMENT = ALLOCATOR_ROOT / "m2-fault-seam-inventory-x86_64-v3.5
 # rows into both the aggregate manifest and Python. Source bytes are verified
 # separately against the upstream archive before any native check executes.
 M2_X86_64_BITMAP_FRAGMENT_DIGEST = "dbb2bc7d34762819f7ed76c3b50fd3d8599d46b0ba7b9f78fcc9310afe536300"
-# `ef723d8f` admitted the selected pinned arena statistics and the explicit
-# auto-process-init source context. The current digest also repairs the
-# large-only source anchor to include its required enclosing `unix_mmap`
-# definition. These source-inventory changes do not promote M2.
-M2_X86_64_VM_FRAGMENT_DIGEST = "e4befc04de41c867a70525270a5ac4c7ec59d5b6d34649557168b25b92ba6121"
-# The initialization inventory now separately binds the selected generic/later
-# metadata success post-state while preserving the later publication and
-# automatic-teardown nonclaims. It does not promote M2.
+# The selected subprocess-statistics owner adds its pinned `types.h`,
+# `subproc.c`, and `stats.c` source boundary to the existing VM inventory.
+# These source-inventory changes do not promote M2.
+M2_X86_64_VM_FRAGMENT_DIGEST = "41d7449d49f027992f139cd92ad43f49f5ae25ebcbe8e15039a811b4e742c2d9"
+# The initialization inventory separately binds selected generic/later metadata
+# success post-state while preserving later publication and automatic-teardown
+# nonclaims. It does not promote M2.
 M2_X86_64_INITIALIZATION_FRAGMENT_DIGEST = "8ffe77f67c90df875bb1de6e0ae6921ca299bc240712480f119b3d0d437d0a3b"
 M2_X86_64_FAULT_FRAGMENT_DIGEST = "7eca87cb7f02667ef25f23c7910a15bef44c57f1433e294de10529eda73aef07"
 M2_X86_64_PAGE_MAP_CHECK_IDS = (
