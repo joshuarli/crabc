@@ -90,7 +90,7 @@ def run(c_product, native_product, work):
     c_driver = products['accepted-c'] / 'bin/crabc-cc-dynamic'
     # Both products consume identical application and dependency objects.
     for name in ('probe', 'dso'):
-        command([c_driver, '--dynamic-pie', '-std=c11', '-fno-builtin', '-fPIC', '-pthread',
+        command([c_driver, '--dynamic-shared-object', '-std=c11', '-fno-builtin', '-pthread',
                  '-c', ROOT / f'compat/x86_64/dynamic_native_allocator_{name}.c',
                  '-o', work / f'{name}.o'], work / f'compile-{name}.log')
     tools = producer.common.resolve_pinned_producer_tools()
