@@ -295,6 +295,11 @@ records, the pinned `rust-src` library lock, and the linker-side receipt bind
 the source graph to the final executable or plugin even where Cargo hard-links
 an artifact into its release directory.
 
+For the generated Rust `cdylib`, rustc supplies a confined export version
+script and its exact `--no-undefined-version` safety flag. The wrapper accepts
+that flag only with the shared export script and retains it in the owned LLD
+command; it does not open a general linker-option path.
+
 The native toolchain's host and requested target are both x86_64-musl, so
 Cargo also routes its `build_script_build-*` host executables through the
 target-linker setting. The runner admits that finite Cargo `release/build`

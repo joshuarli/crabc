@@ -247,6 +247,7 @@ def parse_arguments(
     rust_mode: str | None = None
     shared_soname: str | None = None
     version_script: Path | None = None
+    no_undefined_version = False
     export_dynamic = False
     index = 0
     while index < len(arguments):
@@ -278,6 +279,10 @@ def parse_arguments(
             if not value or version_script is not None:
                 raise LinkError("Rust cdylib export script is invalid")
             version_script = confined(value, [application_root], "Rust cdylib export script")
+        elif argument == "-Wl,--no-undefined-version":
+            if no_undefined_version:
+                raise LinkError("duplicate Rust no-undefined-version safety flag")
+            no_undefined_version = True
         elif argument in NATIVE_REQUESTS:
             native_requests.append(argument)
         elif argument in CANONICAL_FLAGS:
@@ -318,6 +323,8 @@ def parse_arguments(
         raise LinkError("missing Rust libc or libgcc request")
     if (shared_soname is not None or version_script is not None) and rust_mode != "shared":
         raise LinkError("Rust shared-object option used for a non-shared link")
+    if no_undefined_version and (rust_mode != "shared" or version_script is None):
+        raise LinkError("Rust no-undefined-version safety flag requires a shared export script")
     if rust_mode == "shared":
         if shared_soname is not None and shared_soname != output.name:
             raise LinkError("Rust shared-object SONAME differs from its output")
@@ -352,6 +359,7 @@ def parse_arguments(
         "source_built_compiler_builtins": compiler_builtins if source_built else None,
         "shared_soname": shared_soname,
         "version_script": version_script,
+        "no_undefined_version": no_undefined_version,
     }
 
 
@@ -511,6 +519,7 @@ def _product_inputs(root: Path, mode: str) -> list[Path]:
 def link_command(
     *, linker: Path, root: Path, mode: str, provider: Path | None, objects: list[Path], archives: list[Path], output: Path,
     export_dynamic: bool, rust_mode: str = "executable", version_script: Path | None = None,
+    no_undefined_version: bool = False,
 ) -> list[str]:
     """Return the entire native command; there are no library-search holes."""
 
@@ -519,9 +528,12 @@ def link_command(
     if rust_mode == "shared":
         if mode != "dynamic":
             raise LinkError("a Rust shared object requires the owned dynamic product")
+        if no_undefined_version and version_script is None:
+            raise LinkError("Rust no-undefined-version safety flag requires a shared export script")
         return [
             str(linker), "-shared", "-soname", output.name, "--hash-style=sysv", "--eh-frame-hdr", "--gc-sections",
-            "--no-undefined", "--allow-shlib-undefined", "-z", "text", "-z", "noexecstack", "-z", "relro", "-z", "now",
+            "--no-undefined", *(["--no-undefined-version"] if no_undefined_version else []),
+            "--allow-shlib-undefined", "-z", "text", "-z", "noexecstack", "-z", "relro", "-z", "now",
             *( ["--version-script", str(version_script)] if version_script is not None else [] ),
             "--trace", "-o", str(output), str(runtime[1]), *map(str, objects), *rust_inputs,
             str(runtime[3]), str(runtime[4]), str(runtime[5]),
@@ -675,7 +687,7 @@ def link(arguments: list[str]) -> None:
     command = link_command(
         linker=linker, root=root, mode=mode, provider=provider, objects=objects, archives=archives,
         output=output, export_dynamic=bool(parsed["export_dynamic"]), rust_mode=rust_mode,
-        version_script=version_script,
+        version_script=version_script, no_undefined_version=bool(parsed["no_undefined_version"]),
     )
     trace = run(command)
     runtime = _product_inputs(root, mode)

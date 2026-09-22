@@ -234,10 +234,41 @@ class OwnedRustLinkContract(unittest.TestCase):
         arguments.extend((
             "-Wl,-soname=libcleanup.so",
             f"-Wl,--version-script={self.application / 'rust-cdylib.map'}",
+            "-Wl,--no-undefined-version",
         ))
         parsed = linker.parse_arguments(arguments, self.application, self.stock, self.source_built)
         self.assertEqual(parsed["rust_mode"], "shared")
         self.assertEqual(parsed["output"], nested / "libcleanup.so")
+        self.assertTrue(parsed["no_undefined_version"])
+        command = linker.link_command(
+            linker=Path("/pinned/ld.lld"), root=self.application, mode="dynamic", provider=None,
+            objects=[], archives=[], output=parsed["output"], export_dynamic=False,
+            rust_mode=parsed["rust_mode"], version_script=parsed["version_script"],
+            no_undefined_version=parsed["no_undefined_version"],
+        )
+        self.assertIn("--no-undefined-version", command)
+
+    def test_no_undefined_version_rejects_a_non_shared_or_unmapped_link(self):
+        with self.assertRaisesRegex(linker.LinkError, "requires a shared export script"):
+            linker.parse_arguments(
+                [*self.source_built_arguments(), "-Wl,--no-undefined-version"],
+                self.application, self.stock, self.source_built,
+            )
+        with self.assertRaisesRegex(linker.LinkError, "unrecognized Rust link argument"):
+            linker.parse_arguments(
+                [*self.source_built_arguments(), "-Wl,--no-undefined-version=forged"],
+                self.application, self.stock, self.source_built,
+            )
+        with self.assertRaisesRegex(linker.LinkError, "duplicate Rust no-undefined-version"):
+            arguments = self.source_built_arguments()
+            arguments[arguments.index("-pie")] = "-shared"
+            linker.parse_arguments(
+                [
+                    *arguments,
+                    f"-Wl,--version-script={self.application / 'rust-cdylib.map'}",
+                    "-Wl,--no-undefined-version", "-Wl,--no-undefined-version",
+                ], self.application, self.stock, self.source_built,
+            )
 
     def test_shared_rust_plugin_retains_only_its_rustc_export_script(self):
         nested = self.application / "deps"

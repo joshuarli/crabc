@@ -735,6 +735,9 @@ def source_built_link_receipt(
     command = record.get("command")
     require(isinstance(trace, str) and isinstance(command, list) and all(isinstance(item, str) for item in command),
             f"{description} lacks exact command or trace")
+    if record.get("rust_requested_mode") == "shared":
+        require("--no-undefined-version" in command,
+                f"{description} does not retain Rust's cdylib version-script safety flag")
     def ambient_runtime(value: str) -> bool:
         name = Path(value).name
         return "libgcc" in value or value in {"-lgcc", "-lgcc_s", "-lunwind", "-lc"} or (

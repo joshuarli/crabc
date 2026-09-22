@@ -378,6 +378,15 @@ class OwnedCleanupContract(unittest.TestCase):
             receipt, binary, source, "test source-built link", built_unwind=built_unwind_record,
         )
         self.assertEqual(selected["rust_library_origin"], "source-built")
+        record["rust_requested_mode"] = "shared"
+        receipt.write_text(json.dumps(record))
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "cdylib version-script safety flag"):
+            owned_cleanup.source_built_link_receipt(receipt, binary, source, "test source-built link")
+        record["command"].append("--no-undefined-version")
+        receipt.write_text(json.dumps(record))
+        owned_cleanup.source_built_link_receipt(receipt, binary, source, "test source-built link")
+        record.pop("rust_requested_mode")
+        record["command"].pop()
         retained.write_bytes(b"tampered retained Cargo LTO object")
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "fused Cargo LTO unwind ABI"):
             owned_cleanup.source_built_link_receipt(receipt, binary, source, "test source-built link")
