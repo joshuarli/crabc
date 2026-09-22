@@ -44,7 +44,7 @@ use super::{
     auxv_observation, environment, immediate_termination, posix_exit, process_globals,
     startup_security, static_tls,
 };
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 use super::pthread_create_join;
 
 const MAX_STARTUP_POINTERS: usize = 1 << 20;
@@ -105,7 +105,7 @@ pub use process_exit::{atexit, __cxa_atexit, __cxa_finalize, __funcs_on_exit};
 #[no_mangle]
 pub unsafe extern "C" fn exit(status: c_int) -> ! {
     unsafe { __funcs_on_exit() };
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     unsafe { __stdio_exit() };
     posix_exit::_exit(status)
 }
@@ -155,9 +155,9 @@ pub unsafe extern "C" fn __init_ssp(_entropy: *mut c_void) {}
 /// streams and caller-supplied setvbuf storage must remain valid until return.
 #[inline(never)]
 #[no_mangle]
-#[cfg_attr(not(feature = "x86-owned-static-runtime"), linkage = "weak")]
+#[cfg_attr(not(crabc_x86_owned_runtime), linkage = "weak")]
 pub unsafe extern "C" fn __stdio_exit() {
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     unsafe { super::stdio_standard::flush_all_on_exit() };
 }
 
@@ -191,7 +191,7 @@ pub unsafe extern "C" fn __libc_start_main(
     // before this ABI entry.  Publish the process-lifetime cancellation state
     // before constructors can execute; signal delivery itself remains owned
     // by the separate cancellation leaf.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     unsafe { pthread_create_join::publish_initial_selected_pthread_cancellation_state() };
 
     // SAFETY: `startup_vectors` validated the kernel/CRT envp and auxiliary

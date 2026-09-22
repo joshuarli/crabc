@@ -191,7 +191,7 @@ pub(super) unsafe fn pthread_fork_parent() {
 /// The sole child inherited a matching pthread_fork_prepare transaction;
 /// caller values were retained before changing main identity, and every outer
 /// owned lock has completed. No inherited key metadata is being mutated.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 pub(super) unsafe fn pthread_fork_child() {
     SELECTED_TSD_LOCK.store(0, Ordering::Release);
 }
@@ -486,7 +486,7 @@ pub(super) unsafe fn run_selected_main_tsd_destructors() {
 /// # Safety
 /// Run in the sole clone child before adopting main TLS identity. A supplied
 /// source is this caller's copied, still-mapped worker value table.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 pub(super) unsafe fn adopt_process_child_values(source: Option<*const SelectedTsdValues>) {
     let Some(source) = source else { return; };
     let source = unsafe { &*source };
@@ -595,7 +595,7 @@ pub unsafe extern "C" fn tss_set(key: c_uint, value: *mut c_void) -> c_int {
 /// # Safety
 /// `values` is the current timer worker's live value table; no other task runs
 /// its destructors or resets this guard.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 pub(super) unsafe fn run_timer_callback_tsd_destructors(values: *const SelectedTsdValues) {
     unsafe { run_selected_worker_tsd_destructors(values); }
     unsafe { (*values).teardown.store(TSD_TEAR_DOWN_IDLE, Ordering::Release); }

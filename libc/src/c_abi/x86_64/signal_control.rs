@@ -46,11 +46,11 @@ const SA_RESTART: i32 = 0x1000_0000;
 // non-SA_RESTART handler makes timed-futex EINTR observable process-wide,
 // even if the kernel subsequently rejects that installation. Queries, DFL,
 // IGN, and restoration do not reset it. Only the owned runtime consumes it.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 static INTERRUPTING_SIGNAL_HANDLER_INSTALLED: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 pub(super) fn interrupting_signal_handler_installed() -> bool {
     INTERRUPTING_SIGNAL_HANDLER_INSTALLED.load(core::sync::atomic::Ordering::Acquire)
 }
@@ -66,7 +66,7 @@ const RESERVED_SIGNAL_MASK: u64 = (1_u64 << 31) | (1_u64 << 32) | (1_u64 << 33);
 // wrapper would lose musl's weak same-address and override contract. This
 // feature adds no signal behavior; it leaves the default selected-static
 // archive surface unchanged.
-#[cfg(any(feature = "x86-signal-legacy-aliases", feature = "x86-owned-static-runtime"))]
+#[cfg(any(feature = "x86-signal-legacy-aliases", crabc_x86_owned_runtime))]
 core::arch::global_asm!(
     ".weak bsd_signal",
     ".set bsd_signal, signal",
@@ -105,7 +105,7 @@ pub unsafe extern "C" fn __libc_sigaction(
     let action_pointer = if action.is_null() {
         core::ptr::null()
     } else {
-        #[cfg(feature = "x86-owned-static-runtime")]
+        #[cfg(crabc_x86_owned_runtime)]
         // Match musl's predicate and pre-syscall placement, including failed
         // attempts to install a handler for SIGKILL or SIGSTOP.
         if unsafe { (*action.cast::<PublicSigAction>()).handler > 1
@@ -165,7 +165,7 @@ pub unsafe extern "C" fn __sigaction(
         return invalid_argument();
     }
 
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let _abort_transaction = if signal == 6 {
         match unsafe { super::owned_process_lock::SignalGuard::acquire() } {
             Ok(guard) => Some(guard),
@@ -276,7 +276,7 @@ pub unsafe extern "C" fn sigprocmask(
 /// `set` and `old_set` must be null or designate readable and writable public
 /// `sigset_t` records respectively for this call. The caller owns the effect
 /// of changing its signal mask; only the kernel-visible output word changes.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[no_mangle]
 pub unsafe extern "C" fn pthread_sigmask(
     how: c_int,

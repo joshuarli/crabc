@@ -99,12 +99,12 @@ class OwnedKernelResidualTests(unittest.TestCase):
         frozen = FROZEN_CONFIGURATION.read_text(encoding="utf-8")
         owned = OWNED_CONFIGURATION.read_text(encoding="utf-8")
         self.assertIn(
-            '#[cfg(not(feature = "x86-owned-static-runtime"))]\n'
+            '#[cfg(not(crabc_x86_owned_runtime))]\n'
             '#[path = "system_configuration.rs"]\nmod system_configuration;',
             root,
         )
         self.assertIn(
-            '#[cfg(feature = "x86-owned-static-runtime")]\n'
+            '#[cfg(crabc_x86_owned_runtime)]\n'
             '#[path = "owned_system_configuration.rs"]\nmod system_configuration;',
             root,
         )

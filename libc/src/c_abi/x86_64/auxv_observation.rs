@@ -67,7 +67,7 @@ pub(super) unsafe fn install_initial(auxv: *const usize) {
 /// `pthread_getattr_np` uses this exact address for musl's initial-stack
 /// mapping probe. Both owned CRT paths publish it before application code;
 /// this accessor neither exposes the vector publicly nor changes its owner.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 pub(super) fn initial_stack_anchor() -> Option<usize> {
     let address = INITIAL_AUXV.load(Ordering::Acquire);
     (address != 0).then_some(address)
@@ -139,7 +139,7 @@ pub unsafe extern "C" fn __getauxval(item: c_ulong) -> c_ulong {
 }
 
 /// Kernel main-executable program-header coordinates, published by owned CRT.
-#[cfg(all(feature = "x86-owned-static-runtime", not(feature = "x86-owned-dynamic-runtime")))]
+#[cfg(all(crabc_x86_owned_runtime, not(crabc_x86_dynamic_runtime)))]
 pub(super) struct InitialProgramHeaders {
     pub(super) address: *const u8,
     pub(super) entry_size: usize,
@@ -151,7 +151,7 @@ pub(super) struct InitialProgramHeaders {
 /// Musl's static `dl_iterate_phdr` collects the last value for each auxv tag.
 /// Startup has validated the terminating vector and static TLS has validated
 /// the ELF table before this immutable address is published.
-#[cfg(all(feature = "x86-owned-static-runtime", not(feature = "x86-owned-dynamic-runtime")))]
+#[cfg(all(crabc_x86_owned_runtime, not(crabc_x86_dynamic_runtime)))]
 pub(super) fn initial_program_headers() -> Option<InitialProgramHeaders> {
     let auxv = INITIAL_AUXV.load(Ordering::Acquire) as *const usize;
     if auxv.is_null() {

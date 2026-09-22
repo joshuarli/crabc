@@ -67,7 +67,7 @@ pub unsafe extern "C" fn open(path: *const c_char, flags: c_int, mode: c_uint) -
     // SAFETY: the caller owns the raw pathname contract. Linux x86-64 takes
     // the old open syscall's pathname/flags/mode words in rdi/rsi/rdx.
     let result = unsafe {
-        #[cfg(feature = "x86-owned-static-runtime")]
+        #[cfg(crabc_x86_owned_runtime)]
         {
             super::pthread_cancel::syscall_cp(
                 raw_syscall::SYS_OPEN,
@@ -79,7 +79,7 @@ pub unsafe extern "C" fn open(path: *const c_char, flags: c_int, mode: c_uint) -
                 0,
             )
         }
-        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        #[cfg(not(crabc_x86_owned_runtime))]
         {
             raw_syscall::syscall3(
                 raw_syscall::SYS_OPEN,
@@ -133,7 +133,7 @@ pub unsafe extern "C" fn openat(
     // SAFETY: the caller owns the raw pathname/directory-descriptor contract;
     // syscall4 routes the final Linux mode word through r10.
     let result = unsafe {
-        #[cfg(feature = "x86-owned-static-runtime")]
+        #[cfg(crabc_x86_owned_runtime)]
         {
             super::pthread_cancel::syscall_cp(
                 raw_syscall::SYS_OPENAT,
@@ -145,7 +145,7 @@ pub unsafe extern "C" fn openat(
                 0,
             )
         }
-        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        #[cfg(not(crabc_x86_owned_runtime))]
         {
             raw_syscall::syscall4(
                 raw_syscall::SYS_OPENAT,

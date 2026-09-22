@@ -25,7 +25,7 @@ class OwnedVmVmlockTests(unittest.TestCase):
         self.assertRegex(
             source,
             re.compile(
-                r'#\[cfg\(feature = "x86-owned-static-runtime"\)\]\n'
+                r'#\[cfg\(crabc_x86_owned_runtime\)\]\n'
                 r'#\[inline\]\n'
                 r'fn selected_owned_vm_wait\(\) \{\n'
                 r'    // SAFETY: the existing pthread vmlock owns the selected'

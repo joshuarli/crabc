@@ -46,7 +46,7 @@ pub unsafe extern "C" fn nanosleep(request: *const c_void, remaining: *mut c_voi
     // SAFETY: the caller owns the complete raw Linux pointer contract. Linux
     // x86-64 receives the request and remaining pointers in rdi/rsi.
     let result = unsafe {
-        #[cfg(feature = "x86-owned-static-runtime")]
+        #[cfg(crabc_x86_owned_runtime)]
         {
             super::pthread_cancel::syscall_cp(
                 raw_syscall::SYS_NANOSLEEP,
@@ -58,7 +58,7 @@ pub unsafe extern "C" fn nanosleep(request: *const c_void, remaining: *mut c_voi
                 0,
             )
         }
-        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        #[cfg(not(crabc_x86_owned_runtime))]
         {
             raw_syscall::syscall2(
                 raw_syscall::SYS_NANOSLEEP,

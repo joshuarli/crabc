@@ -138,10 +138,10 @@ use super::stdio_standard;
 #[cfg(feature = "x86-stdio-permanent-format-scan")]
 use stdio_standard::StandardStream;
 
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_printf.rs"]
 mod owned_printf;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_wide_format.rs"]
 mod owned_wide_format;
 
@@ -357,7 +357,7 @@ impl StreamOutput {
 #[cfg(feature = "x86-stdio-permanent-format-scan")]
 impl FormatSink for StreamOutput {
     unsafe fn byte(&mut self, byte: u8) {
-        #[cfg(feature = "x86-owned-static-runtime")]
+        #[cfg(crabc_x86_owned_runtime)]
         if self.failed {
             match self.count.checked_add(1) {
                 Some(next) => self.count = next,
@@ -365,9 +365,9 @@ impl FormatSink for StreamOutput {
             }
             return;
         }
-        #[cfg(feature = "x86-owned-static-runtime")]
+        #[cfg(crabc_x86_owned_runtime)]
         let status = unsafe { stdio_standard::write_formatted_byte(self.stream, byte) };
-        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        #[cfg(not(crabc_x86_owned_runtime))]
         let status = unsafe { stdio_standard::write_byte(self.stream, byte) };
         if status < 0 {
             self.failed = true;
@@ -378,7 +378,7 @@ impl FormatSink for StreamOutput {
         }
     }
     unsafe fn bytes(&mut self, source: *const u8, length: usize) {
-        #[cfg(feature = "x86-owned-static-runtime")]
+        #[cfg(crabc_x86_owned_runtime)]
         {
             if !self.failed && unsafe { stdio_standard::write_formatted_bytes(self.stream, source, length) } < 0 {
                 self.failed = true;
@@ -389,7 +389,7 @@ impl FormatSink for StreamOutput {
             }
             return;
         }
-        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        #[cfg(not(crabc_x86_owned_runtime))]
         {
             let mut index = 0usize;
             while index < length {
@@ -399,7 +399,7 @@ impl FormatSink for StreamOutput {
         }
     }
     unsafe fn repeated(&mut self, byte: u8, length: usize) {
-        #[cfg(feature = "x86-owned-static-runtime")]
+        #[cfg(crabc_x86_owned_runtime)]
         {
             // vfprintf pad emits 256-byte chunks. Preserve callback batching
             // and logical count even after F_ERR suppresses physical output.
@@ -417,7 +417,7 @@ impl FormatSink for StreamOutput {
             } else { unsafe { self.bytes(block.as_ptr(), remaining); } }
             return;
         }
-        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        #[cfg(not(crabc_x86_owned_runtime))]
         {
             let mut index = 0usize;
             while index < length {
@@ -430,8 +430,8 @@ impl FormatSink for StreamOutput {
     fn overflowed(&self) -> bool { self.overflowed }
     fn set_overflowed(&mut self) { self.overflowed = true; }
     fn failed(&self) -> bool { self.failed }
-    fn allow_float(&self) -> bool { cfg!(feature = "x86-owned-static-runtime") }
-    fn allow_errno_message(&self) -> bool { cfg!(feature = "x86-owned-static-runtime") }
+    fn allow_float(&self) -> bool { cfg!(crabc_x86_owned_runtime) }
+    fn allow_errno_message(&self) -> bool { cfg!(crabc_x86_owned_runtime) }
 }
 
 #[inline]
@@ -562,12 +562,12 @@ unsafe fn write_number(
         unsafe { output.byte(b'0') };
     }
     unsafe { output.repeated(b'0', zero_precision) };
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     {
         reversed[..digit_count].reverse();
         unsafe { output.bytes(reversed.as_ptr(), digit_count) };
     }
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     while digit_count != 0 {
         digit_count -= 1;
         unsafe { output.byte(reversed[digit_count]) };
@@ -834,7 +834,7 @@ unsafe fn write_hex_float(
     }
 }
 
-#[cfg(not(feature = "x86-owned-static-runtime"))]
+#[cfg(not(crabc_x86_owned_runtime))]
 unsafe fn format_to_sink<S: FormatSink>(
     output: &mut S,
     format: *const c_char,
@@ -1034,7 +1034,7 @@ unsafe fn format_to_buffer(
     format: *const c_char,
     args: &mut VaList<'_>,
 ) -> c_int {
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     {
         if capacity != 0 { unsafe { destination.write(0); } }
         let mut output = Output::new(destination.cast::<u8>(), capacity);
@@ -1042,7 +1042,7 @@ unsafe fn format_to_buffer(
         unsafe { output.finish(); }
         return result;
     }
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     {
     let mut output = Output::new(destination.cast::<u8>(), capacity);
     let valid = unsafe { format_to_sink(&mut output, format, args) };
@@ -1125,18 +1125,18 @@ pub unsafe extern "C" fn sprintf(
 }
 
 #[cfg(feature = "x86-stdio-permanent-format-scan")]
-#[cfg(not(feature = "x86-owned-static-runtime"))]
+#[cfg(not(crabc_x86_owned_runtime))]
 unsafe fn format_to_stream(
     stream: *mut StandardStream,
     format: *const c_char,
     args: &mut VaList<'_>,
 ) -> c_int {
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     if !stdio_standard::is_permanent_stream(stream) {
         unsafe { errno::set_errno(EINVAL) };
         return -1;
     }
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let _stream_guard = unsafe { stdio_standard::StreamGuard::acquire(stream) };
     let mut output = StreamOutput::new(stream);
     let valid = unsafe { format_to_sink(&mut output, format, args) };
@@ -1149,7 +1149,7 @@ unsafe fn format_to_stream(
     output.count as c_int
 }
 
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 unsafe fn format_to_stream(stream: *mut StandardStream, format: *const c_char, args: &mut VaList<'_>) -> c_int {
     unsafe { owned_printf::format_stream(stream, format, args) }
 }
@@ -1407,16 +1407,16 @@ unsafe fn assign_count(args: &mut VaList<'_>, length: Length, count: usize) {
     }
 }
 
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_scanf.rs"]
 mod owned_scanf;
 
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 unsafe fn scan_from_string(input: *const c_char, format: *const c_char, args: &mut VaList<'_>) -> c_int {
     unsafe { owned_scanf::string(input, format, args) }
 }
 
-#[cfg(not(feature = "x86-owned-static-runtime"))]
+#[cfg(not(crabc_x86_owned_runtime))]
 unsafe fn scan_from_string(
     input: *const c_char,
     format: *const c_char,
@@ -1850,23 +1850,23 @@ unsafe fn scan_integer_stream(
     Some((value, negative))
 }
 
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 unsafe fn scan_from_stream(stream: *mut StandardStream, format: *const c_char, args: &mut VaList<'_>) -> c_int {
     unsafe { owned_scanf::stream(stream, format, args) }
 }
 
-#[cfg(all(feature = "x86-stdio-permanent-format-scan", not(feature = "x86-owned-static-runtime")))]
+#[cfg(all(feature = "x86-stdio-permanent-format-scan", not(crabc_x86_owned_runtime)))]
 unsafe fn scan_from_stream(
     stream: *mut StandardStream,
     format: *const c_char,
     args: &mut VaList<'_>,
 ) -> c_int {
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     if !stdio_standard::is_permanent_stream(stream) {
         unsafe { errno::set_errno(EINVAL) };
         return EOF;
     }
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let _stream_guard = unsafe { stdio_standard::StreamGuard::acquire(stream) };
     let mut reader = StreamReader::new(stream);
     let mut directive = format.cast::<u8>();

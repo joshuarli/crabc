@@ -4013,10 +4013,10 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
     static_root_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
     static_root_text = static_root_source.read_text(errors="replace")
     environment_runtime_wiring = (
-        '#[cfg(not(feature = "x86-environment-runtime"))]\n'
+        '#[cfg(not(crabc_x86_environment_runtime))]\n'
         '#[path = "environment.rs"]\n'
         'mod environment;\n'
-        '#[cfg(feature = "x86-environment-runtime")]\n'
+        '#[cfg(crabc_x86_environment_runtime)]\n'
         '#[path = "environment_runtime.rs"]\n'
         "mod environment;"
     )
@@ -4042,7 +4042,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "temporary-name suffix helper must remain an explicit module"
         )
     temporary_names_wiring = (
-        '#[cfg(feature = "x86-temporary-names")]\n'
+        '#[cfg(crabc_x86_temporary_names)]\n'
         '#[path = "temporary_names.rs"]\n'
         "mod temporary_names;"
     )
@@ -4452,7 +4452,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "filesystem_access.rs"]',
         '#[path = "fchdir.rs"]',
         '#[path = "mktemp.rs"]',
-        '#[cfg(feature = "x86-temporary-names")]',
+        '#[cfg(crabc_x86_temporary_names)]',
         '#[path = "temporary_names.rs"]',
         '#[path = "descriptor_control.rs"]',
         '#[path = "ioctl.rs"]',

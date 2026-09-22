@@ -340,15 +340,15 @@ class X86ParityLedgerTests(unittest.TestCase):
         implementation = exit_owners[0]
         self.assertIn("weak_alias(dummy, __stdio_exit)", implementation)
         self.assertIn(
-            '#[cfg_attr(not(feature = "x86-owned-static-runtime"), linkage = "weak")]',
+            '#[cfg_attr(not(crabc_x86_owned_runtime), linkage = "weak")]',
             implementation,
         )
         self.assertIn(
-            '#[cfg(feature = "x86-owned-static-runtime")]\n    unsafe { __stdio_exit() };',
+            '#[cfg(crabc_x86_owned_runtime)]\n    unsafe { __stdio_exit() };',
             implementation,
         )
         self.assertIn(
-            '#[cfg(feature = "x86-owned-static-runtime")]\n'
+            '#[cfg(crabc_x86_owned_runtime)]\n'
             "    unsafe { super::stdio_standard::flush_all_on_exit() };",
             implementation,
         )
@@ -356,8 +356,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
         ).read_text(encoding="utf-8")
         self.assertIn(
-            '#[cfg_attr(feature = "x86-owned-static-runtime", path = "owned_static_stdio.rs")]\n'
-            '#[cfg_attr(not(feature = "x86-owned-static-runtime"), path = "stdio_standard.rs")]\n'
+            '#[cfg_attr(crabc_x86_owned_runtime, path = "owned_static_stdio.rs")]\n'
+            '#[cfg_attr(not(crabc_x86_owned_runtime), path = "stdio_standard.rs")]\n'
             "mod stdio_standard;",
             static_root,
         )
@@ -697,7 +697,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         family = self.family(self.data(), "libc.posix-runtime")
         source_path = ROOT / "libc/src/c_abi/x86_64/static_c_abi.rs"
         source = source_path.read_text(encoding="utf-8")
-        guard = '#[cfg(any(feature = "x86-posix-spawn-file-actions", feature = "x86-owned-static-runtime"))]'
+        guard = '#[cfg(any(feature = "x86-posix-spawn-file-actions", crabc_x86_owned_runtime))]'
         changed = self.replace_required(source, guard, "", "spawn action composition")
         read_text = Path.read_text
 
@@ -18943,7 +18943,7 @@ class X86ParityLedgerTests(unittest.TestCase):
 
         unguarded_default = self.replace_required(
             implementation,
-            '#[cfg(feature = "x86-owned-static-runtime")]\n'
+            '#[cfg(crabc_x86_owned_runtime)]\n'
             "static DEFAULT_ATTRIBUTES: core::sync::atomic::AtomicU64 =",
             "static DEFAULT_ATTRIBUTES: core::sync::atomic::AtomicU64 =",
             "pthread attribute owned default state",
@@ -23879,7 +23879,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         ledger.require_frozen_lchmod_unsupported_selection(static_root)
         widened_lchmod = self.replace_required(
             static_root,
-            '#[cfg(not(feature = "x86-owned-static-runtime"))]\n'
+            '#[cfg(not(crabc_x86_owned_runtime))]\n'
             '#[path = "lchmod_unsupported.rs"]\n'
             "mod lchmod_unsupported;",
             '#[path = "lchmod_unsupported.rs"]\nmod lchmod_unsupported;',
@@ -25407,7 +25407,7 @@ class X86ParityLedgerTests(unittest.TestCase):
 
         widened_frozen = self.replace_required(
             static_root,
-            '#[cfg(not(feature = "x86-owned-static-runtime"))]\n'
+            '#[cfg(not(crabc_x86_owned_runtime))]\n'
             '#[path = "descriptor_control.rs"]\n'
             "mod descriptor_control;",
             '#[path = "descriptor_control.rs"]\nmod descriptor_control;',
@@ -25421,10 +25421,10 @@ class X86ParityLedgerTests(unittest.TestCase):
 
         stale_owned_provider = self.replace_required(
             static_root,
-            '#[cfg(feature = "x86-owned-static-runtime")]\n'
+            '#[cfg(crabc_x86_owned_runtime)]\n'
             '#[path = "owned_descriptor_control.rs"]\n'
             "mod descriptor_control;",
-            '#[cfg(feature = "x86-owned-static-runtime")]\n'
+            '#[cfg(crabc_x86_owned_runtime)]\n'
             '#[path = "descriptor_control.rs"]\n'
             "mod descriptor_control;",
             "owned descriptor-control selection",
@@ -30690,7 +30690,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         widened_reporting = self.replace_required(
             static_root,
             '#[cfg(all(feature = "x86-signal-reporting", '
-            'not(feature = "x86-owned-static-runtime")))]',
+            'not(crabc_x86_owned_runtime)))]',
             '#[cfg(feature = "x86-signal-reporting")]',
             "frozen signal reporting selection",
         )
@@ -30705,7 +30705,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         widened_sysv_helpers = self.replace_required(
             static_root,
             '#[cfg(all(feature = "x86-signal-sysv-helpers", '
-            'not(feature = "x86-owned-static-runtime")))]',
+            'not(crabc_x86_owned_runtime)))]',
             '#[cfg(feature = "x86-signal-sysv-helpers")]',
             "frozen SysV signal-helper selection",
         )
@@ -30720,7 +30720,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         frozen_only_aliases = self.replace_required(
             signal_control,
             '#[cfg(any(feature = "x86-signal-legacy-aliases", '
-            'feature = "x86-owned-static-runtime"))]',
+            'crabc_x86_owned_runtime))]',
             '#[cfg(feature = "x86-signal-legacy-aliases")]',
             "signal weak alias selection",
         )

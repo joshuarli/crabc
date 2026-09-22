@@ -45,9 +45,9 @@ compile_error!("x86 pthread-atfork leaf requires little-endian Linux/x86-64");
 
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicBool, Ordering};
-#[cfg(not(feature = "x86-owned-static-runtime"))]
+#[cfg(not(crabc_x86_owned_runtime))]
 use core::sync::atomic::AtomicUsize;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 use core::sync::atomic::AtomicPtr;
 
 use super::c_status;
@@ -56,7 +56,7 @@ use super::{
     signal_execution, static_tls,
 };
 
-#[cfg(not(feature = "x86-owned-static-runtime"))]
+#[cfg(not(crabc_x86_owned_runtime))]
 const ATFORK_CAPACITY: usize = 32;
 const ENOMEM: c_int = 12;
 const EAGAIN: i64 = 11;
@@ -67,7 +67,7 @@ const LINUX_X86_64_SYS_FORK: i64 = 57;
 
 type AtforkHook = unsafe extern "C" fn();
 
-#[cfg(not(feature = "x86-owned-static-runtime"))]
+#[cfg(not(crabc_x86_owned_runtime))]
 #[derive(Clone, Copy)]
 struct AtforkRegistration {
     prepare: Option<AtforkHook>,
@@ -75,7 +75,7 @@ struct AtforkRegistration {
     child: Option<AtforkHook>,
 }
 
-#[cfg(not(feature = "x86-owned-static-runtime"))]
+#[cfg(not(crabc_x86_owned_runtime))]
 impl AtforkRegistration {
     const EMPTY: Self = Self {
         prepare: None,
@@ -89,9 +89,9 @@ impl AtforkRegistration {
 // while held. Retain the existing paired lock even for an empty registry so
 // a concurrent first registration cannot cross an unprotected fork snapshot.
 static ATFORK_LOCK: AtomicBool = AtomicBool::new(false);
-#[cfg(not(feature = "x86-owned-static-runtime"))]
+#[cfg(not(crabc_x86_owned_runtime))]
 static ATFORK_COUNT: AtomicUsize = AtomicUsize::new(0);
-#[cfg(not(feature = "x86-owned-static-runtime"))]
+#[cfg(not(crabc_x86_owned_runtime))]
 static mut ATFORK_REGISTRATIONS: [AtforkRegistration; ATFORK_CAPACITY] =
     [AtforkRegistration::EMPTY; ATFORK_CAPACITY];
 
@@ -99,7 +99,7 @@ static mut ATFORK_REGISTRATIONS: [AtforkRegistration; ATFORK_CAPACITY] =
 // While the lock is held, HEAD also acts as the source's traversal cursor:
 // prepare leaves it at the oldest node, completion returns it to the newest.
 // Nodes are never freed because pthread_atfork has no deregistration API.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[repr(C)]
 struct AtforkNode {
     prepare: Option<AtforkHook>,
@@ -109,7 +109,7 @@ struct AtforkNode {
     next: *mut AtforkNode,
 }
 
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 static OWNED_ATFORK_HEAD: AtomicPtr<AtforkNode> = AtomicPtr::new(core::ptr::null_mut());
 
 /// Perform only the selected Linux x86-64 `fork=57` transition.
@@ -150,7 +150,7 @@ fn unlock_registry() {
     ATFORK_LOCK.store(false, Ordering::Release);
 }
 
-#[cfg(not(feature = "x86-owned-static-runtime"))]
+#[cfg(not(crabc_x86_owned_runtime))]
 #[inline]
 unsafe fn registrations() -> *mut AtforkRegistration {
     core::ptr::addr_of_mut!(ATFORK_REGISTRATIONS).cast::<AtforkRegistration>()
@@ -164,7 +164,7 @@ unsafe fn registrations() -> *mut AtforkRegistration {
 /// copied lock. This is the private `__fork_handler` shape used by musl's
 /// `fork`; callers must preserve its paired prepare/post transition and never
 /// invoke it reentrantly from a callback.
-#[cfg(not(feature = "x86-owned-static-runtime"))]
+#[cfg(not(crabc_x86_owned_runtime))]
 #[inline(never)]
 #[no_mangle]
 pub unsafe extern "C" fn __fork_handler(who: c_int) {
@@ -204,7 +204,7 @@ pub unsafe extern "C" fn __fork_handler(who: c_int) {
 /// A negative prepare call must have exactly one parent (zero) or child
 /// (positive) completion. Callbacks return normally and never reenter the
 /// registry while this task retains its lock.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[inline(never)]
 #[no_mangle]
 pub unsafe extern "C" fn __fork_handler(who: c_int) {
@@ -261,7 +261,7 @@ pub unsafe extern "C" fn __ldso_atfork(_who: c_int) {}
 /// The owned fork and _Fork transitions call this exact seam in source
 /// order. The fallback selects no queues, cancellation or descriptor
 /// coordination; those require the future strong owned AIO implementation.
-#[cfg(not(feature = "x86-owned-static-runtime"))]
+#[cfg(not(crabc_x86_owned_runtime))]
 #[inline(never)]
 #[no_mangle]
 #[linkage = "weak"]
@@ -272,7 +272,7 @@ pub unsafe extern "C" fn __aio_atfork(_who: c_int) {}
 /// never waits on or traverses a possibly interrupted worker registry. The
 /// child keeps its FS image and copies only caller-owned TSD representation;
 /// copied key, allocator, loader and application locks are not repaired here.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 unsafe fn fork_without_handlers() -> i64 {
     let mut saved = 0_u64;
     unsafe { signal_execution::block_all_signals(&mut saved) };
@@ -299,7 +299,7 @@ unsafe fn fork_without_handlers() -> i64 {
 /// already-prepared loader transaction. The child still repairs its TID, TSD,
 /// main pointer, robust list, and signal target before abort unlock and AIO;
 /// only the selected-worker registry/task reset waits for loader completion.
-#[cfg(all(feature = "x86-owned-static-runtime", feature = "x86-owned-dynamic-runtime"))]
+#[cfg(all(crabc_x86_owned_runtime, crabc_x86_dynamic_runtime))]
 unsafe fn fork_without_handlers_deferred_registry_reset(
 ) -> (i64, Option<pthread_create_join::DeferredProcessChildRegistryReset>) {
     let mut saved = 0_u64;
@@ -333,7 +333,7 @@ unsafe fn fork_without_handlers_deferred_registry_reset(
 /// # Safety
 /// The caller executes on an initialized owned main or pthread task. In the
 /// child it must obey the post-fork async-signal-safe execution restrictions.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[no_mangle]
 pub unsafe extern "C" fn _Fork() -> c_int {
     c_status(unsafe { fork_without_handlers() })
@@ -345,7 +345,7 @@ pub unsafe extern "C" fn _Fork() -> c_int {
 /// callback must remain executable until every admitted `fork` that can read
 /// it has completed.  The callbacks must return normally and must not call
 /// this leaf recursively while its registry lock is held.
-#[cfg(not(feature = "x86-owned-static-runtime"))]
+#[cfg(not(crabc_x86_owned_runtime))]
 #[no_mangle]
 pub unsafe extern "C" fn pthread_atfork(
     prepare: Option<AtforkHook>,
@@ -382,7 +382,7 @@ pub unsafe extern "C" fn pthread_atfork(
 /// # Safety
 /// Each non-null callback stays executable for every later fork that can
 /// reach it, returns normally, and does not reenter this locked registry.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[no_mangle]
 pub unsafe extern "C" fn pthread_atfork(
     prepare: Option<AtforkHook>,
@@ -437,9 +437,9 @@ pub unsafe extern "C" fn fork() -> c_int {
     // SAFETY: this private fork transaction restores the exact one-word mask
     // on every parent, child, and raw-error completion path below.
     unsafe { signal_execution::block_application_signals(&mut saved_signal_mask) };
-    #[cfg(feature = "x86-owned-dynamic-runtime")]
+    #[cfg(crabc_x86_dynamic_runtime)]
     let loader_callback_lock = pthread_create_join::fork_has_other_runtime_tasks();
-    #[cfg(feature = "x86-owned-dynamic-runtime")]
+    #[cfg(crabc_x86_dynamic_runtime)]
     let Some(loader_fork) = (unsafe { static_tls::prepare_fork(loader_callback_lock) }) else {
         unsafe {
             signal_execution::restore_application_signals(&saved_signal_mask);
@@ -451,9 +451,9 @@ pub unsafe extern "C" fn fork() -> c_int {
     // it through raw fork makes the copied key metadata and caller values one
     // coherent child snapshot rather than clearing an inherited partial lock.
     pthread_tsd::pthread_fork_prepare();
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     unsafe { super::owned_aio::atfork(-1) };
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     unsafe {
         // Musl `fork.c` locks __at_quick_exit_lockptr after pthread-key
         // metadata. Its random lock is next, before named IPC and stdio.
@@ -465,21 +465,21 @@ pub unsafe extern "C" fn fork() -> c_int {
         super::owned_timezone::pthread_fork_prepare();
     }
     pthread_create_join::pthread_fork_prepare();
-    #[cfg(all(feature = "x86-owned-static-runtime", feature = "x86-owned-dynamic-runtime"))]
+    #[cfg(all(crabc_x86_owned_runtime, crabc_x86_dynamic_runtime))]
     let (result, deferred_child_registry_reset) = unsafe {
         fork_without_handlers_deferred_registry_reset()
     };
-    #[cfg(all(feature = "x86-owned-static-runtime", not(feature = "x86-owned-dynamic-runtime")))]
+    #[cfg(all(crabc_x86_owned_runtime, not(crabc_x86_dynamic_runtime)))]
     let result = unsafe { fork_without_handlers() };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     let result = unsafe { raw_selected_fork() };
     if result == 0 {
-        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        #[cfg(not(crabc_x86_owned_runtime))]
         let child_tid = unsafe { pthread_create_join::register_fork_child_kernel_tid() };
         // SAFETY: the copied list lock retains the inherited caller control
         // while this first child-only TSD transfer runs. It also clears the
         // copied TSD lock, whose parent owner cannot exist in this child.
-        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        #[cfg(not(crabc_x86_owned_runtime))]
         if !unsafe { pthread_tsd::adopt_current_values_after_fork() }
             || !static_tls::adopt_current_thread_after_fork()
         {
@@ -487,9 +487,9 @@ pub unsafe extern "C" fn fork() -> c_int {
         }
         // SAFETY: the child now has its caller's main TSD/TLS identity. Drop
         // inherited worker handles and the copied list lock before callbacks.
-        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        #[cfg(not(crabc_x86_owned_runtime))]
         unsafe { pthread_create_join::pthread_fork_child(child_tid) };
-        #[cfg(feature = "x86-owned-static-runtime")]
+        #[cfg(crabc_x86_owned_runtime)]
         unsafe {
             // `fork.c` completes its private atfork locks forward: the copied
             // quick-exit guard, BSD random, then named IPC/stdio-family state.
@@ -504,7 +504,7 @@ pub unsafe extern "C" fn fork() -> c_int {
             // after owned locks and before the loader, as in musl fork.c.
             pthread_tsd::pthread_fork_child();
         }
-        #[cfg(feature = "x86-owned-dynamic-runtime")]
+        #[cfg(crabc_x86_dynamic_runtime)]
         unsafe {
             // The inner transaction already repaired only caller identity,
             // TSD, robust-list, and signal targets. Re-root loader ownership
@@ -520,7 +520,7 @@ pub unsafe extern "C" fn fork() -> c_int {
         // SAFETY: this completes the parent side of the exact list-lock pair
         // on both a successful parent return and a raw fork failure.
         unsafe { pthread_create_join::pthread_fork_parent() };
-        #[cfg(feature = "x86-owned-static-runtime")]
+        #[cfg(crabc_x86_owned_runtime)]
         unsafe {
             // `fork.c` completes its private atfork locks forward before user
             // parent callbacks: quick-exit, BSD random, then named IPC/stdio.
@@ -533,10 +533,10 @@ pub unsafe extern "C" fn fork() -> c_int {
         }
         // SAFETY: this is the matching outer key-metadata completion after
         // every parent-side raw fork result.
-        #[cfg(feature = "x86-owned-static-runtime")]
+        #[cfg(crabc_x86_owned_runtime)]
         unsafe { super::owned_aio::atfork(0) };
         unsafe { pthread_tsd::pthread_fork_parent() };
-        #[cfg(feature = "x86-owned-dynamic-runtime")]
+        #[cfg(crabc_x86_dynamic_runtime)]
         unsafe { loader_fork.complete(false) };
     }
     // SAFETY: this restores the caller's saved application mask after all

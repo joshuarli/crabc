@@ -130,7 +130,7 @@ pub unsafe extern "C" fn poll(
 ) -> c_int {
     // SAFETY: the caller owns the complete Linux poll-array contract. The
     // scalar count and timeout retain their x86 C ABI words exactly.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let result = unsafe {
         super::pthread_cancel::syscall_cp(
             raw_syscall::SYS_POLL,
@@ -142,7 +142,7 @@ pub unsafe extern "C" fn poll(
             0,
         )
     };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     let result = unsafe {
         raw_syscall::syscall3(
             raw_syscall::SYS_POLL,
@@ -186,7 +186,7 @@ pub unsafe extern "C" fn ppoll(
     };
     // SAFETY: all pointer and signal-mask semantics remain with the C caller;
     // Linux uses x86 r10/r8 for the timeout/mask fourth and fifth words.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let result = unsafe {
         super::pthread_cancel::syscall_cp(
             raw_syscall::SYS_PPOLL,
@@ -198,7 +198,7 @@ pub unsafe extern "C" fn ppoll(
             0,
         )
     };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     let result = unsafe {
         raw_syscall::syscall5(
             raw_syscall::SYS_PPOLL,
@@ -265,7 +265,7 @@ pub unsafe extern "C" fn select(
 
     // SAFETY: the caller owns all descriptor-set extents and syscall-visible
     // storage. Linux takes its fourth and fifth arguments in x86 r10/r8.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let result = unsafe {
         super::pthread_cancel::syscall_cp(
             raw_syscall::SYS_SELECT,
@@ -277,7 +277,7 @@ pub unsafe extern "C" fn select(
             0,
         )
     };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     let result = unsafe {
         raw_syscall::syscall5(
             raw_syscall::SYS_SELECT,
@@ -328,7 +328,7 @@ pub unsafe extern "C" fn pselect(
     };
     // SAFETY: the caller owns the public record and descriptor-set contracts;
     // this local pair has the Linux `pselect6` pointer/size ABI in x86 r9.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let result = unsafe {
         super::pthread_cancel::syscall_cp(
             raw_syscall::SYS_PSELECT6,
@@ -340,7 +340,7 @@ pub unsafe extern "C" fn pselect(
             &mask_argument as *const PselectMaskArgument as usize as i64,
         )
     };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     let result = unsafe {
         raw_syscall::syscall6(
             raw_syscall::SYS_PSELECT6,
@@ -363,7 +363,7 @@ pub unsafe extern "C" fn pselect(
 #[no_mangle]
 pub extern "C" fn pause() -> c_int {
     // SAFETY: pause has no user arguments and Linux owns all wait state.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let result = unsafe {
         super::pthread_cancel::syscall_cp(
             raw_syscall::SYS_PAUSE,
@@ -375,7 +375,7 @@ pub extern "C" fn pause() -> c_int {
             0,
         )
     };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     let result = unsafe { raw_syscall::syscall0(raw_syscall::SYS_PAUSE) };
     c_status(result)
 }
@@ -392,7 +392,7 @@ pub extern "C" fn pause() -> c_int {
 pub unsafe extern "C" fn sigsuspend(mask: *const c_void) -> c_int {
     // SAFETY: Linux consumes one x86 kernel signal-set word from the caller's
     // public record and owns the atomic mask swap/restore transition.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let result = unsafe {
         super::pthread_cancel::syscall_cp(
             raw_syscall::SYS_RT_SIGSUSPEND,
@@ -404,7 +404,7 @@ pub unsafe extern "C" fn sigsuspend(mask: *const c_void) -> c_int {
             0,
         )
     };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     let result = unsafe {
         raw_syscall::syscall2(
             raw_syscall::SYS_RT_SIGSUSPEND,

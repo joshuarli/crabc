@@ -82,7 +82,7 @@ fcntl:
 
     .section .note.GNU-stack,"",@progbits
 "#,
-    owned_blocking_lock = const cfg!(feature = "x86-owned-static-runtime") as u8,
+    owned_blocking_lock = const cfg!(crabc_x86_owned_runtime) as u8,
     no_argument = sym fcntl_no_argument,
     scalar = sym fcntl_scalar,
     record_lock = sym record_locks::fcntl_record_lock,

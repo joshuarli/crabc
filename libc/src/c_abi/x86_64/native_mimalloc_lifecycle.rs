@@ -187,7 +187,7 @@ unsafe extern "C" fn finish_selected_process_in_fini_array() {
 #[used]
 #[linkage = "internal"]
 #[link_section = ".fini_array"]
-#[cfg_attr(feature = "x86-owned-dynamic-runtime", export_name = "__crabc_x86_native_mimalloc_process_finalizer")]
+#[cfg_attr(crabc_x86_dynamic_runtime, export_name = "__crabc_x86_native_mimalloc_process_finalizer")]
 static SELECTED_PROCESS_DONE_FINI_ARRAY: unsafe extern "C" fn() =
     finish_selected_process_in_fini_array;
 

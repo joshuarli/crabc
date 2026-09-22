@@ -456,7 +456,7 @@ class ResolverAliasOrdinaryBoundaryRegressionTests(unittest.TestCase):
 
         source = (ROOT / 'libc/src/c_abi/x86_64/resolver_runtime.rs').read_text(encoding='utf-8')
         _validate_selected_source_text(source)
-        marker = '#[cfg(not(feature = "x86-owned-static-runtime"))]\n#[no_mangle]\npub unsafe extern "C" fn getaddrinfo('
+        marker = '#[cfg(not(crabc_x86_owned_runtime))]\n#[no_mangle]\npub unsafe extern "C" fn getaddrinfo('
         self.assertIn(marker, source)
         with self.assertRaisesRegex(ReceiptError, 'legacy getaddrinfo caller is not excluded'):
             _validate_selected_source_text(source.replace(marker, '#[no_mangle]\npub unsafe extern "C" fn getaddrinfo(', 1))

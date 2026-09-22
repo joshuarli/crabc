@@ -36,7 +36,7 @@ class OwnedStaticFilesystemConsumerTests(unittest.TestCase):
         self.assertNotIn("pthread_testcancel", directory)
         self.assertIn("has no cancellation-state wrapper", directory)
 
-        self.assertIn('#[cfg(feature = "x86-owned-static-runtime")]', traversal)
+        self.assertIn('#[cfg(crabc_x86_owned_runtime)]', traversal)
         self.assertIn("unsafe fn owned_static_nftw_cancellation_guard", traversal)
         self.assertIn("pthread_setcancelstate(", traversal)
         self.assertIn("PTHREAD_CANCEL_DISABLE", traversal)

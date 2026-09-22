@@ -46,7 +46,7 @@ unsafe fn wait4_result(pid: c_int, status: *mut c_int, options: c_int) -> i64 {
     // contract. Linux/x86-64 receives its fourth null `rusage` argument in
     // `r10` through the raw syscall adapter.
     unsafe {
-        #[cfg(feature = "x86-owned-static-runtime")]
+        #[cfg(crabc_x86_owned_runtime)]
         {
             super::pthread_cancel::syscall_cp(
                 raw_syscall::SYS_WAIT4,
@@ -58,7 +58,7 @@ unsafe fn wait4_result(pid: c_int, status: *mut c_int, options: c_int) -> i64 {
                 0,
             )
         }
-        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        #[cfg(not(crabc_x86_owned_runtime))]
         {
             raw_syscall::syscall4(
                 raw_syscall::SYS_WAIT4,
@@ -128,7 +128,7 @@ pub unsafe extern "C" fn waitid(
     // output-record contract. The raw adapter places `options`/NULL rusage in
     // Linux/x86-64's r10/r8 argument registers, respectively.
     let result = unsafe {
-        #[cfg(feature = "x86-owned-static-runtime")]
+        #[cfg(crabc_x86_owned_runtime)]
         {
             super::pthread_cancel::syscall_cp(
                 raw_syscall::SYS_WAITID,
@@ -140,7 +140,7 @@ pub unsafe extern "C" fn waitid(
                 0,
             )
         }
-        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        #[cfg(not(crabc_x86_owned_runtime))]
         {
             raw_syscall::syscall5(
                 raw_syscall::SYS_WAITID,

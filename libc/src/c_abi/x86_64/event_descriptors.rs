@@ -132,7 +132,7 @@ unsafe fn epoll_pwait_syscall(
     // public signal-mask lifetime. Linux consumes only the first one-word
     // kernel mask and the helper moves arguments four through six into
     // r10/r8/r9 respectively.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let result = unsafe {
         super::pthread_cancel::syscall_cp(
             raw_syscall::SYS_EPOLL_PWAIT,
@@ -144,7 +144,7 @@ unsafe fn epoll_pwait_syscall(
             KERNEL_SIGSET_SIZE as i64,
         )
     };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     let result = unsafe {
         raw_syscall::syscall6(
             raw_syscall::SYS_EPOLL_PWAIT,
@@ -239,7 +239,7 @@ pub extern "C" fn eventfd(initial_value: c_uint, flags: c_int) -> c_int {
 #[no_mangle]
 pub unsafe extern "C" fn eventfd_read(fd: c_int, value: *mut u64) -> c_int {
     // SAFETY: the caller supplies writable eight-byte eventfd storage.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let result = unsafe {
         super::pthread_cancel::syscall_cp(
             raw_syscall::SYS_READ,
@@ -251,7 +251,7 @@ pub unsafe extern "C" fn eventfd_read(fd: c_int, value: *mut u64) -> c_int {
             0,
         )
     };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     let result = unsafe {
         raw_syscall::syscall3(
             raw_syscall::SYS_READ,
@@ -277,7 +277,7 @@ pub unsafe extern "C" fn eventfd_read(fd: c_int, value: *mut u64) -> c_int {
 #[no_mangle]
 pub extern "C" fn eventfd_write(fd: c_int, value: u64) -> c_int {
     // SAFETY: the local scalar stays live and readable for the syscall.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let result = unsafe {
         super::pthread_cancel::syscall_cp(
             raw_syscall::SYS_WRITE,
@@ -289,7 +289,7 @@ pub extern "C" fn eventfd_write(fd: c_int, value: u64) -> c_int {
             0,
         )
     };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     let result = unsafe {
         raw_syscall::syscall3(
             raw_syscall::SYS_WRITE,

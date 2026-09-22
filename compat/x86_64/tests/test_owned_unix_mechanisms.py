@@ -36,7 +36,7 @@ class OwnedUnixMechanismTests(unittest.TestCase):
 
         root = STATIC_ROOT.read_text(encoding="utf-8")
         self.assertIn(
-            '#[cfg(feature = "x86-owned-static-runtime")]\n'
+            '#[cfg(crabc_x86_owned_runtime)]\n'
             '#[path = "owned_unix_mechanisms.rs"]\n'
             "mod owned_unix_mechanisms;",
             root,

@@ -120,7 +120,7 @@ pub unsafe extern "C" fn chdir(path: *const c_char) -> c_int {
 /// `path` must designate a readable NUL-terminated pathname during the syscall.
 /// The caller owns process-wide pathname coordination and the consequences for
 /// existing CWD and open descriptors; this operation is not a confinement API.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[no_mangle]
 pub unsafe extern "C" fn chroot(path: *const c_char) -> c_int {
     c_status(unsafe { raw_syscall::syscall1(raw_syscall::SYS_CHROOT, path as usize as i64) })

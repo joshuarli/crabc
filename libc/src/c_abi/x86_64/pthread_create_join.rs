@@ -164,7 +164,7 @@ const _: () = {
 /// has no registry membership or mapped-control retirement edge. The first
 /// cancellation request installs the source handler before delivering through
 /// the lifecycle-owned target transaction.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 pub(super) unsafe fn publish_initial_selected_pthread_cancellation_state() {
     // SAFETY: each selected process startup calls this only after its static
     // or dynamic TLS owner installed the concrete x86 TCB and before it
@@ -488,9 +488,9 @@ struct ThreadControl {
     // handshake. The callback stays closed until the child reports Attached.
     #[cfg(feature = "native-mimalloc-shadow")]
     native_mimalloc_attach: AtomicI32,
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     startup_signal_mask: Option<u64>,
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     scheduler_control: AtomicI32,
     // A linked detached record begins with a zero child-TID before clone has
     // installed the kernel clear-child-tid ownership. It therefore remains
@@ -796,9 +796,9 @@ fn current_is_selected_initial_thread() -> bool {
 /// retired while another worker remained alive.
 #[inline(always)]
 unsafe fn exit_selected_final_runtime_task() -> ! {
-    #[cfg(feature = "x86-owned-dynamic-runtime")]
+    #[cfg(crabc_x86_dynamic_runtime)]
     unsafe { super::owned_dynamic_runtime::exit(0) }
-    #[cfg(not(feature = "x86-owned-dynamic-runtime"))]
+    #[cfg(not(crabc_x86_dynamic_runtime))]
     unsafe { super::static_startup::exit(0) }
 }
 
@@ -893,7 +893,7 @@ pub(super) fn has_live_selected_workers() -> bool {
 /// Read logical task state under the registry lock, then release this snapshot
 /// before acquiring the outer loader transaction. With no other live task,
 /// no sibling can race a new creation after this observation.
-#[cfg(feature = "x86-owned-dynamic-runtime")]
+#[cfg(crabc_x86_dynamic_runtime)]
 pub(super) fn fork_has_other_runtime_tasks() -> bool {
     let current = pthread_identity::current_thread_pointer() as usize;
     lock_selected_worker_registry();
@@ -1030,14 +1030,14 @@ unsafe fn adopt_process_child(child_tid: c_int, inherited_worker: Option<*mut Th
 /// user entry and removed only at retirement. This owned-only snapshot lets
 /// clone and _Fork perform musl's minimal __post_Fork without taking a list lock
 /// that could already be held by an interrupted thread.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[derive(Clone, Copy)]
 pub(super) struct ProcessChildCaller(Option<*mut ThreadControl>);
 
 /// # Safety
 /// The caller is an initialized owned task with all signals blocked. Its
 /// control remains live through the raw process transition and sole-child adoption.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 pub(super) unsafe fn capture_process_child_caller() -> ProcessChildCaller {
     let pointer = pthread_identity::current_thread_pointer();
     if static_tls::is_initial_thread_pointer(pointer) {
@@ -1059,7 +1059,7 @@ pub(super) unsafe fn capture_process_child_caller() -> ProcessChildCaller {
 /// # Safety
 /// Call once in a sole process child, with every signal still blocked and the
 /// copied caller control mapped, before restoring signals or callbacks.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 pub(super) unsafe fn prepare_process_child_caller(
     caller: ProcessChildCaller,
 ) -> DeferredProcessChildRegistryReset {
@@ -1079,7 +1079,7 @@ pub(super) unsafe fn prepare_process_child_caller(
 /// # Safety
 ///
 /// The caller meets [`prepare_process_child_caller`]'s sole-child conditions.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 pub(super) unsafe fn adopt_process_child_caller(caller: ProcessChildCaller) {
     let reset = unsafe { prepare_process_child_caller(caller) };
     unsafe { reset.complete() };
@@ -2030,7 +2030,7 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
     // the compare-exchange/wake protocol so a preempted creator does not make
     // the child busy-wait. The existing child_tid supplies the kernel exit
     // acknowledgement instead of redirecting clear-child-tid into control.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     unsafe {
         let state = &(*control).scheduler_control;
         if state.load(Ordering::Acquire) != 0 {
@@ -2074,9 +2074,9 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
     // 32) in the inherited mask; start_c11 instead retains the blocked
     // application mask. Publish FS+32 first: restoring can deliver signals
     // immediately, before the callback.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let startup_mask = unsafe { (*control).startup_signal_mask };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     let startup_mask: Option<u64> = None;
     let startup_mask_word = startup_mask.unwrap_or(1_u64 << 32);
     let _ = unsafe {
@@ -2092,7 +2092,7 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
     // the child owns the callback invocation and parent only reads result
     // after `finished` is published and the child has exited.
     let result = unsafe { (*control).start.invoke((*control).argument) };
-    #[cfg(not(feature = "x86-owned-dynamic-runtime"))]
+    #[cfg(not(crabc_x86_dynamic_runtime))]
     if current_is_selected_initial_thread() {
         // This callback called fork and became the static child main task.
         // Its inherited worker control was intentionally unlinked in the
@@ -2161,7 +2161,7 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
     // SAFETY: a non-final worker has completed its selected state users and
     // returns only to the private clone tail that ends this Linux task.
     // Mark explicit FILE locks before retiring their FS+32 list owner.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     unsafe { pthread_cancel::orphan_current_stdio_locks() };
     unsafe { pthread_identity::clear_current_selected_cancellation_state() };
     0
@@ -2208,7 +2208,7 @@ pub unsafe extern "C" fn pthread_create(
         // lifecycle owner.
         unsafe { super::pthread_attr::selected_worker_attributes(attributes) }
     };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     if attributes.scheduler_requested {
         return ENOTSUP;
     }
@@ -2273,7 +2273,7 @@ unsafe fn create_selected_worker_with_attributes(
     if thread.is_null() {
         return EINVAL;
     }
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     if attributes.scheduler_requested {
         return ENOTSUP;
     }
@@ -2322,9 +2322,9 @@ unsafe fn create_selected_worker_with_attributes(
                 start_ready: AtomicU8::new(0),
                 #[cfg(feature = "native-mimalloc-shadow")]
                 native_mimalloc_attach: AtomicI32::new(NATIVE_MIMALLOC_ATTACH_PENDING),
-                #[cfg(feature = "x86-owned-static-runtime")]
+                #[cfg(crabc_x86_owned_runtime)]
                 startup_signal_mask: None,
-                #[cfg(feature = "x86-owned-static-runtime")]
+                #[cfg(crabc_x86_owned_runtime)]
                 scheduler_control: AtomicI32::new(if attributes.scheduler_requested { 1 } else { 0 }),
                 creator_handoff_pending: AtomicU8::new(1),
                 cancellation_wake_leases: AtomicUsize::new(0),
@@ -2379,7 +2379,7 @@ unsafe fn create_selected_worker_with_attributes(
     // This runtime also holds SIGCANCEL until that cache is ready. Preserve
     // the existing all-signal setup interval for explicit scheduling/C11 and
     // the frozen private leaf's cancellation-only mask.
-    let creation_signal_mask = if cfg!(feature = "x86-owned-static-runtime") {
+    let creation_signal_mask = if cfg!(crabc_x86_owned_runtime) {
         if attributes.scheduler_requested || !matches!(start, SelectedWorkerStart::Pthread(_)) {
             u64::MAX
         } else { 0xffff_fffc_7fff_ffff | (1_u64 << 32) }
@@ -2398,7 +2398,7 @@ unsafe fn create_selected_worker_with_attributes(
     // The selected stack is either caller-owned or the writable upper portion
     // of a private guarded map; the separate control and v1 blocks retain the
     // live record and full fresh final-image TLS copy.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     {
         // Musl start_c11 never restores the application mask blocked around
         // clone; unlike pthread start, it also leaves inherited internal bits
@@ -2427,7 +2427,7 @@ unsafe fn create_selected_worker_with_attributes(
             child_tid,
         )
     };
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let scheduler_result = if clone_result >= 0 && attributes.scheduler_requested {
         let result = unsafe { raw_syscall::syscall3(
             144, clone_result, attributes.sched_policy as i64,
@@ -2457,7 +2457,7 @@ unsafe fn create_selected_worker_with_attributes(
     } else { 0 };
     // SAFETY: paired restoration is required on success and clone failure.
     unsafe { super::signal_execution::restore_application_signals(&creator_signal_mask) };
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     if scheduler_result < 0 { return (-scheduler_result) as c_int; }
     if is_linux_error(clone_result) {
         if !release_selected_worker(control) {
@@ -2582,7 +2582,7 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
         // SAFETY: only a non-final initial task reaches this point. Its
         // cancellation state is disabled and no ordinary-exit callback will
         // run; orphan explicit FILE locks before retiring their FS+32 owner.
-        #[cfg(feature = "x86-owned-static-runtime")]
+        #[cfg(crabc_x86_owned_runtime)]
         unsafe { pthread_cancel::orphan_current_stdio_locks() };
         unsafe { pthread_identity::clear_current_selected_cancellation_state() };
         // SAFETY: another selected worker remains. End only this initial task;
@@ -2653,7 +2653,7 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
     // task exit below after cancellation is disabled for pthread-mode exits
     // and cleanup/TSD users have completed. FILE retirement still needs the
     // current FS+32 list even though its signal target is already retired.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     unsafe { pthread_cancel::orphan_current_stdio_locks() };
     unsafe { pthread_identity::clear_current_selected_cancellation_state() };
     // SAFETY: Linux SYS_exit terminates precisely the calling task and does
@@ -2748,7 +2748,7 @@ unsafe fn join_selected_worker_with_wait(
     thread: *mut c_void,
     wait: SelectedWorkerJoinWait,
 ) -> Result<SelectedWorkerJoinResult, c_int> {
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     unsafe {
         pthread_cancel::pthread_testcancel();
         let mut original_state = 0;
@@ -2767,19 +2767,19 @@ unsafe fn join_selected_worker_with_wait(
         pthread_cancel::pthread_setcancelstate(original_state, core::ptr::null_mut());
         return result;
     }
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     unsafe { join_selected_worker_inner(thread, wait) }
 }
 
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 const JOIN_CANCEL_ENABLE: c_int = 0;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 const JOIN_CANCEL_DISABLE: c_int = 1;
 
 /// Cancellation abandons Rust frames; explicitly restore the target before
 /// invoking the joining task's outer user cleanup handlers. The target stays
 /// linked and mapped throughout the cancellable wait.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 unsafe extern "C" fn cancel_selected_worker_join(argument: *mut c_void) {
     unsafe { release_join_claim(argument.cast::<ThreadControl>()) };
 }
@@ -2848,7 +2848,7 @@ unsafe fn timed_selected_worker_futex_wait(
 
     // SAFETY: the claimed control keeps this exact child-TID word mapped,
     // while the local relative timeout remains live for the syscall duration.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let result = unsafe {
         pthread_cancel::syscall_cp(
             raw_syscall::SYS_FUTEX,
@@ -2860,7 +2860,7 @@ unsafe fn timed_selected_worker_futex_wait(
             0,
         )
     };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     let result = unsafe {
         raw_syscall::syscall4(
             raw_syscall::SYS_FUTEX,
@@ -2885,9 +2885,9 @@ unsafe fn timed_selected_worker_futex_wait(
 unsafe fn join_selected_worker_inner(
     thread: *mut c_void,
     wait: SelectedWorkerJoinWait,
-    #[cfg(feature = "x86-owned-static-runtime")] cleanup: *mut pthread_cancel::CleanupNode,
-    #[cfg(feature = "x86-owned-static-runtime")] registered: &mut bool,
-    #[cfg(feature = "x86-owned-static-runtime")] original_state: c_int,
+    #[cfg(crabc_x86_owned_runtime)] cleanup: *mut pthread_cancel::CleanupNode,
+    #[cfg(crabc_x86_owned_runtime)] registered: &mut bool,
+    #[cfg(crabc_x86_owned_runtime)] original_state: c_int,
 ) -> Result<SelectedWorkerJoinResult, c_int> {
     if thread.is_null() {
         return Err(EINVAL);
@@ -2903,7 +2903,7 @@ unsafe fn join_selected_worker_inner(
         return Err(EINVAL);
     };
 
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     unsafe {
         pthread_cancel::_pthread_cleanup_push(cleanup, Some(cancel_selected_worker_join), control.cast());
         *registered = true;
@@ -2925,7 +2925,7 @@ unsafe fn join_selected_worker_inner(
             break;
         }
         if child_tid < 0 {
-            #[cfg(feature = "x86-owned-static-runtime")]
+            #[cfg(crabc_x86_owned_runtime)]
             unsafe { pthread_cancel::pthread_setcancelstate(JOIN_CANCEL_DISABLE, core::ptr::null_mut()); }
             unsafe { release_join_claim(control) };
             return Err(EINVAL);
@@ -2935,7 +2935,7 @@ unsafe fn join_selected_worker_inner(
                 timed_selected_worker_futex_wait(control, child_tid, absolute_timeout)
             };
             if timed_wait == ETIMEDOUT || timed_wait == EINVAL {
-                #[cfg(feature = "x86-owned-static-runtime")]
+                #[cfg(crabc_x86_owned_runtime)]
                 unsafe { pthread_cancel::pthread_setcancelstate(JOIN_CANCEL_DISABLE, core::ptr::null_mut()); }
                 unsafe { release_join_claim(control) };
                 return Err(timed_wait);
@@ -2948,20 +2948,20 @@ unsafe fn join_selected_worker_inner(
         // CLONE_CHILD_CLEARTID wakes this shared (not FUTEX_PRIVATE) word as
         // the last kernel action on normal child exit. EAGAIN and EINTR only
         // request another load; no C errno translation is selected here.
-        #[cfg(feature = "x86-owned-static-runtime")]
+        #[cfg(crabc_x86_owned_runtime)]
         let wait_result = unsafe {
             pthread_cancel::syscall_cp(raw_syscall::SYS_FUTEX,
                 core::ptr::addr_of_mut!((*control).child_tid) as usize as i64,
                 FUTEX_WAIT, i64::from(child_tid), 0, 0, 0)
         };
-        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        #[cfg(not(crabc_x86_owned_runtime))]
         let wait_result: i64;
         // SAFETY: the shared child-TID word, expected value, and null timeout
         // satisfy Linux FUTEX_WAIT. Keeping this syscall at the selected join
         // boundary gives the lifecycle's wait-before-reclaim proof a direct
         // machine-code witness rather than depending on generic-wrapper
         // inlining after the worker attribute path grew.
-        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        #[cfg(not(crabc_x86_owned_runtime))]
         unsafe {
             core::arch::asm!(
                 "syscall",
@@ -2981,7 +2981,7 @@ unsafe fn join_selected_worker_inner(
             if error == EAGAIN || error == EINTR {
                 continue;
             }
-            #[cfg(feature = "x86-owned-static-runtime")]
+            #[cfg(crabc_x86_owned_runtime)]
             unsafe { pthread_cancel::pthread_setcancelstate(JOIN_CANCEL_DISABLE, core::ptr::null_mut()); }
             unsafe { release_join_claim(control) };
             return Err(error);
@@ -2990,7 +2990,7 @@ unsafe fn join_selected_worker_inner(
 
     // From this point the target may be withdrawn and unmapped: cancellation
     // must not run the claim cleanup against retired storage.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     unsafe { pthread_cancel::pthread_setcancelstate(JOIN_CANCEL_DISABLE, core::ptr::null_mut()); }
 
     // A normal returning worker publishes `finished` after its result before
@@ -3007,7 +3007,7 @@ unsafe fn join_selected_worker_inner(
         // call into the following munmap, and a retry after a failed munmap
         // intentionally leaves the worker withdrawn.
         if !release_selected_worker(control) {
-            #[cfg(feature = "x86-owned-static-runtime")]
+            #[cfg(crabc_x86_owned_runtime)]
             unsafe { pthread_cancel::pthread_setcancelstate(JOIN_CANCEL_DISABLE, core::ptr::null_mut()); }
             unsafe { release_join_claim(control) };
             return Err(EINVAL);
@@ -3129,7 +3129,7 @@ pub unsafe extern "C" fn pthread_join(thread: *mut c_void, result: *mut *mut c_v
 /// while `child_tid` represents the separate running/exited edge. Keep both
 /// reads under the registry lock so a completed target is handed to the common
 /// reclamation path only while its control mapping is still linked.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 fn selected_worker_tryjoin_preflight(thread: *mut c_void) -> Result<(), c_int> {
     if thread.is_null() {
         return Err(EINVAL);
@@ -3165,7 +3165,7 @@ fn selected_worker_tryjoin_preflight(thread: *mut c_void) -> Result<(), c_int> {
 // strong internal body hidden and give the public spelling the same ELF
 // address: a Rust forwarding wrapper would change both pointer identity and
 // normal archive override behavior.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 core::arch::global_asm!(
     ".hidden __pthread_tryjoin_np",
     ".weak pthread_tryjoin_np",
@@ -3189,7 +3189,7 @@ core::arch::global_asm!(
 /// non-null, must designate aligned writable pointer storage for a successful
 /// result handoff. The caller must not concurrently take another selected
 /// lifecycle ownership operation on the same handle.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[no_mangle]
 pub unsafe extern "C" fn __pthread_tryjoin_np(
     thread: *mut c_void,
@@ -3231,7 +3231,7 @@ pub unsafe extern "C" fn __pthread_tryjoin_np(
 /// when non-null and reached by the wait loop, must point to aligned readable
 /// native x86-64 `struct timespec` storage. The caller must not concurrently
 /// take another selected lifecycle ownership operation on `thread`.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[no_mangle]
 pub unsafe extern "C" fn __pthread_timedjoin_np(
     thread: *mut c_void,

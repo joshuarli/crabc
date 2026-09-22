@@ -299,7 +299,7 @@ class OwnedPosixFilesystemTests(unittest.TestCase):
 
         root = STATIC_ROOT.read_text(encoding="utf-8")
         self.assertIn('#[cfg(feature = "x86-file-handles")]\n#[path = "file_handles.rs"]', root)
-        self.assertIn('#[cfg(feature = "x86-temporary-names")]\n#[path = "temporary_names.rs"]', root)
+        self.assertIn('#[cfg(crabc_x86_temporary_names)]\n#[path = "temporary_names.rs"]', root)
 
     def test_source_owners_retain_the_pinned_musl_boundaries(self) -> None:
         compat = COMPAT.read_text(encoding="utf-8")

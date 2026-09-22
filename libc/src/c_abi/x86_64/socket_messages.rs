@@ -139,7 +139,7 @@ unsafe fn sendmsg_result(file_descriptor: c_int, message: *const MsgHdr, flags: 
         // SAFETY: Linux owns null message-pointer validation for this direct
         // raw form.
         return unsafe {
-            #[cfg(feature = "x86-owned-static-runtime")]
+            #[cfg(crabc_x86_owned_runtime)]
             {
                 super::pthread_cancel::syscall_cp(
                     raw_syscall::SYS_SENDMSG,
@@ -151,7 +151,7 @@ unsafe fn sendmsg_result(file_descriptor: c_int, message: *const MsgHdr, flags: 
                     0,
                 )
             }
-            #[cfg(not(feature = "x86-owned-static-runtime"))]
+            #[cfg(not(crabc_x86_owned_runtime))]
             {
                 raw_syscall::syscall3(
                     raw_syscall::SYS_SENDMSG,
@@ -191,7 +191,7 @@ unsafe fn sendmsg_result(file_descriptor: c_int, message: *const MsgHdr, flags: 
     // Linux returns. The caller owns iovec/name pointer validity and every
     // message-specific descriptor/policy contract.
     unsafe {
-        #[cfg(feature = "x86-owned-static-runtime")]
+        #[cfg(crabc_x86_owned_runtime)]
         {
             super::pthread_cancel::syscall_cp(
                 raw_syscall::SYS_SENDMSG,
@@ -203,7 +203,7 @@ unsafe fn sendmsg_result(file_descriptor: c_int, message: *const MsgHdr, flags: 
                 0,
             )
         }
-        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        #[cfg(not(crabc_x86_owned_runtime))]
         {
             raw_syscall::syscall3(
                 raw_syscall::SYS_SENDMSG,
@@ -222,7 +222,7 @@ unsafe fn recvmsg_result(file_descriptor: c_int, message: *mut MsgHdr, flags: c_
         // Keep the raw invalid-pointer result defined at this Rust boundary;
         // valid public calls always take the copy-and-sanitise path below.
         return unsafe {
-            #[cfg(feature = "x86-owned-static-runtime")]
+            #[cfg(crabc_x86_owned_runtime)]
             {
                 super::pthread_cancel::syscall_cp(
                     raw_syscall::SYS_RECVMSG,
@@ -234,7 +234,7 @@ unsafe fn recvmsg_result(file_descriptor: c_int, message: *mut MsgHdr, flags: c_
                     0,
                 )
             }
-            #[cfg(not(feature = "x86-owned-static-runtime"))]
+            #[cfg(not(crabc_x86_owned_runtime))]
             {
                 raw_syscall::syscall3(
                     raw_syscall::SYS_RECVMSG,
@@ -253,7 +253,7 @@ unsafe fn recvmsg_result(file_descriptor: c_int, message: *mut MsgHdr, flags: c_
     header.iov_padding = 0;
     header.control_padding = 0;
     let result = unsafe {
-        #[cfg(feature = "x86-owned-static-runtime")]
+        #[cfg(crabc_x86_owned_runtime)]
         {
             super::pthread_cancel::syscall_cp(
                 raw_syscall::SYS_RECVMSG,
@@ -265,7 +265,7 @@ unsafe fn recvmsg_result(file_descriptor: c_int, message: *mut MsgHdr, flags: c_
                 0,
             )
         }
-        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        #[cfg(not(crabc_x86_owned_runtime))]
         {
             raw_syscall::syscall3(
                 raw_syscall::SYS_RECVMSG,
@@ -442,7 +442,7 @@ pub unsafe extern "C" fn recvmmsg(
         index += 1;
     }
     let result = unsafe {
-        #[cfg(feature = "x86-owned-static-runtime")]
+        #[cfg(crabc_x86_owned_runtime)]
         {
             super::pthread_cancel::syscall_cp(
                 raw_syscall::SYS_RECVMMSG,
@@ -454,7 +454,7 @@ pub unsafe extern "C" fn recvmmsg(
                 0,
             )
         }
-        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        #[cfg(not(crabc_x86_owned_runtime))]
         {
             raw_syscall::syscall5(
                 raw_syscall::SYS_RECVMMSG,

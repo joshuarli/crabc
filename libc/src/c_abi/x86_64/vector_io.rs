@@ -60,10 +60,10 @@ pub unsafe extern "C" fn readv(file_descriptor: c_int, iov: *const IoVec, iovcnt
     // SAFETY: the caller owns the complete raw vector-I/O contract. Linux
     // validates the iovec count and each memory range without a libc-side
     // prevalidation pass.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let result = unsafe { super::pthread_cancel::syscall_cp(raw_syscall::SYS_READV,
         file_descriptor as i64, iov as i64, iovcnt as i64, 0, 0, 0) };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     let result = unsafe {
         raw_syscall::syscall3(
             raw_syscall::SYS_READV,
@@ -86,10 +86,10 @@ pub unsafe extern "C" fn readv(file_descriptor: c_int, iov: *const IoVec, iovcnt
 #[no_mangle]
 pub unsafe extern "C" fn writev(file_descriptor: c_int, iov: *const IoVec, iovcnt: c_int) -> isize {
     // SAFETY: the caller owns the complete raw vector-I/O contract.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let result = unsafe { super::pthread_cancel::syscall_cp(raw_syscall::SYS_WRITEV,
         file_descriptor as i64, iov as i64, iovcnt as i64, 0, 0, 0) };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     let result = unsafe {
         raw_syscall::syscall3(
             raw_syscall::SYS_WRITEV,
@@ -119,7 +119,7 @@ pub unsafe extern "C" fn preadv(
     // Linux/x86-64's legacy preadv ABI takes the signed 64-bit C offset as
     // two machine words in r10/r8, low word first. Arithmetic shift keeps the
     // signed high word for negative-offset kernel validation.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let result = unsafe {
         super::pthread_cancel::syscall_cp(
             raw_syscall::SYS_PREADV,
@@ -131,7 +131,7 @@ pub unsafe extern "C" fn preadv(
             0,
         )
     };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     let result = unsafe {
         raw_syscall::syscall5(
             raw_syscall::SYS_PREADV,
@@ -167,7 +167,7 @@ pub unsafe extern "C" fn pwritev(
     // SAFETY: the caller owns the vector-I/O lifetime/accessibility contract;
     // r10/r8 split the offset and r9 carries RWF_NOAPPEND exactly as Linux
     // x86-64 requires.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let result = unsafe {
         super::pthread_cancel::syscall_cp(
             raw_syscall::SYS_PWRITEV2,
@@ -179,7 +179,7 @@ pub unsafe extern "C" fn pwritev(
             RWF_NOAPPEND,
         )
     };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     let result = unsafe {
         raw_syscall::syscall6(
             raw_syscall::SYS_PWRITEV2,
@@ -216,7 +216,7 @@ pub unsafe extern "C" fn pwritev(
 
     // SAFETY: the caller's vector-I/O contract remains live for the fallback;
     // split offset words match Linux x86-64's preadv/pwritev ABI.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let fallback = unsafe {
         super::pthread_cancel::syscall_cp(
             raw_syscall::SYS_PWRITEV,
@@ -228,7 +228,7 @@ pub unsafe extern "C" fn pwritev(
             0,
         )
     };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     let fallback = unsafe {
         raw_syscall::syscall5(
             raw_syscall::SYS_PWRITEV,

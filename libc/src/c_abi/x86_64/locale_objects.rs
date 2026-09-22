@@ -199,9 +199,9 @@ pub(super) fn current_ctype_override() -> Option<bool> {
 // conversion and application cookie callbacks observe the same locale. This
 // guard owns no reference into FILE/TLS across callbacks and restores even if
 // a callback changed its thread locale, matching the source save/restore.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 pub(super) struct StreamLocaleGuard { saved: u8, thread: core::marker::PhantomData<*mut ()> }
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 impl StreamLocaleGuard {
     /// # Safety
     /// Calling thread has initialized runtime TLS. Keep this guard on that
@@ -214,7 +214,7 @@ impl StreamLocaleGuard {
         }
     }
 }
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 impl Drop for StreamLocaleGuard {
     fn drop(&mut self) { unsafe { CURRENT_LOCALE_MODE = self.saved; } }
 }
@@ -258,7 +258,7 @@ pub unsafe extern "C" fn newlocale(mask: c_int, name: *const c_char, base: Local
     } else {
         token_is_utf8(base)
     };
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     {
         // musl newlocale.c inherits unselected categories from a supplied
         // base; without a base it resolves their default environment names.
@@ -282,7 +282,7 @@ pub unsafe extern "C" fn newlocale(mask: c_int, name: *const c_char, base: Local
             }
         }
     }
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     if mask != 0 {
         let Some(requested) = (unsafe { requested_utf8(name) }) else {
             unsafe { errno::set_errno(ENOENT) };

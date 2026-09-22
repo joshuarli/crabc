@@ -1,4 +1,31 @@
+// Cargo features select dependency edges; these fixed target-local cfgs select
+// shared runtime capabilities. Keeping those contracts separate lets owned
+// backends share source without making allocator clients depend on C mimalloc.
+fn x86_runtime_capabilities() {
+    const CAPABILITIES: &[(&str, &str)] = &[
+        ("crabc_x86_owned_runtime", "CARGO_FEATURE_X86_OWNED_STATIC_RUNTIME"),
+        ("crabc_x86_dynamic_runtime", "CARGO_FEATURE_X86_OWNED_DYNAMIC_RUNTIME"),
+        ("crabc_x86_allocator_runtime", "CARGO_FEATURE_X86_ALLOCATOR_RUNTIME"),
+        ("crabc_x86_allocator_string_duplication", "CARGO_FEATURE_X86_ALLOCATOR_STRING_DUPLICATION"),
+        ("crabc_x86_allocator_observability", "CARGO_FEATURE_X86_ALLOCATOR_OBSERVABILITY"),
+        ("crabc_x86_environment_runtime", "CARGO_FEATURE_X86_ENVIRONMENT_RUNTIME"),
+        ("crabc_x86_temporary_names", "CARGO_FEATURE_X86_TEMPORARY_NAMES"),
+        ("crabc_x86_scandir", "CARGO_FEATURE_X86_SCANDIR"),
+        ("crabc_x86_crypt_allocator_composition", "CARGO_FEATURE_X86_CRYPT_ALLOCATOR_COMPOSITION"),
+    ];
+    let selected_x86 = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux")
+        && std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("x86_64")
+        && std::env::var("CARGO_CFG_TARGET_ENDIAN").as_deref() == Ok("little");
+    for (cfg, feature) in CAPABILITIES {
+        println!("cargo::rustc-check-cfg=cfg({cfg})");
+        if selected_x86 && std::env::var_os(feature).is_some() {
+            println!("cargo::rustc-cfg={cfg}");
+        }
+    }
+}
+
 fn main() {
+    x86_runtime_capabilities();
     // The installed static product compiles its dlfcn bridge with a local
     // unavailable-record trampoline, rather than carrying a dynamic-loader
     // weak import into a closed ET_EXEC image.

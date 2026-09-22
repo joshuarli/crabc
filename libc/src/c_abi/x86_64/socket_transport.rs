@@ -143,7 +143,7 @@ pub unsafe extern "C" fn accept(
     // SAFETY: the caller supplies Linux's optional paired sockaddr output
     // contract. The kernel validates the descriptor and copies output.
     let result = unsafe {
-        #[cfg(feature = "x86-owned-static-runtime")]
+        #[cfg(crabc_x86_owned_runtime)]
         {
             super::pthread_cancel::syscall_cp(
                 raw_syscall::SYS_ACCEPT,
@@ -155,7 +155,7 @@ pub unsafe extern "C" fn accept(
                 0,
             )
         }
-        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        #[cfg(not(crabc_x86_owned_runtime))]
         {
             raw_syscall::syscall3(
                 raw_syscall::SYS_ACCEPT,
@@ -186,7 +186,7 @@ pub unsafe extern "C" fn accept4(
     // SAFETY: the caller supplies Linux's optional paired sockaddr output
     // contract; x86's fourth syscall argument is r10.
     let result = unsafe {
-        #[cfg(feature = "x86-owned-static-runtime")]
+        #[cfg(crabc_x86_owned_runtime)]
         {
             super::pthread_cancel::syscall_cp(
                 raw_syscall::SYS_ACCEPT4,
@@ -198,7 +198,7 @@ pub unsafe extern "C" fn accept4(
                 0,
             )
         }
-        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        #[cfg(not(crabc_x86_owned_runtime))]
         {
             raw_syscall::syscall4(
                 raw_syscall::SYS_ACCEPT4,
@@ -228,7 +228,7 @@ pub unsafe extern "C" fn connect(
 ) -> c_int {
     // SAFETY: the caller supplies the complete raw sockaddr input contract.
     let result = unsafe {
-        #[cfg(feature = "x86-owned-static-runtime")]
+        #[cfg(crabc_x86_owned_runtime)]
         {
             super::pthread_cancel::syscall_cp(
                 raw_syscall::SYS_CONNECT,
@@ -240,7 +240,7 @@ pub unsafe extern "C" fn connect(
                 0,
             )
         }
-        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        #[cfg(not(crabc_x86_owned_runtime))]
         {
             raw_syscall::syscall3(
                 raw_syscall::SYS_CONNECT,
@@ -272,7 +272,7 @@ pub unsafe extern "C" fn send(
     // SAFETY: the caller supplies the complete raw send buffer contract;
     // Linux x86 receives its final peer-address words in r8/r9.
     let result = unsafe {
-        #[cfg(feature = "x86-owned-static-runtime")]
+        #[cfg(crabc_x86_owned_runtime)]
         {
             super::pthread_cancel::syscall_cp(
                 raw_syscall::SYS_SENDTO,
@@ -284,7 +284,7 @@ pub unsafe extern "C" fn send(
                 0,
             )
         }
-        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        #[cfg(not(crabc_x86_owned_runtime))]
         {
             raw_syscall::syscall6(
                 raw_syscall::SYS_SENDTO,
@@ -319,7 +319,7 @@ pub unsafe extern "C" fn recv(
     // SAFETY: the caller supplies the complete raw receive buffer contract;
     // Linux x86 receives its final source-address words in r8/r9.
     let result = unsafe {
-        #[cfg(feature = "x86-owned-static-runtime")]
+        #[cfg(crabc_x86_owned_runtime)]
         {
             super::pthread_cancel::syscall_cp(
                 raw_syscall::SYS_RECVFROM,
@@ -331,7 +331,7 @@ pub unsafe extern "C" fn recv(
                 0,
             )
         }
-        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        #[cfg(not(crabc_x86_owned_runtime))]
         {
             raw_syscall::syscall6(
                 raw_syscall::SYS_RECVFROM,
@@ -367,7 +367,7 @@ pub unsafe extern "C" fn sendto(
     // SAFETY: the caller supplies both raw buffer and sockaddr input
     // contracts; Linux x86 passes arguments four through six in r10/r8/r9.
     let result = unsafe {
-        #[cfg(feature = "x86-owned-static-runtime")]
+        #[cfg(crabc_x86_owned_runtime)]
         {
             super::pthread_cancel::syscall_cp(
                 raw_syscall::SYS_SENDTO,
@@ -379,7 +379,7 @@ pub unsafe extern "C" fn sendto(
                 i64::from(address_length),
             )
         }
-        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        #[cfg(not(crabc_x86_owned_runtime))]
         {
             raw_syscall::syscall6(
                 raw_syscall::SYS_SENDTO,
@@ -417,7 +417,7 @@ pub unsafe extern "C" fn recvfrom(
     // SAFETY: the caller supplies raw receive buffer and optional paired
     // sockaddr output contracts; Linux x86 uses r10/r8/r9 for their tail.
     let result = unsafe {
-        #[cfg(feature = "x86-owned-static-runtime")]
+        #[cfg(crabc_x86_owned_runtime)]
         {
             super::pthread_cancel::syscall_cp(
                 raw_syscall::SYS_RECVFROM,
@@ -429,7 +429,7 @@ pub unsafe extern "C" fn recvfrom(
                 address_length as usize as i64,
             )
         }
-        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        #[cfg(not(crabc_x86_owned_runtime))]
         {
             raw_syscall::syscall6(
                 raw_syscall::SYS_RECVFROM,

@@ -34,14 +34,14 @@ use super::qsort::{qsort_with_context, QsortContextCmp};
 // frozen shared DEFAULT __qsort_r exposure, so its DSO link mode must not
 // inherit this static-only visibility directive. A Rust weak wrapper would
 // have a different address and silently widen the translated source contract.
-#[cfg(not(feature = "x86-owned-dynamic-runtime"))]
+#[cfg(not(crabc_x86_dynamic_runtime))]
 core::arch::global_asm!(
     ".hidden __qsort_r",
     ".weak qsort_r",
     ".set qsort_r, __qsort_r",
 );
 
-#[cfg(feature = "x86-owned-dynamic-runtime")]
+#[cfg(crabc_x86_dynamic_runtime)]
 core::arch::global_asm!(
     ".weak qsort_r",
     ".set qsort_r, __qsort_r",

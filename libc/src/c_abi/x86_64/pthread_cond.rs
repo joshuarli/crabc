@@ -49,14 +49,14 @@ use core::ptr::null_mut;
 
 use super::{atomic, pthread_cancel, pthread_create_join, pthread_mutex, raw_syscall};
 
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_pthread_cond.rs"]
 mod owned;
 
 const ENOTSUP: c_int = 95;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 const ECANCELED: c_int = 125;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 const PTHREAD_CANCEL_DISABLE: u8 = 1;
 
 const COND_WORD_COUNT: usize = 12;
@@ -630,9 +630,9 @@ pub unsafe extern "C" fn pthread_cond_init(
     condition: *mut c_void,
     attr: *const c_void,
 ) -> c_int {
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     return unsafe { owned::init(condition, attr) };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     {
         if !attr.is_null() { return ENOTSUP; }
         unsafe { init_selected_private_cond(condition) }
@@ -653,9 +653,9 @@ pub unsafe extern "C" fn pthread_cond_init(
 pub unsafe extern "C" fn pthread_cond_destroy(condition: *mut c_void) -> c_int {
     // SAFETY: the C ABI obligations above exactly match the private selected
     // destruction seam.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     return unsafe { owned::destroy(condition) };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     unsafe { destroy_selected_private_cond(condition) }
 }
 
@@ -675,7 +675,7 @@ pub unsafe extern "C" fn pthread_cond_destroy(condition: *mut c_void) -> c_int {
 /// pthread wrapper selects cancellation for owned main/worker pthread tasks
 /// and the frozen archive's validated selected pthread worker. It does not
 /// accept non-normal mutex state.
-#[cfg(not(feature = "x86-owned-static-runtime"))]
+#[cfg(not(crabc_x86_owned_runtime))]
 #[inline(always)]
 pub(super) unsafe fn wait_selected_private_cond(
     condition: *mut c_void,
@@ -882,7 +882,7 @@ pub(super) unsafe fn wait_selected_private_cond(
 /// # Safety
 /// The caller holds a supported live mutex, protects its predicate with it,
 /// and retains both objects through wait, relock, and cancellation cleanup.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[inline(always)]
 pub(super) unsafe fn wait_selected_private_cond(condition: *mut c_void, mutex: *mut c_void) -> c_int {
     unsafe { owned::wait(condition, mutex, core::ptr::null()) }
@@ -892,7 +892,7 @@ pub(super) unsafe fn wait_selected_private_cond(condition: *mut c_void, mutex: *
 /// # Safety
 /// In addition to ordinary wait obligations, `deadline` is a readable aligned
 /// x86 timespec that remains immutable during the call.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 pub(super) unsafe fn timed_wait_selected_cond(
     condition: *mut c_void, mutex: *mut c_void, deadline: *const c_void,
 ) -> c_int {
@@ -952,9 +952,9 @@ pub(super) unsafe fn signal_selected_private_cond(condition: *mut c_void) -> c_i
 pub unsafe extern "C" fn pthread_cond_signal(condition: *mut c_void) -> c_int {
     // SAFETY: the C ABI obligations above exactly match the private selected
     // signal seam.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     return unsafe { owned::signal(condition, 1) };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     unsafe { signal_selected_private_cond(condition) }
 }
 
@@ -990,8 +990,8 @@ pub(super) unsafe fn broadcast_selected_private_cond(condition: *mut c_void) -> 
 pub unsafe extern "C" fn pthread_cond_broadcast(condition: *mut c_void) -> c_int {
     // SAFETY: the C ABI obligations above exactly match the private selected
     // broadcast seam.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     return unsafe { owned::signal(condition, -1) };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     unsafe { broadcast_selected_private_cond(condition) }
 }

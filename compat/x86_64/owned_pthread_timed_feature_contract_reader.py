@@ -1334,7 +1334,7 @@ def evaluate_feature_source(root: Path) -> dict[str, object]:
         require(f'#[path = "{leaf}"]' in module_root,
                 f"timed feature static C ABI leaf route differs: {leaf}")
     condition_route = (root / "libc/src/c_abi/x86_64/pthread_cond.rs").read_text(encoding="utf-8")
-    require('#[cfg(feature = "x86-owned-static-runtime")]\n#[path = "owned_pthread_cond.rs"]' in condition_route,
+    require('#[cfg(crabc_x86_owned_runtime)]\n#[path = "owned_pthread_cond.rs"]' in condition_route,
             "timed feature owned condition route differs")
     source_paths = {
         "pthread_cond_timedwait": "libc/src/c_abi/x86_64/owned_pthread_cond.rs",

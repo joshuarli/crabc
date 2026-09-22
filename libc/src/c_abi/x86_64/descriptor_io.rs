@@ -121,14 +121,14 @@ fn retry_dup3(old_descriptor: c_int, new_descriptor: c_int, flags: c_int) -> i64
 /// without delivery, and EINTR after close never becomes cancellation.
 #[no_mangle]
 pub extern "C" fn close(file_descriptor: c_int) -> c_int {
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     // Musl passes `__aio_close(fd)` as close's cancellation-point argument.
     // The owned hook cancels matching work and detaches its visible queue
     // incarnation before the kernel can recycle this numeric descriptor.
     let file_descriptor = unsafe { super::owned_aio::close(file_descriptor) };
     // SAFETY: `file_descriptor` is a scalar Linux descriptor word; the kernel
     // validates it and owns the close lifetime transition.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let result = unsafe {
         super::pthread_cancel::syscall_cp(
             raw_syscall::SYS_CLOSE, i64::from(file_descriptor),
@@ -139,7 +139,7 @@ pub extern "C" fn close(file_descriptor: c_int) -> c_int {
             0,
         )
     };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     let result = unsafe {
         raw_syscall::syscall1(raw_syscall::SYS_CLOSE, i64::from(file_descriptor))
     };
@@ -165,10 +165,10 @@ pub unsafe extern "C" fn read(
     count: usize,
 ) -> isize {
     // SAFETY: the caller supplies the complete raw Linux read buffer contract.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let result = unsafe { super::pthread_cancel::syscall_cp(raw_syscall::SYS_READ,
         file_descriptor as i64, buffer as i64, count as i64, 0, 0, 0) };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     let result = unsafe {
         raw_syscall::syscall3(
             raw_syscall::SYS_READ,
@@ -196,10 +196,10 @@ pub unsafe extern "C" fn write(
 ) -> isize {
     // SAFETY: the caller supplies the complete raw Linux write buffer
     // contract, including signal/descriptor policy.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let result = unsafe { super::pthread_cancel::syscall_cp(raw_syscall::SYS_WRITE,
         file_descriptor as i64, buffer as i64, count as i64, 0, 0, 0) };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     let result = unsafe {
         raw_syscall::syscall3(
             raw_syscall::SYS_WRITE,
@@ -228,7 +228,7 @@ pub unsafe extern "C" fn pread(
 ) -> isize {
     // SAFETY: the caller supplies the complete raw Linux positioned-read
     // buffer contract; x86 passes the fourth syscall word in r10.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let result = unsafe {
         super::pthread_cancel::syscall_cp(
             raw_syscall::SYS_PREAD64,
@@ -240,7 +240,7 @@ pub unsafe extern "C" fn pread(
             0,
         )
     };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     let result = unsafe {
         raw_syscall::syscall4(
             raw_syscall::SYS_PREAD64,
@@ -280,7 +280,7 @@ pub unsafe extern "C" fn pwrite(
     // SAFETY: the caller supplies the complete raw Linux buffer contract.
     // The private iovec stays live for the pwritev2 syscall, and x86's split
     // offset/flags occupy r10/r8/r9 exactly as in musl's source wrapper.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let result = unsafe {
         super::pthread_cancel::syscall_cp(
             raw_syscall::SYS_PWRITEV2,
@@ -292,7 +292,7 @@ pub unsafe extern "C" fn pwrite(
             RWF_NOAPPEND,
         )
     };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     let result = unsafe {
         raw_syscall::syscall6(
             raw_syscall::SYS_PWRITEV2,
@@ -330,7 +330,7 @@ pub unsafe extern "C" fn pwrite(
 
     // SAFETY: the caller's positioned-write buffer contract still holds; the
     // fallback retains the original signed offset word in x86 r10.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let fallback = unsafe {
         super::pthread_cancel::syscall_cp(
             raw_syscall::SYS_PWRITE64,
@@ -342,7 +342,7 @@ pub unsafe extern "C" fn pwrite(
             0,
         )
     };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     let fallback = unsafe {
         raw_syscall::syscall4(
             raw_syscall::SYS_PWRITE64,
@@ -401,7 +401,7 @@ pub extern "C" fn ftruncate(file_descriptor: c_int, length: c_long) -> c_int {
 #[no_mangle]
 pub extern "C" fn fsync(file_descriptor: c_int) -> c_int {
     // SAFETY: `file_descriptor` is a scalar Linux descriptor word.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let result = unsafe {
         super::pthread_cancel::syscall_cp(
             raw_syscall::SYS_FSYNC, i64::from(file_descriptor),
@@ -412,7 +412,7 @@ pub extern "C" fn fsync(file_descriptor: c_int) -> c_int {
             0,
         )
     };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     let result = unsafe {
         raw_syscall::syscall1(raw_syscall::SYS_FSYNC, i64::from(file_descriptor))
     };
@@ -427,7 +427,7 @@ pub extern "C" fn fsync(file_descriptor: c_int) -> c_int {
 #[no_mangle]
 pub extern "C" fn fdatasync(file_descriptor: c_int) -> c_int {
     // SAFETY: `file_descriptor` is a scalar Linux descriptor word.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let result = unsafe {
         super::pthread_cancel::syscall_cp(
             raw_syscall::SYS_FDATASYNC, i64::from(file_descriptor),
@@ -438,7 +438,7 @@ pub extern "C" fn fdatasync(file_descriptor: c_int) -> c_int {
             0,
         )
     };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     let result = unsafe {
         raw_syscall::syscall1(raw_syscall::SYS_FDATASYNC, i64::from(file_descriptor))
     };

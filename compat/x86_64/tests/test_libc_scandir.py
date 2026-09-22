@@ -28,7 +28,7 @@ class X86LibcScandirTests(unittest.TestCase):
         self.assertNotIn("x86-scandir", static_root)
         self.assertNotIn("\nscandir\n", static_exports)
         self.assertNotIn("\n__crabc_x86_scandir_v1\n", static_exports)
-        self.assertIn('#[cfg(feature = "x86-scandir")]', implementation)
+        self.assertIn('#[cfg(crabc_x86_scandir)]', implementation)
         self.assertIn('pub unsafe extern "C" fn scandir(', implementation)
         self.assertIn("src/dirent/scandir.c", implementation)
         self.assertIn("C++ exceptions and C `longjmp`", implementation)

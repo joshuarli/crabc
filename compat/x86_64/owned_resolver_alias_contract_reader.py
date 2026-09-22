@@ -1018,7 +1018,7 @@ def _validate_selected_source_text(source: str) -> None:
     getaddrinfo = 'pub unsafe extern "C" fn getaddrinfo('
     getaddrinfo_start = source.index(getaddrinfo, legacy_start)
     require('__res_send(' in source[legacy_start:getaddrinfo_start], 'resolver legacy source caller differs')
-    attached_cfg = '#[cfg(not(feature = "x86-owned-static-runtime"))]\n#[no_mangle]\n' + getaddrinfo
+    attached_cfg = '#[cfg(not(crabc_x86_owned_runtime))]\n#[no_mangle]\n' + getaddrinfo
     require(attached_cfg in source,
             'resolver legacy getaddrinfo caller is not excluded from the selected runtime')
     getaddrinfo_end = source.index('\n}', getaddrinfo_start) + 2

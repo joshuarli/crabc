@@ -54,7 +54,7 @@ core::arch::global_asm!(
     ".set pthread_testcancel, __pthread_testcancel",
 );
 
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_syscall_cancel.rs"]
 mod owned_syscall_cancel;
 
@@ -62,7 +62,7 @@ mod owned_syscall_cancel;
 /// # Safety
 /// The syscall pointer, lifetime and argument requirements hold. A caller must
 /// not own a non-cancel-safe runtime resource without a cleanup/disable scope.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[inline(always)]
 pub(super) unsafe fn syscall_cp(number: i64, a: i64, b: i64, c: i64, d: i64, e: i64, f: i64) -> i64 {
     unsafe { owned_syscall_cancel::syscall_cp(number,a,b,c,d,e,f) }
@@ -140,17 +140,17 @@ impl SelectedWorkerCancellation {
 // control mapping or allocation. The lifecycle owner publishes this address
 // into reserved FS+32 only after owned TLS is established; signal handlers
 // must never discover it through a registry scan or a TLS-GD resolver.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 static MAIN_CANCELLATION: SelectedWorkerCancellation = SelectedWorkerCancellation::new(true);
 
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 pub(super) fn main_cancellation_state() -> *const SelectedWorkerCancellation {
     core::ptr::addr_of!(MAIN_CANCELLATION)
 }
 
 // The current task alone mutates this intrusive explicit-FILE-lock list.
 // It includes C11 tasks too: FILE retirement is not a cancellation policy.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 pub(super) fn current_stdio_lock_head() -> Option<&'static AtomicUsize> {
     let state = super::pthread_identity::current_selected_cancellation_state();
     if state.is_null() { None } else { Some(unsafe { &(*state).stdio_locks }) }
@@ -161,7 +161,7 @@ pub(super) fn current_stdio_lock_head() -> Option<&'static AtomicUsize> {
 /// Cleanup/TSD callbacks have finished, cancellation is disabled, and this
 /// task is retiring without ordinary process-exit callbacks. Its FS+32 state
 /// and all still-listed FILE objects remain live through this call.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 pub(super) unsafe fn orphan_current_stdio_locks() {
     unsafe { super::stdio_standard::orphan_current_stdio_locks(); }
 }
@@ -192,13 +192,13 @@ pub(super) fn mark_selected_worker_pending(
 
 #[inline]
 fn current_pthread_slot() -> Option<&'static SelectedWorkerCancellation> {
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let state = {
         let pointer = super::pthread_identity::current_selected_cancellation_state();
         if pointer.is_null() { return None; }
         pointer
     };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     let state = pthread_create_join::current_selected_pthread_worker_cancellation()?;
     // SAFETY: current-worker resolution proves its control mapping remains
     // live until this task exits. This private reference is used only for the
@@ -338,9 +338,9 @@ pub(super) fn disable_current_selected_pthread_cancellation_for_exit() {
 /// the target application; asynchronous targets must obey POSIX async safety.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_cancel(thread: *mut c_void) -> c_int {
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     { return unsafe { owned_syscall_cancel::request(thread) }; }
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     if pthread_create_join::request_selected_pthread_cancellation(thread) {
         0
     } else {
@@ -379,7 +379,7 @@ pub unsafe extern "C" fn pthread_setcancelstate(state: c_int, old_state: *mut c_
 /// enabling asynchronous cancellation must obey POSIX async-cancel safety.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_setcanceltype(type_: c_int, old_type: *mut c_int) -> c_int {
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     {
         if type_ != PTHREAD_CANCEL_DEFERRED && type_ != PTHREAD_CANCEL_ASYNCHRONOUS { return EINVAL; }
         let Some(slot) = current_pthread_slot() else { return ENOTSUP; };
@@ -389,7 +389,7 @@ pub unsafe extern "C" fn pthread_setcanceltype(type_: c_int, old_type: *mut c_in
         if type_ != 0 { test_current_selected_pthread_cancellation(); }
         return 0;
     }
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     match type_ {
         PTHREAD_CANCEL_DEFERRED => {
             if current_pthread_slot().is_none() {
@@ -477,7 +477,7 @@ pub unsafe extern "C" fn _pthread_cleanup_pop(cleanup: *mut CleanupNode, run: c_
 /// musl timer_create.c::cleanup_fromsig resets logical callback cancellation
 /// after TSD cleanup and blocking application/SIGTIMER signals. This current
 /// task owns its popped cleanup chain; pending cancellation is consumed here.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 pub(super) fn reset_timer_callback_cancellation() {
     if let Some(slot) = current_pthread_slot() {
         slot.pending.store(0, Ordering::Release);
@@ -493,7 +493,7 @@ pub(super) fn reset_timer_callback_cancellation() {
 /// word immediately before it invokes the callback. It does not pop cleanup
 /// records or change cancellation state, so this must not reuse the timer
 /// callback reset above.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 pub(super) fn clear_current_aio_callback_pending() {
     if let Some(slot) = current_pthread_slot() {
         slot.pending.store(0, Ordering::Release);

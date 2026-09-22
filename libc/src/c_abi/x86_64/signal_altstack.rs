@@ -93,9 +93,9 @@ pub unsafe extern "C" fn sigaltstack(stack: *const c_void, old_stack: *mut c_voi
         // SAFETY: a non-null `stack` is readable for one complete public
         // record under this C entry point's documented caller obligation.
         let requested = unsafe { &*stack.cast::<PublicSignalStack>() };
-        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        #[cfg(not(crabc_x86_owned_runtime))]
         let minimum = MINSIGSTKSZ;
-        #[cfg(feature = "x86-owned-static-runtime")]
+        #[cfg(crabc_x86_owned_runtime)]
         let minimum = super::system_configuration::minimum_signal_stack_size();
         if requested.flags & SS_DISABLE == 0 && requested.size < minimum {
             return insufficient_memory();

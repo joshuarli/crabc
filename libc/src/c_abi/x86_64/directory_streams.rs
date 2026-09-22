@@ -539,7 +539,7 @@ pub unsafe extern "C" fn readdir_r(
 // folded into the allocator wrapper's backend implementation before the link
 // boundary.  The opaque assembly tail calls leave the ordinary C symbols for
 // the linker (and the allocation-failure wrapper evidence) to resolve.
-#[cfg(feature = "x86-scandir")]
+#[cfg(crabc_x86_scandir)]
 core::arch::global_asm!(
     r#"
     .text
@@ -569,7 +569,7 @@ __crabc_x86_scandir_cabi_free:
 "#
 );
 
-#[cfg(feature = "x86-scandir")]
+#[cfg(crabc_x86_scandir)]
 unsafe extern "C" {
     #[link_name = "__crabc_x86_scandir_cabi_malloc"]
     fn cabi_scandir_malloc(size: usize) -> *mut c_void;
@@ -579,14 +579,14 @@ unsafe extern "C" {
     fn cabi_scandir_free(pointer: *mut c_void);
 }
 
-#[cfg(feature = "x86-scandir")]
+#[cfg(crabc_x86_scandir)]
 type ScandirSelector = unsafe extern "C" fn(*const Dirent) -> c_int;
-#[cfg(feature = "x86-scandir")]
+#[cfg(crabc_x86_scandir)]
 type ScandirComparator = unsafe extern "C" fn(*const *const Dirent, *const *const Dirent) -> c_int;
 
 /// Release one unpublished scandir result list through the selected C
 /// allocation boundary.
-#[cfg(feature = "x86-scandir")]
+#[cfg(crabc_x86_scandir)]
 unsafe fn scandir_free_partial(names: *mut *mut Dirent, mut count: usize) {
     if names.is_null() {
         return;
@@ -604,7 +604,7 @@ unsafe fn scandir_free_partial(names: *mut *mut Dirent, mut count: usize) {
 
 /// Adapt scandir's pointer-to-pointer comparator to the existing musl qsort
 /// worker's context-bearing callback ABI.
-#[cfg(feature = "x86-scandir")]
+#[cfg(crabc_x86_scandir)]
 unsafe extern "C" fn scandir_qsort_compare(
     left: *const c_void,
     right: *const c_void,
@@ -635,7 +635,7 @@ unsafe extern "C" fn scandir_qsort_compare(
 /// receives pointers to live returned-record slots while sorting. Both callbacks
 /// must remain valid, obey their C pointer contracts, and return normally:
 /// C++ exceptions and C `longjmp` must not cross this Rust boundary.
-#[cfg(feature = "x86-scandir")]
+#[cfg(crabc_x86_scandir)]
 #[no_mangle]
 pub unsafe extern "C" fn scandir(
     path: *const c_char,
@@ -743,7 +743,7 @@ pub unsafe extern "C" fn scandir(
 /// The mixed-runtime runner calls this only to force the feature-gated object
 /// into its candidate before link-map evidence rejects musl's scandir and
 /// allocation implementations. It is not an installed libc interface.
-#[cfg(feature = "x86-scandir")]
+#[cfg(crabc_x86_scandir)]
 #[no_mangle]
 pub extern "C" fn __crabc_x86_scandir_v1() -> usize {
     1

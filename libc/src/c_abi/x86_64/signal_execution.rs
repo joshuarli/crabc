@@ -275,7 +275,7 @@ pub unsafe extern "C" fn sigtimedwait(
     loop {
         // SAFETY: the caller owns all three pointer contracts. Linux x86
         // consumes one eight-byte mask word as pinned musl does.
-        #[cfg(feature = "x86-owned-static-runtime")]
+        #[cfg(crabc_x86_owned_runtime)]
         let result = unsafe {
             super::pthread_cancel::syscall_cp(
                 raw_syscall::SYS_RT_SIGTIMEDWAIT,
@@ -287,7 +287,7 @@ pub unsafe extern "C" fn sigtimedwait(
                 0,
             )
         };
-        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        #[cfg(not(crabc_x86_owned_runtime))]
         let result = unsafe {
             raw_syscall::syscall4(
                 raw_syscall::SYS_RT_SIGTIMEDWAIT,

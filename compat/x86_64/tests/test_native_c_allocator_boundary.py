@@ -38,8 +38,8 @@ class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
         exclusion = '    not(feature = "native-mimalloc-shadow"),\n'
         for gate in (
             "crabc_owned_mimalloc_lifecycle",
-            'feature = "x86-allocator-runtime"',
-            'feature = "x86-allocator-observability"',
+            'crabc_x86_allocator_runtime',
+            'crabc_x86_allocator_observability',
         ):
             selection = f"#[cfg(all(\n    {gate},\n" + exclusion
             self.assertEqual(static_root.count(selection), 1)

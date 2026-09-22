@@ -31,7 +31,7 @@ class X86LibcAllocatorStringDuplicationTests(unittest.TestCase):
             manifest,
         )
         self.assertIn(
-            '#[cfg(feature = "x86-allocator-string-duplication")]', target
+            '#[cfg(crabc_x86_allocator_string_duplication)]', target
         )
         self.assertIn('#[path = "allocator_string_duplication.rs"]', target)
         for required in (

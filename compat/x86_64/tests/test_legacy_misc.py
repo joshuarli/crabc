@@ -30,7 +30,7 @@ class X86LegacyMiscTests(unittest.TestCase):
         )
         self.assertIn(
             '#[cfg(all(feature = "x86-legacy-misc", '
-            'not(feature = "x86-owned-static-runtime")))]\n'
+            'not(crabc_x86_owned_runtime)))]\n'
             '#[path = "legacy_misc.rs"]\nmod legacy_misc;', root,
         )
         self.assertIn(

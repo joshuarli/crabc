@@ -79,7 +79,7 @@ pub unsafe extern "C" fn __clock_nanosleep(
 
     // SAFETY: the caller owns the complete raw Linux record-pointer contract;
     // x86 syscall argument four is explicitly placed in r10 by this helper.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let result = unsafe {
         // Musl uses nanosleep for relative realtime requests; preserve that
         // syscall boundary as well as its cancellation/error behavior.
@@ -101,7 +101,7 @@ pub unsafe extern "C" fn __clock_nanosleep(
             )
         }
     };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     let result = unsafe {
         raw_syscall::syscall4(
             raw_syscall::SYS_CLOCK_NANOSLEEP,

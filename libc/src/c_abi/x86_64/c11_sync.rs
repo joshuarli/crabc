@@ -48,14 +48,14 @@ use super::{pthread_cond, pthread_mutex};
 
 const EBUSY: c_int = 16;
 const MTX_PLAIN: c_int = 0;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 const MTX_RECURSIVE: c_int = 1;
 const THRD_SUCCESS: c_int = 0;
 const THRD_BUSY: c_int = 1;
 const THRD_ERROR: c_int = 2;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 const THRD_TIMEDOUT: c_int = 4;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 const ETIMEDOUT: c_int = 110;
 
 /// Exact public x86 C11 `mtx_t` storage.
@@ -115,7 +115,7 @@ const fn c11_status(result: c_int) -> c_int {
 /// selected operation has quiesced.
 #[no_mangle]
 pub unsafe extern "C" fn mtx_init(mutex: *mut c_void, kind: c_int) -> c_int {
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     {
         let mutex_type = if kind & MTX_RECURSIVE != 0 {
             MTX_RECURSIVE
@@ -128,7 +128,7 @@ pub unsafe extern "C" fn mtx_init(mutex: *mut c_void, kind: c_int) -> c_int {
             pthread_mutex::init_selected_owned_mutex(mutex, mutex_type)
         });
     }
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     {
         if kind != MTX_PLAIN {
             return THRD_ERROR;
@@ -149,13 +149,13 @@ pub unsafe extern "C" fn mtx_init(mutex: *mut c_void, kind: c_int) -> c_int {
 /// selected C object-lifetime contract.
 #[no_mangle]
 pub unsafe extern "C" fn mtx_destroy(mutex: *mut c_void) {
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     {
         // SAFETY: the C ABI obligations establish a quiescent owned record.
         let _ = unsafe { pthread_mutex::destroy_selected_owned_mutex(mutex) };
         return;
     }
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     // SAFETY: the C ABI obligations above establish the selected private
     // record's quiescent destruction boundary. C11 has no error result here.
     let _ = unsafe { pthread_mutex::destroy_selected_normal_mutex(mutex) };
@@ -170,12 +170,12 @@ pub unsafe extern "C" fn mtx_destroy(mutex: *mut c_void) {
 /// this static route is not a cancellation point.
 #[no_mangle]
 pub unsafe extern "C" fn mtx_lock(mutex: *mut c_void) -> c_int {
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     {
         // SAFETY: the owned C11 record uses the matching private mutex seam.
         return c11_status(unsafe { pthread_mutex::lock_selected_owned_mutex(mutex) });
     }
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     // SAFETY: the C ABI obligations above establish the selected normal mutex
     // state machine for this private sibling call.
     c11_status(unsafe { pthread_mutex::lock_selected_normal_mutex(mutex) })
@@ -190,7 +190,7 @@ pub unsafe extern "C" fn mtx_lock(mutex: *mut c_void) -> c_int {
 /// normal-mutex protocol.
 #[no_mangle]
 pub unsafe extern "C" fn mtx_trylock(mutex: *mut c_void) -> c_int {
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     {
         // SAFETY: the owned C11 record uses the matching one-attempt seam.
         return match unsafe { pthread_mutex::try_lock_selected_owned_mutex(mutex) } {
@@ -199,7 +199,7 @@ pub unsafe extern "C" fn mtx_trylock(mutex: *mut c_void) -> c_int {
             _ => THRD_ERROR,
         };
     }
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     // SAFETY: the C ABI obligations above establish a valid selected mutex
     // record for the private one-attempt acquisition seam.
     match unsafe { pthread_mutex::try_lock_selected_normal_mutex(mutex) } {
@@ -218,12 +218,12 @@ pub unsafe extern "C" fn mtx_trylock(mutex: *mut c_void) -> c_int {
 /// outside this selected boundary.
 #[no_mangle]
 pub unsafe extern "C" fn mtx_unlock(mutex: *mut c_void) -> c_int {
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     {
         // SAFETY: C11 caller ownership establishes the selected release seam.
         return unsafe { pthread_mutex::unlock_selected_owned_mutex(mutex) };
     }
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     // Musl intentionally tail-calls its internal pthread unlock here: errors
     // arise only from C11 undefined behavior. Preserve that direct result
     // instead of broadly translating it through `c11_status`.
@@ -239,7 +239,7 @@ pub unsafe extern "C" fn mtx_unlock(mutex: *mut c_void) -> c_int {
 /// # Safety
 /// `mutex` is a live owned C11 object and `deadline` names a readable aligned
 /// native x86 timespec if contention requires waiting.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[no_mangle]
 pub unsafe extern "C" fn mtx_timedlock(
     mutex: *mut c_void,
@@ -331,7 +331,7 @@ pub unsafe extern "C" fn cnd_broadcast(condition: *mut c_void) -> c_int {
 /// The caller holds a live initialized C11 mutex and retains both aligned
 /// object lifetimes and predicate discipline. `deadline` names a readable
 /// aligned native timespec for the duration of the operation.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[no_mangle]
 pub unsafe extern "C" fn cnd_timedwait(
     condition: *mut c_void, mutex: *mut c_void, deadline: *const c_void,

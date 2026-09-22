@@ -43,7 +43,7 @@ compile_error!("the x86 pthread attribute leaf requires little-endian Linux/x86-
 use core::ffi::{c_int, c_void};
 use core::mem::{align_of, size_of};
 
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 const ESRCH: c_int = 3;
 const EINVAL: c_int = 22;
 const ENOTSUP: c_int = 95;
@@ -78,9 +78,9 @@ pub(super) struct SelectedWorkerAttributes {
     pub(super) caller_stack_top: Option<usize>,
     pub(super) detached: bool,
     pub(super) scheduler_requested: bool,
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     pub(super) sched_policy: c_int,
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     pub(super) sched_priority: c_int,
 }
 
@@ -100,13 +100,13 @@ pub(super) fn selected_worker_default_attributes() -> SelectedWorkerAttributes {
 // Musl pthread_setattr_default_np.c serializes a pair of monotonic maxima
 // with the pthread-create lock. A single atomic pair supplies the same coherent
 // snapshot without a process-global lock that a fork child could inherit held.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 static DEFAULT_ATTRIBUTES: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(
     DEFAULT_STACK_SIZE as u64 | ((DEFAULT_GUARD_SIZE as u64) << 32),
 );
 
 fn current_default_attributes() -> PublicPthreadAttr {
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     {
         let pair = DEFAULT_ATTRIBUTES.load(core::sync::atomic::Ordering::Acquire);
         let mut value = PublicPthreadAttr::musl_default();
@@ -114,14 +114,14 @@ fn current_default_attributes() -> PublicPthreadAttr {
         value.words[1] = (pair >> 32) as usize;
         value
     }
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     PublicPthreadAttr::musl_default()
 }
 
 /// Snapshot the GNU default attributes (only stack and guard are nonzero).
 /// # Safety
 /// `attributes` must point to writable, aligned pthread_attr_t storage.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[no_mangle]
 pub unsafe extern "C" fn pthread_getattr_default_np(attributes: *mut c_void) -> c_int {
     unsafe { attributes.cast::<PublicPthreadAttr>().write(current_default_attributes()) };
@@ -133,7 +133,7 @@ pub unsafe extern "C" fn pthread_getattr_default_np(attributes: *mut c_void) -> 
 /// src/thread/pthread_setattr_default_np.c (MIT).
 /// # Safety
 /// `attributes` must point to a readable, initialized, aligned pthread_attr_t.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[no_mangle]
 pub unsafe extern "C" fn pthread_setattr_default_np(attributes: *const c_void) -> c_int {
     let value = unsafe { attributes.cast::<PublicPthreadAttr>().read() };
@@ -274,9 +274,9 @@ impl PublicPthreadAttr {
             // may be recorded while inheriting and are then source-ignored;
             // preserve that distinction instead of rejecting inert metadata.
             scheduler_requested: self.inherit_sched() != 0,
-            #[cfg(feature = "x86-owned-static-runtime")]
+            #[cfg(crabc_x86_owned_runtime)]
             sched_policy: self.sched_policy(),
-            #[cfg(feature = "x86-owned-static-runtime")]
+            #[cfg(crabc_x86_owned_runtime)]
             sched_priority: self.sched_priority(),
         }
     }
@@ -679,7 +679,7 @@ pub unsafe extern "C" fn pthread_attr_getschedparam(
 /// for one pthread_attr_t; prior initialization is not required. The returned
 /// stack coordinates do not extend the target's lifetime or permit access to
 /// its stack without separate application synchronization.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[no_mangle]
 pub unsafe extern "C" fn pthread_getattr_np(
     thread: *mut c_void,

@@ -66,7 +66,7 @@ fn mapping_failed(error: c_int) -> *mut c_void {
 /// from racing a selected process-shared barrier/robust-mutex transition that
 /// still holds a caller-owned public-object pointer. The frozen archive keeps
 /// its prior no-op because it does not select that owned product contract.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[inline]
 fn selected_owned_vm_wait() {
     // SAFETY: the existing pthread vmlock owns the selected process-shared
@@ -75,7 +75,7 @@ fn selected_owned_vm_wait() {
     unsafe { super::pthread_vmlock::wait() };
 }
 
-#[cfg(not(feature = "x86-owned-static-runtime"))]
+#[cfg(not(crabc_x86_owned_runtime))]
 #[inline]
 fn selected_owned_vm_wait() {}
 

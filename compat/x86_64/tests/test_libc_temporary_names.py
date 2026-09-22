@@ -25,7 +25,7 @@ class X86LibcTemporaryNamesTests(unittest.TestCase):
             cargo,
         )
         self.assertIn('#[path = "temporary_names.rs"]', static_root)
-        self.assertIn('#[cfg(feature = "x86-temporary-names")]', static_root)
+        self.assertIn('#[cfg(crabc_x86_temporary_names)]', static_root)
         self.assertEqual(
             {
                 line.split("fn ", 1)[1].split("(", 1)[0]

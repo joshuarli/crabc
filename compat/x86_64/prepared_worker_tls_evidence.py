@@ -364,8 +364,8 @@ def account_source(root: Path = ROOT) -> dict[str, Any]:
     _ordered(release,('(*node).token } == token', 'x86_64_runtime_tls_view::release(token.thread_pointer)',
                       'SYS_MUNMAP', 'if result == 0'), 'loader-exact-token-release')
     graph=sources['libc/src/c_abi/x86_64/static_c_abi.rs']
-    require('#[cfg_attr(not(feature = "x86-owned-dynamic-runtime"), path = "static_tls.rs")]' in graph
-            and '#[cfg_attr(feature = "x86-owned-dynamic-runtime", path = "dynamic_tls.rs")]' in graph,
+    require('#[cfg_attr(not(crabc_x86_dynamic_runtime), path = "static_tls.rs")]' in graph
+            and '#[cfg_attr(crabc_x86_dynamic_runtime, path = "dynamic_tls.rs")]' in graph,
             'static/dynamic TLS owners lost their explicit feature split')
     fork_order=check_full_dynamic_fork_order(sources['libc/Cargo.toml'],sources[PTHREAD_ATFORK])
     fork_generation=check_post_fork_generation_source(sources['compat/x86_64/prepared_worker_tls_probe.c'],sources[WORKER_OWNER])

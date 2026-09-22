@@ -16206,14 +16206,14 @@ def require_static_crt_initial_tls_handoff_artifact(family: Mapping[str, Any]) -
             f"static-c-crt-initial-tls-handoff implementation omits {phrase}",
         )
     require(
-        '#[cfg_attr(not(feature = "x86-owned-static-runtime"), linkage = "weak")]'
+        '#[cfg_attr(not(crabc_x86_owned_runtime), linkage = "weak")]'
         in implementation,
         "static-c-crt-initial-tls-handoff must retain the private weak __stdio_exit fallback",
     )
     require(
-        '#[cfg(feature = "x86-owned-static-runtime")]\n    unsafe { __stdio_exit() };'
+        '#[cfg(crabc_x86_owned_runtime)]\n    unsafe { __stdio_exit() };'
         in implementation
-        and '#[cfg(feature = "x86-owned-static-runtime")]\n'
+        and '#[cfg(crabc_x86_owned_runtime)]\n'
         "    unsafe { super::stdio_standard::flush_all_on_exit() };" in implementation,
         "static-c-crt-initial-tls-handoff must confine owned stdio finalization to its feature",
     )
@@ -24561,7 +24561,7 @@ def require_posix_spawn_file_actions_artifact(family: Mapping[str, Any]) -> None
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
     ).read_text(encoding="utf-8")
     require(
-        '#[cfg(any(feature = "x86-posix-spawn-file-actions", feature = "x86-owned-static-runtime"))]'
+        '#[cfg(any(feature = "x86-posix-spawn-file-actions", crabc_x86_owned_runtime))]'
         '\n#[path = "posix_spawn_file_actions.rs"]'
         "\nmod posix_spawn_file_actions;" in static_root,
         "x86 spawn-action lifecycle must remain confined to its explicit or owned runtime profile",
@@ -25965,14 +25965,14 @@ def require_frozen_process_signal_selection(
         (
             "reporting",
             '#[cfg(all(feature = "x86-signal-reporting", '
-            'not(feature = "x86-owned-static-runtime")))]\n'
+            'not(crabc_x86_owned_runtime)))]\n'
             '#[path = "signal_reporting.rs"]\n'
             "mod signal_reporting;",
         ),
         (
             "SysV helpers",
             '#[cfg(all(feature = "x86-signal-sysv-helpers", '
-            'not(feature = "x86-owned-static-runtime")))]\n'
+            'not(crabc_x86_owned_runtime)))]\n'
             '#[path = "signal_sysv_helpers.rs"]\n'
             "mod signal_sysv_helpers;",
         ),
@@ -25983,14 +25983,14 @@ def require_frozen_process_signal_selection(
             f"process.signal frozen {name} selection must exclude the owned runtime",
         )
     require(
-        '#[cfg(feature = "x86-owned-static-runtime")]\n'
+        '#[cfg(crabc_x86_owned_runtime)]\n'
         '#[path = "owned_signal_helpers.rs"]\n'
         "mod owned_signal_helpers;" in static_root,
         "process.signal owned SysV helper selection is missing",
     )
     require(
         '#[cfg(any(feature = "x86-signal-legacy-aliases", '
-        'feature = "x86-owned-static-runtime"))]\n'
+        'crabc_x86_owned_runtime))]\n'
         "core::arch::global_asm!(" in signal_control,
         "process.signal weak alias selection must retain both frozen and owned providers",
     )
@@ -27340,7 +27340,7 @@ def require_signal_legacy_aliases_artifact(family: Mapping[str, Any]) -> None:
         "Pinned musl 1.2.6",
         "src/signal/signal.c",
         '#[cfg(any(feature = "x86-signal-legacy-aliases", '
-        'feature = "x86-owned-static-runtime"))]',
+        'crabc_x86_owned_runtime))]',
         '".weak bsd_signal"',
         '".set bsd_signal, signal"',
         '".weak __sysv_signal"',
@@ -27670,13 +27670,13 @@ def require_sysv_signal_helpers_artifact(family: Mapping[str, Any]) -> None:
     ).read_text(encoding="utf-8")
     require(
         '#[cfg(all(feature = "x86-signal-sysv-helpers", '
-        'not(feature = "x86-owned-static-runtime")))]\n'
+        'not(crabc_x86_owned_runtime)))]\n'
         '#[path = "signal_sysv_helpers.rs"]\n'
         "mod signal_sysv_helpers;" in static_root,
         "x86 static C ABI must keep frozen SysV signal helpers outside the owned runtime",
     )
     require(
-        '#[cfg(feature = "x86-owned-static-runtime")]\n'
+        '#[cfg(crabc_x86_owned_runtime)]\n'
         '#[path = "owned_signal_helpers.rs"]\n'
         "mod owned_signal_helpers;" in static_root,
         "x86 static C ABI must select owned SysV signal helpers for the owned runtime",
@@ -37789,13 +37789,13 @@ def require_frozen_lchmod_unsupported_selection(static_root: str) -> None:
     """Keep the fixed unsupported lchmod leaf out of the owned runtime."""
 
     require(
-        '#[cfg(not(feature = "x86-owned-static-runtime"))]\n'
+        '#[cfg(not(crabc_x86_owned_runtime))]\n'
         '#[path = "lchmod_unsupported.rs"]\n'
         "mod lchmod_unsupported;" in static_root,
         "lchmod frozen unsupported selection must exclude the owned runtime",
     )
     require(
-        '#[cfg(feature = "x86-owned-static-runtime")]\n'
+        '#[cfg(crabc_x86_owned_runtime)]\n'
         '#[path = "owned_filesystem_mechanisms.rs"]\n'
         "mod owned_filesystem_mechanisms;" in static_root,
         "lchmod owned filesystem provider selection is missing",
@@ -38682,13 +38682,13 @@ def require_frozen_descriptor_control_selection(static_root: str) -> None:
     """Keep the frozen fcntl leaf outside the owned descriptor provider."""
 
     require(
-        '#[cfg(not(feature = "x86-owned-static-runtime"))]\n'
+        '#[cfg(not(crabc_x86_owned_runtime))]\n'
         '#[path = "descriptor_control.rs"]\n'
         "mod descriptor_control;" in static_root,
         "fcntl frozen descriptor-control selection must exclude the owned runtime",
     )
     require(
-        '#[cfg(feature = "x86-owned-static-runtime")]\n'
+        '#[cfg(crabc_x86_owned_runtime)]\n'
         '#[path = "owned_descriptor_control.rs"]\n'
         "mod descriptor_control;" in static_root,
         "fcntl owned descriptor-control selection is missing",
@@ -43797,7 +43797,7 @@ def require_scandir_allocation_client_artifact(family: Mapping[str, Any]) -> Non
         "static-c-scandir-allocation-client must not broaden default static roots or exports",
     )
     for phrase in (
-        '#[cfg(feature = "x86-scandir")]',
+        '#[cfg(crabc_x86_scandir)]',
         'pub unsafe extern "C" fn scandir(',
         "jmp malloc",
         "jmp realloc",
@@ -48481,7 +48481,7 @@ def require_legacy_misc_slice(family: Mapping[str, Any]) -> None:
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
     ).read_text(encoding="utf-8")
     require(
-        '#[cfg(all(feature = "x86-legacy-misc", not(feature = "x86-owned-static-runtime")))]\n#[path = "legacy_misc.rs"]\nmod legacy_misc;'
+        '#[cfg(all(feature = "x86-legacy-misc", not(crabc_x86_owned_runtime)))]\n#[path = "legacy_misc.rs"]\nmod legacy_misc;'
         in static_root,
         "legacy.misc owner must remain behind its dedicated opt-in root gate",
     )
@@ -55668,7 +55668,7 @@ def require_crypt_allocator_composition_artifact(family: Mapping[str, Any]) -> N
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
     ).read_text(encoding="utf-8")
     for snippet in (
-        'not(feature = "x86-crypt-allocator-composition")',
+        'not(crabc_x86_crypt_allocator_composition)',
         "x86-crypt and x86-allocator-runtime must be enabled through x86-crypt-allocator-composition",
     ):
         require(
@@ -56941,8 +56941,8 @@ def require_stdio_standard_streams_artifact(family: Mapping[str, Any]) -> None:
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
     ).read_text(encoding="utf-8")
     require(
-        '#[cfg_attr(feature = "x86-owned-static-runtime", path = "owned_static_stdio.rs")]\n'
-        '#[cfg_attr(not(feature = "x86-owned-static-runtime"), path = "stdio_standard.rs")]\n'
+        '#[cfg_attr(crabc_x86_owned_runtime, path = "owned_static_stdio.rs")]\n'
+        '#[cfg_attr(not(crabc_x86_owned_runtime), path = "stdio_standard.rs")]\n'
         "mod stdio_standard;" in static_root,
         "x86 static C ABI must retain distinct default and owned stdio leaves",
     )
@@ -73527,8 +73527,8 @@ def require_locale_object_wide_artifact(family: Mapping[str, Any]) -> None:
         "current_ctype_override",
         "TIME_STRINGS",
         "No locale map, allocation",
-        '#[cfg(feature = "x86-owned-static-runtime")]',
-        '#[cfg(not(feature = "x86-owned-static-runtime"))]',
+        '#[cfg(crabc_x86_owned_runtime)]',
+        '#[cfg(not(crabc_x86_owned_runtime))]',
         "9fa28ece75d8a2191de7c5bb53bed224c5947417",
     ):
         require(snippet in implementation, f"locale_objects leaf omits {snippet}")
@@ -75472,7 +75472,7 @@ def require_pthread_attr_frozen_owned_boundary(implementation: str) -> tuple[str
     )
 
     owned_atomic_declaration = (
-        '#[cfg(feature = "x86-owned-static-runtime")]\n'
+        '#[cfg(crabc_x86_owned_runtime)]\n'
         "static DEFAULT_ATTRIBUTES: core::sync::atomic::AtomicU64 ="
     )
     require(
@@ -75490,7 +75490,7 @@ def require_pthread_attr_frozen_owned_boundary(implementation: str) -> tuple[str
         "pthread attribute owned default state must retain its atomic snapshot and update",
     )
     require(
-        '#[cfg(not(feature = "x86-owned-static-runtime"))]\n'
+        '#[cfg(not(crabc_x86_owned_runtime))]\n'
         "    PublicPthreadAttr::musl_default()" in owned_defaults,
         "pthread attribute frozen default path must remain independent of owned state",
     )
@@ -75499,7 +75499,7 @@ def require_pthread_attr_frozen_owned_boundary(implementation: str) -> tuple[str
         "pthread_setattr_default_np",
     ):
         require(
-            '#[cfg(feature = "x86-owned-static-runtime")]\n#[no_mangle]\n'
+            '#[cfg(crabc_x86_owned_runtime)]\n#[no_mangle]\n'
             f'pub unsafe extern "C" fn {symbol}' in owned_defaults,
             f"pthread attribute owned default entry point {symbol} must remain cfg-gated",
         )
@@ -75727,7 +75727,7 @@ def require_static_pthread_attr_artifact(family: Mapping[str, Any]) -> None:
         )
     for phrase in (
         "src/thread/pthread_getattr_np.c",
-        '#[cfg(feature = "x86-owned-static-runtime")]',
+        '#[cfg(crabc_x86_owned_runtime)]',
         'pub unsafe extern "C" fn pthread_getattr_np',
         "super::pthread_create_join::selected_thread_attributes(thread)",
         "super::auxv_observation::initial_stack_anchor()",

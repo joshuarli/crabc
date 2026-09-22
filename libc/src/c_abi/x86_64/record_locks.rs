@@ -30,7 +30,7 @@ use super::{c_status, errno, raw_syscall};
 const EINVAL: c_int = 22;
 const F_GETLK: c_int = 5;
 const F_SETLK: c_int = 6;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 const F_SETLKW: c_int = 7;
 
 /// Forward one selected pointer-bearing record-lock `fcntl` call.
@@ -48,7 +48,7 @@ pub(super) unsafe extern "C" fn fcntl_record_lock(
     command: c_int,
     record: *mut c_void,
 ) -> c_int {
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     if command == F_SETLKW {
         // Musl's only canceling fcntl command. The assembly dispatcher proves
         // that the C caller supplied the record pointer in rdx; the caller

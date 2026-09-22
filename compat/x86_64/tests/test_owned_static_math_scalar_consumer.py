@@ -129,7 +129,7 @@ class OwnedStaticMathScalarConsumerTests(unittest.TestCase):
         ):
             self.assertIn(required, module)
         self.assertIn(
-            '#[cfg(feature = "x86-owned-static-runtime")]\n'
+            '#[cfg(crabc_x86_owned_runtime)]\n'
             '#[path = "math_scalar_completion.rs"]\n'
             "mod math_scalar_completion;",
             static_root,

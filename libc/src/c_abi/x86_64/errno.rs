@@ -42,7 +42,7 @@ pub unsafe extern "C" fn __errno_location() -> *mut c_int {
 // instead make it a preemptible public export. The allocator can therefore
 // keep its internal reference without creating a second errno owner, while
 // ordinary C callers continue to use only `__errno_location`.
-#[cfg(all(feature = "x86-allocator-runtime", not(feature = "x86-owned-dynamic-runtime")))]
+#[cfg(all(crabc_x86_allocator_runtime, not(crabc_x86_dynamic_runtime)))]
 core::arch::global_asm!(
     ".hidden ___errno_location",
     ".weak ___errno_location",
@@ -53,7 +53,7 @@ core::arch::global_asm!(
 // selected shared private-alias script owns LOCAL DEFAULT localization,
 // matching musl's shared symbol table while retaining the alias out of
 // `.dynsym`.
-#[cfg(all(feature = "x86-allocator-runtime", feature = "x86-owned-dynamic-runtime"))]
+#[cfg(all(crabc_x86_allocator_runtime, crabc_x86_dynamic_runtime))]
 core::arch::global_asm!(
     ".weak ___errno_location",
     ".set ___errno_location, __errno_location",

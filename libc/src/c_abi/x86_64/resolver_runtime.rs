@@ -857,7 +857,7 @@ pub unsafe extern "C" fn __res_send(
     let query = unsafe { core::slice::from_raw_parts(query, query_length as usize) };
     let answer = unsafe { core::slice::from_raw_parts_mut(answer, answer_length as usize) };
     let query_id = u16::from_be_bytes([query[0], query[1]]);
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let (result, masked_errno) = {
         let request = super::owned_resolver_batch::BatchRequest::new(query, query_id, answer);
         let batch_config = super::owned_resolver_batch::CResolverBatchConfig::from_c_resolver(&config);
@@ -868,7 +868,7 @@ pub unsafe extern "C" fn __res_send(
                 resolver::ExchangeError::Setup(errno) | resolver::ExchangeError::Transport(errno) => errno,
             }), outcome.last_errno)
     };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     let (result, masked_errno) = (resolver::exchange(&config, query, query_id, answer), None::<c_int>);
     let result = match result {
         Ok(length) => length as c_int,
@@ -1245,7 +1245,7 @@ unsafe fn join_domain(name: *const c_char, suffix: *const c_char, output: &mut [
 
 /// Resolve numeric, `/etc/hosts`, then configured A/AAAA DNS names into the
 /// C-owned `addrinfo` pages released by `freeaddrinfo`.
-#[cfg(not(feature = "x86-owned-static-runtime"))]
+#[cfg(not(crabc_x86_owned_runtime))]
 #[no_mangle]
 pub unsafe extern "C" fn getaddrinfo(
     name: *const c_char,

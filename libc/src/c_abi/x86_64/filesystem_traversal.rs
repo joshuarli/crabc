@@ -77,7 +77,7 @@ const FTW_DEPTH: c_int = 8;
 // Pinned musl's public pthread.h spelling. Keep this local to the
 // feature-gated source translation rather than widening the traversal leaf's
 // standalone contract with a general cancellation-state owner.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 const PTHREAD_CANCEL_DISABLE: c_int = 1;
 
 #[repr(C)]
@@ -130,7 +130,7 @@ unsafe fn fail(error: c_int) -> c_int {
 /// worker sees the source-faithful disable/walk/restore interval, so a callback
 /// cannot deliver a deferred request while directory, allocation, or CWD
 /// cleanup state is live.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[inline]
 unsafe fn owned_static_nftw_cancellation_guard(walk: impl FnOnce() -> c_int) -> c_int {
     let mut previous_state = 0;
@@ -675,7 +675,7 @@ pub unsafe extern "C" fn nftw(
         };
         (io_buffer.as_mut_ptr(), io_length, io_buffer.len())
     };
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     return unsafe {
         owned_static_nftw_cancellation_guard(|| unsafe {
             walk(
@@ -692,7 +692,7 @@ pub unsafe extern "C" fn nftw(
             )
         })
     };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     unsafe {
         walk(
             path_buffer.as_mut_ptr(),
@@ -743,7 +743,7 @@ pub unsafe extern "C" fn ftw(
         ftw: callback,
         nftw: None,
     };
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     return unsafe {
         owned_static_nftw_cancellation_guard(|| unsafe {
             walk(
@@ -760,7 +760,7 @@ pub unsafe extern "C" fn ftw(
             )
         })
     };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     unsafe {
         walk(
             path_buffer.as_mut_ptr(),

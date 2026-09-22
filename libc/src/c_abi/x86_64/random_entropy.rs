@@ -45,7 +45,7 @@ pub unsafe extern "C" fn getrandom(
 ) -> isize {
     // SAFETY: the caller supplies the complete Linux output-buffer contract;
     // the kernel validates the random-source flags and publishes raw errors.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let result = unsafe {
         super::pthread_cancel::syscall_cp(
             raw_syscall::SYS_GETRANDOM,
@@ -57,7 +57,7 @@ pub unsafe extern "C" fn getrandom(
             0,
         )
     };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     let result = unsafe {
         raw_syscall::syscall3(
             raw_syscall::SYS_GETRANDOM,
@@ -86,9 +86,9 @@ pub unsafe extern "C" fn getentropy(buffer: *mut c_void, length: usize) -> c_int
         return -1;
     }
 
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     let mut previous_state = 0;
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     // SAFETY: PTHREAD_CANCEL_DISABLE is valid and the local previous-state
     // word is writable. Unselected C11 tasks have no cancellation slot and
     // keep their existing non-canceling syscall behavior.
@@ -98,7 +98,7 @@ pub unsafe extern "C" fn getentropy(buffer: *mut c_void, length: usize) -> c_int
 
     // SAFETY: the public caller owns the buffer contract across every retry.
     let result = unsafe { fill_entropy(buffer, length) };
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     if guarded {
         // SAFETY: a successful transition initialized this valid prior state.
         // Restore it on error as well as after a complete fill, as pinned musl.

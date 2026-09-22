@@ -42,7 +42,7 @@ pub unsafe extern "C" fn msync(address: *mut c_void, length: usize, flags: c_int
     // SAFETY: the caller owns the complete Linux mapping and synchronization
     // contract; x86 syscall arguments one through three are rdi/rsi/rdx.
     let result = unsafe {
-        #[cfg(feature = "x86-owned-static-runtime")]
+        #[cfg(crabc_x86_owned_runtime)]
         {
             super::pthread_cancel::syscall_cp(
                 raw_syscall::SYS_MSYNC,
@@ -54,7 +54,7 @@ pub unsafe extern "C" fn msync(address: *mut c_void, length: usize, flags: c_int
                 0,
             )
         }
-        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        #[cfg(not(crabc_x86_owned_runtime))]
         {
             raw_syscall::syscall3(
                 raw_syscall::SYS_MSYNC,

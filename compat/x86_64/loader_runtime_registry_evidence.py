@@ -308,7 +308,7 @@ def source_resolution(root: Path = ROOT) -> dict[str, object]:
     for name in (*FORK_NAMES, RESET_NAME):
         require(f"fn {name}(" in dynamic_tls, f"dynamic TLS consumer omits {name}")
     static_root = source_file(root, "libc/src/c_abi/x86_64/static_c_abi.rs").read_text(encoding="utf-8")
-    require('#[cfg_attr(feature = "x86-owned-dynamic-runtime", path = "dynamic_tls.rs")]' in static_root,
+    require('#[cfg_attr(crabc_x86_dynamic_runtime, path = "dynamic_tls.rs")]' in static_root,
             "selected libc root does not select dynamic TLS consumer")
     cargo = source_file(root, "ldso/Cargo.toml").read_text(encoding="utf-8")
     require('x86_64-owned-dynamic-runtime = ["x86_64-general-initial-lifecycle", "x86_64-general-initial-tls-runtime-v1-dynamic-main-thread-interpreter"]' in cargo,

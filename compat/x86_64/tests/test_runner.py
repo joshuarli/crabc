@@ -5396,7 +5396,7 @@ unsafe fn join_selected_worker_inner(
             self.assertIn(required, source)
         self.assertIn(
             '#[cfg(any(feature = "x86-signal-legacy-aliases", '
-            'feature = "x86-owned-static-runtime"))]',
+            'crabc_x86_owned_runtime))]',
             source,
         )
 
@@ -5542,13 +5542,13 @@ unsafe fn join_selected_worker_inner(
         self.assertIn("x86-signal-sysv-helpers = []", cargo_toml)
         self.assertIn(
             '#[cfg(all(feature = "x86-signal-sysv-helpers", '
-            'not(feature = "x86-owned-static-runtime")))]\n'
+            'not(crabc_x86_owned_runtime)))]\n'
             '#[path = "signal_sysv_helpers.rs"]\n'
             "mod signal_sysv_helpers;",
             static_root,
         )
         self.assertIn(
-            '#[cfg(feature = "x86-owned-static-runtime")]\n'
+            '#[cfg(crabc_x86_owned_runtime)]\n'
             '#[path = "owned_signal_helpers.rs"]\n'
             "mod owned_signal_helpers;",
             static_root,
@@ -5699,7 +5699,7 @@ unsafe fn join_selected_worker_inner(
         self.assertIn("x86-signal-reporting = []", manifest)
         self.assertIn(
             '#[cfg(all(feature = "x86-signal-reporting", '
-            'not(feature = "x86-owned-static-runtime")))]\n'
+            'not(crabc_x86_owned_runtime)))]\n'
             '#[path = "signal_reporting.rs"]\n'
             "mod signal_reporting;",
             static_root,
@@ -6016,7 +6016,7 @@ unsafe fn join_selected_worker_inner(
         ).read_text(encoding="utf-8")
 
         self.assertIn(
-            '#[cfg_attr(not(feature = "x86-owned-static-runtime"), path = "siginterrupt.rs")]',
+            '#[cfg_attr(not(crabc_x86_owned_runtime), path = "siginterrupt.rs")]',
             static_root,
         )
         self.assertIn("raw_syscall::syscall4", siginterrupt)
@@ -6442,7 +6442,7 @@ unsafe fn join_selected_worker_inner(
         )
         dispatcher = RUNNER.read_text(encoding="utf-8")
 
-        self.assertIn('#[cfg_attr(not(feature = "x86-owned-static-runtime"), path = "signal_pause.rs")]', static_root)
+        self.assertIn('#[cfg_attr(not(crabc_x86_owned_runtime), path = "signal_pause.rs")]', static_root)
         for required in (
             "Selected static Linux/x86-64 sigpause C boundary",
             "src/signal/sigpause.c",
@@ -7759,7 +7759,7 @@ unsafe fn join_selected_worker_inner(
             ("__pthread_timedjoin_np", "pthread_timedjoin_np"),
         ):
             self.assertIn(
-                '#[cfg(feature = "x86-owned-static-runtime")]\n#[no_mangle]\n'
+                '#[cfg(crabc_x86_owned_runtime)]\n#[no_mangle]\n'
                 f'pub unsafe extern "C" fn {internal_symbol}',
                 implementation,
             )
@@ -10081,7 +10081,7 @@ unsafe fn join_selected_worker_inner(
 
         for required in (
             "src/thread/pthread_getattr_np.c",
-            '#[cfg(feature = "x86-owned-static-runtime")]',
+            '#[cfg(crabc_x86_owned_runtime)]',
             'pub unsafe extern "C" fn pthread_getattr_np',
             "super::pthread_create_join::selected_thread_attributes(thread)",
             "super::auxv_observation::initial_stack_anchor()",
@@ -10622,12 +10622,12 @@ unsafe fn join_selected_worker_inner(
             "pthread_mutex_setprioceiling",
         ):
             self.assertIn(
-                '#[cfg(feature = "x86-owned-static-runtime")]\n#[no_mangle]\n'
+                '#[cfg(crabc_x86_owned_runtime)]\n#[no_mangle]\n'
                 f'pub unsafe extern "C" fn {name}',
                 pthread_mutex,
             )
         self.assertIn(
-            '#[cfg(feature = "x86-owned-static-runtime")]\n'
+            '#[cfg(crabc_x86_owned_runtime)]\n'
             '#[export_name = "__pthread_mutex_timedlock"]\n'
             'pub unsafe extern "C" fn pthread_mutex_timedlock',
             pthread_mutex,
@@ -11381,11 +11381,11 @@ unsafe fn join_selected_worker_inner(
         # Timed C11 operations are additive only in the owned product. The
         # frozen archive's installed-symbol rejection remains in its runner.
         self.assertIn(
-            '#[cfg(feature = "x86-owned-static-runtime")]\n#[no_mangle]\npub unsafe extern "C" fn cnd_timedwait',
+            '#[cfg(crabc_x86_owned_runtime)]\n#[no_mangle]\npub unsafe extern "C" fn cnd_timedwait',
             c11_sync,
         )
         self.assertIn(
-            '#[cfg(feature = "x86-owned-static-runtime")]\n#[no_mangle]\npub unsafe extern "C" fn mtx_timedlock',
+            '#[cfg(crabc_x86_owned_runtime)]\n#[no_mangle]\npub unsafe extern "C" fn mtx_timedlock',
             c11_sync,
         )
         for forbidden in (
@@ -12194,11 +12194,11 @@ unsafe fn join_selected_worker_inner(
         runner = RUNNER.read_text(encoding="utf-8")
 
         self.assertIn(
-            '#[cfg_attr(not(feature = "x86-owned-dynamic-runtime"), path = "static_tls.rs")]',
+            '#[cfg_attr(not(crabc_x86_dynamic_runtime), path = "static_tls.rs")]',
             static_root,
         )
         self.assertIn(
-            '#[cfg_attr(feature = "x86-owned-dynamic-runtime", path = "dynamic_tls.rs")]',
+            '#[cfg_attr(crabc_x86_dynamic_runtime, path = "dynamic_tls.rs")]',
             static_root,
         )
         for required in (
@@ -12408,7 +12408,7 @@ unsafe fn join_selected_worker_inner(
             "rtld_fini.is_some()",
             "fn __stdio_exit()",
             "weak_alias(dummy, __stdio_exit)",
-            '#[cfg_attr(not(feature = "x86-owned-static-runtime"), linkage = "weak")]',
+            '#[cfg_attr(not(crabc_x86_owned_runtime), linkage = "weak")]',
             'super::stdio_standard::flush_all_on_exit()',
             'unsafe { __stdio_exit() };',
             "pub unsafe extern \"C\" fn exit",
@@ -14012,7 +14012,7 @@ unsafe fn join_selected_worker_inner(
         runner = RUNNER.read_text(encoding="utf-8")
 
         self.assertIn(
-            '#[cfg(any(feature = "x86-posix-spawn-file-actions", feature = "x86-owned-static-runtime"))]',
+            '#[cfg(any(feature = "x86-posix-spawn-file-actions", crabc_x86_owned_runtime))]',
             static_root,
         )
         self.assertIn('#[path = "posix_spawn_file_actions.rs"]', static_root)
@@ -14327,9 +14327,9 @@ unsafe fn join_selected_worker_inner(
         self.assertIn(
             'x86-environment-runtime = ["x86-allocator-runtime"]', manifest
         )
-        self.assertIn('#[cfg(not(feature = "x86-environment-runtime"))]', static_root)
+        self.assertIn('#[cfg(not(crabc_x86_environment_runtime))]', static_root)
         self.assertIn('#[path = "environment.rs"]', static_root)
-        self.assertIn('#[cfg(feature = "x86-environment-runtime")]', static_root)
+        self.assertIn('#[cfg(crabc_x86_environment_runtime)]', static_root)
         self.assertIn('#[path = "environment_runtime.rs"]', static_root)
         self.assertIn(
             'Path("libc/src/c_abi/x86_64/environment.rs")', structure
@@ -16858,8 +16858,8 @@ unsafe fn join_selected_worker_inner(
             "c_status(result)",
             "c_ssize_status(result)",
             "super::pthread_cancel::syscall_cp",
-            '#[cfg(feature = "x86-owned-static-runtime")]',
-            '#[cfg(not(feature = "x86-owned-static-runtime"))]',
+            '#[cfg(crabc_x86_owned_runtime)]',
+            '#[cfg(not(crabc_x86_owned_runtime))]',
         ):
             self.assertIn(required, socket_transport)
         for forbidden in (
@@ -18037,7 +18037,7 @@ esac
         dispatcher = RUNNER.read_text(encoding="utf-8")
 
         self.assertIn('#[path = "bsd_random.rs"]', static_root)
-        self.assertIn('#[cfg(feature = "x86-owned-static-runtime")]', static_root)
+        self.assertIn('#[cfg(crabc_x86_owned_runtime)]', static_root)
         for required in (
             "9fa28ece75d8a2191de7c5bb53bed224c5947417",
             "src/prng/random.c",
@@ -20690,11 +20690,11 @@ esac
             "ungetc",
         )
         self.assertIn(
-            '#[cfg_attr(not(feature = "x86-owned-static-runtime"), path = "stdio_standard.rs")]',
+            '#[cfg_attr(not(crabc_x86_owned_runtime), path = "stdio_standard.rs")]',
             static_root,
         )
         self.assertIn(
-            '#[cfg_attr(feature = "x86-owned-static-runtime", path = "owned_static_stdio.rs")]',
+            '#[cfg_attr(crabc_x86_owned_runtime, path = "owned_static_stdio.rs")]',
             static_root,
         )
         for symbol in data_symbols:
@@ -28392,8 +28392,8 @@ esac
             "wrapping_neg",
             "positive errno",
             "super::pthread_cancel::syscall_cp",
-            '#[cfg(feature = "x86-owned-static-runtime")]',
-            '#[cfg(not(feature = "x86-owned-static-runtime"))]',
+            '#[cfg(crabc_x86_owned_runtime)]',
+            '#[cfg(not(crabc_x86_owned_runtime))]',
             "special-cases a relative realtime request",
             "without changing errno and do not establish public x86 support.",
         ):
@@ -29017,8 +29017,8 @@ esac
             "c_status(result)",
             "__syscall_cp",
             "super::pthread_cancel::syscall_cp",
-            '#[cfg(feature = "x86-owned-static-runtime")]',
-            '#[cfg(not(feature = "x86-owned-static-runtime"))]',
+            '#[cfg(crabc_x86_owned_runtime)]',
+            '#[cfg(not(crabc_x86_owned_runtime))]',
             "rdi/rsi/rdx/r10",
         ):
             self.assertIn(required, descriptor_entry)
@@ -29136,13 +29136,13 @@ esac
         runner = RUNNER.read_text(encoding="utf-8")
 
         self.assertIn(
-            '#[cfg(not(feature = "x86-owned-static-runtime"))]\n'
+            '#[cfg(not(crabc_x86_owned_runtime))]\n'
             '#[path = "descriptor_control.rs"]\n'
             "mod descriptor_control;",
             static_root,
         )
         self.assertIn(
-            '#[cfg(feature = "x86-owned-static-runtime")]\n'
+            '#[cfg(crabc_x86_owned_runtime)]\n'
             '#[path = "owned_descriptor_control.rs"]\n'
             "mod descriptor_control;",
             static_root,
@@ -29266,7 +29266,7 @@ esac
             "raw_syscall::SYS_FCNTL",
             "raw_syscall::syscall3(",
             "super::pthread_cancel::syscall_cp(",
-            '#[cfg(feature = "x86-owned-static-runtime")]',
+            '#[cfg(crabc_x86_owned_runtime)]',
             "c_status(result)",
             "rdi/rsi/rdx",
             "fcntl_record_lock",
@@ -30459,7 +30459,7 @@ esac
             self.assertNotIn(forbidden, implementation)
 
         self.assertIn(
-            '#[cfg(feature = "x86-owned-static-runtime")]\n'
+            '#[cfg(crabc_x86_owned_runtime)]\n'
             '#[no_mangle]\n'
             'pub unsafe extern "C" fn sem_timedwait(',
             implementation,
@@ -32052,7 +32052,7 @@ esac
             "Linux 5.10",
             "raw_syscall::SYS_CHDIR",
             "raw_syscall::SYS_CHROOT",
-            '#[cfg(feature = "x86-owned-static-runtime")]',
+            '#[cfg(crabc_x86_owned_runtime)]',
             "raw_syscall::SYS_GETCWD",
             "raw_syscall::SYS_MKDIR",
             "raw_syscall::SYS_UNLINK",
@@ -32762,7 +32762,7 @@ esac
         # beside the private DIR representation, but it must not broaden this
         # dependency-free default artifact or its explicit export root.
         scandir_feature_anchor = (
-            '#[cfg(feature = "x86-scandir")]\n#[no_mangle]\n'
+            '#[cfg(crabc_x86_scandir)]\n#[no_mangle]\n'
             'pub unsafe extern "C" fn scandir('
         )
         self.assertIn(scandir_feature_anchor, implementation)
@@ -33260,7 +33260,7 @@ esac
             'x86-legacy-misc = ["x86-legacy-des-compat"]', manifest
         )
         self.assertIn(
-            '#[cfg(all(feature = "x86-legacy-misc", not(feature = "x86-owned-static-runtime")))]\n'
+            '#[cfg(all(feature = "x86-legacy-misc", not(crabc_x86_owned_runtime)))]\n'
             '#[path = "legacy_misc.rs"]\nmod legacy_misc;',
             static_root,
         )

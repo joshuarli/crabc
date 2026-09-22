@@ -391,7 +391,7 @@ unsafe fn setlocale_locked(category: c_int, name: *const c_char) -> *mut c_char 
         return unsafe { query_locale_locked(category, current) };
     }
 
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     if unsafe { *name } == 0 {
         let categories = if category == LC_ALL { 0..LC_ALL } else { category..category + 1 };
         let mut next = current;
@@ -442,7 +442,7 @@ unsafe fn setlocale_locked(category: c_int, name: *const c_char) -> *mut c_char 
 ///
 /// The caller supplies a category in 0..6 and excludes concurrent environment
 /// mutation for the borrowed getenv values, as required by that C interface.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 pub(super) unsafe fn environment_locale_mode(category: c_int) -> Option<bool> {
     const CATEGORY_NAMES: [&[u8]; 6] = [
         b"LC_CTYPE\0", b"LC_NUMERIC\0", b"LC_TIME\0",
@@ -686,7 +686,7 @@ pub unsafe extern "C" fn mbrtowc(
 // FILE orientation snapshots only the fixed-profile CTYPE choice, not a
 // mutable locale object. The held caller owns state/output; wide FILE wrappers
 // also scope the thread locale so callbacks retain source observations.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 pub(super) unsafe fn decode_for_stream(wide: *mut c_int, source: *const c_char,
     count: usize, state: &mut u32, utf8: bool, legacy: bool) -> usize {
     let outcome = unsafe { decode_mbrtowc(*state, source, count, utf8) };

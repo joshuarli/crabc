@@ -163,7 +163,7 @@ static mut STATIC_INITIAL_TLS_PLAN: StaticInitialTlsPlan = StaticInitialTlsPlan:
 /// the same already-derived AT_RANDOM value to both views before preinit or
 /// worker entry; this is not a second seed or a callable reseeding path.
 /// The smaller standalone TLS archive keeps its existing private guard scope.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[no_mangle]
 pub static mut __stack_chk_guard: usize = 0;
 
@@ -218,7 +218,7 @@ pub(super) unsafe fn bootstrap_initial_thread(initial_stack: *const usize) -> bo
     // following release store publishes every plan field to child allocators.
     unsafe {
         core::ptr::write_volatile(core::ptr::addr_of_mut!(STATIC_INITIAL_TLS_PLAN), plan);
-        #[cfg(feature = "x86-owned-static-runtime")]
+        #[cfg(crabc_x86_owned_runtime)]
         core::ptr::write(core::ptr::addr_of_mut!(__stack_chk_guard), plan.stack_guard);
     }
     STATIC_INITIAL_TLS_MAIN_THREAD_POINTER.store(block.thread_pointer as usize, Ordering::Release);
@@ -897,7 +897,7 @@ const _: () = {
 /// # Safety
 /// Called on a live owned TLS task after callback/TSD cleanup, with application
 /// signals blocked. No application reference to its TLS may be used meanwhile.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 pub(super) unsafe fn reset_current_thread_images() {
     let plan = unsafe { STATIC_INITIAL_TLS_PLAN };
     let tp = super::pthread_identity::current_thread_pointer();
@@ -916,7 +916,7 @@ pub(super) unsafe fn reset_current_thread_images() {
 ///
 /// # Safety
 /// The caller must be an owned thread with live TLS installed by this module.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 pub(super) unsafe fn current_initial_image() -> *mut u8 {
     if !is_ready() {
         return core::ptr::null_mut();

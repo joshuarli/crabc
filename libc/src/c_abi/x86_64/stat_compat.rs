@@ -112,7 +112,7 @@ impl PathMetadata {
 
 /// Observe the inode used by the owned named-semaphore mapping registry.
 /// This retains the kernel/public stat layout in its single owner.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 pub(super) unsafe fn fstat_inode(descriptor: c_int) -> Option<u64> {
     let mut metadata: Stat = unsafe { core::mem::zeroed() };
     if unsafe { __fstat(descriptor, &mut metadata) } == 0 { Some(metadata.inode) } else { None }
@@ -202,7 +202,7 @@ unsafe fn raw_newfstatat(
 /// `path` must satisfy Linux `newfstatat(2)`'s pathname, lifetime, and
 /// accessibility rules for the whole raw request. `directory_fd` and `flags`
 /// are forwarded unchanged.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[inline(always)]
 pub(super) unsafe fn fstatat_mode(
     directory_fd: c_int,

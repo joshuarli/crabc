@@ -469,8 +469,8 @@ def _validate_default_c_allocator_selection(static_root: str) -> None:
     """Keep each C owner behind its existing gate and the native-shadow exclusion."""
     for gate, declaration in (
         ("crabc_owned_mimalloc_lifecycle", '#[path = "allocator_mimalloc_lifecycle.rs"]\nmod allocator_mimalloc_lifecycle;'),
-        ('feature = "x86-allocator-runtime"', "mod allocator {"),
-        ('feature = "x86-allocator-observability"', "mod allocator_observability {"),
+        ('crabc_x86_allocator_runtime', "mod allocator {"),
+        ('crabc_x86_allocator_observability', "mod allocator_observability {"),
     ):
         selection = (
             "#[cfg(all(\n"

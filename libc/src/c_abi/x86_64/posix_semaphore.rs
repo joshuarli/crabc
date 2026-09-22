@@ -169,7 +169,7 @@ unsafe fn futex_wait(value: *mut c_int, private_word: c_int) -> i64 {
 /// `semaphore` must be the live, private, zero-or-one handoff semaphore owned
 /// by an AIO submitter and its just-created worker. No public caller may use
 /// the record, and the submitter keeps it on stack until this function returns.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 pub(super) unsafe fn wait_aio_handoff_without_cancellation(semaphore: *mut c_void) {
     let semaphore = semaphore.cast::<PublicSemaphore>();
     let value = unsafe { semaphore_word(semaphore, SEM_VALUE_WORD) };
@@ -298,7 +298,7 @@ pub unsafe extern "C" fn sem_trywait(semaphore: *mut c_void) -> c_int {
 /// `semaphore` must point to a live, initialized, aligned selected `sem_t`.
 /// Every concurrent thread or process must retain the same atomic and futex
 /// lifetime discipline until this call returns.
-#[cfg(not(feature = "x86-owned-static-runtime"))]
+#[cfg(not(crabc_x86_owned_runtime))]
 #[no_mangle]
 pub unsafe extern "C" fn sem_wait(semaphore: *mut c_void) -> c_int {
     let semaphore = semaphore.cast::<PublicSemaphore>();
@@ -353,7 +353,7 @@ pub unsafe extern "C" fn sem_wait(semaphore: *mut c_void) -> c_int {
 }
 
 /// Native LP64 timespec consumed by musl's relative-timeout conversion.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[repr(C)]
 struct SemaphoreDeadline {
     seconds: i64,
@@ -362,7 +362,7 @@ struct SemaphoreDeadline {
 
 /// Withdraw one semaphore waiter before the next user cleanup callback runs.
 /// The registered C cleanup chain runs on cancellation; Rust Drop does not.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 unsafe extern "C" fn cleanup_semaphore_waiter(argument: *mut c_void) {
     // SAFETY: the timed-wait scope publishes this aligned semaphore count
     // after incrementing it and keeps the semaphore live through cleanup.
@@ -371,7 +371,7 @@ unsafe extern "C" fn cleanup_semaphore_waiter(argument: *mut c_void) {
 
 /// Musl `__timedwait_cp` for this realtime semaphore wait. Linux 5.10 native
 /// LP64 needs neither time32 conversion nor pre-baseline private-futex fallback.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 unsafe fn semaphore_timedwait_result(
     value: *mut c_int,
     private_word: c_int,
@@ -439,7 +439,7 @@ unsafe fn semaphore_timedwait_result(
 /// `semaphore` points to a live initialized and aligned public `sem_t`.
 /// Concurrent participants retain its storage and use compatible atomic/futex
 /// operations until the call and any cancellation cleanup have finished.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[no_mangle]
 pub unsafe extern "C" fn sem_wait(semaphore: *mut c_void) -> c_int {
     // SAFETY: this is musl's sem_timedwait(sem, NULL) mapping with the same
@@ -457,7 +457,7 @@ pub unsafe extern "C" fn sem_wait(semaphore: *mut c_void) -> c_int {
 /// storage remains valid through all concurrent operations and cleanup.
 /// `deadline` is null for an unbounded wait, or points to a readable aligned
 /// native x86-64 timespec that stays valid until this call finishes.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[no_mangle]
 pub unsafe extern "C" fn sem_timedwait(
     semaphore: *mut c_void,

@@ -178,13 +178,13 @@ class ErrnoStorageLifecycleTests(unittest.TestCase):
         source = ERRNO.read_text(encoding="utf-8")
 
         self.assertIn(
-            '#[cfg(all(feature = "x86-allocator-runtime", not(feature = "x86-owned-dynamic-runtime")))]\n'
+            '#[cfg(all(crabc_x86_allocator_runtime, not(crabc_x86_dynamic_runtime)))]\n'
             'core::arch::global_asm!(\n'
             '    ".hidden ___errno_location",',
             source,
         )
         self.assertIn(
-            '#[cfg(all(feature = "x86-allocator-runtime", feature = "x86-owned-dynamic-runtime"))]\n'
+            '#[cfg(all(crabc_x86_allocator_runtime, crabc_x86_dynamic_runtime))]\n'
             'core::arch::global_asm!(\n'
             '    ".weak ___errno_location",',
             source,

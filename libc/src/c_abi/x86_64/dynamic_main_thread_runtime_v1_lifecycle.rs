@@ -38,7 +38,7 @@ enum LifecycleOwner {
         executable_fini: LifecycleFunction,
         loader_fini: LifecycleFunction,
     },
-    #[cfg(feature = "x86-owned-dynamic-runtime")]
+    #[cfg(crabc_x86_dynamic_runtime)]
     Conventional {
         run_initial: LifecycleFunction,
         loader_fini: LifecycleFunction,
@@ -51,7 +51,7 @@ struct StartupVectors {
     random: *const usize,
 }
 
-#[cfg(feature = "x86-owned-dynamic-runtime")]
+#[cfg(crabc_x86_dynamic_runtime)]
 fn select_lifecycle(
     selection: super::conventional_startup::Selection,
     init: Option<LifecycleFunction>,
@@ -140,14 +140,14 @@ pub unsafe extern "C" fn __libc_start_main(
     let Some(vectors) = (unsafe { startup_vectors(argc, argv) }) else {
         immediate_termination::_Exit(127);
     };
-    #[cfg(feature = "x86-owned-dynamic-runtime")]
+    #[cfg(crabc_x86_dynamic_runtime)]
     let lifecycle = match unsafe { super::conventional_startup::select() }
         .and_then(|selection| select_lifecycle(selection, init, fini, rtld_fini))
     {
         Some(lifecycle) => lifecycle,
         None => immediate_termination::_Exit(127),
     };
-    #[cfg(not(feature = "x86-owned-dynamic-runtime"))]
+    #[cfg(not(crabc_x86_dynamic_runtime))]
     let lifecycle = match rtld_fini {
         Some(loader_fini) => {
             // This source root has no conventional record consumer. Retain
@@ -187,19 +187,19 @@ pub unsafe extern "C" fn __libc_start_main(
                 core::ptr::write(core::ptr::addr_of_mut!(EXECUTABLE_FINI), Some(executable_fini));
                 core::ptr::write(core::ptr::addr_of_mut!(LOADER_FINI), Some(loader_fini));
             }
-            #[cfg(feature = "x86-owned-dynamic-runtime")]
+            #[cfg(crabc_x86_dynamic_runtime)]
             LifecycleOwner::Conventional { loader_fini, .. } => {
                 core::ptr::write(core::ptr::addr_of_mut!(EXECUTABLE_FINI), None);
                 core::ptr::write(core::ptr::addr_of_mut!(LOADER_FINI), Some(loader_fini));
             }
         }
     }
-    #[cfg(feature = "x86-owned-dynamic-runtime")]
+    #[cfg(crabc_x86_dynamic_runtime)]
     if !unsafe { super::prepare(argc, argv) } { immediate_termination::_Exit(127); }
     PROCESS_STATE.store(READY, Ordering::Release);
     match lifecycle {
         LifecycleOwner::Owned { executable_init, .. } => unsafe { executable_init() },
-        #[cfg(feature = "x86-owned-dynamic-runtime")]
+        #[cfg(crabc_x86_dynamic_runtime)]
         LifecycleOwner::Conventional { run_initial, .. } => unsafe { run_initial() },
     }
     let status = unsafe { main(argc, argv, vectors.envp) };
@@ -222,12 +222,12 @@ pub unsafe extern "C" fn exit(status: c_int) -> ! {
     if let Some(callback) = executable { unsafe { callback() }; }
     let loader = unsafe { core::ptr::replace(core::ptr::addr_of_mut!(LOADER_FINI), None) };
     if let Some(callback) = loader { unsafe { callback() }; }
-    #[cfg(feature = "x86-owned-dynamic-runtime")]
+    #[cfg(crabc_x86_dynamic_runtime)]
     unsafe { super::flush_on_exit() };
     immediate_termination::_Exit(status)
 }
 
-#[cfg(all(test, feature = "x86-owned-dynamic-runtime"))]
+#[cfg(all(test, crabc_x86_dynamic_runtime))]
 mod tests {
     use super::*;
 

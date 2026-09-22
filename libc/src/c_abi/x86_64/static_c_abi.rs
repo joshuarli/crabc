@@ -201,8 +201,8 @@ mod atomic;
 mod raw_syscall;
 #[path = "temp_name_random.rs"]
 mod temp_name_random;
-#[cfg_attr(not(feature = "x86-owned-dynamic-runtime"), path = "static_tls.rs")]
-#[cfg_attr(feature = "x86-owned-dynamic-runtime", path = "dynamic_tls.rs")]
+#[cfg_attr(not(crabc_x86_dynamic_runtime), path = "static_tls.rs")]
+#[cfg_attr(crabc_x86_dynamic_runtime, path = "dynamic_tls.rs")]
 mod static_tls;
 #[path = "stat_compat.rs"]
 mod stat_compat;
@@ -269,7 +269,7 @@ mod strsignal;
 // psignal/psiginfo compose the selected permanent stderr and errno substrate.
 // Keep this diagnostic pair opt-in so the frozen default archive does not
 // silently acquire reporting symbols or imply a general stdio runtime.
-#[cfg(all(feature = "x86-signal-reporting", not(feature = "x86-owned-static-runtime")))]
+#[cfg(all(feature = "x86-signal-reporting", not(crabc_x86_owned_runtime)))]
 #[path = "signal_reporting.rs"]
 mod signal_reporting;
 #[path = "ctype.rs"]
@@ -294,10 +294,10 @@ mod wide_character;
 mod wcswcs;
 // Preserve the frozen bounded provider for the default archive. Owned
 // products select the pinned-musl TRE compiler and executor as one owner.
-#[cfg(not(feature = "x86-owned-static-runtime"))]
+#[cfg(not(crabc_x86_owned_runtime))]
 #[path = "regex.rs"]
 mod regex;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_regex/mod.rs"]
 mod owned_regex;
 #[path = "iconv.rs"]
@@ -332,12 +332,12 @@ mod rand_r;
 // rand/srand are process-global C ABI compatibility state. They are selected
 // only by the installed owned product, leaving the default archive's selected
 // random surface at caller-owned rand_r and the independent rand48 family.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_rand.rs"]
 mod owned_rand;
 // The selected owned product carries musl's separately locked BSD random
 // state. Keep the frozen default archive at caller-owned rand_r/rand48 leaves.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "bsd_random.rs"]
 mod bsd_random;
 #[path = "lrand48.rs"]
@@ -400,30 +400,30 @@ mod signal_control;
 // Keep the historical System V helper closure opt-in: these four spellings
 // must not silently widen the selected-static signal ABI or imply a general
 // signal runtime.
-#[cfg(all(feature = "x86-signal-sysv-helpers", not(feature = "x86-owned-static-runtime")))]
+#[cfg(all(feature = "x86-signal-sysv-helpers", not(crabc_x86_owned_runtime)))]
 #[path = "signal_sysv_helpers.rs"]
 mod signal_sysv_helpers;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_signal_helpers.rs"]
 mod owned_signal_helpers;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_passwd.rs"]
 mod owned_passwd;
 // Conventional account-file compatibility owners compose the existing local
 // passwd parser and owned FILE/cancellation state. They remain confined to
 // installed owned products; the frozen default archive does not gain a
 // shadow cursor, usershell state, or legacy effective-user-name provider.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_shadow.rs"]
 mod owned_shadow;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_usershell.rs"]
 mod owned_usershell;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_cuserid.rs"]
 mod owned_cuserid;
-#[cfg_attr(feature = "x86-owned-static-runtime", path = "owned_siginterrupt.rs")]
-#[cfg_attr(not(feature = "x86-owned-static-runtime"), path = "siginterrupt.rs")]
+#[cfg_attr(crabc_x86_owned_runtime, path = "owned_siginterrupt.rs")]
+#[cfg_attr(not(crabc_x86_owned_runtime), path = "siginterrupt.rs")]
 mod siginterrupt;
 #[path = "signal_realtime_max.rs"]
 mod signal_realtime_max;
@@ -458,15 +458,15 @@ mod signal_set_binary;
 mod signal_execution;
 #[path = "thread_signal.rs"]
 mod thread_signal;
-#[cfg_attr(feature = "x86-owned-static-runtime", path = "owned_signal_pause.rs")]
-#[cfg_attr(not(feature = "x86-owned-static-runtime"), path = "signal_pause.rs")]
+#[cfg_attr(crabc_x86_owned_runtime, path = "owned_signal_pause.rs")]
+#[cfg_attr(not(crabc_x86_owned_runtime), path = "signal_pause.rs")]
 mod signal_pause;
 #[path = "signal_altstack.rs"]
 mod signal_altstack;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "pthread_signal.rs"]
 mod pthread_signal;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "pthread_scheduling.rs"]
 mod pthread_scheduling;
 #[path = "pthread_identity.rs"]
@@ -489,7 +489,7 @@ mod pthread_barrier;
 mod pthread_spin_init;
 #[path = "pthread_cancel.rs"]
 mod pthread_cancel;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_process_trio.rs"]
 mod owned_process_trio;
 #[path = "pthread_atfork.rs"]
@@ -506,7 +506,7 @@ mod pthread_spin_destroy;
 // pthread_spin_init/destroy records with the private x86 atomic helper. They
 // are included in owned products; the frozen private archive retains its
 // explicit feature selection and exact default export boundary.
-#[cfg(any(feature = "x86-pthread-spin-operations", feature = "x86-owned-static-runtime"))]
+#[cfg(any(feature = "x86-pthread-spin-operations", crabc_x86_owned_runtime))]
 #[path = "pthread_spin_operations.rs"]
 mod pthread_spin_operations;
 #[path = "pthread_cond.rs"]
@@ -547,7 +547,7 @@ mod gettid;
 mod isatty;
 #[path = "ttyname_r.rs"]
 mod ttyname_r;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_pty.rs"]
 mod owned_pty;
 #[path = "tcgetpgrp.rs"]
@@ -564,10 +564,10 @@ mod process_context;
 // already evidenced x86 allocator wrapper. `x86-owned-static-runtime` selects
 // that gate as one aggregate prerequisite, without widening either default or
 // standalone environment fixture.
-#[cfg(not(feature = "x86-environment-runtime"))]
+#[cfg(not(crabc_x86_environment_runtime))]
 #[path = "environment.rs"]
 mod environment;
-#[cfg(feature = "x86-environment-runtime")]
+#[cfg(crabc_x86_environment_runtime)]
 #[path = "environment_runtime.rs"]
 mod environment;
 // The direct exec forms, selected-environment forwarding, PATH search, and
@@ -617,7 +617,7 @@ mod issetugid;
 #[cfg(feature = "x86-legacy-des-compat")]
 #[path = "legacy_des_compat.rs"]
 mod legacy_des_compat;
-#[cfg(all(feature = "x86-legacy-misc", not(feature = "x86-owned-static-runtime")))]
+#[cfg(all(feature = "x86-legacy-misc", not(crabc_x86_owned_runtime)))]
 #[path = "legacy_misc.rs"]
 mod legacy_misc;
 #[path = "secure_environment.rs"]
@@ -632,7 +632,7 @@ mod immediate_termination;
 mod posix_exit;
 // The generic AArch64 quick-exit list is allocation backed and has no place in
 // this x86 product. The owned profile selects musl's separate fixed table.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_quick_exit.rs"]
 mod owned_quick_exit;
 #[path = "posix_spawnattr_init.rs"]
@@ -645,7 +645,7 @@ mod posix_spawnattr_getschedpolicy;
 mod posix_spawnattr_signal_fields;
 #[path = "posix_spawnattr_getschedparam.rs"]
 mod posix_spawnattr_getschedparam;
-#[cfg(not(feature = "x86-owned-dynamic-runtime"))]
+#[cfg(not(crabc_x86_dynamic_runtime))]
 #[path = "static_startup.rs"]
 mod static_startup;
 // Native shadow selection requires the owned startup and worker lifecycle.
@@ -655,14 +655,14 @@ mod static_startup;
 // generic native and dynamic features must not select that seam implicitly.
 #[cfg(all(
     feature = "native-mimalloc-shadow",
-    not(feature = "x86-owned-static-runtime"),
+    not(crabc_x86_owned_runtime),
 ))]
 compile_error!(
     "native-mimalloc-shadow on Linux/x86-64 requires x86-owned-static-runtime"
 );
 #[cfg(all(
     feature = "native-mimalloc-shadow",
-    feature = "x86-owned-dynamic-runtime",
+    crabc_x86_dynamic_runtime,
     not(feature = "x86-owned-dynamic-native-shadow"),
 ))]
 compile_error!(
@@ -671,13 +671,13 @@ compile_error!(
 #[cfg(feature = "native-mimalloc-shadow")]
 #[path = "native_mimalloc_lifecycle.rs"]
 mod native_mimalloc_lifecycle;
-#[cfg(feature = "x86-owned-dynamic-runtime")]
+#[cfg(crabc_x86_dynamic_runtime)]
 #[path = "owned_dynamic_runtime.rs"]
 mod owned_dynamic_runtime;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "init_fini_defaults.rs"]
 mod init_fini_defaults;
-#[cfg(feature = "x86-owned-dynamic-runtime")]
+#[cfg(crabc_x86_dynamic_runtime)]
 #[path = "loader_debug_abi.rs"]
 mod loader_debug_abi;
 #[path = "stack_chk_fail.rs"]
@@ -686,13 +686,13 @@ mod stack_chk_fail;
 mod process_globals;
 // The installed aggregate owns allocation-backed descriptor streams and exit
 // flushing; the default fixture preserves its permanent/single-slot contract.
-#[cfg_attr(feature = "x86-owned-static-runtime", path = "owned_static_stdio.rs")]
-#[cfg_attr(not(feature = "x86-owned-static-runtime"), path = "stdio_standard.rs")]
+#[cfg_attr(crabc_x86_owned_runtime, path = "owned_static_stdio.rs")]
+#[cfg_attr(not(crabc_x86_owned_runtime), path = "stdio_standard.rs")]
 mod stdio_standard;
 // Conventional account files need the installed owned FILE lifecycle and its
 // cancellation/fork boundaries. Keep this local `/etc/group` provider inside
 // the owned aggregate rather than widening the frozen default archive.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_group.rs"]
 mod owned_group;
 #[path = "stdio_format_scan.rs"]
@@ -723,22 +723,22 @@ mod clock_gettime;
 mod clock_settime;
 #[path = "clock_adjtime.rs"]
 mod clock_adjtime;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_legacy_time.rs"]
 mod owned_legacy_time;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_posix_timers.rs"]
 mod owned_posix_timers;
-#[cfg(not(feature = "x86-owned-static-runtime"))]
+#[cfg(not(crabc_x86_owned_runtime))]
 #[path = "timer_getoverrun.rs"]
 mod timer_getoverrun;
-#[cfg(not(feature = "x86-owned-static-runtime"))]
+#[cfg(not(crabc_x86_owned_runtime))]
 #[path = "timer_delete.rs"]
 mod timer_delete;
-#[cfg(not(feature = "x86-owned-static-runtime"))]
+#[cfg(not(crabc_x86_owned_runtime))]
 #[path = "timer_gettime.rs"]
 mod timer_gettime;
-#[cfg(not(feature = "x86-owned-static-runtime"))]
+#[cfg(not(crabc_x86_owned_runtime))]
 #[path = "timer_settime.rs"]
 mod timer_settime;
 #[path = "clock_getcpuclockid.rs"]
@@ -751,43 +751,43 @@ mod ftime;
 mod gmtime_r;
 #[path = "timegm.rs"]
 mod timegm;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_timezone.rs"]
 mod owned_timezone;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_calendar.rs"]
 mod owned_calendar;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_strftime.rs"]
 mod owned_strftime;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_wcsftime.rs"]
 mod owned_wcsftime;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_strfmon.rs"]
 mod owned_strfmon;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_strptime.rs"]
 mod owned_strptime;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_getdate.rs"]
 mod owned_getdate;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_wide_conversion.rs"]
 mod owned_wide_conversion;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_mount_table.rs"]
 mod owned_mount_table;
 // The process-global C logger shares the owned descriptor, calendar, printf,
 // cancellation, and fork owners.  Keep it off the frozen selected archive;
 // the installed dynamic profile inherits this owned-static leaf roster.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_syslog.rs"]
 mod owned_syslog;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_fmtmsg.rs"]
 mod owned_fmtmsg;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_utmpx.rs"]
 mod owned_utmpx;
 #[path = "time_observation.rs"]
@@ -806,16 +806,16 @@ mod filesystem_access;
 mod fchdir;
 #[path = "mktemp.rs"]
 mod mktemp;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "temporary_objects.rs"]
 mod temporary_objects;
 // These legacy name generators are intentionally opt-in. They preserve
 // pinned-musl's racy absent-name observation and compose only with the
 // separately audited allocation/string-duplication baseline.
-#[cfg(feature = "x86-temporary-names")]
+#[cfg(crabc_x86_temporary_names)]
 #[path = "temporary_names.rs"]
 mod temporary_names;
-#[cfg(not(feature = "x86-owned-static-runtime"))]
+#[cfg(not(crabc_x86_owned_runtime))]
 #[path = "lchmod_unsupported.rs"]
 mod lchmod_unsupported;
 #[path = "mkfifo.rs"]
@@ -828,10 +828,10 @@ mod mkfifoat;
 mod extended_attributes;
 // Installed commands have a complete typed variadic dispatch; retain the
 // frozen private descriptor/status/record whitelist as its own artifact.
-#[cfg(not(feature = "x86-owned-static-runtime"))]
+#[cfg(not(crabc_x86_owned_runtime))]
 #[path = "descriptor_control.rs"]
 mod descriptor_control;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_descriptor_control.rs"]
 mod descriptor_control;
 #[path = "record_locks.rs"]
@@ -873,10 +873,10 @@ mod ulimit;
 // The frozen selected-static configuration module admits only its original
 // fixed selectors. Installed products select the source-backed auxv signal
 // stack extension without widening that private archive boundary.
-#[cfg(not(feature = "x86-owned-static-runtime"))]
+#[cfg(not(crabc_x86_owned_runtime))]
 #[path = "system_configuration.rs"]
 mod system_configuration;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_system_configuration.rs"]
 mod system_configuration;
 #[path = "memory_mapping.rs"]
@@ -897,7 +897,7 @@ mod readiness_waits;
 mod event_descriptors;
 #[path = "mq_setattr.rs"]
 mod mq_setattr;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_message_queues.rs"]
 mod owned_message_queues;
 #[path = "aio_error.rs"]
@@ -905,7 +905,7 @@ mod aio_error;
 // The frozen archive retains its archive-free `aio_error` observation leaf.
 // Owned products select the source AIO completion protocol and its request
 // siblings instead.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_aio.rs"]
 mod owned_aio;
 #[path = "timer_fd.rs"]
@@ -934,7 +934,7 @@ mod directory_streams;
 // locale, directory, stat, allocator, environment, and passwd owners only in
 // the owned runtime aggregate. The frozen private archive keeps its current
 // public provider boundary until this dedicated product evidence is selected.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_pattern.rs"]
 mod owned_pattern;
 #[cfg(feature = "x86-filesystem-traversal")]
@@ -997,16 +997,16 @@ mod h_errno;
 #[cfg(feature = "x86-resolver-runtime")]
 #[path = "resolver_runtime.rs"]
 mod resolver_runtime;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_resolver_transport.rs"]
 mod owned_resolver_transport;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_resolver_batch.rs"]
 mod owned_resolver_batch;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_netdb_lookup.rs"]
 mod owned_netdb_lookup;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_classic_netdb.rs"]
 mod owned_classic_netdb;
 #[cfg(not(feature = "x86-resolver-runtime"))]
@@ -1024,7 +1024,7 @@ mod posix_spawnattr_setschedparam;
 mod posix_spawnattr_setschedpolicy;
 #[path = "posix_spawn_file_actions_init.rs"]
 mod posix_spawn_file_actions_init;
-#[cfg(any(feature = "x86-posix-spawn-file-actions", feature = "x86-owned-static-runtime"))]
+#[cfg(any(feature = "x86-posix-spawn-file-actions", crabc_x86_owned_runtime))]
 #[path = "posix_spawn_file_actions.rs"]
 mod posix_spawn_file_actions;
 #[path = "endservent.rs"]
@@ -1043,13 +1043,13 @@ mod socket_messages;
 mod sysv_semaphore;
 #[path = "posix_semaphore.rs"]
 mod posix_semaphore;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_named_ipc.rs"]
 mod owned_named_ipc;
 #[path = "sysv_message_shared_memory.rs"]
 mod sysv_message_shared_memory;
-#[cfg_attr(feature = "x86-owned-dynamic-runtime", path = "general_dlfcn.rs")]
-#[cfg_attr(not(feature = "x86-owned-dynamic-runtime"), path = "fixed_graph_dlfcn.rs")]
+#[cfg_attr(crabc_x86_dynamic_runtime, path = "general_dlfcn.rs")]
+#[cfg_attr(not(crabc_x86_dynamic_runtime), path = "fixed_graph_dlfcn.rs")]
 mod fixed_graph_dlfcn;
 
 // The installed-product builders pair this cfg with the C define that
@@ -1065,7 +1065,7 @@ mod allocator_mimalloc_lifecycle;
 // backend and lifecycle. Its C contract is shared verbatim with AArch64; only
 // the target-local errno accessor differs.
 #[cfg(all(
-    feature = "x86-allocator-runtime",
+    crabc_x86_allocator_runtime,
     not(feature = "native-mimalloc-shadow"),
 ))]
 mod allocator {
@@ -1103,7 +1103,7 @@ mod allocator {
     /// Owned TLS is ready for errno publication. The backend retains its
     /// normal lazy initialization; successful storage obeys that allocator's
     /// ownership and allocation lifetime.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     pub(super) unsafe fn allocate_internal(size: usize) -> *mut c_void {
         unsafe { mimalloc_failed(libmimalloc_sys::mi_malloc_aligned(
             size, MIMALLOC_MALLOC_ALIGNMENT,
@@ -1115,7 +1115,7 @@ mod allocator {
     ///
     /// This stays separate from public `calloc`: private libc state must not
     /// select an executable replacement for the weak public spelling.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     pub(super) unsafe fn allocate_zeroed_internal(size: usize) -> *mut c_void {
         let allocation = unsafe { allocate_internal(size) };
         if !allocation.is_null() {
@@ -1129,7 +1129,7 @@ mod allocator {
     ///
     /// Musl's internal free preserves the calling thread's errno at cleanup
     /// boundaries, just as the selected public wrapper does.
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     pub(super) unsafe fn deallocate_internal(pointer: *mut c_void) {
         if !pointer.is_null() {
             let saved_errno = cabi_allocator_errno();
@@ -1162,7 +1162,7 @@ mod allocator;
 // entry point. Keep its object and feature separate so the completed wrapper
 // artifact retains its exact nine-entry public surface and this mixed-runtime
 // evidence cannot imply allocator lifecycle closure.
-#[cfg(feature = "x86-allocator-string-duplication")]
+#[cfg(crabc_x86_allocator_string_duplication)]
 #[path = "allocator_string_duplication.rs"]
 mod allocator_string_duplication;
 
@@ -1171,84 +1171,84 @@ mod allocator_string_duplication;
 // SIGABRT termination sequence.  Keep all four owners behind the aggregate
 // feature so the completed default and earlier private allocator fixtures
 // retain their established archive and export contracts.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_static_syscall.rs"]
 mod owned_static_syscall;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_static_prctl.rs"]
 mod owned_static_prctl;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_static_realpath.rs"]
 mod owned_static_realpath;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_static_abort.rs"]
 mod owned_static_abort;
 
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_assert.rs"]
 mod owned_assert;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_process_lock.rs"]
 mod owned_process_lock;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_spawn.rs"]
 mod owned_spawn;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_linux_control.rs"]
 mod owned_linux_control;
 // These direct Linux/filesystem/terminal mechanisms reuse the selected
 // allocator, pathname, cancellation, descriptor, and raw-syscall owners.
 // Keep their eight public names out of the frozen selected-static archive.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_unix_mechanisms.rs"]
 mod owned_unix_mechanisms;
 // This product-only block completes one source-mapped set of filesystem C
 // mechanisms without widening the frozen selected-static archive.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_filesystem_mechanisms.rs"]
 mod owned_filesystem_mechanisms;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_vm_mechanisms.rs"]
 mod owned_vm_mechanisms;
 // Word expansion owns parsing/evaluation and uses the selected environment,
 // pathname, spawn, and C result-allocation owners. Keep
 // it inside the aggregate so the frozen default archive remains export-free.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_wordexp.rs"]
 mod owned_wordexp;
 // The C adapter and deterministic core share one result-record owner. The
 // private Rust boundaries are not additional exported C records or APIs.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[allow(dead_code)] // Includes deterministic core-test views.
 #[path = "owned_wordexp_engine.rs"]
 mod owned_wordexp_engine;
 // Only selected command substitutions reach this process/environment owner.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[allow(dead_code)]
 #[path = "owned_wordexp_process.rs"]
 mod owned_wordexp_process;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[allow(dead_code)]
 #[path = "owned_wordexp_paths.rs"]
 mod owned_wordexp_paths;
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[allow(dead_code)] // Includes standalone record-ownership test constructors.
 #[path = "owned_wordexp_results.rs"]
 mod owned_wordexp_results;
 // Allocation budgets exist only in a disposable private witness archive.
-#[cfg(all(feature = "x86-owned-static-runtime", crabc_owned_wordexp_result_private_test))]
+#[cfg(all(crabc_x86_owned_runtime, crabc_owned_wordexp_result_private_test))]
 #[path = "owned_wordexp_result_failure.rs"]
 mod owned_wordexp_result_failure;
 // The installed owned-static composition additionally needs Lua's complete
 // binary32/binary64 inverse-trigonometry set. Keep it at this aggregate
 // boundary: the frozen default archive must not acquire any of these entries.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_inverse_trig.rs"]
 mod owned_inverse_trig;
 // The six scalar entries are a separate source-closed component of the
 // installed owned-static product. Keep them feature-gated so default fixture
 // archives retain their exact frozen export contract.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "math_scalar_completion.rs"]
 mod math_scalar_completion;
 
@@ -1336,7 +1336,7 @@ mod pthread_mutex_prioceiling_query;
 // C entry, not part of the weak allocation family. Its private witness keeps
 // archive ownership independently auditable in the feature-built x86 image.
 #[cfg(all(
-    feature = "x86-allocator-observability",
+    crabc_x86_allocator_observability,
     not(feature = "native-mimalloc-shadow"),
 ))]
 mod allocator_observability {
@@ -1351,7 +1351,7 @@ mod allocator_observability {
 }
 
 #[cfg(all(
-    feature = "x86-allocator-observability",
+    crabc_x86_allocator_observability,
     feature = "native-mimalloc-shadow",
 ))]
 mod allocator_observability {
@@ -1380,8 +1380,8 @@ mod allocator_observability {
 // aligned_alloc, and free through the selected crabc wrapper/backend.
 #[cfg(all(
     feature = "x86-crypt",
-    feature = "x86-allocator-runtime",
-    not(feature = "x86-crypt-allocator-composition"),
+    crabc_x86_allocator_runtime,
+    not(crabc_x86_crypt_allocator_composition),
 ))]
 compile_error!(
     "x86-crypt and x86-allocator-runtime must be enabled through x86-crypt-allocator-composition"

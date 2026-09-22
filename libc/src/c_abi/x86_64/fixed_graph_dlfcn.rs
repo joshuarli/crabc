@@ -28,7 +28,7 @@ use super::raw_syscall;
 
 // Owned static startup enumerates its one executable without a loader record.
 // The private fixed-graph proof keeps its existing snapshot implementation.
-#[cfg(feature = "x86-owned-static-runtime")]
+#[cfg(crabc_x86_owned_runtime)]
 #[path = "static_dl_iterate_phdr.rs"]
 mod static_dl_iterate_phdr;
 
@@ -827,10 +827,10 @@ pub unsafe extern "C" fn dl_iterate_phdr(
     let Some(callback) = callback else {
         return 0;
     };
-    #[cfg(feature = "x86-owned-static-runtime")]
+    #[cfg(crabc_x86_owned_runtime)]
     return static_dl_iterate_phdr::iterate(callback, data);
 
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    #[cfg(not(crabc_x86_owned_runtime))]
     {
         let Some(record) = runtime_record() else {
             return -1;
