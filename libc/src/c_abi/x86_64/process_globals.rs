@@ -34,10 +34,40 @@ use super::{
     stdio_standard::{fputc, fwrite, stderr, StandardStream},
 };
 
-#[path = "process_name_startup.rs"]
-mod process_name_startup;
-
 const EINVAL: c_int = 22;
+static EMPTY_PROGRAM_NAME: [u8; 1] = [0];
+
+/// Select full and short process names from startup's argv and `AT_EXECFN`.
+///
+/// # Safety
+///
+/// `argc` and `argv` must be the validated initial process vector, with
+/// readable NUL-terminated strings for non-null entries. `execfn` must be null
+/// or a readable NUL-terminated kernel auxiliary-vector value. The returned
+/// pointers are retained in process globals, so all selected storage must live
+/// for the process lifetime.
+unsafe fn select_program_names(
+    argc: c_int,
+    argv: *const *const c_char,
+    execfn: *const c_char,
+) -> (*const c_char, *const c_char) {
+    let full = if argc > 0 && !argv.is_null() && !unsafe { *argv }.is_null() {
+        unsafe { *argv }
+    } else if !execfn.is_null() {
+        execfn
+    } else {
+        EMPTY_PROGRAM_NAME.as_ptr().cast()
+    };
+    let mut short = full;
+    let mut cursor = full;
+    while unsafe { *cursor } != 0 {
+        if unsafe { *cursor } as u8 == b'/' {
+            short = unsafe { cursor.add(1) };
+        }
+        cursor = unsafe { cursor.add(1) };
+    }
+    (full, short)
+}
 
 // Musl exposes these compatibility spellings as weak aliases, not copied
 // pointer values. The same-address property matters when a caller writes a
@@ -83,11 +113,39 @@ include!("../../getopt_exports.rs");
 /// retained for process lifetime, like pointers into the initial argv vector.
 pub(super) unsafe fn install(argc: c_int, argv: *const *const c_char) {
     let execfn = super::auxv_observation::initial_execfn().unwrap_or(core::ptr::null());
-    let (full, short) = unsafe { process_name_startup::select(argc, argv, execfn) };
+    let (full, short) = unsafe { select_program_names(argc, argv, execfn) };
     // SAFETY: the selected pointers refer to the validated initial stack or
-    // the static empty-name byte, and both globals are C ABI pointer slots.
+    // the leaf-owned static empty-name byte, and both globals are C ABI pointer slots.
     unsafe {
         __progname_full = full.cast_mut();
         __progname = short.cast_mut();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::select_program_names;
+    use core::ffi::c_char;
+
+    #[test]
+    fn null_argv0_uses_execfn_and_extracts_basename() {
+        static EXECFN: &[u8] = b"/srv/app/no-argv0\0";
+        let argv = [core::ptr::null::<c_char>()];
+        let (full, short) = unsafe {
+            select_program_names(0, argv.as_ptr(), EXECFN.as_ptr().cast())
+        };
+        assert_eq!(full, EXECFN.as_ptr().cast());
+        assert_eq!(short, unsafe { EXECFN.as_ptr().add(9) }.cast());
+    }
+
+    #[test]
+    fn absent_execfn_uses_the_leaf_owned_empty_program_name() {
+        let argv = [core::ptr::null::<c_char>()];
+        let (full, short) = unsafe {
+            select_program_names(0, argv.as_ptr(), core::ptr::null())
+        };
+        assert_eq!(unsafe { *full }, 0);
+        assert_eq!(short, full);
+        assert_eq!(full, EMPTY_PROGRAM_NAME.as_ptr().cast());
     }
 }
