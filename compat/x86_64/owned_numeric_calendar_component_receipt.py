@@ -201,7 +201,7 @@ def tool_roster(root: Path, dynamic: Path, static: Path | None) -> dict[str, obj
             "oracle": recorded_tool_identity(root, Path("/usr/local/bin/crabc-x86_64-musl-gcc"), "pinned musl compiler"),
             "dynamic_driver": recorded_tool_identity(root, dynamic / "bin/crabc-cc-dynamic", "dynamic compiler driver"),
             "compiler": recorded_tool_identity(root, Path(module.compiler()), "resolved compiler"),
-            "linker": recorded_tool_identity(root, Path(module.linker()), "resolved linker"),
+            "linker": recorded_tool_identity(root, Path(module.linker(dynamic)), "resolved linker"),
         }
         if static is not None:
             result["static_driver"] = recorded_tool_identity(root, static / "bin/crabc-cc", "static compiler driver")

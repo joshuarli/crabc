@@ -294,7 +294,7 @@ def tool_roster(root: Path, static_product: Path, dynamic_product: Path) -> dict
             "static_driver": recorded_tool_identity(root, static_product / "bin/crabc-cc", "static compiler driver"),
             "dynamic_driver": recorded_tool_identity(root, dynamic_product / "bin/crabc-cc-dynamic", "dynamic compiler driver"),
             "compiler": recorded_tool_identity(root, Path(module.compiler()), "resolved compiler"),
-            "linker": recorded_tool_identity(root, Path(module.linker()), "resolved linker"),
+            "linker": recorded_tool_identity(root, Path(module.linker(dynamic_product)), "resolved linker"),
             "shell": recorded_command_identity(Path("/bin/sh"), "capability-proof shell"),
             "chroot": recorded_command_identity(Path("/usr/sbin/chroot"), "chroot control command"),
         }

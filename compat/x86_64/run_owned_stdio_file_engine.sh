@@ -139,7 +139,7 @@ try:
     spec.loader.exec_module(module)
     result = {'oracle': identity(oracle_text), 'static_driver': identity(static / 'bin/crabc-cc'),
               'dynamic_driver': identity(dynamic / 'bin/crabc-cc-dynamic'),
-              'compiler': identity(Path(module.compiler())), 'linker': identity(Path(module.linker())),
+              'compiler': identity(Path(module.compiler())), 'linker': identity(Path(module.linker(dynamic))),
               'control_busybox': identity(busybox_text), 'control_loader': identity(loader_text),
               'control_mount': identity(mount_text), 'control_umount': identity(umount_text)}
 finally:

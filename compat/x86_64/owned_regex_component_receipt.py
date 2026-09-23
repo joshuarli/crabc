@@ -203,7 +203,7 @@ def tool_roster(root: Path, dynamic: Path, static: Path | None) -> dict[str, obj
             "oracle": recorded_tool_identity(root, Path("/usr/local/bin/crabc-x86_64-musl-gcc"), "pinned musl compiler"),
             "dynamic_driver": recorded_tool_identity(root, dynamic / "bin/crabc-cc-dynamic", "dynamic compiler driver"),
             "compiler": recorded_tool_identity(root, Path(module.compiler()), "resolved compiler"),
-            "linker": recorded_tool_identity(root, Path(module.linker()), "resolved linker"),
+            "linker": recorded_tool_identity(root, Path(module.linker(dynamic)), "resolved linker"),
             "nm": recorded_tool_identity(root, Path("/usr/bin/nm"), "pinned symbol reader"),
             "readelf": recorded_tool_identity(root, Path("/usr/bin/readelf"), "pinned ELF reader"),
             "env": recorded_tool_identity(root, Path("/usr/bin/env"), "pinned clean-environment launcher"),

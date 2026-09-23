@@ -261,11 +261,11 @@ def product_record(root, product):
     return {'manifest': family.file_identity(root, manifest), 'tree': family.snapshot(product)}
 
 
-def live_tools():
+def live_tools(product):
     import crabc_cc_static as compiler
     return {role: {'path': str(path), 'sha256': native.digest(path)} for role, path in
             (('compiler', Path(compiler.compiler()).resolve(strict=True)),
-             ('linker', Path(compiler.linker()).resolve(strict=True)))}
+             ('linker', Path(compiler.linker(product)).resolve(strict=True)))}
 
 
 def live_oracle():
@@ -279,7 +279,7 @@ def prepare(root, work, product):
     request = {'schema': SCHEMA, 'source_mount': str(root), 'product': product.relative_to(root).as_posix()}
     family.static_products.write_new(work / 'profile-request.json', request)
     for name, value in (('source-before', source_records(root)), ('product-before', product_record(root, product)),
-                        ('tools-before', live_tools()), ('oracle-before', live_oracle())):
+                        ('tools-before', live_tools(product)), ('oracle-before', live_oracle())):
         family.static_products.write_new(work / ('profile-'+name+'.json'), value)
     oracle = native.read_json(work / 'profile-oracle-before.json')
     retained = work / 'profile-oracle'
@@ -295,7 +295,7 @@ def prepare(root, work, product):
 def guard(root, work, product):
     same(source_records(root), native.read_json(work / 'profile-source-before.json'), 'crypt source changed during execution')
     same(product_record(root, product), native.read_json(work / 'profile-product-before.json'), 'crypt supplied product changed during execution')
-    same(live_tools(), native.read_json(work / 'profile-tools-before.json'), 'crypt compiler/linker changed during execution')
+    same(live_tools(product), native.read_json(work / 'profile-tools-before.json'), 'crypt compiler/linker changed during execution')
     same(live_oracle(), native.read_json(work / 'profile-oracle-before.json'), 'crypt pinned oracle changed during execution')
 
 
@@ -322,7 +322,7 @@ def extend(root, work, product):
     vectors.mkdir()
     (vectors / 'observer.c').write_bytes(generated_observer(root))
     reader = native.Reader(work, str(root), product, root)
-    commands = vector_commands(reader, live_tools()['compiler']['path'])
+    commands = vector_commands(reader, live_tools(product)['compiler']['path'])
     try:
         for label in ('dependencies', 'compile', 'oracle-link'):
             guard(root, work, product)

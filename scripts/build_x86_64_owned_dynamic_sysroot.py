@@ -668,10 +668,15 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
         "modes": ["dynamic-pie", "dynamic-non-pie", "dynamic-shared-object"],
         "runtime_profile": qualification.MATERIALIZATION_PROFILE,
         "qualification": qualification.MATERIALIZATION_QUALIFICATION})
+    write_product_manifest(output, metadata)
+
+
+def write_product_manifest(output: Path, metadata: Path) -> None:
+    """Seal installed payload bytes together with their selected Rust toolchain."""
     files = {path.relative_to(output).as_posix(): common.sha256_file(path)
              for path in sorted(output.rglob("*")) if path.is_file() and not path.is_symlink()}
     common.write_json(metadata / "manifest.json", {"schema": 1, "format": FORMAT,
-        "target": common.TARGET, "files": files,
+        "target": common.TARGET, "toolchain": common.PINNED_TOOLCHAIN, "files": files,
         "symlinks": {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"}})
 
 

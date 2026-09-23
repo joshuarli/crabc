@@ -201,7 +201,7 @@ def expected_tool_seal(static: Path, dynamic: Path) -> dict[str, object]:
             "oracle": tool_identity(ORACLE_CC),
             "dynamic_driver": tool_identity(dynamic / "bin/crabc-cc-dynamic"),
             "compiler": tool_identity(Path(module.compiler())),
-            "linker": tool_identity(Path(module.linker())),
+            "linker": tool_identity(Path(module.linker(dynamic))),
             "static_driver": tool_identity(static / "bin/crabc-cc"),
         }
     finally:

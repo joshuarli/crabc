@@ -308,7 +308,7 @@ def tool_roster(root: Path, static: Path, dynamic: Path) -> dict[str, object]:
             "dynamic_driver": tool_identity(root, dynamic / "bin/crabc-cc-dynamic", "dynamic driver"),
             "static_driver": tool_identity(root, static / "bin/crabc-cc", "static driver"),
             "compiler": tool_identity(root, Path(module.compiler()), "resolved compiler"),
-            "linker": tool_identity(root, Path(module.linker()), "resolved linker"),
+            "linker": tool_identity(root, Path(module.linker(dynamic)), "resolved linker"),
             "nm": tool_identity(root, Path(providers.NM), "nm"),
             "readelf": tool_identity(root, Path(providers.READELF), "readelf"),
         }

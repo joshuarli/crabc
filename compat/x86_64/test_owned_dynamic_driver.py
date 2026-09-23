@@ -45,6 +45,20 @@ class InstalledDynamicDriverTests(unittest.TestCase):
     def write_manifest(self):
         (self.root / "share/crabc/manifest.json").write_text(json.dumps(self.manifest))
 
+    def test_producer_manifest_seals_the_pinned_toolchain_identity(self):
+        output = Path(self.temporary.name) / "product"
+        metadata = output / "share/crabc"
+        metadata.mkdir(parents=True)
+        payload = output / "lib/libc.so"
+        payload.parent.mkdir(parents=True)
+        payload.write_bytes(b"owned libc")
+
+        producer.write_product_manifest(output, metadata)
+
+        record = json.loads((metadata / "manifest.json").read_text())
+        self.assertEqual(record["toolchain"], producer.common.PINNED_TOOLCHAIN)
+        self.assertEqual(record["files"]["lib/libc.so"], hashlib.sha256(b"owned libc").hexdigest())
+
     @staticmethod
     def _run_native(command: list[str]) -> None:
         completed = subprocess.run(command, capture_output=True, text=True, check=False)

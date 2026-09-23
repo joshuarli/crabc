@@ -105,7 +105,7 @@ try:
         'static_driver': identity(static / 'bin/crabc-cc'),
         'dynamic_driver': identity(dynamic / 'bin/crabc-cc-dynamic'),
         'compiler': identity(Path(module.compiler())),
-        'linker': identity(Path(module.linker())),
+        'linker': identity(Path(module.linker(dynamic))),
     }
 finally:
     sys.modules.pop(spec.name, None)

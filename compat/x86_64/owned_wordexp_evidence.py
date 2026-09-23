@@ -727,7 +727,7 @@ def _installed_tool_roster(dynamic: Path, static: Path | None) -> dict[str, dict
     try:
         specification.loader.exec_module(module)
         compiler = Path(module.compiler())
-        linker = Path(module.linker())
+        linker = Path(module.linker(dynamic))
     except (AttributeError, OSError, RuntimeError) as error:
         raise EvidenceError("installed compiler helper cannot resolve fixed tools") from error
     finally:

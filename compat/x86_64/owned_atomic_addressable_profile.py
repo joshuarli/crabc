@@ -76,7 +76,7 @@ def live_tools(product):
         require(Path(compiler.__file__).resolve() == helper, 'atomic installed compiler helper import drifted')
         result = {role: {'path': str(path), 'sha256': native.digest(path)} for role, path in
                   (('compiler', Path(compiler.compiler()).resolve(strict=True)),
-                   ('linker', Path(compiler.linker()).resolve(strict=True)))}
+                   ('linker', Path(compiler.linker(product)).resolve(strict=True)))}
     finally:
         sys.path.pop(0)
         sys.modules.pop('crabc_cc_static', None)

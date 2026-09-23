@@ -147,7 +147,7 @@ sys.modules[spec.name] = module
 try:
     spec.loader.exec_module(module)
     record = {'oracle': identity(oracle), 'dynamic_driver': identity(dynamic / 'bin/crabc-cc-dynamic'),
-              'compiler': identity(Path(module.compiler())), 'linker': identity(Path(module.linker()))}
+              'compiler': identity(Path(module.compiler())), 'linker': identity(Path(module.linker(dynamic)))}
     if static is not None:
         record['static_driver'] = identity(static / 'bin/crabc-cc')
 finally:

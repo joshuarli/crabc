@@ -210,7 +210,7 @@ def _driver_tools(dynamic: Path, static: Path | None) -> dict[str, Any]:
     sys.modules[spec.name] = module
     try:
         spec.loader.exec_module(module)
-        compiler, linker = Path(module.compiler()), Path(module.linker())
+        compiler, linker = Path(module.compiler()), Path(module.linker(dynamic))
     except (AttributeError, OSError, RuntimeError) as error:
         raise EvidenceError("installed compiler helper cannot resolve tools") from error
     finally:
