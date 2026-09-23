@@ -9467,33 +9467,18 @@ mod tests {
                 .expect("the child remains pinned through its allocated page");
             assert_ne!(child_stats_after, child_stats_before,
                 "the child arena reserve and page commitment are charged to the child");
-            let (sequence, total, live, ticket_identity, is_child) = child
-                .with_child_heap(|mut image, _heap, _memory| {
-                    let identity_pointer = image.as_ref().get_ref().identity().as_ptr();
-                    let ticket = image
-                        .as_mut()
-                        .issue_metadata_thread_ticket()
-                        .expect("child sequence zero is eligible after Heap and metadata publication");
-                    let sequence = ticket.sequence().get();
-                    let ticket_identity = core::ptr::eq(
-                        ticket.subprocess().as_ptr(),
-                        identity_pointer,
-                    );
-                    drop(ticket);
+            let (total, live, is_child) = child
+                .with_child_heap(|image, _heap, _memory| {
                     let identity = image.as_ref().get_ref().identity();
                     (
-                        sequence,
                         identity.total_thread_count(),
                         identity.live_thread_count(),
-                        ticket_identity,
                         identity.is_registered_child_of(parent),
                     )
                 })
                 .unwrap();
-            assert_eq!(sequence, 0);
-            assert_eq!(total, 1);
+            assert_eq!(total, 0);
             assert_eq!(live, 0);
-            assert!(ticket_identity);
             assert!(is_child);
             let metadata_theap = child
                 .with_metadata_theap(|theap| NonNull::from(&mut *theap))
@@ -9519,6 +9504,85 @@ mod tests {
             assert!(metadata_identity_matches);
             assert!(metadata_heap_matches);
             assert!(metadata_tld_is_detached);
+
+            // The first real child TLD is sequence zero, but it is an
+            // ordinary metadata-backed TLD. Its live Theap's page owner and
+            // Heap identity must both be the child, while map lookup remains
+            // process-global. Exercise one full allocate/free/page-drain and
+            // then retire the exact TLD/Theap blocks before child destruction.
+            let mut child_thread = unsafe { child.begin_child_thread(binding) }
+                .unwrap_or_else(|failure| match failure {
+                    crate::meta::ChildThreadStartFailure::Rejected(error) => {
+                        panic!("child metadata pages reject seq-zero TLD/Theap init: {error:?}")
+                    }
+                    crate::meta::ChildThreadStartFailure::Retained { error, .. } => {
+                        panic!("child metadata pages retain seq-zero TLD/Theap init: {error:?}")
+                    }
+                });
+            let child_thread_sequence = child_thread.sequence().get();
+            let child_thread_id = child_thread.thread().get();
+            assert_eq!(child_thread_sequence, 0);
+            let parent_thread_stats_before = parent.vm_statistics().snapshot();
+            let (total_count, live_count, page_memory, page_heap, page_owner) =
+                unsafe {
+                    child_thread.with_page_engine(binding, |child_image, engine| {
+                        let identity = child_image.as_ref().get_ref().identity();
+                        let block = engine.allocate(64, false)
+                            .expect("ordinary child Theap allocates a small block");
+                        let page = unsafe { engine.page_for_block(block) };
+                        assert!(!page.is_null(), "ordinary child allocation has a page image");
+                        let page_ref = unsafe { &*page };
+                        let memory = page_ref.memid();
+                        let heap = page_ref.heap();
+                        let owner = page_ref.owner_thread_id();
+                        assert!(identity.ready_main_heap_identity().unwrap()
+                            .matches(NonNull::new(heap).unwrap()),
+                            "ordinary child page names the parent-allocated child Heap");
+                        assert_eq!(owner, child_thread_id,
+                            "ordinary child page is owned by its live child thread");
+                        let map = unsafe { binding.page_map().page_map_for_owned_ranges() }
+                            .expect("the canonical PageMap remains live during child allocation");
+                        assert_eq!(unsafe { map.checked_lookup(block.as_ptr()) }, page,
+                            "ordinary child page lookup uses the process-global PageMap");
+                        unsafe { engine.free(block) }
+                            .expect("the ordinary child block frees through its live Theap");
+                        assert!(engine.collect_retired(true),
+                            "the freed ordinary page reaches source force collection");
+                        assert!(engine.finish_pages_in_place(),
+                            "the ordinary child page owner drains before Theap detach");
+                        (
+                            identity.total_thread_count(),
+                            identity.live_thread_count(),
+                            memory,
+                            heap,
+                            owner,
+                        )
+                    })
+                }
+                .expect("the real child ordinary page session validates its attached TLD");
+            assert_eq!(total_count, 1);
+            assert_eq!(live_count, 1);
+            assert_eq!(page_memory.kind(), crate::types::MemoryKind::Arena);
+            assert!(!parent.ready_main_heap_identity().unwrap()
+                .matches(NonNull::new(page_heap).unwrap()),
+                "child page is not linked to the process parent's main Heap");
+            assert_ne!(page_owner, 0);
+            assert_eq!(parent.vm_statistics().snapshot(), parent_thread_stats_before,
+                "ordinary child page allocation does not charge parent statistics");
+            unsafe { child_thread.teardown(binding) }
+                .unwrap_or_else(|_| panic!("the drained child TLD/Theap detach and free"));
+            drop(child_thread);
+            assert!(child.finish_metadata_pages(binding)
+                .expect("the child metadata engine remains active"),
+                "the now-empty child metadata Theap releases its ordinary TLD/Theap pages");
+            let (thread_total_after, thread_live_after) = child
+                .with_child_heap(|image, _heap, _memory| {
+                    let identity = image.identity();
+                    (identity.total_thread_count(), identity.live_thread_count())
+                })
+                .expect("child context remains live after ordinary thread teardown");
+            assert_eq!(thread_total_after, 1);
+            assert_eq!(thread_live_after, 0);
 
             let fault = crate::os::fault::install(crate::os::fault::Plan::disabled());
             let os_block_address = core::cell::Cell::new(None);

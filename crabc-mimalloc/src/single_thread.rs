@@ -2599,6 +2599,13 @@ pub(crate) type ChildMetadataPageAllocator<'session, 'child, 'map> = PageAllocat
     crate::page_backing::ChildMetadataArenaBacking<'child>,
 >;
 
+pub(crate) type ChildOrdinaryPageAllocator<'session, 'child, 'map> = PageAllocatorEngine<
+    'child,
+    'map,
+    crate::types::metadata_session::ChildOrdinaryTheapPageSession<'session, 'child>,
+    crate::page_backing::ChildMetadataArenaBacking<'child>,
+>;
+
 impl<'session, 'child, 'map> ChildMetadataPageAllocator<'session, 'child, 'map> {
     /// Creates a child metadata page operation over the child's own arena
     /// backing and the process-global PageMap. The caller holds both the
@@ -2671,6 +2678,65 @@ impl<'session, 'child, 'map> ChildMetadataPageAllocator<'session, 'child, 'map> 
     /// latching by its external child owner.
     pub(crate) fn finish_pages(self) -> Result<(), Self> {
         self.finish_quiescent().map(|_| ())
+    }
+}
+
+impl<'session, 'child, 'map> ChildOrdinaryPageAllocator<'session, 'child, 'map> {
+    /// Creates a regular child-thread page operation over that child's arena
+    /// backing and the process-global PageMap. Unlike the detached metadata
+    /// session, arena claims use the ordinary TLD sequence.
+    ///
+    /// # Safety
+    /// `session` must be the exact live child TLD/Theap projection retained by
+    /// its linear owner; `backing` must pair the same child with the canonical
+    /// parent PageMap; and no other map/page writer may overlap.
+    pub(crate) unsafe fn activate_child_ordinary(
+        session: crate::types::metadata_session::ChildOrdinaryTheapPageSession<'session, 'child>,
+        backing: crate::page_backing::ChildMetadataArenaBacking<'child>,
+        page_map: &'map PageMap,
+        sequence: crate::types::ThreadSequence,
+    ) -> Self {
+        Self {
+            session,
+            arena: backing,
+            arena_lifetime: PhantomData,
+            requested_arena: ArenaId::none(),
+            page_map,
+            thread_sequence: sequence.get(),
+            pending_os_release: None,
+            collection_poison: None,
+            page_commit_poison: false,
+            #[cfg(test)]
+            forced_collect_retired_call_count: 0,
+            #[cfg(test)]
+            page_free_collect_failure_once: PageCollectFailureInjection::None,
+            #[cfg(test)]
+            page_release_after_page_map_unregister_failure_once: false,
+            #[cfg(test)]
+            aggregate_abandon_after_queue_detach_failure_once: false,
+            #[cfg(test)]
+            last_page_to_full: None,
+            #[cfg(test)]
+            page_commit_on_demand: false,
+            #[cfg(test)]
+            page_area_commit_lease: None,
+            shutdown_complete: false,
+        }
+    }
+
+    pub(crate) fn finish_operation(mut self) -> Result<(), Self> {
+        if self.pending_os_release.is_some()
+            || self.collection_poison.is_some()
+            || self.page_commit_poison
+        {
+            return Err(self);
+        }
+        self.shutdown_complete = true;
+        Ok(())
+    }
+
+    pub(crate) fn finish_pages_in_place(&mut self) -> bool {
+        self.finish_quiescent_in_place()
     }
 }
 

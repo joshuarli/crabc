@@ -3866,6 +3866,11 @@ impl Page {
         }
     }
 
+    #[inline]
+    pub(crate) fn owner_thread_id(&self) -> usize {
+        self.xthread_id.load(core::sync::atomic::Ordering::Acquire)
+    }
+
     /// Creates the zero page image used only for secondary aligned-metadata
     /// lookup slots.
     ///

@@ -222,12 +222,9 @@ impl ChildSubprocessImage {
     /// the ticket-zero static TLD image.
     #[inline]
     pub(crate) fn issue_metadata_thread_ticket<'ctx>(
-        self: core::pin::Pin<&'ctx mut Self>,
+        self: core::pin::Pin<&'ctx Self>,
     ) -> Result<ChildThreadRegistrationTicket<'ctx>, ChildThreadTicketError> {
-        // SAFETY: consuming Pin transfers the unique pinned borrow into this
-        // ticket lifetime; projecting the identity cannot move its parent.
-        let child: &'ctx mut Self = unsafe { core::pin::Pin::into_inner_unchecked(self) };
-        let identity: &'ctx SubprocessIdentity = &child.identity;
+        let identity: &'ctx SubprocessIdentity = &self.get_ref().identity;
         if !identity.is_registered()
             || identity.main_heap_publication_state() != MainHeapPublicationState::Ready
             || !identity.has_published_metadata_theap()
@@ -260,11 +257,90 @@ impl ChildThreadRegistrationTicket<'_> {
 
     #[inline]
     pub(crate) fn subprocess(&self) -> &SubprocessIdentity { self.subprocess }
+
+    /// Consumes this exact source sequence after its complete child TLD image
+    /// has been initialized. Sequence zero is ordinary metadata storage for
+    /// children; only process main can select the static TLD image.
+    ///
+    /// # Safety
+    /// The returned lease outlives this ticket's borrow and owns no part of
+    /// the child image. The caller stores it beside the matching TLD in the
+    /// `ChildMainHeapContextOwner` route that issued this ticket and keeps
+    /// that owner borrowed or projected until the lease is released, so the
+    /// parent-metadata allocation holding the pinned child image cannot be
+    /// released first. Release obligations are on
+    /// `ChildThreadRegistrationLease::release`.
+    #[inline]
+    pub(crate) unsafe fn activate_after_initialized_tld(
+        self,
+        tld: &ThreadLocalData,
+        thread: LiveThreadId,
+    ) -> Result<ChildThreadRegistrationLease, ChildThreadTicketError> {
+        if !tld.matches_subprocess_attached_no_theap_lifecycle(
+            thread,
+            self.sequence,
+            self.subprocess,
+        ) {
+            return Err(ChildThreadTicketError::TldMismatch);
+        }
+        self.subprocess.increment_live_thread_count();
+        Ok(ChildThreadRegistrationLease {
+            subprocess: NonNull::from(self.subprocess),
+            _not_send_or_sync: PhantomData,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ChildThreadTicketError {
     ChildNotReady,
+    TldMismatch,
+}
+
+/// Source `thread_count` ownership for one completed child TLD.
+///
+/// This is the child counterpart of `ThreadRegistrationLease`, but the child
+/// identity is not `'static`: it is the offset-zero identity of a pinned
+/// `ChildSubprocessImage` inside a parent-metadata allocation owned by one
+/// `ChildMainHeapContextOwner`. The lease records only that address, like the
+/// source `tld->subproc`, and never keeps the image alive by itself.
+/// `release` consumes the lease, so one TLD teardown has exactly one relaxed
+/// decrement. Dropping an unreleased lease deliberately does nothing: the
+/// count stays raised rather than reporting a possibly live TLD as gone.
+#[must_use = "a child TLD registration must be released exactly once"]
+pub(crate) struct ChildThreadRegistrationLease {
+    subprocess: NonNull<SubprocessIdentity>,
+    _not_send_or_sync: PhantomData<*mut ()>,
+}
+
+impl ChildThreadRegistrationLease {
+    #[inline]
+    pub(crate) fn belongs_to(&self, subprocess: &SubprocessIdentity) -> bool {
+        self.subprocess == NonNull::from(subprocess)
+    }
+
+    /// Performs `mi_tld_free`'s first transition: the relaxed decrement of
+    /// the child `thread_count` raised by `activate_after_initialized_tld`.
+    ///
+    /// # Safety
+    /// - Lifetime: the `ChildMainHeapContextOwner` that issued this lease's
+    ///   ticket still owns the parent-metadata allocation holding the pinned
+    ///   child image, and stays borrowed (or has its image projected) for this
+    ///   whole call so it cannot free, move, or reinitialize that image. The
+    ///   lease's own address is not evidence of liveness.
+    /// - Order: the matching TLD has no attached Theap, either because none
+    ///   was ever attached or because both intrusive Heap/TLD edges are
+    ///   removed, and its thread identity is still valid: this call precedes
+    ///   that TLD's identity invalidation, lock teardown, and metadata free.
+    #[inline]
+    pub(crate) unsafe fn release(self) {
+        // SAFETY: the caller keeps the issuing context owner, and therefore
+        // the pinned image allocation, live for this call. Only a short shared
+        // reference is formed: the identity is never projected mutably and
+        // this is one atomic RMW. Consuming `self` pairs it with exactly one
+        // prior increment, so the count cannot underflow.
+        unsafe { self.subprocess.as_ref() }.decrement_live_thread_count();
+    }
 }
 
 /// Which source subprocess path may consume the process-static TLD image.
