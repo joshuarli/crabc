@@ -762,6 +762,15 @@ impl<'owner> MetaAllocation<'owner> {
         Some(unsafe { &mut *self.pointer.as_ptr().cast::<Theap>() })
     }
 
+    /// True only while this capability owns an unlinked dynamic Theap image.
+    /// It gates pre-registry rollback and the final post-detach release; a
+    /// Theap with either intrusive membership must remain retained.
+    #[inline]
+    unsafe fn is_unlinked_dynamic_theap(&mut self) -> bool {
+        self.dynamic_theap_mut()
+            .is_some_and(|theap| unsafe { theap.is_unlinked_dynamic_metadata() })
+    }
+
     /// Immutably projects a prior exact dynamic-Theap image while its retained
     /// metadata capability is still live. The page-session boundary needs only
     /// source queue/direct inspection through this reference; mutation remains
@@ -1169,6 +1178,315 @@ pub(crate) struct MetadataEngine<'owner> {
 /// Process-main spelling. Child subprocesses use the same private metadata
 /// engine with a shorter owner lifetime in their reclaimable context.
 pub(crate) type MetaAllocator = MetadataEngine<'static>;
+
+/// Exact parent-issued storage for one reclaimable child source context.
+///
+/// The parent metadata engine and process-main identity are process-lived;
+/// this owner value and both child allocations are not. The capabilities stay
+/// outside the allocated child image, so releasing the context can never
+/// invalidate the value that authorizes that release. Child Heap creation
+/// and its own metadata engine are later source transitions and are not
+/// represented by this owner yet.
+/// This deliberately covers only a root child allocated by the process-main
+/// metadata engine; nested-child parent metadata and user-Heap allocation are
+/// not accepted by this API.
+///
+/// The production API stops at the unregistered preparation stage. The
+/// lifecycle regression may drive the exact later intrusive transitions
+/// through a lease to prove the retained allocations survive them, but this
+/// type does not yet construct a child Heap or publish child readiness.
+#[must_use = "a child context owner must be retained through child teardown"]
+pub(crate) struct ChildContextOwner {
+    parent_metadata: Pin<&'static MetaAllocator>,
+    parent_subprocess: &'static MainSubprocess,
+    // `'static` describes the process-lived allocator that minted this
+    // capability, not the child bytes' validity. The capability's live state
+    // and this owner's borrow-gated projections end at explicit release.
+    context: MetaAllocation<'static>,
+    metadata_theap: Option<MetaAllocation<'static>>,
+    image_initialized: bool,
+}
+
+/// Creation can fail after the first parent allocation. In that case the
+/// exact remaining capabilities travel with the error instead of being
+/// dropped or reconstructed.
+#[must_use = "a retained child context owner must remain owned after creation failure"]
+pub(crate) enum ChildContextCreateFailure {
+    Allocation {
+        stage: ChildContextCreateStage,
+        error: MetaError,
+    },
+    Retained {
+        owner: ChildContextOwner,
+        stage: ChildContextCreateStage,
+        error: MetaError,
+        rollback_error: Option<MetaError>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ChildContextCreateStage {
+    AllocateContext,
+    InitializeImage,
+    AllocateMetadataTheap,
+    InitializeMetadataTheap,
+    RollbackContext,
+    ReleaseMetadataTheap,
+    ReleaseContext,
+}
+
+/// Mutable child-image access is bounded by this lease. No raw image pointer
+/// or metadata release capability escapes it.
+pub(crate) struct ChildContextLease<'lease> {
+    owner: &'lease mut ChildContextOwner,
+}
+
+impl ChildContextOwner {
+    /// Allocates the child context and metadata-Theap images through the
+    /// parent's exact metadata owner. This is the source creation prefix:
+    /// both allocations precede registry publication. A failed second
+    /// allocation releases the first capability; if that release fails, the
+    /// owner is returned intact for terminal retention.
+    pub(crate) fn allocate(
+        parent_metadata: Pin<&'static MetaAllocator>,
+        parent_subprocess: &'static MainSubprocess,
+        config: MemoryConfig,
+    ) -> Result<Self, ChildContextCreateFailure> {
+        let mut context = parent_metadata
+            .zalloc_for_main_subprocess(
+                config,
+                parent_subprocess,
+                size_of::<crate::subproc::ChildSubprocessImage>(),
+            )
+            .map_err(|error| ChildContextCreateFailure::Allocation {
+                stage: ChildContextCreateStage::AllocateContext,
+                error,
+            })?;
+        let initialized = context.initialize_child_subprocess_image().is_some();
+        let mut owner = Self {
+            parent_metadata,
+            parent_subprocess,
+            context,
+            metadata_theap: None,
+            image_initialized: initialized,
+        };
+        if !initialized {
+            return Err(ChildContextCreateFailure::Retained {
+                owner,
+                stage: ChildContextCreateStage::InitializeImage,
+                error: MetaError::InitializationRetained,
+                rollback_error: None,
+            });
+        }
+
+        let metadata_theap = match parent_metadata.zalloc_for_main_subprocess(
+            config,
+            parent_subprocess,
+            size_of::<Theap>(),
+        ) {
+            Ok(allocation) => allocation,
+            Err(error) => {
+                return match parent_metadata.free(&mut owner.context) {
+                    Ok(()) => Err(ChildContextCreateFailure::Allocation {
+                        stage: ChildContextCreateStage::AllocateMetadataTheap,
+                        error,
+                    }),
+                    Err(rollback_error) => Err(ChildContextCreateFailure::Retained {
+                        owner,
+                        stage: ChildContextCreateStage::RollbackContext,
+                        error,
+                        rollback_error: Some(rollback_error),
+                    }),
+                };
+            }
+        };
+        owner.metadata_theap = Some(metadata_theap);
+        let theap_initialized = owner
+            .metadata_theap
+            .as_mut()
+            .and_then(MetaAllocation::initialize_dynamic_theap_metadata)
+            .is_some();
+        if !theap_initialized {
+            return Err(ChildContextCreateFailure::Retained {
+                owner,
+                stage: ChildContextCreateStage::InitializeMetadataTheap,
+                error: MetaError::InitializationRetained,
+                rollback_error: None,
+            });
+        }
+        Ok(owner)
+    }
+
+    /// Borrows the child image and its metadata-Theap capability for one
+    /// operation. The higher-ranked closure prevents either projection from
+    /// escaping the owner borrow.
+    pub(crate) fn with_lease<R>(
+        &mut self,
+        operation: impl for<'lease> FnOnce(ChildContextLease<'lease>) -> R,
+    ) -> R {
+        operation(ChildContextLease { owner: self })
+    }
+
+    /// Projects the initialized child image only for the duration of the
+    /// closure. Its exact allocation capability remains external and live.
+    pub(crate) fn with_image<R>(
+        &mut self,
+        operation: impl for<'image> FnOnce(
+            Pin<&'image mut crate::subproc::ChildSubprocessImage>,
+        ) -> R,
+    ) -> Option<R> {
+        if !self.image_initialized { return None; }
+        self.with_lease(|mut lease| lease.with_image(operation))
+    }
+
+    /// Frees a never-published child context in source reverse-allocation
+    /// order. Once registry or intrusive membership has been published,
+    /// callers must use the terminal source teardown path before release.
+    pub(crate) fn release_unpublished(
+        mut self,
+    ) -> Result<(), ChildContextReleaseFailure> {
+        let pristine = self.with_image(|image| {
+            let identity = image.identity();
+            !identity.is_registered()
+                && identity.main_heap_publication_state()
+                    == crate::subproc::MainHeapPublicationState::Absent
+                && !identity.has_published_metadata_theap()
+        }).unwrap_or(!self.image_initialized);
+        if !pristine {
+            return Err(ChildContextReleaseFailure {
+                owner: self,
+                stage: ChildContextCreateStage::RollbackContext,
+                error: MetaError::InitializationRetained,
+            });
+        }
+        if let Some(metadata_theap) = self.metadata_theap.as_mut() {
+            // SAFETY: unpublished state above plus exclusive ownership of
+            // both caps proves no Heap/TLD list operation can be concurrent.
+            if !unsafe { metadata_theap.is_unlinked_dynamic_theap() } {
+                return Err(ChildContextReleaseFailure {
+                    owner: self,
+                    stage: ChildContextCreateStage::ReleaseMetadataTheap,
+                    error: MetaError::InitializationRetained,
+                });
+            }
+            if let Err(error) = self.parent_metadata.free(metadata_theap) {
+                return Err(ChildContextReleaseFailure {
+                    owner: self,
+                    stage: ChildContextCreateStage::ReleaseMetadataTheap,
+                    error,
+                });
+            }
+            self.metadata_theap = None;
+        }
+        if let Err(error) = self.parent_metadata.free(&mut self.context) {
+            return Err(ChildContextReleaseFailure {
+                owner: self,
+                stage: ChildContextCreateStage::ReleaseContext,
+                error,
+            });
+        }
+        Ok(())
+    }
+
+    /// Releases the two parent-issued capabilities after the represented
+    /// source unlink transitions have completed. This is deliberately an
+    /// unsafe terminal boundary until the child Heap allocation/page
+    /// destruction owner is integrated.
+    ///
+    /// # Safety
+    /// The child has no users or tickets; registry membership was removed
+    /// first; its Heap/Theap list edges and child metadata identity were
+    /// cleared in pinned source order; and any child Heap/page destruction
+    /// has completed. The caller retains the child Heap owner independently
+    /// and has ended every projection before this final context release.
+    pub(crate) unsafe fn release_after_external_teardown(
+        mut self,
+    ) -> Result<(), ChildContextReleaseFailure> {
+        let terminal_identity = self.with_image(|image| {
+            !image.identity().is_registered()
+                && !image.identity().has_published_metadata_theap()
+        }).unwrap_or(false);
+        if !terminal_identity {
+            return Err(ChildContextReleaseFailure {
+                owner: self,
+                stage: ChildContextCreateStage::RollbackContext,
+                error: MetaError::InitializationRetained,
+            });
+        }
+        if let Some(metadata_theap) = self.metadata_theap.as_mut() {
+            // SAFETY: the caller's terminal teardown proof and exclusive
+            // owner consume exclude every Heap/TLD list operation.
+            if !unsafe { metadata_theap.is_unlinked_dynamic_theap() } {
+                return Err(ChildContextReleaseFailure {
+                    owner: self,
+                    stage: ChildContextCreateStage::ReleaseMetadataTheap,
+                    error: MetaError::InitializationRetained,
+                });
+            }
+            if let Err(error) = self.parent_metadata.free(metadata_theap) {
+                return Err(ChildContextReleaseFailure {
+                    owner: self,
+                    stage: ChildContextCreateStage::ReleaseMetadataTheap,
+                    error,
+                });
+            }
+            self.metadata_theap = None;
+        }
+        if let Err(error) = self.parent_metadata.free(&mut self.context) {
+            return Err(ChildContextReleaseFailure {
+                owner: self,
+                stage: ChildContextCreateStage::ReleaseContext,
+                error,
+            });
+        }
+        Ok(())
+    }
+}
+
+impl ChildContextLease<'_> {
+    #[inline]
+    pub(crate) const fn context_memory_id(&self) -> MemoryId {
+        self.owner.context.memory_id()
+    }
+
+    #[inline]
+    pub(crate) fn with_image<R>(
+        &mut self,
+        operation: impl for<'image> FnOnce(
+            Pin<&'image mut crate::subproc::ChildSubprocessImage>,
+        ) -> R,
+    ) -> Option<R> {
+        let image = self
+            .owner
+            .context
+            .child_subprocess_image_mut()?;
+        Some(operation(image))
+    }
+
+    #[inline]
+    pub(crate) fn with_metadata_theap<R>(
+        &mut self,
+        operation: impl for<'theap> FnOnce(&'theap mut Theap) -> R,
+    ) -> Option<R> {
+        self.owner
+            .metadata_theap
+            .as_mut()
+            .and_then(MetaAllocation::dynamic_theap_mut)
+            .map(operation)
+    }
+
+    #[inline]
+    pub(crate) const fn parent_subprocess(&self) -> &'static MainSubprocess {
+        self.owner.parent_subprocess
+    }
+}
+
+#[must_use = "a failed child context release retains its exact owner"]
+pub(crate) struct ChildContextReleaseFailure {
+    pub(crate) owner: ChildContextOwner,
+    pub(crate) stage: ChildContextCreateStage,
+    pub(crate) error: MetaError,
+}
 
 #[derive(Clone, Copy)]
 struct MetadataProcessBacking {

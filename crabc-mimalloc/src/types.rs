@@ -6093,6 +6093,23 @@ impl Theap {
         !self.heap.load(core::sync::atomic::Ordering::Relaxed).is_null()
     }
 
+    /// Whether this dynamic metadata image has been removed from both
+    /// intrusive lists. The source may retain its old `heap` pointer after
+    /// list unlink until the following metadata free.
+    /// # Safety
+    /// The exact metadata capability is exclusively retained and no Heap or
+    /// TLD list operation can mutate these links concurrently.
+    pub(crate) unsafe fn is_unlinked_dynamic_metadata(&self) -> bool {
+        (self.tld.is_null() || core::ptr::eq(self.tld, detached_thread_local_ptr()))
+            && self.tnext.is_null()
+            && self.tprev.is_null()
+            // SAFETY: the caller provides exclusive, quiescent access to the
+            // intrusive link image as required above.
+            && unsafe { (*self.hnext.get()).is_null() }
+            // SAFETY: same exclusive image proof as the preceding link read.
+            && unsafe { (*self.hprev.get()).is_null() }
+    }
+
     /// Borrows only the source default Theap's random field for OS hints.
     /// It never creates a mutable reference spanning page queues or links.
     ///
@@ -6820,15 +6837,8 @@ mod tests {
         let parent: &'static MainSubprocess = std::boxed::Box::leak(std::boxed::Box::new(
             MainSubprocess::new(),
         ));
-        // This fixture owns a test-only Box image and supplies its exact
-        // synthetic Malloc provenance; production child storage must come
-        // from the future linear parent-allocation owner.
-        let child: &'static mut crate::subproc::ChildSubprocessImage =
-            std::boxed::Box::leak(std::boxed::Box::new(
-                crate::subproc::ChildSubprocessImage::new(),
-            ));
         // SAFETY: this isolated fixture exclusively owns the main source
-        // membership and the test-only stable child image.
+        // membership and its one-time registry transition.
         unsafe { registry.initialize_main(parent) }.unwrap();
         let metadata_config = crate::os::MemoryConfig::from_observations(
             crate::os::PageSize::new(4096).unwrap(),
@@ -6840,106 +6850,155 @@ mod tests {
         parent_metadata
             .prepare_for_main_subprocess(metadata_config, parent)
             .unwrap();
-        let child_memory = MemoryId::malloc(
-            core::ptr::from_ref(&*child).cast_mut().cast(),
+        let live_before_child_prepare = parent_metadata.test_allocation_audit();
+        // The real owner allocates its context first and its metadata Theap
+        // second. Force the latter to fail, then observe the exact context
+        // capability roll back through the same parent engine without
+        // changing the registry or leaking a live metadata capability.
+        assert_ne!(
             size_of::<crate::subproc::ChildSubprocessImage>(),
-            true,
+            size_of::<Theap>(),
+            "fault injection must target the second, metadata-Theap allocation",
         );
-        // Match `mi_subproc_new`: the child context image and parent-owned
-        // metadata-Theap allocation precede registry insertion.
-        let mut child_metadata_allocation = parent_metadata
-            .zalloc_for_main_subprocess(metadata_config, parent, size_of::<Theap>())
-            .unwrap();
-        // SAFETY: child is retained at this pinned exact Malloc image through
-        // every list operation below, and parent is an initialized member.
-        unsafe { registry.initialize_child(&*child, parent, child_memory) }.unwrap();
+        parent_metadata.test_fail_next_direct_zeroed_size(size_of::<Theap>());
+        let failed_prepare = crate::meta::ChildContextOwner::allocate(
+            parent_metadata,
+            parent,
+            metadata_config,
+        );
+        assert!(matches!(
+            failed_prepare,
+            Err(crate::meta::ChildContextCreateFailure::Allocation {
+                stage: crate::meta::ChildContextCreateStage::AllocateMetadataTheap,
+                error: crate::meta::MetaError::AllocationUnavailable,
+            })
+        ));
+        assert_eq!(
+            parent_metadata.test_allocation_audit().live_capability_count,
+            live_before_child_prepare.live_capability_count,
+        );
+        // The successful path uses the same parent-issued context and
+        // metadata-Theap capabilities through registry, Heap, attachment, and
+        // terminal unlink. The owner remains external to both byte images.
+        let child_owner = crate::meta::ChildContextOwner::allocate(
+            parent_metadata,
+            parent,
+            metadata_config,
+        );
+        let mut child_owner = match child_owner {
+            Ok(owner) => owner,
+            Err(_) => panic!("parent metadata prepares child source images"),
+        };
+        let child_memory = child_owner.with_lease(|lease| lease.context_memory_id());
+        // Match `mi_subproc_new`: both exact parent allocations precede child
+        // registry publication. The lease keeps the image projection bounded.
+        assert!(child_owner
+            .with_image(|child| unsafe {
+                registry.initialize_child(child.as_ref().get_ref(), parent, child_memory)
+            })
+            .unwrap()
+            .is_ok());
         let mut child_heap = std::boxed::Box::new(Heap::bootstrap_empty());
         let child_heap_memory = MemoryId::malloc(
             core::ptr::from_mut(&mut *child_heap).cast(),
             size_of::<Heap>(),
             true,
         );
-        // SAFETY: both images are pinned for this isolated test; the Heap
-        // MemoryId is explicit fixture provenance, not a production owner.
-        unsafe {
-            core::pin::Pin::new_unchecked(&mut *child_heap)
-                .initialize_child_main(
-                    core::pin::Pin::new_unchecked(&mut *child),
-                    child_heap_memory,
-                )
-        }
-        .unwrap();
+        // SAFETY: the child context is parent-allocated and pinned by its
+        // exact capability. The empty Heap remains a test-only Box image;
+        // this models list admission, not parent-Heap allocation parity.
+        assert!(child_owner
+            .with_image(|child| unsafe {
+                core::pin::Pin::new_unchecked(&mut *child_heap)
+                    .initialize_child_main(child, child_heap_memory)
+            })
+            .unwrap()
+            .is_ok());
 
-        // SAFETY: the child Heap is Box-pinned and the capability owns the
-        // child Theap allocation. The scoped mutable projection ends before
-        // teardown mutates the Theap through its raw identity.
-        let child_theap = {
-            let child_metadata_theap = child_metadata_allocation
-                .initialize_dynamic_theap_metadata()
-                .unwrap();
-            unsafe {
-                parent_metadata.initialize_child_metadata_theap(
-                    metadata_config,
-                    parent,
-                    &mut child_heap,
-                    child_metadata_theap,
-                )
-            }
+        // SAFETY: the lease owns the exact parent-issued Theap capability and
+        // the test Heap is pinned. The scoped `&mut Theap` ends before raw
+        // teardown mutates that image.
+        let child_theap = child_owner
+            .with_lease(|mut lease| {
+                lease.with_metadata_theap(|child_metadata_theap| {
+                    unsafe {
+                        parent_metadata.initialize_child_metadata_theap(
+                            metadata_config,
+                            parent,
+                            &mut child_heap,
+                            child_metadata_theap,
+                        )
+                    }
+                    .unwrap();
+                    // The session operation used the parent's actual
+                    // bootstrap-owned TLD; only its non-null identity is
+                    // observed in this scope.
+                    assert!(!child_metadata_theap.tld.is_null());
+                    let child_theap = NonNull::from(&mut *child_metadata_theap);
+                    assert_eq!(child_heap.theaps, child_theap.as_ptr());
+                    assert!(core::ptr::eq(
+                        child_metadata_theap.heap.load(Ordering::Acquire),
+                        core::ptr::from_mut(&mut *child_heap),
+                    ));
+                    child_theap
+                })
+            })
             .unwrap();
-
-            let child_theap = NonNull::from(&mut *child_metadata_theap);
-            // The session operation used the parent's actual bootstrap-owned
-            // TLD; only its non-null identity is observed in this scope.
-            assert!(!child_metadata_theap.tld.is_null());
-            assert_eq!(child_heap.theaps, child_theap.as_ptr());
-            assert!(core::ptr::eq(
-                child_metadata_theap.heap.load(Ordering::Acquire),
-                core::ptr::from_mut(&mut *child_heap),
-            ));
-            child_theap
-        };
         // Child `mi_tld_create` requires the child metadata-Theap identity to
-        // be published. This fixture performs that bounded source transition
+        // be published. This modeled owner completes that identity step
         // before issuing its metadata-backed sequence-zero ticket.
-        assert!(unsafe {
-            child
+        assert!(child_owner
+            .with_image(|child| unsafe {
+                child.identity().publish_detached_metadata_theap(child_theap)
+            })
+            .unwrap());
+        assert!(child_owner
+            .with_image(|child| child
                 .identity()
-                .publish_detached_metadata_theap(child_theap)
-        });
-        assert!(child
-            .identity()
-            .matches_published_detached_metadata_theap(child_theap));
+                .matches_published_detached_metadata_theap(child_theap))
+            .unwrap());
         // Source child sequence zero follows the metadata route after child
         // initialization; it cannot consume MainSubprocess's static TLD.
         // Dropping this unconsumed ticket represents a failed TLD allocation
         // and leaves the monotonic total advanced without a live increment.
-        let child_identity_pointer = child.identity().as_ptr();
-        let child_ticket = unsafe {
-            core::pin::Pin::new_unchecked(&mut *child).issue_metadata_thread_ticket()
-        }
-        .unwrap();
-        assert_eq!(child_ticket.sequence().get(), 0);
-        assert!(core::ptr::eq(
-            child_ticket.subprocess().as_ptr(),
-            child_identity_pointer,
-        ));
-        drop(child_ticket);
-        assert_eq!(child.total_thread_count(), 1);
-        assert_eq!(child.live_thread_count(), 0);
-        assert!(child.is_registered_child_of(parent));
+        let (sequence, total, live, is_child) = child_owner
+            .with_image(|mut child| {
+                let identity_pointer = child.identity().as_ptr();
+                let ticket = child.as_mut().issue_metadata_thread_ticket().unwrap();
+                let sequence = ticket.sequence().get();
+                assert!(core::ptr::eq(ticket.subprocess().as_ptr(), identity_pointer));
+                drop(ticket);
+                let identity = child.identity();
+                (
+                    sequence,
+                    identity.total_thread_count(),
+                    identity.live_thread_count(),
+                    identity.is_registered_child_of(parent),
+                )
+            })
+            .unwrap();
+        assert_eq!(sequence, 0);
+        assert_eq!(total, 1);
+        assert_eq!(live, 0);
+        assert!(is_child);
 
         // `mi_subproc_unsafe_destroy` removes subprocess membership before
         // it enters the nested Heap/Theap teardown walk.
         // SAFETY: the test has exclusive child teardown and retains every
         // nested owner image until the subsequent list transitions finish.
-        unsafe { registry.unlink_child_terminal(&*child) }.unwrap();
-        assert!(!child.is_registered_child_of(parent));
+        assert!(child_owner
+            .with_image(|child| unsafe {
+                registry.unlink_child_terminal(child.as_ref().get_ref())
+            })
+            .unwrap()
+            .is_ok());
 
         // `_mi_heap_free_theaps` runs `_mi_heap_detach_theaps` first, removing
         // the TLD edge while retaining the Heap edge, then clears Heap links.
         // Keep the image allocation live until both list owners are clear.
         // SAFETY: this fixture has no child users, and both the Box-pinned
-        // Heap and exact Theap allocation remain live through both unlinks.
+        // Heap and owner-held exact Theap allocation remain live through both
+        // unlinks.
         unsafe { parent_metadata.detach_child_metadata_theap(
                 metadata_config,
                 parent,
@@ -6947,39 +7006,57 @@ mod tests {
                 child_theap,
             ) }
             .unwrap();
-        let child_metadata_theap = child_metadata_allocation.dynamic_theap_mut().unwrap();
         assert!(child_heap.theaps.is_null());
         // `mi_heap_free_theaps` clears list links but leaves `theap->heap`
         // published through its following `_mi_theap_decref`/free.
-        assert!(child_metadata_theap.is_initialized());
-        assert!(child_metadata_theap.tld.is_null());
-        assert!(child_metadata_theap.tnext.is_null());
-        assert!(child_metadata_theap.tprev.is_null());
-        // SAFETY: the child Heap and Theap remain exclusively owned and no
-        // list operation is concurrent after the successful detach.
-        assert!(unsafe { (*child_metadata_theap.hnext.get()).is_null() });
-        assert!(unsafe { (*child_metadata_theap.hprev.get()).is_null() });
-        assert!(core::ptr::eq(
-            child_metadata_theap.heap.load(Ordering::Acquire),
-            core::ptr::from_mut(&mut *child_heap),
+        assert!(child_owner
+            .with_lease(|mut lease| {
+                lease.with_metadata_theap(|theap| {
+                assert!(theap.is_initialized());
+                assert!(theap.tld.is_null());
+                assert!(theap.tnext.is_null());
+                assert!(theap.tprev.is_null());
+                // SAFETY: detach returned successfully and no list operation
+                // is concurrent after this point.
+                assert!(unsafe { (*theap.hnext.get()).is_null() });
+                assert!(unsafe { (*theap.hprev.get()).is_null() });
+                assert!(core::ptr::eq(
+                    theap.heap.load(Ordering::Acquire),
+                    core::ptr::from_mut(&mut *child_heap),
+                ));
+            })
+            })
+            .is_some());
+        // The bounded fixture has no pages or thread clients; it has completed
+        // registry unlink, TLD-first Theap detach, Heap-list removal, and
+        // metadata identity retirement. Box is only the synthetic empty Heap
+        // image; no full heap/page destruction parity is claimed.
+        assert!(child_owner
+            .with_image(|child| unsafe {
+                child.identity().heap_list().free_child_main(
+                    &mut child_heap,
+                    child.identity(),
+                )
+            })
+            .unwrap()
+            .is_ok());
+        drop(child_heap);
+        assert!(child_owner
+            .with_image(|child| unsafe {
+                child.identity().clear_metadata_identity_terminal();
+                !child.identity().has_published_metadata_theap()
+            })
+            .unwrap());
+        // SAFETY: this synthetic empty-Heap fixture has no page owners; all
+        // represented source edges are gone and every owner projection ended.
+        assert!(matches!(
+            unsafe { child_owner.release_after_external_teardown() },
+            Ok(())
         ));
-        parent_metadata.free(&mut child_metadata_allocation).unwrap();
-        // The bounded child Heap model ends at intrusive list removal; this
-        // fixture intentionally does not claim page destruction or backing
-        // release parity with `mi_heap_destroy`.
-        // SAFETY: registry and Theap edges are gone and the Box fixture stays
-        // pinned until the exact child Heap list node has been removed.
-        unsafe {
-            child
-                .heap_list()
-                .free_child_main(&mut child_heap, child.identity())
-        }
-        .unwrap();
-        // Pinned `subproc.c` clears this identity only after Heap/Theap
-        // destruction. The bounded fixture has completed its modeled list
-        // transitions and can now retire the comparison identity.
-        unsafe { child.clear_metadata_identity_terminal() };
-        assert!(!child.test_has_published_metadata_theap());
+        assert_eq!(
+            parent_metadata.test_allocation_audit().live_capability_count,
+            live_before_child_prepare.live_capability_count,
+        );
     }
 
     #[test]

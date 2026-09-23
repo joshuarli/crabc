@@ -770,17 +770,20 @@ impl SubprocessIdentity {
     }
 
     #[inline]
-    fn has_published_metadata_theap(&self) -> bool {
+    pub(crate) fn has_published_metadata_theap(&self) -> bool {
         !self.theap_meta.load(Ordering::Acquire).is_null()
     }
 
     /// Source `subproc.c:232` clears metadata identity after Heap destruction
-    /// and before arena release. The allocator's engine must already be closed.
+    /// and before arena release. A child engine must be absent or terminally
+    /// closed; a parent metadata engine may still own the detached storage.
     ///
     /// # Safety
     /// Permanent terminal admission excludes every source observer and the
-    /// exact metadata owner has consumed its engine. No old metadata Page may
-    /// subsequently be classified through this subprocess.
+    /// no child metadata engine can allocate or retain pages through this
+    /// subprocess. If a child engine was initialized, its exact owner has
+    /// consumed it. No old metadata Page may subsequently be classified
+    /// through this subprocess.
     pub(crate) unsafe fn clear_metadata_identity_terminal(&self) {
         self.theap_meta.store(core::ptr::null_mut(), Ordering::Release);
     }
