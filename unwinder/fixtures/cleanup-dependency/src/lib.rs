@@ -13,7 +13,11 @@ impl Drop for DependencyCleanup {
 pub fn panic_with_cleanup(count: Arc<AtomicUsize>) -> ! {
     let _cleanup = DependencyCleanup(count);
     assert_eq!(Backtrace::force_capture().status(), BacktraceStatus::Captured);
-    std::panic::panic_any(73usize)
+    let payload = std::panic::catch_unwind(|| {
+        std::panic::panic_any(73usize);
+    })
+        .expect_err("dependency panic must reach its local catch boundary");
+    std::panic::resume_unwind(payload)
 }
 
 pub const fn dependency_marker() -> usize {

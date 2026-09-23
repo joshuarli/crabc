@@ -119,6 +119,13 @@ class OwnedCleanupContract(unittest.TestCase):
         dependency = (owned_cleanup.DEPENDENCY_FIXTURE / "src/lib.rs").read_text()
         self.assertIn("#[inline(never)]", dependency)
         self.assertIn("std::panic::panic_any(73usize)", dependency)
+        self.assertIn("std::panic::catch_unwind", dependency)
+        self.assertIn("std::panic::resume_unwind", dependency)
+        cleanup = dependency.index("let _cleanup = DependencyCleanup(count)")
+        caught_panic = dependency.index("std::panic::catch_unwind")
+        resumed_panic = dependency.index("std::panic::resume_unwind")
+        self.assertLess(cleanup, caught_panic)
+        self.assertLess(caught_panic, resumed_panic)
         for source in (
             owned_cleanup.BUILD_STD_FIXTURE / "src/main.rs",
             owned_cleanup.BUILD_STD_DSO_FIXTURE / "src/plugin.rs",
