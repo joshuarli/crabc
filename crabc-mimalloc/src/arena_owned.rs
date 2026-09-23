@@ -854,17 +854,22 @@ impl ProcessArenaBacking {
         slot.state.store(INITIALIZING, Ordering::Release);
         drop(guard);
 
-        let numa_node = if numa_node < 0 && process.policy().arena_is_numa_local() {
-            process.current_numa_node() as i32
-        } else { numa_node };
         let result = unsafe {
-            super::manage_in_place_with_publisher(
+            super::manage_in_place_with_publisher_and_numa_source(
                 &self.registry,
                 start,
                 managed_size,
                 config.page_size(),
                 memory.initially_committed(),
-                numa_node,
+                || {
+                    // Pinned `mi_arena_initialize` resolves the optional
+                    // local node only after this arena's metadata commit and
+                    // zeroing succeeded. A failed callback must leave the
+                    // process NUMA cache untouched.
+                    if numa_node < 0 && process.policy().arena_is_numa_local() {
+                        process.current_numa_node() as i32
+                    } else { numa_node }
+                },
                 exclusive,
                 Some(hook),
                 memory,
@@ -1016,12 +1021,26 @@ impl ProcessArenaBacking {
         // The internal hook carries Rust ownership, not an externally supplied
         // source callback. Its zero-already-committed path is exactly the OS
         // commit used by source arena initialization and page metadata.
-        let numa_node = if numa_node < 0 && process.policy().arena_is_numa_local() {
-            process.current_numa_node() as i32
-        } else { numa_node };
         let result = unsafe {
-            super::manage_in_place(&self.registry, start, managed_size, config.page_size(),
-                memory.initially_committed(), numa_node, exclusive, hook, memory)
+            super::manage_in_place_with_publisher_and_numa_source(
+                &self.registry, start, managed_size, config.page_size(),
+                memory.initially_committed(),
+                || {
+                    // The source reads current NUMA only for an arena whose
+                    // metadata preparation reached its initialization step.
+                    if numa_node < 0 && process.policy().arena_is_numa_local() {
+                        process.current_numa_node() as i32
+                    } else { numa_node }
+                },
+                exclusive, hook, memory,
+                |arena| {
+                    if self.registry.insert(arena) {
+                        Ok(())
+                    } else {
+                        Err(ManageArenaError::RegistryFull)
+                    }
+                },
+            )
         };
         match result {
             Ok(managed) => {
@@ -1993,7 +2012,10 @@ mod tests {
     #[test]
     fn external_callback_commit_zero_and_prepublication_failure_return_the_typed_lease() {
         let _fault = fault::install(fault::Plan::disabled());
-        let process = process();
+        let mut options = VmOptions::uninitialized();
+        options.initialize_all(|_| VmOptionEnvironment::Absent);
+        options.set(VmOption::ArenaIsNumaLocal, 1);
+        let process = process_with_options(options);
         let backing = backing();
         let trace = Box::leak(Box::new(ExternalCallbackTrace::new()));
         trace.commit_success.store(false, Ordering::Release);
@@ -2015,6 +2037,7 @@ mod tests {
         assert_eq!(backing.registry().count(), 0);
         assert!(backing.slots.iter().all(|slot| slot.state.load(Ordering::Acquire) == EMPTY));
         assert!(trace.commits.load(Ordering::Acquire) >= 1);
+        assert_eq!(process.policy().test_numa_node_count_cache(), 0);
         let lease = failure
             .into_returned_lease()
             .expect("the unpublished callback lease returns to its caller");
@@ -2023,6 +2046,7 @@ mod tests {
         trace.commit_success.store(true, Ordering::Release);
         trace.commit_zero_output.store(true, Ordering::Release);
         install_external(backing, process, ARENA_MIN_SIZE, lease);
+        assert_ne!(process.policy().test_numa_node_count_cache(), 0);
         trace.clear_observation();
         let claim = unsafe {
             backing.try_find_free(search(ArenaId::none()), 2, ARENA_SLICE_SIZE, true)
@@ -3303,6 +3327,36 @@ mod tests {
         let id = install(backing, process, MapAccess::Reserved);
         assert!(!id.as_ptr().is_null());
         assert_eq!(backing.registry().count(), 1);
+    }
+
+    #[test]
+    fn failed_owned_metadata_commit_does_not_resolve_local_numa_policy() {
+        let mut options = VmOptions::uninitialized();
+        options.initialize_all(|_| VmOptionEnvironment::Absent);
+        options.set(VmOption::ArenaIsNumaLocal, 1);
+        let process = process_with_options(options);
+        let backing = backing();
+        let (mapping, memory) = mapped(process, MapAccess::Reserved);
+        assert_eq!(process.policy().test_numa_node_count_cache(), 0);
+
+        let fault = fault::install(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
+        let failure = unsafe {
+            backing.install_owned_os_mapping(
+                process, config(), ARENA_MIN_SIZE, mapping, memory, -1, false,
+            )
+        }
+        .expect_err("metadata commit must fail before arena publication");
+        assert_eq!(failure.error(), ManageArenaError::CommitFailed);
+        assert_eq!(fault.observed(), 1);
+        assert_eq!(backing.registry().count(), 0);
+        assert_eq!(
+            process.policy().test_numa_node_count_cache(),
+            0,
+            "source queries the local node only after metadata is committed",
+        );
+        fault.set(fault::Plan::disabled());
+        let (mut mapping, _, owner) = failure.into_parts();
+        mapping.unmap_for_process(owner, 0, false).unwrap();
     }
 
     #[test]

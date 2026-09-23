@@ -86,6 +86,12 @@ simulated successful primitive storage/recorders do not qualify hardware
 huge-page allocation. Rust's owned failed-page tracker is documented in the
 known-differences register.
 
+For process-owned regular and callback-backed external arenas,
+`arena_owned::ProcessArenaBacking` now supplies the optional local NUMA node
+through `arena::manage_in_place_with_publisher_and_numa_source` at pinned
+`src/arena.c:1676-1740`'s post-metadata initialization point. A rejected
+metadata commit leaves `VmPolicy`'s NUMA count cache unresolved; each later
+subarena reaches its own source node choice only after its metadata succeeds.
 
 The dedicated full-regular medium/large/non-direct-small/direct-small post-exit
 row and the full-singleton/homogeneous-full-OS-singleton/full-medium/full-large/mixed-medium-large/full-non-direct-small/full-direct-small aggregate
