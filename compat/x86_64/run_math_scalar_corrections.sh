@@ -12,7 +12,7 @@ work="$(mktemp -d "$TMPDIR/math-scalar-corrections.XXXXXX")"
 chmod a+rx "$work"
 printf 'Retained scalar correction evidence: %s\n' "$work"
 cc=/usr/local/bin/crabc-x86_64-musl-gcc
-rustup run nightly-2026-07-24 rustc --edition=2021 --crate-type=lib --emit=obj \
+rustup run "$(python3 "$root/scripts/rust_toolchain.py")" rustc --edition=2021 --crate-type=lib --emit=obj \
     --target x86_64-unknown-linux-musl -C panic=abort -C opt-level=2 \
     compat/x86_64/math_scalar_corrections_boundary.rs -o "$work/boundary.o"
 flags=(-std=c11 -I"$root/include" -nostdlib -static -fno-pie -no-pie -ffreestanding

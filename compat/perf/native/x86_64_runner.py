@@ -245,6 +245,10 @@ EXPECTED_CORRECTNESS_OUTPUT = """native_x86
    ╰─ open_close
 
 """
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from scripts.rust_toolchain import pinned_toolchain
+
+
 SMOKE_BUILD_ENVIRONMENT_KEYS = {
     "PATH", "HOME", "LC_ALL", "LANG", "TZ", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN",
     "CARGO_HOME", "CARGO_TARGET_DIR", "TMPDIR", "CARGO_ENCODED_RUSTFLAGS", "CARGO_NET_OFFLINE",
@@ -1063,7 +1067,7 @@ def _clean_environments(
         "LANG": "C",
         "TZ": "UTC",
         "RUSTUP_HOME": rustup_home,
-        "RUSTUP_TOOLCHAIN": "nightly-2026-07-24",
+        "RUSTUP_TOOLCHAIN": pinned_toolchain(repository_root()),
         "CARGO_HOME": str(cargo_home),
         "CARGO_TARGET_DIR": str(target),
         "TMPDIR": str(temporary),
@@ -2564,7 +2568,7 @@ def validate_report(
     if (
         build_environment.get("CARGO_NET_OFFLINE") != "true"
         or build_environment.get("CARGO_ENCODED_RUSTFLAGS") != ""
-        or build_environment.get("RUSTUP_TOOLCHAIN") != "nightly-2026-07-24"
+        or build_environment.get("RUSTUP_TOOLCHAIN") != pinned_toolchain(repository_root())
         or build_environment.get("LC_ALL") != "C"
         or build_environment.get("LANG") != "C"
         or build_environment.get("TZ") != "UTC"

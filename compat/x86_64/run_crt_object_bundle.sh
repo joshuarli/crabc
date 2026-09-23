@@ -22,7 +22,7 @@ done
 if command -v llvm-objdump >/dev/null 2>&1; then
     objdump=llvm-objdump
 else
-    rustc_path="$(rustup run nightly-2026-07-24 rustc --print sysroot)/lib/rustlib/x86_64-unknown-linux-musl/bin/llvm-objdump"
+    rustc_path="$(rustup run "$(python3 "$ROOT_DIR/scripts/rust_toolchain.py")" rustc --print sysroot)/lib/rustlib/x86_64-unknown-linux-musl/bin/llvm-objdump"
     [ -x "$rustc_path" ] || fail "requires the pinned llvm-objdump component"
     objdump="$rustc_path"
 fi

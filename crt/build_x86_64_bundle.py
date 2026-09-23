@@ -24,10 +24,12 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from scripts.rust_toolchain import pinned_toolchain
 CRT_ROOT = ROOT / "crt"
 BUILDER = CRT_ROOT / "build_x86_64.py"
 TARGET = "x86_64-unknown-linux-musl"
-PINNED_TOOLCHAIN = "nightly-2026-07-24"
+PINNED_TOOLCHAIN = pinned_toolchain(ROOT)
 OBJECT_NAMES = ("crt1.o", "Scrt1.o", "rcrt1.o", "crti.o", "crtn.o")
 DEFAULT_OUTPUT = ROOT / "target" / "crt-x86_64-object-bundle"
 MANIFEST_NAME = "manifest.json"

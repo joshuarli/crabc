@@ -60,7 +60,7 @@ grep -Fq "$ROOT_DIR/include/errno.h" "$header_trace" || {
     exit 1
 }
 
-rustup run nightly-2026-07-24 rustc --edition=2021 \
+rustup run "$(python3 "$ROOT_DIR/scripts/rust_toolchain.py")" rustc --edition=2021 \
     --target x86_64-unknown-linux-musl \
     --crate-type=lib \
     --emit=obj \

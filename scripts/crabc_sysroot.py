@@ -33,6 +33,8 @@ import tempfile
 import time
 import tomllib
 from pathlib import Path, PurePosixPath
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.rust_toolchain import pinned_toolchain
 from typing import Any, Iterable, Mapping, Sequence
 
 
@@ -47,7 +49,7 @@ CRT_SOURCE_FILES = {
     "crti.o": "crti.rs",
     "crtn.o": "crtn.rs",
 }
-CRT_PINNED_TOOLCHAIN = "nightly-2026-07-24"
+CRT_PINNED_TOOLCHAIN = pinned_toolchain()
 FULL_RUNTIME_SOURCE_ROOTS = frozenset(
     {"libc/src", "ldso/src", "crabc-mimalloc/src", "crt/src", "builtins/src"}
 )

@@ -56,7 +56,7 @@ cc -E -H -D_GNU_SOURCE -I"$ROOT_DIR/include" \
 grep -Fq "$ROOT_DIR/include/signal.h" "$header_trace" \
     || fail "candidate fixture did not use the project signal header"
 
-rustup run nightly-2026-07-24 rustc --edition=2021 \
+rustup run "$(python3 "$ROOT_DIR/scripts/rust_toolchain.py")" rustc --edition=2021 \
     --target x86_64-unknown-linux-musl \
     --crate-type=lib \
     --emit=obj \

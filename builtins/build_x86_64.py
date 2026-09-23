@@ -25,7 +25,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 SOURCE = ROOT / "src" / "lib.rs"
 CONTRACT = ROOT / "x86_64-helper-contract.toml"
-TOOLCHAIN = "nightly-2026-07-24"
+sys.path.insert(0, str(ROOT))
+from scripts.rust_toolchain import pinned_toolchain
+TOOLCHAIN = pinned_toolchain(ROOT.parent)
 TARGET = "x86_64-unknown-linux-musl"
 ARCHIVE_NAME = "libcrabc-builtins.a"
 MEMBER_NAME = "crabc-builtins.o"

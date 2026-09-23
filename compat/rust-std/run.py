@@ -29,12 +29,14 @@ from typing import Mapping, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+from scripts.rust_toolchain import pinned_toolchain
 FIXTURE = Path(__file__).resolve().parent / "fixtures/src/main.rs"
 FIXTURE_MANIFEST = FIXTURE.parents[1] / "Cargo.toml"
 UPSTREAMS = ROOT / "compat/upstreams.toml"
 REPORT = ROOT / "compat/reports/rust-std/latest.json"
 TARGET = "aarch64-unknown-linux-musl"
-TOOLCHAIN = "nightly-2026-07-24"
+TOOLCHAIN = pinned_toolchain(ROOT)
 MUSL_VERSION = "1.2.6"
 MUSL_ROOT = Path(f"/opt/musl-{MUSL_VERSION}")
 
@@ -468,7 +470,7 @@ def load_pins() -> dict[str, object]:
     musl = upstreams.get("musl")
     if not isinstance(environment, dict) or not isinstance(musl, dict):
         raise RunnerError("compat/upstreams.toml lacks environment/musl pins")
-    if environment.get("platform") != "linux/arm64" or environment.get("rust_toolchain") != TOOLCHAIN:
+    if environment.get("platform") != "linux/arm64" or pinned_toolchain(ROOT) != TOOLCHAIN:
         raise RunnerError("compat/upstreams.toml is not pinned to the native Rust/musl environment")
     if musl.get("version") != MUSL_VERSION:
         raise RunnerError("compat/upstreams.toml has an unexpected musl version")

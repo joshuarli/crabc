@@ -80,7 +80,7 @@ cc -DCRABC_OWNED_CRT_HANDOFF=1 -fPIC -shared -nostdlib -Wl,--hash-style=sysv -Wl
 if command -v llvm-objdump >/dev/null 2>&1; then
     llvm_objdump="$(command -v llvm-objdump)"
 else
-    rust_sysroot="$(rustup run nightly-2026-07-24 rustc --print sysroot)"
+    rust_sysroot="$(rustup run "$(python3 "$ROOT_DIR/scripts/rust_toolchain.py")" rustc --print sysroot)"
     llvm_objdump="$rust_sysroot/lib/rustlib/x86_64-unknown-linux-musl/bin/llvm-objdump"
 fi
 if [ ! -x "$llvm_objdump" ]; then

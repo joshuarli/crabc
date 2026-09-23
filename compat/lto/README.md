@@ -24,7 +24,7 @@ Run from the repository root inside the pinned native Linux/AArch64 image:
 python3 compat/lto/run.py
 ```
 
-The runner expects Rust `nightly-2026-07-24`, musl `1.2.6` under
+The runner expects Rust channel selected by `rust-toolchain.toml`, musl `1.2.6` under
 `/opt/musl-1.2.6`, the already-built `target/debug/{libc.a,libc.so,libldso.so}`
 for C/D, and the installed owned sysroot at `target/crabc-sysroot/` for B.
 `./scripts/dev.sh lto` builds that sysroot before running the matrix.

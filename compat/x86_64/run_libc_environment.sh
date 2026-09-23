@@ -190,7 +190,7 @@ env -i CRABC_X86_INITIAL=entry "$reference" ||
 
 mkdir "$crt_dir"
 for object in crt1 crti crtn; do
-    rustup run nightly-2026-07-24 rustc --edition=2021 --crate-type=lib --emit=obj \
+    rustup run "$(python3 "$ROOT_DIR/scripts/rust_toolchain.py")" rustc --edition=2021 --crate-type=lib --emit=obj \
         --target x86_64-unknown-linux-musl -C panic=abort \
         -C force-unwind-tables=no -C debuginfo=0 -C opt-level=2 \
         -C overflow-checks=off -C debug-assertions=off \

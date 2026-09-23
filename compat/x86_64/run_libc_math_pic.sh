@@ -11,7 +11,7 @@ set -euo pipefail
 
 readonly ROOT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
-readonly PINNED_TOOLCHAIN=nightly-2026-07-24
+readonly PINNED_TOOLCHAIN="$(python3 "$ROOT_DIR/scripts/rust_toolchain.py")"
 
 fail() { printf 'ERROR: x86 generated math PIC closure: %s\n' "$*" >&2; exit 1; }
 require_tool() { command -v "$1" >/dev/null 2>&1 || fail "requires $1"; }

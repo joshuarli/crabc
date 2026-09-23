@@ -14,11 +14,13 @@ from pathlib import Path
 
 
 CRT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from scripts.rust_toolchain import pinned_toolchain
 ROOT = CRT_ROOT.parent
 BUILDER = CRT_ROOT / "build.py"
 FIXTURE = CRT_ROOT / "fixtures" / "static_pie_fixture.rs"
 TARGET = "aarch64-unknown-linux-musl"
-PINNED_TOOLCHAIN = "nightly-2026-07-24"
+PINNED_TOOLCHAIN = pinned_toolchain(ROOT)
 
 PT_DYNAMIC = 2
 PT_INTERP = 3

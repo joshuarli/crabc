@@ -146,7 +146,7 @@ for object in rcrt1 crti crtn; do
         crti) source_path=crt/src/x86_64_crti.rs ;;
         crtn) source_path=crt/src/x86_64_crtn.rs ;;
     esac
-    rustup run nightly-2026-07-24 rustc --edition=2021 --crate-type=lib --emit=obj \
+    rustup run "$(python3 "$ROOT_DIR/scripts/rust_toolchain.py")" rustc --edition=2021 --crate-type=lib --emit=obj \
         --target x86_64-unknown-linux-musl -C panic=abort -C force-unwind-tables=no \
         -C debuginfo=0 -C opt-level=2 -C overflow-checks=off -C debug-assertions=off \
         -C relocation-model=pic -C code-model=small -C link-dead-code=no \

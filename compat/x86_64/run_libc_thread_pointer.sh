@@ -55,7 +55,7 @@ cd "$ROOT_DIR"
     compat/x86_64/libc_thread_pointer_probe.c -o "$reference"
 env -u LD_LIBRARY_PATH -u LD_PRELOAD "$reference"
 
-rustup run nightly-2026-07-24 rustc --edition=2021 \
+rustup run "$(python3 "$ROOT_DIR/scripts/rust_toolchain.py")" rustc --edition=2021 \
     --target x86_64-unknown-linux-musl \
     --crate-type=lib \
     --emit=obj \

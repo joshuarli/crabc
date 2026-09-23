@@ -3,11 +3,11 @@
 # Build this only through scripts/dev-x86_64.sh. The launcher requires a
 # native Linux/x86-64 host and always requests linux/amd64, so this image must
 # never become an emulated substitute for the AArch64 development image.
-# The Linux 5.10 UAPI source and derived x86 export identity are mirrored in
-# compat/upstreams.toml, because Docker cannot consume that TOML pin directly.
+# The Rust channel comes from rust-toolchain.toml; external source pins remain
+# in compat/upstreams.toml.
 FROM alpine:3.24.1@sha256:79ff19e9084a00eece421b2523fb93e22d730e2c0e525905de047e848e56d95f
 
-ARG RUST_TOOLCHAIN=nightly-2026-07-24
+COPY rust-toolchain.toml /tmp/rust-toolchain.toml
 ARG RUST_TARGET=x86_64-unknown-linux-musl
 ARG MUSL_VERSION=1.2.6
 ARG MUSL_SHA256=d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a
@@ -47,6 +47,8 @@ RUN test "$(uname -m)" = "x86_64" \
         tar \
         xz \
     # Alpine packages the bootstrap binary as rustup-init rather than rustup.
+    && RUST_TOOLCHAIN="$(sed -n 's/^channel = "\(.*\)"$/\1/p' /tmp/rust-toolchain.toml)" \
+    && test -n "${RUST_TOOLCHAIN}" \
     && rustup-init -y --profile minimal --default-toolchain "${RUST_TOOLCHAIN}" \
     && rustup target add "${RUST_TARGET}" \
     # Match rust-toolchain.toml so Cargo never mutates an ephemeral test

@@ -55,6 +55,8 @@ from typing import Iterator, Mapping, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+from scripts.rust_toolchain import pinned_toolchain
 LTO_ROOT = Path(__file__).resolve().parent
 # The fixture is deliberately selected through its manifest.  A caller
 # may use --manifest for a companion fixture kept under another directory.
@@ -63,7 +65,7 @@ DEFAULT_STOCK_STD_MANIFEST = LTO_ROOT / "native-std-lto-fixture/Cargo.toml"
 DEFAULT_REPORT = ROOT / "compat/reports/lto/native-facade/latest.json"
 DEFAULT_SYSROOT = ROOT / "target/crabc-sysroot"
 TARGET = "aarch64-unknown-linux-musl"
-TOOLCHAIN = "nightly-2026-07-24"
+TOOLCHAIN = pinned_toolchain(ROOT)
 MUSL_VERSION = "1.2.6"
 MUSL_ROOT = Path(f"/opt/musl-{MUSL_VERSION}")
 CANONICAL_INTERPRETER = "/lib/ld-crabc-aarch64.so.1"
@@ -384,8 +386,8 @@ def load_pins() -> dict[str, object]:
         raise RunnerError("compat/upstreams.toml lacks environment/musl pins")
     if environment.get("platform") != "linux/arm64":
         raise RunnerError("compat/upstreams.toml is not pinned to linux/arm64")
-    if environment.get("rust_toolchain") != TOOLCHAIN:
-        raise RunnerError("compat/upstreams.toml has an unexpected Rust toolchain")
+    if pinned_toolchain(ROOT) != TOOLCHAIN:
+        raise RunnerError("rust-toolchain.toml has an unexpected Rust toolchain")
     if musl.get("version") != MUSL_VERSION:
         raise RunnerError("compat/upstreams.toml has an unexpected musl version")
     return {"environment": environment, "musl": musl}

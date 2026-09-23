@@ -10,7 +10,7 @@ set -euo pipefail
 
 readonly ROOT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly TARGET="x86_64-unknown-linux-musl"
-readonly TOOLCHAIN="nightly-2026-07-24"
+readonly TOOLCHAIN="$(python3 "$ROOT_DIR/scripts/rust_toolchain.py")"
 readonly LLD="/opt/rustup/toolchains/$TOOLCHAIN-x86_64-unknown-linux-musl/lib/rustlib/$TARGET/bin/gcc-ld/ld.lld"
 readonly PROBE="$ROOT_DIR/compat/x86_64/owned_pattern_private_probe.c"
 

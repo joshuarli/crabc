@@ -125,7 +125,7 @@ build_definition_dso
 if command -v llvm-objdump >/dev/null 2>&1; then
     llvm_objdump="$(command -v llvm-objdump)"
 else
-    rust_sysroot="$(rustup run nightly-2026-07-24 rustc --print sysroot)"
+    rust_sysroot="$(rustup run "$(python3 "$ROOT_DIR/scripts/rust_toolchain.py")" rustc --print sysroot)"
     llvm_objdump="$rust_sysroot/lib/rustlib/x86_64-unknown-linux-musl/bin/llvm-objdump"
 fi
 [ -x "$llvm_objdump" ] || fail 'requires the pinned Rust llvm-objdump'

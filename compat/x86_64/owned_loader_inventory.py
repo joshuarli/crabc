@@ -23,6 +23,8 @@ from typing import Any, Mapping, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+from scripts.rust_toolchain import pinned_toolchain
 sys.path.insert(0, str(ROOT / "compat" / "x86_64"))
 import crabc_cc_owned_dynamic as installed_driver
 import owned_dynamic_qualification as qualification
@@ -37,7 +39,7 @@ LIBC_PATH = "usr/lib/libc.so"
 LOADER_PROVENANCE_PATH = "share/crabc/loader.provenance.json"
 LOADER_FEATURE = "x86_64-owned-dynamic-runtime"
 LOADER_RUSTFLAGS = "-C link-dead-code -C target-feature=-crt-static -C relocation-model=pic"
-PINNED_TOOLCHAIN = "nightly-2026-07-24"
+PINNED_TOOLCHAIN = pinned_toolchain(ROOT)
 CONFIGURATION_PATHS = (
     "scripts/build_x86_64_owned_dynamic_sysroot.py",
     "scripts/build_x86_64_owned_sysroot.py",

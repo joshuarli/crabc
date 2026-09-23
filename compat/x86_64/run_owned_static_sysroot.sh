@@ -1415,7 +1415,7 @@ done
 if command -v ld.lld >/dev/null 2>&1; then
     link_editor=ld.lld
 else
-    toolchain_root="$(rustup run nightly-2026-07-24 rustc --print sysroot)"
+    toolchain_root="$(rustup run "$(python3 "$ROOT_DIR/scripts/rust_toolchain.py")" rustc --print sysroot)"
     link_editor="$toolchain_root/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld"
     [ -x "$link_editor" ] || fail "requires a pinned Rust-toolchain ld.lld"
 fi

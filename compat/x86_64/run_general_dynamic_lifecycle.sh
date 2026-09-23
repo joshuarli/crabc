@@ -37,7 +37,7 @@ rustc --edition=2021 --crate-type staticlib -C panic=abort -C relocation-model=p
 cc -shared -nostdlib -Wl,--hash-style=sysv -Wl,-z,now -Wl,--allow-shlib-undefined \
     -Wl,--version-script,"$FIXTURES/general_dynamic_lifecycle.map" -Wl,-soname,libcrabc-dynamic.so \
     -Wl,--whole-archive "$work/owned-dynamic-libc.a" -Wl,--no-whole-archive -o "$work/libcrabc-dynamic.so"
-rust_sysroot="$(rustup run nightly-2026-07-24 rustc --print sysroot)"
+rust_sysroot="$(rustup run "$(python3 "$ROOT/scripts/rust_toolchain.py")" rustc --print sysroot)"
 python3 -B "$ROOT/crt/build_x86_64.py" --general-dynamic-lifecycle \
     --out-dir "$work/crt" --llvm-objdump "$rust_sysroot/lib/rustlib/x86_64-unknown-linux-musl/bin/llvm-objdump" \
     >"$work/crt.json"

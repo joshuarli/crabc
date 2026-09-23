@@ -6664,7 +6664,7 @@ run_libc_signal_foundation_probe() {
 run_ldso_relocation_tests() {
     run_in_container bash -ceu '
         test_binary="$TMPDIR/crabc-x86-64-ldso-relocation"
-        rustup run nightly-2026-07-24 rustc --edition=2021 --test \
+        rustup run "$(python3 /workspace/scripts/rust_toolchain.py)" rustc --edition=2021 --test \
             /workspace/ldso/src/x86_64_relocation.rs -o "$test_binary"
         "$test_binary" --test-threads=1
     '

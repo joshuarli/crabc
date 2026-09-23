@@ -73,7 +73,7 @@ class OwnedLoaderProvenanceTests(unittest.TestCase):
         command = [
             "/opt/pinned/rustup",
             "run",
-            "nightly-2026-07-24",
+            producer.common.PINNED_TOOLCHAIN,
             "cargo",
             "build",
             "--locked",

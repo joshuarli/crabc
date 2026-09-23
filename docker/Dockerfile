@@ -6,7 +6,7 @@
 # during FROM resolution.
 FROM alpine:3.24.1@sha256:e7a1a92a5bfeee40966aea60f0796b0e7917cc35591542701834f03a68fa3d18
 
-ARG RUST_TOOLCHAIN=nightly-2026-07-24
+COPY rust-toolchain.toml /tmp/rust-toolchain.toml
 ARG MUSL_VERSION=1.2.6
 ARG MUSL_SHA256=d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a
 ARG MUSL_REV=9fa28ece75d8a2191de7c5bb53bed224c5947417
@@ -39,6 +39,8 @@ RUN apk add --no-cache \
         tar \
         xz \
     # Alpine packages the bootstrap binary as rustup-init rather than rustup.
+    && RUST_TOOLCHAIN="$(sed -n 's/^channel = "\(.*\)"$/\1/p' /tmp/rust-toolchain.toml)" \
+    && test -n "${RUST_TOOLCHAIN}" \
     && rustup-init -y --profile minimal --default-toolchain "${RUST_TOOLCHAIN}" \
     && rustup component add rust-src llvm-tools
 

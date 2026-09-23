@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import sys
 import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,6 +20,8 @@ from typing import Any
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT_DIR))
+from scripts.rust_toolchain import pinned_toolchain
 DEFAULT_OUTPUT = ROOT_DIR / "COMPATIBILITY.md"
 ABI_MANIFEST = ROOT_DIR / "compat/abi/musl-1.2.6/aarch64/manifest.json"
 SYMBOL_REPORT_DIR = ROOT_DIR / "compat/reports/symbols"
@@ -368,7 +371,7 @@ def main() -> int:
         ("architecture", "AArch64 (`aarch64-unknown-linux-musl`)"),
         ("reference libc", f"musl {upstreams['musl']['version']}"),
         ("Docker platform", upstreams["environment"]["platform"]),
-        ("Rust toolchain", upstreams["environment"]["rust_toolchain"]),
+        ("Rust toolchain", pinned_toolchain(ROOT_DIR)),
     ]
     if environment is None:
         baseline_rows.append(("tested source", "unrecorded; run an evidence command"))

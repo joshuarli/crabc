@@ -23,6 +23,8 @@ from pathlib import Path
 
 
 CRT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from scripts.rust_toolchain import pinned_toolchain
 ROOT = CRT_ROOT.parent
 BUILDER = CRT_ROOT / "build_x86_64.py"
 FIXTURE = CRT_ROOT / "fixtures" / "dynamic_startup_fixture_x86_64.c"
@@ -82,7 +84,7 @@ def llvm_objdump() -> str:
     rustup = shutil.which("rustup")
     if rustup is None:
         raise unittest.SkipTest("llvm-objdump is unavailable")
-    sysroot = run([rustup, "run", "nightly-2026-07-24", "rustc", "--print", "sysroot"])
+    sysroot = run([rustup, "run", pinned_toolchain(ROOT), "rustc", "--print", "sysroot"])
     if sysroot.returncode != 0:
         raise unittest.SkipTest(sysroot.stderr.decode(errors="replace"))
     candidate = (

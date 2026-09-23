@@ -144,7 +144,8 @@ class PinTests(unittest.TestCase):
     def test_upstream_pins_match_stage_target(self) -> None:
         pins = RUNNER.load_pins()
         self.assertEqual(pins["environment"]["platform"], "linux/arm64")
-        self.assertEqual(pins["environment"]["rust_toolchain"], RUNNER.TOOLCHAIN)
+        self.assertNotIn("rust_toolchain", pins["environment"])
+        self.assertEqual(RUNNER.TOOLCHAIN, RUNNER.pinned_toolchain(RUNNER.ROOT))
         self.assertEqual(pins["musl"]["version"], RUNNER.MUSL_VERSION)
 
     def test_default_report_uses_shared_generated_report_root(self) -> None:

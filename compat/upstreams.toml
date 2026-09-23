@@ -1,12 +1,10 @@
-# Every normal development command uses the versions below; no tool fetches an
-# upstream default branch. Docker-resolved pins are mirrored here as the
-# repository's canonical compatibility identity, while other sources are
-# registered before their future harnesses need them.
+# External source pins used by compatibility oracles and container builds live
+# here. The Rust channel is selected only by rust-toolchain.toml. Other sources
+# are registered before their future harnesses need them.
 
 [environment]
 platform = "linux/arm64"
 alpine_image = "alpine:3.24.1@sha256:e7a1a92a5bfeee40966aea60f0796b0e7917cc35591542701834f03a68fa3d18"
-rust_toolchain = "nightly-2026-07-24"
 
 [musl]
 version = "1.2.6"

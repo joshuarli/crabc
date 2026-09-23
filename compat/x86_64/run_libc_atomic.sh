@@ -35,7 +35,7 @@ probe="$work_dir/atomic-probe"
 disassembly="$work_dir/atomic-disassembly"
 
 cd "$ROOT_DIR"
-rustup run nightly-2026-07-24 rustc --edition=2021 \
+rustup run "$(python3 "$ROOT_DIR/scripts/rust_toolchain.py")" rustc --edition=2021 \
 	--target x86_64-unknown-linux-musl \
 	-C opt-level=2 \
 	-C panic=abort \

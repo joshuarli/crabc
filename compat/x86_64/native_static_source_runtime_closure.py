@@ -25,8 +25,10 @@ from typing import Any, NamedTuple
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+from scripts.rust_toolchain import pinned_toolchain
 TARGET = "x86_64-unknown-linux-musl"
-TOOLCHAIN = "nightly-2026-07-24"
+TOOLCHAIN = pinned_toolchain(ROOT)
 PINNED_CARGO_BIN = pathlib.Path("/opt/cargo/bin")
 PINNED_RUSTUP_FRONTEND = PINNED_CARGO_BIN / "rustup"
 # Alpine packages the installed rustup executable under this bootstrap name.

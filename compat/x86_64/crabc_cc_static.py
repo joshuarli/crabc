@@ -28,7 +28,6 @@ from typing import Sequence
 
 
 TARGET = "x86_64-unknown-linux-musl"
-PINNED_TOOLCHAIN = "nightly-2026-07-24"
 DRIVER_FORMAT = "crabc-x86-64-sealed-static-driver-v1"
 SYSROOT_FORMAT = "crabc-x86-64-owned-static-sysroot-v1"
 LINK_RECEIPT_SCHEMA = 1
@@ -930,13 +929,22 @@ def compiler() -> str:
     return path
 
 
-def linker() -> str:
+def linker(root: Path) -> str:
     path = shutil.which("ld.lld", path=clean_environment()["PATH"])
     if path is not None:
         return str(Path(path).resolve())
+    try:
+        manifest = json.loads(
+            (root / "share" / "crabc" / "manifest.json").read_text(encoding="utf-8")
+        )
+        toolchain = manifest["toolchain"]
+    except (OSError, json.JSONDecodeError, KeyError, TypeError) as error:
+        raise DriverError("the owned sysroot manifest has no Rust toolchain identity") from error
+    if not isinstance(toolchain, str) or not toolchain:
+        raise DriverError("the owned sysroot manifest has an invalid Rust toolchain identity")
     rustup, environment = pinned_rustup_environment()
     completed = subprocess.run(
-        [str(rustup), "run", PINNED_TOOLCHAIN, "rustc", "--print", "sysroot"],
+        [str(rustup), "run", toolchain, "rustc", "--print", "sysroot"],
         env=environment,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
@@ -945,12 +953,12 @@ def linker() -> str:
         check=False,
     )
     if completed.returncode != 0:
-        raise DriverError("the pinned Rust toolchain cannot report its sysroot")
+        raise DriverError("the manifest-selected Rust toolchain cannot report its sysroot")
     sysroot = Path(completed.stdout.strip())
     if not sysroot.is_absolute():
-        raise DriverError("the pinned Rust toolchain reported an unsafe sysroot")
+        raise DriverError("the manifest-selected Rust toolchain reported an unsafe sysroot")
     bundled = sysroot / "lib" / "rustlib" / TARGET / "bin" / "gcc-ld" / "ld.lld"
-    require_regular(bundled.resolve(), "pinned Rust-toolchain ld.lld")
+    require_regular(bundled.resolve(), "manifest-selected Rust-toolchain ld.lld")
     return str(bundled.resolve())
 
 
@@ -981,7 +989,7 @@ def materialize_link_plan(root: Path, mode: StaticMode, applications: Sequence[P
     result: list[str] = []
     for item in plan:
         if item == "ld.lld":
-            result.append(linker())
+            result.append(linker(root))
         elif item == APPLICATION_OBJECTS:
             result.extend(str(path) for path in applications)
         elif item == OUTPUT:

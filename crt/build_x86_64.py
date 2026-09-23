@@ -26,10 +26,12 @@ from typing import Any, Iterable
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from scripts.rust_toolchain import pinned_toolchain
 CRT_ROOT = Path(__file__).resolve().parent
 SOURCE_ROOT = CRT_ROOT / "src"
 TARGET = "x86_64-unknown-linux-musl"
-PINNED_TOOLCHAIN = "nightly-2026-07-24"
+PINNED_TOOLCHAIN = pinned_toolchain(ROOT)
 DEFAULT_OUTPUT = ROOT / "target" / "crt-x86_64-static"
 
 ELF_MAGIC = b"\x7fELF"
@@ -643,7 +645,7 @@ def build(args: argparse.Namespace) -> dict[str, object]:
         raise BuildError(f"unable to execute pinned rustc: {version['stderr']}")
     version_text = str(version["stdout"])
     if "rustc 1.99.0-nightly" not in version_text or "commit-date: 2026-07-23" not in version_text:
-        raise BuildError("x86-64 CRT builder requires rust-toolchain.toml's pinned nightly-2026-07-24 rustc")
+        raise BuildError("x86-64 CRT builder requires rust-toolchain.toml-selected rustc")
 
     object_records: dict[str, dict[str, object]] = {}
     try:

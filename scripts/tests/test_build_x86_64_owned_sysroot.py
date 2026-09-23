@@ -113,7 +113,7 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
                 "sha256": "1" * 64,
             },
             "rustc": {
-                "sysroot": "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl",
+                "sysroot": f"/opt/rustup/toolchains/{builder.PINNED_TOOLCHAIN}-x86_64-unknown-linux-musl",
                 "version": {
                     "release": "1.99.0-nightly",
                     "commit_hash": "2" * 40,
@@ -123,8 +123,8 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
             },
             "llvm_target_tools": {
                 name: {
-                    "path": f"/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/lib/rustlib/{builder.TARGET}/bin/{name}",
-                    "resolved_path": f"/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/lib/rustlib/{builder.TARGET}/bin/{name}",
+                    "path": f"/opt/rustup/toolchains/{builder.PINNED_TOOLCHAIN}-x86_64-unknown-linux-musl/lib/rustlib/{builder.TARGET}/bin/{name}",
+                    "resolved_path": f"/opt/rustup/toolchains/{builder.PINNED_TOOLCHAIN}-x86_64-unknown-linux-musl/lib/rustlib/{builder.TARGET}/bin/{name}",
                     "sha256": "3" * 64,
                 }
                 for name in builder.PINNED_TARGET_TOOLS

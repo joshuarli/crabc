@@ -30,6 +30,8 @@ from typing import Mapping, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+from scripts.rust_toolchain import pinned_toolchain
 FIXTURE = ROOT / "compat/x86_64/consumer_static_pie_lto_fixture.rs"
 HELPER_SOURCE = ROOT / "compat/x86_64/consumer_static_pie_lto_helper.rs"
 MEMORY_PROBE = ROOT / "compat/x86_64/libc_memory_probe.rs"
@@ -48,7 +50,7 @@ ROUTE_SOURCES = (
 CRT_BUILDER = ROOT / "crt/build_x86_64.py"
 BUILTINS_BUILDER = ROOT / "builtins/build_x86_64.py"
 TARGET = "x86_64-unknown-linux-musl"
-TOOLCHAIN = "nightly-2026-07-24"
+TOOLCHAIN = pinned_toolchain(ROOT)
 EXPECTED_STDOUT = b"x86-static-pie-lto:ok\n"
 DEFAULT_REPORT = ROOT / "compat/reports/x86_64/consumer-static-pie-lto/latest.json"
 HELPER_SYMBOL_FRAGMENT = "crabc_x86_consumer_lto_helper::fingerprint"

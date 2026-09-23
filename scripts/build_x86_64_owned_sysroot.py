@@ -31,9 +31,11 @@ from typing import Sequence
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from scripts.rust_toolchain import pinned_toolchain
 TARGET = "x86_64-unknown-linux-musl"
 FORMAT = "crabc-x86-64-owned-static-sysroot-v1"
-PINNED_TOOLCHAIN = "nightly-2026-07-24"
+PINNED_TOOLCHAIN = pinned_toolchain(ROOT)
 PINNED_CARGO_HOME = Path("/opt/cargo")
 PINNED_RUSTUP_HOME = Path("/opt/rustup")
 PINNED_TARGET_TOOLS = ("llvm-ar", "llvm-nm", "llvm-objdump")

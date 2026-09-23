@@ -11,7 +11,7 @@ x86-64 support.
 ## Installed contract
 
 `scripts/build_x86_64_owned_sysroot.py` uses the pinned
-`nightly-2026-07-24` Rust toolchain in a sealed build environment and installs
+Rust toolchain selected by `rust-toolchain.toml` in a sealed build environment and installs
 only regular files:
 
 ```text

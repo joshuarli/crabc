@@ -20,7 +20,7 @@ Run it inside the pinned native development image after building crabc:
 python3 compat/rust-std/run.py
 ```
 
-The runner requires native AArch64, Rust `nightly-2026-07-24`, the pinned musl
+The runner requires native AArch64, Rust channel selected by `rust-toolchain.toml`, the pinned musl
 tree, and `target/debug/{libc.so,libldso.so}`. It rejects glibc evidence,
 records toolchain/ABI/artifact digests, and writes
 `compat/reports/rust-std/latest.json`. The reference and candidate executions

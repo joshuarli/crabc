@@ -23,7 +23,7 @@ if [ -n "${RUSTC:-}" ]; then
 elif command -v rustc >/dev/null 2>&1; then
     rustc_command=(rustc)
 elif command -v rustup >/dev/null 2>&1; then
-    rustc_command=(rustup run nightly-2026-07-24 rustc)
+    rustc_command=(rustup run "$(python3 "$ROOT_DIR/scripts/rust_toolchain.py")" rustc)
 else
     printf 'ERROR: rustc or rustup is required for x86-64 image evidence\n' >&2
     exit 2

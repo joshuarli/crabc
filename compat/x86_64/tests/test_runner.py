@@ -4202,7 +4202,7 @@ unsafe fn join_selected_worker_inner(
         self.assertIn('/workspace/compat/x86_64/run_libc_signal_foundation.sh', source)
         self.assertIn('run_ldso_relocation_tests()', source)
         self.assertIn('ldso/src/x86_64_relocation.rs', source)
-        self.assertIn('rustup run nightly-2026-07-24 rustc --edition=2021 --test', source)
+        self.assertIn('rustup run "$(python3 /workspace/scripts/rust_toolchain.py)" rustc --edition=2021 --test', source)
         self.assertIn('run_ldso_image_tests()', source)
         self.assertIn('/workspace/ldso/run-x86_64-image.sh test', source)
         self.assertIn('run_ldso_initial_graph_tests()', source)
@@ -12681,7 +12681,7 @@ unsafe fn join_selected_worker_inner(
         for required in ("__thread", "crabc_crt_peer_initial", "crabc_crt_peer_tbss"):
             self.assertIn(required, peer)
         for required in (
-            "rustup run nightly-2026-07-24 rustc",
+            "rust_toolchain.py",
             "rcrt1.o",
             "crti.o",
             "crtn.o",
@@ -12805,7 +12805,7 @@ unsafe fn join_selected_worker_inner(
 
         for required in (
             "crabc-x86-64-owned-static-sysroot-v1",
-            "nightly-2026-07-24",
+            "pinned_toolchain(ROOT)",
             "c.*.rcgu.o",
             "stock_compiler_builtins_members_installed",
             "ambient_target_crt_or_library_installed",
@@ -35880,7 +35880,7 @@ esac
             self.assertEqual(arguments[bash_index : bash_index + 2], ["bash", "-ceu"])
             source_test_command = arguments[bash_index + 2]
             self.assertIn(
-                "rustup run nightly-2026-07-24 rustc --edition=2021 --test",
+                'rustup run "$(python3 /workspace/scripts/rust_toolchain.py)" rustc --edition=2021 --test',
                 source_test_command,
             )
             self.assertIn(
