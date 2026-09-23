@@ -481,6 +481,7 @@ pub unsafe extern "C" fn __posix_getopt(
     getopt(argc, argv, optstring)
 }
 
+#[cfg(all(target_os = "linux", target_arch = "aarch64", target_endian = "little"))]
 pub unsafe fn cabi_set_program_names(argv0: *const c_char) {
     if argv0.is_null() {
         return;

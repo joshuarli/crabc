@@ -32,6 +32,7 @@ use super::errno;
 const MAX_AUXV_ENTRIES: usize = 4096;
 const AT_NULL: usize = 0;
 const AT_PAGESZ: usize = 6;
+pub(super) const AT_EXECFN: usize = 31;
 const ENOENT: core::ffi::c_int = 2;
 
 // A dynamic loader normally owns this hidden process field. The selected
@@ -62,6 +63,26 @@ pub(super) unsafe fn install_initial(auxv: *const usize) {
     INITIAL_AUXV.store(auxv as usize, Ordering::Release);
 }
 
+/// Read one value from the startup-published, already validated auxv vector.
+fn initial_value(item: usize) -> Option<usize> {
+    let auxv = INITIAL_AUXV.load(Ordering::Acquire) as *const usize;
+    if auxv.is_null() {
+        return None;
+    }
+    for index in 0..MAX_AUXV_ENTRIES {
+        // SAFETY: startup publishes only its validated, bounded initial vector.
+        let tag = unsafe { core::ptr::read(auxv.add(index * 2)) };
+        if tag == AT_NULL {
+            return None;
+        }
+        if tag == item {
+            // SAFETY: every auxv record has its value in the next machine word.
+            return Some(unsafe { core::ptr::read(auxv.add(index * 2 + 1)) });
+        }
+    }
+    None
+}
+
 /// Borrow the startup-published vector address as the original stack anchor.
 ///
 /// `pthread_getattr_np` uses this exact address for musl's initial-stack
@@ -73,6 +94,18 @@ pub(super) fn initial_stack_anchor() -> Option<usize> {
     (address != 0).then_some(address)
 }
 
+/// Return the kernel-published executable name without changing `errno`.
+///
+/// Musl uses `AT_EXECFN` when the initial `argv[0]` is null. Startup has
+/// already validated this immutable vector before the program-name globals
+/// are installed, so this bounded lookup neither parses a foreign vector nor
+/// exposes a new public auxiliary-vector interface.
+pub(super) fn initial_execfn() -> Option<*const core::ffi::c_char> {
+    initial_value(AT_EXECFN)
+        .filter(|value| *value != 0)
+        .map(|value| value as *const core::ffi::c_char)
+}
+
 /// Return the startup-published `AT_PAGESZ` value without calling the public
 /// `__getauxval` ABI or changing the initial thread's errno.
 ///
@@ -81,23 +114,7 @@ pub(super) fn initial_stack_anchor() -> Option<usize> {
 /// consumer or an allocator/process-lifecycle owner.
 #[cfg(feature = "native-mimalloc-shadow")]
 pub(super) fn initial_page_size() -> Option<usize> {
-    let auxv = INITIAL_AUXV.load(Ordering::Acquire) as *const usize;
-    if auxv.is_null() {
-        return None;
-    }
-    for index in 0..MAX_AUXV_ENTRIES {
-        // SAFETY: `install_initial` accepts the same bounded AT_NULL-
-        // terminated kernel vector validated by selected x86 startup.
-        let tag = unsafe { core::ptr::read(auxv.add(index * 2)) };
-        if tag == AT_NULL {
-            return None;
-        }
-        if tag == AT_PAGESZ {
-            let page_size = unsafe { core::ptr::read(auxv.add(index * 2 + 1)) };
-            return (page_size != 0).then_some(page_size);
-        }
-    }
-    None
+    initial_value(AT_PAGESZ).filter(|page_size| *page_size != 0)
 }
 
 /// Return one raw value from the validated Linux initial auxiliary vector.
@@ -115,21 +132,8 @@ pub(super) fn initial_page_size() -> Option<usize> {
 /// initial stack.
 #[no_mangle]
 pub unsafe extern "C" fn __getauxval(item: c_ulong) -> c_ulong {
-    let auxv = INITIAL_AUXV.load(Ordering::Acquire) as *const usize;
-    if !auxv.is_null() {
-        for index in 0..MAX_AUXV_ENTRIES {
-            // SAFETY: `install_initial` accepts only the bounded
-            // AT_NULL-terminated kernel vector validated by static startup.
-            let tag = unsafe { core::ptr::read(auxv.add(index * 2)) };
-            if tag == AT_NULL {
-                break;
-            }
-            if tag == item as usize {
-                // SAFETY: every auxiliary-vector record contains its value in
-                // the immediately following machine word.
-                return unsafe { core::ptr::read(auxv.add(index * 2 + 1)) as c_ulong };
-            }
-        }
+    if let Some(value) = initial_value(item as usize) {
+        return value as c_ulong;
     }
 
     // SAFETY: an absent auxiliary-vector item has the selected C errno

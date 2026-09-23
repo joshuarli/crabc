@@ -34,8 +34,10 @@ use super::{
     stdio_standard::{fputc, fwrite, stderr, StandardStream},
 };
 
+#[path = "process_name_startup.rs"]
+mod process_name_startup;
+
 const EINVAL: c_int = 22;
-static EMPTY_PROGRAM_NAME: [u8; 1] = [0];
 
 // Musl exposes these compatibility spellings as weak aliases, not copied
 // pointer values. The same-address property matters when a caller writes a
@@ -68,15 +70,24 @@ unsafe fn fputs(string: *const c_char, stream: *mut StandardStream) -> c_int {
 
 include!("../../getopt_exports.rs");
 
-/// Publish the validated startup vectors before constructors or `main` run.
-pub(super) unsafe fn install(
-    argc: c_int,
-    argv: *const *const c_char,
-) {
-    let argv0 = if argc > 0 && !argv.is_null() && !unsafe { *argv }.is_null() {
-        unsafe { *argv }
-    } else {
-        EMPTY_PROGRAM_NAME.as_ptr().cast::<c_char>()
-    };
-    unsafe { cabi_set_program_names(argv0) };
+/// Publish the process-name globals from the initial argv before callbacks.
+///
+/// If startup has no non-null `argv[0]`, use the validated kernel `AT_EXECFN`
+/// value; if that tag is absent, use the empty program name as musl does.
+///
+/// # Safety
+///
+/// `argc` and `argv` must be the same validated initial process vector used by
+/// the selected startup path, and `auxv_observation` must already own its
+/// validated initial auxv pointer. The kernel-provided `AT_EXECFN` pointer is
+/// retained for process lifetime, like pointers into the initial argv vector.
+pub(super) unsafe fn install(argc: c_int, argv: *const *const c_char) {
+    let execfn = super::auxv_observation::initial_execfn().unwrap_or(core::ptr::null());
+    let (full, short) = unsafe { process_name_startup::select(argc, argv, execfn) };
+    // SAFETY: the selected pointers refer to the validated initial stack or
+    // the static empty-name byte, and both globals are C ABI pointer slots.
+    unsafe {
+        __progname_full = full.cast_mut();
+        __progname = short.cast_mut();
+    }
 }
