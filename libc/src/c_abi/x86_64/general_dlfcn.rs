@@ -145,6 +145,14 @@ pub unsafe extern "C" fn dladdr(address: *const c_void, output: *mut c_void) -> 
 #[no_mangle]
 pub unsafe extern "C" fn dlinfo(handle: *mut c_void, request: c_int, output: *mut c_void) -> c_int {
     if request != 2 {
+        // musl validates the handle before reporting an unsupported request.
+        // Use local storage here so validation never writes caller memory.
+        let mut link_map = ptr::null_mut();
+        let error = unsafe { __crabc_x86_64_runtime_information(handle, &mut link_map) };
+        if error != 0 {
+            unsafe { diagnostic(b"Invalid library handle", ptr::null(), b""); }
+            return -1;
+        }
         let mut number = [0u8; 12];
         let mut index = number.len();
         let mut value = request.unsigned_abs();
