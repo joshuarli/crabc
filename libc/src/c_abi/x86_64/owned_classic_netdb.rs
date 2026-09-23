@@ -28,7 +28,35 @@ pub struct Hostent { name: *mut c_char, aliases: *mut *mut c_char, family: c_int
 pub struct Netent { name: *mut c_char, aliases: *mut *mut c_char, family: c_int, network: u32 }
 #[repr(C)]
 pub struct Servent { name: *mut c_char, aliases: *mut *mut c_char, port: c_int, protocol: *mut c_char }
-unsafe extern "C" { fn malloc(size: usize) -> *mut c_void; fn free(p: *mut c_void); fn fprintf(file: *mut stdio_standard::StandardStream, format: *const c_char, ...) -> c_int; }
+// The nonreentrant host cache is allocated and retired through musl's public
+// malloc/free pair. An executable may replace that pair. Keep both calls at
+// the ELF lookup boundary: LTO can bind a Rust extern spelling directly to
+// this crate's weak allocator and send an interposed pointer to native_free.
+core::arch::global_asm!(r#"
+    .text
+    .p2align 4
+    .globl __crabc_x86_host_cache_cabi_malloc
+    .hidden __crabc_x86_host_cache_cabi_malloc
+    .type __crabc_x86_host_cache_cabi_malloc,@function
+__crabc_x86_host_cache_cabi_malloc:
+    jmp malloc
+    .size __crabc_x86_host_cache_cabi_malloc, .-__crabc_x86_host_cache_cabi_malloc
+
+    .p2align 4
+    .globl __crabc_x86_host_cache_cabi_free
+    .hidden __crabc_x86_host_cache_cabi_free
+    .type __crabc_x86_host_cache_cabi_free,@function
+__crabc_x86_host_cache_cabi_free:
+    jmp free
+    .size __crabc_x86_host_cache_cabi_free, .-__crabc_x86_host_cache_cabi_free
+"#);
+unsafe extern "C" {
+    #[link_name = "__crabc_x86_host_cache_cabi_malloc"]
+    fn host_cache_malloc(size: usize) -> *mut c_void;
+    #[link_name = "__crabc_x86_host_cache_cabi_free"]
+    fn host_cache_free(p: *mut c_void);
+    fn fprintf(file: *mut stdio_standard::StandardStream, format: *const c_char, ...) -> c_int;
+}
 const EMPTY_SERVICE: Servent = Servent { name: ptr::null_mut(), aliases: ptr::null_mut(), port: 0, protocol: ptr::null_mut() };
 static mut FORWARD_HOST: *mut Hostent = ptr::null_mut();
 static mut REVERSE_HOST: *mut Hostent = ptr::null_mut();
@@ -104,9 +132,9 @@ pub unsafe extern "C" fn gethostbyaddr_r(addr: *const c_void,len: c_uint,af: c_i
 unsafe fn static_host(owner: *mut *mut Hostent, call: impl Fn(*mut Hostent,*mut c_char,usize,*mut *mut Hostent,*mut c_int)->c_int) -> *mut Hostent {
     let mut size = 63usize; let mut result = ptr::null_mut();
     loop {
-        unsafe { free((*owner).cast()); }
+        unsafe { host_cache_free((*owner).cast()); }
         size = size.wrapping_mul(2).wrapping_add(1);
-        let record = unsafe { malloc(size).cast::<Hostent>() }; unsafe { *owner = record; }
+        let record = unsafe { host_cache_malloc(size).cast::<Hostent>() }; unsafe { *owner = record; }
         if record.is_null() { unsafe { h_errno::set(3); } return ptr::null_mut(); }
         let code = call(record,unsafe { record.add(1).cast() },size-mem::size_of::<Hostent>(),&mut result,unsafe { h_errno::location() });
         if code != 34 { return result; }

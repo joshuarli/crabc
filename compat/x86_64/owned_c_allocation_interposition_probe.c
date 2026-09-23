@@ -1,12 +1,13 @@
 // Verify that owned C APIs which publish or retire malloc-family storage keep
 // the executable's provider selected.  asprintf publishes caller-owned bytes;
 // the passwd lookup's private getline allocation is retired before return.
-// lio_listio's list state also uses that provider, while AIO queue storage
-// belongs to the private libc allocator.
+// lio_listio's list state and the nonreentrant host cache also use that
+// provider, while AIO queue storage belongs to the private libc allocator.
 #define _GNU_SOURCE
 #include <aio.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <netdb.h>
 #include <stddef.h>
 #include <stdatomic.h>
 #include <pwd.h>
@@ -226,6 +227,29 @@ static int check_passwd_getdelim_release(void)
     return allocator_misuse || !released_storage_is_unchanged_since(first) ? 23 : 0;
 }
 
+static int check_host_cache_provider(void)
+{
+    struct hostent *first_host;
+    struct hostent *second_host;
+    size_t first = allocation_count;
+    size_t byte;
+
+    first_host = gethostbyname("127.0.0.1");
+    if (first_host == 0 || first_host->h_addrtype != AF_INET
+        || allocation_count != first + 1)
+        return 40;
+    second_host = gethostbyname("127.0.0.1");
+    if (second_host == 0 || second_host->h_addrtype != AF_INET
+        || allocation_count != first + 2)
+        return 41;
+    if (!allocations[first].released || allocations[first + 1].released)
+        return 42;
+    for (byte = 0; byte < allocations[first].length; byte++)
+        if (allocations[first].address[byte] != FREED_FILL)
+            return 43;
+    return allocator_misuse ? 44 : 0;
+}
+
 static _Atomic int aio_cleanup_complete;
 
 static void aio_cleanup_notification(union sigval value)
@@ -289,6 +313,8 @@ int main(int argc, char **argv)
         return check_asprintf_result();
     if (strcmp(argv[1], "passwd") == 0)
         return check_passwd_getdelim_release();
+    if (strcmp(argv[1], "host") == 0)
+        return check_host_cache_provider();
     if (strcmp(argv[1], "lio") == 0)
         return check_lio_state_and_private_queue();
     return 3;

@@ -1,6 +1,6 @@
 # Owned C allocator interposition
 
-`./scripts/dev-x86_64.sh owned-c-allocation-interposition` qualifies three
+`./scripts/dev-x86_64.sh owned-c-allocation-interposition` qualifies four
 narrow dynamic C-allocation boundaries against pinned musl 1.2.6 commit
 `9fa28ece75d8a2191de7c5bb53bed224c5947417`. It is focused x86 evidence; it
 does not close stdio, passwd, allocator, or dynamic-runtime qualification.
@@ -31,6 +31,12 @@ notification runs after private queue retirement; the observer waits for that
 callback before checking for late allocator misuse. Extra public
 queue allocations or private frees of public state fail the observer.
 
+The `host` case calls `gethostbyname` twice with a numeric IPv4 address. The
+nonreentrant cache must allocate both records through the executable's
+`malloc`, release the first through its `free`, and leave the second live.
+The observer also checks the released bytes. The numeric address avoids a DNS
+or hosts-file dependency in this allocator ownership case.
+
 `owned_printf.rs::vasprintf` already has an ordinary external `malloc`
 boundary: the product records its `R_X86_64_GLOB_DAT` lookup and the consumer
 passes through executable interposition in every run. No printf implementation
@@ -47,20 +53,25 @@ public `malloc` lookup and passwd `free@plt` tail.
 The AIO `__crabc_x86_aio_cabi_malloc` and `__crabc_x86_aio_cabi_free` tails
 likewise retain ordinary public PLT lookups for list state; the product audit
 and executed `lio` observer both check that boundary.
+`owned_classic_netdb.rs` uses the same public lookup for its nonreentrant host
+cache through `__crabc_x86_host_cache_cabi_malloc` and
+`__crabc_x86_host_cache_cabi_free`. The selected native shadow previously
+reached its private `native_free` with the executable's cache pointer and
+terminated with status 134 on the second lookup. The product audit checks both
+hidden tails and their `malloc@plt`/`free@plt` jumps.
 
 The runner compiles the consumer once through a fresh installed crabc dynamic
 sysroot, then links that exact object with pinned musl and the installed PIE
 and non-PIE drivers. It verifies that each executable exports all three
 interposers, installs a one-record passwd file in disposable chroots, and runs
-all three cases through kernel and direct-interpreter entry. It compares
-status, stdout, and stderr for twelve musl/candidate pairs. A passing receipt
-therefore requires all twenty-four executions to succeed with the same
+all four cases through kernel and direct-interpreter entry. It compares
+status, stdout, and stderr for sixteen musl/candidate pairs. A passing receipt
+therefore requires all thirty-two executions to succeed with the same
 observable results.
 Every target must independently exit zero before comparison; a failure or
 timeout stops the runner after retaining its raw status and streams. Matching
 oracle and candidate failures cannot qualify this boundary.
 
-Timezone's growth-only `OLD_TZ` cache and classic netdb's nonreentrant host
-cache remain separate allocator clients. This receipt records their existence
-without extending their ownership contracts or claiming their interposition
-qualification.
+Timezone's growth-only `OLD_TZ` cache remains a separate allocator client.
+This receipt records its existence without extending its ownership contract
+or claiming its interposition qualification.
