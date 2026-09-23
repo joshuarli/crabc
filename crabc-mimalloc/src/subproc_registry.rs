@@ -9,7 +9,7 @@
 use super::*;
 
 pub(crate) struct SourceSubprocessRegistry {
-    head: UnsafeCell<*mut MainSubprocess>,
+    head: UnsafeCell<*mut SubprocessIdentity>,
     lock: PrivateLock,
     total_count: AtomicUsize,
 }
@@ -21,9 +21,9 @@ unsafe impl Sync for SourceSubprocessRegistry {}
 pub(super) struct SourceSubprocessMembership {
     registry: AtomicPtr<SourceSubprocessRegistry>,
     initialized: AtomicBool,
-    previous: UnsafeCell<*mut MainSubprocess>,
-    next: UnsafeCell<*mut MainSubprocess>,
-    parent: UnsafeCell<*mut MainSubprocess>,
+    previous: UnsafeCell<*mut SubprocessIdentity>,
+    next: UnsafeCell<*mut SubprocessIdentity>,
+    parent: UnsafeCell<*mut SubprocessIdentity>,
     sequence: UnsafeCell<usize>,
     memory: UnsafeCell<MemoryId>,
 }
@@ -43,7 +43,7 @@ impl SourceSubprocessMembership {
 
     pub(super) fn is_child_of(
         &self,
-        parent: &MainSubprocess,
+        parent: &SubprocessIdentity,
         child_is_main: bool,
     ) -> bool {
         let parent_membership = &parent.source_membership;
@@ -58,8 +58,12 @@ impl SourceSubprocessMembership {
                 // SAFETY: initialization publishes this immutable parent
                 // write with `initialized`'s Release store.
                 unsafe { *self.parent.get() },
-                core::ptr::from_ref(parent).cast_mut(),
+                parent.as_ptr(),
             )
+    }
+
+    pub(super) fn is_initialized(&self) -> bool {
+        self.initialized.load(Ordering::Acquire)
     }
 }
 
@@ -93,12 +97,13 @@ impl SourceSubprocessRegistry {
     pub(crate) unsafe fn initialize_main(
         &'static self, subprocess: &'static MainSubprocess,
     ) -> Result<(), SourceSubprocessRegistryError> {
-        let member = &subprocess.source_membership;
+        let identity = &subprocess.identity;
+        let member = &identity.source_membership;
         member.registry.compare_exchange(core::ptr::null_mut(), core::ptr::from_ref(self).cast_mut(), Ordering::AcqRel, Ordering::Acquire)
             .map_err(|_| SourceSubprocessRegistryError::InvalidMembership)?;
         // Source assigns static memid/parent/sequence before list locking.
         unsafe {
-            *member.memory.get() = MemoryId::static_allocation(NonNull::from(subprocess).cast().as_ptr(), size_of::<MainSubprocess>());
+            *member.memory.get() = MemoryId::static_allocation(identity.as_ptr().cast(), size_of::<MainSubprocess>());
             *member.parent.get() = core::ptr::null_mut();
             *member.sequence.get() = self.total_count.fetch_add(1, Ordering::Relaxed);
         }
@@ -112,7 +117,7 @@ impl SourceSubprocessRegistry {
         unsafe {
             *member.previous.get() = core::ptr::null_mut();
             *member.next.get() = *self.head.get();
-            *self.head.get() = core::ptr::from_ref(subprocess).cast_mut();
+            *self.head.get() = identity.as_ptr();
         }
         member.initialized.store(true, Ordering::Release);
         guard.unlock().map_err(SourceSubprocessRegistryError::Lock)
@@ -132,12 +137,13 @@ impl SourceSubprocessRegistry {
     /// membership projections.
     pub(crate) unsafe fn initialize_child(
         &'static self,
-        subprocess: &MainSubprocess,
+        subprocess: &ChildSubprocessImage,
         parent: &MainSubprocess,
         memory: MemoryId,
     ) -> Result<(), SourceSubprocessRegistryError> {
-        let member = &subprocess.source_membership;
-        if subprocess.is_process_main()
+        let identity = subprocess.identity();
+        let member = &identity.source_membership;
+        if identity.is_process_main()
             || memory.kind() != crate::types::MemoryKind::Malloc
         {
             return Err(SourceSubprocessRegistryError::InvalidMembership);
@@ -146,7 +152,7 @@ impl SourceSubprocessRegistry {
         // is active before its exact allocation identity is inspected.
         let malloc = unsafe { memory.info.malloc };
         if malloc.base != core::ptr::from_ref(subprocess).cast_mut().cast()
-            || malloc.size != size_of::<MainSubprocess>()
+            || malloc.size != size_of::<ChildSubprocessImage>()
             || !core::ptr::eq(
                 parent.source_membership.registry.load(Ordering::Acquire),
                 self,
@@ -168,7 +174,7 @@ impl SourceSubprocessRegistry {
         // if a later lock boundary must retain the partially initialized node.
         unsafe {
             *member.memory.get() = memory;
-            *member.parent.get() = core::ptr::from_ref(parent).cast_mut();
+            *member.parent.get() = parent.identity_ptr();
             *member.sequence.get() = self.total_count.fetch_add(1, Ordering::Relaxed);
         }
         let guard = self.lock.lock().map_err(SourceSubprocessRegistryError::Lock)?;
@@ -182,8 +188,8 @@ impl SourceSubprocessRegistry {
             *member.next.get() = head;
             (*head).source_membership.previous
                 .get()
-                .write(core::ptr::from_ref(subprocess).cast_mut());
-            *self.head.get() = core::ptr::from_ref(subprocess).cast_mut();
+                .write(identity.as_ptr());
+            *self.head.get() = identity.as_ptr();
         }
         member.initialized.store(true, Ordering::Release);
         guard.unlock().map_err(SourceSubprocessRegistryError::Lock)
@@ -199,9 +205,9 @@ impl SourceSubprocessRegistry {
         &self, subprocess: &MainSubprocess,
     ) -> Result<(), SourceSubprocessRegistryError> {
         let guard = self.lock.lock().map_err(SourceSubprocessRegistryError::Lock)?;
-        let member = &subprocess.source_membership;
+        let member = &subprocess.identity.source_membership;
         let valid = core::ptr::eq(member.registry.load(Ordering::Acquire), self)
-            && core::ptr::eq(unsafe { *self.head.get() }, subprocess)
+            && core::ptr::eq(unsafe { *self.head.get() }, subprocess.identity_ptr())
             && unsafe { (*member.previous.get()).is_null() && (*member.next.get()).is_null() };
         if !valid {
             let _ = guard.unlock();
@@ -224,20 +230,21 @@ impl SourceSubprocessRegistry {
     /// release the exact context allocation only after those steps complete.
     pub(crate) unsafe fn unlink_child_terminal(
         &self,
-        subprocess: &MainSubprocess,
+        subprocess: &ChildSubprocessImage,
     ) -> Result<(), SourceSubprocessRegistryError> {
         let guard = self.lock.lock().map_err(SourceSubprocessRegistryError::Lock)?;
-        let member = &subprocess.source_membership;
+        let identity = subprocess.identity();
+        let member = &identity.source_membership;
         let previous = unsafe { *member.previous.get() };
         let next = unsafe { *member.next.get() };
-        let valid = !subprocess.is_process_main()
+        let valid = !identity.is_process_main()
             && core::ptr::eq(member.registry.load(Ordering::Acquire), self)
             && (previous.is_null() || unsafe { (*previous).source_membership.registry.load(Ordering::Acquire) == core::ptr::from_ref(self).cast_mut() })
             && (next.is_null() || unsafe { (*next).source_membership.registry.load(Ordering::Acquire) == core::ptr::from_ref(self).cast_mut() })
             && (if previous.is_null() {
-                unsafe { *self.head.get() == core::ptr::from_ref(subprocess).cast_mut() }
+                unsafe { *self.head.get() == identity.as_ptr() }
             } else {
-                unsafe { (*previous).source_membership.next.get().read() == core::ptr::from_ref(subprocess).cast_mut() }
+                unsafe { (*previous).source_membership.next.get().read() == identity.as_ptr() }
             });
         if !valid {
             let _ = guard.unlock();
@@ -268,8 +275,8 @@ mod tests {
         let registry = std::boxed::Box::leak(std::boxed::Box::new(SourceSubprocessRegistry::new()));
         let main: &'static MainSubprocess =
             std::boxed::Box::leak(std::boxed::Box::new(MainSubprocess::new()));
-        let child: &'static MainSubprocess =
-            std::boxed::Box::leak(std::boxed::Box::new(MainSubprocess::new_child()));
+        let child: &'static ChildSubprocessImage =
+            std::boxed::Box::leak(std::boxed::Box::new(ChildSubprocessImage::new()));
         // SAFETY: the isolated process fixture exclusively owns the static
         // main image and its one-time source-list transition.
         unsafe { registry.initialize_main(main) }.unwrap();
@@ -277,7 +284,7 @@ mod tests {
             info: crate::types::MemoryInfo {
                 malloc: crate::types::MallocMemory {
                     base: core::ptr::from_ref(child).cast_mut().cast(),
-                    size: size_of::<MainSubprocess>(),
+                    size: size_of::<ChildSubprocessImage>(),
                 },
             },
             kind: crate::types::MemoryKind::Malloc,
@@ -289,20 +296,20 @@ mod tests {
         // main is already a member, and this fixture has no concurrent users.
         unsafe { registry.initialize_child(child, main, memory) }.unwrap();
 
-        assert!(core::ptr::eq(unsafe { *registry.head.get() }, child));
+        assert!(core::ptr::eq(unsafe { *registry.head.get() }, child.identity()));
         assert!(core::ptr::eq(
             unsafe { *child.source_membership.parent.get() },
-            main
+            main.identity()
         ));
         assert_eq!(unsafe { *child.source_membership.sequence.get() }, 1);
         assert!(unsafe { *child.source_membership.previous.get() }.is_null());
         assert!(core::ptr::eq(
             unsafe { *child.source_membership.next.get() },
-            main
+            main.identity()
         ));
         assert!(core::ptr::eq(
             unsafe { *main.source_membership.previous.get() },
-            child
+            child.identity()
         ));
         assert_eq!(
             unsafe { *child.source_membership.memory.get() }.kind(),
@@ -312,12 +319,12 @@ mod tests {
         // SAFETY: this isolated child has no Heap, thread, metadata, or arena
         // users; the exact child image remains allocated through unlink.
         unsafe { registry.unlink_child_terminal(child) }.unwrap();
-        assert!(core::ptr::eq(unsafe { *registry.head.get() }, main));
+        assert!(core::ptr::eq(unsafe { *registry.head.get() }, main.identity()));
         assert!(unsafe { *main.source_membership.previous.get() }.is_null());
         assert_eq!(unsafe { *child.source_membership.previous.get() }, core::ptr::null_mut());
         assert!(core::ptr::eq(
             unsafe { *child.source_membership.next.get() },
-            main
+            main.identity()
         ));
         assert_eq!(registry.total_count.load(Ordering::Relaxed), 2);
     }

@@ -626,7 +626,7 @@ impl ProcessPageMapStorage {
         unsafe { (*self.page_map.get()).write(page_map) };
         // SAFETY: same exclusive COLD-state publication proof as the map.
         unsafe { (*self.config.get()).write(config) };
-        self.subprocess.store(subprocess.as_ptr(), Ordering::Release);
+        self.subprocess.store(subprocess.owner_ptr(), Ordering::Release);
 
         // SAFETY: the map was fully initialized in its final slot and is
         // process-lived.  The Release root publication makes its initialized
@@ -657,7 +657,7 @@ impl ProcessPageMapStorage {
         if stored_config != config {
             return Err(ProcessPageMapError::ConfigurationMismatch);
         }
-        if !core::ptr::eq(self.subprocess.load(Ordering::Acquire), subprocess.as_ptr()) {
+        if !core::ptr::eq(self.subprocess.load(Ordering::Acquire), subprocess.owner_ptr()) {
             return Err(ProcessPageMapError::SubprocessMismatch);
         }
         if self.root.load().is_none() {

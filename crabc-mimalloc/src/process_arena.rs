@@ -1025,7 +1025,7 @@ impl ProcessSharedArenaStorage {
         // no reader can observe these final fields until its Release publish.
         unsafe { (*self.config.get()).write(candidate.pair.config) };
         self.subprocess
-            .store(candidate.pair.subprocess.as_ptr(), Ordering::Release);
+            .store(candidate.pair.subprocess.owner_ptr(), Ordering::Release);
         self.page_map_root
             .store(candidate.pair.root.as_ptr(), Ordering::Release);
         self.pair_state.store(PAIR_SET, Ordering::Release);
@@ -1038,7 +1038,7 @@ impl ProcessSharedArenaStorage {
             && self.config() == pair.config
             && core::ptr::eq(
                 self.subprocess.load(Ordering::Acquire),
-                pair.subprocess.as_ptr(),
+                pair.subprocess.owner_ptr(),
             )
             && core::ptr::eq(
                 self.page_map_root.load(Ordering::Acquire),

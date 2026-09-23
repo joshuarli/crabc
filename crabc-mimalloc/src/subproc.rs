@@ -44,7 +44,7 @@
 extern crate std;
 
 use core::cell::UnsafeCell;
-use core::marker::PhantomData;
+use core::marker::{PhantomData, PhantomPinned};
 use core::mem::{MaybeUninit, size_of};
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicUsize, Ordering};
@@ -105,32 +105,28 @@ impl MainStaticTldSlot {
     }
 }
 
-/// The deliberately bounded source identity of `mi_process_subproc_main`.
-///
-/// This type owns no general subprocess state. Its private static-TLD slot is
-/// the actual source-shaped `mi_process_tld_main` branch selected only by
-/// sequence zero; it is not a metadata allocation cache or a reusable TLD.
-pub(crate) struct MainSubprocess {
+/// Shared address-stable identity embedded in either the process-main owner
+/// or one parent-allocated child image. Intrusive Heap/TLD/Theap links point
+/// at this field, never at either surrounding role-specific image; the
+/// `repr(transparent)` child wrapper preserves the identity at allocation
+/// base for the exact source `mi_memid_t` membership check.
+pub(crate) struct SubprocessIdentity {
     role: SubprocessRole,
     source_membership: registry::SourceSubprocessMembership,
-    /// The one process-owned registry, reserve lock, and permanent exact OS
-    /// backing slots for source normal arenas. This is a Rust ownership group,
-    /// never a complete `mi_subproc_t` layout projection.
+    /// This identity's source `arenas` array, reserve lock, and exact OS
+    /// backing slots. The `ProcessArenaBacking` Rust name describes the
+    /// existing process path; it is a per-subprocess owner, not shared state
+    /// or a complete `mi_subproc_t` layout projection.
     arena_backing: crate::arena::ProcessArenaBacking,
     /// The complete source-ordered statistics image shares the subprocess
     /// lifetime with VM, arena, and Heap producers. This is private state,
     /// not a public `mi_stats_t` layout, reporting API, or generic sink.
     statistics: crate::statistics::SubprocessStatistics,
-    /// Each source subprocess owns its detached metadata allocator. The main
-    /// process keeps this exact image in static storage; a child subprocess
-    /// will place the same owner in its parent-allocated context before it
-    /// publishes any child-local metadata route.
-    metadata_allocator: crate::meta::MetaAllocator,
     heap_list: crate::types::heap_registry::SubprocessHeapList,
     thread_count: AtomicUsize,
     thread_total_count: AtomicUsize,
     /// The one source `subproc->heap_main` identity selected for this
-    /// process-main subprocess.
+    /// subprocess (the process-static image for main, parent-owned for child).
     ///
     /// The pointer is never projected as `&Heap` or `&mut Heap`.  It exists
     /// solely so the source-static foundation can publish and later compare
@@ -162,24 +158,113 @@ pub(crate) struct MainSubprocess {
     /// process-lifetime backing slots and bootstrap state. This is neither a
     /// `mi_subproc_t` byte-layout claim nor pthread-mutex equivalence.
     theap_meta_lock: PrivateLock,
-    /// Rust-side selection of the source sequence-zero TLD branch.
-    ///
-    /// This does not replace either source counter. It only prevents a
-    /// generic constructor from taking sequence zero while the source-shaped
-    /// process coordinator has committed to the static main image.
+}
+
+/// Process-main-only owner. The detached metadata engine and immutable
+/// ticket-zero TLD slot never occupy reclaimable child context storage.
+#[repr(C)]
+pub(crate) struct MainSubprocess {
+    identity: SubprocessIdentity,
+    metadata_allocator: crate::meta::MetaAllocator,
+    main_tld: UnsafeCell<MainStaticTldSlot>,
+    /// Rust-side selection of the source sequence-zero TLD branch. This selector
+    /// belongs only to process main; child sequence zero always uses metadata.
     bootstrap_selection: AtomicU8,
     main_tld_state: AtomicU8,
-    /// Test-only snapshot taken inside the source-order interval after the
-    /// normal arm's live registration and before Rust Release-publishes the
-    /// static TLD image. It exposes no TLD projection or initialization
-    /// authority.
     #[cfg(test)]
     main_tld_post_registration_state: AtomicU8,
     #[cfg(test)]
     main_tld_post_registration_total: AtomicUsize,
     #[cfg(test)]
     main_tld_post_registration_live: AtomicUsize,
-    main_tld: UnsafeCell<MainStaticTldSlot>,
+}
+
+impl core::ops::Deref for MainSubprocess {
+    type Target = SubprocessIdentity;
+
+    fn deref(&self) -> &Self::Target { &self.identity }
+}
+
+// SAFETY: common subprocess state is synchronized by its atomics/private
+// locks. The process-only TLD slot is initialized by its one-way ticket-zero
+// protocol and metadata-engine mutation is serialized by that engine's lock.
+unsafe impl Sync for MainSubprocess {}
+
+/// The exact parent-allocated child source image. Its shared identity starts
+/// at allocation offset zero, while its pinned role wrapper prevents safe
+/// movement after the source registry or intrusive Heap/Theap lists publish
+/// this address. Child metadata capabilities remain in its external owner.
+#[repr(transparent)]
+pub(crate) struct ChildSubprocessImage {
+    identity: SubprocessIdentity,
+    _pin: PhantomPinned,
+}
+
+impl core::ops::Deref for ChildSubprocessImage {
+    type Target = SubprocessIdentity;
+
+    fn deref(&self) -> &Self::Target { &self.identity }
+}
+
+impl ChildSubprocessImage {
+    pub(crate) const fn new() -> Self {
+        Self {
+            identity: SubprocessIdentity::new_with_role(SubprocessRole::Child),
+            _pin: PhantomPinned,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn identity(&self) -> &SubprocessIdentity { &self.identity }
+
+    /// Issues the exact old source child `thread_total_count` value. Child
+    /// sequence zero is always metadata-backed; only `MainSubprocess` owns
+    /// the ticket-zero static TLD image.
+    #[inline]
+    pub(crate) fn issue_metadata_thread_ticket<'ctx>(
+        self: core::pin::Pin<&'ctx mut Self>,
+    ) -> Result<ChildThreadRegistrationTicket<'ctx>, ChildThreadTicketError> {
+        // SAFETY: consuming Pin transfers the unique pinned borrow into this
+        // ticket lifetime; projecting the identity cannot move its parent.
+        let child: &'ctx mut Self = unsafe { core::pin::Pin::into_inner_unchecked(self) };
+        let identity: &'ctx SubprocessIdentity = &child.identity;
+        if !identity.is_registered()
+            || identity.main_heap_publication_state() != MainHeapPublicationState::Ready
+            || !identity.has_published_metadata_theap()
+        {
+            return Err(ChildThreadTicketError::ChildNotReady);
+        }
+        let old = identity.thread_total_count.fetch_add(1, Ordering::Relaxed);
+        Ok(ChildThreadRegistrationTicket {
+            subprocess: identity,
+            sequence: ThreadSequence::from_previous_total_count(old),
+            _not_send_or_sync: PhantomData,
+        })
+    }
+}
+
+/// The source child thread sequence reserved before child metadata TLD
+/// allocation. Its borrow keeps the child image projection alive; dropping
+/// the ticket records the source monotonic failed-creation result and never
+/// decrements the live-thread count.
+#[must_use = "a child thread ticket must initialize one metadata TLD or record a failed creation"]
+pub(crate) struct ChildThreadRegistrationTicket<'ctx> {
+    subprocess: &'ctx SubprocessIdentity,
+    sequence: ThreadSequence,
+    _not_send_or_sync: PhantomData<*mut ()>,
+}
+
+impl ChildThreadRegistrationTicket<'_> {
+    #[inline]
+    pub(crate) const fn sequence(&self) -> ThreadSequence { self.sequence }
+
+    #[inline]
+    pub(crate) fn subprocess(&self) -> &SubprocessIdentity { self.subprocess }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ChildThreadTicketError {
+    ChildNotReady,
 }
 
 /// Which source subprocess path may consume the process-static TLD image.
@@ -196,7 +281,7 @@ enum SubprocessRole {
 // The sole UnsafeCell is initialized only by the unique sequence-zero ticket,
 // then reached exclusively through its `!Send` TLD owner; it is never reused
 // after retirement.
-unsafe impl Sync for MainSubprocess {}
+unsafe impl Sync for SubprocessIdentity {}
 
 /// The bounded visibility of the source process-main Heap identity.
 ///
@@ -267,7 +352,7 @@ impl MainHeapReadyIdentity {
 /// Heap transition or substitute a different candidate after mutation begins.
 #[must_use = "a reserved source main-Heap transition must publish or retain the process image"]
 pub(crate) struct MainHeapPublicationReservation<'subprocess> {
-    subprocess: &'subprocess MainSubprocess,
+    subprocess: &'subprocess SubprocessIdentity,
     heap: NonNull<Heap>,
     _not_send_or_sync: PhantomData<*mut ()>,
 }
@@ -280,7 +365,7 @@ pub(crate) struct MainHeapPublicationReservation<'subprocess> {
 /// Release-published source-static Heap identity.
 #[must_use = "a published source main-Heap identity must become ready or retain the process image"]
 pub(crate) struct MainHeapPublication<'subprocess> {
-    subprocess: &'subprocess MainSubprocess,
+    subprocess: &'subprocess SubprocessIdentity,
     heap: NonNull<Heap>,
     completed: bool,
     _not_send_or_sync: PhantomData<*mut ()>,
@@ -288,27 +373,10 @@ pub(crate) struct MainHeapPublication<'subprocess> {
 
 impl MainSubprocess {
     pub(crate) const fn new() -> Self {
-        Self::new_with_role(SubprocessRole::ProcessMain)
-    }
-
-    pub(crate) const fn new_child() -> Self {
-        Self::new_with_role(SubprocessRole::Child)
-    }
-
-    const fn new_with_role(role: SubprocessRole) -> Self {
         Self {
-            role,
-            source_membership: registry::SourceSubprocessMembership::new(),
-            arena_backing: crate::arena::ProcessArenaBacking::new(),
-            statistics: crate::statistics::SubprocessStatistics::new(),
+            identity: SubprocessIdentity::new_with_role(SubprocessRole::ProcessMain),
             metadata_allocator: crate::meta::MetaAllocator::new(),
-            heap_list: crate::types::heap_registry::SubprocessHeapList::new(),
-            thread_count: AtomicUsize::new(0),
-            thread_total_count: AtomicUsize::new(0),
-            main_heap: AtomicPtr::new(core::ptr::null_mut()),
-            main_heap_state: AtomicU8::new(MAIN_HEAP_ABSENT),
-            theap_meta: AtomicPtr::new(core::ptr::null_mut()),
-            theap_meta_lock: PrivateLock::new(),
+            main_tld: UnsafeCell::new(MainStaticTldSlot::new()),
             bootstrap_selection: AtomicU8::new(BOOTSTRAP_OPEN),
             main_tld_state: AtomicU8::new(MAIN_TLD_COLD),
             #[cfg(test)]
@@ -317,7 +385,51 @@ impl MainSubprocess {
             main_tld_post_registration_total: AtomicUsize::new(0),
             #[cfg(test)]
             main_tld_post_registration_live: AtomicUsize::new(0),
-            main_tld: UnsafeCell::new(MainStaticTldSlot::new()),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn global() -> &'static Self {
+        &PROCESS_MAIN_SUBPROCESS
+    }
+
+    #[inline]
+    pub(crate) fn as_ptr(&self) -> *mut SubprocessIdentity {
+        self.identity.as_ptr()
+    }
+
+    #[inline]
+    pub(crate) fn owner_ptr(&self) -> *mut Self {
+        core::ptr::from_ref(self).cast_mut()
+    }
+
+    #[inline]
+    pub(crate) fn identity_ptr(&self) -> *mut SubprocessIdentity {
+        self.identity.as_ptr()
+    }
+
+    #[inline]
+    pub(crate) fn identity(&self) -> &SubprocessIdentity {
+        &self.identity
+    }
+}
+
+const _: [(); 0] = [(); core::mem::offset_of!(MainSubprocess, identity)];
+
+impl SubprocessIdentity {
+    const fn new_with_role(role: SubprocessRole) -> Self {
+        Self {
+            role,
+            source_membership: registry::SourceSubprocessMembership::new(),
+            arena_backing: crate::arena::ProcessArenaBacking::new(),
+            statistics: crate::statistics::SubprocessStatistics::new(),
+            heap_list: crate::types::heap_registry::SubprocessHeapList::new(),
+            thread_count: AtomicUsize::new(0),
+            thread_total_count: AtomicUsize::new(0),
+            main_heap: AtomicPtr::new(core::ptr::null_mut()),
+            main_heap_state: AtomicU8::new(MAIN_HEAP_ABSENT),
+            theap_meta: AtomicPtr::new(core::ptr::null_mut()),
+            theap_meta_lock: PrivateLock::new(),
         }
     }
 
@@ -330,12 +442,6 @@ impl MainSubprocess {
     /// The global main owner is permanently static. Later child construction
     /// must tie this pin to the parent metadata allocation that owns the child
     /// context rather than lengthening a borrow to process lifetime.
-    pub(crate) fn metadata_allocator(&'static self) -> core::pin::Pin<&'static crate::meta::MetaAllocator> {
-        // SAFETY: the main subprocess is process-static. Child callers will
-        // acquire an equivalent pin only through their owning child lease.
-        unsafe { core::pin::Pin::new_unchecked(&self.metadata_allocator) }
-    }
-
     #[inline]
     pub(crate) const fn is_process_main(&self) -> bool {
         matches!(self.role, SubprocessRole::ProcessMain)
@@ -343,15 +449,20 @@ impl MainSubprocess {
 
     /// Checks the source child-parent edge after list membership publication.
     #[inline]
-    pub(crate) fn is_registered_child_of(&self, parent: &MainSubprocess) -> bool {
+    pub(crate) fn is_registered_child_of(&self, parent: &SubprocessIdentity) -> bool {
         self.source_membership
             .is_child_of(parent, self.is_process_main())
+    }
+
+    #[inline]
+    pub(crate) fn is_registered(&self) -> bool {
+        self.source_membership.is_initialized()
     }
 
     /// Returns the one process-static main-subprocess identity.
     #[inline]
     pub(crate) fn global() -> &'static Self {
-        &PROCESS_MAIN_SUBPROCESS
+        &PROCESS_MAIN_SUBPROCESS.identity
     }
 
     /// Returns bitmap producers' view into this subprocess's one source
@@ -433,6 +544,347 @@ impl MainSubprocess {
     #[inline]
     pub(crate) fn record_statistics_heap_delete_wait(&self) {
         self.statistics.heap_delete_waited();
+    }
+
+    #[inline]
+    pub(crate) const fn as_ptr(&self) -> *mut Self {
+        core::ptr::from_ref(self).cast_mut()
+    }
+
+    /// Observes whether the canonical source main-Heap identity is absent,
+    /// privately reserved but unpublished, being published, or ready. It
+    /// never returns a Heap pointer.
+    #[inline]
+    pub(crate) fn main_heap_publication_state(&self) -> MainHeapPublicationState {
+        match self.main_heap_state.load(Ordering::Acquire) {
+            MAIN_HEAP_ABSENT => MainHeapPublicationState::Absent,
+            MAIN_HEAP_RESERVED => MainHeapPublicationState::Reserved,
+            MAIN_HEAP_PUBLISHING => MainHeapPublicationState::Publishing,
+            MAIN_HEAP_READY => MainHeapPublicationState::Ready,
+            _ => MainHeapPublicationState::Retained,
+        }
+    }
+
+    /// Acquire-loads the ready source main-Heap identity without exposing a
+    /// dereferenceable Heap capability.
+    #[inline]
+    pub(crate) fn ready_main_heap_identity(
+        &self,
+    ) -> Result<MainHeapReadyIdentity, MainHeapReadyLookupError> {
+        match self.main_heap_publication_state() {
+            MainHeapPublicationState::Absent => Err(MainHeapReadyLookupError::Absent),
+            MainHeapPublicationState::Reserved => Err(MainHeapReadyLookupError::Reserved),
+            MainHeapPublicationState::Publishing => Err(MainHeapReadyLookupError::Publishing),
+            MainHeapPublicationState::Retained => Err(MainHeapReadyLookupError::Retained),
+            MainHeapPublicationState::Ready => {
+                let heap = NonNull::new(self.main_heap.load(Ordering::Acquire))
+                    .ok_or(MainHeapReadyLookupError::Retained)?;
+                Ok(MainHeapReadyIdentity { heap })
+            }
+        }
+    }
+
+    /// Checks whether `heap` is exactly the ready canonical source main-Heap
+    /// image. This is comparison-only and grants no Heap projection.
+    #[inline]
+    pub(crate) fn matches_ready_main_heap(&self, heap: NonNull<Heap>) -> bool {
+        match self.ready_main_heap_identity() {
+            Ok(identity) => identity.matches(heap),
+            Err(_) => false,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn matches_publishing_main_heap(&self, heap: NonNull<Heap>) -> bool {
+        self.main_heap_state.load(Ordering::Acquire) == MAIN_HEAP_PUBLISHING
+            && core::ptr::eq(self.main_heap.load(Ordering::Acquire), heap.as_ptr())
+    }
+
+    /// Reserves this subprocess's one `Absent -> Reserved` main-Heap
+    /// transition before the source-adjacent Heap image writes occur.
+    ///
+    /// The subprocess atomic deliberately has no pointer yet, while the
+    /// returned private token binds `heap` as the only candidate that may
+    /// later publish. This lets a stale owner fail before it can alter a
+    /// candidate static Heap, while a valid owner can still preserve the
+    /// pinned `src/init.c:196` -> `197` order by recording the kind-only
+    /// static `memid` before calling [`Self::publish_main_heap_identity`].
+    ///
+    /// # Safety
+    ///
+    /// The caller must own this exact subprocess's selected main-Heap
+    /// initialization branch and final stable Heap slot. For `ProcessMain`,
+    /// that is the process-static slot and remains valid for process lifetime.
+    /// For `Child`, the external context owner must retain the parent-issued
+    /// context allocation through terminal registry, Theap, and Heap-list
+    /// teardown; this token's borrow alone is not that owner. In either role,
+    /// the caller must complete or deliberately retain the transition.
+    /// Dropping the reservation leaves `Reserved` permanently set, so it is
+    /// not a probe or retry mechanism.
+    #[inline]
+    pub(crate) unsafe fn begin_main_heap_publication(
+        &self,
+        heap: NonNull<Heap>,
+    ) -> Result<MainHeapPublicationReservation<'_>, MainHeapPublicationError> {
+        match self.main_heap_state.compare_exchange(
+            MAIN_HEAP_ABSENT,
+            MAIN_HEAP_RESERVED,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => Ok(MainHeapPublicationReservation {
+                subprocess: self,
+                heap,
+                _not_send_or_sync: PhantomData,
+            }),
+            Err(MAIN_HEAP_RESERVED) => Err(MainHeapPublicationError::Reserved),
+            Err(MAIN_HEAP_PUBLISHING) => Err(MainHeapPublicationError::Publishing),
+            Err(MAIN_HEAP_READY) => Err(MainHeapPublicationError::AlreadyReady),
+            Err(_) => Err(MainHeapPublicationError::StalePublication),
+        }
+    }
+
+    /// Release-publishes this subprocess's main-Heap identity after the exact
+    /// role-specific memory ID has been recorded, but before the owner
+    /// completes `_mi_heap_init`'s remaining Heap fields.
+    ///
+    /// This is exactly the `src/init.c:196` -> `197` boundary. The process
+    /// main branch records its kind-only static memory ID; the child branch
+    /// records the exact parent-issued Malloc ID. The returned
+    /// pointer-bearing token is `Publishing`; callers must not expose a ready
+    /// lookup until `finish_main_heap_publication` follows complete
+    /// `Heap::initialize_main_static_after_kind_only_memid` work.
+    ///
+    /// # Safety
+    ///
+    /// `reservation` must be the one current transition for this exact
+    /// subprocess and already privately binds its final role-specific main
+    /// Heap image. Its source memory ID must already be installed. For a
+    /// process-main identity the image is process-static; for a child the
+    /// external child owner retains the exact context allocation until all
+    /// Heap identity observers are quiescent after teardown. The caller
+    /// exclusively owns the remaining initialization transition. This method never
+    /// dereferences the bound Heap and provides no Heap projection; an
+    /// incorrect reservation would nevertheless permanently bind the
+    /// subprocess to a foreign or stale static slot.
+    #[inline]
+    pub(crate) unsafe fn publish_main_heap_identity(
+        &self,
+        reservation: MainHeapPublicationReservation<'_>,
+    ) -> Result<MainHeapPublication<'_>, MainHeapPublicationError> {
+        if !core::ptr::eq(reservation.subprocess.as_ptr(), self.as_ptr()) {
+            return Err(MainHeapPublicationError::ForeignSubprocess);
+        }
+        let heap = reservation.heap;
+        if self.main_heap_state.load(Ordering::Acquire) != MAIN_HEAP_RESERVED
+            || !self.main_heap.load(Ordering::Acquire).is_null()
+        {
+            return Err(MainHeapPublicationError::StalePublication);
+        }
+        // Pinned `src/init.c:197` is the first pointer publication. Keep the
+        // Rust-only state in Reserved until this Release store has made the
+        // kind-only line-196 Heap image visible; no ready lookup can project
+        // either state as a Heap reference.
+        self.main_heap.store(heap.as_ptr(), Ordering::Release);
+        self.main_heap_state
+            .store(MAIN_HEAP_PUBLISHING, Ordering::Release);
+        Ok(MainHeapPublication {
+            subprocess: self,
+            heap,
+            completed: false,
+            _not_send_or_sync: PhantomData,
+        })
+    }
+
+    /// Marks a previously published source main-Heap identity ready after its
+    /// full static initialization completes.
+    ///
+    /// # Safety
+    ///
+    /// The token must have come from this exact subprocess, and its Heap must
+    /// be completely initialized in its final stable slot before this call.
+    /// The main image remains process-static. A child owner must retain its
+    /// context allocation until every ready-identity observer has ended and
+    /// the child Heap list is unlinked. The resulting identity is
+    /// comparison-only, but a premature ready mark would falsely report the
+    /// source `heap_main` image as initialized.
+    #[inline]
+    pub(crate) unsafe fn finish_main_heap_publication(
+        &self,
+        publication: &mut MainHeapPublication<'_>,
+    ) -> Result<MainHeapReadyIdentity, MainHeapPublicationError> {
+        if publication.completed {
+            return Err(MainHeapPublicationError::StalePublication);
+        }
+        if !core::ptr::eq(publication.subprocess.as_ptr(), self.as_ptr()) {
+            return Err(MainHeapPublicationError::ForeignSubprocess);
+        }
+        let heap = publication.heap;
+        if !core::ptr::eq(
+            self.main_heap.load(Ordering::Acquire),
+            heap.as_ptr(),
+        ) {
+            return Err(MainHeapPublicationError::StalePublication);
+        }
+        match self.main_heap_state.compare_exchange(
+            MAIN_HEAP_PUBLISHING,
+            MAIN_HEAP_READY,
+            Ordering::Release,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => {
+                publication.completed = true;
+                Ok(MainHeapReadyIdentity { heap })
+            }
+            Err(_) => Err(MainHeapPublicationError::StalePublication),
+        }
+    }
+
+    /// Release-publishes this process's one static detached metadata-Theap
+    /// identity exactly once.
+    ///
+    /// # Safety
+    ///
+    /// `theap` must be the fully initialized detached metadata image selected
+    /// for this exact subprocess. Process main retains it at a pinned static
+    /// address; a child owner retains its exact metadata capability until
+    /// terminal teardown and no longer permits identity observation.
+    /// This method never dereferences it, but publishing a stale, incomplete,
+    /// or cross-subprocess image would let a later metadata route mistake it
+    /// for the source process owner. A failed publication never overwrites the
+    /// prior slot. The caller retains the subprocess image and Theap owner
+    /// through the complete publication lifetime.
+    #[inline]
+    pub(crate) unsafe fn publish_detached_metadata_theap(
+        &self,
+        theap: NonNull<Theap>,
+    ) -> bool {
+        self.theap_meta
+            .compare_exchange(
+                core::ptr::null_mut(),
+                theap.as_ptr(),
+                Ordering::Release,
+                Ordering::Acquire,
+            )
+            .is_ok()
+    }
+
+    #[inline]
+    fn has_published_metadata_theap(&self) -> bool {
+        !self.theap_meta.load(Ordering::Acquire).is_null()
+    }
+
+    /// Source `subproc.c:232` clears metadata identity after Heap destruction
+    /// and before arena release. The allocator's engine must already be closed.
+    ///
+    /// # Safety
+    /// Permanent terminal admission excludes every source observer and the
+    /// exact metadata owner has consumed its engine. No old metadata Page may
+    /// subsequently be classified through this subprocess.
+    pub(crate) unsafe fn clear_metadata_identity_terminal(&self) {
+        self.theap_meta.store(core::ptr::null_mut(), Ordering::Release);
+    }
+
+    /// Checks only whether `theap` is the exact previously published detached
+    /// metadata image. It does not dereference the slot or grant allocation
+    /// authority.
+    #[inline]
+    pub(crate) fn matches_published_detached_metadata_theap(&self, theap: NonNull<Theap>) -> bool {
+        core::ptr::eq(self.theap_meta.load(Ordering::Acquire), theap.as_ptr())
+    }
+
+    /// Acquires the bounded Rust representation of source
+    /// `subproc->theap_meta_lock`.
+    ///
+    /// Production callers must first prove the existing `theap_meta` identity
+    /// admission. Only `MetaAllocator`'s selected direct allocation phase may
+    /// retain this guard; it releases the guard before `_mi_meta_rezalloc`'s
+    /// Rust copy and exact-owner free work. The source Malloc branch of
+    /// `_mi_meta_free` does not take this lock, so Rust's separate backing
+    /// lock remains responsible for its private allocator mutation.
+    #[inline]
+    pub(crate) fn lock_metadata_theap(&self) -> CoreResult<PrivateLockGuard<'_>> {
+        self.theap_meta_lock.lock()
+    }
+
+    /// Test-only observation of a selected direct metadata caller waiting on
+    /// this source-owned lock. It grants neither lock ownership nor a Theap
+    /// capability.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_metadata_theap_lock_is_contended(&self) -> bool {
+        self.theap_meta_lock.test_is_contended()
+    }
+
+    /// Holds the selected source-owned metadata lock for one ordering test.
+    /// This is test-only and grants no metadata allocation or Theap
+    /// capability.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_hold_metadata_theap_lock(&self) -> CoreResult<PrivateLockGuard<'_>> {
+        self.lock_metadata_theap()
+    }
+
+    /// Implements the selected read-only `_mi_meta_is_meta_page` predicate.
+    ///
+    /// `None` represents C's null `mi_page_t*` input. A Rust `&Page` proves
+    /// that the page image is readable for the field load; this method grants
+    /// neither a Theap reference nor authority to change the page or
+    /// subprocess. It deliberately takes no metadata or subprocess lock,
+    /// does not inspect COLD/BOUND/READY state, and does not start backing or
+    /// a detached session.
+    #[inline]
+    pub(crate) fn is_metadata_page(&self, page: Option<&Page>) -> bool {
+        let Some(page) = page else {
+            return false;
+        };
+        let theap = page.theap();
+        !theap.is_null() && core::ptr::eq(theap, self.theap_meta.load(Ordering::Acquire))
+    }
+
+    /// Test-only observation of whether the source metadata-Theap identity is
+    /// non-null. This deliberately reveals neither its address nor a usable
+    /// Theap reference.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_has_published_metadata_theap(&self) -> bool {
+        !self.theap_meta.load(Ordering::Acquire).is_null()
+    }
+
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
+    #[inline]
+    pub(crate) fn live_thread_count(&self) -> usize {
+        self.thread_count.load(Ordering::Relaxed)
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn total_thread_count(&self) -> usize {
+        self.thread_total_count.load(Ordering::Relaxed)
+    }
+
+    #[inline]
+    fn increment_live_thread_count(&self) {
+        self.thread_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[inline]
+    fn decrement_live_thread_count(&self) {
+        let prior = self.thread_count.fetch_sub(1, Ordering::Relaxed);
+        debug_assert!(prior > 0, "a thread-registration lease cannot underflow");
+    }
+
+
+}
+
+
+impl MainSubprocess {
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_static_owner() -> &'static Self {
+        // Each fixture owns its isolated source-main image so tests cannot
+        // depend on the process singleton's first-ticket history.
+        std::boxed::Box::leak(std::boxed::Box::new(Self::new()))
     }
 
     /// Reserves the unique source-static ticket-zero path for a process
@@ -583,310 +1035,6 @@ impl MainSubprocess {
                 Err(current) => observed = current,
             }
         }
-    }
-
-    #[inline]
-    pub(crate) const fn as_ptr(&self) -> *mut Self {
-        core::ptr::from_ref(self).cast_mut()
-    }
-
-    /// Observes whether the canonical source main-Heap identity is absent,
-    /// privately reserved but unpublished, being published, or ready. It
-    /// never returns a Heap pointer.
-    #[inline]
-    pub(crate) fn main_heap_publication_state(&self) -> MainHeapPublicationState {
-        match self.main_heap_state.load(Ordering::Acquire) {
-            MAIN_HEAP_ABSENT => MainHeapPublicationState::Absent,
-            MAIN_HEAP_RESERVED => MainHeapPublicationState::Reserved,
-            MAIN_HEAP_PUBLISHING => MainHeapPublicationState::Publishing,
-            MAIN_HEAP_READY => MainHeapPublicationState::Ready,
-            _ => MainHeapPublicationState::Retained,
-        }
-    }
-
-    /// Acquire-loads the ready source main-Heap identity without exposing a
-    /// dereferenceable Heap capability.
-    #[inline]
-    pub(crate) fn ready_main_heap_identity(
-        &self,
-    ) -> Result<MainHeapReadyIdentity, MainHeapReadyLookupError> {
-        match self.main_heap_publication_state() {
-            MainHeapPublicationState::Absent => Err(MainHeapReadyLookupError::Absent),
-            MainHeapPublicationState::Reserved => Err(MainHeapReadyLookupError::Reserved),
-            MainHeapPublicationState::Publishing => Err(MainHeapReadyLookupError::Publishing),
-            MainHeapPublicationState::Retained => Err(MainHeapReadyLookupError::Retained),
-            MainHeapPublicationState::Ready => {
-                let heap = NonNull::new(self.main_heap.load(Ordering::Acquire))
-                    .ok_or(MainHeapReadyLookupError::Retained)?;
-                Ok(MainHeapReadyIdentity { heap })
-            }
-        }
-    }
-
-    /// Checks whether `heap` is exactly the ready canonical source main-Heap
-    /// image. This is comparison-only and grants no Heap projection.
-    #[inline]
-    pub(crate) fn matches_ready_main_heap(&self, heap: NonNull<Heap>) -> bool {
-        match self.ready_main_heap_identity() {
-            Ok(identity) => identity.matches(heap),
-            Err(_) => false,
-        }
-    }
-
-    /// Reserves this subprocess's one `Absent -> Reserved` main-Heap
-    /// transition before the source-adjacent Heap image writes occur.
-    ///
-    /// The subprocess atomic deliberately has no pointer yet, while the
-    /// returned private token binds `heap` as the only candidate that may
-    /// later publish. This lets a stale owner fail before it can alter a
-    /// candidate static Heap, while a valid owner can still preserve the
-    /// pinned `src/init.c:196` -> `197` order by recording the kind-only
-    /// static `memid` before calling [`Self::publish_main_heap_identity`].
-    ///
-    /// # Safety
-    ///
-    /// The caller must own this exact subprocess's selected source-main
-    /// initialization branch and the final process-static `heap` slot. That
-    /// address must remain valid for the process lifetime, and the caller
-    /// must either complete or deliberately retain the transition. Dropping
-    /// the returned reservation leaves `Reserved` permanently set, so an
-    /// arbitrary internal caller must not use this as a probe or retry
-    /// mechanism.
-    #[inline]
-    pub(crate) unsafe fn begin_main_heap_publication(
-        &self,
-        heap: NonNull<Heap>,
-    ) -> Result<MainHeapPublicationReservation<'_>, MainHeapPublicationError> {
-        match self.main_heap_state.compare_exchange(
-            MAIN_HEAP_ABSENT,
-            MAIN_HEAP_RESERVED,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        ) {
-            Ok(_) => Ok(MainHeapPublicationReservation {
-                subprocess: self,
-                heap,
-                _not_send_or_sync: PhantomData,
-            }),
-            Err(MAIN_HEAP_RESERVED) => Err(MainHeapPublicationError::Reserved),
-            Err(MAIN_HEAP_PUBLISHING) => Err(MainHeapPublicationError::Publishing),
-            Err(MAIN_HEAP_READY) => Err(MainHeapPublicationError::AlreadyReady),
-            Err(_) => Err(MainHeapPublicationError::StalePublication),
-        }
-    }
-
-    /// Release-publishes the canonical source main-Heap identity after its
-    /// kind-only static memory ID has been recorded, but before the owner
-    /// completes `_mi_heap_init`'s remaining Heap fields.
-    ///
-    /// This is exactly the `src/init.c:196` -> `197` boundary. The returned
-    /// pointer-bearing token is `Publishing`; callers must not expose a ready
-    /// lookup until `finish_main_heap_publication` follows complete
-    /// `Heap::initialize_main_static_after_kind_only_memid` work.
-    ///
-    /// # Safety
-    ///
-    /// `reservation` must be the one current transition for this exact
-    /// subprocess and already privately binds its final process-static
-    /// `mi_process_heap_main` analogue. That address must remain valid for
-    /// the process lifetime; its kind-only `MemoryId::static_kind_only()`
-    /// image must already be installed, and the caller must exclusively own
-    /// the remaining initialization transition. This method never
-    /// dereferences the bound Heap and provides no Heap projection; an
-    /// incorrect reservation would nevertheless permanently bind the
-    /// subprocess to a foreign or stale static slot.
-    #[inline]
-    pub(crate) unsafe fn publish_main_heap_identity(
-        &self,
-        reservation: MainHeapPublicationReservation<'_>,
-    ) -> Result<MainHeapPublication<'_>, MainHeapPublicationError> {
-        if !core::ptr::eq(reservation.subprocess.as_ptr(), self.as_ptr()) {
-            return Err(MainHeapPublicationError::ForeignSubprocess);
-        }
-        let heap = reservation.heap;
-        if self.main_heap_state.load(Ordering::Acquire) != MAIN_HEAP_RESERVED
-            || !self.main_heap.load(Ordering::Acquire).is_null()
-        {
-            return Err(MainHeapPublicationError::StalePublication);
-        }
-        // Pinned `src/init.c:197` is the first pointer publication. Keep the
-        // Rust-only state in Reserved until this Release store has made the
-        // kind-only line-196 Heap image visible; no ready lookup can project
-        // either state as a Heap reference.
-        self.main_heap.store(heap.as_ptr(), Ordering::Release);
-        self.main_heap_state
-            .store(MAIN_HEAP_PUBLISHING, Ordering::Release);
-        Ok(MainHeapPublication {
-            subprocess: self,
-            heap,
-            completed: false,
-            _not_send_or_sync: PhantomData,
-        })
-    }
-
-    /// Marks a previously published source main-Heap identity ready after its
-    /// full static initialization completes.
-    ///
-    /// # Safety
-    ///
-    /// The token must have come from this exact subprocess, and its Heap must
-    /// be completely initialized in its final static slot before this call.
-    /// The resulting identity remains comparison-only, but a premature ready
-    /// mark would falsely report the source `heap_main` image as initialized.
-    #[inline]
-    pub(crate) unsafe fn finish_main_heap_publication(
-        &self,
-        publication: &mut MainHeapPublication<'_>,
-    ) -> Result<MainHeapReadyIdentity, MainHeapPublicationError> {
-        if publication.completed {
-            return Err(MainHeapPublicationError::StalePublication);
-        }
-        if !core::ptr::eq(publication.subprocess.as_ptr(), self.as_ptr()) {
-            return Err(MainHeapPublicationError::ForeignSubprocess);
-        }
-        let heap = publication.heap;
-        if !core::ptr::eq(
-            self.main_heap.load(Ordering::Acquire),
-            heap.as_ptr(),
-        ) {
-            return Err(MainHeapPublicationError::StalePublication);
-        }
-        match self.main_heap_state.compare_exchange(
-            MAIN_HEAP_PUBLISHING,
-            MAIN_HEAP_READY,
-            Ordering::Release,
-            Ordering::Acquire,
-        ) {
-            Ok(_) => {
-                publication.completed = true;
-                Ok(MainHeapReadyIdentity { heap })
-            }
-            Err(_) => Err(MainHeapPublicationError::StalePublication),
-        }
-    }
-
-    /// Release-publishes this process's one static detached metadata-Theap
-    /// identity exactly once.
-    ///
-    /// # Safety
-    ///
-    /// `theap` must be the fully initialized detached metadata image selected
-    /// for this exact subprocess, must live at a pinned process-lifetime
-    /// address, and must remain valid for every later identity comparison.
-    /// This method never dereferences it, but publishing a stale, incomplete,
-    /// or cross-subprocess image would let a later metadata route mistake it
-    /// for the source process owner. A failed publication never overwrites the
-    /// prior slot.
-    #[inline]
-    pub(crate) unsafe fn publish_detached_metadata_theap(
-        &self,
-        theap: NonNull<Theap>,
-    ) -> bool {
-        self.theap_meta
-            .compare_exchange(
-                core::ptr::null_mut(),
-                theap.as_ptr(),
-                Ordering::Release,
-                Ordering::Acquire,
-            )
-            .is_ok()
-    }
-
-    /// Source `subproc.c:232` clears metadata identity after Heap destruction
-    /// and before arena release. The allocator's engine must already be closed.
-    ///
-    /// # Safety
-    /// Permanent terminal admission excludes every source observer and the
-    /// exact metadata owner has consumed its engine. No old metadata Page may
-    /// subsequently be classified through this subprocess.
-    pub(crate) unsafe fn clear_metadata_identity_terminal(&self) {
-        self.theap_meta.store(core::ptr::null_mut(), Ordering::Release);
-    }
-
-    /// Checks only whether `theap` is the exact previously published detached
-    /// metadata image. It does not dereference the slot or grant allocation
-    /// authority.
-    #[inline]
-    pub(crate) fn matches_published_detached_metadata_theap(&self, theap: NonNull<Theap>) -> bool {
-        core::ptr::eq(self.theap_meta.load(Ordering::Acquire), theap.as_ptr())
-    }
-
-    /// Acquires the bounded Rust representation of source
-    /// `subproc->theap_meta_lock`.
-    ///
-    /// Production callers must first prove the existing `theap_meta` identity
-    /// admission. Only `MetaAllocator`'s selected direct allocation phase may
-    /// retain this guard; it releases the guard before `_mi_meta_rezalloc`'s
-    /// Rust copy and exact-owner free work. The source Malloc branch of
-    /// `_mi_meta_free` does not take this lock, so Rust's separate backing
-    /// lock remains responsible for its private allocator mutation.
-    #[inline]
-    pub(crate) fn lock_metadata_theap(&self) -> CoreResult<PrivateLockGuard<'_>> {
-        self.theap_meta_lock.lock()
-    }
-
-    /// Test-only observation of a selected direct metadata caller waiting on
-    /// this source-owned lock. It grants neither lock ownership nor a Theap
-    /// capability.
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn test_metadata_theap_lock_is_contended(&self) -> bool {
-        self.theap_meta_lock.test_is_contended()
-    }
-
-    /// Holds the selected source-owned metadata lock for one ordering test.
-    /// This is test-only and grants no metadata allocation or Theap
-    /// capability.
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn test_hold_metadata_theap_lock(&self) -> CoreResult<PrivateLockGuard<'_>> {
-        self.lock_metadata_theap()
-    }
-
-    /// Implements the selected read-only `_mi_meta_is_meta_page` predicate.
-    ///
-    /// `None` represents C's null `mi_page_t*` input. A Rust `&Page` proves
-    /// that the page image is readable for the field load; this method grants
-    /// neither a Theap reference nor authority to change the page or
-    /// subprocess. It deliberately takes no metadata or subprocess lock,
-    /// does not inspect COLD/BOUND/READY state, and does not start backing or
-    /// a detached session.
-    #[inline]
-    pub(crate) fn is_metadata_page(&self, page: Option<&Page>) -> bool {
-        let Some(page) = page else {
-            return false;
-        };
-        let theap = page.theap();
-        !theap.is_null() && core::ptr::eq(theap, self.theap_meta.load(Ordering::Acquire))
-    }
-
-    /// Test-only observation of whether the source metadata-Theap identity is
-    /// non-null. This deliberately reveals neither its address nor a usable
-    /// Theap reference.
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn test_has_published_metadata_theap(&self) -> bool {
-        !self.theap_meta.load(Ordering::Acquire).is_null()
-    }
-
-    #[cfg(any(test, feature = "native-runtime-test-audit"))]
-    #[inline]
-    pub(crate) fn live_thread_count(&self) -> usize {
-        self.thread_count.load(Ordering::Relaxed)
-    }
-
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn total_thread_count(&self) -> usize {
-        self.thread_total_count.load(Ordering::Relaxed)
-    }
-
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn test_static_owner() -> &'static Self {
-        // Each fixture owns its isolated source-main image so tests cannot
-        // depend on the process singleton's first-ticket history.
-        std::boxed::Box::leak(std::boxed::Box::new(Self::new()))
     }
 
     /// Proves the fresh static slot is still cold before the selected
@@ -1102,23 +1250,13 @@ impl MainSubprocess {
         // SAFETY: taking a raw field address through the `UnsafeCell` does
         // not form a reference to the uninitialized TLD. Every later write or
         // projection is separately gated by the static-slot state machine.
+        debug_assert!(self.is_process_main());
         unsafe { core::ptr::addr_of_mut!((*self.main_tld.get()).image).cast() }
     }
 
     #[inline]
-    fn increment_live_thread_count(&self) {
-        self.thread_count.fetch_add(1, Ordering::Relaxed);
-    }
-
-    #[inline]
-    fn decrement_live_thread_count(&self) {
-        let prior = self.thread_count.fetch_sub(1, Ordering::Relaxed);
-        debug_assert!(prior > 0, "a thread-registration lease cannot underflow");
-    }
-
-    #[inline]
     fn issue_thread_ticket_unchecked(&'static self) -> ThreadRegistrationTicket {
-        let old = self.thread_total_count.fetch_add(1, Ordering::Relaxed);
+        let old = self.identity.thread_total_count.fetch_add(1, Ordering::Relaxed);
         ThreadRegistrationTicket {
             subprocess: self,
             sequence: ThreadSequence::from_previous_total_count(old),
@@ -1128,6 +1266,14 @@ impl MainSubprocess {
 }
 
 static PROCESS_MAIN_SUBPROCESS: MainSubprocess = MainSubprocess::new();
+
+impl MainSubprocess {
+    pub(crate) fn metadata_allocator(&'static self) -> core::pin::Pin<&'static crate::meta::MetaAllocator> {
+        // SAFETY: this wrapper is the process-static owner; child images do
+        // not contain or project a process metadata engine.
+        unsafe { core::pin::Pin::new_unchecked(&self.metadata_allocator) }
+    }
+}
 
 /// A selected source-static ticket-zero bootstrap path.
 ///
@@ -1332,7 +1478,7 @@ impl ThreadRegistrationTicket {
 
     #[inline]
     pub(crate) const fn is_first_main_tld(&self) -> bool {
-        self.subprocess.is_process_main() && self.sequence.get() == 0
+        self.subprocess.identity.is_process_main() && self.sequence.get() == 0
     }
 
     /// Initializes and registers the actual static `mi_process_tld_main`
@@ -1521,7 +1667,7 @@ impl ThreadRegistrationTicket {
         ));
         self.subprocess.increment_live_thread_count();
         ThreadRegistrationLease {
-            subprocess: self.subprocess,
+        subprocess: self.subprocess.identity(),
             _not_send_or_sync: PhantomData,
         }
     }
@@ -1579,7 +1725,7 @@ impl ThreadRegistrationTicket {
         ));
         self.subprocess.increment_live_thread_count();
         ThreadRegistrationLease {
-            subprocess: self.subprocess,
+            subprocess: self.subprocess.identity(),
             _not_send_or_sync: PhantomData,
         }
     }
@@ -1593,7 +1739,7 @@ impl ThreadRegistrationTicket {
 /// falsely report that its still-live TLD is no longer registered.
 #[must_use = "a live subprocess registration must be released exactly once"]
 pub(crate) struct ThreadRegistrationLease {
-    subprocess: &'static MainSubprocess,
+    subprocess: &'static SubprocessIdentity,
     _not_send_or_sync: PhantomData<*mut ()>,
 }
 
@@ -1611,7 +1757,7 @@ impl ThreadRegistrationLease {
     /// `into_source_retained` without release or prior recovery. The source
     /// TLD and subprocess must remain live for the returned lease.
     pub(crate) unsafe fn recover_source_retained(
-        subprocess: &'static MainSubprocess,
+        subprocess: &'static SubprocessIdentity,
         tld: &ThreadLocalData,
     ) -> Option<Self> {
         let thread = LiveThreadId::new(tld.thread_id())?;
@@ -1723,21 +1869,6 @@ mod tests {
     extern crate std;
 
     use super::*;
-
-    #[test]
-    fn first_child_thread_keeps_zero_sequence_without_claiming_process_static_tld() {
-        let child = std::boxed::Box::leak(std::boxed::Box::new(MainSubprocess::new_child()));
-        let ticket = child
-            .issue_generic_thread_ticket()
-            .expect("the child source sequence starts at zero");
-        assert_eq!(ticket.sequence().get(), 0);
-        assert!(!ticket.is_first_main_tld());
-        assert_eq!(child.total_thread_count(), 1);
-        assert_eq!(
-            child.reserve_static_bootstrap().err(),
-            Some(MainStaticBootstrapSelectionError::NotProcessMain)
-        );
-    }
 
     #[test]
     fn process_metadata_allocator_is_owned_by_the_static_main_subprocess() {

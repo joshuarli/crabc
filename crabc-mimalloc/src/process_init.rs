@@ -768,7 +768,7 @@ impl ProcessMainInitializationStorage {
         // failure retains this exact selected image instead of letting a
         // receiver reason only from caller-local copies.
         unsafe { (*self.config.get()).write(config) };
-        self.subprocess.store(subprocess.as_ptr(), Ordering::Release);
+        self.subprocess.store(subprocess.owner_ptr(), Ordering::Release);
         self.page_map_storage
             .store(core::ptr::from_ref(page_map_storage).cast_mut(), Ordering::Release);
         if let Some(process) = vm_process {
@@ -861,7 +861,7 @@ impl ProcessMainInitializationStorage {
         if stored_config != config {
             return Err(ProcessMainInitError::ConfigurationMismatch);
         }
-        if !core::ptr::eq(self.subprocess.load(Ordering::Acquire), subprocess.as_ptr()) {
+        if !core::ptr::eq(self.subprocess.load(Ordering::Acquire), subprocess.owner_ptr()) {
             return Err(ProcessMainInitError::SubprocessMismatch);
         }
         let page_map_storage = NonNull::new(self.page_map_storage.load(Ordering::Acquire))
@@ -890,7 +890,7 @@ impl ProcessMainInitializationStorage {
         if self.config() != config {
             return Err(ProcessMainInitError::ConfigurationMismatch);
         }
-        if self.subprocess.load(Ordering::Acquire) != subprocess.as_ptr() {
+        if self.subprocess.load(Ordering::Acquire) != subprocess.owner_ptr() {
             return Err(ProcessMainInitError::SubprocessMismatch);
         }
         let page_map_storage = NonNull::new(self.page_map_storage.load(Ordering::Acquire))
@@ -1009,7 +1009,7 @@ impl ProcessMainInitializationStorage {
         // static owners. These are the same final tuple slots production
         // records before it issues its metadata-binding capability.
         unsafe { (*self.config.get()).write(config) };
-        self.subprocess.store(subprocess.as_ptr(), Ordering::Release);
+        self.subprocess.store(subprocess.owner_ptr(), Ordering::Release);
         self.page_map_storage
             .store(core::ptr::from_ref(page_map_storage).cast_mut(), Ordering::Release);
         Ok(ProcessMainBackingBinding::new(self, process, page_map))
@@ -1300,7 +1300,7 @@ impl ProcessMainBackingBinding {
         debug_assert!(matches!(storage.state.load(Ordering::Acquire), INITIALIZING | SOURCE_ATTACHED | READY));
         debug_assert!(core::ptr::eq(
             storage.subprocess.load(Ordering::Acquire),
-            process.subprocess().as_ptr(),
+            process.subprocess().owner_ptr(),
         ));
         debug_assert!(!storage.page_map_storage.load(Ordering::Acquire).is_null());
         Self {
@@ -1385,7 +1385,7 @@ impl ProcessMainAllocationLease {
         if self.storage.config() != self.config {
             return Err(ProcessMainInitError::ConfigurationMismatch);
         }
-        if self.storage.subprocess.load(Ordering::Acquire) != self.subprocess.as_ptr() {
+        if self.storage.subprocess.load(Ordering::Acquire) != self.subprocess.owner_ptr() {
             return Err(ProcessMainInitError::SubprocessMismatch);
         }
         Ok(())
@@ -1593,7 +1593,7 @@ impl ProcessMainReadyLease {
         if self.storage.config() != self.config
             || !core::ptr::eq(
                 self.storage.subprocess.load(Ordering::Acquire),
-                self.subprocess.as_ptr(),
+                self.subprocess.owner_ptr(),
             )
         {
             return Err(ProcessMainInitError::Retained);

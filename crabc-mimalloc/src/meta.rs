@@ -219,6 +219,7 @@ pub(crate) struct MetaAllocation<'owner> {
     dynamic_thread_local_backing_projected: bool,
     thread_local_data_initialized: bool,
     dynamic_theap_initialized: bool,
+    child_subprocess_image_initialized: bool,
     dynamic_arena_pages_initialized: bool,
     _owner: PhantomData<Pin<&'owner MetadataEngine<'owner>>>,
 }
@@ -248,6 +249,7 @@ impl<'owner> MetaAllocation<'owner> {
             dynamic_thread_local_backing_projected: false,
             thread_local_data_initialized: false,
             dynamic_theap_initialized: false,
+            child_subprocess_image_initialized: false,
             dynamic_arena_pages_initialized: false,
             _owner: PhantomData,
         }
@@ -261,6 +263,58 @@ impl<'owner> MetaAllocation<'owner> {
     #[inline]
     pub(crate) const fn memory_id(&self) -> MemoryId {
         self.memory
+    }
+
+    /// Initializes this exact fresh parent-issued capability as the distinct
+    /// child subprocess image. The linear release right stays external.
+    #[inline]
+    pub(crate) fn initialize_child_subprocess_image(
+        &mut self,
+    ) -> Option<Pin<&mut crate::subproc::ChildSubprocessImage>> {
+        type Image = crate::subproc::ChildSubprocessImage;
+        if !self.is_live()
+            || self.origin != MetaAllocationOrigin::DirectZeroed
+            || self.child_subprocess_image_initialized
+            || self.dynamic_theap_initialized
+            || self.thread_local_data_initialized
+            || self.dynamic_thread_local_backing_projected
+            || self.dynamic_arena_pages_initialized
+            || self.requested_size != size_of::<Image>()
+            || self.pointer.as_ptr().addr() % align_of::<Image>() != 0
+        {
+            return None;
+        }
+        // SAFETY: the exact direct-zeroed capability is uniquely borrowed,
+        // has the image's exact size/alignment, and has no prior role. `new`
+        // writes every field before the pinned view is formed.
+        unsafe { self.pointer.as_ptr().cast::<Image>().write(Image::new()); }
+        self.child_subprocess_image_initialized = true;
+        // SAFETY: the external capability owns this stable address until
+        // release and the image is `!Unpin` after this projection.
+        Some(unsafe {
+            Pin::new_unchecked(&mut *self.pointer.as_ptr().cast::<Image>())
+        })
+    }
+
+    /// Short mutable projection of an initialized child image. Its external
+    /// `MetaAllocation` must remain live for the complete borrow.
+    #[inline]
+    pub(crate) fn child_subprocess_image_mut(
+        &mut self,
+    ) -> Option<Pin<&mut crate::subproc::ChildSubprocessImage>> {
+        type Image = crate::subproc::ChildSubprocessImage;
+        if !self.is_live()
+            || !self.child_subprocess_image_initialized
+            || self.dynamic_theap_initialized
+            || self.thread_local_data_initialized
+            || self.dynamic_thread_local_backing_projected
+            || self.dynamic_arena_pages_initialized
+        {
+            return None;
+        }
+        // SAFETY: only the exact initializer sets this marker; `&mut self`
+        // uniquely borrows the capability and its bytes.
+        Some(unsafe { Pin::new_unchecked(&mut *self.pointer.as_ptr().cast::<Image>()) })
     }
 
     /// Whether `memory` is the exact Malloc provenance recorded by this
@@ -1342,7 +1396,7 @@ impl<'owner> MetadataEngine<'owner> {
         let subprocess = MainSubprocess::test_static_owner();
         owner
             .test_default_subprocess
-            .store(subprocess.as_ptr(), Ordering::Release);
+            .store(subprocess.owner_ptr(), Ordering::Release);
         // SAFETY: the deliberately leaked test fixture has a process-lifetime
         // address, and its test-only default subprocess is separately leaked
         // before this owner is returned. That matches the static-reference
@@ -1384,7 +1438,7 @@ impl<'owner> MetadataEngine<'owner> {
         // bootstrap-image observation.
         let stored_config = unsafe { *(*this.config.get()).assume_init_ref() };
         stored_config == config
-            && core::ptr::eq(this.subprocess.load(Ordering::Acquire), subprocess.as_ptr())
+            && core::ptr::eq(this.subprocess.load(Ordering::Acquire), subprocess.owner_ptr())
             && self
                 .validate_bound_detached_metadata_theap(subprocess)
                 .is_ok()
@@ -2106,7 +2160,7 @@ impl<'owner> MetadataEngine<'owner> {
             BOUND | READY => {
                 if !core::ptr::eq(
                     self.get_ref().subprocess.load(Ordering::Acquire),
-                    subprocess.as_ptr(),
+                    subprocess.owner_ptr(),
                 ) {
                     return Err(MetaError::SubprocessMismatch);
                 }
@@ -2306,7 +2360,7 @@ impl<'owner> MetadataEngine<'owner> {
         // selected source subprocess above, so this independent atomic is a
         // comparison-only mirror for lock-free precondition checks.
         unsafe { (*this.config.get()).write(config) };
-        this.subprocess.store(subprocess.as_ptr(), Ordering::Release);
+        this.subprocess.store(subprocess.owner_ptr(), Ordering::Release);
         this.detached_metadata_theap
             .store(identity.as_ptr(), Ordering::Release);
         this.status.store(BOUND, Ordering::Release);
@@ -2594,7 +2648,7 @@ impl<'borrow, 'owner> MetaEntry<'borrow, 'owner> {
                 .get_ref()
                 .subprocess
                 .load(Ordering::Acquire),
-            subprocess.as_ptr(),
+            subprocess.owner_ptr(),
         ) {
             Err(MetaError::SubprocessMismatch)
         } else {
@@ -2688,27 +2742,6 @@ mod tests {
     fn config() -> MemoryConfig {
         let page_size = PageSize::new(4096).unwrap();
         MemoryConfig::from_observations(page_size, 1024 * 1024, false, false)
-    }
-
-    fn prepare_main_owner_with_borrowed_engine<'owner>(
-        engine: Pin<&'owner MetadataEngine<'owner>>,
-        subprocess: &'static MainSubprocess,
-    ) -> Result<MetaAllocatorBound<'owner>, MetaError> {
-        engine.prepare_for_main_subprocess(config(), subprocess)
-    }
-
-    #[test]
-    fn borrowed_metadata_engine_rejects_child_on_main_binding_path() {
-        let child: &'static MainSubprocess = std::boxed::Box::leak(std::boxed::Box::new(
-            MainSubprocess::new_child(),
-        ));
-        let engine = std::boxed::Box::pin(MetadataEngine::new());
-        let result = prepare_main_owner_with_borrowed_engine(engine.as_ref(), child);
-        match result {
-            Err(MetaError::SubprocessMismatch) => {}
-            Err(error) => panic!("unexpected child binding error: {error:?}"),
-            Ok(_bound) => panic!("child metadata engine entered the main binding path"),
-        }
     }
 
     /// Test-only process lifetime mirrors the production static singleton:

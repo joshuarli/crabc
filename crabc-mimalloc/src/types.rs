@@ -41,6 +41,7 @@
 
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
+use core::marker::PhantomPinned;
 use core::mem::{align_of, size_of};
 use core::num::NonZeroUsize;
 use core::ptr::{NonNull, null_mut};
@@ -53,15 +54,14 @@ use crate::config::{
 use crate::lock::PrivateLock;
 use crate::random::TheapRandomImage;
 use crate::statistics::{HeapTheapStatistics, HeapTheapStatisticsSnapshot};
-use crate::subproc::MainSubprocess;
+use crate::subproc::{MainSubprocess, SubprocessIdentity};
 
 pub(crate) type ThreadId = usize;
 pub(crate) type ThreadFree = usize;
 pub(crate) type PageFlags = usize;
-/// Compatibility spelling for source fields that carry the bounded
-/// process-main identity. This is deliberately not a complete `mi_subproc_t`
-/// layout; see [`MainSubprocess`] for the represented fields.
-pub(crate) type Subprocess = MainSubprocess;
+/// Shared source identity carried by intrusive source fields. Role-specific
+/// process-main and child images embed this exact identity at their base.
+pub(crate) type Subprocess = SubprocessIdentity;
 
 pub(crate) const PAGE_IN_FULL_QUEUE: PageFlags = 0x01;
 pub(crate) const PAGE_HAS_INTERIOR_POINTERS: PageFlags = 0x02;
@@ -172,7 +172,7 @@ impl TheapOwner {
 /// heap API.
 #[repr(C)]
 pub(crate) struct Heap {
-    subprocess: *mut MainSubprocess,
+    subprocess: *mut crate::subproc::SubprocessIdentity,
     heap_seq: usize,
     next: *mut Heap,
     prev: *mut Heap,
@@ -188,6 +188,7 @@ pub(crate) struct Heap {
     arena_pages_lock: PrivateLock,
     memid: MemoryId,
     statistics: HeapTheapStatistics,
+    _pin: PhantomPinned,
 }
 
 impl Heap {
@@ -210,6 +211,7 @@ impl Heap {
             arena_pages_lock: PrivateLock::new(),
             memid: MemoryId::none(),
             statistics: HeapTheapStatistics::new(),
+            _pin: PhantomPinned,
         }
     }
 
@@ -350,8 +352,62 @@ impl Heap {
         self.initialize_main_static_fields(subprocess, false);
     }
 
+    /// Initializes and inserts the source child main Heap after the child
+    /// subprocess registry edge has been published. This models Heap identity
+    /// publication and subprocess-list membership only; allocation from the
+    /// parent's user Heap, page initialization, and page destruction remain
+    /// distinct transitions.
+    ///
+    /// # Safety
+    /// Both pinned images remain live through child destruction. `memory` is
+    /// the exact Malloc provenance for this Heap image, and the child context
+    /// owner retains its parent-issued allocation through registry unlink,
+    /// Theap teardown, and Heap-list removal. An error after publication is
+    /// terminal and requires retaining both images.
+    pub(crate) unsafe fn initialize_child_main(
+        mut self: core::pin::Pin<&mut Self>,
+        subprocess: core::pin::Pin<&mut crate::subproc::ChildSubprocessImage>,
+        memory: MemoryId,
+    ) -> Result<(), heap_registry::SourceHeapRegistryError> {
+        let identity = subprocess.as_ref().get_ref().identity();
+        if identity.is_process_main()
+            || !identity.is_registered()
+            || !self.is_uninitialized_main_static_image()
+            || memory.kind() != MemoryKind::Malloc
+        {
+            return Err(heap_registry::SourceHeapRegistryError::InvalidImage);
+        }
+        // SAFETY: the kind check validates the active MemoryId union member.
+        let malloc = unsafe { memory.info.malloc };
+        let heap_pointer = NonNull::from(self.as_ref().get_ref());
+        if malloc.base != heap_pointer.as_ptr().cast()
+            || malloc.size != size_of::<Heap>()
+        {
+            return Err(heap_registry::SourceHeapRegistryError::InvalidImage);
+        }
+        // SAFETY: the child owner pins this identity until terminal Heap
+        // removal, and this exact source child-main branch is not concurrent.
+        let reservation = unsafe { identity.begin_main_heap_publication(heap_pointer) }
+            .map_err(|_| heap_registry::SourceHeapRegistryError::InvalidImage)?;
+        // SAFETY: the pinned Heap is uniquely borrowed for this transition.
+        let heap = unsafe { self.as_mut().get_unchecked_mut() };
+        heap.memid = memory;
+        // SAFETY: the reservation binds the exact pinned Heap after its
+        // parent-issued Malloc provenance has been stored above.
+        let mut publication = unsafe { identity.publish_main_heap_identity(reservation) }
+            .map_err(|_| heap_registry::SourceHeapRegistryError::InvalidImage)?;
+        heap.initialize_main_static_fields(identity, true);
+        // SAFETY: source `_mi_heap_init` publishes the initialized Heap in the
+        // child subprocess list before the ready observation is exposed.
+        unsafe { identity.heap_list().link_child_main(heap, identity)?; }
+        // SAFETY: all child-main Heap fields and list links are now complete.
+        unsafe { identity.finish_main_heap_publication(&mut publication) }
+            .map_err(|_| heap_registry::SourceHeapRegistryError::InvalidImage)?;
+        Ok(())
+    }
+
     #[inline]
-    fn initialize_main_static_fields(&mut self, subprocess: &'static MainSubprocess, canonical: bool) {
+    fn initialize_main_static_fields(&mut self, subprocess: &crate::subproc::SubprocessIdentity, canonical: bool) {
         self.subprocess = subprocess.as_ptr();
         // Source increment returns the previous count. Explicit historical
         // fixtures initialize only fields and never join the source registry.
@@ -516,7 +572,7 @@ impl Heap {
     ) -> bool {
         regular_theap_key != 0
             && regular_theap_key != 1
-            && core::ptr::eq(self.subprocess, subprocess.as_ptr())
+            && core::ptr::eq(self.subprocess, subprocess.identity_ptr())
             && self.theap_slot == regular_theap_key
             && self.exclusive_arena.is_null()
             && self.memid.kind() == MemoryKind::None
@@ -538,7 +594,7 @@ impl Heap {
         !requested_parent.is_null()
             && self.theap_slot != 0
             && self.theap_slot != 1
-            && core::ptr::eq(self.subprocess, subprocess.as_ptr())
+            && core::ptr::eq(self.subprocess, subprocess.identity_ptr())
             && self.exclusive_arena == requested_parent
             && self.memid.kind() == MemoryKind::None
     }
@@ -631,7 +687,7 @@ impl Heap {
         }
         if self.theap_slot != 1
             || self.memid.kind() != MemoryKind::Static
-            || !core::ptr::eq(self.subprocess, subprocess.as_ptr())
+            || !core::ptr::eq(self.subprocess, subprocess.identity_ptr())
         {
             return Err(HeapArenaPagesError::NotMainStatic);
         }
@@ -1012,7 +1068,7 @@ impl Heap {
 
     #[inline]
     pub(crate) fn is_bound_to_main_subprocess(&self, subprocess: &MainSubprocess) -> bool {
-        core::ptr::eq(self.subprocess, subprocess.as_ptr())
+        core::ptr::eq(self.subprocess, subprocess.identity_ptr())
     }
 
     /// Identifies the source process-static main Heap image. This is narrower
@@ -1372,7 +1428,7 @@ pub(crate) struct ThreadLocalData {
     thread_id: ThreadId,
     thread_seq: usize,
     numa_node: i32,
-    subprocess: *mut MainSubprocess,
+    subprocess: *mut crate::subproc::SubprocessIdentity,
     theaps: *mut Theap,
     theaps_lock: PrivateLock,
     recurse: bool,
@@ -1910,7 +1966,7 @@ impl ThreadLocalData {
     }
 
     #[inline]
-    pub(crate) fn is_attached_to_main_subprocess(&self, subprocess: &MainSubprocess) -> bool {
+    pub(crate) fn is_attached_to_main_subprocess(&self, subprocess: &SubprocessIdentity) -> bool {
         core::ptr::eq(self.subprocess, subprocess.as_ptr())
     }
 
@@ -2107,7 +2163,7 @@ impl ThreadLocalData {
     #[inline]
     pub(crate) fn initialize_detached_after_static_memid(
         &mut self,
-        subprocess: &'static MainSubprocess,
+        subprocess: &SubprocessIdentity,
     ) -> bool {
         if !self.matches_detached_static_memid_preimage() {
             return false;
@@ -2151,7 +2207,7 @@ impl ThreadLocalData {
         thread_id: LiveThreadId,
         thread_sequence: ThreadSequence,
         numa_node: i32,
-        subprocess: &'static MainSubprocess,
+        subprocess: &SubprocessIdentity,
     ) -> bool {
         self.initialize_normal_tld_field_prefix_after_direct_preimage_with_numa_source(
             thread_id,
@@ -2171,7 +2227,7 @@ impl ThreadLocalData {
         thread_id: LiveThreadId,
         thread_sequence: ThreadSequence,
         numa_node_source: impl FnOnce() -> i32,
-        subprocess: &'static MainSubprocess,
+        subprocess: &SubprocessIdentity,
     ) -> bool {
         self.initialize_normal_tld_field_prefix_after_direct_preimage_impl(
             thread_id,
@@ -2195,7 +2251,7 @@ impl ThreadLocalData {
         thread_id: LiveThreadId,
         thread_sequence: ThreadSequence,
         numa_node: i32,
-        subprocess: &'static MainSubprocess,
+        subprocess: &SubprocessIdentity,
         trace: &mut NormalTldInitWriteTrace,
     ) -> bool {
         self.initialize_normal_tld_field_prefix_after_direct_preimage_impl(
@@ -2213,7 +2269,7 @@ impl ThreadLocalData {
         thread_id: LiveThreadId,
         thread_sequence: ThreadSequence,
         numa_node_source: impl FnOnce() -> i32,
-        subprocess: &'static MainSubprocess,
+        subprocess: &SubprocessIdentity,
         #[cfg(test)] mut trace: Option<&mut dyn NormalTldInitTraceSink>,
     ) -> bool {
         if !self.matches_normal_tld_init_direct_preimage()
@@ -2355,7 +2411,7 @@ impl ThreadLocalData {
         thread_id: LiveThreadId,
         thread_sequence: ThreadSequence,
         numa_node: i32,
-        subprocess: &'static MainSubprocess,
+        subprocess: &SubprocessIdentity,
         memid: MemoryId,
     ) {
         // `mi_tld_create` writes this caller-owned provenance before entering
@@ -2401,7 +2457,7 @@ impl ThreadLocalData {
         thread_id: LiveThreadId,
         thread_sequence: ThreadSequence,
         numa_node_source: impl FnOnce() -> i32,
-        subprocess: &'static MainSubprocess,
+        subprocess: &SubprocessIdentity,
         memid: MemoryId,
     ) {
         // SAFETY: the public unsafe contract above is forwarded unchanged to
@@ -2442,7 +2498,7 @@ impl ThreadLocalData {
         thread_id: LiveThreadId,
         thread_sequence: ThreadSequence,
         numa_node_source: impl FnOnce() -> i32,
-        subprocess: &'static MainSubprocess,
+        subprocess: &SubprocessIdentity,
         memid: MemoryId,
         trace: &mut StaticFirstTldCreateTrace,
     ) {
@@ -2468,7 +2524,7 @@ impl ThreadLocalData {
         thread_id: LiveThreadId,
         thread_sequence: ThreadSequence,
         numa_node_source: impl FnOnce() -> i32,
-        subprocess: &'static MainSubprocess,
+        subprocess: &SubprocessIdentity,
         memid: MemoryId,
         #[cfg(test)] mut trace: Option<&mut StaticFirstTldCreateTrace>,
     ) {
@@ -2507,7 +2563,7 @@ impl ThreadLocalData {
         &self,
         thread_id: LiveThreadId,
         thread_sequence: ThreadSequence,
-        subprocess: &MainSubprocess,
+        subprocess: &SubprocessIdentity,
     ) -> bool {
         self.matches_subprocess_attached_lifecycle(thread_id, thread_sequence, subprocess)
             && self.theaps.is_null()
@@ -2525,7 +2581,7 @@ impl ThreadLocalData {
         &self,
         thread_id: LiveThreadId,
         thread_sequence: ThreadSequence,
-        subprocess: &MainSubprocess,
+        subprocess: &SubprocessIdentity,
     ) -> bool {
         self.matches_subprocess_attached_callback_boundary(
             thread_id,
@@ -2547,7 +2603,7 @@ impl ThreadLocalData {
         &self,
         thread_id: LiveThreadId,
         thread_sequence: ThreadSequence,
-        subprocess: &MainSubprocess,
+        subprocess: &SubprocessIdentity,
     ) -> bool {
         self.thread_id == thread_id.get()
             && self.thread_seq == thread_sequence.get()
@@ -2567,7 +2623,7 @@ impl ThreadLocalData {
         &self,
         thread_id: LiveThreadId,
         thread_sequence: ThreadSequence,
-        subprocess: &MainSubprocess,
+        subprocess: &SubprocessIdentity,
     ) -> bool {
         self.matches_subprocess_attached_callback_boundary(
             thread_id,
@@ -6388,7 +6444,7 @@ impl Theap {
     pub(crate) fn is_bound_to_main_subprocess(&self, subprocess: &MainSubprocess) -> bool {
         core::ptr::eq(
             self.subproc.load(core::sync::atomic::Ordering::Acquire),
-            subprocess.as_ptr(),
+            subprocess.identity_ptr(),
         )
     }
 
@@ -6764,11 +6820,15 @@ mod tests {
         let parent: &'static MainSubprocess = std::boxed::Box::leak(std::boxed::Box::new(
             MainSubprocess::new(),
         ));
-        let child: &'static MainSubprocess = std::boxed::Box::leak(std::boxed::Box::new(
-            MainSubprocess::new_child(),
-        ));
+        // This fixture owns a test-only Box image and supplies its exact
+        // synthetic Malloc provenance; production child storage must come
+        // from the future linear parent-allocation owner.
+        let child: &'static mut crate::subproc::ChildSubprocessImage =
+            std::boxed::Box::leak(std::boxed::Box::new(
+                crate::subproc::ChildSubprocessImage::new(),
+            ));
         // SAFETY: this isolated fixture exclusively owns the main source
-        // membership and the permanent child identity image.
+        // membership and the test-only stable child image.
         unsafe { registry.initialize_main(parent) }.unwrap();
         let metadata_config = crate::os::MemoryConfig::from_observations(
             crate::os::PageSize::new(4096).unwrap(),
@@ -6781,8 +6841,8 @@ mod tests {
             .prepare_for_main_subprocess(metadata_config, parent)
             .unwrap();
         let child_memory = MemoryId::malloc(
-            core::ptr::from_ref(child).cast_mut().cast(),
-            size_of::<MainSubprocess>(),
+            core::ptr::from_ref(&*child).cast_mut().cast(),
+            size_of::<crate::subproc::ChildSubprocessImage>(),
             true,
         );
         // Match `mi_subproc_new`: the child context image and parent-owned
@@ -6792,14 +6852,23 @@ mod tests {
             .unwrap();
         // SAFETY: child is retained at this pinned exact Malloc image through
         // every list operation below, and parent is an initialized member.
-        unsafe { registry.initialize_child(child, parent, child_memory) }.unwrap();
+        unsafe { registry.initialize_child(&*child, parent, child_memory) }.unwrap();
         let mut child_heap = std::boxed::Box::new(Heap::bootstrap_empty());
         let child_heap_memory = MemoryId::malloc(
             core::ptr::from_mut(&mut *child_heap).cast(),
             size_of::<Heap>(),
             true,
         );
-        child_heap.initialize_main_static(child, child_heap_memory);
+        // SAFETY: both images are pinned for this isolated test; the Heap
+        // MemoryId is explicit fixture provenance, not a production owner.
+        unsafe {
+            core::pin::Pin::new_unchecked(&mut *child_heap)
+                .initialize_child_main(
+                    core::pin::Pin::new_unchecked(&mut *child),
+                    child_heap_memory,
+                )
+        }
+        .unwrap();
 
         // SAFETY: the child Heap is Box-pinned and the capability owns the
         // child Theap allocation. The scoped mutable projection ends before
@@ -6829,13 +6898,41 @@ mod tests {
             ));
             child_theap
         };
+        // Child `mi_tld_create` requires the child metadata-Theap identity to
+        // be published. This fixture performs that bounded source transition
+        // before issuing its metadata-backed sequence-zero ticket.
+        assert!(unsafe {
+            child
+                .identity()
+                .publish_detached_metadata_theap(child_theap)
+        });
+        assert!(child
+            .identity()
+            .matches_published_detached_metadata_theap(child_theap));
+        // Source child sequence zero follows the metadata route after child
+        // initialization; it cannot consume MainSubprocess's static TLD.
+        // Dropping this unconsumed ticket represents a failed TLD allocation
+        // and leaves the monotonic total advanced without a live increment.
+        let child_identity_pointer = child.identity().as_ptr();
+        let child_ticket = unsafe {
+            core::pin::Pin::new_unchecked(&mut *child).issue_metadata_thread_ticket()
+        }
+        .unwrap();
+        assert_eq!(child_ticket.sequence().get(), 0);
+        assert!(core::ptr::eq(
+            child_ticket.subprocess().as_ptr(),
+            child_identity_pointer,
+        ));
+        drop(child_ticket);
+        assert_eq!(child.total_thread_count(), 1);
+        assert_eq!(child.live_thread_count(), 0);
         assert!(child.is_registered_child_of(parent));
 
         // `mi_subproc_unsafe_destroy` removes subprocess membership before
         // it enters the nested Heap/Theap teardown walk.
         // SAFETY: the test has exclusive child teardown and retains every
         // nested owner image until the subsequent list transitions finish.
-        unsafe { registry.unlink_child_terminal(child) }.unwrap();
+        unsafe { registry.unlink_child_terminal(&*child) }.unwrap();
         assert!(!child.is_registered_child_of(parent));
 
         // `_mi_heap_free_theaps` runs `_mi_heap_detach_theaps` first, removing
@@ -6867,6 +6964,22 @@ mod tests {
             core::ptr::from_mut(&mut *child_heap),
         ));
         parent_metadata.free(&mut child_metadata_allocation).unwrap();
+        // The bounded child Heap model ends at intrusive list removal; this
+        // fixture intentionally does not claim page destruction or backing
+        // release parity with `mi_heap_destroy`.
+        // SAFETY: registry and Theap edges are gone and the Box fixture stays
+        // pinned until the exact child Heap list node has been removed.
+        unsafe {
+            child
+                .heap_list()
+                .free_child_main(&mut child_heap, child.identity())
+        }
+        .unwrap();
+        // Pinned `subproc.c` clears this identity only after Heap/Theap
+        // destruction. The bounded fixture has completed its modeled list
+        // transitions and can now retire the comparison identity.
+        unsafe { child.clear_metadata_identity_terminal() };
+        assert!(!child.test_has_published_metadata_theap());
     }
 
     #[test]
@@ -8110,7 +8223,7 @@ mod tests {
         thread_id: ThreadId,
         thread_seq: usize,
         numa_node: i32,
-        subprocess: *mut MainSubprocess,
+        subprocess: *mut SubprocessIdentity,
         theap_head: *mut Theap,
         recurse: bool,
         in_threadpool: bool,
@@ -8306,7 +8419,7 @@ mod tests {
         let post_thread_id_detached = tld.thread_id == THREAD_ID_DETACHED;
         let post_thread_sequence_zero = tld.thread_seq == 0;
         let post_numa_node_minus_one = tld.numa_node == -1;
-        let post_subprocess_matches_input = core::ptr::eq(tld.subprocess, subprocess.as_ptr());
+        let post_subprocess_matches_input = core::ptr::eq(tld.subprocess, subprocess.identity_ptr());
         let post_theap_head_null = tld.theaps.is_null();
         let post_lock_roundtrip = tld.test_theaps_lock_starts_and_restores_unlocked();
         let post_recurse_false = !tld.recurse;
@@ -9083,7 +9196,7 @@ mod tests {
     fn main_heap_statistics_merge_into_the_shared_subprocess_owner_and_reset() {
         let subprocess = MainSubprocess::new();
         let mut main_heap = Heap::bootstrap_empty();
-        main_heap.subprocess = core::ptr::from_ref(&subprocess).cast_mut();
+        main_heap.subprocess = subprocess.identity_ptr();
         assert!(main_heap.statistics.page_registered(7));
         main_heap.statistics.page_retired();
         main_heap.statistics.page_reclaimed_on_free();

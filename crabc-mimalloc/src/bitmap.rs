@@ -1691,11 +1691,11 @@ impl<'storage> BitmapView<'storage> {
     /// quiescence: the writer does not clear permanently until that reader has
     /// restored its failed candidate. A successful weak CAS uses AcqRel and
     /// leaves the conservative chunk map set, as upstream does.
-    pub(crate) fn clear_once_set(&self, subprocess: &crate::subproc::MainSubprocess, index: usize) -> Option<()> {
+    pub(crate) fn clear_once_set(&self, subprocess: &crate::subproc::SubprocessIdentity, index: usize) -> Option<()> {
         self.clear_once_set_with(subprocess, index, || {})
     }
 
-    fn clear_once_set_with<F>(&self, subprocess: &crate::subproc::MainSubprocess, index: usize, mut observed_temporary_clear: F) -> Option<()>
+    fn clear_once_set_with<F>(&self, subprocess: &crate::subproc::SubprocessIdentity, index: usize, mut observed_temporary_clear: F) -> Option<()>
     where
         F: FnMut(),
     {
