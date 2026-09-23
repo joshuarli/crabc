@@ -1165,7 +1165,10 @@ pub(crate) struct MetadataEngine<'owner> {
     allocator: UnsafeCell<MaybeUninit<MetadataPageAllocator<'owner>>>,
     process_backing: UnsafeCell<Option<MetadataProcessBacking>>,
     canonical_heap: UnsafeCell<Option<crate::main_theap::MainStaticMetadataHeapLease>>,
-    subprocess: AtomicPtr<MainSubprocess>,
+    /// Common source identity for the process-only binding path. Child engine
+    /// binding will use this identity directly without fabricating a
+    /// `MainSubprocess` wrapper or its static TLD slot.
+    subprocess: AtomicPtr<crate::subproc::SubprocessIdentity>,
     /// The exact detached static Theap address successfully published through
     /// `subprocess->theap_meta`. This is identity-only: the allocator never
     /// dereferences it through this slot. Keeping it separate from the
@@ -2239,7 +2242,7 @@ impl<'owner> MetadataEngine<'owner> {
         // bootstrap-image observation.
         let stored_config = unsafe { *(*this.config.get()).assume_init_ref() };
         stored_config == config
-            && core::ptr::eq(this.subprocess.load(Ordering::Acquire), subprocess.owner_ptr())
+            && core::ptr::eq(this.subprocess.load(Ordering::Acquire), subprocess.identity_ptr())
             && self
                 .validate_bound_detached_metadata_theap(subprocess)
                 .is_ok()
@@ -2961,7 +2964,7 @@ impl<'owner> MetadataEngine<'owner> {
             BOUND | READY => {
                 if !core::ptr::eq(
                     self.get_ref().subprocess.load(Ordering::Acquire),
-                    subprocess.owner_ptr(),
+                    subprocess.identity_ptr(),
                 ) {
                     return Err(MetaError::SubprocessMismatch);
                 }
@@ -3161,7 +3164,7 @@ impl<'owner> MetadataEngine<'owner> {
         // selected source subprocess above, so this independent atomic is a
         // comparison-only mirror for lock-free precondition checks.
         unsafe { (*this.config.get()).write(config) };
-        this.subprocess.store(subprocess.owner_ptr(), Ordering::Release);
+        this.subprocess.store(subprocess.identity_ptr(), Ordering::Release);
         this.detached_metadata_theap
             .store(identity.as_ptr(), Ordering::Release);
         this.status.store(BOUND, Ordering::Release);
@@ -3449,7 +3452,7 @@ impl<'borrow, 'owner> MetaEntry<'borrow, 'owner> {
                 .get_ref()
                 .subprocess
                 .load(Ordering::Acquire),
-            subprocess.owner_ptr(),
+            subprocess.identity_ptr(),
         ) {
             Err(MetaError::SubprocessMismatch)
         } else {
