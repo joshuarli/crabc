@@ -23,6 +23,7 @@ EXPECTED_VM_CHECK_IDS = (
     "aligned-overmap-cleanup-c-rust-boundary-matrix",
     "process-policy-first-arena-clean-primary-fallback",
     "process-policy-first-arena-retained-cleanup-statistics",
+    "selected-subprocess-statistics-aggregation",
     "process-policy-ticket-zero-live-random",
     "aligned-map-direct-cleanup-owner",
     "aligned-map-prefix-cleanup-owner",
@@ -174,18 +175,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
             "c_command": c_command,
             "c_source_files": [
                 {"path": path, "sha256": "a" * 64, "bytes": 1}
-                for path in sorted((
-                    "include/mimalloc-stats.h",
-                    "include/mimalloc/internal.h",
-                    "include/mimalloc/prim.h",
-                    "src/arena.c",
-                    "src/init.c",
-                    "src/os.c",
-                    "src/page.c",
-                    "src/prim/prim.c",
-                    "src/prim/unix/prim.c",
-                    "src/stats.c",
-                ))
+                for path in sorted(producer.SOURCE_UNITS)
             ],
             "compared_value_count": len(producer.TRACE_KEYS),
             "comparison": {"compared_value_count": len(producer.TRACE_KEYS), "status": "matched"},
@@ -548,7 +538,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
         self.assertEqual(vm["id"], "vm-primitives")
         self.assertEqual(vm["native_status"], "partial")
         self.assertEqual(tuple(check["id"] for check in vm["checks"]), EXPECTED_VM_CHECK_IDS)
-        self.assertEqual(len(vm["checks"]), 33)
+        self.assertEqual(len(vm["checks"]), 34)
         self.assertEqual(len(vm["bounded_source_definitions"]), 20)
         callback_definitions = {
             definition["id"]: definition["source_anchor"]
@@ -744,8 +734,27 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 "target": arena_check["target"],
             }
         ]
+        metadata_check = next(
+            check
+            for component in summary["components"]
+            if component["id"] == "metadata"
+            for check in component["checks"]
+        )
+        metadata_records = [
+            {
+                "comparison_status": "matched",
+                "component": "metadata",
+                "command": ["<metadata-lifecycle-producer>"],
+                "evidence_scope": "bounded-main-subprocess-pinned-c-rust-metadata-publication-and-replacement-lifecycle",
+                "id": metadata_check["id"],
+                "passed_test_count": metadata_check["expected_passed_test_count"],
+                "target": metadata_check["target"],
+            }
+        ]
         vm_check_records_producer = mock.Mock(return_value=vm_records)
         arena_records_producer = mock.Mock(return_value=arena_records)
+        metadata_records_producer = mock.Mock(return_value=metadata_records)
+        metadata_lifecycle_producer = mock.Mock(return_value={})
         observed = {}
 
         def focused_checks(_summary, _program, *, already_executed_check_ids, gate_name):
@@ -793,6 +802,8 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 RUNNER,
                 _m2_x86_64_vm_check_records=vm_check_records_producer,
                 _m2_x86_64_process_arena_collect_check_records=arena_records_producer,
+                _m2_x86_64_metadata_check_records=metadata_records_producer,
+                run_m2_x86_64_metadata_lifecycle_differential=metadata_lifecycle_producer,
             ),
             mock.patch.object(RUNNER, "_run_m2_x86_64_initialization_evidence", return_value={}) as initialization_producer,
             mock.patch.object(RUNNER, "_m2_x86_64_initialization_check_records", return_value=initialization_records),
@@ -820,6 +831,8 @@ class NativeVmAssemblyTests(unittest.TestCase):
         )
         vm_check_records_producer.assert_called_once_with(summary, {}, {})
         arena_records_producer.assert_called_once_with(summary, {})
+        metadata_lifecycle_producer.assert_called_once()
+        metadata_records_producer.assert_called_once_with(summary, {})
         runtime_thp_producer.assert_called_once_with()
         initialization_producer.assert_called_once_with(offline=True)
         fault_producer.assert_called_once_with(offline=True, test_program={}, vm_evidence={})
@@ -831,6 +844,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
         )
         self.assertTrue({record["id"] for record in fault_records}.issubset(observed["ids"]))
         self.assertTrue({record["id"] for record in arena_records}.issubset(observed["ids"]))
+        self.assertTrue({record["id"] for record in metadata_records}.issubset(observed["ids"]))
         owner_check = next(
             check
             for component in summary["components"]

@@ -191,6 +191,34 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
         checks.extend(RUNNER._m2_x86_64_bitmap_check_records(summary, evidence))
         metadata_evidence = self.metadata_evidence()
         checks.extend(RUNNER._m2_x86_64_metadata_check_records(summary, metadata_evidence))
+        initialization_checks = [
+            {'component': 'initialization', 'command': ['/workspace/.work/prepared-test'],
+             'comparison_status': 'matched', 'evidence_scope': 'synthetic-initialization-report-assembly-fixture',
+             'id': check['id'], 'passed_test_count': check['expected_passed_test_count'],
+             'target': check['target']}
+            for component in summary['components'] if component['id'] == 'initialization'
+            for check in component['checks']
+        ]
+        checks.extend(initialization_checks)
+        fault_checks = [
+            {'component': 'fault-injection', 'command': ['/workspace/.work/prepared-test'],
+             'comparison_status': 'source-specific-relation-verified',
+             'evidence_scope': 'synthetic-fault-report-assembly-fixture',
+             'id': check['id'], 'passed_test_count': 1, 'target': check['target']}
+            for component in summary['components'] if component['id'] == 'fault-injection'
+            for check in component['checks']
+        ]
+        checks.extend(fault_checks)
+        arena_checks = [
+            {'component': 'arenas', 'command': ['/workspace/.work/prepared-test'],
+             'comparison_status': 'matched',
+             'evidence_scope': 'synthetic-arena-report-assembly-fixture',
+             'id': check['id'], 'passed_test_count': check['expected_passed_test_count'],
+             'target': check['target']}
+            for component in summary['components'] if component['id'] == 'arenas'
+            for check in component['checks']
+        ]
+        checks.extend(arena_checks)
         for check in summary['components'][3]['checks']:
             row = {'component': 'page-map', 'command': ['/workspace/.work/prepared-test'],
                    'id': check['id'], 'passed_test_count': 1, 'target': check['target']}
@@ -209,6 +237,11 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
             'bounded_source_evidence': {'status': 'passed', 'record_count': len(records), 'records': records},
             'focused_checks': checks, 'bitmap_evidence': evidence, 'vm_evidence': vm_evidence,
             'metadata_evidence': metadata_evidence,
+            'initialization_evidence': {'synthetic': True},
+            'fault_evidence': {'synthetic': True},
+            '_initialization_checks': initialization_checks,
+            '_fault_checks': fault_checks,
+            '_arena_checks': arena_checks,
         }
 
     def test_shared_vm_report_keeps_the_complete_custom_receipt_set_out_of_the_focused_batch(self):
@@ -239,7 +272,16 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
         )
 
     def test_report_contains_actual_bitmap_checks_without_promoting_partial_components(self):
-        report = RUNNER.m2_x86_64_memory_substrate_report(**self.report_arguments())
+        arguments = self.report_arguments()
+        initialization_checks = arguments.pop('_initialization_checks')
+        fault_checks = arguments.pop('_fault_checks')
+        arena_checks = arguments.pop('_arena_checks')
+        with mock.patch.object(
+            RUNNER, '_m2_x86_64_initialization_check_records', return_value=initialization_checks
+        ), mock.patch.object(RUNNER, '_m2_x86_64_fault_check_records', return_value=fault_checks), mock.patch.object(
+            RUNNER, '_m2_x86_64_process_arena_collect_check_records', return_value=arena_checks
+        ):
+            report = RUNNER.m2_x86_64_memory_substrate_report(**arguments)
         self.assertEqual(len(report['milestone']['unmet_component_ids']), 6)
         self.assertEqual(report['milestone']['status'], 'partial')
         bitmap = report['components'][2]
@@ -274,7 +316,16 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
             if mutation == 'anchor': records[0]['source_anchor']['sha256'] = '0' * 64
             if mutation == 'missing-anchor': records.pop()
             if mutation == 'duplicate-anchor': records[-1] = records[0]
-            with self.subTest(mutation=mutation), self.assertRaises(RUNNER.HarnessError):
+            initialization_checks = args.pop('_initialization_checks')
+            fault_checks = args.pop('_fault_checks')
+            arena_checks = args.pop('_arena_checks')
+            with (
+                self.subTest(mutation=mutation),
+                self.assertRaises(RUNNER.HarnessError),
+                mock.patch.object(RUNNER, '_m2_x86_64_initialization_check_records', return_value=initialization_checks),
+                mock.patch.object(RUNNER, '_m2_x86_64_fault_check_records', return_value=fault_checks),
+                mock.patch.object(RUNNER, '_m2_x86_64_process_arena_collect_check_records', return_value=arena_checks),
+            ):
                 RUNNER.m2_x86_64_memory_substrate_report(**args)
 
 
