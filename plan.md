@@ -38,9 +38,9 @@ are not transferable passes for a different revision.
   reader passed on the same clean `3c47d990d` cohort. The current-source
   static process-global fixture passed normal and empty-argv startup against
   pinned musl and the owned runtime at
-  `f600772a6`. A clean current-source static product preparation and its
-  independent reader passed at `ad21441d6`; dynamic product qualification
-  is still running. These source-bound checkpoints do not promote
+  `f600772a6`. Clean current-source static preparation and three-product
+  dynamic qualification passed with independent readers at `ad21441d6`.
+  These source-bound checkpoints do not promote
   current main. Complete the actual remaining
   aggregate/family admissions from `campaign-status`, not another symbol sweep.
 - **Allocator:** M1's six bounded components passed at `0daef148bd20dc2bef2ac9dc34af4f3dd0e99d7a`.
