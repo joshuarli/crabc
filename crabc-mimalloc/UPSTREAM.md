@@ -144,6 +144,14 @@ page's remaining clients. Focused x86 unit tests cover each result in both
 owner seams. This does not broaden dynamic, non-abandoning, public/default,
 or paused-AArch64 coverage.
 
+Mapped-page adoption preserves the two distinct source false collections:
+`src/arena.c:761-765` collects under the abandoned identity before
+`src/page.c:277-291` reassociates and collects again. The first call to
+`remote_free::collect_abandoned_false` moves its remote blocks into an empty
+`free` list; a block published between those collections stays in
+`local_free` when `free` is already populated. The focused two-publication
+adoption regression checks that source ordering.
+
 > **Later-main direct-small adoption correction.** The broad later-main table
 > rows below predate the source-specific
 > `later-main-one-member-immediate-direct-small-post-exit-allocation-adoption`

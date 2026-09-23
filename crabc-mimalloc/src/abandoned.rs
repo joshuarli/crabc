@@ -3183,10 +3183,13 @@ where
 
     after_claim();
 
-    // Source arena claim first drains while the page retains its abandoned
-    // identity, then page reclaim reassociates and completes its live
-    // false-force collection before queue insertion.
-    let abandoned_collected = match unsafe { remote_free::collect_abandoned(page) } {
+    // `arena.c:_mi_arenas_page_try_find_abandoned` completes a false-force
+    // collection while the page still has its abandoned identity. This moves
+    // the first detached list to `free` when that list was empty. A later
+    // publication before `page.c:_mi_theap_page_reclaim` is collected into
+    // `local_free` by its second false-force collection, preserving source
+    // reuse order rather than prepending both lists into the first `free`.
+    let abandoned_collected = match unsafe { remote_free::collect_abandoned_false(page) } {
         Ok(collected) => collected,
         Err(error) => return Err(fail(AbandonError::RemoteFree(error))),
     };
@@ -3282,11 +3285,10 @@ where
         }
     };
     after_claim();
-    // `arena.c:_mi_arenas_try_find_abandoned` first drains an abandoned
-    // owner's remote list while it still carries the abandoned identity.
-    // A later `_mi_theap_page_reclaim` installs the target Theap and performs
-    // the normal live-owner collection again before queue insertion.
-    let abandoned_collected = unsafe { remote_free::collect_abandoned(page) }
+    // `arena.c:_mi_arenas_page_try_find_abandoned` completes the first
+    // false-force collection before `page.c:_mi_theap_page_reclaim` changes
+    // the owner identity and collects a later remote publication again.
+    let abandoned_collected = unsafe { remote_free::collect_abandoned_false(page) }
         .map_err(AbandonError::RemoteFree)?;
     after_abandoned_collection();
     // SAFETY: the successful AcqRel OR acquired the only source owner bit;
@@ -6248,6 +6250,61 @@ mod tests {
         assert_eq!(page.0.abandoned_test_thread_id(), thread_id.get());
         assert_eq!(page.0.remote_free_test_head(), 1);
         assert_eq!(page.0.remote_free_test_used(), 2);
+        assert!(!map.is_published(17));
+    }
+
+    #[test]
+    fn adoption_preserves_false_collection_order_across_two_remote_publications() {
+        let mut storage = BitmapStorage::uninit();
+        let mut arena = map_fixture(&mut storage);
+        let view = unsafe { ArenaView::from_ptr(&mut arena).unwrap() };
+        let map = view.abandoned_pages(1).unwrap();
+        let mut page = mapped_page(&mut arena, 4);
+        let page_raw = NonNull::from(&mut page);
+        assert_eq!(unsafe { abandon(page_raw, Some(&map)) }, Ok(AbandonResult::UnownedMapped));
+
+        let thread_id = LiveThreadId::new(16).unwrap();
+        let mut target_heap = Heap::bootstrap_empty();
+        let mut target_tld = ThreadLocalData::detached();
+        let mut target_theap = Theap::empty();
+        let target = bind_adopting_theap(
+            &mut target_heap,
+            &mut target_tld,
+            &mut target_theap,
+            thread_id,
+        );
+        let mut first = TestBlock([0; 16]);
+        let mut second = TestBlock([0; 16]);
+        let first_block = first.pointer().cast::<Block>().as_ptr();
+        let second_block = second.pointer().cast::<Block>().as_ptr();
+        let adopted = unsafe {
+            try_adopt_with(
+                &map,
+                0,
+                target,
+                thread_id,
+                |_| Some(page_raw),
+                || {
+                    assert_eq!(
+                        unsafe { remote_free::push_abandoned(page_raw, first.pointer()) },
+                        Ok(remote_free::AbandonedRemotePush::PublishedToExistingOwner)
+                    );
+                },
+                || {
+                    assert_eq!(
+                        unsafe { remote_free::push_abandoned(page_raw, second.pointer()) },
+                        Ok(remote_free::AbandonedRemotePush::PublishedToExistingOwner)
+                    );
+                },
+            )
+        }
+        .unwrap()
+        .expect("the mapped page remains adoptable");
+
+        assert_eq!(adopted.collected_remote_blocks(), 2);
+        assert_eq!(page.remote_free_test_used(), 2);
+        assert_eq!(page.remote_free_test_free(), first_block);
+        assert_eq!(page.remote_free_test_local_free(), second_block);
         assert!(!map.is_published(17));
     }
 
