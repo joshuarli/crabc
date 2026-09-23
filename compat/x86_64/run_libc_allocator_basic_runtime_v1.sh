@@ -257,6 +257,10 @@ for symbol in "${expected_wrapper_symbols[@]}"; do
     assert_elf_function_binding "$wrapper_elf_symbols" "$symbol" "$binding" \
         "allocator wrapper"
 done
+# The pinned release codegen unit co-locates this observer with unrelated
+# selected C entries. Keep each extra public name explicitly accounted for;
+# their co-location does not merge their source contracts or relax the
+# separate weak allocator-wrapper and strong observer bindings below.
 mapfile -t observability_exports < <(
     nm -g --defined-only --format=posix \
         "$work_dir/owners/${observability_members[0]}" |
@@ -264,12 +268,15 @@ mapfile -t observability_exports < <(
 )
 expected_observability_symbols=(
     __crabc_x86_allocator_observability_v1
+    endservent
+    ether_line
     malloc_usable_size
+    splice
 )
 if [ "${observability_exports[*]}" != "${expected_observability_symbols[*]}" ]; then
     printf 'expected: %s\nactual:   %s\n' "${expected_observability_symbols[*]}" \
         "${observability_exports[*]}" >&2
-    fail "allocator-observability object export surface drifted"
+    fail "allocator-observability codegen-unit export set drifted"
 fi
 for symbol in mi_malloc_aligned mi_zalloc mi_realloc_aligned mi_free mi_usable_size; do
     nm -g --defined-only "$work_dir/owners/${backend_members[0]}" |
