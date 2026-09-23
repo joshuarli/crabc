@@ -287,6 +287,40 @@ def default_rustc_command() -> list[str]:
     return [rustup, "run", PINNED_TOOLCHAIN, "rustc"]
 
 
+def selected_nightly_sysroot(version: dict[str, Any], sysroot: dict[str, Any],
+                             environment: dict[str, str]) -> Path:
+    """Require rustup's exact selected nightly and the expected x86 host."""
+
+    release = next(
+        (line.partition(": ")[2] for line in version["stdout"].splitlines()
+         if line.startswith("release: ")),
+        "",
+    )
+    host = next(
+        (line.partition(": ")[2] for line in version["stdout"].splitlines()
+         if line.startswith("host: ")),
+        "",
+    )
+    if version["returncode"] != 0 or not release.endswith("-nightly") or host != TARGET:
+        raise BuildError("x86-64 CRT builder requires the selected nightly x86 toolchain")
+    if sysroot["returncode"] != 0:
+        raise BuildError(f"unable to locate selected Rust sysroot: {sysroot['stderr']}")
+    reported = str(sysroot["stdout"]).strip()
+    if not reported or "\n" in reported:
+        raise BuildError("selected Rust toolchain reported an unsafe sysroot")
+    path = Path(reported)
+    try:
+        resolved = path.resolve(strict=True)
+        rustup_home = Path(environment.get("RUSTUP_HOME", Path.home() / ".rustup"))
+        toolchains = (rustup_home / "toolchains").resolve(strict=True)
+        resolved.relative_to(toolchains)
+    except (OSError, RuntimeError, ValueError) as error:
+        raise BuildError("selected Rust sysroot escapes rustup's toolchain directory") from error
+    if not (resolved.name == PINNED_TOOLCHAIN or resolved.name.startswith(f"{PINNED_TOOLCHAIN}-")):
+        raise BuildError(f"Rust sysroot does not match rust-toolchain.toml: {resolved.name}")
+    return resolved
+
+
 def require_tool(name: str) -> str:
     resolved = shutil.which(name)
     if resolved is None:
@@ -640,12 +674,10 @@ def build(args: argparse.Namespace) -> dict[str, object]:
 
     version = run_command(rustc + ["-Vv"], environment)
     records.append({"kind": "toolchain", **version})
+    sysroot = run_command(rustc + ["--print", "sysroot"], environment)
+    records.append({"kind": "sysroot", **sysroot})
     write_json(commands_path, records)
-    if version["returncode"] != 0:
-        raise BuildError(f"unable to execute pinned rustc: {version['stderr']}")
-    version_text = str(version["stdout"])
-    if "rustc 1.99.0-nightly" not in version_text or "commit-date: 2026-07-23" not in version_text:
-        raise BuildError("x86-64 CRT builder requires rust-toolchain.toml-selected rustc")
+    selected_nightly_sysroot(version, sysroot, environment)
 
     object_records: dict[str, dict[str, object]] = {}
     try:

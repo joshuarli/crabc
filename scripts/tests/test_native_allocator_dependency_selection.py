@@ -33,6 +33,27 @@ def feature_dependencies(selection):
     return dependencies
 
 
+def selected_features(selection):
+    pending = list(selection)
+    visited = set()
+    selected = set()
+    while pending:
+        feature = pending.pop()
+        if feature in visited:
+            continue
+        visited.add(feature)
+        for child in FEATURES[feature]:
+            if child.startswith('dep:'):
+                continue
+            if '/' in child:
+                selected.add(child)
+            elif child in FEATURES:
+                pending.append(child)
+            else:
+                selected.add(child)
+    return selected
+
+
 class NativeAllocatorDependencySelectionTests(unittest.TestCase):
     def test_native_dynamic_production_graph_excludes_c_allocator(self):
         for feature in ('x86-owned-static-native-shadow', 'x86-owned-dynamic-native-shadow'):
@@ -53,12 +74,17 @@ class NativeAllocatorDependencySelectionTests(unittest.TestCase):
                 self.assertNotIn('crabc-mimalloc', dependencies)
 
     def test_native_and_c_aggregates_keep_identical_nonallocator_leaves(self):
-        clients = {'x86-crypt-allocator-composition', 'x86-allocator-runtime',
-                   'x86-allocator-observability', 'x86-allocator-string-duplication',
-                   'x86-environment-runtime', 'x86-temporary-names', 'x86-scandir'}
-        c_leaves = set(FEATURES['x86-owned-static-runtime']) - clients
-        c_leaves.add('x86-crypt')
-        native_leaves = set(FEATURES['x86-owned-static-native-shadow']) - {'native-mimalloc-shadow'}
+        allocator_clients = {
+            'x86-allocator-runtime',
+            'x86-allocator-observability',
+            'x86-allocator-string-duplication',
+        }
+        c_leaves = selected_features(['x86-owned-static-runtime']) - allocator_clients - {
+            'x86-crypt-allocator-composition',
+        }
+        native_leaves = selected_features(['x86-owned-static-native-shadow']) - {
+            'native-mimalloc-shadow',
+        }
         self.assertEqual(native_leaves, c_leaves)
 
     def test_actual_normal_build_graph_rejects_c_in_native_selection(self):
@@ -82,6 +108,23 @@ class NativeAllocatorDependencySelectionTests(unittest.TestCase):
             with self.assertRaisesRegex(builder.BuildError, 'C mimalloc archive'):
                 builder.selected_allocator_archive(cargo, 'native-shadow')
             self.assertEqual(builder.selected_allocator_archive(cargo, 'accepted-c'), archive)
+
+    def test_accepted_c_archive_selection_supports_new_cargo_build_layout(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / '.work') as temporary:
+            cargo = Path(temporary)
+            archive = cargo / builder.TARGET / 'release/build/libmimalloc-sys/4a07dd04e8d6e8b2/out/libmimalloc.a'
+            archive.parent.mkdir(parents=True)
+            archive.write_bytes(b'accepted allocator archive')
+            self.assertEqual(builder.selected_allocator_archive(cargo, 'accepted-c'), archive)
+
+    def test_native_build_rejects_c_archive_in_new_cargo_build_layout(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / '.work') as temporary:
+            cargo = Path(temporary)
+            archive = cargo / builder.TARGET / 'release/build/libmimalloc-sys/4a07dd04e8d6e8b2/out/libmimalloc.a'
+            archive.parent.mkdir(parents=True)
+            archive.write_bytes(b'orphan archive')
+            with self.assertRaisesRegex(builder.BuildError, 'C mimalloc archive'):
+                builder.selected_allocator_archive(cargo, 'native-shadow')
 
     def test_native_static_manifest_names_only_the_selected_rust_allocator(self):
         manifest = builder.installed_manifest({}, {}, allocator_backend='native-shadow')

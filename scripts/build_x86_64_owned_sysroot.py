@@ -783,7 +783,15 @@ def allocator_dependency_graph(cargo: list[str], features: str, allocator_backen
 
 
 def selected_allocator_archive(cargo_root: Path, allocator_backend: str) -> Path | None:
-    archives = list((cargo_root / TARGET / "release/build").glob("libmimalloc-sys-*/out/libmimalloc.a"))
+    build_root = cargo_root / TARGET / "release/build"
+    # The pinned nightly uses `libmimalloc-sys/<hash>` instead of the older
+    # single `libmimalloc-sys-<hash>` build-directory component. Keep the
+    # archive selection exact for both layouts so the C backend remains
+    # uniquely attested and native-shadow builds still reject any C archive.
+    archives = [
+        *build_root.glob("libmimalloc-sys-*/out/libmimalloc.a"),
+        *build_root.glob("libmimalloc-sys/*/out/libmimalloc.a"),
+    ]
     if allocator_backend == "native-shadow":
         if archives:
             raise BuildError("native production build contains a C mimalloc archive")
