@@ -124,18 +124,24 @@ impl SourceSubprocessRegistry {
     /// # Safety
     /// `subprocess` is pinned in a live allocation owned by `parent`, and
     /// `memory` is the exact Malloc MemoryId returned for that whole image.
-    /// The parent is already a member of this registry. The caller retains
-    /// the allocation and excludes child teardown until every Heap, metadata
-    /// owner, thread, and list consumer has completed.
+    /// The parent is already a member of this process-lifetime registry. The
+    /// caller retains both subprocess allocations and excludes child teardown
+    /// until every Heap, metadata owner, thread, and list consumer has
+    /// completed. Child and parent references need remain valid only for this
+    /// transition; the retained allocation is the authority for later raw
+    /// membership projections.
     pub(crate) unsafe fn initialize_child(
         &'static self,
-        subprocess: &'static MainSubprocess,
-        parent: &'static MainSubprocess,
+        subprocess: &MainSubprocess,
+        parent: &MainSubprocess,
         memory: MemoryId,
     ) -> Result<(), SourceSubprocessRegistryError> {
+        let malloc = unsafe { memory.info.malloc };
         let member = &subprocess.source_membership;
         if subprocess.is_process_main()
             || memory.kind() != crate::types::MemoryKind::Malloc
+            || malloc.base != core::ptr::from_ref(subprocess).cast_mut().cast()
+            || malloc.size != size_of::<MainSubprocess>()
             || !core::ptr::eq(
                 parent.source_membership.registry.load(Ordering::Acquire),
                 self,

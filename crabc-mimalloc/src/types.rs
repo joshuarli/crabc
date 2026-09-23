@@ -6576,7 +6576,7 @@ mod tests {
     use core::mem::{align_of, offset_of, size_of, MaybeUninit};
 
     #[test]
-    fn child_detached_metadata_theap_uses_parent_tld_and_unlinks_before_child_owner() {
+    fn child_metadata_theap_uses_parent_attached_tld_and_releases_parent_allocation() {
         let registry = std::boxed::Box::leak(std::boxed::Box::new(
             crate::subproc::registry::SourceSubprocessRegistry::new(),
         ));
@@ -6589,6 +6589,16 @@ mod tests {
         // SAFETY: this isolated fixture exclusively owns the main source
         // membership and the permanent child identity image.
         unsafe { registry.initialize_main(parent) }.unwrap();
+        let metadata_config = crate::os::MemoryConfig::from_observations(
+            crate::os::PageSize::new(4096).unwrap(),
+            1024 * 1024,
+            false,
+            false,
+        );
+        let parent_metadata = parent.metadata_allocator();
+        parent_metadata
+            .prepare_for_main_subprocess(metadata_config, parent)
+            .unwrap();
         let child_memory = MemoryId::malloc(
             core::ptr::from_ref(child).cast_mut().cast(),
             size_of::<MainSubprocess>(),
@@ -6606,21 +6616,24 @@ mod tests {
         );
         child_heap.initialize_main_static(child, child_heap_memory);
 
+        // This temporary TLD has the correct detached/parent identity shape,
+        // but is not yet the parent engine's actual metadata-TLD projection.
+        // Child metadata attachment to `parent->theap_meta->tld` remains
+        // incomplete until the engine exposes a lock-scoped field projection.
         let mut parent_detached_tld = ThreadLocalData::detached();
         assert!(parent_detached_tld.prepare_detached_static_memid());
         assert!(parent_detached_tld.initialize_detached_after_static_memid(parent));
-        let mut child_metadata_theap = std::boxed::Box::new(Theap::empty());
-        let theap_memory = MemoryId::malloc(
-            core::ptr::from_mut(&mut *child_metadata_theap).cast(),
-            size_of::<Theap>(),
-            true,
-        );
-        assert!(child_metadata_theap.set_dynamic_metadata_memid(theap_memory));
+        let mut child_metadata_allocation = parent_metadata
+            .zalloc_for_main_subprocess(metadata_config, parent, size_of::<Theap>())
+            .unwrap();
+        let child_metadata_theap = child_metadata_allocation
+            .initialize_dynamic_theap_metadata()
+            .unwrap();
         child_metadata_theap
             .initialize_child_metadata(&mut child_heap, &mut parent_detached_tld)
             .unwrap();
 
-        let child_theap = core::ptr::from_mut(&mut *child_metadata_theap);
+        let child_theap = core::ptr::from_mut(child_metadata_theap);
         assert_eq!(parent_detached_tld.theaps, child_theap);
         assert_eq!(child_heap.theaps, child_theap);
         assert!(core::ptr::eq(
@@ -6641,7 +6654,8 @@ mod tests {
         assert!(!child.is_registered_child_of(parent));
 
         // `_mi_theap_free` first removes the heap-list edge, then the TLD-list
-        // edge. The child membership remains live until both owners are clear.
+        // edge. The child image allocation remains live until both list owners
+        // are clear, even though process-list membership was already removed.
         parent_detached_tld
             .detach_one_theap_from_heap(&mut child_heap, child_theap)
             .unwrap();
@@ -6652,6 +6666,7 @@ mod tests {
             .detach_one_theap_from_tld(child_theap)
             .unwrap();
         assert!(parent_detached_tld.theaps.is_null());
+        parent_metadata.free(&mut child_metadata_allocation).unwrap();
     }
 
     #[test]
