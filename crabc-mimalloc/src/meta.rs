@@ -1059,10 +1059,12 @@ impl MetaRelease {
 ///
 /// `Self` is `!Unpin`: after initialization, the page engine contains
 /// references to the final bootstrap and either the shared process map or the
-/// historical private PageMap slot. [`MetaAllocator`] fixes `'owner` to
-/// `'static` for the process-main singleton. A child owner can instantiate
-/// this engine with the borrow lifetime of its reclaimable context, so its
-/// metadata capabilities cannot outlive that context.
+/// historical private PageMap slot. `'owner` describes those backing
+/// capabilities; an entry borrows this pinned image only for the entry's
+/// shorter lifetime. [`MetaAllocator`] fixes `'owner` to `'static` for the
+/// process-main singleton. A reclaimable child owner must still ensure that
+/// every capability minted for its engine is retired before its image is
+/// released.
 pub(crate) struct MetadataEngine<'owner> {
     lock: PrivateLock,
     active_entry_thread: AtomicUsize,
@@ -1675,7 +1677,7 @@ impl<'owner> MetadataEngine<'owner> {
     /// publication, so retain the child owner and do not retry from the error
     /// alone.
     pub(crate) unsafe fn initialize_child_metadata_theap(
-        self: Pin<&'owner Self>,
+        self: Pin<&Self>,
         config: MemoryConfig,
         parent: &'static MainSubprocess,
         child_heap: &mut Heap,
@@ -1683,7 +1685,7 @@ impl<'owner> MetadataEngine<'owner> {
     ) -> Result<(), ChildMetadataTheapError> {
         let mut entry = self.enter().map_err(ChildMetadataTheapError::Metadata)?;
         entry
-            .ensure_ready(config, parent)
+            .ensure_existing_ready(config, parent)
             .map_err(ChildMetadataTheapError::Metadata)?;
         // SAFETY: `allocator()` mutably borrows the existing page session
         // stored inside the engine. It never reprojects the bootstrap from
@@ -1715,7 +1717,7 @@ impl<'owner> MetadataEngine<'owner> {
     /// terminally retained; this combined operation is not retryable from the
     /// error alone.
     pub(crate) unsafe fn detach_child_metadata_theap(
-        self: Pin<&'owner Self>,
+        self: Pin<&Self>,
         config: MemoryConfig,
         parent: &'static MainSubprocess,
         child_heap: &mut Heap,
@@ -1723,7 +1725,7 @@ impl<'owner> MetadataEngine<'owner> {
     ) -> Result<(), ChildMetadataTheapError> {
         let mut entry = self.enter().map_err(ChildMetadataTheapError::Metadata)?;
         entry
-            .ensure_ready(config, parent)
+            .ensure_existing_ready(config, parent)
             .map_err(ChildMetadataTheapError::Metadata)?;
         // SAFETY: `allocator()` mutably borrows the existing page session and
         // its single Theap/TLD projection; the engine entry stays live for
@@ -2122,7 +2124,7 @@ impl<'owner> MetadataEngine<'owner> {
     /// publication. This method only compares stable atomics; it never
     /// reborrows the mutable bootstrap or dereferences the subprocess slot.
     fn validate_bound_detached_metadata_theap(
-        self: Pin<&'owner Self>,
+        self: Pin<&Self>,
         subprocess: &'static MainSubprocess,
     ) -> Result<(), MetaError> {
         let this = self.get_ref();
@@ -2138,7 +2140,9 @@ impl<'owner> MetadataEngine<'owner> {
         }
     }
 
-    fn enter(self: Pin<&'owner Self>) -> Result<MetaEntry<'owner>, MetaError> {
+    fn enter<'borrow>(
+        self: Pin<&'borrow Self>,
+    ) -> Result<MetaEntry<'borrow, 'owner>, MetaError> {
         let this = self.get_ref();
         if matches!(this.status.load(Ordering::Acquire), CLOSED | CLOSE_RETAINED) {
             return Err(MetaError::Closed);
@@ -2173,10 +2177,10 @@ impl<'owner> MetadataEngine<'owner> {
     /// nonrecursive lock; the source guard then nests inside it and is
     /// released first. Bootstrap and exact-owner free keep using only the
     /// backing lock because neither is a selected source allocation phase.
-    fn enter_for_main_subprocess(
-        self: Pin<&'owner Self>,
+    fn enter_for_main_subprocess<'borrow>(
+        self: Pin<&'borrow Self>,
         subprocess: &'static MainSubprocess,
-    ) -> Result<MetaEntry<'owner>, MetaError> {
+    ) -> Result<MetaEntry<'borrow, 'owner>, MetaError> {
         let mut entry = self.enter()?;
         let theap_meta_guard = subprocess.lock_metadata_theap().map_err(MetaError::Lock)?;
         entry.theap_meta_guard = Some(theap_meta_guard);
@@ -2196,7 +2200,7 @@ impl<'owner> MetadataEngine<'owner> {
     /// helper deliberately neither acquires the source `theap_meta` lock nor
     /// changes the capability state.
     fn release_claimed_under_entry(
-        entry: &mut MetaEntry<'owner>,
+        entry: &mut MetaEntry<'_, 'owner>,
         allocation: &mut MetaAllocation<'owner>,
     ) -> Result<(), MetaError> {
         if entry.status() != READY || !allocation.has_consistent_malloc_provenance() {
@@ -2313,7 +2317,7 @@ impl<'owner> MetadataEngine<'owner> {
     /// detached metadata image on its first real metadata request.
     fn initialize_backing(
         self: Pin<&'owner Self>,
-        entry: &mut MetaEntry<'owner>,
+        entry: &mut MetaEntry<'_, 'owner>,
         config: MemoryConfig,
         subprocess: &'static MainSubprocess,
     ) -> Result<(), MetaError> {
@@ -2525,17 +2529,17 @@ impl<'owner> MetadataEngine<'owner> {
 }
 
 /// A held metadata private lock and its exclusive initialized-state access.
-struct MetaEntry<'owner> {
-    owner: Pin<&'owner MetadataEngine<'owner>>,
+struct MetaEntry<'borrow, 'owner> {
+    owner: Pin<&'borrow MetadataEngine<'owner>>,
     entry_thread: usize,
     /// The bounded source-owned lock for direct allocation phases. It is
     /// nested inside `guard` so the existing recursion marker covers a wait
     /// on this nonrecursive lock; Drop releases it before the backing lock.
-    theap_meta_guard: Option<PrivateLockGuard<'owner>>,
-    guard: Option<PrivateLockGuard<'owner>>,
+    theap_meta_guard: Option<PrivateLockGuard<'borrow>>,
+    guard: Option<PrivateLockGuard<'borrow>>,
 }
 
-impl<'owner> MetaEntry<'owner> {
+impl<'borrow, 'owner> MetaEntry<'borrow, 'owner> {
     /// Ensures the source-static detached metadata image names this exact
     /// process tuple. BOUND deliberately does not make a backing PageMap,
     /// arena, or allocator projection available.
@@ -2543,7 +2547,10 @@ impl<'owner> MetaEntry<'owner> {
         &mut self,
         config: MemoryConfig,
         subprocess: &'static MainSubprocess,
-    ) -> Result<(), MetaError> {
+    ) -> Result<(), MetaError>
+    where
+        'borrow: 'owner,
+    {
         match self.status() {
             COLD => self.owner.bind_empty_detached_identity(config, subprocess),
             BOUND | READY => self.validate_bound_tuple(config, subprocess),
@@ -2556,7 +2563,10 @@ impl<'owner> MetaEntry<'owner> {
         &mut self,
         config: MemoryConfig,
         subprocess: &'static MainSubprocess,
-    ) -> Result<(), MetaError> {
+    ) -> Result<(), MetaError>
+    where
+        'borrow: 'owner,
+    {
         self.ensure_bound(config, subprocess)?;
         self.owner
             .validate_bound_detached_metadata_theap(subprocess)?;
@@ -2593,6 +2603,19 @@ impl<'owner> MetaEntry<'owner> {
         }
     }
 
+    /// Verifies an already-ready parent engine without permitting a short
+    /// child lifecycle borrow to initialize its self-referential page session.
+    fn ensure_existing_ready(
+        &self,
+        config: MemoryConfig,
+        subprocess: &'static MainSubprocess,
+    ) -> Result<(), MetaError> {
+        if self.status() != READY {
+            return Err(MetaError::InitializationRetained);
+        }
+        self.validate_bound_tuple(config, subprocess)
+    }
+
     #[inline]
     fn status(&self) -> u8 {
         self.owner.get_ref().status.load(Ordering::Acquire)
@@ -2613,7 +2636,7 @@ impl<'owner> MetaEntry<'owner> {
     }
 }
 
-impl Drop for MetaEntry<'_> {
+impl Drop for MetaEntry<'_, '_> {
     fn drop(&mut self) {
         // Unlock the nested selected source lock, then the Rust backing lock,
         // before clearing the recursion marker. The first release preserves
@@ -4622,6 +4645,22 @@ mod tests {
             Err(MetaError::RecursiveEntry)
         ));
         drop(entry);
+    }
+
+    #[test]
+    fn metadata_entry_borrows_a_nonstatic_engine_only_for_the_entry() {
+        // The engine's backing-provenance lifetime is independent of this
+        // short pin borrow. The empty COLD engine only exercises entry-lock
+        // ownership; no allocator capability can be minted from it.
+        let engine = MetadataEngine::<'static>::new();
+        // SAFETY: pinning a stack local is sufficient here because entry only
+        // takes a shared pinned borrow and no self-referential backing exists
+        // in the COLD image.
+        let pinned = unsafe { Pin::new_unchecked(&engine) };
+        let entry = pinned.enter().expect("a fresh engine admits one entry");
+        assert!(matches!(pinned.enter(), Err(MetaError::RecursiveEntry)));
+        drop(entry);
+        drop(engine);
     }
 
     #[test]
