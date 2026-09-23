@@ -24,7 +24,7 @@ MUSL_TREE_SHA256 = '2ebc86943f5cdac77729695b304a08f6308e7a218f9d484cec5675006b20
 # digests mean a later edit cannot reuse these observed pinned-musl diagnostics
 # by name alone.
 PROOF_SOURCES = {
-    'compat/upstreams.toml': '21f2ac05168af11b667bd8e068499acfc484924176ee2fadd0ef11f20b86fdad',
+    'compat/upstreams.toml': 'bfb6cc46cca77ee8a491a0d494b1a10c8fb96e78ab44c1864dc196e996b6c4aa',
     'compat/x86_64/math-scalar-corrections.md': '7496c2882edc73f579cd02e56760cdf9e469b359b8d97e01a3bd135450d31f99',
     'compat/x86_64/math_scalar_corrections.py': '3df692cfaa4ce0a66288d6939aa4ba7ff4d1186543e644b1241b972fe23837d6',
     'compat/x86_64/run_math_scalar_corrections_libc_test.py': '898d6b45311a5126d2975020515e10f3f40015166c09775b3494f6a1cf60bea4',
@@ -33,7 +33,7 @@ PROOF_SOURCES = {
     'compat/x86_64/generate_libc_math_elementary_long_double.py': '4b08aa69558f42d023e5971565b1b3eef68a1ece9d9b4b84cc1e19fd4708798c',
     'compat/x86_64/generate_libc_math_pow.py': '13d4ba9c0e69d3c3416804d08443353516cb591646bf33bfe59c271ea6d4bdc4',
     'compat/x86_64/generate_libc_math_special.py': 'a73830ba507bb030336d348d1b173aaf121dad3894ea31bffa843526a5cbc4c6',
-    'compat/x86_64/run_math_scalar_corrections.sh': 'c77f82afc760ecf195cd3e5a2d6ccf13c0b7c5fef299606fa840474f30bf2772',
+    'compat/x86_64/run_math_scalar_corrections.sh': 'ceda7393b5ede0ceefc656f0474dee55ed6fe9daa5885e69cc893dae46e39818',
     'compat/x86_64/run_musl_oracle.sh': '4f37688ab2b16c36aee03a666d336bbadf11f79645019effb35c4cbebcc58c2a',
     'compat/x86_64/verify_math_scalar_corrections.py': 'f171001ac9321e82d7af8d1fd3f5dcab18387d8fbb22cc92ecc19c4cc241f50f',
     'compat/x86_64/verify_math_pow_records.py': '377c45675a7bb503b2f2148783db2c5b952686148b4ce0164965349ab7b4fe12',
