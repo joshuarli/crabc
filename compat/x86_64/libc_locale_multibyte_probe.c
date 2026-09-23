@@ -232,6 +232,7 @@ static int check_string_conversions(void)
     static const char euro_lead[] = "\xe2";
     static const char euro_tail[] = "\x82\xac";
     static const wchar_t wide[] = { L'A', 0x20ac, L'\0' };
+    static const wchar_t unencodable[] = { L'A', 0xd800, L'B', L'\0' };
     wchar_t decoded[4] = { 0, 0, 0, 0 };
     char encoded[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
     const char *source;
@@ -299,6 +300,29 @@ static int check_string_conversions(void)
     if (result != 1 || source != euro_tail + 2 || decoded[0] != 0x20ac ||
         !mbsinit(&split_state))
         return 11;
+
+    /*
+     * musl's wcsrtombs advances the caller's source pointer per converted
+     * element, so an unencodable element leaves it at that element in both
+     * the four-byte fast loop and the short-capacity tail loop.
+     */
+    wide_source = unencodable;
+    errno = 0;
+    encoded[0] = encoded[1] = (char)0x5a;
+    if (wcsrtombs(encoded, &wide_source, sizeof(encoded), &state) != (size_t)-1 ||
+        errno != EILSEQ || wide_source != unencodable + 1 || encoded[0] != 'A' ||
+        (unsigned char)encoded[1] != 0x5a)
+        return 12;
+    wide_source = unencodable;
+    errno = 0;
+    if (wcsrtombs(encoded, &wide_source, 3, &state) != (size_t)-1 ||
+        errno != EILSEQ || wide_source != unencodable + 1)
+        return 13;
+    wide_source = unencodable;
+    errno = 0;
+    if (wcsrtombs(NULL, &wide_source, 0, &state) != (size_t)-1 ||
+        errno != EILSEQ || wide_source != unencodable)
+        return 14;
     return 0;
 }
 

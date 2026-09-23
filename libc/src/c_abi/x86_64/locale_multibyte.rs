@@ -1012,7 +1012,10 @@ pub unsafe extern "C" fn mbsrtowcs(
 ///
 /// `source` must point to a live writable pointer to a readable terminated x86
 /// `wchar_t` sequence. A non-null destination must hold `count` bytes. Musl
-/// ignores its mbstate_t argument for this stateless output conversion.
+/// ignores its mbstate_t argument for this stateless output conversion. As in
+/// musl's `wcsrtombs.c`, an output conversion advances `*source` per element:
+/// an unencodable element returns `(size_t)-1` with `*source` naming it, while
+/// the null-destination count mode never writes `*source`.
 #[no_mangle]
 pub unsafe extern "C" fn wcsrtombs(
     destination: *mut c_char,
@@ -1062,6 +1065,9 @@ pub unsafe extern "C" fn wcsrtombs(
             }
             let encoded = unsafe { wcrtomb(output, wide, core::ptr::null_mut()) };
             if encoded == MB_RET_ILSEQ {
+                // SAFETY: musl advances `*ws` per converted element, so the
+                // caller's source pointer names the unencodable element.
+                unsafe { core::ptr::write(source, cursor) };
                 return MB_RET_ILSEQ;
             }
             output = unsafe { output.add(encoded) };
@@ -1090,6 +1096,8 @@ pub unsafe extern "C" fn wcsrtombs(
             let mut bytes = [0 as c_char; 4];
             let encoded = unsafe { wcrtomb(bytes.as_mut_ptr(), wide, core::ptr::null_mut()) };
             if encoded == MB_RET_ILSEQ {
+                // SAFETY: as above, publish the per-element source progress.
+                unsafe { core::ptr::write(source, cursor) };
                 return MB_RET_ILSEQ;
             }
             if encoded > remaining {
