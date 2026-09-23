@@ -1145,8 +1145,9 @@ impl ProcessArenaBacking {
     /// backing's `destroy_all` has transferred every slot. No child teardown
     /// or registry mutation may overlap. `search` must carry the exact live
     /// child Heap/page facts; for the child metadata-Theap source path its
-    /// thread sequence is the parent detached TLD's sequence zero, and
-    /// `random` is that TLD's exclusively borrowed source random image.
+    /// thread sequence is zero from the parent detached TLD, while `random`
+    /// is the child metadata Theap's exclusively borrowed random image,
+    /// seeded from that TLD during Theap initialization.
     pub(crate) unsafe fn try_allocate_child_slices_with_random<'child>(
         &'child self,
         child: crate::os::ChildVmProcess<'child>,
