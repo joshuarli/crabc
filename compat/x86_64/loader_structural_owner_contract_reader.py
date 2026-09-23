@@ -117,7 +117,7 @@ REVIEWED_FUNCTION_FINGERPRINTS = {
     "lock_runtime_acquire": "bba026a7267826ec2cb081217ee6d493ba3586a330b047d0c8b5c01e377b95be",
     "lock_runtime_drop": "6e5de7aff25767e3a28ed117c8ed37d13cc3a94ac1d8b8a928749bd2f7b91f46",
     "worker_tls_allocate": "28bd02edb866ccf4967b0b9088714ddbac5a2bc8125a0ca9f2da68a799265ade",
-    "pthread_creator": "0a808c2cf24262701fdff727c5a6fd9b6fc2a2b24871b405e5b5391fff887487",
+    "pthread_creator": "a57ec9f95e55aae717be046eadfb58896633cb107514f5fd681fbe28c49648cf",
     "registry_runtime_function": "65032fa5c8f30985477192262e23cf77cff3b84b5a9ebf8a0dfbd0df70ecbf4d",
     "dlfcn_dlopen": "490cf95c67cec7a8c8197d7a9cef2309888f4d02349f0170f1edb57e33db488c",
     "dlfcn_dlsym": "4614bddb7798e9fbf0073bea8f13d7f94dc56ef60b99311ad9d71e41072083ed",
@@ -126,12 +126,13 @@ REVIEWED_FUNCTION_FINGERPRINTS = {
     "dlfcn_dlinfo": "0dd91517c082f16c322a5893f66006ddae008485c8545b336f05cd18d52816e5",
     "dlfcn_dl_iterate_phdr": "ee4cd3492be18dbc908d0d7668915a11ee92a4c46b96c3fa882539ef87a33156",
 }
-# `pthread_creator` remains this receipt's token-before-clone algorithm.  The
-# native shadow additions reviewed in 795440db are a control-record field and
-# a parent-side post-clone handshake, both gated by `native-mimalloc-shadow`.
-# `static_c_abi.rs` rejects that feature with x86-owned-dynamic-runtime, so
-# they do not change the selected dynamic route.  Worker entry and exit own
-# allocator lifecycle behavior and are deliberately outside this receipt.
+# `pthread_creator` remains this receipt's token-before-clone algorithm.
+# Native shadow creator changes include attach and exact descriptor control
+# fields plus a parent-side post-clone handshake, all gated by
+# `native-mimalloc-shadow`. `static_c_abi.rs` rejects that feature with the
+# selected C-backend `x86-owned-dynamic-runtime` route unless the separate
+# `x86-owned-dynamic-native-shadow` owner is selected. Worker entry and exit
+# lifecycle algorithms remain outside this receipt.
 NATIVE_MIMALLOC_SHADOW_CONTROL_FIELD = (
     '#[cfg(feature = "native-mimalloc-shadow")]\n'
     '                native_mimalloc_attach: AtomicI32::new(NATIVE_MIMALLOC_ATTACH_PENDING),'
@@ -139,6 +140,10 @@ NATIVE_MIMALLOC_SHADOW_CONTROL_FIELD = (
 NATIVE_MIMALLOC_SHADOW_POST_CLONE_HANDSHAKE = (
     '#[cfg(feature = "native-mimalloc-shadow")]\n'
     '    match unsafe { selected_worker_native_mimalloc_attached(control) } {'
+)
+NATIVE_MIMALLOC_SHADOW_DESCRIPTOR_FIELD = (
+    '#[cfg(feature = "native-mimalloc-shadow")]\n'
+    '                native_allocator_descriptor: AtomicPtr::new(core::ptr::null_mut()),'
 )
 STATIC_ROLES = {
     "static_driver": "bin/crabc-cc",
@@ -533,6 +538,19 @@ def validate_feature_routes(ldso_cargo: str, libc_cargo: str, graph: str, static
     static_code = _rust_without_comments(static_c_abi)
     module = '#[cfg_attr(crabc_x86_dynamic_runtime, path = "general_dlfcn.rs")]\n#[cfg_attr(not(crabc_x86_dynamic_runtime), path = "fixed_graph_dlfcn.rs")]\nmod fixed_graph_dlfcn;'
     require(static_code.count(module) == 1, "selected libc dlfcn module route differs")
+    native_dynamic_guard = (
+        '#[cfg(all(\n'
+        '    feature = "native-mimalloc-shadow",\n'
+        '    crabc_x86_dynamic_runtime,\n'
+        '    not(feature = "x86-owned-dynamic-native-shadow"),\n'
+        '))]\n'
+        'compile_error!(\n'
+        '    "native-mimalloc-shadow with x86-owned-dynamic-runtime requires the explicit '
+        'x86-owned-dynamic-native-shadow ownership selection"\n'
+        ');'
+    )
+    require(static_code.count(native_dynamic_guard) == 1,
+            "native shadow dynamic owner guard differs")
 
 
 def validate_runtime_lock_source(lock: str) -> None:
@@ -561,6 +579,8 @@ def validate_native_shadow_creator_handoff(body: str) -> None:
     code = _rust_without_comments(body)
     require(code.count(NATIVE_MIMALLOC_SHADOW_CONTROL_FIELD) == 1,
             "native shadow control field guard differs")
+    require(code.count(NATIVE_MIMALLOC_SHADOW_DESCRIPTOR_FIELD) == 1,
+            "native shadow descriptor field guard differs")
     require(code.count(NATIVE_MIMALLOC_SHADOW_POST_CLONE_HANDSHAKE) == 1,
             "native shadow post-clone handshake guard differs")
     _ordered(body, (

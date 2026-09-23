@@ -47,13 +47,19 @@ class LoaderStructuralOwnerSourceTests(unittest.TestCase):
         creator = reader.rust_function_body(pthread, "unsafe fn create_selected_worker_with_attributes")
         reader.validate_native_shadow_creator_handoff(creator)
         field = reader.NATIVE_MIMALLOC_SHADOW_CONTROL_FIELD
+        descriptor_field = reader.NATIVE_MIMALLOC_SHADOW_DESCRIPTOR_FIELD
         handshake = reader.NATIVE_MIMALLOC_SHADOW_POST_CLONE_HANDSHAKE
         inverted_guard = '#[cfg(not(feature = "native-mimalloc-shadow"))]'
         mutations = {
             "control field": creator.replace(field, field.split("\n", 1)[1], 1),
+            "descriptor field": creator.replace(
+                descriptor_field, descriptor_field.split("\n", 1)[1], 1),
             "post-clone handshake": creator.replace(handshake, handshake.split("\n", 1)[1], 1),
             "inverted control field": creator.replace(
                 field, field.replace('#[cfg(feature = "native-mimalloc-shadow")]', inverted_guard, 1), 1),
+            "inverted descriptor field": creator.replace(
+                descriptor_field,
+                descriptor_field.replace('#[cfg(feature = "native-mimalloc-shadow")]', inverted_guard, 1), 1),
             "inverted post-clone handshake": creator.replace(
                 handshake, handshake.replace('#[cfg(feature = "native-mimalloc-shadow")]', inverted_guard, 1), 1),
         }
@@ -92,11 +98,19 @@ class LoaderStructuralOwnerSourceTests(unittest.TestCase):
     def test_ldso_and_libc_feature_spelling_cannot_cross_crates(self) -> None:
         ldso = (ROOT / "ldso/Cargo.toml").read_text(encoding="utf-8")
         libc = (ROOT / "libc/Cargo.toml").read_text(encoding="utf-8")
+        static_abi = (ROOT / "libc/src/c_abi/x86_64/static_c_abi.rs").read_text(encoding="utf-8")
+        with self.assertRaisesRegex(reader.LoaderStructuralOwnerError, "native shadow dynamic owner guard"):
+            reader.validate_feature_routes(
+                ldso, libc,
+                (ROOT / "ldso/src/x86_64_general_initial_graph.rs").read_text(encoding="utf-8"),
+                static_abi.replace('not(feature = "x86-owned-dynamic-native-shadow")',
+                                   'feature = "x86-owned-dynamic-native-shadow"', 1),
+            )
         with self.assertRaisesRegex(reader.LoaderStructuralOwnerError, "ldso feature route"):
             reader.validate_feature_routes(ldso.replace(
                 "x86_64-owned-dynamic-runtime", "x86-owned-dynamic-runtime", 1), libc,
                 (ROOT / "ldso/src/x86_64_general_initial_graph.rs").read_text(encoding="utf-8"),
-                (ROOT / "libc/src/c_abi/x86_64/static_c_abi.rs").read_text(encoding="utf-8"))
+                static_abi)
 
     def test_reviewed_selected_body_preserves_cfg_feature_literals(self) -> None:
         graph = (ROOT / "ldso/src/x86_64_general_initial_graph.rs").read_text(encoding="utf-8")
