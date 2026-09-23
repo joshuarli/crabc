@@ -415,6 +415,26 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
             receipt.validate_image_tool(program, receipt.identity(self.workspace, forged),
                                         self.workspace, {}, manifest)
 
+    def test_current_image_manifest_uses_the_repository_toolchain_and_keeps_the_old_pin(self) -> None:
+        current = receipt.trusted_image_manifest()
+        toolchain = receipt.pinned_toolchain(ROOT)
+        rustc = f"/opt/rustup/toolchains/{toolchain}-x86_64-unknown-linux-musl/bin/rustc"
+        linker = (f"/opt/rustup/toolchains/{toolchain}-x86_64-unknown-linux-musl/"
+                  "lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld")
+        self.assertEqual(current["schema"], "crabc.x86_64-owned-utmpx-image-inputs/v2")
+        self.assertEqual(current["image"], receipt.PINNED_IMAGE_ID)
+        self.assertIn(rustc, current["files"])
+        self.assertIn(linker, current["files"])
+        self.assertEqual(set(receipt.IMAGE_FIXED_PATHS[-2:]), {rustc, linker})
+
+        old_path = ROOT / "compat/x86_64/owned_utmpx_image_inputs.json"
+        old = json.loads(old_path.read_text(encoding="utf-8"))
+        tracked = subprocess.check_output(
+            ["git", "show", "HEAD:compat/x86_64/owned_utmpx_image_inputs.json"], cwd=ROOT,
+        )
+        self.assertEqual(old_path.read_bytes(), tracked)
+        self.assertNotEqual(old["image"], current["image"])
+
     def test_selected_product_epoch_is_distinct_from_the_collector_epoch(self) -> None:
         collector = receipt.local_git_head(ROOT)
         selected = {"revision": "f" * 40, "content_sha256": "b" * 64}

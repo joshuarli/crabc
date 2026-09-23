@@ -22,6 +22,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 from typing import Any, Mapping
 
 # This module is the host's trusted reader.  It must never import retained
@@ -36,14 +37,19 @@ from owned_static_link_authority import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from scripts.rust_toolchain import pinned_toolchain
+
 SCHEMA = "crabc.x86_64-owned-utmpx-receipt/v1"
 COMMAND_SCHEMA = "crabc.x86_64-owned-utmpx-command/v2"
 SOURCE_MOUNT = "/workspace"
-PINNED_IMAGE_ID = "sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d"
+PINNED_IMAGE_ID = "sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d"
 PINNED_IMAGE = "crabc-core-evidence@" + PINNED_IMAGE_ID
-IMAGE_MANIFEST = "compat/x86_64/owned_utmpx_image_inputs.json"
+IMAGE_MANIFEST = "compat/x86_64/owned_utmpx_current_image_inputs.json"
 SHA_RE = re.compile(r"[0-9a-f]{64}\Z")
 IMAGE_PATH = "/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+TOOLCHAIN_ROOT = Path("/opt/rustup/toolchains") / f"{pinned_toolchain(ROOT)}-x86_64-unknown-linux-musl"
 COMMAND_ENV = {
     "PATH": IMAGE_PATH,
     "TMPDIR": SOURCE_MOUNT + "/.work/utmpx-receipt",
@@ -58,8 +64,8 @@ IMAGE_COMMANDS = ("bash", "basename", "chmod", "chroot", "cmp", "cp", "dirname",
 IMAGE_FIXED_PATHS = (
     "/usr/local/bin/crabc-x86_64-musl-gcc", "/opt/musl-1.2.6/lib/libc.so", "/opt/musl-1.2.6/lib/libc.a",
     "/opt/musl-1.2.6/lib/musl-gcc.specs",
-    "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/bin/rustc",
-    "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld",
+    str(TOOLCHAIN_ROOT / "bin/rustc"),
+    str(TOOLCHAIN_ROOT / "lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld"),
 )
 
 # These are the eight current source-selected legacy aliases.  ``utmpname`` is
@@ -104,7 +110,9 @@ SOURCES = (
     "compat/x86_64/owned_dynamic_receipt.py",
     "compat/x86_64/loader_debug_abi_evidence.py",
     "compat/x86_64/owned_static_link_authority.py",
-    "compat/x86_64/owned_utmpx_image_inputs.json",
+    IMAGE_MANIFEST,
+    "rust-toolchain.toml",
+    "scripts/rust_toolchain.py",
     "docs/evidence/x86-owned-utmpx.md",
     "compat/upstreams.toml",
     "docker/x86_64-musl-oracle-gcc",
@@ -329,14 +337,14 @@ def live_image_manifest() -> dict[str, Any]:
     except (OSError, subprocess.CalledProcessError) as error:
         raise ReceiptError("pinned image GCC support identity is unavailable") from error
     require(all(type(path) is str and path.startswith("/") for path in paths), "pinned image command identity differs")
-    return {"schema": "crabc.x86_64-owned-utmpx-image-inputs/v1", "image": PINNED_IMAGE_ID,
+    return {"schema": "crabc.x86_64-owned-utmpx-image-inputs/v2", "image": PINNED_IMAGE_ID,
             "path": IMAGE_PATH, "files": {path: image_file_record(path) for path in sorted(set(paths))}}
 
 
 def trusted_image_manifest() -> dict[str, Any]:
     value = read_json(ROOT / IMAGE_MANIFEST, "trusted utmpx image manifest")
     require(type(value) is dict and set(value) == {"schema", "image", "path", "files"}
-            and value["schema"] == "crabc.x86_64-owned-utmpx-image-inputs/v1"
+            and value["schema"] == "crabc.x86_64-owned-utmpx-image-inputs/v2"
             and value["image"] == PINNED_IMAGE_ID and value["path"] == IMAGE_PATH
             and type(value["files"]) is dict and value["files"], "trusted utmpx image manifest differs")
     for invocation, record in value["files"].items():
