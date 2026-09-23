@@ -1529,6 +1529,7 @@ enum ChildMainHeapStage {
     TheapDetached,
     MetadataTheapReleased,
     HeapListRemoved,
+    ArenaBackingDestroyed,
     Terminal,
 }
 
@@ -1549,6 +1550,7 @@ pub(crate) struct ChildMainHeapBindFailure<'heap> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ChildMainHeapReleaseStage {
     Validate,
+    ArenaBacking,
     ParentHeap,
     Context,
 }
@@ -1557,15 +1559,21 @@ pub(crate) enum ChildMainHeapReleaseStage {
 pub(crate) enum ChildMainHeapReleaseError {
     InvalidTransition,
     Metadata(MetaError),
+    ArenaDestroy(crate::arena::ArenaDestroyError),
+    ArenaReleaseRetained,
     ParentHeap(crate::main_heap_page::ParentHeapAllocationReleaseError),
 }
 
 #[must_use = "a failed child Heap release retains its context and allocation state"]
-pub(crate) enum ChildMainHeapReleaseFailure<'heap> {
+pub(crate) enum ChildMainHeapReleaseFailure<'heap, 'tracking> {
     Retained {
         owner: ChildMainHeapContextOwner<'heap>,
         stage: ChildMainHeapReleaseStage,
         error: ChildMainHeapReleaseError,
+    },
+    ArenaBacking {
+        owner: ChildMainHeapContextOwner<'heap>,
+        destroyed: crate::arena::DestroyedArenas<'tracking>,
     },
     Terminal {
         owner: ChildMainHeapContextOwner<'heap>,
@@ -1870,12 +1878,13 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     /// detach, metadata-Theap free, and Heap-list removal succeeded; all Heap
     /// projections ended; and the supplied current parent attachment is the
     /// exact allocator owner that minted this token.
-    pub(crate) unsafe fn release_after_empty_heap_teardown(
+    pub(crate) unsafe fn release_after_empty_heap_teardown<'tracking>(
         mut self,
+        tracking: &'tracking mut [usize],
         heap_owner: &mut crate::main_heap_page::MainHeapThreadOwnerLocalPageEngine<'heap>,
         attachment: &mut crate::main_heap_thread::MainHeapThreadAttachment<'heap>,
-    ) -> Result<(), ChildMainHeapReleaseFailure<'heap>> {
-        if self.stage != ChildMainHeapStage::HeapListRemoved {
+    ) -> Result<(), ChildMainHeapReleaseFailure<'heap, 'tracking>> {
+        if !matches!(self.stage, ChildMainHeapStage::HeapListRemoved | ChildMainHeapStage::ArenaBackingDestroyed) {
             return Err(ChildMainHeapReleaseFailure::Retained {
                 owner: self,
                 stage: ChildMainHeapReleaseStage::Validate,
@@ -1895,6 +1904,27 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
                 stage: ChildMainHeapReleaseStage::Validate,
                 error: ChildMainHeapReleaseError::InvalidTransition,
             });
+        }
+        if self.stage == ChildMainHeapStage::HeapListRemoved {
+            let destroyed = self.context.with_image(|child| unsafe {
+                child.identity().arena_backing().destroy_all(tracking)
+            }).unwrap_or(Err(crate::arena::ArenaDestroyError::InvalidOwnership));
+            match destroyed {
+                Err(error) => {
+                    return Err(ChildMainHeapReleaseFailure::Retained {
+                        owner: self,
+                        stage: ChildMainHeapReleaseStage::ArenaBacking,
+                        error: ChildMainHeapReleaseError::ArenaDestroy(error),
+                    });
+                }
+                Ok(destroyed) if !destroyed.is_released() => {
+                    return Err(ChildMainHeapReleaseFailure::ArenaBacking { owner: self, destroyed });
+                }
+                Ok(destroyed) => {
+                    drop(destroyed);
+                    self.stage = ChildMainHeapStage::ArenaBackingDestroyed;
+                }
+            }
         }
         let allocation = self.heap_storage.take().expect("validated child Heap capability");
         match unsafe { heap_owner.release_child_heap_storage_after_teardown(attachment, allocation) } {
@@ -1924,6 +1954,25 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
             });
         }
         Ok(())
+    }
+}
+
+impl<'heap, 'tracking> ChildMainHeapReleaseFailure<'heap, 'tracking> {
+    /// Retries raw unmaps retained by the completed child arena teardown.
+    /// The parent-issued context and its child identity stay inside this
+    /// failure value until every transferred raw release succeeds.
+    pub(crate) fn retry_arena_backing(
+        self,
+    ) -> Result<ChildMainHeapContextOwner<'heap>, Self> {
+        let Self::ArenaBacking { mut owner, mut destroyed } = self else {
+            return Err(self);
+        };
+        if destroyed.retry_raw().is_err() || !destroyed.is_released() {
+            return Err(Self::ArenaBacking { owner, destroyed });
+        }
+        owner.stage = ChildMainHeapStage::ArenaBackingDestroyed;
+        drop(destroyed);
+        Ok(owner)
     }
 }
 

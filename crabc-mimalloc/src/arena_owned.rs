@@ -933,6 +933,12 @@ impl ProcessArenaBacking {
     }
 
     /// Caller holds reserve_lock until slot publication or complete rollback.
+    ///
+    /// # Safety
+    /// `process` and `stored_process` name the same immutable policy/identity
+    /// pair, and the caller retains both plus this backing until every
+    /// published slot/callback is quiescent and `destroy_all` has transferred
+    /// all remaining owners. This applies to returned failure owners too.
     unsafe fn install_owned_allocation_locked(
         &self, process: VmProcess<'_>, stored_process: StoredVmProcess, config: MemoryConfig,
         managed_size: usize, allocation: ArenaBacking, memory: MemoryId,
@@ -1066,9 +1072,12 @@ impl ProcessArenaBacking {
     /// # Safety
     ///
     /// This must be the sole normal arena group for `process`, with its fixed
-    /// configuration. `search`'s requested arena and Heap/thread inputs must
-    /// describe live source owners. The returned claim retains its exact
-    /// range until explicit release; no registry destruction may overlap.
+    /// configuration. The borrowed process policy and identity, plus this
+    /// backing, remain pinned and live through every published slot, callback,
+    /// retained cleanup owner, returned claim, and quiescent `destroy_all`.
+    /// `search`'s requested arena and Heap/thread inputs must describe live
+    /// source owners. The returned claim retains its exact range until
+    /// explicit release; no registry destruction may overlap.
     pub(crate) unsafe fn try_allocate_slices(
         &'static self, process: VmProcess<'static>, config: MemoryConfig,
         search: ArenaSearch, slice_count: usize, alignment: usize, commit: bool,
@@ -1084,6 +1093,8 @@ impl ProcessArenaBacking {
     /// # Safety
     /// The caller must satisfy `try_allocate_slices` and retain the supplied
     /// source random operation's exclusive-access contract during each draw.
+    /// The borrowed process policy/identity and backing remain live until all
+    /// published owners and retained failures are retired by `destroy_all`.
     pub(crate) unsafe fn try_allocate_slices_with_random(
         &self, process: VmProcess<'_>, config: MemoryConfig,
         search: ArenaSearch, slice_count: usize, alignment: usize, commit: bool,
@@ -1110,6 +1121,11 @@ impl ProcessArenaBacking {
     }
 
     /// Source `mi_arena_reserve`, called only under the source reserve lock.
+    ///
+    /// # Safety
+    /// The caller holds `reserve_lock` and retains the borrowed process policy,
+    /// identity, and backing until `destroy_all` transfers all published or
+    /// terminal owners. `random` is exclusively borrowed for each source draw.
     unsafe fn reserve_locked(
         &self, process: VmProcess<'_>, config: MemoryConfig,
         requested_size: usize, allow_large: bool, mut random: crate::os::OsRandom<'_>,
@@ -1134,8 +1150,10 @@ impl ProcessArenaBacking {
     ///
     /// # Safety
     /// This is the process's sole arena group with immutable configuration.
-    /// Published ranges remain process-lived, and no teardown overlaps. Any
-    /// random image is exclusively borrowed from the current default Theap.
+    /// The borrowed process policy/identity and backing remain live until all
+    /// published ranges, callbacks, and retained failures are retired by
+    /// `destroy_all`; no teardown overlaps. Any random image is exclusively
+    /// borrowed from the current default Theap.
     pub(crate) unsafe fn reserve_os_memory_for_process(
         &'static self, process: VmProcess<'static>, config: MemoryConfig, size: usize,
         access: MapAccess, allow_large: bool, random: crate::os::OsRandom<'_>,
@@ -1152,6 +1170,10 @@ impl ProcessArenaBacking {
     /// Source `mi_reserve_os_memory_ex2` regular aligned map/manage/free.
     /// A failed map trim or unpublished manage cleanup retains the exact
     /// still-active owner in a terminal slot, never an untracked raw address.
+    ///
+    /// # Safety
+    /// The caller holds `reserve_lock` and satisfies `reserve_locked`'s
+    /// process/backing lifetime and random-access obligations.
     unsafe fn reserve_one_locked(
         &self, process: VmProcess<'_>, config: MemoryConfig,
         size: usize, access: MapAccess, allow_large: bool, random: crate::os::OsRandom<'_>,

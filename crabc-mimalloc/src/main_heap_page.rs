@@ -9448,7 +9448,7 @@ mod tests {
             // no child pages and makes no full heap-destroy claim.
             unsafe {
                 child
-                    .release_after_empty_heap_teardown(&mut heap_owner, attachment)
+                    .release_after_empty_heap_teardown(&mut [], &mut heap_owner, attachment)
                     .unwrap_or_else(|_| panic!("the parent Heap token and context release last"));
             }
             assert_eq!(
