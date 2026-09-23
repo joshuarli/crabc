@@ -2438,8 +2438,13 @@ python3 -m unittest compat/allocator/tests/test_runner.py
 ```
 
 The verified archive and tag attestation live in the ignored
-`.work/allocator-cache/`. Once they are present, `--offline` performs no
-network access. Contract or source-map changes require an explicit ratchet
+`.work/allocator-cache/`. `--offline` performs no network access. The tag
+attestation file records a remote tag observation made by an online run; when
+it is absent, an offline run still accepts a digest-verified archive whose
+`git archive` pax commit equals the pinned peeled revision, admitting the tag
+object from the reviewed pin (`pinned_archive_tag_identity`). That admission is
+not written as an attestation, so consumers that require a remote observation
+still need one online run. Contract or source-map changes require an explicit ratchet
 snapshot after review; the normal gate never updates its own baseline.
 
 ## Checked-in contracts

@@ -16198,17 +16198,65 @@ def cached_tag_attestation(pin: Mapping[str, str]) -> dict[str, Any] | None:
     return value
 
 
-def verify_tag_identity(pin: Mapping[str, str], offline: bool) -> dict[str, Any]:
-    """Cache an exact annotated-tag/peeled-commit attestation beside the archive."""
+def archive_embedded_revision(archive: Path) -> str | None:
+    """Return the commit ID that `git archive` recorded in a source tarball.
+
+    The pinned codeload URL is `git archive` output, which stores the archived
+    commit as the pax global header's `comment` record. `tarfile` parses that
+    header while opening the first member.
+    """
+
+    try:
+        with tarfile.open(archive, "r:gz") as stream:
+            comment = stream.pax_headers.get("comment")
+    except (OSError, tarfile.TarError) as error:
+        raise HarnessError(f"cannot read mimalloc archive pax header: {error}") from error
+    if isinstance(comment, str) and re.fullmatch(r"[0-9a-f]{40}", comment):
+        return comment
+    return None
+
+
+def pinned_archive_tag_identity(pin: Mapping[str, str], archive: Path) -> dict[str, Any]:
+    """Admit the reviewed tag identity for an offline, digest-verified archive.
+
+    Offline there is no upstream to probe. The source of truth is the reviewed
+    pin (`compat/upstreams.toml`, `crabc-mimalloc/UPSTREAM.md`), whose annotated
+    tag object and peeled commit were verified when its archive digest was
+    recorded. The caller must already have matched `archive` against that
+    SHA-256; this check additionally requires those bytes to name the pinned
+    peeled commit. The record carries `basis: pinned-archive` and is never
+    written to the cached remote-observation path.
+    """
+
+    embedded = archive_embedded_revision(archive)
+    if embedded != pin["revision"]:
+        raise HarnessError(
+            "offline mimalloc archive does not embed the pinned peeled revision: "
+            f"expected {pin['revision']}, observed {embedded!r}"
+        )
+    return {
+        "basis": "pinned-archive",
+        "format": 1,
+        "repository": pin["repository"],
+        "tag": pin["tag"],
+        "tag_object": pin["tag_object"],
+        "revision": pin["revision"],
+    }
+
+
+def verify_tag_identity(pin: Mapping[str, str], offline: bool, archive: Path) -> dict[str, Any]:
+    """Establish the annotated-tag/peeled-commit identity of a verified archive.
+
+    A cached remote observation (`tag_attestation_path`) wins. Offline runs
+    otherwise admit the reviewed pin from the archive's embedded commit; online
+    runs probe the remote tag and cache that observation beside the archive.
+    """
 
     cached = cached_tag_attestation(pin)
     if cached is not None:
         return cached
     if offline:
-        raise HarnessError(
-            "verified mimalloc tag identity is absent from offline cache: "
-            f"{tag_attestation_path(pin)}"
-        )
+        return pinned_archive_tag_identity(pin, archive)
     git = require_tool("git")
     ref = f"refs/tags/{pin['tag']}"
     peeled = ref + "^{}"
@@ -16242,7 +16290,7 @@ def fetch_archive(pin: Mapping[str, str], offline: bool) -> Path:
     archive = archive_path(pin)
     expected = pin["sha256"]
     if archive.is_file() and sha256_file(archive) == expected:
-        verify_tag_identity(pin, offline)
+        verify_tag_identity(pin, offline, archive)
         return archive
     if archive.exists():
         archive.unlink()
@@ -16264,7 +16312,7 @@ def fetch_archive(pin: Mapping[str, str], offline: bool) -> Path:
             f"expected {expected}, observed {observed}"
         )
     partial.replace(archive)
-    verify_tag_identity(pin, offline=False)
+    verify_tag_identity(pin, False, archive)
     return archive
 
 

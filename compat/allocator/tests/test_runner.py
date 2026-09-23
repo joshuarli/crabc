@@ -410,6 +410,98 @@ class ArchiveTests(unittest.TestCase):
                 RUNNER.safe_extract(archive, root / "out", "mimalloc-3.5.0")
 
 
+def git_archive_like_tarball(path: Path, embedded_commit: str | None) -> None:
+    """Write a gzip tarball shaped like `git archive` output for the pin.
+
+    `git archive` (and therefore the pinned codeload URL) records the archived
+    commit ID as the pax global header's `comment` record.
+    """
+
+    pax_headers = {} if embedded_commit is None else {"comment": embedded_commit}
+    with tarfile.open(
+        path, "w:gz", format=tarfile.PAX_FORMAT, pax_headers=pax_headers
+    ) as stream:
+        directory = tarfile.TarInfo("mimalloc-3.5.0")
+        directory.type = tarfile.DIRTYPE
+        stream.addfile(directory)
+
+
+class OfflineArchiveTagIdentityTests(unittest.TestCase):
+    """Offline `fetch_archive` admits the reviewed tag identity without a probe."""
+
+    def offline_cache(self, root: Path, embedded_commit: str | None) -> dict[str, str]:
+        pin = RUNNER.load_pin()
+        archive = root / f"mimalloc-{pin['version']}.tar.gz"
+        git_archive_like_tarball(archive, embedded_commit)
+        return {**pin, "sha256": hashlib.sha256(archive.read_bytes()).hexdigest()}
+
+    def forbid_network(self):
+        refuse = mock.Mock(side_effect=AssertionError("offline fetch touched the network"))
+        return (
+            mock.patch.object(RUNNER, "command_record", refuse),
+            mock.patch.object(RUNNER.urllib.request, "urlopen", refuse),
+        )
+
+    def test_offline_fetch_admits_the_pinned_tag_when_the_archive_embeds_its_commit(self) -> None:
+        with RUNNER.temporary_directory("crabc-offline-tag-identity-") as temporary:
+            root = Path(temporary)
+            pin = self.offline_cache(root, RUNNER.load_pin()["revision"])
+            probe, download = self.forbid_network()
+            with mock.patch.object(RUNNER, "CACHE", root), probe, download:
+                archive = RUNNER.fetch_archive(pin, offline=True)
+                identity = RUNNER.verify_tag_identity(pin, True, archive)
+            self.assertEqual(archive, root / "mimalloc-3.5.0.tar.gz")
+            self.assertEqual(
+                identity,
+                {
+                    "basis": "pinned-archive",
+                    "format": 1,
+                    "repository": pin["repository"],
+                    "revision": pin["revision"],
+                    "tag": pin["tag"],
+                    "tag_object": pin["tag_object"],
+                },
+            )
+            # The cached attestation records a remote tag observation; an
+            # offline admission must not masquerade as one.
+            self.assertFalse((root / "mimalloc-3.5.0.tag.json").exists())
+            with mock.patch.object(RUNNER, "CACHE", root):
+                self.assertIsNone(RUNNER.cached_tag_attestation(pin))
+
+    def test_offline_fetch_rejects_an_archive_that_embeds_another_commit(self) -> None:
+        for embedded in ("0" * 40, None):
+            with self.subTest(embedded=embedded), RUNNER.temporary_directory(
+                "crabc-offline-tag-identity-"
+            ) as temporary:
+                root = Path(temporary)
+                pin = self.offline_cache(root, embedded)
+                probe, download = self.forbid_network()
+                with mock.patch.object(RUNNER, "CACHE", root), probe, download:
+                    with self.assertRaisesRegex(
+                        RUNNER.HarnessError, "does not embed the pinned peeled revision"
+                    ):
+                        RUNNER.fetch_archive(pin, offline=True)
+
+    def test_offline_fetch_prefers_a_cached_remote_tag_observation(self) -> None:
+        with RUNNER.temporary_directory("crabc-offline-tag-identity-") as temporary:
+            root = Path(temporary)
+            pin = self.offline_cache(root, RUNNER.load_pin()["revision"])
+            observed = {
+                "format": 1,
+                "repository": pin["repository"],
+                "revision": pin["revision"],
+                "tag": pin["tag"],
+                "tag_object": pin["tag_object"],
+            }
+            (root / "mimalloc-3.5.0.tag.json").write_text(
+                json.dumps(observed, sort_keys=True) + "\n", encoding="utf-8"
+            )
+            probe, download = self.forbid_network()
+            with mock.patch.object(RUNNER, "CACHE", root), probe, download:
+                archive = RUNNER.fetch_archive(pin, offline=True)
+                self.assertEqual(RUNNER.verify_tag_identity(pin, True, archive), observed)
+
+
 class InventoryTests(unittest.TestCase):
     def test_native_x86_64_profile_records_its_musl_target_boundary(self) -> None:
         self.assertEqual(RUNNER.X86_64_RUST_TARGET, "x86_64-unknown-linux-musl")

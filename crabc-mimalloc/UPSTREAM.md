@@ -16,7 +16,12 @@ it must never follow upstream `main`.
 
 The archive hash identifies the bytes at the listed URL. Any fetch must verify
 both that the annotated tag peels to the recorded commit and that the fetched
-archive has this SHA-256 before it is used as source or an oracle.
+archive has this SHA-256 before it is used as source or an oracle. An offline
+run performs no fetch: absent a cached remote tag observation, it accepts a
+cached archive only when the SHA-256 matches and the archive's `git archive`
+pax global `comment` names the peeled tag commit above. The tag object is then
+this reviewed record, not a new remote observation
+(`compat/allocator/run.py` `pinned_archive_tag_identity`).
 
 ## License provenance
 
