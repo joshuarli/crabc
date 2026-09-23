@@ -83,7 +83,7 @@ static int set_msgverb(const char *value)
     return setenv("MSGVERB", value, 1) == 0 ? 0 : 1;
 }
 
-static int capture_print(const char *verb, const char *expected)
+static int capture_print(const char *verb, int severity, const char *expected)
 {
     int descriptors[2];
     int saved_stderr;
@@ -105,7 +105,7 @@ static int capture_print(const char *verb, const char *expected)
         return 5;
 
     errno = E2BIG;
-    result = fmtmsg(MM_PRINT, "LBL", MM_ERROR, "TEXT", "FIX", "TAG");
+    result = fmtmsg(MM_PRINT, "LBL", severity, "TEXT", "FIX", "TAG");
     saved_errno = errno;
     if (dup2(saved_stderr, 2) != 2)
         return 6;
@@ -128,25 +128,31 @@ static int check_print_paths(void)
     static const char all_components[] =
         "LBL: ERROR: TEXT\nTO FIX: FIX TAG\n";
     static const char label_and_text[] = "LBL: TEXT\n";
+    static const char unknown_severity[] =
+        "LBL: (null)TEXT\nTO FIX: FIX TAG\n";
     int result;
 
     errno = E2BIG;
     if (fmtmsg(MM_NULLMC, "ignored", MM_ERROR, "ignored", NULL, NULL) != MM_OK ||
         errno != E2BIG)
         return 1;
-    result = capture_print("label:severity:text:action:tag", all_components);
+    result = capture_print("label:severity:text:action:tag", MM_ERROR, all_components);
     if (result != 0)
         return 10 + result;
-    result = capture_print("label:text", label_and_text);
+    result = capture_print("label:text", MM_ERROR, label_and_text);
     if (result != 0)
         return 30 + result;
     /* Musl treats an unrecognized MSGVERB component as all components. */
-    result = capture_print("not-a-component", all_components);
+    result = capture_print("not-a-component", MM_ERROR, all_components);
     if (result != 0)
         return 50 + result;
-    result = capture_print("", all_components);
+    result = capture_print("", MM_ERROR, all_components);
     if (result != 0)
         return 70 + result;
+    /* Musl's nonzero unknown severity passes null to dprintf's %s. */
+    result = capture_print("label:severity:text:action:tag", 5, unknown_severity);
+    if (result != 0)
+        return 90 + result;
     return 0;
 }
 

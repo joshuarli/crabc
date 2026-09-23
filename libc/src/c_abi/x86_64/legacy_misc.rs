@@ -210,7 +210,9 @@ pub unsafe extern "C" fn fmtmsg(
         MM_ERROR => c"ERROR: ".as_ptr(),
         MM_WARNING => c"WARNING: ".as_ptr(),
         MM_INFO => c"INFO: ".as_ptr(),
-        _ => empty(),
+        // Musl leaves an unrecognized severity as MM_NULLSEV, then prints
+        // that null pointer through dprintf's %s conversion.
+        _ => c"(null)".as_ptr(),
     };
 
     if classification & c_long::from(MM_CONSOLE) != 0 {
