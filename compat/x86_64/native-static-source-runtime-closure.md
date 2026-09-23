@@ -44,6 +44,9 @@ package checksums, and selected source files are recorded.  Workspace and
 registry dependencies are resolved from the checked lock through that private
 vendor; Cargo runs `--locked --offline` with a private `CARGO_HOME`, target,
 and `TMPDIR`.
+The private development graph sets `CARGO_PROFILE_DEV_DEBUG=0`; no debug
+sections are needed for the executable fixture, and the pinned Rust LLD does
+not support compressed debug sections emitted by the image C toolchain.
 
 The selected-native shadow target graph is:
 

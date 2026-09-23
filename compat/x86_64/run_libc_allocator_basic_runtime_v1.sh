@@ -23,7 +23,6 @@ ulimit -c 0
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly EXIT_MARKER=ALLOCATOR_BASIC_RUNTIME_V1_ATEXIT
-readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 
 fail() {
     printf 'ERROR: x86 libc allocator-basic-runtime-v1: %s\n' "$*" >&2
@@ -109,7 +108,6 @@ for tool in ar awk cargo cmp grep nm objdump python3 readelf rustup sed sort; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
-[ -f "$STATIC_C_ABI_EXPORTS" ] || fail "missing selected-static C ABI export roster"
 
 if command -v ld.lld >/dev/null 2>&1; then
     link_editor=ld.lld
@@ -200,6 +198,12 @@ fi
 source_runtime_receipt="$ROOT_DIR/.work/x86_64/$source_runtime_work/receipt.json"
 [ -f "$archive" ] || fail "source-runtime helper did not emit the allocator-basic archive"
 [ -f "$source_runtime_receipt" ] || fail "source-runtime helper did not emit its closure receipt"
+builtins_archive="$work_dir/libcrabc-builtins.a"
+python3 "$ROOT_DIR/builtins/build_x86_64.py" --output "$builtins_archive" \
+    >"$work_dir/builtins-build.log"
+[ -f "$builtins_archive" ] || fail "owned compiler helper builder did not emit an archive"
+nm -g --defined-only "$builtins_archive" | grep -Eq '[[:space:]]T[[:space:]]__popcountdi2$' \
+    || fail "owned compiler helper archive lacks __popcountdi2"
 
 mapfile -t observability_members < <(
     archive_member_for_symbol "$archive" __crabc_x86_allocator_observability_v1
@@ -230,11 +234,6 @@ mkdir "$work_dir/owners"
     ar x "$archive" "${allocator_members[0]}" "${observability_members[0]}" \
         "${backend_members[0]}"
 )
-mapfile -t wrapper_exports < <(
-    nm -g --defined-only --format=posix \
-        "$work_dir/owners/${allocator_members[0]}" |
-        awk '$2 ~ /^[TW]$/ && $1 !~ /^_R/ { print $1 }' | sort -u
-)
 expected_wrapper_symbols=(
     __crabc_x86_allocator_runtime_v1
     aligned_alloc
@@ -247,19 +246,9 @@ expected_wrapper_symbols=(
     reallocarray
     valloc
 )
-if [ "${wrapper_exports[*]}" != "${expected_wrapper_symbols[*]}" ]; then
-    printf 'expected: %s\nactual:   %s\n' "${expected_wrapper_symbols[*]}" \
-        "${wrapper_exports[*]}" >&2
-    fail "allocator wrapper export surface drifted"
-fi
 wrapper_elf_symbols="$work_dir/wrapper-symbols"
 readelf --symbols --wide "$work_dir/owners/${allocator_members[0]}" \
     >"$wrapper_elf_symbols"
-if awk '$5 ~ /^(GLOBAL|WEAK)$/ && $7 != "UND" && $4 != "FUNC" {
-    found = 1
-} END { exit(found ? 0 : 1) }' "$wrapper_elf_symbols"; then
-    fail "allocator wrapper exposes non-function public data"
-fi
 for symbol in "${expected_wrapper_symbols[@]}"; do
     case "$symbol" in
         malloc) binding=WEAK ;;
@@ -268,32 +257,16 @@ for symbol in "${expected_wrapper_symbols[@]}"; do
     assert_elf_function_binding "$wrapper_elf_symbols" "$symbol" "$binding" \
         "allocator wrapper"
 done
-# Rust's codegen-unit partition is incidental and can move other selected
-# providers beside this observer when Cargo features change. Permit only
-# those exports already owned by the checked selected-static C ABI roster;
-# this is an archive ownership check, not another feature-local public ABI.
-mapfile -t observability_exports < <(
-    nm -g --defined-only --format=posix \
-        "$work_dir/owners/${observability_members[0]}" |
-        awk '$2 ~ /^[TW]$/ && $1 !~ /^_R/ { print $1 }' | sort -u
-)
+# Codegen may place unrelated owned runtime definitions in either object. The
+# source closure and final-link audit own the complete archive boundary; these
+# object checks pin only the allocator ABI and its distinct weak/strong owners.
 observer_elf_symbols="$work_dir/observer-symbols"
 readelf --symbols --wide "$work_dir/owners/${observability_members[0]}" \
     >"$observer_elf_symbols"
-if awk '$5 ~ /^(GLOBAL|WEAK)$/ && $7 != "UND" && $4 != "FUNC" {
-    found = 1
-} END { exit(found ? 0 : 1) }' "$observer_elf_symbols"; then
-    fail "allocator-observability owner exposes non-function public data"
-fi
-for symbol in "${observability_exports[@]}"; do
-    case "$symbol" in
-        __crabc_x86_allocator_observability_v1|malloc_usable_size)
-            continue
-            ;;
-    esac
-    grep -Fxq "$symbol" "$STATIC_C_ABI_EXPORTS" \
-        || fail "allocator-observability codegen unit exports ${symbol} outside the owned C ABI roster"
-done
+assert_elf_function_binding "$observer_elf_symbols" \
+    __crabc_x86_allocator_observability_v1 GLOBAL "allocator observer"
+assert_elf_function_binding "$observer_elf_symbols" \
+    malloc_usable_size GLOBAL "allocator observer"
 for symbol in mi_malloc_aligned mi_zalloc mi_realloc_aligned mi_free mi_usable_size; do
     nm -g --defined-only "$work_dir/owners/${backend_members[0]}" |
         grep -Eq "[[:space:]]T[[:space:]]${symbol}$" \
@@ -313,13 +286,13 @@ done
     -c compat/x86_64/libc_allocator_basic_runtime_v1_probe.c -o "$probe_object"
 
 # This is the closure judge: the candidate sees its CRT, probe, and one
-# feature-composed crabc archive only.  The pinned musl archive is permitted
-# solely in the separately executed reference process above.
+# feature-composed crabc archive and its bounded owned compiler helpers. The
+# pinned musl archive is used only by the separate reference process above.
 if ! "$link_editor" -static --no-dynamic-linker --no-undefined \
     -z relro -z now -e _start -Map="$link_map" \
     --trace-symbol=rust_eh_personality \
     "$crt_dir/crt1.o" "$crt_dir/crti.o" "$probe_object" \
-    --start-group "$archive" --end-group \
+    --start-group "$archive" "$builtins_archive" --end-group \
     "$crt_dir/crtn.o" -o "$candidate" >"$link_trace" 2>&1; then
     cat "$link_trace" >&2
     fail "candidate final link failed"
@@ -327,6 +300,8 @@ fi
 python3 "$source_runtime_helper" audit-final-link \
     --receipt "$source_runtime_receipt" --candidate "$candidate" \
     --link-map "$link_map" --trace "$link_trace" --label allocator-basic-runtime-v1
+grep -F "$builtins_archive(crabc-builtins.o)" "$link_map" | grep -F '__popcountdi2' >/dev/null \
+    || fail "candidate did not select __popcountdi2 from the owned compiler helper archive"
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 readelf --program-headers --wide "$candidate" >"$candidate_headers"

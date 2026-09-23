@@ -268,6 +268,33 @@ class NativeStaticSourceRuntimeClosureTests(unittest.TestCase):
         self.assertEqual(record["all_externs"]["base64ct"]["logical_name"], "base64ct")
         self.assertEqual(record["all_externs"]["base64ct"]["modifiers"], [])
 
+    def test_primary_record_accepts_only_matching_rlib_rmeta_pairs(self) -> None:
+        command, target, runtime, artifacts, source = self._command(immediate_abort=True)
+        emitted = self._emitted(artifacts)
+        metadata = artifacts["core"].with_suffix(".rmeta")
+        metadata.write_bytes(b"core metadata")
+        emitted[metadata] = dict(emitted[artifacts["core"]])
+        command.extend(["--extern", f"noprelude,nounused:core={metadata}"])
+
+        record = CLOSURE.command_record(command, target, runtime, emitted, "crabc-libc", source)
+        self.assertEqual(record["all_externs"]["core"]["path"], str(artifacts["core"]))
+        self.assertEqual(record["all_externs"]["core"]["metadata"]["path"], str(metadata))
+
+        bad_identity = dict(emitted)
+        bad_identity[metadata] = {**bad_identity[metadata], "target_name": "std"}
+        with self.assertRaisesRegex(CLOSURE.ClosureError, "metadata does not bind"):
+            CLOSURE.command_record(command, target, runtime, bad_identity, "crabc-libc", source)
+
+        repeated = [*command, "--extern", f"noprelude,nounused:core={metadata}"]
+        with self.assertRaisesRegex(CLOSURE.ClosureError, "repeats --extern core"):
+            CLOSURE.command_record(repeated, target, runtime, emitted, "crabc-libc", source)
+
+        mismatched = artifacts["core"].with_name("libother.rmeta")
+        mismatched.write_bytes(b"other metadata")
+        malformed = [*command[:-2], "--extern", f"noprelude,nounused:core={mismatched}"]
+        with self.assertRaisesRegex(CLOSURE.ClosureError, "repeats --extern core"):
+            CLOSURE.command_record(malformed, target, runtime, emitted, "crabc-libc", source)
+
     def test_alloc_record_retains_private_compiler_builtins_edge(self) -> None:
         command, target, _, artifacts, source = self._command(immediate_abort=True, record_crate="alloc")
 

@@ -129,6 +129,7 @@ class CargoExtern(NamedTuple):
     logical_name: str
     modifiers: tuple[str, ...]
     path: pathlib.Path
+    metadata_path: pathlib.Path | None = None
 
 
 def fail(message: str) -> None:
@@ -539,9 +540,19 @@ def externs(command: Sequence[str], description: str) -> dict[str, CargoExtern]:
         if modifiers not in SUPPORTED_EXTERN_MODIFIERS:
             fail(f"{description} has unsupported --extern modifier sequence: {spelling!r}")
         path = physical(pathlib.Path(raw_path), f"{description} {name} extern")
-        if name in result:
+        previous = result.get(name)
+        if previous is None:
+            result[name] = CargoExtern(logical_name=name, modifiers=modifiers, path=path)
+            continue
+        paths = (previous.path, path)
+        if (previous.metadata_path is not None or previous.modifiers != modifiers
+                or {item.suffix for item in paths} != {".rlib", ".rmeta"}
+                or paths[0].with_suffix("") != paths[1].with_suffix("")):
             fail(f"{description} repeats --extern {name}")
-        result[name] = CargoExtern(logical_name=name, modifiers=modifiers, path=path)
+        library = next(item for item in paths if item.suffix == ".rlib")
+        metadata = next(item for item in paths if item.suffix == ".rmeta")
+        result[name] = CargoExtern(logical_name=name, modifiers=modifiers,
+                                   path=library, metadata_path=metadata)
     return result
 
 
@@ -602,6 +613,16 @@ def command_record(command: Sequence[str], target: pathlib.Path, expected_runtim
         identity = emitted.get(artifact)
         if identity is None:
             fail(f"Cargo {crate} rustc {name} extern does not bind an emitted Cargo artifact")
+        metadata_record = None
+        if external.metadata_path is not None:
+            try:
+                external.metadata_path.relative_to(target)
+            except ValueError as error:
+                raise ClosureError(f"Cargo {crate} rustc admits external Rust metadata {name}: {external.metadata_path}") from error
+            metadata_identity = emitted.get(external.metadata_path)
+            if metadata_identity != identity:
+                fail(f"Cargo {crate} rustc {name} metadata does not bind the same emitted Cargo artifact")
+            metadata_record = file_record(external.metadata_path, f"Cargo {crate} {name} metadata")
         target_name = identity["target_name"]
         if not isinstance(target_name, str):
             fail(f"Cargo {crate} rustc {name} extern has malformed emitted target identity")
@@ -613,6 +634,8 @@ def command_record(command: Sequence[str], target: pathlib.Path, expected_runtim
             **file_record(artifact, f"Cargo {crate} {name} extern"),
             "artifact": identity,
         }
+        if metadata_record is not None:
+            all_externs[name]["metadata"] = metadata_record
     return {
         "arguments": list(command),
         "source": source_identity,
@@ -802,6 +825,7 @@ def build(arguments: argparse.Namespace) -> pathlib.Path:
         "CARGO_HOME": str(work / "cargo-home"),
         "CARGO_NET_OFFLINE": "true",
         "CARGO_INCREMENTAL": "0",
+        "CARGO_PROFILE_DEV_DEBUG": "0",
         "CARGO_TARGET_DIR": str(target),
         "CARGO_TERM_COLOR": "never",
         "CARGO_ENCODED_RUSTFLAGS": "\x1f".join(RUNTIME_FLAGS),
@@ -859,6 +883,7 @@ def build(arguments: argparse.Namespace) -> pathlib.Path:
         "pinned_rustup": rustup,
         "immediate_abort_semantics": "development-only Rust panics abort immediately instead of using static_c_abi.rs's nonreturning spin panic handler",
         "cargo_command": command,
+        "cargo_profile_dev_debug": 0,
         "runtime_flags": list(RUNTIME_FLAGS),
         "cargo_stdout": file_record(stdout_path, "source-runtime Cargo JSON stream"),
         "cargo_stderr": file_record(stderr_path, "source-runtime Cargo diagnostics"),
