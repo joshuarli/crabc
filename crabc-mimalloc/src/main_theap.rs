@@ -9,7 +9,8 @@
 // `_mi_heap_init` ordering and `mi_thread_theaps_done`) and `src/init.c:448-481`
 // (`_mi_thread_done` root/teardown call order), `src/theap.c:228-306,414-449`
 // (including `_mi_tld_detach_theaps`), `src/heap.c:37-42,103-126`,
-// `src/threadlocal.c:205-214`, and `include/mimalloc/types.h:560-639,690-701`.
+// `src/threadlocal.c:205-214`, `src/page.c:1021-1043`,
+// `src/options.c:160`, and `include/mimalloc/types.h:560-639,690-701`.
 
 //! Process-static first-thread main heap and default-theap attachment.
 //!
@@ -820,6 +821,9 @@ pub(crate) struct MainStaticTheapAttachment {
     thread: crate::types::LiveThreadId,
     tld: Option<MainStaticThreadLocalData>,
     registration: Option<ThreadRegistrationLease>,
+    /// The process-lived source descriptor owner is read only at the generic
+    /// collection threshold. Legacy detached fixtures use the source default.
+    generic_collect_policy: Option<&'static crate::os::VmPolicy>,
     /// One detached OS-aligned singleton release owner retained only when an
     /// unfinished bounded main-static page engine cannot complete its final
     /// unmap. It is intentionally terminal: this attachment has no general
@@ -920,19 +924,20 @@ impl MainStaticTheapAttachment {
     ///
     /// The caller must meet [`Self::begin_after_heap_foundation`]'s exact
     /// lifecycle and ownership obligations, and `process` must be the
-    /// retained process pair for this same selected `foundation`.  This call
-    /// borrows it only synchronously at the source-position NUMA write; the
-    /// returned attachment never retains a policy alias.
+    /// retained process pair for this same selected `foundation`. Its policy
+    /// remains live through the returned attachment's page-session lifetime:
+    /// the source generic collection option is read at each administration
+    /// threshold after the synchronous source-position NUMA write.
     pub(crate) unsafe fn begin_after_heap_foundation_with_vm_process(
         foundation: MainStaticHeapFoundation,
         selection: MainStaticBootstrapSelection,
-        process: VmProcess<'_>,
+        process: VmProcess<'static>,
     ) -> Result<Self, MainStaticTheapError> {
         // SAFETY: this forwards the unchanged caller-owned source foundation
         // and ticket-zero selector to the shared attachment transition. The
-        // copied borrowed process pair remains valid for this synchronous
-        // NUMA observation under the caller's process-startup ownership.
-        unsafe {
+        // process pair remains valid through this synchronous NUMA observation
+        // and the returned attachment's process-lived option reads.
+        let mut attachment = unsafe {
             Self::begin_after_heap_foundation_with_numa_source(
                 foundation,
                 selection,
@@ -945,7 +950,9 @@ impl MainStaticTheapAttachment {
                     numa_node as i32
                 },
             )
-        }
+        }?;
+        attachment.generic_collect_policy = Some(process.policy());
+        Ok(attachment)
     }
 
     /// Shares the selected static attachment with a synchronous private NUMA
@@ -1114,6 +1121,7 @@ impl MainStaticTheapAttachment {
             thread,
             tld: Some(tld),
             registration: Some(registration),
+            generic_collect_policy: None,
             terminal_os_release: None,
             state: AttachmentState::Attached,
             _not_send_or_sync: PhantomData,
@@ -1359,6 +1367,7 @@ impl MainStaticTheapAttachment {
             storage: self.storage,
             subprocess: self.subprocess,
             thread: self.thread,
+            generic_collect_policy: self.generic_collect_policy,
             static_main_mapped_regular_claim: StaticMainMappedRegularClaimSlot::Unavailable,
             _not_send_or_sync: PhantomData,
         })
@@ -2803,6 +2812,7 @@ pub(crate) struct MainStaticProcessPageSession {
     storage: &'static MainStaticAttachmentStorage,
     subprocess: &'static MainSubprocess,
     thread: crate::types::LiveThreadId,
+    generic_collect_policy: Option<&'static crate::os::VmPolicy>,
     /// The one process-paired ordinary regular reclaim source. It is absent
     /// before the first arena exists, then remains with this permanent session
     /// across an all-free active-to-dormant transition and later reactivation.
@@ -3377,6 +3387,8 @@ unsafe impl TheapPageSession for MainStaticProcessPageSession {
             Theap::advance_generic_allocation_administration_at(
                 NonNull::new(self.storage.theap.image.get())
                     .expect("the process-static Theap slot has a stable address"),
+                || self.generic_collect_policy
+                    .map_or(10_000, crate::os::VmPolicy::generic_collect_frequency),
             )
         }
     }

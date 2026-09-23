@@ -6,7 +6,8 @@
 //
 // Source map: pinned mimalloc v3.5.0 `src/init.c:236-282,305-360,377-421,
 // 448-481`, `src/theap.c:89-152,228-306,414-449`, `src/page.c:214-243`,
-// `src/threadlocal.c:205-214`, `src/prim/prim-tls.c:25-34,211-252`, and
+// `src/threadlocal.c:205-214`, `src/page.c:1021-1043`, `src/options.c:160`,
+// `src/prim/prim-tls.c:25-34,211-252`, and
 // `src/heap.c:103-126`.
 
 //! Later-thread attachment to the process-static main heap.
@@ -290,6 +291,9 @@ pub(crate) struct MainHeapThreadAttachment<'main> {
     /// The source `mi_option_page_full_retain` image frozen before this
     /// later Theap Release-publishes its heap pointer.
     page_mode: TheapPageMode,
+    /// Source generic collection option retained by the real process path;
+    /// detached fixtures keep the pinned 10,000 default.
+    generic_collect_policy: Option<&'static crate::os::VmPolicy>,
     tld: Option<DynamicAttachedThreadLocalData>,
     theap: Option<MetaAllocation<'static>>,
     thread: crate::types::LiveThreadId,
@@ -358,6 +362,26 @@ impl<'main> MainHeapThreadAttachment<'main> {
                 TheapPageMode::OrdinaryAbandoning,
             )
         }
+    }
+
+    /// Starts the production later-main owner with the selected process
+    /// option image used at each generic administration boundary.
+    ///
+    /// # Safety
+    ///
+    /// This has [`Self::begin`]'s caller obligations. `process` must be the
+    /// process-lived policy for this exact main Heap and remain valid through
+    /// the attachment's final teardown.
+    pub(crate) unsafe fn begin_with_vm_process(
+        main_heap: MainStaticHeapLease<'main>,
+        config: MemoryConfig,
+        process: crate::os::VmProcess<'static>,
+    ) -> Result<Self, MainHeapThreadAttachmentBeginError<'main>> {
+        // SAFETY: the caller supplies the same source attachment inputs and
+        // exact retained process identity required by this boundary.
+        let mut attachment = unsafe { Self::begin(main_heap, config) }?;
+        attachment.generic_collect_policy = Some(process.policy());
+        Ok(attachment)
     }
 
     /// Builds the same owner over an explicit process-lived metadata fixture.
@@ -485,6 +509,7 @@ impl<'main> MainHeapThreadAttachment<'main> {
             metadata,
             config,
             page_mode,
+            generic_collect_policy: None,
             tld: Some(tld),
             theap: None,
             thread,
@@ -2151,7 +2176,13 @@ unsafe impl TheapPageSession for MainHeapThreadPageSession<'_, '_> {
     ) -> crate::types::GenericAllocationAdministration {
         // SAFETY: this validated session owns only the two generic source
         // counters; no whole-Theap mutable projection overlaps Heap links.
-        unsafe { Theap::advance_generic_allocation_administration_at(self.local_theap_pointer()) }
+        unsafe {
+            Theap::advance_generic_allocation_administration_at(
+                self.local_theap_pointer(),
+                || self.attachment.generic_collect_policy
+                    .map_or(10_000, crate::os::VmPolicy::generic_collect_frequency),
+            )
+        }
     }
 
     #[cfg(target_arch = "x86_64")]

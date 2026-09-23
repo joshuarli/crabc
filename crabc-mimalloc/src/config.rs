@@ -13,7 +13,9 @@
 // 463-492,545-557,612,716-718` (normal-release constants),
 // `include/mimalloc/bits.h:33-145` and
 // `include/mimalloc/internal.h:717-719` (word and two-level page-map
-// constants), `src/bitmap.h:94-105` (bitmap-bounded arena constants), and
+// constants), `src/bitmap.h:94-105` (bitmap-bounded arena constants),
+// `src/options.c:160,623-674` (generic collection and selected environment
+// descriptors), and
 // `CMakeLists.txt:7-24,161-192,280-340,361-454,647-693,769-774` (selected
 // normal-release switches and the deliberately excluded Armv8.3-a path).
 // The selected M1 branch is LP64, little-endian Linux/AArch64 normal release:
@@ -22,8 +24,9 @@
 // large pages are active. `MI_ARENA_SLICE_SHIFT` and
 // `MI_BCHUNK_BITS_SHIFT` are C/Rust checked as the actual selected macros, not
 // re-derived formulas. The C oracle deliberately keeps the project Armv8.0
-// baseline instead of CMake's optional Armv8.3-a path. This module is not a
-// runtime configuration mechanism or a port of unselected CMake modes.
+// baseline instead of CMake's optional Armv8.3-a path. These constants do
+// not offer runtime CMake-mode selection; the selected source option image
+// below retains only the process descriptors explicitly listed there.
 
 pub(crate) const WORD_SIZE: usize = core::mem::size_of::<usize>();
 pub(crate) const KIB: usize = 1024;
@@ -119,11 +122,13 @@ pub(crate) const PAGE_MAP_SUB_SHIFT: usize = 13;
 pub(crate) const PAGE_MAP_SUB_COUNT: usize = 1 << PAGE_MAP_SUB_SHIFT;
 pub(crate) const PAGE_MAP_SHIFT: usize = MAX_VABITS - PAGE_MAP_SUB_SHIFT - ARENA_SLICE_SHIFT;
 
-/// The VM-affecting subset of pinned `src/options.c` descriptors.
+/// The selected VM-policy and generic-allocation descriptors from pinned
+/// `src/options.c`.
 ///
-/// These are not a new allocator configuration language.  They retain the
-/// source descriptors that `src/os.c` observes, including their individual
-/// default values and lazy `UNINIT -> DEFAULTED | INITIALIZED` transition.
+/// These are not a new allocator configuration language. They retain the
+/// source descriptors that `src/os.c` and generic Theap administration
+/// observe, including their defaults and lazy
+/// `UNINIT -> DEFAULTED | INITIALIZED` transitions.
 /// A process-start owner must supply the environment observation: this
 /// allocation-free crate deliberately has no ambient `environ` reader.
 #[repr(usize)]
@@ -147,13 +152,14 @@ pub(crate) enum VmOption {
     MinimalPurgeSize = 15,
     ReserveOsMemory = 16,
     DestroyOnExit = 17,
+    GenericCollect = 18,
 }
 
 impl VmOption {
-    pub(crate) const ALL: [Self; 18] = [
+    pub(crate) const ALL: [Self; 19] = [
         // Keep the selected descriptors in their `src/options.c:111-177`
-        // order.  The source initializes every descriptor in declaration
-        // order at process start; the omitted non-VM descriptors stay outside
+        // order. The source initializes every descriptor in declaration
+        // order at process start; the omitted descriptors stay outside
         // this bounded process-policy owner rather than being silently
         // reordered around it.
         Self::ArenaEagerCommit,
@@ -169,6 +175,7 @@ impl VmOption {
         Self::ArenaReserve,
         Self::ArenaPurgeMult,
         Self::DisallowArenaAlloc,
+        Self::GenericCollect,
         Self::PageCommitOnDemand,
         Self::AllowThp,
         Self::MinimalPurgeSize,
@@ -198,6 +205,7 @@ impl VmOption {
             Self::MinimalPurgeSize => b"minimal_purge_size",
             Self::ReserveOsMemory => b"reserve_os_memory",
             Self::DestroyOnExit => b"destroy_on_exit",
+            Self::GenericCollect => b"generic_collect",
         }
     }
 
@@ -223,7 +231,8 @@ impl VmOption {
             | Self::ArenaIsNumaLocal
             | Self::MinimalPurgeSize
             | Self::ReserveOsMemory
-            | Self::DestroyOnExit => None,
+            | Self::DestroyOnExit
+            | Self::GenericCollect => None,
         }
     }
 
@@ -259,6 +268,9 @@ impl VmOption {
             | Self::PageCommitOnDemand
             | Self::ArenaIsNumaLocal
             | Self::DestroyOnExit => 0,
+            // `src/options.c:160`; `page.c:1030` clamps this raw value only
+            // at each 1,000-call generic administration boundary.
+            Self::GenericCollect => 10_000,
             // `src/options.c:174`, expressed in KiB like the two arena-size
             // descriptors.
             Self::MinimalPurgeSize => 0,
@@ -331,16 +343,16 @@ impl VmOptionSlot {
     }
 }
 
-/// Allocation-free VM option descriptors with the source's lazy timing.
+/// Allocation-free selected process options with the source's lazy timing.
 ///
-/// This value deliberately has no global instance.  A future process-start
-/// owner must retain it, provide bounded environment observations, and decide
+/// This value has no global instance. The process-start owner must retain it,
+/// provide bounded environment observations, and decide
 /// when all descriptors are ready before constructing [`crate::os::VmPolicy`].
 /// Keeping that owner explicit prevents tests or a second linked allocator
 /// copy from silently changing process policy.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct VmOptions {
-    slots: [VmOptionSlot; 18],
+    slots: [VmOptionSlot; 19],
 }
 
 impl VmOptions {
@@ -367,6 +379,7 @@ impl VmOptions {
                 VmOptionSlot::new(VmOption::MinimalPurgeSize.default_value()),
                 VmOptionSlot::new(VmOption::ReserveOsMemory.default_value()),
                 VmOptionSlot::new(VmOption::DestroyOnExit.default_value()),
+                VmOptionSlot::new(VmOption::GenericCollect.default_value()),
             ],
         }
     }
@@ -994,6 +1007,7 @@ mod tests {
                 VmOption::ArenaReserve,
                 VmOption::ArenaPurgeMult,
                 VmOption::DisallowArenaAlloc,
+                VmOption::GenericCollect,
                 VmOption::PageCommitOnDemand,
                 VmOption::AllowThp,
                 VmOption::MinimalPurgeSize,
@@ -1002,6 +1016,17 @@ mod tests {
             ],
             "the bounded VM owner follows the selected source declaration order"
         );
+    }
+
+    #[test]
+    fn generic_collect_environment_retains_source_signed_value_and_descriptor_order() {
+        let entries = [b"mimalloc_generic_collect=-7\0".as_ptr().cast(), core::ptr::null()];
+        let mut options = VmOptions::uninitialized();
+        // SAFETY: this stable two-entry test vector contains one NUL-terminated value.
+        unsafe { options.initialize_from_source_environment(entries.as_ptr()) };
+        assert_eq!(options.value(VmOption::GenericCollect), Some(-7));
+        assert_eq!(options.state(VmOption::GenericCollect), VmOptionState::Initialized);
+        assert_eq!(VmOption::ALL[13], VmOption::GenericCollect);
     }
 
     #[test]

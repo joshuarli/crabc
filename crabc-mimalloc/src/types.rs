@@ -20,8 +20,9 @@
 // `include/mimalloc/internal.h:985-999` (the full-queue flag and reserved-byte
 // accounting transition), `src/arena.c:674-723,870-1037,1240-1282` (per-heap arena-pages
 // acquisition/publication and fresh/release page metadata
-// publication), `src/page.c:214-243,574-644,708-757` (false-force owner-local
-// collection and fresh-page local-state invariants),
+// publication), `src/page.c:214-243,574-644,708-757,1021-1043`
+// (false-force owner-local collection, fresh-page local-state invariants,
+// and source-clamped generic administration),
 // and `src/arena.c:199-219` (arena memory-ID construction and projection).
 // Main-Heap source destruction is in the `heap_destroy` child module.
 // The intrusive membership operations from `src/page-queue.c:40-55,126-423`
@@ -6482,15 +6483,14 @@ impl Theap {
     /// Advances source `_mi_malloc_generic` administration through the
     /// `mi_malloc_generic_admin` collection decision.
     ///
-    /// The fixed v3.5.0 default `mi_option_generic_collect` is 10,000. This
-    /// port has no option registration route yet, so it intentionally records
-    /// that pinned default rather than manufacturing a side option state.
+    /// The fixed v3.5.0 default `mi_option_generic_collect` is 10,000.
+    /// Detached fixtures without a process option owner retain that image.
     #[inline]
     pub(crate) fn advance_generic_allocation_administration(
         &mut self,
     ) -> GenericAllocationAdministration {
         // SAFETY: the exclusive receiver owns both source counter fields.
-        unsafe { Self::advance_generic_allocation_administration_at(NonNull::from(self)) }
+        unsafe { Self::advance_generic_allocation_administration_at(NonNull::from(self), || 10_000) }
     }
 
     /// Advances only the two source generic-administration counters at an
@@ -6500,15 +6500,18 @@ impl Theap {
     ///
     /// `pointer` must designate one live `Theap`; the caller exclusively owns
     /// `generic_count` and `generic_collect_count`, and holds no shared whole-
-    /// `Theap` observation across this call. This narrow raw projection exists
+    /// `Theap` observation across this call. `generic_collect_frequency` must
+    /// read only an independent process option owner; it must not inspect or
+    /// mutate this Theap and must return the source-clamped value in
+    /// `1..=1_000_000`. This narrow raw projection exists
     /// for the permanent process page session, where unrelated linked-list
     /// fields remain concurrently observable through the shared-Heap protocol.
     #[inline]
     pub(crate) unsafe fn advance_generic_allocation_administration_at(
         pointer: NonNull<Theap>,
+        generic_collect_frequency: impl FnOnce() -> isize,
     ) -> GenericAllocationAdministration {
         const GENERIC_ADMIN_FREQUENCY: isize = 1_000;
-        const GENERIC_FULL_COLLECT_FREQUENCY: isize = 10_000;
 
         // C reaches this function only after `_mi_malloc_generic` has
         // incremented `generic_count`; it then routes the threshold value to
@@ -6535,7 +6538,10 @@ impl Theap {
 
             *generic_collect_count += *generic_count;
             *generic_count = 0;
-            if *generic_collect_count >= GENERIC_FULL_COLLECT_FREQUENCY {
+            // `page.c:1030` obtains the live option only after the 1,000-call
+            // threshold. A temporarily unavailable environment entry must
+            // not be retried by the other 999 generic calls.
+            if *generic_collect_count >= generic_collect_frequency() {
                 *generic_collect_count = 0;
                 GenericAllocationAdministration::Full
             } else {
@@ -9614,6 +9620,36 @@ mod tests {
             theap.generic_collect_count, 0,
             "the source resets generic_collect_count before its selected full collection"
         );
+    }
+
+    #[test]
+    fn generic_allocation_administration_reads_source_option_only_at_threshold() {
+        let mut theap = Theap::empty();
+        let pointer = NonNull::from(&mut theap);
+        let observations = core::cell::Cell::new(0);
+        for _ in 0..999 {
+            // SAFETY: the test exclusively owns the live Theap; the callback
+            // observes only an independent scalar Cell.
+            let result = unsafe {
+                Theap::advance_generic_allocation_administration_at(pointer, || {
+                    observations.set(observations.get() + 1);
+                    1
+                })
+            };
+            assert_eq!(result, GenericAllocationAdministration::None);
+        }
+        assert_eq!(observations.get(), 0);
+        // SAFETY: the same exclusive Theap and independent option observer.
+        let result = unsafe {
+            Theap::advance_generic_allocation_administration_at(pointer, || {
+                observations.set(observations.get() + 1);
+                1
+            })
+        };
+        assert_eq!(result, GenericAllocationAdministration::Full);
+        assert_eq!(observations.get(), 1);
+        assert_eq!(theap.generic_count, 0);
+        assert_eq!(theap.generic_collect_count, 0);
     }
 
     #[test]

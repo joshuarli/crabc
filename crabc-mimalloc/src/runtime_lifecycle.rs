@@ -15652,6 +15652,14 @@ fn attach_current_thread_after_entry(
             return Some(ThreadAttachResult::Retained);
         }
     };
+    let process = match ready.vm_process() {
+        Ok(process) => process,
+        Err(_) => {
+            slot.state = ThreadLifecycleState::Retained;
+            RUNTIME_PROCESS.retain();
+            return Some(ThreadAttachResult::Retained);
+        }
+    };
     let Some(main_heap) = (unsafe { RUNTIME_PROCESS.active_main_heap() }) else {
         slot.state = ThreadLifecycleState::Retained;
         RUNTIME_PROCESS.retain();
@@ -15676,7 +15684,7 @@ fn attach_current_thread_after_entry(
     // diagnostic callbacks may enter native allocation, which must be free
     // to observe this still-Fresh slot. The independent entry claim above
     // prevents those callbacks from beginning a second attachment.
-    let attachment = unsafe { MainHeapThreadAttachment::begin(main_heap, config) };
+    let attachment = unsafe { MainHeapThreadAttachment::begin_with_vm_process(main_heap, config, process) };
     let slot = current_thread_slot();
     Some(match attachment {
         Ok(attachment) => {

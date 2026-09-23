@@ -1091,6 +1091,13 @@ impl VmPolicy {
         self.option_value_after_unresolved_observation(option)
     }
 
+    /// Pinned `page.c:1030` reads and clamps this option only when a Theap's
+    /// generic allocation counter reaches its administration boundary.
+    #[inline]
+    pub(crate) fn generic_collect_frequency(&self) -> isize {
+        self.option_value(VmOption::GenericCollect).clamp(1, 1_000_000) as isize
+    }
+
     /// Completes a source option read after its initial incomplete-image
     /// observation. See [`Self::options_after_unresolved_observation`] for
     /// why the gate must recheck completion before it projects mutably.
@@ -6627,6 +6634,16 @@ mod tests {
             5,
             "the source rejects INT_MAX itself as an explicit option and probes the primitive"
         );
+    }
+
+    #[test]
+    fn generic_collect_policy_clamps_the_live_source_descriptor() {
+        let mut policy = VmPolicy::defaults_for_test();
+        assert_eq!(policy.generic_collect_frequency(), 10_000);
+        for (raw, selected) in [(-7, 1), (0, 1), (1, 1), (1_001, 1_001), (1_000_001, 1_000_000)] {
+            policy.set_option(VmOption::GenericCollect, raw);
+            assert_eq!(policy.generic_collect_frequency(), selected);
+        }
     }
 
     #[test]
