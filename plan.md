@@ -35,17 +35,20 @@ are not transferable passes for a different revision.
   VM, metadata, arenas, initialization, fault injection, and no-recursion
   qualification remain partial. The bounded metadata witness does not close them.
 - **Integration:** Accepted C stays default. Explicit owned static and dynamic
-  native-shadow products and graph/purity checks exist; installed lifecycle,
-  interposition, full qualification and promotion remain distinct obligations.
+  native-shadow products and graph/purity checks exist. The private
+  source-built x86 C allocator basic gate passed at `d92714775` with the
+  `nightly-2026-09-15` toolchain selected by `rust-toolchain.toml`.
+  Installed lifecycle, interposition, full qualification and promotion remain
+  distinct obligations.
 - **Qualification:** Native OS/libc-test aggregation, unwinder/std/LTO,
   ordered consumer gates and release performance remain open. The 114-row
   collector and bounded replay are not performance qualification. Hardware
   prerequisites are recorded below.
-- **Preservation:** Reconcile unfinished local work before duplicating it:
-  many sibling worktrees and branches not merged into `main` may exist
-  (`git worktree list`, `git branch --no-merged main`); check for the
-  subsystem at hand rather than auditing all of them. AArch64 remains paused;
-  its public profile, selected C backend and qualified records stay unchanged.
+- **Preservation:** Pre-upgrade detached and dirty worktree source was preserved
+  under `refs/archive/pre-toolchain*` before old `.work` state was removed.
+  Review the relevant branch or archive ref before duplicating subsystem work.
+  AArch64 remains paused; its public profile, selected C backend and qualified
+  records stay unchanged.
 
 ## Fixed contracts
 
