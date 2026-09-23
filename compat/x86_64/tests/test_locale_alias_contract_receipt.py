@@ -59,11 +59,18 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
             "launcher_stream": self.write("raw/compile.launcher.json", b'["/usr/bin/env","-i","LC_ALL=C","PATH=/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","/usr/bin/timeout","20"]\n'),
         }
 
-    def public_entry_fixture(self, *, tracked_unselected: bool = False) -> tuple[Path, Path, dict[str, object]]:
-        """Build a copied receipt whose source admission remains real on replay."""
+    def public_entry_fixture(self, *, tracked_unselected: bool = False,
+                             current: bool = False) -> tuple[Path, Path, dict[str, object]]:
+        """Build a copied receipt whose source admission remains real on replay.
 
+        ``current`` selects the v4 schema and its own retained source roster,
+        which differs from the historical v3 roster used by default.
+        """
+
+        schema = receipt.CURRENT_SCHEMA if current else receipt.SCHEMA
+        selected_sources = receipt.CURRENT_SELECTED_SOURCES if current else receipt.SELECTED_SOURCES
         trusted = self.root / "trusted"
-        for relative in receipt.SELECTED_SOURCES:
+        for relative in selected_sources:
             source = ROOT / relative
             destination = trusted / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -83,15 +90,15 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
         authority.capture_git_objects(trusted, report_root, [revision])
         authenticated, _files = authority.source_tree(report_root, revision)
         for directory in ("inputs/source", "source-after/inputs/source"):
-            for relative in receipt.SELECTED_SOURCES:
+            for relative in selected_sources:
                 destination = report_root / directory / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(trusted / relative, destination)
         source = {"revision": revision, "tree": tree, "content_sha256": authenticated["content_sha256"],
-                  "clean": True, "paths": receipt.source_records(report_root / "inputs/source", receipt.SELECTED_SOURCES)}
+                  "clean": True, "paths": receipt.source_records(report_root / "inputs/source", selected_sources)}
         source_contract = receipt.validate_source_contract(report_root / "inputs/source")
         report = {
-            "schema": receipt.SCHEMA, "status": receipt.STATUS, "mode_policy": receipt.MODE_POLICY,
+            "schema": schema, "status": receipt.STATUS, "mode_policy": receipt.MODE_POLICY,
             "image_inputs": {"image": "deferred"}, "source_before": source, "source_after": source,
             "source_contract": source_contract, "products": {"products": "deferred"},
             "collector_commands": [{"collector": "deferred"}], "runner_commands": [{"runner": "deferred"}],
@@ -645,6 +652,16 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
         trusted, report_path, report = self.public_entry_fixture()
         admitted = self.admit_public_entry(trusted, report_path)
         self.assertEqual(admitted["source"], report["source_before"])
+
+    def test_validate_report_public_exit_replays_the_current_schema_source_roster(self) -> None:
+        """The v4 exit recheck must reuse the v4 roster, not the historical one."""
+
+        trusted, report_path, report = self.public_entry_fixture(current=True)
+        self.assertNotEqual(set(receipt.CURRENT_SELECTED_SOURCES), set(receipt.SELECTED_SOURCES))
+        admitted = self.admit_public_entry(trusted, report_path)
+        self.assertEqual(admitted["source"], report["source_before"])
+        self.assertEqual([row["path"] for row in admitted["source"]["paths"]],
+                         list(receipt.CURRENT_SELECTED_SOURCES))
 
     def test_validate_report_rejects_a_forged_selected_source_path_identity(self) -> None:
         """The source seal includes its path records, not only its Git digest."""

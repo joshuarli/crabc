@@ -1572,6 +1572,7 @@ def validate_report(root: Path, report_path: Path) -> dict[str, object]:
     _public_replay_exit_recheck(
         root, receipt_root, report_path, report_identity, record, output_relative, source, after_source,
         source_contract, image, products, collector_commands, runner_commands, artifacts, dynamic_links, snapshots, runtime, symbols,
+        selected_sources,
     )
     return {
         "source": source,
@@ -1605,15 +1606,21 @@ def _public_replay_exit_recheck(
     snapshots: Mapping[str, object],
     runtime: Mapping[str, object],
     symbols: Mapping[str, object],
+    selected_sources: Sequence[str],
 ) -> None:
-    """Repeat the public reader's finite reconstruction without starting a process."""
+    """Repeat the public reader's finite reconstruction without starting a process.
+
+    ``selected_sources`` is the roster the initial reconstruction chose from
+    the receipt schema; the v3 and v4 rosters differ, so the exit recheck must
+    not fall back to the historical default.
+    """
 
     if _identity(receipt_root, report_path) != report_identity:
         _fail("report changed during process-free replay")
     if _strict_json(report_path, "locale alias receipt report") != record:
         _fail("report content changed during process-free replay")
-    source_again = _validate_source_seal(receipt_root, record["source_before"], "inputs/source")
-    after_again = _validate_source_seal(receipt_root, record["source_after"], "source-after/inputs/source")
+    source_again = _validate_source_seal(receipt_root, record["source_before"], "inputs/source", selected_sources)
+    after_again = _validate_source_seal(receipt_root, record["source_after"], "source-after/inputs/source", selected_sources)
     if source_again != source or after_again != after_source:
         _fail("source reconstruction changed during process-free replay")
     if validate_source_contract(receipt_root / "inputs/source") != source_contract:
