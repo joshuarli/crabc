@@ -1210,7 +1210,7 @@ impl MetaAllocatorBound {
 unsafe impl Sync for MetaAllocator {}
 
 impl MetaAllocator {
-    const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             lock: PrivateLock::new(),
             active_entry_thread: AtomicUsize::new(0),
@@ -1252,8 +1252,7 @@ impl MetaAllocator {
     /// not itself discover a page size or touch TLS.
     #[inline]
     pub(crate) fn global() -> Pin<&'static Self> {
-        // SAFETY: this object is a process static and cannot move.
-        unsafe { Pin::new_unchecked(&PROCESS_METADATA_ALLOCATOR) }
+        MainSubprocess::global().metadata_allocator()
     }
 
     #[cfg(not(test))]
@@ -2515,8 +2514,6 @@ fn current_entry_thread() -> Result<usize, MetaError> {
         .map(LiveThreadId::get)
         .ok_or(MetaError::InvalidEntryThread)
 }
-
-static PROCESS_METADATA_ALLOCATOR: MetaAllocator = MetaAllocator::new();
 
 #[cfg(test)]
 mod tests {

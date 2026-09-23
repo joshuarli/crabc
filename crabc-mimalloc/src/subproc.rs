@@ -120,6 +120,11 @@ pub(crate) struct MainSubprocess {
     /// lifetime with VM, arena, and Heap producers. This is private state,
     /// not a public `mi_stats_t` layout, reporting API, or generic sink.
     statistics: crate::statistics::SubprocessStatistics,
+    /// Each source subprocess owns its detached metadata allocator. The main
+    /// process keeps this exact image in static storage; a child subprocess
+    /// will place the same owner in its parent-allocated context before it
+    /// publishes any child-local metadata route.
+    metadata_allocator: crate::meta::MetaAllocator,
     heap_list: crate::types::heap_registry::SubprocessHeapList,
     thread_count: AtomicUsize,
     thread_total_count: AtomicUsize,
@@ -277,6 +282,7 @@ impl MainSubprocess {
             source_membership: registry::SourceSubprocessMembership::new(),
             arena_backing: crate::arena::ProcessArenaBacking::new(),
             statistics: crate::statistics::SubprocessStatistics::new(),
+            metadata_allocator: crate::meta::MetaAllocator::new(),
             heap_list: crate::types::heap_registry::SubprocessHeapList::new(),
             thread_count: AtomicUsize::new(0),
             thread_total_count: AtomicUsize::new(0),
@@ -298,6 +304,17 @@ impl MainSubprocess {
 
     pub(crate) fn heap_list(&self) -> &crate::types::heap_registry::SubprocessHeapList {
         &self.heap_list
+    }
+
+    /// Returns this subprocess's pinned detached metadata owner.
+    ///
+    /// The global main owner is permanently static. Later child construction
+    /// must tie this pin to the parent metadata allocation that owns the child
+    /// context rather than lengthening a borrow to process lifetime.
+    pub(crate) fn metadata_allocator(&'static self) -> core::pin::Pin<&'static crate::meta::MetaAllocator> {
+        // SAFETY: the main subprocess is process-static. Child callers will
+        // acquire an equivalent pin only through their owning child lease.
+        unsafe { core::pin::Pin::new_unchecked(&self.metadata_allocator) }
     }
 
     /// Returns the one process-static main-subprocess identity.
@@ -1671,6 +1688,14 @@ mod tests {
     extern crate std;
 
     use super::*;
+
+    #[test]
+    fn process_metadata_allocator_is_owned_by_the_static_main_subprocess() {
+        let subprocess = MainSubprocess::global();
+        let owned = subprocess.metadata_allocator();
+        let global = crate::meta::MetaAllocator::global();
+        assert!(core::ptr::eq(owned.get_ref(), global.get_ref()));
+    }
 
     #[test]
     fn ticket_issues_old_relaxed_sequence_and_only_a_lease_changes_live_count() {
