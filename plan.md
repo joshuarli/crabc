@@ -36,7 +36,9 @@ are not transferable passes for a different revision.
   reader passed. The text family's 27 producer runs passed and its family reader
   is pending. The current-source static process-global fixture passed normal
   and empty-argv startup against pinned musl and the owned runtime at
-  `f600772a6`. These source-bound checkpoints do not promote
+  `f600772a6`. A clean current-source static product preparation and its
+  independent reader passed at `ad21441d6`; dynamic product qualification
+  is still running. These source-bound checkpoints do not promote
   current main. Complete the actual remaining
   aggregate/family admissions from `campaign-status`, not another symbol sweep.
 - **Allocator:** M1's six bounded components passed at `0daef148bd20dc2bef2ac9dc34af4f3dd0e99d7a`.
@@ -63,7 +65,10 @@ are not transferable passes for a different revision.
 - **Qualification:** Native OS/libc-test aggregation, installed-product
   unwinder/std/LTO, ordered consumer gates and release performance remain open.
   Eight standalone unwinder commands and 89 host tests passed on the selected
-  nightly; these are non-promoting source-boundary checks. The 114-row
+  nightly; these are non-promoting source-boundary checks. Canonical static
+  Lua source-build and its independent admission reader passed on clean
+  `ad21441d6`; dynamic Lua and family admission await the matching validated
+  dynamic product. The 114-row
   collector and bounded replay are not performance qualification. Hardware
   prerequisites are recorded below.
 - **Preservation:** Pre-upgrade detached and dirty worktree source was preserved
