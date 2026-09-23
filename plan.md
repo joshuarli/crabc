@@ -39,7 +39,13 @@ are not transferable passes for a different revision.
   static process-global fixture passed normal and empty-argv startup against
   pinned musl and the owned runtime at
   `f600772a6`. Clean current-source static preparation and three-product
-  dynamic qualification passed with independent readers at `ad21441d6`.
+  dynamic qualification passed with independent readers at `ed30f681b`.
+  A fresh standalone OS-test rerun on the frozen `3c47d990d` products
+  reconstructed 5,395 observations and passed its independent reader with
+  only the ten selected atomic/credential dispositions; the earlier
+  contention timeout remains raw failure evidence. A focused `dlinfo`
+  handle-order regression and pthread/C11 once cancellation regression now
+  pass after integrated fixes.
   The same-source native ABI inventory collected and replayed successfully as
   measurement, with provider/semantic closure still open. These source-bound
   checkpoints do not promote current main. Complete the actual remaining
@@ -48,8 +54,9 @@ are not transferable passes for a different revision.
   pinned C/Rust metadata lifecycle differential passed at their recorded source
   revisions. Parent-owned child context, metadata Theap, Heap storage,
   no-page teardown, and a real child-owned regular arena slice passed focused
-  native tests through `ed30f681b`. Child metadata PageMap/page allocation and
-  destruction remain open; VM, arenas, initialization, fault injection, and
+  native tests through `ed30f681b`. The child PageMap/arena pair and locked
+  metadata entry are integrated; child metadata page allocation and
+  destruction remain open. VM, arenas, initialization, fault injection, and
   no-recursion M2 qualification remain partial. C remains the selected backend.
 - **Integration:** Accepted C stays default. Explicit owned static and dynamic
   native-shadow products and graph/purity checks exist. The private
@@ -59,8 +66,11 @@ are not transferable passes for a different revision.
   distinct obligations.
 - **Qualification:** Native OS/libc-test aggregation, installed-product
   unwinder/std/LTO, ordered consumer gates and release performance remain open.
-  Eight standalone unwinder commands and 89 host tests passed on the selected
-  nightly; these are non-promoting source-boundary checks. Canonical static and
+  Eight standalone unwinder commands and 90 host tests passed on the selected
+  nightly; these are non-promoting source-boundary checks. The installed
+  unwinder cleanup reached provider and stock consumers, then exposed and
+  fixed two exact vendor-marker composition defects; a fresh source-matched
+  full gate remains open. Canonical static and
   dynamic Lua source builds and the independent source-build admission passed
   on clean `ad21441d6`. The 114-row
   collector and bounded replay are not performance qualification. Hardware
