@@ -34,9 +34,10 @@ are not transferable passes for a different revision.
   matched on native x86 at `17960aab416c63e50aac190be9e5004fd0a267af`.
   VM, metadata, arenas, initialization, fault injection, and no-recursion
   qualification remain partial. A bounded parent-owned child-Theap attach/detach
-  step passed its focused native test at `b50e32571`; production child context,
-  Heap teardown, and parent storage release remain open. The bounded metadata
-  witnesses do not close the milestone.
+  step passed its focused native test at `b50e32571`. The process-main/child
+  subprocess identity split passed its focused native test at `563ce8abd`;
+  production child context, Heap teardown, and parent storage release remain
+  open. The bounded metadata witnesses do not close the milestone.
 - **Integration:** Accepted C stays default. Explicit owned static and dynamic
   native-shadow products and graph/purity checks exist. The private
   source-built x86 C allocator basic gate passed at `d92714775` with the
