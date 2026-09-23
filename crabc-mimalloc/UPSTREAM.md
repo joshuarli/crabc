@@ -98,6 +98,10 @@ and `compat/allocator/x86_64_huge_reservation_evidence.py`; explicitly
 simulated successful primitive storage/recorders do not qualify hardware
 huge-page allocation. Rust's owned failed-page tracker is documented in the
 known-differences register.
+The direct first-page failure row now maps `src/prim/unix/prim.c:419-449` and
+`src/os.c:781-814` warning order through `diagnostic_output::HugePageWarningRoute`
+and `os::HugeOsAllocation::allocate_for_process_with_source_warnings`; its C/Rust
+trace still requires absent owners and unchanged subprocess counters.
 
 For process-owned regular and callback-backed external arenas,
 `arena_owned::ProcessArenaBacking` now supplies the optional local NUMA node

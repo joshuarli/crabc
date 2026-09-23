@@ -447,9 +447,21 @@ typedef struct large_only_failure_probe_s {
   int flags[3];
   int errors[3];
   size_t madvise_calls;
+  size_t warning_calls;
+  char warning_fragments[6][192];
 } large_only_failure_probe_t;
 
 static large_only_failure_probe_t large_only_failure_probe;
+
+static void m2_large_only_failure_output(const char* message, void* argument) {
+  (void)argument;
+  if (!large_only_failure_probe.active) return;
+  const size_t index = large_only_failure_probe.warning_calls++;
+  if (index >= 6 || message == NULL) return;
+  const size_t length = strnlen(message, sizeof(large_only_failure_probe.warning_fragments[0]) - 1);
+  memcpy(large_only_failure_probe.warning_fragments[index], message, length);
+  large_only_failure_probe.warning_fragments[index][length] = '\0';
+}
 
 /* This is a separate, fixed source-branch profile for `src/os.c:771-841`.
  * It replaces only a selected raw MAP_HUGETLB result with an anonymous normal
@@ -2465,6 +2477,10 @@ static int run_large_only_failure_child(int record_descriptor) {
   mi_subproc_t* const subproc = _mi_subproc_main();
   if (subproc == NULL) return 1;
 
+  mi_option_set_enabled(mi_option_verbose, false);
+  mi_option_set_enabled(mi_option_show_errors, true);
+  mi_register_output(m2_large_only_failure_output, NULL);
+
   const int64_t reserved_before = current_reserved(subproc);
   const int64_t committed_before = current_committed(subproc);
   large_only_failure_probe = (large_only_failure_probe_t){
@@ -2500,6 +2516,27 @@ static int run_large_only_failure_child(int record_descriptor) {
       && large_only_failure_probe.flags[1] == (huge_flags | MAP_HUGE_2MB)
       && large_only_failure_probe.errors[0] == ENOMEM
       && large_only_failure_probe.errors[1] == ENOMEM;
+  char first_upper_warning[192];
+  _mi_snprintf(first_upper_warning, sizeof(first_upper_warning),
+      "unable to allocate huge OS page (error: 12 (0x0C), address: %p, size: 40000000 bytes)\n",
+      large_only_failure_probe.hints[0]);
+  char second_upper_warning[192];
+  _mi_snprintf(second_upper_warning, sizeof(second_upper_warning),
+      "unable to allocate huge OS page (error: 12 (0x0C), address: %p, size: 40000000 bytes)\n",
+      large_only_failure_probe.hints[2]);
+  const bool warning_order = large_only_failure_probe.warning_calls == 6
+      && strncmp(large_only_failure_probe.warning_fragments[0],
+                 "mimalloc: warning: thread 0x", sizeof("mimalloc: warning: thread 0x") - 1) == 0
+      && strcmp(large_only_failure_probe.warning_fragments[1],
+          "unable to allocate huge (1GiB) page, trying large (2MiB) pages instead (errno: 12)\n") == 0
+      && strncmp(large_only_failure_probe.warning_fragments[2],
+                 "mimalloc: warning: thread 0x", sizeof("mimalloc: warning: thread 0x") - 1) == 0
+      && strcmp(large_only_failure_probe.warning_fragments[3], first_upper_warning) == 0
+      && strncmp(large_only_failure_probe.warning_fragments[4],
+                 "mimalloc: warning: thread 0x", sizeof("mimalloc: warning: thread 0x") - 1) == 0
+      && strcmp(large_only_failure_probe.warning_fragments[5], second_upper_warning) == 0;
+  record.first_one_gib_then_two_mib_same_claim_terminal_enomem =
+      record.first_one_gib_then_two_mib_same_claim_terminal_enomem && warning_order;
   record.second_only_two_mib_after_sticky_unavailable = second == NULL
       && second_pages == 0 && second_size == 0 && second_memid.memkind == MI_MEM_NONE
       && large_only_failure_probe.hints[2] != NULL

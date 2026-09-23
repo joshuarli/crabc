@@ -610,6 +610,55 @@ impl SourceFormattedMessage {
         Self { bytes, length }
     }
 
+    /// Fixed warning bodies from the pinned `src/os.c` huge-page allocation
+    /// loop and `src/prim/unix/prim.c` one-GiB retry. These use the
+    /// same bounded source formatter as the existing `mbind` warning.
+    pub(crate) fn huge_one_gib_retry(errno: Errno) -> Self {
+        let mut bytes = [0; SOURCE_FORMAT_STORAGE_BYTES];
+        let mut length = 0;
+        append_mbind_bytes(&mut bytes, &mut length,
+            b"unable to allocate huge (1GiB) page, trying large (2MiB) pages instead (errno: ");
+        append_mbind_unsigned_decimal(&mut bytes, &mut length, errno.raw() as u64);
+        append_mbind_bytes(&mut bytes, &mut length, b")\n");
+        Self { bytes, length }
+    }
+
+    pub(crate) fn huge_map_failure(errno: Errno, address: usize) -> Self {
+        let mut bytes = [0; SOURCE_FORMAT_STORAGE_BYTES];
+        let mut length = 0;
+        append_mbind_bytes(&mut bytes, &mut length, b"unable to allocate huge OS page (error: ");
+        append_mbind_unsigned_decimal(&mut bytes, &mut length, errno.raw() as u64);
+        append_mbind_bytes(&mut bytes, &mut length, b" (0x");
+        append_mbind_uppercase_hex_minimum_two(&mut bytes, &mut length, errno.raw() as u64);
+        append_mbind_bytes(&mut bytes, &mut length, b"), address: ");
+        append_source_pointer(&mut bytes, &mut length, address);
+        append_mbind_bytes(&mut bytes, &mut length, b", size: ");
+        append_mbind_uppercase_hex_minimum_two(&mut bytes, &mut length, 1_u64 << 30);
+        append_mbind_bytes(&mut bytes, &mut length, b" bytes)\n");
+        Self { bytes, length }
+    }
+
+    pub(crate) fn huge_noncontiguous(page: usize, address: usize) -> Self {
+        let mut bytes = [0; SOURCE_FORMAT_STORAGE_BYTES];
+        let mut length = 0;
+        append_mbind_bytes(&mut bytes, &mut length, b"could not allocate contiguous huge OS page ");
+        append_mbind_unsigned_decimal(&mut bytes, &mut length, page as u64);
+        append_mbind_bytes(&mut bytes, &mut length, b" at ");
+        append_source_pointer(&mut bytes, &mut length, address);
+        append_mbind_bytes(&mut bytes, &mut length, b"\n");
+        Self { bytes, length }
+    }
+
+    pub(crate) fn huge_timeout(pages: usize) -> Self {
+        let mut bytes = [0; SOURCE_FORMAT_STORAGE_BYTES];
+        let mut length = 0;
+        append_mbind_bytes(&mut bytes, &mut length,
+            b"huge OS page allocation timed out (after allocating ");
+        append_mbind_unsigned_decimal(&mut bytes, &mut length, pages as u64);
+        append_mbind_bytes(&mut bytes, &mut length, b" page(s))\n");
+        Self { bytes, length }
+    }
+
     #[inline]
     fn as_c_str(&self) -> &CStr {
         // SAFETY: construction always places a zero byte immediately after
@@ -693,6 +742,25 @@ fn append_mbind_uppercase_hex_minimum_two(
     while digits != 0 {
         digits -= 1;
         append_mbind_bytes(bytes, length, &reversed[digits..digits + 1]);
+    }
+}
+
+/// `src/libc.c` prints `%p` with `0x` and a zero-filled width of eight,
+/// twelve, or sixteen uppercase hexadecimal digits according to the address.
+#[inline]
+fn append_source_pointer(
+    bytes: &mut [u8; SOURCE_FORMAT_STORAGE_BYTES], length: &mut usize, value: usize,
+) {
+    append_mbind_bytes(bytes, length, b"0x");
+    let width = if value <= u32::MAX as usize { 8 }
+        else if value >> 16 <= u32::MAX as usize { 12 }
+        else { 2 * core::mem::size_of::<usize>() };
+    let mut shift = width * 4;
+    while shift != 0 {
+        shift -= 4;
+        let digit = ((value >> shift) & 0xF) as u8;
+        let byte = if digit < 10 { b'0' + digit } else { b'A' + digit - 10 };
+        append_mbind_bytes(bytes, length, &[byte]);
     }
 }
 
@@ -1704,16 +1772,20 @@ fn invalid_diagnostic_option_message(index: usize) -> SourceFormattedMessage {
     SourceFormattedMessage::from_source_formatted(unsafe { CStr::from_bytes_with_nul_unchecked(message) })
 }
 
-/// Borrowed route from a process-owned diagnostic image to the one pinned
-/// failed-`mbind` warning call site. It carries no VM policy, mapping, or
-/// callback ownership and exists only while the source startup reservation
-/// chain holds the process owner.
+/// Borrowed route from a process-owned diagnostic image to the pinned huge-page
+/// warning call sites. It carries no VM policy, mapping, or callback ownership
+/// and exists only while the source startup reservation chain holds the
+/// process owner.
 #[derive(Clone, Copy)]
-pub(crate) struct MbindWarningRoute<'owner> {
+pub(crate) struct HugePageWarningRoute<'owner> {
     output: &'owner OutputOwner,
 }
 
-impl<'owner> MbindWarningRoute<'owner> {
+/// Legacy spelling used by the existing process reservation caller.
+/// New huge-page source warnings use [`HugePageWarningRoute`].
+pub(crate) type MbindWarningRoute<'owner> = HugePageWarningRoute<'owner>;
+
+impl<'owner> HugePageWarningRoute<'owner> {
     #[inline]
     pub(crate) const fn new(output: &'owner OutputOwner) -> Self {
         Self { output }
@@ -1732,6 +1804,18 @@ impl<'owner> MbindWarningRoute<'owner> {
     #[inline]
     pub(crate) unsafe fn mbind_failure(&self, numa_node: i32, errno: Errno) {
         let message = SourceFormattedMessage::mbind_failure(numa_node, errno);
+        unsafe { self.output.warning_from_source_options(message) };
+    }
+
+    /// Delivers one selected source huge-page warning while the caller still
+    /// owns every mapped primitive and holds the startup output capability.
+    ///
+    /// # Safety
+    /// The same process serialization and callback lifetime obligations as
+    /// [`Self::mbind_failure`] apply. The caller must invoke this at the
+    /// matching pinned source branch, before transferring or releasing pages.
+    #[inline]
+    pub(crate) unsafe fn huge_warning(&self, message: SourceFormattedMessage) {
         unsafe { self.output.warning_from_source_options(message) };
     }
 }

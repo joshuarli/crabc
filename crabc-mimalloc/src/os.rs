@@ -51,7 +51,7 @@ use core::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use crabc_core::{Errno, Result};
 
 #[cfg(target_arch = "x86_64")]
-use crate::diagnostic_output::MbindWarningRoute;
+use crate::diagnostic_output::{HugePageWarningRoute, SourceFormattedMessage};
 use crate::config::{
     ARENA_SLICE_SIZE, VmOption, VmOptionEnvironmentReader, VmOptionState, VmOptions,
 };
@@ -1262,6 +1262,9 @@ impl VmPolicy {
     /// Claims the source high-address range used for one-or-more 1-GiB huge
     /// page attempts. Claiming advances the process cursor even when a later
     /// kernel map fails, exactly as `mi_os_claim_huge_pages` does.
+    /// The pinned claim warnings still need a callback-safe boundary: this
+    /// function may hold exclusive access to the default Theap random image
+    /// while an output callback can reenter allocation.
     fn claim_huge_pages(
         &self,
         pages: usize,
@@ -2011,6 +2014,8 @@ impl Mapping {
             false,
             None,
             default_random,
+            #[cfg(target_arch = "x86_64")]
+            None,
         )
     }
 
@@ -2182,7 +2187,10 @@ impl Mapping {
 
     /// Attempts the exact one-GiB source huge-page primitive at a claimed
     /// high-address hint. There is no regular mmap fallback on this path.
-    fn map_huge_page_at(policy: &VmPolicy, config: MemoryConfig, hint: usize) -> Result<Self> {
+    fn map_huge_page_at(
+        policy: &VmPolicy, config: MemoryConfig, hint: usize,
+        #[cfg(target_arch = "x86_64")] warning: Option<HugePageWarningRoute<'_>>,
+    ) -> Result<Self> {
         fault_before(FaultPoint::HugeMap)?;
         Self::map_unix_policy(
             policy,
@@ -2194,6 +2202,8 @@ impl Mapping {
             true,
             Some(hint),
             None,
+            #[cfg(target_arch = "x86_64")]
+            warning,
         )
     }
 
@@ -2225,6 +2235,7 @@ impl Mapping {
         large_only: bool,
         explicit_hint: Option<usize>,
         default_random: OsRandom<'_>,
+        #[cfg(target_arch = "x86_64")] warning: Option<HugePageWarningRoute<'_>>,
     ) -> Result<Self> {
         fault_before(FaultPoint::Map)?;
         let mut flags = MAP_PRIVATE | MAP_ANONYMOUS;
@@ -2263,6 +2274,17 @@ impl Mapping {
                     Ok(address) => return Ok(Self::policy_mapping(address, length, config, access, true)),
                     Err(first_error) if one_gib => {
                         policy.huge_one_gib_unavailable.store(true, Ordering::Relaxed);
+                        #[cfg(target_arch = "x86_64")]
+                        if large_only {
+                            if let Some(warning) = warning {
+                                // SAFETY: the source emits this warning after
+                                // its first failed map and before the retry;
+                                // the startup owner retains the output route.
+                                unsafe { warning.huge_warning(
+                                    SourceFormattedMessage::huge_one_gib_retry(first_error)
+                                ) };
+                            }
+                        }
                         let fallback_flags = (large_flags & !MAP_HUGE_1GB) | MAP_HUGE_2MB;
                         match Self::mmap_with_hint(
                             source_hint(),
@@ -3420,20 +3442,20 @@ impl<'a> HugeOsAllocation<'a> {
     }
 
     #[cfg(target_arch = "x86_64")]
-    /// The selected source-startup huge primitive with its already-retained
-    /// diagnostic route. This never changes mapping ownership or falls back to
-    /// a regular primitive: it differs only at the failed valid-node `mbind`
-    /// call site.
-    pub(crate) fn allocate_for_process_with_mbind_warning(
+    /// The source-startup huge primitive with its already-retained diagnostic
+    /// route. Warnings run at the pinned one-GiB retry, placement,
+    /// failed primitive, noncontiguous cleanup, and timeout positions; none
+    /// transfers mapping ownership or substitutes a regular primitive.
+    pub(crate) fn allocate_for_process_with_source_warnings(
         process: VmProcess<'a>,
         config: MemoryConfig,
         pages: usize,
         numa_node: i32,
         max_milliseconds: i64,
         default_random: OsRandom<'_>,
-        warning: MbindWarningRoute<'_>,
+        warning: HugePageWarningRoute<'_>,
     ) -> HugeOsAllocationOutcome<'a> {
-        allocate_huge_pages_with(
+        allocate_huge_pages_with_warnings(
             process,
             pages,
             max_milliseconds,
@@ -3443,6 +3465,20 @@ impl<'a> HugeOsAllocation<'a> {
             ),
             source_clock_start,
             source_clock_end,
+            Some(warning),
+        )
+    }
+
+    /// Legacy caller spelling retained for the existing arena reservation
+    /// owner. It now carries every source huge-page warning in that attempt.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) fn allocate_for_process_with_mbind_warning(
+        process: VmProcess<'a>, config: MemoryConfig, pages: usize,
+        numa_node: i32, max_milliseconds: i64, default_random: OsRandom<'_>,
+        warning: HugePageWarningRoute<'_>,
+    ) -> HugeOsAllocationOutcome<'a> {
+        Self::allocate_for_process_with_source_warnings(
+            process, config, pages, numa_node, max_milliseconds, default_random, warning,
         )
     }
 
@@ -3559,6 +3595,24 @@ fn allocate_huge_pages_with<'a>(
     mut clock_start: impl FnMut() -> i64,
     mut clock_end: impl FnMut(i64) -> i64,
 ) -> HugeOsAllocationOutcome<'a> {
+    allocate_huge_pages_with_warnings(
+        process, pages, max_milliseconds, default_random, map_page,
+        clock_start, clock_end,
+        #[cfg(target_arch = "x86_64")]
+        None,
+    )
+}
+
+fn allocate_huge_pages_with_warnings<'a>(
+    process: VmProcess<'a>,
+    pages: usize,
+    max_milliseconds: i64,
+    default_random: OsRandom<'_>,
+    mut map_page: impl FnMut(usize) -> Result<Mapping>,
+    mut clock_start: impl FnMut() -> i64,
+    mut clock_end: impl FnMut(i64) -> i64,
+    #[cfg(target_arch = "x86_64")] warning: Option<HugePageWarningRoute<'_>>,
+) -> HugeOsAllocationOutcome<'a> {
     let Some((start, claimed_size)) = process.policy.claim_huge_pages(pages, default_random) else {
         return HugeOsAllocationOutcome::Unavailable(HugeOsAllocationStop::ClaimOverflow);
     };
@@ -3584,6 +3638,14 @@ fn allocate_huge_pages_with<'a>(
         let mut mapping = match map_page(address) {
             Ok(mapping) => mapping,
             Err(error) => {
+                #[cfg(target_arch = "x86_64")]
+                if let Some(warning) = warning {
+                    // SAFETY: source emits before returning the partial
+                    // prefix; the process startup output owner stays live.
+                    unsafe { warning.huge_warning(
+                        SourceFormattedMessage::huge_map_failure(error, address)
+                    ) };
+                }
                 stop = HugeOsAllocationStop::PrimitiveMapFailed(error);
                 break;
             }
@@ -3591,6 +3653,14 @@ fn allocate_huge_pages_with<'a>(
         all_zero &= mapping.initially_zero();
         if mapping.base().ok() != Some(expected) {
             stop = HugeOsAllocationStop::NoncontiguousPrimitive;
+            #[cfg(target_arch = "x86_64")]
+            if let Some(warning) = warning {
+                // SAFETY: the rejected map is still held locally and the
+                // source warning precedes its adjustment free.
+                unsafe { warning.huge_warning(
+                    SourceFormattedMessage::huge_noncontiguous(page, address)
+                ) };
+            }
             if let Err(error) = mapping.unmap_for_process(process, HUGE_PAGE_SIZE, true) {
                 rejected = Some(HugeOsRejectedPrimitive { error, mapping });
             }
@@ -3623,6 +3693,12 @@ fn allocate_huge_pages_with<'a>(
                 elapsed = max_milliseconds.saturating_add(1);
             }
             if elapsed > max_milliseconds {
+                #[cfg(target_arch = "x86_64")]
+                if let Some(warning) = warning {
+                    // SAFETY: the completed prefix remains owned during
+                    // this source warning before loop termination.
+                    unsafe { warning.huge_warning(SourceFormattedMessage::huge_timeout(page)) };
+                }
                 stop = HugeOsAllocationStop::TimedOut;
                 break;
             }
@@ -3656,7 +3732,11 @@ fn map_huge_page_for_process(
     hint: usize,
     numa_node: i32,
 ) -> Result<Mapping> {
-    let mapping = Mapping::map_huge_page_at(process.policy, config, hint)?;
+    let mapping = Mapping::map_huge_page_at(
+        process.policy, config, hint,
+        #[cfg(target_arch = "x86_64")]
+        None,
+    )?;
     apply_huge_page_numa_preference(mapping.base()?, numa_node);
     Ok(mapping)
 }
@@ -3667,9 +3747,9 @@ fn map_huge_page_for_process_with_mbind_warning(
     config: MemoryConfig,
     hint: usize,
     numa_node: i32,
-    warning: MbindWarningRoute<'_>,
+    warning: HugePageWarningRoute<'_>,
 ) -> Result<Mapping> {
-    let mapping = Mapping::map_huge_page_at(process.policy, config, hint)?;
+    let mapping = Mapping::map_huge_page_at(process.policy, config, hint, Some(warning))?;
     apply_huge_page_numa_preference_with_mbind_warning(mapping.base()?, numa_node, warning);
     Ok(mapping)
 }
@@ -3695,7 +3775,7 @@ fn apply_huge_page_numa_preference(address: *mut u8, numa_node: i32) {
 fn apply_huge_page_numa_preference_with_mbind_warning(
     address: *mut u8,
     numa_node: i32,
-    warning: MbindWarningRoute<'_>,
+    warning: HugePageWarningRoute<'_>,
 ) {
     if numa_node < 0 || numa_node >= usize::BITS as i32 - 1 {
         return;
@@ -5851,7 +5931,7 @@ mod tests {
     use crabc_core::Errno;
     #[cfg(target_arch = "x86_64")]
     use crate::diagnostic_output::{
-        MbindWarningRoute, OutputCallback, OutputOwner, RuntimeStderrOutput,
+        HugePageWarningRoute, OutputCallback, OutputOwner, RuntimeStderrOutput,
     };
     #[cfg(target_arch = "x86_64")]
     use core::cell::UnsafeCell;
@@ -5930,8 +6010,8 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     struct FaultDiagnosticRelationCapture {
         count: AtomicUsize,
-        lengths: UnsafeCell<[usize; 2]>,
-        fragments: UnsafeCell<[[u8; 192]; 2]>,
+        lengths: UnsafeCell<[usize; 4]>,
+        fragments: UnsafeCell<[[u8; 192]; 4]>,
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -5942,8 +6022,8 @@ mod tests {
         const fn new() -> Self {
             Self {
                 count: AtomicUsize::new(0),
-                lengths: UnsafeCell::new([0; 2]),
-                fragments: UnsafeCell::new([[0; 192]; 2]),
+                lengths: UnsafeCell::new([0; 4]),
+                fragments: UnsafeCell::new([[0; 192]; 4]),
             }
         }
 
@@ -5952,8 +6032,8 @@ mod tests {
             // SAFETY: this source witness resets only between serialized
             // callback deliveries and before its next observation.
             unsafe {
-                *self.lengths.get() = [0; 2];
-                *self.fragments.get() = [[0; 192]; 2];
+                *self.lengths.get() = [0; 4];
+                *self.fragments.get() = [[0; 192]; 4];
             }
         }
 
@@ -5977,7 +6057,7 @@ mod tests {
         let capture = unsafe { &*(argument as *const FaultDiagnosticRelationCapture) };
         let bytes = unsafe { CStr::from_ptr(message) }.to_bytes();
         let index = capture.count.fetch_add(1, Ordering::AcqRel);
-        if index >= 2 || bytes.len() > 192 {
+        if index >= 4 || bytes.len() > 192 {
             return;
         }
         // SAFETY: `index` is this callback's unique bounded fixed slot and
@@ -6068,7 +6148,7 @@ mod tests {
         ).expect("receiver witness begins with one live mapping");
         let base = mapping.base().expect("mapping remains live before mbind");
 
-        apply_huge_page_numa_preference_with_mbind_warning(base, 62, MbindWarningRoute::new(&output));
+        apply_huge_page_numa_preference_with_mbind_warning(base, 62, HugePageWarningRoute::new(&output));
         assert_eq!(fault.observed(), 1, "the valid source node attempts exactly one mbind");
         assert_eq!(mapping.base(), Ok(base), "failed mbind leaves the mapping owner intact");
         assert_eq!(capture.count.load(Ordering::Acquire), 2, "warning prefix and source body stay separate deliveries");
@@ -6076,7 +6156,7 @@ mod tests {
 
         capture.count.store(0, Ordering::Release);
         fault.set(fault::Plan::at(fault::Point::NumaBind, 1, Errno::PERM));
-        apply_huge_page_numa_preference_with_mbind_warning(base, 63, MbindWarningRoute::new(&output));
+        apply_huge_page_numa_preference_with_mbind_warning(base, 63, HugePageWarningRoute::new(&output));
         assert_eq!(fault.observed(), 0, "node 63 is outside the 64-bit source receiver domain");
         assert_eq!(capture.count.load(Ordering::Acquire), 0, "invalid node has no output delivery");
         assert_eq!(mapping.base(), Ok(base));
@@ -6106,7 +6186,7 @@ mod tests {
         let base = mapping.base().expect("fault-diagnostic mapping is live before mbind");
         let before = subprocess.vm_statistics().snapshot();
         apply_huge_page_numa_preference_with_mbind_warning(
-            base, numa_node, MbindWarningRoute::new(output),
+            base, numa_node, HugePageWarningRoute::new(output),
         );
         let survives = mapping.base() == Ok(base) && subprocess.vm_statistics().snapshot() == before;
         mapping.unmap_for_process(process, page, true)
@@ -7538,15 +7618,22 @@ mod tests {
         let all_raw_maps_are_huge = attempts[..count]
             .iter()
             .all(|attempt| attempt.uses_huge_page_flag());
+        let first_result = first_terminal_enomem
+            && first_one_gib_then_two_mib_same_claim
+            && first_fault_observations == (2, 1, 0);
+        let second_result = second_terminal_enomem
+            && second_only_two_mib_after_sticky_unavailable
+            && (fault.observed(), fault.secondary_observed(), fault.third_observed())
+                == (3, 2, 1);
+        drop(fault);
+        #[cfg(target_arch = "x86_64")]
+        let warning_order = failed_huge_attempt_warning_relation();
+        #[cfg(not(target_arch = "x86_64"))]
+        let warning_order = true;
 
         [
-            first_terminal_enomem
-                && first_one_gib_then_two_mib_same_claim
-                && first_fault_observations == (2, 1, 0),
-            second_terminal_enomem
-                && second_only_two_mib_after_sticky_unavailable
-                && (fault.observed(), fault.secondary_observed(), fault.third_observed())
-                    == (3, 2, 1),
+            first_result && warning_order,
+            second_result,
             all_raw_maps_are_huge,
             after == before,
         ]
@@ -7556,6 +7643,59 @@ mod tests {
     #[test]
     fn large_only_one_gib_failure_retries_two_mib_once_then_stays_terminal() {
         assert_eq!(large_only_one_gib_failure_terminal_matrix(), [true; 4]);
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    fn failed_huge_attempt_warning_relation() -> bool {
+        let _environment_serial = VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK.lock().unwrap();
+        let _environment_reset = VmPolicySourceEnvironmentReset;
+        let show_errors = b"mimalloc_show_errors=1\0";
+        let verbose = b"mimalloc_verbose=0\0";
+        let max_warnings = b"mimalloc_max_warnings=32\0";
+        let mut environment = [show_errors.as_ptr().cast(), verbose.as_ptr().cast(),
+            max_warnings.as_ptr().cast(), core::ptr::null()];
+        VM_POLICY_SOURCE_ENVIRONMENT.store(environment.as_mut_ptr(), Ordering::Release);
+        let mut output = OutputOwner::new(unexpected_default_diagnostic_output);
+        // SAFETY: the fixed environment vector and output callback stay live
+        // for the entire serialized source attempt and its synchronous output.
+        unsafe { output.initialize_source_options(vm_policy_source_environment_for_test) };
+        let capture = FaultDiagnosticRelationCapture::new();
+        unsafe { output.register_output(Some(capture_fault_diagnostic_relation as OutputCallback),
+            &capture as *const FaultDiagnosticRelationCapture as *mut c_void) };
+        capture.reset();
+
+        let fault = fault::install(fault::Plan::at_pair(
+            fault::Point::LargeMap, 1, fault::Point::LargeMap, 1, Errno::NOMEM));
+        let config = MemoryConfig::from_observations(PageSize::new(4096).unwrap(),
+            0, true, false);
+        let policy = VmPolicy::defaults_for_test();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        let before = subprocess.vm_statistics().snapshot();
+        let mut random = TheapRandomImage::empty_weak();
+        random.initialize_weak();
+        let outcome = HugeOsAllocation::allocate_for_process_with_source_warnings(
+            process, config, 1, -1, 0, Some(&mut random), HugePageWarningRoute::new(&output));
+        let hint = policy.huge_hint_start.load(Ordering::Acquire) - HUGE_PAGE_SIZE;
+        assert!(matches!(outcome, HugeOsAllocationOutcome::Unavailable(
+            HugeOsAllocationStop::PrimitiveMapFailed(Errno::NOMEM))));
+        assert_eq!(fault.observed(), 2);
+        assert_eq!(subprocess.vm_statistics().snapshot(), before);
+        assert_eq!(capture.count.load(Ordering::Acquire), 4);
+        assert!(capture.fragment(0).starts_with(b"mimalloc: warning: thread 0x"));
+        assert_eq!(capture.fragment(1),
+            b"unable to allocate huge (1GiB) page, trying large (2MiB) pages instead (errno: 12)\n");
+        assert!(capture.fragment(2).starts_with(b"mimalloc: warning: thread 0x"));
+        assert_eq!(capture.fragment(3), std::format!(
+            "unable to allocate huge OS page (error: 12 (0x0C), address: 0x{hint:012X}, size: 40000000 bytes)\n"
+        ).as_bytes());
+        true
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn failed_huge_attempt_warns_before_retry_and_before_unavailable_result() {
+        assert!(failed_huge_attempt_warning_relation());
     }
 
     #[cfg(not(miri))]

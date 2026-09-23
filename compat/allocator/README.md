@@ -2831,12 +2831,15 @@ exact huge-page flags; it does not compare raw addresses across languages.
 The C terminal upper outcomes return NULL with zero pages/size and
 `MI_MEM_NONE`; Rust returns `Unavailable` with no allocation owner. Both
 observe unchanged reserve/commit statistics. The C fixture separately observes
-no `MADV_HUGEPAGE` call. ENOMEM here is a wrapped primitive observation, not
+no `MADV_HUGEPAGE` call. The first direct attempt also checks the actual
+warning fragments: the one-GiB fallback warning precedes the upper allocation
+failure warning, with the same owner and counter result on both sides. ENOMEM
+here is a wrapped primitive observation, not
 an ambient final-errno contract of `_mi_os_alloc_huge_os_pages`.
 
 This is failure-only evidence for one requested page. It does not qualify
 hardware huge-page success, multiple-page/partial-prefix or timeout behavior,
-mbind/NUMA placement, diagnostics, THP success, or allocator/runtime callers;
+mbind/NUMA placement, other diagnostics, THP success, or allocator/runtime callers;
 the M2 VM component remains partial.
 
 ### Native M2 aligned-overmap cleanup boundary
