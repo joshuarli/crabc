@@ -138,6 +138,8 @@ pub unsafe extern "C" fn getopt(
         __optpos = 0;
     }
 
+    // Musl advances optstring past the ordering prefix before interpreting
+    // the leading ':' error mode. Preserve that normalized view for errors.
     let mut options = optstring;
     if *options as u8 == b'-' || *options as u8 == b'+' {
         options = options.add(1);
@@ -160,7 +162,7 @@ pub unsafe extern "C" fn getopt(
 
     if !matched {
         optopt = option;
-        if *optstring as u8 != b':' && opterr != 0 {
+        if *options as u8 != b':' && opterr != 0 {
             cabi_getopt_message(
                 *argv,
                 b": unrecognized option: \0".as_ptr(),
@@ -186,7 +188,7 @@ pub unsafe extern "C" fn getopt(
         }
         if optind > argc {
             optopt = option;
-            if *optstring as u8 == b':' {
+            if *options as u8 == b':' {
                 return b':' as c_int;
             }
             if opterr != 0 {

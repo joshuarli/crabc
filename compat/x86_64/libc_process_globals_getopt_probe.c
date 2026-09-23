@@ -180,6 +180,12 @@ static int check_short_errors(void)
     optind = 0;
     if (getopt(2, missing, ":ab:") != ':' || optopt != 'b')
         return 2;
+    optind = 0;
+    if (getopt(2, missing, "-:ab:") != ':' || optopt != 'b')
+        return 3;
+    optind = 0;
+    if (getopt(2, missing, "+:ab:") != ':' || optopt != 'b')
+        return 4;
     return 0;
 }
 
@@ -274,6 +280,17 @@ static int check_long_options(void)
         if (getopt_long_only(2, argv, "v", options, &index) != 'v' ||
             index != -1 || optind != 2)
             return 7;
+    }
+    {
+        char a0[] = "tool";
+        char a1[] = "-b";
+        char *argv[] = { a0, a1, NULL };
+
+        optind = 0;
+        opterr = 0;
+        if (getopt_long(2, argv, "-:ab:", options, &index) != ':' ||
+            optopt != 'b')
+            return 8;
     }
     return 0;
 }
