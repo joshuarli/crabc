@@ -26,9 +26,13 @@ from typing import Any, Mapping, Sequence
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from scripts.rust_toolchain import pinned_toolchain
+
 SOURCE_MOUNT = "/workspace"
-PINNED_IMAGE = "crabc-core-evidence@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d"
-IMAGE_MANIFEST = "compat/x86_64/owned_utmpx_image_inputs.json"
+PINNED_IMAGE = "crabc-core-evidence@sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d"
+IMAGE_MANIFEST = "compat/x86_64/owned_resolver_network_image_inputs.json"
 RECEIPT_SCHEMA = "crabc.x86_64-resolver-network-physical/v2"
 SCOPE = ("libc.resolver",)
 EXECUTION_MODE = "two-arms-twelve-candidate-modes"
@@ -37,6 +41,9 @@ ARTIFACT_MODES = ("static-et-exec", "static-pie", "dynamic-pie", "dynamic-non-pi
 ARMS = ("installed", "extracted")
 DYNAMIC_INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
 MUSL_ROOT = Path("/opt/musl-1.2.6")
+TOOLCHAIN_ROOT = Path("/opt/rustup/toolchains") / f"{pinned_toolchain(ROOT)}-x86_64-unknown-linux-musl"
+RUSTC = TOOLCHAIN_ROOT / "bin/rustc"
+LLD = TOOLCHAIN_ROOT / "lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld"
 MUSL_INCLUDE = MUSL_ROOT / "include"
 HEADER_TRACE_PATH = re.compile(r"^\.+ (/.+)$")
 COMPILER_ORACLE_INPUTS = {
@@ -46,6 +53,8 @@ COMPILER_ORACLE_INPUTS = {
     "cc1": Path("/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/cc1"),
     "collect2": Path("/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/collect2"),
     "lto_plugin": Path("/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/liblto_plugin.so"),
+    "rustc": RUSTC,
+    "rust_linker": LLD,
     "specs": MUSL_ROOT / "lib/musl-gcc.specs",
     "libc_archive": MUSL_ROOT / "lib/libc.a",
     "libc_shared": MUSL_ROOT / "lib/libc.so",
@@ -86,6 +95,8 @@ SOURCE_PATHS = {
     "dynamic_receipt_contract": "compat/x86_64/owned_dynamic_receipt.py",
     "reader": "compat/x86_64/resolver_network_component_receipt.py",
     "image_manifest": IMAGE_MANIFEST,
+    "toolchain_config": "rust-toolchain.toml",
+    "toolchain_reader": "scripts/rust_toolchain.py",
 }
 
 
@@ -348,31 +359,39 @@ def validate_report_document(report: object) -> Mapping[str, object]:
     return report
 
 
+def trusted_image_manifest(root: Path) -> Mapping[str, object]:
+    manifest_path = physical_file(root / IMAGE_MANIFEST, "pinned core image manifest")
+    value = read_json_bytes(manifest_path.read_bytes(), "pinned core image manifest")
+    required = {
+        "/usr/local/bin/crabc-x86_64-musl-gcc", "/usr/bin/python3", "/usr/bin/readelf", "/usr/sbin/chroot",
+        *(str(path) for path in COMPILER_ORACLE_INPUTS.values()), str(RUSTC), str(LLD),
+    }
+    require(isinstance(value, dict) and set(value) == {"schema", "image", "path", "files"} and
+            value.get("schema") == "crabc.x86_64-owned-resolver-network-image-inputs/v1" and
+            value.get("image") == PINNED_IMAGE.removeprefix("crabc-core-evidence@") and
+            value.get("path") == "/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" and
+            isinstance(value.get("files"), dict), "pinned resolver-network image manifest differs")
+    files = value["files"]
+    require(set(files) == required, "pinned resolver-network image input roster differs")
+    for invocation, record in files.items():
+        require(isinstance(record, dict) and set(record) == {"path", "sha256", "size", "mode"} and
+                isinstance(record["path"], str) and record["path"].startswith("/") and
+                isinstance(record["sha256"], str) and re.fullmatch(r"[0-9a-f]{64}", record["sha256"]) is not None and
+                type(record["size"]) is int and record["size"] >= 0 and
+                type(record["mode"]) is int and 0 <= record["mode"] <= 0o777,
+                f"pinned resolver-network image input differs: {invocation}")
+    return value
+
+
 def image_manifest(root: Path, receipt: Mapping[str, object]) -> Mapping[str, object]:
     image = receipt["image"]
     require(isinstance(image, dict) and set(image) == {"id", "manifest"} and image["id"] == PINNED_IMAGE,
             "resolver receipt image identity differs")
     manifest = assert_receipt_file_identity(root, image["manifest"], "pinned core image manifest",
                                             expected=root / IMAGE_MANIFEST)
-    value = read_json_bytes(manifest.read_bytes(), "pinned core image manifest")
-    require(isinstance(value, dict) and set(value) == {"schema", "image", "path", "files"} and
-            value.get("schema") == "crabc.x86_64-owned-utmpx-image-inputs/v1" and
-            value.get("image") == PINNED_IMAGE.removeprefix("crabc-core-evidence@") and
-            value.get("path") == "/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" and
-            isinstance(value.get("files"), dict), "pinned core image manifest differs")
-    files = value["files"]
-    required = {
-        "/usr/local/bin/crabc-x86_64-musl-gcc", "/usr/bin/python3", "/usr/bin/readelf", "/usr/sbin/chroot",
-        *(str(path) for path in COMPILER_ORACLE_INPUTS.values()),
-    }
-    require(required <= set(files), "pinned core image manifest omits a resolver compiler input")
-    for invocation, record in files.items():
-        require(isinstance(invocation, str) and invocation.startswith("/") and isinstance(record, dict) and
-                set(record) == {"path", "sha256", "size", "mode"} and isinstance(record["path"], str) and
-                record["path"].startswith("/") and isinstance(record["sha256"], str) and
-                re.fullmatch(r"[0-9a-f]{64}", record["sha256"]) is not None and
-                type(record["size"]) is int and record["size"] >= 0 and type(record["mode"]) is int and
-                0 <= record["mode"] <= 0o777, "pinned core image manifest record differs")
+    value = trusted_image_manifest(root)
+    require(manifest.read_bytes() == (json.dumps(value, indent=2, sort_keys=True) + "\n").encode(),
+            "pinned resolver-network image manifest bytes differ")
     return value
 
 

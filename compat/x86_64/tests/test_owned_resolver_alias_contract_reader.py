@@ -672,10 +672,13 @@ class ResolverAliasPreExecutionCaptureTests(unittest.TestCase):
                                           image_inputs={'timeout': '/usr/bin/unknown'})
 
     def test_image_manifest_covers_each_declared_image_input(self) -> None:
-        manifest = json.loads((ROOT / 'compat/x86_64/owned-resolver-alias-image-inputs.json').read_text(encoding='utf-8'))
+        manifest = resolver_reader.trusted_image_manifest(ROOT)
         self.assertTrue(set(IMAGE_INPUTS.values()).issubset(manifest['files']))
         self.assertEqual(manifest['files']['/usr/bin/timeout']['path'], '/bin/coreutils')
         self.assertEqual(manifest['files']['/usr/sbin/chroot']['path'], '/bin/coreutils')
+        self.assertEqual(manifest['image'], resolver_reader.IMAGE.removeprefix('crabc-core-evidence@'))
+        self.assertTrue(resolver_reader.TOOLCHAIN_INPUTS.issubset(manifest['files']))
+        self.assertTrue((ROOT / 'compat/x86_64/owned-resolver-alias-image-inputs.json').is_file())
 
 
 class ResolverAliasCollectionLifecycleTests(unittest.TestCase):
@@ -693,6 +696,11 @@ class ResolverAliasCollectionLifecycleTests(unittest.TestCase):
             source = {'revision': 'a' * 40, 'tree': 'b' * 40, 'source_sha256': 'c' * 64}
             with mock.patch.object(resolver_reader, '_admit_current_collection', return_value=(source, paths)), \
                  mock.patch.dict(resolver_reader.IMAGE_INPUTS, {}, clear=True), \
+                 mock.patch.object(resolver_reader, 'trusted_image_manifest', return_value={
+                     'schema': 'crabc.x86_64-owned-resolver-alias-image-inputs/v1',
+                     'image': resolver_reader.IMAGE.removeprefix('crabc-core-evidence@'),
+                     'files': {},
+                 }), \
                  mock.patch.dict(os.environ, {resolver_reader.IMAGE_MARKER: resolver_reader.IMAGE}):
                 result = resolver_reader.begin_collection(
                     root=ROOT, work=work,

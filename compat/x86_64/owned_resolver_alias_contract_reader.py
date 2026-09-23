@@ -23,6 +23,10 @@ from typing import Any
 
 MODULE_DIR = Path(__file__).resolve().parent
 ROOT = MODULE_DIR.parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from scripts.rust_toolchain import pinned_toolchain
+
 if str(MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(MODULE_DIR))
 import owned_posix_product_evidence as product_evidence
@@ -32,8 +36,8 @@ SCHEMA = 'crabc.x86_64-owned-resolver-alias-contract/v1'
 COLLECTION_BEGIN_SCHEMA = 'crabc.x86_64-owned-resolver-alias-collection-begin/v1'
 STATUS = 'component-verified'
 COMPONENT = 'resolver-alias-private-bodies'
-IMAGE = 'crabc-core-evidence@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d'
-IMAGE_MANIFEST = MODULE_DIR / 'owned-resolver-alias-image-inputs.json'
+IMAGE = 'crabc-core-evidence@sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d'
+IMAGE_MANIFEST = MODULE_DIR / 'owned_resolver_alias_image_inputs.json'
 MUSL_SOURCE_COMMIT = '9fa28ece75d8a2191de7c5bb53bed224c5947417'
 IMAGE_MARKER = 'CRABC_RESOLVER_ALIAS_IMAGE_ID'
 IMAGE_INPUTS = {
@@ -44,6 +48,11 @@ IMAGE_INPUTS = {
     'oracle_compiler': '/usr/local/bin/crabc-x86_64-musl-gcc',
     'oracle_archive': '/opt/musl-1.2.6/lib/libc.a',
     'oracle_shared': '/opt/musl-1.2.6/lib/libc.so',
+}
+TOOLCHAIN_ROOT = Path('/opt/rustup/toolchains') / f'{pinned_toolchain(ROOT)}-x86_64-unknown-linux-musl'
+TOOLCHAIN_INPUTS = {
+    str(TOOLCHAIN_ROOT / 'bin/rustc'),
+    str(TOOLCHAIN_ROOT / 'lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld'),
 }
 
 ALIASES = (
@@ -86,7 +95,7 @@ COLLECTOR_PATHS = (
     'compat/x86_64/owned_resolver_alias_override_probe.c',
     'compat/x86_64/owned_resolver_alias_override_caller.c',
     'compat/x86_64/owned-resolver-alias-contract.md',
-    'compat/x86_64/owned-resolver-alias-image-inputs.json',
+    'compat/x86_64/owned_resolver_alias_image_inputs.json',
     'compat/x86_64/owned_static_link_authority.py',
     'compat/x86_64/loader_debug_abi_evidence.py',
     'compat/x86_64/owned_posix_product_evidence.py',
@@ -192,6 +201,25 @@ def read_json(path: Path, description: str) -> Any:
                           parse_constant=lambda value: (_ for _ in ()).throw(ReceiptError(f'{description} has invalid JSON constant {value}')))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ReceiptError(f'{description} is not JSON: {path}') from error
+
+
+def trusted_image_manifest(root: Path) -> dict[str, Any]:
+    """Validate the current image inputs captured from the pinned core image."""
+    value = read_json(root / 'compat/x86_64/owned_resolver_alias_image_inputs.json', 'resolver image manifest')
+    expected_inputs = set(IMAGE_INPUTS.values()) | TOOLCHAIN_INPUTS
+    exact(value, {'schema', 'image', 'files'}, 'resolver current image manifest')
+    require(value['schema'] == 'crabc.x86_64-owned-resolver-alias-image-inputs/v1'
+            and value['image'] == IMAGE.removeprefix('crabc-core-evidence@')
+            and type(value['files']) is dict and set(value['files']) == expected_inputs,
+            'resolver current image manifest differs')
+    for invocation, record in value['files'].items():
+        exact(record, {'path', 'sha256', 'size', 'mode'}, f'resolver image input {invocation}')
+        require(type(record['path']) is str and record['path'].startswith('/')
+                and type(record['sha256']) is str and re.fullmatch(r'[0-9a-f]{64}', record['sha256']) is not None
+                and type(record['size']) is int and record['size'] >= 0
+                and type(record['mode']) is int and 0 <= record['mode'] <= 0o777,
+                f'resolver image input record differs: {invocation}')
+    return value
 
 
 def file_identity(path: Path, *, root: Path) -> dict[str, Any]:
@@ -521,7 +549,7 @@ def _source_paths(root: Path) -> dict[str, Path]:
         'static_authority': root / 'compat/x86_64/owned_static_link_authority.py',
         'elf_reader': root / 'compat/x86_64/loader_debug_abi_evidence.py',
         'product_authority': root / 'compat/x86_64/owned_posix_product_evidence.py',
-        'image_manifest': root / 'compat/x86_64/owned-resolver-alias-image-inputs.json',
+        'image_manifest': root / 'compat/x86_64/owned_resolver_alias_image_inputs.json',
     }
 
 
@@ -1057,7 +1085,7 @@ def _validate_inputs(report: Mapping[str, Any], receipt_root: Path, root: Path,
     _validate_current_source_inputs(root, report['selected_source']['revision'], expected_paths)
     inputs = exact(report['inputs'], set(INPUT_NAMES), 'resolver input roster')
     origin_root = _origin_root(inputs)
-    image_manifest = read_json(_source_paths(root)['image_manifest'], 'resolver image manifest')
+    image_manifest = trusted_image_manifest(root)
     _validate_captured_input_identities(receipt_root, inputs, expected_paths, image_manifest,
                                          verify_image_sources=verify_image_sources)
     for name, source in expected_paths.items():
@@ -1380,8 +1408,7 @@ def begin_collection(*, root: Path, work: Path, static_product: Path, dynamic_pr
             'resolver collection begin path differs')
     source, paths = _admit_current_collection(root, static_product, dynamic_product,
                                                product_report, static_preparation, elf_facts, base_inventory)
-    image_manifest = read_json(_source_paths(root)['image_manifest'], 'resolver image manifest')
-    require(type(image_manifest.get('files')) is dict, 'resolver image manifest file roster differs')
+    image_manifest = trusted_image_manifest(root)
     inputs = _capture_input_identities(work, paths, image_manifest)
     begin = {'schema': COLLECTION_BEGIN_SCHEMA, 'collection': {'image': image, 'source_revision': source['revision']},
              'selected_source': source, 'inputs': inputs, 'product_input_modes': LINK_INPUT_MODES}

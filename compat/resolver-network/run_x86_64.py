@@ -31,11 +31,17 @@ from typing import Any, Iterable, Mapping, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
+from scripts.rust_toolchain import pinned_toolchain
+
 import owned_dynamic_receipt as receipt_contract
 
 MUSL_ROOT = Path("/opt/musl-1.2.6")
 MUSL_COMPILER = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
+TOOLCHAIN_ROOT = Path("/opt/rustup/toolchains") / f"{pinned_toolchain(ROOT)}-x86_64-unknown-linux-musl"
+RUSTC = TOOLCHAIN_ROOT / "bin/rustc"
+LLD = TOOLCHAIN_ROOT / "lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld"
 SOURCE = ROOT / "compat/resolver-network/workload.c"
 DNS_SERVER = ROOT / "compat/resolver-network/dns_server.py"
 DEFAULT_WORK_ROOT = ROOT / ".work/x86_64/resolver-network"
@@ -43,8 +49,8 @@ DEFAULT_REPORT = ROOT / "compat/reports/resolver-network/x86_64/latest.json"
 STATIC_FORMAT = "crabc-x86-64-sealed-static-driver-v1"
 DYNAMIC_FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
 DYNAMIC_INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
-PINNED_IMAGE = "crabc-core-evidence@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d"
-IMAGE_MANIFEST = ROOT / "compat/x86_64/owned_utmpx_image_inputs.json"
+PINNED_IMAGE = "crabc-core-evidence@sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d"
+IMAGE_MANIFEST = ROOT / "compat/x86_64/owned_resolver_network_image_inputs.json"
 PHYSICAL_RECEIPT_SCHEMA = "crabc.x86_64-resolver-network-physical/v2"
 COMPONENT_SCOPE = ["libc.resolver"]
 RECEIPT_SOURCE_FILES = {
@@ -54,6 +60,8 @@ RECEIPT_SOURCE_FILES = {
     "dynamic_receipt_contract": ROOT / "compat/x86_64/owned_dynamic_receipt.py",
     "reader": ROOT / "compat/x86_64/resolver_network_component_receipt.py",
     "image_manifest": IMAGE_MANIFEST,
+    "toolchain_config": ROOT / "rust-toolchain.toml",
+    "toolchain_reader": ROOT / "scripts/rust_toolchain.py",
 }
 COMPILER_ORACLE_INPUTS = {
     "gcc": Path("/usr/bin/gcc"),
@@ -62,6 +70,8 @@ COMPILER_ORACLE_INPUTS = {
     "cc1": Path("/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/cc1"),
     "collect2": Path("/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/collect2"),
     "lto_plugin": Path("/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/liblto_plugin.so"),
+    "rustc": RUSTC,
+    "rust_linker": LLD,
     "specs": MUSL_ROOT / "lib/musl-gcc.specs",
     "libc_archive": MUSL_ROOT / "lib/libc.a",
     "libc_shared": MUSL_ROOT / "lib/libc.so",

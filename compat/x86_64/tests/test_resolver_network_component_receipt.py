@@ -51,6 +51,16 @@ class ResolverNetworkComponentReceiptTests(unittest.TestCase):
             "extracted-dynamic-non-pie-ordinary", "extracted-dynamic-non-pie-direct-entry",
         })
 
+    def test_current_image_manifest_tracks_the_repository_toolchain_and_exact_roster(self) -> None:
+        manifest = self.reader.trusted_image_manifest(ROOT)
+        self.assertEqual(manifest['image'], self.reader.PINNED_IMAGE.removeprefix('crabc-core-evidence@'))
+        self.assertEqual(set(manifest['files']), {
+            '/usr/local/bin/crabc-x86_64-musl-gcc', '/usr/bin/python3', '/usr/bin/readelf', '/usr/sbin/chroot',
+            *(str(path) for path in self.reader.COMPILER_ORACLE_INPUTS.values()),
+            str(self.reader.RUSTC), str(self.reader.LLD),
+        })
+        self.assertIn(f"{self.reader.pinned_toolchain(ROOT)}-x86_64-", str(self.reader.RUSTC))
+
     def test_raw_dns_events_without_required_transitions_remain_rejected(self) -> None:
         contract = self.reader.recompute_event_contract([], executions=13)
         self.assertFalse(contract["passed"])

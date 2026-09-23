@@ -20,7 +20,7 @@ readonly CHROOT=/usr/sbin/chroot
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly MUSL_ARCHIVE=/opt/musl-1.2.6/lib/libc.a
 readonly MUSL_SHARED=/opt/musl-1.2.6/lib/libc.so
-readonly IMAGE='crabc-core-evidence@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d'
+readonly IMAGE='crabc-core-evidence@sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d'
 
 fail() { printf 'owned resolver alias receipt: %s\n' "$*" >&2; exit 1; }
 
