@@ -2212,6 +2212,15 @@ mod tests {
         let mut small_second = remotely_freed_page(small_size, 2);
         let mut medium = remotely_freed_page(medium_size, 1);
         let mut full = remotely_freed_page(medium_size, 1);
+        // `remote_free_test_page` normally uses a never-dereferenced Theap
+        // sentinel. Queue membership owns `mi_page_set_in_full`, which reads
+        // and updates the actual Theap's `pages_full_size`; this mixed queue
+        // fixture must therefore bind all four pages to its pinned owner.
+        let theap_pointer = &mut theap as *mut Theap;
+        small_first.abandoned_test_set_theap(theap_pointer);
+        small_second.abandoned_test_set_theap(theap_pointer);
+        medium.abandoned_test_set_theap(theap_pointer);
+        full.abandoned_test_set_theap(theap_pointer);
         let small_first = NonNull::from(&mut small_first);
         let small_second = NonNull::from(&mut small_second);
         let medium = NonNull::from(&mut medium);
@@ -2238,6 +2247,7 @@ mod tests {
         let small_direct = invariants::word_count(small_size).unwrap();
         assert_eq!(theap.direct_page(small_direct), Some(small_first.as_ptr()));
         assert!(page_is_in_full(unsafe { full.as_ref() }));
+        assert_eq!(theap.pages_full_size(), medium_size);
 
         let mut small_first_remote = MixedCollectAbandonRemoteBlock([0; 16]);
         let mut small_second_remote = MixedCollectAbandonRemoteBlock([0; 16]);
@@ -2339,6 +2349,7 @@ mod tests {
         assert!(theap.queue(medium_bin).unwrap().is_empty());
         assert!(theap.queue(BIN_FULL).unwrap().is_empty());
         assert_eq!(theap.page_count(), 0);
+        assert_eq!(theap.pages_full_size(), 0);
         assert!(!page_is_in_full(unsafe { full.as_ref() }));
     }
 
