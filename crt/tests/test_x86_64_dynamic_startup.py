@@ -23,9 +23,9 @@ from pathlib import Path
 
 
 CRT_ROOT = Path(__file__).resolve().parents[1]
+ROOT = CRT_ROOT.parent
 sys.path.insert(0, str(ROOT))
 from scripts.rust_toolchain import pinned_toolchain
-ROOT = CRT_ROOT.parent
 BUILDER = CRT_ROOT / "build_x86_64.py"
 FIXTURE = CRT_ROOT / "fixtures" / "dynamic_startup_fixture_x86_64.c"
 LIFECYCLE_FIXTURE = CRT_ROOT / "fixtures" / "dynamic_startup_lifecycle_fixture_x86_64.c"

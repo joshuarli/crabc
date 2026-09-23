@@ -25,7 +25,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 SOURCE = ROOT / "src" / "lib.rs"
 CONTRACT = ROOT / "x86_64-helper-contract.toml"
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT.parent))
 from scripts.rust_toolchain import pinned_toolchain
 TOOLCHAIN = pinned_toolchain(ROOT.parent)
 TARGET = "x86_64-unknown-linux-musl"
