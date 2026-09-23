@@ -21,70 +21,55 @@ explicit, never be converted into a pass or a smaller completion claim.
 Update this section in place when the frontier changes. Recorded checkpoints
 are not transferable passes for a different revision.
 
-- **Runtime:** Frozen accounting validates. `campaign-status` reports 9 of 26
-  families `foundation-verified` (including `libc.headers-layouts`) and
-  capabilities 180 `implemented-foundation`, 26 `selected-private`, 17
-  `missing`; all eight qualification gates are incomplete. Substantial
-  POSIX/pthread/text/stdio/resolver/loader and installed-product work is
-  integrated. The POSIX dynamic, 54-cell matrix, native aggregate, and physical
-  admission passed with independent readers on clean `3c47d990d`. The pthread
-  installed-behavior component, atomic/clone prerequisites, complete component
-  coordinator, and independent family reader passed on that cohort.
-  The loader's 21 synthetic and 34 package cases, three inventories, and
-  independent family reader passed on that cohort. The resolver network,
-  cancellation, classic netdb, protocol database, and alias components passed
-  on the same products; the complete resolver family assessment and independent
-  reader passed. The text family's 27 producer runs and independent family
-  reader passed on the same clean `3c47d990d` cohort. The current-source
-  static process-global fixture passed normal and empty-argv startup against
-  pinned musl and the owned runtime at
-  `f600772a6`. Clean current-source static preparation and three-product
-  dynamic qualification passed with independent readers at `ed30f681b`.
-  A fresh standalone OS-test rerun on the frozen `3c47d990d` products
-  reconstructed 5,395 observations and passed its independent reader with
-  only the ten selected atomic/credential dispositions; the earlier
-  contention timeout remains raw failure evidence. A focused `dlinfo`
-  handle-order, pthread/C11 once cancellation, `getopt` ordering-prefix, and
-  process-wide CRT startup-rejection regressions now pass after integrated fixes.
-  The same-source native ABI inventory collected and replayed successfully as
-  measurement, with provider/semantic closure still open. These source-bound
-  checkpoints do not promote current main. Complete the actual remaining
-  aggregate/family admissions from `campaign-status`, not another symbol sweep.
-- **Allocator:** M1's six bounded components, M2 PageMap/scalar bitmaps, and a
-  pinned C/Rust metadata lifecycle differential passed at their recorded source
-  revisions. Parent-owned child context, metadata Theap, Heap storage,
-  no-page teardown, and a real child-owned regular arena slice passed focused
-  native tests through `ed30f681b`. The child PageMap/arena pair and locked
-  metadata entry are integrated. A real child metadata page session now passed
-  focused arena and aligned OS-backed allocation/free, retained unmap retry,
-  and source-ordered no-page teardown at `96940060d`; full child Heap/page
-  destruction remains open. Source-once startup, arena NUMA selection,
-  abandoned-page false collection, and private zero-offset aligned realloc
-  have focused native regressions; their aggregate gates remain open. VM,
-  arenas, initialization, fault injection, and no-recursion M2 qualification
-  remain partial. C remains the selected backend.
-- **Integration:** Accepted C stays default. Explicit owned static and dynamic
-  native-shadow products and graph/purity checks exist. The private
-  source-built x86 C allocator basic gate passed at `d92714775` with the
-  `nightly-2026-09-15` toolchain selected by `rust-toolchain.toml`.
-  Installed lifecycle, interposition, full qualification and promotion remain
-  distinct obligations.
-- **Qualification:** Native OS/libc-test aggregation, installed-product
-  unwinder/std/LTO, ordered consumer gates and release performance remain open.
-  Eight standalone unwinder commands and 90 host tests passed on the selected
-  nightly; these are non-promoting source-boundary checks. The installed
-  unwinder cleanup reached provider and stock consumers, then exposed and
-  fixed two exact vendor-marker composition defects; a fresh source-matched
-  full gate remains open. Canonical static and
-  dynamic Lua source builds and the independent source-build admission passed
-  on clean `ad21441d6`. The 114-row
-  collector and bounded replay are not performance qualification. Hardware
-  prerequisites are recorded below.
-- **Preservation:** Pre-upgrade detached and dirty worktree source was preserved
-  under `refs/archive/pre-toolchain*` before old `.work` state was removed.
-  Review the relevant branch or archive ref before duplicating subsystem work.
-  AArch64 remains paused; its public profile, selected C backend and qualified
-  records stay unchanged.
+- **Runtime:** Frozen accounting validates. `campaign-status` has 9/26 families
+  `foundation-verified`, 180 implemented, 26 selected-private, and 17 missing
+  capabilities; all eight qualification gates remain incomplete. POSIX,
+  pthread, resolver, text, loader, and installed-product components passed on
+  frozen `3c47d990d` products, and current-source static/dynamic products
+  passed at `ed30f681b`. Integrated fixes now cover `dlinfo`, once
+  cancellation, worker self naming, `getopt`, CRT startup rejection, GNU-unique
+  scope, late ELF program headers, `fmtmsg`, `fgets`, and allocator-client
+  interposition. The BSD-random
+  quartet has a physical oracle-rebuilt receipt on its source branch; 497
+  unrelated ABI selection blockers remain. Requalify on a stable revision
+  before promoting any family; `libc.posix-runtime` is the next ready transition.
+- **Allocator:** M1 bounded foundations, M2 PageMap/scalar bitmaps, and a
+  metadata lifecycle differential passed at recorded revisions. The integrated
+  child metadata page session, source-once startup, arena NUMA order, abandoned
+  false collection, aligned realloc, VM warning order, and full-queue byte
+  accounting have focused native evidence. Full child Heap/page lifecycle,
+  M2 VM/arenas/init/fault/no-recursion, and M3-M7 aggregate gates remain open.
+  Source `generic_collect` policy and private zeroed realloc paths are now
+  integrated with focused native checks. C remains the selected backend. The
+  merged allocator suite passed 1,159 tests at `7d7ea272b` after two fixture
+  corrections; later M4 edits still need merged qualification.
+- **Integration and qualification:** `rust-toolchain.toml` selects
+  `nightly-2026-09-15`; explicit static/dynamic native-shadow products exist.
+  Accepted C stays default. Native OS/libc aggregation, installed-product
+  unwinder/std/LTO, ordered consumers, allocator M8-M11 and release performance
+  remain open. The clean `ad21441d6` Lua source-build admission passed; older
+  source-bound receipts do not qualify moving `main`. Hardware prerequisites
+  are recorded below.
+- **Preservation:** Pre-upgrade dirty worktree source is under
+  `refs/archive/pre-toolchain*`. AArch64 remains paused and frozen.
+- **Paused handoff (2026-09-23):** Development stopped at integrated `main`
+  `c6f349e79`; no agent or native build is running. The frozen AArch64
+  capability ledger is unchanged after the x86 `dup2` fix. The merged allocator
+  unit suite passed 1,159/1,159 at `7d7ea272b`; parity validation passed after
+  the later worker-name reconciliation. The current-main aligned-realloc
+  differential did not start because the offline cache lacked
+  `mimalloc-3.5.0.tag.json`; its pinned archive is present and hash-verified.
+  Review and integrate isolated `be227686e` (source-built core fixes nightly
+  static C links; canonical `libc-issetugid`, `libc-pthread-name`, and
+  `libc-legacy-misc` passed), `76f401c03` (short-buffer `res_send`), and
+  `4827620ff` (explicit child thread page owner; correct the registration
+  release safety comment). Keep `ed4db0ba6` out of `main`: independent review
+  found its compiler_builtins linker archive/OUT_DIR identity check incomplete
+  despite 105 passing host tests and a diagnostic static smoke. Then rerun
+  merged M4 and affected canonical gates, and source-seal one stable product
+  cohort for the dependency-ready POSIX admission. `.work` contains frozen
+  POSIX and active-source unwinder evidence; preserve those raw receipts and
+  the allocator SIGSEGV core/log while resuming safe disk cleanup.
 
 ## Fixed contracts
 
