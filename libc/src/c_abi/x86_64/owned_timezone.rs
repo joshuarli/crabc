@@ -11,7 +11,7 @@
 //! back to UTC instead of inheriting upstream's out-of-bounds accesses.
 //! General fork lock recovery remains a separate process-owner obligation.
 
-use core::{ffi::{c_char, c_int, c_long, c_void}, ptr,
+use core::{ffi::{c_char, c_int, c_long}, ptr,
     sync::atomic::{AtomicI32, Ordering}};
 use super::{environment, errno, raw_syscall as sys, startup_security, timegm};
 
@@ -29,6 +29,10 @@ static mut STANDARD_NAME: [u8; 7] = [0; 7];
 static mut DAYLIGHT_NAME: [u8; 7] = [0; 7];
 static mut DAYLIGHT_OFFSET: i32 = 0;
 static mut RULES: [[i32; 5]; 2] = [[0; 5]; 2];
+// Pinned __tz.c maps malloc to __libc_malloc while holding the timezone lock.
+// This growth-only cache is libc-owned, even when an executable interposes the
+// public malloc symbol. The selected native and accepted C adapters both own
+// that private allocation through allocator::allocate_internal.
 static mut OLD_BUFFER: [u8; 32] = [0; 32];
 static mut OLD_TZ: *mut u8 = ptr::addr_of_mut!(OLD_BUFFER).cast();
 static mut OLD_SIZE: usize = 32;
@@ -71,8 +75,6 @@ pub(super) unsafe fn pthread_fork_parent() { drop(TimezoneGuard); }
 /// This is the matching sole-thread fork child, before signals/user callbacks;
 /// never call it in a CLONE_VM child or the original process.
 pub(super) unsafe fn pthread_fork_child() { LOCK.store(0, Ordering::Relaxed); }
-unsafe extern "C" { fn malloc(size: usize) -> *mut c_void; }
-
 unsafe fn length(mut p: *const u8) -> usize {
     let start = p;
     unsafe { while *p != 0 { p = p.add(1); } p.offset_from(start) as usize }
@@ -231,7 +233,7 @@ unsafe fn configure() {
             OLD_SIZE = (OLD_SIZE * 2).max(size+1).min(4098);
             // Preserve upstream's growth-only cache allocations, including its
             // retry behavior after ENOMEM; no allocator invention or free cache.
-            OLD_TZ = malloc(OLD_SIZE).cast();
+            OLD_TZ = super::allocator::allocate_internal(OLD_SIZE).cast();
         }
         if !OLD_TZ.is_null() { ptr::copy_nonoverlapping(source, OLD_TZ, size+1); }
         let mut posix = false;

@@ -1,6 +1,6 @@
 # Owned C allocator interposition
 
-`./scripts/dev-x86_64.sh owned-c-allocation-interposition` qualifies four
+`./scripts/dev-x86_64.sh owned-c-allocation-interposition` qualifies five
 narrow dynamic C-allocation boundaries against pinned musl 1.2.6 commit
 `9fa28ece75d8a2191de7c5bb53bed224c5947417`. It is focused x86 evidence; it
 does not close stdio, passwd, allocator, or dynamic-runtime qualification.
@@ -37,6 +37,14 @@ nonreentrant cache must allocate both records through the executable's
 The observer also checks the released bytes. The numeric address avoids a DNS
 or hosts-file dependency in this allocator ownership case.
 
+The `timezone` case installs a POSIX `TZ` rule longer than the 32-byte static
+cache, then rejects every executable `malloc` while `tzset` grows `OLD_TZ`.
+Pinned musl's `src/time/__tz.c` maps that allocation to `__libc_malloc` because
+it occurs under the timezone lock. The case requires no public allocation
+attempt and checks the parsed standard and daylight names. The selected native
+shadow previously called the executable allocator and failed this case; the
+private `allocator::allocate_internal` seam now owns the cache.
+
 `owned_printf.rs::vasprintf` already has an ordinary external `malloc`
 boundary: the product records its `R_X86_64_GLOB_DAT` lookup and the consumer
 passes through executable interposition in every run. No printf implementation
@@ -64,14 +72,13 @@ The runner compiles the consumer once through a fresh installed crabc dynamic
 sysroot, then links that exact object with pinned musl and the installed PIE
 and non-PIE drivers. It verifies that each executable exports all three
 interposers, installs a one-record passwd file in disposable chroots, and runs
-all four cases through kernel and direct-interpreter entry. It compares
-status, stdout, and stderr for sixteen musl/candidate pairs. A passing receipt
-therefore requires all thirty-two executions to succeed with the same
+all five cases through kernel and direct-interpreter entry. It compares
+status, stdout, and stderr for twenty musl/candidate pairs. A passing receipt
+therefore requires all forty executions to succeed with the same
 observable results.
 Every target must independently exit zero before comparison; a failure or
 timeout stops the runner after retaining its raw status and streams. Matching
 oracle and candidate failures cannot qualify this boundary.
 
-Timezone's growth-only `OLD_TZ` cache remains a separate allocator client.
-This receipt records its existence without extending its ownership contract
-or claiming its interposition qualification.
+The timezone case covers cache growth under executable allocator replacement;
+it does not qualify the complete timezone or allocator lifecycle.

@@ -15,7 +15,7 @@ readonly PROBE="$ROOT/compat/x86_64/owned_c_allocation_interposition_probe.c"
 readonly CRABC_INTERPRETER=/lib/ld-crabc-x86_64.so.1
 readonly MUSL_INTERPRETER=/lib/ld-musl-x86_64.so.1
 readonly PASSWD_RECORD='crabc:x:64:64:Crabc:/home/crabc:/bin/sh'
-readonly -a scenarios=(asprintf passwd lio host)
+readonly -a scenarios=(asprintf passwd lio host timezone)
 
 [ "$#" -le 1 ] || {
     printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2
@@ -230,4 +230,4 @@ for mode in pie non-pie; do
 done
 
 printf '%s\n' \
-    "owned C allocator interposition: PASS (same installed-header object; pinned musl and installed PIE/non-PIE kernel/direct roots; asprintf, passwd getline cleanup, lio_listio state, and host cache retain executable malloc-family ownership; AIO queues stay private); evidence: $work"
+    "owned C allocator interposition: PASS (same installed-header object; pinned musl and installed PIE/non-PIE kernel/direct roots; asprintf, passwd getline cleanup, lio_listio state, and host cache retain executable malloc-family ownership; AIO queues and timezone cache stay private); evidence: $work"

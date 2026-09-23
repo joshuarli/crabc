@@ -2,7 +2,8 @@
 // the executable's provider selected.  asprintf publishes caller-owned bytes;
 // the passwd lookup's private getline allocation is retired before return.
 // lio_listio's list state and the nonreentrant host cache also use that
-// provider, while AIO queue storage belongs to the private libc allocator.
+// provider, while AIO queue storage and the locked timezone cache belong to
+// libc's private allocator.
 #define _GNU_SOURCE
 #include <aio.h>
 #include <errno.h>
@@ -14,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 enum { STORAGE_BYTES = 1 << 20, MAXIMUM_ALLOCS = 32, FREED_FILL = 42 };
@@ -250,6 +252,26 @@ static int check_host_cache_provider(void)
     return allocator_misuse ? 44 : 0;
 }
 
+static int check_timezone_cache_provider(void)
+{
+    static char value[] = "TZ=EST5EDT,M3.2.0/02:00:00,M11.1.0/02:00:00";
+    size_t first;
+    size_t attempts;
+
+    if (putenv(value) != 0)
+        return 50;
+    first = allocation_count;
+    attempts = allocation_attempts;
+    reject_allocations = 1;
+    tzset();
+    reject_allocations = 0;
+    if (allocation_count != first || allocation_attempts != attempts)
+        return 51;
+    if (strcmp(tzname[0], "EST") != 0 || strcmp(tzname[1], "EDT") != 0)
+        return 52;
+    return allocator_misuse ? 53 : 0;
+}
+
 static _Atomic int aio_cleanup_complete;
 
 static void aio_cleanup_notification(union sigval value)
@@ -315,6 +337,8 @@ int main(int argc, char **argv)
         return check_passwd_getdelim_release();
     if (strcmp(argv[1], "host") == 0)
         return check_host_cache_provider();
+    if (strcmp(argv[1], "timezone") == 0)
+        return check_timezone_cache_provider();
     if (strcmp(argv[1], "lio") == 0)
         return check_lio_state_and_private_queue();
     return 3;
