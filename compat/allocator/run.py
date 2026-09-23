@@ -223,6 +223,9 @@ M2_X86_64_MEMORY_SUBSTRATE_CARGO_TARGET = (
 M2_X86_64_PAGE_MAP_TRACE_ARTIFACT_ROOT = (
     ARTIFACT_ROOT / "x86_64/m2-memory-substrate/page-map-trace"
 )
+M2_X86_64_METADATA_TRACE_ARTIFACT_ROOT = (
+    ARTIFACT_ROOT / "x86_64/m2-memory-substrate/metadata-trace"
+)
 M2_DETACHED_TLD_STATIC_PREIMAGE_TRACE_ARTIFACT_ROOT = (
     ARTIFACT_ROOT / "m2-memory-substrate/detached-tld-static-preimage-trace"
 )
@@ -345,6 +348,23 @@ M2_X86_64_PAGE_MAP_CHECK_IDS = (
     "page-map-lazy-publication-private-lock",
     "process-page-map-cold-terminal-owner",
 )
+M2_X86_64_METADATA_CHECKS = (
+    {
+        "expected_passed_test_count": 1,
+        "id": "metadata-cross-thread-publication-lifecycle",
+        "kind": "c-rust-metadata-lifecycle-differential",
+        "target": "meta::tests::process_metadata_cross_thread_publication_and_replacement_trace",
+    },
+)
+M2_X86_64_METADATA_CHECK_IDS = tuple(check["id"] for check in M2_X86_64_METADATA_CHECKS)
+M2_METADATA_LIFECYCLE_TRACE_KEYS = (
+    "m2.metadata.lifecycle.workers",
+    "m2.metadata.lifecycle.published",
+    "m2.metadata.lifecycle.failed_replacement_preserved",
+    "m2.metadata.lifecycle.replaced_released",
+)
+M2_METADATA_LIFECYCLE_TRACE_VALUES = (4, 96, 96, 96)
+M2_X86_64_METADATA_FIXTURE = ALLOCATOR_ROOT / "m2_metadata_x86_64.c"
 M2_X86_64_SOURCE_MAP_REFERENCES: Mapping[str, tuple[dict[str, str], ...]] = {
     "vm-primitives": (
         {"unit_id": "os-allocation-policy", "required_status": "partial"},
@@ -9289,6 +9309,125 @@ def run_m2_page_map_cold_init_differential(
     }
 
 
+def build_m2_metadata_lifecycle_trace(
+    compiler: str,
+    source: Path,
+    profile_dir: Path,
+    profile_flags: Sequence[str],
+) -> dict[str, Any]:
+    """Build and run the direct pinned-C detached metadata lifecycle fixture."""
+
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    binary = profile_dir / "m2-metadata-lifecycle-probe"
+    command = [
+        compiler,
+        "-std=c11",
+        "-fPIC",
+        "-ftls-model=initial-exec",
+        "-DMI_SHARED_LIB",
+        "-DMI_SHARED_LIB_EXPORT",
+        "-DMI_LIBC_MUSL=1",
+        "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
+        "-I",
+        str(source / "include"),
+        "-I",
+        str(source / "src"),
+        *profile_flags,
+        str(M2_X86_64_METADATA_FIXTURE),
+        "-pthread",
+        "-o",
+        str(binary),
+    ]
+    build = command_record(command, cwd=source, timeout_seconds=300)
+    require_success(build, "pinned C M2 metadata lifecycle build")
+    run = command_record((str(binary),), cwd=source, timeout_seconds=180)
+    require_success(run, "pinned C M2 metadata lifecycle execution")
+    trace = parse_m2_metadata_lifecycle_trace(str(run["stdout"]), source="pinned C")
+    validate_m2_metadata_lifecycle_trace(trace, source="pinned C")
+    return {
+        "artifact": artifact_record(binary),
+        "build_command": command,
+        "record": trace,
+        "source_files": source_file_records(
+            source,
+            (
+                "include/mimalloc/atomic.h",
+                "include/mimalloc/internal.h",
+                "include/mimalloc/types.h",
+                "src/alloc-aligned.c",
+                "src/alloc.c",
+                "src/arena.c",
+                "src/init.c",
+                "src/os.c",
+                "src/page-map.c",
+                "src/page.c",
+                "src/subproc.c",
+                "src/theap.c",
+            ),
+        ),
+        "stdout": str(run["stdout"]),
+    }
+
+
+def run_m2_x86_64_metadata_lifecycle_differential(
+    pin: Mapping[str, str],
+    *,
+    offline: bool,
+    artifact_root: Path,
+    test_program: Mapping[str, Any],
+    check: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Compare source allocation/publication/replacement/free with Rust."""
+
+    require_native_x86_64()
+    if (
+        check not in M2_X86_64_METADATA_CHECKS
+        or check["kind"] != "c-rust-metadata-lifecycle-differential"
+    ):
+        raise HarnessError(
+            "native x86 M2 metadata differential lost its exact manifest witness"
+        )
+    compiler = require_tool("musl-gcc")
+    archive = fetch_archive(pin, offline)
+    with temporary_directory(prefix="crabc-mimalloc-m2-metadata-source-") as temporary:
+        source = safe_extract(archive, Path(temporary), pin["archive_root"])
+        c_oracle = build_m2_metadata_lifecycle_trace(
+            compiler,
+            source,
+            artifact_root,
+            CONFIGURATION_PROFILES["release"],
+        )
+
+    rust, rust_output = _x86_64_run_exact_program_check(
+        test_program,
+        check,
+        nocapture=True,
+        gate_name="native x86 M2 metadata lifecycle",
+    )
+    rust_trace = parse_m2_metadata_lifecycle_trace(rust_output, source="Rust")
+    validate_m2_metadata_lifecycle_trace(rust_trace, source="Rust")
+    comparison = compare_m2_metadata_lifecycle_trace(c_oracle["record"], rust_trace)
+    return {
+        "c_oracle": c_oracle,
+        "comparison": comparison,
+        "fixture": artifact_record(M2_X86_64_METADATA_FIXTURE),
+        "rust": {
+            "command": rust["command"],
+            "passed_test_count": rust["passed_test_count"],
+            "record": rust_trace,
+        },
+        "scope": (
+            "one direct pinned-C/Rust detached-metadata lifecycle: four producer threads "
+            "publish 96 zeroed direct/aligned allocations to a joined consumer; every "
+            "SIZE_MAX replacement preserves the old live payload, and every successful "
+            "replacement is released through its exact metadata owner. This compares the "
+            "selected main-subprocess Malloc path only, not concurrent consumer overlap, "
+            "non-main subprocess ownership, or non-Malloc memory-ID release branches."
+        ),
+        "status": comparison["status"],
+    }
+
+
 def run_m2_memory_substrate_checks(
     summary: Mapping[str, Any], pin: Mapping[str, str], *, offline: bool
 ) -> list[dict[str, Any]]:
@@ -12608,6 +12747,7 @@ def validate_x86_64_m2_memory_substrate_contract(
     if contract.get("global_evidence") != [
         "x86-64-source-contract-inventories",
         "x86-64-bounded-component-source-definitions",
+        "x86-64-metadata-allocation-cross-thread-publication-lifecycle",
         "x86-64-page-map-c-rust-differentials",
         "x86-64-page-map-focused-source-test-batch",
         "x86-64-bitmap-source-and-native-evidence",
@@ -12742,7 +12882,10 @@ def validate_x86_64_m2_memory_substrate_contract(
         raw_checks = raw_component.get("checks")
         if not isinstance(raw_checks, list):
             raise HarnessError(f"native x86 M2 component {component_id} has invalid checks")
-        if component_id == "page-map":
+        if component_id == "metadata":
+            if raw_checks != list(M2_X86_64_METADATA_CHECKS):
+                raise HarnessError("native x86 M2 metadata check inventory changed")
+        elif component_id == "page-map":
             if raw_checks != list(M2_X86_64_PAGE_MAP_CHECKS):
                 raise HarnessError("native x86 M2 PageMap check inventory changed")
         elif component_id == "arenas":
@@ -12766,6 +12909,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                 or raw_check.get("kind")
                 not in {
                     "rust-unit",
+                    "c-rust-metadata-lifecycle-differential",
                     "c-rust-page-map-success-differential",
                     "c-rust-page-map-lazy-commit-failure-differential",
                     "c-rust-page-map-cold-init-differential",
@@ -12841,6 +12985,25 @@ def validate_x86_64_m2_memory_substrate_contract(
                     or "fn emit_native_owned_arena_purge_trace()" not in source.read_text(encoding="utf-8")
                 ):
                     raise HarnessError("native x86 M2 process-arena evidence target is absent")
+            elif raw_check.get("kind") == "c-rust-metadata-lifecycle-differential":
+                rust_source = ROOT / "crabc-mimalloc/src/meta.rs"
+                fixture_text = (
+                    M2_X86_64_METADATA_FIXTURE.read_text(encoding="utf-8")
+                    if M2_X86_64_METADATA_FIXTURE.is_file()
+                    else ""
+                )
+                if (
+                    component_id != "metadata"
+                    or raw_check.get("target")
+                    != "meta::tests::process_metadata_cross_thread_publication_and_replacement_trace"
+                    or not rust_source.is_file()
+                    or "fn process_metadata_cross_thread_publication_and_replacement_trace()"
+                    not in rust_source.read_text(encoding="utf-8")
+                    or '#include "static.c"' not in fixture_text
+                    or "_mi_meta_rezalloc" not in fixture_text
+                    or "pthread_barrier_wait" not in fixture_text
+                ):
+                    raise HarnessError("native x86 M2 metadata lifecycle evidence target is absent")
             elif component_id != "bitmaps":
                 _m2_memory_substrate_source_test_exists(
                     str(raw_check["target"]), str(raw_check["id"])
@@ -12881,6 +13044,8 @@ def validate_x86_64_m2_memory_substrate_contract(
         components.append(component)
     if [check["id"] for check in components[3]["checks"]] != list(M2_X86_64_PAGE_MAP_CHECK_IDS):
         raise HarnessError("native x86 M2 PageMap check identity inventory changed")
+    if [check["id"] for check in components[1]["checks"]] != list(M2_X86_64_METADATA_CHECK_IDS):
+        raise HarnessError("native x86 M2 metadata check identity inventory changed")
     if (milestone["status"] == "complete") != all(
         component["native_status"] == "complete" and not component["remaining_conditions"]
         for component in components
@@ -13670,6 +13835,98 @@ def _m2_x86_64_process_arena_collect_check_records(
     }]
 
 
+def _m2_x86_64_metadata_check_records(
+    summary: Mapping[str, Any], evidence: object
+) -> list[dict[str, Any]]:
+    """Bind the source lifecycle differential to the partial metadata row."""
+
+    component = next(item for item in summary["components"] if item["id"] == "metadata")
+    if component["checks"] != list(M2_X86_64_METADATA_CHECKS):
+        raise HarnessError("native x86 M2 metadata check roster changed")
+    check = component["checks"][0]
+    if not isinstance(evidence, Mapping):
+        raise HarnessError("native x86 M2 metadata lifecycle producer result is absent")
+    c_oracle = evidence.get("c_oracle")
+    rust = evidence.get("rust")
+    c_command = c_oracle.get("build_command") if isinstance(c_oracle, Mapping) else None
+    c_artifact = c_oracle.get("artifact") if isinstance(c_oracle, Mapping) else None
+    expected_sources = sorted(
+        (
+            "include/mimalloc/atomic.h",
+            "include/mimalloc/internal.h",
+            "include/mimalloc/types.h",
+            "src/alloc-aligned.c",
+            "src/alloc.c",
+            "src/arena.c",
+            "src/init.c",
+            "src/os.c",
+            "src/page-map.c",
+            "src/page.c",
+            "src/subproc.c",
+            "src/theap.c",
+        )
+    )
+    source_files = c_oracle.get("source_files") if isinstance(c_oracle, Mapping) else None
+    rust_command = rust.get("command") if isinstance(rust, Mapping) else None
+    if (
+        evidence.get("status") != "matched"
+        or evidence.get("comparison") != {
+            "compared_value_count": len(M2_METADATA_LIFECYCLE_TRACE_KEYS),
+            "status": "matched",
+        }
+        or not isinstance(c_oracle, Mapping)
+        or not isinstance(c_command, list)
+        or not c_command
+        or Path(c_command[0]).name != "musl-gcc"
+        or str(M2_X86_64_METADATA_FIXTURE) not in c_command
+        or "-pthread" not in c_command
+        or not isinstance(c_artifact, Mapping)
+        or c_artifact.get("path")
+        != relative(M2_X86_64_METADATA_TRACE_ARTIFACT_ROOT / "m2-metadata-lifecycle-probe")
+        or type(c_artifact.get("bytes")) is not int
+        or c_artifact.get("bytes", 0) <= 0
+        or not isinstance(c_artifact.get("sha256"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", str(c_artifact.get("sha256"))) is None
+        or not isinstance(c_oracle.get("stdout"), str)
+        or not isinstance(c_oracle.get("record"), Mapping)
+        or dict(c_oracle["record"])
+        != dict(zip(M2_METADATA_LIFECYCLE_TRACE_KEYS, M2_METADATA_LIFECYCLE_TRACE_VALUES))
+        or parse_m2_metadata_lifecycle_trace(c_oracle["stdout"], source="pinned C")
+        != dict(c_oracle["record"])
+        or not isinstance(source_files, list)
+        or [record.get("path") for record in source_files if isinstance(record, Mapping)]
+        != expected_sources
+        or len(source_files) != len(expected_sources)
+        or any(
+            not isinstance(record, Mapping)
+            or type(record.get("bytes")) is not int
+            or record.get("bytes", 0) <= 0
+            or not isinstance(record.get("sha256"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", str(record.get("sha256"))) is None
+            for record in source_files
+        )
+        or not isinstance(evidence.get("fixture"), Mapping)
+        or dict(evidence["fixture"]) != artifact_record(M2_X86_64_METADATA_FIXTURE)
+        or not isinstance(rust, Mapping)
+        or rust.get("passed_test_count") != check["expected_passed_test_count"]
+        or not isinstance(rust_command, list)
+        or not all(isinstance(argument, str) and argument for argument in rust_command)
+        or rust.get("record") != c_oracle.get("record")
+    ):
+        raise HarnessError("native x86 M2 metadata lifecycle evidence is invalid")
+    return [
+        {
+            "comparison_status": "matched",
+            "component": "metadata",
+            "command": list(rust_command),
+            "evidence_scope": "bounded-main-subprocess-pinned-c-rust-metadata-publication-and-replacement-lifecycle",
+            "id": check["id"],
+            "passed_test_count": check["expected_passed_test_count"],
+            "target": check["target"],
+        }
+    ]
+
+
 def _m2_x86_64_initialization_check_records(
     summary: Mapping[str, Any], evidence: object
 ) -> list[dict[str, Any]]:
@@ -13828,6 +14085,7 @@ def m2_x86_64_memory_substrate_report(
     focused_checks: Sequence[Mapping[str, Any]],
     bitmap_evidence: Mapping[str, Any] | None = None,
     vm_evidence: Mapping[str, Any] | None = None,
+    metadata_evidence: Mapping[str, Any] | None = None,
     runtime_thp_evidence: Mapping[str, Any] | None = None,
     initialization_evidence: Mapping[str, Any] | None = None,
     fault_evidence: Mapping[str, Any] | None = None,
@@ -13840,6 +14098,7 @@ def m2_x86_64_memory_substrate_report(
     ):
         raise HarnessError("native x86 M2 source evidence did not pass")
     expected_bitmap_records = _m2_x86_64_bitmap_check_records(summary, bitmap_evidence)
+    expected_metadata_records = _m2_x86_64_metadata_check_records(summary, metadata_evidence)
     expected_vm_records = _m2_x86_64_vm_check_records(
         summary, vm_evidence, runtime_thp_evidence
     )
@@ -13909,6 +14168,10 @@ def m2_x86_64_memory_substrate_report(
         elif component_id == "bitmaps":
             if checks != expected_bitmap_records:
                 raise HarnessError("native x86 M2 bitmap shared execution records changed")
+        elif component_id == "metadata":
+            if checks != expected_metadata_records:
+                raise HarnessError("native x86 M2 metadata executed receipt inventory changed")
+            unmet.append(component_id)
         elif component_id == "vm-primitives":
             if not complete and checks != expected_vm_records + [
                 {
@@ -13993,6 +14256,9 @@ def m2_x86_64_memory_substrate_report(
         "schema": "crabc-mimalloc-x86_64-m2-memory-substrate-report",
         "shared_evidence": {
             "x86-64-bounded-component-source-definitions": dict(bounded_source_evidence),
+            "x86-64-metadata-allocation-cross-thread-publication-lifecycle": dict(
+                metadata_evidence
+            ) if metadata_evidence is not None else {},
             "x86-64-page-map-c-rust-differentials": {"status": "passed"},
             "x86-64-page-map-focused-source-test-batch": {"status": "passed"},
             "x86-64-source-contract-inventories": dict(source_contract_evidence),
@@ -14047,6 +14313,9 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
     cold_component, cold_check = _m2_x86_64_check_by_id(
         summary, "cold-page-map-initialization-failure"
     )
+    _, metadata_check = _m2_x86_64_check_by_id(
+        summary, "metadata-cross-thread-publication-lifecycle"
+    )
     success = run_m2_page_map_differential(
         pin,
         offline=offline,
@@ -14074,6 +14343,14 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         test_program=test_program,
         check=cold_check,
     )
+    metadata_evidence = run_m2_x86_64_metadata_lifecycle_differential(
+        pin,
+        offline=offline,
+        artifact_root=M2_X86_64_METADATA_TRACE_ARTIFACT_ROOT,
+        test_program=test_program,
+        check=metadata_check,
+    )
+    metadata_checks = _m2_x86_64_metadata_check_records(summary, metadata_evidence)
     bitmap_evidence = _run_m2_x86_64_bitmap_evidence(offline=offline, test_program=test_program)
     bitmap_checks = _m2_x86_64_bitmap_check_records(summary, bitmap_evidence)
     _, arena_owned_check = _m2_x86_64_check_by_id(
@@ -14100,6 +14377,7 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         *initialization_checks,
         *fault_checks,
         *bitmap_checks,
+        *metadata_checks,
         *arena_owned_checks,
         _m2_x86_64_differential_check_record(success_component, success_check, success),
         _m2_x86_64_differential_check_record(lazy_component, lazy_check, lazy),
@@ -14116,6 +14394,7 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
                     *(check["id"] for check in initialization_checks),
                     *(check["id"] for check in fault_checks),
                     *(check["id"] for check in bitmap_checks),
+                    metadata_check["id"],
                     *(check["id"] for check in arena_owned_checks),
                 }
             ),
@@ -14133,6 +14412,7 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         focused_checks=focused_checks,
         bitmap_evidence=bitmap_evidence,
         vm_evidence=vm_evidence,
+        metadata_evidence=metadata_evidence,
         runtime_thp_evidence=runtime_thp_evidence,
         initialization_evidence=initialization_evidence,
         fault_evidence=fault_evidence,
@@ -17823,6 +18103,68 @@ def parse_address_independent_trace(
     if address_key is not None:
         raise HarnessError(f"{description} emitted a raw address field: {address_key}")
     return values
+
+
+def parse_m2_metadata_lifecycle_trace(output: str, *, source: str) -> dict[str, int]:
+    """Parse selected pinned-C/Rust detached-metadata publication results."""
+
+    trace = parse_address_independent_trace(
+        output,
+        begin="CRABC_MI_M2_METADATA_LIFECYCLE_TRACE_BEGIN",
+        end="CRABC_MI_M2_METADATA_LIFECYCLE_TRACE_END",
+        description=f"{source} M2 metadata lifecycle trace",
+    )
+    if set(trace) != set(M2_METADATA_LIFECYCLE_TRACE_KEYS):
+        missing = sorted(set(M2_METADATA_LIFECYCLE_TRACE_KEYS) - set(trace))
+        unexpected = sorted(set(trace) - set(M2_METADATA_LIFECYCLE_TRACE_KEYS))
+        details = []
+        if missing:
+            details.append("missing: " + ", ".join(missing))
+        if unexpected:
+            details.append("unexpected: " + ", ".join(unexpected))
+        raise HarnessError(
+            f"{source} M2 metadata lifecycle trace does not match the fixed schema: "
+            + "; ".join(details)
+        )
+    return trace
+
+
+def validate_m2_metadata_lifecycle_trace(
+    trace: Mapping[str, int], *, source: str
+) -> None:
+    """Require every selected cross-thread publication and release relation."""
+
+    if source not in {"pinned C", "Rust"}:
+        raise HarnessError(f"unknown M2 metadata lifecycle trace source: {source}")
+    if set(trace) != set(M2_METADATA_LIFECYCLE_TRACE_KEYS):
+        raise HarnessError(f"{source} M2 metadata lifecycle trace keys changed")
+    for key, expected in zip(
+        M2_METADATA_LIFECYCLE_TRACE_KEYS, M2_METADATA_LIFECYCLE_TRACE_VALUES
+    ):
+        if type(trace[key]) is not int or trace[key] != expected:
+            raise HarnessError(
+                f"{source} M2 metadata lifecycle trace has an unmet relation: {key}"
+            )
+
+
+def compare_m2_metadata_lifecycle_trace(
+    c_trace: Mapping[str, int], rust_trace: Mapping[str, int]
+) -> dict[str, Any]:
+    """Require address-independent metadata lifecycle parity with pinned C."""
+
+    validate_m2_metadata_lifecycle_trace(c_trace, source="pinned C")
+    validate_m2_metadata_lifecycle_trace(rust_trace, source="Rust")
+    mismatches = [
+        f"{key} (C={c_trace[key]}, Rust={rust_trace[key]})"
+        for key in M2_METADATA_LIFECYCLE_TRACE_KEYS
+        if c_trace[key] != rust_trace[key]
+    ]
+    if mismatches:
+        raise HarnessError(
+            "Rust M2 metadata lifecycle trace differs from pinned C: "
+            + "; ".join(mismatches)
+        )
+    return {"compared_value_count": len(M2_METADATA_LIFECYCLE_TRACE_KEYS), "status": "matched"}
 
 
 def parse_fundamental_trace(output: str) -> dict[str, int]:

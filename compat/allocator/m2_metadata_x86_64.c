@@ -83,10 +83,12 @@ static int metadata_lifecycle(mi_subproc_t* subproc) {
     }
   }
   if (pthread_barrier_destroy(&barrier) != 0) return 19;
+  puts("CRABC_MI_M2_METADATA_LIFECYCLE_TRACE_BEGIN");
   puts("m2.metadata.lifecycle.workers=4");
   puts("m2.metadata.lifecycle.published=96");
   puts("m2.metadata.lifecycle.failed_replacement_preserved=96");
   puts("m2.metadata.lifecycle.replaced_released=96");
+  puts("CRABC_MI_M2_METADATA_LIFECYCLE_TRACE_END");
   return 0;
 }
 

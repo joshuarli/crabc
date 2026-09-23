@@ -26,6 +26,72 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
             'transcript_sha256': '78ff33552d928c12a9bd1e234d409e5d4dabaa77bd1ee9b7b9ee9b84966ceddb',
         }
 
+    @staticmethod
+    def metadata_evidence():
+        metadata_trace = dict(
+            zip(
+                RUNNER.M2_METADATA_LIFECYCLE_TRACE_KEYS,
+                RUNNER.M2_METADATA_LIFECYCLE_TRACE_VALUES,
+            )
+        )
+        metadata_sources = [
+            "include/mimalloc/atomic.h",
+            "include/mimalloc/internal.h",
+            "include/mimalloc/types.h",
+            "src/alloc-aligned.c",
+            "src/alloc.c",
+            "src/arena.c",
+            "src/init.c",
+            "src/os.c",
+            "src/page-map.c",
+            "src/page.c",
+            "src/subproc.c",
+            "src/theap.c",
+        ]
+        return {
+            "c_oracle": {
+                "artifact": {
+                    "bytes": 1,
+                    "path": RUNNER.relative(
+                        RUNNER.M2_X86_64_METADATA_TRACE_ARTIFACT_ROOT
+                        / "m2-metadata-lifecycle-probe"
+                    ),
+                    "sha256": "b" * 64,
+                },
+                "build_command": [
+                    "musl-gcc",
+                    str(RUNNER.M2_X86_64_METADATA_FIXTURE),
+                    "-pthread",
+                ],
+                "record": metadata_trace,
+                "source_files": [
+                    {"path": path, "bytes": 1, "sha256": "a" * 64}
+                    for path in metadata_sources
+                ],
+                "stdout": "\n".join(
+                    [
+                        "CRABC_MI_M2_METADATA_LIFECYCLE_TRACE_BEGIN",
+                        *(
+                            f"{key}={value}"
+                            for key, value in zip(
+                                RUNNER.M2_METADATA_LIFECYCLE_TRACE_KEYS,
+                                RUNNER.M2_METADATA_LIFECYCLE_TRACE_VALUES,
+                            )
+                        ),
+                        "CRABC_MI_M2_METADATA_LIFECYCLE_TRACE_END",
+                    ]
+                ),
+            },
+            "comparison": {"compared_value_count": 4, "status": "matched"},
+            "fixture": RUNNER.artifact_record(RUNNER.M2_X86_64_METADATA_FIXTURE),
+            "rust": {
+                "command": ["/workspace/.work/prepared-test", "meta::tests::trace"],
+                "passed_test_count": 1,
+                "record": metadata_trace,
+            },
+            "status": "matched",
+        }
+
     def summary(self):
         return RUNNER.validate_x86_64_m2_memory_substrate_contract(
             RUNNER.read_json(RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CONTRACT), RUNNER.load_pin())
@@ -74,6 +140,15 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
             ), self.assertRaisesRegex(RUNNER.HarnessError, 'source-map predicate is not current'):
                 self.summary()
 
+    def test_metadata_differential_receipt_binds_the_selected_c_and_rust_trace(self):
+        checks = RUNNER._m2_x86_64_metadata_check_records(
+            self.summary(), self.metadata_evidence()
+        )
+        self.assertEqual([check["id"] for check in checks], [
+            "metadata-cross-thread-publication-lifecycle"
+        ])
+        self.assertEqual(checks[0]["comparison_status"], "matched")
+
     def test_prepared_bitmap_producer_executes_the_supplied_binary_without_building(self):
         spec = importlib.util.spec_from_file_location('bitmap_producer_test', RUNNER.ALLOCATOR_ROOT / 'm2_bitmaps_x86_64.py')
         producer = importlib.util.module_from_spec(spec)
@@ -114,6 +189,8 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
                            'id': check['id'], 'passed_test_count': 1, 'target': check['target'],
                            'evidence_scope': 'focused-source-test-batch'})
         checks.extend(RUNNER._m2_x86_64_bitmap_check_records(summary, evidence))
+        metadata_evidence = self.metadata_evidence()
+        checks.extend(RUNNER._m2_x86_64_metadata_check_records(summary, metadata_evidence))
         for check in summary['components'][3]['checks']:
             row = {'component': 'page-map', 'command': ['/workspace/.work/prepared-test'],
                    'id': check['id'], 'passed_test_count': 1, 'target': check['target']}
@@ -131,6 +208,7 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
             'source_contract_evidence': {'status': 'passed'},
             'bounded_source_evidence': {'status': 'passed', 'record_count': len(records), 'records': records},
             'focused_checks': checks, 'bitmap_evidence': evidence, 'vm_evidence': vm_evidence,
+            'metadata_evidence': metadata_evidence,
         }
 
     def test_shared_vm_report_keeps_the_complete_custom_receipt_set_out_of_the_focused_batch(self):

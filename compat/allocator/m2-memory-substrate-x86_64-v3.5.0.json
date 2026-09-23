@@ -8,22 +8,42 @@
       }
     },
     {
-      "checks": [],
+      "checks": [
+        {
+          "expected_passed_test_count": 1,
+          "id": "metadata-cross-thread-publication-lifecycle",
+          "kind": "c-rust-metadata-lifecycle-differential",
+          "target": "meta::tests::process_metadata_cross_thread_publication_and_replacement_trace"
+        }
+      ],
       "id": "metadata",
       "native_status": "partial",
       "remaining_conditions": [
-        "Qualify metadata allocation, backing ownership, and cross-thread publication with native source tests and C/Rust evidence."
+        "Qualify non-main-subprocess metadata ownership, non-Malloc memory-ID release branches, and concurrent allocation/publication/release overlap beyond the selected main-subprocess producer-to-consumer lifecycle."
       ],
       "source_map_records": [
         { "required_status": "partial", "unit_id": "core-layouts-and-configuration" },
         { "required_status": "partial", "unit_id": "atomic-operation-facade" }
       ],
-      "source_units": ["src/subproc.c", "include/mimalloc/internal.h"],
+      "source_units": [
+        "src/subproc.c",
+        "src/theap.c",
+        "src/alloc.c",
+        "src/alloc-aligned.c",
+        "src/page.c",
+        "src/arena.c",
+        "src/page-map.c",
+        "src/os.c",
+        "src/init.c",
+        "include/mimalloc/internal.h",
+        "include/mimalloc/atomic.h",
+        "include/mimalloc/types.h"
+      ],
       "unqualified_failure_matrix": [
         {
           "id": "metadata-backing-and-publication",
-          "required_evidence": ["native metadata lifecycle differential", "publication and cleanup failure tests"],
-          "source_scope": "src/subproc.c:19-81 metadata allocation, detached metadata-theap locking, and typed memory-ID release paths"
+          "required_evidence": ["non-main-subprocess metadata lifecycle", "non-Malloc memory-ID release matrix", "concurrent allocation/publication/release overlap"],
+          "source_scope": "src/subproc.c:19-81 metadata allocation, detached metadata-theap locking, and typed memory-ID release; src/theap.c, src/alloc.c, src/alloc-aligned.c, src/page.c, src/arena.c, src/page-map.c, src/os.c, and src/init.c provide the selected ordinary backing, publication, and release paths"
         }
       ]
     },
@@ -175,6 +195,7 @@
   "global_evidence": [
     "x86-64-source-contract-inventories",
     "x86-64-bounded-component-source-definitions",
+    "x86-64-metadata-allocation-cross-thread-publication-lifecycle",
     "x86-64-page-map-c-rust-differentials",
     "x86-64-page-map-focused-source-test-batch",
     "x86-64-bitmap-source-and-native-evidence",

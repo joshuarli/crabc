@@ -2817,10 +2817,12 @@ mod tests {
         let mut entry = allocator.enter().unwrap();
         let MetadataPageAllocator::Process(engine) = entry.allocator() else { panic!("process engine"); };
         assert!(engine.collect_retired(true));
+        std::println!("CRABC_MI_M2_METADATA_LIFECYCLE_TRACE_BEGIN");
         std::println!("m2.metadata.lifecycle.workers=4");
         std::println!("m2.metadata.lifecycle.published=96");
         std::println!("m2.metadata.lifecycle.failed_replacement_preserved=96");
         std::println!("m2.metadata.lifecycle.replaced_released=96");
+        std::println!("CRABC_MI_M2_METADATA_LIFECYCLE_TRACE_END");
     }
 
     fn bind_process_fixture(allocator: Pin<&'static MetaAllocator>, disallow_arena: bool)

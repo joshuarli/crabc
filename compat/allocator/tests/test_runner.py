@@ -4431,6 +4431,28 @@ class ContractTests(unittest.TestCase):
             )
         )
 
+    def test_x86_m2_metadata_contract_runs_the_publication_lifecycle_witness(self) -> None:
+        contract = RUNNER.read_json(RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CONTRACT)
+        summary = RUNNER.validate_x86_64_m2_memory_substrate_contract(
+            contract, RUNNER.load_pin()
+        )
+        metadata = next(
+            component for component in summary["components"] if component["id"] == "metadata"
+        )
+        self.assertEqual(
+            [
+                (check["id"], check["kind"], check["target"])
+                for check in metadata["checks"]
+            ],
+            [
+                (
+                    "metadata-cross-thread-publication-lifecycle",
+                    "c-rust-metadata-lifecycle-differential",
+                    "meta::tests::process_metadata_cross_thread_publication_and_replacement_trace",
+                ),
+            ],
+        )
+
     def test_x86_m2_contract_rejects_missing_page_map_source_or_failure_accounting(self) -> None:
         contract = RUNNER.read_json(RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CONTRACT)
         missing_definition = json.loads(json.dumps(contract))
