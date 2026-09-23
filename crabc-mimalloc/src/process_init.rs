@@ -1015,6 +1015,81 @@ impl ProcessMainInitializationStorage {
         Ok(ProcessMainBackingBinding::new(self, process, page_map))
     }
 
+    /// Test counterpart that binds a fresh process-policy coordinator to an
+    /// already initialized map lease after a source main attachment exists.
+    /// This lets child-page tests share the exact process-global map used by
+    /// their parent Heap fixture instead of constructing a second map that
+    /// only looks equivalent.
+    ///
+    /// # Safety
+    /// `self` and all pointed-to owners are isolated leaked test statics; this
+    /// is their sole binding attempt. The supplied map remains live for every
+    /// use of the returned binding.
+    #[cfg(test)]
+    pub(crate) unsafe fn test_bind_vm_process_to_existing_page_map(
+        &'static self,
+        mut config: MemoryConfig,
+        options: VmOptions,
+        subprocess: &'static MainSubprocess,
+        page_map: ProcessPageMapLease,
+    ) -> Result<ProcessMainBackingBinding, ProcessMainInitError> {
+        if self
+            .state
+            .compare_exchange(COLD, INITIALIZING, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return Err(ProcessMainInitError::AlreadyInitialized);
+        }
+        let map_config = match page_map.memory_config() {
+            Ok(config) => config,
+            Err(error) => {
+                self.mark_retained();
+                return Err(ProcessMainInitError::PageMap(error));
+            }
+        };
+        let map_subprocess = match page_map.subprocess() {
+            Ok(subprocess) => subprocess,
+            Err(error) => {
+                self.mark_retained();
+                return Err(ProcessMainInitError::PageMap(error));
+            }
+        };
+        if map_config != config {
+            self.mark_retained();
+            return Err(ProcessMainInitError::ConfigurationMismatch);
+        }
+        if !core::ptr::eq(map_subprocess, subprocess) {
+            self.mark_retained();
+            return Err(ProcessMainInitError::SubprocessMismatch);
+        }
+        let policy = match VmPolicy::new(options) {
+            Ok(policy) => policy,
+            Err(error) => {
+                self.mark_retained();
+                return Err(ProcessMainInitError::VmPolicy(error));
+            }
+        };
+        // SAFETY: this helper owns INITIALIZING and the explicit isolated test
+        // coordinator is the sole writer of the policy slot.
+        let process = match unsafe { self.retain_vm_process(policy, subprocess, &mut config, false) } {
+            Ok(process) => process,
+            Err(error) => {
+                self.mark_retained();
+                return Err(error);
+            }
+        };
+        unsafe { (*self.config.get()).write(config) };
+        self.subprocess.store(subprocess.owner_ptr(), Ordering::Release);
+        self.page_map_storage.store(page_map.storage_pointer(), Ordering::Release);
+        let Some(thread) = current_thread_identity() else {
+            self.mark_retained();
+            return Err(ProcessMainInitError::Preflight(MainStaticTheapError::InvalidCurrentThread));
+        };
+        self.initializing_thread.store(thread.get(), Ordering::Relaxed);
+        self.state.store(SOURCE_ATTACHED, Ordering::Release);
+        Ok(ProcessMainBackingBinding::new(self, process, page_map))
+    }
+
     /// Moves one resolved policy into its permanent process slot and returns
     /// the address-stable owner.  The source once claim is held by the caller;
     /// this method refuses an unexpected second slot instead of overwriting a

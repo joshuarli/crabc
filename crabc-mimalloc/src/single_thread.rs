@@ -2592,6 +2592,88 @@ pub(crate) type CanonicalProcessMetadataPageAllocator<'map> = PageAllocatorEngin
     'static, 'map, crate::types::metadata_session::CanonicalMetadataTheapSession,
     crate::page_backing::ProcessMetadataPageBacking>;
 
+pub(crate) type ChildMetadataPageAllocator<'session, 'child, 'map> = PageAllocatorEngine<
+    'child,
+    'map,
+    crate::types::metadata_session::ChildMetadataTheapPageSession<'session, 'child>,
+    crate::page_backing::ChildMetadataArenaBacking<'child>,
+>;
+
+impl<'session, 'child, 'map> ChildMetadataPageAllocator<'session, 'child, 'map> {
+    /// Creates a child metadata page operation over the child's own arena
+    /// backing and the process-global PageMap. The caller holds both the
+    /// child metadata lock and the map lifecycle lease for the full engine.
+    ///
+    /// # Safety
+    /// `session` must project the exact pinned child metadata-Theap and its
+    /// parent-allocated child Heap; `backing` must pair that same child with
+    /// the canonical parent PageMap; and no other map/page writer may overlap.
+    pub(crate) unsafe fn activate_child_metadata(
+        session: crate::types::metadata_session::ChildMetadataTheapPageSession<'session, 'child>,
+        backing: crate::page_backing::ChildMetadataArenaBacking<'child>,
+        page_map: &'map PageMap,
+    ) -> Self {
+        Self {
+            session,
+            arena: backing,
+            arena_lifetime: PhantomData,
+            requested_arena: ArenaId::none(),
+            page_map,
+            // The detached parent metadata TLD is source thread sequence zero
+            // for the child metadata Theap's page search.
+            thread_sequence: 0,
+            pending_os_release: None,
+            collection_poison: None,
+            page_commit_poison: false,
+            #[cfg(test)]
+            forced_collect_retired_call_count: 0,
+            #[cfg(test)]
+            page_free_collect_failure_once: PageCollectFailureInjection::None,
+            #[cfg(test)]
+            page_release_after_page_map_unregister_failure_once: false,
+            #[cfg(test)]
+            aggregate_abandon_after_queue_detach_failure_once: false,
+            #[cfg(test)]
+            last_page_to_full: None,
+            #[cfg(test)]
+            page_commit_on_demand: false,
+            #[cfg(test)]
+            page_area_commit_lease: None,
+            shutdown_complete: false,
+        }
+    }
+
+    /// Ends one child metadata page operation while leaving valid pages and
+    /// allocations linked to the retained child Theap. Any unfinished mapping
+    /// or page poison returns the engine so its Drop path can transfer/latch
+    /// that ownership in the child context.
+    pub(crate) fn finish_operation(mut self) -> Result<(), Self> {
+        if self.pending_os_release.is_some()
+            || self.collection_poison.is_some()
+            || self.page_commit_poison
+        {
+            return Err(self);
+        }
+        self.shutdown_complete = true;
+        Ok(())
+    }
+
+    /// Forces the source all-free collection boundary while keeping the
+    /// engine borrow available for the common short-operation finish path.
+    /// A `false` result may still be retryable when allocations remain live;
+    /// any ambiguous page transition is separately captured by engine poison.
+    pub(crate) fn finish_pages_in_place(&mut self) -> bool {
+        self.finish_quiescent_in_place()
+    }
+
+    /// Force-collects this child's now-all-free metadata pages before child
+    /// Theap/Heap teardown. Failure returns the exact engine for terminal
+    /// latching by its external child owner.
+    pub(crate) fn finish_pages(self) -> Result<(), Self> {
+        self.finish_quiescent().map(|_| ())
+    }
+}
+
 impl<'arena, 'map, 'bootstrap, B> PageAllocatorEngine<
     'arena, 'map, ExclusiveTheapSession<'bootstrap>, B,
 >

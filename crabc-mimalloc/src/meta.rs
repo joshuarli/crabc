@@ -1222,6 +1222,7 @@ pub(crate) type MetaAllocator = MetadataEngine<'static>;
 pub(crate) struct ChildContextOwner {
     parent_metadata: Pin<&'static MetaAllocator>,
     parent_subprocess: &'static MainSubprocess,
+    config: MemoryConfig,
     // `'static` describes the process-lived allocator that minted this
     // capability, not the child bytes' validity. The capability's live state
     // and this owner's borrow-gated projections end at explicit release.
@@ -1291,6 +1292,7 @@ impl ChildContextOwner {
         let mut owner = Self {
             parent_metadata,
             parent_subprocess,
+            config,
             context,
             metadata_theap: None,
             image_initialized: initialized,
@@ -1544,7 +1546,10 @@ pub(crate) struct ChildMainHeapContextOwner<'heap> {
     heap_storage: Option<crate::main_heap_page::ParentHeapAllocation<'heap>>,
     pending_os_release: Option<crate::os_page::OsAlignedPageOwner>,
     page_engine: ChildPageEngineState,
+    metadata_pages_may_exist: bool,
     stage: ChildMainHeapStage,
+    #[cfg(test)]
+    fail_next_metadata_session_setup: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1568,6 +1573,18 @@ pub(crate) enum ChildPageEngineState {
     RetryPending,
     RetryComplete,
     Poisoned,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ChildMetadataPageEngineError {
+    InvalidTransition,
+    ChildProcess(crate::os::ChildVmProcessError),
+    BackingPair(crate::process_arena::ChildProcessPageArenaLeaseError),
+    PageMapLifecycle(crate::process_page_map::ProcessPageMapError),
+    Registry(crate::subproc::registry::SourceSubprocessRegistryError),
+    SessionNotReady,
+    EngineRetained,
+    MetadataPagesRemain,
 }
 
 impl ChildPageEngineState {
@@ -1668,12 +1685,64 @@ impl ChildContextOwner {
             heap_storage: Some(heap),
             pending_os_release: None,
             page_engine: ChildPageEngineState::Active,
+            metadata_pages_may_exist: false,
             stage: ChildMainHeapStage::Registered,
+            #[cfg(test)]
+            fail_next_metadata_session_setup: false,
         })
     }
 }
 
 impl<'heap> ChildMainHeapContextOwner<'heap> {
+    #[cfg(test)]
+    pub(crate) const fn test_page_engine_state(&self) -> ChildPageEngineState {
+        self.page_engine
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn test_has_pending_os_release(&self) -> bool {
+        self.pending_os_release.is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_is_heap_ready(&self) -> bool {
+        self.stage == ChildMainHeapStage::HeapReady
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_is_registry_unlinked(&self) -> bool {
+        self.stage == ChildMainHeapStage::RegistryUnlinked
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_theap_heap_detach_state(&mut self) -> (bool, bool, bool) {
+        let has_heap_projection = self.heap_storage.as_mut()
+            .is_some_and(|heap| heap.with_heap(|_| ()).is_some());
+        let Some(theap) = self.context.metadata_theap.as_ref()
+            .and_then(MetaAllocation::dynamic_theap_pointer) else {
+            return (has_heap_projection, false, false);
+        };
+        let published = self.context.with_image(|child| {
+            child.identity().matches_published_detached_metadata_theap(theap)
+        }).unwrap_or(false);
+        let attached = self.context.with_image(|child| {
+            child.identity().has_published_metadata_theap()
+        }).unwrap_or(false);
+        (has_heap_projection, attached, published)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_fail_next_metadata_session_setup(&mut self) {
+        self.fail_next_metadata_session_setup = true;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_child_vm_statistics(
+        &mut self,
+    ) -> Option<crate::statistics::VmStatisticsSnapshot> {
+        self.context.with_image(|child| child.identity().vm_statistics().snapshot())
+    }
+
     pub(crate) fn retain_pending_os_release(
         &mut self,
         owner: crate::os_page::OsAlignedPageOwner,
@@ -1785,6 +1854,201 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         result
     }
 
+    /// Runs one ordinary child metadata page-engine operation against the
+    /// child's detached metadata Theap. The process binding supplies the
+    /// canonical parent PageMap/policy; arena claims, statistics, and process
+    /// VM accounting are routed through the exact registered child identity.
+    /// The engine is short-lived, while live pages remain linked to the
+    /// retained child Theap between operations.
+    pub(crate) fn with_metadata_page_engine<R>(
+        &mut self,
+        binding: crate::process_init::ProcessMainBackingBinding,
+        operation: impl for<'session, 'child> FnOnce(
+            Pin<&'child crate::subproc::ChildSubprocessImage>,
+            &mut crate::single_thread::ChildMetadataPageAllocator<'session, 'child, 'static>,
+        ) -> R,
+    ) -> Result<R, ChildMetadataPageEngineError> {
+        #[cfg(test)]
+        if self.fail_next_metadata_session_setup {
+            self.fail_next_metadata_session_setup = false;
+            return Err(ChildMetadataPageEngineError::SessionNotReady);
+        }
+        if self.stage != ChildMainHeapStage::HeapReady
+            || self.pending_os_release.is_some()
+            || self.page_engine != ChildPageEngineState::Active
+            || !binding.is_active()
+            || !binding.is_allocation_ready()
+            || binding.process().main_subprocess().is_none_or(|parent| {
+                !core::ptr::eq(parent, self.context.parent_subprocess)
+            })
+            || binding.page_map().memory_config().ok() != Some(self.context.config)
+        {
+            return Err(ChildMetadataPageEngineError::InvalidTransition);
+        }
+
+        let Self {
+            context,
+            heap_storage,
+            pending_os_release,
+            page_engine,
+            metadata_pages_may_exist,
+            ..
+        } = self;
+        let result = context.with_locked_metadata_entry(|child, theap| {
+            let child_process = crate::os::ChildVmProcess::new(binding.process(), child)
+                .map_err(ChildMetadataPageEngineError::ChildProcess)?;
+            let pair = crate::process_arena::ChildProcessPageArenaLease::join(
+                binding.page_map(),
+                child_process,
+            )
+            .map_err(ChildMetadataPageEngineError::BackingPair)?;
+            let page_lifecycle = pair
+                .begin_page_lifecycle()
+                .map_err(ChildMetadataPageEngineError::BackingPair)?;
+            // SAFETY: this engine owns child page ranges for the complete
+            // operation and the lifecycle capability above excludes every
+            // other plain PageMap mutation.
+            let page_map = unsafe { pair.page_map_for_owned_ranges() }
+                .map_err(ChildMetadataPageEngineError::BackingPair)?;
+            // Identity-only raw projection: the linear token below retains
+            // this exact allocation, but this path must not form `&mut Heap`
+            // because ordinary child Heap projections use the Heap's own
+            // synchronization. Page publication records only its address.
+            let heap = heap_storage
+                .as_ref()
+                .map(crate::main_heap_page::ParentHeapAllocation::pointer_for_identity)
+                .ok_or(ChildMetadataPageEngineError::InvalidTransition)?;
+            // SAFETY: the locked entry supplies the exact child Theap/image;
+            // owner fields retain its Heap allocation and pending-state slots
+            // for this bounded engine operation.
+            let session = unsafe {
+                crate::types::metadata_session::ChildMetadataTheapPageSession::new(
+                    child,
+                    theap,
+                    heap,
+                    pending_os_release,
+                    page_engine,
+                    metadata_pages_may_exist,
+                )
+            }
+            .ok_or(ChildMetadataPageEngineError::SessionNotReady)?;
+            let backing = crate::page_backing::ChildMetadataArenaBacking::new(pair);
+            // SAFETY: exact child/context ownership, detached-Theap lock, and
+            // canonical PageMap lifecycle are held through the engine call.
+            let mut engine = unsafe {
+                crate::single_thread::ChildMetadataPageAllocator::activate_child_metadata(
+                    session, backing, page_map,
+                )
+            };
+            let value = operation(child, &mut engine);
+            let result = if let Err(engine) = engine.finish_operation() {
+                // Its Drop transfers an accounted OS retry owner and latches
+                // any other unfinished page-engine state in this child.
+                drop(engine);
+                Err(ChildMetadataPageEngineError::EngineRetained)
+            } else {
+                Ok(value)
+            };
+            if let Err(error) = page_lifecycle.finish() {
+                *page_engine = ChildPageEngineState::Poisoned;
+                return Err(ChildMetadataPageEngineError::PageMapLifecycle(error));
+            }
+            result
+        })
+        .ok_or(ChildMetadataPageEngineError::SessionNotReady)?;
+        result
+    }
+
+    /// Ends the child metadata page lifetime after all child-owned metadata
+    /// blocks have been freed. A false result means live pages remain; an
+    /// ambiguous source transition latches the owner so teardown cannot pass.
+    pub(crate) fn finish_metadata_pages(
+        &mut self,
+        binding: crate::process_init::ProcessMainBackingBinding,
+    ) -> Result<bool, ChildMetadataPageEngineError> {
+        self.with_metadata_page_engine(binding, |_child, engine| engine.finish_pages_in_place())
+    }
+
+    /// Source-ordered child destroy prefix: while registry admission still
+    /// exists, either unlink directly when this metadata Theap has no pages
+    /// left, or create its page session, unlink the child, and force-release
+    /// the now-unreachable pages through the retained child backing. This
+    /// covers only this metadata-Theap's pages; the caller remains responsible
+    /// for every other child Heap/Theap page.
+    ///
+    /// # Safety
+    /// All child threads and users are quiescent, every client allocation
+    /// owned by this metadata Theap has been freed, and `registry` is the
+    /// exact source registry that admitted this child. Setup errors before
+    /// registry mutation leave this owner registered and retryable. An
+    /// ambiguous unlink or post-unlink error retains this owner with the
+    /// context and remaining capabilities intact; only an already-accounted
+    /// raw unmap failure has an explicit retry transition.
+    pub(crate) unsafe fn unlink_registry_and_finish_metadata_pages(
+        &mut self,
+        registry: &'static crate::subproc::registry::SourceSubprocessRegistry,
+        binding: crate::process_init::ProcessMainBackingBinding,
+    ) -> Result<(), ChildMetadataPageEngineError> {
+        if self.stage != ChildMainHeapStage::HeapReady {
+            return Err(ChildMetadataPageEngineError::InvalidTransition);
+        }
+        if self.page_engine == ChildPageEngineState::RetryComplete {
+            if self.pending_os_release.is_some() || self.metadata_pages_may_exist {
+                return Err(ChildMetadataPageEngineError::InvalidTransition);
+            }
+            let result = self.context.with_image(|child| {
+                // SAFETY: forwarded exact-registry and child-quiescence
+                // obligations; this owner proves there are no metadata pages
+                // or pending raw page releases left in the child context.
+                unsafe { registry.unlink_child_terminal(child.as_ref().get_ref()) }
+            }).unwrap_or(Err(
+                crate::subproc::registry::SourceSubprocessRegistryError::InvalidMembership,
+            ));
+            self.stage = if result.is_ok() {
+                ChildMainHeapStage::RegistryUnlinked
+            } else {
+                ChildMainHeapStage::Terminal
+            };
+            return result.map_err(ChildMetadataPageEngineError::Registry);
+        }
+        let mut registry_attempted = false;
+        let mut registry_unlinked = false;
+        let result = self.with_metadata_page_engine(binding, |child, engine| {
+            // SAFETY: forwarded quiescence/exact-registry contract; the child
+            // page pair was validated while the registry edge was still live.
+            registry_attempted = true;
+            let unlink = unsafe { registry.unlink_child_terminal(child.get_ref()) };
+            if let Err(error) = unlink {
+                return Err(ChildMetadataPageEngineError::Registry(error));
+            }
+            registry_unlinked = true;
+            Ok(engine.finish_pages_in_place())
+        });
+        if registry_unlinked {
+            self.stage = ChildMainHeapStage::RegistryUnlinked;
+        }
+        match result {
+            Err(error) => {
+                if registry_unlinked && self.page_engine == ChildPageEngineState::Active {
+                    self.page_engine = ChildPageEngineState::Poisoned;
+                }
+                if registry_attempted && !registry_unlinked {
+                    self.stage = ChildMainHeapStage::Terminal;
+                }
+                Err(error)
+            }
+            Ok(Err(error)) => {
+                self.stage = ChildMainHeapStage::Terminal;
+                Err(error)
+            }
+            Ok(Ok(true)) => Ok(()),
+            Ok(Ok(false)) => {
+                self.page_engine = ChildPageEngineState::Poisoned;
+                Err(ChildMetadataPageEngineError::MetadataPagesRemain)
+            }
+        }
+    }
+
     /// Initializes the source child main Heap against its parent-issued
     /// storage, then attaches the parent's metadata Theap and publishes its
     /// identity. This represents the creation suffix following the source
@@ -1869,7 +2133,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         &mut self,
         registry: &'static crate::subproc::registry::SourceSubprocessRegistry,
     ) -> Result<(), crate::subproc::registry::SourceSubprocessRegistryError> {
-        if self.stage != ChildMainHeapStage::HeapReady {
+        if self.stage != ChildMainHeapStage::HeapReady || self.metadata_pages_may_exist {
             return Err(crate::subproc::registry::SourceSubprocessRegistryError::InvalidMembership);
         }
         let result = self.context.with_image(|child| unsafe {
@@ -1896,7 +2160,9 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         parent_metadata: Pin<&'static MetaAllocator>,
         config: MemoryConfig,
     ) -> Result<(), ChildMetadataTheapError> {
-        if self.stage != ChildMainHeapStage::RegistryUnlinked || self.pending_os_release.is_some()
+        if self.stage != ChildMainHeapStage::RegistryUnlinked
+            || self.metadata_pages_may_exist
+            || self.pending_os_release.is_some()
             || !self.page_engine.permits_teardown() {
             return Err(ChildMetadataTheapError::Metadata(MetaError::InitializationRetained));
         }
@@ -2025,7 +2291,9 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         heap_owner: &mut crate::main_heap_page::MainHeapThreadOwnerLocalPageEngine<'heap>,
         attachment: &mut crate::main_heap_thread::MainHeapThreadAttachment<'heap>,
     ) -> Result<(), ChildMainHeapReleaseFailure<'heap, 'tracking>> {
-        if self.pending_os_release.is_some() || !self.page_engine.permits_teardown()
+        if self.pending_os_release.is_some()
+            || self.metadata_pages_may_exist
+            || !self.page_engine.permits_teardown()
             || !matches!(self.stage, ChildMainHeapStage::HeapListRemoved | ChildMainHeapStage::ArenaBackingDestroyed) {
             return Err(ChildMainHeapReleaseFailure::Retained {
                 owner: self,
@@ -2600,6 +2868,30 @@ impl<'owner> MetadataEngine<'owner> {
                 && core::ptr::eq(unsafe { (*pointer).heap() }, core::ptr::from_mut(canonical))
                 && canonical.has_shared_theap_member_blocking(pointer) == Ok(true)
         }) == Ok(true)
+    }
+
+    /// Diagnoses the exact read-only parent metadata binding predicates used
+    /// by child Theap detach. This grants no entry or allocator capability.
+    #[cfg(test)]
+    pub(crate) fn test_child_detach_binding(
+        self: Pin<&'static Self>,
+        config: MemoryConfig,
+        subprocess: &'static MainSubprocess,
+    ) -> (u8, bool, bool, Result<(), MetaError>) {
+        let this = self.get_ref();
+        let status = this.status.load(Ordering::Acquire);
+        let config_matches = if matches!(status, BOUND | READY) {
+            // SAFETY: BOUND/READY publishes the immutable config tuple.
+            unsafe { this.config.get().read().assume_init() == config }
+        } else {
+            false
+        };
+        let subprocess_matches = core::ptr::eq(
+            this.subprocess.load(Ordering::Acquire),
+            subprocess.identity_ptr(),
+        );
+        let theap = self.validate_bound_detached_metadata_theap(subprocess);
+        (status, config_matches, subprocess_matches, theap)
     }
 
     /// Binds the actual source static metadata Theap to the startup-selected

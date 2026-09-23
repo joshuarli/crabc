@@ -12,6 +12,7 @@ use crate::bootstrap::{TheapPageSession, theap_page_session_sealed};
 use crate::main_theap::MainStaticMetadataHeapLease;
 use crate::os::MemoryConfig;
 use crate::os_page::OsAlignedPageOwner;
+use core::marker::PhantomData;
 use core::ptr::NonNull;
 
 pub(crate) struct CanonicalMetadataTheapSession {
@@ -158,4 +159,161 @@ unsafe impl TheapPageSession for CanonicalMetadataTheapSession {
         Err(owner)
     }
     fn latch_unfinished_page_engine(&mut self) {}
+}
+
+/// One child metadata page operation. The caller holds the child's
+/// `theap_meta_lock` for this session and keeps the context, metadata-Theap,
+/// parent-allocated child Heap, PageMap root, and child arena backing alive.
+/// The Heap is retained as a raw identity only: fresh-page association stores
+/// its address and must not create `&mut Heap` while child threads may use it.
+pub(crate) struct ChildMetadataTheapPageSession<'session, 'image> {
+    theap: NonNull<Theap>,
+    heap: NonNull<Heap>,
+    child: NonNull<crate::subproc::SubprocessIdentity>,
+    pending_os_release: &'session mut Option<OsAlignedPageOwner>,
+    page_engine: &'session mut crate::meta::ChildPageEngineState,
+    metadata_pages_may_exist: &'session mut bool,
+    _image: PhantomData<&'image crate::subproc::ChildSubprocessImage>,
+}
+
+impl<'session, 'image> ChildMetadataTheapPageSession<'session, 'image> {
+    /// # Safety
+    /// The caller owns the exact child metadata lock and projects the pinned
+    /// child image, Theap capability, and Heap allocation from one live
+    /// `ChildMainHeapContextOwner`. Those owners and both mutable state
+    /// references remain exclusive until the session is consumed. No other
+    /// operation may project this detached Theap while the lock is held.
+    pub(crate) unsafe fn new(
+        child: core::pin::Pin<&'image crate::subproc::ChildSubprocessImage>,
+        theap: &'session mut Theap,
+        heap: NonNull<Heap>,
+        pending_os_release: &'session mut Option<OsAlignedPageOwner>,
+        page_engine: &'session mut crate::meta::ChildPageEngineState,
+        metadata_pages_may_exist: &'session mut bool,
+    ) -> Option<Self> {
+        let identity = child.get_ref().identity();
+        if !identity.matches_ready_main_heap(heap)
+            || !identity.matches_published_detached_metadata_theap(NonNull::from(&mut *theap))
+            || !theap.is_detached()
+            || pending_os_release.is_some()
+            || *page_engine != crate::meta::ChildPageEngineState::Active
+        {
+            return None;
+        }
+        Some(Self {
+            theap: NonNull::from(theap),
+            heap,
+            child: NonNull::from(identity),
+            pending_os_release,
+            page_engine,
+            metadata_pages_may_exist,
+            _image: PhantomData,
+        })
+    }
+
+    #[inline]
+    fn theap(&self) -> &Theap {
+        // SAFETY: the child metadata lock and exclusive owner retain this
+        // exact initialized image for the complete session operation.
+        unsafe { self.theap.as_ref() }
+    }
+}
+
+impl theap_page_session_sealed::Sealed for ChildMetadataTheapPageSession<'_, '_> {}
+
+// SAFETY: the constructor takes the exact child metadata lock and transfers
+// unique local-field authority for its detached Theap. Child page backing and
+// Heap addresses remain retained by the external owner for the operation.
+unsafe impl TheapPageSession for ChildMetadataTheapPageSession<'_, '_> {
+    fn theap(&self) -> &Theap { self.theap() }
+    fn thread_id(&self) -> Option<LiveThreadId> { None }
+
+    fn with_os_random_source<R>(
+        &mut self,
+        operation: impl FnOnce(&mut (dyn crate::os::OsRandomSource + 'static)) -> R,
+    ) -> R {
+        // SAFETY: detached metadata operations serialize this exact Theap;
+        // only its initialized random field is projected for each draw.
+        let mut random = unsafe { crate::os::CurrentTheapRandom::new(self.theap) };
+        operation(&mut random)
+    }
+
+    fn queue(&self, bin: usize) -> Option<&PageQueue> { self.theap().queue(bin) }
+    fn queue_mut(&mut self, bin: usize) -> Option<&mut PageQueue> {
+        unsafe { Theap::local_queue_mut_at(self.theap, bin) }
+    }
+    fn direct_page(&self, index: usize) -> Option<*mut Page> { self.theap().direct_page(index) }
+    fn set_direct_page(&mut self, index: usize, page: *mut Page) -> bool {
+        unsafe { Theap::set_local_direct_page_at(self.theap, index, page) }
+    }
+    fn note_page_added(&mut self) {
+        unsafe { Theap::note_local_page_added_at(self.theap); }
+        *self.metadata_pages_may_exist = true;
+    }
+    fn note_page_removed(&mut self) -> bool {
+        let removed = unsafe { Theap::note_local_page_removed_at(self.theap) };
+        if removed && self.theap().page_count() == 0 {
+            *self.metadata_pages_may_exist = false;
+        }
+        removed
+    }
+
+    fn ensure_arena_pages(&mut self, arena: &ArenaView<'_>, _config: MemoryConfig) -> bool {
+        unsafe { arena.pages().is_some() }
+    }
+    fn set_arena_page(&mut self, arena: &ArenaView<'_>, memory: MemoryId) -> bool {
+        let Some(memory) = memory.arena_memory() else { return false; };
+        if memory.arena != core::ptr::from_ref(arena.arena()).cast_mut() { return false; }
+        unsafe { arena.pages() }
+            .and_then(|pages| pages.set_range(memory.slice_index as usize, 1))
+            .is_some_and(|transition| transition.all_transitioned())
+    }
+    fn clear_arena_page(&mut self, arena: &ArenaView<'_>, memory: MemoryId) -> bool {
+        let Some(memory) = memory.arena_memory() else { return false; };
+        if memory.arena != core::ptr::from_ref(arena.arena()).cast_mut() { return false; }
+        unsafe { arena.pages() }
+            .and_then(|pages| pages.clear_range(memory.slice_index as usize, 1))
+            == Some(true)
+    }
+
+    unsafe fn publish_fresh_page(
+        &mut self, metadata: NonNull<Page>, block_size: usize, page_offset: usize,
+        reserved: u16, slice_pcommitted: u16, free_is_zero: bool, memid: MemoryId,
+    ) -> Option<NonNull<Page>> {
+        // SAFETY: page metadata is exclusively held by the fresh claim; the
+        // metadata lock grants this Theap, and the child owner retains the
+        // stable Heap address without forming an overlapping Heap reference.
+        unsafe { Page::publish_fresh_exclusive_owner_at_with_heap_pointer(
+            metadata, &mut *self.theap.as_ptr(), self.heap, TheapOwner::Detached,
+            block_size, page_offset, reserved, slice_pcommitted, free_is_zero, memid,
+        ) }
+    }
+
+    fn retire_page(&mut self, page: &mut Page) -> Option<MemoryId> { page.retire_exclusive() }
+    fn retired_bounds(&self) -> (usize, usize) { self.theap().retired_bounds() }
+    fn note_retired_bin(&mut self, bin: usize) -> bool {
+        unsafe { Theap::note_local_retired_bin_at(self.theap, bin) }
+    }
+    fn reset_retired_bounds(&mut self) {
+        unsafe { Theap::reset_local_retired_bounds_at(self.theap); }
+    }
+    fn retain_unfinished_os_release(
+        &mut self,
+        owner: OsAlignedPageOwner,
+    ) -> Result<(), OsAlignedPageOwner> {
+        if self.pending_os_release.is_some()
+            || !owner.belongs_to_subprocess(unsafe { self.child.as_ref() })
+        {
+            return Err(owner);
+        }
+        let Some(next) = self.page_engine.with_retained_release(owner.raw_retry_ready()) else {
+            return Err(owner);
+        };
+        *self.pending_os_release = Some(owner);
+        *self.page_engine = next;
+        Ok(())
+    }
+    fn latch_unfinished_page_engine(&mut self) {
+        *self.page_engine = self.page_engine.latch_unfinished();
+    }
 }

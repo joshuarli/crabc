@@ -309,6 +309,10 @@ impl ParentHeapAllocation<'_> {
         core::ptr::eq(self.parent_subprocess.as_ptr(), subprocess.as_ptr())
     }
 
+    /// Returns the exact Heap allocation address as an identity only. This
+    /// does not authorize dereferencing the pointer or creating a Heap
+    /// reference; the caller must retain this linear token until every Page
+    /// owner record that stores the address has been retired.
     #[inline]
     pub(crate) const fn pointer_for_identity(&self) -> NonNull<Heap> {
         self.pointer
@@ -9288,7 +9292,7 @@ mod tests {
 
     #[test]
     fn parent_allocated_child_heap_follows_registry_and_theap_release_order() {
-        with_owner_local_fixture(true, |attachment, mut heap_owner, _pair| {
+        with_owner_local_fixture(true, |attachment, mut heap_owner, pair| {
             let parent = attachment
                 .subprocess()
                 .expect("the active source attachment names its process parent");
@@ -9391,60 +9395,78 @@ mod tests {
             vm_options.set(crate::config::VmOption::ArenaReserve,
                 (crate::config::ARENA_MIN_SIZE / crate::config::KIB) as i64);
             vm_options.set(crate::config::VmOption::ArenaEagerCommit, 0);
-            let child_policy = crate::os::VmPolicy::new(vm_options)
-                .expect("resolved child VM policy is valid");
-            let parent_vm = crate::os::VmProcess::new(&child_policy, parent);
-            let process_page_map = crate::process_page_map::ProcessPageMapStorage::test_static_owner()
-                .initialize(config, parent)
-                .expect("the process-global PageMap belongs to the parent");
-            // This fixture isolates the child arena allocation transition;
-            // it does not claim that the not-yet-implemented child metadata
-            // engine supplies its random image from the parent's detached TLD.
-            let mut child_arena_random = crate::random::TheapRandomImage::empty_weak();
-            child_arena_random.initialize_weak();
-            let (child_arena_memory, child_arena_count, parent_arena_count) = child
-                .with_child_heap(|child_image, _heap, _memory| {
-                    let child_vm = crate::os::ChildVmProcess::new(parent_vm, child_image.as_ref())
-                        .expect("the exact registered child borrows the parent policy");
-                    let page_pair = crate::process_arena::ChildProcessPageArenaLease::join(
-                        process_page_map,
-                        child_vm,
+            // Bind the parent's exact selected policy to the same global map
+            // already used by its ordinary page engine. This fixture binding
+            // deliberately remains pre-READY; the initialized map and live
+            // main attachment supply the source capabilities needed here.
+            let binding = unsafe {
+                crate::process_init::ProcessMainInitializationStorage::test_static_owner()
+                    .test_bind_vm_process_to_existing_page_map(
+                        config, vm_options, parent, pair.page_map_lease(),
                     )
-                    .expect("the parent's global PageMap pairs with this registered child");
-                    let child_identity = child_vm.identity();
-                    let child_arenas = page_pair.arena_backing();
-                    assert!(core::ptr::eq(child_arenas, child_identity.arena_backing()));
-                    let child_backing = crate::page_backing::ChildMetadataArenaBacking::new(page_pair);
-                    let parent_arenas = parent.arena_backing();
-                    let parent_count_before = parent_arenas.registry().count();
-                    let claim = child_backing.claim_child_arena_slices_with_random(
-                            config,
-                            crate::arena::ArenaId::none(),
-                            1,
-                            true,
-                            0,
-                            Some(&mut child_arena_random),
-                        )
-                    .expect("child slice allocation uses its own regular arena group");
-                    let memory = claim.memory_id();
-                    let arena_memory = memory.arena_memory()
-                        .expect("the child allocation names arena-backed slices");
-                    // SAFETY: the live claim and registered child owner keep
-                    // this published arena image address-stable.
-                    let arena = unsafe { &*arena_memory.arena };
-                    assert!(core::ptr::eq(arena.subprocess, child_identity.as_ptr()));
-                    assert!(claim.release(), "the exact child arena claim returns to its bitmap");
-                    assert_eq!(parent_arenas.registry().count(), parent_count_before);
-                    (
-                        memory,
-                        child_arenas.registry().count(),
-                        parent_arenas.registry().count(),
-                    )
+            }
+            .expect("child pages borrow the parent's exact policy and global PageMap");
+            // A backing/session setup error occurs before source registry
+            // unlink, so the preparation owner must remain usable for retry.
+            child.test_fail_next_metadata_session_setup();
+            assert!(matches!(
+                unsafe { child.unlink_registry_and_finish_metadata_pages(registry, binding) },
+                Err(crate::meta::ChildMetadataPageEngineError::SessionNotReady),
+            ));
+            assert!(child.test_is_heap_ready());
+            assert!(child
+                .with_child_heap(|image, _heap, _memory| image
+                    .identity()
+                    .is_registered_child_of(parent))
+                .unwrap_or(false));
+
+            let parent_stats_before = parent.vm_statistics().snapshot();
+            let child_stats_before = child
+                .with_child_heap(|image, _heap, _memory| {
+                    image.identity().vm_statistics().snapshot()
                 })
-                .expect("the ready child Heap remains projectable");
+                .expect("the pinned child identity remains live");
+            let parent_arena_count_before = parent.arena_backing().registry().count();
+            let (child_arena_memory, child_arena_count, parent_arena_count) = child
+                .with_metadata_page_engine(binding, |child_image, engine| {
+                    let block = engine.allocate(64, false)
+                        .expect("child metadata engine allocates its small arena block");
+                    // SAFETY: the child engine retains the exact map and page
+                    // owner throughout this operation.
+                    let page = unsafe { engine.page_for_block(block) };
+                    assert!(!page.is_null(), "child small allocation has a live page image");
+                    // SAFETY: PageMap still publishes this initialized page.
+                    let memory = unsafe { (*page).memid() };
+                    // SAFETY: this engine owns disjoint ranges under the
+                    // process-global PageMap lifecycle lease.
+                    let map = unsafe { binding.page_map().page_map_for_owned_ranges() }
+                        .expect("parent PageMap remains available during child allocation");
+                    assert_eq!(unsafe { map.checked_lookup(block.as_ptr()) }, page,
+                        "child page publishes through the process-global PageMap");
+                    let identity = child_image.as_ref().get_ref().identity();
+                    let child_count = identity.arena_backing().registry().count();
+                    let parent_count = parent.arena_backing().registry().count();
+                    // SAFETY: this is the exact once-live block allocated
+                    // above, and the child metadata lock excludes teardown.
+                    unsafe { engine.free(block) }
+                        .expect("the arena-backed child block is freed before page collection");
+                    assert!(engine.collect_retired(true),
+                        "the child metadata Theap releases the now-empty arena page");
+                    (memory, child_count, parent_count)
+                })
+                .expect("the ready child metadata entry owns a page session");
             assert_eq!(child_arena_count, 1);
-            assert_eq!(parent_arena_count, 0);
+            assert_eq!(parent_arena_count, parent_arena_count_before);
             assert_eq!(child_arena_memory.kind(), crate::types::MemoryKind::Arena);
+            assert_eq!(parent.vm_statistics().snapshot(), parent_stats_before,
+                "child arena reserve and page commitment never charge the parent");
+            let child_stats_after = child
+                .with_child_heap(|image, _heap, _memory| {
+                    image.identity().vm_statistics().snapshot()
+                })
+                .expect("the child remains pinned through its allocated page");
+            assert_ne!(child_stats_after, child_stats_before,
+                "the child arena reserve and page commitment are charged to the child");
             let (sequence, total, live, ticket_identity, is_child) = child
                 .with_child_heap(|mut image, _heap, _memory| {
                     let identity_pointer = image.as_ref().get_ref().identity().as_ptr();
@@ -9498,29 +9520,113 @@ mod tests {
             assert!(metadata_heap_matches);
             assert!(metadata_tld_is_detached);
 
-            // Source destruction starts with registry unlink, then detaches
-            // the metadata-Theap from TLD and Heap lists. The exact metadata
+            let fault = crate::os::fault::install(crate::os::fault::Plan::disabled());
+            let os_block_address = core::cell::Cell::new(None);
+            let os_retirement = child.with_metadata_page_engine(binding, |_child_image, engine| {
+                // Use the source-aligned singleton route that bypasses arena
+                // admission and owns a distinct OS mapping.
+                let block = engine.allocate_aligned(SMALL_MAX_OBJ_SIZE + 1, 128 * 1024)
+                    .expect("child metadata engine allocates an OS-backed large block");
+                let page = unsafe { engine.page_for_block(block) };
+                assert!(!page.is_null(), "large child allocation has a live page image");
+                assert!(unsafe { (*page).memid().kind().is_os() },
+                    "aligned child metadata page uses the source OS singleton route");
+                os_block_address.set(Some(block.as_ptr() as usize));
+                // The aligned allocation may trim its initial reservation;
+                // inject only after it is fully published so this fault hits
+                // the terminal release of the exact child mapping.
+                fault.set(crate::os::fault::Plan::at(
+                    crate::os::fault::Point::Unmap, 1, crabc_core::Errno::NOMEM,
+                ));
+                unsafe { engine.free(block) }
+                    .expect("client free succeeds while its failed unmap owner is retained");
+                assert_eq!(fault.observed(), 1,
+                    "the exact child mapping's release consumes the injected unmap failure");
+                let map = unsafe { binding.page_map().page_map_for_owned_ranges() }
+                    .expect("parent PageMap remains available during child release");
+                // SAFETY: this session owns the exact range and the OS free
+                // just unregistered it before its injected unmap failure.
+                assert!(unsafe { map.checked_lookup(block.as_ptr()) }.is_null());
+            });
+            assert!(matches!(
+                os_retirement,
+                Err(crate::meta::ChildMetadataPageEngineError::EngineRetained),
+            ), "failed OS release transfers its exact owner into the child context");
+            let os_block_address = os_block_address
+                .get()
+                .expect("the child OS mapping address was captured before free");
+            assert_eq!(fault.observed(), 1, "one child unmap attempt failed");
+            fault.set(crate::os::fault::Plan::disabled());
+            assert_eq!(child.test_page_engine_state(), crate::meta::ChildPageEngineState::RetryPending);
+            let map = unsafe { binding.page_map().page_map_for_owned_ranges() }
+                .expect("the canonical PageMap remains live during child teardown");
+            // SAFETY: this single-thread fixture owns the child address and
+            // no lookup overlaps terminal teardown; null proves unregister
+            // completed before the injected unmap failure.
+            assert!(unsafe { map.checked_lookup(os_block_address as *const u8) }.is_null());
+            let stats_before_retry = child
+                .test_child_vm_statistics()
+                .expect("the child context remains retained across raw retry");
+            assert!(unsafe { child.retry_pending_os_release() }
+                .expect("the retained raw mapping unmaps without a process projection"));
+            assert_eq!(child.test_page_engine_state(), crate::meta::ChildPageEngineState::RetryComplete);
+            let stats_after_retry = child
+                .test_child_vm_statistics()
+                .expect("the child context remains live after the raw retry");
+            assert_eq!(stats_after_retry, stats_before_retry,
+                "retry does not repeat process accounting already applied before unmap");
+            assert!(child.test_is_heap_ready());
+            assert!(binding.is_active());
+            assert!(binding.is_allocation_ready());
+            assert_eq!(child.test_page_engine_state(), crate::meta::ChildPageEngineState::RetryComplete);
+            assert!(!child.test_has_pending_os_release());
+            assert_eq!(binding.page_map().memory_config().ok(), Some(config));
+
+            // Source destruction starts by unlinking this now-empty child;
+            // its metadata-Theap pages were already retired through the
+            // registered child backing, with any failed OS unmap retried while
+            // the context remained retained. It then detaches the TLD and
+            // Heap list edges. The exact metadata
             // cap is freed before child Heap-list removal and parent user-Heap
             // storage release, with child context last.
-            // SAFETY: this no-page fixture has no child users or concurrent
-            // list operations.
-            unsafe { child.unlink_registry(registry) }
-                .expect("the child registry edge is removed first");
+            // SAFETY: all child users are quiescent, all metadata-Theap pages
+            // and pending raw mapping owners are gone, and `registry` is the
+            // exact source registry that admitted this child.
+            // Registry unlink follows the earlier all-page retirement and raw
+            // retry; the fast path validates that no detached-Theap page or
+            // OS retry remains before unlinking this now-empty child.
+            fault.set(crate::os::fault::Plan::disabled());
+            assert_eq!(child.test_page_engine_state(), crate::meta::ChildPageEngineState::RetryComplete);
+            assert!(!child.test_has_pending_os_release());
+            // The source registry edge is removed only after the pending OS
+            // release completes and the metadata Theap has no remaining
+            // pages. The RetryComplete fast path performs this terminal
+            // unlink without reopening a page engine.
+            // SAFETY: all child users are quiescent, all metadata-Theap pages
+            // and raw mapping retries are gone, and this is the exact source
+            // registry that admitted the child.
+            unsafe { child.unlink_registry_and_finish_metadata_pages(registry, binding) }
+                .expect("the now-empty child unlinks after raw page retry");
+            assert!(child.test_is_registry_unlinked());
             // SAFETY: registry unlink makes the exact child Heap/TLD pair
             // quiescent; the parent metadata engine owns the detached TLD.
-            unsafe { child.detach_metadata_theap(parent_metadata, config) }
-                .unwrap_or_else(|_| panic!("the child Theap detaches TLD-first"));
+            let detach_result = unsafe { child.detach_metadata_theap(parent_metadata, config) };
+            assert!(detach_result.is_ok(),
+                "the child Theap detaches TLD-first: {detach_result:?}; parent binding {:?}, child storage {:?}",
+                parent_metadata.test_child_detach_binding(config, parent),
+                child.test_theap_heap_detach_state());
             // SAFETY: both Theap list edges have been removed and no identity
             // observer remains after registry unlink.
             unsafe { child.release_metadata_theap_after_detach() }
                 .unwrap_or_else(|_| panic!("the child metadata-Theap capability releases"));
-            // SAFETY: this Heap has no pages; its last list/count edge may now
-            // be removed following Theap destruction.
+            // SAFETY: this Heap has no remaining pages; its last list/count
+            // edge may now be removed following Theap destruction.
             unsafe { child.unlink_child_heap() }
                 .expect("the empty child Heap unlinks after its Theap");
             // SAFETY: all represented list teardown is complete and the exact
-            // current parent attachment minted this token. This witness has
-            // no child pages and makes no full heap-destroy claim.
+            // current parent attachment minted this token. Ordinary child
+            // Heap page destruction outside the metadata Theap remains a
+            // separate boundary.
             unsafe {
                 child
                     .release_after_empty_heap_teardown(&mut [], &mut heap_owner, attachment)

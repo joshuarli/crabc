@@ -1129,6 +1129,11 @@ impl Drop for MappedAbandonedClaimScope {
 }
 
 impl ProcessPageMapLease {
+    #[inline]
+    pub(crate) const fn storage_pointer(self) -> *mut ProcessPageMapStorage {
+        core::ptr::from_ref(self.storage).cast_mut()
+    }
+
     /// Returns the published source root after confirming the process owner
     /// remains live.
     pub(crate) fn root(self) -> Result<NonNull<PageMapHeader>, ProcessPageMapError> {

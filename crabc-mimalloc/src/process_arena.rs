@@ -1276,6 +1276,9 @@ pub(crate) struct ProcessPageArenaLease {
 }
 
 impl ProcessPageArenaLease {
+    #[inline]
+    pub(crate) const fn page_map_lease(self) -> ProcessPageMapLease { self.page_map }
+
     /// Joins exactly matching Release-published process map and arena owners.
     pub(crate) fn join(
         page_map: ProcessPageMapLease,

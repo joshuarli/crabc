@@ -3981,13 +3981,39 @@ impl Page {
         heap: &Heap,
         owner: TheapOwner,
     ) {
+        // SAFETY: this existing reference-based path inherits the exact
+        // address-stable Heap lifetime obligations of its callers.
+        unsafe {
+            self.associate_exclusive_owner_with_heap_pointer(
+                theap,
+                NonNull::from(heap),
+                owner,
+            );
+        }
+    }
+
+    /// Associates a detached Theap page with an address-stable Heap without
+    /// creating a Rust reference to that Heap. Child metadata operations may
+    /// share the child main Heap with ordinary child threads; their detached
+    /// metadata lock excludes other metadata Theap operations, not ordinary
+    /// Heap projections.
+    /// # Safety
+    /// `heap` is the exact address-stable Heap retained for this page's full
+    /// lifecycle; callers must not use this identity pointer to form an
+    /// overlapping Rust reference.
+    unsafe fn associate_exclusive_owner_with_heap_pointer(
+        &mut self,
+        theap: &mut Theap,
+        heap: NonNull<Heap>,
+        owner: TheapOwner,
+    ) {
         debug_assert!(theap.matches_owner(owner));
         self.theap = core::ptr::from_mut(theap);
         // A fresh page records this address but does not mutate its Heap.
         // Heap-list and arena-pages changes retain their own synchronized
         // source boundaries, so this association must not manufacture an
         // exclusive Rust projection of the process-static main Heap.
-        self.heap = core::ptr::from_ref(heap).cast_mut();
+        self.heap = heap.as_ptr();
         self.xthread_id
             .store(owner.thread_id(), core::sync::atomic::Ordering::Release);
         // The source's owner bit permits access to the non-atomic page fields.
@@ -4050,7 +4076,42 @@ impl Page {
         if !Self::fresh_parameters_are_valid(block_size, page_offset, reserved) {
             return false;
         }
+        // SAFETY: reference-based callers preserve the Heap's address for
+        // the Page lifetime under the existing page-owner contract.
+        unsafe {
+            self.publish_fresh_exclusive_owner_with_heap_pointer(
+                theap,
+                NonNull::from(heap),
+                owner,
+                block_size,
+                page_offset,
+                reserved,
+                slice_pcommitted,
+                free_is_zero,
+                memid,
+            )
+        }
+    }
 
+    /// # Safety
+    /// `heap` is the exact address-stable Heap retained for this page's full
+    /// lifecycle; callers must not use this identity pointer to form an
+    /// overlapping Rust reference.
+    unsafe fn publish_fresh_exclusive_owner_with_heap_pointer(
+        &mut self,
+        theap: &mut Theap,
+        heap: NonNull<Heap>,
+        owner: TheapOwner,
+        block_size: usize,
+        page_offset: usize,
+        reserved: u16,
+        slice_pcommitted: u16,
+        free_is_zero: bool,
+        memid: MemoryId,
+    ) -> bool {
+        if !Self::fresh_parameters_are_valid(block_size, page_offset, reserved) {
+            return false;
+        }
         self.free = null_mut();
         self.used = 0;
         self.local_free = null_mut();
@@ -4064,7 +4125,8 @@ impl Page {
         self.next = null_mut();
         self.prev = null_mut();
         self.memid = memid;
-        self.associate_exclusive_owner(theap, heap, owner);
+        // SAFETY: forwarded exact Heap identity/lifetime contract.
+        unsafe { self.associate_exclusive_owner_with_heap_pointer(theap, heap, owner) };
         // `MI_PAGE_META_IS_ALIGNED` is enabled in the frozen profile. As in
         // `arena.c`, publish the self map only after every ordinary page field
         // and exclusive owner record is ready.
@@ -4072,6 +4134,50 @@ impl Page {
         self.self_
             .store(self_pointer, core::sync::atomic::Ordering::Release);
         true
+    }
+
+    /// Raw publication for an address-stable child Heap whose ordinary
+    /// threads may concurrently project the image. The owner token must keep
+    /// the exact Heap allocation live until this page is retired; no Heap
+    /// reference is formed by this operation. The pointer carries only the
+    /// Heap image identity for the Page's owner record, not permission to
+    /// access its fields. The child Heap's exclusive access remains governed
+    /// by its own lock/session path.
+    ///
+    /// # Safety
+    /// All obligations of [`Self::publish_fresh_exclusive_owner_at`] apply.
+    /// In addition, `heap` must be the exact pinned child main Heap associated
+    /// with this child metadata Theap and remain allocated through page
+    /// retirement. The caller must retain its exact linear allocation owner
+    /// throughout that interval and must not form an overlapping Rust
+    /// reference to the Heap from this raw identity projection.
+    pub(crate) unsafe fn publish_fresh_exclusive_owner_at_with_heap_pointer(
+        mut metadata: NonNull<Self>,
+        theap: &mut Theap,
+        heap: NonNull<Heap>,
+        owner: TheapOwner,
+        block_size: usize,
+        page_offset: usize,
+        reserved: u16,
+        slice_pcommitted: u16,
+        free_is_zero: bool,
+        memid: MemoryId,
+    ) -> Option<NonNull<Self>> {
+        if !Self::fresh_parameters_are_valid(block_size, page_offset, reserved) {
+            return None;
+        }
+        // SAFETY: caller grants the unique writable metadata capability.
+        unsafe { metadata.as_ptr().write(Self::empty()) };
+        // SAFETY: the preceding raw write initialized a valid Page value.
+        let page = unsafe { metadata.as_mut() };
+        // SAFETY: forwarded raw Heap identity and retention obligations.
+        if !unsafe { page.publish_fresh_exclusive_owner_with_heap_pointer(
+            theap, heap, owner, block_size, page_offset, reserved,
+            slice_pcommitted, free_is_zero, memid,
+        ) } {
+            return None;
+        }
+        Some(metadata)
     }
 
     #[inline]
