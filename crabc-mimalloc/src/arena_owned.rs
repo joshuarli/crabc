@@ -684,8 +684,8 @@ impl ProcessArenaBacking {
     /// The caller owns the returned span until explicit release and must not
     /// overlap page/bitmap users during its commitment or release transitions.
     pub(crate) unsafe fn try_find_free(
-        &'static self, search: ArenaSearch, slice_count: usize, alignment: usize, commit: bool,
-    ) -> Option<ArenaSliceClaim<'static>> {
+        &self, search: ArenaSearch, slice_count: usize, alignment: usize, commit: bool,
+    ) -> Option<ArenaSliceClaim<'_>> {
         unsafe {
             self.registry.try_find_free_with(search, slice_count, alignment, |view| {
                 let owner = self.allocation_for_arena(view.arena())?;
@@ -735,7 +735,7 @@ impl ProcessArenaBacking {
         &'static self, process: VmProcess<'static>, config: MemoryConfig,
         managed_size: usize, mapping: Mapping, memory: MemoryId, numa_node: i32, exclusive: bool,
     ) -> Result<ManagedExternalRegion, ProcessArenaInstallFailure> {
-        let result = unsafe { self.install_owned_allocation_locked(process, config, managed_size,
+        let result = unsafe { self.install_owned_allocation_locked(process, StoredVmProcess::from_static_process(process), config, managed_size,
             ArenaBacking::Regular(mapping), memory, numa_node, exclusive) };
         result.map_err(|(error, allocation)| {
             let ArenaBacking::Regular(mapping) = allocation else { unreachable!() };
@@ -918,7 +918,7 @@ impl ProcessArenaBacking {
         let process = allocation.process();
         let size = allocation.size();
         let memory = allocation.memory_id();
-        unsafe { self.install_owned_allocation_locked(process, config, size,
+        unsafe { self.install_owned_allocation_locked(process, StoredVmProcess::from_static_process(process), config, size,
             ArenaBacking::Huge(allocation), memory, numa_node, exclusive) }
             .map_err(|(error, owner)| {
                 let ArenaBacking::Huge(allocation) = owner else { unreachable!() };
@@ -928,7 +928,7 @@ impl ProcessArenaBacking {
 
     /// Caller holds reserve_lock until slot publication or complete rollback.
     unsafe fn install_owned_allocation_locked(
-        &'static self, process: VmProcess<'static>, config: MemoryConfig,
+        &self, process: VmProcess<'_>, stored_process: StoredVmProcess, config: MemoryConfig,
         managed_size: usize, allocation: ArenaBacking, memory: MemoryId,
         numa_node: i32, exclusive: bool,
     ) -> Result<ManagedExternalRegion, (ManageArenaError, ArenaBacking)> {
@@ -979,7 +979,7 @@ impl ProcessArenaBacking {
             return Err(fail(ManageArenaError::RegistryFull, allocation));
         };
         unsafe { (*slot.value.get()).write(OwnedArenaAllocation {
-            allocation, memory, process: StoredVmProcess::from_static_process(process), config, release_error: None,
+            allocation, memory, process: stored_process, config, release_error: None,
         }); }
         slot.state.store(INITIALIZING, Ordering::Release);
         let hook = (memory.kind() == MemoryKind::Os).then(||
