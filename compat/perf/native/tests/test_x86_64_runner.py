@@ -505,18 +505,18 @@ class ReaderBoundaryTests(unittest.TestCase):
     def test_tool_record_replay_rejects_commit_version_and_target_drift(self) -> None:
         valid = {
             "rustc": (
-                "rustc 1.99.0-nightly (89c61a754 2026-07-23)\n"
+                "rustc 1.100.0-nightly (574ff7d98 2026-09-14)\n"
                 "binary: rustc\n"
-                "commit-hash: 89c61a7545da48b06116675b888398d02a4064c7\n"
-                "commit-date: 2026-07-23\n"
+                "commit-hash: 574ff7d98bd6d037e5236a8453029173b32631fd\n"
+                "commit-date: 2026-09-14\n"
                 "host: x86_64-unknown-linux-musl\n"
-                "release: 1.99.0-nightly\n"
+                "release: 1.100.0-nightly\n"
             ),
-            "cargo": "cargo 1.99.0-nightly (3efb1f477 2026-07-17)\n",
+            "cargo": "cargo 1.100.0-nightly (7941be6fb 2026-09-11)\n",
             "rustup": "x86_64-unknown-linux-musl\n",
         }
         drifted = {
-            "rustc": valid["rustc"].replace("89c61a7545da48b06116675b888398d02a4064c7", "0" * 40),
+            "rustc": valid["rustc"].replace("574ff7d98bd6d037e5236a8453029173b32631fd", "0" * 40),
             "cargo": "cargo 9.9.9\n",
             "rustup": "x86_64-unknown-linux-musl\naarch64-unknown-linux-musl\n",
         }

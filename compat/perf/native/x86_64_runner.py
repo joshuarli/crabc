@@ -58,7 +58,7 @@ RESOURCE_KEYS = {
 }
 NUMERIC_RESOURCE_KEYS = RESOURCE_KEYS - {"status", "memory_status"}
 
-PINNED_IMAGE = "crabc-core-evidence@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d"
+PINNED_IMAGE = "crabc-core-evidence@sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d"
 PINNED_TARGET = "x86_64-unknown-linux-musl"
 EXPECTED_EXECUTION = {
     "architecture": "x86_64",
@@ -154,11 +154,11 @@ EXPECTED_EXECUTION_SOURCES = {
 }
 
 EXPECTED_RUSTC_FIELDS = {
-    "release": "1.99.0-nightly",
-    "commit-hash": "89c61a7545da48b06116675b888398d02a4064c7",
+    "release": "1.100.0-nightly",
+    "commit-hash": "574ff7d98bd6d037e5236a8453029173b32631fd",
     "host": "x86_64-unknown-linux-musl",
 }
-EXPECTED_CARGO_VERSION = "cargo 1.99.0-nightly (3efb1f477 2026-07-17)"
+EXPECTED_CARGO_VERSION = "cargo 1.100.0-nightly (7941be6fb 2026-09-11)"
 EXPECTED_INSTALLED_TARGETS = ["x86_64-unknown-linux-musl"]
 
 # Cargo metadata's resolve nodes are the target-filtered active package graph,
