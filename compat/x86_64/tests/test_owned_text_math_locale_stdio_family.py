@@ -538,9 +538,10 @@ class TextMathLocaleStdioFamilyTests(unittest.TestCase):
         changed = False
 
         def mutate(root: Path, request: coordinator.ComponentRequest, pair: str,
-                   evidence: coordinator.ComponentEvidence) -> dict[str, object]:
+                   evidence: coordinator.ComponentEvidence,
+                   directory_snapshots: object = None) -> dict[str, object]:
             nonlocal changed
-            record = original(root, request, pair, evidence)
+            record = original(root, request, pair, evidence, directory_snapshots)
             if not changed:
                 changed = True
                 (self.fixture.products["primary"]["static"] / "payload").write_text("changed\n", encoding="utf-8")
@@ -549,6 +550,25 @@ class TextMathLocaleStdioFamilyTests(unittest.TestCase):
         with mock.patch.object(coordinator, "_pair_record", side_effect=mutate):
             with self.assertRaisesRegex(coordinator.FamilyError, "declared input changed during collection"):
                 self.collect()
+
+    def test_pair_records_reuse_initial_tree_snapshots_and_keep_final_recheck(self) -> None:
+        product = self.fixture.products["primary"]["static"]
+        original_snapshot = coordinator.family.snapshot
+        calls = 0
+
+        def track(path: Path) -> dict[str, object]:
+            nonlocal calls
+            if path == product:
+                calls += 1
+            return original_snapshot(path)
+
+        patches = self.fixture.patches(self.fixture.adapter_results())
+        with patches[0], patches[1], patches[2], patches[3], \
+                mock.patch.object(coordinator.family, "snapshot", side_effect=track):
+            coordinator.collect(self.fixture.root, self.fixture.relative(self.fixture.request_path))
+        # Initial snapshot plus the pre-output and post-output mutation checks.
+        # Pair records derive their receipt identity from the initial snapshot.
+        self.assertEqual(calls, 3)
 
     def test_reader_rejects_a_retained_input_mutated_while_output_identities_are_built(self) -> None:
         original = coordinator._roster_identity

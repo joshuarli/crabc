@@ -350,7 +350,11 @@ def _snapshot_file_identity(root: Path, path: Path) -> dict[str, object]:
 
 
 def _snapshot_identity(root: Path, path: Path) -> dict[str, object]:
-    snapshot = family.snapshot(path)
+    return _snapshot_identity_from_contents(root, path, family.snapshot(path))
+
+
+def _snapshot_identity_from_contents(root: Path, path: Path,
+                                     snapshot: Mapping[str, object]) -> dict[str, object]:
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
     return {
         "path": path.relative_to(root).as_posix(),
@@ -912,7 +916,14 @@ def _require_component(name: str, values: object, products: Mapping[str, Mapping
             require(not evidence.rows, f"{name} has unexpected family behavior rows")
 
 
-def _pair_record(root: Path, request: ComponentRequest, pair: str, evidence: ComponentEvidence) -> dict[str, Any]:
+def _pair_record(root: Path, request: ComponentRequest, pair: str, evidence: ComponentEvidence,
+                 directory_snapshots: Mapping[Path, Mapping[str, object]] | None = None) -> dict[str, Any]:
+    def snapshot_identity(path: Path) -> dict[str, object]:
+        if directory_snapshots is None:
+            return _snapshot_identity(root, path)
+        require(path in directory_snapshots, "pair output directory was not included in the input snapshot")
+        return _snapshot_identity_from_contents(root, path, directory_snapshots[path])
+
     source: dict[str, object]
     if request.receipt is not None:
         source = {"receipt": _identity(root, request.receipt)}
@@ -921,11 +932,11 @@ def _pair_record(root: Path, request: ComponentRequest, pair: str, evidence: Com
     record: dict[str, Any] = {
         **source,
         "modes": list(evidence.modes),
-        "products": {kind: _snapshot_identity(root, path) for kind, path in evidence.products.items()},
+        "products": {kind: snapshot_identity(path) for kind, path in evidence.products.items()},
         "rows": dict(evidence.rows),
     }
     if request.evidence_roots is not None:
-        record["evidence_root"] = _snapshot_identity(root, request.evidence_roots[pair])
+        record["evidence_root"] = snapshot_identity(request.evidence_roots[pair])
     if request.expected_inputs is not None:
         record["expected_inputs"] = _identity(root, request.expected_inputs[pair])
     return record
@@ -1019,14 +1030,16 @@ def collect(root: Path, request_path: Path) -> dict[str, Any]:
         _require_component(name, replayed, products, source_before)
         require(replayed == observed[name], f"{name} public reader changed during collection")
 
-    # _pair_record seals retained product trees while constructing the output.
-    # Recheck every declared root afterwards so a mutation in that final read
-    # cannot enter an otherwise-valid immutable coordinator receipt.
+    # Reuse the initial product/evidence-root snapshots for receipt identities.
+    # The final check below ensures those bytes stayed unchanged through output
+    # construction without rereading each tree once per component pair.
+    directory_snapshots = {snapshot.path: snapshot.contents for snapshot in directories}
     components = {
         name: {
             "scope": list(COMPONENTS[name].scope),
             "credits": list(COMPONENTS[name].credits),
-            "pairs": {pair: _pair_record(root, requests[name], pair, observed[name][pair]) for pair in PAIRS},
+            "pairs": {pair: _pair_record(root, requests[name], pair, observed[name][pair], directory_snapshots)
+                      for pair in PAIRS},
         }
         for name in COMPONENTS
     }
