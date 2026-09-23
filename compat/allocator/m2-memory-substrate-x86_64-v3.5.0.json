@@ -19,7 +19,8 @@
       "id": "metadata",
       "native_status": "partial",
       "remaining_conditions": [
-        "Qualify non-main-subprocess metadata ownership and non-Malloc memory-ID release branches beyond the selected main-subprocess lifecycle."
+        "Qualify non-main-subprocess metadata ownership and non-Malloc memory-ID release branches.",
+        "Qualify deterministic concurrent allocation/publication/release overlap; the current phase barrier proves only that cross-thread replacements happen before peer allocation batches finish."
       ],
       "source_map_records": [
         { "required_status": "partial", "unit_id": "core-layouts-and-configuration" },
