@@ -17,6 +17,7 @@ mod sealed {
     pub trait Sealed {}
     impl Sealed for crate::arena::ArenaView<'_> {}
     impl Sealed for super::ProcessMetadataPageBacking {}
+    impl Sealed for super::ChildMetadataArenaBacking<'_> {}
 }
 
 /// A value-owned candidate cursor. It retains registry/arena lifetime facts,
@@ -46,7 +47,7 @@ pub(crate) trait PageBacking<'arena>: sealed::Sealed {
     /// whose arena lifetime the caller retains. This validates source owner
     /// identity, not arbitrary or dangling client-supplied arena addresses.
     unsafe fn arena_for_memory(&self, memory: MemoryId) -> Option<ArenaView<'arena>>;
-    fn process(&self) -> Option<VmProcess<'static>> { None }
+    fn process(&self) -> Option<VmProcess<'arena>> { None }
     fn claim(&self, config: MemoryConfig, requested: ArenaId, slices: usize,
         commit: bool, thread_sequence: usize) -> Option<ArenaSliceClaim<'arena>>;
     fn claim_with_random(&self, config: MemoryConfig, requested: ArenaId, slices: usize,
@@ -373,6 +374,34 @@ impl<'child> ChildMetadataArenaBacking<'child> {
         let metadata = (PAGE_META_ALIGNED_COUNT * core::mem::size_of::<Page>()
             + ARENA_SLICE_SIZE - 1) & !(ARENA_SLICE_SIZE - 1);
         rounded.clamp(ARENA_MIN_OBJ_SIZE, PAGE_META_ALIGNMENT - metadata)
+    }
+}
+
+impl<'child> PageBacking<'child> for ChildMetadataArenaBacking<'child> {
+    fn selected_arena(&self) -> Option<&ArenaView<'child>> { None }
+    fn process(&self) -> Option<VmProcess<'child>> { Some(self.process()) }
+    unsafe fn arena_for_memory(&self, memory: MemoryId) -> Option<ArenaView<'child>> {
+        unsafe { ChildMetadataArenaBacking::arena_for_memory(self, memory) }
+    }
+    fn claim(&self, config: MemoryConfig, requested: ArenaId, slices: usize,
+        commit: bool, thread_sequence: usize) -> Option<ArenaSliceClaim<'child>> {
+        self.claim_child_arena_slices_with_random(config, requested, slices, commit,
+            thread_sequence, None)
+    }
+    fn claim_with_random(&self, config: MemoryConfig, requested: ArenaId, slices: usize,
+        commit: bool, thread_sequence: usize, random: crate::os::OsRandom<'_>)
+        -> Option<ArenaSliceClaim<'child>> {
+        self.claim_child_arena_slices_with_random(config, requested, slices, commit,
+            thread_sequence, random)
+    }
+    unsafe fn release(&self, memory: MemoryId) -> bool {
+        unsafe { ChildMetadataArenaBacking::release(self, memory) }
+    }
+    unsafe fn account_page_commit_before_release(&self, memory: MemoryId, committed: usize) -> bool {
+        unsafe { ChildMetadataArenaBacking::account_page_commit_before_release(self, memory, committed) }
+    }
+    fn collect(&self, config: MemoryConfig, force: bool, thread_sequence: usize) -> bool {
+        ChildMetadataArenaBacking::collect(self, config, force, thread_sequence)
     }
 }
 

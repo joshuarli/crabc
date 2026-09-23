@@ -1542,6 +1542,8 @@ impl ChildContextOwner {
 pub(crate) struct ChildMainHeapContextOwner<'heap> {
     context: ChildContextOwner,
     heap_storage: Option<crate::main_heap_page::ParentHeapAllocation<'heap>>,
+    pending_os_release: Option<crate::os_page::OsAlignedPageOwner>,
+    page_engine: ChildPageEngineState,
     stage: ChildMainHeapStage,
 }
 
@@ -1555,6 +1557,34 @@ enum ChildMainHeapStage {
     HeapListRemoved,
     ArenaBackingDestroyed,
     Terminal,
+}
+
+/// Page-engine failure ownership remains distinct from subprocess teardown.
+/// A failed accounted `munmap` can be retried raw while its context remains
+/// retained; other unfinished engine state is permanently poisoned.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ChildPageEngineState {
+    Active,
+    RetryPending,
+    RetryComplete,
+    Poisoned,
+}
+
+impl ChildPageEngineState {
+    fn permits_page_projection(self) -> bool { self == Self::Active }
+    fn permits_teardown(self) -> bool { matches!(self, Self::Active | Self::RetryComplete) }
+
+    pub(crate) fn with_retained_release(self, retryable: bool) -> Option<Self> {
+        (self == Self::Active).then_some(if retryable { Self::RetryPending } else { Self::Poisoned })
+    }
+
+    pub(crate) fn latch_unfinished(self) -> Self {
+        if self == Self::RetryPending { self } else { Self::Poisoned }
+    }
+
+    fn complete_raw_retry(self) -> Option<Self> {
+        (self == Self::RetryPending).then_some(Self::RetryComplete)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1636,12 +1666,70 @@ impl ChildContextOwner {
         Ok(ChildMainHeapContextOwner {
             context: self,
             heap_storage: Some(heap),
+            pending_os_release: None,
+            page_engine: ChildPageEngineState::Active,
             stage: ChildMainHeapStage::Registered,
         })
     }
 }
 
 impl<'heap> ChildMainHeapContextOwner<'heap> {
+    pub(crate) fn retain_pending_os_release(
+        &mut self,
+        owner: crate::os_page::OsAlignedPageOwner,
+    ) -> Result<(), crate::os_page::OsAlignedPageOwner> {
+        if self.pending_os_release.is_some() || self.stage == ChildMainHeapStage::Terminal {
+            return Err(owner);
+        }
+        let belongs_to_child = self.context.with_image(|child| {
+            owner.belongs_to_subprocess(child.as_ref().get_ref().identity())
+        }).unwrap_or(false);
+        if !belongs_to_child {
+            return Err(owner);
+        }
+        let retryable = owner.raw_retry_ready();
+        let Some(next) = self.page_engine.with_retained_release(retryable) else {
+            return Err(owner);
+        };
+        self.pending_os_release = Some(owner);
+        self.page_engine = next;
+        Ok(())
+    }
+
+    pub(crate) fn latch_unfinished_page_engine(&mut self) {
+        self.page_engine = self.page_engine.latch_unfinished();
+    }
+
+    /// Retries only an owner whose process accounting edge already ran.
+    /// The child context remains in `self` throughout the processless raw
+    /// continuation; terminal and pre-accounted owners are preserved.
+    pub(crate) unsafe fn retry_pending_os_release(
+        &mut self,
+    ) -> Result<bool, crate::os_page::OsAlignedPageError> {
+        if self.page_engine != ChildPageEngineState::RetryPending { return Ok(false); }
+        let Some(owner) = self.pending_os_release.take() else { return Ok(false); };
+        if !owner.raw_retry_ready() {
+            self.pending_os_release = Some(owner);
+            return Ok(false);
+        }
+        // SAFETY: `self` retains the exact pinned child context and this
+        // owner is the sole outstanding terminal mapping release right.
+        match unsafe { owner.retry_release() } {
+            Ok(()) => {
+                let Some(next) = self.page_engine.complete_raw_retry() else {
+                    unreachable!("raw retry was admitted only in the retry-pending state");
+                };
+                self.page_engine = next;
+                Ok(true)
+            }
+            Err(failure) => {
+                let error = failure.error();
+                self.pending_os_release = Some(failure.into_owner());
+                Err(error)
+            }
+        }
+    }
+
     /// Projects the child context and its parent-allocated Heap together for
     /// one source transition. Both references are bounded by the closure.
     pub(crate) fn with_child_heap<R>(
@@ -1652,7 +1740,8 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
             MemoryId,
         ) -> R,
     ) -> Option<R> {
-        if self.stage != ChildMainHeapStage::HeapReady { return None; }
+        if self.stage != ChildMainHeapStage::HeapReady || self.pending_os_release.is_some()
+            || !self.page_engine.permits_page_projection() { return None; }
         let Self { context, heap_storage, .. } = self;
         let heap = heap_storage.as_mut()?;
         let memory = heap.memory_id();
@@ -1667,7 +1756,8 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         &mut self,
         operation: impl for<'theap> FnOnce(&'theap mut Theap) -> R,
     ) -> Option<R> {
-        if self.stage != ChildMainHeapStage::HeapReady { return None; }
+        if self.stage != ChildMainHeapStage::HeapReady || self.pending_os_release.is_some()
+            || !self.page_engine.permits_page_projection() { return None; }
         self.context.with_lease(|mut lease| lease.with_metadata_theap(operation))
     }
 
@@ -1684,7 +1774,8 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
             MemoryId,
         ) -> R,
     ) -> Option<R> {
-        if self.stage != ChildMainHeapStage::HeapReady { return None; }
+        if self.stage != ChildMainHeapStage::HeapReady || self.pending_os_release.is_some()
+            || !self.page_engine.permits_page_projection() { return None; }
         let Self { context, heap_storage, .. } = self;
         let heap_storage = heap_storage.as_mut()?;
         let memory = heap_storage.memory_id();
@@ -1805,7 +1896,8 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         parent_metadata: Pin<&'static MetaAllocator>,
         config: MemoryConfig,
     ) -> Result<(), ChildMetadataTheapError> {
-        if self.stage != ChildMainHeapStage::RegistryUnlinked {
+        if self.stage != ChildMainHeapStage::RegistryUnlinked || self.pending_os_release.is_some()
+            || !self.page_engine.permits_teardown() {
             return Err(ChildMetadataTheapError::Metadata(MetaError::InitializationRetained));
         }
         let parent = self.context.parent_subprocess;
@@ -1841,7 +1933,8 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     pub(crate) unsafe fn release_metadata_theap_after_detach(
         &mut self,
     ) -> Result<(), ChildMainHeapReleaseError> {
-        if self.stage != ChildMainHeapStage::TheapDetached {
+        if self.stage != ChildMainHeapStage::TheapDetached || self.pending_os_release.is_some()
+            || !self.page_engine.permits_teardown() {
             return Err(ChildMainHeapReleaseError::InvalidTransition);
         }
         let Some(heap) = self.heap_storage.as_ref() else {
@@ -1886,7 +1979,8 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     pub(crate) unsafe fn unlink_child_heap(
         &mut self,
     ) -> Result<(), crate::types::heap_registry::SourceHeapRegistryError> {
-        if self.stage != ChildMainHeapStage::MetadataTheapReleased {
+        if self.stage != ChildMainHeapStage::MetadataTheapReleased || self.pending_os_release.is_some()
+            || !self.page_engine.permits_teardown() {
             return Err(crate::types::heap_registry::SourceHeapRegistryError::InvalidImage);
         }
         // `with_child_heap` is intentionally restricted to HeapReady. Use
@@ -1931,7 +2025,8 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         heap_owner: &mut crate::main_heap_page::MainHeapThreadOwnerLocalPageEngine<'heap>,
         attachment: &mut crate::main_heap_thread::MainHeapThreadAttachment<'heap>,
     ) -> Result<(), ChildMainHeapReleaseFailure<'heap, 'tracking>> {
-        if !matches!(self.stage, ChildMainHeapStage::HeapListRemoved | ChildMainHeapStage::ArenaBackingDestroyed) {
+        if self.pending_os_release.is_some() || !self.page_engine.permits_teardown()
+            || !matches!(self.stage, ChildMainHeapStage::HeapListRemoved | ChildMainHeapStage::ArenaBackingDestroyed) {
             return Err(ChildMainHeapReleaseFailure::Retained {
                 owner: self,
                 stage: ChildMainHeapReleaseStage::Validate,
@@ -3644,6 +3739,31 @@ mod tests {
 
     use crate::os::{fault, PageSize};
     use crate::types::MemoryKind;
+
+    #[test]
+    fn child_page_engine_retry_and_poison_states_keep_teardown_distinct() {
+        let active = ChildPageEngineState::Active;
+        assert!(active.permits_page_projection());
+        assert!(active.permits_teardown());
+
+        let retry_pending = active.with_retained_release(true).unwrap();
+        assert_eq!(retry_pending, ChildPageEngineState::RetryPending);
+        assert!(!retry_pending.permits_page_projection());
+        assert!(!retry_pending.permits_teardown());
+        assert_eq!(retry_pending.latch_unfinished(), retry_pending,
+            "an accounted unmap remains recoverable when the engine drops");
+        let retry_complete = retry_pending.complete_raw_retry().unwrap();
+        assert_eq!(retry_complete, ChildPageEngineState::RetryComplete);
+        assert!(!retry_complete.permits_page_projection());
+        assert!(retry_complete.permits_teardown());
+
+        let publication_failure = active.with_retained_release(false).unwrap();
+        assert_eq!(publication_failure, ChildPageEngineState::Poisoned);
+        assert_eq!(publication_failure.latch_unfinished(), publication_failure);
+        assert!(!publication_failure.permits_page_projection());
+        assert!(!publication_failure.permits_teardown());
+        assert!(publication_failure.complete_raw_retry().is_none());
+    }
 
     fn config() -> MemoryConfig {
         let page_size = PageSize::new(4096).unwrap();

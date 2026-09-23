@@ -100,6 +100,31 @@ impl OsRandomSource for CurrentDefaultTheapRandom {
         unsafe { crate::types::Theap::next_os_reservation_random_at(pointer) }
     }
 }
+
+/// Revalidates one pinned non-TLS Theap's random field at each OS draw.
+/// This is used by detached metadata Theaps, including reclaimable child
+/// contexts, whose source random image is not the caller's default TLS.
+pub(crate) struct CurrentTheapRandom {
+    theap: NonNull<crate::types::Theap>,
+    _not_send: core::marker::PhantomData<*mut ()>,
+}
+
+impl CurrentTheapRandom {
+    /// # Safety
+    /// The caller retains this exact initialized Theap and excludes every
+    /// overlapping whole-Theap/random-field reference for the operation.
+    pub(crate) unsafe fn new(theap: NonNull<crate::types::Theap>) -> Self {
+        Self { theap, _not_send: core::marker::PhantomData }
+    }
+}
+
+impl OsRandomSource for CurrentTheapRandom {
+    fn next_if_initialized(&mut self) -> Option<u64> {
+        // SAFETY: the constructor contract retains the exact image; each
+        // field projection ends before the caller's next VM operation.
+        unsafe { crate::types::Theap::next_os_reservation_random_at(self.theap) }
+    }
+}
 use crate::types::{MemoryId, MemoryKind};
 
 // Linux values shared by the exact AArch64 and x86-64 Unix primitive paths.

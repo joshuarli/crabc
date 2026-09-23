@@ -94,6 +94,16 @@ impl theap_page_session_sealed::Sealed for CanonicalMetadataTheapSession {}
 unsafe impl TheapPageSession for CanonicalMetadataTheapSession {
     fn theap(&self) -> &Theap { unsafe { self.theap.as_ref() } }
     fn thread_id(&self) -> Option<LiveThreadId> { None }
+    fn with_os_random_source<R>(
+        &mut self,
+        operation: impl FnOnce(&mut (dyn crate::os::OsRandomSource + 'static)) -> R,
+    ) -> R {
+        // SAFETY: this canonical metadata session is entered only under its
+        // serialized MetadataEngine entry and retains this exact initialized
+        // Theap through the operation; the adapter projects one field per draw.
+        let mut random = unsafe { crate::os::CurrentTheapRandom::new(self.theap) };
+        operation(&mut random)
+    }
     fn queue(&self, bin: usize) -> Option<&PageQueue> { self.theap().queue(bin) }
     fn queue_mut(&mut self, bin: usize) -> Option<&mut PageQueue> {
         unsafe { Theap::local_queue_mut_at(self.theap, bin) }

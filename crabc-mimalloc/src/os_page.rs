@@ -349,6 +349,10 @@ pub(crate) struct OsAlignedPageClaim {
     mapping: Mapping,
     layout: OsAlignedPageLayout,
     process: Option<VmProcess<'static>>,
+    /// Comparison-only subprocess identity for a borrowed process claim. The
+    /// child image stays owned by its external context capability; release
+    /// must present a fresh short-lived `VmProcess` for this exact identity.
+    process_identity: Option<NonNull<crate::subproc::SubprocessIdentity>>,
     initially_committed: bool,
     /// The exact source page-area commitment to remove if this private claim
     /// rolls back. Metadata commitment is deliberately excluded because its
@@ -385,6 +389,7 @@ pub(crate) struct PublishedOsAlignedPage {
     slice_start: NonNull<u8>,
     primary: NonNull<Page>,
     process: Option<VmProcess<'static>>,
+    process_identity: Option<NonNull<crate::subproc::SubprocessIdentity>>,
     release_commit_size: usize,
     release_accounted: bool,
 }
@@ -484,6 +489,7 @@ impl OsAlignedPageClaim {
             mapping,
             layout,
             process: None,
+            process_identity: None,
             initially_committed: true,
             release_commit_size: 0,
             release_state: OsPageReleaseState::Unaccounted,
@@ -531,6 +537,7 @@ impl OsAlignedPageClaim {
                             mapping,
                             layout,
                             process: Some(process),
+                            process_identity: Some(NonNull::from(process.subprocess())),
                             initially_committed: false,
                             release_commit_size: 0,
                             ready: false,
@@ -543,6 +550,7 @@ impl OsAlignedPageClaim {
             mapping,
             layout,
             process: Some(process),
+            process_identity: Some(NonNull::from(process.subprocess())),
             initially_committed: true,
             // Preserve the existing source full-commit release accounting:
             // the mapping suffix from `slice_start` is its source extent.
@@ -571,6 +579,145 @@ impl OsAlignedPageClaim {
         if !claim.mapping.initially_zero() {
             // SAFETY: the successful metadata commit makes this complete
             // still-private prefix writable before any Page is published.
+            unsafe { core::ptr::write_bytes(claim.mapping.base().unwrap(), 0, metadata_size); }
+        }
+        claim.ready = true;
+        Ok(claim)
+    }
+
+    /// Process-paired allocation for a reclaimable child identity. Unlike
+    /// the process-main entry point, this claim never stores a `VmProcess`;
+    /// the external child owner retains the image and supplies a short pair
+    /// for accounting/release.
+    /// # Safety
+    /// The caller retains the exact pinned subprocess image and external
+    /// context owner until this claim is either published and reclaimed or
+    /// explicitly released. The returned token carries only its comparison
+    /// identity, not the context lifetime.
+    pub(crate) unsafe fn allocate_for_borrowed_process_with_random(
+        process: VmProcess<'_>, config: MemoryConfig, block_size: usize,
+        alignment: usize, requested: crate::arena::ArenaId,
+        random: crate::os::OsRandom<'_>,
+    ) -> Result<Self, OsAlignedPageAllocationFailure> {
+        let failed = |error| OsAlignedPageAllocationFailure::released(
+            OsAlignedPageError::new(OsAlignedPageFailureStage::Map, error));
+        if process.policy().disallow_os_alloc() || !requested.as_ptr().is_null() {
+            return Err(failed(Errno::NOMEM));
+        }
+        let layout = OsAlignedPageLayout::for_fresh_page(config, block_size, alignment)
+            .ok_or_else(|| failed(Errno::INVAL))?;
+        let allocation = NormalOsAllocation::allocate_aligned_base_for_process(process, config,
+            layout.mapping_length(), PAGE_META_ALIGNMENT, MapAccess::Reserved, false, random);
+        let mapping = match allocation {
+            Ok(allocation) => allocation.into_mapping_and_memory().0,
+            Err(failure) => {
+                let error = failure.error();
+                return match failure.into_mapping() {
+                    None => Err(failed(error)),
+                    Some(mapping) => Err(OsAlignedPageAllocationFailure::with_claim(
+                        OsAlignedPageError::new(OsAlignedPageFailureStage::Map, error),
+                        Self {
+                            mapping, layout, process: None,
+                            process_identity: Some(NonNull::from(process.subprocess())),
+                            initially_committed: false, release_commit_size: 0, ready: false,
+                            release_state: OsPageReleaseState::RetainedAlignmentFailure(error),
+                        },
+                    )),
+                };
+            }
+        };
+        let mut claim = Self {
+            mapping, layout, process: None,
+            process_identity: Some(NonNull::from(process.subprocess())),
+            initially_committed: true, release_commit_size: layout.mapping_length(),
+            release_state: OsPageReleaseState::Unaccounted, ready: false,
+        };
+        let metadata_size = layout.metadata_commit_size();
+        let result = claim.mapping.commit_for_process(process, 0, metadata_size, metadata_size)
+            .map_err(|error| (OsAlignedPageFailureStage::MetadataCommit, error))
+            .and_then(|_| claim.mapping.commit_for_process(process, layout.alignment(),
+                layout.allocation_size(), 0)
+                .map_err(|error| (OsAlignedPageFailureStage::BlockCommit, error)));
+        if let Err((stage, error)) = result {
+            // SAFETY: this allocation call retains the exact input process
+            // identity and sole private claim through rollback.
+            return match unsafe { claim.release_for_process(process) } {
+                Ok(()) => Err(OsAlignedPageAllocationFailure::released(OsAlignedPageError::new(stage, error))),
+                Err(failure) => {
+                    let cleanup = failure.error().operation();
+                    let OsAlignedPageOwner::Claim(claim) = failure.into_owner() else {
+                        unreachable!("unpublished claim cleanup retains that exact claim");
+                    };
+                    Err(OsAlignedPageAllocationFailure::with_claim(
+                        OsAlignedPageError::with_cleanup(stage, error, Some(cleanup)), claim))
+                }
+            };
+        }
+        if !claim.mapping.initially_zero() {
+            // SAFETY: the successful metadata commit makes this prefix writable.
+            unsafe { core::ptr::write_bytes(claim.mapping.base().unwrap(), 0, metadata_size); }
+        }
+        claim.ready = true;
+        Ok(claim)
+    }
+
+    /// # Safety
+    /// Same external subprocess-image retention obligation as
+    /// [`Self::allocate_for_borrowed_process_with_random`].
+    pub(crate) unsafe fn allocate_on_demand_for_borrowed_process_with_random(
+        process: VmProcess<'_>, config: MemoryConfig, block_size: usize,
+        alignment: usize, requested: crate::arena::ArenaId,
+        random: crate::os::OsRandom<'_>,
+    ) -> Result<Self, OsAlignedPageAllocationFailure> {
+        let failed = |error| OsAlignedPageAllocationFailure::released(
+            OsAlignedPageError::new(OsAlignedPageFailureStage::Map, error));
+        if process.policy().disallow_os_alloc() || !requested.as_ptr().is_null() {
+            return Err(failed(Errno::NOMEM));
+        }
+        let layout = OsAlignedPageLayout::for_fresh_page(config, block_size, alignment)
+            .ok_or_else(|| failed(Errno::INVAL))?;
+        let allocation = NormalOsAllocation::allocate_aligned_base_for_process(process, config,
+            layout.mapping_length(), PAGE_META_ALIGNMENT, MapAccess::Reserved, false, random);
+        let mapping = match allocation {
+            Ok(allocation) => allocation.into_mapping_and_memory().0,
+            Err(failure) => {
+                let error = failure.error();
+                return match failure.into_mapping() {
+                    None => Err(failed(error)),
+                    Some(mapping) => Err(OsAlignedPageAllocationFailure::with_claim(
+                        OsAlignedPageError::new(OsAlignedPageFailureStage::Map, error),
+                        Self { mapping, layout, process: None,
+                            process_identity: Some(NonNull::from(process.subprocess())),
+                            initially_committed: false, release_commit_size: 0, ready: false,
+                            release_state: OsPageReleaseState::RetainedAlignmentFailure(error) },
+                    )),
+                };
+            }
+        };
+        let mut claim = Self { mapping, layout, process: None,
+            process_identity: Some(NonNull::from(process.subprocess())),
+            initially_committed: false, release_commit_size: 0,
+            release_state: OsPageReleaseState::Unaccounted, ready: false };
+        let metadata_size = layout.metadata_commit_size();
+        if let Err(error) = claim.mapping.commit_for_process(process, 0, metadata_size, metadata_size) {
+            // SAFETY: this allocation call retains the exact input process
+            // identity and sole private claim through rollback.
+            return match unsafe { claim.release_for_process(process) } {
+                Ok(()) => Err(OsAlignedPageAllocationFailure::released(
+                    OsAlignedPageError::new(OsAlignedPageFailureStage::MetadataCommit, error))),
+                Err(failure) => {
+                    let cleanup = failure.error().operation();
+                    let OsAlignedPageOwner::Claim(claim) = failure.into_owner() else {
+                        unreachable!("unpublished claim cleanup retains that exact claim");
+                    };
+                    Err(OsAlignedPageAllocationFailure::with_claim(
+                        OsAlignedPageError::with_cleanup(OsAlignedPageFailureStage::MetadataCommit,
+                            error, Some(cleanup)), claim))
+                }
+            };
+        }
+        if !claim.mapping.initially_zero() {
+            // SAFETY: metadata commit made the complete private prefix writable.
             unsafe { core::ptr::write_bytes(claim.mapping.base().unwrap(), 0, metadata_size); }
         }
         claim.ready = true;
@@ -620,6 +767,7 @@ impl OsAlignedPageClaim {
                             mapping,
                             layout,
                             process: Some(process),
+                            process_identity: Some(NonNull::from(process.subprocess())),
                             initially_committed: false,
                             release_commit_size: 0,
                             ready: false,
@@ -632,6 +780,7 @@ impl OsAlignedPageClaim {
             mapping,
             layout,
             process: Some(process),
+            process_identity: Some(NonNull::from(process.subprocess())),
             initially_committed: false,
             release_commit_size: 0,
             release_state: OsPageReleaseState::Unaccounted,
@@ -776,6 +925,24 @@ impl OsAlignedPageClaim {
         Ok(())
     }
 
+    /// Child counterpart of [`Self::commit_initial_page_prefix`]. The
+    /// external child context supplies the process pair only for this
+    /// operation; the claim itself retains no borrowed subprocess image.
+    pub(crate) fn commit_initial_page_prefix_for_process(
+        &mut self, process: VmProcess<'_>, size: usize,
+    ) -> Result<(), OsAlignedPageError> {
+        if self.process_identity != Some(NonNull::from(process.subprocess()))
+            || !self.ready || self.initially_committed || self.release_commit_size != 0
+            || size == 0 || size > self.layout.allocation_size()
+        {
+            return Err(OsAlignedPageError::new(OsAlignedPageFailureStage::Publish, Errno::INVAL));
+        }
+        self.mapping.commit_for_process(process, self.layout.alignment(), size, 0)
+            .map_err(|error| OsAlignedPageError::new(OsAlignedPageFailureStage::BlockCommit, error))?;
+        self.release_commit_size = size;
+        Ok(())
+    }
+
     #[inline]
     pub(crate) fn base(&self) -> Result<*mut u8, OsAlignedPageError> {
         self.mapping
@@ -913,9 +1080,81 @@ impl OsAlignedPageClaim {
                 self.release_state = OsPageReleaseState::Accounted;
                 self.mapping.unmap_for_process(process, self.release_commit_size, false)
             }
-            _ => self.mapping.unmap(),
+            (None, OsPageReleaseState::Unaccounted) if self.process_identity.is_some() => {
+                Err(Errno::INVAL)
+            }
+            (_, OsPageReleaseState::Accounted) => self.mapping.unmap(),
+            (None, OsPageReleaseState::Unaccounted) => self.mapping.unmap(),
+            (_, OsPageReleaseState::RetainedPublicationFailure) => unreachable!(),
         };
         match result {
+            Ok(()) => Ok(()),
+            Err(error) => Err(OsAlignedPageReleaseFailure {
+                error: OsAlignedPageError::new(OsAlignedPageFailureStage::Release, error),
+                owner: OsAlignedPageOwner::Claim(self),
+            }),
+        }
+    }
+
+    /// Releases a claim whose process pair is borrowed from a reclaimable
+    /// child context. The token stores only the exact identity address; the
+    /// caller keeps the child owner alive and supplies a fresh short borrow.
+    /// Once process accounting is applied, a failed syscall is retried with
+    /// raw `Mapping::unmap`, so the borrow need not outlive this call.
+    /// # Safety
+    /// The caller retains the exact subprocess identity image captured by
+    /// this claim, with the sole terminal release right, through this call.
+    pub(crate) unsafe fn release_for_process(
+        mut self,
+        process: VmProcess<'_>,
+    ) -> Result<(), OsAlignedPageReleaseFailure> {
+        if self.process_identity != Some(NonNull::from(process.subprocess())) {
+            return Err(OsAlignedPageReleaseFailure {
+                error: OsAlignedPageError::new(OsAlignedPageFailureStage::Release, Errno::INVAL),
+                owner: OsAlignedPageOwner::Claim(self),
+            });
+        }
+        if matches!(self.release_state, OsPageReleaseState::RetainedPublicationFailure) {
+            return Err(OsAlignedPageReleaseFailure {
+                error: OsAlignedPageError::new(OsAlignedPageFailureStage::Publish, Errno::INVAL),
+                owner: OsAlignedPageOwner::Claim(self),
+            });
+        }
+        let result = match self.release_state {
+            OsPageReleaseState::RetainedAlignmentFailure(error) => Err(error),
+            OsPageReleaseState::Unaccounted => {
+                // Pinned `_mi_os_prim_free` applies statistics even when the
+                // syscall fails. Latch before the call so retry is raw-only.
+                self.release_state = OsPageReleaseState::Accounted;
+                self.mapping.unmap_for_process(process, self.release_commit_size, false)
+            }
+            OsPageReleaseState::Accounted => self.mapping.unmap(),
+            OsPageReleaseState::RetainedPublicationFailure => unreachable!(),
+        };
+        match result {
+            Ok(()) => Ok(()),
+            Err(error) => Err(OsAlignedPageReleaseFailure {
+                error: OsAlignedPageError::new(OsAlignedPageFailureStage::Release, error),
+                owner: OsAlignedPageOwner::Claim(self),
+            }),
+        }
+    }
+
+    /// Completes a retry after process accounting already ran. This takes no
+    /// process pair, preventing stale child projections from being needed by
+    /// the raw unmap continuation.
+    /// # Safety
+    /// The caller retains the exact subprocess/context image captured by
+    /// this claim and still owns the sole terminal retry transition. This is
+    /// intentionally processless; it is not authority to outlive the owner.
+    pub(crate) unsafe fn retry_release(mut self) -> Result<(), OsAlignedPageReleaseFailure> {
+        if !matches!(self.release_state, OsPageReleaseState::Accounted) {
+            return Err(OsAlignedPageReleaseFailure {
+                error: OsAlignedPageError::new(OsAlignedPageFailureStage::Release, Errno::INVAL),
+                owner: OsAlignedPageOwner::Claim(self),
+            });
+        }
+        match self.mapping.unmap() {
             Ok(()) => Ok(()),
             Err(error) => Err(OsAlignedPageReleaseFailure {
                 error: OsAlignedPageError::new(OsAlignedPageFailureStage::Release, error),
@@ -1039,7 +1278,7 @@ impl PublishedOsAlignedPage {
         config: MemoryConfig,
         primary: NonNull<Page>,
     ) -> Option<Self> {
-        unsafe { Self::from_page_with_process(config, primary, None) }
+        unsafe { Self::from_page_with_process(config, primary, None, None, false) }
     }
 
     /// Reconstructs the exact ordinary/aligned process OS-page release right.
@@ -1052,18 +1291,39 @@ impl PublishedOsAlignedPage {
     pub(crate) unsafe fn from_page_for_process(
         process: VmProcess<'static>, config: MemoryConfig, primary: NonNull<Page>,
     ) -> Option<Self> {
-        unsafe { Self::from_page_with_process(config, primary, Some(process)) }
+        unsafe { Self::from_page_with_process(config, primary, Some(process),
+            Some(NonNull::from(process.subprocess())), true) }
+    }
+
+    /// Reconstructs a published-page release token for a reclaimable child.
+    /// The token retains only the identity address; its external child owner
+    /// must remain live through this token's terminal release.
+    ///
+    /// # Safety
+    ///
+    /// The caller owns the unique terminal right to this exact page and keeps
+    /// the child context pinned until release succeeds. No concurrent
+    /// metadata or PageMap writer may overlap.
+    pub(crate) unsafe fn from_page_for_borrowed_process(
+        process: VmProcess<'_>, config: MemoryConfig, primary: NonNull<Page>,
+    ) -> Option<Self> {
+        // SAFETY: forwarded from this constructor's unique page/context
+        // ownership contract; `None` prevents storing the short borrow.
+        unsafe { Self::from_page_with_process(config, primary, None,
+            Some(NonNull::from(process.subprocess())), true) }
     }
 
     unsafe fn from_page_with_process(
         config: MemoryConfig, primary: NonNull<Page>, process: Option<VmProcess<'static>>,
+        process_identity: Option<NonNull<crate::subproc::SubprocessIdentity>>,
+        process_backed: bool,
     ) -> Option<Self> {
         // SAFETY: the caller proves `primary` is live and exclusively owned.
         let page = unsafe { primary.as_ref() };
         // SAFETY: this release constructor retains the live primary while it
         // validates its immutable source geometry.
-        let geometry = unsafe { published_os_page_geometry(config, primary, process.is_some()) }?;
-        let release_commit_size = if process.is_some() {
+        let geometry = unsafe { published_os_page_geometry(config, primary, process_backed) }?;
+        let release_commit_size = if process_backed {
             if geometry.memory.initially_committed() {
                 if page.slice_pcommitted() != 0 {
                     return None;
@@ -1089,6 +1349,7 @@ impl PublishedOsAlignedPage {
             base: geometry.base,
             slice_start: geometry.slice_start,
             primary,
+            process_identity,
             process,
             release_commit_size,
             release_accounted: false,
@@ -1166,6 +1427,12 @@ impl PublishedOsAlignedPage {
     /// page must be retired, all readers must be quiescent, and this token must
     /// retain the unique mapping release right.
     pub(crate) unsafe fn reclaim(mut self) -> Result<(), OsAlignedPageReleaseFailure> {
+        if self.process.is_none() && self.process_identity.is_some() && !self.release_accounted {
+            return Err(OsAlignedPageReleaseFailure {
+                error: OsAlignedPageError::new(OsAlignedPageFailureStage::Release, Errno::INVAL),
+                owner: OsAlignedPageOwner::Published(self),
+            });
+        }
         // SAFETY: the method contract preserves the original published base,
         // exact rounded length, and unique terminal ownership.
         let result = if let Some(process) = self.process.filter(|_| !self.release_accounted) {
@@ -1187,9 +1454,93 @@ impl PublishedOsAlignedPage {
             }),
         }
     }
+
+    /// Reclaims a borrowed-process publication. The exact identity must
+    /// match; accounting is latched before the first syscall, and any retry
+    /// uses the process-independent raw mapping owner.
+    ///
+    /// # Safety
+    ///
+    /// Same terminal PageMap/metadata/page quiescence requirements as
+    /// [`Self::reclaim`], with the child context retained by the caller.
+    pub(crate) unsafe fn reclaim_for_process(
+        mut self, process: VmProcess<'_>,
+    ) -> Result<(), OsAlignedPageReleaseFailure> {
+        if self.process_identity != Some(NonNull::from(process.subprocess())) {
+            return Err(OsAlignedPageReleaseFailure {
+                error: OsAlignedPageError::new(OsAlignedPageFailureStage::Release, Errno::INVAL),
+                owner: OsAlignedPageOwner::Published(self),
+            });
+        }
+        // SAFETY: forwarded from the terminal release contract. The process
+        // statistics edge is applied exactly once even if munmap fails.
+        let result = if self.release_accounted {
+            // SAFETY: retained token still owns this exact mapping.
+            unsafe { Mapping::reclaim_published(self.base.as_ptr(), self.layout.mapping_length()) }
+        } else {
+            self.release_accounted = true;
+            unsafe { Mapping::reclaim_published_for_process(process, self.base.as_ptr(),
+                self.layout.mapping_length(), self.release_commit_size, false) }
+        };
+        match result {
+            Ok(()) => Ok(()),
+            Err(error) => Err(OsAlignedPageReleaseFailure {
+                error: OsAlignedPageError::new(OsAlignedPageFailureStage::Release, error),
+                owner: OsAlignedPageOwner::Published(self),
+            }),
+        }
+    }
+
+    /// Raw retry after process accounting was latched by a failed first
+    /// reclaim. No subprocess or context projection is required.
+    ///
+    /// # Safety
+    /// The mapping remains uniquely owned and terminal page/metadata
+    /// preconditions remain satisfied.
+    pub(crate) unsafe fn retry_reclaim(
+        self,
+    ) -> Result<(), OsAlignedPageReleaseFailure> {
+        if !self.release_accounted {
+            return Err(OsAlignedPageReleaseFailure {
+                error: OsAlignedPageError::new(OsAlignedPageFailureStage::Release, Errno::INVAL),
+                owner: OsAlignedPageOwner::Published(self),
+            });
+        }
+        // SAFETY: caller preserves the unique published mapping release right.
+        match unsafe { Mapping::reclaim_published(self.base.as_ptr(), self.layout.mapping_length()) } {
+            Ok(()) => Ok(()),
+            Err(error) => Err(OsAlignedPageReleaseFailure {
+                error: OsAlignedPageError::new(OsAlignedPageFailureStage::Release, error),
+                owner: OsAlignedPageOwner::Published(self),
+            }),
+        }
+    }
 }
 
 impl OsAlignedPageOwner {
+    /// Returns whether this owner was created for this exact subprocess.
+    /// Processless owners cannot be adopted by a child context because they
+    /// have no identity edge tying their retry lifetime to that context.
+    #[inline]
+    pub(crate) fn belongs_to_subprocess(
+        &self,
+        subprocess: &crate::subproc::SubprocessIdentity,
+    ) -> bool {
+        let expected = Some(NonNull::from(subprocess));
+        match self {
+            Self::Claim(claim) => claim.process_identity == expected,
+            Self::Published(page) => page.process_identity == expected,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn raw_retry_ready(&self) -> bool {
+        match self {
+            Self::Claim(claim) => matches!(claim.release_state, OsPageReleaseState::Accounted),
+            Self::Published(page) => page.release_accounted,
+        }
+    }
+
     /// Retries the exact explicit release represented by this one owner.
     ///
     /// # Safety
@@ -1202,6 +1553,43 @@ impl OsAlignedPageOwner {
             Self::Claim(claim) => claim.release(),
             // SAFETY: forwarded from this method's published-owner contract.
             Self::Published(published) => unsafe { published.reclaim() },
+        }
+    }
+
+    /// Releases a process-paired owner using a short-lived pair. Both owner
+    /// variants validate their captured identity; after the first failed
+    /// syscall, their explicit accounting latch makes retries raw-only.
+    ///
+    /// # Safety
+    ///
+    /// Published owners require the same detached-page and quiescence
+    /// guarantees as [`PublishedOsAlignedPage::reclaim`]. The caller must
+    /// retain the external subprocess image until this owner is released.
+    pub(crate) unsafe fn release_for_process(
+        self, process: VmProcess<'_>,
+    ) -> Result<(), OsAlignedPageReleaseFailure> {
+        match self {
+            // SAFETY: forwarded from this method's exact-context obligation.
+            Self::Claim(claim) => unsafe { claim.release_for_process(process) },
+            // SAFETY: forwarded from this method's published-owner contract.
+            Self::Published(published) => unsafe { published.reclaim_for_process(process) },
+        }
+    }
+
+    /// Explicitly retries only an already-accounted owner, without a process
+    /// pair. Publication-retained and unaccounted states cannot enter here.
+    ///
+    /// # Safety
+    /// The caller retains the exact subprocess/context image captured by the
+    /// owner and remains its sole terminal release owner. Published owners
+    /// also retain the quiescence obligations of
+    /// [`PublishedOsAlignedPage::retry_reclaim`].
+    pub(crate) unsafe fn retry_release(self) -> Result<(), OsAlignedPageReleaseFailure> {
+        match self {
+            // SAFETY: forwarded from this method's owner-retention contract.
+            Self::Claim(claim) => unsafe { claim.retry_release() },
+            // SAFETY: forwarded from this method's published-owner contract.
+            Self::Published(published) => unsafe { published.retry_reclaim() },
         }
     }
 }
@@ -1259,6 +1647,53 @@ mod tests {
             assert_eq!(process.subprocess().vm_statistics().snapshot(), after,
                 "raw retry must not apply a second source accounting event");
         }
+    }
+
+    #[test]
+    fn borrowed_process_claim_rejects_identity_mismatch_and_retries_accounted_unmap_raw() {
+        let fault = fault::install(fault::Plan::disabled());
+        let parent = process(false);
+        let foreign = process(false);
+        // SAFETY: the fixture retains the exact process image through release.
+        let claim = unsafe { OsAlignedPageClaim::allocate_for_borrowed_process_with_random(
+            parent, config(4 * KIB), 4096, 1, crate::arena::ArenaId::none(), None,
+        ) }.unwrap_or_else(|_| panic!("child-style process pair allocates exact claim"));
+        fault.set(fault::Plan::disabled());
+        let owner = OsAlignedPageOwner::Claim(claim);
+        assert!(owner.belongs_to_subprocess(parent.subprocess()));
+        assert!(!owner.belongs_to_subprocess(foreign.subprocess()));
+        // Safe child-owner retention must reject both foreign and processless
+        // mappings before it stores a retry right under the child context.
+        let OsAlignedPageOwner::Claim(claim) = owner else { unreachable!() };
+        let before = parent.subprocess().vm_statistics().snapshot();
+        let other_before = foreign.subprocess().vm_statistics().snapshot();
+        // SAFETY: both process images and the unique claim remain retained.
+        let mismatch = unsafe { claim.release_for_process(foreign) }.expect_err("foreign process rejected");
+        assert_eq!(fault.observed(), 0, "identity rejection precedes unmap");
+        assert_eq!(parent.subprocess().vm_statistics().snapshot(), before);
+        assert_eq!(foreign.subprocess().vm_statistics().snapshot(), other_before);
+        let OsAlignedPageOwner::Claim(claim) = mismatch.into_owner() else { panic!("claim retained"); };
+
+        fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+        // SAFETY: the exact captured process image remains live.
+        let failed = unsafe { claim.release_for_process(parent) }.expect_err("first unmap is injected");
+        assert_eq!(fault.observed(), 1);
+        let after_account = parent.subprocess().vm_statistics().snapshot();
+        assert_ne!(after_account, before, "source accounting precedes syscall result");
+        let OsAlignedPageOwner::Claim(claim) = failed.into_owner() else { panic!("claim retained"); };
+
+        // SAFETY: both process images and the unique retry owner remain live.
+        let mismatch = unsafe { claim.release_for_process(foreign) }.expect_err("retry identity is checked");
+        assert_eq!(fault.observed(), 1, "mismatch does not issue a second unmap");
+        assert_eq!(parent.subprocess().vm_statistics().snapshot(), after_account);
+        let OsAlignedPageOwner::Claim(claim) = mismatch.into_owner() else { panic!("claim retained"); };
+        fault.set(fault::Plan::disabled());
+        // SAFETY: this test retains both subprocess images and the unique
+        // claim owner through the explicit retry.
+        unsafe { claim.retry_release() }
+            .unwrap_or_else(|_| panic!("raw retry succeeds without process projection"));
+        assert_eq!(fault.observed(), 0, "raw retry does not enter a process syscall hook");
+        assert_eq!(parent.subprocess().vm_statistics().snapshot(), after_account);
     }
 
     #[test]

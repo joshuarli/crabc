@@ -399,6 +399,19 @@ pub(crate) mod theap_page_session_sealed {
 pub(crate) unsafe trait TheapPageSession: theap_page_session_sealed::Sealed {
     fn theap(&self) -> &Theap;
     fn thread_id(&self) -> Option<LiveThreadId>;
+    /// Runs OS placement draws against this session's source random image.
+    /// Ordinary sessions use current compiler TLS; detached child metadata
+    /// sessions override this to draw from their owned metadata Theap.
+    #[inline]
+    fn with_os_random_source<R>(
+        &mut self,
+        operation: impl FnOnce(&mut (dyn crate::os::OsRandomSource + 'static)) -> R,
+    ) -> R {
+        // SAFETY: ordinary source sessions retain the current default Theap
+        // for the operation; child metadata sessions provide their own image.
+        let mut random = unsafe { crate::os::CurrentDefaultTheapRandom::new() };
+        operation(&mut random)
+    }
     /// Advances the source generic-allocation administration counters for an
     /// ordinary allocation boundary. Only a session that owns the exact
     /// mutable Theap overrides this hook; read-only or deliberately narrowed

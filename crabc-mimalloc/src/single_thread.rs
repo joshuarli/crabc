@@ -38428,7 +38428,19 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // `Claim` owner is still private; a refused publication rollback is
         // terminal and its release method performs no syscall. Neither state
         // has a live reader.
-        match unsafe { owner.release() } {
+        let released = if owner.raw_retry_ready() {
+            // SAFETY: the failure owner reports that process accounting was
+            // already applied before its prior syscall returned.
+            unsafe { owner.retry_release() }
+        } else if let Some(process) = self.arena.process() {
+            // SAFETY: this engine retains the exact process identity and the
+            // owner validates it before accounting or raw retry.
+            unsafe { owner.release_for_process(process) }
+        } else {
+            // SAFETY: legacy selected-arena owners have no process accounting.
+            unsafe { owner.release() }
+        };
+        match released {
             Ok(()) => true,
             Err(failure) => {
                 self.park_pending_os_release(failure.into_owner());
@@ -38455,7 +38467,14 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// `unmap` failure. Parking preserves the mapping's exact ownership while
     /// its already-rolled-back metadata remains private.
     fn release_unpublished_claim_or_park(&mut self, claim: OsAlignedPageClaim) {
-        match claim.release() {
+        let result = if let Some(process) = self.arena.process() {
+            // SAFETY: the backing borrowed by this engine retains the exact
+            // subprocess image captured by the private claim.
+            unsafe { claim.release_for_process(process) }
+        } else {
+            claim.release()
+        };
+        match result {
             Ok(()) => {}
             Err(failure) => {
                 self.park_pending_os_release(failure.into_owner());
@@ -39196,30 +39215,26 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             return None;
         }
         let config = self.page_map.memory_config();
-        // SAFETY: this fresh source operation retains the current default
-        // root, with no whole-Theap/random projection across the VM call.
-        let mut random = unsafe { crate::os::CurrentDefaultTheapRandom::new() };
-        let allocation = if let Some(process) = self.arena.process() {
-            if commit {
-                OsAlignedPageClaim::allocate_for_process_with_random(
-                    process,
-                    config,
-                    block_size,
-                    alignment,
-                    self.requested_arena,
-                    Some(&mut random),
-                )
+        let arena = &self.arena;
+        let requested = self.requested_arena;
+        let allocation = self.session.with_os_random_source(|random| {
+            if let Some(process) = arena.process() {
+                if commit {
+                    // SAFETY: this PageBacking is borrowed from the exact
+                    // child owner which remains live through the engine call.
+                    unsafe { OsAlignedPageClaim::allocate_for_borrowed_process_with_random(
+                        process, config, block_size, alignment, requested, Some(random),
+                    ) }
+                } else {
+                    // SAFETY: same exact child-backing retention as above.
+                    unsafe { OsAlignedPageClaim::allocate_on_demand_for_borrowed_process_with_random(
+                        process, config, block_size, alignment, requested, Some(random),
+                    ) }
+                }
             } else {
-                OsAlignedPageClaim::allocate_on_demand_for_process_with_random(
-                    process,
-                    config,
-                    block_size,
-                    alignment,
-                    self.requested_arena,
-                    Some(&mut random),
-                )
+                OsAlignedPageClaim::allocate(config, block_size, alignment)
             }
-        } else { OsAlignedPageClaim::allocate(config, block_size, alignment) };
+        });
         let mut claim = match allocation {
             Ok(claim) => claim,
             Err(failure) => {
@@ -39272,7 +39287,12 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                     return None;
                 }
             };
-            if claim.commit_initial_page_prefix(prefix_size).is_err() {
+            let committed = if let Some(process) = self.arena.process() {
+                claim.commit_initial_page_prefix_for_process(process, prefix_size)
+            } else {
+                claim.commit_initial_page_prefix(prefix_size)
+            };
+            if committed.is_err() {
                 self.release_unpublished_claim_or_park(claim);
                 return None;
             }
@@ -40620,7 +40640,15 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 debug_assert!(statistics_recorded);
                 // SAFETY: `published` owns the unique raw release right and
                 // all map/alias/primary metadata predecessors now completed.
-                match unsafe { published.reclaim() } {
+                let reclaimed = if let Some(process) = self.arena.process() {
+                    // SAFETY: the backing retains the exact process identity;
+                    // the token validates it and accounts only on first call.
+                    unsafe { published.reclaim_for_process(process) }
+                } else {
+                    // SAFETY: this non-process backing owns its raw mapping.
+                    unsafe { published.reclaim() }
+                };
+                match reclaimed {
                     Ok(()) => true,
                     Err(failure) => {
                         // The caller's block is already semantically free:
@@ -40769,7 +40797,14 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         debug_assert!(statistics_recorded);
         // SAFETY: this token retains the unique published mapping release
         // right after every visible page/metadata predecessor is gone.
-        match unsafe { published.reclaim() } {
+        let reclaimed = if let Some(process) = self.arena.process() {
+            // SAFETY: the backing retains the exact process identity.
+            unsafe { published.reclaim_for_process(process) }
+        } else {
+            // SAFETY: this non-process backing owns its raw mapping.
+            unsafe { published.reclaim() }
+        };
+        match reclaimed {
             Ok(()) => true,
             Err(failure) => {
                 self.park_pending_os_release(failure.into_owner());
@@ -40807,7 +40842,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             // serializes the page-map observations named by the constructor.
             let published = unsafe {
                 if let Some(process) = self.arena.process() {
-                    PublishedOsAlignedPage::from_page_for_process(process, page_map.memory_config(), page)
+                    PublishedOsAlignedPage::from_page_for_borrowed_process(process, page_map.memory_config(), page)
                 } else { PublishedOsAlignedPage::from_page(page_map.memory_config(), page) }
             }?;
             // SAFETY: the returned token carries the exact clipped range and
@@ -41298,7 +41333,7 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
             // that pre-existing source mapping image.
             let published = unsafe {
                 if let Some(process) = self.arena.process() {
-                    PublishedOsAlignedPage::from_page_for_process(process, self.page_map.memory_config(), page)
+                    PublishedOsAlignedPage::from_page_for_borrowed_process(process, self.page_map.memory_config(), page)
                 } else {
                     PublishedOsAlignedPage::from_page(self.page_map.memory_config(), page)
                 }
@@ -41475,7 +41510,14 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
             return false;
         }
         // SAFETY: the typed `published` token is now the sole mapping owner.
-        match unsafe { published.reclaim() } {
+        let reclaimed = if let Some(process) = self.arena.process() {
+            // SAFETY: the backing retains the exact process identity.
+            unsafe { published.reclaim_for_process(process) }
+        } else {
+            // SAFETY: this non-process backing owns its raw mapping.
+            unsafe { published.reclaim() }
+        };
+        match reclaimed {
             Ok(()) => true,
             Err(failure) => {
                 if self.pending_os_release.is_some() {
