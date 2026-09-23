@@ -462,6 +462,17 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
         self.assertIn(receipt.CURRENT_IMAGE_MANIFEST_PATH, receipt.CURRENT_SELECTED_SOURCES)
         self.assertTrue(current_path.is_file())
 
+    def test_current_manifest_cannot_omit_a_required_image_input(self) -> None:
+        forged_root = self.root / "forged-current-root"
+        manifest_path = forged_root / receipt.CURRENT_IMAGE_MANIFEST_PATH
+        manifest_path.parent.mkdir(parents=True)
+        manifest = json.loads((ROOT / receipt.CURRENT_IMAGE_MANIFEST_PATH).read_text(encoding="utf-8"))
+        manifest["files"].pop(receipt.CURRENT_DYNAMIC_LINKER_PATH)
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        with mock.patch.object(receipt, "ROOT", forged_root):
+            with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "unexpected oracle or tool roster"):
+                receipt._trusted_image_manifest(receipt.CURRENT_PINNED_IMAGE)
+
     def test_current_image_input_replay_selects_its_own_manifest_and_paths(self) -> None:
         manifest_path = receipt.CURRENT_IMAGE_MANIFEST_PATH
         trusted = json.loads(json.dumps(receipt._trusted_image_manifest(receipt.CURRENT_PINNED_IMAGE)))

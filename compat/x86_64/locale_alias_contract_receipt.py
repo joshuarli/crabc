@@ -69,8 +69,10 @@ IMAGE_INPUTS = (
     "/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/cc1", "/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/collect2",
     "/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/liblto_plugin.so", "/usr/local/bin/crabc-x86_64-musl-gcc", "/usr/sbin/chroot",
 )
-_CURRENT_IMAGE_MANIFEST = json.loads((ROOT / CURRENT_IMAGE_MANIFEST_PATH).read_text(encoding="utf-8"))
-CURRENT_IMAGE_INPUTS = tuple(_CURRENT_IMAGE_MANIFEST["files"])
+_HISTORICAL_TOOLCHAIN_ROOT = "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl"
+CURRENT_IMAGE_INPUTS = tuple(
+    path.replace(_HISTORICAL_TOOLCHAIN_ROOT, CURRENT_TOOLCHAIN_ROOT) for path in IMAGE_INPUTS
+)
 
 # Every retained regular file carries its observed permissions.  Source modes
 # are additionally authenticated by the complete clean Git tree; immutable
