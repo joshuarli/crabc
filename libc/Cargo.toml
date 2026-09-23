@@ -38,33 +38,12 @@ x86-allocator-string-duplication = ["x86-allocator-runtime"]
 # remain gated here so default and older private fixture archives keep their
 # exact contracts.
 x86-owned-static-runtime = [
-    "x86-kernel-admin",
+    "x86-owned-static-runtime-core",
     "x86-crypt-allocator-composition",
-    "x86-math-long-double-completion",
-    "x86-allocator-runtime",
-    "x86-allocator-observability",
-    "x86-allocator-string-duplication",
-    "x86-environment-runtime",
-    "x86-file-handles",
-    "x86-filesystem-traversal",
-    "x86-temporary-names",
-    "x86-process-exec",
-    "x86-stdio-permanent-format-scan",
-    "x86-scandir",
-    "x86-resolver-runtime",
-    "x86-interval-timers",
-    "x86-ualarm",
-    "x86-sched-rr-interval",
-    "x86-netdb-setent",
-    "x86-legacy-misc",
-    "x86-a64l",
-    "x86-memory-special",
-    "dep:rand_pcg",
 ]
 # Owned C runtime source closure used by non-crypt private composition gates.
-# Its leaves intentionally match x86-owned-static-runtime except for the
-# alloc-enabled x86-crypt-allocator-composition dependency. The installed
-# aggregate above still selects that separately evidenced crypt boundary.
+# The installed aggregate above adds the separately evidenced, alloc-backed
+# crypt boundary to these shared leaves.
 x86-owned-static-runtime-core = [
     "x86-kernel-admin",
     "x86-math-long-double-completion",

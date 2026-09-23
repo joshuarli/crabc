@@ -28,15 +28,9 @@ class X86LibcAllocatorBasicRuntimeV1Tests(unittest.TestCase):
             basic_profile,
             "the allocator-basic candidate needs an owned C runtime profile without crypt",
         )
-        self.assertEqual(
-            basic_profile,
-            [
-                feature
-                for feature in full_profile
-                if feature != "x86-crypt-allocator-composition"
-            ],
-            "the narrowed source profile must retain every other owned-static leaf",
-        )
+        self.assertEqual(full_profile, [
+            "x86-owned-static-runtime-core", "x86-crypt-allocator-composition",
+        ])
         self.assertNotIn("x86-crypt", basic_profile)
         self.assertIn("x86-crypt-allocator-composition", full_profile)
         self.assertIn("--features x86-owned-static-runtime-core", runner)
