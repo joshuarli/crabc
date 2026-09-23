@@ -26,7 +26,10 @@ are not transferable passes for a different revision.
   capabilities 180 `implemented-foundation`, 26 `selected-private`, 17
   `missing`; all eight qualification gates are incomplete. Substantial
   POSIX/pthread/text/stdio/resolver/loader and installed-product work is
-  integrated. Complete the actual remaining
+  integrated. The POSIX dynamic, 54-cell matrix, native aggregate, and physical
+  admission passed with independent readers on clean `3c47d990d`; the pthread
+  installed-behavior component also passed there. These source-bound checkpoints
+  do not promote current main. Complete the actual remaining
   aggregate/family admissions from `campaign-status`, not another symbol sweep.
 - **Allocator:** M1's six bounded components passed at `0daef148bd20dc2bef2ac9dc34af4f3dd0e99d7a`.
   M2 PageMap and scalar bitmaps qualified at `62d6435c772e9ddc144de302cc54ad78cea720e9`;
