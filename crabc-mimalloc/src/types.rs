@@ -5221,7 +5221,7 @@ impl Theap {
         let owner = TheapOwner::Live(
             LiveThreadId::new(tld.thread_id()).ok_or(TheapMainStaticInitError::InvalidInput)?,
         );
-        self.initialize_static_for_owner(heap, tld, owner)
+        self.initialize_for_owner(heap, tld, owner)
     }
 
     /// Source `_mi_theap_init` for the process-static detached metadata image.
@@ -5232,7 +5232,7 @@ impl Theap {
         if self.memid.kind() != MemoryKind::Static {
             return Err(TheapMainStaticInitError::InvalidInput);
         }
-        self.initialize_static_for_owner(heap, tld, TheapOwner::Detached)
+        self.initialize_for_owner(heap, tld, TheapOwner::Detached)
     }
 
     /// Initializes the child subprocess's detached metadata Theap over its
@@ -5246,10 +5246,10 @@ impl Theap {
         {
             return Err(TheapMainStaticInitError::InvalidInput);
         }
-        self.initialize_static_for_owner(heap, parent_detached_tld, TheapOwner::Detached)
+        self.initialize_for_owner(heap, parent_detached_tld, TheapOwner::Detached)
     }
 
-    fn initialize_static_for_owner(
+    fn initialize_for_owner(
         &mut self, heap: &mut Heap, tld: &mut ThreadLocalData, owner: TheapOwner,
     ) -> Result<(), TheapMainStaticInitError> {
         let subprocess_relation_is_valid = if heap.subprocess.is_null()
