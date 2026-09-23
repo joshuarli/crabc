@@ -103,6 +103,18 @@ def expected_labels() -> tuple[str, ...]:
     return tuple(labels)
 
 
+def scenario_root(work: Path, label: str) -> Path:
+    # The dynamic runner executes kernel and direct entry against the same
+    # copied product tree for each scenario; only the output labels differ.
+    for mode in LINKS:
+        if mode.startswith("dynamic-"):
+            for entry in ("kernel", "direct"):
+                prefix = f"{mode}-{entry}-"
+                if label.startswith(prefix):
+                    return work / f"{mode}-{label[len(prefix):]}-root"
+    return work / f"{label}-root"
+
+
 def tree_rows(root: Path) -> list[tuple[str, str, int, str]]:
     """Describe a product or chroot without following any contained symlink."""
     physical(root, directory=True)
@@ -258,7 +270,7 @@ def validate_report(report_path: Path, *, static_product: Path | None = None,
     require(type(roots) is dict and set(roots) == set(expected_labels()), "scenario root roster differs")
     for label in expected_labels():
         scenario = next(name for name in SCENARIOS if label.endswith("-" + name))
-        root = physical(work / (label + "-root"), directory=True)
+        root = physical(scenario_root(work, label), directory=True)
         require(roots[label] == tree_record(root), f"{label} execution root differs")
         executable = work / ("oracle" if label.startswith("oracle-") else next(mode for mode in LINKS if label.startswith(mode + "-")))
         require(digest((root / "consumer").read_bytes()) == digest(executable.read_bytes()),
@@ -307,7 +319,7 @@ def collect_report(work: Path) -> Path:
         "scope": "installed-bsd-random-component",
         "files": {name: file_record(work, name) for name in sorted(names)},
         "products": read_json(work / "product-inputs.json"),
-        "scenario_roots": {label: tree_record(work / (label + "-root")) for label in expected_labels()},
+        "scenario_roots": {label: tree_record(scenario_root(work, label)) for label in expected_labels()},
     }
     report_path = work / "report.json"
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
