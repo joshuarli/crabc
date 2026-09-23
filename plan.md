@@ -44,8 +44,8 @@ are not transferable passes for a different revision.
   reconstructed 5,395 observations and passed its independent reader with
   only the ten selected atomic/credential dispositions; the earlier
   contention timeout remains raw failure evidence. A focused `dlinfo`
-  handle-order regression and pthread/C11 once cancellation regression now
-  pass after integrated fixes.
+  handle-order, pthread/C11 once cancellation, `getopt` ordering-prefix, and
+  process-wide CRT startup-rejection regressions now pass after integrated fixes.
   The same-source native ABI inventory collected and replayed successfully as
   measurement, with provider/semantic closure still open. These source-bound
   checkpoints do not promote current main. Complete the actual remaining
@@ -58,8 +58,11 @@ are not transferable passes for a different revision.
   metadata entry are integrated. A real child metadata page session now passed
   focused arena and aligned OS-backed allocation/free, retained unmap retry,
   and source-ordered no-page teardown at `96940060d`; full child Heap/page
-  destruction remains open. VM, arenas, initialization, fault injection, and
-  no-recursion M2 qualification remain partial. C remains the selected backend.
+  destruction remains open. Source-once startup, arena NUMA selection,
+  abandoned-page false collection, and private zero-offset aligned realloc
+  have focused native regressions; their aggregate gates remain open. VM,
+  arenas, initialization, fault injection, and no-recursion M2 qualification
+  remain partial. C remains the selected backend.
 - **Integration:** Accepted C stays default. Explicit owned static and dynamic
   native-shadow products and graph/purity checks exist. The private
   source-built x86 C allocator basic gate passed at `d92714775` with the
