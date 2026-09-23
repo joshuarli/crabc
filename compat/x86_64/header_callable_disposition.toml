@@ -46,16 +46,6 @@ expected_transition = "Completed as a non-promoting checked disposition: every c
 evidence = ["compiler-derived inventory digest binding", "exact disjoint primary callable partition", "exact deferred-owner roster", "exact missing-reference declaration roster", "native x86 inventory regeneration plus checked report"]
 
 [[deferred_owner_group]]
-id = "x86-cabi-posix-runtime-missing-v1"
-semantic_family = "libc.posix-runtime"
-linkage_owner_family = "libc.c-abi-compat"
-linkage_owner_obligation = "final-callable-provider-archive-closure"
-resolution = "planned-provider"
-provider_target = "future selected C ABI providers in libc.posix-runtime"
-source_oracle = "Pinned musl 1.2.6 public headers and selected x86 callable inventory"
-members = ["initstate", "random", "setstate", "srandom"]
-
-[[deferred_owner_group]]
 id = "x86-header-callable-builtin-v1"
 semantic_family = "libc.headers-layouts"
 linkage_owner_family = "libc.c-abi-compat"

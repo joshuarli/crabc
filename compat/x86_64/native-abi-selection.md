@@ -675,10 +675,13 @@ placement such as the two protected stdio bodies. Candidate ELF never creates a
 selection or determines a new normative alias relation. Private crypt bodies
 and all CRT placements state their metadata explicitly.
 
-The six audit exclusions `__crabc_runtime_v1`, `initstate`, `random`,
-`setstate`, `srandom`, and `rust_eh_personality` are not in these source-owner
-groups. This section also does not add the BSD random quartet, allocator
-metadata, or Rust unwinder identities.
+The BSD random quartet (`initstate`, `random`, `setstate`, `srandom`) is selected
+through the checked installed-header provider route and the owned static
+runtime's exact feature roster. The source is `bsd_random.rs`; its installed
+semantic receipt must still prove the selected static and shared products.
+`__crabc_runtime_v1` and `rust_eh_personality` remain outside these
+source-owner groups. This section does not add allocator metadata or Rust
+unwinder identities.
 
 The existing weak static `dl_iterate_phdr` placement also has an owned-startup
 consumer contract: [owned static executable enumeration](owned-static-dl-iterate-phdr.md).
@@ -805,9 +808,9 @@ Header-provided names require compiler-derived profile and linker-name proof;
 the existing header ABI workflow already extracts `VarDecl` facts, but a
 summary digest alone is not an enumerable public-data declaration manifest.
 
-The BSD random quartet (`initstate`, `random`, `setstate`, `srandom`) remains
-unresolved under the pending user policy decision. Do not invent a PRNG core
-or turn an absent provider into a structural exclusion.
+The BSD random quartet is a source-selected provider under the narrow pinned
+musl port exception in `AGENTS.md`. Its product placement and semantic evidence
+remain separate gates; do not infer either from the source selection alone.
 
 Final selection validation must bind one clean integrated policy/collector
 revision, prepared/materialized product identities, complete ELF observations,

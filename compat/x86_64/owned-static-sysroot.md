@@ -622,7 +622,9 @@ for its state transition. `owned-rand` compares one installed-header object
 with musl across static and dynamic modes, including seeding, serialized
 threads, fork and shared-DSO state. [`owned-rand.md`](owned-rand.md) records
 the dependency graph, source mapping and atomic concurrency extension. The
-four BSD `random` state APIs remain unresolved providers.
+four BSD `random` state APIs have a separate pinned-musl source port and
+installed-product evidence in `bsd_random.rs` and `run_owned_bsd_random.sh`.
+The current ABI selection reader still requires its exact product receipt.
 
 The installed C filename-pattern entries are qualified by `owned-pattern`.
 [`owned-pattern.md`](owned-pattern.md) records the musl source mapping,

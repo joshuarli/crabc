@@ -2003,7 +2003,7 @@ def expand_obligations(contract: Mapping[str, Any], inputs: Mapping[str, Any]) -
         record['selection'] = {'disposition': disposition, 'owner': owner['id'], 'family': owner['semantic_family'],
                                'reason': owner['provider_target'], 'sources': ['compat/x86_64/header_callable_disposition.toml']}
         if disposition == 'unresolved':
-            record['unresolved'].append('BSD random policy is unresolved; planned provider routing is not closure')
+            record['unresolved'].append('planned provider routing is not closure')
         else:
             record['unresolved'].append('selected boundary requires its declaration/consumer/compiler/oracle receipt')
     for group in contract['structural_groups']:

@@ -2,9 +2,9 @@
   "contract_schema": "crabc.x86_64-header-callable-disposition/v2",
   "inputs": {
     "callable_extension_contract_sha256": "950febf6d9d8f26f001eb31844438c047f6ada96dbb3c2ecc27de97e51151b7f",
-    "callable_inventory_sha256": "8d881f8bdd229977f0cf47efaf644fc90a057b0d8f02df7a305fd137e27720b0",
+    "callable_inventory_sha256": "69aaf064fbd7ae5d027bd895b0887ffac0bcedb21b799b4b4d7ad65e70aa1f0b",
     "candidate_external_callable_sha256": "ac2057843e61094f0a8f1dc8b3774d2d2b848f8a860c0f7cf6193cd3ae7ac118",
-    "parity_ledger_sha256": "a55c2194348f58cc0ea8db6552a8b6b248693528fe79e75ec9b5d3e28720e532",
+    "parity_ledger_sha256": "ac7e80bcddb8a6ad3b0221ee1b399106805d5de2f20d00fcb6339da2c89951c2",
     "static_c_abi_exports_sha256": "3698b538aea4c357f0536bacf340bf4c0c520a6b8cc6d34a8e119b4ce1c655b3"
   },
   "missing_reference_declaration_groups": [],
@@ -166,6 +166,7 @@
           "hypotf",
           "init_module",
           "initgroups",
+          "initstate",
           "isastream",
           "klogctl",
           "lckpwdf",
@@ -244,6 +245,7 @@
           "quick_exit",
           "quotactl",
           "rand",
+          "random",
           "realpath",
           "reboot",
           "remap_file_pages",
@@ -262,6 +264,7 @@
           "setns",
           "setpwent",
           "setspent",
+          "setstate",
           "settimeofday",
           "setusershell",
           "setutent",
@@ -269,6 +272,7 @@
           "shm_open",
           "shm_unlink",
           "srand",
+          "srandom",
           "statx",
           "stime",
           "strfmon",
@@ -1477,21 +1481,6 @@
     },
     "deferred_owner_groups": [
       {
-        "id": "x86-cabi-posix-runtime-missing-v1",
-        "linkage_owner_family": "libc.c-abi-compat",
-        "linkage_owner_obligation": "final-callable-provider-archive-closure",
-        "members": [
-          "initstate",
-          "random",
-          "setstate",
-          "srandom"
-        ],
-        "provider_target": "future selected C ABI providers in libc.posix-runtime",
-        "resolution": "planned-provider",
-        "semantic_family": "libc.posix-runtime",
-        "source_oracle": "Pinned musl 1.2.6 public headers and selected x86 callable inventory"
-      },
-      {
         "id": "x86-header-callable-builtin-v1",
         "linkage_owner_family": "libc.c-abi-compat",
         "linkage_owner_obligation": "final-callable-provider-archive-closure",
@@ -1782,13 +1771,12 @@
   },
   "summary": {
     "candidate_external_callable_count": 1526,
-    "declared_unverified_feature_callable_count": 310,
+    "declared_unverified_feature_callable_count": 314,
     "default_static_callable_count": 1123,
     "deferred_resolution_counts": {
       "compiler-builtin": 1,
       "consumer-supplied": 1,
-      "oracle-declared-no-provider": 9,
-      "planned-provider": 4
+      "oracle-declared-no-provider": 9
     },
     "final_provider_archive_closure_complete": false,
     "header_declaration_parity_complete": false,
@@ -1800,7 +1788,7 @@
     "reviewed_native_callable_extension_provider_route_count": 1,
     "undispositioned_candidate_callable_count": 0,
     "undispositioned_missing_reference_name_count": 0,
-    "unprovided_callable_count": 15,
+    "unprovided_callable_count": 11,
     "verified_feature_callable_count": 78
   },
   "target": "x86_64-unknown-linux-musl",

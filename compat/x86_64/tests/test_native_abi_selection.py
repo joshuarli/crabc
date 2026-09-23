@@ -352,9 +352,14 @@ class SourceOwnerPolicyTests(unittest.TestCase):
         selected = {name for group in source_groups for name in group['members']}
         self.assertEqual(selected, SOURCE_OWNER_NAMES)
         self.assertEqual(len(selected), 108)
-        for name in ('__crabc_runtime_v1', 'initstate', 'random', 'setstate', 'srandom', 'rust_eh_personality'):
+        for name in ('__crabc_runtime_v1', 'rust_eh_personality'):
             self.assertNotIn(name, selected)
             self.assertFalse(self.records[name]['selection'].get('group', '').startswith('source-owned-'))
+        for name in ('initstate', 'random', 'setstate', 'srandom'):
+            self.assertEqual(self.records[name]['selection']['group'], 'declared-callable-providers')
+            self.assertEqual(self.records[name]['selection']['disposition'], 'public-provider')
+            self.assertEqual({row['artifact_key'] for row in self.records[name]['expected_placements']},
+                             {'candidate-static', 'candidate-shared'})
 
     def test_errno_private_alias_is_a_component_private_provider_not_a_source_owner_or_public_export(self):
         record = self.records['___errno_location']

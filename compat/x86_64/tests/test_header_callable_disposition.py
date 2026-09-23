@@ -62,16 +62,16 @@ class HeaderCallableDispositionTests(unittest.TestCase):
                 default_static=("kill",),
             )
 
-    def test_rand_pair_is_owned_while_bsd_state_apis_remain_deferred(self) -> None:
+    def test_rand_and_bsd_state_apis_are_owned_by_the_installed_runtime(self) -> None:
         primary = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))["primary_disposition"]
         owned = next(row for row in primary["declared_unverified_feature_archives"]
                      if row["id"] == "x86-owned-static-runtime")
-        names = {"rand", "srand"}
+        names = {"rand", "srand", "random", "srandom", "initstate", "setstate"}
         self.assertTrue(names <= set(owned["members"]))
         self.assertFalse(names & set(primary["default_static"]["members"]))
         deferred = {name for row in primary["deferred_owner_groups"] for name in row["members"]}
         self.assertFalse(names & deferred)
-        self.assertTrue({"random", "srandom", "initstate", "setstate"} <= deferred)
+        self.assertFalse(names & deferred)
 
     def test_aio_additions_belong_to_the_owned_runtime(self) -> None:
         primary = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))["primary_disposition"]
