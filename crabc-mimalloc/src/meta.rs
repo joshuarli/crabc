@@ -2543,6 +2543,27 @@ mod tests {
         MemoryConfig::from_observations(page_size, 1024 * 1024, false, false)
     }
 
+    fn prepare_main_owner_with_borrowed_engine<'owner>(
+        engine: Pin<&'owner MetadataEngine<'owner>>,
+        subprocess: &'static MainSubprocess,
+    ) -> Result<MetaAllocatorBound<'owner>, MetaError> {
+        engine.prepare_for_main_subprocess(config(), subprocess)
+    }
+
+    #[test]
+    fn borrowed_metadata_engine_rejects_child_on_main_binding_path() {
+        let child: &'static MainSubprocess = std::boxed::Box::leak(std::boxed::Box::new(
+            MainSubprocess::new_child(),
+        ));
+        let engine = std::boxed::Box::pin(MetadataEngine::new());
+        let result = prepare_main_owner_with_borrowed_engine(engine.as_ref(), child);
+        match result {
+            Err(MetaError::SubprocessMismatch) => {}
+            Err(error) => panic!("unexpected child binding error: {error:?}"),
+            Ok(_bound) => panic!("child metadata engine entered the main binding path"),
+        }
+    }
+
     /// Test-only process lifetime mirrors the production static singleton:
     /// the detached engine stores `'static` references into its final slots.
     /// This deliberately leaves the source detached-metadata image cold so a
