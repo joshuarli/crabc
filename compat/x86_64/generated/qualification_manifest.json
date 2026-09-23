@@ -1,6 +1,6 @@
 {
   "completed_gate_count": 0,
-  "contract_sha256": "994ee4c67f59fca6e4e46d05ebfbc45ad49ff8986f3be15b4a2994606b976ca9",
+  "contract_sha256": "1b9866498e868d8d099e0264cdbcf4fbeda6b1608b1229c4cd3b899cb35f9de1",
   "execution": {
     "cargo_home": "/workspace/.work/x86_64/cargo",
     "dispatcher_command": [
@@ -108,6 +108,9 @@
       "timeout_seconds": 7200
     },
     {
+      "case_count": 1,
+      "case_manifest": "compat/x86_64/qualification_source_build.json",
+      "case_manifest_sha256": "c643b4a0791d8ba736e8a75f4b053bf8edc950f31b33084c722c7ff6379130a6",
       "depends_on": [
         "compat.abi-differential",
         "compat.posix-process",
@@ -120,7 +123,7 @@
       "oracle": "frozen-aarch64-selected-source-consumers-and-pinned-musl-1.2.6",
       "provenance": "pinned-source-inputs-and-owned-crabc-sysroot",
       "purity": "reject-ambient-target-crt-libc-loader-libgcc-compiler-rt-and-headers",
-      "state": "planned",
+      "state": "ready",
       "timeout_seconds": 7200
     },
     {
@@ -160,7 +163,7 @@
     }
   ],
   "promotion_ready": false,
-  "ready_gate_count": 0,
+  "ready_gate_count": 1,
   "runnable_prefix": [],
   "schema": "crabc.x86_64-qualification-manifest/v2",
   "target": {

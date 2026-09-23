@@ -156,9 +156,8 @@ during collection and retained qualification validation. The catalog leaf
 has a fresh network namespace with no active interfaces; prepare the pinned
 APK cache before running it.
 
-Both curl workloads and both git workloads currently fail on strong
-`rand`/`srand` imports. These absent libc providers require a reviewed PRNG
-dependency under `AGENTS.md`. All 34 workloads remain required for completion.
+All 34 workloads remain required for completion; a pass on one product or
+revision is not evidence for another.
 
 This is one consumer component for the frozen 34 workloads. It does not close
 the wider software-corpus, loader-family, performance, or source-build scope.

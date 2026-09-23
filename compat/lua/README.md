@@ -54,6 +54,29 @@ dynamic products against their current source seal. The parity ledger calls
 this same reader before accepting `consumer.source-build` as
 `foundation-verified`.
 
+## Ordered qualification case
+
+`qualify_source_build.py` is the only case pinned by
+`compat/x86_64/qualification_source_build.json` for the ordered
+`consumer.source-build` qualification gate, selected with
+`./scripts/dev-x86_64.sh qualification-manifest --through consumer.source-build`
+after every predecessor gate is ready. That frozen roster is exactly the
+AArch64 `lua` gate: static ET_EXEC and static-PIE `lua`/`luac` with linked
+preload modules, and the dynamic `liblua.so.5.4`, `lua`, `luac`, success,
+failure, and missing-symbol modules through installed and package-extracted
+sysroots, all with source and bytecode workloads compared to fresh pinned-musl
+builds. The case adds no workload and substitutes no version probe.
+
+The qualification runner starts cases with a scrubbed environment and
+`PYTHONSAFEPATH=1`, so this runner names its own import directories. It fails
+before building anything unless the checkout is clean committed source and
+every transitive family prerequisite of `consumer.source-build` is
+`foundation-verified` in the validated campaign report. It then runs the static
+and dynamic dispatchers and the admission reader in order, requires the
+admission to bind the same clean source, rechecks that source, and only then
+prints its non-promoting marker. A report produced at another revision or
+content digest is never admitted.
+
 ## Candidate boundary
 
 The dynamic candidate uses the installed public headers, Rust CRT objects,

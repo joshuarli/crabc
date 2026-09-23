@@ -1,0 +1,26 @@
+{
+  "schema": "crabc.x86_64-qualification-case-manifest/v1",
+  "gate": "consumer.source-build",
+  "target": {
+    "triple": "x86_64-unknown-linux-musl",
+    "system": "Linux",
+    "machine": "x86_64",
+    "endianness": "little"
+  },
+  "oracle": "frozen-aarch64-selected-source-consumers-and-pinned-musl-1.2.6",
+  "provenance": "pinned-source-inputs-and-owned-crabc-sysroot",
+  "purity": "reject-ambient-target-crt-libc-loader-libgcc-compiler-rt-and-headers",
+  "isolation": "clean-native-linux-x86_64-worktree-scrubbed-environment-and-materialized-sysroot",
+  "cases": [
+    {
+      "id": "lua-frozen-source-build",
+      "command": [
+        "python3",
+        "compat/lua/qualify_source_build.py"
+      ],
+      "runner_sha256": "1d529a7954745334478f30adeb047054eb4e59b8af68627e08cb3142db95a19d",
+      "expected_stdout_line": "x86 consumer.source-build Lua roster: PASS (non-promoting)",
+      "timeout_seconds": 3600
+    }
+  ]
+}

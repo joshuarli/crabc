@@ -105,6 +105,12 @@ installed and package-extracted sysroot lanes. The result records
 `compat/reports/lua/x86_64-dynamic-latest.json`; it proves this consumer slice
 and does not promote any incomplete runtime family.
 
+The ordered `consumer.source-build` qualification gate runs the same static and
+dynamic lanes and the admission reader through one case,
+`compat/lua/qualify_source_build.py`. It requires clean committed source and
+verified transitive family prerequisites before it builds anything; see
+`compat/lua/README.md`.
+
 ## Reference comparison
 
 Candidate execution uses the normal kernel path through

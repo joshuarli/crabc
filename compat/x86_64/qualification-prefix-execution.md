@@ -65,9 +65,10 @@ executable prefix infrastructure, not final qualification or promotion.
 
 ## Remaining implementation before qualification
 - Register dependency-ready full-family case manifests and execute their real
-  ordered prefixes. All eight current promotion gates are still planned; the
-  native `--through compat.abi-differential` check currently rejects that planned
-  prerequisite without executing a target case.
+  ordered prefixes. Only `consumer.source-build` is ready (its one Lua roster
+  case is described in `compat/lua/README.md`); the other seven gates are
+  planned, so every prefix, including `--through consumer.source-build`, is
+  rejected before executing a target case.
 - Make final qualification/promotion validation consume current same-revision
   bound receipts for the complete unchanged chain. Do not infer completion from
   `ready`, a private prefix, or historical reports.

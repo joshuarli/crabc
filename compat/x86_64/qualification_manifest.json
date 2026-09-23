@@ -80,12 +80,16 @@
     },
     {
       "id": "consumer.source-build",
-      "state": "planned",
+      "state": "ready",
       "oracle": "frozen-aarch64-selected-source-consumers-and-pinned-musl-1.2.6",
       "provenance": "pinned-source-inputs-and-owned-crabc-sysroot",
       "purity": "reject-ambient-target-crt-libc-loader-libgcc-compiler-rt-and-headers",
       "isolation": "clean-native-linux-x86_64-worktree-scrubbed-environment-and-materialized-sysroot",
-      "timeout_seconds": 7200
+      "timeout_seconds": 7200,
+      "case_manifest": {
+        "path": "compat/x86_64/qualification_source_build.json",
+        "sha256": "c643b4a0791d8ba736e8a75f4b053bf8edc950f31b33084c722c7ff6379130a6"
+      }
     },
     {
       "id": "capability.accounting",
