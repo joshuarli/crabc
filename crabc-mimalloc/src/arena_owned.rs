@@ -293,6 +293,11 @@ impl StoredVmProcess {
         // excluded by the backing's quiescent destruction contract.
         unsafe { VmProcess::new(self.policy.as_ref(), self.subprocess.as_ref()) }
     }
+
+    fn matches(&self, process: VmProcess<'_>) -> bool {
+        core::ptr::eq(self.policy.as_ptr(), process.policy())
+            && core::ptr::eq(self.subprocess.as_ptr(), process.subprocess())
+    }
 }
 
 pub(super) struct OwnedArenaAllocation {
@@ -727,15 +732,16 @@ impl ProcessArenaBacking {
                 error: ManageArenaError::RegistryFull, mapping, memory, process,
             }),
         };
-        unsafe { self.install_owned_os_mapping_locked(process, config, managed_size, mapping, memory, numa_node, exclusive) }
+        unsafe { self.install_owned_os_mapping_locked(process,
+            StoredVmProcess::from_static_process(process), config, managed_size, mapping, memory, numa_node, exclusive) }
     }
 
     /// The caller holds reserve_lock through every slot and registry write.
-    unsafe fn install_owned_os_mapping_locked(
-        &'static self, process: VmProcess<'static>, config: MemoryConfig,
+    unsafe fn install_owned_os_mapping_locked<'process>(
+        &self, process: VmProcess<'process>, stored_process: StoredVmProcess, config: MemoryConfig,
         managed_size: usize, mapping: Mapping, memory: MemoryId, numa_node: i32, exclusive: bool,
-    ) -> Result<ManagedExternalRegion, ProcessArenaInstallFailure> {
-        let result = unsafe { self.install_owned_allocation_locked(process, StoredVmProcess::from_static_process(process), config, managed_size,
+    ) -> Result<ManagedExternalRegion, ProcessArenaInstallFailure<'process>> {
+        let result = unsafe { self.install_owned_allocation_locked(process, stored_process, config, managed_size,
             ArenaBacking::Regular(mapping), memory, numa_node, exclusive) };
         result.map_err(|(error, allocation)| {
             let ArenaBacking::Regular(mapping) = allocation else { unreachable!() };
@@ -933,6 +939,9 @@ impl ProcessArenaBacking {
         numa_node: i32, exclusive: bool,
     ) -> Result<ManagedExternalRegion, (ManageArenaError, ArenaBacking)> {
         let fail = |error, allocation| (error, allocation);
+        if !stored_process.matches(process) {
+            return Err(fail(ManageArenaError::InvalidRegion, allocation));
+        }
         let start = match allocation.base() {
             Ok(start) => start,
             Err(_) => return Err(fail(ManageArenaError::InvalidRegion, allocation)),
@@ -1076,10 +1085,10 @@ impl ProcessArenaBacking {
     /// The caller must satisfy `try_allocate_slices` and retain the supplied
     /// source random operation's exclusive-access contract during each draw.
     pub(crate) unsafe fn try_allocate_slices_with_random(
-        &'static self, process: VmProcess<'static>, config: MemoryConfig,
+        &self, process: VmProcess<'_>, config: MemoryConfig,
         search: ArenaSearch, slice_count: usize, alignment: usize, commit: bool,
         random: crate::os::OsRandom<'_>,
-    ) -> Option<ArenaSliceClaim<'static>> {
+    ) -> Option<ArenaSliceClaim<'_>> {
         let requested_size = slice_count.checked_mul(crate::config::ARENA_SLICE_SIZE)?;
         if requested_size == 0 || requested_size > ARENA_MAX_SIZE
             || alignment > crate::config::ARENA_SLICE_SIZE { return None; }
@@ -1102,7 +1111,7 @@ impl ProcessArenaBacking {
 
     /// Source `mi_arena_reserve`, called only under the source reserve lock.
     unsafe fn reserve_locked(
-        &'static self, process: VmProcess<'static>, config: MemoryConfig,
+        &self, process: VmProcess<'_>, config: MemoryConfig,
         requested_size: usize, allow_large: bool, mut random: crate::os::OsRandom<'_>,
     ) -> Option<ArenaId> {
         let policy = process.policy();
@@ -1144,7 +1153,7 @@ impl ProcessArenaBacking {
     /// A failed map trim or unpublished manage cleanup retains the exact
     /// still-active owner in a terminal slot, never an untracked raw address.
     unsafe fn reserve_one_locked(
-        &'static self, process: VmProcess<'static>, config: MemoryConfig,
+        &self, process: VmProcess<'_>, config: MemoryConfig,
         size: usize, access: MapAccess, allow_large: bool, random: crate::os::OsRandom<'_>,
     ) -> Option<ArenaId> {
         // Reserve a cleanup slot before acquiring any new OS ownership.
@@ -1154,7 +1163,8 @@ impl ProcessArenaBacking {
         let (mut mapping, memory, already_failed_cleanup) = match allocation {
             Ok(allocation) => {
                 let (mapping, memory) = allocation.into_mapping_and_memory();
-                match unsafe { self.install_owned_os_mapping_locked(process, config, size, mapping, memory, -1, false) } {
+                match unsafe { self.install_owned_os_mapping_locked(process,
+                    StoredVmProcess::from_retained_process(process), config, size, mapping, memory, -1, false) } {
                     Ok(managed) => return Some(managed.arena_id()),
                     Err(failure) => { let (mapping, memory, _) = failure.into_parts(); (mapping, memory, None) }
                 }
@@ -1182,7 +1192,10 @@ impl ProcessArenaBacking {
         };
         unsafe { (*slot.value.get()).write(OwnedArenaAllocation {
             allocation: ArenaBacking::Regular(mapping), memory,
-            process: StoredVmProcess::from_static_process(process), config, release_error: Some(error),
+            // SAFETY: all callers of this private reservation path retain the
+            // process identity through this backing's quiescent destruction.
+            process: unsafe { StoredVmProcess::from_retained_process(process) },
+            config, release_error: Some(error),
         }); }
         slot.state.store(RETAINED, Ordering::Release);
         None
@@ -1232,17 +1245,17 @@ impl ProcessHugeArenaInstallFailure {
 }
 
 /// An unpublished failure retains both the OS owner and its accounting pair.
-pub(crate) struct ProcessArenaInstallFailure {
+pub(crate) struct ProcessArenaInstallFailure<'process> {
     error: ManageArenaError,
     mapping: Mapping,
     memory: MemoryId,
-    process: VmProcess<'static>,
+    process: VmProcess<'process>,
 }
 
-impl ProcessArenaInstallFailure {
+impl<'process> ProcessArenaInstallFailure<'process> {
     pub(crate) const fn error(&self) -> ManageArenaError { self.error }
 
-    pub(crate) fn into_parts(self) -> (Mapping, MemoryId, VmProcess<'static>) {
+    pub(crate) fn into_parts(self) -> (Mapping, MemoryId, VmProcess<'process>) {
         (self.mapping, self.memory, self.process)
     }
 }
