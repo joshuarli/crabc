@@ -302,11 +302,16 @@ mod tests {
         // SAFETY: `child` is the exact stable allocation retained by this
         // fixture and remains pinned through the registration/unlink checks.
         let child_pin = unsafe { core::pin::Pin::new_unchecked(child) };
-        let target = crate::os::ChildVmProcess::new(&policy, child_pin, main.identity())
+        let parent_vm = crate::os::VmProcess::new(&policy, main.identity());
+        let target = crate::os::ChildVmProcess::new(parent_vm, child_pin)
             .expect("a registered child borrows the process policy with its own identity");
         assert!(core::ptr::eq(target.identity(), child.identity()));
         assert!(!core::ptr::eq(target.identity(), main.identity()));
         assert!(core::ptr::eq(target.process().subprocess(), child.identity()));
+        assert!(matches!(
+            crate::os::ChildVmProcess::new(target.process(), child_pin),
+            Err(crate::os::ChildVmProcessError::ParentNotProcessMain),
+        ));
 
         assert!(core::ptr::eq(unsafe { *registry.head.get() }, child.identity()));
         assert!(core::ptr::eq(

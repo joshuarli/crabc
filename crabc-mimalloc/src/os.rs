@@ -757,23 +757,27 @@ pub(crate) struct ChildVmProcess<'child> {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ChildVmProcessError {
+    ParentNotProcessMain,
     NotRegisteredChild,
 }
 
 impl<'child> ChildVmProcess<'child> {
     /// Binds the exact process policy to a registered, address-stable child.
     pub(crate) fn new(
-        policy: &'child VmPolicy,
+        parent: VmProcess<'child>,
         child: core::pin::Pin<&'child crate::subproc::ChildSubprocessImage>,
-        parent: &crate::subproc::SubprocessIdentity,
     ) -> core::result::Result<Self, ChildVmProcessError> {
+        let parent_identity = parent.subprocess();
+        if !parent_identity.is_process_main() {
+            return Err(ChildVmProcessError::ParentNotProcessMain);
+        }
         let image: &'child crate::subproc::ChildSubprocessImage = core::pin::Pin::get_ref(child);
         let identity: &'child crate::subproc::SubprocessIdentity = image.identity();
-        if !identity.is_registered_child_of(parent) {
+        if !identity.is_registered_child_of(parent_identity) {
             return Err(ChildVmProcessError::NotRegisteredChild);
         }
         Ok(Self {
-            process: VmProcess::new(policy, identity),
+            process: VmProcess::new(parent.policy(), identity),
             child,
         })
     }
