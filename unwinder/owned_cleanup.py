@@ -58,6 +58,10 @@ SOURCE_LTO_RUNTIME_TARGETS = {
 SOURCE_GRAPH_PACKAGES = frozenset(build.FEATURES)
 HOST_BUILD_LINKER = Path("/usr/bin/gcc")
 HOST_BUILD_SCRIPT_OUTPUT = re.compile(r"build_script_build-[0-9a-f]+\Z")
+# Cargo -vv prints each command's environment as leading NAME=value words, and
+# its build-dir layout names every unit directory with a 16-digit hash.
+CARGO_ENVIRONMENT_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+CARGO_UNIT_HASH = re.compile(r"[0-9a-f]{16}\Z")
 SERIAL_BUILD_ENVIRONMENT = {
     "CARGO_BUILD_JOBS": "1",
     "CMAKE_BUILD_PARALLEL_LEVEL": "1",
@@ -704,10 +708,16 @@ def run_logged_streams(
 
 def source_built_link_receipt(
     path: Path, binary: Path, source_library_root: Path, source_build_root: Path, description: str,
-    toolchain_search_root: Path | None = None, built_unwind: dict[str, str] | None = None,
-    expected_compiler_builtins_artifact: tuple[str, Path] | None = None,
+    toolchain_search_root: Path | None = None, built_unwind: dict[str, str] | None = None, *,
+    compiler_builtins_archive: dict[str, str],
 ) -> dict[str, Any]:
-    """Read one source-built fat-LTO link without admitting stock target rlibs."""
+    """Read one source-built fat-LTO link without admitting stock target rlibs.
+
+    ``compiler_builtins_archive`` is the ``library_archive`` record from
+    ``cargo_compiler_builtins_identity``. The linker can only check the
+    archive's unit-directory shape; this reader requires that the one archive
+    it omitted is the Cargo library unit configured by the pinned build script.
+    """
 
     record = json_object(path, description)
     require(record.get("schema") == 6 and record.get("format") == "crabc-owned-rust-source-build-link/v5",
@@ -748,17 +758,13 @@ def source_built_link_receipt(
         and Path(compiler_builtins["path"]).is_relative_to(source_build_root),
         f"{description} does not omit its source-built compiler-builtins archive",
     )
-    if expected_compiler_builtins_artifact is not None:
-        archive_path = physical(Path(compiler_builtins["path"]), f"{description} omitted compiler-builtins archive")
-        producer_package_id, expected_archive = expected_compiler_builtins_artifact
-        expected_archive = physical(expected_archive, "Cargo compiler-builtins artifact")
-        artifact_directory = archive_path.parent
-        producer = record.get("source_built_compiler_builtins_producer")
-        require(artifact_directory.is_relative_to(source_build_root)
-                and archive_path == expected_archive
-                and producer == {"package_id": producer_package_id, "artifact_directory": str(artifact_directory)}
-                and record_file(archive_path, f"{description} linked compiler-builtins archive") == compiler_builtins,
-                f"{description} compiler-builtins archive differs from the authenticated Cargo artifact producer")
+    require(
+        compiler_builtins == compiler_builtins_archive
+        and record_file(Path(compiler_builtins["path"]), f"{description} omitted compiler-builtins archive")
+        == compiler_builtins_archive,
+        f"{description} omits a compiler-builtins archive other than the Cargo unit its build-script OUT_DIR "
+        "configured",
+    )
     inputs = record.get("application_inputs")
     require(isinstance(inputs, list) and all(isinstance(value, dict) for value in inputs),
             f"{description} lacks its Rust application inputs")
@@ -1108,50 +1114,165 @@ def cargo_archive_metadata_companion(stream: str, archive: Path, target: Path, d
     return metadata
 
 
-def cargo_archive_package_id(stream: str, archive: Path, description: str) -> str:
-    """Return the package identity in the unique Cargo record that declares an archive."""
+def cargo_verbose_command(line: str, description: str) -> tuple[dict[str, str], list[str]]:
+    """Split one complete Cargo ``-vv`` ``Running `...``` line into environment and argv."""
 
-    archive = physical(archive, f"{description} archive")
-    selected: list[str] = []
-    for record in cargo_json_records(stream, f"{description} Cargo artifact stream"):
-        if record.get("reason") == "compiler-artifact" and isinstance(record.get("filenames"), list) \
-                and str(archive) in record["filenames"]:
-            package_id = record.get("package_id")
-            require(isinstance(package_id, str), f"{description} Cargo artifact has no package identity")
-            selected.append(package_id)
-    require(len(selected) == 1, f"expected one Cargo package identity for {description}, found {selected!r}")
-    return selected[0]
+    prefix = "Running `"
+    command = line.strip()
+    require(command.startswith(prefix) and command.endswith("`") and len(command) > len(prefix) + 1,
+            f"{description} is not one complete Cargo -vv command")
+    try:
+        words = shlex.split(command[len(prefix):-1])
+    except ValueError as error:
+        raise OwnedCleanupError(f"{description} is not shell-quoted") from error
+    environment: dict[str, str] = {}
+    while words and CARGO_ENVIRONMENT_ASSIGNMENT.match(words[0]) is not None:
+        name, _, value = words.pop(0).partition("=")
+        require(name not in environment, f"{description} repeats its {name} environment")
+        environment[name] = value
+    require(bool(words), f"{description} has no program")
+    return environment, words
 
 
-def cargo_build_std_compiler_builtins_out_dir(
-    stream: str, target: Path, rust_source: Path,
-) -> tuple[str, Path]:
-    """Select the one compiler_builtins OUT_DIR Cargo says its build script owns."""
+def cargo_unit_hash(path: Path, units: Path, relative: tuple[str, ...]) -> str | None:
+    """Return ``<hash>`` when ``path`` is exactly ``units/<hash>/<relative...>``."""
+
+    if not path.is_relative_to(units):
+        return None
+    parts = path.relative_to(units).parts
+    if len(parts) != len(relative) + 1 or parts[1:] != relative or CARGO_UNIT_HASH.fullmatch(parts[0]) is None:
+        return None
+    return parts[0]
+
+
+def cargo_compiler_builtins_identity(stream: str, log: str, *, target: Path, rust_source: Path) -> dict[str, Any]:
+    """Bind the compiler_builtins archive to the build-script run that configured it.
+
+    The source-built final link omits this archive, so the runner must know
+    exactly which Cargo unit it is. Cargo's build-dir layout gives the pinned
+    package three unit directories that share one package id:
+
+    * host compile: ``release/build/compiler_builtins/<h>/out/build_script_build``;
+    * build-script run: ``<target>/release/build/compiler_builtins/<h>/out``,
+      which is the script's ``OUT_DIR``;
+    * library compile: ``<target>/release/build/compiler_builtins/<h>/out/``
+      ``libcompiler_builtins-<h>.rlib``.
+
+    Neither the shared package id nor the archive's directory shape says which
+    run configured the library. The library rustc command's ``OUT_DIR`` binds
+    the archive to the run, and the run command binds that ``OUT_DIR`` to the
+    host executable whose link the host build-script manifest closes.
+    """
 
     target = physical(target, "source-built Cargo target", directory=True)
     rust_source = physical(rust_source, "pinned rust-src library", directory=True)
-    package = next(entry for entry in pinned_rust_source_host_builds(rust_source)
-                   if entry["package"] == "compiler_builtins")
-    expected_id = package["package_id_suffix"]
-    expected_root = physical(target / TARGET / "release/build", "source-built Cargo build root", directory=True)
-    selected: list[tuple[str, Path]] = []
-    for record in cargo_json_records(stream, "Cargo compiler-builtins build-script stream"):
-        if record.get("reason") != "build-script-executed":
+    pinned = next(entry for entry in pinned_rust_source_host_builds(rust_source)
+                  if entry["package"] == "compiler_builtins")
+    manifest = pinned["manifest"]
+    package_source = manifest.parent
+    package_id = f"path+file://{package_source}{pinned['package_id_suffix']}"
+    build_source = pinned["source"]
+    library_source = physical(package_source / "src/lib.rs", "pinned compiler_builtins library source")
+    host_units = target / "release/build/compiler_builtins"
+    target_units = target / TARGET / "release/build/compiler_builtins"
+
+    scripts: list[Path] = []
+    out_dirs: list[Path] = []
+    archives: list[Path] = []
+    for record in cargo_json_records(stream, "Cargo compiler_builtins stream"):
+        record_package = record.get("package_id")
+        if not isinstance(record_package, str) or "#compiler_builtins@" not in record_package:
             continue
-        package_id = record.get("package_id")
-        out_dir_value = record.get("out_dir")
-        if not isinstance(package_id, str) or not package_id.endswith(expected_id):
+        reason = record.get("reason")
+        if reason not in {"compiler-artifact", "build-script-executed"}:
             continue
-        require(isinstance(out_dir_value, str), "Cargo compiler-builtins build-script record has no OUT_DIR")
-        out_dir = physical(Path(out_dir_value), "Cargo compiler-builtins build-script OUT_DIR", directory=True)
-        relative = out_dir.relative_to(expected_root) if out_dir.is_relative_to(expected_root) else None
-        require(relative is not None and len(relative.parts) == 3 and relative.parts[0] == "compiler_builtins"
-                and re.fullmatch(r"[0-9a-f]{16}", relative.parts[1]) is not None
-                and relative.parts[2] == "out",
-                "Cargo compiler-builtins OUT_DIR is outside its exact target build package")
-        selected.append((package_id, out_dir))
-    require(len(selected) == 1, f"expected one Cargo compiler-builtins OUT_DIR producer, found {selected!r}")
-    return selected[0]
+        require(record_package == package_id,
+                f"Cargo compiler_builtins record is not the pinned rust-src package: {record_package}")
+        if reason == "build-script-executed":
+            out_dir_value = record.get("out_dir")
+            require(isinstance(out_dir_value, str), "Cargo compiler_builtins build-script run has no OUT_DIR")
+            out_dir = physical(Path(out_dir_value), "Cargo compiler_builtins OUT_DIR", directory=True)
+            require(cargo_unit_hash(out_dir, target_units, ("out",)) is not None,
+                    "Cargo compiler_builtins OUT_DIR is not a target build-script run unit")
+            out_dirs.append(out_dir)
+            continue
+        target_record = record.get("target")
+        filenames = record.get("filenames")
+        require(isinstance(target_record, dict) and isinstance(filenames, list)
+                and all(isinstance(item, str) for item in filenames) and record.get("executable") is None,
+                "Cargo compiler_builtins artifact record is malformed")
+        if target_record.get("kind") == ["custom-build"]:
+            require(target_record.get("src_path") == str(build_source) and len(filenames) == 1,
+                    "Cargo compiler_builtins build-script artifact identity drifted")
+            script = physical(Path(filenames[0]), "Cargo compiler_builtins host build script", executable=True)
+            require(cargo_unit_hash(script, host_units, ("out", "build_script_build")) is not None,
+                    "Cargo compiler_builtins build script is not a host build-script unit output")
+            scripts.append(script)
+            continue
+        require(target_record.get("name") == "compiler_builtins" and target_record.get("kind") == ["lib"]
+                and target_record.get("crate_types") == ["lib"]
+                and target_record.get("src_path") == str(library_source),
+                "Cargo compiler_builtins library artifact identity drifted")
+        rlibs = [Path(item) for item in filenames if item.endswith(".rlib")]
+        require(len(rlibs) == 1, "Cargo compiler_builtins library does not declare one archive")
+        archives.append(physical(rlibs[0], "Cargo compiler_builtins library archive"))
+    require(len(scripts) == 1 and len(out_dirs) == 1 and len(archives) == 1,
+            "Cargo did not report one compiler_builtins build script, OUT_DIR, and library archive: "
+            f"{scripts!r} {out_dirs!r} {archives!r}")
+    script, out_dir, archive = scripts[0], out_dirs[0], archives[0]
+    run_unit = cargo_unit_hash(out_dir, target_units, ("out",))
+    library_unit = cargo_unit_hash(archive, target_units, ("out", archive.name))
+    require(library_unit is not None and archive.name == f"libcompiler_builtins-{library_unit}.rlib",
+            "Cargo compiler_builtins archive is not its library unit output")
+    require(library_unit != run_unit and not archive.is_relative_to(out_dir),
+            "Cargo compiler_builtins archive shares its build script's writable OUT_DIR")
+
+    def package_environment(environment: dict[str, str], description: str) -> None:
+        require(environment.get("CARGO_MANIFEST_PATH") == str(manifest)
+                and environment.get("CARGO_PKG_NAME") == "compiler_builtins"
+                and environment.get("CARGO_PKG_VERSION") == pinned["version"],
+                f"{description} is not the pinned rust-src compiler_builtins package")
+
+    runs = [
+        command for command in (
+            cargo_verbose_command(line, "Cargo compiler_builtins build-script run")
+            for line in log.splitlines() if "Running `" in line and str(script) in line
+        ) if command[1] == [str(script)]
+    ]
+    require(len(runs) == 1, "Cargo diagnostics do not retain one compiler_builtins build-script run")
+    run_environment = runs[0][0]
+    package_environment(run_environment, "Cargo compiler_builtins build-script run")
+    require(run_environment.get("OUT_DIR") == str(out_dir) and run_environment.get("TARGET") == TARGET,
+            "Cargo compiler_builtins build-script run did not write its reported OUT_DIR")
+
+    compiles = [
+        cargo_verbose_command(line, "Cargo compiler_builtins library rustc")
+        for line in log.splitlines()
+        if "Running `" in line and re.search(r"--crate-name compiler_builtins(?=[ `])", line) is not None
+    ]
+    require(len(compiles) == 1, "Cargo diagnostics do not retain one compiler_builtins library rustc")
+    compile_environment, arguments = compiles[0]
+
+    def one_value(option: str) -> str:
+        values = [arguments[index + 1] for index, argument in enumerate(arguments[:-1]) if argument == option]
+        require(len(values) == 1, f"Cargo compiler_builtins library rustc has no unique {option}")
+        return values[0]
+
+    extra_filenames = [argument.removeprefix("extra-filename=") for argument in arguments
+                       if argument.startswith("extra-filename=")]
+    package_environment(compile_environment, "Cargo compiler_builtins library rustc")
+    require(compile_environment.get("OUT_DIR") == str(out_dir),
+            "Cargo compiler_builtins library was not compiled with its build script's reported OUT_DIR")
+    require(one_value("--crate-name") == "compiler_builtins" and one_value("--crate-type") == "lib"
+            and one_value("--target") == TARGET and arguments.count(str(library_source)) == 1
+            and one_value("--out-dir") == str(archive.parent) and extra_filenames == [f"-{library_unit}"],
+            "Cargo compiler_builtins library rustc does not produce its declared archive")
+    return {
+        "package_id": package_id,
+        "build_script_executable": record_file(script, "Cargo compiler_builtins host build script"),
+        "build_script_out_dir": str(out_dir),
+        "library_archive": record_file(archive, "Cargo compiler_builtins library archive"),
+    }
 
 
 def cargo_source_lto_extern_closure(
@@ -1392,23 +1513,24 @@ def cargo_custom_build_artifacts(
         manifest = physical(Path(manifest_value), "Cargo custom-build manifest")
         source = physical(Path(source_value), "Cargo custom-build source")
         output = physical(Path(filenames[0]), "Cargo custom-build artifact output", executable=True)
-        out_dir_source = (
+        approved_source = (
             (manifest, source) in pinned_source_pairs or (manifest, source) in approved_vendor_sources
         )
         standard_output = output.name == "build-script-build"
-        out_dir_output = (
+        # Cargo's build-dir layout names the script in its compile unit's
+        # ``out`` directory; that directory is not the script's OUT_DIR.
+        unit_output = (
             output.name == "build_script_build"
             and owned_rust_link.admitted_host_build_script_path(output, host_build_root)
-            and out_dir_source
+            and approved_source
         )
-        require((manifest, source) in pinned_source_pairs or (manifest, source) in approved_vendor_sources,
-                "Cargo custom-build artifact is outside approved pinned source")
+        require(approved_source, "Cargo custom-build artifact is outside approved pinned source")
         if (manifest, source) in pinned_source_pairs:
             pinned = pinned_source_pairs[(manifest, source)]
             require(package_id.endswith(pinned["package_id_suffix"]),
                     "Cargo rust-source custom-build package differs from the pinned lock")
         require(
-            output.is_relative_to(host_build_root) and (standard_output or out_dir_output),
+            output.is_relative_to(host_build_root) and (standard_output or unit_output),
             "Cargo custom-build artifact is outside the declared host root",
         )
         identity = file_identity(output)
@@ -1581,7 +1703,7 @@ def host_build_script_manifest(
                     (entry["manifest"], entry["source"])
                     for entry in [*provider_custom_builds, *composite_vendor_custom_builds]
                 },
-                "Cargo OUT_DIR host-link receipt does not belong to an approved pinned source",
+                "Cargo unit-output host-link receipt does not belong to an approved pinned source",
             )
         artifacts.append({
             "package_id": artifact["package_id"],
@@ -2135,8 +2257,6 @@ def compile_source_built_mode(
         rust_sysroot / "lib/rustlib/src/rust/library", f"{label} pinned rust-src library", directory=True,
     )
     rust_source_lock = physical(rust_source / "Cargo.lock", f"{label} pinned rust-src lock")
-    compiler_builtins_source = next(entry for entry in pinned_rust_source_host_builds(rust_source)
-                                    if entry["package"] == "compiler_builtins")
     environment = clean_environment()
     environment.update({
         **SERIAL_BUILD_ENVIRONMENT,
@@ -2157,11 +2277,6 @@ def compile_source_built_mode(
         "CRABC_OWNED_RUST_SOURCE_LTO_UNWIND_ABI": json.dumps(sorted(build.UNWIND_ABI)),
         "CRABC_OWNED_RUST_APPLICATION_ROOT": str(release),
         "CRABC_OWNED_RUST_HOST_BUILD_ROOT": str(host_build_root),
-        owned_rust_link.SOURCE_LIBRARY_ENV: str(rust_source),
-        "CRABC_OWNED_RUST_COMPILER_BUILTINS_PACKAGE_ID": (
-            f"path+file://{compiler_builtins_source['manifest'].parent}"
-            f"{compiler_builtins_source['package_id_suffix']}"
-        ),
         "CRABC_OWNED_RUST_HOST_BUILD_LINKER": str(HOST_BUILD_LINKER),
         "CRABC_OWNED_RUST_HOST_BUILD_RECEIPTS": str(host_build_receipt_root),
         "CRABC_OWNED_RUST_CHANNEL": channel,
@@ -2231,15 +2346,9 @@ def compile_source_built_mode(
     }
     built_unwind = cargo_build_std_unwind_artifact(stdout, target, rust_source)
     built_unwind_record = record_file(built_unwind, f"{label} Cargo build-std unwind archive")
-    compiler_builtins_package_id, compiler_builtins_out_dir = cargo_build_std_compiler_builtins_out_dir(
-        stdout, target, rust_source,
-    )
-    compiler_builtins_archive = runtime_archives["compiler_builtins"]
-    compiler_builtins_artifact_package_id = cargo_archive_package_id(
-        stdout, compiler_builtins_archive, "Cargo compiler_builtins library",
-    )
-    require(compiler_builtins_artifact_package_id == compiler_builtins_package_id,
-            "Cargo compiler_builtins library and build-script package identities differ")
+    compiler_builtins = cargo_compiler_builtins_identity(stdout, stderr, target=target, rust_source=rust_source)
+    require(compiler_builtins["library_archive"] == runtime_archive_records["compiler_builtins"],
+            f"{label} Cargo compiler_builtins identity differs from its build-std runtime archive")
     application_dependency = cargo_application_dependency_artifact(
         stdout, package_root=generated_package, target=target,
     )
@@ -2268,7 +2377,7 @@ def compile_source_built_mode(
     binary_receipt = source_built_link_receipt(
         binary_receipt_path, binary_link_output, source_library_root, source_build_root,
         f"{label} source-built cleanup link receipt", toolchain_search_root, built_unwind_record,
-        (compiler_builtins_artifact_package_id, compiler_builtins_archive),
+        compiler_builtins_archive=compiler_builtins["library_archive"],
     )
     consumer: dict[str, Any] = {
         "mode": mode,
@@ -2286,10 +2395,7 @@ def compile_source_built_mode(
         "rust_source_lock": record_file(rust_source_lock, f"{label} pinned rust-src lock"),
         "source_built_target_library_root": str(source_library_root),
         "source_built_target_build_root": str(source_build_root),
-        "cargo_compiler_builtins_build_script": {
-            "package_id": compiler_builtins_package_id,
-            "out_dir": str(compiler_builtins_out_dir),
-        },
+        "cargo_compiler_builtins": compiler_builtins,
         "offline_sources": offline_sources,
         "cargo_source_lto_runtime_artifacts": runtime_archive_records,
         "cargo_source_lto_runtime_metadata_artifacts": runtime_metadata_records,
@@ -2317,7 +2423,7 @@ def compile_source_built_mode(
         plugin_receipt = source_built_link_receipt(
             plugin_receipt_path, plugin_link_output, source_library_root, source_build_root,
             f"{label} source-built cleanup plugin link receipt", toolchain_search_root, built_unwind_record,
-            (compiler_builtins_artifact_package_id, compiler_builtins_archive),
+            compiler_builtins_archive=compiler_builtins["library_archive"],
         )
         plugin_lto_externs = cargo_source_lto_extern_closure(
             stderr, target_name="crabc_owned_cleanup_plugin", binary_name=None, link_output=plugin_link_output,

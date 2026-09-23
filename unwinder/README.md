@@ -291,6 +291,20 @@ Cargo's compiler-artifact
 records identify the fresh `std`, `core`, `alloc`, `panic_unwind`,
 `compiler_builtins`, `proc_macro`, and `crabc-unwinder` rlibs by their pinned
 source paths.
+
+Rustc still passes the source-built `compiler_builtins` rlib to the native
+link after fat LTO; the wrapper omits it in favor of the owned product's
+builtins and records the omitted file. Cargo's build-dir layout gives that
+package three unit directories with one shared package id: the host
+build-script compile (`release/build/compiler_builtins/<hash>/out/build_script_build`),
+the build-script run whose `out` is its `OUT_DIR`, and the library compile
+whose `out` holds `libcompiler_builtins-<hash>.rlib`. The wrapper can check
+only the library unit's shape. `cargo_compiler_builtins_identity` in
+`owned_cleanup.py` requires the exact pinned rust-src package id, one record
+of each unit, a verbose run command that executes that host script with the
+reported `OUT_DIR`, and a library `rustc` command that reads the same
+`OUT_DIR` and writes the declared archive to its own unit. The link-receipt
+reader then requires the omitted archive to be exactly that library archive.
 The retained primary `rustc` command must pass those exact records through
 `--extern` and must not pass its separately built `libunwind`. Fat LTO then
 absorbs that graph into one native object, so the final owned LLD command
@@ -332,11 +346,13 @@ records from Cargo's machine-readable stream, and records the pinned
 `rust-src` lock plus every declared package manifest and build source. Each
 host-link receipt also hashes the resolved files reported by GNU ld, while
 GCC receives a minimal environment with no inherited compiler or library
-search overrides. Some pinned Cargo build scripts have an `OUT_DIR` output named
-`build_script_build` without Cargo's usual hash suffix. The linker admits this
-shape only when the crate and output directory match and Cargo's manifest/source
-pair is one of the `compiler_builtins` or `std` scripts in the pinned rust-src
-lock, or an explicitly recorded provider or composite-vendor build script.
+search overrides. Cargo's build-dir layout links some pinned build scripts as
+`<package>/<hash>/out/build_script_build`, without Cargo's usual hash suffix;
+that `out` is the compile unit's output directory, not the script's `OUT_DIR`.
+The linker admits this shape only when the crate and output directory match
+and Cargo's manifest/source pair is one of the `compiler_builtins` or `std`
+scripts in the pinned rust-src lock, or an explicitly recorded provider or
+composite-vendor build script.
 Receipt closure still requires the matching Cargo artifact and exact source
 identity.
 The only extra provider build executable is the already-audited pinned `libc`

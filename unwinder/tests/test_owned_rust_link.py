@@ -145,17 +145,17 @@ class OwnedRustLinkContract(unittest.TestCase):
         lookalike = self.source_built / "libcompiler_builtins-0123456789abcdef.rlib"
         lookalike.write_bytes(b"Cargo deps archive")
         arguments = [*self.source_built_arguments(), str(lookalike)]
-        with self.assertRaisesRegex(linker.LinkError, "outside its Cargo OUT_DIR"):
+        with self.assertRaisesRegex(linker.LinkError, "not a Cargo library unit output"):
             linker.parse_arguments(
                 arguments, self.application, self.stock, self.source_built, self.source_built_build,
             )
 
-    def test_source_built_fat_lto_rejects_compiler_builtins_from_an_unmatched_out_dir(self):
+    def test_source_built_fat_lto_rejects_compiler_builtins_from_another_package_unit(self):
         wrong = self.source_built_build / "other_crate/0123456789abcdef/out/libcompiler_builtins-0123456789abcdef.rlib"
         wrong.parent.mkdir(parents=True)
         wrong.write_bytes(b"unmatched archive")
         arguments = [*self.source_built_arguments(), str(wrong)]
-        with self.assertRaisesRegex(linker.LinkError, "outside its Cargo OUT_DIR"):
+        with self.assertRaisesRegex(linker.LinkError, "not a Cargo library unit output"):
             linker.parse_arguments(arguments, self.application, self.stock, self.source_built, self.source_built_build)
 
     def test_source_built_fat_lto_rejects_compiler_builtins_outside_source_root(self):
@@ -240,8 +240,8 @@ class OwnedRustLinkContract(unittest.TestCase):
         )
         self.assertEqual(selected, output)
 
-    def test_pinned_compiler_builtins_out_dir_build_script_is_admitted(self):
-        """Pinned build-std compiles this host script to Cargo's OUT_DIR name."""
+    def test_pinned_compiler_builtins_unit_output_build_script_is_admitted(self):
+        """Pinned build-std links this host script into its compile unit's ``out``."""
 
         rust_source = Path(self.temporary.name) / "rust-src/library"
         package_source = rust_source / "compiler-builtins/compiler-builtins"
@@ -252,7 +252,6 @@ class OwnedRustLinkContract(unittest.TestCase):
         package_build.mkdir(parents=True)
         output = package_build / "build_script_build"
         environment = {
-            "CRABC_OWNED_RUST_SOURCE_LIBRARY": str(rust_source),
             "CARGO_MANIFEST_DIR": str(package_source),
             "CARGO_MANIFEST_PATH": str(package_source / "Cargo.toml"),
             "CARGO_CRATE_NAME": "build_script_build",
@@ -268,16 +267,14 @@ class OwnedRustLinkContract(unittest.TestCase):
             )
         self.assertEqual(selected, output)
 
-    def test_out_dir_build_script_shape_does_not_admit_another_package(self):
+    def test_unit_output_build_script_shape_does_not_admit_another_package(self):
         package_build = self.host_build / "arbitrary_package/0123456789abcdef/out"
         package_build.mkdir(parents=True)
         output = package_build / "build_script_build"
         with self.assertRaisesRegex(linker.LinkError, "not an admitted build script"):
             linker.host_build_script_output(["-o", str(output)], self.host_build)
 
-    def test_approved_vendor_out_dir_build_script_is_admitted(self):
-        rust_source = Path(self.temporary.name) / "rust-src/library"
-        rust_source.mkdir(parents=True)
+    def test_approved_vendor_unit_output_build_script_is_admitted(self):
         package_source = Path(self.temporary.name) / "cargo-vendor/libc-0.2.189"
         package_source.mkdir(parents=True)
         manifest = package_source / "Cargo.toml"
@@ -287,7 +284,6 @@ class OwnedRustLinkContract(unittest.TestCase):
         output = self.host_build / "libc/0123456789abcdef/out/build_script_build"
         output.parent.mkdir(parents=True)
         environment = {
-            linker.SOURCE_LIBRARY_ENV: str(rust_source),
             linker.HOST_BUILD_SOURCES_ENV: json.dumps([{"manifest": str(manifest), "source": str(source)}]),
             "CARGO_MANIFEST_DIR": str(package_source),
             "CARGO_MANIFEST_PATH": str(manifest),

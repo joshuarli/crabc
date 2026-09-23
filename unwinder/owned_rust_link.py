@@ -51,7 +51,6 @@ HOST_BUILD_SCRIPT_OUTPUT = re.compile(r"build_script_build-[0-9a-f]+\Z")
 BUILD_OUTPUT_HASH = re.compile(r"[0-9a-f]{16}\Z")
 BUILD_SCRIPT_PACKAGE = re.compile(r"[A-Za-z0-9_]+\Z")
 SOURCE_LTO_UNWIND_ABI_ENV = "CRABC_OWNED_RUST_SOURCE_LTO_UNWIND_ABI"
-SOURCE_LIBRARY_ENV = "CRABC_OWNED_RUST_SOURCE_LIBRARY"
 HOST_BUILD_SOURCES_ENV = "CRABC_OWNED_RUST_HOST_BUILD_SOURCES"
 
 
@@ -125,7 +124,7 @@ def confined_output(path: str, root: Path) -> Path:
     return candidate
 
 
-def _out_dir_build_script_source_pairs() -> set[tuple[Path, Path]]:
+def _pinned_build_script_source_pairs() -> set[tuple[Path, Path]]:
     """Read the exact source pairs supplied by the authenticated Cargo graph."""
 
     pairs: set[tuple[Path, Path]] = set()
@@ -152,8 +151,13 @@ def _out_dir_build_script_source_pairs() -> set[tuple[Path, Path]]:
     return pairs
 
 
-def _out_dir_build_script(candidate: Path, host_build_root: Path) -> bool:
-    """Recognize one Cargo OUT_DIR script only when its source pair is pinned."""
+def _pinned_unit_build_script(candidate: Path, host_build_root: Path) -> bool:
+    """Recognize an unhashed build-script unit output only when its source pair is pinned.
+
+    Cargo's build-dir layout links a host build script to
+    ``<package>/<hash>/out/build_script_build``. That ``out`` is the compile
+    unit's output directory, not the ``OUT_DIR`` the script later writes.
+    """
 
     try:
         relative = candidate.relative_to(host_build_root)
@@ -178,12 +182,12 @@ def _out_dir_build_script(candidate: Path, host_build_root: Path) -> bool:
     manifest_path = physical_regular(Path(manifest_path_value), "Cargo host build-script manifest")
     return manifest_dir == manifest_path.parent and any(
         manifest == manifest_path and source.is_relative_to(manifest_dir)
-        for manifest, source in _out_dir_build_script_source_pairs()
+        for manifest, source in _pinned_build_script_source_pairs()
     )
 
 
 def admitted_host_build_script_path(path: Path, host_build_root: Path) -> bool:
-    """Recognize either Cargo's hashed output or its compiler-builtins OUT_DIR name."""
+    """Recognize Cargo's hashed build-script output or its build-dir unit output name."""
 
     if HOST_BUILD_SCRIPT_OUTPUT.fullmatch(path.name) is not None:
         return True
@@ -226,14 +230,9 @@ def host_build_script_output(arguments: list[str], host_build_root: Path) -> Pat
     if ".." in Path(output).parts:
         raise LinkError(f"Cargo host build-script output has parent traversal: {output}")
     physical_directory(candidate.parent, "Cargo host build-script output parent")
-    if HOST_BUILD_SCRIPT_OUTPUT.fullmatch(candidate.name) is None:
-        source_library_value = os.environ.get(SOURCE_LIBRARY_ENV)
-        source_library = (
-            physical_directory(Path(source_library_value), "pinned Rust source library")
-            if source_library_value else None
-        )
-        if not _out_dir_build_script(candidate, host_build_root):
-            raise LinkError(f"Cargo host build-script output is not an admitted build script: {output}")
+    if HOST_BUILD_SCRIPT_OUTPUT.fullmatch(candidate.name) is None \
+            and not _pinned_unit_build_script(candidate, host_build_root):
+        raise LinkError(f"Cargo host build-script output is not an admitted build script: {output}")
     if not admitted_host_build_script_path(candidate, host_build_root):
         raise LinkError(f"Cargo host build-script output is not an admitted build script: {output}")
     if candidate.exists() or candidate.is_symlink():
@@ -272,7 +271,14 @@ def _stock_archive(path: Path, stock_root: Path, expression: re.Pattern[str]) ->
 
 
 def _source_built_compiler_builtins_archive(path: Path, source_root: Path) -> bool:
-    """Match Cargo's exact target/release/build compiler-builtins artifact layout."""
+    """Match the shape of Cargo's compiler_builtins library unit output.
+
+    Cargo writes the library to ``compiler_builtins/<hash>/out/`` below the
+    target build root, beside but separate from the build-script run unit
+    whose ``out`` is ``OUT_DIR``. Shape alone cannot tell those units apart;
+    ``owned_cleanup.cargo_compiler_builtins_identity`` binds the omitted
+    archive to its library rustc command and that command's ``OUT_DIR``.
+    """
 
     try:
         relative = path.relative_to(source_root)
@@ -480,7 +486,7 @@ def parse_arguments(
                 if source_built_build_root is None or not _source_built_compiler_builtins_archive(
                     archive, source_built_build_root,
                 ):
-                    raise LinkError("source-built compiler-builtins archive is outside its Cargo OUT_DIR")
+                    raise LinkError("source-built compiler-builtins archive is not a Cargo library unit output")
                 if compiler_builtins is not None:
                     raise LinkError("duplicate source-built Rust compiler-builtins archive")
                 compiler_builtins = archive
@@ -832,7 +838,7 @@ def link(arguments: list[str]) -> None:
     )
     source_built_build_value = os.environ.get("CRABC_OWNED_RUST_SOURCE_BUILT_BUILD_DIR")
     source_built_build_root = (
-        physical_directory(Path(source_built_build_value), "source-built Cargo build-script OUT_DIR root")
+        physical_directory(Path(source_built_build_value), "source-built Cargo target build root")
         if source_built_build_value else None
     )
     toolchain_search_root: Path | None = None
@@ -963,18 +969,9 @@ def link(arguments: list[str]) -> None:
     else:
         source_compiler_builtins = parsed["source_built_compiler_builtins"]
         assert isinstance(source_compiler_builtins, Path) and source_lto_object is not None
-        package_id = os.environ.get("CRABC_OWNED_RUST_COMPILER_BUILTINS_PACKAGE_ID")
-        source_library = physical_directory(Path(os.environ[SOURCE_LIBRARY_ENV]), "pinned rust-src library")
-        expected_package_id = f"path+file://{source_library / 'compiler-builtins/compiler-builtins'}"
-        if not package_id or not package_id.startswith(expected_package_id + "#compiler_builtins@"):
-            raise LinkError("missing pinned compiler_builtins Cargo package identity")
         record["source_built_target_library_root"] = str(source_built_root)
         assert source_built_build_root is not None
         record["source_built_target_build_root"] = str(source_built_build_root)
-        record["source_built_compiler_builtins_producer"] = {
-            "package_id": package_id,
-            "artifact_directory": str(source_compiler_builtins.parent),
-        }
         assert toolchain_search_root is not None
         record["declared_toolchain_search_root"] = str(toolchain_search_root)
         # Cargo builds libunwind for build-std but does not pass it to the
