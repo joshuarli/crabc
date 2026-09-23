@@ -8447,6 +8447,96 @@ def posix_runtime_private_artifact_view(
     return view
 
 
+def require_pthread_runtime_family_admission(
+    family: Mapping[str, Any],
+    posix_family: Mapping[str, Any],
+    posix_admission: Mapping[str, Any] | None,
+) -> Mapping[str, Any] | None:
+    """Admit pthread only from the current POSIX admission and family receipt."""
+    require(family.get("id") == "libc.pthread-tls", "wrong family for pthread/TLS admission")
+    status = family.get("status")
+    require(status in ALLOWED_STATUSES, "pthread/TLS admission family status is invalid")
+    evidence, _ = evidence_records(
+        family.get("native_evidence"), "family[libc.pthread-tls].native_evidence",
+        unique_commands=True,
+    )
+    expected_commands = (
+        "./scripts/dev-x86_64.sh libc-atomic",
+        "./scripts/dev-x86_64.sh libc-clone-raw",
+        "./scripts/dev-x86_64.sh owned-pthread-family --family-execution FILE --output NEW_DIR",
+    )
+    require(tuple(entry["command"] for entry in evidence) == expected_commands,
+            "pthread/TLS native evidence command roster differs")
+    expected_scopes = (
+        "Source-only native x86 i32 atomic helper instruction/behavior proof; it does not select crabc-libc or complete pthread/TLS parity.",
+        "Source-only pinned-musl x86 process-clone machine-boundary proof for SIGCHLD callback/stack/exit behavior; it has no public clone, pthread, or TLS claim.",
+        "The installed pthread/TLS component consumes a validated POSIX matrix and replays the exact finite six-static/twelve-dynamic roster. It retains one supplied-product C11/TLS/synchronization composition with pinned-musl comparison plus reused matrix and dynamic-qualification receipts. It is required component evidence only: it does not admit family completion, promotion, or public x86 support.",
+    )
+    require(tuple(entry["scope"] for entry in evidence) == expected_scopes,
+            "pthread/TLS native evidence scope differs")
+
+    if status == "planned":
+        require(posix_admission is None or posix_family.get("status") == "foundation-verified",
+                "planned pthread/TLS cannot consume an unadmitted POSIX family")
+        require("receipt" not in evidence[2],
+                "planned pthread/TLS must not attach a component receipt")
+        return None
+
+    require(status == "foundation-verified", "pthread/TLS family status is unsupported")
+    require(posix_family.get("status") == "foundation-verified" and posix_admission is not None,
+            "pthread/TLS foundation requires admitted libc.posix-runtime")
+    require(all(entry.get("state") == "verified" for entry in evidence),
+            "foundation-verified pthread/TLS requires every native evidence gate")
+    receipt_value = evidence[2].get("receipt")
+    require(isinstance(receipt_value, str) and receipt_value,
+            "foundation-verified pthread/TLS needs its component receipt")
+    receipt_path = Path(receipt_value)
+    require(not receipt_path.is_absolute() and ".." not in receipt_path.parts,
+            "pthread/TLS component receipt must be checkout-relative")
+    physical = ROOT / receipt_path
+    require(physical.is_file() and not physical.is_symlink() and physical.resolve() == physical
+            and physical.is_relative_to(ROOT / ".work"),
+            "pthread/TLS component receipt must be a physical checkout .work file")
+    try:
+        import owned_pthread_family as pthread_family
+
+        admission = pthread_family.validate_receipt(ROOT, physical)
+    except (RuntimeError, OSError, ValueError, TypeError) as error:
+        raise LedgerError(f"pthread/TLS component receipt rejected: {error}") from error
+
+    require(admission.get("schema") == "crabc.x86_64-owned-pthread-family/v1"
+            and admission.get("status") == "installed-behavior-component-verified"
+            and admission.get("family") == "libc.pthread-tls"
+            and admission.get("component_complete") is True
+            and admission.get("family_completion") is False
+            and admission.get("promotion_ready") is False
+            and admission.get("public_support") is False,
+            "pthread/TLS component receipt completion boundary differs")
+    inputs = admission.get("inputs")
+    posix_inputs = posix_admission.get("inputs")
+    require(isinstance(inputs, Mapping) and isinstance(posix_inputs, Mapping)
+            and inputs.get("source") == posix_inputs.get("source")
+            and inputs.get("family_execution") == posix_inputs.get("family_execution"),
+            "pthread/TLS component and POSIX admission must share source and matrix")
+    return admission
+
+
+def pthread_runtime_private_artifact_view(
+    family: Mapping[str, Any], admission: Mapping[str, Any] | None
+) -> Mapping[str, Any]:
+    """Keep verified pthread leaves private after family admission."""
+    if family.get("status") == "planned":
+        require(admission is None, "planned pthread/TLS cannot have family admission")
+        return family
+    require(admission is not None, "pthread/TLS leaf ratchets need actual family admission")
+    # Each leaf remains deliberately narrower than its owning family. Its
+    # planned-status guard is local to that boundary, not a claim that the
+    # full installed-product family receipt is absent.
+    view = dict(family)
+    view["status"] = "planned"
+    return view
+
+
 def require_uio_cxx_archive_linkage_artifact(family: Mapping[str, Any]) -> None:
     """Keep one real C++ consumer-to-archive seam below broad C++ claims."""
 
@@ -79996,36 +80086,43 @@ def _validate_ledger(
     require_no_std_static_pie_full_lto_consumer_artifact(
         by_id["consumer.rust-std-lto"]
     )
-    require_static_initial_tls_v1_artifact(by_id["libc.pthread-tls"])
-    require_static_crt_initial_tls_handoff_artifact(by_id["libc.pthread-tls"])
-    require_static_crt1_initial_tls_handoff_artifact(by_id["libc.pthread-tls"])
-    require_static_pthread_create_membarrier_binding_artifact(by_id["libc.pthread-tls"])
+    pthread_runtime = by_id["libc.pthread-tls"]
+    pthread_admission = require_pthread_runtime_family_admission(
+        pthread_runtime, posix_runtime, posix_runtime_admission
+    )
+    pthread_runtime_leaf = pthread_runtime_private_artifact_view(
+        pthread_runtime, pthread_admission
+    )
+    require_static_initial_tls_v1_artifact(pthread_runtime_leaf)
+    require_static_crt_initial_tls_handoff_artifact(pthread_runtime_leaf)
+    require_static_crt1_initial_tls_handoff_artifact(pthread_runtime_leaf)
+    require_static_pthread_create_membarrier_binding_artifact(pthread_runtime_leaf)
     require_owned_static_sysroot_artifacts(
         by_id["sysroot.static-tls"], by_id["sysroot.owned-artifact"]
     )
-    require_static_pthread_identity_artifact(by_id["libc.pthread-tls"])
-    require_static_c11_lifecycle_artifact(by_id["libc.pthread-tls"])
-    require_static_pthread_c11_detach_artifact(by_id["libc.pthread-tls"])
-    require_static_thrd_sleep_artifact(by_id["libc.pthread-tls"])
-    require_static_pthread_normal_mutex_artifact(by_id["libc.pthread-tls"])
-    require_static_pthread_rwlock_artifact(by_id["libc.pthread-tls"])
-    require_static_pthread_private_cond_artifact(by_id["libc.pthread-tls"])
-    require_static_c11_plain_sync_artifact(by_id["libc.pthread-tls"])
-    require_static_pthread_c11_once_artifact(by_id["libc.pthread-tls"])
-    require_static_pthread_c11_tsd_artifact(by_id["libc.pthread-tls"])
-    require_static_pthread_cancel_deferred_artifact(by_id["libc.pthread-tls"])
-    require_static_pthread_tls_aggregate_artifact(by_id["libc.pthread-tls"])
-    require_static_pthread_atfork_artifact(by_id["libc.pthread-tls"])
-    require_static_pthread_affinity_artifact(by_id["libc.pthread-tls"])
-    require_static_pthread_cpuclock_artifact(by_id["libc.pthread-tls"])
-    require_static_pthread_name_artifact(by_id["libc.pthread-tls"])
-    require_static_pthread_spin_destroy_artifact(by_id["libc.pthread-tls"])
-    require_static_pthread_attr_artifact(by_id["libc.pthread-tls"])
-    require_static_pthread_barrierattr_pshared_artifact(by_id["libc.pthread-tls"])
-    require_static_pthread_barrier_artifact(by_id["libc.pthread-tls"])
-    require_static_pthread_spin_init_artifact(by_id["libc.pthread-tls"])
+    require_static_pthread_identity_artifact(pthread_runtime_leaf)
+    require_static_c11_lifecycle_artifact(pthread_runtime_leaf)
+    require_static_pthread_c11_detach_artifact(pthread_runtime_leaf)
+    require_static_thrd_sleep_artifact(pthread_runtime_leaf)
+    require_static_pthread_normal_mutex_artifact(pthread_runtime_leaf)
+    require_static_pthread_rwlock_artifact(pthread_runtime_leaf)
+    require_static_pthread_private_cond_artifact(pthread_runtime_leaf)
+    require_static_c11_plain_sync_artifact(pthread_runtime_leaf)
+    require_static_pthread_c11_once_artifact(pthread_runtime_leaf)
+    require_static_pthread_c11_tsd_artifact(pthread_runtime_leaf)
+    require_static_pthread_cancel_deferred_artifact(pthread_runtime_leaf)
+    require_static_pthread_tls_aggregate_artifact(pthread_runtime_leaf)
+    require_static_pthread_atfork_artifact(pthread_runtime_leaf)
+    require_static_pthread_affinity_artifact(pthread_runtime_leaf)
+    require_static_pthread_cpuclock_artifact(pthread_runtime_leaf)
+    require_static_pthread_name_artifact(pthread_runtime_leaf)
+    require_static_pthread_spin_destroy_artifact(pthread_runtime_leaf)
+    require_static_pthread_attr_artifact(pthread_runtime_leaf)
+    require_static_pthread_barrierattr_pshared_artifact(pthread_runtime_leaf)
+    require_static_pthread_barrier_artifact(pthread_runtime_leaf)
+    require_static_pthread_spin_init_artifact(pthread_runtime_leaf)
     require_closed_static_leaf_artifacts(
-        by_id["libc.pthread-tls"],
+        pthread_runtime_leaf,
         (
             (
                 "static-c-pthread-attributes",
@@ -80137,7 +80234,7 @@ def _validate_ledger(
             ),
         ),
     )
-    require_static_thrd_yield_artifact(by_id["libc.pthread-tls"])
+    require_static_thrd_yield_artifact(pthread_runtime_leaf)
     require_byte_string_artifact(by_id["libc.posix-runtime"])
     require_legacy_memory_artifact(posix_runtime_leaf)
     require_memccpy_artifact(posix_runtime_leaf)

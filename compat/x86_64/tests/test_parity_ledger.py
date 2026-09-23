@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import importlib
 import sys
 import tempfile
 import unittest
@@ -18792,6 +18793,105 @@ class X86ParityLedgerTests(unittest.TestCase):
             "static-c-pthread-cancel-deferred must use the closed libc-pthread-cancel-deferred command",
         ):
             ledger.validate_ledger(changed)
+
+    def test_pthread_family_admission_reuses_exact_posix_cohort_receipt(self) -> None:
+        data = self.data()
+        pthread = self.family(data, "libc.pthread-tls")
+        posix = self.family(data, "libc.posix-runtime")
+        pthread["status"] = "foundation-verified"
+        posix["status"] = "foundation-verified"
+        evidence = pthread["native_evidence"]
+        for entry in evidence:
+            entry["state"] = "verified"
+        evidence[2]["receipt"] = ".work/x86_64/pthread-family-run/receipt.json"
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            receipt = root / evidence[2]["receipt"]
+            receipt.parent.mkdir(parents=True)
+            receipt.write_text("{}", encoding="utf-8")
+            posix_admission = {
+                "inputs": {"source": "source-seal", "family_execution": "matrix-seal"}
+            }
+            component = {
+                "schema": "crabc.x86_64-owned-pthread-family/v1",
+                "status": "installed-behavior-component-verified",
+                "family": "libc.pthread-tls",
+                "component_complete": True,
+                "family_completion": False,
+                "promotion_ready": False,
+                "public_support": False,
+                "inputs": {"source": "source-seal", "family_execution": "matrix-seal"},
+            }
+            pthread_family = importlib.import_module("owned_pthread_family")
+            with mock.patch.object(ledger, "ROOT", root), mock.patch.object(
+                pthread_family,
+                "validate_receipt",
+                return_value=component,
+            ) as validate_receipt:
+                admitted = ledger.require_pthread_runtime_family_admission(
+                    pthread, posix, posix_admission
+                )
+            self.assertIs(admitted, component)
+            validate_receipt.assert_called_once_with(root, receipt)
+
+    def test_pthread_family_admission_rejects_changed_or_missing_dependencies(self) -> None:
+        data = self.data()
+        pthread = self.family(data, "libc.pthread-tls")
+        posix = self.family(data, "libc.posix-runtime")
+        pthread["status"] = "foundation-verified"
+        posix["status"] = "foundation-verified"
+        evidence = pthread["native_evidence"]
+        for entry in evidence:
+            entry["state"] = "verified"
+        evidence[2]["receipt"] = ".work/pthread-receipt.json"
+        posix_admission = {
+            "inputs": {"source": "source-seal", "family_execution": "matrix-seal"}
+        }
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            receipt = root / evidence[2]["receipt"]
+            receipt.parent.mkdir(parents=True)
+            receipt.write_text("{}", encoding="utf-8")
+            pthread_family = importlib.import_module("owned_pthread_family")
+            with mock.patch.object(ledger, "ROOT", root), mock.patch.object(
+                pthread_family,
+                "validate_receipt",
+                return_value={"inputs": {"source": "source-seal", "family_execution": "matrix-seal"}},
+            ):
+                for mutate in (
+                    lambda family: family["native_evidence"].pop(),
+                    lambda family: family["native_evidence"][1].update(state="required"),
+                    lambda family: family["native_evidence"][2].update(receipt=".work/missing.json"),
+                ):
+                    candidate = copy.deepcopy(pthread)
+                    mutate(candidate)
+                    with self.subTest(evidence=candidate["native_evidence"]):
+                        with self.assertRaises(ledger.LedgerError):
+                            ledger.require_pthread_runtime_family_admission(
+                                candidate, posix, posix_admission
+                            )
+
+                candidate = copy.deepcopy(pthread)
+                with self.assertRaises(ledger.LedgerError):
+                    ledger.require_pthread_runtime_family_admission(
+                        candidate,
+                        posix,
+                        {"inputs": {"source": "other-source", "family_execution": "matrix-seal"}},
+                    )
+
+    def test_pthread_family_admission_keeps_leaf_view_non_promoting(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.pthread-tls")
+        planned = ledger.pthread_runtime_private_artifact_view(family, None)
+        self.assertIs(planned, family)
+        family["status"] = "foundation-verified"
+        with self.assertRaises(ledger.LedgerError):
+            ledger.pthread_runtime_private_artifact_view(family, None)
+        admitted = ledger.pthread_runtime_private_artifact_view(family, {"status": "admitted"})
+        self.assertEqual(admitted["status"], "planned")
+        self.assertEqual(family["status"], "foundation-verified")
 
     def test_pthread_artifacts_accept_hidden_alias_providers(self) -> None:
         family = self.family(self.data(), "libc.pthread-tls")
