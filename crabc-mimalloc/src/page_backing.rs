@@ -418,8 +418,12 @@ impl<'child> ChildMetadataArenaBacking<'child> {
             requested,
             allow_pinned: true,
         };
-        // SAFETY: the pair retains the exact registered child and this
-        // operation's random source is the parent detached metadata TLD.
+        // SAFETY: the pair retains the exact registered child, and the
+        // caller retains the supplied random source for this operation. The
+        // child metadata-Theap caller must supply sequence zero from its
+        // detached TLD and the child metadata-Theap's initialized random
+        // image (seeded by that TLD during Theap initialization); this generic
+        // admission API does not encode those source facts.
         unsafe {
             self.pair.arena_backing().try_allocate_child_slices_with_random(
                 child, config, search, slices, ARENA_SLICE_SIZE, commit, random,
