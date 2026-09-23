@@ -2484,7 +2484,7 @@ impl<'arena> ArenaView<'arena> {
                 }
                 if let Some(owner) = owner {
                     if owner.config.has_overcommit() && touched_slices > 0 && !arena.memid.is_pinned() {
-                        owner.process.subprocess().vm_statistics()
+                        owner.process().subprocess().vm_statistics()
                             .committed_increase(touched_slices * ARENA_SLICE_SIZE);
                     }
                 }
@@ -2510,7 +2510,7 @@ impl<'arena> ArenaView<'arena> {
                     return None;
                 }
                 if let Some(owner) = owner {
-                    owner.process.subprocess().vm_statistics()
+                    owner.process().subprocess().vm_statistics()
                         .committed_decrease(transition.already_set() * ARENA_SLICE_SIZE);
                 }
             }

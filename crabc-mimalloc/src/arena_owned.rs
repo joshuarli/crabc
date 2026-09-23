@@ -254,10 +254,51 @@ impl ProcessExternalArenaLease {
     }
 }
 
+/// Non-owning identity pair retained by an arena slot for synchronous
+/// callbacks. It is intentionally not a `VmProcess<'static>`: a child arena
+/// can use the same slot machinery only while its external child owner keeps
+/// the pinned subprocess image alive through `destroy_all`.
+#[derive(Clone, Copy)]
+struct StoredVmProcess {
+    policy: NonNull<crate::os::VmPolicy>,
+    subprocess: NonNull<crate::subproc::SubprocessIdentity>,
+}
+
+impl StoredVmProcess {
+    fn from_static_process(process: VmProcess<'static>) -> Self {
+        Self {
+            policy: NonNull::from(process.policy()),
+            subprocess: NonNull::from(process.subprocess()),
+        }
+    }
+
+    /// # Safety
+    /// The process policy and subprocess image remain pinned and live until
+    /// this arena slot is retired by quiescent `destroy_all`. For child use,
+    /// the external child context owner must retain both through every page,
+    /// callback, and arena teardown transition.
+    unsafe fn from_retained_process(process: VmProcess<'_>) -> Self {
+        Self {
+            policy: NonNull::from(process.policy()),
+            subprocess: NonNull::from(process.subprocess()),
+        }
+    }
+
+    /// The returned short borrow is valid because the slot owner can only be
+    /// observed while its containing backing is live; a reclaimable child
+    /// owner must call `destroy_all` before releasing that context.
+    fn project(&self) -> VmProcess<'_> {
+        // SAFETY: every constructor either requires process-static input or
+        // has the explicit retained-context obligation above. Slot access is
+        // excluded by the backing's quiescent destruction contract.
+        unsafe { VmProcess::new(self.policy.as_ref(), self.subprocess.as_ref()) }
+    }
+}
+
 pub(super) struct OwnedArenaAllocation {
     allocation: ArenaBacking,
     memory: MemoryId,
-    pub(super) process: VmProcess<'static>,
+    process: StoredVmProcess,
     pub(super) config: MemoryConfig,
     release_error: Option<Errno>,
 }
@@ -305,6 +346,8 @@ impl ArenaBacking {
 }
 
 impl OwnedArenaAllocation {
+    pub(super) fn process(&self) -> VmProcess<'_> { self.process.project() }
+
     pub(super) fn commit(
         &self,
         start: *mut u8,
@@ -335,7 +378,7 @@ impl OwnedArenaAllocation {
         match &self.allocation {
             ArenaBacking::Regular(mapping) => {
                 if mapping
-                    .commit_for_process(self.process, offset, size, already_committed)
+                    .commit_for_process(self.process(), offset, size, already_committed)
                     .is_ok()
                 {
                     ArenaCommitOutcome::committed(false)
@@ -373,7 +416,7 @@ impl OwnedArenaAllocation {
         }
         match &self.allocation {
             ArenaBacking::Regular(mapping) => mapping
-                .commit_for_process(self.process, offset, size, 0)
+                .commit_for_process(self.process(), offset, size, 0)
                 .map(|_| ())
                 .map_err(ArenaPageCommitError::Mapping),
             ArenaBacking::External(lease) => {
@@ -383,7 +426,7 @@ impl OwnedArenaAllocation {
                 // SAFETY: the outer page owner exclusively owns the direct
                 // prefix; the lease check above proves full source covering
                 // range containment without acquiring unmap authority.
-                unsafe { self.process.commit_direct_page_area(self.config.page_size(), start, size) }
+                unsafe { self.process().commit_direct_page_area(self.config.page_size(), start, size) }
                     .map(|_| ())
                     .map_err(ArenaPageCommitError::Mapping)
             }
@@ -502,7 +545,7 @@ impl ProcessArenaBacking {
         let whole = committed / super::ARENA_SLICE_SIZE;
         if whole != 0 && bitmap.set_range(arena_memory.slice_index as usize, whole).is_none() { return false; }
         let extra = committed % super::ARENA_SLICE_SIZE;
-        if extra != 0 { owner.process.subprocess().vm_statistics().committed_decrease(extra); }
+        if extra != 0 { owner.process().subprocess().vm_statistics().committed_decrease(extra); }
         true
     }
 
@@ -570,8 +613,8 @@ impl ProcessArenaBacking {
             return FirstRegularStartupArenaSelection::ExistingOutsideFirstRegularCapability;
         };
         if !matches!(owner.allocation, ArenaBacking::Regular(_))
-            || !core::ptr::eq(owner.process.policy(), process.policy())
-            || !core::ptr::eq(owner.process.subprocess(), process.subprocess())
+            || !core::ptr::eq(owner.process().policy(), process.policy())
+            || !core::ptr::eq(owner.process().subprocess(), process.subprocess())
             || owner.config != config
         {
             return FirstRegularStartupArenaSelection::ExistingOutsideFirstRegularCapability;
@@ -621,8 +664,8 @@ impl ProcessArenaBacking {
             let Some(owner) = (unsafe { slot.initialized() }) else {
                 return false;
             };
-            if !core::ptr::eq(owner.process.policy(), process.policy())
-                || !core::ptr::eq(owner.process.subprocess(), process.subprocess())
+            if !core::ptr::eq(owner.process().policy(), process.policy())
+                || !core::ptr::eq(owner.process().subprocess(), process.subprocess())
                 || owner.config != config
             {
                 return false;
@@ -783,7 +826,7 @@ impl ProcessArenaBacking {
             (*slot.value.get()).write(OwnedArenaAllocation {
                 allocation: ArenaBacking::External(lease),
                 memory,
-                process,
+                process: StoredVmProcess::from_static_process(process),
                 config,
                 release_error: None,
             });
@@ -916,8 +959,8 @@ impl ProcessArenaBacking {
         for slot in &self.slots {
             if slot.state.load(Ordering::Acquire) == EMPTY { continue; }
             let owner = unsafe { slot.initialized().unwrap() };
-            if !core::ptr::eq(owner.process.policy(), process.policy())
-                || !core::ptr::eq(owner.process.subprocess(), process.subprocess())
+            if !core::ptr::eq(owner.process().policy(), process.policy())
+                || !core::ptr::eq(owner.process().subprocess(), process.subprocess())
                 || owner.config != config
             {
                 return Err(fail(ManageArenaError::InvalidRegion, allocation));
@@ -935,7 +978,9 @@ impl ProcessArenaBacking {
         let Some(slot) = self.slots.iter().find(|slot| slot.state.load(Ordering::Relaxed) == EMPTY) else {
             return Err(fail(ManageArenaError::RegistryFull, allocation));
         };
-        unsafe { (*slot.value.get()).write(OwnedArenaAllocation { allocation, memory, process, config, release_error: None }); }
+        unsafe { (*slot.value.get()).write(OwnedArenaAllocation {
+            allocation, memory, process: StoredVmProcess::from_static_process(process), config, release_error: None,
+        }); }
         slot.state.store(INITIALIZING, Ordering::Release);
         let hook = (memory.kind() == MemoryKind::Os).then(||
             CommitHook::new(commit_owned_arena, (slot as *const ArenaAllocationSlot).cast_mut().cast()));
@@ -1136,7 +1181,8 @@ impl ProcessArenaBacking {
             }
         };
         unsafe { (*slot.value.get()).write(OwnedArenaAllocation {
-            allocation: ArenaBacking::Regular(mapping), memory, process, config, release_error: Some(error),
+            allocation: ArenaBacking::Regular(mapping), memory,
+            process: StoredVmProcess::from_static_process(process), config, release_error: Some(error),
         }); }
         slot.state.store(RETAINED, Ordering::Release);
         None
@@ -1213,14 +1259,14 @@ unsafe extern "C" fn commit_owned_arena(
     if !is_zero.is_null() { unsafe { is_zero.write(false); } }
     if commit {
         owner.allocation.regular().is_some_and(|mapping|
-            mapping.commit_for_process(owner.process, offset, size, 0).is_ok())
+            mapping.commit_for_process(owner.process(), offset, size, 0).is_ok())
     } else {
         // This arm's source result means "needs recommit", not syscall
         // success. Native Linux retains accessibility even when its advisory
         // discard reports an error. The complete policy purge caller also
         // supplies allow_reset and already-committed accounting separately.
         let Some(mapping) = owner.allocation.regular() else { return false; };
-        let _ = mapping.decommit_for_process(owner.process, offset, size, size);
+        let _ = mapping.decommit_for_process(owner.process(), offset, size, size);
         false
     }
 }

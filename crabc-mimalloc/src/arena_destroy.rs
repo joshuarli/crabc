@@ -9,7 +9,7 @@
 //! free would violate Rust lifetime rules. Registry clears and primitive frees
 //! still occur in source index order; snapshots cause no observable VM action.
 
-use super::{ArenaBacking, ProcessArenaBacking, DESTROYED, PUBLISHED};
+use super::{ArenaBacking, OwnedArenaAllocation, ProcessArenaBacking, DESTROYED, PUBLISHED};
 use crate::config::MAX_ARENAS;
 use crate::os::{HugeOsRawReleaseRetry, HugeOsReleaseFailure, Mapping};
 use core::sync::atomic::Ordering;
@@ -169,12 +169,13 @@ impl ProcessArenaBacking {
             // Exclusive shutdown transfers the final owner out exactly once.
             slot.state.store(DESTROYED, Ordering::Release);
             let owner = unsafe { (*slot.value.get()).assume_init_read() };
-            match owner.allocation {
+            let OwnedArenaAllocation { allocation, process, .. } = owner;
+            match allocation {
                 ArenaBacking::Regular(mut mapping) => {
                     // Source passes still_committed=true even for reserved
                     // arenas. The OS memid retains the full reservation size.
                     let size = mapping.length().expect("preflight validated live mapping");
-                    if mapping.unmap_for_process(owner.process, size, false).is_err() {
+                    if mapping.unmap_for_process(process.project(), size, false).is_err() {
                         destroyed.failures[slot_index] = Some(FailedArenaRelease::Regular(mapping));
                     }
                 }

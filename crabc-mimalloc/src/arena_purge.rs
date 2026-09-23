@@ -70,9 +70,10 @@ impl ProcessArenaBacking {
 
     fn schedule_purge(&self, view: &ArenaView<'_>, owner: &OwnedArenaAllocation,
         start: usize, count: usize) -> bool {
-        let policy = owner.process.policy();
+        let process = owner.process();
+        let policy = process.policy();
         let delay = purge_delay(policy.purge_delay_milliseconds(), policy.arena_purge_multiplier());
-        if view.arena().memid.is_pinned() || delay < 0 || owner.process.is_preloading() { return true; }
+        if view.arena().memid.is_pinned() || delay < 0 || process.is_preloading() { return true; }
         if delay == 0 { return purge_claimed(view, owner, start, count).is_some(); }
         let Ok(now) = os::monotonic_milliseconds() else { return true; };
         // The source clock is nonnegative and successful native deadlines
@@ -127,7 +128,7 @@ impl ProcessArenaBacking {
             let Some(arena) = (unsafe { self.registry.arena_at(index) }) else { continue; };
             let Some(view) = (unsafe { ArenaView::from_ptr(core::ptr::from_ref(arena).cast_mut()) }) else { return false; };
             let Some(owner) = (unsafe { self.allocation_for_arena(arena) }) else { return false; };
-            if !core::ptr::eq(owner.process.policy(), process.policy()) || owner.config != config { return false; }
+            if !core::ptr::eq(owner.process().policy(), process.policy()) || owner.config != config { return false; }
             let Some(purged) = self.try_purge_arena(&view, owner, now, force) else { return false; };
             if purged >= 0 {
                 any_pending_or_purged = true;
@@ -155,12 +156,12 @@ impl ProcessArenaBacking {
         // for this traversal, so its subprocess owns this event rather than
         // the backing-local state.
         owner
-            .process
+            .process()
             .subprocess()
             .arena_statistics()
             .arena_purge_expiry_consumed();
         let purge = unsafe { view.slices_purge() }?;
-        let minimum = invariants::slice_count_of_size(owner.process.policy().minimal_purge_size(owner.config))?;
+        let minimum = invariants::slice_count_of_size(owner.process().policy().minimal_purge_size(owner.config))?;
         let mut any_purged = false;
         let mut valid = true;
         let visited = purge.visit_set_ranges_clear_aligned(minimum, |start, count| {
@@ -212,11 +213,11 @@ fn purge_claimed(view: &ArenaView<'_>, owner: &OwnedArenaAllocation,
         // no-callback choice. Its raw arena span has already been formed from
         // the claimed source slices; do not page-normalize or invoke any
         // mapping advice here.
-        owner.process.purge_with_callback(size, || {
+        owner.process().purge_with_callback(size, || {
             owner.invoke_external_purge(address, size)
         })?
     } else {
-        owner.allocation.regular()?.purge_for_process(owner.process, offset, size,
+        owner.allocation.regular()?.purge_for_process(owner.process(), offset, size,
             all_committed, stat_size).unwrap_or(false)
     };
     if needs_recommit || !all_committed { committed.clear_range(start, count)?; }
