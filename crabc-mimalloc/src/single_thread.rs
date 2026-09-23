@@ -2629,6 +2629,8 @@ where
     /// # Safety
     /// The metadata entry and child lifecycle are exclusively owned; the
     /// child has no clients/producers and its exact allocation stays live.
+    /// End all Rust references/projections to the child Theap before calling;
+    /// the raw transition mutates it. Reborrow only after return.
     pub(crate) unsafe fn detach_child_metadata_theap(
         &mut self,
         parent: &'static crate::subproc::MainSubprocess,
@@ -2671,6 +2673,8 @@ impl<'map> PageAllocatorEngine<
     /// # Safety
     /// The owning MetadataEngine entry and child teardown are exclusive; no
     /// child client/producer remains, and its metadata allocation stays live.
+    /// End all Rust references/projections to the child Theap before calling;
+    /// the raw transition mutates it. Reborrow only after return.
     pub(crate) unsafe fn detach_child_metadata_theap(
         &mut self,
         child_heap: &mut crate::types::Heap,

@@ -1705,6 +1705,10 @@ impl<'owner> MetadataEngine<'owner> {
     /// The caller has exclusive teardown authority over the pinned child
     /// Heap and Theap, no child clients or producers remain, and the exact
     /// metadata allocation stays live until this operation succeeds. Any
+    /// Rust reference or typed projection to the child Theap must have ended
+    /// before calling: this transition mutates that image through `child_theap`
+    /// while holding its intrusive-list locks. Reborrow it from the still-live
+    /// `MetaAllocation` only after this method returns. Any
     /// error retains both child images and their allocation capabilities. A
     /// `TheapList` error identifies the unlink stage, but that stage may have
     /// mutated its list before reporting an unlock error. Keep the child owner

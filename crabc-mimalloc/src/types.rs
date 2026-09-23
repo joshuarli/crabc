@@ -2769,7 +2769,10 @@ impl ThreadLocalData {
     /// remains live. The caller holds the parent MetadataEngine entry and
     /// controls every writer to this detached TLD's list. The held entry owns
     /// this list lifecycle, so normal source lock contention is not
-    /// possible here; C's retry/yield loop covers concurrent active TLD
+    /// possible. No Rust reference or typed projection to `theap` may remain
+    /// live while this method mutates it through the raw pointer; reborrow it
+    /// from its owner only after return.
+    /// C's retry/yield loop covers concurrent active TLD
     /// teardown, which this bounded detached-TLD operation does not admit. A
     /// busy try-lock is therefore an invalid-owner terminal error. Any error
     /// retains all owner images terminally: an error
@@ -5408,7 +5411,15 @@ impl Theap {
     /// Initializes the child subprocess's detached metadata Theap over its
     /// parent's detached TLD, matching `mi_subproc_new`'s `_mi_theap_init`
     /// ordering after child Heap creation.
-    pub(crate) fn initialize_child_metadata(
+    ///
+    /// # Safety
+    /// `self` must remain in its exact live metadata allocation, and `heap`
+    /// and `parent_detached_tld` must remain address-stable and live until
+    /// this Theap has been detached from both intrusive lists. The caller
+    /// exclusively controls both list lifecycles and prevents concurrent
+    /// mutation or access through stored pointers. A post-mutation error
+    /// leaves a terminal partial owner that must retain all three images.
+    pub(crate) unsafe fn initialize_child_metadata(
         &mut self, heap: &mut Heap, parent_detached_tld: &mut ThreadLocalData,
     ) -> Result<(), TheapMainStaticInitError> {
         if self.memid.kind() != MemoryKind::Malloc
@@ -6779,10 +6790,6 @@ mod tests {
         let mut child_metadata_allocation = parent_metadata
             .zalloc_for_main_subprocess(metadata_config, parent, size_of::<Theap>())
             .unwrap();
-        let child_metadata_theap = child_metadata_allocation
-            .initialize_dynamic_theap_metadata()
-            .unwrap();
-
         // SAFETY: child is retained at this pinned exact Malloc image through
         // every list operation below, and parent is an initialized member.
         unsafe { registry.initialize_child(child, parent, child_memory) }.unwrap();
@@ -6794,25 +6801,34 @@ mod tests {
         );
         child_heap.initialize_main_static(child, child_heap_memory);
 
-        // SAFETY: the child Heap is Box-pinned and the child Theap remains in
-        // its live linear parent-allocation capability through detachment.
-        unsafe { parent_metadata.initialize_child_metadata_theap(
-                metadata_config,
-                parent,
-                &mut child_heap,
-                child_metadata_theap,
-            ) }
+        // SAFETY: the child Heap is Box-pinned and the capability owns the
+        // child Theap allocation. The scoped mutable projection ends before
+        // teardown mutates the Theap through its raw identity.
+        let child_theap = {
+            let child_metadata_theap = child_metadata_allocation
+                .initialize_dynamic_theap_metadata()
+                .unwrap();
+            unsafe {
+                parent_metadata.initialize_child_metadata_theap(
+                    metadata_config,
+                    parent,
+                    &mut child_heap,
+                    child_metadata_theap,
+                )
+            }
             .unwrap();
 
-        let child_theap = NonNull::from(&mut *child_metadata_theap);
-        // The session operation used the parent's actual bootstrap-owned TLD;
-        // only the raw identity is observed here, never a second TLD borrow.
-        assert!(!child_metadata_theap.tld.is_null());
-        assert_eq!(child_heap.theaps, child_theap.as_ptr());
-        assert!(core::ptr::eq(
-            child_metadata_theap.heap.load(Ordering::Acquire),
-            core::ptr::from_mut(&mut *child_heap),
-        ));
+            let child_theap = NonNull::from(&mut *child_metadata_theap);
+            // The session operation used the parent's actual bootstrap-owned
+            // TLD; only its non-null identity is observed in this scope.
+            assert!(!child_metadata_theap.tld.is_null());
+            assert_eq!(child_heap.theaps, child_theap.as_ptr());
+            assert!(core::ptr::eq(
+                child_metadata_theap.heap.load(Ordering::Acquire),
+                core::ptr::from_mut(&mut *child_heap),
+            ));
+            child_theap
+        };
         assert!(child.is_registered_child_of(parent));
 
         // `mi_subproc_unsafe_destroy` removes subprocess membership before
@@ -6834,11 +6850,18 @@ mod tests {
                 child_theap,
             ) }
             .unwrap();
+        let child_metadata_theap = child_metadata_allocation.dynamic_theap_mut().unwrap();
         assert!(child_heap.theaps.is_null());
         // `mi_heap_free_theaps` clears list links but leaves `theap->heap`
         // published through its following `_mi_theap_decref`/free.
         assert!(child_metadata_theap.is_initialized());
         assert!(child_metadata_theap.tld.is_null());
+        assert!(child_metadata_theap.tnext.is_null());
+        assert!(child_metadata_theap.tprev.is_null());
+        // SAFETY: the child Heap and Theap remain exclusively owned and no
+        // list operation is concurrent after the successful detach.
+        assert!(unsafe { (*child_metadata_theap.hnext.get()).is_null() });
+        assert!(unsafe { (*child_metadata_theap.hprev.get()).is_null() });
         assert!(core::ptr::eq(
             child_metadata_theap.heap.load(Ordering::Acquire),
             core::ptr::from_mut(&mut *child_heap),

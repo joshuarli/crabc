@@ -575,7 +575,9 @@ impl ExclusiveTheapSession<'_> {
         {
             return Err(crate::types::TheapMainStaticInitError::InvalidInput);
         }
-        child_theap.initialize_child_metadata(child_heap, &mut state.tld)
+        // SAFETY: this session pins the parent bootstrap; the caller promises
+        // stable child images and exclusive lifecycle authority through detach.
+        unsafe { child_theap.initialize_child_metadata(child_heap, &mut state.tld) }
     }
 
     /// Detaches a child metadata Theap in the source TLD-then-Heap order.
@@ -586,7 +588,9 @@ impl ExclusiveTheapSession<'_> {
     /// metadata allocation stays live. Errors distinguish failure before the
     /// TLD unlink, after it, before the Heap unlink, or after both list edges
     /// were removed; unlock failures may follow mutation. Retain the complete
-    /// child owner and do not retry or release from the error alone.
+    /// child owner and do not retry or release from the error alone. No Rust
+    /// reference to `child_theap` may remain live during this raw-pointer
+    /// transition; reacquire a projection from its capability afterward.
     pub(crate) unsafe fn detach_child_metadata_theap(
         &mut self,
         parent: &'static MainSubprocess,

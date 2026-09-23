@@ -53,14 +53,19 @@ impl CanonicalMetadataTheapSession {
         // pinned bootstrap; MetadataEngine serializes every projection, and
         // this method retains no reference after the source operation.
         let parent_tld = unsafe { &mut *self.parent_tld.as_ptr() };
-        child_theap.initialize_child_metadata(child_heap, parent_tld)
+        // SAFETY: construction captured the stable bootstrap TLD, and the
+        // caller retains the pinned child Heap/metadata capability through
+        // teardown without concurrent list mutation.
+        unsafe { child_theap.initialize_child_metadata(child_heap, parent_tld) }
     }
 
     /// # Safety
     /// The metadata engine entry is exclusive, the child has no clients or
     /// producers, and the exact child Theap allocation remains live. Any
     /// error may follow a list mutation; retain the child owner and do not
-    /// retry or release based on this result alone.
+    /// retry or release based on this result alone. No Rust reference or
+    /// typed projection to the child Theap may remain live during the raw
+    /// mutation; reborrow from its capability only after return.
     pub(crate) unsafe fn detach_child_metadata_theap(
         &mut self,
         child_heap: &mut Heap,
