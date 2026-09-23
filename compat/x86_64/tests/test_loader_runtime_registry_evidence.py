@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import unittest
@@ -25,6 +26,7 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
         scratch = ROOT / '.work/x86_64/loader-runtime-registry-tests'; scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             root = Path(temporary)
+            shutil.copy2(ROOT / "rust-toolchain.toml", root / "rust-toolchain.toml")
             output, work, product = root / '.work/report', root / '.work/report/work', root / '.work/product'
             work.mkdir(parents=True); (product / 'usr/lib').mkdir(parents=True)
             manifest = product / 'share/crabc/manifest.json'; manifest.parent.mkdir(parents=True); manifest.write_text('{}\n', encoding='utf-8')
@@ -201,6 +203,9 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
         fixture = "compat/x86_64/general_dynamic_iterate_consumer.c"
         self.assertIn(fixture, EVIDENCE.SOURCE_FILES)
         self.assertEqual(EVIDENCE.source_records(ROOT)[fixture], EVIDENCE.identity(ROOT / fixture, logical_path=fixture))
+
+    def test_rust_toolchain_pin_is_an_explicit_component_source_input(self):
+        self.assertIn("rust-toolchain.toml", EVIDENCE.SOURCE_FILES)
 
     def test_growth_projection_requires_the_41_module_line_and_exact_oracle_stream(self):
         stream = EVIDENCE.EXPECTED_GROWTH + b"runtime fini 40\n"

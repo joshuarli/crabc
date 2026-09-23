@@ -21,6 +21,7 @@ import re
 import stat
 import subprocess
 import sys
+import tomllib
 from typing import Any
 
 import owned_dynamic_receipt as receipt_contract
@@ -36,11 +37,30 @@ COMPILE_SCHEMA = "crabc.dynamic-fork-compile/v1"
 ORACLE_PRODUCTS_SCHEMA = "crabc.dynamic-fork-oracle-products/v1"
 EXECUTION_PAYLOAD_SCHEMA = "crabc.dynamic-fork-execution-payload/v1"
 ORACLE_COMPILER = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
-REPLAY_TOOL_PATHS = {
-    "compiler": "/usr/bin/gcc",
-    "linker": "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld",
-    "oracle_compiler": str(ORACLE_COMPILER),
-}
+
+
+def replay_tool_paths(checkout: Path) -> dict[str, str]:
+    """Resolve image tool paths from the checkout's single Rust channel pin."""
+    toolchain_file = checkout / "rust-toolchain.toml"
+    try:
+        if not stat.S_ISREG(toolchain_file.lstat().st_mode):
+            fail("rust-toolchain.toml is not a physical regular file")
+        config = tomllib.loads(toolchain_file.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+        raise EvidenceError(f"cannot read toolchain pin: {toolchain_file}") from error
+    toolchain = config.get("toolchain")
+    channel = toolchain.get("channel") if isinstance(toolchain, dict) else None
+    if not isinstance(channel, str) or re.fullmatch(r"nightly-[0-9]{4}-[0-9]{2}-[0-9]{2}", channel) is None:
+        fail("rust-toolchain.toml has no dated nightly channel")
+    rust_toolchain = f"/opt/rustup/toolchains/{channel}-{TARGET}"
+    return {
+        "compiler": "/usr/bin/gcc",
+        "linker": rust_toolchain + f"/lib/rustlib/{TARGET}/bin/gcc-ld/ld.lld",
+        "oracle_compiler": str(ORACLE_COMPILER),
+    }
+
+
+REPLAY_TOOL_PATHS = replay_tool_paths(ROOT)
 LIBRARY = ROOT / "compat/x86_64/general_dynamic_fork_library.c"
 CONSUMER = ROOT / "compat/x86_64/general_dynamic_fork_consumer.c"
 DSO_TOPOLOGY = (
@@ -74,10 +94,11 @@ class RetainedRuntimeInputs:
     def __init__(self, checkout: Path, tool_root: Path, tools: object):
         self.checkout = physical(checkout, "retained checkout", directory=True)
         self.tool_root = physical(tool_root, "retained tool root", directory=True)
+        self.tool_paths = replay_tool_paths(self.checkout)
         if not self.tool_root.is_relative_to(self.checkout / ".work"):
             fail("retained tool root escapes checkout .work")
-        self.tools = require_keys(tools, set(REPLAY_TOOL_PATHS), "retained tool roster")
-        for role, path in REPLAY_TOOL_PATHS.items():
+        self.tools = require_keys(tools, set(self.tool_paths), "retained tool roster")
+        for role, path in self.tool_paths.items():
             try:
                 inventory._validate_snapshot(self.tool_root, self.tools[role], role,
                     expected_original_path=path, expected_retained_path="inputs/tools/" + role)
@@ -103,7 +124,7 @@ class RetainedRuntimeInputs:
         return path
 
     def tool_path(self, role: str) -> Path:
-        return Path(REPLAY_TOOL_PATHS[role])
+        return Path(self.tool_paths[role])
 
     def require_tool(self, role: str, value: object) -> None:
         record = require_keys(value, {"path", "sha256"}, "retained " + role)

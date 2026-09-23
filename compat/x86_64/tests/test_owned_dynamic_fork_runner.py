@@ -12,6 +12,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
 
@@ -63,8 +64,12 @@ class OwnedDynamicForkRunnerTests(unittest.TestCase):
         scratch=ROOT/'.work/x86_64/owned-dynamic-fork-runner-tests';scratch.mkdir(parents=True,exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             root=Path(temporary);work=root/'.work/receipt';work.mkdir(parents=True)
+            shutil.copy2(ROOT / 'rust-toolchain.toml', root / 'rust-toolchain.toml')
             tools={}
-            for role,path in evidence.REPLAY_TOOL_PATHS.items():
+            expected_paths = evidence.replay_tool_paths(root)
+            channel = tomllib.loads((root / 'rust-toolchain.toml').read_text())['toolchain']['channel']
+            self.assertEqual(expected_paths['linker'], f"/opt/rustup/toolchains/{channel}-{evidence.TARGET}/lib/rustlib/{evidence.TARGET}/bin/gcc-ld/ld.lld")
+            for role,path in expected_paths.items():
                 source=root/(role+'-source');source.write_bytes(role.encode());source.chmod(0o755)
                 record=evidence.inventory._snapshot_regular(work,source,'inputs/tools/'+role,path)
                 tools[role]=record

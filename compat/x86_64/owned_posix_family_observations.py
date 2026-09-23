@@ -202,7 +202,8 @@ def _sources(root, layout):
                   'ldso/src/x86_64_runtime_tls_view.rs', 'ldso/src/x86_64_general_relocation_tests.rs']
     if layout.runner == 'dynamic_fork':
         paths += ['compat/x86_64/owned_dynamic_fork_evidence.py',
-                  'compat/x86_64/general_dynamic_fork_consumer.c', 'compat/x86_64/general_dynamic_fork_library.c']
+                  'compat/x86_64/general_dynamic_fork_consumer.c', 'compat/x86_64/general_dynamic_fork_library.c',
+                  'rust-toolchain.toml']
     return {path: _file(root / path, root)[1] for path in paths}
 
 

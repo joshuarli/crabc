@@ -47,6 +47,7 @@ SOURCE_FILES = (
     "compat/x86_64/owned_dynamic_fork_evidence.py",
     "compat/x86_64/owned_posix_timers_evidence.py",
     "compat/x86_64/owned_posix_product_evidence.py",
+    "rust-toolchain.toml",
     "compat/x86_64/general_dynamic_tls_consumer.c",
     "compat/x86_64/general_dynamic_fork_library.c",
     "compat/x86_64/general_dynamic_fork_consumer.c",

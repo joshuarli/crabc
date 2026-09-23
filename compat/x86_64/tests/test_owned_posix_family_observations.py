@@ -90,6 +90,7 @@ class ObservationsTests(unittest.TestCase):
             path = source_root / 'compat/x86_64' / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('synthetic source identity\n')
+        shutil.copy2(HERE.parents[1] / 'rust-toolchain.toml', source_root / 'rust-toolchain.toml')
         evidence = self.leaf / 'evidence'
         evidence.mkdir()
         body = b'dynamic fork survives adopted main exit: ok\n'
