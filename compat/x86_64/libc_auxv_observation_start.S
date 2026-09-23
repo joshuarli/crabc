@@ -33,5 +33,14 @@ _start:
 	mov $231, %eax
 	syscall
 	.size _start, .-_start
+
+/* The freestanding fixture cannot unwind. The selected nightly core object
+ * still names this symbol in a relocation; keep its inert owner in the
+ * fixture instead of selecting an ambient runtime. */
+	.global rust_eh_personality
+	.type rust_eh_personality,@function
+rust_eh_personality:
+	ud2
+	.size rust_eh_personality, .-rust_eh_personality
 #endif
 	.section .note.GNU-stack,"",@progbits
