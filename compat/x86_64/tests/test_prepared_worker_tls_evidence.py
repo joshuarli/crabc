@@ -5,6 +5,7 @@ import copy
 import importlib.util
 from pathlib import Path
 import sys
+import tomllib
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -13,6 +14,8 @@ assert SPEC and SPEC.loader
 EVIDENCE = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = EVIDENCE
 SPEC.loader.exec_module(EVIDENCE)
+PINNED_TOOLCHAIN = tomllib.loads((ROOT / 'rust-toolchain.toml').read_text(encoding='utf-8'))['toolchain']['channel']
+PINNED_RUSTC = f'/opt/rustup/toolchains/{PINNED_TOOLCHAIN}-x86_64-unknown-linux-musl/bin/rustc'
 
 
 class PreparedWorkerTlsEvidenceTests(unittest.TestCase):
@@ -138,7 +141,7 @@ class PreparedWorkerTlsEvidenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=base) as directory:
             work=Path(directory)
             (work/'raw').mkdir()
-            compiler='/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/bin/rustc'
+            compiler=PINNED_RUSTC
             def snapshot(name,original):
                 path=work/'inputs/tools'/name
                 path.parent.mkdir(parents=True,exist_ok=True)
@@ -215,7 +218,7 @@ class PreparedWorkerTlsEvidenceTests(unittest.TestCase):
             tools={name:{'original':{'path':'/usr/bin/'+name}} for name in EVIDENCE.ordinary.TOOL_ROLES}
             tools['chroot']={'original':{'path':'/bin/coreutils'},'invocation':{'path':'/usr/sbin/chroot','physical_path':'/bin/coreutils'}}
             rust={'selector_invocation':{'path':'/opt/cargo/bin/rustup','physical_path':'/usr/bin/rustup-init'},
-                  'compiler':{'original':{'path':'/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/bin/rustc'}}}
+                  'compiler':{'original':{'path':PINNED_RUSTC}}}
             plan=EVIDENCE.command_plan(ROOT,work,inputs,tools,rust)
             capture=EVIDENCE.ordinary.Collector(ROOT,work,work,work,work)
             with patch.object(EVIDENCE.ordinary.subprocess,'Popen',return_value=Mock(wait=Mock(return_value=0))):

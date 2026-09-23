@@ -377,11 +377,12 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
             self.assertEqual(kwargs, {"export_dynamic": True})
 
     def test_both_product_producer_tool_records_must_match_pinned_image_inputs(self) -> None:
-        base = "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/"
+        base = str(Path(receipt.PRODUCER_TOOL_PATHS["llvm-ar"]).parent) + "/"
+        toolchain = receipt.DYNAMIC_LINKER_PATH.split("/toolchains/", 1)[1].split("/", 1)[0]
         tools = {
             "schema": 1,
             "target": "x86_64-unknown-linux-musl",
-            "toolchain": "nightly-2026-07-24",
+            "toolchain": toolchain,
             "selection": {}, "rustup": {}, "rustc": {},
             "llvm_target_tools": {
                 name: {"path": base + name, "resolved_path": base + name, "sha256": self.digest(name.encode())}
