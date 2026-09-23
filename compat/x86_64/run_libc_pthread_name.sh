@@ -3,8 +3,8 @@
 #
 # The same GNU project-header fixture first executes through pinned musl, then
 # a dependency-free crabc archive and -nostdlib -static candidate. It selects
-# only bootstrapped process-main self pthread_setname_np/pthread_getname_np
-# through direct prctl=157 task-comm operations; no TCB, worker-name, /proc,
+# selected main and worker self pthread_setname_np/pthread_getname_np
+# through direct prctl=157 task-comm operations; no TCB, cross-thread name, /proc,
 # cancellation, or general prctl surface is selected.
 set -euo pipefail
 
@@ -148,7 +148,7 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
     fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
 for marker in 'src/thread/pthread_setname_np.c' 'src/thread/pthread_getname_np.c' \
-    'PR_SET_NAME' 'PR_GET_NAME' 'SYS_PRCTL' 'is_initial_thread_pointer' \
+    'PR_SET_NAME' 'PR_GET_NAME' 'SYS_PRCTL' 'current_selected_runtime_thread_id' \
     'neither entry writes C'; do
     grep -Fq "$marker" libc/src/c_abi/x86_64/pthread_name.rs ||
         fail "pthread task-name source lacks ${marker}"

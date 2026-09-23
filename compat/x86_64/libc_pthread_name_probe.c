@@ -2,12 +2,12 @@
  *
  * The same GNU project-header C body first runs against pinned musl 1.2.6,
  * then through a dependency-free -nostdlib -static candidate linked only with
- * the selected crabc archive. It proves only pthread_setname_np and
- * pthread_getname_np for the bootstrapped process-main pthread_self() handle:
+ * the selected crabc archive. It proves pthread_setname_np and
+ * pthread_getname_np for selected main and worker self handles:
  * Linux's sixteen-byte task-comm state changes through PR_SET_NAME and is
  * observed both through the paired pthread getter and raw PR_GET_NAME.
  * Candidate-only non-self handles fail closed with ESRCH before input/output
- * observation. This does not select workers, a TCB/thread list, /proc task
+ * observation. This does not select cross-thread naming, a TCB/thread list, /proc task
  * naming, cancellation, a general prctl C API, scheduler/affinity attributes,
  * lifecycle, synchronization, TSS, CRT, loader, sysroot, general pthread/TLS
  * behavior, or public x86 support.
@@ -157,6 +157,39 @@ static int check_self_name_pair(void)
     return 0;
 }
 
+static void *check_worker_self_name(void *unused)
+{
+    static const char worker_name[] = "crabc-pth-work";
+    pthread_t self = pthread_self();
+    char observed[CRABC_TASK_COMM_LEN];
+
+    (void)unused;
+    errno = E2BIG;
+    if (pthread_setname_np(self, worker_name) != 0 || errno != E2BIG)
+        return (void *)(uintptr_t)1;
+    fill_bytes(observed, sizeof(observed), (char)0x5a);
+    if (pthread_getname_np(self, observed, sizeof(observed)) != 0 || errno != E2BIG)
+        return (void *)(uintptr_t)2;
+    if (!name_has_prefix_and_nul(observed, worker_name))
+        return (void *)(uintptr_t)3;
+    fill_bytes(observed, sizeof(observed), (char)0x5a);
+    if (raw_get_name(observed) != 0 || !name_has_prefix_and_nul(observed, worker_name))
+        return (void *)(uintptr_t)4;
+    return 0;
+}
+
+static int check_worker_name_pair(void)
+{
+    pthread_t worker;
+    void *result = (void *)(uintptr_t)5;
+
+    if (pthread_create(&worker, 0, check_worker_self_name, 0) != 0)
+        return 1;
+    if (pthread_join(worker, &result) != 0)
+        return 2;
+    return (int)(uintptr_t)result;
+}
+
 #if defined(CRABC_PTHREAD_NAME_FREESTANDING)
 static int check_candidate_nonself_rejection(void)
 {
@@ -189,6 +222,9 @@ int crabc_x86_64_pthread_name_probe(void)
 
     if (status != 0)
         return 10 + status;
+    status = check_worker_name_pair();
+    if (status != 0)
+        return 20 + status;
 #if defined(CRABC_PTHREAD_NAME_FREESTANDING)
     status = check_candidate_nonself_rejection();
     if (status != 0)

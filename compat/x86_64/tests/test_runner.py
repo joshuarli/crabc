@@ -9915,10 +9915,10 @@ unsafe fn join_selected_worker_inner(
         )
         self.assertIn("    owned-pthread-cpuclock)", runner)
 
-    def test_libc_static_c_abi_pthread_name_artifact_stays_self_only(
+    def test_libc_static_c_abi_pthread_name_artifact_stays_selected_self_only(
         self,
     ) -> None:
-        """Keep GNU task names apart from general pthread task naming."""
+        """Keep selected self naming apart from cross-thread task naming."""
 
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
@@ -9967,16 +9967,15 @@ unsafe fn join_selected_worker_inner(
             "SYS_PRCTL",
             "PR_SET_NAME",
             "PR_GET_NAME",
-            "is_initial_thread_pointer",
+            "current_selected_runtime_thread_id",
             "before the name input or output is",
-            "observed. It does not select worker names",
+            "observed. It does not select cross-thread names",
             "neither entry writes C",
             "or public x86",
             "support. Pthread errors",
         ):
             self.assertIn(required, pthread_name)
         for forbidden in (
-            "pthread_create_join",
             "selected_worker_linux_thread_id",
             "set_errno",
             "c_status",
@@ -9998,6 +9997,7 @@ unsafe fn join_selected_worker_inner(
             "pthread_setname_np",
             "pthread_getname_np",
             "raw_get_name",
+            "check_worker_name_pair",
             "CRABC_PTHREAD_NAME_FREESTANDING",
             "check_candidate_nonself_rejection",
             "ESRCH",
