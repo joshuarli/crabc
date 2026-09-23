@@ -136,11 +136,16 @@ impl SourceSubprocessRegistry {
         parent: &MainSubprocess,
         memory: MemoryId,
     ) -> Result<(), SourceSubprocessRegistryError> {
-        let malloc = unsafe { memory.info.malloc };
         let member = &subprocess.source_membership;
         if subprocess.is_process_main()
             || memory.kind() != crate::types::MemoryKind::Malloc
-            || malloc.base != core::ptr::from_ref(subprocess).cast_mut().cast()
+        {
+            return Err(SourceSubprocessRegistryError::InvalidMembership);
+        }
+        // SAFETY: the kind check above validates which MemoryId union member
+        // is active before its exact allocation identity is inspected.
+        let malloc = unsafe { memory.info.malloc };
+        if malloc.base != core::ptr::from_ref(subprocess).cast_mut().cast()
             || malloc.size != size_of::<MainSubprocess>()
             || !core::ptr::eq(
                 parent.source_membership.registry.load(Ordering::Acquire),
