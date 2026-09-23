@@ -5,7 +5,7 @@
 // SPDX-License-Identifier: MIT
 //
 // Source map: pinned mimalloc v3.5.0 `src/init.c:236-282,305-360,377-421,
-// 448-481`, `src/theap.c:228-306,414-449`, `src/threadlocal.c:205-214`,
+// 448-481,536-592`, `src/libc.c:115-140`, `src/theap.c:228-306,414-449`, `src/threadlocal.c:205-214`,
 // `src/free.c:152-233,372-418,479-515`, and `src/prim/unix/prim.c:943-974`; the
 // direct libc fork placement follows pinned musl 1.2.6 `src/process/fork.c`.
 
@@ -101,6 +101,8 @@ use crate::meta::MetaAllocation;
 #[cfg(any(test, feature = "native-runtime-test-audit", target_arch = "x86_64"))]
 use crate::meta::MetaAllocator;
 use crate::os::{MemoryConfig, PageSize, StartupInput};
+#[cfg(target_arch = "x86_64")]
+use crate::once::{AllocatorOnce, AllocatorOnceCompletion, OnceThreadId};
 #[cfg(feature = "native-runtime-test-audit")]
 use crate::os::{MapAccess, Mapping};
 #[cfg(target_arch = "x86_64")]
@@ -2461,6 +2463,12 @@ pub enum ThreadFinalProcessExitOwnerResult {
 /// members.
 struct RuntimeProcessStorage {
     state: AtomicU8,
+    /// The selected x86 process entry retains the source once lock through
+    /// policy observation, owner publication, and reservation callbacks.
+    /// A distinct entry waits for ACTIVE or RETAINED; an initializing-thread
+    /// callback can reenter without waiting on itself.
+    #[cfg(target_arch = "x86_64")]
+    process_once: AllocatorOnce,
     /// One-way logical mapping of pinned `mi_process_done_once`. The permanent
     /// process owner itself remains physically live so late frees and a
     /// source-valid post-done worker continue to use its PageMap/metadata.
@@ -2681,8 +2689,9 @@ enum RuntimePersistentPageEngineThreadExitDrainFailure<'attachment, 'main> {
     },
 }
 
-// SAFETY: the COLD -> INITIALIZING CAS gives one writer exclusive access to
-// `owner`; the final owner is written before PROCESS_ACTIVE's Release store
+// SAFETY: the x86 source once gate (or the paused AArch64 COLD -> INITIALIZING
+// CAS) gives one writer exclusive access to `owner`. The final owner is written
+// before PROCESS_ACTIVE's Release store
 // and is thereafter read immutably. The independent page-owner scheduler
 // admits ticket zero only from READY and one complete later-main mutation at
 // a time; parked engines hold only current-thread typed tokens. Terminal
@@ -3235,6 +3244,8 @@ impl RuntimeProcessStorage {
     const fn new() -> Self {
         Self {
             state: AtomicU8::new(PROCESS_COLD),
+            #[cfg(target_arch = "x86_64")]
+            process_once: AllocatorOnce::new(),
             logical_process_done: AtomicU8::new(PROCESS_DONE_OPEN),
             initial_thread_identity: AtomicUsize::new(0),
             #[cfg(feature = "native-runtime-test-audit")]
@@ -4201,20 +4212,30 @@ impl RuntimeProcessStorage {
         true
     }
 
+    /// Enters the pinned `mi_process_init` once envelope at the outer native
+    /// runtime boundary. The lower process coordinator has its own source
+    /// once lock, but policy/environment observation and runtime publication
+    /// also need to be inside the same blocking startup envelope. A failure
+    /// to obtain a valid identity or private lock makes this boolean runtime
+    /// entry unavailable; it never grants startup ownership.
+    #[cfg(target_arch = "x86_64")]
+    fn begin_initialization_once(&self) -> Option<AllocatorOnceCompletion<'_>> {
+        let identity = OnceThreadId::new(current_thread_identity()?.get())?;
+        self.process_once.enter(identity).ok().flatten()
+    }
+
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     fn initialize(&'static self, page_size_bytes: usize, stderr_output: RuntimeStderrOutput) -> bool {
         let default_stderr_output = stderr_output.into_default_stderr_output();
-        match self.state.compare_exchange(
-            PROCESS_COLD,
-            PROCESS_INITIALIZING,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        ) {
-            Ok(_) => {}
-            Err(PROCESS_ACTIVE) => return true,
-            Err(PROCESS_ALLOCATABLE) => return self.is_on_initial_allocation_thread(),
-            Err(_) => return false,
-        }
+        let Some(completion) = self.begin_initialization_once() else {
+            return match self.state.load(Ordering::Acquire) {
+                PROCESS_ACTIVE => true,
+                PROCESS_ALLOCATABLE => self.is_on_initial_allocation_thread(),
+                _ => false,
+            };
+        };
+        debug_assert_eq!(self.state.load(Ordering::Acquire), PROCESS_COLD);
+        self.state.store(PROCESS_INITIALIZING, Ordering::Release);
 
         let Some(page_size) = PageSize::new(page_size_bytes) else {
             self.retain();
@@ -4257,6 +4278,10 @@ impl RuntimeProcessStorage {
             return false;
         }
         self.state.store(PROCESS_ACTIVE, Ordering::Release);
+        // As in pinned `_mi_atomic_once_release`, the final state precedes
+        // the source once release. A futex wake error cannot revoke either
+        // atomic publication or the completed startup result.
+        let _ = completion.complete();
         true
     }
 
@@ -16740,6 +16765,60 @@ mod tests {
     static NATIVE_DEFERRED_FREE_RUNTIME_DRIVER_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     #[thread_local]
     static mut NATIVE_DEFERRED_FREE_TEST_THREAD_ACTIVE: bool = false;
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn runtime_process_once_waits_for_terminal_startup_and_refuses_owner_reentry() {
+        use std::time::{Duration, Instant};
+
+        for terminal in [PROCESS_ACTIVE, PROCESS_RETAINED] {
+            let runtime: &'static RuntimeProcessStorage = std::boxed::Box::leak(
+                std::boxed::Box::new(RuntimeProcessStorage::new()));
+            let (claimed_tx, claimed_rx) = mpsc::channel();
+            let (release_tx, release_rx) = mpsc::channel();
+            let initializer = thread::spawn(move || {
+                let completion = runtime.begin_initialization_once()
+                    .expect("the first caller claims source process startup");
+                runtime.state.store(PROCESS_INITIALIZING, Ordering::Release);
+                assert!(runtime.begin_initialization_once().is_none(),
+                    "the initializing thread cannot wait on its own once lock");
+                let identity = current_thread_identity().expect("the test caller has compiler TLS");
+                runtime.initial_thread_identity.store(identity.get(), Ordering::Relaxed);
+                runtime.state.store(PROCESS_ALLOCATABLE, Ordering::Release);
+                assert!(runtime.is_on_initial_allocation_thread(),
+                    "the source-attached owner can use its startup allocation lease");
+                assert!(runtime.begin_initialization_once().is_none(),
+                    "source diagnostic reentry still cannot wait on its own once lock");
+                claimed_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                runtime.state.store(terminal, Ordering::Release);
+                completion.complete().expect("the source once lock releases");
+            });
+            claimed_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+
+            let (started_tx, started_rx) = mpsc::channel();
+            let (observed_tx, observed_rx) = mpsc::channel();
+            let contender = thread::spawn(move || {
+                started_tx.send(()).unwrap();
+                let received_claim = runtime.begin_initialization_once().is_some();
+                observed_tx.send((received_claim, runtime.state.load(Ordering::Acquire))).unwrap();
+            });
+            started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while !runtime.process_once.test_is_contended() {
+                assert!(Instant::now() < deadline,
+                    "the contender reaches the runtime process once lock");
+                thread::yield_now();
+            }
+            assert!(observed_rx.recv_timeout(Duration::from_millis(50)).is_err(),
+                "a distinct caller must wait for the terminal startup publication");
+            release_tx.send(()).unwrap();
+            assert_eq!(observed_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+                (false, terminal));
+            initializer.join().unwrap();
+            contender.join().unwrap();
+        }
+    }
 
     struct CurrentThreadDescriptorRegistry(NonNull<admission::NativeAllocatorThreadDescriptor>);
 

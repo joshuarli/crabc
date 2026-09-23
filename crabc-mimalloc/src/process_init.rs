@@ -1979,6 +1979,54 @@ mod tests {
         )
     }
 
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn source_attached_allocation_lease_does_not_release_process_once_to_a_racer() {
+        let config = memory_config();
+        let (storage, main_static, subprocess, metadata, page_map_storage) = fixture();
+        let (attached_tx, attached_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (observed_tx, observed_rx) = mpsc::channel();
+        let (teardown_tx, teardown_rx) = mpsc::channel();
+        let initializer = thread::spawn(move || {
+            let (mut owner, startup) = unsafe {
+                storage.prepare_with_test_components_and_vm_options(
+                    config, resolved_vm_options(), main_static, subprocess,
+                    metadata, page_map_storage, None,
+                )
+            }.expect("the source default Theap is attached before reservations");
+            assert!(owner.allocation().is_ok(),
+                "the source owner can allocate through its initialized tuple");
+            assert!(owner.ready().is_err(),
+                "an allocation lease does not publish completed process readiness");
+            assert!(matches!(unsafe { storage.initialize_with_test_components(
+                config, main_static, subprocess, metadata, page_map_storage,
+            ) }, Err(ProcessMainInitError::Initializing)),
+                "same-thread source reentry cannot wait on its own once lock");
+            attached_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            startup.complete().expect("source startup completes after the callback interval");
+            teardown_rx.recv().unwrap();
+            owner.teardown().expect("the bounded source owner finishes");
+        });
+        attached_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+
+        let contender = thread::spawn(move || {
+            let result = unsafe { storage.initialize_with_test_components(
+                config, main_static, subprocess, metadata, page_map_storage,
+            ) };
+            observed_tx.send(matches!(result, Err(ProcessMainInitError::AlreadyInitialized))).unwrap();
+        });
+        wait_for_process_once_contender(storage);
+        assert!(observed_rx.recv_timeout(Duration::from_millis(50)).is_err(),
+            "a distinct caller remains blocked while only the owner allocation lease exists");
+        release_tx.send(()).unwrap();
+        assert!(observed_rx.recv_timeout(Duration::from_secs(2)).unwrap());
+        teardown_tx.send(()).unwrap();
+        contender.join().unwrap();
+        initializer.join().unwrap();
+    }
+
     #[test]
     fn source_attachment_publishes_allocation_inputs_before_startup_completion() {
         thread::spawn(|| {
