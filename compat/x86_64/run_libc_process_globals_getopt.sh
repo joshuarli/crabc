@@ -107,6 +107,7 @@ cargo_target="$work_dir/cargo-target"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-process-globals-getopt-reference"
 candidate="$work_dir/crabc-process-globals-getopt-candidate"
+empty_argv_launcher="$work_dir/empty-argv-launcher"
 header_trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
 archive_elf_symbols="$work_dir/archive-elf-symbols"
@@ -125,7 +126,7 @@ errno_disassembly="$work_dir/candidate-errno-disassembly"
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_process_globals_getopt_probe.c >/dev/null 2>"$header_trace"
-for header in getopt.h locale.h stddef.h string.h unistd.h bits/alltypes.h \
+for header in getopt.h locale.h stddef.h string.h sys/auxv.h elf.h unistd.h bits/alltypes.h \
     features.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use project ${header}"
@@ -134,6 +135,8 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -static -fno-pie -no-pie -fno-builtin \
     -fno-stack-protector -I"$ROOT_DIR/include" \
     compat/x86_64/libc_process_globals_getopt_probe.c -o "$reference"
+"$ORACLE_CC" -std=c11 -static -fno-pie -no-pie \
+    compat/x86_64/libc_process_globals_empty_argv_launcher.c -o "$empty_argv_launcher"
 readelf --symbols --wide "$reference" >"$reference_symbols"
 assert_process_global_aliases "$reference_symbols" "pinned-musl static reference"
 if "$reference"; then
@@ -142,6 +145,8 @@ else
     status=$?
     fail "pinned-musl process-globals/getopt fixture exited ${status}"
 fi
+"$empty_argv_launcher" "$reference" ||
+    fail "pinned-musl empty-argv process-name fallback failed"
 
 CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
     --target x86_64-unknown-linux-musl -- \
@@ -223,5 +228,7 @@ else
     status=$?
     fail "freestanding process-globals/getopt fixture exited ${status}"
 fi
+"$empty_argv_launcher" "$candidate" ||
+    fail "freestanding empty-argv process-name fallback failed"
 
 printf 'x86 static crabc-libc process globals/getopt: PASS\n'

@@ -22,6 +22,7 @@
 #include <locale.h>
 #include <stddef.h>
 #include <string.h>
+#include <sys/auxv.h>
 #include <unistd.h>
 
 #define CRABC_TYPE_IS(actual, expected) \
@@ -100,14 +101,19 @@ void crabc_x86_64_process_globals_getopt_init(void)
 static int check_program_names(int argc, char **argv)
 {
     static char replacement[] = "replacement";
+    char *expected_full;
     char *saved_short;
 
-    if (constructor_status != 0 || argc <= 0 || argv == NULL || argv[0] == NULL)
+    if (constructor_status != 0)
         return 1;
-    if (__progname_full != argv[0] || program_invocation_name != argv[0] ||
-        __progname != short_program_name(argv[0]) ||
-        program_invocation_short_name != __progname)
+    expected_full = argc > 0 && argv != NULL && argv[0] != NULL
+        ? argv[0] : (char *)getauxval(AT_EXECFN);
+    if (expected_full == NULL)
         return 2;
+    if (__progname_full != expected_full || program_invocation_name != expected_full ||
+        __progname != short_program_name(expected_full) ||
+        program_invocation_short_name != __progname)
+        return 3;
 
     saved_short = __progname;
     program_invocation_short_name = replacement;
@@ -277,6 +283,7 @@ int main(int argc, char **argv)
     int result = check_program_names(argc, argv);
 
     if (result != 0) return 10 + result;
+    if (argc == 0) return 0;
     result = check_short_options();
     if (result != 0) return 30 + result;
     result = check_short_errors();
