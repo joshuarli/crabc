@@ -31,10 +31,10 @@ import owned_posix_static_products as static_products
 import owned_pthread_alias_contract_reader as pthread_reader
 
 SCHEMA = "crabc.x86_64-owned-syscall-alias-contract/v3"
-IMAGE_MANIFEST = MODULE_DIR / "owned-syscall-alias-image-inputs.json"
+IMAGE_MANIFEST = MODULE_DIR / "owned-syscall-alias-image-inputs-current.json"
 STATUS = {"component_complete": True, "family_completion": False,
           "runtime_qualification": False, "promotion_ready": False, "public_support": False}
-IMAGE = "crabc-core-evidence@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d"
+IMAGE = "crabc-core-evidence@sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d"
 MUSL_SOURCE_COMMIT = "9fa28ece75d8a2191de7c5bb53bed224c5947417"
 # The current runner expands to 47 parametrized ``run`` envelopes. The two
 # historical counts remain provenance, never a substitute for this exact
@@ -77,11 +77,12 @@ COLLECTOR_SOURCES = (
     "compat/x86_64/owned_static_link_authority.py",
     "compat/x86_64/crabc_cc_static.py",
     "compat/x86_64/owned_posix_product_evidence.py",
-    "compat/x86_64/owned-syscall-alias-image-inputs.json",
+    "compat/x86_64/owned-syscall-alias-image-inputs-current.json",
     "compat/x86_64/owned_syscall_alias_contract_probe.c",
     "compat/x86_64/owned_syscall_alias_override_probe.c",
     "compat/x86_64/owned_shared_dynamic_list_probe.c",
     "compat/x86_64/owned-syscall-alias-contract.md",
+    "rust-toolchain.toml",
 )
 IMAGE_TOOL_PATHS = {
     "oracle_compiler": Path("/usr/local/bin/crabc-x86_64-musl-gcc"),
@@ -793,7 +794,7 @@ def _validate_report(report_path: Path) -> dict[str, object]:
                 trusted = physical(ROOT / name, "validator collector source")
                 require(trusted.read_bytes() == data and stat.S_IMODE(trusted.stat().st_mode) == mode,
                         f"collector source does not match validator authority: {name}")
-    manifest_name = "compat/x86_64/owned-syscall-alias-image-inputs.json"
+    manifest_name = "compat/x86_64/owned-syscall-alias-image-inputs-current.json"
     require(source_trees["collector"][manifest_name][1] == IMAGE_MANIFEST.read_bytes(), "retained image manifest does not match validator's image authority")
     image_manifest = read_json(IMAGE_MANIFEST, "trusted image input manifest")
     image_inputs = report.get("image_inputs", {})

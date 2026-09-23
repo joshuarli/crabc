@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import stat
 import subprocess
+import tomllib
 import zlib
 
 from loader_debug_abi_evidence import Elf
@@ -239,16 +240,20 @@ def require_relocation_stream(path, artifact):
     require(actual == expected, f'raw relocations do not describe retained ELF: {path.name}')
 
 
-IMAGE_ID = 'sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d'
+IMAGE_ID = 'sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d'
 IMAGE_COMMANDS = ('bash', 'cat', 'chmod', 'chroot', 'cmp', 'cp', 'dirname', 'env',
                   'grep', 'mkdir', 'mktemp', 'python3', 'readelf', 'realpath',
                   'timeout', 'uname', 'gcc', 'as', 'ld', 'rustup')
-IMAGE_FIXED_PATHS = (
+_IMAGE_FIXED_PREFIXES = (
     '/usr/local/bin/crabc-x86_64-musl-gcc', '/opt/musl-1.2.6/lib/libc.so',
     '/opt/musl-1.2.6/lib/libc.a',
     '/opt/musl-1.2.6/lib/musl-gcc.specs',
-    '/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/bin/rustc',
-    '/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld',
+)
+_TOOLCHAIN = tomllib.loads((Path(__file__).resolve().parents[2] / 'rust-toolchain.toml').read_text())['toolchain']['channel']
+IMAGE_FIXED_PATHS = (
+    *_IMAGE_FIXED_PREFIXES,
+    f'/opt/rustup/toolchains/{_TOOLCHAIN}-x86_64-unknown-linux-musl/bin/rustc',
+    f'/opt/rustup/toolchains/{_TOOLCHAIN}-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld',
 )
 IMAGE_PATH = '/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
 

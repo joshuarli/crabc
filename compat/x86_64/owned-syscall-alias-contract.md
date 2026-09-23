@@ -157,7 +157,7 @@ facts must bind the exact `libc.a` and `libc.so` bytes, and its base-inventory
 binding must name the supplied inventory byte-for-byte.
 
 ```sh
-CRABC_X86_SYSCALL_ALIAS_IMAGE_ID=crabc-core-evidence@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d \
+CRABC_X86_SYSCALL_ALIAS_IMAGE_ID=crabc-core-evidence@sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d \
 python3 -B compat/x86_64/owned_syscall_alias_contract_reader.py collect \
   --output "$PWD/.work/x86_64/syscall-alias-receipt/current" \
   --static-preparation "$PWD/.work/x86_64/public-data-products/static-a9c51887/preparation.json" \
@@ -165,7 +165,7 @@ python3 -B compat/x86_64/owned_syscall_alias_contract_reader.py collect \
   --dynamic-product "$PWD/.work/x86_64/loader-debug-abi/clean-a9c51887/component/dynamic-product" \
   --elf-facts "$PWD/.work/x86_64/native-abi-elf-facts/clean-a9c51887/report.json" \
   --base-inventory "$PWD/.work/x86_64/native-abi-inventory/clean-a9c51887/report.json" \
-  --image-id crabc-core-evidence@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d
+  --image-id crabc-core-evidence@sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d
 
 python3 -B compat/x86_64/owned_syscall_alias_contract_reader.py validate-report \
   --report "$PWD/.work/x86_64/syscall-alias-receipt/current/report.json"
@@ -239,17 +239,21 @@ leaves must also match the supplied product revision. This allows a repaired
 collector to inspect an older supplied product without calling that product
 current selected evidence.
 
-`owned-syscall-alias-image-inputs.json` is the finite image input authority. It
-records invocation paths, resolved paths, modes, sizes and SHA-256 values for
+`owned-syscall-alias-image-inputs-current.json` is the finite image input
+authority for the current core image. The original
+`owned-syscall-alias-image-inputs.json` remains unchanged as the July 24
+historical authority. The collector also seals `rust-toolchain.toml`, from
+which its current Rust and LLD paths are derived. The current manifest records
+invocation paths, resolved paths, modes, sizes and SHA-256 values for
 the runner tools, product compiler/assembler/linker inputs, and pinned musl
 wrapper/archive/shared/specs. Regenerate it reproducibly from the exact image:
 
 ```sh
 docker run --rm --network none -v "$PWD:/workspace" -w /workspace \
-  sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d \
+  sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d \
   python3 -B compat/x86_64/owned_syscall_alias_authority.py \
   > .work/x86_64/syscall-image-inputs.json
-cmp compat/x86_64/owned-syscall-alias-image-inputs.json \
+cmp compat/x86_64/owned-syscall-alias-image-inputs-current.json \
   .work/x86_64/syscall-image-inputs.json
 ```
 

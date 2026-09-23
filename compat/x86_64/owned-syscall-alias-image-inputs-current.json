@@ -1,0 +1,180 @@
+{
+  "files": {
+    "/bin/bash": {
+      "mode": 493,
+      "path": "/bin/bash",
+      "sha256": "4f1116dffe86666baf79f8d253da19779ce425153018424c85c15daaee6767c7",
+      "size": 789472
+    },
+    "/bin/cat": {
+      "mode": 493,
+      "path": "/bin/coreutils",
+      "sha256": "b741c1ac63a4fc1666b1030f81f9981dfeb1b6132f69591081f46bf254db2755",
+      "size": 1138944
+    },
+    "/bin/chmod": {
+      "mode": 493,
+      "path": "/bin/coreutils",
+      "sha256": "b741c1ac63a4fc1666b1030f81f9981dfeb1b6132f69591081f46bf254db2755",
+      "size": 1138944
+    },
+    "/bin/cp": {
+      "mode": 493,
+      "path": "/bin/coreutils",
+      "sha256": "b741c1ac63a4fc1666b1030f81f9981dfeb1b6132f69591081f46bf254db2755",
+      "size": 1138944
+    },
+    "/bin/grep": {
+      "mode": 493,
+      "path": "/bin/busybox",
+      "sha256": "01a989eb4d1d04b0d146c790ac536abd88f374ec74a2e110c58910b840d42045",
+      "size": 804616
+    },
+    "/bin/mkdir": {
+      "mode": 493,
+      "path": "/bin/coreutils",
+      "sha256": "b741c1ac63a4fc1666b1030f81f9981dfeb1b6132f69591081f46bf254db2755",
+      "size": 1138944
+    },
+    "/bin/mktemp": {
+      "mode": 493,
+      "path": "/bin/coreutils",
+      "sha256": "b741c1ac63a4fc1666b1030f81f9981dfeb1b6132f69591081f46bf254db2755",
+      "size": 1138944
+    },
+    "/bin/uname": {
+      "mode": 493,
+      "path": "/bin/coreutils",
+      "sha256": "b741c1ac63a4fc1666b1030f81f9981dfeb1b6132f69591081f46bf254db2755",
+      "size": 1138944
+    },
+    "/opt/cargo/bin/rustup": {
+      "mode": 493,
+      "path": "/usr/bin/rustup-init",
+      "sha256": "cff2994a6ad07692c9b2551f7211dc320de8bef89b280ab1185e373651e29834",
+      "size": 5740848
+    },
+    "/opt/musl-1.2.6/lib/libc.a": {
+      "mode": 420,
+      "path": "/opt/musl-1.2.6/lib/libc.a",
+      "sha256": "d0400c3754724e89c4185e3388d2e139461aa0cc4029f2ec566c962916852775",
+      "size": 2731126
+    },
+    "/opt/musl-1.2.6/lib/libc.so": {
+      "mode": 493,
+      "path": "/opt/musl-1.2.6/lib/libc.so",
+      "sha256": "8aea1cf45942b85b9d20bfcc4fbe78dcd6748f7d7c615513b38d3f9a897bdb65",
+      "size": 798104
+    },
+    "/opt/musl-1.2.6/lib/musl-gcc.specs": {
+      "mode": 420,
+      "path": "/opt/musl-1.2.6/lib/musl-gcc.specs",
+      "sha256": "48e3d1726765d6a50f288548901838fdff534d76862a91080ac23bf140172ca4",
+      "size": 636
+    },
+    "/opt/rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-musl/bin/rustc": {
+      "mode": 493,
+      "path": "/opt/rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-musl/bin/rustc",
+      "sha256": "228e24592d38da145ce4064b14e4bcfdd13cd3e2623bdbdcec45f37d16ef7b3b",
+      "size": 9528
+    },
+    "/opt/rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld": {
+      "mode": 493,
+      "path": "/opt/rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld",
+      "sha256": "dc40fa1b087ed4538d410a08e7314bcc1614dc7ff728b5bbf624a1daa97730bc",
+      "size": 373512
+    },
+    "/usr/bin/as": {
+      "mode": 493,
+      "path": "/usr/bin/as",
+      "sha256": "de886b8a70a35803ec72072d716461d14bbb526fc7bc8184f8e463da524bb057",
+      "size": 830296
+    },
+    "/usr/bin/cmp": {
+      "mode": 493,
+      "path": "/bin/busybox",
+      "sha256": "01a989eb4d1d04b0d146c790ac536abd88f374ec74a2e110c58910b840d42045",
+      "size": 804616
+    },
+    "/usr/bin/dirname": {
+      "mode": 493,
+      "path": "/bin/coreutils",
+      "sha256": "b741c1ac63a4fc1666b1030f81f9981dfeb1b6132f69591081f46bf254db2755",
+      "size": 1138944
+    },
+    "/usr/bin/env": {
+      "mode": 493,
+      "path": "/usr/bin/env",
+      "sha256": "3f0192ead0710356845f3aeb4a587aad7cdf9909d5a43c94daa449475a64b37b",
+      "size": 39472
+    },
+    "/usr/bin/gcc": {
+      "mode": 493,
+      "path": "/usr/bin/gcc",
+      "sha256": "d44e2fec81dd67b0be9608ea49eb995dd182f906b53025c3ecb1dbc036e33e8a",
+      "size": 2188112
+    },
+    "/usr/bin/ld": {
+      "mode": 493,
+      "path": "/usr/bin/ld",
+      "sha256": "48c952c44302d407c9f8e2944fc2f9291785875494e8fdc5e63b67ad032504af",
+      "size": 1555880
+    },
+    "/usr/bin/python3": {
+      "mode": 493,
+      "path": "/usr/bin/python3.14",
+      "sha256": "16c8377b7e809985cf46d64559df85bda416264f63b06c84536d3acbe549e23b",
+      "size": 14080
+    },
+    "/usr/bin/readelf": {
+      "mode": 493,
+      "path": "/usr/bin/readelf",
+      "sha256": "49e72abc29652bbd9453b38b748461cf21aeab07ebf7214740d4d8d8ed943eb1",
+      "size": 805680
+    },
+    "/usr/bin/realpath": {
+      "mode": 493,
+      "path": "/bin/coreutils",
+      "sha256": "b741c1ac63a4fc1666b1030f81f9981dfeb1b6132f69591081f46bf254db2755",
+      "size": 1138944
+    },
+    "/usr/bin/timeout": {
+      "mode": 493,
+      "path": "/bin/coreutils",
+      "sha256": "b741c1ac63a4fc1666b1030f81f9981dfeb1b6132f69591081f46bf254db2755",
+      "size": 1138944
+    },
+    "/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/cc1": {
+      "mode": 493,
+      "path": "/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/cc1",
+      "sha256": "bc96b52a656fef6362a166f51b944e8af47d20fdb391e45987a71b9866359275",
+      "size": 42479832
+    },
+    "/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/collect2": {
+      "mode": 493,
+      "path": "/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/collect2",
+      "sha256": "fc7357c4f04e286d7b8d4657d59ce27544d5232745998a1ea1cd59799ddd1146",
+      "size": 1329352
+    },
+    "/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/liblto_plugin.so": {
+      "mode": 493,
+      "path": "/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/liblto_plugin.so",
+      "sha256": "748816b36f25c00d930e1ac38cedf33f784a7dc9e8c807e3596af5fcfa628e08",
+      "size": 87904
+    },
+    "/usr/local/bin/crabc-x86_64-musl-gcc": {
+      "mode": 493,
+      "path": "/usr/local/bin/crabc-x86_64-musl-gcc",
+      "sha256": "9b28cac06b7a1f35331ca06e23a1fc3fa7be9a6f85d9c6006363e8185001c90a",
+      "size": 390
+    },
+    "/usr/sbin/chroot": {
+      "mode": 493,
+      "path": "/bin/coreutils",
+      "sha256": "b741c1ac63a4fc1666b1030f81f9981dfeb1b6132f69591081f46bf254db2755",
+      "size": 1138944
+    }
+  },
+  "image": "sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d",
+  "path": "/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+}

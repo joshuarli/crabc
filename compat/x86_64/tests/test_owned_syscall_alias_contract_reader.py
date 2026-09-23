@@ -14,6 +14,7 @@ import hashlib
 import zlib
 from dataclasses import replace
 from pathlib import Path
+import tomllib
 
 
 SOURCE_DIR = Path(__file__).resolve().parents[1]
@@ -39,9 +40,25 @@ from owned_syscall_alias_contract_reader import (
     same_definition,
     validate_report,
 )
+import owned_syscall_alias_contract_reader as syscall_reader
 
 
 class OwnedSyscallAliasContractReaderTests(unittest.TestCase):
+    def test_current_image_manifest_uses_the_selected_toolchain_and_preserves_legacy_manifest(self) -> None:
+        toolchain = tomllib.loads((syscall_reader.ROOT / "rust-toolchain.toml").read_text())["toolchain"]["channel"]
+        current = json.loads(syscall_reader.IMAGE_MANIFEST.read_text())
+        legacy_path = syscall_reader.MODULE_DIR / "owned-syscall-alias-image-inputs.json"
+        legacy = json.loads(legacy_path.read_text())
+
+        self.assertEqual(authority.IMAGE_ID, syscall_reader.IMAGE.removeprefix("crabc-core-evidence@"))
+        self.assertEqual(current["image"], authority.IMAGE_ID)
+        self.assertEqual(legacy["image"], "sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d")
+        self.assertIn(f"/opt/rustup/toolchains/{toolchain}-x86_64-unknown-linux-musl/bin/rustc", current["files"])
+        self.assertNotIn("nightly-2026-07-24", "\n".join(current["files"]))
+        self.assertIn("compat/x86_64/owned-syscall-alias-image-inputs-current.json", syscall_reader.COLLECTOR_SOURCES)
+        self.assertNotIn("compat/x86_64/owned-syscall-alias-image-inputs.json", syscall_reader.COLLECTOR_SOURCES)
+        self.assertIn("rust-toolchain.toml", syscall_reader.COLLECTOR_SOURCES)
+
     def test_oracle_source_recompile_cannot_pass_same_object_evidence(self) -> None:
         object_path = "/workspace/.work/probe/contract.o"
         commands = {
