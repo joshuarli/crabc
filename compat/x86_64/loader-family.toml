@@ -33,7 +33,7 @@ capability = "runtime.loader"
 qualification_cases = ["elf-scope-alias", "lazy-pie", "lazy-non-pie", "loader-synthetic"]
 synthetic_cases = []
 package_cases = []
-behavior = "Selected RELA and RELR relocation processing, weak/global/protected scope, interpreter aliases, and declared lazy versus NOW binding across both installed executable modes; the synthetic catalog retains the remaining selected relocation encodings."
+behavior = "Selected RELA and RELR relocation processing, weak/global/GNU-unique/protected scope, interpreter aliases, and declared lazy versus NOW binding across both installed executable modes; the synthetic catalog retains the remaining selected relocation encodings."
 
 [[required]]
 id = "runtime-v1-tls-thread"

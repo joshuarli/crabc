@@ -22,6 +22,9 @@ const R_NONE: u32 = 0;
 const R_64: u32 = 1;
 const R_COPY: u32 = 5;
 const SHN_ABS: u16 = 0xfff1;
+// musl dynlink.c:find_sym2 includes GNU unique alongside global and weak in
+// OK_BINDS. It treats unique as an eligible definition, not a new scope rule.
+pub(super) const STB_GNU_UNIQUE: u8 = 10;
 
 /// A transient breadth-first lookup view of the canonical graph, not a
 /// second object store. Mapping and TLS module identities remain unchanged.
@@ -89,7 +92,7 @@ pub(super) unsafe fn find_runtime_symbol(objects: &[Object], indices: &[usize], 
             let Some(symbol) = (unsafe { lookup_exported(objects, owner, name) })? else {
                 continue;
             };
-            if symbol.section == 0 || !matches!(symbol.binding, 1 | 2)
+            if symbol.section == 0 || !matches!(symbol.binding, 1 | 2 | STB_GNU_UNIQUE)
                 || !matches!(symbol.visibility, 0 | 3) || !matches!(symbol.kind, 0 | 1 | 2 | 6)
             { continue; }
             if symbol.kind == 6 {
@@ -109,7 +112,7 @@ pub(super) unsafe fn find_runtime_symbol(objects: &[Object], indices: &[usize], 
         let object = objects.get(owner)?;
         for index in 1..object.symcount {
             let symbol = unsafe { definition(objects, owner, index) }?;
-            if symbol.section == 0 || !matches!(symbol.binding, 1 | 2)
+            if symbol.section == 0 || !matches!(symbol.binding, 1 | 2 | STB_GNU_UNIQUE)
                 || !matches!(symbol.visibility, 0 | 3) || !matches!(symbol.kind, 0 | 1 | 2 | 6)
             { continue; }
             if unsafe { symbol_name(object, index) }? != name { continue; }
@@ -266,7 +269,7 @@ unsafe fn lookup_result(
     requestor: usize, index: usize, tls: bool, copy: bool,
 ) -> Option<SymbolLookup> {
     let requested = unsafe { definition(objects, requestor, index) }?;
-    if !matches!(requested.binding, 0 | 1 | 2)
+    if !matches!(requested.binding, 0 | 1 | 2 | STB_GNU_UNIQUE)
         || (requested.binding == 0 && requested.visibility == 3)
         || (tls && requested.kind != 6)
         || (!tls && !matches!(requested.kind, 0 | 1 | 2))
@@ -280,7 +283,7 @@ unsafe fn lookup_result(
         if copy && owner == 0 { continue; }
         #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         if let Some(found) = unsafe { lookup_exported(objects, owner, name) }? {
-            if found.section == 0 || !matches!(found.binding, 1 | 2)
+            if found.section == 0 || !matches!(found.binding, 1 | 2 | STB_GNU_UNIQUE)
                 || !matches!(found.visibility, 0 | 3)
                 || (tls && found.kind != 6)
                 || (!tls && !matches!(found.kind, 0 | 1 | 2))
@@ -293,7 +296,7 @@ unsafe fn lookup_result(
         #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
         for candidate in 1..objects[owner].symcount {
             let found = unsafe { definition(objects, owner, candidate) }?;
-            if found.section == 0 || !matches!(found.binding, 1 | 2)
+            if found.section == 0 || !matches!(found.binding, 1 | 2 | STB_GNU_UNIQUE)
                 || !matches!(found.visibility, 0 | 3)
                 || (tls && found.kind != 6)
                 || (!tls && !matches!(found.kind, 0 | 1 | 2))

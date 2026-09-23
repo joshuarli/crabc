@@ -877,7 +877,8 @@ unsafe extern "C" fn runtime_address_info(address: usize, output: *mut AddressIn
         if symbol.is_null() { return 0; }
         let info = unsafe { *symbol.add(4) };
         let value = unsafe { read_u64(symbol.add(8)) };
-        if value == 0 || !matches!(info >> 4, 1 | 2) || !matches!(info & 15, 0 | 1 | 2 | 6) { continue; }
+        if value == 0 || !matches!(info >> 4, 1 | 2 | x86_64_general_relocation::STB_GNU_UNIQUE)
+            || !matches!(info & 15, 0 | 1 | 2 | 6) { continue; }
         let Some(candidate) = object.base.checked_add(value).and_then(|v| usize::try_from(v).ok()) else { continue; };
         if candidate > address || candidate <= best { continue; }
         best = candidate;

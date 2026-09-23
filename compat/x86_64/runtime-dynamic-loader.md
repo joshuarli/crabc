@@ -120,6 +120,13 @@ version framework. Relocation preflight protects every consumed hash, version,
 and direct-symbol record before the first write, preventing one relocation
 from changing a later import's admission.
 
+Musl `find_sym2` includes `STB_GNU_UNIQUE` in its eligible bindings for
+relocations and `dlsym`; `dladdr` uses the same binding set. The installed
+`run_general_dynamic_elf_scope.sh` case exercises a real `GLOB_DAT` reference
+to a GNU unique DSO object, followed by `dlsym` and `dladdr`, in PIE and
+non-PIE against pinned musl. `x86_64_general_relocation.rs` and
+`x86_64_runtime_registry.rs` own those checks without GNU unique coalescing.
+
 The retained Alpine `libcrypto.so.3` consumer carries the exact ordinary-DSO
 set `DT_SYMBOLIC=0`, `DT_FLAGS=DF_SYMBOLIC|DF_BIND_NOW`, and
 `DT_FLAGS_1=DF_1_NOW|DF_1_NODELETE`. Musl `decode_dyn` accepts those values,

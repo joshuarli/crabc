@@ -96,4 +96,48 @@ PY_ALIAS
         done
     done
 done
-printf 'ELF weak/protected scope and interpreter alias: PASS (8 cases per arm, 16 alias entries); evidence: %s\n' "$work"
+readonly unique_source="$ROOT/compat/x86_64/general_dynamic_unique_scope.c"
+for arm in oracle candidate; do
+    root="$work/$arm"
+    if [ "$arm" = candidate ]; then
+        interpreter=/lib/ld-crabc-x86_64.so.1
+        "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object -DUNIQUE_PROVIDER \
+            "$unique_source" -o "$root/usr/lib/libelf_unique.so"
+    else
+        interpreter=/lib/ld-musl-x86_64.so.1
+        /usr/local/bin/crabc-x86_64-musl-gcc -fPIC -shared -DUNIQUE_PROVIDER \
+            "$unique_source" -Wl,-soname,libelf_unique.so -o "$root/usr/lib/libelf_unique.so"
+    fi
+    readelf --dyn-syms -W "$root/usr/lib/libelf_unique.so" >"$work/$arm-unique.symbols"
+    awk '$5 == "UNIQUE" && $7 != "UND" && $8 == "elf_unique" { found = 1 }
+        END { exit !found }' "$work/$arm-unique.symbols"
+    readelf -rW "$root/usr/lib/libelf_unique.so" >"$work/$arm-unique.relocations"
+    awk '$3 == "R_X86_64_GLOB_DAT" && $5 == "elf_unique" { found = 1 }
+        END { exit !found }' "$work/$arm-unique.relocations"
+    for mode in pie non-pie; do
+        for phase in initial runtime; do
+            name="unique-$mode-$phase"
+            dependencies=()
+            if [ "$phase" = initial ]; then
+                if [ "$arm" = candidate ]; then
+                    dependencies+=(--application-dso "$root/usr/lib/libelf_unique.so")
+                else
+                    dependencies+=(-Wl,--no-as-needed "$root/usr/lib/libelf_unique.so")
+                fi
+            fi
+            if [ "$arm" = candidate ]; then
+                "$installed/bin/crabc-cc-dynamic" "--dynamic-$mode" "$unique_source" \
+                    "${dependencies[@]}" -o "$root/$name"
+            else
+                /usr/local/bin/crabc-x86_64-musl-gcc -fPIE "-${mode/non-pie/no-pie}" \
+                    "$unique_source" -Wl,--dynamic-linker,"$interpreter",-rpath,/usr/lib \
+                    "${dependencies[@]}" -o "$root/$name"
+            fi
+            timeout 20 chroot "$root" "/$name" >"$work/$arm-$name.stdout"
+            if [ "$arm" = candidate ]; then
+                cmp "$work/oracle-$name.stdout" "$work/candidate-$name.stdout"
+            fi
+        done
+    done
+done
+printf 'ELF scope and interpreter alias: PASS (8 weak/protected, 4 GNU unique cases per arm, 16 alias entries); evidence: %s\n' "$work"
