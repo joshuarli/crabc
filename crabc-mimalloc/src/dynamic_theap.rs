@@ -958,7 +958,8 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         config: MemoryConfig, heap: Pin<&'heap mut Heap>, arena: ArenaView<'heap>,
         process: crate::os::VmProcess<'static>,
     ) -> Result<Self, DynamicTheapBeginError<'heap>> {
-        unsafe { Self::begin_with_components_arena(config, heap, process.subprocess(),
+        unsafe { Self::begin_with_components_arena(config, heap,
+            process.main_subprocess().expect("dynamic worker route is process main"),
             MetaAllocator::global(), OwnedThreadLocalKeyRegistry::global(),
             TheapPageMode::NonAbandoningPageSession, Some(arena),
             !process.policy().disallow_arena_alloc()) }

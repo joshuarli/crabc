@@ -1300,7 +1300,7 @@ impl ProcessMainBackingBinding {
         debug_assert!(matches!(storage.state.load(Ordering::Acquire), INITIALIZING | SOURCE_ATTACHED | READY));
         debug_assert!(core::ptr::eq(
             storage.subprocess.load(Ordering::Acquire),
-            process.subprocess().owner_ptr(),
+            process.main_subprocess().expect("process binding is main").owner_ptr(),
         ));
         debug_assert!(!storage.page_map_storage.load(Ordering::Acquire).is_null());
         Self {
@@ -1482,7 +1482,11 @@ impl ProcessMainReadyLease {
     /// Metadata still uses this ready binding until its subsequent close.
     pub(crate) unsafe fn unlink_terminal_subprocess(self) -> Result<(), ProcessMainInitError> {
         self.ensure_ready()?;
-        unsafe { self.storage.source_subprocesses.unlink_main_terminal(self.vm_process()?.subprocess()) }
+        unsafe {
+            self.storage.source_subprocesses.unlink_main_terminal(
+                self.vm_process()?.main_subprocess().ok_or(ProcessMainInitError::SubprocessMismatch)?,
+            )
+        }
             .map_err(ProcessMainInitError::SubprocessRegistry)
     }
 
@@ -2173,13 +2177,13 @@ mod tests {
                             ready_config.has_transparent_huge_pages()
                                 == expected_transparent_huge_pages
                                 && backing.is_active()
-                                && core::ptr::eq(process.subprocess(), subprocess)
+                                && core::ptr::eq(process.subprocess().as_ptr(), subprocess.identity_ptr())
                                 && core::ptr::eq(backing.process().subprocess(), process.subprocess())
                                 && core::ptr::eq(backing.process().policy(), process.policy())
                                 && matches!(
                                     backing.page_map().subprocess(),
                                     Ok(backing_subprocess)
-                                        if core::ptr::eq(backing_subprocess, process.subprocess())
+                                        if core::ptr::eq(backing_subprocess.identity_ptr(), process.subprocess().as_ptr())
                                 )
                         }
                         _ => false,

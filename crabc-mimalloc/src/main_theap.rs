@@ -2974,7 +2974,7 @@ impl MainStaticProcessPageSession {
         binding: crate::process_init::ProcessMainBackingBinding,
     ) -> bool {
         if !self.is_current() || !binding.is_allocation_ready()
-            || !core::ptr::eq(self.subprocess, binding.process().subprocess())
+            || !core::ptr::eq(self.subprocess.identity_ptr(), binding.process().subprocess().as_ptr())
         {
             self.latch();
             return false;

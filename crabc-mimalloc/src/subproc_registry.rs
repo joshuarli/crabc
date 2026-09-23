@@ -296,6 +296,18 @@ mod tests {
         // main is already a member, and this fixture has no concurrent users.
         unsafe { registry.initialize_child(child, main, memory) }.unwrap();
 
+        let mut options = crate::config::VmOptions::uninitialized();
+        options.initialize_all(|_| crate::config::VmOptionEnvironment::Absent);
+        let policy = crate::os::VmPolicy::new(options).unwrap();
+        // SAFETY: `child` is the exact stable allocation retained by this
+        // fixture and remains pinned through the registration/unlink checks.
+        let child_pin = unsafe { core::pin::Pin::new_unchecked(child) };
+        let target = crate::os::ChildVmProcess::new(&policy, child_pin, main.identity())
+            .expect("a registered child borrows the process policy with its own identity");
+        assert!(core::ptr::eq(target.identity(), child.identity()));
+        assert!(!core::ptr::eq(target.identity(), main.identity()));
+        assert!(core::ptr::eq(target.process().subprocess(), child.identity()));
+
         assert!(core::ptr::eq(unsafe { *registry.head.get() }, child.identity()));
         assert!(core::ptr::eq(
             unsafe { *child.source_membership.parent.get() },

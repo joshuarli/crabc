@@ -1939,7 +1939,9 @@ mod tests {
         let mut bootstrap = core::pin::pin!(bootstrap);
         bootstrap
             .as_mut()
-            .bind_detached_for_main_subprocess(process.subprocess())
+            .bind_detached_for_main_subprocess(
+                process.main_subprocess().expect("fixture uses process main"),
+            )
             .expect("the isolated process binds its detached metadata image before first demand");
         let mut allocator = unsafe {
             ProcessMetadataPageAllocator::activate_process_metadata(

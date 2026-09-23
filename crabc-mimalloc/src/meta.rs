@@ -2493,12 +2493,18 @@ impl<'owner> MetadataEngine<'owner> {
         if !binding.is_active() { return Err(MetaError::InitializationRetained); }
         let process = binding.process();
         let page_map = binding.page_map();
-        if !core::ptr::eq(page_map.subprocess().map_err(|_| MetaError::InitializationFailed)?, process.subprocess()) {
+        if !core::ptr::eq(
+            page_map.subprocess().map_err(|_| MetaError::InitializationFailed)?.identity_ptr(),
+            process.subprocess().as_ptr(),
+        ) {
             return Err(MetaError::SubprocessMismatch);
         }
         let config = page_map.memory_config().map_err(|_| MetaError::InitializationFailed)?;
         let mut entry = self.enter()?;
-        entry.ensure_bound(config, process.subprocess())?;
+        entry.ensure_bound(
+            config,
+            process.main_subprocess().ok_or(MetaError::SubprocessMismatch)?,
+        )?;
         // SAFETY: this owner creates only disjoint fresh page ranges and
         // serializes their map accesses and terminal removals under `entry`.
         // The retained process lease excludes safe root replacement.
@@ -3971,7 +3977,9 @@ mod tests {
         options.initialize_all(|_| crate::config::VmOptionEnvironment::Absent);
         let foreign = process_binding_fixture(MainSubprocess::test_static_owner(), options);
         assert_eq!(allocator.bind_process_backing(foreign), Err(MetaError::SubprocessMismatch));
-        let replacement = process_binding_fixture(binding.process().subprocess(), options);
+        let replacement = process_binding_fixture(
+            binding.process().main_subprocess().unwrap(), options,
+        );
         assert_ne!(replacement.page_map().root().unwrap(), binding.page_map().root().unwrap());
         assert_eq!(allocator.bind_process_backing(replacement), Err(MetaError::BackingAlreadySelected));
         let legacy = static_allocator();
@@ -4344,7 +4352,7 @@ mod tests {
         let first = first_binding.process();
         let claim = ProcessMetadataPageBacking::new(first)
             .claim(config(), ArenaId::none(), 1, true, 0).unwrap();
-        let second_binding = process_binding_fixture(first.subprocess(), options);
+        let second_binding = process_binding_fixture(first.main_subprocess().unwrap(), options);
         let before = first.subprocess().vm_statistics().snapshot();
         let rejected = allocator.bind_process_backing(second_binding);
         assert!(claim.release());

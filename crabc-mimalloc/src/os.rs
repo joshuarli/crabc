@@ -624,14 +624,14 @@ impl Drop for VmPolicyOptionAccess<'_> {
 #[derive(Clone, Copy)]
 pub(crate) struct VmProcess<'a> {
     policy: &'a VmPolicy,
-    subprocess: &'a crate::subproc::MainSubprocess,
+    subprocess: &'a crate::subproc::SubprocessIdentity,
 }
 
 impl<'a> VmProcess<'a> {
     #[inline]
     pub(crate) const fn new(
         policy: &'a VmPolicy,
-        subprocess: &'a crate::subproc::MainSubprocess,
+        subprocess: &'a crate::subproc::SubprocessIdentity,
     ) -> Self {
         Self { policy, subprocess }
     }
@@ -640,8 +640,25 @@ impl<'a> VmProcess<'a> {
     pub(crate) const fn policy(self) -> &'a VmPolicy { self.policy }
 
     #[inline]
-    pub(crate) const fn subprocess(self) -> &'a crate::subproc::MainSubprocess {
+    pub(crate) const fn subprocess(self) -> &'a crate::subproc::SubprocessIdentity {
         self.subprocess
+    }
+
+    /// Projects the surrounding process-main owner only for source paths
+    /// whose contract explicitly owns its static TLD/metadata engine.
+    /// Ordinary VM and arena operations use `subprocess()` so a reclaimable
+    /// child identity is never widened to the process wrapper.
+    #[inline]
+    pub(crate) fn main_subprocess(self) -> Option<&'a crate::subproc::MainSubprocess> {
+        if !self.subprocess.is_process_main() { return None; }
+        // SAFETY: `MainSubprocess::identity` is the first repr(C) field and
+        // the compile-time offset assertion in subproc.rs fixes that address
+        // relation. The role check excludes child images, which must never
+        // be projected as a main owner.
+        Some(unsafe {
+            &*core::ptr::from_ref(self.subprocess)
+                .cast::<crate::subproc::MainSubprocess>()
+        })
     }
 
     /// Returns the source-selected current NUMA node for this exact policy
@@ -722,6 +739,57 @@ impl<'a> VmProcess<'a> {
         }?;
         statistics.committed_increase(length);
         Ok(Some(CommitOutcome::NotKnownZero))
+    }
+}
+
+/// Borrowed VM view for one registered child subprocess.
+///
+/// The policy comes from the owning process, while accounting, arena
+/// ownership, and source sequence selection use the pinned child identity.
+/// This is deliberately distinct from `VmProcess<'static>` process-main
+/// bindings: the child image remains reclaimable and may only be used while
+/// this pin-derived borrow is live.
+#[derive(Clone, Copy)]
+pub(crate) struct ChildVmProcess<'child> {
+    process: VmProcess<'child>,
+    child: core::pin::Pin<&'child crate::subproc::ChildSubprocessImage>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ChildVmProcessError {
+    NotRegisteredChild,
+}
+
+impl<'child> ChildVmProcess<'child> {
+    /// Binds the exact process policy to a registered, address-stable child.
+    pub(crate) fn new(
+        policy: &'child VmPolicy,
+        child: core::pin::Pin<&'child crate::subproc::ChildSubprocessImage>,
+        parent: &crate::subproc::SubprocessIdentity,
+    ) -> core::result::Result<Self, ChildVmProcessError> {
+        let image: &'child crate::subproc::ChildSubprocessImage = core::pin::Pin::get_ref(child);
+        let identity: &'child crate::subproc::SubprocessIdentity = image.identity();
+        if !identity.is_registered_child_of(parent) {
+            return Err(ChildVmProcessError::NotRegisteredChild);
+        }
+        Ok(Self {
+            process: VmProcess::new(policy, identity),
+            child,
+        })
+    }
+
+    #[inline]
+    pub(crate) const fn process(self) -> VmProcess<'child> { self.process }
+
+    #[inline]
+    pub(crate) fn child(self) -> core::pin::Pin<&'child crate::subproc::ChildSubprocessImage> {
+        self.child
+    }
+
+    #[inline]
+    pub(crate) fn identity(self) -> &'child crate::subproc::SubprocessIdentity {
+        let image: &'child crate::subproc::ChildSubprocessImage = core::pin::Pin::get_ref(self.child);
+        image.identity()
     }
 }
 

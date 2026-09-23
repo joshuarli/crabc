@@ -2777,7 +2777,9 @@ impl<'bootstrap, 'map> ProcessMetadataPageAllocator<'bootstrap, 'map> {
         bootstrap: Pin<&'bootstrap mut ExclusiveTheapBootstrap>,
         process: crate::os::VmProcess<'static>, page_map: &'map PageMap,
     ) -> Result<Self, BootstrapError> {
-        let session = bootstrap.begin_bound_detached_session(process.subprocess())?;
+        let session = bootstrap.begin_bound_detached_session(
+            process.main_subprocess().ok_or(BootstrapError::InvalidThreadState)?,
+        )?;
         Ok(Self::from_process_metadata_session(session, process, page_map))
     }
 }

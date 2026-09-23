@@ -89,7 +89,8 @@ impl HugeReleaseMetadata {
         config: MemoryConfig, words: usize) -> Result<Self, MetaError> {
         let bytes = words.checked_mul(core::mem::size_of::<usize>())
             .filter(|bytes| *bytes != 0).ok_or(MetaError::AllocationUnavailable)?;
-        let allocation = metadata.zalloc_for_main_subprocess(config, process.subprocess(), bytes)?;
+        let subprocess = process.main_subprocess().ok_or(MetaError::SubprocessMismatch)?;
+        let allocation = metadata.zalloc_for_main_subprocess(config, subprocess, bytes)?;
         // Ordinary metadata zalloc guarantees the allocator's word alignment;
         // the fresh capability has never been exposed as another typed role.
         debug_assert_eq!(allocation.pointer().as_ptr().addr() % core::mem::align_of::<usize>(), 0);

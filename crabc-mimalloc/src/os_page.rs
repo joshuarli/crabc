@@ -1230,7 +1230,9 @@ mod tests {
         let fault = fault::install(fault::Plan::disabled());
         let process = process(false);
         let mut bootstrap = std::boxed::Box::pin(ExclusiveTheapBootstrap::new());
-        let mut session = bootstrap.as_mut().activate_detached_for_main_subprocess(process.subprocess()).unwrap();
+            let mut session = bootstrap.as_mut().activate_detached_for_main_subprocess(
+                process.main_subprocess().expect("fixture uses process main"),
+            ).unwrap();
         for (block, alignment) in [(16, 1), (4096, 1), (64 * MIB, 1), (4096, 128 * KIB)] {
             let before = process.subprocess().vm_statistics().snapshot();
             let claim = OsAlignedPageClaim::allocate_for_process(process, config(4 * KIB), block,
@@ -1397,7 +1399,9 @@ mod tests {
             let mut map = PageMap::initialize(config(4 * KIB), 0, true).unwrap();
             let mut bootstrap = std::boxed::Box::pin(ExclusiveTheapBootstrap::new());
             let mut session = bootstrap.as_mut()
-                .activate_detached_for_main_subprocess(process.subprocess()).unwrap();
+                .activate_detached_for_main_subprocess(
+                    process.main_subprocess().expect("fixture uses process main"),
+                ).unwrap();
             let commit_ordinal = match selected { 2 | 5 => 1, 3 => 2, _ => usize::MAX };
             fault.set(if selected == 1 {
                 fault::Plan::at_pair(fault::Point::Map, 1, fault::Point::Map, 1, Errno::NOMEM)
@@ -1499,7 +1503,9 @@ mod tests {
         use crate::bootstrap::ExclusiveTheapBootstrap;
         let process = process(false);
         let mut bootstrap = std::boxed::Box::pin(ExclusiveTheapBootstrap::new());
-        let mut session = bootstrap.as_mut().activate_detached_for_main_subprocess(process.subprocess()).unwrap();
+        let mut session = bootstrap.as_mut().activate_detached_for_main_subprocess(
+            process.main_subprocess().expect("fixture uses process main"),
+        ).unwrap();
         let mut ordinal = 0;
         for alignment in [1, 128 * KIB] {
             for block in [16, 4096, 16384, 128 * KIB, MIB, 8 * MIB, 64 * MIB] {
