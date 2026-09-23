@@ -618,6 +618,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-locale [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed fixed locale, multibyte and UTF iconv behavior
   owned-wordexp [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed word expansion across controlled shell states
   owned-bsd-random [--extracted] --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT  qualify installed legacy random state and synchronization
+  owned-bsd-random-receipt validate-report REPORT  replay an installed BSD random receipt in its native product mount
   wordexp-process-adapter  run the private wordexp process-adapter boundary tests
   wordexp-process-private  run the private actual-spawn wordexp process fixture
   wordexp-paths-private  run the private wordexp pathname and passwd fixture
@@ -6967,7 +6968,7 @@ case "$command" in
     memfd-create-header-abi) ;;
     vector-io-header-abi) ;;
     libc-crt1-static-tls) ;;
-    owned-crypt-runtime|owned-atomic-addressable-profile|owned-bsd-random) ;;
+    owned-crypt-runtime|owned-atomic-addressable-profile|owned-bsd-random|owned-bsd-random-receipt) ;;
     native-thread-signal-abi) ;;
     owned-system-cancellation) ;;
     owned-rand) ;;
@@ -7181,6 +7182,11 @@ case "$command" in
     owned-bsd-random)
         prepare_owned_bsd_random_arguments "$@"
         set -- "${BSD_RANDOM_ARGUMENTS[@]}"
+        ;;
+    owned-bsd-random-receipt)
+        [ "$#" -eq 2 ] && [ "$1" = validate-report ] || fail 'owned-bsd-random-receipt requires validate-report REPORT'
+        bsd_random_receipt="$(translate_owned_posix_product "$2" receipt-file)" || exit 2
+        set -- validate-report "$bsd_random_receipt"
         ;;
     owned-pthread-family)
         prepare_owned_pthread_family_arguments "$@"
@@ -9323,6 +9329,10 @@ case "$command" in
     owned-bsd-random)
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_bsd_random.sh "$@"
+        ;;
+    owned-bsd-random-receipt)
+        ensure_image
+        run_in_chroot_cap_container python3 -B /workspace/compat/x86_64/owned_bsd_random_receipt.py "$@"
         ;;
     owned-stdio)
         ensure_image

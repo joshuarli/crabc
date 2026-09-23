@@ -51,6 +51,7 @@ import owned_posix_product_evidence as product_evidence
 import headers_layouts_aggregate
 import owned_public_data_variable_runtime as public_data_variable_runtime
 import loader_structural_owner_contract_reader as loader_structural_owner_evidence
+import owned_bsd_random_receipt as bsd_random_evidence
 
 SCHEMA = 'crabc.x86_64-native-abi-selection-report/v8'
 CONTRACT_SCHEMA = 'crabc.x86_64-native-abi-selection/v1'
@@ -105,6 +106,8 @@ POSIX_SYSV_SIGNAL_LIMITS = [
     'The attached signal-helpers cells remain the admission reader’s current source-bound static and dynamic consumer evidence.',
     'This join does not consume POSIX family completion, qualification, promotion, or public-support gates.',
 ]
+BSD_RANDOM_NAMES = ('initstate', 'random', 'setstate', 'srandom')
+BSD_RANDOM_REQUIREMENT = 'current source-bound selected-provider and BSD random semantic receipt'
 SELECTORS = {'header-providers', 'feature-abi-only', 'exact-file-members', 'explicit'}
 DISPOSITIONS = {'public-provider', 'private-provider', 'unresolved'}
 SUPPORTED_TYPES = {'NOTYPE', 'OBJECT', 'FUNC', 'SECTION', 'FILE', 'COMMON', 'TLS', 'IFUNC'}
@@ -1968,6 +1971,10 @@ def expand_obligations(contract: Mapping[str, Any], inputs: Mapping[str, Any]) -
                         metadata['size_bytes'] = int(frozen_row['size'])
                 metadata.update(group['placement_metadata'].get(artifact, {}))
                 record['expected_placements'].append({'artifact_key': artifact, 'metadata': metadata, 'metadata_rule': group['static_metadata_rule'] if artifact == 'candidate-static' else 'explicit'})
+            if group['id'] == 'declared-callable-providers' and name in BSD_RANDOM_NAMES:
+                # Feature routing selects a provider, but cannot prove ordinary
+                # extraction, state behavior, or fork recovery in real products.
+                record['unresolved'].append(BSD_RANDOM_REQUIREMENT)
             if group['id'] == ERRNO_PRIVATE_ALIAS_GROUP:
                 # Metadata selects this deliberately non-public provider, but
                 # cannot stand in for its source-bound alias/lifecycle receipt.
@@ -2647,6 +2654,90 @@ def attach_fixed_c_producer_metadata(expanded: Sequence[Mapping[str, Any]], comp
                 'owner': FIXED_C_PRODUCER_OWNER,
             })
     require(len(joins) == selection['metadata_placement_count'], 'fixed-C producer placement count differs')
+    return joins
+
+
+def bsd_random_receipt_adapter(report_path: Path | None, *, paths: Mapping[str, Path],
+                               source: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Bind the BSD random consumer matrix to the selected source and products."""
+    if report_path is None:
+        return None
+    path = physical_work_path(report_path, directory=False, own=True)
+    require(path.is_relative_to(ROOT / '.work'), 'BSD random receipt belongs to another checkout')
+    before = file_identity(path)
+    # The owning link receipts contain /workspace paths and sealed product
+    # links. Replay them inside that exact native mount, then bind the same
+    # physical files and selected product roots here on the host.
+    container_path = Path('/workspace') / path.relative_to(ROOT)
+    command = [str(ROOT / 'scripts/dev-x86_64.sh'), 'owned-bsd-random-receipt',
+               'validate-report', str(container_path)]
+    completed = subprocess.run(command, cwd=ROOT, stdin=subprocess.DEVNULL,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    require(completed.returncode == 0,
+            f'BSD random native receipt rejected: {completed.stderr.decode(errors="replace")}')
+    require(same(before, file_identity(path)), 'BSD random receipt changed during replay')
+    report = exact(read_json(path), {'schema', 'scope', 'files', 'products', 'scenario_roots'},
+                   'BSD random receipt')
+    snapshot = exact(read_json(path.parent / 'source-before.json'),
+                     {'schema', 'revision', 'status', 'tree_sha256', 'selected_files'},
+                     'BSD random source snapshot')
+    require(report['schema'] == bsd_random_evidence.SCHEMA
+            and report['scope'] == 'installed-bsd-random-component'
+            and snapshot['status'] == '' and source['clean'] is True
+            and snapshot['revision'] == source['revision']
+            and snapshot['tree_sha256'] == source['content_sha256'],
+            'BSD random receipt is not from the selected clean source')
+    product_inputs = exact(report['products'],
+                           {'schema', 'roles', 'products', 'extracted_provenance'},
+                           'BSD random product inputs')
+    for kind in ('static', 'dynamic'):
+        selected = paths[f'{kind}_product']
+        require(selected.is_relative_to(ROOT / '.work'),
+                f'BSD random selected {kind} product is outside the checkout')
+        container_product = str(Path('/workspace') / selected.relative_to(ROOT))
+        require(product_inputs['products'][kind]['path'] == container_product,
+                f'BSD random {kind} product differs from ABI selection')
+    return {
+        'status': 'bsd-random-component-attached', 'report': before,
+        'source': {'revision': snapshot['revision'], 'content_sha256': snapshot['tree_sha256']},
+        'products': copy.deepcopy(report['products']),
+        'files': copy.deepcopy(report['files']),
+        'scenario_roots': copy.deepcopy(report['scenario_roots']),
+        'limits': [
+            'Only the four BSD random callables receive selected provider and installed consumer evidence.',
+            'POSIX family completion, full ABI closure, promotion and public support remain separate.',
+        ],
+    }
+
+
+def attach_bsd_random_receipt(accounting: Mapping[str, Any],
+                              companion: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """Discharge only the quartet's explicit provider and semantic reason."""
+    if companion is None:
+        return []
+    records, placements, occurrences = _accounting_indexes(accounting, description='BSD random receipt')
+    require(companion['status'] == 'bsd-random-component-attached',
+            'BSD random component status differs')
+    joins = []
+    for name in BSD_RANDOM_NAMES:
+        record = records.get((name, None, False))
+        require(record is not None and record.get('selection', {}).get('group') == 'declared-callable-providers'
+                and record['selection'].get('disposition') == 'public-provider'
+                and record.get('unresolved') == [BSD_RANDOM_REQUIREMENT],
+                f'BSD random {name} selected requirement differs')
+        matched = {}
+        for artifact, table in (('candidate-static', '.symtab'), ('candidate-shared', '.dynsym')):
+            placement, occurrence = _selected_placement(
+                placements, occurrences, name=name, artifact_key=artifact, table=table,
+                role='definition', metadata={'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT'},
+                description=f'BSD random {name} {artifact}',
+            )
+            matched[artifact] = {
+                'placement': placement, 'occurrence_index': occurrence['index'],
+            }
+        _remove_identity_requirements(accounting, record, [BSD_RANDOM_REQUIREMENT],
+                                      description=f'BSD random {name}')
+        joins.append({'name': name, 'placements': matched, 'receipt': copy.deepcopy(companion['report'])})
     return joins
 
 
@@ -9544,6 +9635,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
                   headers_layouts_aggregate_report: Path | None = None,
                   text_family_semantic_report: Path | None = None,
                   posix_sysv_signal_admission_report: Path | None = None,
+                  bsd_random_receipt_report: Path | None = None,
                   public_data_declaration_runtime_report: Path | None = None,
                   loader_structural_owner_receipt_report: Path | None = None) -> dict[str, Any]:
     if pthread_timed_feature_report is not None:
@@ -9619,6 +9711,9 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     )
     posix_sysv_signal_admission_companion = posix_sysv_signal_admission_adapter(
         posix_sysv_signal_admission_report, paths=paths, source=source_before,
+    )
+    bsd_random_receipt_companion = bsd_random_receipt_adapter(
+        bsd_random_receipt_report, paths=paths, source=source_before,
     )
     declaration = declaration_adapter(
         declaration_report,
@@ -9697,6 +9792,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     posix_sysv_signal_admission_joins = attach_posix_sysv_signal_admission(
         accounting, posix_sysv_signal_admission_companion, paths=paths,
     )
+    bsd_random_receipt_joins = attach_bsd_random_receipt(accounting, bsd_random_receipt_companion)
     family_evidence_blockers, family_semantic_receipts = family_semantic_evidence(
         inputs['families'], headers_layouts_companion=headers_layouts_aggregate_companion,
         text_family_companion=text_family_semantic_companion, paths=paths,
@@ -9728,6 +9824,10 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     _recheck_posix_sysv_signal_admission(
         posix_sysv_signal_admission_companion, paths=paths, source=source_before,
     )
+    if bsd_random_receipt_companion is not None:
+        receipt_path = Path(bsd_random_receipt_companion['report']['path'])
+        require(same(bsd_random_receipt_adapter(receipt_path, paths=paths, source=source_before),
+                     bsd_random_receipt_companion), 'BSD random receipt changed during final recheck')
     _recheck_public_data_declaration_runtime(
         public_data_declaration_runtime_companion, paths=paths, source=source_before, measurement=measurement,
         declaration_report=declaration_report, ordinary_declaration_abi_report=ordinary_declaration_abi_report,
@@ -9787,6 +9887,8 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'text_fopen64_structural_joins': text_fopen64_structural_joins,
             'posix_sysv_signal_admission_companion': posix_sysv_signal_admission_companion,
             'posix_sysv_signal_admission_joins': posix_sysv_signal_admission_joins,
+            'bsd_random_receipt_companion': bsd_random_receipt_companion,
+            'bsd_random_receipt_joins': bsd_random_receipt_joins,
             'family_semantic_receipts': family_semantic_receipts,
             **accounting, 'closure': {'complete': not blockers, 'blockers': blockers}, 'status': dict(STATUS),
             'limits': ['selection audit is not qualification', 'complete raw ELF observations stay with the publicly replayed supplement',
@@ -9814,6 +9916,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                  headers_layouts_aggregate_report: Path | None = None,
                  text_family_semantic_report: Path | None = None,
                  posix_sysv_signal_admission_report: Path | None = None,
+                 bsd_random_receipt_report: Path | None = None,
                  public_data_declaration_runtime_report: Path | None = None,
                  loader_structural_owner_receipt_report: Path | None = None,
                  **measurement_inputs: Path) -> dict[str, Any]:
@@ -9840,6 +9943,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                            headers_layouts_aggregate_report=headers_layouts_aggregate_report,
                            text_family_semantic_report=text_family_semantic_report,
                            posix_sysv_signal_admission_report=posix_sysv_signal_admission_report,
+                           bsd_random_receipt_report=bsd_random_receipt_report,
                            public_data_declaration_runtime_report=public_data_declaration_runtime_report,
                            loader_structural_owner_receipt_report=loader_structural_owner_receipt_report)
     output.mkdir()
@@ -9866,6 +9970,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                     headers_layouts_aggregate_report: Path | None = None,
                     text_family_semantic_report: Path | None = None,
                     posix_sysv_signal_admission_report: Path | None = None,
+                    bsd_random_receipt_report: Path | None = None,
                     public_data_declaration_runtime_report: Path | None = None,
                     loader_structural_owner_receipt_report: Path | None = None,
                     **measurement_inputs: Path) -> dict[str, Any]:
@@ -9894,6 +9999,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                              headers_layouts_aggregate_report=headers_layouts_aggregate_report,
                              text_family_semantic_report=text_family_semantic_report,
                              posix_sysv_signal_admission_report=posix_sysv_signal_admission_report,
+                             bsd_random_receipt_report=bsd_random_receipt_report,
                              public_data_declaration_runtime_report=public_data_declaration_runtime_report,
                              loader_structural_owner_receipt_report=loader_structural_owner_receipt_report)
     require(same(report, expected), 'selection report does not reconstruct exactly from source inputs and public measurement replay')
@@ -9928,6 +10034,7 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument('--headers-layouts-aggregate-report', type=Path)
     parser.add_argument('--text-family-semantic-report', type=Path)
     parser.add_argument('--posix-sysv-signal-admission-report', type=Path)
+    parser.add_argument('--bsd-random-receipt-report', type=Path)
     parser.add_argument('--public-data-declaration-runtime-report', type=Path)
     parser.add_argument('--loader-structural-owner-receipt-report', type=Path)
     options = [arg.split('=', 1)[0] for arg in argv if arg.startswith('--')]
@@ -9951,6 +10058,7 @@ def main(argv: Sequence[str]) -> int:
                                                 'headers_layouts_aggregate_report',
                                                 'text_family_semantic_report',
                                                 'posix_sysv_signal_admission_report',
+                                                'bsd_random_receipt_report',
                                                 'public_data_declaration_runtime_report',
                                                 'loader_structural_owner_receipt_report')}
     kwargs['ordinary_link_report'] = kwargs.pop('public_data_ordinary_link_report')

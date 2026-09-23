@@ -119,6 +119,7 @@ snapshot_source() {
 
     python3 -B - "$destination" "$ROOT" <<'PY'
 import hashlib
+import json
 import os
 from pathlib import Path
 import stat
@@ -142,6 +143,7 @@ for raw_name in names:
 selected = [
     'compat/x86_64/owned_bsd_random_probe.c',
     'compat/x86_64/run_owned_bsd_random.sh',
+    'compat/x86_64/owned_bsd_random_receipt.py',
     'include/stdlib.h',
     'libc/src/c_abi/x86_64/bsd_random.rs',
 ]
@@ -392,6 +394,8 @@ output.write_text(json.dumps({
         'probe': {'path': str(probe), 'sha256': digest(probe)},
         'runner': {'path': str(root / 'compat/x86_64/run_owned_bsd_random.sh'),
                    'sha256': digest(root / 'compat/x86_64/run_owned_bsd_random.sh')},
+        'reader': {'path': str(root / 'compat/x86_64/owned_bsd_random_receipt.py'),
+                   'sha256': digest(root / 'compat/x86_64/owned_bsd_random_receipt.py')},
         'port': {'path': str(root / 'libc/src/c_abi/x86_64/bsd_random.rs'),
                  'sha256': digest(root / 'libc/src/c_abi/x86_64/bsd_random.rs')},
         'installed_object': {'path': str(workload), 'sha256': digest(workload)},
@@ -400,8 +404,10 @@ output.write_text(json.dumps({
 }, indent=2, sort_keys=True) + '\n', encoding='utf-8')
 PY
 sha256sum "$PROBE" "$ROOT/compat/x86_64/run_owned_bsd_random.sh" \
+    "$ROOT/compat/x86_64/owned_bsd_random_receipt.py" \
     "$ROOT/libc/src/c_abi/x86_64/bsd_random.rs" >"$work/source-input.sha256"
+python3 -B "$ROOT/compat/x86_64/owned_bsd_random_receipt.py" collect-report "$work"
 matrix='static-et-exec/static-pie plus dynamic-pie-kernel/direct and dynamic-non-pie-kernel/direct'
-printf 'owned BSD random: PASS (same installed-header object through pinned musl; %s; source/oracle/installed headers, reseed/default/state classes through 272 bytes, errno 0..7, pointer/buffer restoration, invariant concurrency, active-worker fork repair, provider symbols, link-receipt identities, and source receipt; supplied roles: static=%s dynamic=%s); evidence: %s\n' \
+printf 'owned BSD random: PASS (same installed-header object through pinned musl; %s; source/oracle/installed headers, reseed/default/state classes through 272 bytes, errno 0..7, pointer/buffer restoration, invariant concurrency, active-worker fork repair, provider symbols, link-receipt identities, and source receipt; supplied roles: static=%s dynamic=%s); evidence: %s/report.json\n' \
     "$matrix" "$(python3 -B -c 'import json,sys; print(json.load(open(sys.argv[1]))["roles"]["static"])' "$work/product-inputs.json")" \
     "$(python3 -B -c 'import json,sys; print(json.load(open(sys.argv[1]))["roles"]["dynamic"])' "$work/product-inputs.json")" "$work"

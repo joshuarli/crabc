@@ -679,6 +679,10 @@ The BSD random quartet (`initstate`, `random`, `setstate`, `srandom`) is selecte
 through the checked installed-header provider route and the owned static
 runtime's exact feature roster. The source is `bsd_random.rs`; its installed
 semantic receipt must still prove the selected static and shared products.
+`run_owned_bsd_random.sh` now writes `report.json` beside its raw outputs.
+`owned_bsd_random_receipt.py` replays that report in the native product mount;
+`--bsd-random-receipt-report REPORT` attaches it to the selection audit only
+when its clean source and both installed products match the selected cohort.
 `__crabc_runtime_v1` and `rust_eh_personality` remain outside these
 source-owner groups. This section does not add allocator metadata or Rust
 unwinder identities.

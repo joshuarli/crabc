@@ -358,6 +358,7 @@ class SourceOwnerPolicyTests(unittest.TestCase):
         for name in ('initstate', 'random', 'setstate', 'srandom'):
             self.assertEqual(self.records[name]['selection']['group'], 'declared-callable-providers')
             self.assertEqual(self.records[name]['selection']['disposition'], 'public-provider')
+            self.assertEqual(self.records[name]['unresolved'], [selection.BSD_RANDOM_REQUIREMENT])
             self.assertEqual({row['artifact_key'] for row in self.records[name]['expected_placements']},
                              {'candidate-static', 'candidate-shared'})
 
