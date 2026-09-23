@@ -131,6 +131,45 @@ flags; none validates the parity ledger or branches on the POSIX family
 status. The parity-ledger validator runs only after the admission receipt is
 present.
 
+### Admission sequence
+
+Run every step from the one clean candidate checkout, in its own `.work`.
+Seed `.work/x86_64/source-oracles` with the pinned OS-test and libc-test
+checkouts first: the native container has no network. `$DYN` is the
+`materialized-dynamic.*` directory printed by step 2 and `$STATIC` is the
+primary static product; the four companions must name that same `installed`
+dynamic product.
+
+```sh
+./scripts/dev-x86_64.sh owned-posix-static-products .work/x86_64/posix-static      # 1
+./scripts/dev-x86_64.sh materialized-dynamic-sysroot                               # 2
+STATIC=.work/x86_64/posix-static/products/primary
+./scripts/dev-x86_64.sh owned-posix-family \
+  --static-preparation .work/x86_64/posix-static/preparation.json \
+  --dynamic-qualification "$DYN/qualification.json" --output .work/x86_64/posix-family
+./scripts/dev-x86_64.sh owned-crypt-runtime --static-sysroot "$STATIC" "$DYN/installed"
+./scripts/dev-x86_64.sh owned-atomic-addressable-profile "$DYN/installed"
+./scripts/dev-x86_64.sh owned-wordexp --static-sysroot "$STATIC" "$DYN/installed"
+./scripts/dev-x86_64.sh owned-wordexp-expected-inputs --static-sysroot "$STATIC" "$DYN/installed"
+./scripts/dev-x86_64.sh owned-posix-native --family-execution .work/x86_64/posix-family/execution.json \
+  --crypt-profile CRYPT/crypt-profile.json \
+  --atomic-addressable-profile ATOMIC/evidence/atomic-addressable-profile.json \
+  --wordexp-profile WORDEXP/owned-wordexp-products.json \
+  --wordexp-expected-native-inputs EXPECTED/expected-native-inputs.json \
+  --output .work/x86_64/posix-native
+python3 -B compat/x86_64/owned_posix_native_execution.py admit \
+  --native-execution .work/x86_64/posix-native/native-execution.json \
+  --output .work/x86_64/posix-family-admission
+python3 -B compat/x86_64/owned_posix_native_execution.py validate-admission \
+  .work/x86_64/posix-family-admission/family-admission.json
+python3 -B compat/x86_64/validate_parity_ledger.py
+./scripts/dev-x86_64.sh campaign-status
+```
+
+Steps 1 and 2 are independent, as are the matrix and the four companions.
+`owned-wordexp-expected-inputs` only captures the independent native
+tool/oracle seal in the same pinned image; it runs no wordexp cell.
+
 The finite credential-alias, address-taken atomic, crypt, strptime, and wordexp
 differences retain upstream reports, counts and raw failures. The separately
 bounded corrected-math entries retain their candidate-pass/pinned-musl-oracle-

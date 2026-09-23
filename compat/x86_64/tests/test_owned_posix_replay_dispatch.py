@@ -15,8 +15,10 @@ COMMANDS = (
     "owned-kernel-residual", "owned-linux-control", "owned-dynamic-spawn",
     "owned-process-trio", "owned-underscore-fork", "owned-utmpx", "owned-account-files", "owned-syslog", "owned-crypt-runtime", "owned-system-cancellation",
     "owned-signal-helpers", "owned-pthread-signal", "owned-posix-timers", "owned-regex",
-    "owned-dynamic-io-cancellation", "project-header-extension-policy", "owned-locale", "owned-math-fenv-all-entry", "owned-wordexp", "owned-stdio", "owned-aio", "owned-numeric-calendar", "owned-rand",
+    "owned-dynamic-io-cancellation", "project-header-extension-policy", "owned-locale", "owned-math-fenv-all-entry", "owned-wordexp", "owned-wordexp-expected-inputs", "owned-stdio", "owned-aio", "owned-numeric-calendar", "owned-rand",
 )
+# Commands whose runner consumes, rather than builds, the dynamic product.
+DYNAMIC_REQUIRED = ("owned-pthread-signal", "owned-math-fenv-all-entry", "owned-wordexp-expected-inputs")
 
 
 class OwnedPosixReplayDispatchTests(unittest.TestCase):
@@ -72,7 +74,7 @@ class OwnedPosixReplayDispatchTests(unittest.TestCase):
             for arguments in ([], [str(self.dynamic)], ["--static-sysroot", str(self.static)]):
                 with self.subTest(command=command, arguments=arguments):
                     result = self.invoke(command, arguments)
-                    required_missing = (command in ("owned-pthread-signal", "owned-math-fenv-all-entry") and arguments != [str(self.dynamic)]) or (command in ("owned-locale", "owned-wordexp", "owned-stdio", "owned-numeric-calendar", "owned-aio") and len(arguments) == 2)
+                    required_missing = (command in DYNAMIC_REQUIRED and arguments != [str(self.dynamic)]) or (command in ("owned-locale", "owned-wordexp", "owned-stdio", "owned-numeric-calendar", "owned-aio") and len(arguments) == 2)
                     self.assertEqual(result.returncode, 2 if required_missing else 0, result.stderr)
                     if required_missing:
                         self.assertIn("usage:", result.stderr)
@@ -164,7 +166,7 @@ class OwnedPosixReplayDispatchTests(unittest.TestCase):
         result = self.invoke("--help", [])
         self.assertEqual(result.returncode, 2)
         for command in COMMANDS:
-            suffix = "DYNAMIC_SYSROOT" if command in ("owned-pthread-signal", "owned-math-fenv-all-entry") else "[DYNAMIC_SYSROOT]"
+            suffix = "DYNAMIC_SYSROOT" if command in DYNAMIC_REQUIRED else "[DYNAMIC_SYSROOT]"
             self.assertIn(f"{command} [--static-sysroot STATIC_SYSROOT] {suffix}", result.stderr)
 
 
