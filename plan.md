@@ -34,7 +34,9 @@ are not transferable passes for a different revision.
   cancellation, classic netdb, protocol database, and alias components passed
   on the same products; the complete resolver family assessment and independent
   reader passed. The text family's 27 producer runs passed and its family reader
-  is pending. These source-bound checkpoints do not promote
+  is pending. The current-source static process-global fixture passed normal
+  and empty-argv startup against pinned musl and the owned runtime at
+  `f600772a6`. These source-bound checkpoints do not promote
   current main. Complete the actual remaining
   aggregate/family admissions from `campaign-status`, not another symbol sweep.
 - **Allocator:** M1's six bounded components passed at `0daef148bd20dc2bef2ac9dc34af4f3dd0e99d7a`.
@@ -47,9 +49,10 @@ are not transferable passes for a different revision.
   subprocess identity split passed its focused native test at `563ce8abd`.
   Parent-issued child context and metadata-Theap preparation passed its focused
   native test at `0617722e4`; a linear parent-Heap child storage capability
-  passed its focused merged native test at `97522c679`. Child metadata engine,
-  real Heap/page teardown, and parent storage release after those transitions
-  remain open. These
+  passed its focused merged native test at `97522c679`. The parent-allocated
+  child Heap's no-page registry/Theap/list teardown and exact storage release
+  passed its focused merged native test at `e9968f2dc`. Child MetadataEngine
+  readiness and real page destruction remain open. These
   bounded witnesses do not close the milestone.
 - **Integration:** Accepted C stays default. Explicit owned static and dynamic
   native-shadow products and graph/purity checks exist. The private
