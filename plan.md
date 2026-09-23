@@ -30,9 +30,11 @@ are not transferable passes for a different revision.
   admission passed with independent readers on clean `3c47d990d`; the pthread
   installed-behavior component and its atomic/clone prerequisites passed there.
   The loader's 21 synthetic and 34 package cases, three inventories, and
-  independent family reader passed on that cohort. The resolver network reader
-  passed on the same products; the text family's 27 producer runs passed and its
-  family reader is pending. These source-bound checkpoints do not promote
+  independent family reader passed on that cohort. The resolver network,
+  cancellation, classic netdb, protocol database, and alias components passed
+  on the same products; the complete resolver family assessment and independent
+  reader passed. The text family's 27 producer runs passed and its family reader
+  is pending. These source-bound checkpoints do not promote
   current main. Complete the actual remaining
   aggregate/family admissions from `campaign-status`, not another symbol sweep.
 - **Allocator:** M1's six bounded components passed at `0daef148bd20dc2bef2ac9dc34af4f3dd0e99d7a`.
