@@ -9481,6 +9481,22 @@ mod tests {
                     .identity()
                     .matches_published_detached_metadata_theap(metadata_theap))
                 .unwrap());
+            let (metadata_identity_matches, metadata_heap_matches, metadata_tld_is_detached) = child
+                .with_child_metadata_entry(|image, heap, theap, memory| {
+                    let identity = image.as_ref().get_ref().identity();
+                    let heap_pointer = core::ptr::from_ref(heap.as_ref().get_ref()).cast_mut();
+                    assert_eq!(memory.malloc_memory().map(|malloc| malloc.base),
+                        Some(heap_pointer.cast()));
+                    (
+                        identity.matches_published_detached_metadata_theap(NonNull::from(&mut *theap)),
+                        theap.heap() == heap_pointer,
+                        theap.is_detached(),
+                    )
+                })
+                .expect("child metadata entry holds its own metadata lock");
+            assert!(metadata_identity_matches);
+            assert!(metadata_heap_matches);
+            assert!(metadata_tld_is_detached);
 
             // Source destruction starts with registry unlink, then detaches
             // the metadata-Theap from TLD and Heap lists. The exact metadata

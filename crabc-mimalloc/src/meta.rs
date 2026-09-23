@@ -1365,6 +1365,30 @@ impl ChildContextOwner {
         self.with_lease(|mut lease| lease.with_image(operation))
     }
 
+    /// Projects the child image, then locks its metadata entry before forming
+    /// a mutable projection of the separately parent-owned metadata Theap.
+    /// Both capabilities remain in this owner for the full closure.
+    fn with_locked_metadata_entry<R>(
+        &mut self,
+        operation: impl for<'image, 'theap> FnOnce(
+            Pin<&'image crate::subproc::ChildSubprocessImage>,
+            &'theap mut Theap,
+        ) -> R,
+    ) -> Option<R> {
+        if self.terminal || !self.image_initialized { return None; }
+        let Self { context, metadata_theap, .. } = self;
+        let image = context.child_subprocess_image_mut()?;
+        let child = image.as_ref();
+        let identity = child.get_ref().identity();
+        let _metadata_lock = identity.lock_metadata_theap().ok()?;
+        let theap = metadata_theap.as_mut()?.dynamic_theap_mut()?;
+        let theap_pointer = NonNull::from(&mut *theap);
+        if !identity.matches_published_detached_metadata_theap(theap_pointer) {
+            return None;
+        }
+        Some(operation(child, theap))
+    }
+
     /// Frees a never-published child context in source reverse-allocation
     /// order. Once registry or intrusive membership has been published,
     /// callers must use the terminal source teardown path before release.
@@ -1645,6 +1669,29 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     ) -> Option<R> {
         if self.stage != ChildMainHeapStage::HeapReady { return None; }
         self.context.with_lease(|mut lease| lease.with_metadata_theap(operation))
+    }
+
+    /// Holds the child subprocess's own metadata-Theap lock while lending
+    /// the pinned child identity, exact child main Heap, and metadata Theap
+    /// for one operation. The closure cannot retain any projection after the
+    /// lock or owner borrow ends.
+    pub(crate) fn with_child_metadata_entry<R>(
+        &mut self,
+        operation: impl for<'child, 'heap_view, 'theap> FnOnce(
+            Pin<&'child crate::subproc::ChildSubprocessImage>,
+            Pin<&'heap_view mut Heap>,
+            &'theap mut Theap,
+            MemoryId,
+        ) -> R,
+    ) -> Option<R> {
+        if self.stage != ChildMainHeapStage::HeapReady { return None; }
+        let Self { context, heap_storage, .. } = self;
+        let heap_storage = heap_storage.as_mut()?;
+        let memory = heap_storage.memory_id();
+        let result = context.with_locked_metadata_entry(|child, metadata_theap| {
+            heap_storage.with_heap(|heap| operation(child, heap, metadata_theap, memory))
+        })?;
+        result
     }
 
     /// Initializes the source child main Heap against its parent-issued
