@@ -56,7 +56,7 @@ use crate::page_map::{PageMap, PageMapInitializationError};
 use crate::single_thread::{FreeError, SingleThreadAllocator, ProcessMetadataPageAllocator, CanonicalProcessMetadataPageAllocator};
 use crate::size_class;
 use crate::types::{
-    ArenaPages, LiveThreadId, MemoryId, MemoryKind, Page, Theap, ThreadLocalData,
+    ArenaPages, Heap, LiveThreadId, MemoryId, MemoryKind, Page, Theap, ThreadLocalData,
     ThreadSequence,
 };
 use crate::subproc::MainSubprocess;
@@ -169,6 +169,15 @@ pub(crate) enum MetaError {
     Free(FreeError),
 }
 
+/// Failure while attaching or detaching a child subprocess's metadata Theap
+/// through the parent's detached metadata TLD.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ChildMetadataTheapError {
+    Metadata(MetaError),
+    Theap(crate::types::TheapMainStaticInitError),
+    TheapList(crate::types::ChildTheapDetachError),
+}
+
 /// Rejection from one typed allocator-owned ordinary-bitmap projection.
 ///
 /// A dynamic bitmap stays owned by its [`MetaAllocation`] capability; this
@@ -199,7 +208,7 @@ pub(crate) struct MetaAllocation<'owner> {
     pointer: NonNull<u8>,
     memory: MemoryId,
     requested_size: usize,
-    owner: NonNull<MetaAllocator>,
+    owner: NonNull<MetadataEngine<'owner>>,
     state: AtomicU8,
     origin: MetaAllocationOrigin,
     bitmap_image_state: BitmapImageState,
@@ -211,7 +220,7 @@ pub(crate) struct MetaAllocation<'owner> {
     thread_local_data_initialized: bool,
     dynamic_theap_initialized: bool,
     dynamic_arena_pages_initialized: bool,
-    _owner: PhantomData<Pin<&'owner MetaAllocator>>,
+    _owner: PhantomData<Pin<&'owner MetadataEngine<'owner>>>,
 }
 
 // SAFETY: the capability is linear and all allocator mutation is serialized
@@ -223,7 +232,7 @@ unsafe impl Send for MetaAllocation<'_> {}
 impl<'owner> MetaAllocation<'owner> {
     #[inline]
     fn new(
-        owner: Pin<&'owner MetaAllocator>,
+        owner: Pin<&'owner MetadataEngine<'owner>>,
         pointer: NonNull<u8>,
         requested_size: usize,
         origin: MetaAllocationOrigin,
@@ -278,7 +287,7 @@ impl<'owner> MetaAllocation<'owner> {
     #[inline]
     pub(crate) fn with_bitmap_view<R>(
         &self,
-        owner: Pin<&MetaAllocator>,
+        owner: Pin<&MetadataEngine<'owner>>,
         layout: BitmapLayout,
         operation: impl FnOnce(&BitmapView<'_>) -> R,
     ) -> Result<R, MetaBitmapProjectionError> {
@@ -298,7 +307,7 @@ impl<'owner> MetaAllocation<'owner> {
     #[inline]
     pub(crate) fn initialize_zeroed_bitmap<R>(
         &mut self,
-        owner: Pin<&MetaAllocator>,
+        owner: Pin<&MetadataEngine<'owner>>,
         layout: BitmapLayout,
         operation: impl FnOnce(&mut BitmapView<'_>) -> R,
     ) -> Result<R, MetaBitmapProjectionError> {
@@ -322,7 +331,7 @@ impl<'owner> MetaAllocation<'owner> {
     #[inline]
     pub(crate) fn publish_preserved_bitmap<R>(
         &mut self,
-        owner: Pin<&MetaAllocator>,
+        owner: Pin<&MetadataEngine<'owner>>,
         layout: BitmapLayout,
         operation: impl FnOnce(&mut BitmapView<'_>) -> R,
     ) -> Result<R, MetaBitmapProjectionError> {
@@ -346,7 +355,7 @@ impl<'owner> MetaAllocation<'owner> {
     #[inline]
     pub(crate) fn copy_bitmap_image_from(
         &mut self,
-        owner: Pin<&MetaAllocator>,
+        owner: Pin<&MetadataEngine<'owner>>,
         target_layout: BitmapLayout,
         source: &MetaAllocation<'owner>,
         source_layout: BitmapLayout,
@@ -382,7 +391,7 @@ impl<'owner> MetaAllocation<'owner> {
     #[inline]
     pub(crate) fn initialize_dynamic_arena_pages(
         &mut self,
-        owner: Pin<&MetaAllocator>,
+        owner: Pin<&MetadataEngine<'owner>>,
         layout: ArenaPagesLayout,
     ) -> bool {
         if !self.validate_dynamic_arena_pages_image(owner, layout)
@@ -434,7 +443,7 @@ impl<'owner> MetaAllocation<'owner> {
     #[inline]
     pub(crate) fn dynamic_arena_pages_pointer(
         &self,
-        owner: Pin<&MetaAllocator>,
+        owner: Pin<&MetadataEngine<'owner>>,
         layout: ArenaPagesLayout,
     ) -> Option<NonNull<ArenaPages>> {
         if !self.dynamic_arena_pages_initialized
@@ -449,7 +458,7 @@ impl<'owner> MetaAllocation<'owner> {
     #[inline]
     pub(crate) fn with_dynamic_arena_pages<R>(
         &self,
-        owner: Pin<&MetaAllocator>,
+        owner: Pin<&MetadataEngine<'owner>>,
         layout: ArenaPagesLayout,
         operation: impl FnOnce(&BitmapView<'_>) -> R,
     ) -> Option<R> {
@@ -460,7 +469,7 @@ impl<'owner> MetaAllocation<'owner> {
     #[inline]
     pub(crate) fn with_dynamic_arena_abandoned_pages<R>(
         &self,
-        owner: Pin<&MetaAllocator>,
+        owner: Pin<&MetadataEngine<'owner>>,
         layout: ArenaPagesLayout,
         bin: usize,
         operation: impl FnOnce(&BitmapView<'_>) -> R,
@@ -474,7 +483,7 @@ impl<'owner> MetaAllocation<'owner> {
     #[inline]
     fn with_dynamic_arena_pages_bitmap<R>(
         &self,
-        owner: Pin<&MetaAllocator>,
+        owner: Pin<&MetadataEngine<'owner>>,
         layout: ArenaPagesLayout,
         bitmap: usize,
         operation: impl FnOnce(&BitmapView<'_>) -> R,
@@ -756,7 +765,7 @@ impl<'owner> MetaAllocation<'owner> {
     }
 
     #[inline]
-    fn belongs_to(&self, owner: Pin<&MetaAllocator>) -> bool {
+    fn belongs_to(&self, owner: Pin<&MetadataEngine<'owner>>) -> bool {
         core::ptr::eq(self.owner.as_ptr(), owner.get_ref())
     }
 
@@ -773,7 +782,7 @@ impl<'owner> MetaAllocation<'owner> {
     #[inline]
     fn validate_bitmap_image(
         &self,
-        owner: Pin<&MetaAllocator>,
+        owner: Pin<&MetadataEngine<'owner>>,
         layout: BitmapLayout,
     ) -> Result<(), MetaBitmapProjectionError> {
         if !self.belongs_to(owner) {
@@ -796,7 +805,7 @@ impl<'owner> MetaAllocation<'owner> {
     #[inline]
     fn validate_dynamic_arena_pages_image(
         &self,
-        owner: Pin<&MetaAllocator>,
+        owner: Pin<&MetadataEngine<'owner>>,
         layout: ArenaPagesLayout,
     ) -> bool {
         self.belongs_to(owner)
@@ -1045,16 +1054,16 @@ impl MetaRelease {
     }
 }
 
-/// One statically bootstrappable, process-lived metadata owner.
+/// One pinned metadata engine whose page allocator borrows its final
+/// bootstrap image for `'owner`.
 ///
 /// `Self` is `!Unpin`: after initialization, the page engine contains
-/// references to the final bootstrap and either the shared process map or
-/// the historical private PageMap slot. Its
-/// safe operations require `Pin<&'static Self>`. Pin alone only prevents a
-/// move, not a destructor; the `SingleThreadAllocator` holds references to
-/// these final slots and therefore needs a process-lived static address. The
-/// process singleton satisfies that condition by construction.
-pub(crate) struct MetaAllocator {
+/// references to the final bootstrap and either the shared process map or the
+/// historical private PageMap slot. [`MetaAllocator`] fixes `'owner` to
+/// `'static` for the process-main singleton. A child owner can instantiate
+/// this engine with the borrow lifetime of its reclaimable context, so its
+/// metadata capabilities cannot outlive that context.
+pub(crate) struct MetadataEngine<'owner> {
     lock: PrivateLock,
     active_entry_thread: AtomicUsize,
     status: AtomicU8,
@@ -1068,7 +1077,7 @@ pub(crate) struct MetaAllocator {
     retained_page_map_initialization_mapping: UnsafeCell<MaybeUninit<Mapping>>,
     has_retained_page_map_initialization_mapping: AtomicBool,
     bootstrap: UnsafeCell<MaybeUninit<ExclusiveTheapBootstrap>>,
-    allocator: UnsafeCell<MaybeUninit<MetadataPageAllocator>>,
+    allocator: UnsafeCell<MaybeUninit<MetadataPageAllocator<'owner>>>,
     process_backing: UnsafeCell<Option<MetadataProcessBacking>>,
     canonical_heap: UnsafeCell<Option<crate::main_theap::MainStaticMetadataHeapLease>>,
     subprocess: AtomicPtr<MainSubprocess>,
@@ -1101,6 +1110,10 @@ pub(crate) struct MetaAllocator {
     _pin: PhantomPinned,
 }
 
+/// Process-main spelling. Child subprocesses use the same private metadata
+/// engine with a shorter owner lifetime in their reclaimable context.
+pub(crate) type MetaAllocator = MetadataEngine<'static>;
+
 #[derive(Clone, Copy)]
 struct MetadataProcessBacking {
     binding: crate::process_init::ProcessMainBackingBinding,
@@ -1110,13 +1123,51 @@ struct MetadataProcessBacking {
 /// Legacy explicit-config callers remain visibly separate until their
 /// process coordinator supplies the real pair/map. The selected production
 /// path never obtains capacity by enlarging that legacy private arena.
-enum MetadataPageAllocator {
-    LegacySelectedArena(SingleThreadAllocator<'static, 'static, 'static>),
-    Process(ProcessMetadataPageAllocator<'static, 'static>),
+enum MetadataPageAllocator<'owner> {
+    LegacySelectedArena(SingleThreadAllocator<'owner, 'static, 'static>),
+    Process(ProcessMetadataPageAllocator<'owner, 'static>),
     CanonicalProcess(CanonicalProcessMetadataPageAllocator<'static>),
 }
 
-impl MetadataPageAllocator {
+impl MetadataPageAllocator<'_> {
+    unsafe fn initialize_child_metadata_theap(
+        &mut self,
+        parent: &'static MainSubprocess,
+        child_heap: &mut Heap,
+        child_theap: &mut Theap,
+    ) -> Result<(), crate::types::TheapMainStaticInitError> {
+        match self {
+            Self::LegacySelectedArena(engine) => unsafe {
+                engine.initialize_child_metadata_theap(parent, child_heap, child_theap)
+            },
+            Self::Process(engine) => unsafe {
+                engine.initialize_child_metadata_theap(parent, child_heap, child_theap)
+            },
+            Self::CanonicalProcess(engine) => unsafe {
+                engine.initialize_child_metadata_theap(child_heap, child_theap)
+            },
+        }
+    }
+
+    unsafe fn detach_child_metadata_theap(
+        &mut self,
+        parent: &'static MainSubprocess,
+        child_heap: &mut Heap,
+        child_theap: NonNull<Theap>,
+    ) -> Result<(), crate::types::ChildTheapDetachError> {
+        match self {
+            Self::LegacySelectedArena(engine) => unsafe {
+                engine.detach_child_metadata_theap(parent, child_heap, child_theap)
+            },
+            Self::Process(engine) => unsafe {
+                engine.detach_child_metadata_theap(parent, child_heap, child_theap)
+            },
+            Self::CanonicalProcess(engine) => unsafe {
+                engine.detach_child_metadata_theap(child_heap, child_theap)
+            },
+        }
+    }
+
     unsafe fn retire_process_quiescent(self) -> Result<(), Self> {
         match self {
             Self::Process(engine) => unsafe { engine.retire_process_metadata_quiescent() }
@@ -1179,13 +1230,13 @@ pub(crate) struct MetaAllocationAudit {
 /// first metadata allocation. It is not a candidate
 /// `ProcessPageArenaLease` backing.
 #[derive(Clone, Copy)]
-pub(crate) struct MetaAllocatorBound {
-    allocator: Pin<&'static MetaAllocator>,
+pub(crate) struct MetaAllocatorBound<'owner> {
+    allocator: Pin<&'owner MetadataEngine<'owner>>,
     config: MemoryConfig,
     subprocess: &'static MainSubprocess,
 }
 
-impl MetaAllocatorBound {
+impl<'owner> MetaAllocatorBound<'owner> {
     #[inline]
     pub(crate) const fn subprocess(self) -> &'static MainSubprocess {
         self.subprocess
@@ -1197,7 +1248,7 @@ impl MetaAllocatorBound {
     }
 
     #[inline]
-    pub(crate) fn matches(self, allocator: Pin<&'static MetaAllocator>) -> bool {
+    pub(crate) fn matches(self, allocator: Pin<&MetadataEngine<'owner>>) -> bool {
         core::ptr::eq(self.allocator.get_ref(), allocator.get_ref())
     }
 }
@@ -1209,8 +1260,8 @@ impl MetaAllocatorBound {
 // this same metadata lock in this bounded owner.
 unsafe impl Sync for MetaAllocator {}
 
-impl MetaAllocator {
-    const fn new() -> Self {
+impl<'owner> MetadataEngine<'owner> {
+    pub(crate) const fn new() -> Self {
         Self {
             lock: PrivateLock::new(),
             active_entry_thread: AtomicUsize::new(0),
@@ -1252,20 +1303,19 @@ impl MetaAllocator {
     /// not itself discover a page size or touch TLS.
     #[inline]
     pub(crate) fn global() -> Pin<&'static Self> {
-        // SAFETY: this object is a process static and cannot move.
-        unsafe { Pin::new_unchecked(&PROCESS_METADATA_ALLOCATOR) }
+        MainSubprocess::global().metadata_allocator()
     }
 
     #[cfg(not(test))]
     #[inline]
-    fn default_subprocess(self: Pin<&'static Self>) -> &'static MainSubprocess {
+    fn default_subprocess(self: Pin<&'owner Self>) -> &'static MainSubprocess {
         let _ = self;
         MainSubprocess::global()
     }
 
     #[cfg(test)]
     #[inline]
-    fn default_subprocess(self: Pin<&'static Self>) -> &'static MainSubprocess {
+    fn default_subprocess(self: Pin<&'owner Self>) -> &'static MainSubprocess {
         let pointer = self
             .get_ref()
             .test_default_subprocess
@@ -1453,10 +1503,13 @@ impl MetaAllocator {
     /// config callers retain their separate selected-arena backing. Neither
     /// path takes its first page before a metadata caller requests one.
     pub(crate) fn prepare_for_main_subprocess(
-        self: Pin<&'static Self>,
+        self: Pin<&'owner Self>,
         config: MemoryConfig,
         subprocess: &'static MainSubprocess,
-    ) -> Result<MetaAllocatorBound, MetaError> {
+    ) -> Result<MetaAllocatorBound<'owner>, MetaError> {
+        if !subprocess.is_process_main() {
+            return Err(MetaError::SubprocessMismatch);
+        }
         let mut entry = self.enter()?;
         entry.ensure_bound(config, subprocess)?;
         Ok(MetaAllocatorBound {
@@ -1501,9 +1554,9 @@ impl MetaAllocator {
     /// Binds the actual source static metadata Theap to the startup-selected
     /// canonical main Heap before metadata allocation can begin.
     pub(crate) fn prepare_for_main_heap(
-        self: Pin<&'static Self>, config: MemoryConfig, subprocess: &'static MainSubprocess,
+        self: Pin<&'owner Self>, config: MemoryConfig, subprocess: &'static MainSubprocess,
         foundation: crate::main_theap::MainStaticHeapFoundation,
-    ) -> Result<MetaAllocatorBound, MetaError> {
+    ) -> Result<MetaAllocatorBound<'owner>, MetaError> {
         if !core::ptr::eq(foundation.subprocess(), subprocess) { return Err(MetaError::SubprocessMismatch); }
         let mut entry = self.enter()?;
         if entry.status() != COLD { return Err(MetaError::BackingAlreadySelected); }
@@ -1606,12 +1659,89 @@ impl MetaAllocator {
         Ok(())
     }
 
+    /// Initializes one already allocated child metadata Theap against the
+    /// exact detached TLD owned by this parent metadata engine.
+    ///
+    /// The engine entry is held while `ExclusiveTheapBootstrap` lends its
+    /// TLD to the source `_mi_theap_init` transition. The operation cannot
+    /// escape a TLD reference or recurse into metadata allocation.
+    ///
+    /// # Safety
+    /// `child_heap` and `child_theap` must be pinned in stable storage until
+    /// both resulting list memberships are removed. `child_theap` must name
+    /// the still-live exact parent `MetaAllocation`; the caller excludes all
+    /// concurrent child Heap/Theap lifecycle operations.
+    /// An initialization error may follow TLD-list attachment and Release
+    /// publication, so retain the child owner and do not retry from the error
+    /// alone.
+    pub(crate) unsafe fn initialize_child_metadata_theap(
+        self: Pin<&'owner Self>,
+        config: MemoryConfig,
+        parent: &'static MainSubprocess,
+        child_heap: &mut Heap,
+        child_theap: &mut Theap,
+    ) -> Result<(), ChildMetadataTheapError> {
+        let mut entry = self.enter().map_err(ChildMetadataTheapError::Metadata)?;
+        entry
+            .ensure_ready(config, parent)
+            .map_err(ChildMetadataTheapError::Metadata)?;
+        // SAFETY: `allocator()` mutably borrows the existing page session
+        // stored inside the engine. It never reprojects the bootstrap from
+        // `MetadataEngine::bootstrap`; the session retains the sole pin.
+        unsafe {
+            entry
+                .allocator()
+                .initialize_child_metadata_theap(parent, child_heap, child_theap)
+        }
+        .map_err(ChildMetadataTheapError::Theap)
+    }
+
+    /// Detaches a child metadata Theap from the child Heap and actual parent
+    /// metadata TLD while the owning engine entry excludes all other metadata
+    /// projections. The linear allocation must be released separately only
+    /// after this source-ordered unlink succeeds.
+    ///
+    /// # Safety
+    /// The caller has exclusive teardown authority over the pinned child
+    /// Heap and Theap, no child clients or producers remain, and the exact
+    /// metadata allocation stays live until this operation succeeds. Any
+    /// Rust reference or typed projection to the child Theap must have ended
+    /// before calling: this transition mutates that image through `child_theap`
+    /// while holding its intrusive-list locks. Reborrow it from the still-live
+    /// `MetaAllocation` only after this method returns. Any
+    /// error retains both child images and their allocation capabilities. A
+    /// `TheapList` error identifies the unlink stage, but that stage may have
+    /// mutated its list before reporting an unlock error. Keep the child owner
+    /// terminally retained; this combined operation is not retryable from the
+    /// error alone.
+    pub(crate) unsafe fn detach_child_metadata_theap(
+        self: Pin<&'owner Self>,
+        config: MemoryConfig,
+        parent: &'static MainSubprocess,
+        child_heap: &mut Heap,
+        child_theap: NonNull<Theap>,
+    ) -> Result<(), ChildMetadataTheapError> {
+        let mut entry = self.enter().map_err(ChildMetadataTheapError::Metadata)?;
+        entry
+            .ensure_ready(config, parent)
+            .map_err(ChildMetadataTheapError::Metadata)?;
+        // SAFETY: `allocator()` mutably borrows the existing page session and
+        // its single Theap/TLD projection; the engine entry stays live for
+        // both source unlink steps.
+        unsafe {
+            entry
+                .allocator()
+                .detach_child_metadata_theap(parent, child_heap, child_theap)
+        }
+        .map_err(ChildMetadataTheapError::TheapList)
+    }
+
     /// Allocates zeroed metadata through the detached source theap.
     pub(crate) fn zalloc(
-        self: Pin<&'static Self>,
+        self: Pin<&'owner Self>,
         config: MemoryConfig,
         size: usize,
-    ) -> Result<MetaAllocation<'static>, MetaError> {
+    ) -> Result<MetaAllocation<'owner>, MetaError> {
         self.zalloc_for_main_subprocess(config, self.default_subprocess(), size)
     }
 
@@ -1620,11 +1750,11 @@ impl MetaAllocator {
     /// total-thread ticket is issued; an initialization/map failure therefore
     /// cannot roll that sequence back or create a live-count lease.
     pub(crate) fn zalloc_for_main_subprocess(
-        self: Pin<&'static Self>,
+        self: Pin<&'owner Self>,
         config: MemoryConfig,
         subprocess: &'static MainSubprocess,
         size: usize,
-    ) -> Result<MetaAllocation<'static>, MetaError> {
+    ) -> Result<MetaAllocation<'owner>, MetaError> {
         self.require_published_detached_metadata_theap(subprocess)?;
         let mut entry = self.enter_for_main_subprocess(subprocess)?;
         entry.ensure_ready(config, subprocess)?;
@@ -1706,11 +1836,11 @@ impl MetaAllocator {
 
     /// Allocates zeroed metadata with the source alignment contract.
     pub(crate) fn zalloc_aligned(
-        self: Pin<&'static Self>,
+        self: Pin<&'owner Self>,
         config: MemoryConfig,
         size: usize,
         alignment: usize,
-    ) -> Result<MetaAllocation<'static>, MetaError> {
+    ) -> Result<MetaAllocation<'owner>, MetaError> {
         self.zalloc_aligned_for_main_subprocess(config, self.default_subprocess(), size, alignment)
     }
 
@@ -1719,12 +1849,12 @@ impl MetaAllocator {
     /// its bitmap stays allocator metadata owned by the main subprocess even
     /// if future callers acquire keys while attached somewhere else.
     pub(crate) fn zalloc_aligned_for_main_subprocess(
-        self: Pin<&'static Self>,
+        self: Pin<&'owner Self>,
         config: MemoryConfig,
         subprocess: &'static MainSubprocess,
         size: usize,
         alignment: usize,
-    ) -> Result<MetaAllocation<'static>, MetaError> {
+    ) -> Result<MetaAllocation<'owner>, MetaError> {
         if !size_class::alignment_is_valid(alignment) {
             return Err(MetaError::InvalidAlignment);
         }
@@ -1773,11 +1903,11 @@ impl MetaAllocator {
     /// copying and before freeing `old`, exactly avoiding the source's
     /// `_mi_meta_rezalloc` recursive-lock hazard.
     pub(crate) fn rezalloc(
-        self: Pin<&'static Self>,
+        self: Pin<&'owner Self>,
         config: MemoryConfig,
-        old: Option<&mut MetaAllocation<'static>>,
+        old: Option<&mut MetaAllocation<'owner>>,
         new_size: usize,
-    ) -> Result<MetaAllocation<'static>, MetaError> {
+    ) -> Result<MetaAllocation<'owner>, MetaError> {
         self.rezalloc_for_main_subprocess(config, self.default_subprocess(), old, new_size)
     }
 
@@ -1787,12 +1917,12 @@ impl MetaAllocator {
     /// same TLD/Theap/registry process selection in isolated tests and later
     /// integration.
     pub(crate) fn rezalloc_for_main_subprocess(
-        self: Pin<&'static Self>,
+        self: Pin<&'owner Self>,
         config: MemoryConfig,
         subprocess: &'static MainSubprocess,
-        old: Option<&mut MetaAllocation<'static>>,
+        old: Option<&mut MetaAllocation<'owner>>,
         new_size: usize,
-    ) -> Result<MetaAllocation<'static>, MetaError> {
+    ) -> Result<MetaAllocation<'owner>, MetaError> {
         let Some(old) = old else {
             return self.zalloc_for_main_subprocess(config, subprocess, new_size);
         };
@@ -1887,8 +2017,8 @@ impl MetaAllocator {
     /// [`Self::release_selected_malloc`] when it must explicitly retain a
     /// pre-entry failure for retry.
     pub(crate) fn free(
-        self: Pin<&'static Self>,
-        allocation: &mut MetaAllocation<'static>,
+        self: Pin<&'owner Self>,
+        allocation: &mut MetaAllocation<'owner>,
     ) -> Result<(), MetaError> {
         if !allocation.belongs_to(self) {
             return Err(MetaError::ForeignOwner);
@@ -1962,9 +2092,12 @@ impl MetaAllocator {
     /// publish it. `MetaEntry::ensure_ready` repeats the exact check before it
     /// can map a first backing page.
     fn require_published_detached_metadata_theap(
-        self: Pin<&'static Self>,
+        self: Pin<&'owner Self>,
         subprocess: &'static MainSubprocess,
     ) -> Result<(), MetaError> {
+        if !subprocess.is_process_main() {
+            return Err(MetaError::SubprocessMismatch);
+        }
         match self.get_ref().status.load(Ordering::Acquire) {
             CLOSED | CLOSE_RETAINED => Err(MetaError::Closed),
             COLD => Err(MetaError::TheapMetaUnpublished),
@@ -1989,7 +2122,7 @@ impl MetaAllocator {
     /// publication. This method only compares stable atomics; it never
     /// reborrows the mutable bootstrap or dereferences the subprocess slot.
     fn validate_bound_detached_metadata_theap(
-        self: Pin<&'static Self>,
+        self: Pin<&'owner Self>,
         subprocess: &'static MainSubprocess,
     ) -> Result<(), MetaError> {
         let this = self.get_ref();
@@ -2005,7 +2138,7 @@ impl MetaAllocator {
         }
     }
 
-    fn enter(self: Pin<&'static Self>) -> Result<MetaEntry, MetaError> {
+    fn enter(self: Pin<&'owner Self>) -> Result<MetaEntry<'owner>, MetaError> {
         let this = self.get_ref();
         if matches!(this.status.load(Ordering::Acquire), CLOSED | CLOSE_RETAINED) {
             return Err(MetaError::Closed);
@@ -2041,9 +2174,9 @@ impl MetaAllocator {
     /// released first. Bootstrap and exact-owner free keep using only the
     /// backing lock because neither is a selected source allocation phase.
     fn enter_for_main_subprocess(
-        self: Pin<&'static Self>,
+        self: Pin<&'owner Self>,
         subprocess: &'static MainSubprocess,
-    ) -> Result<MetaEntry, MetaError> {
+    ) -> Result<MetaEntry<'owner>, MetaError> {
         let mut entry = self.enter()?;
         let theap_meta_guard = subprocess.lock_metadata_theap().map_err(MetaError::Lock)?;
         entry.theap_meta_guard = Some(theap_meta_guard);
@@ -2051,8 +2184,8 @@ impl MetaAllocator {
     }
 
     fn release_claimed(
-        self: Pin<&'static Self>,
-        allocation: &mut MetaAllocation<'static>,
+        self: Pin<&'owner Self>,
+        allocation: &mut MetaAllocation<'owner>,
     ) -> Result<(), MetaError> {
         let mut entry = self.enter()?;
         Self::release_claimed_under_entry(&mut entry, allocation)
@@ -2063,8 +2196,8 @@ impl MetaAllocator {
     /// helper deliberately neither acquires the source `theap_meta` lock nor
     /// changes the capability state.
     fn release_claimed_under_entry(
-        entry: &mut MetaEntry,
-        allocation: &mut MetaAllocation<'static>,
+        entry: &mut MetaEntry<'owner>,
+        allocation: &mut MetaAllocation<'owner>,
     ) -> Result<(), MetaError> {
         if entry.status() != READY || !allocation.has_consistent_malloc_provenance() {
             return Err(MetaError::ReleasedOrStale);
@@ -2114,7 +2247,7 @@ impl MetaAllocator {
     /// identity setup in `mi_heap_main_init_once`; its first `_mi_meta_zalloc`
     /// later obtains ordinary backing on demand.
     fn bind_empty_detached_identity(
-        self: Pin<&'static Self>,
+        self: Pin<&'owner Self>,
         config: MemoryConfig,
         subprocess: &'static MainSubprocess,
     ) -> Result<(), MetaError> {
@@ -2179,8 +2312,8 @@ impl MetaAllocator {
     /// Initializes the bounded Rust backing for an already source-bound
     /// detached metadata image on its first real metadata request.
     fn initialize_backing(
-        self: Pin<&'static Self>,
-        entry: &mut MetaEntry,
+        self: Pin<&'owner Self>,
+        entry: &mut MetaEntry<'owner>,
         config: MemoryConfig,
         subprocess: &'static MainSubprocess,
     ) -> Result<(), MetaError> {
@@ -2360,7 +2493,7 @@ impl MetaAllocator {
         unsafe { (*self.retained_page_map_initialization_mapping.get()).write(mapping) };
     }
 
-    fn cleanup_page_map_after_failed_init(self: Pin<&'static Self>) -> Result<(), MetaError> {
+    fn cleanup_page_map_after_failed_init(self: Pin<&'owner Self>) -> Result<(), MetaError> {
         let this = self.get_ref();
         // SAFETY: the unshared page map was written while BOUND exposed no
         // backing projection. Successful destroy releases all direct mappings
@@ -2375,7 +2508,7 @@ impl MetaAllocator {
     }
 
     fn cleanup_mapping_and_page_map_after_failed_init(
-        self: Pin<&'static Self>,
+        self: Pin<&'owner Self>,
     ) -> Result<(), MetaError> {
         let this = self.get_ref();
         // SAFETY: failure happened before the arena was registry-published;
@@ -2392,17 +2525,17 @@ impl MetaAllocator {
 }
 
 /// A held metadata private lock and its exclusive initialized-state access.
-struct MetaEntry {
-    owner: Pin<&'static MetaAllocator>,
+struct MetaEntry<'owner> {
+    owner: Pin<&'owner MetadataEngine<'owner>>,
     entry_thread: usize,
     /// The bounded source-owned lock for direct allocation phases. It is
     /// nested inside `guard` so the existing recursion marker covers a wait
     /// on this nonrecursive lock; Drop releases it before the backing lock.
-    theap_meta_guard: Option<PrivateLockGuard<'static>>,
-    guard: Option<PrivateLockGuard<'static>>,
+    theap_meta_guard: Option<PrivateLockGuard<'owner>>,
+    guard: Option<PrivateLockGuard<'owner>>,
 }
 
-impl MetaEntry {
+impl<'owner> MetaEntry<'owner> {
     /// Ensures the source-static detached metadata image names this exact
     /// process tuple. BOUND deliberately does not make a backing PageMap,
     /// arena, or allocator projection available.
@@ -2466,21 +2599,21 @@ impl MetaEntry {
     }
 
     #[inline]
-    fn allocator(&mut self) -> &mut MetadataPageAllocator {
+    fn allocator(&mut self) -> &mut MetadataPageAllocator<'owner> {
         // SAFETY: READY plus this held private lock gives exclusive mutation
         // of the final static allocator slot.
         unsafe { (&mut *self.owner.get_ref().allocator.get()).assume_init_mut() }
     }
 
     #[inline]
-    fn allocator_ref(&self) -> &MetadataPageAllocator {
+    fn allocator_ref(&self) -> &MetadataPageAllocator<'owner> {
         // SAFETY: see `allocator`; this shared projection is used only for
         // source pointer identity while the same metadata lock is held.
         unsafe { (&*self.owner.get_ref().allocator.get()).assume_init_ref() }
     }
 }
 
-impl Drop for MetaEntry {
+impl Drop for MetaEntry<'_> {
     fn drop(&mut self) {
         // Unlock the nested selected source lock, then the Rust backing lock,
         // before clearing the recursion marker. The first release preserves
@@ -2516,8 +2649,6 @@ fn current_entry_thread() -> Result<usize, MetaError> {
         .ok_or(MetaError::InvalidEntryThread)
 }
 
-static PROCESS_METADATA_ALLOCATOR: MetaAllocator = MetaAllocator::new();
-
 #[cfg(test)]
 mod tests {
     extern crate std;
@@ -2534,6 +2665,27 @@ mod tests {
     fn config() -> MemoryConfig {
         let page_size = PageSize::new(4096).unwrap();
         MemoryConfig::from_observations(page_size, 1024 * 1024, false, false)
+    }
+
+    fn prepare_main_owner_with_borrowed_engine<'owner>(
+        engine: Pin<&'owner MetadataEngine<'owner>>,
+        subprocess: &'static MainSubprocess,
+    ) -> Result<MetaAllocatorBound<'owner>, MetaError> {
+        engine.prepare_for_main_subprocess(config(), subprocess)
+    }
+
+    #[test]
+    fn borrowed_metadata_engine_rejects_child_on_main_binding_path() {
+        let child: &'static MainSubprocess = std::boxed::Box::leak(std::boxed::Box::new(
+            MainSubprocess::new_child(),
+        ));
+        let engine = std::boxed::Box::pin(MetadataEngine::new());
+        let result = prepare_main_owner_with_borrowed_engine(engine.as_ref(), child);
+        match result {
+            Err(MetaError::SubprocessMismatch) => {}
+            Err(error) => panic!("unexpected child binding error: {error:?}"),
+            Ok(_bound) => panic!("child metadata engine entered the main binding path"),
+        }
     }
 
     /// Test-only process lifetime mirrors the production static singleton:

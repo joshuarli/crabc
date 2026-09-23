@@ -272,7 +272,14 @@ impl ExclusiveTheapBootstrap {
         if unsafe { (*state).session_issued } { return Err(BootstrapError::AlreadyInitialized); }
         unsafe { (*state).session_issued = true; }
         let theap = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*state).theap)) };
-        Ok(unsafe { crate::types::metadata_session::CanonicalMetadataTheapSession::new(theap, heap) })
+        let parent_tld = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*state).tld)) };
+        Ok(unsafe {
+            crate::types::metadata_session::CanonicalMetadataTheapSession::new(
+                theap,
+                parent_tld,
+                heap,
+            )
+        })
     }
 
     fn bind_owner(
@@ -543,6 +550,69 @@ impl ExclusiveTheapSession<'_> {
         // SAFETY: session construction holds the sole mutable borrow of the
         // pinned bootstrap. This helper does not move any pinned field.
         unsafe { self.state.as_mut().get_unchecked_mut() }
+    }
+
+    /// Initializes one child metadata Theap against this session's actual
+    /// detached parent TLD.
+    ///
+    /// # Safety
+    /// The child Heap and Theap must remain pinned in stable storage until
+    /// both source list memberships are removed. `child_theap` must be the
+    /// still-live exact parent metadata allocation, and the caller must
+    /// exclude concurrent child lifecycle operations.
+    /// An error may follow TLD-list attachment and Release publication; in
+    /// that case the caller must retain the child owner and not retry.
+    pub(crate) unsafe fn initialize_child_metadata_theap(
+        &mut self,
+        parent: &'static MainSubprocess,
+        child_heap: &mut Heap,
+        child_theap: &mut Theap,
+    ) -> Result<(), crate::types::TheapMainStaticInitError> {
+        let owner = self.owner;
+        let state = self.state_mut();
+        if owner != TheapOwner::Detached
+            || !state.is_detached_for_main_subprocess(parent)
+        {
+            return Err(crate::types::TheapMainStaticInitError::InvalidInput);
+        }
+        // SAFETY: this session pins the parent bootstrap; the caller promises
+        // stable child images and exclusive lifecycle authority through detach.
+        unsafe { child_theap.initialize_child_metadata(child_heap, &mut state.tld) }
+    }
+
+    /// Detaches a child metadata Theap in the source TLD-then-Heap order.
+    ///
+    /// # Safety
+    /// The caller has exclusive teardown authority over the pinned child Heap
+    /// and Theap, no child clients or producers remain, and the exact
+    /// metadata allocation stays live. Errors distinguish failure before the
+    /// TLD unlink, after it, before the Heap unlink, or after both list edges
+    /// were removed; unlock failures may follow mutation. Retain the complete
+    /// child owner and do not retry or release from the error alone. No Rust
+    /// reference to `child_theap` may remain live during this raw-pointer
+    /// transition; reacquire a projection from its capability afterward.
+    pub(crate) unsafe fn detach_child_metadata_theap(
+        &mut self,
+        parent: &'static MainSubprocess,
+        child_heap: &mut Heap,
+        child_theap: NonNull<Theap>,
+    ) -> Result<(), crate::types::ChildTheapDetachError> {
+        let owner = self.owner;
+        let state = self.state_mut();
+        if owner != TheapOwner::Detached
+            || !state.is_detached_for_main_subprocess(parent)
+        {
+            return Err(crate::types::ChildTheapDetachError::BeforeTldUnlink(
+                crate::types::ThreadLocalTheapListError::Membership,
+            ));
+        }
+        // SAFETY: forwarded child image pinning, producer quiescence, and
+        // exact-allocation liveness obligations.
+        unsafe {
+            state
+                .tld
+                .detach_one_child_theap_for_heap_destroy(child_heap, child_theap.as_ptr())
+        }
     }
 
     /// Inspects the initialized exclusive theap without permitting replacement
