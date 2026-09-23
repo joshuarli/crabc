@@ -3,9 +3,12 @@
 ## Purpose and boundary
 
 `native_static_source_runtime_closure.py` builds private x86 `crabc-libc`
-static archives for the selected-native pthread teardown and allocator-basic
-fixtures. These archives are not installed sysroots, public allocator
-selections, dynamic-product proofs, or terminal/fork-quiescence claims.
+static archives for the selected-static C fixtures and the selected-native
+pthread teardown and allocator-basic fixtures. The default selected-static
+profile serves the `issetugid` and pthread task-name probes; the legacy.misc
+profile serves its composite probe. These archives are not installed sysroots,
+public allocator selections, dynamic-product proofs, or
+terminal/fork-quiescence claims.
 
 The existing target-runtime archive is not a valid closed input for that
 fixture.  The retained `da2` diagnosis records one `alloc` object, one `core`
@@ -16,8 +19,8 @@ and failed before the probe.  The raw archive list is an input diagnostic, not
 a reachability result: it does not identify which of the remaining archive
 members a garbage-collected final link would select.
 
-This experiment replaces that **entire three-crate runtime set** with one
-source-built Cargo graph.  It must never splice a source `core` or `alloc`
+The source-runtime builder replaces that **entire three-crate runtime set**
+with one source-built Cargo graph. It must never splice a source `core` or `alloc`
 archive into the current staticlib, leave a stock `alloc` beside source `core`,
 or add a personality provider.  `rust_eh_personality`, `panic_abort`,
 `panic_unwind`, `unwind`, a stock target runtime archive, a foreign compiler
@@ -81,6 +84,12 @@ alloc-backed SHA-crypt. Its `crabc-libc` graph retains the selected
 runtime set, and does not emit `crabc-mimalloc`. Although the source-built
 `alloc` artifact is authenticated, the C backend must leave all of its object
 members out of `libc.a`.
+
+The selected-static C profiles use either no feature or `x86-legacy-misc`.
+Their Cargo graph has no optional production dependency, and the emitted
+archive contains source-built `core` and `compiler_builtins` members, with no
+`alloc` members. The C fixture's final link map and personality trace are
+audited against the same source-runtime receipt.
 
 `builtins/build.py` supplies the nearest pinned `rust-src` and
 `compiler_builtins` source-build mechanics.  `unwinder/owned_cleanup.py`

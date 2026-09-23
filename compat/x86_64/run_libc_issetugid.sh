@@ -56,16 +56,25 @@ assert_selected_c_abi_surface() {
 
 build_candidate() {
     local output="$1"
+    local link_map="$1.map"
+    local link_trace="$1.trace"
     shift
     "$ORACLE_CC" -std=c11 -D_GNU_SOURCE "$@" -I"$ROOT_DIR/include" \
         -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin \
         -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+        -Wl,--gc-sections -Wl,-Map,"$link_map" \
+        -Wl,--trace-symbol=rust_eh_personality \
         compat/x86_64/libc_issetugid_probe.c \
-        compat/x86_64/libc_issetugid_start.S "$archive" -o "$output"
+        compat/x86_64/libc_issetugid_start.S "$archive" -o "$output" \
+        2>"$link_trace"
+    python3 "$source_runtime_helper" audit-final-link \
+        --receipt "$source_runtime_receipt" --candidate "$output" \
+        --link-map "$link_map" --trace "$link_trace" \
+        --label "${output##*/}"
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cmp diff grep mapfile mkdir nm objdump readelf rustup sort; do
+for tool in ar awk cargo cmp diff grep mapfile mkdir nm objdump python3 readelf rustup sort; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -77,10 +86,22 @@ bash "$ROOT_DIR/compat/x86_64/run_issetugid_header_abi.sh" >/dev/null
 grep -Eq '^issetugid[[:space:]]+issetugid\.lo[[:space:]]+T[[:space:]]+GLOBAL' \
     "$AARCH64_STATIC_ABI" || fail "AArch64 musl ABI oracle lost issetugid ownership"
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-issetugid.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
-target_dir="$work_dir/cargo-target"
-archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/crabc-x86-64-libc-issetugid.XXXXXX")"
+cleanup_work_dir() {
+    local status=$?
+    trap - EXIT
+    if [ "$status" -eq 0 ]; then
+        rm -rf -- "$work_dir"
+    else
+        printf 'x86 static libc issetugid retained failure evidence: %s\n' "$work_dir" >&2
+    fi
+    exit "$status"
+}
+trap cleanup_work_dir EXIT
+source_runtime_helper="$ROOT_DIR/compat/x86_64/native_static_source_runtime_closure.py"
+source_runtime_work="tmp/${work_dir##*/}/source-runtime"
+source_runtime_receipt="$work_dir/source-runtime/receipt.json"
 reference="$work_dir/musl-issetugid-reference"
 candidate="$work_dir/crabc-static-issetugid-candidate"
 synthetic_at_secure="$work_dir/crabc-static-issetugid-at-secure"
@@ -121,10 +142,10 @@ done
     -I"$ROOT_DIR/include" compat/x86_64/libc_issetugid_probe.c -o "$reference"
 env -i "$reference" || fail "pinned-musl ordinary issetugid fixture failed"
 
-CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
-    --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+archive="$(python3 "$source_runtime_helper" build \
+    --work "$source_runtime_work" --features '' --print-archive)"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
+[ -f "$source_runtime_receipt" ] || fail "source-built libc lacks runtime closure receipt"
 
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"

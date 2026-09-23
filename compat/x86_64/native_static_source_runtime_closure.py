@@ -89,7 +89,24 @@ EXTERN_MODIFIER_MATRIX: dict[str, dict[str, tuple[str, ...]]] = {
         "sha_crypt": (),
     },
 }
+SELECTED_STATIC_LIBC_EXTERNS = {
+    "alloc": ("noprelude", "nounused"),
+    "compiler_builtins": ("noprelude", "nounused"),
+    "core": ("noprelude", "nounused"),
+}
 SOURCE_RUNTIME_PROFILES: dict[str, dict[str, object]] = {
+    "": {
+        "name": "selected-static-c-abi",
+        "builds_crabc_mimalloc": False,
+        "staticlib_runtime_names": ("core", "compiler_builtins"),
+        "libc_externs": SELECTED_STATIC_LIBC_EXTERNS,
+    },
+    "x86-legacy-misc": {
+        "name": "selected-static-legacy-misc",
+        "builds_crabc_mimalloc": False,
+        "staticlib_runtime_names": ("core", "compiler_builtins"),
+        "libc_externs": SELECTED_STATIC_LIBC_EXTERNS,
+    },
     "x86-owned-static-native-shadow,native-mimalloc-shadow-test-audit": {
         "name": "native-mimalloc-shadow",
         "builds_crabc_mimalloc": True,
@@ -834,8 +851,10 @@ def build(arguments: argparse.Namespace) -> pathlib.Path:
     command = [
         rustup["argv0"], "run", TOOLCHAIN, "cargo", "-Zbuild-std=core,alloc,compiler_builtins", "rustc",
         "--locked", "--offline", "-vv", "--message-format=json-render-diagnostics", "-p", "crabc-libc", "--lib",
-        "--target", TARGET, "--features", arguments.features,
+        "--target", TARGET,
     ]
+    if arguments.features:
+        command.extend(("--features", arguments.features))
     stdout_path, stderr_path = work / "cargo.stdout.jsonl", work / "cargo.stderr.log"
     run(command, environment, stdout_path, stderr_path, "source-built native static runtime Cargo graph")
     records = cargo_records(stdout_path)

@@ -122,7 +122,7 @@ assert_provider_counts() {
 
 require_native_linux_x86_64
 for tool in ar awk cargo chmod cmp comm diff env grep mapfile mkdir mktemp nm objdump \
-    readelf readlink rustup sed sort uname; do
+    python3 readelf readlink rustup sed sort uname; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -139,7 +139,7 @@ bash "$ROOT_DIR/compat/x86_64/run_libc_issetugid.sh" >/dev/null
 
 [ -f "$LEGACY_MISC_ROOT" ] || fail "missing target-local legacy.misc fmtmsg owner"
 [ -f "$LEGACY_DES_ROOT" ] || fail "missing shared target-local inert DES owner"
-grep -Fq '#[cfg(all(feature = "x86-legacy-misc", not(feature = "x86-owned-static-runtime")))]' "$STATIC_C_ABI_ROOT" ||
+grep -Fq '#[cfg(all(feature = "x86-legacy-misc", not(crabc_x86_owned_runtime)))]' "$STATIC_C_ABI_ROOT" ||
     fail "legacy.misc is not opt-in at the selected-static root"
 grep -Fq 'mod legacy_misc;' "$STATIC_C_ABI_ROOT" ||
     fail "selected-static root does not compose the opt-in legacy.misc owner"
@@ -185,10 +185,13 @@ cleanup_work_dir() {
 trap cleanup_work_dir EXIT
 base_target="$work_dir/base-target"
 narrow_target="$work_dir/narrow-target"
-feature_target="$work_dir/feature-target"
 base_archive="$base_target/x86_64-unknown-linux-musl/debug/libc.a"
 narrow_archive="$narrow_target/x86_64-unknown-linux-musl/debug/libc.a"
-archive="$feature_target/x86_64-unknown-linux-musl/debug/libc.a"
+source_runtime_helper="$ROOT_DIR/compat/x86_64/native_static_source_runtime_closure.py"
+source_runtime_work="${work_dir#"$ROOT_DIR/.work/x86_64/"}/source-runtime"
+[ "$source_runtime_work" != "$work_dir/source-runtime" ] ||
+    fail "source-runtime work directory escaped the checkout"
+source_runtime_receipt="$work_dir/source-runtime/receipt.json"
 reference="$work_dir/musl-legacy-misc-reference"
 candidate="$work_dir/crabc-static-legacy-misc-candidate"
 musl_archive="$($ORACLE_CC -print-file-name=libc.a)"
@@ -221,6 +224,7 @@ encrypt_definition_disassembly="$work_dir/encrypt-definition-disassembly"
 setkey_definition_disassembly="$work_dir/setkey-definition-disassembly"
 archive_relocations="$work_dir/archive-relocations"
 link_map="$work_dir/candidate.map"
+link_trace="$work_dir/candidate.trace"
 candidate_symbols="$work_dir/candidate-symbols"
 candidate_headers="$work_dir/candidate-program-headers"
 candidate_sections="$work_dir/candidate-sections"
@@ -307,10 +311,10 @@ if ! cmp -s "$expected_narrow_bindings" "$narrow_bindings"; then
     fail "narrow inert-DES changed the full global binding surface"
 fi
 
-CARGO_TARGET_DIR="$feature_target" cargo rustc --locked -p crabc-libc --lib \
-    --features "$FEATURE" --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+archive="$(python3 "$source_runtime_helper" build \
+    --work "$source_runtime_work" --features "$FEATURE" --print-archive)"
 [ -f "$archive" ] || fail "cargo did not emit the opt-in x86 archive"
+[ -f "$source_runtime_receipt" ] || fail "source-built libc lacks runtime closure receipt"
 collect_global_surface "$archive" "$feature_surface" "$work_dir/feature-members"
 collect_global_bindings "$archive" "$feature_bindings" "$work_dir/feature-binding-members"
 comm -13 "$narrow_surface" "$feature_surface" >"$observed_additions"
@@ -375,8 +379,13 @@ fi
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
     -Wl,--gc-sections -Wl,-Map,"$link_map" \
+    -Wl,--trace-symbol=rust_eh_personality \
     compat/x86_64/libc_legacy_misc_probe.c \
-    compat/x86_64/libc_legacy_misc_start.S "$archive" -o "$candidate"
+    compat/x86_64/libc_legacy_misc_start.S "$archive" -o "$candidate" \
+    2>"$link_trace"
+python3 "$source_runtime_helper" audit-final-link \
+    --receipt "$source_runtime_receipt" --candidate "$candidate" \
+    --link-map "$link_map" --trace "$link_trace" --label legacy-misc
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 readelf --program-headers --wide "$candidate" >"$candidate_headers"

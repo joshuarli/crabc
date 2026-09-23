@@ -20,6 +20,21 @@ SPEC.loader.exec_module(CLOSURE)
 
 
 class NativeStaticSourceRuntimeClosureTests(unittest.TestCase):
+    def test_selected_static_c_profiles_exclude_optional_runtime_dependencies(self) -> None:
+        for features in ("", "x86-legacy-misc"):
+            with self.subTest(features=features):
+                profile = CLOSURE.source_runtime_profile(features)
+                self.assertEqual(profile["staticlib_runtime_names"], ("core", "compiler_builtins"))
+                self.assertFalse(profile["builds_crabc_mimalloc"])
+                self.assertEqual(
+                    profile["libc_externs"],
+                    {
+                        "alloc": ("noprelude", "nounused"),
+                        "compiler_builtins": ("noprelude", "nounused"),
+                        "core": ("noprelude", "nounused"),
+                    },
+                )
+
     def test_owned_static_core_profile_has_no_crypt_or_native_shadow_externs(self) -> None:
         profile = CLOSURE.source_runtime_profile("x86-owned-static-runtime-core")
 

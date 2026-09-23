@@ -77,7 +77,7 @@ assert_pthread_name_path() {
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sort; do
+for tool in ar awk cargo cmp diff grep mkdir nm objdump python3 readelf rustup sort; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -85,12 +85,26 @@ done
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_pthread_c11_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-pthread-name.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
-cargo_target="$work_dir/cargo-target"
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/crabc-x86-64-pthread-name.XXXXXX")"
+cleanup_work_dir() {
+    local status=$?
+    trap - EXIT
+    if [ "$status" -eq 0 ]; then
+        rm -rf -- "$work_dir"
+    else
+        printf 'x86 static pthread task name retained failure evidence: %s\n' "$work_dir" >&2
+    fi
+    exit "$status"
+}
+trap cleanup_work_dir EXIT
 reference="$work_dir/musl-pthread-name-reference"
 candidate="$work_dir/crabc-static-pthread-name-candidate"
-archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
+source_runtime_helper="$ROOT_DIR/compat/x86_64/native_static_source_runtime_closure.py"
+source_runtime_work="tmp/${work_dir##*/}/source-runtime"
+source_runtime_receipt="$work_dir/source-runtime/receipt.json"
+candidate_link_map="$work_dir/candidate.map"
+candidate_link_trace="$work_dir/candidate.trace"
 header_trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
 archive_elf_symbols="$work_dir/archive-elf-symbols"
@@ -124,10 +138,10 @@ else
     fail "pinned-musl pthread task-name fixture exited ${status}"
 fi
 
-CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
-    --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+archive="$(python3 "$source_runtime_helper" build \
+    --work "$source_runtime_work" --features '' --print-archive)"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
+[ -f "$source_runtime_receipt" ] || fail "source-built libc lacks runtime closure receipt"
 
 nm -A --defined-only "$archive" >"$archive_symbols"
 readelf --symbols --wide "$archive" >"$archive_elf_symbols"
@@ -161,8 +175,15 @@ fi
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_PTHREAD_NAME_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie \
     -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start \
-    -Wl,--no-undefined compat/x86_64/libc_pthread_name_probe.c \
-    compat/x86_64/libc_pthread_name_start.S "$archive" -o "$candidate"
+    -Wl,--no-undefined -Wl,--gc-sections -Wl,-Map,"$candidate_link_map" \
+    -Wl,--trace-symbol=rust_eh_personality \
+    compat/x86_64/libc_pthread_name_probe.c \
+    compat/x86_64/libc_pthread_name_start.S "$archive" -o "$candidate" \
+    2>"$candidate_link_trace"
+python3 "$source_runtime_helper" audit-final-link \
+    --receipt "$source_runtime_receipt" --candidate "$candidate" \
+    --link-map "$candidate_link_map" --trace "$candidate_link_trace" \
+    --label pthread-name
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 readelf --program-headers --wide "$candidate" >"$candidate_headers"
