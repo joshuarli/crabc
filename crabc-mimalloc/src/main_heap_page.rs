@@ -9386,6 +9386,65 @@ mod tests {
             // exclusive; the actual parent allocation token pins both images.
             unsafe { child.initialize_heap_and_metadata_theap(config) }
                 .unwrap_or_else(|_| panic!("the child Heap and metadata Theap initialize"));
+            let mut vm_options = crate::config::VmOptions::uninitialized();
+            vm_options.initialize_all(|_| crate::config::VmOptionEnvironment::Absent);
+            vm_options.set(crate::config::VmOption::ArenaReserve,
+                (crate::config::ARENA_MIN_SIZE / crate::config::KIB) as i64);
+            vm_options.set(crate::config::VmOption::ArenaEagerCommit, 0);
+            let child_policy = crate::os::VmPolicy::new(vm_options)
+                .expect("resolved child VM policy is valid");
+            let parent_vm = crate::os::VmProcess::new(&child_policy, parent);
+            // This fixture isolates the child arena allocation transition;
+            // it does not claim that the not-yet-implemented child metadata
+            // engine supplies its random image from the parent's detached TLD.
+            let mut child_arena_random = crate::random::TheapRandomImage::empty_weak();
+            child_arena_random.initialize_weak();
+            let (child_arena_memory, child_arena_count, parent_arena_count) = child
+                .with_child_heap(|child_image, _heap, _memory| {
+                    let child_vm = crate::os::ChildVmProcess::new(parent_vm, child_image.as_ref())
+                        .expect("the exact registered child borrows the parent policy");
+                    let child_identity = child_vm.identity();
+                    let child_arenas = child_identity.arena_backing();
+                    let parent_arenas = parent.arena_backing();
+                    let parent_count_before = parent_arenas.registry().count();
+                    let claim = unsafe {
+                        child_arenas.try_allocate_child_slices_with_random(
+                            child_vm,
+                            config,
+                            crate::arena::ArenaSearch {
+                                heap_sequence: 0,
+                                heap_count: 1,
+                                thread_sequence: 0,
+                                numa_node: -1,
+                                requested: crate::arena::ArenaId::none(),
+                                allow_pinned: false,
+                            },
+                            1,
+                            1,
+                            true,
+                            Some(&mut child_arena_random),
+                        )
+                    }
+                    .expect("child slice allocation uses its own regular arena group");
+                    let memory = claim.memory_id();
+                    let arena_memory = memory.arena_memory()
+                        .expect("the child allocation names arena-backed slices");
+                    // SAFETY: the live claim and registered child owner keep
+                    // this published arena image address-stable.
+                    let arena = unsafe { &*arena_memory.arena };
+                    assert!(core::ptr::eq(arena.subprocess, child_identity.as_ptr()));
+                    assert!(claim.release(), "the exact child arena claim returns to its bitmap");
+                    assert_eq!(parent_arenas.registry().count(), parent_count_before);
+                    (
+                        memory,
+                        child_arenas.registry().count(),
+                        parent_arenas.registry().count(),
+                    )
+                })
+                .expect("the ready child Heap remains projectable");
+            assert_eq!(child_arena_count, 1);
+            assert_eq!(parent_arena_count, 0);
+            assert_eq!(child_arena_memory.kind(), crate::types::MemoryKind::Arena);
             let (sequence, total, live, ticket_identity, is_child) = child
                 .with_child_heap(|mut image, _heap, _memory| {
                     let identity_pointer = image.as_ref().get_ref().identity().as_ptr();

@@ -753,6 +753,7 @@ impl<'a> VmProcess<'a> {
 pub(crate) struct ChildVmProcess<'child> {
     process: VmProcess<'child>,
     child: core::pin::Pin<&'child crate::subproc::ChildSubprocessImage>,
+    parent: &'child crate::subproc::SubprocessIdentity,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -779,6 +780,7 @@ impl<'child> ChildVmProcess<'child> {
         Ok(Self {
             process: VmProcess::new(parent.policy(), identity),
             child,
+            parent: parent_identity,
         })
     }
 
@@ -794,6 +796,11 @@ impl<'child> ChildVmProcess<'child> {
     pub(crate) fn identity(self) -> &'child crate::subproc::SubprocessIdentity {
         let image: &'child crate::subproc::ChildSubprocessImage = core::pin::Pin::get_ref(self.child);
         image.identity()
+    }
+
+    #[inline]
+    pub(crate) const fn parent_identity(self) -> &'child crate::subproc::SubprocessIdentity {
+        self.parent
     }
 }
 

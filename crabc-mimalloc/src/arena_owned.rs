@@ -725,7 +725,7 @@ impl ProcessArenaBacking {
         memory: MemoryId,
         numa_node: i32,
         exclusive: bool,
-    ) -> Result<ManagedExternalRegion, ProcessArenaInstallFailure> {
+    ) -> Result<ManagedExternalRegion, ProcessArenaInstallFailure<'static>> {
         let _guard = match self.reserve_lock.lock() {
             Ok(guard) => guard,
             Err(_) => return Err(ProcessArenaInstallFailure {
@@ -1118,6 +1118,41 @@ impl ProcessArenaBacking {
             }
         }
         unsafe { self.try_find_free(search, slice_count, alignment, commit) }
+    }
+
+    /// Child-only regular arena allocation through the parent-bound VM policy
+    /// and this exact child's arena group. Every claim borrows the backing;
+    /// retained mapping callbacks keep a raw identity pair until the external
+    /// child owner calls `destroy_all` before releasing its context.
+    ///
+    /// # Safety
+    /// The caller retains the parent-issued `ChildMainHeapContextOwner` and
+    /// its pinned child image until all returned claims are released and this
+    /// backing's `destroy_all` has transferred every slot. No child teardown
+    /// or registry mutation may overlap. `search` must carry the exact live
+    /// child Heap/page facts, and `random` must be the exclusively borrowed
+    /// source random image of the parent detached metadata TLD.
+    pub(crate) unsafe fn try_allocate_child_slices_with_random<'child>(
+        &'child self,
+        child: crate::os::ChildVmProcess<'child>,
+        config: MemoryConfig,
+        search: ArenaSearch,
+        slice_count: usize,
+        alignment: usize,
+        commit: bool,
+        random: crate::os::OsRandom<'_>,
+    ) -> Option<ArenaSliceClaim<'child>> {
+        let identity = child.identity();
+        if !identity.is_registered_child_of(child.parent_identity())
+            || !core::ptr::eq(identity.arena_backing(), self)
+        {
+            return None;
+        }
+        unsafe {
+            self.try_allocate_slices_with_random(
+                child.process(), config, search, slice_count, alignment, commit, random,
+            )
+        }
     }
 
     /// Source `mi_arena_reserve`, called only under the source reserve lock.
