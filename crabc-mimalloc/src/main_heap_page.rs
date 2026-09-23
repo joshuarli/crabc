@@ -9414,26 +9414,17 @@ mod tests {
                     let child_identity = child_vm.identity();
                     let child_arenas = page_pair.arena_backing();
                     assert!(core::ptr::eq(child_arenas, child_identity.arena_backing()));
+                    let child_backing = crate::page_backing::ChildMetadataArenaBacking::new(page_pair);
                     let parent_arenas = parent.arena_backing();
                     let parent_count_before = parent_arenas.registry().count();
-                    let claim = unsafe {
-                        child_arenas.try_allocate_child_slices_with_random(
-                            child_vm,
+                    let claim = child_backing.claim_with_random(
                             config,
-                            crate::arena::ArenaSearch {
-                                heap_sequence: 0,
-                                heap_count: 1,
-                                thread_sequence: 0,
-                                numa_node: -1,
-                                requested: crate::arena::ArenaId::none(),
-                                allow_pinned: false,
-                            },
-                            1,
+                            crate::arena::ArenaId::none(),
                             1,
                             true,
+                            0,
                             Some(&mut child_arena_random),
                         )
-                    }
                     .expect("child slice allocation uses its own regular arena group");
                     let memory = claim.memory_id();
                     let arena_memory = memory.arena_memory()

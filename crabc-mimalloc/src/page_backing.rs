@@ -350,6 +350,102 @@ pub(crate) struct ProcessMetadataPageBacking {
     process: VmProcess<'static>,
 }
 
+/// Arena-slice source for child metadata pages. The PageMap remains process
+/// global, while reserve, bitmap, statistics, and teardown target this exact
+/// pinned child identity. This is not yet a page allocator/session.
+#[derive(Clone, Copy)]
+pub(crate) struct ChildMetadataArenaBacking<'child> {
+    pair: crate::process_arena::ChildProcessPageArenaLease<'child>,
+}
+
+impl<'child> ChildMetadataArenaBacking<'child> {
+    pub(crate) fn new(
+        pair: crate::process_arena::ChildProcessPageArenaLease<'child>,
+    ) -> Self {
+        Self { pair }
+    }
+
+    fn process(&self) -> VmProcess<'child> { self.pair.child().process() }
+
+    fn max_object_size(&self) -> usize {
+        let requested = self.process().policy().arena_max_object_size_bytes();
+        let rounded = requested.wrapping_add(ARENA_SLICE_SIZE - 1) & !(ARENA_SLICE_SIZE - 1);
+        let metadata = (PAGE_META_ALIGNED_COUNT * core::mem::size_of::<Page>()
+            + ARENA_SLICE_SIZE - 1) & !(ARENA_SLICE_SIZE - 1);
+        rounded.clamp(ARENA_MIN_OBJ_SIZE, PAGE_META_ALIGNMENT - metadata)
+    }
+}
+
+impl<'child> ChildMetadataArenaBacking<'child> {
+    /// # Safety
+    /// `memory` must be one live child-owned page/claim with all PageMap
+    /// entries and page metadata aliases removed before returning its slices.
+    unsafe fn arena_for_memory(&self, memory: MemoryId) -> Option<ArenaView<'child>> {
+        let pointer = memory.arena_memory()?.arena;
+        let backing = self.pair.arena_backing();
+        // SAFETY: callers keep the child page/capability live; the pair keeps
+        // the registered child backing alive while this lookup runs.
+        let view = unsafe { ArenaView::from_ptr(pointer) }?;
+        let published = unsafe { backing.registry().arena_at(view.arena().arena_index) }?;
+        (core::ptr::from_ref(published).cast_mut() == pointer).then_some(view)
+    }
+
+    /// The caller supplies the source thread sequence and exclusive random
+    /// source. The child metadata-Theap path uses its parent detached TLD's
+    /// sequence zero and random image; tests with synthetic random values
+    /// establish only arena routing and bitmap release.
+    pub(crate) fn claim_with_random(&self, config: MemoryConfig, requested: ArenaId, slices: usize,
+        commit: bool, thread_sequence: usize, random: crate::os::OsRandom<'_>)
+        -> Option<ArenaSliceClaim<'child>>
+    {
+        if self.pair.memory_config().ok()? != config { return None; }
+        let process = self.process();
+        let arena_backing = self.pair.arena_backing();
+        if !arena_backing.child_binding_matches(process, config)
+            || process.policy().disallow_arena_alloc()
+            || slices > self.max_object_size() / ARENA_SLICE_SIZE { return None; }
+        let child = self.pair.child();
+        let search = ArenaSearch {
+            heap_sequence: 0,
+            heap_count: 0,
+            thread_sequence,
+            numa_node: -1,
+            requested,
+            allow_pinned: true,
+        };
+        // SAFETY: the pair retains the exact registered child and this
+        // operation's random source is the parent detached metadata TLD.
+        unsafe {
+            self.pair.arena_backing().try_allocate_child_slices_with_random(
+                child, config, search, slices, ARENA_SLICE_SIZE, commit, random,
+            )
+        }
+    }
+
+    /// # Safety
+    /// `memory` must be the exact child page span after PageMap unregister,
+    /// arena-bitmap clearing, and metadata teardown; this consumes its unique
+    /// slice-release right.
+    pub(crate) unsafe fn release(&self, memory: MemoryId) -> bool {
+        unsafe { self.arena_for_memory(memory) }.is_some()
+            && unsafe { self.pair.arena_backing().release_slices(memory) }
+    }
+
+    /// # Safety
+    /// The caller uniquely owns this page's release transition after
+    /// PageMap/bitmap removal and passes its exact committed prefix once.
+    pub(crate) unsafe fn account_page_commit_before_release(&self, memory: MemoryId, committed: usize) -> bool {
+        unsafe { self.arena_for_memory(memory) }.is_some()
+            && unsafe { self.pair.arena_backing().account_page_commit_before_release(memory, committed) }
+    }
+
+    pub(crate) fn collect(&self, config: MemoryConfig, force: bool, thread_sequence: usize) -> bool {
+        unsafe { self.pair.arena_backing().collect_purge(
+            self.process(), config, force, false, thread_sequence,
+        ) }
+    }
+}
+
 impl ProcessMetadataPageBacking {
     pub(crate) fn new(process: VmProcess<'static>) -> Self { Self { process } }
     fn backing(&self) -> &'static ProcessArenaBacking { self.process.subprocess().arena_backing() }

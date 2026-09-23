@@ -503,6 +503,20 @@ impl ProcessArenaBacking {
     #[inline]
     pub(crate) fn registry(&self) -> &ArenaRegistry { &self.registry }
 
+    /// Checks that every installed child arena owner is bound to this exact
+    /// VM policy/identity/configuration before a caller can search existing
+    /// slices. An empty child group is admissible; its first installation
+    /// establishes the binding under the same reserve lock.
+    pub(crate) fn child_binding_matches(
+        &self,
+        process: VmProcess<'_>,
+        config: MemoryConfig,
+    ) -> bool {
+        if self.destroyed.load(Ordering::Acquire) { return false; }
+        let Ok(_guard) = self.reserve_lock.lock() else { return false; };
+        self.binding_matches_locked(process, config)
+    }
+
     /// Direct `_mi_os_commit` used by `mi_page_extend_free`, deliberately
     /// distinct from the arena callback used for a fresh page's first prefix.
     ///
@@ -1130,8 +1144,9 @@ impl ProcessArenaBacking {
     /// its pinned child image until all returned claims are released and this
     /// backing's `destroy_all` has transferred every slot. No child teardown
     /// or registry mutation may overlap. `search` must carry the exact live
-    /// child Heap/page facts, and `random` must be the exclusively borrowed
-    /// source random image of the parent detached metadata TLD.
+    /// child Heap/page facts; for the child metadata-Theap source path its
+    /// thread sequence is the parent detached TLD's sequence zero, and
+    /// `random` is that TLD's exclusively borrowed source random image.
     pub(crate) unsafe fn try_allocate_child_slices_with_random<'child>(
         &'child self,
         child: crate::os::ChildVmProcess<'child>,
@@ -1145,6 +1160,7 @@ impl ProcessArenaBacking {
         let identity = child.identity();
         if !identity.is_registered_child_of(child.parent_identity())
             || !core::ptr::eq(identity.arena_backing(), self)
+            || !self.child_binding_matches(child.process(), config)
         {
             return None;
         }
