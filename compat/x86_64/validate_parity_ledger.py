@@ -74974,7 +74974,7 @@ def require_static_pthread_name_artifact(
     assert isinstance(family_description, str)
     for phrase in (
         "Twenty-five separately verified static artifacts",
-        "bootstrapped-main GNU pthread task-name pair over direct Linux prctl",
+        "selected main/worker GNU pthread task-name pair over direct Linux prctl",
         "not pthread/TLS parity",
     ):
         require(
@@ -74996,7 +74996,7 @@ def require_static_pthread_name_artifact(
         "direct Linux `prctl=157`",
         "`PR_SET_NAME=15`",
         "`PR_GET_NAME=16`",
-        "Null, worker, foreign, completed, and non-self handles",
+        "Null, foreign, completed, and non-self handles",
         "candidate-only `ESRCH`",
         "before the name input or output is observed",
         "neither entry writes C `errno`",
@@ -75018,6 +75018,7 @@ def require_static_pthread_name_artifact(
         "libc/src/lib.rs",
         "libc/src/c_abi/x86_64/static_c_abi.rs",
         "libc/src/c_abi/x86_64/pthread_name.rs",
+        "libc/src/c_abi/x86_64/pthread_create_join.rs",
         "libc/src/c_abi/x86_64/pthread_identity.rs",
         "libc/src/c_abi/x86_64/static_tls.rs",
         "libc/src/c_abi/x86_64/syscall.rs",
@@ -75057,14 +75058,14 @@ def require_static_pthread_name_artifact(
         "strnlen(name, 16)",
         "len < 16",
         "Static Initial TLS v1",
-        "`%fs:0` process-main identity",
+        "`%fs:0` main and selected-worker identities",
         "before reading a setter source byte",
         "prctl=157",
         "PR_SET_NAME=15",
         "PR_GET_NAME=16",
         "exactly 16 bytes",
         "positive pthread status",
-        "creates no worker",
+        "creates one selected worker",
     ):
         require(
             phrase in prerequisite_text,
@@ -75099,7 +75100,7 @@ def require_static_pthread_name_artifact(
     scope = evidence[0]["scope"]
     assert isinstance(scope, str)
     for phrase in (
-        "Pinned-musl 1.2.6 project-header C reference",
+        "pinned-musl 1.2.6 project-header C reference",
         "`-nostdlib -static` candidate",
         "bootstrapped-main self set/get success",
         "raw PR_GET_NAME observation",
