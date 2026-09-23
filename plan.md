@@ -52,24 +52,70 @@ are not transferable passes for a different revision.
   are recorded below.
 - **Preservation:** Pre-upgrade dirty worktree source is under
   `refs/archive/pre-toolchain*`. AArch64 remains paused and frozen.
-- **Paused handoff (2026-09-23):** Development stopped at integrated `main`
-  `c6f349e79`; no agent or native build is running. The frozen AArch64
-  capability ledger is unchanged after the x86 `dup2` fix. The merged allocator
-  unit suite passed 1,159/1,159 at `7d7ea272b`; parity validation passed after
-  the later worker-name reconciliation. The current-main aligned-realloc
-  differential did not start because the offline cache lacked
-  `mimalloc-3.5.0.tag.json`; its pinned archive is present and hash-verified.
-  Review and integrate isolated `be227686e` (source-built core fixes nightly
-  static C links; canonical `libc-issetugid`, `libc-pthread-name`, and
-  `libc-legacy-misc` passed), `76f401c03` (short-buffer `res_send`), and
-  `4827620ff` (explicit child thread page owner; correct the registration
-  release safety comment). Keep `ed4db0ba6` out of `main`: independent review
-  found its compiler_builtins linker archive/OUT_DIR identity check incomplete
-  despite 105 passing host tests and a diagnostic static smoke. Then rerun
-  merged M4 and affected canonical gates, and source-seal one stable product
-  cohort for the dependency-ready POSIX admission. `.work` contains frozen
-  POSIX and active-source unwinder evidence; preserve those raw receipts and
-  the allocator SIGSEGV core/log while resuming safe disk cleanup.
+- **Active campaign (2026-09-23):** All lanes below resumed from `b96275b19`.
+  Lane `integrate` owns the paused handoff: `be227686e` (source-built core
+  fixes nightly static C links; canonical `libc-issetugid`,
+  `libc-pthread-name`, and `libc-legacy-misc` passed), `76f401c03`
+  (short-buffer `res_send`), and `4827620ff` (explicit child thread page owner;
+  correct the registration release safety comment), then merged M4 and affected
+  canonical gates. Keep `ed4db0ba6` out of `main`: its compiler_builtins linker
+  archive/OUT_DIR identity check is incomplete (lane `unwinder`). The
+  current-main aligned-realloc differential did not start because the offline
+  cache lacked `mimalloc-3.5.0.tag.json`; its pinned archive is present and
+  hash-verified (lane `m4`). The merged allocator unit suite passed 1,159/1,159
+  at `7d7ea272b`. Preserve the frozen POSIX (`posix-runtime-f5904a276`) and
+  active-source unwinder (`unwinder-products-b1a84d8a9`) worktree evidence and
+  the allocator SIGSEGV core/log; merged, clean worktrees are removed.
+
+## Parallel lanes
+
+Lanes are ownership boundaries, not schedules. Each runs in
+`.work/worktrees/lane-<id>` on branch `lane/<id>`, commits coherent verified
+increments, rebases on local `main`, and hands off. The integration owner alone
+merges to `main`, runs merged checks, edits this file and central ledgers, and
+removes a lane worktree once its work is merged. A lane touches shared files
+(`compat/x86_64/parity.toml`, `scripts/dev-x86_64.sh`, shared manifests) only for
+its own rows or commands. Implementation overlaps freely; family and milestone
+qualification still follows the dependency order below and in `campaign-status`.
+Agent and build concurrency is deliberately unthrottled (user direction,
+2026-09-23); only qualifying performance measurements wait for an uncontended
+host.
+
+| Lane | Owns |
+| --- | --- |
+| `integrate` | Paused-handoff commits above; merged M4 and affected canonical reruns. |
+| `posix` | `libc.posix-runtime`: `process.control`, `system.kernel-admin`, its selected-private rows, source-sealed cohort, `owned-posix-native` admission. |
+| `pthread` | `libc.pthread-tls`: `thread.pthread-c11`, `time.posix-timer-thread-notify`, `process.atfork-exit-hooks`, TLS ownership model, family evidence. |
+| `stdio` | One stream engine: `stdio.stream-io`, `path-stream`, `position-buffering`, `format-scan`, `fopen64-alias`, wide orientation. |
+| `text` | `text.iconv`, `text.wide-multibyte`, `locale.core`, `numeric.parse-float-locale`. |
+| `pattern` | `pattern.regex`, `pattern.wordexp`. |
+| `math-time` | `math.complex`, `math.elementary-fenv-sensitive`, `math.elementary-long-double`, `math.special`, `time.clock-calendar`; text-family assembly. |
+| `resolver` | `libc.resolver` end-to-end owned-product evidence. |
+| `abi-globals` | `process.globals` and final callable/data provider closure. |
+| `abi-selection` | Native ABI selection blockers (`native-abi-selection require-closure`) not owned by a family lane; BSD-random receipt integration. |
+| `c-compat` | Remaining `libc.c-abi-compat` selected-private rows: gettext, crypt/helpers, error reporting, legacy misc, qsort helper, search tables, allocator basic/observability. |
+| `loader` | `loader.dlfcn-basic`, `loader.dlfcn-introspection`, `runtime.loader` general graphs, concurrency, rollback. |
+| `runtime-facades` | `runtime.private-facades` and remaining Rust-facade loader/runtime mappings. |
+| `crt-dynamic` | `crt.dynamic-startup`. |
+| `static-product` | `sysroot.static-tls` and the complete owned static product suite in all static modes. |
+| `dynamic-product` | `sysroot.owned-artifact` dynamic suite, reproducibility, package/extract. |
+| `unwinder` | Installed-product unwinder integration and the `ed4db0ba6` identity fix. |
+| `std-lto` | `consumer.rust-std-lto`. |
+| `source-build` | `consumer.source-build`: Lua and the frozen real-software roster. |
+| `qual-chain` | Fail-closed readiness of the ordered qualification runners and `capability.accounting`. |
+| `runtime-perf` | `performance.release` harness completeness; no qualifying measurements under contention. |
+| `m2-vm-arenas` | Allocator M2 VM and arenas. |
+| `m2-init-fault` | Allocator M2 metadata, initialization, fault injection, no recursion. |
+| `m3` | Allocator M3. |
+| `m4` | Allocator M4, including the aligned-realloc differential. |
+| `m5-remote` | M5 pointer dispatch, remote publication, Loom models. |
+| `m5-exit` | M5 owner-exit traversal, abandonment/reclaim/release, scaffolding removal and architecture ratchet. |
+| `m5-stress` | M5 state auditor, deterministic stress, seeded soak, upstream `test-stress`. |
+| `m6` | Allocator M6 APIs. |
+| `m7` | Allocator M7. |
+| `m8` | Allocator M8 owned-libc integration and native-shadow products. |
+| `alloc-fork` | Final allocator fork contract. |
+| `alloc-perf` | Architecture sanity gate, codegen audit, M9 harness; no qualifying measurements under contention. |
 
 ## Fixed contracts
 
@@ -124,8 +170,9 @@ backend, features, and build configuration. Reuse its immutable products via
 existing supplied-product interfaces; keep required independent reproducibility
 builds independent. No shared mutable build/report directories, cross-revision
 receipt substitution, or relabeling of out-of-order diagnostics as qualification.
-Bound nested compiler/test concurrency by actual CPU and memory limits;
-performance qualification must not contend with builds or other measurements.
+Do not throttle agent or compiler/test concurrency; retry a build killed by
+memory pressure rather than treating it as a defect. Performance qualification
+must not contend with builds or other measurements.
 
 For runner changes, first exercise a small real dispatch → collector → physical
 output → independent-reader round trip. Extend existing matrices and readers

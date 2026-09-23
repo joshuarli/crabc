@@ -134,7 +134,7 @@ primitives remain in reviewed dependencies, including vectorized ones.
   Parallelize useful independent implementation in isolated worktrees; give
   shared state one owner and integrate continuously. Do not invent work to
   fill slots or require a scheduling board, handoff schema, or wave ceremony.
-  Bound nested build/test concurrency separately; qualifying benchmarks need
+  Do not throttle agent or build/test concurrency; qualifying benchmarks need
   an uncontended host.
 - `plan.md` is the only implementation plan and repository-wide progress
   handoff. Update its small Progress status section in place when the frontier
