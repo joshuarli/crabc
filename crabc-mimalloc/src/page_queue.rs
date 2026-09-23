@@ -1334,22 +1334,13 @@ pub(crate) fn page_is_in_full(page: &Page) -> bool {
     page.xthread_id.load(Ordering::Relaxed) & PAGE_IN_FULL_QUEUE != 0
 }
 
-/// Applies the `mi_page_set_in_full` metadata transition owned by this slice.
-///
-/// The source helper also maintains `mi_theap_t::pages_full_size`. That
-/// aggregate and the owning theap lifecycle are absent, so queue membership
-/// writes only the page-resident atomic flag here. Its Relaxed operation is
-/// exactly the `mi_page_flags_set` operation used by the source helper.
+/// Applies the source full-membership flag and reserved-byte transition.
 #[inline]
 unsafe fn page_set_in_full_membership(page: *mut Page, in_full: bool) {
-    // SAFETY: callers keep initialized page metadata stable. This forms a
-    // reference only to the atomic flag subobject, not to the whole `Page`.
-    let xthread_id = unsafe { &*core::ptr::addr_of!((*page).xthread_id) };
-    if in_full {
-        xthread_id.fetch_or(PAGE_IN_FULL_QUEUE, Ordering::Relaxed);
-    } else {
-        xthread_id.fetch_and(!PAGE_IN_FULL_QUEUE, Ordering::Relaxed);
-    }
+    // SAFETY: queue callers own the local page, its matching live Theap field,
+    // and the complete intrusive transition. Their valid concurrent clients
+    // access only disjoint remote-free atomics and distinct client blocks.
+    unsafe { Page::set_in_full_at(NonNull::new_unchecked(page), in_full) };
 }
 
 #[inline]
@@ -2068,6 +2059,42 @@ mod tests {
             assert!(!page_is_in_full(&page));
             assert_queue(&regular, &[&mut page as *mut Page]);
             assert_queue(&full, &[]);
+        }
+    }
+
+    #[test]
+    fn full_queue_transfers_account_reserved_block_bytes_once_per_membership_change() {
+        let block_size = 32;
+        let mut theap = Theap::empty();
+        let mut regular = PageQueue::empty(block_size);
+        let mut full = PageQueue::empty((LARGE_MAX_OBJ_WSIZE + 2) * WORD_SIZE);
+        let mut first = page(block_size);
+        let mut second = page(block_size);
+        assert!(first.set_capacity_reserved(4, 4));
+        assert!(second.set_capacity_reserved(8, 8));
+        first.abandoned_test_set_theap(&mut theap);
+        second.abandoned_test_set_theap(&mut theap);
+
+        // SAFETY: both full-capacity pages and their source Theap are pinned
+        // for this complete exclusive sequence; each transfer owns both
+        // disjoint intrusive queues and every changed link.
+        unsafe {
+            page_queue_push_metadata(&mut regular, &mut first);
+            page_queue_push_metadata(&mut regular, &mut second);
+            page_queue_enqueue_from_metadata(&mut full, &mut regular, &mut first);
+            assert_eq!(theap.pages_full_size(), 4 * block_size);
+            page_queue_enqueue_from_metadata(&mut full, &mut regular, &mut second);
+            assert_eq!(theap.pages_full_size(), 12 * block_size);
+
+            // Moving a full member within the same queue clears and restores
+            // the source flag; the resulting byte total must be unchanged.
+            page_queue_move_to_front_metadata(&mut full, &mut first);
+            assert_eq!(theap.pages_full_size(), 12 * block_size);
+
+            page_queue_enqueue_from_full_metadata(&mut regular, &mut full, &mut first);
+            assert_eq!(theap.pages_full_size(), 8 * block_size);
+            page_queue_remove_metadata(&mut full, &mut second);
+            assert_eq!(theap.pages_full_size(), 0);
         }
     }
 

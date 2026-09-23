@@ -17,7 +17,8 @@
 // predecessor / detached helper order, and main-Heap `memid` / Release
 // identity / heap initialization order), `src/theap.c:228-306,357-369,414-449` (dynamic
 // Theap initialization, canonical cached reference pair, and list detach),
-// `src/arena.c:674-723,870-1037,1240-1282` (per-heap arena-pages
+// `include/mimalloc/internal.h:985-999` (the full-queue flag and reserved-byte
+// accounting transition), `src/arena.c:674-723,870-1037,1240-1282` (per-heap arena-pages
 // acquisition/publication and fresh/release page metadata
 // publication), `src/page.c:214-243,574-644,708-757` (false-force owner-local
 // collection and fresh-page local-state invariants),
@@ -4440,6 +4441,56 @@ impl Page {
         true
     }
 
+    /// Port of `internal.h:mi_page_set_in_full` for the source page flag and
+    /// its owning Theap's reserved-byte total. Queue operations call this
+    /// only after establishing exclusive local queue and page-field authority.
+    ///
+    /// # Safety
+    ///
+    /// `page` must name initialized, stable page metadata. The caller owns
+    /// its local capacity, size, owner, and full-membership transition; if
+    /// `page->theap` is non-null it must remain live and the caller must also
+    /// own that Theap's `pages_full_size` field. Any concurrent valid client
+    /// may access only disjoint remote-free atomic fields and its own block.
+    pub(crate) unsafe fn set_in_full_at(page: NonNull<Self>, in_full: bool) {
+        // SAFETY: the caller keeps the atomic subobject initialized while
+        // it owns this source flag transition.
+        let flags = unsafe { &*core::ptr::addr_of!((*page.as_ptr()).xthread_id) };
+        let previous = if in_full {
+            flags.fetch_or(PAGE_IN_FULL_QUEUE, core::sync::atomic::Ordering::Relaxed)
+        } else {
+            flags.fetch_and(!PAGE_IN_FULL_QUEUE, core::sync::atomic::Ordering::Relaxed)
+        };
+        if (previous & PAGE_IN_FULL_QUEUE != 0) == in_full {
+            return;
+        }
+
+        // SAFETY: only the owner mutates these ordinary page fields; the
+        // short raw projection avoids borrowing the full page or Theap while
+        // a remote client can retain its atomic producer projection.
+        let theap = unsafe { core::ptr::read(core::ptr::addr_of!((*page.as_ptr()).theap)) };
+        if theap.is_null() {
+            return;
+        }
+        let capacity = unsafe { core::ptr::read(core::ptr::addr_of!((*page.as_ptr()).capacity)) };
+        let reserved = unsafe { core::ptr::read(core::ptr::addr_of!((*page.as_ptr()).reserved)) };
+        debug_assert_eq!(capacity, reserved);
+        let block_size = unsafe { core::ptr::read(core::ptr::addr_of!((*page.as_ptr()).block_size)) };
+        let size = (reserved as usize).wrapping_mul(block_size);
+        // SAFETY: the caller owns this exact ordinary Theap field throughout
+        // the queue transition. Unsigned arithmetic has the C source's
+        // size_t behavior; valid source geometry cannot overflow the total.
+        let total = unsafe { core::ptr::addr_of_mut!((*theap).pages_full_size) };
+        let previous_size = unsafe { core::ptr::read(total) };
+        debug_assert!(in_full || size <= previous_size);
+        let next_size = if in_full {
+            previous_size.wrapping_add(size)
+        } else {
+            previous_size.wrapping_sub(size)
+        };
+        unsafe { core::ptr::write(total, next_size) };
+    }
+
     #[inline]
     pub(crate) const fn block_size(&self) -> usize {
         self.block_size
@@ -6579,6 +6630,13 @@ impl Theap {
     #[inline]
     pub(crate) const fn page_full_retain(&self) -> isize {
         self.page_full_retain
+    }
+
+    /// Total reserved block bytes in this Theap's full queue.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) const fn pages_full_size(&self) -> usize {
+        self.pages_full_size
     }
 
     /// Reports the frozen source `page_reclaim_on_free >= 0` option image.
