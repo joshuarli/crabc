@@ -9394,6 +9394,9 @@ mod tests {
             let child_policy = crate::os::VmPolicy::new(vm_options)
                 .expect("resolved child VM policy is valid");
             let parent_vm = crate::os::VmProcess::new(&child_policy, parent);
+            let process_page_map = crate::process_page_map::ProcessPageMapStorage::test_static_owner()
+                .initialize(config, parent)
+                .expect("the process-global PageMap belongs to the parent");
             // This fixture isolates the child arena allocation transition;
             // it does not claim that the not-yet-implemented child metadata
             // engine supplies its random image from the parent's detached TLD.
@@ -9403,8 +9406,14 @@ mod tests {
                 .with_child_heap(|child_image, _heap, _memory| {
                     let child_vm = crate::os::ChildVmProcess::new(parent_vm, child_image.as_ref())
                         .expect("the exact registered child borrows the parent policy");
+                    let page_pair = crate::process_arena::ChildProcessPageArenaLease::join(
+                        process_page_map,
+                        child_vm,
+                    )
+                    .expect("the parent's global PageMap pairs with this registered child");
                     let child_identity = child_vm.identity();
-                    let child_arenas = child_identity.arena_backing();
+                    let child_arenas = page_pair.arena_backing();
+                    assert!(core::ptr::eq(child_arenas, child_identity.arena_backing()));
                     let parent_arenas = parent.arena_backing();
                     let parent_count_before = parent_arenas.registry().count();
                     let claim = unsafe {

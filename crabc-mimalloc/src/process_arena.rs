@@ -1446,6 +1446,90 @@ impl ProcessPageArenaLease {
     }
 }
 
+/// Pairs the process-global PageMap root with a reclaimable child's arena
+/// group. The map remains owned by the process parent while arena ranges,
+/// statistics, and teardown belong to the child image; this lease preserves
+/// that distinction instead of requiring equal subprocess identities.
+#[derive(Clone, Copy)]
+pub(crate) struct ChildProcessPageArenaLease<'child> {
+    page_map: ProcessPageMapLease,
+    child: crate::os::ChildVmProcess<'child>,
+}
+
+impl<'child> ChildProcessPageArenaLease<'child> {
+    /// Joins the canonical parent's published map to one registered child.
+    /// The child's own arena backing is selected through its pinned identity.
+    pub(crate) fn join(
+        page_map: ProcessPageMapLease,
+        child: crate::os::ChildVmProcess<'child>,
+    ) -> Result<Self, ChildProcessPageArenaLeaseError> {
+        page_map
+            .root()
+            .map_err(ChildProcessPageArenaLeaseError::PageMap)?;
+        let parent = page_map
+            .subprocess()
+            .map_err(ChildProcessPageArenaLeaseError::PageMap)?;
+        if !core::ptr::eq(parent.identity(), child.parent_identity()) {
+            return Err(ChildProcessPageArenaLeaseError::ParentMismatch);
+        }
+        page_map
+            .memory_config()
+            .map_err(ChildProcessPageArenaLeaseError::PageMap)?;
+        if !child.identity().is_registered_child_of(child.parent_identity()) {
+            return Err(ChildProcessPageArenaLeaseError::ChildNotRegistered);
+        }
+        Ok(Self { page_map, child })
+    }
+
+    #[inline]
+    pub(crate) fn child(self) -> crate::os::ChildVmProcess<'child> {
+        self.child
+    }
+
+    #[inline]
+    pub(crate) fn memory_config(self) -> Result<MemoryConfig, ChildProcessPageArenaLeaseError> {
+        self.page_map
+            .memory_config()
+            .map_err(ChildProcessPageArenaLeaseError::PageMap)
+    }
+
+    #[inline]
+    pub(crate) fn arena_backing(
+        self,
+    ) -> &'child crate::arena::ProcessArenaBacking {
+        self.child.identity().arena_backing()
+    }
+
+    #[inline]
+    pub(crate) fn begin_page_lifecycle(
+        self,
+    ) -> Result<ProcessPageMapMutationLease, ChildProcessPageArenaLeaseError> {
+        self.page_map
+            .begin_page_lifecycle()
+            .map_err(ChildProcessPageArenaLeaseError::PageMap)
+    }
+
+    /// # Safety
+    /// The caller owns the exact child range and metadata lifetime, excludes
+    /// overlapping plain map operations, and unregisters before releasing it.
+    #[inline]
+    pub(crate) unsafe fn page_map_for_owned_ranges(
+        self,
+    ) -> Result<&'static crate::page_map::PageMap, ChildProcessPageArenaLeaseError> {
+        // SAFETY: the caller upholds the exact-range contract above; this
+        // lease only proves the canonical parent map/registered child pair.
+        unsafe { self.page_map.page_map_for_owned_ranges() }
+            .map_err(ChildProcessPageArenaLeaseError::PageMap)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ChildProcessPageArenaLeaseError {
+    PageMap(ProcessPageMapError),
+    ParentMismatch,
+    ChildNotRegistered,
+}
+
 /// A pre-mutation mismatch while forming one process page/arena owner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ProcessPageArenaLeaseError {
