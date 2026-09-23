@@ -111,6 +111,7 @@ impl MainStaticTldSlot {
 /// the actual source-shaped `mi_process_tld_main` branch selected only by
 /// sequence zero; it is not a metadata allocation cache or a reusable TLD.
 pub(crate) struct MainSubprocess {
+    role: SubprocessRole,
     source_membership: registry::SourceSubprocessMembership,
     /// The one process-owned registry, reserve lock, and permanent exact OS
     /// backing slots for source normal arenas. This is a Rust ownership group,
@@ -179,6 +180,15 @@ pub(crate) struct MainSubprocess {
     #[cfg(test)]
     main_tld_post_registration_live: AtomicUsize,
     main_tld: UnsafeCell<MainStaticTldSlot>,
+}
+
+/// Which source subprocess path may consume the process-static TLD image.
+/// Every other subprocess starts its own relaxed TLD sequence at zero but
+/// must route that first TLD through its metadata-Theap.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SubprocessRole {
+    ProcessMain,
+    Child,
 }
 
 // SAFETY: the counters and one-way metadata-Theap identity are atomic; the
@@ -278,7 +288,16 @@ pub(crate) struct MainHeapPublication<'subprocess> {
 
 impl MainSubprocess {
     pub(crate) const fn new() -> Self {
+        Self::new_with_role(SubprocessRole::ProcessMain)
+    }
+
+    pub(crate) const fn new_child() -> Self {
+        Self::new_with_role(SubprocessRole::Child)
+    }
+
+    const fn new_with_role(role: SubprocessRole) -> Self {
         Self {
+            role,
             source_membership: registry::SourceSubprocessMembership::new(),
             arena_backing: crate::arena::ProcessArenaBacking::new(),
             statistics: crate::statistics::SubprocessStatistics::new(),
@@ -315,6 +334,11 @@ impl MainSubprocess {
         // SAFETY: the main subprocess is process-static. Child callers will
         // acquire an equivalent pin only through their owning child lease.
         unsafe { core::pin::Pin::new_unchecked(&self.metadata_allocator) }
+    }
+
+    #[inline]
+    pub(crate) const fn is_process_main(&self) -> bool {
+        matches!(self.role, SubprocessRole::ProcessMain)
     }
 
     /// Returns the one process-static main-subprocess identity.
@@ -415,6 +439,9 @@ impl MainSubprocess {
     pub(crate) fn reserve_static_bootstrap(
         &'static self,
     ) -> Result<MainStaticBootstrapSelection, MainStaticBootstrapSelectionError> {
+        if !self.is_process_main() {
+            return Err(MainStaticBootstrapSelectionError::NotProcessMain);
+        }
         let observed = self.bootstrap_selection.compare_exchange(
             BOOTSTRAP_OPEN,
             BOOTSTRAP_STATIC_SELECTING,
@@ -482,7 +509,7 @@ impl MainSubprocess {
                             continue;
                         }
                         let ticket = self.issue_thread_ticket_unchecked();
-                        debug_assert!(ticket.is_first_main_tld());
+                        debug_assert_eq!(ticket.is_first_main_tld(), self.is_process_main());
                         return Ok(ticket);
                     }
 
@@ -1251,6 +1278,7 @@ impl Drop for MainStaticBootstrapSelection {
 /// A refused static-main selection.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MainStaticBootstrapSelectionError {
+    NotProcessMain,
     /// The static Heap must occupy its final source slot before ticket zero
     /// can make the static TLD image observable.
     HeapFoundationNotCommitted,
@@ -1297,7 +1325,7 @@ impl ThreadRegistrationTicket {
 
     #[inline]
     pub(crate) const fn is_first_main_tld(&self) -> bool {
-        self.sequence.get() == 0
+        self.subprocess.is_process_main() && self.sequence.get() == 0
     }
 
     /// Initializes and registers the actual static `mi_process_tld_main`
@@ -1688,6 +1716,21 @@ mod tests {
     extern crate std;
 
     use super::*;
+
+    #[test]
+    fn first_child_thread_keeps_zero_sequence_without_claiming_process_static_tld() {
+        let child = std::boxed::Box::leak(std::boxed::Box::new(MainSubprocess::new_child()));
+        let ticket = child
+            .issue_generic_thread_ticket()
+            .expect("the child source sequence starts at zero");
+        assert_eq!(ticket.sequence().get(), 0);
+        assert!(!ticket.is_first_main_tld());
+        assert_eq!(child.total_thread_count(), 1);
+        assert_eq!(
+            child.reserve_static_bootstrap().err(),
+            Some(MainStaticBootstrapSelectionError::NotProcessMain)
+        );
+    }
 
     #[test]
     fn process_metadata_allocator_is_owned_by_the_static_main_subprocess() {

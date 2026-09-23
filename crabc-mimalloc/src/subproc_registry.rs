@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: MIT
 // Source: mimalloc v3.5.0 src/subproc.c:14-15,141-156,202-212,316-325.
 
-//! The source subprocess list surrounding canonical native main initialization.
-//! Only main is constructible in this staged runtime. Its actual source links,
-//! static MemoryId, and sequence are retained; no non-main API is synthesized.
+//! Source subprocess list ownership for process-main initialization and child
+//! membership. Main still uses its canonical static image; child registration
+//! records its parent-issued Malloc provenance and source sequence.
 
 use super::*;
 
@@ -94,6 +94,65 @@ impl SourceSubprocessRegistry {
         guard.unlock().map_err(SourceSubprocessRegistryError::Lock)
     }
 
+    /// Source `mi_subproc_init`'s non-main membership transition after the
+    /// caller has allocated and initialized the exact child context image.
+    ///
+    /// # Safety
+    /// `subprocess` is pinned in a live allocation owned by `parent`, and
+    /// `memory` is the exact Malloc MemoryId returned for that whole image.
+    /// The parent is already a member of this registry. The caller retains
+    /// the allocation and excludes child teardown until every Heap, metadata
+    /// owner, thread, and list consumer has completed.
+    pub(crate) unsafe fn initialize_child(
+        &'static self,
+        subprocess: &'static MainSubprocess,
+        parent: &'static MainSubprocess,
+        memory: MemoryId,
+    ) -> Result<(), SourceSubprocessRegistryError> {
+        let member = &subprocess.source_membership;
+        if subprocess.is_process_main()
+            || memory.kind() != crate::types::MemoryKind::Malloc
+            || !core::ptr::eq(
+                parent.source_membership.registry.load(Ordering::Acquire),
+                self,
+            )
+        {
+            return Err(SourceSubprocessRegistryError::InvalidMembership);
+        }
+        member
+            .registry
+            .compare_exchange(
+                core::ptr::null_mut(),
+                core::ptr::from_ref(self).cast_mut(),
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .map_err(|_| SourceSubprocessRegistryError::InvalidMembership)?;
+        // Pinned `mi_subproc_init` assigns parent and sequence before taking
+        // the process-list lock. The source relaxed total is monotonic even
+        // if a later lock boundary must retain the partially initialized node.
+        unsafe {
+            *member.memory.get() = memory;
+            *member.parent.get() = core::ptr::from_ref(parent).cast_mut();
+            *member.sequence.get() = self.total_count.fetch_add(1, Ordering::Relaxed);
+        }
+        let guard = self.lock.lock().map_err(SourceSubprocessRegistryError::Lock)?;
+        let head = unsafe { *self.head.get() };
+        if head.is_null() {
+            let _ = guard.unlock();
+            return Err(SourceSubprocessRegistryError::InvalidMembership);
+        }
+        unsafe {
+            *member.previous.get() = core::ptr::null_mut();
+            *member.next.get() = head;
+            (*head).source_membership.previous
+                .get()
+                .write(core::ptr::from_ref(subprocess).cast_mut());
+            *self.head.get() = core::ptr::from_ref(subprocess).cast_mut();
+        }
+        guard.unlock().map_err(SourceSubprocessRegistryError::Lock)
+    }
+
     /// Removes source subprocess membership before any Heap is destroyed.
     ///
     /// # Safety
@@ -116,5 +175,110 @@ impl SourceSubprocessRegistry {
         // retired node's own links or making the subprocess reusable.
         unsafe { *self.head.get() = *member.next.get(); }
         guard.unlock().map_err(SourceSubprocessRegistryError::Lock)
+    }
+
+    /// Removes one non-main subprocess at the source's first destroy step.
+    ///
+    /// # Safety
+    /// Terminal child admission excludes every list, Heap, metadata, thread,
+    /// and arena user. Its owner retains the exact context allocation until
+    /// all later source destroy steps finish, and must free it only afterward.
+    pub(crate) unsafe fn unlink_child_terminal(
+        &self,
+        subprocess: &MainSubprocess,
+    ) -> Result<(), SourceSubprocessRegistryError> {
+        let guard = self.lock.lock().map_err(SourceSubprocessRegistryError::Lock)?;
+        let member = &subprocess.source_membership;
+        let previous = unsafe { *member.previous.get() };
+        let next = unsafe { *member.next.get() };
+        let valid = !subprocess.is_process_main()
+            && core::ptr::eq(member.registry.load(Ordering::Acquire), self)
+            && (previous.is_null() || unsafe { (*previous).source_membership.registry.load(Ordering::Acquire) == core::ptr::from_ref(self).cast_mut() })
+            && (next.is_null() || unsafe { (*next).source_membership.registry.load(Ordering::Acquire) == core::ptr::from_ref(self).cast_mut() })
+            && (if previous.is_null() {
+                unsafe { *self.head.get() == core::ptr::from_ref(subprocess).cast_mut() }
+            } else {
+                unsafe { (*previous).source_membership.next.get().read() == core::ptr::from_ref(subprocess).cast_mut() }
+            });
+        if !valid {
+            let _ = guard.unlock();
+            return Err(SourceSubprocessRegistryError::InvalidMembership);
+        }
+        unsafe {
+            if previous.is_null() {
+                *self.head.get() = next;
+            } else {
+                *(*previous).source_membership.next.get() = next;
+            }
+            if !next.is_null() {
+                *(*next).source_membership.previous.get() = previous;
+            }
+        }
+        // Preserve the retired node's own links and identity as pinned C does.
+        guard.unlock().map_err(SourceSubprocessRegistryError::Lock)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn child_registration_prepends_and_terminal_unlink_preserves_owner_image() {
+        let registry = std::boxed::Box::leak(std::boxed::Box::new(SourceSubprocessRegistry::new()));
+        let main: &'static MainSubprocess =
+            std::boxed::Box::leak(std::boxed::Box::new(MainSubprocess::new()));
+        let child: &'static MainSubprocess =
+            std::boxed::Box::leak(std::boxed::Box::new(MainSubprocess::new_child()));
+        // SAFETY: the isolated process fixture exclusively owns the static
+        // main image and its one-time source-list transition.
+        unsafe { registry.initialize_main(main) }.unwrap();
+        let memory = MemoryId {
+            info: crate::types::MemoryInfo {
+                malloc: crate::types::MallocMemory {
+                    base: core::ptr::from_ref(child).cast_mut().cast(),
+                    size: size_of::<MainSubprocess>(),
+                },
+            },
+            kind: crate::types::MemoryKind::Malloc,
+            is_pinned: true,
+            initially_committed: true,
+            initially_zero: true,
+        };
+        // SAFETY: child is pinned in the exact Malloc-shaped test image;
+        // main is already a member, and this fixture has no concurrent users.
+        unsafe { registry.initialize_child(child, main, memory) }.unwrap();
+
+        assert!(core::ptr::eq(unsafe { *registry.head.get() }, child));
+        assert!(core::ptr::eq(
+            unsafe { *child.source_membership.parent.get() },
+            main
+        ));
+        assert_eq!(unsafe { *child.source_membership.sequence.get() }, 1);
+        assert!(unsafe { *child.source_membership.previous.get() }.is_null());
+        assert!(core::ptr::eq(
+            unsafe { *child.source_membership.next.get() },
+            main
+        ));
+        assert!(core::ptr::eq(
+            unsafe { *main.source_membership.previous.get() },
+            child
+        ));
+        assert_eq!(
+            unsafe { *child.source_membership.memory.get() }.kind(),
+            crate::types::MemoryKind::Malloc
+        );
+
+        // SAFETY: this isolated child has no Heap, thread, metadata, or arena
+        // users; the exact child image remains allocated through unlink.
+        unsafe { registry.unlink_child_terminal(child) }.unwrap();
+        assert!(core::ptr::eq(unsafe { *registry.head.get() }, main));
+        assert!(unsafe { *main.source_membership.previous.get() }.is_null());
+        assert_eq!(unsafe { *child.source_membership.previous.get() }, core::ptr::null_mut());
+        assert!(core::ptr::eq(
+            unsafe { *child.source_membership.next.get() },
+            main
+        ));
+        assert_eq!(registry.total_count.load(Ordering::Relaxed), 2);
     }
 }
