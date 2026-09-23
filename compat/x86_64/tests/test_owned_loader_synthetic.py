@@ -189,11 +189,13 @@ time.sleep(30)
             linker = root / "ld.lld"
             linker.write_bytes(b"pinned linker bytes\n")
             linker.chmod(0o755)
-            shared = SimpleNamespace(linker=lambda: str(linker))
+            selected_roots = []
+            shared = SimpleNamespace(linker=lambda product: selected_roots.append(product) or str(linker))
             with mock.patch.object(module, "installed_driver_shared", return_value=shared):
                 self.assertEqual(module.producer_linker_seal(root), {
                     "path": str(linker), "sha256": module.sha256(linker),
                 })
+            self.assertEqual(selected_roots, [root])
             linker.write_bytes(b"replaced linker bytes\n")
             with mock.patch.object(module, "installed_driver_shared", return_value=shared):
                 self.assertNotEqual(module.producer_linker_seal(root)["sha256"],

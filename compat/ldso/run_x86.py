@@ -262,7 +262,7 @@ def producer_linker_seal(product: pathlib.Path) -> dict[str, str]:
 
     shared = installed_driver_shared(product)
     try:
-        selected = pathlib.Path(shared.linker())
+        selected = pathlib.Path(shared.linker(product))
         resolved = selected.resolve(strict=True)
         metadata = resolved.lstat()
     except (OSError, shared.DriverError) as error:

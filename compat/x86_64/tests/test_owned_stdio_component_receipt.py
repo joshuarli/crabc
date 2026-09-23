@@ -126,7 +126,7 @@ class ReceiptFixture:
         helper.write_text(
             "def compiler():\n"
             f"    return {str(self.tool)!r}\n\n"
-            "def linker():\n"
+            "def linker(root):\n"
             f"    return {str(self.tool)!r}\n",
             encoding="utf-8",
         )

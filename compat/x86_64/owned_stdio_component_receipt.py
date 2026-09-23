@@ -366,7 +366,7 @@ def _dynamic_helper_tools(dynamic: Path) -> dict[str, Path]:
         for role in ("compiler", "linker"):
             selector = getattr(module, role, None)
             require(callable(selector), f"installed compiler helper lacks {role} selector")
-            candidate = selector()
+            candidate = selector(dynamic) if role == "linker" else selector()
             require(type(candidate) is str and Path(candidate).is_absolute(),
                     f"installed compiler helper {role} path is invalid")
             selected[role] = regular(Path(candidate), f"installed helper {role}")

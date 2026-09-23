@@ -64,7 +64,7 @@ class ReceiptFixture:
             path.write_bytes(body)
             path.chmod(0o755)
         helper = self.dynamic / "share/crabc/crabc_cc_static.py"
-        helper.write_text("def compiler():\n    return " + repr(str(self.tool)) + "\n\ndef linker():\n    return " + repr(str(self.tool)) + "\n")
+        helper.write_text("def compiler():\n    return " + repr(str(self.tool)) + "\n\ndef linker(root):\n    return " + repr(str(self.tool)) + "\n")
         self.sources: dict[str, Path] = {}
         for role, metadata in receipt.ROLES.items():
             source = self.checkout / str(metadata["source"])
