@@ -109,6 +109,42 @@ class CryptProfileTests(unittest.TestCase):
                 crypt.collect_command(reader, 'retained', command, raw_stdout=b'')
             path.write_bytes(original)
 
+    def test_extend_finally_records_tools_for_the_supplied_dynamic_product(self):
+        tools = {'compiler': {'path': '/pinned/rustc', 'sha256': 'a' * 64},
+                 'linker': {'path': '/product/ld.lld', 'sha256': 'b' * 64}}
+        def live_tools(product):
+            self.assertEqual(product, self.product)
+            return tools
+        def run_command(root, work, label, command, environment):
+            if label in ('vector-link-pie', 'vector-link-non-pie'):
+                mode = label.removeprefix('vector-link-')
+                (work / 'vectors' / f'dynamic-{mode}-consumer').write_bytes(b'fixture executable')
+        def copytree(source, destination, **kwargs):
+            Path(destination).mkdir()
+        def copyfile(source, destination):
+            Path(destination).write_bytes(b'fixture executable')
+        with (patch.object(crypt, 'guard'),
+              patch.object(crypt, 'live_tools', side_effect=live_tools),
+              patch.object(crypt, 'source_records', return_value={'source': 'sealed'}),
+              patch.object(crypt, 'product_record', return_value={'product': 'sealed'}),
+              patch.object(crypt, 'live_oracle', return_value={'oracle': 'sealed'}),
+              patch.object(crypt.native, 'Reader'),
+              patch.object(crypt, 'vector_commands', return_value={name: [] for name in
+                    ('dependencies', 'compile', 'oracle-link')}),
+              patch.object(crypt, 'run_command', side_effect=run_command),
+              patch.object(crypt, 'require_elf'),
+              patch.object(crypt.products, 'validate_link'),
+              patch.object(crypt.shutil, 'copytree', side_effect=copytree),
+              patch.object(crypt.shutil, 'copyfile', side_effect=copyfile),
+              patch.object(crypt.copies, 'record_execution_payload'),
+              patch.object(crypt.copies, 'audit_execution_payload', return_value={}),
+              patch.object(crypt, 'runtime_command', return_value=[]),
+              patch.object(crypt, 'collect', return_value={'status': 'complete'})):
+            crypt.extend(ROOT, self.leaf, self.product)
+
+        self.assertEqual(json.loads((self.leaf / 'profile-tools-after.json').read_text()), tools)
+        self.assertFalse((self.leaf / 'profile-tools-after-error.json').exists())
+
     def test_runtime_invocations_bind_each_dynamic_copy_and_observer_role(self):
         for mode in ('pie', 'non-pie'):
             for entry in ('kernel', 'direct'):

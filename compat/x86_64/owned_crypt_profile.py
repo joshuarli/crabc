@@ -351,7 +351,7 @@ def extend(root, work, product):
                 family.static_products.write_new(vectors / ('dynamic-'+mode+'-execution-'+phase+'.json'), value)
     finally:
         for name, capture in (('source-after', lambda: source_records(root)), ('product-after', lambda: product_record(root, product)),
-                              ('tools-after', live_tools), ('oracle-after', live_oracle)):
+                              ('tools-after', lambda: live_tools(product)), ('oracle-after', live_oracle)):
             try:
                 family.static_products.write_new(work / ('profile-'+name+'.json'), capture())
             except Exception as error:
