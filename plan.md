@@ -28,8 +28,12 @@ are not transferable passes for a different revision.
   POSIX/pthread/text/stdio/resolver/loader and installed-product work is
   integrated. The POSIX dynamic, 54-cell matrix, native aggregate, and physical
   admission passed with independent readers on clean `3c47d990d`; the pthread
-  installed-behavior component also passed there. These source-bound checkpoints
-  do not promote current main. Complete the actual remaining
+  installed-behavior component and its atomic/clone prerequisites passed there.
+  The loader's 21 synthetic and 34 package cases, three inventories, and
+  independent family reader passed on that cohort. The resolver network reader
+  passed on the same products; the text family's 27 producer runs passed and its
+  family reader is pending. These source-bound checkpoints do not promote
+  current main. Complete the actual remaining
   aggregate/family admissions from `campaign-status`, not another symbol sweep.
 - **Allocator:** M1's six bounded components passed at `0daef148bd20dc2bef2ac9dc34af4f3dd0e99d7a`.
   M2 PageMap and scalar bitmaps qualified at `62d6435c772e9ddc144de302cc54ad78cea720e9`;
@@ -40,8 +44,10 @@ are not transferable passes for a different revision.
   step passed its focused native test at `b50e32571`. The process-main/child
   subprocess identity split passed its focused native test at `563ce8abd`.
   Parent-issued child context and metadata-Theap preparation passed its focused
-  native test at `0617722e4`; child metadata engine, real Heap/page teardown,
-  and parent storage release after those transitions remain open. These
+  native test at `0617722e4`; a linear parent-Heap child storage capability
+  passed its focused merged native test at `97522c679`. Child metadata engine,
+  real Heap/page teardown, and parent storage release after those transitions
+  remain open. These
   bounded witnesses do not close the milestone.
 - **Integration:** Accepted C stays default. Explicit owned static and dynamic
   native-shadow products and graph/purity checks exist. The private
@@ -49,8 +55,10 @@ are not transferable passes for a different revision.
   `nightly-2026-09-15` toolchain selected by `rust-toolchain.toml`.
   Installed lifecycle, interposition, full qualification and promotion remain
   distinct obligations.
-- **Qualification:** Native OS/libc-test aggregation, unwinder/std/LTO,
-  ordered consumer gates and release performance remain open. The 114-row
+- **Qualification:** Native OS/libc-test aggregation, installed-product
+  unwinder/std/LTO, ordered consumer gates and release performance remain open.
+  Eight standalone unwinder commands and 89 host tests passed on the selected
+  nightly; these are non-promoting source-boundary checks. The 114-row
   collector and bounded replay are not performance qualification. Hardware
   prerequisites are recorded below.
 - **Preservation:** Pre-upgrade detached and dirty worktree source was preserved
