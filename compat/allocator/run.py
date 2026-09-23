@@ -329,7 +329,7 @@ M2_X86_64_BITMAP_FRAGMENT_DIGEST = "dbb2bc7d34762819f7ed76c3b50fd3d8599d46b0ba7b
 # The selected subprocess-statistics owner adds its pinned `types.h`,
 # `subproc.c`, and `stats.c` source boundary to the existing VM inventory.
 # These source-inventory changes do not promote M2.
-M2_X86_64_VM_FRAGMENT_DIGEST = "41d7449d49f027992f139cd92ad43f49f5ae25ebcbe8e15039a811b4e742c2d9"
+M2_X86_64_VM_FRAGMENT_DIGEST = "3043394bb2635329bf176af98b97f4855b2e2669ed15d6de26a4be5c0e73d0b7"
 # The initialization inventory binds the selected ordinary later-main Theap
 # transaction while retaining non-main, automatic-teardown, and fork nonclaims.
 # It does not promote M2.
