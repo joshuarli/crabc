@@ -39,6 +39,19 @@ observed list/TLD/thread-count transition. Detached TLD backing, arena and
 PageMap release, Heap statistics and bookkeeping, and full subprocess
 destruction remain separate work.
 
+`./compat/allocator/run-x86_64.sh allocator-m6` is the fail-closed Milestone 6
+gate. [`m6-gate-v3.5.0.json`](m6-gate-v3.5.0.json) partitions every applicable
+Heap, Theap, arena, managed-memory, and subprocess item selected from
+[`api-v3.5.0.json`](api-v3.5.0.json) into gates, plus cross-cutting
+destruction/lifetime and upstream-test gates, and names each gate's evidence.
+The command executes every evidence entry that has a runner (currently the two
+destruction differentials above), writes `x86_64/m6-gate/report.json` under the
+allocator artifacts directory, and exits nonzero until every gate passes. A
+gate passes only with no reviewed blocker and all of its evidence runnable and
+passing; the contract validator rejects inventory gaps, double ownership, and
+unblocked gates that depend on missing evidence. `--check` validates the
+contract alone; `--reader-tests` runs its checker tests.
+
 This directory owns the reproducible source, inventory, C-oracle, and later
 Rust/C evidence for the fixed mimalloc v3.5.0 semantic port. Native
 Linux/x86-64 little-endian development is active alongside runtime parity;

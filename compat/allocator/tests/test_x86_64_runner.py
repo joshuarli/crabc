@@ -119,6 +119,22 @@ fi
         self.assertEqual(rejected.returncode, 2)
         self.assertIn("allocator-heap-destroy takes no arguments", rejected.stderr)
 
+    def test_m6_gate_command_is_closed_and_runs_the_fail_closed_gate(self):
+        for arguments, expected in (
+            ((), [b"python3", b"compat/allocator/m6_gate.py"]),
+            (("--check",), [b"python3", b"compat/allocator/m6_gate.py", b"--check"]),
+            (("--reader-tests",), [b"python3", b"compat/allocator/tests/test_m6_gate.py"]),
+        ):
+            with self.subTest(arguments=arguments):
+                result = self.launch("allocator-m6", *arguments)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                args = self.capture.read_bytes().split(b"\0")
+                self.assertEqual(args[-1 - len(expected):-1], expected)
+
+        rejected = self.launch("allocator-m6", "--full")
+        self.assertEqual(rejected.returncode, 2)
+        self.assertIn("allocator-m6 accepts only --check or --reader-tests", rejected.stderr)
+
     def test_opt_in_allocator_budget_forwards_cargo_and_caps_the_container(self):
         result = self.launch(
             "allocator-unit", "--filter", "os::tests::native_large_page_retry_suppression",

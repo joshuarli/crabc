@@ -1,0 +1,356 @@
+{
+  "schema": "crabc-mimalloc-m6-gate",
+  "format": 1,
+  "upstream": {
+    "version": "3.5.0",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801"
+  },
+  "inventory": {
+    "authority": "compat/allocator/api-v3.5.0.json",
+    "groups": [
+      "arena",
+      "heap",
+      "memory-visitation-management",
+      "subprocess",
+      "theap"
+    ],
+    "name_prefixes": [
+      "mi_arena_",
+      "mi_heap_",
+      "mi_manage_",
+      "mi_reserve_",
+      "mi_subproc_",
+      "mi_theap_"
+    ],
+    "additional_items": [
+      "mi_any_heap_contains",
+      "mi_block_visit_fun",
+      "mi_is_in_heap_region",
+      "mi_unsafe_heap_page_is_under_utilized"
+    ]
+  },
+  "evidence": {
+    "differential:heap-destroy": {
+      "runner": "compat/allocator/heap_destroy.py",
+      "scope": "Pinned-C/Rust main-Heap Theap-list destruction after process_done retained worker TLDs (M2 building block of Heap and subprocess destruction)."
+    },
+    "differential:arena-destroy": {
+      "runner": "compat/allocator/arena_destroy.py",
+      "scope": "Pinned-C/Rust quiescent arena-group retirement with regular, external, and huge owners and failed-release retries (M2 building block of subprocess destruction)."
+    },
+    "differential:public-heap-lifecycle": {
+      "runner": null,
+      "scope": "Pinned-C/Rust new/allocate/delete/destroy/contains/visit/statistics traces for non-main Heaps across threads."
+    },
+    "differential:public-theap": {
+      "runner": null,
+      "scope": "Pinned-C/Rust default-Theap switching and direct Theap operation traces."
+    },
+    "differential:public-arena": {
+      "runner": null,
+      "scope": "Pinned-C/Rust reservation, managed-memory, exclusive-arena, and arena query traces."
+    },
+    "differential:subprocess-lifecycle": {
+      "runner": null,
+      "scope": "Pinned-C/Rust subprocess create/add-thread/visit/statistics/destroy traces."
+    },
+    "fault:heap-lifecycle": {
+      "runner": null,
+      "scope": "Deterministic failure injection for Heap, Theap, TLD, TLS-slot, arena-page metadata, and arena allocation with unique-owner audit."
+    },
+    "unit:heap-lifecycle": {
+      "runner": null,
+      "scope": "Focused Rust Heap lifecycle regressions."
+    },
+    "unit:heap-membership": {
+      "runner": null,
+      "scope": "Focused Rust Heap membership regressions."
+    },
+    "unit:heap-allocation": {
+      "runner": null,
+      "scope": "Focused Rust Heap-scoped allocation regressions."
+    },
+    "unit:heap-statistics-visitation": {
+      "runner": null,
+      "scope": "Focused Rust Heap statistics and visitation regressions."
+    },
+    "unit:theap": {
+      "runner": null,
+      "scope": "Focused Rust Theap entry regressions."
+    },
+    "unit:arena": {
+      "runner": null,
+      "scope": "Focused Rust arena and managed-memory regressions."
+    },
+    "unit:subprocess": {
+      "runner": null,
+      "scope": "Focused Rust subprocess regressions."
+    },
+    "upstream:test-api-heaps": {
+      "runner": null,
+      "scope": "Unmodified test-api.c heap-os1, heap-os2, heap-many, and arena_reserve."
+    },
+    "upstream:test-stress-heaps": {
+      "runner": null,
+      "scope": "Unmodified test-stress-heaps.c (MI_USE_HEAPS=4) at 1, 2, 4, and 8 workers."
+    },
+    "upstream:test-stress-subprocs": {
+      "runner": null,
+      "scope": "Unmodified test-stress-subprocs.c (two subprocesses)."
+    }
+  },
+  "gates": [
+    {
+      "id": "m6.heap-lifecycle",
+      "required": true,
+      "items": [
+        "mi_heap_t",
+        "mi_heap_new",
+        "mi_heap_new_in_arena",
+        "mi_heap_delete",
+        "mi_heap_destroy",
+        "mi_heap_main",
+        "mi_heap_theap",
+        "mi_heap_collect",
+        "mi_heap_set_numa_affinity"
+      ],
+      "acceptance": "First-class Heaps follow src/heap.c: parent-main-Heap-allocated Heap images with a dynamic thread-local slot and subprocess list/count membership, lazy per-thread Theap creation, main-Heap delete/destroy refusal warnings, `mi_heap_delete` moving live pages to the main Heap as abandoned pages, `mi_heap_destroy` releasing every page, and exclusive-arena binding.",
+      "evidence": [
+        "differential:public-heap-lifecycle",
+        "differential:heap-destroy",
+        "unit:heap-lifecycle"
+      ],
+      "blocked_by": [
+        "The private dynamic Theap binding attaches one Theap to a caller-pinned `Heap::bootstrap_empty()` image with one claimed regular TLS key; no parent-Heap-allocated non-main Heap, non-main subprocess Heap-list membership, `_mi_heap_move_pages`, `_mi_heap_destroy_pages`, or `mi_heap_free` transition exists, and the Heap registry admits only main Heaps."
+      ]
+    },
+    {
+      "id": "m6.heap-membership",
+      "required": true,
+      "items": [
+        "mi_heap_of",
+        "mi_heap_contains",
+        "mi_any_heap_contains",
+        "mi_is_in_heap_region",
+        "mi_unsafe_heap_page_is_under_utilized"
+      ],
+      "acceptance": "Pointer-to-Heap queries follow the source safe PageMap lookup and page Heap identity, including null, foreign, interior, main-Heap default, and moved-page results.",
+      "evidence": [
+        "differential:public-heap-lifecycle",
+        "unit:heap-membership"
+      ],
+      "blocked_by": [
+        "No public-shaped safe-pointer Heap query exists over the process PageMap, and no non-main Heap identity can yet be observed."
+      ]
+    },
+    {
+      "id": "m6.heap-allocation",
+      "required": true,
+      "items": [
+        "mi_heap_malloc",
+        "mi_heap_zalloc",
+        "mi_heap_calloc",
+        "mi_heap_mallocn",
+        "mi_heap_malloc_small",
+        "mi_heap_zalloc_small",
+        "mi_heap_realloc",
+        "mi_heap_reallocn",
+        "mi_heap_reallocf",
+        "mi_heap_rezalloc",
+        "mi_heap_recalloc",
+        "mi_heap_strdup",
+        "mi_heap_strndup",
+        "mi_heap_realpath",
+        "mi_heap_malloc_aligned",
+        "mi_heap_malloc_aligned_at",
+        "mi_heap_zalloc_aligned",
+        "mi_heap_zalloc_aligned_at",
+        "mi_heap_calloc_aligned",
+        "mi_heap_calloc_aligned_at",
+        "mi_heap_realloc_aligned",
+        "mi_heap_realloc_aligned_at",
+        "mi_heap_rezalloc_aligned",
+        "mi_heap_rezalloc_aligned_at",
+        "mi_heap_recalloc_aligned",
+        "mi_heap_recalloc_aligned_at",
+        "mi_heap_alloc_new",
+        "mi_heap_alloc_new_n"
+      ],
+      "acceptance": "Every Heap-scoped allocation entry resolves the calling thread's Theap for that Heap (`_mi_heap_theap_get_or_init`) and then follows the same M4 allocation, zeroing, overflow, alignment, reallocation, string, and C++ new-handler semantics as the default-Heap entry points.",
+      "evidence": [
+        "differential:public-heap-lifecycle",
+        "upstream:test-api-heaps",
+        "unit:heap-allocation"
+      ],
+      "blocked_by": [
+        "Heap-scoped allocation depends on the missing non-main Heap lifecycle; per-thread Theap resolution exists only for the one private dynamic binding."
+      ]
+    },
+    {
+      "id": "m6.heap-statistics-visitation",
+      "required": true,
+      "items": [
+        "mi_heap_stats_get",
+        "mi_heap_stats_get_json",
+        "mi_heap_stats_merge_to_subproc",
+        "mi_heap_stats_print_out",
+        "mi_heap_visit_blocks",
+        "mi_heap_visit_abandoned_blocks",
+        "mi_heap_area_t",
+        "mi_heap_visit_fun",
+        "mi_block_visit_fun"
+      ],
+      "acceptance": "Heap statistics merge Theap statistics into their Heap and subprocess exactly as source, and Heap visitation walks the Heap's per-arena page bitmaps, abandoned bitmaps, and OS abandoned list with source area images and early-stop results. M7 separately owns the process-wide statistics, visitation, and output machinery these entries share.",
+      "evidence": [
+        "differential:public-heap-lifecycle",
+        "unit:heap-statistics-visitation"
+      ],
+      "blocked_by": [
+        "No public-shaped Heap statistics or Heap visitation entry exists, and M7 statistics/visitation output remains open."
+      ]
+    },
+    {
+      "id": "m6.heap-source-conveniences",
+      "required": true,
+      "items": [
+        "mi_heap_malloc_tp",
+        "mi_heap_zalloc_tp",
+        "mi_heap_calloc_tp",
+        "mi_heap_mallocn_tp",
+        "mi_heap_reallocn_tp",
+        "mi_heap_recalloc_tp",
+        "mi_heap_stl_allocator",
+        "mi_heap_destroy_stl_allocator"
+      ],
+      "acceptance": "The pinned header-only Heap conveniences compile unchanged against the Heap entry points they expand to, with the destroying STL allocator's shared Heap lifetime preserved.",
+      "evidence": [
+        "upstream:test-api-heaps"
+      ],
+      "blocked_by": [
+        "The conveniences expand only to Heap entry points that do not exist yet."
+      ]
+    },
+    {
+      "id": "m6.theap",
+      "required": true,
+      "items": [
+        "mi_theap_t",
+        "mi_theap_get_default",
+        "mi_theap_set_default",
+        "mi_theap_malloc",
+        "mi_theap_zalloc",
+        "mi_theap_calloc",
+        "mi_theap_malloc_small",
+        "mi_theap_zalloc_small",
+        "mi_theap_malloc_aligned",
+        "mi_theap_zalloc_aligned",
+        "mi_theap_realloc",
+        "mi_theap_rezalloc",
+        "mi_theap_collect",
+        "mi_theap_stats_get",
+        "mi_theap_visit_blocks",
+        "mi_theap_guarded_set_sample_rate",
+        "mi_theap_guarded_set_size_bound",
+        "mi_theap_malloc_csize",
+        "mi_theap_zalloc_csize"
+      ],
+      "acceptance": "Theap entry points follow src/theap.c and src/alloc.c: default-Theap get/set with lazy thread initialization and uninitialized-Theap refusal, direct Theap allocation and collection, Theap statistics, the deprecated Theap visitor, and the guarded setters' selected-build no-op or sampling behavior.",
+      "evidence": [
+        "differential:public-theap",
+        "unit:theap"
+      ],
+      "blocked_by": [
+        "Theap operations exist only behind private bounded page sessions; no public-shaped default-Theap switch or direct-Theap entry surface exists."
+      ]
+    },
+    {
+      "id": "m6.arena",
+      "required": true,
+      "items": [
+        "mi_arena_id_t",
+        "mi_arena_area",
+        "mi_arena_contains",
+        "mi_arena_min_alignment",
+        "mi_arena_min_size",
+        "mi_arena_max_object_size",
+        "mi_reserve_os_memory",
+        "mi_reserve_os_memory_ex",
+        "mi_reserve_huge_os_pages",
+        "mi_reserve_huge_os_pages_at",
+        "mi_reserve_huge_os_pages_at_ex",
+        "mi_reserve_huge_os_pages_interleave",
+        "mi_manage_os_memory",
+        "mi_manage_os_memory_ex",
+        "mi_manage_memory"
+      ],
+      "acceptance": "Arena identity, geometry queries, OS and huge-page reservation, exclusive arenas, and caller-managed memory follow src/arena.c and src/os.c for the calling subprocess, including commit-callback behavior, size/alignment refusal, containment, exclusive-Heap binding, and destruction with the owning subprocess.",
+      "evidence": [
+        "differential:arena-destroy",
+        "differential:public-arena",
+        "upstream:test-api-heaps",
+        "unit:arena"
+      ],
+      "blocked_by": [
+        "Arena reservation and managed-memory registration exist as crate-private process/child backing owners; no public-shaped arena identity, reservation, managed-memory, or query entry exists."
+      ]
+    },
+    {
+      "id": "m6.subprocess",
+      "required": true,
+      "items": [
+        "mi_subproc_id_t",
+        "mi_subproc_main",
+        "mi_subproc_current",
+        "mi_subproc_new",
+        "mi_subproc_destroy",
+        "mi_subproc_add_current_thread",
+        "mi_subproc_visit_heaps",
+        "mi_subproc_stats_get",
+        "mi_subproc_stats_get_exclusive",
+        "mi_subproc_stats_get_json",
+        "mi_subproc_stats_print_out",
+        "mi_subproc_heap_stats_print_out"
+      ],
+      "acceptance": "Subprocesses follow src/subproc.c: parent-metadata creation with child main Heap and metadata Theap, registry membership, thread admission refusal for threads already in another subprocess, Heap visitation under the Heap-list lock, statistics merge on destruction, and `mi_subproc_destroy` destroying non-main Heaps, the child main Heap, and the child arenas in source order while refusing the process main subprocess.",
+      "evidence": [
+        "differential:subprocess-lifecycle",
+        "differential:arena-destroy",
+        "upstream:test-stress-subprocs",
+        "unit:subprocess"
+      ],
+      "blocked_by": [
+        "The child subprocess owner is a staged crate-private typestate exercised only by focused fixtures; no composed `mi_subproc_new`/`mi_subproc_destroy`, child thread admission, or public-shaped subprocess entry exists."
+      ]
+    },
+    {
+      "id": "m6.destruction-lifetime",
+      "required": true,
+      "items": [],
+      "acceptance": "Heap delete/destroy, arena destruction, and subprocess destruction are correct under cross-thread lifetime: Heaps used by several threads, owner threads exiting before and after Heap deletion, concurrent thread termination during Theap detachment with source try-lock backoff, remote frees into moved pages, and failure behavior for Heap, Theap, TLD, TLS-slot, arena-page metadata, and arena allocation, each compared with the pinned C oracle.",
+      "evidence": [
+        "differential:heap-destroy",
+        "differential:arena-destroy",
+        "differential:public-heap-lifecycle",
+        "differential:subprocess-lifecycle",
+        "fault:heap-lifecycle"
+      ],
+      "blocked_by": [
+        "The runnable heap-destroy and arena-destroy differentials cover only the main-Heap Theap-list pass and quiescent arena-group retirement; public Heap, cross-thread, and failure-path differentials do not exist."
+      ]
+    },
+    {
+      "id": "m6.upstream",
+      "required": true,
+      "items": [],
+      "acceptance": "Applicable unmodified upstream Heap and subprocess tests pass with only environment/name binding: test-api.c `heap-os1`, `heap-os2`, `heap-many`, and `arena_reserve`; test-stress-heaps.c; and test-stress-subprocs.c.",
+      "evidence": [
+        "upstream:test-api-heaps",
+        "upstream:test-stress-heaps",
+        "upstream:test-stress-subprocs"
+      ],
+      "blocked_by": [
+        "No adapter binds the upstream Heap, arena, or subprocess entry points to the Rust engine."
+      ]
+    }
+  ]
+}
