@@ -239,9 +239,9 @@ class NativeStaticContracts(unittest.TestCase):
                 "CRABC_X86_64_LUA_TIMEOUT": "7",
             }
         )
-        for command, script in (
-            ("lua-static-source-build", "run_x86_static_dispatch.py"),
-            ("lua-dynamic-source-build", "run_x86_dynamic.py"),
+        for command, script, expected_capabilities in (
+            ("lua-static-source-build", "run_x86_static_dispatch.py", []),
+            ("lua-dynamic-source-build", "run_x86_dynamic.py", ["--cap-add=SYS_CHROOT"]),
         ):
             result = subprocess.run(
                 ["bash", str(RUNNER.ROOT / "scripts/dev-x86_64.sh"), command],
@@ -257,7 +257,12 @@ class NativeStaticContracts(unittest.TestCase):
             self.assertIn(f"/workspace/compat/lua/{script}", arguments)
             self.assertEqual(arguments[arguments.index("--jobs") + 1], "3")
             self.assertEqual(arguments[arguments.index("--timeout") + 1], "7")
-            self.assertFalse(any(argument.startswith("--cap-add") for argument in arguments))
+            self.assertEqual(
+                [argument for argument in arguments if argument.startswith("--cap-add")],
+                expected_capabilities,
+            )
+            self.assertNotIn("--privileged", arguments)
+            self.assertFalse(any(argument.startswith("--security-opt") for argument in arguments))
 
     def test_x86_work_root_rejects_external_and_symlinked_state(self) -> None:
         external = RUNNER.ROOT.parent / "outside-lua-work-root"
