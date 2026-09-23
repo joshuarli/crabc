@@ -539,6 +539,14 @@ impl<'main> MainHeapThreadAttachment<'main> {
         Ok(self.main_heap.subprocess())
     }
 
+    /// Exposes the exact process metadata owner selected by this attachment
+    /// to allocator unit fixtures that exercise parent-issued capabilities.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn parent_metadata_allocator(&self) -> core::pin::Pin<&'static MetaAllocator> {
+        self.metadata
+    }
+
     /// Returns the current parent allocation-owner identity retained by this
     /// exact later-thread TLD. The sequence distinguishes a later attachment
     /// on a reused thread from the one that issued an outstanding child Heap

@@ -304,6 +304,16 @@ impl ParentHeapAllocation<'_> {
         self.memory
     }
 
+    #[inline]
+    pub(crate) fn was_allocated_by(&self, subprocess: &crate::subproc::SubprocessIdentity) -> bool {
+        core::ptr::eq(self.parent_subprocess.as_ptr(), subprocess.as_ptr())
+    }
+
+    #[inline]
+    pub(crate) const fn pointer_for_identity(&self) -> NonNull<Heap> {
+        self.pointer
+    }
+
     /// Materializes the zeroed C `mi_heap_t` allocation as this crate's
     /// source-ordered private Heap image. The exact allocation remains
     /// external and address-stable for the token's lifetime.
@@ -9273,6 +9283,190 @@ mod tests {
             attachment
                 .finish_after_user_destructors()
                 .expect("the parent attachment finishes after the child storage release");
+        });
+    }
+
+    #[test]
+    fn parent_allocated_child_heap_follows_registry_and_theap_release_order() {
+        with_owner_local_fixture(true, |attachment, mut heap_owner, _pair| {
+            let parent = attachment
+                .subprocess()
+                .expect("the active source attachment names its process parent");
+            let config = attachment
+                .memory_config()
+                .expect("the source attachment retains its frozen configuration");
+            let parent_metadata = attachment.parent_metadata_allocator();
+            let registry = std::boxed::Box::leak(std::boxed::Box::new(
+                crate::subproc::registry::SourceSubprocessRegistry::new(),
+            ));
+            // SAFETY: this isolated process fixture exclusively owns the
+            // process main registry insertion.
+            unsafe { registry.initialize_main(parent) }
+                .expect("the source parent joins the child registry");
+
+            let audit_before = parent_metadata.test_allocation_audit();
+            parent_metadata.test_fail_next_direct_zeroed_size(core::mem::size_of::<Theap>());
+            assert!(matches!(
+                crate::meta::ChildContextOwner::allocate(
+                    parent_metadata,
+                    parent,
+                    config,
+                ),
+                Err(crate::meta::ChildContextCreateFailure::Allocation {
+                    stage: crate::meta::ChildContextCreateStage::AllocateMetadataTheap,
+                    error: crate::meta::MetaError::AllocationUnavailable,
+                })
+            ));
+            assert_eq!(
+                parent_metadata.test_allocation_audit().live_capability_count,
+                audit_before.live_capability_count,
+                "a failed metadata-Theap allocation releases the child context first",
+            );
+            let failed_context = crate::meta::ChildContextOwner::allocate(
+                parent_metadata,
+                parent,
+                config,
+            );
+            let mut failed_context = match failed_context {
+                Ok(owner) => owner,
+                Err(_) => panic!("parent metadata prepares rollback fixture"),
+            };
+            let failed_memory = failed_context
+                .with_lease(|lease| lease.context_memory_id());
+            assert!(failed_context
+                .with_image(|child| unsafe {
+                    registry.initialize_child(child.as_ref().get_ref(), parent, failed_memory)
+                })
+                .unwrap_or_else(|| panic!("the initialized child context remains projectable"))
+                .is_ok());
+            // Model the pinned `mi_heap_zalloc` null branch. The method's
+            // precondition is that no child Heap capability was returned;
+            // source rollback frees metadata Theap, unlinks registry, then
+            // releases context in that exact order.
+            // SAFETY: no user-Heap allocation or Heap publication occurred.
+            unsafe {
+                failed_context
+                    .rollback_after_child_heap_allocation_failure(registry)
+                    .unwrap_or_else(|_| panic!("the source Heap-allocation rollback completes"));
+            }
+            assert_eq!(
+                parent_metadata.test_allocation_audit().live_capability_count,
+                audit_before.live_capability_count,
+                "the failed Heap branch releases Theap before context",
+            );
+
+            let mut child_context = match crate::meta::ChildContextOwner::allocate(
+                parent_metadata,
+                parent,
+                config,
+            ) {
+                Ok(owner) => owner,
+                Err(_) => panic!("parent metadata prepares the live child context"),
+            };
+            let child_memory = child_context.with_lease(|lease| lease.context_memory_id());
+            assert!(child_context
+                .with_image(|child| unsafe {
+                    registry.initialize_child(child.as_ref().get_ref(), parent, child_memory)
+                })
+                .unwrap_or_else(|| panic!("the initialized child context remains projectable"))
+                .is_ok());
+
+            // Pinned `mi_subproc_new` allocates its main Heap after registry
+            // insertion, through `parent->heap_main` and the current attached
+            // parent Theap. The resulting token is bound to the child owner;
+            // there is no Box-backed Heap fixture in this path.
+            let heap_storage = heap_owner
+                .allocate_child_heap_storage(attachment)
+                .expect("the source parent allocator remains live")
+                .expect("the parent user Heap allocates the exact child Heap image");
+            let mut child = child_context
+                .bind_parent_heap_storage(heap_storage)
+                .unwrap_or_else(|_| panic!("the exact parent Heap token binds to this child"));
+            // SAFETY: the registry edge is live and source initialization is
+            // exclusive; the actual parent allocation token pins both images.
+            unsafe { child.initialize_heap_and_metadata_theap(config) }
+                .unwrap_or_else(|_| panic!("the child Heap and metadata Theap initialize"));
+            let (sequence, total, live, ticket_identity, is_child) = child
+                .with_child_heap(|mut image, _heap, _memory| {
+                    let identity_pointer = image.as_ref().get_ref().identity().as_ptr();
+                    let ticket = image
+                        .as_mut()
+                        .issue_metadata_thread_ticket()
+                        .expect("child sequence zero is eligible after Heap and metadata publication");
+                    let sequence = ticket.sequence().get();
+                    let ticket_identity = core::ptr::eq(
+                        ticket.subprocess().as_ptr(),
+                        identity_pointer,
+                    );
+                    drop(ticket);
+                    let identity = image.as_ref().get_ref().identity();
+                    (
+                        sequence,
+                        identity.total_thread_count(),
+                        identity.live_thread_count(),
+                        ticket_identity,
+                        identity.is_registered_child_of(parent),
+                    )
+                })
+                .unwrap();
+            assert_eq!(sequence, 0);
+            assert_eq!(total, 1);
+            assert_eq!(live, 0);
+            assert!(ticket_identity);
+            assert!(is_child);
+            let metadata_theap = child
+                .with_metadata_theap(|theap| NonNull::from(&mut *theap))
+                .expect("the attached child metadata Theap remains owned");
+            assert!(child
+                .with_child_heap(|image, _heap, _memory| image
+                    .identity()
+                    .matches_published_detached_metadata_theap(metadata_theap))
+                .unwrap());
+
+            // Source destruction starts with registry unlink, then detaches
+            // the metadata-Theap from TLD and Heap lists. The exact metadata
+            // cap is freed before child Heap-list removal and parent user-Heap
+            // storage release, with child context last.
+            // SAFETY: this no-page fixture has no child users or concurrent
+            // list operations.
+            unsafe { child.unlink_registry(registry) }
+                .expect("the child registry edge is removed first");
+            // SAFETY: registry unlink makes the exact child Heap/TLD pair
+            // quiescent; the parent metadata engine owns the detached TLD.
+            unsafe { child.detach_metadata_theap(parent_metadata, config) }
+                .unwrap_or_else(|_| panic!("the child Theap detaches TLD-first"));
+            // SAFETY: both Theap list edges have been removed and no identity
+            // observer remains after registry unlink.
+            unsafe { child.release_metadata_theap_after_detach() }
+                .unwrap_or_else(|_| panic!("the child metadata-Theap capability releases"));
+            // SAFETY: this Heap has no pages; its last list/count edge may now
+            // be removed following Theap destruction.
+            unsafe { child.unlink_child_heap() }
+                .expect("the empty child Heap unlinks after its Theap");
+            // SAFETY: all represented list teardown is complete and the exact
+            // current parent attachment minted this token. This witness has
+            // no child pages and makes no full heap-destroy claim.
+            unsafe {
+                child
+                    .release_after_empty_heap_teardown(&mut heap_owner, attachment)
+                    .unwrap_or_else(|_| panic!("the parent Heap token and context release last"));
+            }
+            assert_eq!(
+                parent_metadata.test_allocation_audit().live_capability_count,
+                audit_before.live_capability_count,
+                "Theap and child context metadata capabilities return to baseline",
+            );
+            heap_owner
+                .finish(attachment)
+                .expect("child storage release leaves the parent owner quiescent");
+            attachment
+                .finish_after_user_destructors()
+                .expect("the source attachment completes after child teardown");
+            assert_eq!(
+                parent_metadata.test_allocation_audit().live_capability_count,
+                0,
+                "the parent attachment releases its own dynamic TLD and Theap last",
+            );
         });
     }
 
