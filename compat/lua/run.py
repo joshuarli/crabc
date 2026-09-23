@@ -100,6 +100,18 @@ sys.modules[SPEC.name] = SYSROOT
 SPEC.loader.exec_module(SYSROOT)
 
 
+def current_source_identity() -> dict[str, str]:
+    """Use the product qualification's source seal for live Lua evidence."""
+
+    qualification_root = ROOT / "compat/x86_64"
+    if str(qualification_root) not in sys.path:
+        sys.path.insert(0, str(qualification_root))
+    import owned_dynamic_qualification as qualification
+
+    revision = qualification.git("rev-parse", "HEAD").decode().strip()
+    return {"revision": revision, "source_sha256": qualification.source_digest()}
+
+
 @dataclasses.dataclass(frozen=True)
 class ProcessResult:
     status: int | str
@@ -2116,12 +2128,14 @@ def run_x86_static_dispatch(
     state = allocate_x86_static_dispatch_state(state_parent)
     report_path = state / "report.json"
     sysroot = state / "sysroot"
+    source_identity = current_source_identity()
     dispatcher: dict[str, object] = {
         "state_root": str(state),
         "authoritative_report": str(report_path),
         "producer": None,
         "latest_report": str(latest_report),
         "latest_report_publication": "only after a passing private report",
+        "source_identity": source_identity,
     }
     try:
         selected_builder = require_physical_regular_file(
@@ -2164,6 +2178,8 @@ def run_x86_static_dispatch(
     write_json_atomic(report_path, report)
     if report.get("passed") is not True or report.get("result") != "pass":
         return report, report_path, None
+    if current_source_identity() != source_identity:
+        raise RunnerError(f"source changed during Lua static qualification; retained report: {report_path}")
     try:
         latest = publish_x86_static_dispatch_report(report_path, latest_report)
     except RunnerError as error:

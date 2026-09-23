@@ -196,7 +196,11 @@ class NativeStaticContracts(unittest.TestCase):
             )
 
     def test_x86_dispatcher_rejects_arguments_before_starting_a_container(self) -> None:
-        for command in ("lua-static-source-build", "lua-dynamic-source-build"):
+        for command in (
+            "lua-static-source-build",
+            "lua-dynamic-source-build",
+            "lua-source-build-admission",
+        ):
             result = subprocess.run(
                 ["bash", str(RUNNER.ROOT / "scripts/dev-x86_64.sh"), command, "unexpected"],
                 cwd=RUNNER.ROOT,

@@ -2071,6 +2071,7 @@ unsafe fn join_selected_worker_inner(
             'owned-static-sysroot|owned-posix-static-products|owned-posix-family|owned-posix-native|owned-pthread-family|owned-pthread-family-composition',
             'lua-static-source-build',
             'lua-dynamic-source-build',
+            'lua-source-build-admission',
             'libc-owned-wordexp',
             'owned-loader-short-stack|owned-dynamic-sysroot',
             'owned-dynamic-pthread-exit',

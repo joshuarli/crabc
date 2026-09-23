@@ -202,7 +202,6 @@ class X86ParityLedgerTests(unittest.TestCase):
         with mock.patch.object(ledger, "load_toml", return_value=replacement) as load:
             self.assertEqual(self.data(), replacement)
         load.assert_called_once_with(ledger.LEDGER_PATH)
-
         with mock.patch.object(ledger, "load_toml", return_value=replacement) as load:
             self.assertEqual(self.header_manifest(), replacement)
             self.assertEqual(self.header_foundation_manifest(), replacement)
@@ -213,6 +212,45 @@ class X86ParityLedgerTests(unittest.TestCase):
                 mock.call(ledger.HEADER_LAYOUT_FOUNDATION_MANIFEST_PATH),
             ],
         )
+
+    def test_source_build_family_requires_both_owned_lua_product_lanes(self) -> None:
+        family = self.family(self.data(), "consumer.source-build")
+        evidence = family["native_evidence"]
+        self.assertIsInstance(evidence, list)
+        commands = {
+            entry["command"]
+            for entry in evidence
+            if isinstance(entry, dict) and entry.get("state") == "required"
+        }
+        self.assertEqual(
+            commands,
+            {
+                "./scripts/dev-x86_64.sh lua-source-build-admission",
+            },
+        )
+
+    def test_source_build_foundation_replays_physical_lane_admission(self) -> None:
+        source_build_root = ROOT / "compat" / "lua"
+        if str(source_build_root) not in sys.path:
+            sys.path.insert(0, str(source_build_root))
+        import source_build_admission
+
+        family = {
+            "native_evidence": [
+                {
+                    "state": "verified",
+                    "command": "./scripts/dev-x86_64.sh lua-source-build-admission",
+                    "scope": "Both native Lua products.",
+                }
+            ]
+        }
+        with mock.patch.object(
+            source_build_admission,
+            "validate",
+            side_effect=source_build_admission.LUA.RunnerError("missing physical lane receipt"),
+        ):
+            with self.assertRaisesRegex(ledger.LedgerError, "missing physical lane receipt"):
+                ledger.require_lua_source_build_admission(family)
 
     def test_validate_ledger_reuses_successful_artifact_owner_checks_within_one_call(
         self,

@@ -17,6 +17,7 @@ Run it through the architecture-specific Docker entry point:
 ./scripts/dev.sh lua --offline
 ./scripts/dev-x86_64.sh lua-static-source-build
 ./scripts/dev-x86_64.sh lua-dynamic-source-build
+./scripts/dev-x86_64.sh lua-source-build-admission
 python3 -m unittest discover -s compat/lua/tests -p 'test_*.py'
 ```
 
@@ -44,6 +45,14 @@ same complete dynamic graph through both roots and requires exact hashes for
 copy. The conventional latest x86 report is atomically replaced only after the
 whole invocation passes. Both offline paths require a verified Lua archive
 cache entry; neither downloads on a cache miss.
+
+The admission command reads both latest reports as physical receipts. It
+requires each authoritative report under `.work/x86_64` to match its published
+copy, binds both reports to the current checkout source identity and pinned Lua
+archive, revalidates the static and dynamic sysroot manifests, and checks the
+dynamic products against their current source seal. The parity ledger calls
+this same reader before accepting `consumer.source-build` as
+`foundation-verified`.
 
 ## Candidate boundary
 

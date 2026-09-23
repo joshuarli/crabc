@@ -652,6 +652,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-static-sysroot  build twice and run the private installed x86 static pthread/TLS consumer
   lua-static-source-build  build installed x86 static Lua source/bytecode ET_EXEC/static-PIE qualification
   lua-dynamic-source-build  qualify pinned Lua through installed/extracted x86 dynamic sysroots
+  lua-source-build-admission  validate both physical current-source Lua lane reports and product identities
   libc-owned-wordexp  run the installed x86 wordexp/wordfree ET_EXEC/static-PIE gate
   owned-loader-short-stack  compare owned dynamic startup with musl at libc-test's 100 KiB stack limit
   general-dynamic-dlopen [--entry-mode dynamic-pie|dynamic-non-pie] DYNAMIC_SYSROOT  run bounded runtime loader dlfcn evidence against one supplied product
@@ -6977,6 +6978,7 @@ case "$command" in
     owned-static-sysroot|owned-posix-static-products|owned-posix-family|owned-posix-native|owned-pthread-family|owned-pthread-family-composition) ;;
     lua-static-source-build) ;;
     lua-dynamic-source-build) ;;
+    lua-source-build-admission) ;;
     libc-owned-wordexp) ;;
     owned-loader-short-stack|owned-dynamic-sysroot) ;;
     owned-dynamic-pthread-exit) ;;
@@ -9612,6 +9614,11 @@ PY
         [ "$#" -eq 0 ] || fail "lua-dynamic-source-build takes no arguments"
         ensure_image
         run_lua_dynamic_source_build_probe
+        ;;
+    lua-source-build-admission)
+        [ "$#" -eq 0 ] || fail "lua-source-build-admission takes no arguments"
+        ensure_image
+        run_in_container python3 -B /workspace/compat/lua/source_build_admission.py
         ;;
     libc-owned-wordexp)
         [ "$#" -eq 0 ] || fail "libc-owned-wordexp takes no arguments"

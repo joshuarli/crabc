@@ -9266,6 +9266,28 @@ def require_evidence(
     return records, states
 
 
+def require_lua_source_build_admission(family: Mapping[str, Any]) -> None:
+    """Do not admit the source-build family from prose or stale latest pointers."""
+
+    evidence, _states = require_evidence(
+        family.get("native_evidence"), "family[consumer.source-build].native_evidence", "foundation-verified"
+    )
+    require(
+        len(evidence) == 1
+        and evidence[0].get("command") == "./scripts/dev-x86_64.sh lua-source-build-admission",
+        "consumer.source-build requires its canonical Lua admission verifier",
+    )
+    source_build_root = ROOT / "compat" / "lua"
+    if str(source_build_root) not in sys.path:
+        sys.path.insert(0, str(source_build_root))
+    import source_build_admission
+
+    try:
+        source_build_admission.validate()
+    except Exception as error:
+        raise LedgerError(f"consumer.source-build Lua admission failed: {error}") from error
+
+
 def require_header_foundation_downstream_evidence(
     value: Any, location: str, status: str
 ) -> tuple[list[Mapping[str, Any]], set[str]]:
@@ -79817,6 +79839,8 @@ def _validate_ledger(
             )
         else:
             require_evidence(entry["native_evidence"], f"{location}.native_evidence", status)
+        if identifier == "consumer.source-build" and status == "foundation-verified":
+            require_lua_source_build_admission(entry)
         require_oracles(entry["oracle"], f"{location}.oracle")
         family_capabilities = string_list(
             entry["capabilities"], f"{location}.capabilities", allow_empty=True

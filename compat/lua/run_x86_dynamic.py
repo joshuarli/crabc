@@ -1783,11 +1783,13 @@ def run_dynamic_dispatch(
     installed = state / "sysroot"
     package = state / "runtime.tar"
     extracted = state / "extracted"
+    source_identity = LUA.current_source_identity()
     dispatcher: dict[str, object] = {
         "state_root": str(state),
         "authoritative_report": str(report_path),
         "latest_report": str(Path(os.path.abspath(latest_report))),
         "latest_report_publication": "only after a passing installed-and-extracted report",
+        "source_identity": source_identity,
     }
     report: dict[str, object] = {
         "schema_version": 1,
@@ -1853,6 +1855,8 @@ def run_dynamic_dispatch(
     LUA.write_json_atomic(report_path, report)
     if report.get("passed") is not True:
         return report, report_path, None
+    if LUA.current_source_identity() != source_identity:
+        raise LUA.RunnerError(f"source changed during Lua dynamic qualification; retained report: {report_path}")
     latest = publish_report(report_path, latest_report)
     return report, report_path, latest
 
