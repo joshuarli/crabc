@@ -1465,11 +1465,11 @@ classification = "native-unsafe"
 status = "verified"
 rust_api = ["io::{close, dup, dup2, dup3, read, write}", "OwnedFd"]
 shared_impl = ["crabc_core::io direct descriptor operations"]
-native_boundary = "direct Linux close/dup/read/write, x86-64 dup2, and target dup3 syscalls with OwnedFd lifetime and Buffer contracts"
+native_boundary = "direct Linux/AArch64 close/dup/dup3/read/write syscalls with OwnedFd lifetime and Buffer contracts"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-rs/tests/core_os.rs", "crabc-rs/tests/descriptor_stdio.rs", "crabc-rs/tests/x86_64_io.rs", "crabc-rs/examples/direct_io_probe.rs", "crabc-rs/examples/core_os_probe.rs", "crabc-rs/examples/descriptor_mapping_probe.rs", "compat/crabc-rs/verify_direct_io.py", "compat/crabc-rs/verify_core_os.py", "compat/crabc-rs/verify_descriptor_mapping.py"]
-rationale = "The basic byte and ownership operations are native through typed Buffer and OwnedFd contracts, not a reproduction of raw C pointer, EINTR, or return-value conventions. Native x86-64 dup2 uses the direct kernel operation so equal invalid descriptors return EBADF without a separate check. Raw close remains explicitly unsafe; vector and positioned operations are tracked separately, while splice remains outside this row."
+evidence = ["crabc-rs/tests/core_os.rs", "crabc-rs/tests/descriptor_stdio.rs", "crabc-rs/examples/direct_io_probe.rs", "crabc-rs/examples/core_os_probe.rs", "crabc-rs/examples/descriptor_mapping_probe.rs", "compat/crabc-rs/verify_direct_io.py", "compat/crabc-rs/verify_core_os.py", "compat/crabc-rs/verify_descriptor_mapping.py"]
+rationale = "The basic byte and ownership operations are native through typed Buffer and OwnedFd contracts, not a reproduction of raw C pointer, EINTR, or return-value conventions. Raw close remains explicitly unsafe; vector and positioned operations are tracked separately, while splice remains outside this row."
 
 [[capability]]
 id = "io.file-position"
