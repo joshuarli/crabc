@@ -3,12 +3,12 @@
 #
 # The same project-header fixture first runs against pinned musl 1.2.6, then
 # as a true `-nostdlib -static` executable linked only with the selected crabc
-# archive. It proves only normal-return `pthread_once` and C11 `call_once`:
-# four-byte zero/static flags, exactly one initializer, acquire publication of
-# a relaxed payload, private-futex contention/wake, and errno preservation.
-# It is not cancellation reset, initializer thread exit, recursive entry,
-# fork/atfork, TSS, dynamic TLS, a general pthread/C11 runtime, family
-# completion, CRT, loader, sysroot, or public x86 support.
+# archive. It covers four-byte zero/static flags, normal exactly-once
+# initialization, acquire publication, private-futex contention/wake, and
+# retry after cancellation of an initializer with waiters for both APIs.
+# Recursive entry, fork/atfork, TSS, dynamic TLS, a general pthread/C11
+# runtime, family completion, CRT, loader, sysroot, and public x86 support
+# remain outside this artifact.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

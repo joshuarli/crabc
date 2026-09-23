@@ -24,4 +24,13 @@ _start:
 	mov $231, %eax
 	syscall
 	.size _start, .-_start
+
+/* This freestanding C fixture cannot unwind. The selected nightly core object
+ * still carries a personality relocation, so the fixture owns an inert
+ * endpoint rather than selecting an ambient runtime provider. */
+	.global rust_eh_personality
+	.type rust_eh_personality,@function
+rust_eh_personality:
+	ud2
+	.size rust_eh_personality, .-rust_eh_personality
 	.section .note.GNU-stack,"",@progbits
