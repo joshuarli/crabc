@@ -1230,9 +1230,9 @@ mod tests {
         let fault = fault::install(fault::Plan::disabled());
         let process = process(false);
         let mut bootstrap = std::boxed::Box::pin(ExclusiveTheapBootstrap::new());
-            let mut session = bootstrap.as_mut().activate_detached_for_main_subprocess(
-                process.main_subprocess().expect("fixture uses process main"),
-            ).unwrap();
+        let mut session = bootstrap.as_mut().activate_detached_for_main_subprocess(
+            process.main_subprocess().expect("fixture uses process main"),
+        ).unwrap();
         for (block, alignment) in [(16, 1), (4096, 1), (64 * MIB, 1), (4096, 128 * KIB)] {
             let before = process.subprocess().vm_statistics().snapshot();
             let claim = OsAlignedPageClaim::allocate_for_process(process, config(4 * KIB), block,
