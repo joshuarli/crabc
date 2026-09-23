@@ -2,6 +2,8 @@
 
 use crate::{RawFd, Result};
 use crate::syscall::{decode, decode_i32, syscall1, syscall3, syscall4, syscall5, syscall6, SYS_CLOSE, SYS_DUP, SYS_DUP3, SYS_FCNTL, SYS_IOCTL, SYS_PREAD64, SYS_PREADV, SYS_PREADV2, SYS_PWRITE64, SYS_PWRITEV, SYS_PWRITEV2, SYS_READ, SYS_READV, SYS_SENDFILE, SYS_SYNC_FILE_RANGE, SYS_WRITE, SYS_WRITEV};
+#[cfg(target_arch = "x86_64")]
+use crate::syscall::{syscall2, SYS_DUP2};
 
 /// One Linux `struct iovec` record for direct vectored I/O.
 ///
@@ -61,16 +63,26 @@ pub fn dup3(fd: RawFd, new_fd: RawFd, flags: u32) -> Result<()> {
         .map(|_| ())
 }
 
-/// Performs Rustix/POSIX `dup2` semantics on AArch64.
+/// Performs Rustix/POSIX `dup2` semantics.
 ///
-/// Linux implements this through `dup3`. Unlike `dup3`, equal source and
-/// target descriptors are a successful no-op, as required by `dup2`.
+/// x86-64 uses Linux's direct `dup2` syscall, including its atomic
+/// equal-descriptor validity check. AArch64 retains its existing `dup3`
+/// translation and equal-descriptor no-op.
 #[inline]
 pub fn dup2(fd: RawFd, new_fd: RawFd) -> Result<()> {
-    if fd == new_fd {
-        return Ok(());
+    #[cfg(target_arch = "x86_64")]
+    {
+        // SAFETY: Both arguments are scalar descriptor numbers; Linux
+        // validates them and atomically replaces the destination when needed.
+        return decode(unsafe { syscall2(SYS_DUP2, fd as usize, new_fd as usize) }).map(|_| ());
     }
-    dup3(fd, new_fd, 0)
+    #[cfg(target_arch = "aarch64")]
+    {
+        if fd == new_fd {
+            return Ok(());
+        }
+        dup3(fd, new_fd, 0)
+    }
 }
 
 /// Reads `FD_*` flags through `fcntl(F_GETFD)`.

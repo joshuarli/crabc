@@ -28,6 +28,7 @@ pub(crate) const SYS_PWRITEV2: usize = 328;
 pub(crate) const SYS_LSEEK: usize = 8;
 pub(crate) const SYS_FCNTL: usize = 72;
 pub(crate) const SYS_DUP: usize = 32;
+pub(crate) const SYS_DUP2: usize = 33;
 pub(crate) const SYS_DUP3: usize = 292;
 pub(crate) const SYS_CLOSE: usize = 3;
 pub(crate) const SYS_FLOCK: usize = 73;

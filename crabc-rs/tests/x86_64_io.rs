@@ -4,6 +4,26 @@ use core::ffi::CStr;
 
 use crabc_rs::{io, pipe, Errno, OwnedFd};
 
+#[test]
+fn x86_64_dup2_validates_equal_invalid_descriptors() {
+    assert_eq!(
+        crabc_core::io::dup2(-1, -1)
+            .expect_err("dup2 must validate an equal invalid descriptor")
+            .raw(),
+        Errno::BADF.raw(),
+    );
+
+    let source = anonymous_regular_file();
+    let mut target = anonymous_regular_file();
+    assert_eq!(io::write(&source, b"dup2").expect("seed source"), 4);
+    crabc_core::io::dup2(source.as_raw_fd(), source.as_raw_fd())
+        .expect("equal open descriptor remains valid");
+    io::dup2(&source, &mut target).expect("replace target descriptor");
+    let mut bytes = [0; 4];
+    assert_eq!(io::pread(&target, &mut bytes[..], 0).expect("read replacement"), 4);
+    assert_eq!(&bytes, b"dup2");
+}
+
 fn anonymous_regular_file() -> OwnedFd {
     let name = CStr::from_bytes_with_nul(b"crabc-rs-x86-64-io\0")
         .expect("fixed anonymous-file name is NUL-terminated");
