@@ -471,6 +471,16 @@ class NativeExecutionTests(unittest.TestCase):
             record = execution.validate_receipt(self.root, path)
         self.assertEqual(list(record['components']), [component.id for component in execution.COMPONENTS])
 
+    def test_native_receipt_reader_returns_the_single_validated_matrix(self):
+        path = self.execute()
+        original_validate_matrix = family.validate_receipt
+        with patch.object(family, 'validate_receipt', wraps=original_validate_matrix) as validate_matrix:
+            record, matrix = execution.validate_receipt_with_matrix(self.root, path)
+        self.assertEqual(validate_matrix.call_count, 1)
+        self.assertEqual(record, json.loads(path.read_text(encoding='utf-8')))
+        self.assertEqual(matrix['schema'], family.SCHEMA)
+        self.assertEqual(matrix['status'], 'workload-matrix-verified')
+
 
 class NativeFamilyAdmissionTests(unittest.TestCase):
     """The admission layer must consume, never synthesize, matrix evidence."""
@@ -558,6 +568,40 @@ class NativeFamilyAdmissionTests(unittest.TestCase):
             ],
         )
 
+    def test_admission_inputs_reuses_matrix_from_native_receipt_validation(self):
+        matrix = {
+            'schema': family.SCHEMA,
+            'status': 'workload-matrix-verified',
+            'family': 'libc.posix-runtime',
+            'native_aggregate_complete': False,
+            'family_completion': False,
+            'public_support': False,
+            'inputs': {'source': self.source},
+        }
+        native = {
+            'inputs': {
+                'family_execution': {
+                    'path': '.work/test/matrix/execution.json',
+                    'sha256': 'a' * 64,
+                    'size': 1,
+                },
+                'source': self.source,
+            },
+        }
+        matrix_path = ROOT / native['inputs']['family_execution']['path']
+        with patch.object(execution, 'validate_receipt_with_matrix',
+                          return_value=(native, matrix)) as validate, \
+             patch.object(execution, 'source_identity', return_value=self.source), \
+             patch.object(family, 'file_identity',
+                          return_value=native['inputs']['family_execution']) as matrix_identity:
+            observed_native, observed_matrix, _, observed_path = execution.admission_inputs(
+                ROOT, ROOT / '.work/test/native/native-execution.json')
+        validate.assert_called_once()
+        matrix_identity.assert_called_once_with(ROOT, matrix_path)
+        self.assertIs(observed_native, native)
+        self.assertIs(observed_matrix, matrix)
+        self.assertEqual(observed_path, matrix_path)
+
     def test_admission_rejects_one_missing_spelling_or_one_substituted_cell(self):
         self.matrix['spelling_evidence']['dynamic'].pop('fork')
         with self.assertRaisesRegex(RuntimeError, 'spelling'):
@@ -626,17 +670,18 @@ class NativeFamilyAdmissionTests(unittest.TestCase):
             native['inputs']['family_execution'] = family.file_identity(ROOT, matrix_path)
             native_path.write_text(json.dumps(native), encoding='utf-8')
 
-            def native_receipt(root, path):
+            def native_receipt_with_matrix(root, path):
                 self.assertEqual(path, native_path)
-                return json.loads(native_path.read_text(encoding='utf-8'))
-
-            def matrix_receipt(root, path):
-                self.assertEqual(path, matrix_path)
-                return json.loads(matrix_path.read_text(encoding='utf-8'))
+                observed_native = json.loads(native_path.read_text(encoding='utf-8'))
+                observed_matrix = json.loads(matrix_path.read_text(encoding='utf-8'))
+                if not execution.same_json(family.file_identity(root, matrix_path),
+                                           observed_native['inputs']['family_execution']):
+                    raise RuntimeError('family matrix receipt changed')
+                return observed_native, observed_matrix
 
             with patch.object(execution, 'source_identity', return_value=self.source) as current_source, \
-                 patch.object(execution, 'validate_receipt', side_effect=native_receipt), \
-                 patch.object(family, 'validate_receipt', side_effect=matrix_receipt):
+                 patch.object(execution, 'validate_receipt_with_matrix',
+                              side_effect=native_receipt_with_matrix) as native_receipt:
                 original_proof = execution.admission_proof
                 proof_calls = 0
 
@@ -653,6 +698,7 @@ class NativeFamilyAdmissionTests(unittest.TestCase):
                 with patch.object(execution, 'admission_proof', side_effect=mutate_matrix_after_first_proof):
                     with self.assertRaisesRegex(RuntimeError, 'family matrix receipt changed'):
                         execution.admit(ROOT, (work / 'mutated').relative_to(ROOT), native_path.relative_to(ROOT))
+                self.assertEqual(native_receipt.call_count, 3)
 
                 matrix_path.write_text(json.dumps(matrix), encoding='utf-8')
                 output = work / 'admission'

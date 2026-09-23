@@ -195,7 +195,7 @@ def io_replacement(root, matrix):
             'selected_dynamic_entries': {mode: 'primary:' + mode for mode in family_observations.MODES[2:]}}
 
 
-def input_matrix(root, request):
+def _input_matrix(root, request):
     require(isinstance(request, dict) and set(request) == {'schema', 'source_mount', 'family_execution', 'crypt_profile',
             'atomic_addressable_profile', 'wordexp_profile', 'wordexp_expected_native_inputs'}
             and request['schema'] == SCHEMA, 'native execution request fields differ')
@@ -253,6 +253,12 @@ def input_matrix(root, request):
               'family_execution': family.file_identity(root, path), 'source': source,
               'source_files': source_files(root), 'product': product_binding(root, product),
               'matrix_inputs': matrix['inputs'], 'io_cancellation_replacement': io_replacement(root, matrix)}
+    return inputs, product, matrix
+
+
+def input_matrix(root, request):
+    """Return the native input bindings while keeping the matrix internal."""
+    inputs, product, _ = _input_matrix(root, request)
     return inputs, product
 
 
@@ -429,14 +435,15 @@ def admission_inputs(root, native_path):
     """Reconstruct the two current receipts and their common selected source."""
     native_path = family.physical(root, native_path)
     require(native_path.name == 'native-execution.json', 'expected native-execution.json for family admission')
-    native_execution = validate_receipt(root, native_path)
+    native_execution, matrix = validate_receipt_with_matrix(root, native_path)
     matrix_identity = native_execution['inputs']['family_execution']
     require(isinstance(matrix_identity, dict) and set(matrix_identity) == {'path', 'sha256', 'size'},
             'native aggregate family matrix identity differs')
     matrix_path = family.physical(root, root / matrix_identity['path'])
+    # Keep the final byte identity seal after native replay, but reuse the full
+    # matrix validation already performed while rebuilding the native receipt.
     require(same_json(family.file_identity(root, matrix_path), matrix_identity),
             'native aggregate family matrix receipt changed')
-    matrix = family.validate_receipt(root, matrix_path)
     require(matrix['schema'] == family.SCHEMA and matrix['status'] == 'workload-matrix-verified'
             and matrix['family'] == 'libc.posix-runtime'
             and matrix['native_aggregate_complete'] is False
@@ -637,10 +644,10 @@ def guard(root, inputs, product):
             'wordexp expected native input changed during native execution')
 
 
-def collect(root, work):
+def _collect(root, work):
     work = family.physical(root, work)
     request = read(work / 'request.json')
-    inputs, product = input_matrix(root, request)
+    inputs, product, matrix = _input_matrix(root, request)
     expected = {'request.json', 'source-before.json', 'source-after.json',
                 'product-before.json', 'product-after.json', 'runs', 'sequence'}
     require({p.name for p in work.iterdir()} in (expected, expected | {'native-execution.json'}),
@@ -660,12 +667,20 @@ def collect(root, work):
         components[component.id] = observed
         predecessor = family.file_identity(root, path)
     guard(root, inputs, product)
-    return {'schema': SCHEMA, 'status': 'native-aggregate-verified', 'inputs': inputs,
+    result = {'schema': SCHEMA, 'status': 'native-aggregate-verified', 'inputs': inputs,
             'request': family.file_identity(root, work / 'request.json'),
             'seals': {f'{kind}-{phase}': family.file_identity(root, work / f'{kind}-{phase}.json')
                       for kind in ('source', 'product') for phase in ('before', 'after')},
             'components': components, 'io_cancellation_replacement': inputs['io_cancellation_replacement'],
             'native_aggregate_complete': True, 'campaign_complete': False, 'family_completion': False, 'public_support': False}
+
+    return result, matrix
+
+
+def collect(root, work):
+    """Reconstruct the serialized native receipt, discarding internal inputs."""
+    result, _ = _collect(root, work)
+    return result
 
 
 def execute(root, work, matrixpath, cryptpath, atomicpath, wordexppath, wordexp_expected_path):
@@ -761,6 +776,15 @@ def validate_receipt(root, path):
     observed = collect(root, path.parent)
     require(same_json(read(path), observed), 'native aggregate receipt changed')
     return observed
+
+
+def validate_receipt_with_matrix(root, path):
+    """Validate a native receipt and return its already validated matrix."""
+    path = family.physical(root, path)
+    require(path.name == 'native-execution.json', 'expected native-execution.json receipt')
+    observed, matrix = _collect(root, path.parent)
+    require(same_json(read(path), observed), 'native aggregate receipt changed')
+    return observed, matrix
 
 
 def main():
