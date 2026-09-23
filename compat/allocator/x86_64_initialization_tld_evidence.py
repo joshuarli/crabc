@@ -958,6 +958,12 @@ def run_evidence(*, offline: bool, report_path: Path) -> dict[str, Any]:
         c_probes: list[dict[str, Any]] = []
         rust_probes: list[dict[str, Any]] = []
         rust_target = temporary / "rust-target"
+        try:
+            run.build_crabc_mimalloc_lib_tests(
+                cargo, rust_target, description="Rust initialization TLD test build"
+            )
+        except run.HarnessError as error:
+            raise EvidenceError(str(error)) from error
         for index, branch_id in enumerate(INITIALIZATION_TLD_BRANCH_IDS):
             c_result = build_c_branch(compiler, source, temporary, branch_id)
             rust_command, rust_trace = run_rust_branch(cargo, rust_target, branch_id)

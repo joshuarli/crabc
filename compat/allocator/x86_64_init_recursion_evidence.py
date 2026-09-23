@@ -791,6 +791,17 @@ def rust_test_command(cargo: str, target_dir: Path, test_filter: str) -> list[st
     ]
 
 
+def prebuild_rust_tests(cargo: str, target_dir: Path) -> None:
+    """Compile one isolated target's test binary outside the timed test run."""
+
+    try:
+        run.build_crabc_mimalloc_lib_tests(
+            cargo, target_dir, description="Rust init-recursion test build"
+        )
+    except run.HarnessError as error:
+        raise EvidenceError(str(error)) from error
+
+
 def run_rust_test(cargo: str, target_dir: Path, test_filter: str) -> tuple[list[str], str]:
     command = rust_test_command(cargo, target_dir, test_filter)
     environment = os.environ.copy()
@@ -808,6 +819,7 @@ def run_rust_test(cargo: str, target_dir: Path, test_filter: str) -> tuple[list[
 
 def build_rust_trace(cargo: str, temporary: Path) -> dict[str, Any]:
     target_dir = temporary / "rust-target"
+    prebuild_rust_tests(cargo, target_dir)
     command, output = run_rust_test(cargo, target_dir, TRACE_FILTER)
     trace = parse_trace(output, description="Rust init-recursion trace")
     validate_trace(trace, description="Rust init-recursion trace")
@@ -826,6 +838,7 @@ def build_rust_trace(cargo: str, temporary: Path) -> dict[str, Any]:
 
 def build_startup_callback_rust_trace(cargo: str, temporary: Path) -> dict[str, Any]:
     target_dir = temporary / "rust-startup-output-target"
+    prebuild_rust_tests(cargo, target_dir)
     command, output = run_rust_test(cargo, target_dir, STARTUP_CALLBACK_FILTER)
     trace = parse_startup_callback_rust_trace(
         output, description="Rust startup-output callback trace",

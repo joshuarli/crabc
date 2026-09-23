@@ -11211,6 +11211,39 @@ def _x86_64_unit_test_program(
     }
 
 
+# A cold private test build is compilation, not a focused test's execution
+# budget. Parallel lanes deliberately share the native host without Cargo job
+# throttling, so bound only this warm-up by a build-scale limit.
+CRABC_MIMALLOC_LIB_TEST_BUILD_TIMEOUT_SECONDS = 3600
+
+
+def build_crabc_mimalloc_lib_tests(
+    cargo: str, target_dir: Path, *, description: str
+) -> dict[str, Any]:
+    """Compile the no-default-feature library test binary before timed runs.
+
+    A producer that later runs exact `cargo test ... --lib
+    --no-default-features FILTER` commands in the same private target
+    directory reuses this artifact, so each recorded test command keeps its
+    ordinary execution timeout instead of absorbing a cold build.
+    """
+
+    environment = os.environ.copy()
+    environment["CARGO_INCREMENTAL"] = "0"
+    record = command_record(
+        [
+            cargo, "test", "--locked", "--target", X86_64_RUST_TARGET,
+            "--target-dir", str(target_dir), "-p", "crabc-mimalloc", "--lib",
+            "--no-default-features", "--no-run",
+        ],
+        cwd=ROOT,
+        env=environment,
+        timeout_seconds=CRABC_MIMALLOC_LIB_TEST_BUILD_TIMEOUT_SECONDS,
+    )
+    require_success(record, description)
+    return record
+
+
 def _m1_foundations_test_program(
     execution: Mapping[str, Any], cargo_target: Path
 ) -> dict[str, Any]:
