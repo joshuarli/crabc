@@ -55,6 +55,37 @@ class NativeManifestTests(unittest.TestCase):
             {"gzip", "sqlite", "curl", "openssl", "openssh-client-default"},
         )
 
+    def test_signed_index_repin_keeps_the_exact_archive_and_signature_boundary(self) -> None:
+        self.assertEqual(
+            self.manifest.index_sha256,
+            "2331ad1c0df007c2da75983e14948919068e3b50336a6e2d14ffbb158c911c31",
+        )
+        self.assertEqual(len(self.manifest.archive_roster), 59)
+        archive_dir = Path("/workspace/.work/owned-package-corpus/apks")
+        index = Path("/workspace/.work/owned-package-corpus/index/APKINDEX.tar.gz")
+        identity = {"directory": str(archive_dir), "index": {"path": str(index)}}
+        success = type("Completed", (), {"returncode": 0, "stdout": b"OK\n", "stderr": b""})()
+        with mock.patch.object(RUNNER, "input_identity", return_value=identity), \
+             mock.patch.object(RUNNER, "apk_metadata", return_value={"pkgname": "other", "pkgver": "1"}), \
+             mock.patch.object(RUNNER.subprocess, "run", return_value=success) as verify:
+            RUNNER.verify_inputs(self.manifest, archive_dir, index)
+        self.assertEqual(verify.call_count, 60)
+        self.assertEqual(
+            verify.call_args_list[-1].args[0],
+            [str(RUNNER.APK), "--keys-dir", str(RUNNER.KEYS), "verify", str(index)],
+        )
+
+        def reject_index(argv, **_kwargs):
+            return type("Completed", (), {
+                "returncode": int(argv[-1] == str(index)), "stdout": b"", "stderr": b"bad signature",
+            })()
+
+        with mock.patch.object(RUNNER, "input_identity", return_value=identity), \
+             mock.patch.object(RUNNER, "apk_metadata", return_value={"pkgname": "other", "pkgver": "1"}), \
+             mock.patch.object(RUNNER.subprocess, "run", side_effect=reject_index):
+            with self.assertRaisesRegex(RUNNER.CorpusError, "index signature verification failed"):
+                RUNNER.verify_inputs(self.manifest, archive_dir, index)
+
 
 class PrivatePayloadTests(unittest.TestCase):
     def test_created_evidence_parents_are_readable_without_changing_existing_private_parents(self) -> None:
