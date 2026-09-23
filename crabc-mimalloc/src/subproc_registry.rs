@@ -20,6 +20,7 @@ unsafe impl Sync for SourceSubprocessRegistry {}
 
 pub(super) struct SourceSubprocessMembership {
     registry: AtomicPtr<SourceSubprocessRegistry>,
+    initialized: AtomicBool,
     previous: UnsafeCell<*mut MainSubprocess>,
     next: UnsafeCell<*mut MainSubprocess>,
     parent: UnsafeCell<*mut MainSubprocess>,
@@ -31,12 +32,34 @@ impl SourceSubprocessMembership {
     pub(super) const fn new() -> Self {
         Self {
             registry: AtomicPtr::new(core::ptr::null_mut()),
+            initialized: AtomicBool::new(false),
             previous: UnsafeCell::new(core::ptr::null_mut()),
             next: UnsafeCell::new(core::ptr::null_mut()),
             parent: UnsafeCell::new(core::ptr::null_mut()),
             sequence: UnsafeCell::new(0),
             memory: UnsafeCell::new(MemoryId::none()),
         }
+    }
+
+    pub(super) fn is_child_of(
+        &self,
+        parent: &MainSubprocess,
+        child_is_main: bool,
+    ) -> bool {
+        let parent_membership = &parent.source_membership;
+        self.initialized.load(Ordering::Acquire)
+            && parent_membership.initialized.load(Ordering::Acquire)
+            && !child_is_main
+            && core::ptr::eq(
+                self.registry.load(Ordering::Acquire),
+                parent_membership.registry.load(Ordering::Acquire),
+            )
+            && core::ptr::eq(
+                // SAFETY: initialization publishes this immutable parent
+                // write with `initialized`'s Release store.
+                unsafe { *self.parent.get() },
+                core::ptr::from_ref(parent).cast_mut(),
+            )
     }
 }
 
@@ -91,6 +114,7 @@ impl SourceSubprocessRegistry {
             *member.next.get() = *self.head.get();
             *self.head.get() = core::ptr::from_ref(subprocess).cast_mut();
         }
+        member.initialized.store(true, Ordering::Release);
         guard.unlock().map_err(SourceSubprocessRegistryError::Lock)
     }
 
@@ -150,6 +174,7 @@ impl SourceSubprocessRegistry {
                 .write(core::ptr::from_ref(subprocess).cast_mut());
             *self.head.get() = core::ptr::from_ref(subprocess).cast_mut();
         }
+        member.initialized.store(true, Ordering::Release);
         guard.unlock().map_err(SourceSubprocessRegistryError::Lock)
     }
 
@@ -180,9 +205,12 @@ impl SourceSubprocessRegistry {
     /// Removes one non-main subprocess at the source's first destroy step.
     ///
     /// # Safety
-    /// Terminal child admission excludes every list, Heap, metadata, thread,
-    /// and arena user. Its owner retains the exact context allocation until
-    /// all later source destroy steps finish, and must free it only afterward.
+    /// The caller has exclusive terminal child teardown: no concurrent
+    /// subprocess-list operation can inspect this child, and no concurrent
+    /// child operation can race its nested destruction. The source unlink is
+    /// the first destroy step; the caller must keep the child image live while
+    /// Heap, metadata-Theap, thread, arena, and lock teardown follows, then
+    /// release the exact context allocation only after those steps complete.
     pub(crate) unsafe fn unlink_child_terminal(
         &self,
         subprocess: &MainSubprocess,
@@ -215,6 +243,7 @@ impl SourceSubprocessRegistry {
             }
         }
         // Preserve the retired node's own links and identity as pinned C does.
+        member.initialized.store(false, Ordering::Release);
         guard.unlock().map_err(SourceSubprocessRegistryError::Lock)
     }
 }

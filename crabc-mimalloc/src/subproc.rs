@@ -47,7 +47,7 @@ use core::cell::UnsafeCell;
 use core::marker::PhantomData;
 use core::mem::{MaybeUninit, size_of};
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicUsize, Ordering};
 
 use crabc_core::Result as CoreResult;
 
@@ -339,6 +339,13 @@ impl MainSubprocess {
     #[inline]
     pub(crate) const fn is_process_main(&self) -> bool {
         matches!(self.role, SubprocessRole::ProcessMain)
+    }
+
+    /// Checks the source child-parent edge after list membership publication.
+    #[inline]
+    pub(crate) fn is_registered_child_of(&self, parent: &MainSubprocess) -> bool {
+        self.source_membership
+            .is_child_of(parent, self.is_process_main())
     }
 
     /// Returns the one process-static main-subprocess identity.

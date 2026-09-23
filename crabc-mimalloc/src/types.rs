@@ -5229,17 +5229,47 @@ impl Theap {
     pub(crate) fn initialize_metadata_static(
         &mut self, heap: &mut Heap, tld: &mut ThreadLocalData,
     ) -> Result<(), TheapMainStaticInitError> {
+        if self.memid.kind() != MemoryKind::Static {
+            return Err(TheapMainStaticInitError::InvalidInput);
+        }
         self.initialize_static_for_owner(heap, tld, TheapOwner::Detached)
+    }
+
+    /// Initializes the child subprocess's detached metadata Theap over its
+    /// parent's detached TLD, matching `mi_subproc_new`'s `_mi_theap_init`
+    /// ordering after child Heap creation.
+    pub(crate) fn initialize_child_metadata(
+        &mut self, heap: &mut Heap, parent_detached_tld: &mut ThreadLocalData,
+    ) -> Result<(), TheapMainStaticInitError> {
+        if self.memid.kind() != MemoryKind::Malloc
+            || !parent_detached_tld.is_subprocess_attached_no_theap()
+        {
+            return Err(TheapMainStaticInitError::InvalidInput);
+        }
+        self.initialize_static_for_owner(heap, parent_detached_tld, TheapOwner::Detached)
     }
 
     fn initialize_static_for_owner(
         &mut self, heap: &mut Heap, tld: &mut ThreadLocalData, owner: TheapOwner,
     ) -> Result<(), TheapMainStaticInitError> {
+        let subprocess_relation_is_valid = if heap.subprocess.is_null()
+            || tld.subprocess.is_null()
+        {
+            false
+        } else if core::ptr::eq(heap.subprocess, tld.subprocess) {
+            true
+        } else if owner == TheapOwner::Detached {
+            // SAFETY: both pointers are initialized source subprocess
+            // identities retained by the live Heap and detached TLD. The
+            // child membership publication synchronizes its immutable parent.
+            unsafe { (&*heap.subprocess).is_registered_child_of(&*tld.subprocess) }
+        } else {
+            false
+        };
         if self.is_initialized()
             || !tld.is_subprocess_attached_no_theap()
             || !tld.matches_owner(owner)
-            || heap.subprocess.is_null()
-            || !core::ptr::eq(heap.subprocess, tld.subprocess)
+            || !subprocess_relation_is_valid
         {
             return Err(TheapMainStaticInitError::InvalidInput);
         }
@@ -6544,6 +6574,85 @@ mod tests {
     use crate::free_list::LocalFreeList;
     use crate::remote_free;
     use core::mem::{align_of, offset_of, size_of, MaybeUninit};
+
+    #[test]
+    fn child_detached_metadata_theap_uses_parent_tld_and_unlinks_before_child_owner() {
+        let registry = std::boxed::Box::leak(std::boxed::Box::new(
+            crate::subproc::registry::SourceSubprocessRegistry::new(),
+        ));
+        let parent: &'static MainSubprocess = std::boxed::Box::leak(std::boxed::Box::new(
+            MainSubprocess::new(),
+        ));
+        let child: &'static MainSubprocess = std::boxed::Box::leak(std::boxed::Box::new(
+            MainSubprocess::new_child(),
+        ));
+        // SAFETY: this isolated fixture exclusively owns the main source
+        // membership and the permanent child identity image.
+        unsafe { registry.initialize_main(parent) }.unwrap();
+        let child_memory = MemoryId::malloc(
+            core::ptr::from_ref(child).cast_mut().cast(),
+            size_of::<MainSubprocess>(),
+            true,
+        );
+        // SAFETY: child is retained at this pinned exact Malloc image through
+        // every list operation below, and parent is an initialized member.
+        unsafe { registry.initialize_child(child, parent, child_memory) }.unwrap();
+
+        let mut child_heap = std::boxed::Box::new(Heap::bootstrap_empty());
+        let child_heap_memory = MemoryId::malloc(
+            core::ptr::from_mut(&mut *child_heap).cast(),
+            size_of::<Heap>(),
+            true,
+        );
+        child_heap.initialize_main_static(child, child_heap_memory);
+
+        let mut parent_detached_tld = ThreadLocalData::detached();
+        assert!(parent_detached_tld.prepare_detached_static_memid());
+        assert!(parent_detached_tld.initialize_detached_after_static_memid(parent));
+        let mut child_metadata_theap = std::boxed::Box::new(Theap::empty());
+        let theap_memory = MemoryId::malloc(
+            core::ptr::from_mut(&mut *child_metadata_theap).cast(),
+            size_of::<Theap>(),
+            true,
+        );
+        assert!(child_metadata_theap.set_dynamic_metadata_memid(theap_memory));
+        child_metadata_theap
+            .initialize_child_metadata(&mut child_heap, &mut parent_detached_tld)
+            .unwrap();
+
+        let child_theap = core::ptr::from_mut(&mut *child_metadata_theap);
+        assert_eq!(parent_detached_tld.theaps, child_theap);
+        assert_eq!(child_heap.theaps, child_theap);
+        assert!(core::ptr::eq(
+            child_metadata_theap.tld,
+            core::ptr::from_mut(&mut parent_detached_tld),
+        ));
+        assert!(core::ptr::eq(
+            child_metadata_theap.heap.load(Ordering::Acquire),
+            core::ptr::from_mut(&mut *child_heap),
+        ));
+        assert!(child.is_registered_child_of(parent));
+
+        // `mi_subproc_unsafe_destroy` removes subprocess membership before
+        // it enters the nested Heap/Theap teardown walk.
+        // SAFETY: the test has exclusive child teardown and retains every
+        // nested owner image until the subsequent list transitions finish.
+        unsafe { registry.unlink_child_terminal(child) }.unwrap();
+        assert!(!child.is_registered_child_of(parent));
+
+        // `_mi_theap_free` first removes the heap-list edge, then the TLD-list
+        // edge. The child membership remains live until both owners are clear.
+        parent_detached_tld
+            .detach_one_theap_from_heap(&mut child_heap, child_theap)
+            .unwrap();
+        assert!(child_heap.theaps.is_null());
+        assert!(!child_metadata_theap.is_initialized());
+        assert_eq!(parent_detached_tld.theaps, child_theap);
+        parent_detached_tld
+            .detach_one_theap_from_tld(child_theap)
+            .unwrap();
+        assert!(parent_detached_tld.theaps.is_null());
+    }
 
     #[test]
     fn shared_theap_observation_survives_locked_source_heap_prepend() {
