@@ -30,8 +30,10 @@ are not transferable passes for a different revision.
   aggregate/family admissions from `campaign-status`, not another symbol sweep.
 - **Allocator:** M1's six bounded components passed at `0daef148bd20dc2bef2ac9dc34af4f3dd0e99d7a`.
   M2 PageMap and scalar bitmaps qualified at `62d6435c772e9ddc144de302cc54ad78cea720e9`;
+  a pinned C/Rust metadata publication and replacement lifecycle differential
+  matched on native x86 at `17960aab416c63e50aac190be9e5004fd0a267af`.
   VM, metadata, arenas, initialization, fault injection, and no-recursion
-  qualification remain partial. Later witnesses do not close them.
+  qualification remain partial. The bounded metadata witness does not close them.
 - **Integration:** Accepted C stays default. Explicit owned static and dynamic
   native-shadow products and graph/purity checks exist; installed lifecycle,
   interposition, full qualification and promotion remain distinct obligations.
