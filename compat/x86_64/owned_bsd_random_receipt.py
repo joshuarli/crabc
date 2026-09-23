@@ -269,7 +269,8 @@ def validate_report(report_path: Path, *, static_product: Path | None = None,
     roots = report["scenario_roots"]
     require(type(roots) is dict and set(roots) == set(expected_labels()), "scenario root roster differs")
     for label in expected_labels():
-        scenario = next(name for name in SCENARIOS if label.endswith("-" + name))
+        scenario = next(name for name in sorted(SCENARIOS, key=len, reverse=True)
+                        if label.endswith("-" + name))
         root = physical(scenario_root(work, label), directory=True)
         require(roots[label] == tree_record(root), f"{label} execution root differs")
         executable = work / ("oracle" if label.startswith("oracle-") else next(mode for mode in LINKS if label.startswith(mode + "-")))
