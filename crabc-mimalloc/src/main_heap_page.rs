@@ -9417,7 +9417,7 @@ mod tests {
                     let child_backing = crate::page_backing::ChildMetadataArenaBacking::new(page_pair);
                     let parent_arenas = parent.arena_backing();
                     let parent_count_before = parent_arenas.registry().count();
-                    let claim = child_backing.claim_with_random(
+                    let claim = child_backing.claim_child_arena_slices_with_random(
                             config,
                             crate::arena::ArenaId::none(),
                             1,

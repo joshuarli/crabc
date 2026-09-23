@@ -390,14 +390,19 @@ impl<'child> ChildMetadataArenaBacking<'child> {
         (core::ptr::from_ref(published).cast_mut() == pointer).then_some(view)
     }
 
-    /// The caller supplies the source thread sequence and exclusive random
-    /// source. The child metadata-Theap path uses its parent detached TLD's
-    /// sequence zero and random image; tests with synthetic random values
-    /// establish only arena routing and bitmap release.
-    pub(crate) fn claim_with_random(&self, config: MemoryConfig, requested: ArenaId, slices: usize,
+    /// Admits slices for this registered child using caller-supplied search
+    /// sequence and random source. This is generic child arena admission: it
+    /// does not establish the child metadata-Theap source route. A caller
+    /// using that route must retain and supply the source TLD sequence/random
+    /// capability for the whole operation; tests with synthetic random state
+    /// prove only child arena routing and bitmap release.
+    pub(crate) fn claim_child_arena_slices_with_random(
+        &self, config: MemoryConfig, requested: ArenaId, slices: usize,
         commit: bool, thread_sequence: usize, random: crate::os::OsRandom<'_>)
         -> Option<ArenaSliceClaim<'child>>
     {
+        // Validate the child backing before the lower route can search or
+        // claim an already-published child arena.
         if self.pair.memory_config().ok()? != config { return None; }
         let process = self.process();
         let arena_backing = self.pair.arena_backing();
