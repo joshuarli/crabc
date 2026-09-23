@@ -8,12 +8,28 @@ import shutil
 import sys
 import tempfile
 import unittest
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "compat" / "x86_64"))
 
 
 class TimedFeatureReceiptBoundaryTests(unittest.TestCase):
+    def test_current_image_manifest_uses_selected_toolchain_and_keeps_old_manifest(self) -> None:
+        reader = importlib.import_module("owned_pthread_timed_feature_contract_reader")
+        toolchain = tomllib.loads((ROOT / "rust-toolchain.toml").read_text())["toolchain"]["channel"]
+        current = reader.trusted_image_manifest()
+        legacy = json.loads((ROOT / "compat/x86_64/owned_pthread_timed_feature_image_inputs.json").read_text())
+
+        self.assertEqual(reader.PINNED_IMAGE, current["image"])
+        self.assertEqual(legacy["image"], "sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d")
+        self.assertIn(f"/opt/rustup/toolchains/{toolchain}-x86_64-unknown-linux-musl/bin/rustc", current["files"])
+        self.assertNotIn("nightly-2026-07-24", "\n".join(current["files"]))
+        self.assertEqual(reader.IMAGE_FIXED_PATHS[-2:], (
+            f"/opt/rustup/toolchains/{toolchain}-x86_64-unknown-linux-musl/bin/rustc",
+            f"/opt/rustup/toolchains/{toolchain}-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld",
+        ))
+
     def test_four_feature_owned_aliases_have_one_fixed_roster(self) -> None:
         reader = importlib.import_module("owned_pthread_timed_feature_contract_reader")
         self.assertEqual(
@@ -169,7 +185,7 @@ class TimedFeatureReceiptBoundaryTests(unittest.TestCase):
             {
                 "probe", "reader", "runner", "syscall_authority", "static_authority",
                 "elf_authority", "static_preparation_owner", "static_package_owner",
-                "product_validator", "dynamic_probe_authority", "image_manifest",
+                "product_validator", "dynamic_probe_authority", "image_manifest", "rust_toolchain",
             },
         )
 

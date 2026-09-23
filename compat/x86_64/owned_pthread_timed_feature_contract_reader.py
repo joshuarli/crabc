@@ -51,9 +51,9 @@ SUCCESS_TRANSCRIPT = b"owned-pthread-timed-feature-contract-ok\n"
 TIMEOUT_SECONDS = 45
 INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
 ROOT = Path(__file__).resolve().parents[2]
-PINNED_IMAGE = "sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d"
+PINNED_IMAGE = "sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d"
 IMAGE_PATH = "/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-IMAGE_MANIFEST_PATH = ROOT / "compat/x86_64/owned_pthread_timed_feature_image_inputs.json"
+IMAGE_MANIFEST_PATH = ROOT / "compat/x86_64/owned_pthread_timed_feature_image_inputs_current.json"
 # The runner, reader, oracle wrapper, and supplied drivers consume only this
 # finite tool/image closure.  The checked-in manifest is validator authority;
 # reports copy its records but cannot choose paths, modes, or digests.
@@ -62,15 +62,19 @@ IMAGE_COMMANDS = (
     "mkdir", "mktemp", "python3", "readelf", "realpath", "timeout", "uname",
     "gcc", "as", "ld", "rustup",
 )
-IMAGE_FIXED_PATHS = (
+_IMAGE_FIXED_PREFIXES = (
     "/usr/local/bin/crabc-x86_64-musl-gcc",
     "/opt/musl-1.2.6/lib/libc.so",
     "/opt/musl-1.2.6/lib/libc.a",
     "/opt/musl-1.2.6/lib/musl-gcc.specs",
-    "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/bin/rustc",
-    "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld",
 )
-IMAGE_MANIFEST_SOURCE = "compat/x86_64/owned_pthread_timed_feature_image_inputs.json"
+PINNED_TOOLCHAIN = tomllib.loads((ROOT / "rust-toolchain.toml").read_text())["toolchain"]["channel"]
+IMAGE_FIXED_PATHS = (
+    *_IMAGE_FIXED_PREFIXES,
+    f"/opt/rustup/toolchains/{PINNED_TOOLCHAIN}-x86_64-unknown-linux-musl/bin/rustc",
+    f"/opt/rustup/toolchains/{PINNED_TOOLCHAIN}-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld",
+)
+IMAGE_MANIFEST_SOURCE = "compat/x86_64/owned_pthread_timed_feature_image_inputs_current.json"
 PREPARATION_RETAINED_ROOT = "retained/products/static-preparation"
 EXECUTION_ENVIRONMENT = {
     "GIT_CONFIG_GLOBAL": "/dev/null",
@@ -196,6 +200,7 @@ COLLECTOR_PATHS = {
     "product_validator": "compat/x86_64/owned_posix_product_evidence.py",
     "dynamic_probe_authority": "compat/x86_64/owned_pthread_timed_dynamic_authority.py",
     "image_manifest": IMAGE_MANIFEST_SOURCE,
+    "rust_toolchain": "rust-toolchain.toml",
 }
 COLLECTOR_INPUTS = ("probe", "reader", "runner")
 INPUT_NAMES = (
@@ -2025,6 +2030,7 @@ def _collector_copy_path(name: str) -> str:
         "product_validator": "retained/collector/owned-posix-product-evidence.py",
         "dynamic_probe_authority": "retained/collector/owned-pthread-timed-dynamic-authority.py",
         "image_manifest": "retained/collector/image-inputs.json",
+        "rust_toolchain": "retained/collector/rust-toolchain.toml",
     }
     require(name in paths, f"unknown collector authority source: {name}")
     return paths[name]

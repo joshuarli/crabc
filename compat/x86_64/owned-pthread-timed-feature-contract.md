@@ -21,7 +21,12 @@ and /dev/null standard input, linker maps and receipts, actual ELF symbol
 tables, and the five executable modes: static,
 static PIE, musl dynamic PIE/non-PIE, and crabc dynamic PIE/non-PIE. A finite
 validator-owned pinned-image manifest seals every runner/oracle/compiler tool,
-including the invoked LLD path, bytes, and mode. Static link receipts bind the
+including the invoked LLD path, bytes, and mode. The current manifest is
+`owned_pthread_timed_feature_image_inputs_current.json` for core image
+`sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d`;
+it derives Rust and LLD paths from `rust-toolchain.toml`. The original
+`owned_pthread_timed_feature_image_inputs.json` remains unchanged for historical
+receipts. Static link receipts bind the
 contract object, owned CRT objects, selected `libc.a`, builtins archive, linker
 output, and extraction trace. The retained map is replayed against exact
 contract, CRT, archive-member, and builtins inputs; the four public providers

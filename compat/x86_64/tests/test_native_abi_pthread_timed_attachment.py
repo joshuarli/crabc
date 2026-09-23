@@ -43,7 +43,8 @@ COLLECTOR_PATHS = {
     'static_package_owner': 'compat/x86_64/owned_static_sysroot_package.py',
     'product_validator': 'compat/x86_64/owned_posix_product_evidence.py',
     'dynamic_probe_authority': 'compat/x86_64/owned_pthread_timed_dynamic_authority.py',
-    'image_manifest': 'compat/x86_64/owned_pthread_timed_feature_image_inputs.json',
+    'image_manifest': 'compat/x86_64/owned_pthread_timed_feature_image_inputs_current.json',
+    'rust_toolchain': 'rust-toolchain.toml',
 }
 STATIC_LINK_INPUTS = {
     'static_crt1': 'usr/lib/crt1.o', 'static_rcrt1': 'usr/lib/rcrt1.o',
