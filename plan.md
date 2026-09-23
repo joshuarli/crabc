@@ -27,8 +27,9 @@ are not transferable passes for a different revision.
   `missing`; all eight qualification gates are incomplete. Substantial
   POSIX/pthread/text/stdio/resolver/loader and installed-product work is
   integrated. The POSIX dynamic, 54-cell matrix, native aggregate, and physical
-  admission passed with independent readers on clean `3c47d990d`; the pthread
-  installed-behavior component and its atomic/clone prerequisites passed there.
+  admission passed with independent readers on clean `3c47d990d`. The pthread
+  installed-behavior component, atomic/clone prerequisites, complete component
+  coordinator, and independent family reader passed on that cohort.
   The loader's 21 synthetic and 34 package cases, three inventories, and
   independent family reader passed on that cohort. The resolver network,
   cancellation, classic netdb, protocol database, and alias components passed
