@@ -2280,7 +2280,7 @@ mod tests {
     #[test]
     fn final_process_info_uses_the_committed_defaults_when_unix_sampling_fails() {
         let mut statistics = final_statistics_fixture();
-        statistics.committed = final_stat_count(-1, 0, i64::MAX);
+        statistics.committed = final_stat_count(i64::MAX, 0, -1);
         let committed = statistics.process_info_committed_defaults();
         assert_eq!(committed.current_bytes, 0);
         assert_eq!(committed.peak_bytes, isize::MAX as usize);
