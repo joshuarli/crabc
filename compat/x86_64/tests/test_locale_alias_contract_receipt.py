@@ -460,6 +460,8 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
         self.assertEqual(receipt._image_profile(receipt.PINNED_IMAGE)["schema"], receipt.SCHEMA)
         self.assertEqual(receipt._image_profile(receipt.CURRENT_PINNED_IMAGE)["schema"], receipt.CURRENT_SCHEMA)
         self.assertIn(receipt.CURRENT_IMAGE_MANIFEST_PATH, receipt.CURRENT_SELECTED_SOURCES)
+        self.assertIn("rust-toolchain.toml", receipt.CURRENT_SELECTED_SOURCES)
+        self.assertNotIn("compat/x86_64/owned_utmpx_receipt.py", receipt.CURRENT_SELECTED_SOURCES)
         self.assertTrue(current_path.is_file())
 
     def test_current_manifest_cannot_omit_a_required_image_input(self) -> None:

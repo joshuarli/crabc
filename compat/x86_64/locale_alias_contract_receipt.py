@@ -204,7 +204,9 @@ SELECTED_SOURCES = (
     "docker/Dockerfile.x86_64",
     "docker/x86_64-musl-oracle-gcc",
 )
-CURRENT_SELECTED_SOURCES = (*SELECTED_SOURCES, CURRENT_IMAGE_MANIFEST_PATH)
+CURRENT_SELECTED_SOURCES = tuple(
+    source for source in SELECTED_SOURCES if source != "compat/x86_64/owned_utmpx_receipt.py"
+) + (CURRENT_IMAGE_MANIFEST_PATH, "rust-toolchain.toml")
 
 # The runner produces one stream set for each external command.  Snapshots are
 # separate input seals, not command records; the collector runner invocation is
