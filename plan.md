@@ -33,9 +33,10 @@ are not transferable passes for a different revision.
   independent family reader passed on that cohort. The resolver network,
   cancellation, classic netdb, protocol database, and alias components passed
   on the same products; the complete resolver family assessment and independent
-  reader passed. The text family's 27 producer runs passed and its family reader
-  is pending. The current-source static process-global fixture passed normal
-  and empty-argv startup against pinned musl and the owned runtime at
+  reader passed. The text family's 27 producer runs and independent family
+  reader passed on the same clean `3c47d990d` cohort. The current-source
+  static process-global fixture passed normal and empty-argv startup against
+  pinned musl and the owned runtime at
   `f600772a6`. A clean current-source static product preparation and its
   independent reader passed at `ad21441d6`; dynamic product qualification
   is still running. These source-bound checkpoints do not promote
