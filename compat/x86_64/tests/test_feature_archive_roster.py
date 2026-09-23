@@ -61,7 +61,11 @@ class FeatureArchiveRosterTests(unittest.TestCase):
         cargo_features = ROSTER.load_cargo_x86_features()
         rows = ROSTER.load_feature_archive_roster()
 
-        self.assertEqual([item.identifier for item in rows], list(cargo_features))
+        self.assertIn("x86-owned-static-runtime-core", cargo_features)
+        self.assertEqual(
+            [item.identifier for item in rows],
+            [name for name in cargo_features if name not in ROSTER.INTERNAL_COMPOSITION_FEATURES],
+        )
         owned_static = next(item for item in rows if item.identifier == "x86-owned-static-runtime")
         self.assertEqual(owned_static.state, "planned")
         self.assertIsNone(owned_static.evidence_record)

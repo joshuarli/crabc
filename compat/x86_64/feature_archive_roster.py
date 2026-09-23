@@ -27,6 +27,9 @@ NATIVE_PROVIDER_PROFILES = {
     "x86-owned-static-native-shadow": "x86-owned-static-runtime",
     "x86-owned-dynamic-native-shadow": "x86-owned-dynamic-runtime",
 }
+# This private source-build selector only groups existing C leaves. It has no
+# independent callable archive or frozen capability to add to the parity ledger.
+INTERNAL_COMPOSITION_FEATURES = {"x86-owned-static-runtime-core"}
 
 VALID_ALIAS_BINDINGS = {"weak-same-address"}
 SYMBOL_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -345,13 +348,15 @@ def parse_feature_archive_roster(
             )
         )
 
+    archive_features = tuple(identifier for identifier in cargo_features
+                             if identifier not in INTERNAL_COMPOSITION_FEATURES)
     require(
-        {row.identifier for row in rows} == set(cargo_features),
-        "feature archive roster must cover every and only x86 Cargo feature",
+        {row.identifier for row in rows} == set(archive_features),
+        "feature archive roster must cover every and only x86 archive feature",
     )
     require(
-        tuple(row.identifier for row in rows) == tuple(cargo_features),
-        "feature archive roster order must match libc Cargo feature order",
+        tuple(row.identifier for row in rows) == archive_features,
+        "feature archive roster order must match libc Cargo archive feature order",
     )
     by_id = {row.identifier: row for row in rows}
     for row in rows:
@@ -370,7 +375,10 @@ def parse_feature_archive_roster(
                 c_clients = {"x86-allocator-runtime", "x86-allocator-observability",
                              "x86-allocator-string-duplication", "x86-environment-runtime",
                              "x86-temporary-names", "x86-scandir", "x86-crypt-allocator-composition"}
-                expected_leaves = (set(cargo_features[provider.identifier]) - c_clients) | {"x86-crypt", "native-mimalloc-shadow"}
+                # The C aggregate names its shared core profile once. Compare
+                # the native leaf selection with that profile's direct leaves.
+                c_leaves = cargo_features.get("x86-owned-static-runtime-core", cargo_features[provider.identifier])
+                expected_leaves = (set(c_leaves) - c_clients) | {"x86-crypt", "native-mimalloc-shadow"}
             else:
                 expected_leaves = {"x86-owned-static-native-shadow"}
             require(set(cargo_features[row.identifier]) == expected_leaves,
@@ -379,6 +387,8 @@ def parse_feature_archive_roster(
         enabled_closure = set(feature_closure(row.enabled_features, cargo_features))
         baseline_closure = set(feature_closure(row.baseline_features, cargo_features))
         expected_baseline = enabled_closure - {row.identifier}
+        if row.identifier == "x86-owned-static-runtime":
+            expected_baseline -= INTERNAL_COMPOSITION_FEATURES
         require(
             baseline_closure == expected_baseline,
             f"feature archive {row.identifier} baseline does not match its Cargo feature dependency closure",
