@@ -584,9 +584,12 @@ def provider_registry_unwinding_source(application: Path, offline_sources: dict[
         markers: dict[str, dict[str, str]] = {}
         for relative, contents in CARGO_REGISTRY_UNWINDING_MARKERS.items():
             marker = destination / relative
-            require(not marker.exists() and not marker.is_symlink(),
-                    f"private provider registry marker already exists: {relative}")
-            marker.write_bytes(contents)
+            require(not marker.is_symlink(), f"private provider registry marker is a symlink: {relative}")
+            if marker.exists():
+                require(marker.is_file() and marker.read_bytes() == contents,
+                        f"private provider registry marker differs from the pinned transport shape: {relative}")
+            else:
+                marker.write_bytes(contents)
             markers[relative] = record_file(marker, f"private provider registry marker {relative}")
         upstream_tree_sha256 = build.tree_digest(destination)
         require(upstream_tree_sha256 == build.PATCHED_UNWINDING_UPSTREAM_TREE_SHA256,

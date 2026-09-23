@@ -318,6 +318,11 @@ class OwnedCleanupContract(unittest.TestCase):
         source = self.write_vendor_package(vendor, build.PATCHED_UNWINDING, version, checksum,
                                            directory_name=build.PATCHED_UNWINDING)
         source_checksum = source / ".cargo-checksum.json"
+        registry_gitignore = owned_cleanup.CARGO_REGISTRY_UNWINDING_MARKERS[".gitignore"]
+        (source / ".gitignore").write_bytes(registry_gitignore)
+        checksum_data = json.loads(source_checksum.read_text())
+        checksum_data["files"][".gitignore"] = hashlib.sha256(registry_gitignore).hexdigest()
+        source_checksum.write_text(json.dumps(checksum_data))
         expected = Path(self.temporary.name) / "registry-shape"
         shutil.copytree(source, expected)
         (expected / ".cargo-checksum.json").unlink()
@@ -359,6 +364,34 @@ class OwnedCleanupContract(unittest.TestCase):
             self.assertTrue(source_checksum.exists())
             self.assertFalse((registry / ".cargo-checksum.json").exists())
             self.assertEqual((registry / ".cargo-ok").read_bytes(), b'{"v":1}')
+            invalid_vendor = Path(self.temporary.name) / "invalid-provider-vendor"
+            invalid_vendor.mkdir()
+            invalid_source = self.write_vendor_package(
+                invalid_vendor, build.PATCHED_UNWINDING, version, checksum,
+                directory_name=build.PATCHED_UNWINDING,
+            )
+            invalid_gitignore = invalid_source / ".gitignore"
+            invalid_gitignore.write_text("not the registry transport marker\n")
+            invalid_checksum_path = invalid_source / ".cargo-checksum.json"
+            invalid_checksum = json.loads(invalid_checksum_path.read_text())
+            invalid_checksum["files"][".gitignore"] = hashlib.sha256(invalid_gitignore.read_bytes()).hexdigest()
+            invalid_checksum_path.write_text(json.dumps(invalid_checksum))
+            invalid_application = Path(self.temporary.name) / "invalid-application"
+            invalid_application.mkdir()
+            invalid_offline_sources = {
+                "provider_vendor": {
+                    "packages": [{
+                        "name": build.PATCHED_UNWINDING,
+                        "version": version,
+                        "directory": str(invalid_source),
+                        "checksum": owned_cleanup.record_file(
+                            invalid_checksum_path, "invalid test vendor checksum",
+                        ),
+                    }],
+                },
+            }
+            with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "differs from the pinned transport shape"):
+                owned_cleanup.provider_registry_unwinding_source(invalid_application, invalid_offline_sources)
             failed_application = Path(self.temporary.name) / "failed-application"
             failed_application.mkdir()
             with mock.patch.object(build, "PATCHED_UNWINDING_UPSTREAM_TREE_SHA256", "0" * 64), \
