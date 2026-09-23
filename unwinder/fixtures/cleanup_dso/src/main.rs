@@ -14,6 +14,7 @@ unsafe extern "C" {
 }
 
 fn main() {
+    assert_eq!(crabc_cleanup_dependency::dependency_marker(), 73);
     // The explicit loader invocation supplies the plugin directory as its
     // first library-path element. Loading the basename therefore proves
     // owned-loader DSO discovery, rather than a direct-path open.

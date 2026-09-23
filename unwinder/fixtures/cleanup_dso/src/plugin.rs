@@ -1,35 +1,34 @@
 use std::backtrace::{Backtrace, BacktraceStatus};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
 
-static DROPS: AtomicUsize = AtomicUsize::new(0);
 static CLOSE_STAGE: AtomicUsize = AtomicUsize::new(0);
 
-struct Cleanup;
+struct Cleanup(Arc<AtomicUsize>);
 
 impl Drop for Cleanup {
     fn drop(&mut self) {
-        DROPS.fetch_add(1, Ordering::SeqCst);
+        self.0.fetch_add(1, Ordering::SeqCst);
     }
 }
 
-fn unwind_once() {
-    let _first = Cleanup;
-    let _second = Cleanup;
+fn unwind_once(drops: Arc<AtomicUsize>) {
+    let _cleanup = Cleanup(drops.clone());
     assert_eq!(Backtrace::force_capture().status(), BacktraceStatus::Captured);
-    std::panic::panic_any(73usize);
+    crabc_cleanup_dependency::panic_with_cleanup(drops);
 }
 
 fn catches_cleanup() -> bool {
-    let expected_drops = DROPS.load(Ordering::SeqCst) + 2;
+    let drops = Arc::new(AtomicUsize::new(0));
+    let observed_drops = drops.clone();
     let prior_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(|_| {}));
-    let result = std::panic::catch_unwind(unwind_once);
+    let result = std::panic::catch_unwind(|| unwind_once(drops));
     std::panic::set_hook(prior_hook);
     result
         .err()
         .and_then(|payload| payload.downcast::<usize>().ok())
         .is_some_and(|payload| *payload == 73)
-        && DROPS.load(Ordering::SeqCst) == expected_drops
+        && observed_drops.load(Ordering::SeqCst) == 2
 }
 
 fn wait_for_last_handle_close() -> bool {
@@ -53,7 +52,6 @@ pub extern "C" fn crabc_owned_cleanup_dso() -> i32 {
     if !wait_for_last_handle_close() {
         return 3;
     }
-    DROPS.store(0, Ordering::SeqCst);
     if !catches_cleanup() {
         return 1;
     }

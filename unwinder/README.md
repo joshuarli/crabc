@@ -266,7 +266,12 @@ direct final `libunwind` archive, remains rejected.
 The same run then builds two checked-in Cargo fixtures with
 `--locked --offline -Zbuild-std=std,panic_unwind`, fresh checkout-local Cargo
 home, target, and temporary directories, `CARGO_BUILD_JOBS=1`, and fat LTO.
-The source-built static fixture repeats the complete cleanup/backtrace check.
+Both fixtures depend on the pinned local `cleanup-dependency` crate. Its
+no-inline panic frame owns a `Drop` guard, so the static executable and DSO
+plugin prove cleanup across an application-crate boundary in addition to the
+root frame; the locked Cargo graph, source path, selected dependency archive,
+and fused LTO `--extern` input are bound in the consumer evidence. The
+source-built static fixture repeats the complete cleanup/backtrace check.
 The dynamic fixture builds a Rust `cdylib` plugin which performs that check itself;
 its Rust host resolves the plugin's exported entry with `dlopen`/`dlsym` and
 loads the plugin by basename through the selected loader's explicit library

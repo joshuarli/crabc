@@ -39,6 +39,10 @@ TARGET = "x86_64-unknown-linux-musl"
 FIXTURE = ROOT / "fixtures/cleanup.rs"
 BUILD_STD_FIXTURE = ROOT / "fixtures/build_std_cleanup"
 BUILD_STD_DSO_FIXTURE = ROOT / "fixtures/cleanup_dso"
+DEPENDENCY_FIXTURE = ROOT / "fixtures/cleanup-dependency"
+DEPENDENCY_PACKAGE = "crabc-cleanup-dependency"
+DEPENDENCY_CRATE = "crabc_cleanup_dependency"
+DEPENDENCY_VERSION = "0.1.0"
 BUILD_STD_BINARY = "crabc-owned-cleanup-build-std"
 BUILD_STD_DSO_HOST = "crabc-owned-cleanup-dso-host"
 BUILD_STD_DSO_LIBRARY = "libcrabc_owned_cleanup_plugin.so"
@@ -113,6 +117,7 @@ SOURCE_INPUTS = (
     BUILD_STD_FIXTURE / "Cargo.toml", BUILD_STD_FIXTURE / "Cargo.lock", BUILD_STD_FIXTURE / "src/main.rs",
     BUILD_STD_DSO_FIXTURE / "Cargo.toml", BUILD_STD_DSO_FIXTURE / "Cargo.lock",
     BUILD_STD_DSO_FIXTURE / "src/main.rs", BUILD_STD_DSO_FIXTURE / "src/plugin.rs",
+    DEPENDENCY_FIXTURE / "Cargo.toml", DEPENDENCY_FIXTURE / "src/lib.rs",
 )
 
 
@@ -883,6 +888,38 @@ def cargo_artifact(
     return selected[0]
 
 
+def cargo_application_dependency_artifact(stream: str, *, package_root: Path, target: Path) -> Path:
+    """Select the one declared local cleanup dependency from Cargo's stream."""
+
+    target = physical(target, "source-built Cargo target", directory=True)
+    source = physical(package_root.parent / "cleanup-dependency/src/lib.rs",
+                      "generated cleanup dependency source")
+    selected: list[Path] = []
+    for record in cargo_json_records(stream, "Cargo application dependency artifact stream"):
+        if record.get("reason") != "compiler-artifact":
+            continue
+        artifact_target = record.get("target")
+        if not isinstance(artifact_target, dict) or artifact_target.get("src_path") != str(source):
+            continue
+        require(
+            artifact_target.get("name") == DEPENDENCY_CRATE
+            and artifact_target.get("kind") == ["lib"]
+            and artifact_target.get("crate_types") == ["lib"]
+            and record.get("executable") is None,
+            "Cargo cleanup dependency artifact identity drifted",
+        )
+        filenames = record.get("filenames")
+        require(isinstance(filenames, list), "Cargo cleanup dependency artifact has malformed outputs")
+        for filename in filenames:
+            if isinstance(filename, str) and filename.endswith(".rlib"):
+                artifact = physical(Path(filename), "Cargo cleanup dependency archive")
+                require(artifact.is_relative_to(target),
+                        "Cargo cleanup dependency archive escapes its target directory")
+                selected.append(artifact)
+    require(len(selected) == 1, f"expected one local cleanup dependency archive, found {selected!r}")
+    return selected[0]
+
+
 def cargo_link_receipt_for_artifact(artifact: Path, source_library_root: Path, description: str) -> tuple[Path, Path]:
     """Find the linker-side output Cargo may have hard-linked into release/."""
 
@@ -982,7 +1019,8 @@ def cargo_build_std_runtime_artifacts(stream: str, target: Path, rust_source: Pa
 
 def cargo_source_lto_extern_closure(
     log: str, *, target_name: str, binary_name: str | None, link_output: Path, source_library_root: Path,
-    runtime_artifacts: dict[str, dict[str, str]], cargo_provider: dict[str, str], built_unwind: dict[str, str],
+    runtime_artifacts: dict[str, dict[str, str]], cargo_provider: dict[str, str],
+    application_dependency: dict[str, str], built_unwind: dict[str, str],
 ) -> dict[str, Any]:
     """Bind one primary Cargo rustc input graph to its fused native-link output."""
 
@@ -1048,7 +1086,11 @@ def cargo_source_lto_extern_closure(
         externs[name] = record_file(external, f"Cargo primary consumer {name} extern")
         index += 2
 
-    expected = {**runtime_artifacts, "crabc_unwinder": cargo_provider}
+    expected = {
+        **runtime_artifacts,
+        "crabc_unwinder": cargo_provider,
+        DEPENDENCY_CRATE: application_dependency,
+    }
     built_unwind_path = built_unwind.get("path")
     require(isinstance(built_unwind_path, str) and all(
         record.get("path") != built_unwind_path for record in externs.values()
@@ -1383,7 +1425,7 @@ def audit_source_graph(
             "generated source-built consumer manifest has no package identity")
     root_name = root["name"]
     packages, packages_by_id = _unique_packages(metadata, "source-built Cargo metadata")
-    expected_names = {root_name, *SOURCE_GRAPH_PACKAGES}
+    expected_names = {root_name, DEPENDENCY_PACKAGE, *SOURCE_GRAPH_PACKAGES}
     require(set(packages) == expected_names, "source-built Cargo graph has an unapproved package")
     require(packages[root_name].get("manifest_path") == str(manifest),
             "Cargo did not compile the generated source-built consumer manifest")
@@ -1393,6 +1435,11 @@ def audit_source_graph(
             "Cargo did not compile the staged crabc-unwinder root")
     require(Path(packages[build.PATCHED_UNWINDING].get("manifest_path", "")).parent == staged_unwinding,
             "Cargo did not compile the staged patched unwinding source")
+    dependency_manifest = physical(package_root.parent / "cleanup-dependency/Cargo.toml",
+                                   "generated cleanup dependency manifest")
+    require(packages[DEPENDENCY_PACKAGE].get("manifest_path") == str(dependency_manifest)
+            and packages[DEPENDENCY_PACKAGE].get("version") == DEPENDENCY_VERSION,
+            "Cargo did not compile the pinned local cleanup dependency")
 
     records = lock.get("package")
     require(isinstance(records, list) and all(isinstance(record, dict) for record in records),
@@ -1405,6 +1452,12 @@ def audit_source_graph(
     root_lock = locked[root_name]
     require(root_lock.get("version") == root["version"] and "source" not in root_lock and "checksum" not in root_lock,
             "generated source-built lock does not bind its local consumer")
+    require(set(root_lock.get("dependencies", [])) == {"crabc-unwinder", DEPENDENCY_PACKAGE},
+            "generated source-built lock does not bind its exact local consumer dependencies")
+    dependency_lock = locked[DEPENDENCY_PACKAGE]
+    require(dependency_lock.get("version") == DEPENDENCY_VERSION
+            and "source" not in dependency_lock and "checksum" not in dependency_lock,
+            "generated source-built lock does not bind its local cleanup dependency")
 
     resolve = metadata.get("resolve")
     require(isinstance(resolve, dict) and isinstance(resolve.get("nodes"), list),
@@ -1418,12 +1471,17 @@ def audit_source_graph(
     nodes_by_id = {node["id"]: node for node in nodes}
     root_id = packages[root_name]["id"]
     provider_id = packages["crabc-unwinder"]["id"]
-    require(nodes_by_id[root_id].get("dependencies") == [provider_id],
-            "generated consumer has an unapproved direct dependency")
+    dependency_id = packages[DEPENDENCY_PACKAGE]["id"]
+    require(set(nodes_by_id[root_id].get("dependencies", [])) == {provider_id, dependency_id},
+            "generated consumer dependency IDs differ from the provider and cleanup crate")
     root_deps = nodes_by_id[root_id].get("deps")
-    require(isinstance(root_deps, list) and len(root_deps) == 1 and isinstance(root_deps[0], dict)
-            and root_deps[0].get("name") == "crabc_unwinder" and root_deps[0].get("pkg") == provider_id,
-            "generated consumer does not use the staged crabc-unwinder dependency")
+    require(isinstance(root_deps, list) and len(root_deps) == 2
+            and all(isinstance(item, dict) for item in root_deps)
+            and {(item.get("name"), item.get("pkg")) for item in root_deps}
+            == {("crabc_unwinder", provider_id), (DEPENDENCY_CRATE, dependency_id)},
+            "generated consumer does not use the exact provider and cleanup dependencies")
+    require(not nodes_by_id[dependency_id].get("dependencies"),
+            "local cleanup dependency has an unapproved dependency closure")
     provider_dependencies = {packages_by_id.get(identifier, {}).get("name") for identifier in nodes_by_id[provider_id].get("dependencies", [])}
     require(provider_dependencies == set(build.PINS), "staged crabc-unwinder dependency closure drifted")
 
@@ -1453,6 +1511,9 @@ def audit_source_graph(
     return {
         "root_package_id": root_id,
         "provider_package_id": provider_id,
+        "application_dependency_package_id": dependency_id,
+        "application_dependency_manifest": record_file(dependency_manifest, "generated cleanup dependency manifest"),
+        "application_dependency_source": record_file(dependency_manifest.parent / "src/lib.rs", "generated cleanup dependency source"),
         "provider_manifest": record_file(staged_manifest, "staged crabc-unwinder manifest"),
         "provider_source": record_file(provider_source, "staged crabc-unwinder source"),
         "provider_link_anchor": source_provider_link_anchor(provider_source),
@@ -1497,25 +1558,50 @@ def prepare_source_graph_package(
     manifest_source = physical(package / "Cargo.toml", "source-built fixture manifest")
     lock_source = physical(package / "Cargo.lock", "source-built fixture lock")
     fixture_manifest = tomllib.loads(manifest_source.read_text(encoding="utf-8"))
-    require("dependencies" not in fixture_manifest and "patch" not in fixture_manifest,
-            "source-built fixture has an unapproved preexisting dependency graph")
+    fixture_dependencies = fixture_manifest.get("dependencies")
+    require(isinstance(fixture_dependencies, dict)
+            and fixture_dependencies == {DEPENDENCY_PACKAGE: {"path": "../cleanup-dependency"}}
+            and "patch" not in fixture_manifest,
+            "source-built fixture dependency graph differs from the cleanup crate")
     root = application / "cargo-package"
     require(not root.exists() and not root.is_symlink(), "generated source-built consumer package must be fresh")
     root.mkdir(mode=0o755)
     staged_manifest = Path(staged["manifest"])
     staged_unwinding = Path(staged["staged"])
+    manifest_text = manifest_source.read_text(encoding="utf-8").rstrip()
+    dependency_section = re.search(r"(?m)^\[dependencies\]\s*$", manifest_text)
+    require(dependency_section is not None, "source-built fixture lost its cleanup dependency section")
+    next_section = re.search(r"(?m)^\[", manifest_text[dependency_section.end():])
+    insertion = dependency_section.end() + (next_section.start() if next_section else len(manifest_text[dependency_section.end():]))
+    provider_dependency = (
+        f"\ncrabc-unwinder = {{ path = \"{_toml_path(staged_manifest.parent, 'staged crabc-unwinder source', directory=True)}\" }}\n"
+    )
+    manifest_text = manifest_text[:insertion].rstrip() + provider_dependency + manifest_text[insertion:]
     rendered_manifest = (
-        manifest_source.read_text(encoding="utf-8").rstrip() + "\n\n"
-        "[dependencies]\n"
-        f"crabc-unwinder = {{ path = \"{_toml_path(staged_manifest.parent, 'staged crabc-unwinder source', directory=True)}\" }}\n\n"
-        "[patch.crates-io]\n"
+        manifest_text + "\n\n[patch.crates-io]\n"
         f"unwinding = {{ path = \"{_toml_path(staged_unwinding, 'staged patched unwinding source', directory=True)}\" }}\n"
     )
     generated_manifest = root / "Cargo.toml"
     generated_manifest.write_text(rendered_manifest, encoding="utf-8")
     sources: list[dict[str, dict[str, str]]] = []
+    dependency_target = application / "cleanup-dependency"
+    dependency_target.mkdir(mode=0o755)
+    dependency_sources = []
+    for relative in ("Cargo.toml", "src/lib.rs"):
+        source_path = physical(DEPENDENCY_FIXTURE / relative, "pinned cleanup dependency source")
+        target_path = dependency_target / relative
+        if target_path.parent != dependency_target:
+            target_path.parent.mkdir(mode=0o755)
+        shutil.copyfile(source_path, target_path)
+        dependency_sources.append({
+            "source": record_file(source_path, "pinned cleanup dependency source"),
+            "generated": record_file(target_path, "generated cleanup dependency source"),
+        })
+    sources.extend(dependency_sources)
     if package == BUILD_STD_FIXTURE:
-        sources.append(_write_anchored_source(FIXTURE, root / "src/main.rs", "fn main() {", "cleanup fixture"))
+        sources.append(_write_anchored_source(
+            package / "src/main.rs", root / "src/main.rs", "fn main() {", "dependency cleanup fixture",
+        ))
     elif package == BUILD_STD_DSO_FIXTURE and with_plugin:
         thread_join_contracts = dso_thread_join_contract(package / "src/main.rs", package / "src/plugin.rs")
         sources.append(_write_anchored_source(package / "src/main.rs", root / "src/main.rs", "fn main() {", "cleanup DSO host"))
@@ -1843,6 +1929,12 @@ def compile_source_built_mode(
     }
     built_unwind = cargo_build_std_unwind_artifact(stdout, target, rust_source)
     built_unwind_record = record_file(built_unwind, f"{label} Cargo build-std unwind archive")
+    application_dependency = cargo_application_dependency_artifact(
+        stdout, package_root=generated_package, target=target,
+    )
+    application_dependency_record = record_file(
+        application_dependency, f"{label} Cargo cleanup dependency archive",
+    )
     binary = cargo_artifact(stdout, package=generated_package, target=target, name=binary_name, crate_type="bin")
     binary = physical(binary, f"{label} source-built cleanup executable", executable=True)
     binary_receipt_path, binary_link_output = cargo_link_receipt_for_artifact(
@@ -1851,7 +1943,8 @@ def compile_source_built_mode(
     cargo_lto_externs = cargo_source_lto_extern_closure(
         stderr, target_name=binary_name, binary_name=binary_name, link_output=binary_link_output,
         source_library_root=source_library_root, runtime_artifacts=runtime_archive_records,
-        cargo_provider=cargo_provider_record, built_unwind=built_unwind_record,
+        cargo_provider=cargo_provider_record, application_dependency=application_dependency_record,
+        built_unwind=built_unwind_record,
     )
     binary_receipt = source_built_link_receipt(
         binary_receipt_path, binary_link_output, source_library_root, f"{label} source-built cleanup link receipt",
@@ -1874,6 +1967,7 @@ def compile_source_built_mode(
         "source_built_target_library_root": str(source_library_root),
         "offline_sources": offline_sources,
         "cargo_source_lto_runtime_artifacts": runtime_archive_records,
+        "cargo_application_dependency": application_dependency_record,
         "cargo_source_lto_extern_closure": cargo_lto_externs,
         "cargo_graph_provider": cargo_provider_record,
         "built_but_unselected_source_built_rust_unwind": built_unwind_record,
@@ -1901,7 +1995,8 @@ def compile_source_built_mode(
         plugin_lto_externs = cargo_source_lto_extern_closure(
             stderr, target_name="crabc_owned_cleanup_plugin", binary_name=None, link_output=plugin_link_output,
             source_library_root=source_library_root, runtime_artifacts=runtime_archive_records,
-            cargo_provider=cargo_provider_record, built_unwind=built_unwind_record,
+            cargo_provider=cargo_provider_record, application_dependency=application_dependency_record,
+            built_unwind=built_unwind_record,
         )
         require(plugin_receipt.get("rust_requested_mode") == "shared",
                 f"{label} source-built cleanup plugin was not linked as a shared object")

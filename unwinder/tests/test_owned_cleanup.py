@@ -106,6 +106,25 @@ class OwnedCleanupContract(unittest.TestCase):
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "real _Unwind_RaiseException link anchor"):
             owned_cleanup.source_provider_link_anchor(missing)
 
+    def test_source_built_std_cleanup_unwinds_through_the_declared_application_crate(self):
+        for package in (owned_cleanup.BUILD_STD_FIXTURE, owned_cleanup.BUILD_STD_DSO_FIXTURE):
+            manifest = tomllib.loads((package / "Cargo.toml").read_text())
+            self.assertEqual(
+                manifest["dependencies"],
+                {"crabc-cleanup-dependency": {"path": "../cleanup-dependency"}},
+            )
+            lock = tomllib.loads((package / "Cargo.lock").read_text())
+            root = next(item for item in lock["package"] if item["name"] == manifest["package"]["name"])
+            self.assertEqual(root["dependencies"], ["crabc-cleanup-dependency"])
+        dependency = (owned_cleanup.DEPENDENCY_FIXTURE / "src/lib.rs").read_text()
+        self.assertIn("#[inline(never)]", dependency)
+        self.assertIn("std::panic::panic_any(73usize)", dependency)
+        for source in (
+            owned_cleanup.BUILD_STD_FIXTURE / "src/main.rs",
+            owned_cleanup.BUILD_STD_DSO_FIXTURE / "src/plugin.rs",
+        ):
+            self.assertIn("crabc_cleanup_dependency::panic_with_cleanup", source.read_text())
+
     def test_dso_thread_join_contract_matches_thread_completion_without_result_equality(self):
         host = owned_cleanup.BUILD_STD_DSO_FIXTURE / "src/main.rs"
         plugin = owned_cleanup.BUILD_STD_DSO_FIXTURE / "src/plugin.rs"
@@ -472,21 +491,25 @@ class OwnedCleanupContract(unittest.TestCase):
                 path.chmod(mode)
 
     def test_generated_source_graph_manifest_accepts_the_staged_unwinding_directory(self):
-        application = Path(self.temporary.name) / "application"
         staged_root = Path(self.temporary.name) / "staged-root"
         staged_unwinding = Path(self.temporary.name) / "staged-unwinding"
-        application.mkdir()
-        staged_root.mkdir()
+        staged_root.mkdir(parents=True)
         staged_unwinding.mkdir()
         (staged_root / "Cargo.toml").write_text("[package]\nname = \"crabc-unwinder\"\nversion = \"0.1.0\"\n")
         (staged_unwinding / "Cargo.toml").write_text("[package]\nname = \"unwinding\"\nversion = \"0.2.10\"\n")
-        prepared = owned_cleanup.prepare_source_graph_package(
-            application, owned_cleanup.BUILD_STD_FIXTURE,
-            {"manifest": str(staged_root / "Cargo.toml"), "staged": str(staged_unwinding)}, False,
-        )
-        manifest = tomllib.loads(Path(prepared["generated_manifest"]["path"]).read_text())
-        self.assertEqual(manifest["dependencies"]["crabc-unwinder"]["path"], str(staged_root))
-        self.assertEqual(manifest["patch"]["crates-io"]["unwinding"]["path"], str(staged_unwinding))
+        staged = {"manifest": str(staged_root / "Cargo.toml"), "staged": str(staged_unwinding)}
+        for index, package in enumerate((owned_cleanup.BUILD_STD_FIXTURE, owned_cleanup.BUILD_STD_DSO_FIXTURE)):
+            application = Path(self.temporary.name) / f"application-{index}"
+            application.mkdir()
+            prepared = owned_cleanup.prepare_source_graph_package(application, package, staged, index == 1)
+            manifest = tomllib.loads(Path(prepared["generated_manifest"]["path"]).read_text())
+            self.assertEqual(manifest["dependencies"]["crabc-unwinder"]["path"], str(staged_root))
+            self.assertEqual(
+                manifest["dependencies"]["crabc-cleanup-dependency"]["path"], "../cleanup-dependency",
+            )
+            self.assertEqual(manifest["patch"]["crates-io"]["unwinding"]["path"], str(staged_unwinding))
+            self.assertTrue((application / "cleanup-dependency/src/lib.rs").is_file())
+            self.assertEqual(len(prepared["sources"]), 4 if index == 1 else 3)
 
     def test_source_graph_preflight_uses_the_generated_static_workspace_without_a_sysroot_product(self):
         output = WORK / f"source-graph-preflight-{Path(self.temporary.name).name}"
@@ -871,6 +894,9 @@ class OwnedCleanupContract(unittest.TestCase):
         provider = target / "libcrabc_unwinder-fedcba9876543210.rlib"
         provider.write_bytes(b"provider")
         provider_record = owned_cleanup.record_file(provider, "test Cargo provider archive")
+        dependency = target / "libcrabc_cleanup_dependency-0123456789abcdef.rlib"
+        dependency.write_bytes(b"application dependency")
+        dependency_record = owned_cleanup.record_file(dependency, "test Cargo cleanup dependency archive")
         built_unwind = target / "libunwind-0011223344556677.rlib"
         built_unwind.write_bytes(b"unselected unwind")
         built_unwind_record = owned_cleanup.record_file(built_unwind, "test source-built unwind archive")
@@ -878,7 +904,9 @@ class OwnedCleanupContract(unittest.TestCase):
         output.write_bytes(b"fused output")
         externs = [
             f"--extern {name}={path}"
-            for name, path in {**runtime, "crabc_unwinder": provider}.items()
+            for name, path in {
+                **runtime, "crabc_unwinder": provider, "crabc_cleanup_dependency": dependency,
+            }.items()
         ]
         log = (
             "     Running `CARGO_PRIMARY_PACKAGE=1 CARGO_BIN_NAME=crabc-owned-cleanup-build-std "
@@ -890,10 +918,13 @@ class OwnedCleanupContract(unittest.TestCase):
             log, target_name="crabc-owned-cleanup-build-std", binary_name="crabc-owned-cleanup-build-std",
             link_output=output,
             source_library_root=target, runtime_artifacts=runtime_records, cargo_provider=provider_record,
-            built_unwind=built_unwind_record,
+            application_dependency=dependency_record, built_unwind=built_unwind_record,
         )
         self.assertEqual(closure["linker_output"], owned_cleanup.record_file(output, "test fused output"))
-        self.assertEqual(closure["externs"], {**runtime_records, "crabc_unwinder": provider_record})
+        self.assertEqual(closure["externs"], {
+            **runtime_records, "crabc_unwinder": provider_record,
+            "crabc_cleanup_dependency": dependency_record,
+        })
         plugin_output = target / "libcrabc_owned_cleanup_plugin.so"
         plugin_output.write_bytes(b"fused plugin output")
         plugin_log = (
@@ -904,7 +935,8 @@ class OwnedCleanupContract(unittest.TestCase):
         plugin_closure = owned_cleanup.cargo_source_lto_extern_closure(
             plugin_log, target_name="crabc_owned_cleanup_plugin", binary_name=None,
             link_output=plugin_output, source_library_root=target, runtime_artifacts=runtime_records,
-            cargo_provider=provider_record, built_unwind=built_unwind_record,
+            cargo_provider=provider_record, application_dependency=dependency_record,
+            built_unwind=built_unwind_record,
         )
         self.assertEqual(plugin_closure["linker_output"], owned_cleanup.record_file(plugin_output, "test fused plugin output"))
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "cdylib rustc has an unapproved extra filename"):
@@ -912,7 +944,8 @@ class OwnedCleanupContract(unittest.TestCase):
                 plugin_log.replace(f"--out-dir {target}", f"--out-dir {target} -C extra-filename=-deadbeef"),
                 target_name="crabc_owned_cleanup_plugin", binary_name=None,
                 link_output=plugin_output, source_library_root=target, runtime_artifacts=runtime_records,
-                cargo_provider=provider_record, built_unwind=built_unwind_record,
+                cargo_provider=provider_record, application_dependency=dependency_record,
+                built_unwind=built_unwind_record,
             )
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "unselected source-built libunwind"):
             owned_cleanup.cargo_source_lto_extern_closure(
@@ -921,7 +954,7 @@ class OwnedCleanupContract(unittest.TestCase):
                 target_name="crabc-owned-cleanup-build-std", binary_name="crabc-owned-cleanup-build-std",
                 link_output=output,
                 source_library_root=target, runtime_artifacts=runtime_records, cargo_provider=provider_record,
-                built_unwind=built_unwind_record,
+                application_dependency=dependency_record, built_unwind=built_unwind_record,
             )
         extra = target / "libextra-0011223344556677.rlib"
         extra.write_bytes(b"unapproved source target input")
@@ -932,7 +965,7 @@ class OwnedCleanupContract(unittest.TestCase):
                 target_name="crabc-owned-cleanup-build-std", binary_name="crabc-owned-cleanup-build-std",
                 link_output=output,
                 source_library_root=target, runtime_artifacts=runtime_records, cargo_provider=provider_record,
-                built_unwind=built_unwind_record,
+                application_dependency=dependency_record, built_unwind=built_unwind_record,
             )
 
     def test_cargo_json_records_ignore_build_script_text_but_reject_malformed_json(self):
@@ -963,6 +996,39 @@ class OwnedCleanupContract(unittest.TestCase):
             owned_cleanup.cargo_artifact(stream, package=package, target=target, name="cleanup", crate_type="bin"),
             binary,
         )
+
+    def test_cargo_application_dependency_artifact_is_source_and_target_bound(self):
+        application = Path(self.temporary.name) / "application"
+        package = application / "cargo-package"
+        dependency_source = application / "cleanup-dependency/src/lib.rs"
+        dependency_source.parent.mkdir(parents=True)
+        dependency_source.write_text("pub fn source() {}\n")
+        target = Path(self.temporary.name) / "target"
+        deps = target / "release/deps"
+        deps.mkdir(parents=True)
+        archive = deps / "libcrabc_cleanup_dependency-0123456789abcdef.rlib"
+        archive.write_bytes(b"local cleanup dependency")
+        record = {
+            "reason": "compiler-artifact",
+            "target": {
+                "name": "crabc_cleanup_dependency", "kind": ["lib"], "crate_types": ["lib"],
+                "src_path": str(dependency_source),
+            },
+            "filenames": [str(archive)],
+            "executable": None,
+        }
+        self.assertEqual(
+            owned_cleanup.cargo_application_dependency_artifact(
+                json.dumps(record), package_root=package, target=target,
+            ),
+            archive,
+        )
+        changed = dict(record)
+        changed["target"] = {**record["target"], "src_path": str(Path(self.temporary.name) / "other.rs")}
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "expected one local cleanup dependency archive"):
+            owned_cleanup.cargo_application_dependency_artifact(
+                json.dumps(changed), package_root=package, target=target,
+            )
 
     def test_cargo_graph_provider_uses_the_declared_rlib_target_kind(self):
         target = Path(self.temporary.name) / "target"

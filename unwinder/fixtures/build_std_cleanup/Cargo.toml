@@ -5,6 +5,9 @@ edition = "2024"
 
 [workspace]
 
+[dependencies]
+crabc-cleanup-dependency = { path = "../cleanup-dependency" }
+
 [profile.release]
 codegen-units = 1
 debug = 0
