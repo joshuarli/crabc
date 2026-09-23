@@ -40,8 +40,9 @@ are not transferable passes for a different revision.
   pinned musl and the owned runtime at
   `f600772a6`. Clean current-source static preparation and three-product
   dynamic qualification passed with independent readers at `ad21441d6`.
-  These source-bound checkpoints do not promote
-  current main. Complete the actual remaining
+  The same-source native ABI inventory collected and replayed successfully as
+  measurement, with provider/semantic closure still open. These source-bound
+  checkpoints do not promote current main. Complete the actual remaining
   aggregate/family admissions from `campaign-status`, not another symbol sweep.
 - **Allocator:** M1's six bounded components passed at `0daef148bd20dc2bef2ac9dc34af4f3dd0e99d7a`.
   M2 PageMap and scalar bitmaps qualified at `62d6435c772e9ddc144de302cc54ad78cea720e9`;
@@ -67,10 +68,9 @@ are not transferable passes for a different revision.
 - **Qualification:** Native OS/libc-test aggregation, installed-product
   unwinder/std/LTO, ordered consumer gates and release performance remain open.
   Eight standalone unwinder commands and 89 host tests passed on the selected
-  nightly; these are non-promoting source-boundary checks. Canonical static
-  Lua source-build and its independent admission reader passed on clean
-  `ad21441d6`; dynamic Lua and family admission await the matching validated
-  dynamic product. The 114-row
+  nightly; these are non-promoting source-boundary checks. Canonical static and
+  dynamic Lua source builds and the independent source-build admission passed
+  on clean `ad21441d6`. The 114-row
   collector and bounded replay are not performance qualification. Hardware
   prerequisites are recorded below.
 - **Preservation:** Pre-upgrade detached and dirty worktree source was preserved
