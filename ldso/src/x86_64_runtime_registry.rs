@@ -90,6 +90,10 @@ struct RuntimeObject {
     initializer_count: usize,
     finalizers: [usize; CALLBACKS],
     finalizer_count: usize,
+    // A newly committed open batch is visible before its callbacks run. This
+    // owner distinguishes that zero-state interval from readiness: foreign
+    // readers wait, while the opener's callbacks may reenter loader reads.
+    initialization_owner: AtomicI32,
     // Zero is queued, a positive kernel TID owns an executing constructor,
     // and negative values are terminal initialization/finalization phases.
     callback_state: AtomicI32,
@@ -106,7 +110,7 @@ impl RuntimeObject {
             next: core::ptr::null_mut(), previous: core::ptr::null_mut(), symbol_next: core::ptr::null_mut(), fini_next: core::ptr::null_mut(), needed_by: core::ptr::null_mut(), global: false, short_name,
             needed: [core::ptr::null_mut(); MAX_NEEDED], needed_count: 0, name: [0; MAX_PATH],
             initializers: [0; CALLBACKS], initializer_count: 0, finalizers: [0; CALLBACKS], finalizer_count: 0,
-            callback_state: AtomicI32::new(0) });
+            initialization_owner: AtomicI32::new(0), callback_state: AtomicI32::new(0) });
             core::ptr::copy_nonoverlapping(name.as_ptr(), (*node).name.as_mut_ptr(), name.len());
             (*node).link_map.name = (*node).name.as_ptr();
             if let ObjectStorage::Runtime(object) = &(*node).storage {
@@ -154,6 +158,16 @@ impl UnpublishedObjects {
         Some(())
     }
     fn relinquish(&mut self) { self.head = core::ptr::null_mut(); self.tail = core::ptr::null_mut(); self.count = 0; }
+}
+
+unsafe fn assign_opening_owner(nodes: &UnpublishedObjects, tid: i32) -> Option<()> {
+    if tid <= 0 { return None; }
+    let mut node = nodes.head;
+    while !node.is_null() {
+        unsafe { (*node).initialization_owner.store(tid, Ordering::Relaxed); }
+        node = unsafe { (*node).next };
+    }
+    Some(())
 }
 impl Drop for UnpublishedObjects {
     fn drop(&mut self) {
@@ -239,6 +253,11 @@ impl PreparedInitialRegistry {
             }
             unsafe { (*node).needed_count = edges.len(); }
         }
+        // Initial nodes become visible before their constructors run. Mark
+        // their startup thread now so foreign readers wait while that thread
+        // can reenter later nodes in the same initial callback plan.
+        let opening_tid = unsafe { syscall1(186, 0) as i32 };
+        unsafe { assign_opening_owner(&nodes, opening_tid) }?;
         let mut registry = RuntimeRegistry::empty();
         registry.head = nodes.head;
         registry.tail = nodes.tail;
@@ -409,7 +428,10 @@ unsafe fn initialize_object(node: *mut RuntimeObject) {
             unsafe { wait_initialization(&(*node).callback_state, state); }
             continue;
         }
-        unsafe { (*node).callback_state.store(tid, Ordering::Release); }
+        unsafe {
+            (*node).initialization_owner.store(tid, Ordering::Relaxed);
+            (*node).callback_state.store(tid, Ordering::Release);
+        }
         if unsafe { (*node).finalizer_count } != 0 {
             unsafe { (*node).fini_next = registry.fini_head; }
             registry.fini_head = node;
@@ -430,6 +452,70 @@ unsafe fn initialize_object(node: *mut RuntimeObject) {
         }
         return;
     }
+}
+
+/// Wait until a node's open-batch constructors are complete before exposing
+/// it to a foreign loader read. The batch owner may reenter before its later
+/// constructors run; every other thread waits on the callback state with no
+/// graph lock held. Runtime nodes are append-only, so the pointer remains live
+/// throughout this wait.
+unsafe fn wait_for_readable_node(node: *mut RuntimeObject) -> Result<(), i32> {
+    let tid = unsafe { syscall1(186, 0) } as i32;
+    loop {
+        let state = unsafe { (*node).callback_state.load(Ordering::Acquire) };
+        if state == CONSTRUCTOR_ABANDONED { return Err(ERROR_FORK_CONSTRUCTOR); }
+        let owner = unsafe { (*node).initialization_owner.load(Ordering::Acquire) };
+        if state == 0 && owner <= 0 { return Err(ERROR_BAD_ELF); }
+        if node_is_readable_to(state, owner, tid) {
+            return Ok(());
+        }
+        #[cfg(test)]
+        READERS_WAITING_FOR_CONSTRUCTOR.fetch_add(1, Ordering::AcqRel);
+        wait_initialization(unsafe { &(*node).callback_state }, state);
+        #[cfg(test)]
+        READERS_WAITING_FOR_CONSTRUCTOR.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+#[inline]
+fn node_is_readable_to(state: i32, owner: i32, tid: i32) -> bool {
+    state < 0 || (state == 0 && owner == tid) || state == tid
+}
+
+#[cfg(test)]
+static READERS_WAITING_FOR_CONSTRUCTOR: AtomicI32 = AtomicI32::new(0);
+
+unsafe fn runtime_symbol_order(
+    registry: &RuntimeRegistry,
+    snapshot: &ObjectSnapshot,
+    handle: *mut c_void,
+    caller: usize,
+) -> Result<ObjectOrder, i32> {
+    let mut order = ObjectOrder { indices: LoaderBuffer::new(registry.count, 0).ok_or(12)?, count: 0 };
+    if handle.is_null() || handle.cast::<RuntimeObject>() == registry.head || handle as usize == usize::MAX {
+        let mut node = registry.symbols_head;
+        if handle as usize == usize::MAX {
+            let mut owner = registry.head;
+            for candidate in snapshot.nodes.as_slice() {
+                let object = unsafe { (**candidate).object() }.ok_or(ERROR_HANDLE)?;
+                if let Some(offset) = (caller as u64).checked_sub(object.base) {
+                    if unsafe { virtual_range_in_load(object.phdr, object.phnum, offset, 1) } { owner = *candidate; break; }
+                }
+            }
+            // Musl starts at the caller's physical successor, then traverses
+            // that object's symbol-scope links.
+            node = unsafe { (*owner).next };
+        }
+        while !node.is_null() {
+            order.indices.as_mut_slice()[order.count] = unsafe { (*node).index };
+            order.count += 1;
+            node = unsafe { (*node).symbol_next };
+        }
+    } else {
+        let root = unsafe { validated_handle(registry, handle) }.ok_or(ERROR_HANDLE)?;
+        order = unsafe { breadth_first_scope(snapshot, registry, root, false) }.ok_or(12)?;
+    }
+    Ok(order)
 }
 
 pub(super) unsafe fn initialize_initial() {
@@ -512,6 +598,23 @@ unsafe extern "C" fn runtime_fork_complete(parent_tid: i32, child: i32, callback
                     if visitor == parent_tid { tid } else { CONSTRUCTOR_ABANDONED },
                     Ordering::Release,
                 ); }
+                unsafe { (*node).initialization_owner.store(
+                    if visitor == parent_tid { tid } else { CONSTRUCTOR_ABANDONED },
+                    Ordering::Release,
+                ); }
+            } else if visitor == 0 {
+                let owner = unsafe { (*node).initialization_owner.load(Ordering::Acquire) };
+                if owner > 0 {
+                    if owner == parent_tid {
+                        unsafe { (*node).initialization_owner.store(tid, Ordering::Release); }
+                    } else {
+                        unsafe {
+                            (*node).callback_state.store(CONSTRUCTOR_ABANDONED, Ordering::Release);
+                            (*node).initialization_owner.store(CONSTRUCTOR_ABANDONED, Ordering::Release);
+                            wake_initialization(&(*node).callback_state);
+                        }
+                    }
+                }
             }
             node = unsafe { (*node).next };
         }
@@ -701,6 +804,8 @@ unsafe fn open_transaction(guard: &RuntimeGuard, filename: &[u8], flags: i32) ->
     }
     let retry = unsafe { PreparedRetry::prepare(snapshot.objects.as_slice(), final_scope.as_slice(),
         registry.initial_tls_count, registry.deferred.as_ref(), &deferred) }.ok_or(ERROR_RELOCATION)?;
+    let opening_tid = if new.head.is_null() { 0 } else { unsafe { syscall1(186, 0) as i32 } };
+    if !new.head.is_null() { unsafe { assign_opening_owner(&new, opening_tid) }.ok_or(ERROR_BAD_ELF)?; }
     let retry = unsafe { retry.make_writable(guard) }.ok_or(ERROR_RELOCATION)?;
     // No fallible work remains. Worker allocation/release shares this guard;
     // every TP receives its coherent view before the new scope is visible.
@@ -796,34 +901,31 @@ unsafe extern "C" fn runtime_symbol(handle: *mut c_void, name: *const u8, caller
     let Some(length) = (unsafe { bounded_nul(name, MAX_PATH) }) else { unsafe { *error = ERROR_SYMBOL; } return core::ptr::null_mut(); };
     let name = unsafe { core::slice::from_raw_parts(name, length) };
     let result = (|| -> Result<_, i32> {
-        let _guard = RuntimeGuard::acquire();
-        let registry = unsafe { &*REGISTRY.0.get() };
-        let snapshot = unsafe { ObjectSnapshot::collect(registry, &UnpublishedObjects::new()) }.ok_or(12)?;
-        let mut order = ObjectOrder { indices: LoaderBuffer::new(registry.count, 0).ok_or(12)?, count: 0 };
-        if handle.is_null() || handle.cast::<RuntimeObject>() == registry.head || handle as usize == usize::MAX {
-            let mut node = registry.symbols_head;
-            if handle as usize == usize::MAX {
-                let mut owner = registry.head;
-                for candidate in snapshot.nodes.as_slice() {
-                    let object = unsafe { (**candidate).object() }.ok_or(ERROR_HANDLE)?;
-                    if let Some(offset) = (caller as u64).checked_sub(object.base) {
-                        if unsafe { virtual_range_in_load(object.phdr, object.phnum, offset, 1) } { owner = *candidate; break; }
-                    }
-                }
-                // Musl starts at the caller's physical successor, then
-                // traverses that object's symbol-scope links.
-                node = unsafe { (*owner).next };
+        loop {
+            let (snapshot, order, additions) = {
+                let guard = RuntimeGuard::acquire();
+                let registry = unsafe { &*REGISTRY.0.get() };
+                let snapshot = unsafe { ObjectSnapshot::collect(registry, &UnpublishedObjects::new()) }.ok_or(12)?;
+                let order = unsafe { runtime_symbol_order(registry, &snapshot, handle, caller) }?;
+                let additions = registry.additions;
+                drop(guard);
+                (snapshot, order, additions)
+            };
+            for &index in order.as_slice() {
+                unsafe { wait_for_readable_node(snapshot.nodes.as_slice()[index]) }?;
             }
-            while !node.is_null() {
-                order.indices.as_mut_slice()[order.count] = unsafe { (*node).index };
-                order.count += 1;
-                node = unsafe { (*node).symbol_next };
+            let _guard = RuntimeGuard::acquire();
+            let registry = unsafe { &*REGISTRY.0.get() };
+            if registry.additions != additions { continue; }
+            for &index in order.as_slice() {
+                if unsafe { (*snapshot.nodes.as_slice()[index]).callback_state.load(Ordering::Acquire) }
+                    == CONSTRUCTOR_ABANDONED
+                { return Err(ERROR_FORK_CONSTRUCTOR); }
             }
-        } else {
-            let root = unsafe { validated_handle(registry, handle) }.ok_or(ERROR_HANDLE)?;
-            order = unsafe { breadth_first_scope(&snapshot, registry, root, false) }.ok_or(12)?;
+            break unsafe {
+                x86_64_general_relocation::find_runtime_symbol(snapshot.objects.as_slice(), order.as_slice(), name)
+            }.ok_or(ERROR_SYMBOL);
         }
-        unsafe { x86_64_general_relocation::find_runtime_symbol(snapshot.objects.as_slice(), order.as_slice(), name) }.ok_or(ERROR_SYMBOL)
     })();
     match result {
         Ok(x86_64_general_relocation::RuntimeSymbol::Address(address)) => address as *mut c_void,
@@ -924,6 +1026,7 @@ unsafe extern "C" fn runtime_iterate(callback: ProgramHeaderCallback, data: *mut
         unsafe { (*REGISTRY.0.get()).head }
     };
     while !node.is_null() {
+        if let Err(error) = unsafe { wait_for_readable_node(node) } { return error; }
         let mut info = {
             let _guard = RuntimeGuard::acquire();
             let Some(object) = (unsafe { (*node).object() }) else { return 0; };

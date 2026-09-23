@@ -1,6 +1,6 @@
 extern crate std;
 use super::*;
-use core::sync::atomic::{AtomicPtr, AtomicUsize};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
 
 #[test]
 fn source_test_harness_keeps_its_own_tls_resolver() {
@@ -130,6 +130,85 @@ fn shared_callback_owner_claims_once_across_recursive_and_concurrent_calls() {
         CallbackGuard::reset_finalized_fixture();
         CALLBACK_NODE.store(core::ptr::null_mut(), Ordering::SeqCst);
     }
+}
+
+#[test]
+fn foreign_loader_read_waits_for_open_batch_constructor_and_owner_can_reenter() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    unsafe {
+        let mut nodes = UnpublishedObjects::new();
+        let node = RuntimeObject::allocate(ObjectStorage::Runtime(EMPTY_OBJECT), identity(90), 0,
+            b"opening", true).unwrap();
+        nodes.append(node).unwrap();
+        let pending_node = RuntimeObject::allocate(ObjectStorage::Runtime(EMPTY_OBJECT), identity(91), 1,
+            b"later-opening", true).unwrap();
+        nodes.append(pending_node).unwrap();
+        let release_constructor = std::sync::Arc::new(AtomicBool::new(false));
+        let owner_release = release_constructor.clone();
+        let (constructor_started_tx, constructor_started_rx) = mpsc::channel();
+        let owner_address = node as usize;
+        let pending_address = pending_node as usize;
+        let owner = std::thread::spawn(move || {
+            let node = owner_address as *mut RuntimeObject;
+            let pending_node = pending_address as *mut RuntimeObject;
+            let tid = syscall1(186, 0) as i32;
+            (*node).initialization_owner.store(tid, Ordering::Relaxed);
+            (*pending_node).initialization_owner.store(tid, Ordering::Relaxed);
+            (*node).callback_state.store(tid, Ordering::Release);
+            // This is the constructor owner's same-thread dlsym/iteration
+            // admission. It passes for both the active callback and a later
+            // zero-state node in this same unpublished callback batch.
+            assert_eq!(wait_for_readable_node(node), Ok(()));
+            assert_eq!(wait_for_readable_node(pending_node), Ok(()));
+            constructor_started_tx.send(()).unwrap();
+            while !owner_release.load(Ordering::Acquire) { core::hint::spin_loop(); }
+            (*node).callback_state.store(INITIALIZED, Ordering::Release);
+            wake_initialization(&(*node).callback_state);
+            (*pending_node).callback_state.store(INITIALIZED, Ordering::Release);
+            wake_initialization(&(*pending_node).callback_state);
+        });
+        constructor_started_rx.recv().unwrap();
+
+        READERS_WAITING_FOR_CONSTRUCTOR.store(0, Ordering::Release);
+        let (reader_started_tx, reader_started_rx) = mpsc::channel();
+        let (reader_done_tx, reader_done_rx) = mpsc::channel();
+        let reader_address = node as usize;
+        let reader = std::thread::spawn(move || {
+            reader_started_tx.send(()).unwrap();
+            let result = wait_for_readable_node(reader_address as *mut RuntimeObject);
+            reader_done_tx.send(result).unwrap();
+        });
+        reader_started_rx.recv().unwrap();
+        for _ in 0..1_000_000 {
+            if READERS_WAITING_FOR_CONSTRUCTOR.load(Ordering::Acquire) != 0 { break; }
+            core::hint::spin_loop();
+        }
+        assert_ne!(READERS_WAITING_FOR_CONSTRUCTOR.load(Ordering::Acquire), 0,
+            "foreign loader read did not enter the constructor wait");
+        assert!(reader_done_rx.recv_timeout(Duration::from_millis(10)).is_err(),
+            "foreign loader read escaped before constructor completion");
+
+        release_constructor.store(true, Ordering::Release);
+        assert_eq!(reader_done_rx.recv_timeout(Duration::from_secs(1)).unwrap(), Ok(()));
+        owner.join().unwrap();
+        reader.join().unwrap();
+    }
+}
+
+#[test]
+fn opening_owner_does_not_bypass_a_foreign_constructor_claim() {
+    let opening_tid = 41;
+    let constructor_tid = 42;
+    assert!(node_is_readable_to(0, opening_tid, opening_tid),
+        "the opener may reenter a later zero-state node in its batch");
+    assert!(!node_is_readable_to(0, 0, opening_tid),
+        "a published zero-state node without an owner must not be admitted as ready");
+    assert!(!node_is_readable_to(constructor_tid, opening_tid, opening_tid),
+        "a positive state claimed by another thread must take precedence over stale owner metadata");
+    assert!(node_is_readable_to(constructor_tid, opening_tid, constructor_tid),
+        "the active constructor owner may reenter its own node");
 }
 
 #[test]
