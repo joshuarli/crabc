@@ -80,3 +80,9 @@ six-argument startup/errno boundary. It remains distinct from the owned-CRT
 carrier and from any installed loader/libc product, lifecycle, `dl*`, worker,
 DTV-growth, sysroot, or promotion claim. Those obligations remain explicit in
 `compat/x86_64/parity.toml`.
+
+`crt/src/x86_64_dynamic_startup.rs::startup_reject` uses Linux `exit_group`
+with status 127. Rejection can occur while checking a later executable array
+after a dependency constructor started workers; thread-only `exit` would leave
+those workers and the process alive. The freestanding owned-handoff fixture
+forces that order with a raw-clone worker and a malformed init-array bound.

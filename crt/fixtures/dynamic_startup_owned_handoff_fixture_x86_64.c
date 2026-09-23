@@ -45,7 +45,39 @@ static void record(char event)
 }
 
 static void preinit(void) { record('P'); }
+#ifdef CRABC_BAD_INIT_ARRAY_WITH_WORKER
+/* The dependency constructor creates a live thread before the CRT rejects a
+ * malformed main init-array boundary. A thread-only exit leaves this process
+ * running; process-wide exit_group must end both threads with status 127. */
+__asm__(
+    ".text\n"
+    ".type spawn_worker,@function\n"
+    "spawn_worker:\n"
+    "lea worker_stack+65536(%rip),%rsi\n"
+    "mov $0x10f00,%edi\n" /* CLONE_VM|FS|FILES|SIGHAND|THREAD */
+    "xor %edx,%edx\n"
+    "xor %r10d,%r10d\n"
+    "xor %r8d,%r8d\n"
+    "mov $56,%eax\n" /* clone */
+    "syscall\n"
+    "test %rax,%rax\n"
+    "jz 1f\n"
+    "ret\n"
+    "1: mov $34,%eax\n" /* pause */
+    "syscall\n"
+    "jmp 1b\n"
+    ".section .bss\n"
+    ".balign 16\n"
+    "worker_stack: .skip 65536\n"
+    ".text\n"
+    ".globl __init_array_start\n"
+    ".set __init_array_start, 1\n"
+);
+extern long spawn_worker(void);
+static void dependency(void) { if (spawn_worker() <= 0) raw_exit(96); record('D'); }
+#else
 static void dependency(void) { record('D'); }
+#endif
 static void init(void) { record('I'); }
 static void fini(void) { record('F'); }
 static void loader_fini(void) { record('L'); }

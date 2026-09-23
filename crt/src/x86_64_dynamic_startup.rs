@@ -310,9 +310,12 @@ unsafe fn invoke_linker_entry(entry: LinkerArrayEntry) {
 #[inline(never)]
 fn startup_reject() -> ! {
     unsafe {
+        // A dependency constructor may already have created workers when a
+        // later main-image array is rejected. Linux exit terminates only this
+        // thread; exit_group stops the entire malformed startup transaction.
         core::arch::asm!(
             "syscall",
-            in("rax") 60usize,
+            in("rax") 231usize,
             in("rdi") 127usize,
             options(noreturn, nostack),
         );

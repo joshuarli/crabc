@@ -14,6 +14,7 @@ import os
 import platform
 import re
 import shutil
+import signal
 import struct
 import subprocess
 import sys
@@ -152,11 +153,13 @@ def build_lifecycle_fixture_object(work: Path) -> Path:
     return object_path
 
 
-def build_owned_handoff_fixture_object(work: Path, *, malformed: bool = False) -> Path:
+def build_owned_handoff_fixture_object(
+    work: Path, *, malformed: bool = False, threaded_rejection: bool = False
+) -> Path:
     object_path = work / (
-        "dynamic_startup_owned_handoff_fixture_bad_x86_64.o"
-        if malformed
-        else "dynamic_startup_owned_handoff_fixture_x86_64.o"
+        "dynamic_startup_owned_handoff_fixture_"
+        + ("bad" if malformed else "threaded" if threaded_rejection else "normal")
+        + "_x86_64.o"
     )
     compile_result = run(
         oracle_compiler()
@@ -167,6 +170,7 @@ def build_owned_handoff_fixture_object(work: Path, *, malformed: bool = False) -
             "-fno-pie",
             "-fno-asynchronous-unwind-tables",
             *( ["-DCRABC_BAD_OWNED_HANDOFF=1"] if malformed else [] ),
+            *( ["-DCRABC_BAD_INIT_ARRAY_WITH_WORKER=1"] if threaded_rejection else [] ),
             "-c",
             str(OWNED_HANDOFF_FIXTURE),
             "-o",
@@ -462,6 +466,26 @@ class X86_64DynamicStartupTests(unittest.TestCase):
             )
             malformed_handoff_run = run([str(malformed_handoff_probe)])
             self.assertEqual(malformed_handoff_run.returncode, 127)
+
+            threaded_fixture = build_owned_handoff_fixture_object(work, threaded_rejection=True)
+            threaded_probe = work / "candidate-threaded-rejection"
+            link_freestanding_lifecycle_probe(
+                threaded_probe, scrt1=output / "Scrt1.o", fixture=threaded_fixture
+            )
+            assert_freestanding_lifecycle_contract(threaded_probe)
+            process = subprocess.Popen(
+                [str(threaded_probe)], stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+            )
+            try:
+                stdout, stderr = process.communicate(timeout=3)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.communicate()
+                self.fail("CRT rejection left a dependency-constructor worker alive")
+            self.assertEqual(process.returncode, 127, stderr.decode(errors="replace"))
+            self.assertEqual(stdout, b"")
+            self.assertEqual(stderr, b"")
 
             builder = load_builder_module()
             forged = work / "forged-Scrt1.o"
