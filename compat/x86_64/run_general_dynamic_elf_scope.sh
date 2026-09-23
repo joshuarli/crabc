@@ -140,4 +140,52 @@ for arm in oracle candidate; do
         done
     done
 done
-printf 'ELF scope and interpreter alias: PASS (8 weak/protected, 4 GNU unique cases per arm, 16 alias entries); evidence: %s\n' "$work"
+readonly late_source="$ROOT/compat/x86_64/general_dynamic_phdr_late.c"
+readonly late_mutator="$ROOT/compat/x86_64/general_dynamic_phdr_late_mutate.py"
+for arm in oracle candidate; do
+    root="$work/$arm"
+    mkdir -p "$work/$arm-unmutated"
+    if [ "$arm" = candidate ]; then
+        interpreter=/lib/ld-crabc-x86_64.so.1
+        "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object -DPHDR_PROVIDER \
+            "$late_source" -o "$work/$arm-unmutated/libphdr-late.so"
+    else
+        interpreter=/lib/ld-musl-x86_64.so.1
+        /usr/local/bin/crabc-x86_64-musl-gcc -fPIC -shared -DPHDR_PROVIDER \
+            "$late_source" -Wl,-soname,libphdr-late.so \
+            -o "$work/$arm-unmutated/libphdr-late.so"
+    fi
+    python3 -B "$late_mutator" "$work/$arm-unmutated/libphdr-late.so" \
+        "$root/usr/lib/libphdr-late.so"
+    readelf -lW "$root/usr/lib/libphdr-late.so" >"$work/$arm-late.program-headers"
+    for mode in pie non-pie; do
+        for phase in initial runtime; do
+            name="late-phdr-$mode-$phase"
+            dependencies=()
+            if [ "$phase" = initial ]; then
+                if [ "$arm" = candidate ]; then
+                    dependencies+=(--application-dso "$root/usr/lib/libphdr-late.so")
+                else
+                    dependencies+=(-Wl,--no-as-needed "$root/usr/lib/libphdr-late.so")
+                fi
+            fi
+            if [ "$arm" = candidate ]; then
+                "$installed/bin/crabc-cc-dynamic" "--dynamic-$mode" "$late_source" \
+                    "${dependencies[@]}" -o "$root/$name"
+            else
+                /usr/local/bin/crabc-x86_64-musl-gcc -fPIE "-${mode/non-pie/no-pie}" \
+                    "$late_source" -Wl,--dynamic-linker,"$interpreter",-rpath,/usr/lib \
+                    "${dependencies[@]}" -o "$root/$name"
+            fi
+            status=0
+            timeout 20 chroot "$root" "/$name" >"$work/$arm-$name.stdout" \
+                2>"$work/$arm-$name.stderr" || status=$?
+            printf '%s\n' "$status" >"$work/$arm-$name.status"
+            [ "$status" -eq 0 ]
+            if [ "$arm" = candidate ]; then
+                cmp "$work/oracle-$name.stdout" "$work/candidate-$name.stdout"
+            fi
+        done
+    done
+done
+printf 'ELF scope and interpreter alias: PASS (8 weak/protected, 4 GNU unique, 4 late PHDR cases per arm, 16 alias entries); evidence: %s\n' "$work"

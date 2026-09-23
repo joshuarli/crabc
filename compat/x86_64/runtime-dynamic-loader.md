@@ -120,6 +120,15 @@ version framework. Relocation preflight protects every consumed hash, version,
 and direct-symbol record before the first write, preventing one relocation
 from changing a later import's admission.
 
+An ELF file may store its program-header table beyond the first file page.
+`map_elf_for_role` reads the ELF header first, then maps that bounded table
+separately. It still requires the complete table inside the file and a
+readable, file-backed `PT_LOAD` for the retained `dl_iterate_phdr` view. This
+follows musl `map_library`'s separate program-header read without increasing
+the selected 32-entry admission bound.
+`run_general_dynamic_elf_scope.sh` checks a relocated table in initial and
+runtime DSOs, PIE and non-PIE, against pinned musl.
+
 Musl `find_sym2` includes `STB_GNU_UNIQUE` in its eligible bindings for
 relocations and `dlsym`; `dladdr` uses the same binding set. The installed
 `run_general_dynamic_elf_scope.sh` case exercises a real `GLOB_DAT` reference

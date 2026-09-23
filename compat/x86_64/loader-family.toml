@@ -22,10 +22,10 @@ behavior = "Interpreter process entry, main discovery, arbitrary initial DT_NEED
 [[required]]
 id = "search-mapping-protection"
 capability = "runtime.loader"
-qualification_cases = ["cli", "lazy-pie", "lazy-non-pie", "loader-synthetic"]
+qualification_cases = ["cli", "elf-scope-alias", "lazy-pie", "lazy-non-pie", "loader-synthetic"]
 synthetic_cases = []
 package_cases = []
-behavior = "Selected search and RUNPATH/RPATH policy, file admission, load bias, mapped-segment protections, explicit lazy GOT/RELRO restoration, and fail-closed command-path rejection. The current synthetic catalog also retains its selected mapping/protection cases."
+behavior = "Selected search and RUNPATH/RPATH policy, in-file late program-header admission, load bias, mapped-segment protections, explicit lazy GOT/RELRO restoration, and fail-closed command-path rejection. The current synthetic catalog also retains its selected mapping/protection cases."
 
 [[required]]
 id = "relocation-symbol-scope-relr"

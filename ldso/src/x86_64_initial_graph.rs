@@ -2247,13 +2247,29 @@ unsafe fn map_elf_for_role(
     let phnum = read_u16(header.add(56)) as usize;
     let ph_table_len = phnum.checked_mul(56)?;
     let ph_file_end = phoff.checked_add(ph_table_len)?;
-    if !valid || phnum == 0 || phnum > MAX_PHDRS || ph_file_end > header_map_len as usize {
+    let phoff_u64 = u64::try_from(phoff).ok()?;
+    let ph_file_end_u64 = u64::try_from(ph_file_end).ok()?;
+    if !valid || phnum == 0 || phnum > MAX_PHDRS || ph_file_end_u64 > file_byte_len {
         return None;
     }
+    // Musl reads an in-file PHDR table independently of its first header
+    // read. Map only the pages carrying this bounded table when e_phoff lies
+    // later in the file; the retained pointer is found in PT_LOAD below.
+    let (phdr_mapping, phdr) = if ph_file_end <= header_map_len as usize {
+        (None, header.add(phoff))
+    } else {
+        let page_offset = align_down(phoff_u64);
+        let map_len = ph_file_end_u64.checked_sub(page_offset)?;
+        let address = syscall6(SYS_MMAP, 0, i64::try_from(map_len).ok()?, PROT_READ,
+            MAP_PRIVATE, fd, i64::try_from(page_offset).ok()?);
+        if is_linux_error(address) { return None; }
+        (Some(MappingLease { address, byte_len: map_len }),
+            (address as *const u8).add(usize::try_from(phoff_u64 - page_offset).ok()?))
+    };
     let mut min = u64::MAX;
     let mut max = 0u64;
     for index in 0..phnum {
-        let p = header.add(phoff + index * 56);
+        let p = phdr.add(index * 56);
         if read_u32(p) == PT_LOAD {
             min = min.min(align_down(read_u64(p.add(16))));
             max = max.max(align_up(read_u64(p.add(16)).checked_add(read_u64(p.add(40)))?));
@@ -2281,7 +2297,7 @@ unsafe fn map_elf_for_role(
     };
     let base = (reserve as u64).checked_sub(min)?;
     for index in 0..phnum {
-        let p = header.add(phoff + index * 56);
+        let p = phdr.add(index * 56);
         if read_u32(p) != PT_LOAD {
             continue;
         }
@@ -2318,11 +2334,9 @@ unsafe fn map_elf_for_role(
     }
     // The temporary header mapping cannot own retained program-header
     // pointers. Locate the actual PT_LOAD file bytes before it is dropped.
-    let phoff_u64 = u64::try_from(phoff).ok()?;
-    let ph_file_end_u64 = u64::try_from(ph_file_end).ok()?;
     let mut runtime_phdr = None;
     for index in 0..phnum {
-        let p = header.add(phoff + index * 56);
+        let p = phdr.add(index * 56);
         if read_u32(p) != PT_LOAD {
             continue;
         }
@@ -2332,7 +2346,7 @@ unsafe fn map_elf_for_role(
             continue;
         }
         let virtual_address = read_u64(p.add(16)).checked_add(phoff_u64 - file_offset)?;
-        if !virtual_range_in_load(header.add(phoff), phnum, virtual_address, ph_table_len as u64) {
+        if !virtual_range_in_load(phdr, phnum, virtual_address, ph_table_len as u64) {
             return None;
         }
         runtime_phdr = Some(runtime_address(base, virtual_address)? as *const u8);
@@ -2340,6 +2354,7 @@ unsafe fn map_elf_for_role(
     }
     let runtime_phdr = runtime_phdr?;
     let entry = base.checked_add(read_u64(header.add(24)))?;
+    drop(phdr_mapping);
     drop(header_mapping);
     let mut object = parse_mapped(
         base,

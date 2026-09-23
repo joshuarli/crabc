@@ -51,7 +51,7 @@ NONPROMOTING_FLAGS = {
 # full qualification and makes a stale behavior roster reject until reviewed.
 EXPECTED_ROWS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("entry-and-initial-graph", "runtime.loader", ("cycle", "cli")),
-    ("search-mapping-protection", "runtime.loader", ("cli", "lazy-pie", "lazy-non-pie", "loader-synthetic")),
+    ("search-mapping-protection", "runtime.loader", ("cli", "elf-scope-alias", "lazy-pie", "lazy-non-pie", "loader-synthetic")),
     ("relocation-symbol-scope-relr", "runtime.loader", ("elf-scope-alias", "lazy-pie", "lazy-non-pie", "loader-synthetic")),
     ("runtime-v1-tls-thread", "runtime.private-facades", ("cycle", "dlopen-pie", "dlopen-non-pie", "pthread-exit", "pthread-signal", "loader-synthetic")),
     ("constructor-finalization", "runtime.loader", ("constructor-exit", "dlopen-pie", "dlopen-non-pie")),
