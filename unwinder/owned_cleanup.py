@@ -2301,10 +2301,12 @@ def run(static_root: Path, dynamic_root: Path, provider_vendor_root: Path, outpu
         "consumer compiler identity",
     )
     standalone_provider_sources = prepare_standalone_provider_cargo_home(output, provider_vendor_root)
+    standalone_registry_source = provider_registry_unwinding_source(output, standalone_provider_sources)
     run_logged([
         sys.executable, "-B", ROOT / "build.py", "--output", output / "provider",
         "--stage-root", output / "provider" / "source-inputs",
         "--cargo-home", standalone_provider_sources["cargo_home"],
+        "--registry-unwinding-source", standalone_registry_source["registry_source"],
     ], environment,
                output / "provider-build.log", "selected unwind provider build")
     provider = provider_snapshot(output / "provider", toolchain)

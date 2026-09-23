@@ -198,7 +198,10 @@ backtrace behavior.
 The caller supplies `--provider-vendor` as a physical checkout-local Cargo
 directory source containing exactly the locked `unwinding`, `gimli`, and
 `libc 0.2.186` provider packages. Each Cargo checksum manifest and every
-listed file is rehashed against `PINS` before use. The runner separately
+listed file is rehashed against `PINS` before use. For the standalone provider
+build, it derives a private registry-shaped `unwinding` source from that
+authenticated vendor package so the original upstream tree hash remains the
+source boundary while Cargo stays offline. The runner separately
 audits Rust's pinned `rust-src/library/.cargo/config.toml`, complete
 `rust-src/library/vendor` roster, and `rust-src/library/Cargo.lock`; it merges
 only the extra provider `libc 0.2.186` source into a fresh private composite

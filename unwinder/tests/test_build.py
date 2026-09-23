@@ -168,6 +168,61 @@ class DependencyBoundary(unittest.TestCase):
                 for path, mode in input_modes.items():
                     path.chmod(mode)
 
+    def test_standalone_provider_can_stage_the_authenticated_registry_shape_of_a_vendor_package(self):
+        scratch = builder.ROOT.parent / '.work/x86_64/unwinder-output-tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            root = Path(temporary) / 'crabc-unwinder'
+            (root / 'src').mkdir(parents=True)
+            (root / 'Cargo.toml').write_text('[package]\nname = "crabc-unwinder"\n')
+            (root / 'Cargo.lock').write_text('version = 4\n')
+            (root / 'src/lib.rs').write_text('#![no_std]\n')
+
+            registry = Path(temporary) / 'registry/unwinding-0.2.10'
+            target = registry / 'src/unwinder/find_fde/phdr.rs'
+            target.parent.mkdir(parents=True)
+            target.write_text('registry source\n')
+            (registry / 'Cargo.toml').write_text(
+                '[package]\nname = "unwinding"\nversion = "0.2.10"\n',
+            )
+            (registry / '.cargo-ok').write_text('{"v":1}')
+            (registry / '.gitignore').write_text('.vscode/\ntarget\n')
+
+            vendor = Path(temporary) / 'vendor/unwinding-0.2.10'
+            shutil.copytree(registry, vendor, ignore=shutil.ignore_patterns('.cargo-ok', '.gitignore'))
+            (vendor / '.cargo-checksum.json').write_text('{"directory-source":true}\n')
+            overlay = Path(temporary) / 'overlay.rs'
+            overlay.write_text('patched source\n')
+            patches = {
+                'src/unwinder/find_fde/phdr.rs': {
+                    'overlay': overlay,
+                    'upstream_sha256': builder.digest(target),
+                },
+            }
+            package = {
+                'source': builder.CRATES_IO_REGISTRY,
+                'manifest_path': str(vendor / 'Cargo.toml'),
+            }
+            stage_root = Path(temporary) / 'output/source-inputs'
+            stage_root.parent.mkdir()
+            with unittest.mock.patch.object(builder, 'ROOT', root), \
+                 unittest.mock.patch.object(builder, 'PATCHES', patches), \
+                 unittest.mock.patch.object(
+                     builder, 'PATCHED_UNWINDING_UPSTREAM_TREE_SHA256', builder.tree_digest(registry),
+                 ):
+                with self.assertRaisesRegex(ValueError, 'source tree differs'):
+                    builder.stage_patched_unwinding(
+                        {builder.PATCHED_UNWINDING: package}, stage_root=stage_root,
+                    )
+                staged = builder.stage_patched_unwinding(
+                    {builder.PATCHED_UNWINDING: package},
+                    stage_root=stage_root,
+                    registry_source=registry,
+                )
+            self.assertEqual(staged['upstream_tree_sha256'], builder.tree_digest(registry))
+            self.assertEqual((registry / '.cargo-checksum.json').exists(), False)
+            self.assertEqual((vendor / '.cargo-checksum.json').read_text(), '{"directory-source":true}\n')
+
     def test_private_build_paths_cannot_escape_the_evidence_output(self):
         scratch = builder.ROOT.parent / '.work/x86_64/unwinder-output-tests'
         scratch.mkdir(parents=True, exist_ok=True)

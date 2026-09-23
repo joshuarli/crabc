@@ -169,11 +169,26 @@ def private_stage_root(stage_root):
     return candidate
 
 
-def stage_patched_unwinding(packages, *, stage_root=None):
+def stage_patched_unwinding(packages, *, stage_root=None, registry_source=None):
     package = packages[PATCHED_UNWINDING]
     if package.get('source') != CRATES_IO_REGISTRY:
         raise ValueError('unwinding source is not the pinned crates.io registry package')
-    upstream = Path(package['manifest_path']).parent
+    if registry_source is None:
+        upstream = Path(package['manifest_path']).parent
+    else:
+        upstream = Path(registry_source)
+        if upstream.is_symlink() or not upstream.is_dir():
+            raise ValueError('registry unwinding source must be a physical directory')
+        upstream = upstream.resolve(strict=True)
+        try:
+            source_manifest = tomllib.loads((upstream / 'Cargo.toml').read_text(encoding='utf-8'))
+        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+            raise ValueError('registry unwinding source manifest is invalid') from error
+        source_package = source_manifest.get('package')
+        if (not isinstance(source_package, dict)
+                or source_package.get('name') != PATCHED_UNWINDING
+                or source_package.get('version') != PINS[PATCHED_UNWINDING][0]):
+            raise ValueError('registry unwinding source identity differs from its lock')
     overlays = {}
     for target, patch in PATCHES.items():
         source = upstream / target
@@ -277,7 +292,7 @@ def verify_staged_patched_unwinding(staged):
         if digest(staged['staged'] / patch['target']) != patch['compiled_sha256']:
             raise ValueError('compiled unwinding overlay differs from the staged patch record')
 
-def build(output, *, stage_root=None, cargo_home=None):
+def build(output, *, stage_root=None, cargo_home=None, registry_unwinding_source=None):
     if (platform.system(), platform.machine()) != ('Linux', 'x86_64'):
         raise ValueError('native Linux/x86-64 required')
     output = output.resolve()
@@ -290,6 +305,11 @@ def build(output, *, stage_root=None, cargo_home=None):
         stage_root = Path(os.path.abspath(stage_root))
         if not stage_root.is_relative_to(output):
             raise ValueError('private unwinding stage root must remain below build output')
+    if registry_unwinding_source is not None:
+        registry_unwinding_source = Path(os.path.abspath(registry_unwinding_source))
+        if (registry_unwinding_source.is_symlink() or not registry_unwinding_source.is_dir()
+                or not registry_unwinding_source.resolve(strict=True).is_relative_to(output.parent)):
+            raise ValueError('registry unwinding source must be a physical input below the build output parent')
     if cargo_home is None:
         cargo_home = ROOT.parent / '.work/x86_64/cargo'
     else:
@@ -313,7 +333,9 @@ def build(output, *, stage_root=None, cargo_home=None):
     source_manifest = ['--manifest-path', str(ROOT / 'Cargo.toml'), '--locked']
     metadata = json.loads(run([*cargo, 'metadata', *source_manifest, '--format-version=1', '--filter-platform', TARGET], **kwargs))
     packages = audit_graph(metadata, tomllib.loads((ROOT / 'Cargo.lock').read_text()))
-    staged = stage_patched_unwinding(packages, stage_root=stage_root)
+    staged = stage_patched_unwinding(
+        packages, stage_root=stage_root, registry_source=registry_unwinding_source,
+    )
     staged_kwargs = {'cwd': staged['manifest'].parent, 'env': environment}
     run([*cargo, 'generate-lockfile', '--offline', '--manifest-path', staged['manifest']], **staged_kwargs)
     manifest = ['--manifest-path', str(staged['manifest']), '--locked']
@@ -395,6 +417,8 @@ if __name__ == '__main__':
                         help='fresh private provider-source root below --output')
     parser.add_argument('--cargo-home', type=Path,
                         help='existing private Cargo home beside --output')
+    parser.add_argument('--registry-unwinding-source', type=Path,
+                        help='authenticated registry-shaped source derived from the provider Cargo vendor')
     arguments = parser.parse_args()
     output = arguments.output
     if output is None:
@@ -404,4 +428,5 @@ if __name__ == '__main__':
         # The pinned container builds as root; retain public build evidence
         # readable by the invoking host user, like the installed-product jobs.
         output.chmod(0o755)
-    build(output, stage_root=arguments.stage_root, cargo_home=arguments.cargo_home)
+    build(output, stage_root=arguments.stage_root, cargo_home=arguments.cargo_home,
+          registry_unwinding_source=arguments.registry_unwinding_source)
