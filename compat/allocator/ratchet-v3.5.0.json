@@ -14,16 +14,16 @@
   "native_shadow_stress_fixture_count": 1,
   "owner_exit_publication_contract_sha256": "5225a08ef5da9dd9e892d87381379016c15d255cc8566f8a610d69769d15572c",
   "port_map_counts": {
-    "differential_verified": 42,
+    "differential_verified": 44,
     "exported": 4,
-    "implemented": 186,
-    "item_count": 182,
+    "implemented": 191,
+    "item_count": 188,
     "performance_qualified": 0,
     "stress_verified": 1,
     "unit_count": 34,
-    "unit_verified": 186
+    "unit_verified": 191
   },
-  "port_map_sha256": "334a0af74507e978d69134261df21ae86b9ef8ae52f20d56705d034f4f6f38cf",
+  "port_map_sha256": "d86677afc0ead32d0b51971706f546d0774d391ed0b4c0df16bebd09fed855a9",
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_atomic_do_once-callsite-disposition-ledger": [
       "implemented",
@@ -225,6 +225,11 @@
       "implemented",
       "unit_verified"
     ],
+    "item:src/arena.c:mi-arena-initialize-process-first-regular-numa-policy": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
+    ],
     "item:src/arena.c:mi-arena-reserve-first-default-one-arena": [
       "implemented",
       "unit_verified"
@@ -244,6 +249,11 @@
     "item:src/arena.c:os-aligned-singleton-metadata-page-map-and-release": [
       "implemented",
       "unit_verified"
+    ],
+    "item:src/arena.c:persistent-arena-quiescent-destruction": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
     ],
     "item:src/arena.c:process-ready-published-shared-arena-pair": [
       "implemented",
@@ -335,6 +345,10 @@
       "implemented",
       "unit_verified"
     ],
+    "item:src/free.c:same-origin-mapped-remote-free-reclaim-statistics-event": [
+      "implemented",
+      "unit_verified"
+    ],
     "item:src/init.c:MI_MEMID_STATIC-bootstrap-page-and-theap-images": [
       "implemented",
       "unit_verified",
@@ -371,6 +385,10 @@
       "implemented",
       "unit_verified"
     ],
+    "item:src/init.c:later-thread-statistics-source-events": [
+      "implemented",
+      "unit_verified"
+    ],
     "item:src/init.c:mi_page_empty-and-MI_PAGE_QUEUES_EMPTY": [
       "implemented",
       "unit_verified",
@@ -395,6 +413,7 @@
       "unit_verified",
       "stress_verified"
     ],
+    "item:src/init.c:process-done-subprocess-destroy-order": [],
     "item:src/init.c:static-first-tld-create-direct-success-arm": [
       "implemented",
       "unit_verified",
@@ -679,6 +698,10 @@
       "unit_verified"
     ],
     "item:src/theap.c:dynamic-thread-exit-mapped-two-block-non-direct-small-handoff": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/theap.c:generic-oom-all-queue-collection": [
       "implemented",
       "unit_verified"
     ],

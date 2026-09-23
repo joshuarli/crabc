@@ -283,8 +283,9 @@ differential_verified = false
 stress_verified = false
 performance_qualified = false
 
-[[unit]]
-upstream = "src/init.c and src/subproc.c"
+[[item]]
+upstream = "src/init.c"
+name = "process-done-subprocess-destroy-order"
 source_region = "mi_process_done_once's current-cache clear and signed destroy_on_exit branch (605,626-647), _mi_auto_process_done automatic suppression (660), and source subprocess/heap/metadata/arena/PageMap destruction order (src/subproc.c:202-255)"
 rust_module = "crabc_mimalloc::runtime_destroy and libc::c_abi::x86_64::native_mimalloc_lifecycle"
 rust_item = "partial: NativeProcessDoneInvocation/NativeProcessDoneAction preserve Automatic versus Explicit signed selection; the ordinary retaining caller selects the signed final-output permit before its metadata/default-Theap/main-Heap field-only merge and scalar process sampling, then emits the common tail before preloading; capture_native_process_destroy_request runs before the existing libc selected-worker registry pin; prepare_native_process_destroy runs only inside that pin and returns NativePreparedProcessDestroy; the private libc adapter releases the pin before finish performs source-ordered physical destruction, final statistics after arena retirement, and the common tail after PageMap retirement"
@@ -1785,7 +1786,7 @@ stress_verified = false
 performance_qualified = false
 
 [[item]]
-upstream = "src/arena.c and src/os.c"
+upstream = "src/arena.c"
 name = "mi-arena-initialize-process-first-regular-numa-policy"
 source_region = "src/arena.c:1676-1740 metadata preparation and arena_is_numa_local node write after mi_reserve_os_memory_ex2's -1 sentinel; src/arena.c:1885-1902 regular first-arena map/manage call; src/os.c:860-898 option-aware NUMA count/current normalization"
 rust_module = "crabc_mimalloc::process_arena, crabc_mimalloc::arena, and crabc_mimalloc::os"
@@ -3770,8 +3771,9 @@ differential_verified = true
 stress_verified = false
 performance_qualified = false
 
-[[unit]]
+[[item]]
 upstream = "src/theap.c"
+name = "generic-oom-all-queue-collection"
 source_region = "mi_theap_page_collect(MI_FORCE), mi_theap_visit_pages, and the page/backing phases of mi_theap_collect_ex (29-49,97-148), reached by src/page.c:mi_malloc_generic_fallback (1048-1059)"
 rust_module = "crabc_mimalloc::single_thread"
 rust_item = "PageAllocatorEngine::{collect_all_pages_for_allocation_retry,collect_retired_pages,allocate_generic_with_retry}"
