@@ -160,7 +160,15 @@ static void dns_record_prefix(void) {
     CHECK(((struct sockaddr_in*)ai->ai_addr)->sin_addr.s_addr==inet_addr("198.51.100.47"));freeaddrinfo(ai);
     unsigned char query[512],answer[512];
     int query_length=res_mkquery(0,"prefix-a.example.test",C_IN,T_A,0,0,0,query,sizeof query);
-    CHECK(query_length>0&&res_send(query,query_length,answer,sizeof answer)>12&&answer[6]==0&&answer[7]==3);
+    CHECK(query_length>0);
+    int full_length=res_send(query,query_length,answer,sizeof answer);
+    CHECK(full_length>16&&answer[6]==0&&answer[7]==3);
+    unsigned char short_answer[18];memset(short_answer,0xa5,sizeof short_answer);
+    CHECK(res_send(query,query_length,short_answer,0)==full_length&&short_answer[0]==0xa5);
+    CHECK(res_send(query,query_length,short_answer,1)==full_length&&
+          short_answer[0]==answer[0]&&short_answer[1]==0xa5);
+    CHECK(res_send(query,query_length,short_answer,16)==full_length&&
+          !memcmp(short_answer,answer,16)&&short_answer[16]==0xa5);
     CHECK(res_query("prefix-a.example.test",C_IN,T_A,answer,sizeof answer)>12&&answer[6]==0&&answer[7]==3);
     error=97;
     CHECK(!gethostbyname2_r("prefix-aaaa.example.test",AF_INET6,&h,b,sizeof b,&r,&error)&&r==&h&&error==97);

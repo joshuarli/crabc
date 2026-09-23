@@ -840,7 +840,8 @@ pub unsafe extern "C" fn __res_send(
     answer: *mut u8,
     answer_length: c_int,
 ) -> c_int {
-    if query.is_null() || answer.is_null() || query_length < 12 || answer_length < 12 {
+    let minimum_answer_length = if cfg!(crabc_x86_owned_runtime) { 0 } else { 12 };
+    if query.is_null() || answer.is_null() || query_length < 12 || answer_length < minimum_answer_length {
         unsafe {
             set_errno(EINVAL);
             set_h_errno(NO_RECOVERY);
@@ -859,14 +860,26 @@ pub unsafe extern "C" fn __res_send(
     let query_id = u16::from_be_bytes([query[0], query[1]]);
     #[cfg(crabc_x86_owned_runtime)]
     let (result, masked_errno) = {
-        let request = super::owned_resolver_batch::BatchRequest::new(query, query_id, answer);
+        // musl's `res_send` receives into 512 local bytes for a shorter caller
+        // range, copies only that range, and still returns the full reply
+        // length. The selected batch always sees its required answer capacity.
+        let mut short_reply = [0u8; 512];
+        let receive = if answer.len() < short_reply.len() { &mut short_reply[..] } else { &mut answer[..] };
+        let request = super::owned_resolver_batch::BatchRequest::new(query, query_id, receive);
         let batch_config = super::owned_resolver_batch::CResolverBatchConfig::from_c_resolver(&config);
         let outcome = unsafe { super::owned_resolver_batch::exchange(&batch_config, super::owned_resolver_batch::BatchRequests::one(request)) };
-        (outcome.result.and_then(|receipt| receipt.length(0).filter(|length| *length != 0)
+        let result = outcome.result.and_then(|receipt| receipt.length(0).filter(|length| *length != 0)
             .ok_or(resolver::ExchangeError::Transport(crabc_core::Errno::TIMEDOUT)))
             .map_err(|error| match error {
                 resolver::ExchangeError::Setup(errno) | resolver::ExchangeError::Transport(errno) => errno,
-            }), outcome.last_errno)
+            });
+        if let Ok(&length) = result.as_ref() {
+            if answer.len() < short_reply.len() {
+                let copied = answer.len().min(length);
+                answer[..copied].copy_from_slice(&short_reply[..copied]);
+            }
+        }
+        (result, outcome.last_errno)
     };
     #[cfg(not(crabc_x86_owned_runtime))]
     let (result, masked_errno) = (resolver::exchange(&config, query, query_id, answer), None::<c_int>);
