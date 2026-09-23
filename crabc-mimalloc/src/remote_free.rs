@@ -1480,6 +1480,29 @@ pub(crate) unsafe fn collect_abandoned(page: NonNull<Page>) -> Result<usize, Rem
     collect_state(state)
 }
 
+/// Completes `_mi_page_free_collect(page, false)` after an abandoned owner
+/// observes a late remote publication while trying to clear its low owner bit.
+///
+/// `arena.c:mi_abandoned_page_unown` runs both the remote detach and the
+/// non-forcing local transfer before its all-free check. A still-live page
+/// must therefore expose the collected blocks through `free` when that list
+/// was empty, rather than leave them in `local_free` after unownership.
+///
+/// # Safety
+///
+/// `page` must remain live and abandoned with its low owner bit held by this
+/// caller. The caller must be the sole writer of ordinary free-list fields
+/// and retain every linked block through both collection phases.
+pub(crate) unsafe fn collect_abandoned_false(page: NonNull<Page>) -> Result<usize, RemoteFreeError> {
+    // SAFETY: the caller holds the low owner bit and the complete page and
+    // block-area lifetime through the remote and owner-local source phases.
+    let state = unsafe { Page::abandoned_remote_free_owner_state_at(page) }
+        .ok_or(RemoteFreeError::NotOwnerAssociated)?;
+    let collected = collect_state(state)?;
+    move_local_to_free_if_empty(state);
+    Ok(collected)
+}
+
 /// Collects the predecessor list of one just-published abandoned remote free.
 ///
 /// This is the small-page `_mi_page_free_collect_partly` path from

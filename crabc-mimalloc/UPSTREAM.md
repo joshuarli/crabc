@@ -117,9 +117,13 @@ separate: a selected but unsupported page retains its lifecycle transition;
 it never substitutes the non-abandoning `BIN_FULL` branch. Its false
 collection yields the source all-free linked release, partial mapped-abandoned,
 or full unmapped-abandoned result, and preserves the `unown` late-remote-free
-ordering. Focused x86 unit tests cover each result in both owner seams. This
-does not broaden dynamic, non-abandoning, public/default, or paused-AArch64
-coverage.
+ordering. In that late-publication branch, pinned `src/arena.c:630-651`
+calls `_mi_page_free_collect(page, false)` from `src/page.c:214-243`:
+`remote_free::collect_abandoned_false` detaches the remote head and transfers
+`local_free` to an empty `free` list before `abandoned::unown_with` tests the
+page's remaining clients. Focused x86 unit tests cover each result in both
+owner seams. This does not broaden dynamic, non-abandoning, public/default,
+or paused-AArch64 coverage.
 
 > **Later-main direct-small adoption correction.** The broad later-main table
 > rows below predate the source-specific

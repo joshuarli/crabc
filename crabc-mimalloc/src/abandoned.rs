@@ -3401,9 +3401,11 @@ where
             }),
             AbandonedOwnerHeadTransition::RemotePublished(_) => {
                 // SAFETY: this caller still holds the owner bit and the
-                // abandoned-page lifetime proof; collection touches only
-                // owner fields.
-                unsafe { remote_free::collect_abandoned(page) }
+                // abandoned-page lifetime proof. Pinned
+                // `mi_abandoned_page_unown` calls
+                // `_mi_page_free_collect(page, false)` here, so transfer the
+                // local list after detaching the late remote publication.
+                unsafe { remote_free::collect_abandoned_false(page) }
                     .map_err(AbandonError::RemoteFree)?;
                 if page_is_empty(&state) {
                     unabandon_mapped(&state, map)?;
@@ -6250,7 +6252,7 @@ mod tests {
     }
 
     #[test]
-    fn producer_between_unown_observation_and_cas_is_collected_before_release() {
+    fn producer_between_unown_observation_and_cas_completes_false_collection() {
         let mut storage = BitmapStorage::uninit();
         let mut arena = map_fixture(&mut storage);
         let view = unsafe { ArenaView::from_ptr(&mut arena).unwrap() };
@@ -6260,6 +6262,8 @@ mod tests {
 
         let mut first = TestBlock([0; 16]);
         let mut second = TestBlock([0; 16]);
+        let first_block = first.pointer().cast::<crate::types::Block>().as_ptr();
+        let second_block = second.pointer().cast::<crate::types::Block>().as_ptr();
         assert_eq!(
             unsafe { remote_free::push_abandoned(page.pointer(), first.pointer()) },
             Ok(remote_free::AbandonedRemotePush::ClaimedUnownedPage)
@@ -6294,7 +6298,13 @@ mod tests {
 
         assert_eq!(page.0.remote_free_test_head(), 0);
         assert_eq!(page.0.remote_free_test_used(), 1);
-        assert_eq!(page.0.remote_free_test_local_chain_len(3), 2);
+        // The owner collected `first` before it observed an empty head; the
+        // source false collector moves it into `free`. The later `second`
+        // stays in `local_free` because a non-force collection never appends
+        // that list to an already nonempty `free` list.
+        assert_eq!(page.0.remote_free_test_free(), first_block);
+        assert_eq!(page.0.remote_free_test_local_free(), second_block);
+        assert_eq!(page.0.remote_free_test_local_chain_len(3), 1);
     }
 
     mod post_exit_mapped_reclaim_reabandon {
