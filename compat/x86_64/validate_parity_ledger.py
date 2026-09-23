@@ -53442,6 +53442,8 @@ def require_process_globals_getopt_artifact(family: Mapping[str, Any]) -> None:
         "still-planned `libc.c-abi-compat`",
         "dependency-free",
         "bounded static `__libc_start_main`",
+        "validated `AT_EXECFN`",
+        "empty-argv launcher",
         "established AArch64 musl translation",
         "same-address",
         "Environment storage and mutation",
@@ -53466,14 +53468,17 @@ def require_process_globals_getopt_artifact(family: Mapping[str, Any]) -> None:
         "libc/src/c_abi/x86_64/static_c_abi.rs",
         "libc/src/c_abi/x86_64/static_startup.rs",
         "libc/src/c_abi/x86_64/process_globals.rs",
+        "libc/src/c_abi/x86_64/auxv_observation.rs",
         "libc/src/getopt_exports.rs",
         "include/getopt.h",
         "include/locale.h",
         "include/string.h",
         "include/unistd.h",
+        "include/sys/auxv.h",
         "compat/x86_64/static_c_abi_exports.txt",
         "compat/x86_64/libc_process_globals_getopt_probe.c",
         "compat/x86_64/libc_process_globals_getopt_start.S",
+        "compat/x86_64/libc_process_globals_empty_argv_launcher.c",
         "compat/x86_64/run_libc_process_globals_getopt.sh",
         "compat/x86_64/tests/test_parity_ledger.py",
         "compat/x86_64/tests/test_runner.py",
@@ -53534,9 +53539,10 @@ def require_process_globals_getopt_artifact(family: Mapping[str, Any]) -> None:
     )
     require(
         any(
-            "does not publish or mutate an `environ` object" in item
-            and "auxv object" in item
-            and "loader-owned state" in item
+            "validated `AT_EXECFN`" in item
+            and "does not export or own the `getauxval` auxv object" in item
+            and "does not publish or mutate an `environ` object" in item
+            and "loader state" in item
             for item in prerequisites
         ),
         "static-c-process-globals-getopt must remain disjoint from environment ownership",

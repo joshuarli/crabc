@@ -30144,13 +30144,18 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         for symbol in ledger.PROCESS_GLOBALS_GETOPT_SYMBOLS:
             self.assertIn(f"`{symbol}`", artifact["description"])
+        self.assertIn("validated `AT_EXECFN`", artifact["description"])
+        self.assertIn("empty-argv launcher", artifact["description"])
         owners = artifact["source_owners"]
         assert isinstance(owners, list)
         for owner in (
             "libc/src/c_abi/x86_64/process_globals.rs",
+            "libc/src/c_abi/x86_64/auxv_observation.rs",
             "libc/src/getopt_exports.rs",
+            "include/sys/auxv.h",
             "compat/x86_64/libc_process_globals_getopt_probe.c",
             "compat/x86_64/libc_process_globals_getopt_start.S",
+            "compat/x86_64/libc_process_globals_empty_argv_launcher.c",
             "compat/x86_64/run_libc_process_globals_getopt.sh",
         ):
             self.assertIn(owner, owners)

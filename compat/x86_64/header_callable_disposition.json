@@ -2,9 +2,9 @@
   "contract_schema": "crabc.x86_64-header-callable-disposition/v2",
   "inputs": {
     "callable_extension_contract_sha256": "950febf6d9d8f26f001eb31844438c047f6ada96dbb3c2ecc27de97e51151b7f",
-    "callable_inventory_sha256": "c3b0c832dd9572601d4a097a9e3dae5c54707527836deaea76566926cd30130e",
+    "callable_inventory_sha256": "a533af544c153979757bf7257d4a87287925c7e288223f448321c55cce46e8a3",
     "candidate_external_callable_sha256": "ac2057843e61094f0a8f1dc8b3774d2d2b848f8a860c0f7cf6193cd3ae7ac118",
-    "parity_ledger_sha256": "f26dc01722ce1043e3ee888f6afac91c4554d63aae9d6f9391274a4db06628eb",
+    "parity_ledger_sha256": "d48b117051bec16fa44aee0a0ec72ace82b9ba3c02966303566d2094ce7598ba",
     "static_c_abi_exports_sha256": "3698b538aea4c357f0536bacf340bf4c0c520a6b8cc6d34a8e119b4ce1c655b3"
   },
   "missing_reference_declaration_groups": [],

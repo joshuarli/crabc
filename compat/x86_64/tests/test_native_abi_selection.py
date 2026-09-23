@@ -131,6 +131,19 @@ class SelectionContractTests(unittest.TestCase):
         with self.assertRaisesRegex(selection.SelectionError, 'source_mutable'):
             selection.validate_contract(contract)
 
+    def test_program_name_selection_names_the_validated_auxv_fallback_owner(self):
+        contract = selection.load_contract()
+        objects = {row['name']: row for row in contract['object_contracts']}
+        for name in (
+            '__progname', '__progname_full',
+            'program_invocation_name', 'program_invocation_short_name',
+        ):
+            with self.subTest(name=name):
+                row = objects[name]
+                self.assertIn('libc/src/c_abi/x86_64/process_globals.rs', row['sources'])
+                self.assertIn('libc/src/c_abi/x86_64/auxv_observation.rs', row['sources'])
+                self.assertIn('validated AT_EXECFN', row['meaning'])
+
     def test_declaration_kind_keeps_accessor_and_abi_only_objects_out_of_variable_selection(self):
         objects = {r['name']: r for r in selection.load_contract()['object_contracts']}
         self.assertEqual(objects['stdin']['declaration_kind'], 'installed-variable')

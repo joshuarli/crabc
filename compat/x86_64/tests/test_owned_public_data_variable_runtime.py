@@ -64,6 +64,12 @@ class PublicDataVariableRuntimeContractTests(unittest.TestCase):
         )
         self.assertEqual(contract['candidate_modes'], ['static', 'static-pie', 'dynamic-pie', 'dynamic-non-pie'])
         self.assertEqual(contract['dynamic_execution_routes'], ['kernel', 'direct-interpreter'])
+        getopt_group = next(
+            group for group in contract['groups']
+            if group['id'] == 'getopt-and-program-name-globals'
+        )
+        self.assertIn('libc/src/c_abi/x86_64/auxv_observation.rs', getopt_group['owner_sources'])
+        self.assertIn('validated AT_EXECFN', getopt_group['semantics'])
 
     def test_contract_rejects_a_missing_or_substituted_group_before_collection(self) -> None:
         contract = reader.load_contract()
