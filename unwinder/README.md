@@ -286,7 +286,8 @@ owned-loader mapping discovery without a direct-path open or an exception
 crossing the DSO ABI.
 
 For a source-built final link the wrapper admits only the Cargo application
-root and its declared target `release/build` root. Cargo's compiler-artifact
+root, target `release/deps` library root, and target `release/build` root.
+Cargo's compiler-artifact
 records identify the fresh `std`, `core`, `alloc`, `panic_unwind`,
 `compiler_builtins`, `proc_macro`, and `crabc-unwinder` rlibs by their pinned
 source paths.
@@ -319,9 +320,13 @@ command; it does not open a general linker-option path.
 
 The native toolchain's host and requested target are both x86_64-musl, so
 Cargo also routes its `build_script_build-*` host executables through the
-target-linker setting. The runner admits that finite Cargo `release/build`
+target-linker setting. The runner admits that finite host `release/build`
 subtree only to the pinned container `/usr/bin/gcc`, records every such host
-link in an exclusive per-artifact receipt. A generated manifest binds the
+link in an exclusive per-artifact receipt. Resolved inputs under Cargo's target
+tree are copied into that receipt's private directory before Cargo can erase
+transient build objects; the reader rehashes each retained copy and checks any
+original that still exists. System linker inputs remain hashed in place. A
+generated manifest binds the
 receipts by hard-link identity to the exact `compiler-artifact` custom-build
 records from Cargo's machine-readable stream, and records the pinned
 `rust-src` lock plus every declared package manifest and build source. Each

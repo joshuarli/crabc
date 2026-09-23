@@ -391,7 +391,8 @@ def retain_rust_cdylib_export_script(
 
 def parse_arguments(
     arguments: list[str], application_root: Path, stock_root: Path | None,
-    source_built_root: Path | None = None, toolchain_search_root: Path | None = None,
+    source_built_root: Path | None = None, source_built_build_root: Path | None = None,
+    toolchain_search_root: Path | None = None,
 ) -> dict[str, object]:
     """Parse the finite rustc linker dialect without forwarding any raw flag."""
 
@@ -403,9 +404,11 @@ def parse_arguments(
         # *search* path; no archive input may use it and ``link_command`` never
         # forwards any search path to LLD.
         search_roots = [application_root, source_built_root]
+        if source_built_build_root is not None:
+            search_roots.append(source_built_build_root)
         if toolchain_search_root is not None:
             search_roots.append(toolchain_search_root)
-        archive_roots = [source_built_root]
+        archive_roots = [source_built_root, *([source_built_build_root] if source_built_build_root else [])]
         archive_description = "source-built Rust archive"
     else:
         if stock_root is None:
@@ -473,14 +476,20 @@ def parse_arguments(
                 if stock_unwind is not None:
                     raise LinkError("duplicate stock Rust libunwind archive")
                 stock_unwind = archive
-            elif (
-                _source_built_compiler_builtins_archive(archive, runtime_root)
-                if source_built else _stock_archive(archive, runtime_root, COMPILER_BUILTINS_ARCHIVE)
-            ):
+            elif source_built and SOURCE_BUILT_COMPILER_BUILTINS_ARCHIVE.fullmatch(archive.name):
+                if source_built_build_root is None or not _source_built_compiler_builtins_archive(
+                    archive, source_built_build_root,
+                ):
+                    raise LinkError("source-built compiler-builtins archive is outside its Cargo OUT_DIR")
                 if compiler_builtins is not None:
-                    raise LinkError("duplicate source-built Rust compiler-builtins archive" if source_built else
-                                    "duplicate Rust compiler-builtins archive")
+                    raise LinkError("duplicate source-built Rust compiler-builtins archive")
                 compiler_builtins = archive
+            elif not source_built and _stock_archive(archive, runtime_root, COMPILER_BUILTINS_ARCHIVE):
+                if compiler_builtins is not None:
+                    raise LinkError("duplicate Rust compiler-builtins archive")
+                compiler_builtins = archive
+            elif source_built_build_root is not None and archive.is_relative_to(source_built_build_root):
+                raise LinkError(f"unapproved archive in source-built Cargo build root: {archive}")
             elif is_foreign_native_runtime(str(archive)):
                 raise LinkError(f"foreign native runtime archive: {archive}")
             else:
@@ -636,6 +645,11 @@ def delegate_host_build_script(arguments: list[str], output: Path) -> None:
     output = physical_regular(output, "Cargo host build-script output")
     link_inputs: list[dict[str, str]] = []
     seen_inputs: set[Path] = set()
+    target_root_value = os.environ.get("CRABC_OWNED_RUST_CARGO_TARGET_ROOT")
+    cargo_target_root = (
+        physical_directory(Path(target_root_value), "Cargo host-link target root") if target_root_value else None
+    )
+    retained_input_dir = receipts / f"{hashlib.sha256(str(output).encode()).hexdigest()}.json.inputs"
     for line in completed.stdout.splitlines():
         selected = line.strip()
         if not selected:
@@ -649,7 +663,19 @@ def delegate_host_build_script(arguments: list[str], output: Path) -> None:
             raise LinkError(f"Cargo host build-script linker input is missing: {selected}") from error
         if path not in seen_inputs:
             seen_inputs.add(path)
-            link_inputs.append({"path": str(path), "sha256": sha256(path)})
+            input_record = {"path": str(path), "sha256": sha256(path)}
+            if cargo_target_root is not None and path.is_relative_to(cargo_target_root):
+                if not retained_input_dir.exists():
+                    retained_input_dir.mkdir()
+                retained_path = retained_input_dir / f"{len(link_inputs):04d}.input"
+                shutil.copyfile(path, retained_path)
+                retained_path = physical_regular(retained_path, "retained Cargo host-link input")
+                retained_digest = sha256(retained_path)
+                if retained_digest != input_record["sha256"]:
+                    raise LinkError(f"retained Cargo host-link input changed while copying: {path}")
+                input_record["retained_path"] = str(retained_path)
+                input_record["retained_sha256"] = retained_digest
+            link_inputs.append(input_record)
     if not link_inputs:
         raise LinkError("Cargo host build-script linker did not report resolved inputs")
     record = {
@@ -804,8 +830,15 @@ def link(arguments: list[str]) -> None:
         physical_directory(Path(source_built_value), "source-built Rust target library root")
         if source_built_value else None
     )
+    source_built_build_value = os.environ.get("CRABC_OWNED_RUST_SOURCE_BUILT_BUILD_DIR")
+    source_built_build_root = (
+        physical_directory(Path(source_built_build_value), "source-built Cargo build-script OUT_DIR root")
+        if source_built_build_value else None
+    )
     toolchain_search_root: Path | None = None
     if source_built_root is not None:
+        if source_built_build_root is None:
+            raise LinkError("missing source-built Cargo build root")
         toolchain_search_value = os.environ.get("CRABC_OWNED_RUST_TOOLCHAIN_SEARCH_ROOT")
         if not toolchain_search_value:
             raise LinkError("missing owned Rust toolchain search root")
@@ -837,7 +870,7 @@ def link(arguments: list[str]) -> None:
         raise LinkError("source-built Rust link must not receive a standalone unwind provider")
     manifest, manifest_files = _read_product(root, mode)
     parsed = parse_arguments(
-        arguments, application_root, stock_root, source_built_root,
+        arguments, application_root, stock_root, source_built_root, source_built_build_root,
         toolchain_search_root=toolchain_search_root,
     )
     output = parsed["output"]
@@ -930,7 +963,18 @@ def link(arguments: list[str]) -> None:
     else:
         source_compiler_builtins = parsed["source_built_compiler_builtins"]
         assert isinstance(source_compiler_builtins, Path) and source_lto_object is not None
+        package_id = os.environ.get("CRABC_OWNED_RUST_COMPILER_BUILTINS_PACKAGE_ID")
+        source_library = physical_directory(Path(os.environ[SOURCE_LIBRARY_ENV]), "pinned rust-src library")
+        expected_package_id = f"path+file://{source_library / 'compiler-builtins/compiler-builtins'}"
+        if not package_id or not package_id.startswith(expected_package_id + "#compiler_builtins@"):
+            raise LinkError("missing pinned compiler_builtins Cargo package identity")
         record["source_built_target_library_root"] = str(source_built_root)
+        assert source_built_build_root is not None
+        record["source_built_target_build_root"] = str(source_built_build_root)
+        record["source_built_compiler_builtins_producer"] = {
+            "package_id": package_id,
+            "artifact_directory": str(source_compiler_builtins.parent),
+        }
         assert toolchain_search_root is not None
         record["declared_toolchain_search_root"] = str(toolchain_search_root)
         # Cargo builds libunwind for build-std but does not pass it to the

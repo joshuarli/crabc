@@ -43,6 +43,8 @@ class OwnedRustLinkContract(unittest.TestCase):
         self.stock.mkdir()
         self.source_built = root / "source-built"
         self.source_built.mkdir()
+        self.source_built_build = root / "source-built-build"
+        self.source_built_build.mkdir()
         self.toolchain_search = root / "toolchain-target-lib"
         self.toolchain_search.mkdir()
         self.host_build = root / "cargo-target/release/build"
@@ -63,7 +65,7 @@ class OwnedRustLinkContract(unittest.TestCase):
         ):
             (self.source_built / name).write_bytes(b"archive")
         self.source_built_compiler_builtins = (
-            self.source_built / "compiler_builtins/0123456789abcdef/out/libcompiler_builtins-0123456789abcdef.rlib"
+            self.source_built_build / "compiler_builtins/0123456789abcdef/out/libcompiler_builtins-0123456789abcdef.rlib"
         )
         self.source_built_compiler_builtins.parent.mkdir(parents=True)
         self.source_built_compiler_builtins.write_bytes(b"archive")
@@ -129,7 +131,7 @@ class OwnedRustLinkContract(unittest.TestCase):
 
     def test_source_built_fat_lto_omits_all_direct_runtime_archives(self):
         parsed = linker.parse_arguments(
-            self.source_built_arguments(), self.application, self.stock, self.source_built
+            self.source_built_arguments(), self.application, self.stock, self.source_built, self.source_built_build
         )
         self.assertIsNone(parsed["source_built_unwind"])
         self.assertEqual(
@@ -139,26 +141,35 @@ class OwnedRustLinkContract(unittest.TestCase):
         self.assertEqual(parsed["rust_library_origin"], "source-built")
         self.assertEqual(parsed["archives"], [])
 
+    def test_source_built_compiler_builtins_cannot_be_sourced_from_deps_root(self):
+        lookalike = self.source_built / "libcompiler_builtins-0123456789abcdef.rlib"
+        lookalike.write_bytes(b"Cargo deps archive")
+        arguments = [*self.source_built_arguments(), str(lookalike)]
+        with self.assertRaisesRegex(linker.LinkError, "outside its Cargo OUT_DIR"):
+            linker.parse_arguments(
+                arguments, self.application, self.stock, self.source_built, self.source_built_build,
+            )
+
     def test_source_built_fat_lto_rejects_compiler_builtins_from_an_unmatched_out_dir(self):
-        wrong = self.source_built / "other_crate/0123456789abcdef/out/libcompiler_builtins-0123456789abcdef.rlib"
+        wrong = self.source_built_build / "other_crate/0123456789abcdef/out/libcompiler_builtins-0123456789abcdef.rlib"
         wrong.parent.mkdir(parents=True)
         wrong.write_bytes(b"unmatched archive")
         arguments = [*self.source_built_arguments(), str(wrong)]
-        with self.assertRaisesRegex(linker.LinkError, "direct Rust archive"):
-            linker.parse_arguments(arguments, self.application, self.stock, self.source_built)
+        with self.assertRaisesRegex(linker.LinkError, "outside its Cargo OUT_DIR"):
+            linker.parse_arguments(arguments, self.application, self.stock, self.source_built, self.source_built_build)
 
     def test_source_built_fat_lto_rejects_compiler_builtins_outside_source_root(self):
         wrong = self.application / "libcompiler_builtins-0123456789abcdef.rlib"
         wrong.write_bytes(b"outside archive")
         arguments = [*self.source_built_arguments(), str(wrong)]
         with self.assertRaisesRegex(linker.LinkError, "outside the declared Rust roots"):
-            linker.parse_arguments(arguments, self.application, self.stock, self.source_built)
+            linker.parse_arguments(arguments, self.application, self.stock, self.source_built, self.source_built_build)
 
     def test_source_built_direct_libunwind_archive_is_rejected(self):
         with self.assertRaisesRegex(linker.LinkError, "libunwind archive must not enter"):
             linker.parse_arguments(
                 [*self.source_built_arguments(), str(self.source_built / "libunwind-0123456789abcdef.rlib")],
-                self.application, self.stock, self.source_built,
+                self.application, self.stock, self.source_built, self.source_built_build,
             )
 
     def test_source_built_link_admits_only_the_declared_unused_toolchain_search_path(self):
@@ -166,7 +177,7 @@ class OwnedRustLinkContract(unittest.TestCase):
         last_search = max(index for index, argument in enumerate(arguments) if argument == "-L")
         arguments[last_search + 1] = str(self.toolchain_search)
         parsed = linker.parse_arguments(
-            arguments, self.application, self.stock, self.source_built,
+            arguments, self.application, self.stock, self.source_built, self.source_built_build,
             toolchain_search_root=self.toolchain_search,
         )
         self.assertIn(self.toolchain_search, parsed["search_paths"])
@@ -175,7 +186,7 @@ class OwnedRustLinkContract(unittest.TestCase):
         stock_core.write_bytes(b"archive")
         with self.assertRaisesRegex(linker.LinkError, "source-built Rust archive"):
             linker.parse_arguments(
-                [*arguments, str(stock_core)], self.application, self.stock, self.source_built,
+                [*arguments, str(stock_core)], self.application, self.stock, self.source_built, self.source_built_build,
                 toolchain_search_root=self.toolchain_search,
             )
 
@@ -183,7 +194,7 @@ class OwnedRustLinkContract(unittest.TestCase):
         with self.assertRaisesRegex(linker.LinkError, "fat-LTO final link carries"):
             linker.parse_arguments(
                 [*self.source_built_arguments(), str(self.source_built / "libcrabc_unwinder-0123456789abcdef.rlib")],
-                self.application, self.stock, self.source_built,
+                self.application, self.stock, self.source_built, self.source_built_build,
             )
 
     def test_source_built_fat_lto_object_must_retain_the_declared_abi_and_personality(self):
@@ -311,6 +322,7 @@ class OwnedRustLinkContract(unittest.TestCase):
         with patch.dict(os.environ, {
             "CRABC_OWNED_RUST_HOST_BUILD_LINKER": str(host_linker),
             "CRABC_OWNED_RUST_HOST_BUILD_RECEIPTS": str(receipts),
+            "CRABC_OWNED_RUST_CARGO_TARGET_ROOT": str(self.host_build.parents[1]),
             "LIBRARY_PATH": "/untrusted/lib",
             "GCC_EXEC_PREFIX": "/untrusted/gcc/",
             "COMPILER_PATH": "/untrusted/compiler",
@@ -326,6 +338,10 @@ class OwnedRustLinkContract(unittest.TestCase):
         })
         self.assertEqual(record["schema"], 2)
         self.assertTrue(record["link_inputs"])
+        retained_inputs = [item for item in record["link_inputs"] if "retained_path" in item]
+        self.assertTrue(retained_inputs)
+        for item in retained_inputs:
+            self.assertEqual(linker.sha256(Path(item["retained_path"])), item["retained_sha256"])
         for key in ("LIBRARY_PATH", "GCC_EXEC_PREFIX", "COMPILER_PATH", "CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH"):
             self.assertNotIn(key, observed_environment)
 
@@ -333,7 +349,7 @@ class OwnedRustLinkContract(unittest.TestCase):
         arguments = self.source_built_arguments()
         arguments.append(str(self.stock / "libstd-0123456789abcdef.rlib"))
         with self.assertRaisesRegex(linker.LinkError, "source-built Rust archive"):
-            linker.parse_arguments(arguments, self.application, self.stock, self.source_built)
+            linker.parse_arguments(arguments, self.application, self.stock, self.source_built, self.source_built_build)
 
     def test_source_built_std_rejects_an_application_rlib(self):
         arguments = self.source_built_arguments()
@@ -341,7 +357,7 @@ class OwnedRustLinkContract(unittest.TestCase):
         application_std.write_bytes(b"archive")
         arguments.append(str(application_std))
         with self.assertRaisesRegex(linker.LinkError, "source-built Rust archive"):
-            linker.parse_arguments(arguments, self.application, self.stock, self.source_built)
+            linker.parse_arguments(arguments, self.application, self.stock, self.source_built, self.source_built_build)
 
     def test_shared_rust_plugin_accepts_nested_cargo_output(self):
         nested = self.application / "deps"
@@ -354,7 +370,7 @@ class OwnedRustLinkContract(unittest.TestCase):
             f"-Wl,--version-script={self.application / 'rust-cdylib.map'}",
             "-Wl,--no-undefined-version",
         ))
-        parsed = linker.parse_arguments(arguments, self.application, self.stock, self.source_built)
+        parsed = linker.parse_arguments(arguments, self.application, self.stock, self.source_built, self.source_built_build)
         self.assertEqual(parsed["rust_mode"], "shared")
         self.assertEqual(parsed["output"], nested / "libcleanup.so")
         self.assertTrue(parsed["no_undefined_version"])
@@ -370,12 +386,12 @@ class OwnedRustLinkContract(unittest.TestCase):
         with self.assertRaisesRegex(linker.LinkError, "requires a shared export script"):
             linker.parse_arguments(
                 [*self.source_built_arguments(), "-Wl,--no-undefined-version"],
-                self.application, self.stock, self.source_built,
+                self.application, self.stock, self.source_built, self.source_built_build,
             )
         with self.assertRaisesRegex(linker.LinkError, "unrecognized Rust link argument"):
             linker.parse_arguments(
                 [*self.source_built_arguments(), "-Wl,--no-undefined-version=forged"],
-                self.application, self.stock, self.source_built,
+                self.application, self.stock, self.source_built, self.source_built_build,
             )
         with self.assertRaisesRegex(linker.LinkError, "duplicate Rust no-undefined-version"):
             arguments = self.source_built_arguments()
@@ -385,7 +401,7 @@ class OwnedRustLinkContract(unittest.TestCase):
                     *arguments,
                     f"-Wl,--version-script={self.application / 'rust-cdylib.map'}",
                     "-Wl,--no-undefined-version", "-Wl,--no-undefined-version",
-                ], self.application, self.stock, self.source_built,
+                ], self.application, self.stock, self.source_built, self.source_built_build,
             )
 
     def test_shared_rust_plugin_retains_only_its_rustc_export_script(self):
@@ -398,7 +414,7 @@ class OwnedRustLinkContract(unittest.TestCase):
             "-Wl,-soname=libcleanup.so",
             f"-Wl,--version-script={self.application / 'rust-cdylib.map'}",
         ))
-        parsed = linker.parse_arguments(arguments, self.application, self.stock, self.source_built)
+        parsed = linker.parse_arguments(arguments, self.application, self.stock, self.source_built, self.source_built_build)
         self.assertEqual(parsed["shared_soname"], "libcleanup.so")
         self.assertEqual(parsed["version_script"], self.application / "rust-cdylib.map")
 
@@ -481,7 +497,7 @@ class OwnedRustLinkContract(unittest.TestCase):
             "-Wl,-soname=libcleanup.so",
             f"-Wl,--version-script={self.application / 'rust-cdylib.map'}",
         ))
-        parsed = linker.parse_arguments(arguments, self.application, self.stock, self.source_built)
+        parsed = linker.parse_arguments(arguments, self.application, self.stock, self.source_built, self.source_built_build)
         self.assertEqual(parsed["version_script"], self.application / "rust-cdylib.map")
 
     def test_direct_or_forwarded_native_fallback_cannot_escape_translation(self):
@@ -522,7 +538,7 @@ class OwnedRustLinkContract(unittest.TestCase):
         provider = Path(self.temporary.name) / "libcrabc-unwind.a"
         provider.write_bytes(b"provider")
         parsed = linker.parse_arguments(
-            self.source_built_arguments(), self.application, self.stock, self.source_built
+            self.source_built_arguments(), self.application, self.stock, self.source_built, self.source_built_build
         )
         command = linker.link_command(
             linker=Path("/pinned/ld.lld"), root=root, mode="dynamic", provider=None,

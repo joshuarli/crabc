@@ -591,6 +591,8 @@ class OwnedCleanupContract(unittest.TestCase):
     def test_source_built_receipt_retains_fused_lto_abi_after_cargo_removes_the_object(self):
         source = Path(self.temporary.name) / "source-built"
         source.mkdir()
+        source_build_root = Path(self.temporary.name) / "source-built-build"
+        source_build_root.mkdir()
         toolchain_search = Path(self.temporary.name) / "toolchain-target-lib"
         toolchain_search.mkdir()
         binary = Path(self.temporary.name) / "cleanup"
@@ -599,7 +601,7 @@ class OwnedCleanupContract(unittest.TestCase):
         built_unwind = source / "libunwind-hash.rlib"
         built_unwind.write_bytes(b"source-built unwind")
         built_unwind_record = owned_cleanup.record_file(built_unwind, "test source-built unwind")
-        compiler_builtins = source / "compiler_builtins/0123456789abcdef/out/libcompiler_builtins-0123456789abcdef.rlib"
+        compiler_builtins = source_build_root / "compiler_builtins/0123456789abcdef/out/libcompiler_builtins-0123456789abcdef.rlib"
         compiler_builtins.parent.mkdir(parents=True)
         compiler_builtins.write_bytes(b"Cargo compiler_builtins")
         compiler_builtins_record = owned_cleanup.record_file(compiler_builtins, "test Cargo compiler-builtins")
@@ -615,6 +617,11 @@ class OwnedCleanupContract(unittest.TestCase):
             "format": "crabc-owned-rust-source-build-link/v5",
             "rust_library_origin": "source-built",
             "source_built_target_library_root": str(source),
+            "source_built_target_build_root": str(source_build_root),
+            "source_built_compiler_builtins_producer": {
+                "package_id": "path+file:///rust-src/compiler-builtins/compiler-builtins#compiler_builtins@0.1.160",
+                "artifact_directory": str(compiler_builtins.parent),
+            },
             "declared_toolchain_search_root": str(toolchain_search),
             "unused_search_paths": [str(toolchain_search)],
             "omitted_source_built_compiler_builtins": compiler_builtins_record,
@@ -638,23 +645,36 @@ class OwnedCleanupContract(unittest.TestCase):
         # the confined evidence copy.
         fused.unlink()
         selected = owned_cleanup.source_built_link_receipt(
-            receipt, binary, source, "test source-built link", built_unwind=built_unwind_record,
-            expected_compiler_builtins=compiler_builtins_record,
+            receipt, binary, source, source_build_root, "test source-built link", built_unwind=built_unwind_record,
+            expected_compiler_builtins_artifact=(
+                "path+file:///rust-src/compiler-builtins/compiler-builtins#compiler_builtins@0.1.160",
+                compiler_builtins,
+            ),
         )
         self.assertEqual(selected["rust_library_origin"], "source-built")
-        mismatched_archive = source / "compiler_builtins/ffffffffffffffff/out/libcompiler_builtins-ffffffffffffffff.rlib"
+        mismatched_archive = source_build_root / "compiler_builtins/ffffffffffffffff/out/libcompiler_builtins-ffffffffffffffff.rlib"
         mismatched_archive.parent.mkdir(parents=True)
         mismatched_archive.write_bytes(b"different Cargo artifact")
-        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "authenticated Cargo artifact"):
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "authenticated Cargo artifact producer"):
             owned_cleanup.source_built_link_receipt(
-                receipt, binary, source, "test source-built link", expected_compiler_builtins=owned_cleanup.record_file(
-                    mismatched_archive, "mismatched Cargo compiler-builtins",
+                receipt, binary, source, source_build_root, "test source-built link",
+                expected_compiler_builtins_artifact=(
+                    "path+file:///rust-src/compiler-builtins/compiler-builtins#compiler_builtins@0.1.160",
+                    mismatched_archive,
+                ),
+            )
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "authenticated Cargo artifact producer"):
+            owned_cleanup.source_built_link_receipt(
+                receipt, binary, source, source_build_root, "test source-built link",
+                expected_compiler_builtins_artifact=(
+                    "path+file:///rust-src/compiler-builtins/compiler-builtins#compiler_builtins@0.1.159",
+                    compiler_builtins,
                 ),
             )
         record["rust_requested_mode"] = "shared"
         receipt.write_text(json.dumps(record))
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "cdylib version-script safety flag"):
-            owned_cleanup.source_built_link_receipt(receipt, binary, source, "test source-built link")
+            owned_cleanup.source_built_link_receipt(receipt, binary, source, source_build_root, "test source-built link")
         record["command"].append("--no-undefined-version")
         cargo_script = Path(self.temporary.name) / "cargo-rust-list"
         expected_dynamic_exports = sorted({*owned_cleanup.owned_rust_link.RUST_CDYLIB_EXPORTS, *build.UNWIND_ABI})
@@ -678,16 +698,16 @@ class OwnedCleanupContract(unittest.TestCase):
         # directory. The receipt keeps that original as a source fact while
         # independently rehashing the confined copy LLD received.
         cargo_script.unlink()
-        owned_cleanup.source_built_link_receipt(receipt, binary, source, "test source-built link")
+        owned_cleanup.source_built_link_receipt(receipt, binary, source, source_build_root, "test source-built link")
         record["rust_cdylib_export_script"]["dynamic_exports"] = expected_dynamic_exports[:-1]
         receipt.write_text(json.dumps(record))
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "retained cdylib export script"):
-            owned_cleanup.source_built_link_receipt(receipt, binary, source, "test source-built link")
+            owned_cleanup.source_built_link_receipt(receipt, binary, source, source_build_root, "test source-built link")
         record["rust_cdylib_export_script"]["dynamic_exports"] = expected_dynamic_exports
         receipt.write_text(json.dumps(record))
         retained_script.write_text("tampered cdylib export script\n")
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "retained cdylib export script"):
-            owned_cleanup.source_built_link_receipt(receipt, binary, source, "test source-built link")
+            owned_cleanup.source_built_link_receipt(receipt, binary, source, source_build_root, "test source-built link")
         retained_script.write_text(cargo_script_contents)
         record.pop("rust_requested_mode")
         record["command"].pop()
@@ -695,38 +715,39 @@ class OwnedCleanupContract(unittest.TestCase):
         record.pop("rust_cdylib_export_script")
         retained.write_bytes(b"tampered retained Cargo LTO object")
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "fused Cargo LTO unwind ABI"):
-            owned_cleanup.source_built_link_receipt(receipt, binary, source, "test source-built link")
+            owned_cleanup.source_built_link_receipt(receipt, binary, source, source_build_root, "test source-built link")
         retained.write_bytes(fused_bytes)
         record["provider_archive"] = {"path": str(self.archive)}
         receipt.write_text(json.dumps(record))
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "standalone provider"):
-            owned_cleanup.source_built_link_receipt(receipt, binary, source, "test source-built link")
+            owned_cleanup.source_built_link_receipt(receipt, binary, source, source_build_root, "test source-built link")
         record.pop("provider_archive")
         record["omitted_stock_rust_unwind"] = {"path": "/stock/libunwind-hash.rlib"}
         receipt.write_text(json.dumps(record))
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "stock Rust runtime"):
-            owned_cleanup.source_built_link_receipt(receipt, binary, source, "test source-built link")
+            owned_cleanup.source_built_link_receipt(receipt, binary, source, source_build_root, "test source-built link")
         record.pop("omitted_stock_rust_unwind")
         record["omitted_source_built_rust_unwind"] = {"path": str(source / "libunwind-hash.rlib")}
         receipt.write_text(json.dumps(record))
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "direct source-built Rust libunwind"):
-            owned_cleanup.source_built_link_receipt(receipt, binary, source, "test source-built link")
+            owned_cleanup.source_built_link_receipt(receipt, binary, source, source_build_root, "test source-built link")
         record.pop("omitted_source_built_rust_unwind")
         record["source_lto_object"]["defined_unwind_abi"] = []
         receipt.write_text(json.dumps(record))
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "fused Cargo LTO unwind ABI"):
-            owned_cleanup.source_built_link_receipt(receipt, binary, source, "test source-built link")
+            owned_cleanup.source_built_link_receipt(receipt, binary, source, source_build_root, "test source-built link")
         record["source_lto_object"]["defined_unwind_abi"] = sorted(build.UNWIND_ABI)
         record["source_lto_object"]["cargo_object"] = {**fused_record, "sha256": "0" * 64}
         receipt.write_text(json.dumps(record))
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "fused Cargo LTO unwind ABI"):
-            owned_cleanup.source_built_link_receipt(receipt, binary, source, "test source-built link")
+            owned_cleanup.source_built_link_receipt(receipt, binary, source, source_build_root, "test source-built link")
         record["source_lto_object"]["cargo_object"] = fused_record
         record["unused_search_paths"].append("/unapproved/search")
         receipt.write_text(json.dumps(record))
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "search path"):
             owned_cleanup.source_built_link_receipt(
-                receipt, binary, source, "test source-built link", toolchain_search_root=toolchain_search,
+                receipt, binary, source, source_build_root, "test source-built link",
+                toolchain_search_root=toolchain_search,
             )
 
     def host_build_fixture(self):
@@ -748,6 +769,7 @@ class OwnedCleanupContract(unittest.TestCase):
         (std_source / "Cargo.toml").write_text('[package]\nname = "std"\nversion = "0.0.0"\n')
         (std_source / "build.rs").write_text("fn main() {}\n")
         host_root = Path(self.temporary.name) / "cargo-target/release/build"
+        target_root = host_root.parents[1]
         package = host_root / "compiler_builtins-0123456789abcdef"
         package.mkdir(parents=True)
         linked = package / "build_script_build-0123456789abcdef"
@@ -755,6 +777,9 @@ class OwnedCleanupContract(unittest.TestCase):
         linked.chmod(0o755)
         artifact = package / "build-script-build"
         os.link(linked, artifact)
+        transient = target_root / "release/build/object/0123456789abcdef/out/transient.o"
+        transient.parent.mkdir(parents=True)
+        transient.write_bytes(b"temporary linker object")
         receipts = Path(self.temporary.name) / "host-build-receipts"
         receipts.mkdir()
         receipt_record = {
@@ -764,10 +789,19 @@ class OwnedCleanupContract(unittest.TestCase):
                 owned_cleanup.HOST_BUILD_LINKER, "pinned Cargo host build-script linker",
             ),
             "command": [str(owned_cleanup.HOST_BUILD_LINKER), "-Wl,-t", "-o", str(linked)],
-            "link_inputs": [owned_cleanup.record_file(linked, "resolved host linker input")],
+            "link_inputs": [],
             "output": owned_cleanup.record_file(linked, "Cargo host build-script linker output"),
         }
         receipt = receipts / (hashlib.sha256(str(linked).encode()).hexdigest() + ".json")
+        retained_dir = receipts / (receipt.name + ".inputs")
+        retained_dir.mkdir()
+        retained = retained_dir / "0000.input"
+        retained.write_bytes(transient.read_bytes())
+        receipt_record["link_inputs"] = [{
+            **owned_cleanup.record_file(transient, "resolved host linker input"),
+            "retained_path": str(retained),
+            "retained_sha256": owned_cleanup.record_file(retained, "retained host linker input")["sha256"],
+        }]
         receipt.write_text(json.dumps(receipt_record) + "\n")
         cargo_record = {
             "reason": "compiler-artifact",
@@ -787,6 +821,8 @@ class OwnedCleanupContract(unittest.TestCase):
         return {
             "rust_source": rust_source,
             "host_root": host_root,
+            "target_root": target_root,
+            "transient": transient,
             "linked": linked,
             "artifact": artifact,
             "receipts": receipts,
@@ -797,6 +833,11 @@ class OwnedCleanupContract(unittest.TestCase):
         }
 
     def write_host_receipt(self, directory, output):
+        receipt = directory / (hashlib.sha256(str(output).encode()).hexdigest() + ".json")
+        retained_dir = directory / (receipt.name + ".inputs")
+        retained_dir.mkdir()
+        retained = retained_dir / "0000.input"
+        retained.write_bytes(output.read_bytes())
         record = {
             "schema": 2,
             "kind": "cargo-host-build-script",
@@ -804,10 +845,13 @@ class OwnedCleanupContract(unittest.TestCase):
                 owned_cleanup.HOST_BUILD_LINKER, "pinned Cargo host build-script linker",
             ),
             "command": [str(owned_cleanup.HOST_BUILD_LINKER), "-Wl,-t", "-o", str(output)],
-            "link_inputs": [owned_cleanup.record_file(output, "resolved linker input")],
+            "link_inputs": [{
+                **owned_cleanup.record_file(output, "resolved linker input"),
+                "retained_path": str(retained),
+                "retained_sha256": owned_cleanup.record_file(retained, "retained linker input")["sha256"],
+            }],
             "output": owned_cleanup.record_file(output, "Cargo host build-script linker output"),
         }
-        receipt = directory / (hashlib.sha256(str(output).encode()).hexdigest() + ".json")
         receipt.write_text(json.dumps(record) + "\n")
         return receipt
 
@@ -818,6 +862,7 @@ class OwnedCleanupContract(unittest.TestCase):
             cargo_stdout=fixture["cargo_stdout"],
             rust_source=fixture["rust_source"],
             rust_source_lock=fixture["rust_source"] / "Cargo.lock",
+            cargo_target_root=fixture["target_root"],
             host_build_root=fixture["host_root"],
             receipts_root=fixture["receipts"],
             output=manifest,
@@ -839,6 +884,29 @@ class OwnedCleanupContract(unittest.TestCase):
             fixture["linked"], "Cargo host build-script linker output",
         ))
 
+    def test_host_build_link_retained_copy_survives_cargo_deleting_transient_input(self):
+        fixture = self.host_build_fixture()
+        retained = Path(fixture["receipt_record"]["link_inputs"][0]["retained_path"])
+        fixture["transient"].unlink()
+        self.host_build_manifest(fixture)
+        retained.write_bytes(b"tampered")
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "retained Cargo host-link input changed"):
+            self.host_build_manifest(fixture)
+
+    def test_host_build_link_rejects_target_input_without_retained_copy(self):
+        fixture = self.host_build_fixture()
+        fixture["receipt_record"]["link_inputs"] = [
+            {key: value for key, value in fixture["receipt_record"]["link_inputs"][0].items()
+             if key in {"path", "sha256"}},
+        ]
+        fixture["receipt"].write_text(json.dumps(fixture["receipt_record"]) + "\n")
+        retained_dir = fixture["receipts"] / (fixture["receipt"].name + ".inputs")
+        for retained in retained_dir.iterdir():
+            retained.unlink()
+        retained_dir.rmdir()
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "lacks its retained copy"):
+            self.host_build_manifest(fixture)
+
     def test_compiler_builtins_out_dir_link_receipt_closes_to_its_cargo_artifact(self):
         fixture = self.host_build_fixture()
         old_linked = fixture["linked"]
@@ -857,6 +925,10 @@ class OwnedCleanupContract(unittest.TestCase):
             linked, "Cargo host build-script linker output",
         )
         fixture["receipt"].unlink()
+        old_retained_dir = fixture["receipts"] / (fixture["receipt"].name + ".inputs")
+        for old_retained in old_retained_dir.iterdir():
+            old_retained.unlink()
+        old_retained_dir.rmdir()
         fixture["receipt"] = self.write_host_receipt(fixture["receipts"], linked)
 
         manifest = self.host_build_manifest(fixture)
@@ -986,6 +1058,7 @@ class OwnedCleanupContract(unittest.TestCase):
         result = owned_cleanup.host_build_script_manifest(
             cargo_stream=fixture["cargo_stdout"].read_text(), cargo_stdout=fixture["cargo_stdout"],
             rust_source=fixture["rust_source"], rust_source_lock=fixture["rust_source"] / "Cargo.lock",
+            cargo_target_root=fixture["target_root"],
             host_build_root=fixture["host_root"], receipts_root=fixture["receipts"], output=output,
             composite_vendor_custom_build_inputs=composite_inputs,
         )
@@ -1000,11 +1073,45 @@ class OwnedCleanupContract(unittest.TestCase):
             final, "Cargo host build-script linker output",
         )
         fixture["receipt_record"]["command"][-1] = str(final)
+        fixture["receipt_record"]["link_inputs"] = [owned_cleanup.record_file(
+            owned_cleanup.HOST_BUILD_LINKER, "resolved system linker input",
+        )]
+        old_retained_dir = fixture["receipts"] / (fixture["receipt"].name + ".inputs")
+        for retained in old_retained_dir.iterdir():
+            retained.unlink()
+        old_retained_dir.rmdir()
         fixture["receipt"].write_text(json.dumps(fixture["receipt_record"]) + "\n")
         replacement = fixture["receipts"] / (hashlib.sha256(str(final).encode()).hexdigest() + ".json")
         fixture["receipt"].rename(replacement)
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "outside the declared host root"):
             self.host_build_manifest(fixture)
+
+    def test_compiler_builtins_out_dir_is_bound_to_its_cargo_build_script_record(self):
+        fixture = self.host_build_fixture()
+        pinned_builds = owned_cleanup.pinned_rust_source_host_builds(fixture["rust_source"])
+        self.assertEqual(next(item["package_id_suffix"] for item in pinned_builds if item["package"] == "std"),
+                         "#0.0.0")
+        target = Path(self.temporary.name) / "cargo-target"
+        out_dir = target / owned_cleanup.TARGET / "release/build/compiler_builtins/0123456789abcdef/out"
+        out_dir.mkdir(parents=True)
+        package_id = fixture["cargo_record"]["package_id"]
+        record = {"reason": "build-script-executed", "package_id": package_id, "out_dir": str(out_dir)}
+        selected = owned_cleanup.cargo_build_std_compiler_builtins_out_dir(
+            json.dumps(record), target, fixture["rust_source"],
+        )
+        self.assertEqual(selected, (package_id, out_dir))
+
+        wrong_package = {**record, "package_id": "path+file:///rust-src#std@0.0.0"}
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "expected one Cargo compiler-builtins OUT_DIR"):
+            owned_cleanup.cargo_build_std_compiler_builtins_out_dir(
+                json.dumps(wrong_package), target, fixture["rust_source"],
+            )
+        wrong_out_dir = {**record, "out_dir": str(fixture["host_root"] / "compiler_builtins/0123456789abcdef/out")}
+        Path(wrong_out_dir["out_dir"]).mkdir(parents=True)
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "outside its exact target build package"):
+            owned_cleanup.cargo_build_std_compiler_builtins_out_dir(
+                json.dumps(wrong_out_dir), target, fixture["rust_source"],
+            )
 
     def test_cargo_build_std_unwind_artifact_is_fresh_and_source_identified(self):
         target = Path(self.temporary.name) / "target"
@@ -1036,7 +1143,7 @@ class OwnedCleanupContract(unittest.TestCase):
         }))
 
         found_receipt, found_output = owned_cleanup.cargo_link_receipt_for_artifact(
-            cargo_artifact, source_root, "test source-built cleanup",
+            cargo_artifact, source_root.parent / "deps", source_root, "test source-built cleanup",
         )
         self.assertEqual(found_receipt, receipt)
         self.assertEqual(found_output, linker_output)
@@ -1054,9 +1161,9 @@ class OwnedCleanupContract(unittest.TestCase):
             "output": {"path": str(outside_output), "sha256": owned_cleanup.digest(cargo_artifact)},
         }))
 
-        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "outside the source-built target library root"):
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "outside its source-built Cargo root"):
             owned_cleanup.cargo_link_receipt_for_artifact(
-                cargo_artifact, source_root, "test source-built cleanup",
+                cargo_artifact, source_root.parent / "deps", source_root, "test source-built cleanup",
             )
 
     def test_cargo_primary_rustc_binds_source_runtime_and_provider_externs_to_fused_output(self):
@@ -1111,7 +1218,8 @@ class OwnedCleanupContract(unittest.TestCase):
         closure = owned_cleanup.cargo_source_lto_extern_closure(
             log, target_name="crabc-owned-cleanup-build-std", binary_name="crabc-owned-cleanup-build-std",
             link_output=output,
-            source_library_root=target, runtime_artifacts=runtime_records, cargo_provider=provider_record,
+            source_library_root=target, source_build_root=target,
+            runtime_artifacts=runtime_records, runtime_metadata_artifacts={}, cargo_provider=provider_record,
             application_dependency=dependency_record, built_unwind=built_unwind_record,
         )
         self.assertEqual(closure["linker_output"], owned_cleanup.record_file(output, "test fused output"))
@@ -1119,6 +1227,35 @@ class OwnedCleanupContract(unittest.TestCase):
             **runtime_records, "crabc_unwinder": provider_record,
             "crabc_cleanup_dependency": dependency_record,
         })
+        alloc_metadata = target / "liballoc-deadbeef.rmeta"
+        alloc_metadata.write_bytes(b"alloc metadata")
+        alloc_metadata_record = owned_cleanup.record_file(alloc_metadata, "test Cargo alloc metadata")
+        metadata_log = log.replace(
+            f"--extern alloc={runtime['alloc']}",
+            f"--extern alloc={runtime['alloc']} --extern alloc={alloc_metadata}",
+        )
+        metadata_closure = owned_cleanup.cargo_source_lto_extern_closure(
+            metadata_log, target_name="crabc-owned-cleanup-build-std",
+            binary_name="crabc-owned-cleanup-build-std", link_output=output,
+            source_library_root=target, source_build_root=target,
+            runtime_artifacts=runtime_records, runtime_metadata_artifacts={"alloc": alloc_metadata_record},
+            cargo_provider=provider_record, application_dependency=dependency_record,
+            built_unwind=built_unwind_record,
+        )
+        self.assertEqual(metadata_closure["metadata_externs"], {"alloc": alloc_metadata_record})
+        build_std_output = target / "crabc_owned_cleanup_build_std"
+        build_std_output.write_bytes(b"build-std executable")
+        build_std_log = log.replace("-C extra-filename=-deadbeef", "")
+        build_std_closure = owned_cleanup.cargo_source_lto_extern_closure(
+            build_std_log, target_name="crabc-owned-cleanup-build-std",
+            binary_name="crabc-owned-cleanup-build-std", link_output=build_std_output,
+            source_library_root=target, source_build_root=target,
+            runtime_artifacts=runtime_records, runtime_metadata_artifacts={}, cargo_provider=provider_record,
+            application_dependency=dependency_record, built_unwind=built_unwind_record,
+        )
+        self.assertEqual(build_std_closure["linker_output"], owned_cleanup.record_file(
+            build_std_output, "test build-std executable",
+        ))
         plugin_output = target / "libcrabc_owned_cleanup_plugin.so"
         plugin_output.write_bytes(b"fused plugin output")
         plugin_log = (
@@ -1128,7 +1265,8 @@ class OwnedCleanupContract(unittest.TestCase):
         )
         plugin_closure = owned_cleanup.cargo_source_lto_extern_closure(
             plugin_log, target_name="crabc_owned_cleanup_plugin", binary_name=None,
-            link_output=plugin_output, source_library_root=target, runtime_artifacts=runtime_records,
+            link_output=plugin_output, source_library_root=target, source_build_root=target,
+            runtime_artifacts=runtime_records, runtime_metadata_artifacts={},
             cargo_provider=provider_record, application_dependency=dependency_record,
             built_unwind=built_unwind_record,
         )
@@ -1137,7 +1275,8 @@ class OwnedCleanupContract(unittest.TestCase):
             owned_cleanup.cargo_source_lto_extern_closure(
                 plugin_log.replace(f"--out-dir {target}", f"--out-dir {target} -C extra-filename=-deadbeef"),
                 target_name="crabc_owned_cleanup_plugin", binary_name=None,
-                link_output=plugin_output, source_library_root=target, runtime_artifacts=runtime_records,
+                link_output=plugin_output, source_library_root=target, source_build_root=target,
+                runtime_artifacts=runtime_records, runtime_metadata_artifacts={},
                 cargo_provider=provider_record, application_dependency=dependency_record,
                 built_unwind=built_unwind_record,
             )
@@ -1147,7 +1286,8 @@ class OwnedCleanupContract(unittest.TestCase):
                             f"--extern crabc_unwinder={provider} --extern unwind={built_unwind}"),
                 target_name="crabc-owned-cleanup-build-std", binary_name="crabc-owned-cleanup-build-std",
                 link_output=output,
-                source_library_root=target, runtime_artifacts=runtime_records, cargo_provider=provider_record,
+                source_library_root=target, source_build_root=target,
+                runtime_artifacts=runtime_records, runtime_metadata_artifacts={}, cargo_provider=provider_record,
                 application_dependency=dependency_record, built_unwind=built_unwind_record,
             )
         extra = target / "libextra-0011223344556677.rlib"
@@ -1158,7 +1298,8 @@ class OwnedCleanupContract(unittest.TestCase):
                             f"--extern crabc_unwinder={provider} --extern extra={extra}"),
                 target_name="crabc-owned-cleanup-build-std", binary_name="crabc-owned-cleanup-build-std",
                 link_output=output,
-                source_library_root=target, runtime_artifacts=runtime_records, cargo_provider=provider_record,
+                source_library_root=target, source_build_root=target,
+                runtime_artifacts=runtime_records, runtime_metadata_artifacts={}, cargo_provider=provider_record,
                 application_dependency=dependency_record, built_unwind=built_unwind_record,
             )
 
@@ -1171,6 +1312,22 @@ class OwnedCleanupContract(unittest.TestCase):
         self.assertEqual(records, [record])
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "malformed Cargo JSON"):
             owned_cleanup.cargo_json_records('{"reason":\n', "test Cargo stream")
+
+    def test_cargo_rlib_metadata_companion_must_be_in_its_artifact_record(self):
+        target = Path(self.temporary.name) / "metadata-target"
+        target.mkdir()
+        archive = target / "libfixture-0123456789abcdef.rlib"
+        metadata = target / "libfixture-0123456789abcdef.rmeta"
+        archive.write_bytes(b"archive")
+        metadata.write_bytes(b"metadata")
+        stream = json.dumps({"reason": "compiler-artifact", "filenames": [str(archive), str(metadata)]})
+        self.assertEqual(owned_cleanup.cargo_archive_metadata_companion(
+            stream, archive, target, "fixture",
+        ), metadata)
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "expected one Cargo artifact record"):
+            owned_cleanup.cargo_archive_metadata_companion(
+                stream.replace(str(archive), "different.rlib"), archive, target, "fixture",
+            )
 
     def test_cargo_artifact_accepts_only_the_declared_fixture_target(self):
         package = Path(self.temporary.name) / "package"
