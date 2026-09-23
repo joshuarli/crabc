@@ -917,12 +917,18 @@ def _require_component(name: str, values: object, products: Mapping[str, Mapping
 
 
 def _pair_record(root: Path, request: ComponentRequest, pair: str, evidence: ComponentEvidence,
-                 directory_snapshots: Mapping[Path, Mapping[str, object]] | None = None) -> dict[str, Any]:
+                 directory_snapshots: Mapping[Path, Mapping[str, object]] | None = None,
+                 snapshot_identity_cache: dict[Path, dict[str, object]] | None = None) -> dict[str, Any]:
     def snapshot_identity(path: Path) -> dict[str, object]:
         if directory_snapshots is None:
             return _snapshot_identity(root, path)
         require(path in directory_snapshots, "pair output directory was not included in the input snapshot")
-        return _snapshot_identity_from_contents(root, path, directory_snapshots[path])
+        if snapshot_identity_cache is not None and path in snapshot_identity_cache:
+            return snapshot_identity_cache[path]
+        value = _snapshot_identity_from_contents(root, path, directory_snapshots[path])
+        if snapshot_identity_cache is not None:
+            snapshot_identity_cache[path] = value
+        return value
 
     source: dict[str, object]
     if request.receipt is not None:
@@ -1034,12 +1040,16 @@ def collect(root: Path, request_path: Path) -> dict[str, Any]:
     # The final check below ensures those bytes stayed unchanged through output
     # construction without rereading each tree once per component pair.
     directory_snapshots = {snapshot.path: snapshot.contents for snapshot in directories}
+    snapshot_identity_cache: dict[Path, dict[str, object]] = {}
     components = {
         name: {
             "scope": list(COMPONENTS[name].scope),
             "credits": list(COMPONENTS[name].credits),
-            "pairs": {pair: _pair_record(root, requests[name], pair, observed[name][pair], directory_snapshots)
-                      for pair in PAIRS},
+            "pairs": {
+                pair: _pair_record(root, requests[name], pair, observed[name][pair], directory_snapshots,
+                                   snapshot_identity_cache)
+                for pair in PAIRS
+            },
         }
         for name in COMPONENTS
     }

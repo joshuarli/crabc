@@ -538,10 +538,10 @@ class TextMathLocaleStdioFamilyTests(unittest.TestCase):
         changed = False
 
         def mutate(root: Path, request: coordinator.ComponentRequest, pair: str,
-                   evidence: coordinator.ComponentEvidence,
-                   directory_snapshots: object = None) -> dict[str, object]:
+                   evidence: coordinator.ComponentEvidence, directory_snapshots: object = None,
+                   snapshot_identity_cache: object = None) -> dict[str, object]:
             nonlocal changed
-            record = original(root, request, pair, evidence, directory_snapshots)
+            record = original(root, request, pair, evidence, directory_snapshots, snapshot_identity_cache)
             if not changed:
                 changed = True
                 (self.fixture.products["primary"]["static"] / "payload").write_text("changed\n", encoding="utf-8")
@@ -554,7 +554,9 @@ class TextMathLocaleStdioFamilyTests(unittest.TestCase):
     def test_pair_records_reuse_initial_tree_snapshots_and_keep_final_recheck(self) -> None:
         product = self.fixture.products["primary"]["static"]
         original_snapshot = coordinator.family.snapshot
+        original_identity = coordinator._snapshot_identity_from_contents
         calls = 0
+        identities: dict[Path, int] = {}
 
         def track(path: Path) -> dict[str, object]:
             nonlocal calls
@@ -562,13 +564,22 @@ class TextMathLocaleStdioFamilyTests(unittest.TestCase):
                 calls += 1
             return original_snapshot(path)
 
+        def track_identity(root: Path, path: Path, snapshot: object) -> dict[str, object]:
+            identities[path] = identities.get(path, 0) + 1
+            return original_identity(root, path, snapshot)
+
         patches = self.fixture.patches(self.fixture.adapter_results())
         with patches[0], patches[1], patches[2], patches[3], \
-                mock.patch.object(coordinator.family, "snapshot", side_effect=track):
+                mock.patch.object(coordinator.family, "snapshot", side_effect=track), \
+                mock.patch.object(coordinator, "_snapshot_identity_from_contents", side_effect=track_identity):
             coordinator.collect(self.fixture.root, self.fixture.relative(self.fixture.request_path))
         # Initial snapshot plus the pre-output and post-output mutation checks.
         # Pair records derive their receipt identity from the initial snapshot.
         self.assertEqual(calls, 3)
+        self.assertEqual(set(identities), set(self.fixture.products[pair][kind]
+                                              for pair in coordinator.PAIRS for kind in ("static", "dynamic"))
+                         | set(self.fixture.aggregate_pair_roots.values()))
+        self.assertTrue(all(count == 1 for count in identities.values()))
 
     def test_reader_rejects_a_retained_input_mutated_while_output_identities_are_built(self) -> None:
         original = coordinator._roster_identity
