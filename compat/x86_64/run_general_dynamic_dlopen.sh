@@ -140,6 +140,51 @@ LD_LIBRARY_PATH="$work/oracle" timeout 20 "$work/oracle/iterate" worker >"$work/
 cmp "$work/iterate-worker-oracle.stdout" "$work/iterate-worker-candidate.stdout"
 [ "$(<"$work/iterate-candidate.stdout")" = 'dl_iterate_phdr: nested callback, retained mapping, bounded append' ]
 printf 'general runtime iterate: PASS (nested callback, retained close, bounded appended DSO); evidence: %s\n' "$work"
+
+# Hold a runtime DSO constructor while independent threads enter dlsym and
+# dl_iterate_phdr. Pinned musl exposes the published image to both readers
+# before the constructor returns; the constructor also reenters both APIs.
+barrier_state="$ROOT/compat/x86_64/general_dynamic_constructor_barrier_state.c"
+barrier_plugin="$ROOT/compat/x86_64/general_dynamic_constructor_barrier_plugin.c"
+barrier_consumer="$ROOT/compat/x86_64/general_dynamic_constructor_barrier_consumer.c"
+barrier_state_name=libconstructor-barrier-state.so
+barrier_plugin_name=libconstructor-barrier.so
+"$driver" --dynamic-shared-object "$barrier_state" -o "$work/$barrier_state_name"
+"$driver" --dynamic-shared-object "$barrier_plugin" \
+    --application-dso "$work/$barrier_state_name" -o "$work/$barrier_plugin_name"
+"$driver" "$entry_mode" "$barrier_consumer" \
+    --application-dso "$work/$barrier_state_name" -o "$work/constructor-barrier"
+mkdir -p "$work/execution-root/usr/lib"
+cp "$work/$barrier_state_name" "$work/$barrier_plugin_name" "$work/execution-root/usr/lib/"
+cp "$work/constructor-barrier" "$work/execution-root/constructor-barrier"
+status=0
+timeout 20 chroot "$work/execution-root" /constructor-barrier \
+    >"$work/constructor-barrier-candidate.stdout" 2>"$work/constructor-barrier-candidate.stderr" || status=$?
+if [ "$status" -ne 0 ]; then
+    printf 'general constructor visibility: FAIL status=%s; evidence: %s\n' "$status" "$work" >&2
+    cat "$work/constructor-barrier-candidate.stderr" >&2
+    exit 1
+fi
+
+mkdir -p "$work/oracle/constructor-barrier"
+"$oracle_cc" -fPIC -shared -std=c11 "$barrier_state" \
+    -Wl,-z,now,-soname,"$barrier_state_name" -o "$work/oracle/constructor-barrier/$barrier_state_name"
+"$oracle_cc" -fPIC -shared -std=c11 "$barrier_plugin" \
+    -I"$ROOT/compat/x86_64" -L"$work/oracle/constructor-barrier" \
+    -l:libconstructor-barrier-state.so -Wl,-rpath,'$ORIGIN' \
+    -Wl,-z,now,-soname,"$barrier_plugin_name" -o "$work/oracle/constructor-barrier/$barrier_plugin_name"
+"$oracle_cc" "${oracle_entry_flags[@]}" -std=c11 "$barrier_consumer" \
+    -I"$ROOT/compat/x86_64" -L"$work/oracle/constructor-barrier" \
+    -l:libconstructor-barrier-state.so -Wl,-rpath,'$ORIGIN' \
+    -o "$work/oracle/constructor-barrier/consumer"
+LD_LIBRARY_PATH="$work/oracle/constructor-barrier" timeout 20 \
+    "$work/oracle/constructor-barrier/consumer" \
+    >"$work/constructor-barrier-oracle.stdout" 2>"$work/constructor-barrier-oracle.stderr"
+cmp "$work/constructor-barrier-oracle.stdout" "$work/constructor-barrier-candidate.stdout"
+[ "$(<"$work/constructor-barrier-candidate.stdout")" = \
+    'constructor visibility: same-thread reentry and foreign dlsym/iterate visibility' ]
+printf 'general constructor visibility: PASS (foreign dlsym/iterate visibility, same-thread reentry); evidence: %s\n' "$work"
+
 "$driver" "$entry_mode" "$ROOT/compat/x86_64/general_dynamic_scope_consumer.c" -o "$work/scope"
 "$oracle_cc" "${oracle_entry_flags[@]}" "$ROOT/compat/x86_64/general_dynamic_scope_consumer.c" \
     -Wl,-rpath,"$work/oracle" -o "$work/oracle/scope"
