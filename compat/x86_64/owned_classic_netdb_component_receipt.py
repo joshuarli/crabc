@@ -25,6 +25,9 @@ from typing import Any, Mapping
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+from rust_toolchain import pinned_toolchain
+
 SOURCE_MOUNT = "/workspace"
 SCHEMA = "crabc.x86_64-owned-classic-netdb-products/v1"
 COMPONENT = "classic-netdb"
@@ -76,9 +79,11 @@ DYNAMIC_CELLS = (
     "dynamic-non-pie-direct",
 )
 FULL_CELLS = ("static", "static-pie", *DYNAMIC_CELLS)
-PINNED_IMAGE = "crabc-core-evidence@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d"
-IMAGE_MANIFEST = "compat/x86_64/owned_utmpx_image_inputs.json"
-LINKER_PATH = Path("/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld")
+PINNED_IMAGE = "crabc-core-evidence@sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d"
+IMAGE_MANIFEST = "compat/x86_64/owned_classic_netdb_image_inputs.json"
+TOOLCHAIN = pinned_toolchain(ROOT)
+TOOLCHAIN_ROOT = Path("/opt/rustup/toolchains") / f"{TOOLCHAIN}-x86_64-unknown-linux-musl"
+LINKER_PATH = TOOLCHAIN_ROOT / "lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld"
 SOURCE_PATHS = {
     "producer": "compat/x86_64/owned_classic_netdb.py",
     "runner": "compat/x86_64/run_owned_classic_netdb.sh",
@@ -256,9 +261,13 @@ def source_product_seal(root: Path, static: Path | None, dynamic: Path) -> dict[
 
 def trusted_image_manifest(root: Path) -> dict[str, object]:
     value = read_json(checkout_file(root, IMAGE_MANIFEST, "classic-netdb image manifest"), "classic-netdb image manifest")
-    require(isinstance(value, dict) and value.get("image") == PINNED_IMAGE.removeprefix("crabc-core-evidence@") and
-            isinstance(value.get("files"), dict), "classic-netdb pinned image manifest differs")
-    for path in ("/usr/bin/readelf", "/usr/bin/nm", "/usr/local/bin/crabc-x86_64-musl-gcc"):
+    require(isinstance(value, dict) and set(value) == {"schema", "image", "files"} and
+            value.get("schema") == "crabc.x86_64-owned-classic-netdb-image-inputs/v1" and
+            value.get("image") == PINNED_IMAGE.removeprefix("crabc-core-evidence@") and
+            isinstance(value.get("files"), dict),
+            "classic-netdb current image manifest differs")
+    for path in (str(TOOLCHAIN_ROOT / "bin/rustc"), str(LINKER_PATH),
+                 "/usr/bin/readelf", "/usr/bin/nm", "/usr/bin/gcc", "/usr/local/bin/crabc-x86_64-musl-gcc"):
         require(path in value["files"], f"classic-netdb image manifest omits {path}")
     return value
 

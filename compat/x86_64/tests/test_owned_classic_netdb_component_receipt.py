@@ -87,7 +87,23 @@ class OwnedClassicNetdbComponentReceiptTests(unittest.TestCase):
 
     def test_link_replay_uses_the_fixed_pinned_lld_identity(self) -> None:
         self.assertEqual(self.receipt.LINKER_PATH.name, "ld.lld")
-        self.assertIn("nightly-2026-07-24", str(self.receipt.LINKER_PATH))
+        self.assertIn(self.receipt.TOOLCHAIN, str(self.receipt.LINKER_PATH))
+
+    def test_current_image_manifest_binds_the_selected_toolchain_and_exact_files(self) -> None:
+        manifest = self.receipt.trusted_image_manifest(ROOT)
+        self.assertEqual(
+            manifest["image"],
+            "sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d",
+        )
+        files = manifest["files"]
+        self.assertEqual(
+            files[str(self.receipt.TOOLCHAIN_ROOT / "bin/rustc")]["sha256"],
+            "228e24592d38da145ce4064b14e4bcfdd13cd3e2623bdbdcec45f37d16ef7b3b",
+        )
+        self.assertEqual(
+            files[str(self.receipt.LINKER_PATH)]["sha256"],
+            "dc40fa1b087ed4538d410a08e7314bcc1614dc7ff728b5bbf624a1daa97730bc",
+        )
 
     def test_symbol_claims_replay_the_elf_not_retained_symbol_text(self) -> None:
         output = b"""Symbol table '.dynsym' contains 2 entries:\n   Num:    Value          Size Type    Bind   Vis      Ndx Name\n     1: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND gethostbyname\n     2: 0000000000001000    10 FUNC    GLOBAL DEFAULT   12 gethostbyname\n"""

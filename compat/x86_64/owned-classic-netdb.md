@@ -178,8 +178,10 @@ copied as a whole read-only checkout beneath `.work/frozen-26df`; hard links
 are not an admissible substitute. These are development replays only and do
 not qualify current source or admit a family.
 
-Read a retained receipt inside the pinned native evidence image, whose exact
-identity is `crabc-core-evidence@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d`:
+Read a retained receipt inside the current native evidence image. The reader
+resolves its Rust compiler and linker paths from `rust-toolchain.toml`; the
+captured executable identities and image digest are in
+`owned_classic_netdb_image_inputs.json`:
 
 ```sh
 python3 -B compat/x86_64/owned_classic_netdb_component_receipt.py validate \
