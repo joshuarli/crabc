@@ -201,6 +201,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   perf-native-test  run focused native Rust-facade performance runner tests
   native-abi-inventory {collect|validate-report} ...  collect or replay the native x86 musl/owned ABI measurement inventory
   native-abi-inventory-test  run focused native ABI-inventory parser, replay, and dispatcher tests
+  owned-text-math-locale-stdio-family {assemble|validate} ...  assemble or replay text/math/locale/stdio family evidence in the pinned image
   native-abi-elf-facts {collect|validate-report} ...  inspect or replay complete ELF facts supplementing a current v1 inventory
   native-abi-selection {build-report|validate-report|require-closure} ...  account native ABI selection and replay its retained evidence
   header-declaration-inventory {collect|validate-report} ...  retain or replay compiler declaration and macro occurrences
@@ -6841,6 +6842,13 @@ case "$command" in
             *) fail "native-abi-selection requires build-report, validate-report, or require-closure" ;;
         esac
         ;;
+    owned-text-math-locale-stdio-family)
+        [ "$#" -ge 1 ] || fail "owned-text-math-locale-stdio-family requires assemble or validate"
+        case "$1" in
+            assemble|validate) ;;
+            *) fail "owned-text-math-locale-stdio-family requires assemble or validate" ;;
+        esac
+        ;;
     header-declaration-inventory)
         [ "$#" -ge 1 ] || fail "header-declaration-inventory requires collect or validate-report"
         case "$1" in
@@ -7263,6 +7271,10 @@ case "$command" in
         # reader owns argument admission and source/product binding, including
         # the explicit measurement checkout for historical observations.
         python3 -B "$ROOT_DIR/compat/x86_64/native_abi_selection.py" "$@"
+        ;;
+    owned-text-math-locale-stdio-family)
+        ensure_image
+        run_in_container python3 -B /workspace/compat/x86_64/owned_text_math_locale_stdio_family.py "$@"
         ;;
     header-declaration-inventory)
         if [ "$HEADER_DECLARATION_MODE" = validate-report ]; then
