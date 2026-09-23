@@ -121,6 +121,15 @@ static int memories(void)
     unsigned char zero_size_sentinel='?';
     f=fmemopen(&zero_size_sentinel,0,"w+");
     if(!f || zero_size_sentinel || fclose(f)) return 29;
+    /* A direction error remains set across subsequent successful reads.
+     * fgets still returns the accumulated line when the final read hits EOF. */
+    unsigned char read_only_data[]="abc";
+    f=fmemopen(read_only_data,3,"r");
+    if(!f || fwrite("!",1,1,f) || !ferror(f)) return 46;
+    char retained_line[5]={0};
+    if(fgets(retained_line,sizeof retained_line,f)!=retained_line
+        || strcmp(retained_line,"abc") || !feof(f) || !ferror(f)
+        || fclose(f)) return 47;
     output=NULL; size=99; f=open_memstream(&output,&size); if(!f) return 22;
     if(fseek(f,((long)1<<31),SEEK_SET) || fputc('X',f)==EOF) return 23;
     struct rlimit original, constrained;

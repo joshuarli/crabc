@@ -1569,11 +1569,14 @@ pub unsafe extern "C" fn fgets(
 
     let mut cursor = destination;
     let mut remaining = count;
-    let mut stopped_on_error = false;
+    let mut stopped_without_eof = false;
     while remaining > 1 {
         let character = unsafe { read_byte_held(stream) };
         if character == EOF {
-            stopped_on_error = unsafe { (*stream).flags & F_ERR != 0 };
+            // An earlier direction error can leave F_ERR set even when this
+            // read reaches EOF after accumulating a valid line. Pinned musl
+            // accepts that partial line based on F_EOF, not F_ERR.
+            stopped_without_eof = unsafe { (*stream).flags & F_EOF == 0 };
             break;
         }
         unsafe { cursor.write(character as u8 as c_char) };
@@ -1583,7 +1586,7 @@ pub unsafe extern "C" fn fgets(
             break;
         }
     }
-    if cursor == destination || stopped_on_error {
+    if cursor == destination || stopped_without_eof {
         return ptr::null_mut();
     }
     unsafe { cursor.write(0) };
