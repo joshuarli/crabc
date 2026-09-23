@@ -1212,10 +1212,19 @@ def cargo_custom_build_artifacts(
         source = physical(Path(source_value), "Cargo custom-build source")
         output = physical(Path(filenames[0]), "Cargo custom-build artifact output", executable=True)
         source_is_rust = manifest.is_relative_to(rust_source) and source.is_relative_to(rust_source)
+        out_dir_source = (
+            source_is_rust or (manifest, source) in approved_vendor_sources
+        )
+        standard_output = output.name == "build-script-build"
+        out_dir_output = (
+            output.name == "build_script_build"
+            and owned_rust_link.admitted_host_build_script_path(output, host_build_root)
+            and out_dir_source
+        )
         require(source_is_rust or (manifest, source) in approved_vendor_sources,
                 "Cargo custom-build artifact is outside approved pinned source")
         require(
-            output.is_relative_to(host_build_root) and output.name == "build-script-build",
+            output.is_relative_to(host_build_root) and (standard_output or out_dir_output),
             "Cargo custom-build artifact is outside the declared host root",
         )
         identity = file_identity(output)
@@ -1267,7 +1276,7 @@ def host_build_script_receipts(root: Path, host_build_root: Path) -> list[dict[s
         linked = physical(Path(output["path"]), "Cargo host build-script linker output", executable=True)
         require(
             linked.is_relative_to(host_build_root)
-            and HOST_BUILD_SCRIPT_OUTPUT.fullmatch(linked.name) is not None
+            and owned_rust_link.admitted_host_build_script_path(linked, host_build_root)
             and output == record_file(
                 linked, "Cargo host build-script linker output",
             ),
@@ -1327,6 +1336,16 @@ def host_build_script_manifest(
     for identity in sorted(declared_by_identity):
         artifact = declared_by_identity[identity]
         receipt = receipt_by_identity[identity]
+        if receipt["output"].name == "build_script_build":
+            require(
+                (artifact["manifest"].is_relative_to(rust_source)
+                 and artifact["source"].is_relative_to(rust_source))
+                or (artifact["manifest"], artifact["source"]) in {
+                    (entry["manifest"], entry["source"])
+                    for entry in [*provider_custom_builds, *composite_vendor_custom_builds]
+                },
+                "Cargo OUT_DIR host-link receipt does not belong to an approved pinned source",
+            )
         artifacts.append({
             "package_id": artifact["package_id"],
             "manifest": record_file(artifact["manifest"], "Cargo custom-build manifest"),
@@ -1896,6 +1915,7 @@ def compile_source_built_mode(
         "CRABC_OWNED_RUST_SOURCE_LTO_UNWIND_ABI": json.dumps(sorted(build.UNWIND_ABI)),
         "CRABC_OWNED_RUST_APPLICATION_ROOT": str(release),
         "CRABC_OWNED_RUST_HOST_BUILD_ROOT": str(host_build_root),
+        owned_rust_link.SOURCE_LIBRARY_ENV: str(rust_source),
         "CRABC_OWNED_RUST_HOST_BUILD_LINKER": str(HOST_BUILD_LINKER),
         "CRABC_OWNED_RUST_HOST_BUILD_RECEIPTS": str(host_build_receipt_root),
         "CRABC_OWNED_RUST_CHANNEL": channel,
@@ -1906,6 +1926,14 @@ def compile_source_built_mode(
         application=application, package=package, channel=channel, environment=environment, with_plugin=with_plugin,
         offline_sources=offline_sources,
     )
+    host_build_sources = [
+        {"manifest": str(entry["manifest"]), "source": str(entry["source"])}
+        for entry in provider_graph["graph"]["provider_custom_builds"]
+    ]
+    host_build_sources.extend({
+        "manifest": entry["manifest"]["path"], "source": entry["source"]["path"],
+    } for entry in offline_sources["composite_vendor_custom_build_inputs"])
+    environment[owned_rust_link.HOST_BUILD_SOURCES_ENV] = json.dumps(host_build_sources, sort_keys=True)
     generated_package = Path(provider_graph["package"]["root"])
     command: list[str | Path] = [
         "rustup", "run", channel, "cargo", "build", "--manifest-path", generated_package / "Cargo.toml", "--release",

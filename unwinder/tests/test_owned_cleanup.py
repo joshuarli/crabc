@@ -816,6 +816,63 @@ class OwnedCleanupContract(unittest.TestCase):
             fixture["linked"], "Cargo host build-script linker output",
         ))
 
+    def test_compiler_builtins_out_dir_link_receipt_closes_to_its_cargo_artifact(self):
+        fixture = self.host_build_fixture()
+        old_linked = fixture["linked"]
+        linked = fixture["host_root"] / "compiler_builtins/0123456789abcdef/out/build_script_build"
+        linked.parent.mkdir(parents=True)
+        old_linked.unlink()
+        fixture["artifact"].unlink()
+        linked.write_bytes(b"compiler-builtins OUT_DIR host build script")
+        linked.chmod(0o755)
+        fixture["linked"] = linked
+        fixture["artifact"] = linked
+        fixture["cargo_record"]["filenames"] = [str(linked)]
+        fixture["cargo_stdout"].write_text(json.dumps(fixture["cargo_record"]) + "\n")
+        fixture["receipt_record"]["command"][-1] = str(linked)
+        fixture["receipt_record"]["output"] = owned_cleanup.record_file(
+            linked, "Cargo host build-script linker output",
+        )
+        fixture["receipt"].unlink()
+        fixture["receipt"] = self.write_host_receipt(fixture["receipts"], linked)
+
+        manifest = self.host_build_manifest(fixture)
+        self.assertEqual(len(manifest["artifacts"]), 1)
+        self.assertEqual(manifest["artifacts"][0]["host_link_output"], owned_cleanup.record_file(
+            linked, "Cargo host build-script linker output",
+        ))
+
+    def test_out_dir_receipt_rejects_another_pinned_package(self):
+        fixture = self.host_build_fixture()
+        # Move both Cargo's receipt and artifact to an unrelated rust-src crate;
+        # the directory shape and hard-link identity alone must not grant admission.
+        other_source = Path(self.temporary.name) / "another-crate"
+        other_source.mkdir()
+        other_manifest = other_source / "Cargo.toml"
+        other_build = other_source / "build.rs"
+        other_manifest.write_text('[package]\nname = "another-crate"\n')
+        other_build.write_text("fn main() {}\n")
+        record = fixture["cargo_record"]
+        record["manifest_path"] = str(other_manifest)
+        record["target"]["src_path"] = str(other_build)
+        linked = fixture["host_root"] / "compiler_builtins/0123456789abcdef/out/build_script_build"
+        linked.parent.mkdir(parents=True)
+        fixture["linked"].unlink()
+        fixture["artifact"].unlink()
+        linked.write_bytes(b"unapproved OUT_DIR host build script")
+        linked.chmod(0o755)
+        record["filenames"] = [str(linked)]
+        fixture["cargo_stdout"].write_text(json.dumps(record) + "\n")
+        fixture["receipt_record"]["command"][-1] = str(linked)
+        fixture["receipt_record"]["output"] = owned_cleanup.record_file(
+            linked, "Cargo host build-script linker output",
+        )
+        fixture["receipt"].unlink()
+        self.write_host_receipt(fixture["receipts"], linked)
+
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "outside approved pinned source"):
+            self.host_build_manifest(fixture)
+
     def test_host_build_manifest_rejects_target_lookalike(self):
         fixture = self.host_build_fixture()
         record = fixture["cargo_record"]

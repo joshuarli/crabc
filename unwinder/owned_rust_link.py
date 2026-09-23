@@ -26,6 +26,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tomllib
 from typing import Iterable
 
 
@@ -47,7 +48,11 @@ RUST_CDYLIB_EXPORTS = (
     "crabc_owned_cleanup_dso_release",
 )
 HOST_BUILD_SCRIPT_OUTPUT = re.compile(r"build_script_build-[0-9a-f]+\Z")
+BUILD_OUTPUT_HASH = re.compile(r"[0-9a-f]{16}\Z")
+BUILD_SCRIPT_PACKAGE = re.compile(r"[A-Za-z0-9_]+\Z")
 SOURCE_LTO_UNWIND_ABI_ENV = "CRABC_OWNED_RUST_SOURCE_LTO_UNWIND_ABI"
+SOURCE_LIBRARY_ENV = "CRABC_OWNED_RUST_SOURCE_LIBRARY"
+HOST_BUILD_SOURCES_ENV = "CRABC_OWNED_RUST_HOST_BUILD_SOURCES"
 
 
 class LinkError(RuntimeError):
@@ -120,6 +125,103 @@ def confined_output(path: str, root: Path) -> Path:
     return candidate
 
 
+def _out_dir_build_script_source_pairs(source_library: Path | None) -> set[tuple[Path, Path]]:
+    """Read the exact pinned source pairs allowed to produce Cargo OUT_DIR tools."""
+
+    pairs: set[tuple[Path, Path]] = set()
+    manifest_value = os.environ.get("CARGO_MANIFEST_PATH")
+    package_name = os.environ.get("CARGO_PKG_NAME")
+    if manifest_value is not None and package_name and source_library is not None:
+        manifest = physical_regular(Path(manifest_value), "Cargo host build-script manifest")
+        if manifest.is_relative_to(source_library):
+            try:
+                package = tomllib.loads(manifest.read_text(encoding="utf-8")).get("package")
+            except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+                raise LinkError("pinned Rust host build-script manifest is unreadable") from error
+            if not isinstance(package, dict) or package.get("name") != package_name:
+                raise LinkError("pinned Rust host build-script package identity drifted")
+            build = package.get("build")
+            if build is not False:
+                if build is None or build is True:
+                    source = manifest.parent / "build.rs"
+                elif isinstance(build, str) and build and not Path(build).is_absolute() \
+                        and ".." not in Path(build).parts:
+                    source = manifest.parent / build
+                else:
+                    raise LinkError("pinned Rust host build-script path is malformed")
+                source = physical_regular(source, "pinned Rust host build source")
+                if not source.is_relative_to(manifest.parent):
+                    raise LinkError("pinned Rust host build source escapes its package")
+                pairs.add((manifest, source))
+    encoded = os.environ.get(HOST_BUILD_SOURCES_ENV)
+    if encoded is None:
+        return pairs
+    try:
+        entries = json.loads(encoded)
+    except json.JSONDecodeError as error:
+        raise LinkError("approved Cargo host build-script sources are not JSON") from error
+    if not isinstance(entries, list):
+        raise LinkError("approved Cargo host build-script sources are malformed")
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != {"manifest", "source"}:
+            raise LinkError("approved Cargo host build-script source entry is malformed")
+        manifest_value, source_value = entry["manifest"], entry["source"]
+        if not isinstance(manifest_value, str) or not isinstance(source_value, str):
+            raise LinkError("approved Cargo host build-script source paths are malformed")
+        manifest = physical_regular(Path(manifest_value), "approved Cargo host build-script manifest")
+        source = physical_regular(Path(source_value), "approved Cargo host build-script source")
+        if not source.is_relative_to(manifest.parent):
+            raise LinkError("approved Cargo host build-script source escapes its package")
+        pairs.add((manifest, source))
+    return pairs
+
+
+def _out_dir_build_script(candidate: Path, host_build_root: Path, source_library: Path | None) -> bool:
+    """Recognize one Cargo OUT_DIR script only when its source pair is pinned."""
+
+    try:
+        relative = candidate.relative_to(host_build_root)
+    except ValueError:
+        return False
+    if (
+        len(relative.parts) != 4 or BUILD_SCRIPT_PACKAGE.fullmatch(relative.parts[0]) is None
+        or BUILD_OUTPUT_HASH.fullmatch(relative.parts[1]) is None
+        or relative.parts[2:] != ("out", "build_script_build")
+    ):
+        return False
+    manifest_value = os.environ.get("CARGO_MANIFEST_DIR")
+    manifest_path_value = os.environ.get("CARGO_MANIFEST_PATH")
+    package_name = os.environ.get("CARGO_PKG_NAME")
+    if (
+        os.environ.get("CARGO_CRATE_NAME") != "build_script_build"
+        or not package_name or manifest_value is None or manifest_path_value is None
+        or relative.parts[0] != package_name.replace("-", "_")
+    ):
+        return False
+    manifest_dir = physical_directory(Path(manifest_value), "Cargo host build-script manifest directory")
+    manifest_path = physical_regular(Path(manifest_path_value), "Cargo host build-script manifest")
+    return manifest_dir == manifest_path.parent and any(
+        manifest == manifest_path and source.is_relative_to(manifest_dir)
+        for manifest, source in _out_dir_build_script_source_pairs(source_library)
+    )
+
+
+def admitted_host_build_script_path(path: Path, host_build_root: Path) -> bool:
+    """Recognize either Cargo's hashed output or its compiler-builtins OUT_DIR name."""
+
+    if HOST_BUILD_SCRIPT_OUTPUT.fullmatch(path.name) is not None:
+        return True
+    try:
+        relative = path.relative_to(host_build_root)
+    except ValueError:
+        return False
+    return (
+        len(relative.parts) == 4 and BUILD_SCRIPT_PACKAGE.fullmatch(relative.parts[0]) is not None
+        and BUILD_OUTPUT_HASH.fullmatch(relative.parts[1]) is not None
+        and relative.parts[2:] == ("out", "build_script_build")
+    )
+
+
 def host_build_script_output(arguments: list[str], host_build_root: Path) -> Path | None:
     """Return the one Cargo host build-script output, if this is one.
 
@@ -149,6 +251,14 @@ def host_build_script_output(arguments: list[str], host_build_root: Path) -> Pat
         raise LinkError(f"Cargo host build-script output has parent traversal: {output}")
     physical_directory(candidate.parent, "Cargo host build-script output parent")
     if HOST_BUILD_SCRIPT_OUTPUT.fullmatch(candidate.name) is None:
+        source_library_value = os.environ.get(SOURCE_LIBRARY_ENV)
+        source_library = (
+            physical_directory(Path(source_library_value), "pinned Rust source library")
+            if source_library_value else None
+        )
+        if not _out_dir_build_script(candidate, host_build_root, source_library):
+            raise LinkError(f"Cargo host build-script output is not an admitted build script: {output}")
+    if not admitted_host_build_script_path(candidate, host_build_root):
         raise LinkError(f"Cargo host build-script output is not an admitted build script: {output}")
     if candidate.exists() or candidate.is_symlink():
         raise LinkError(f"Cargo host build-script output must be fresh: {output}")

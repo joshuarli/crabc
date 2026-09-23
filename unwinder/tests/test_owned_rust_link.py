@@ -210,6 +210,60 @@ class OwnedRustLinkContract(unittest.TestCase):
         )
         self.assertEqual(selected, output)
 
+    def test_pinned_compiler_builtins_out_dir_build_script_is_admitted(self):
+        """Pinned build-std compiles this host script to Cargo's OUT_DIR name."""
+
+        rust_source = Path(self.temporary.name) / "rust-src/library"
+        package_source = rust_source / "compiler-builtins/compiler-builtins"
+        package_source.mkdir(parents=True)
+        (package_source / "Cargo.toml").write_text('[package]\nname = "compiler_builtins"\n')
+        (package_source / "build.rs").write_text("fn main() {}\n")
+        package_build = self.host_build / "compiler_builtins/0123456789abcdef/out"
+        package_build.mkdir(parents=True)
+        output = package_build / "build_script_build"
+        environment = {
+            "CRABC_OWNED_RUST_SOURCE_LIBRARY": str(rust_source),
+            "CARGO_MANIFEST_DIR": str(package_source),
+            "CARGO_MANIFEST_PATH": str(package_source / "Cargo.toml"),
+            "CARGO_CRATE_NAME": "build_script_build",
+            "CARGO_PKG_NAME": "compiler_builtins",
+        }
+        with patch.dict(os.environ, environment):
+            selected = linker.host_build_script_output(
+                ["-m64", "fixture.o", "-o", str(output), "-static-pie"], self.host_build,
+            )
+        self.assertEqual(selected, output)
+
+    def test_out_dir_build_script_shape_does_not_admit_another_package(self):
+        package_build = self.host_build / "arbitrary_package/0123456789abcdef/out"
+        package_build.mkdir(parents=True)
+        output = package_build / "build_script_build"
+        with self.assertRaisesRegex(linker.LinkError, "not an admitted build script"):
+            linker.host_build_script_output(["-o", str(output)], self.host_build)
+
+    def test_approved_vendor_out_dir_build_script_is_admitted(self):
+        rust_source = Path(self.temporary.name) / "rust-src/library"
+        rust_source.mkdir(parents=True)
+        package_source = Path(self.temporary.name) / "cargo-vendor/libc-0.2.189"
+        package_source.mkdir(parents=True)
+        manifest = package_source / "Cargo.toml"
+        source = package_source / "build.rs"
+        manifest.write_text('[package]\nname = "libc"\n')
+        source.write_text("fn main() {}\n")
+        output = self.host_build / "libc/0123456789abcdef/out/build_script_build"
+        output.parent.mkdir(parents=True)
+        environment = {
+            linker.SOURCE_LIBRARY_ENV: str(rust_source),
+            linker.HOST_BUILD_SOURCES_ENV: json.dumps([{"manifest": str(manifest), "source": str(source)}]),
+            "CARGO_MANIFEST_DIR": str(package_source),
+            "CARGO_MANIFEST_PATH": str(manifest),
+            "CARGO_CRATE_NAME": "build_script_build",
+            "CARGO_PKG_NAME": "libc",
+        }
+        with patch.dict(os.environ, environment):
+            selected = linker.host_build_script_output(["-o", str(output)], self.host_build)
+        self.assertEqual(selected, output)
+
     def test_host_build_script_link_writes_one_exclusive_receipt(self):
         package = self.host_build / "compiler_builtins-0123456789abcdef"
         package.mkdir()

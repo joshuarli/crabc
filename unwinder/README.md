@@ -325,7 +325,13 @@ link in an exclusive per-artifact receipt. A generated manifest binds the
 receipts by hard-link identity to the exact `compiler-artifact` custom-build
 records from Cargo's machine-readable stream, and records the pinned
 `rust-src` lock plus every declared package manifest and build source. The
-only extra provider build executable is the already-audited pinned `libc`
+Some pinned Cargo build scripts have an `OUT_DIR` output named
+`build_script_build` without Cargo's usual hash suffix. The linker admits this
+shape only when the crate and output directory match and Cargo's manifest/source
+pair is the pinned compiler-builtins source or an explicitly recorded provider
+or composite-vendor build script. Receipt closure still requires the matching
+Cargo artifact and exact source identity.
+The only extra provider build executable is the already-audited pinned `libc`
 cfg build script; its manifest/source pair is recorded separately and must
 match the resolved provider graph. It rejects unmatched, duplicate, forged,
 or target-lookalike records before it accepts a consumer. Those host tools do
