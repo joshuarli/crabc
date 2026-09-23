@@ -443,6 +443,47 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
             with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "unexpected oracle or tool roster"):
                 receipt._trusted_image_manifest()
 
+    def test_current_manifest_uses_manifest_selected_toolchain_and_keeps_v3_authority(self) -> None:
+        historical = receipt._trusted_image_manifest(receipt.PINNED_IMAGE)
+        current = receipt._trusted_image_manifest(receipt.CURRENT_PINNED_IMAGE)
+        current_path = ROOT / receipt.CURRENT_IMAGE_MANIFEST_PATH
+        self.assertEqual(historical["image"], receipt.PINNED_IMAGE.removeprefix("crabc-core-evidence@"))
+        self.assertEqual(current["image"], receipt.CURRENT_PINNED_IMAGE.removeprefix("crabc-core-evidence@"))
+        self.assertEqual(current["path"], receipt.COMMAND_PATH)
+        self.assertEqual(set(current["files"]), set(receipt.CURRENT_IMAGE_INPUTS))
+        self.assertEqual(
+            receipt.CURRENT_TOOLCHAIN_ROOT,
+            f"/opt/rustup/toolchains/{receipt.CURRENT_TOOLCHAIN}-x86_64-unknown-linux-musl",
+        )
+        self.assertIn(f"{receipt.CURRENT_TOOLCHAIN_ROOT}/bin/rustc", current["files"])
+        self.assertIn(receipt.CURRENT_DYNAMIC_LINKER_PATH, current["files"])
+        self.assertEqual(receipt._image_profile(receipt.PINNED_IMAGE)["schema"], receipt.SCHEMA)
+        self.assertEqual(receipt._image_profile(receipt.CURRENT_PINNED_IMAGE)["schema"], receipt.CURRENT_SCHEMA)
+        self.assertIn(receipt.CURRENT_IMAGE_MANIFEST_PATH, receipt.CURRENT_SELECTED_SOURCES)
+        self.assertTrue(current_path.is_file())
+
+    def test_current_image_input_replay_selects_its_own_manifest_and_paths(self) -> None:
+        manifest_path = receipt.CURRENT_IMAGE_MANIFEST_PATH
+        trusted = json.loads(json.dumps(receipt._trusted_image_manifest(receipt.CURRENT_PINNED_IMAGE)))
+        for index, (invocation, image_record) in enumerate(sorted(trusted["files"].items())):
+            contents = invocation.encode()
+            image_record.update({
+                "path": f"/physical/{index}",
+                "sha256": self.digest(contents),
+                "size": len(contents),
+                "mode": 0o644,
+            })
+        manifest_bytes = json.dumps(trusted, indent=2, sort_keys=True).encode() + b"\n"
+        manifest_record = self.write(f"inputs/source/{manifest_path}", manifest_bytes)
+        records = {}
+        for index, (invocation, image_record) in enumerate(sorted(trusted["files"].items())):
+            retained = self.write(f"inputs/image/{index:02d}", invocation.encode())
+            records[invocation] = {"image": image_record, "retained": retained}
+        report = {"id": receipt.CURRENT_PINNED_IMAGE, "manifest": manifest_record, "files": records}
+        with mock.patch.object(receipt, "_trusted_image_manifest", return_value=trusted):
+            observed = receipt._validate_image_inputs(self.root, report)
+        self.assertEqual(observed["id"], receipt.CURRENT_PINNED_IMAGE)
+        self.assertEqual(observed["manifest"]["path"], manifest_record["path"])
     def test_product_tree_retains_directory_file_and_symlink_modes(self) -> None:
         product = self.root / "products/static"
         nested = product / "bin"

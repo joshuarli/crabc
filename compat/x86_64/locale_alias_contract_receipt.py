@@ -25,6 +25,7 @@ import subprocess
 import sys
 import re
 import tempfile
+import tomllib
 import zlib
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -35,6 +36,11 @@ SCHEMA = "crabc.x86_64-locale-alias-contract-receipt/v3"
 COMMAND_SCHEMA = "crabc.x86_64-locale-alias-contract-command/v2"
 IMAGE_MANIFEST_PATH = "compat/x86_64/locale-alias-contract-image-inputs.json"
 PINNED_IMAGE = "crabc-core-evidence@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d"
+CURRENT_SCHEMA = "crabc.x86_64-locale-alias-contract-receipt/v4"
+CURRENT_PINNED_IMAGE = "crabc-core-evidence@sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d"
+CURRENT_IMAGE_MANIFEST_PATH = "compat/x86_64/locale-alias-contract-image-inputs-v2.json"
+CURRENT_TOOLCHAIN = tomllib.loads((ROOT / "rust-toolchain.toml").read_text(encoding="utf-8"))["toolchain"]["channel"]
+CURRENT_TOOLCHAIN_ROOT = f"/opt/rustup/toolchains/{CURRENT_TOOLCHAIN}-x86_64-unknown-linux-musl"
 COMMAND_PATH = "/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 COMMAND_ENVIRONMENT = {"LC_ALL": "C", "PATH": COMMAND_PATH}
 # The product builders re-open the mounted Git checkout after the collector
@@ -63,6 +69,8 @@ IMAGE_INPUTS = (
     "/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/cc1", "/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/collect2",
     "/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/liblto_plugin.so", "/usr/local/bin/crabc-x86_64-musl-gcc", "/usr/sbin/chroot",
 )
+_CURRENT_IMAGE_MANIFEST = json.loads((ROOT / CURRENT_IMAGE_MANIFEST_PATH).read_text(encoding="utf-8"))
+CURRENT_IMAGE_INPUTS = tuple(_CURRENT_IMAGE_MANIFEST["files"])
 
 # Every retained regular file carries its observed permissions.  Source modes
 # are additionally authenticated by the complete clean Git tree; immutable
@@ -75,6 +83,50 @@ MODE_POLICY = {
     "products": "static primary/reproduction/extracted preparation and dynamic product trees are retained with mode",
     "consumers": "normal installed-header runner uses umask 022 and retains every artifact and raw stream mode",
 }
+
+
+def _image_profile(image_id: object) -> dict[str, object]:
+    """Select immutable image authority for a historical or current receipt."""
+
+    if image_id == PINNED_IMAGE:
+        return {
+            "id": PINNED_IMAGE,
+            "manifest_path": IMAGE_MANIFEST_PATH,
+            "files": IMAGE_INPUTS,
+            "producer_tools": PRODUCER_TOOL_PATHS,
+            "linker": DYNAMIC_LINKER_PATH,
+            "schema": SCHEMA,
+        }
+    if image_id == CURRENT_PINNED_IMAGE:
+        return {
+            "id": CURRENT_PINNED_IMAGE,
+            "manifest_path": CURRENT_IMAGE_MANIFEST_PATH,
+            "files": CURRENT_IMAGE_INPUTS,
+            "producer_tools": CURRENT_PRODUCER_TOOL_PATHS,
+            "linker": CURRENT_DYNAMIC_LINKER_PATH,
+            "schema": CURRENT_SCHEMA,
+        }
+    _fail("locale alias receipt names an unsupported image")
+
+
+def current_image_input_manifest() -> dict[str, object]:
+    """Capture the exact finite current image inputs from inside that image."""
+
+    records: dict[str, object] = {}
+    for invocation in sorted(CURRENT_IMAGE_INPUTS):
+        path = Path(invocation).resolve(strict=True)
+        records[invocation] = {
+            "path": str(path),
+            "sha256": _sha256(path),
+            "size": path.stat().st_size,
+            "mode": stat.S_IMODE(path.stat().st_mode),
+        }
+    return {
+        "schema": "crabc.x86_64-locale-alias-image-inputs/v1",
+        "image": CURRENT_PINNED_IMAGE.removeprefix("crabc-core-evidence@"),
+        "path": COMMAND_PATH,
+        "files": records,
+    }
 
 def _collector_environment(output_relative: str) -> dict[str, str]:
     return {**COMMAND_ENVIRONMENT, "TMPDIR": _mount(f"{output_relative}/tmp"), "TZ": "UTC", "PYTHONDONTWRITEBYTECODE": "1",
@@ -111,6 +163,11 @@ PRODUCER_TOOL_PATHS = {
 }
 DYNAMIC_LINKER_PATH = "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/" \
                       "lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld"
+CURRENT_PRODUCER_TOOL_PATHS = {
+    name: f"{CURRENT_TOOLCHAIN_ROOT}/lib/rustlib/x86_64-unknown-linux-musl/bin/{name}"
+    for name in ("llvm-ar", "llvm-nm", "llvm-objdump")
+}
+CURRENT_DYNAMIC_LINKER_PATH = f"{CURRENT_TOOLCHAIN_ROOT}/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld"
 IMPLEMENTATION_SOURCES = (
     "libc/src/c_abi/x86_64/locale_narrow.rs",
     "libc/src/c_abi/x86_64/locale_objects.rs",
@@ -145,6 +202,7 @@ SELECTED_SOURCES = (
     "docker/Dockerfile.x86_64",
     "docker/x86_64-musl-oracle-gcc",
 )
+CURRENT_SELECTED_SOURCES = (*SELECTED_SOURCES, CURRENT_IMAGE_MANIFEST_PATH)
 
 # The runner produces one stream set for each external command.  Snapshots are
 # separate input seals, not command records; the collector runner invocation is
@@ -717,13 +775,15 @@ def _validate_dynamic_executable_link_sidecars(
     files = image.get("files")
     if not isinstance(files, Mapping):
         _fail("retained image linker authority is absent")
-    image_entry = files.get(DYNAMIC_LINKER_PATH)
+    linker_path = _image_profile(image.get("id", PINNED_IMAGE))["linker"]
+    assert isinstance(linker_path, str)
+    image_entry = files.get(linker_path)
     if not isinstance(image_entry, Mapping):
         _fail("retained image linker authority is absent")
     image_identity = _exact_mapping(
         image_entry.get("image"), {"path", "sha256", "size", "mode"}, "retained dynamic linker identity",
     )
-    if image_identity["path"] != DYNAMIC_LINKER_PATH:
+    if image_identity["path"] != linker_path:
         _fail("retained dynamic linker path changed")
     linker = {name: image_identity[name] for name in ("path", "sha256")}
     raw = _relative_directory(root, RUNNER_DIRECTORY, "runner raw")
@@ -953,13 +1013,16 @@ def _validate_producer_tools(
     if set(tools) != expected_fields or tools.get("schema") != 1 or tools.get("target") != "x86_64-unknown-linux-musl":
         _fail(f"{name} product producer tool record changed")
     llvm = tools.get("llvm_target_tools")
-    if not isinstance(llvm, Mapping) or set(llvm) != set(PRODUCER_TOOL_PATHS):
+    profile = _image_profile(image.get("id", PINNED_IMAGE))
+    producer_tool_paths = profile["producer_tools"]
+    assert isinstance(producer_tool_paths, Mapping)
+    if not isinstance(llvm, Mapping) or set(llvm) != set(producer_tool_paths):
         _fail(f"{name} product LLVM tool roster changed")
     files = image.get("files")
     if not isinstance(files, Mapping):
         _fail("retained image tool records are absent")
     normalized: dict[str, object] = {}
-    for tool, invocation in PRODUCER_TOOL_PATHS.items():
+    for tool, invocation in producer_tool_paths.items():
         received = _exact_mapping(llvm[tool], {"path", "resolved_path", "sha256"}, f"{name} {tool} producer tool")
         image_record = files.get(invocation)
         if not isinstance(image_record, Mapping) or not isinstance(image_record.get("image"), Mapping):
@@ -1040,19 +1103,23 @@ def _hex(value: object, length: int, label: str) -> str:
     return value
 
 
-def _trusted_image_manifest() -> dict[str, object]:
+def _trusted_image_manifest(image_id: str = PINNED_IMAGE) -> dict[str, object]:
     """Read the finite checked-in image input authority without probing a host."""
 
-    value = _strict_json(ROOT / IMAGE_MANIFEST_PATH, "trusted locale image input manifest")
+    profile = _image_profile(image_id)
+    manifest_path = profile["manifest_path"]
+    image_inputs = profile["files"]
+    assert isinstance(manifest_path, str) and isinstance(image_inputs, tuple)
+    value = _strict_json(ROOT / manifest_path, "trusted locale image input manifest")
     manifest = _exact_mapping(value, {"schema", "image", "path", "files"}, "trusted locale image input manifest")
     if manifest["schema"] != "crabc.x86_64-locale-alias-image-inputs/v1":
         _fail("trusted locale image manifest schema changed")
-    if manifest["image"] != PINNED_IMAGE.removeprefix("crabc-core-evidence@") or manifest["path"] != COMMAND_PATH:
+    if manifest["image"] != image_id.removeprefix("crabc-core-evidence@") or manifest["path"] != COMMAND_PATH:
         _fail("trusted locale image identity changed")
     files = manifest["files"]
     if not isinstance(files, Mapping) or not files:
         _fail("trusted locale image input roster is empty")
-    if set(files) != set(IMAGE_INPUTS) or len(IMAGE_INPUTS) != len(set(IMAGE_INPUTS)):
+    if set(files) != set(image_inputs) or len(image_inputs) != len(set(image_inputs)):
         _fail("trusted locale image manifest has an unexpected oracle or tool roster")
     for invocation, record in files.items():
         if not isinstance(invocation, str) or not invocation.startswith("/"):
@@ -1066,10 +1133,13 @@ def _trusted_image_manifest() -> dict[str, object]:
     return dict(manifest)
 
 
-def _copy_image_inputs(root: Path, receipt_root: Path) -> dict[str, object]:
+def _copy_image_inputs(root: Path, receipt_root: Path, image_id: str = CURRENT_PINNED_IMAGE) -> dict[str, object]:
     """Copy each manifest-selected physical image input before any producer runs."""
 
-    manifest = _trusted_image_manifest()
+    profile = _image_profile(image_id)
+    manifest_path = profile["manifest_path"]
+    assert isinstance(manifest_path, str)
+    manifest = _trusted_image_manifest(image_id)
     files = manifest["files"]
     assert isinstance(files, Mapping)
     records: dict[str, object] = {}
@@ -1088,20 +1158,21 @@ def _copy_image_inputs(root: Path, receipt_root: Path) -> dict[str, object]:
         destination = receipt_root / "inputs/image" / f"{index:02d}-{expected['sha256']}"
         _copy_regular(source, destination)
         records[invocation] = {"image": dict(expected), "retained": _identity(receipt_root, destination)}
-    return {"id": PINNED_IMAGE,
-            "manifest": _identity(receipt_root, receipt_root / "inputs/source" / IMAGE_MANIFEST_PATH),
+    return {"id": image_id,
+            "manifest": _identity(receipt_root, receipt_root / "inputs/source" / manifest_path),
             "files": records}
 
 
 def _validate_image_inputs(root: Path, value: object) -> dict[str, object]:
     record = _exact_mapping(value, {"id", "manifest", "files"}, "retained locale image inputs")
-    if record["id"] != PINNED_IMAGE:
-        _fail("retained locale image identity changed")
+    profile = _image_profile(record["id"])
+    manifest_path = profile["manifest_path"]
+    assert isinstance(manifest_path, str)
     manifest_record = _file_record(root, record["manifest"], "retained locale image manifest")
-    if manifest_record != _identity(root, root / "inputs/source" / IMAGE_MANIFEST_PATH):
+    if manifest_record != _identity(root, root / "inputs/source" / manifest_path):
         _fail("retained locale image manifest is not the copied selected source")
     retained_manifest = _strict_json(root / manifest_record["path"], "retained locale image manifest")
-    trusted = _trusted_image_manifest()
+    trusted = _trusted_image_manifest(str(record["id"]))
     if retained_manifest != trusted:
         _fail("retained locale image manifest differs from trusted source")
     entries = record["files"]
@@ -1117,7 +1188,7 @@ def _validate_image_inputs(root: Path, value: object) -> dict[str, object]:
         if {key: retained[key] for key in ("sha256", "bytes", "mode")} != {"sha256": expected["sha256"], "bytes": expected["size"], "mode": expected["mode"]}:
             _fail("retained locale image input bytes or mode changed")
         actual[invocation] = {"image": expected, "retained": retained}
-    return {"id": PINNED_IMAGE, "manifest": manifest_record, "files": actual}
+    return {"id": record["id"], "manifest": manifest_record, "files": actual}
 
 
 def _live_source_state(root: Path) -> dict[str, object]:
@@ -1154,7 +1225,13 @@ def _retained_git_tree(root: Path, revision: str) -> str:
     return _hex(first[5:].decode("ascii", "strict"), 40, "retained Git tree")
 
 
-def _capture_source_phase(root: Path, receipt_root: Path, directory: str, state: Mapping[str, object] | None = None) -> dict[str, object]:
+def _capture_source_phase(
+    root: Path,
+    receipt_root: Path,
+    directory: str,
+    state: Mapping[str, object] | None = None,
+    selected_sources: Sequence[str] = SELECTED_SOURCES,
+) -> dict[str, object]:
     """Copy selected source after authenticating the complete clean Git tree."""
 
     live = _live_source_state(root)
@@ -1172,15 +1249,20 @@ def _capture_source_phase(root: Path, receipt_root: Path, directory: str, state:
     if authenticated != {"revision": live["revision"], "content_sha256": live["content_sha256"]} or _retained_git_tree(receipt_root, live["revision"]) != live["tree"]:
         _fail("retained complete Git source authority differs from clean source state")
     source_root = receipt_root / directory
-    for relative in SELECTED_SOURCES:
+    for relative in selected_sources:
         expected = files.get(relative)
         if expected is None or expected[2] or expected[0] != stat.S_IMODE((root / relative).stat().st_mode) or expected[1] != (root / relative).read_bytes():
             _fail(f"selected source differs from authenticated Git tree: {relative}")
         _copy_regular(root / relative, source_root / relative)
-    return {**live, "paths": source_records(source_root, SELECTED_SOURCES)}
+    return {**live, "paths": source_records(source_root, selected_sources)}
 
 
-def _validate_source_seal(root: Path, value: object, source_directory: str) -> dict[str, object]:
+def _validate_source_seal(
+    root: Path,
+    value: object,
+    source_directory: str,
+    selected_sources: Sequence[str] = SELECTED_SOURCES,
+) -> dict[str, object]:
     record = _exact_mapping(value, {"revision", "tree", "content_sha256", "clean", "paths"}, "source seal")
     if record["clean"] is not True or not isinstance(record["paths"], list):
         _fail("source seal is not clean")
@@ -1197,7 +1279,7 @@ def _validate_source_seal(root: Path, value: object, source_directory: str) -> d
         _fail("retained complete Git source authority differs from source seal")
     _validate_current_tracked_source(revision, digest, files)
     retained_root = _relative_directory(root, source_directory, "retained source")
-    retained = source_records(retained_root, SELECTED_SOURCES)
+    retained = source_records(retained_root, selected_sources)
     if record["paths"] != retained:
         _fail("retained source bytes changed")
     for source in retained:
@@ -1393,13 +1475,23 @@ def validate_report(root: Path, report_path: Path) -> dict[str, object]:
     report = _strict_json(report_path, "locale alias receipt report")
     expected = {"schema", "status", "mode_policy", "image_inputs", "source_before", "source_after", "source_contract", "products", "collector_commands", "runner_commands", "snapshots", "artifacts", "runtime", "symbols", "nonclaims"}
     record = _exact_mapping(report, expected, "locale alias receipt report")
-    if (record["schema"] != SCHEMA or record["status"] != STATUS or record["mode_policy"] != MODE_POLICY
+    image_record = record["image_inputs"]
+    if not isinstance(image_record, Mapping):
+        _fail("retained locale image inputs are malformed")
+    # Older replay tests replace image validation with a sentinel record. Use
+    # the receipt schema to retain their historical authority boundary; the
+    # real image validator below still checks the exact image identity.
+    profile = _image_profile(
+        image_record.get("id", PINNED_IMAGE if record["schema"] == SCHEMA else CURRENT_PINNED_IMAGE)
+    )
+    selected_sources = CURRENT_SELECTED_SOURCES if profile["schema"] == CURRENT_SCHEMA else SELECTED_SOURCES
+    if (record["schema"] != profile["schema"] or record["status"] != STATUS or record["mode_policy"] != MODE_POLICY
             or record["nonclaims"] != list(NONCLAIMS)):
         _fail("locale alias receipt status changed")
     if record["source_before"] != record["source_after"]:
         _fail("source changed during locale alias collection")
-    source = _validate_source_seal(receipt_root, record["source_before"], "inputs/source")
-    after_source = _validate_source_seal(receipt_root, record["source_after"], "source-after/inputs/source")
+    source = _validate_source_seal(receipt_root, record["source_before"], "inputs/source", selected_sources)
+    after_source = _validate_source_seal(receipt_root, record["source_after"], "source-after/inputs/source", selected_sources)
     if source != after_source:
         _fail("retained source before/after bytes differ")
     source_contract = validate_source_contract(receipt_root / "inputs/source")
@@ -1574,7 +1666,7 @@ def collect(root: Path, output: Path) -> dict[str, object]:
     output_relative = _require_native_collection(root, output)
     output.mkdir(parents=True)
     try:
-        before = _capture_source_phase(root, output, "inputs/source")
+        before = _capture_source_phase(root, output, "inputs/source", selected_sources=CURRENT_SELECTED_SOURCES)
         source_state = _source_state(before)
         image_inputs = _copy_image_inputs(root, output)
         env = {
@@ -1593,7 +1685,7 @@ def collect(root: Path, output: Path) -> dict[str, object]:
         if _live_source_state(root) != source_state:
             _fail("source changed during dynamic product construction")
         collector_commands.append(_run(root, output, "locale-alias-runner", _expected_collector_commands(output_relative)[2][1], env=env))
-        after = _capture_source_phase(root, output, "source-after/inputs/source", source_state)
+        after = _capture_source_phase(root, output, "source-after/inputs/source", source_state, CURRENT_SELECTED_SOURCES)
         if before != after:
             _fail("source changed during locale alias collection")
         raw_commands = _raw_runner_records(output, output_relative)
@@ -1625,7 +1717,7 @@ def collect(root: Path, output: Path) -> dict[str, object]:
         dynamic_state = dynamic_product / "share/crabc/dynamic-product-state.json"
         product_records["dynamic"]["state"] = _identity(output, dynamic_state)
         report = {
-            "schema": SCHEMA,
+            "schema": CURRENT_SCHEMA,
             "status": STATUS,
             "mode_policy": MODE_POLICY,
             "image_inputs": image_inputs,
@@ -1655,13 +1747,16 @@ def collect(root: Path, output: Path) -> dict[str, object]:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subcommands = parser.add_subparsers(dest="action", required=True)
+    subcommands.add_parser("image-input-manifest")
     collect_parser = subcommands.add_parser("collect")
     collect_parser.add_argument("--output", type=Path, required=True)
     validate_parser = subcommands.add_parser("validate-report")
     validate_parser.add_argument("report", type=Path)
     arguments = parser.parse_args(argv)
     try:
-        if arguments.action == "collect":
+        if arguments.action == "image-input-manifest":
+            result = current_image_input_manifest()
+        elif arguments.action == "collect":
             result = collect(ROOT, arguments.output)
         else:
             result = validate_report(ROOT, arguments.report)
