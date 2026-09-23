@@ -4,10 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 import subprocess
+import sys
+import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "compat/x86_64"))
+import owned_bsd_random_receipt as receipt
 PROBE = ROOT / "compat/x86_64/owned_bsd_random_probe.c"
 RUNNER = ROOT / "compat/x86_64/run_owned_bsd_random.sh"
 
@@ -41,6 +46,41 @@ class OwnedBsdRandomContracts(unittest.TestCase):
     def test_runner_has_valid_shell_syntax(self) -> None:
         result = subprocess.run(["bash", "-n", str(RUNNER)], capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_oracle_relink_rejects_substitution_and_linker_drift(self) -> None:
+        scratch = ROOT / ".work/x86_64/bsd-random-receipt-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work = Path(temporary)
+            compiler = work / "pinned-musl-cc"
+            compiler.write_text(
+                '#!/bin/sh\nset -eu\n'
+                'while [ "$1" != -o ]; do\n'
+                '  case "$1" in *.o) input="$1" ;; esac\n'
+                '  shift\n'
+                'done\nshift\n{ printf "linked:"; cat "$input"; } > "$1"\n',
+                encoding="utf-8",
+            )
+            compiler.chmod(0o755)
+            gcc = work / "gcc"
+            gcc.write_bytes(b"pinned compiler")
+            specs = work / "musl-gcc.specs"
+            specs.write_bytes(b"pinned specs")
+            (work / "workload.o").write_bytes(b"object")
+            (work / "oracle").write_bytes(b"linked:object")
+            with (mock.patch.object(receipt, "ORACLE_CC", compiler),
+                  mock.patch.object(receipt, "ORACLE_GCC", gcc),
+                  mock.patch.object(receipt, "ORACLE_SPECS", specs)):
+                contract = receipt.oracle_link_contract(work)
+                receipt.authenticate_oracle_link(work, contract)
+                changed_link = {**contract, "argv": [*contract["argv"]]}
+                changed_link["argv"][1] = "-shared"
+                with self.assertRaisesRegex(receipt.ReceiptError, "link contract"):
+                    receipt.authenticate_oracle_link(work, changed_link)
+                (work / "oracle").write_bytes(b"substituted oracle")
+                forged_hash = receipt.oracle_link_contract(work)
+                with self.assertRaisesRegex(receipt.ReceiptError, "rebuilt link"):
+                    receipt.authenticate_oracle_link(work, forged_hash)
 
 
 if __name__ == "__main__":

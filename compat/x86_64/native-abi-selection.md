@@ -683,6 +683,9 @@ semantic receipt must still prove the selected static and shared products.
 `owned_bsd_random_receipt.py` replays that report in the native product mount;
 `--bsd-random-receipt-report REPORT` attaches it to the selection audit only
 when its clean source and both installed products match the selected cohort.
+The reader seals the pinned musl wrapper, GCC executable and specs, then
+relinks the retained workload object with the runner's exact static flags and
+compares the resulting oracle executable before accepting any output trace.
 `__crabc_runtime_v1` and `rust_eh_personality` remain outside these
 source-owner groups. This section does not add allocator metadata or Rust
 unwinder identities.

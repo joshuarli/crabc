@@ -15,12 +15,17 @@ from pathlib import Path
 import stat
 import subprocess
 import sys
+import tempfile
 
 import owned_posix_product_evidence as products
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SCHEMA = "crabc.x86_64-owned-bsd-random-receipt/v1"
+SCHEMA = "crabc.x86_64-owned-bsd-random-receipt/v2"
+ORACLE_CC = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
+ORACLE_GCC = Path("/usr/bin/gcc")
+ORACLE_SPECS = Path("/opt/musl-1.2.6/lib/musl-gcc.specs")
+ORACLE_LINK_FLAGS = ("-static", "-fno-pie", "-no-pie", "-pthread")
 SCENARIOS = ("core", "state", "fork-active", "concurrent-random", "concurrent-state")
 LINKS = {
     "static-et-exec": ("static", "static"),
@@ -75,6 +80,41 @@ def file_record(work: Path, name: str) -> dict[str, object]:
     path = physical(work / name)
     value = path.read_bytes()
     return {"sha256": digest(value), "size": len(value), "mode": stat.S_IMODE(path.stat().st_mode)}
+
+
+def tool_record(path: Path) -> dict[str, object]:
+    path = physical(path)
+    value = path.read_bytes()
+    return {"path": str(path), "sha256": digest(value), "size": len(value),
+            "mode": stat.S_IMODE(path.stat().st_mode)}
+
+
+def oracle_link_contract(work: Path) -> dict[str, object]:
+    """Name the pinned compiler chain and the exact original link inputs."""
+    return {
+        "compiler": tool_record(ORACLE_CC),
+        "gcc": tool_record(ORACLE_GCC),
+        "specs": tool_record(ORACLE_SPECS),
+        "argv": [str(ORACLE_CC), *ORACLE_LINK_FLAGS, str(work / "workload.o"),
+                 "-o", str(work / "oracle")],
+        "workload": file_record(work, "workload.o"),
+        "oracle": file_record(work, "oracle"),
+    }
+
+
+def authenticate_oracle_link(work: Path, retained: object) -> None:
+    """Recreate the oracle from the same object before trusting its transcript."""
+    require(retained == oracle_link_contract(work), "pinned-musl oracle link contract differs")
+    with tempfile.TemporaryDirectory(prefix="bsd-random-oracle-relink-", dir=work.parent) as scratch:
+        rebuilt = Path(scratch) / "oracle"
+        argv = [str(ORACLE_CC), *ORACLE_LINK_FLAGS, str(work / "workload.o"),
+                "-o", str(rebuilt)]
+        completed = subprocess.run(argv, stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        require(completed.returncode == 0 and not completed.stdout and not completed.stderr,
+                "pinned-musl oracle relink failed")
+        require(physical(rebuilt).read_bytes() == (work / "oracle").read_bytes(),
+                "pinned-musl oracle differs from exact rebuilt link")
 
 
 def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -241,7 +281,7 @@ def validate_report(report_path: Path, *, static_product: Path | None = None,
     work = physical(report_path.parent, directory=True)
     require(work.is_relative_to(ROOT / ".work"), "BSD random report escapes checkout .work")
     report = read_json(report_path)
-    require(type(report) is dict and set(report) == {"schema", "scope", "files", "products", "scenario_roots"}
+    require(type(report) is dict and set(report) == {"schema", "scope", "files", "products", "oracle_link", "scenario_roots"}
             and report["schema"] == SCHEMA and report["scope"] == "installed-bsd-random-component",
             "BSD random report contract differs")
     names = set(FIXED_FILES)
@@ -255,6 +295,7 @@ def validate_report(report_path: Path, *, static_product: Path | None = None,
     for name in names:
         require(files[name] == file_record(work, name), f"retained file differs: {name}")
     product_paths = source_and_products(work)
+    authenticate_oracle_link(work, report["oracle_link"])
     require(report["products"] == read_json(work / "product-inputs.json"), "report product binding differs")
     for kind, supplied in (("static", static_product), ("dynamic", dynamic_product)):
         if supplied is not None:
@@ -320,6 +361,7 @@ def collect_report(work: Path) -> Path:
         "scope": "installed-bsd-random-component",
         "files": {name: file_record(work, name) for name in sorted(names)},
         "products": read_json(work / "product-inputs.json"),
+        "oracle_link": oracle_link_contract(work),
         "scenario_roots": {label: tree_record(scenario_root(work, label)) for label in expected_labels()},
     }
     report_path = work / "report.json"

@@ -2676,7 +2676,7 @@ def bsd_random_receipt_adapter(report_path: Path | None, *, paths: Mapping[str, 
     require(completed.returncode == 0,
             f'BSD random native receipt rejected: {completed.stderr.decode(errors="replace")}')
     require(same(before, file_identity(path)), 'BSD random receipt changed during replay')
-    report = exact(read_json(path), {'schema', 'scope', 'files', 'products', 'scenario_roots'},
+    report = exact(read_json(path), {'schema', 'scope', 'files', 'products', 'oracle_link', 'scenario_roots'},
                    'BSD random receipt')
     snapshot = exact(read_json(path.parent / 'source-before.json'),
                      {'schema', 'revision', 'status', 'tree_sha256', 'selected_files'},
@@ -2701,6 +2701,7 @@ def bsd_random_receipt_adapter(report_path: Path | None, *, paths: Mapping[str, 
         'status': 'bsd-random-component-attached', 'report': before,
         'source': {'revision': snapshot['revision'], 'content_sha256': snapshot['tree_sha256']},
         'products': copy.deepcopy(report['products']),
+        'oracle_link': copy.deepcopy(report['oracle_link']),
         'files': copy.deepcopy(report['files']),
         'scenario_roots': copy.deepcopy(report['scenario_roots']),
         'limits': [
