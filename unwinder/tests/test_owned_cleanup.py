@@ -237,6 +237,13 @@ class OwnedCleanupContract(unittest.TestCase):
         provider_vendor.mkdir()
         for name, (version, checksum) in build.PINS.items():
             self.write_vendor_package(provider_vendor, name, version, checksum)
+        provider_unwinding = provider_vendor / f"unwinding-{unwinding_version}"
+        provider_gitignore = provider_unwinding / ".gitignore"
+        provider_gitignore.write_bytes(owned_cleanup.CARGO_REGISTRY_UNWINDING_MARKERS[".gitignore"])
+        provider_checksum_path = provider_unwinding / ".cargo-checksum.json"
+        provider_checksum = json.loads(provider_checksum_path.read_text())
+        provider_checksum["files"][".gitignore"] = hashlib.sha256(provider_gitignore.read_bytes()).hexdigest()
+        provider_checksum_path.write_text(json.dumps(provider_checksum))
         application = Path(self.temporary.name) / "application"
         cargo_home = application / "cargo-home"
         application.mkdir()
@@ -250,6 +257,8 @@ class OwnedCleanupContract(unittest.TestCase):
         names = {package["name"] + "-" + package["version"]
                  for package in sources["composite_vendor"]["packages"]}
         self.assertEqual(names, {"gimli-0.34.0", "libc-0.2.189", "libc-0.2.186", "unwinding-0.2.10"})
+        composite_unwinding = Path(sources["composite_vendor"]["root"]) / f"unwinding-{unwinding_version}"
+        self.assertFalse((composite_unwinding / ".gitignore").exists())
         config = Path(sources["cargo_config"]["path"]).read_text()
         self.assertIn("crabc-owned-composite-vendor", config)
         self.assertIn("offline = true", config)

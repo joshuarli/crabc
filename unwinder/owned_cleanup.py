@@ -427,9 +427,25 @@ def prepare_offline_cargo_sources(
         existing = combined_expected.get(directory_name)
         if existing is not None:
             require(existing == expected, "Rust and provider vendor source pins conflict")
+            standard_package = standard_by_name[directory_name]
+            provider_package = provider_by_name[directory_name]
+            standard_files = {record["path"]: record["sha256"] for record in standard_package["files"]}
+            provider_files = {record["path"]: record["sha256"] for record in provider_package["files"]}
+            registry_marker_sha256 = hashlib.sha256(CARGO_REGISTRY_UNWINDING_MARKERS[".gitignore"]).hexdigest()
+            same_files_without_gitignore = (
+                {path: value for path, value in standard_files.items() if path != ".gitignore"}
+                == {path: value for path, value in provider_files.items() if path != ".gitignore"}
+            )
+            gitignore_is_transport_only = (
+                standard_files.get(".gitignore") != provider_files.get(".gitignore")
+                and all(value in (None, registry_marker_sha256) for value in (
+                    standard_files.get(".gitignore"), provider_files.get(".gitignore"),
+                ))
+                and same_files_without_gitignore
+            )
             require(
-                standard_by_name[directory_name]["package_checksum"] == provider_by_name[directory_name]["package_checksum"]
-                and standard_by_name[directory_name]["files"] == provider_by_name[directory_name]["files"],
+                standard_package["package_checksum"] == provider_package["package_checksum"]
+                and (standard_files == provider_files or gitignore_is_transport_only),
                 "Rust and provider vendor source contents differ",
             )
         else:
