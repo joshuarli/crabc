@@ -171,7 +171,7 @@ import importlib.util
 from pathlib import Path
 import sys
 
-product, attribute = map(Path, sys.argv[1:])
+product, attribute = Path(sys.argv[1]), sys.argv[2]
 helper = product / 'share/crabc/crabc_cc_static.py'
 spec = importlib.util.spec_from_file_location('owned_text_locale_numeric_component_resolve', helper)
 if spec is None or spec.loader is None:
@@ -180,7 +180,8 @@ module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
 try:
     spec.loader.exec_module(module)
-    print(Path(getattr(module, str(attribute))()).resolve(strict=True))
+    selector = getattr(module, str(attribute))
+    print(Path(selector(product) if attribute == 'linker' else selector()).resolve(strict=True))
 finally:
     sys.modules.pop(spec.name, None)
 PY
