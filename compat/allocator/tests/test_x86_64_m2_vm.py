@@ -611,6 +611,24 @@ class NativeVmAssemblyTests(unittest.TestCase):
         self.assertEqual(records[2]["id"], "aligned-overmap-cleanup-c-rust-boundary-matrix")
         self.assertEqual(records[2]["comparison_status"], "expected-divergence-verified")
 
+    def test_rust_binary_binding_accepts_both_cargo_profile_layouts_only(self):
+        """The pinned nightly's per-unit test executable remains gate-owned."""
+
+        debug = RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CARGO_TARGET / RUNNER.X86_64_RUST_TARGET / "debug"
+        bound = RUNNER._m2_x86_64_vm_rust_binary_path_is_bound
+        self.assertTrue(bound(str(debug / "deps/crabc_mimalloc-0123abcd")))
+        self.assertTrue(bound(str(debug / "build/crabc-mimalloc/0123abcd/out/crabc_mimalloc-0123abcd")))
+        for rejected in (
+            debug / "build/crabc-mimalloc/0123abcd/out/crabc_mimalloc-4567ef01",
+            debug / "build/crabc-mimalloc/0123abcd/crabc_mimalloc-0123abcd",
+            debug / "build/crabc-core/0123abcd/out/crabc_mimalloc-0123abcd",
+            debug / "deps/crabc_mimalloc-0123abcd.d",
+            debug / "crabc_mimalloc-0123abcd",
+            RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CARGO_TARGET / "debug/deps/crabc_mimalloc-0123abcd",
+        ):
+            with self.subTest(rejected=rejected):
+                self.assertFalse(bound(str(rejected)))
+
     def test_process_arena_collect_receipt_binds_its_c_rust_pair(self):
         summary = self.summary()
         records = RUNNER._m2_x86_64_process_arena_collect_check_records(

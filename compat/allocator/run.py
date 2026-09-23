@@ -13344,21 +13344,37 @@ def _m2_x86_64_vm_rust_build_command() -> list[str]:
 
 
 def _m2_x86_64_vm_rust_binary_path_is_bound(path: object) -> bool:
-    """Bind the retained executable to the M2 native Cargo target directory."""
+    """Bind the retained executable to the M2 native Cargo target directory.
+
+    Cargo reports the library test executable in one of two fixed profile
+    layouts: the historical flat `debug/deps/crabc_mimalloc-HASH`, or the
+    per-unit build-directory layout selected by the pinned nightly,
+    `debug/build/crabc-mimalloc/HASH/out/crabc_mimalloc-HASH`. Both remain
+    beneath this gate's private Cargo target; the per-unit form must repeat
+    the same hash in its directory and file name.
+    """
 
     if not isinstance(path, str) or not path:
         return False
     actual_parts = _m2_x86_64_vm_path_tail_parts(path)
-    expected_parts = _m2_x86_64_vm_path_tail_parts(relative(
+    profile_parts = _m2_x86_64_vm_path_tail_parts(relative(
         M2_X86_64_MEMORY_SUBSTRATE_CARGO_TARGET
         / X86_64_RUST_TARGET
-        / "debug/deps"
+        / "debug"
     ))
-    if actual_parts is None or expected_parts is None or len(actual_parts) <= len(expected_parts):
+    if actual_parts is None or profile_parts is None:
         return False
-    if actual_parts[-len(expected_parts) - 1 : -1] != expected_parts:
+    binary = re.fullmatch(r"crabc_mimalloc-([0-9a-f]+)", actual_parts[-1])
+    if binary is None:
         return False
-    return re.fullmatch(r"crabc_mimalloc-[0-9a-f]+", actual_parts[-1]) is not None
+    for layout in (["deps"], ["build", "crabc-mimalloc", binary.group(1), "out"]):
+        expected_parts = [*profile_parts, *layout]
+        if (
+            len(actual_parts) > len(expected_parts)
+            and actual_parts[-len(expected_parts) - 1 : -1] == expected_parts
+        ):
+            return True
+    return False
 
 
 def _m2_x86_64_vm_test_program_is_bound(test_program: object) -> bool:
