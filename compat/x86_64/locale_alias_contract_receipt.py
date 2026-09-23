@@ -1297,17 +1297,68 @@ def _validate_source_seal(
     return {"revision": revision, "tree": tree, "content_sha256": digest, "clean": True, "paths": retained}
 
 
+def _local_git_head(root: Path) -> str:
+    """Read the checkout's HEAD without executing Git or importing another reader."""
+
+    marker = root / ".git"
+    try:
+        if marker.is_dir() and not marker.is_symlink():
+            gitdir = marker.resolve(strict=True)
+        else:
+            if not marker.is_file() or marker.is_symlink():
+                _fail("current Git marker differs")
+            value = marker.read_text(encoding="ascii").strip()
+            if not value.startswith("gitdir: "):
+                _fail("current Git marker differs")
+            gitdir = Path(value[len("gitdir: "):])
+            if not gitdir.is_absolute():
+                gitdir = marker.parent / gitdir
+            gitdir = gitdir.resolve(strict=True)
+        head_path = gitdir / "HEAD"
+        if not head_path.is_file() or head_path.is_symlink():
+            _fail("current Git HEAD differs")
+        head = head_path.read_text(encoding="ascii").strip()
+        if re.fullmatch(r"[0-9a-f]{40}", head):
+            return head
+        if not head.startswith("ref: "):
+            _fail("current Git HEAD differs")
+        reference = head[len("ref: "):]
+        if not reference.startswith("refs/") or ".." in Path(reference).parts:
+            _fail("current Git HEAD reference differs")
+        common = gitdir
+        common_file = gitdir / "commondir"
+        if common_file.exists():
+            if not common_file.is_file() or common_file.is_symlink():
+                _fail("current Git common directory differs")
+            suffix = common_file.read_text(encoding="ascii").strip()
+            if not suffix or Path(suffix).is_absolute():
+                _fail("current Git common directory differs")
+            common = (gitdir / suffix).resolve(strict=True)
+            if not common.is_dir():
+                _fail("current Git common directory differs")
+        for base in (gitdir, common):
+            loose = base / reference
+            if loose.is_file() and not loose.is_symlink():
+                value = loose.read_text(encoding="ascii").strip()
+                if re.fullmatch(r"[0-9a-f]{40}", value):
+                    return value
+        packed = common / "packed-refs"
+        if packed.is_file() and not packed.is_symlink():
+            for row in packed.read_text(encoding="ascii").splitlines():
+                if row and not row.startswith(("#", "^")):
+                    value, name = row.split(" ", 1)
+                    if name == reference and re.fullmatch(r"[0-9a-f]{40}", value):
+                        return value
+    except (OSError, UnicodeDecodeError, ValueError) as error:
+        raise LocaleAliasReceiptError("current Git HEAD is unreadable") from error
+    _fail("current Git HEAD reference has no object identity")
+
+
 def _validate_current_tracked_source(revision: str, digest: str, files: Mapping[str, tuple[int, bytes, bool]]) -> None:
     """Admit the trusted checkout's exact recorded HEAD and every tracked byte/mode."""
 
-    sys.path.insert(0, str(ROOT / "compat/x86_64"))
-    import owned_utmpx_receipt as utmpx
-
-    try:
-        if utmpx.local_git_head(ROOT) != revision:
-            _fail("current Git HEAD differs from retained source authority")
-    except utmpx.ReceiptError as error:
-        raise LocaleAliasReceiptError("current Git HEAD is unreadable") from error
+    if _local_git_head(ROOT) != revision:
+        _fail("current Git HEAD differs from retained source authority")
     current_digest = hashlib.sha256()
     for name, (mode, expected, symlink) in sorted(files.items()):
         path = ROOT / name
