@@ -109,6 +109,7 @@ use crate::main_heap_thread::{
     MainHeapThreadOwnerLocalPageEngineLease, MainHeapThreadPageSession,
     MainHeapThreadPageSessionError,
 };
+use crate::main_theap::MainStaticHeapLease;
 use crate::process_arena::{ProcessPageArenaLease, ProcessPageArenaLeaseError};
 use crate::process_page_map::{
     LiveAllocationPointer, ProcessPageMapError, ProcessPageMapMutationLease, ProcessPageMapPostExitAccess,
@@ -213,6 +214,7 @@ use crate::single_thread::{
     ThreadExitSingletonHandoff, ThreadExitSingletonRemoteFreeError,
     ThreadExitSingletonRemoteFreeFailure,
 };
+use crate::types::{Heap, MemoryId};
 #[cfg(test)]
 use crate::types::Page;
 
@@ -228,6 +230,10 @@ extern crate std;
 #[must_use = "an owner-local page engine must finish or be retained with its attachment"]
 pub(crate) struct MainHeapThreadOwnerLocalPageEngine<'main> {
     engine: Option<OwnerLocalMainHeapPageAllocator<'static, 'static, RuntimeFirstRegularPageBacking>>,
+    /// Exact process-main Heap whose ordinary user allocation route backs
+    /// child main-Heap images. The lease keeps that parent image alive without
+    /// borrowing its mutable fields across child operations.
+    parent_heap: MainStaticHeapLease<'main>,
     // The matching process pair and static-main Heap lease are selector facts
     // of this persistent owner, not general `PageAllocatorEngine` state.  A
     // short bound session borrows this value only for the selected
@@ -235,6 +241,113 @@ pub(crate) struct MainHeapThreadOwnerLocalPageEngine<'main> {
     mapped_abandoned_claim: StaticMainMappedRegularClaimSelector<'main>,
     lifecycle: MainHeapThreadOwnerLocalPageEngineLease,
     _not_send_or_sync: PhantomData<*mut ()>,
+}
+
+/// One exact zeroed Heap image allocated from the source parent user Heap.
+///
+/// The allocation is retained outside its bytes and is not a PageMap
+/// observation: its private pointer/provenance pair is a linear capability
+/// minted by `MainHeapThreadOwnerLocalPageEngine::allocate_child_heap_storage`.
+/// The lifetime ties it to the process-main Heap owner while allowing ordinary
+/// parent allocations between short projections. Dropping the token performs
+/// no free; a caller must retain it through child teardown and consume it via
+/// the parent owner's source free route.
+#[must_use = "the parent Heap allocation must be retained until child Heap teardown and explicit free"]
+pub(crate) struct ParentHeapAllocation<'main> {
+    pointer: NonNull<Heap>,
+    memory: MemoryId,
+    parent_subprocess: NonNull<crate::subproc::SubprocessIdentity>,
+    parent_thread: crate::types::LiveThreadId,
+    parent_thread_sequence: usize,
+    parent_heap: MainStaticHeapLease<'main>,
+    initialized: bool,
+    _not_send_or_sync: PhantomData<*mut ()>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ParentHeapAllocationReleaseError {
+    WrongParent,
+    UninitializedImage,
+    Access(MainHeapThreadOwnerLocalPageEngineAccessError),
+}
+
+/// A failure before the parent allocator was entered returns a still-live
+/// allocation capability. The terminal variant below is deliberately
+/// non-projectable because an allocator free error may follow block mutation.
+#[must_use = "a failed parent Heap release must retain its exact state"]
+pub(crate) enum ParentHeapAllocationReleaseFailure<'main> {
+    Retained {
+        allocation: ParentHeapAllocation<'main>,
+        error: ParentHeapAllocationReleaseError,
+    },
+    Terminal(ParentHeapAllocationTerminal<'main>),
+}
+
+/// An ordinary source free was entered and did not report success. The Heap
+/// image may already have been consumed by `push_local` or retirement, so
+/// this owner intentionally grants no further image projection or retry.
+#[must_use = "a terminal parent Heap allocation must remain retained"]
+pub(crate) struct ParentHeapAllocationTerminal<'main> {
+    _allocation: ParentHeapAllocation<'main>,
+    pub(crate) error: ParentHeapAllocationTerminalError,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ParentHeapAllocationTerminalError {
+    Access(MainHeapThreadOwnerLocalPageEngineAccessError),
+    Free(FreeError),
+}
+
+impl ParentHeapAllocation<'_> {
+    #[inline]
+    pub(crate) const fn memory_id(&self) -> MemoryId {
+        self.memory
+    }
+
+    /// Materializes the zeroed C `mi_heap_t` allocation as this crate's
+    /// source-ordered private Heap image. The exact allocation remains
+    /// external and address-stable for the token's lifetime.
+    pub(crate) fn initialize_empty_image(&mut self) -> bool {
+        if self.initialized
+            || self.pointer.as_ptr().addr() % core::mem::align_of::<Heap>() != 0
+            || self.memory.kind() != crate::types::MemoryKind::Malloc
+        {
+            return false;
+        }
+        let Some(memory) = self.memory.malloc_memory() else {
+            return false;
+        };
+        if memory.base != self.pointer.as_ptr().cast()
+            || memory.size != core::mem::size_of::<Heap>()
+            || !self.memory.initially_zero
+        {
+            return false;
+        }
+        // SAFETY: the token was minted only from a successful exact-size
+        // zeroed allocation, is uniquely borrowed, and preserves its stable
+        // address. The complete Rust image is written before projection.
+        unsafe { self.pointer.as_ptr().write(Heap::bootstrap_empty()) };
+        self.initialized = true;
+        true
+    }
+
+    /// Projects the address-stable Heap image for one closure. The HRTB keeps
+    /// the unique pinned projection from escaping the token borrow.
+    pub(crate) fn with_heap<R>(
+        &mut self,
+        operation: impl for<'heap> FnOnce(core::pin::Pin<&'heap mut Heap>) -> R,
+    ) -> Option<R> {
+        if !self.initialized
+            || self.memory.kind() != crate::types::MemoryKind::Malloc
+            || self.pointer.as_ptr().addr() % core::mem::align_of::<Heap>() != 0
+        {
+            return None;
+        }
+        // SAFETY: the linear token retains this exact allocation, no mutable
+        // projection escapes the HRTB closure, and its address is stable.
+        let image = unsafe { core::pin::Pin::new_unchecked(&mut *self.pointer.as_ptr()) };
+        Some(operation(image))
+    }
 }
 
 /// Why an attached later-main owner could not create its persistent local
@@ -258,6 +371,7 @@ pub(crate) enum MainHeapThreadOwnerLocalPageEngineAccessError {
     Session(MainHeapThreadPageSessionError),
     Bind(OwnerLocalMainHeapPageSessionBindError),
     MissingEngine,
+    ParentHeapMismatch,
     MappedAbandonedClaimTerminal,
 }
 
@@ -2231,6 +2345,7 @@ impl<'main> MainHeapThreadOwnerLocalPageEngine<'main> {
         let session = attachment
             .page_session()
             .map_err(MainHeapThreadOwnerLocalPageEngineBeginError::Session)?;
+        let parent_heap = session.main_heap_lease();
         let lifecycle = MainHeapThreadOwnerLocalPageEngineLease::claim(&session)
             .map_err(MainHeapThreadOwnerLocalPageEngineBeginError::Attachment)?;
         let mapped_abandoned_claim =
@@ -2248,6 +2363,7 @@ impl<'main> MainHeapThreadOwnerLocalPageEngine<'main> {
         };
         Ok(Self {
             engine: Some(engine),
+            parent_heap,
             mapped_abandoned_claim,
             lifecycle,
             _not_send_or_sync: PhantomData,
@@ -2281,6 +2397,7 @@ impl<'main> MainHeapThreadOwnerLocalPageEngine<'main> {
             .map_err(MainHeapThreadOwnerLocalPageEngineBeginError::PageMap)?;
         let session = attachment.page_session()
             .map_err(MainHeapThreadOwnerLocalPageEngineBeginError::Session)?;
+        let parent_heap = session.main_heap_lease();
         let numa_node = session.theap().tld_numa_node()
             .ok_or(MainHeapThreadOwnerLocalPageEngineBeginError::MissingNumaNode)?;
         let lifecycle = MainHeapThreadOwnerLocalPageEngineLease::claim(&session)
@@ -2295,8 +2412,152 @@ impl<'main> MainHeapThreadOwnerLocalPageEngine<'main> {
                 ArenaId::none(), page_map,
             )
         };
-        Ok(Self { engine: Some(engine), mapped_abandoned_claim, lifecycle,
+        Ok(Self { engine: Some(engine), parent_heap, mapped_abandoned_claim, lifecycle,
             _not_send_or_sync: PhantomData })
+    }
+
+    /// Allocates one zeroed, exact-size child main-Heap image from this
+    /// owner's current parent user Heap. The returned linear capability owns
+    /// the allocation independently of the short allocator projection, so
+    /// the parent can continue ordinary allocations while the child lives.
+    pub(crate) fn allocate_child_heap_storage(
+        &mut self,
+        attachment: &mut MainHeapThreadAttachment<'main>,
+    ) -> Result<Option<ParentHeapAllocation<'main>>, MainHeapThreadOwnerLocalPageEngineAccessError> {
+        let subprocess = attachment.subprocess()
+            .map_err(|error| MainHeapThreadOwnerLocalPageEngineAccessError::Session(
+                MainHeapThreadPageSessionError::Attachment(error),
+            ))?;
+        let (parent_thread, parent_thread_sequence) = attachment
+            .allocation_owner_identity()
+            .map_err(|error| MainHeapThreadOwnerLocalPageEngineAccessError::Session(
+                MainHeapThreadPageSessionError::Attachment(error),
+            ))?;
+        if !core::ptr::eq(subprocess, self.parent_heap.subprocess()) {
+            return Err(MainHeapThreadOwnerLocalPageEngineAccessError::ParentHeapMismatch);
+        }
+        let pointer = self.with_local_allocator(attachment, |allocator| {
+            allocator.allocate(core::mem::size_of::<Heap>(), true)
+        })?;
+        Ok(pointer.map(|pointer| ParentHeapAllocation {
+            pointer: pointer.cast(),
+            memory: MemoryId::malloc(
+                pointer.as_ptr(),
+                core::mem::size_of::<Heap>(),
+                true,
+            ),
+            parent_subprocess: NonNull::new(subprocess.as_ptr())
+                .expect("the selected parent subprocess identity is non-null"),
+            parent_thread,
+            parent_thread_sequence,
+            parent_heap: self.parent_heap,
+            initialized: false,
+            _not_send_or_sync: PhantomData,
+        }))
+    }
+
+    /// Consumes one child Heap allocation through the parent owner's ordinary
+    /// pointer-centered free route after the source child teardown.
+    ///
+    /// # Safety
+    /// The child subprocess has removed its registry edge; the child Heap has
+    /// completed source page/Theap teardown and Heap-list unlink; no child
+    /// user or intrusive edge can observe the image; and this exact
+    /// allocation remains live and has not been freed or transferred. This
+    /// parent attachment/owner is the source allocator which can free it. On
+    /// A mismatch detected before entering the allocator returns the live
+    /// token. Once `free` is invoked, every failure returns an opaque terminal
+    /// owner: this free path may have linked the block into `local_free` or
+    /// retired its page before a later `Lifecycle` error.
+    pub(crate) unsafe fn release_child_heap_storage_after_teardown(
+        &mut self,
+        attachment: &mut MainHeapThreadAttachment<'main>,
+        allocation: ParentHeapAllocation<'main>,
+    ) -> Result<(), ParentHeapAllocationReleaseFailure<'main>> {
+        let subprocess = match attachment.subprocess() {
+            Ok(subprocess) => subprocess,
+            Err(error) => return Err(ParentHeapAllocationReleaseFailure::Retained {
+                allocation,
+                error: ParentHeapAllocationReleaseError::Access(
+                    MainHeapThreadOwnerLocalPageEngineAccessError::Session(
+                        MainHeapThreadPageSessionError::Attachment(error),
+                    ),
+                ),
+            }),
+        };
+        let source_owner = match attachment.allocation_owner_identity() {
+            Ok(owner) => owner,
+            Err(error) => return Err(ParentHeapAllocationReleaseFailure::Retained {
+                allocation,
+                error: ParentHeapAllocationReleaseError::Access(
+                    MainHeapThreadOwnerLocalPageEngineAccessError::Session(
+                        MainHeapThreadPageSessionError::Attachment(error),
+                    ),
+                ),
+            }),
+        };
+        if !core::ptr::eq(subprocess.as_ptr(), allocation.parent_subprocess.as_ptr())
+            || !core::ptr::eq(self.parent_heap.subprocess(), allocation.parent_heap.subprocess())
+            || source_owner != (allocation.parent_thread, allocation.parent_thread_sequence)
+        {
+            return Err(ParentHeapAllocationReleaseFailure::Retained {
+                allocation,
+                error: ParentHeapAllocationReleaseError::WrongParent,
+            });
+        }
+        let memory = allocation.memory.malloc_memory();
+        if !allocation.initialized
+            || allocation.memory.kind() != crate::types::MemoryKind::Malloc
+            || !memory.is_some_and(|memory| {
+                memory.base == allocation.pointer.as_ptr().cast()
+                    && memory.size == core::mem::size_of::<Heap>()
+                    && allocation.memory.initially_zero
+            })
+        {
+            return Err(ParentHeapAllocationReleaseFailure::Retained {
+                allocation,
+                error: ParentHeapAllocationReleaseError::UninitializedImage,
+            });
+        }
+        let pointer = allocation.pointer.cast();
+        let mut free_invoked = false;
+        let result = self.with_local_allocator(attachment, |allocator| {
+            // SAFETY: this method's caller proves the exact live child Heap
+            // allocation and completed source teardown. The unique token
+            // excludes a duplicate free or child access.
+            free_invoked = true;
+            unsafe { allocator.free(pointer) }
+        });
+        match result {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => {
+                // `free` can mutate the owner-local queue before returning a
+                // lifecycle error. Keep the parent owner terminal too: the
+                // opaque allocation alone would not protect its queue state.
+                self.lifecycle.retain_terminal_after_thread_exit_failure();
+                Err(ParentHeapAllocationReleaseFailure::Terminal(
+                    ParentHeapAllocationTerminal {
+                        _allocation: allocation,
+                        error: ParentHeapAllocationTerminalError::Free(error),
+                    },
+                ))
+            }
+            Err(error) if free_invoked => {
+                // The callback ran, so a later selector/access error may
+                // follow a completed or partial free transition.
+                self.lifecycle.retain_terminal_after_thread_exit_failure();
+                Err(ParentHeapAllocationReleaseFailure::Terminal(
+                    ParentHeapAllocationTerminal {
+                        _allocation: allocation,
+                        error: ParentHeapAllocationTerminalError::Access(error),
+                    },
+                ))
+            }
+            Err(error) => Err(ParentHeapAllocationReleaseFailure::Retained {
+                allocation,
+                error: ParentHeapAllocationReleaseError::Access(error),
+            }),
+        }
     }
 
     /// Runs one synchronous local allocation operation without parking,
@@ -8935,6 +9196,83 @@ mod tests {
             attachment
                 .finish_after_user_destructors()
                 .expect("panic unwinding does not strand the attachment");
+        });
+    }
+
+    #[test]
+    fn parent_user_heap_child_heap_storage_is_linear_and_source_freed() {
+        with_owner_local_fixture(true, |attachment, mut owner, _pair| {
+            let mut allocation = owner
+                .allocate_child_heap_storage(attachment)
+                .expect("the parent Heap owner admits one allocation")
+                .expect("the parent user Heap allocates the exact child Heap image");
+            let memory = allocation
+                .memory_id()
+                .malloc_memory()
+                .expect("the retained allocation carries exact Malloc provenance");
+            assert_eq!(memory.base, allocation.pointer.as_ptr().cast());
+            assert_eq!(memory.size, core::mem::size_of::<Heap>());
+            assert!(allocation.memory_id().initially_zero);
+            assert!(allocation.initialize_empty_image());
+            let expected_image = allocation.pointer.as_ptr();
+            assert_eq!(
+                allocation.with_heap(|image| image.as_ref().get_ref() as *const Heap),
+                Some(expected_image.cast_const()),
+                "the token lends only its address-stable pinned child Heap image"
+            );
+
+            // The linear image owner does not keep a mutable allocator borrow:
+            // normal parent Heap allocation/free continues between projections.
+            let parent_block = owner
+                .with_local_allocator(attachment, |allocator| allocator.allocate(73, false))
+                .expect("the parent owner remains available while child bytes live")
+                .expect("the parent Heap allocates an unrelated block");
+            owner
+                .with_local_allocator(attachment, |allocator| {
+                    // SAFETY: this block is the exact current allocation just
+                    // returned by the same parent Heap owner.
+                    unsafe { allocator.free(parent_block) }
+                })
+                .expect("the parent allocator remains available")
+                .expect("the unrelated parent allocation frees normally");
+
+            // A later attachment can reuse this process identity. This
+            // synthetic stale-sequence mutation proves release rejects that
+            // key; this fixture does not construct a second live attachment
+            // because the outstanding block itself prevents the first owner
+            // from completing source teardown.
+            let allocation_owner_sequence = allocation.parent_thread_sequence;
+            allocation.parent_thread_sequence = allocation_owner_sequence.wrapping_add(1);
+            let stale = unsafe {
+                owner.release_child_heap_storage_after_teardown(attachment, allocation)
+            }
+            .expect_err("a synthetic same-subprocess sequence mismatch is rejected");
+            let ParentHeapAllocationReleaseFailure::Retained { allocation, error } = stale else {
+                panic!("a pre-free sequence mismatch must retain the live capability");
+            };
+            assert_eq!(error, ParentHeapAllocationReleaseError::WrongParent);
+            let mut allocation = allocation;
+            allocation.parent_thread_sequence = allocation_owner_sequence;
+
+            // No child registry or Heap-list publication occurred in this
+            // preparation-only witness, so the exact parent capability can
+            // take the source free path directly.
+            // SAFETY: the Heap image remains empty and unpublished, has no
+            // source users/list edges, and this token is its sole allocation
+            // owner. This is the source-compatible prepublication rollback.
+            unsafe {
+                owner
+                    .release_child_heap_storage_after_teardown(attachment, allocation)
+                    .unwrap_or_else(|_| {
+                        panic!("the exact parent-owned Heap image frees through its source owner")
+                    });
+            }
+            owner
+                .finish(attachment)
+                .expect("the child storage free leaves the parent engine quiescent");
+            attachment
+                .finish_after_user_destructors()
+                .expect("the parent attachment finishes after the child storage release");
         });
     }
 

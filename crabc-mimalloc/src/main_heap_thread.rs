@@ -539,6 +539,24 @@ impl<'main> MainHeapThreadAttachment<'main> {
         Ok(self.main_heap.subprocess())
     }
 
+    /// Returns the current parent allocation-owner identity retained by this
+    /// exact later-thread TLD. The sequence distinguishes a later attachment
+    /// on a reused thread from the one that issued an outstanding child Heap
+    /// allocation token.
+    #[inline]
+    pub(crate) fn allocation_owner_identity(
+        &self,
+    ) -> Result<(crate::types::LiveThreadId, usize), MainHeapThreadAttachmentError> {
+        self.ensure_attached_current()?;
+        let sequence = self
+            .tld
+            .as_ref()
+            .ok_or(MainHeapThreadAttachmentError::Poisoned)?
+            .sequence()
+            .get();
+        Ok((self.thread, sequence))
+    }
+
     /// Returns the frozen configuration used for this TLD/Theap metadata
     /// image. The process PageMap/arena pair must match it exactly.
     #[inline]
