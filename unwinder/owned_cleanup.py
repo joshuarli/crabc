@@ -705,6 +705,7 @@ def run_logged_streams(
 def source_built_link_receipt(
     path: Path, binary: Path, source_library_root: Path, description: str,
     toolchain_search_root: Path | None = None, built_unwind: dict[str, str] | None = None,
+    expected_compiler_builtins: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Read one source-built fat-LTO link without admitting stock target rlibs."""
 
@@ -746,6 +747,13 @@ def source_built_link_receipt(
         and compiler_builtins["path"].startswith(str(source_library_root) + os.sep),
         f"{description} does not omit its source-built compiler-builtins archive",
     )
+    if expected_compiler_builtins is not None:
+        require(record_file(
+            Path(expected_compiler_builtins["path"]), f"{description} Cargo compiler-builtins archive",
+        ) == expected_compiler_builtins and record_file(
+            Path(expected_compiler_builtins["path"]), f"{description} linked compiler-builtins archive",
+        ) == record.get("omitted_source_built_compiler_builtins"),
+                f"{description} compiler-builtins archive is not the authenticated Cargo artifact")
     inputs = record.get("application_inputs")
     require(isinstance(inputs, list) and all(isinstance(value, dict) for value in inputs),
             f"{description} lacks its Rust application inputs")
@@ -944,7 +952,7 @@ def cargo_link_receipt_for_artifact(artifact: Path, source_library_root: Path, d
 
     artifact_digest = digest(artifact)
     candidates: list[tuple[Path, Path]] = []
-    for receipt in sorted(source_library_root.glob("*.crabc-owned-rust-link.json")):
+    for receipt in sorted(source_library_root.rglob("*.crabc-owned-rust-link.json")):
         record = json_object(receipt, f"{description} candidate link receipt")
         output = record.get("output")
         if not isinstance(output, dict) or output.get("sha256") != artifact_digest:
@@ -953,6 +961,8 @@ def cargo_link_receipt_for_artifact(artifact: Path, source_library_root: Path, d
         if not isinstance(path, str):
             raise OwnedCleanupError(f"{description} candidate link receipt has no output path")
         linked = physical(Path(path), f"{description} linker-side output")
+        require(linked.is_relative_to(source_library_root),
+                f"{description} linker-side output is outside the source-built target library root")
         candidates.append((physical(receipt, f"{description} link receipt"), linked))
     if len(candidates) != 1:
         raise OwnedCleanupError(f"expected one linker receipt for Cargo artifact {artifact}, found {candidates!r}")
@@ -1139,6 +1149,46 @@ def source_build_log_contract(log: str, rust_source: Path) -> None:
             "Cargo build-std log does not retain the requested fat-LTO profile")
 
 
+def pinned_rust_source_host_builds(rust_source: Path) -> list[dict[str, Any]]:
+    """Return only the two build scripts in the pinned `std` build-std closure."""
+
+    rust_source = physical(rust_source, "pinned rust-src library", directory=True)
+    rust_source_lock = physical(rust_source / "Cargo.lock", "pinned rust-src lock")
+    try:
+        lock = tomllib.loads(rust_source_lock.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+        raise OwnedCleanupError("pinned rust-src lock is unreadable") from error
+    locked_packages = lock.get("package")
+    require(isinstance(locked_packages, list), "pinned rust-src lock has no package roster")
+    expected = (
+        ("compiler_builtins", "compiler-builtins/compiler-builtins"),
+        ("std", "std"),
+    )
+    result: list[dict[str, Any]] = []
+    for name, relative_dir in expected:
+        package_source = rust_source / relative_dir
+        manifest = physical(package_source / "Cargo.toml", "pinned rust-source host build manifest")
+        source = physical(package_source / "build.rs", "pinned rust-source host build source")
+        try:
+            package_data = tomllib.loads(manifest.read_text(encoding="utf-8")).get("package")
+        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+            raise OwnedCleanupError("pinned rust-source host build manifest is unreadable") from error
+        require(isinstance(package_data, dict) and package_data.get("name") == name
+                and package_data.get("build") in (None, "build.rs"),
+                f"pinned rust-source {name} build-script identity drifted")
+        versions = {
+            entry.get("version") for entry in locked_packages
+            if isinstance(entry, dict) and entry.get("name") == name
+        }
+        require(len(versions) == 1 and all(isinstance(version, str) for version in versions),
+                f"pinned rust-src lock does not uniquely identify {name}")
+        version = next(iter(versions))
+        require(package_data.get("version") == version,
+                f"pinned rust-source {name} manifest differs from Cargo.lock")
+        result.append({"manifest": manifest, "source": source, "package": name, "version": version})
+    return result
+
+
 def host_build_script_output(arguments: list[str], description: str) -> str:
     """Read the one ``-o`` output from a pinned host-link command."""
 
@@ -1185,6 +1235,10 @@ def cargo_custom_build_artifacts(
          physical(entry["source"], "approved Cargo vendor build source"))
         for entry in [*provider_custom_builds, *composite_vendor_custom_builds]
     }
+    pinned_source_builds = pinned_rust_source_host_builds(rust_source)
+    pinned_source_pairs = {
+        (entry["manifest"], entry["source"]): entry for entry in pinned_source_builds
+    }
     artifacts: list[dict[str, Any]] = []
     seen_paths: set[Path] = set()
     seen_identities: set[tuple[int, int]] = set()
@@ -1211,9 +1265,8 @@ def cargo_custom_build_artifacts(
         manifest = physical(Path(manifest_value), "Cargo custom-build manifest")
         source = physical(Path(source_value), "Cargo custom-build source")
         output = physical(Path(filenames[0]), "Cargo custom-build artifact output", executable=True)
-        source_is_rust = manifest.is_relative_to(rust_source) and source.is_relative_to(rust_source)
         out_dir_source = (
-            source_is_rust or (manifest, source) in approved_vendor_sources
+            (manifest, source) in pinned_source_pairs or (manifest, source) in approved_vendor_sources
         )
         standard_output = output.name == "build-script-build"
         out_dir_output = (
@@ -1221,8 +1274,12 @@ def cargo_custom_build_artifacts(
             and owned_rust_link.admitted_host_build_script_path(output, host_build_root)
             and out_dir_source
         )
-        require(source_is_rust or (manifest, source) in approved_vendor_sources,
+        require((manifest, source) in pinned_source_pairs or (manifest, source) in approved_vendor_sources,
                 "Cargo custom-build artifact is outside approved pinned source")
+        if (manifest, source) in pinned_source_pairs:
+            pinned = pinned_source_pairs[(manifest, source)]
+            require(package_id.endswith(f"#{pinned['package']}@{pinned['version']}"),
+                    "Cargo rust-source custom-build package differs from the pinned lock")
         require(
             output.is_relative_to(host_build_root) and (standard_output or out_dir_output),
             "Cargo custom-build artifact is outside the declared host root",
@@ -1258,9 +1315,9 @@ def host_build_script_receipts(root: Path, host_build_root: Path) -> list[dict[s
         require(receipt.suffix == ".json", "Cargo host build-script receipt has an unapproved name")
         receipt = physical(receipt, "Cargo host build-script receipt")
         record = json_object(receipt, "Cargo host build-script receipt")
-        require(set(record) == {"schema", "kind", "linker", "command", "output"},
+        require(set(record) == {"schema", "kind", "linker", "command", "link_inputs", "output"},
                 "Cargo host build-script receipt fields drifted")
-        require(record["schema"] == 1 and record["kind"] == "cargo-host-build-script",
+        require(record["schema"] == 2 and record["kind"] == "cargo-host-build-script",
                 "Cargo host build-script receipt identity drifted")
         linker = record["linker"]
         command = record["command"]
@@ -1268,9 +1325,22 @@ def host_build_script_receipts(root: Path, host_build_root: Path) -> list[dict[s
         require(
             linker == record_file(HOST_BUILD_LINKER, "pinned Cargo host build-script linker")
             and isinstance(command, list) and all(isinstance(item, str) for item in command)
-            and command and command[0] == str(HOST_BUILD_LINKER),
+            and len(command) > 2 and command[0] == str(HOST_BUILD_LINKER) and command[1] == "-Wl,-t",
             "Cargo host build-script linker identity drifted",
         )
+        link_inputs = record["link_inputs"]
+        require(isinstance(link_inputs, list) and link_inputs,
+                "Cargo host build-script receipt has no resolved link inputs")
+        input_paths: list[str] = []
+        for value in link_inputs:
+            require(isinstance(value, dict) and set(value) == {"path", "sha256"}
+                    and isinstance(value["path"], str) and isinstance(value["sha256"], str),
+                    "Cargo host build-script resolved input is malformed")
+            require(record_file(Path(value["path"]), "Cargo host build-script resolved input") == value,
+                    "Cargo host build-script resolved input changed")
+            input_paths.append(value["path"])
+        require(len(input_paths) == len(set(input_paths)),
+                "Cargo host build-script resolved inputs contain duplicates")
         require(isinstance(output, dict) and isinstance(output.get("path"), str),
                 "Cargo host build-script receipt output is malformed")
         linked = physical(Path(output["path"]), "Cargo host build-script linker output", executable=True)
@@ -1282,7 +1352,7 @@ def host_build_script_receipts(root: Path, host_build_root: Path) -> list[dict[s
             ),
             "Cargo host build-script receipt output is outside the declared host root or drifted",
         )
-        require(host_build_script_output(command[1:], "Cargo host build-script receipt command") == str(linked),
+        require(host_build_script_output(command[2:], "Cargo host build-script receipt command") == str(linked),
                 "Cargo host build-script receipt command differs from its output")
         expected_name = hashlib.sha256(str(linked).encode()).hexdigest() + ".json"
         require(receipt.name == expected_name,
@@ -1338,8 +1408,10 @@ def host_build_script_manifest(
         receipt = receipt_by_identity[identity]
         if receipt["output"].name == "build_script_build":
             require(
-                (artifact["manifest"].is_relative_to(rust_source)
-                 and artifact["source"].is_relative_to(rust_source))
+                (artifact["manifest"], artifact["source"]) in {
+                    (entry["manifest"], entry["source"])
+                    for entry in pinned_rust_source_host_builds(rust_source)
+                }
                 or (artifact["manifest"], artifact["source"]) in {
                     (entry["manifest"], entry["source"])
                     for entry in [*provider_custom_builds, *composite_vendor_custom_builds]
@@ -1873,7 +1945,7 @@ def compile_source_built_mode(
     application.mkdir(mode=0o755)
     target = application / "cargo-target"
     release = target / TARGET / "release"
-    source_library_root = release / "deps"
+    source_library_root = release / "build"
     host_build_root = target / "release/build"
     temporary = application / "tmp"
     cargo_home = application / "cargo-home"
@@ -1930,6 +2002,9 @@ def compile_source_built_mode(
         {"manifest": str(entry["manifest"]), "source": str(entry["source"])}
         for entry in provider_graph["graph"]["provider_custom_builds"]
     ]
+    host_build_sources.extend({
+        "manifest": str(entry["manifest"]), "source": str(entry["source"]),
+    } for entry in pinned_rust_source_host_builds(rust_source))
     host_build_sources.extend({
         "manifest": entry["manifest"]["path"], "source": entry["source"]["path"],
     } for entry in offline_sources["composite_vendor_custom_build_inputs"])
@@ -1995,7 +2070,7 @@ def compile_source_built_mode(
     )
     binary_receipt = source_built_link_receipt(
         binary_receipt_path, binary_link_output, source_library_root, f"{label} source-built cleanup link receipt",
-        toolchain_search_root, built_unwind_record,
+        toolchain_search_root, built_unwind_record, runtime_archive_records["compiler_builtins"],
     )
     consumer: dict[str, Any] = {
         "mode": mode,
@@ -2038,6 +2113,7 @@ def compile_source_built_mode(
         plugin_receipt = source_built_link_receipt(
             plugin_receipt_path, plugin_link_output, source_library_root,
             f"{label} source-built cleanup plugin link receipt", toolchain_search_root, built_unwind_record,
+            runtime_archive_records["compiler_builtins"],
         )
         plugin_lto_externs = cargo_source_lto_extern_closure(
             stderr, target_name="crabc_owned_cleanup_plugin", binary_name=None, link_output=plugin_link_output,

@@ -286,7 +286,7 @@ owned-loader mapping discovery without a direct-path open or an exception
 crossing the DSO ABI.
 
 For a source-built final link the wrapper admits only the Cargo application
-root and its declared target `release/deps` root. Cargo's compiler-artifact
+root and its declared target `release/build` root. Cargo's compiler-artifact
 records identify the fresh `std`, `core`, `alloc`, `panic_unwind`,
 `compiler_builtins`, `proc_macro`, and `crabc-unwinder` rlibs by their pinned
 source paths.
@@ -324,13 +324,16 @@ subtree only to the pinned container `/usr/bin/gcc`, records every such host
 link in an exclusive per-artifact receipt. A generated manifest binds the
 receipts by hard-link identity to the exact `compiler-artifact` custom-build
 records from Cargo's machine-readable stream, and records the pinned
-`rust-src` lock plus every declared package manifest and build source. The
-Some pinned Cargo build scripts have an `OUT_DIR` output named
+`rust-src` lock plus every declared package manifest and build source. Each
+host-link receipt also hashes the resolved files reported by GNU ld, while
+GCC receives a minimal environment with no inherited compiler or library
+search overrides. Some pinned Cargo build scripts have an `OUT_DIR` output named
 `build_script_build` without Cargo's usual hash suffix. The linker admits this
 shape only when the crate and output directory match and Cargo's manifest/source
-pair is the pinned compiler-builtins source or an explicitly recorded provider
-or composite-vendor build script. Receipt closure still requires the matching
-Cargo artifact and exact source identity.
+pair is one of the `compiler_builtins` or `std` scripts in the pinned rust-src
+lock, or an explicitly recorded provider or composite-vendor build script.
+Receipt closure still requires the matching Cargo artifact and exact source
+identity.
 The only extra provider build executable is the already-audited pinned `libc`
 cfg build script; its manifest/source pair is recorded separately and must
 match the resolved provider graph. It rejects unmatched, duplicate, forged,

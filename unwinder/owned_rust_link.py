@@ -26,7 +26,6 @@ import shutil
 import stat
 import subprocess
 import sys
-import tomllib
 from typing import Iterable
 
 
@@ -34,6 +33,7 @@ TARGET = "x86_64-unknown-linux-musl"
 INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
 STOCK_RUST_UNWIND_ARCHIVE = re.compile(r"libunwind-[0-9a-f]+\.rlib\Z")
 COMPILER_BUILTINS_ARCHIVE = re.compile(r"libcompiler_builtins-[0-9a-f]+\.rlib\Z")
+SOURCE_BUILT_COMPILER_BUILTINS_ARCHIVE = re.compile(r"libcompiler_builtins-([0-9a-f]{16})\.rlib\Z")
 FALLBACK_REQUESTS = frozenset({"-lgcc", "-lgcc_s", "-lunwind"})
 NATIVE_REQUESTS = frozenset({"-lc", *FALLBACK_REQUESTS, "-lpthread", "-lm", "-ldl", "-lrt", "-lutil"})
 CANONICAL_FLAGS = frozenset({
@@ -125,34 +125,10 @@ def confined_output(path: str, root: Path) -> Path:
     return candidate
 
 
-def _out_dir_build_script_source_pairs(source_library: Path | None) -> set[tuple[Path, Path]]:
-    """Read the exact pinned source pairs allowed to produce Cargo OUT_DIR tools."""
+def _out_dir_build_script_source_pairs() -> set[tuple[Path, Path]]:
+    """Read the exact source pairs supplied by the authenticated Cargo graph."""
 
     pairs: set[tuple[Path, Path]] = set()
-    manifest_value = os.environ.get("CARGO_MANIFEST_PATH")
-    package_name = os.environ.get("CARGO_PKG_NAME")
-    if manifest_value is not None and package_name and source_library is not None:
-        manifest = physical_regular(Path(manifest_value), "Cargo host build-script manifest")
-        if manifest.is_relative_to(source_library):
-            try:
-                package = tomllib.loads(manifest.read_text(encoding="utf-8")).get("package")
-            except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
-                raise LinkError("pinned Rust host build-script manifest is unreadable") from error
-            if not isinstance(package, dict) or package.get("name") != package_name:
-                raise LinkError("pinned Rust host build-script package identity drifted")
-            build = package.get("build")
-            if build is not False:
-                if build is None or build is True:
-                    source = manifest.parent / "build.rs"
-                elif isinstance(build, str) and build and not Path(build).is_absolute() \
-                        and ".." not in Path(build).parts:
-                    source = manifest.parent / build
-                else:
-                    raise LinkError("pinned Rust host build-script path is malformed")
-                source = physical_regular(source, "pinned Rust host build source")
-                if not source.is_relative_to(manifest.parent):
-                    raise LinkError("pinned Rust host build source escapes its package")
-                pairs.add((manifest, source))
     encoded = os.environ.get(HOST_BUILD_SOURCES_ENV)
     if encoded is None:
         return pairs
@@ -176,7 +152,7 @@ def _out_dir_build_script_source_pairs(source_library: Path | None) -> set[tuple
     return pairs
 
 
-def _out_dir_build_script(candidate: Path, host_build_root: Path, source_library: Path | None) -> bool:
+def _out_dir_build_script(candidate: Path, host_build_root: Path) -> bool:
     """Recognize one Cargo OUT_DIR script only when its source pair is pinned."""
 
     try:
@@ -202,7 +178,7 @@ def _out_dir_build_script(candidate: Path, host_build_root: Path, source_library
     manifest_path = physical_regular(Path(manifest_path_value), "Cargo host build-script manifest")
     return manifest_dir == manifest_path.parent and any(
         manifest == manifest_path and source.is_relative_to(manifest_dir)
-        for manifest, source in _out_dir_build_script_source_pairs(source_library)
+        for manifest, source in _out_dir_build_script_source_pairs()
     )
 
 
@@ -256,7 +232,7 @@ def host_build_script_output(arguments: list[str], host_build_root: Path) -> Pat
             physical_directory(Path(source_library_value), "pinned Rust source library")
             if source_library_value else None
         )
-        if not _out_dir_build_script(candidate, host_build_root, source_library):
+        if not _out_dir_build_script(candidate, host_build_root):
             raise LinkError(f"Cargo host build-script output is not an admitted build script: {output}")
     if not admitted_host_build_script_path(candidate, host_build_root):
         raise LinkError(f"Cargo host build-script output is not an admitted build script: {output}")
@@ -293,6 +269,22 @@ def _reject_linker_escape(argument: str) -> None:
 
 def _stock_archive(path: Path, stock_root: Path, expression: re.Pattern[str]) -> bool:
     return path.parent == stock_root and expression.fullmatch(path.name) is not None
+
+
+def _source_built_compiler_builtins_archive(path: Path, source_root: Path) -> bool:
+    """Match Cargo's exact target/release/build compiler-builtins artifact layout."""
+
+    try:
+        relative = path.relative_to(source_root)
+    except ValueError:
+        return False
+    match = SOURCE_BUILT_COMPILER_BUILTINS_ARCHIVE.fullmatch(path.name)
+    return (
+        len(relative.parts) == 4 and relative.parts[0] == "compiler_builtins"
+        and BUILD_OUTPUT_HASH.fullmatch(relative.parts[1]) is not None
+        and relative.parts[1] == (match.group(1) if match else None)
+        and relative.parts[2] == "out" and match is not None
+    )
 
 
 def _linker_option_value(argument: str, name: str) -> str | None:
@@ -481,7 +473,10 @@ def parse_arguments(
                 if stock_unwind is not None:
                     raise LinkError("duplicate stock Rust libunwind archive")
                 stock_unwind = archive
-            elif _stock_archive(archive, runtime_root, COMPILER_BUILTINS_ARCHIVE):
+            elif (
+                _source_built_compiler_builtins_archive(archive, runtime_root)
+                if source_built else _stock_archive(archive, runtime_root, COMPILER_BUILTINS_ARCHIVE)
+            ):
                 if compiler_builtins is not None:
                     raise LinkError("duplicate source-built Rust compiler-builtins archive" if source_built else
                                     "duplicate Rust compiler-builtins archive")
@@ -628,21 +623,41 @@ def delegate_host_build_script(arguments: list[str], output: Path) -> None:
         raise LinkError("missing owned Rust host build-script linker evidence")
     linker = physical_regular(Path(linker_value), "pinned Cargo host build-script linker")
     receipts = physical_directory(Path(receipts_value), "Cargo host build-script receipt root")
-    environment = dict(os.environ)
-    environment.pop("CARGO_MAKEFLAGS", None)
-    environment.pop("MAKEFLAGS", None)
+    # Cargo's build-script products are host tools. Keep GCC's ambient search
+    # environment out of their link and retain the files GNU ld actually read.
+    environment = {"PATH": "/usr/bin:/bin", "LC_ALL": "C"}
+    command = [str(linker), "-Wl,-t", *arguments]
     completed = subprocess.run(
-        [str(linker), *arguments], env=environment, text=True,
+        command, env=environment, text=True,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
     )
     if completed.returncode:
         raise LinkError(f"Cargo host build-script linker exited {completed.returncode}: {completed.stdout}")
     output = physical_regular(output, "Cargo host build-script output")
+    link_inputs: list[dict[str, str]] = []
+    seen_inputs: set[Path] = set()
+    for line in completed.stdout.splitlines():
+        selected = line.strip()
+        if not selected:
+            continue
+        path = Path(selected)
+        if not path.is_absolute():
+            raise LinkError(f"Cargo host build-script linker emitted an unclosed input: {selected}")
+        try:
+            path = physical_regular(path.resolve(strict=True), "Cargo host build-script resolved linker input")
+        except OSError as error:
+            raise LinkError(f"Cargo host build-script linker input is missing: {selected}") from error
+        if path not in seen_inputs:
+            seen_inputs.add(path)
+            link_inputs.append({"path": str(path), "sha256": sha256(path)})
+    if not link_inputs:
+        raise LinkError("Cargo host build-script linker did not report resolved inputs")
     record = {
-        "schema": 1,
+        "schema": 2,
         "kind": "cargo-host-build-script",
         "linker": {"path": str(linker), "sha256": sha256(linker)},
-        "command": [str(linker), *arguments],
+        "command": command,
+        "link_inputs": link_inputs,
         "output": {"path": str(output), "sha256": sha256(output)},
     }
     receipt = receipts / f"{hashlib.sha256(str(output).encode()).hexdigest()}.json"

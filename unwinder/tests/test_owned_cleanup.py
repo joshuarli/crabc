@@ -599,6 +599,10 @@ class OwnedCleanupContract(unittest.TestCase):
         built_unwind = source / "libunwind-hash.rlib"
         built_unwind.write_bytes(b"source-built unwind")
         built_unwind_record = owned_cleanup.record_file(built_unwind, "test source-built unwind")
+        compiler_builtins = source / "compiler_builtins/0123456789abcdef/out/libcompiler_builtins-0123456789abcdef.rlib"
+        compiler_builtins.parent.mkdir(parents=True)
+        compiler_builtins.write_bytes(b"Cargo compiler_builtins")
+        compiler_builtins_record = owned_cleanup.record_file(compiler_builtins, "test Cargo compiler-builtins")
         fused = Path(self.temporary.name) / "cleanup.cgu.0.rcgu.o"
         fused_bytes = b"fused Cargo LTO object"
         fused.write_bytes(fused_bytes)
@@ -613,7 +617,7 @@ class OwnedCleanupContract(unittest.TestCase):
             "source_built_target_library_root": str(source),
             "declared_toolchain_search_root": str(toolchain_search),
             "unused_search_paths": [str(toolchain_search)],
-            "omitted_source_built_compiler_builtins": {"path": str(source / "libcompiler_builtins-hash.rlib")},
+            "omitted_source_built_compiler_builtins": compiler_builtins_record,
             "application_inputs": [retained_record],
             "source_lto_object": {
                 "cargo_object": fused_record,
@@ -635,8 +639,18 @@ class OwnedCleanupContract(unittest.TestCase):
         fused.unlink()
         selected = owned_cleanup.source_built_link_receipt(
             receipt, binary, source, "test source-built link", built_unwind=built_unwind_record,
+            expected_compiler_builtins=compiler_builtins_record,
         )
         self.assertEqual(selected["rust_library_origin"], "source-built")
+        mismatched_archive = source / "compiler_builtins/ffffffffffffffff/out/libcompiler_builtins-ffffffffffffffff.rlib"
+        mismatched_archive.parent.mkdir(parents=True)
+        mismatched_archive.write_bytes(b"different Cargo artifact")
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "authenticated Cargo artifact"):
+            owned_cleanup.source_built_link_receipt(
+                receipt, binary, source, "test source-built link", expected_compiler_builtins=owned_cleanup.record_file(
+                    mismatched_archive, "mismatched Cargo compiler-builtins",
+                ),
+            )
         record["rust_requested_mode"] = "shared"
         receipt.write_text(json.dumps(record))
         with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "cdylib version-script safety flag"):
@@ -721,11 +735,18 @@ class OwnedCleanupContract(unittest.TestCase):
         rust_source = Path(self.temporary.name) / "rust-src/library"
         package_source = rust_source / "compiler-builtins/compiler-builtins"
         package_source.mkdir(parents=True)
-        (rust_source / "Cargo.lock").write_text("source lock\n")
+        (rust_source / "Cargo.lock").write_text(
+            'version = 4\n\n[[package]]\nname = "compiler_builtins"\nversion = "0.1.160"\n\n'
+            '[[package]]\nname = "std"\nversion = "0.0.0"\n'
+        )
         manifest = package_source / "Cargo.toml"
         source = package_source / "build.rs"
-        manifest.write_text("[package]\nname = \"compiler_builtins\"\n")
+        manifest.write_text('[package]\nname = "compiler_builtins"\nversion = "0.1.160"\n')
         source.write_text("fn main() {}\n")
+        std_source = rust_source / "std"
+        std_source.mkdir()
+        (std_source / "Cargo.toml").write_text('[package]\nname = "std"\nversion = "0.0.0"\n')
+        (std_source / "build.rs").write_text("fn main() {}\n")
         host_root = Path(self.temporary.name) / "cargo-target/release/build"
         package = host_root / "compiler_builtins-0123456789abcdef"
         package.mkdir(parents=True)
@@ -737,19 +758,20 @@ class OwnedCleanupContract(unittest.TestCase):
         receipts = Path(self.temporary.name) / "host-build-receipts"
         receipts.mkdir()
         receipt_record = {
-            "schema": 1,
+            "schema": 2,
             "kind": "cargo-host-build-script",
             "linker": owned_cleanup.record_file(
                 owned_cleanup.HOST_BUILD_LINKER, "pinned Cargo host build-script linker",
             ),
-            "command": [str(owned_cleanup.HOST_BUILD_LINKER), "-o", str(linked)],
+            "command": [str(owned_cleanup.HOST_BUILD_LINKER), "-Wl,-t", "-o", str(linked)],
+            "link_inputs": [owned_cleanup.record_file(linked, "resolved host linker input")],
             "output": owned_cleanup.record_file(linked, "Cargo host build-script linker output"),
         }
         receipt = receipts / (hashlib.sha256(str(linked).encode()).hexdigest() + ".json")
         receipt.write_text(json.dumps(receipt_record) + "\n")
         cargo_record = {
             "reason": "compiler-artifact",
-            "package_id": f"path+file://{package_source}#compiler_builtins@0.1.0",
+            "package_id": f"path+file://{package_source}#compiler_builtins@0.1.160",
             "manifest_path": str(manifest),
             "target": {
                 "kind": ["custom-build"],
@@ -776,12 +798,13 @@ class OwnedCleanupContract(unittest.TestCase):
 
     def write_host_receipt(self, directory, output):
         record = {
-            "schema": 1,
+            "schema": 2,
             "kind": "cargo-host-build-script",
             "linker": owned_cleanup.record_file(
                 owned_cleanup.HOST_BUILD_LINKER, "pinned Cargo host build-script linker",
             ),
-            "command": [str(owned_cleanup.HOST_BUILD_LINKER), "-o", str(output)],
+            "command": [str(owned_cleanup.HOST_BUILD_LINKER), "-Wl,-t", "-o", str(output)],
+            "link_inputs": [owned_cleanup.record_file(output, "resolved linker input")],
             "output": owned_cleanup.record_file(output, "Cargo host build-script linker output"),
         }
         receipt = directory / (hashlib.sha256(str(output).encode()).hexdigest() + ".json")
@@ -860,6 +883,35 @@ class OwnedCleanupContract(unittest.TestCase):
         fixture["linked"].unlink()
         fixture["artifact"].unlink()
         linked.write_bytes(b"unapproved OUT_DIR host build script")
+        linked.chmod(0o755)
+        record["filenames"] = [str(linked)]
+        fixture["cargo_stdout"].write_text(json.dumps(record) + "\n")
+        fixture["receipt_record"]["command"][-1] = str(linked)
+        fixture["receipt_record"]["output"] = owned_cleanup.record_file(
+            linked, "Cargo host build-script linker output",
+        )
+        fixture["receipt"].unlink()
+        self.write_host_receipt(fixture["receipts"], linked)
+
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "outside approved pinned source"):
+            self.host_build_manifest(fixture)
+
+    def test_out_dir_receipt_rejects_unknown_package_inside_rust_src(self):
+        fixture = self.host_build_fixture()
+        other_source = fixture["rust_source"] / "arbitrary/runtime-crate"
+        other_source.mkdir(parents=True)
+        other_manifest = other_source / "Cargo.toml"
+        other_build = other_source / "build.rs"
+        other_manifest.write_text('[package]\nname = "runtime_crate"\nversion = "1.0.0"\n')
+        other_build.write_text("fn main() {}\n")
+        record = fixture["cargo_record"]
+        record["manifest_path"] = str(other_manifest)
+        record["target"]["src_path"] = str(other_build)
+        linked = fixture["host_root"] / "runtime_crate/0123456789abcdef/out/build_script_build"
+        linked.parent.mkdir(parents=True)
+        fixture["linked"].unlink()
+        fixture["artifact"].unlink()
+        linked.write_bytes(b"unapproved rust-src OUT_DIR host build script")
         linked.chmod(0o755)
         record["filenames"] = [str(linked)]
         fixture["cargo_stdout"].write_text(json.dumps(record) + "\n")
@@ -970,6 +1022,42 @@ class OwnedCleanupContract(unittest.TestCase):
             "executable": None,
         })
         self.assertEqual(owned_cleanup.cargo_build_std_unwind_artifact(stream, target, rust_source), archive)
+
+    def test_cargo_link_receipt_finds_nested_release_build_output(self):
+        source_root = Path(self.temporary.name) / "target/x86_64-unknown-linux-musl/release/build"
+        linker_output = source_root / "crabc-cleanup/0123456789abcdef/out/cleanup"
+        linker_output.parent.mkdir(parents=True)
+        linker_output.write_bytes(b"fused source-built executable")
+        cargo_artifact = source_root.parent / "cleanup"
+        os.link(linker_output, cargo_artifact)
+        receipt = Path(str(linker_output) + ".crabc-owned-rust-link.json")
+        receipt.write_text(json.dumps({
+            "output": {"path": str(linker_output), "sha256": owned_cleanup.digest(cargo_artifact)},
+        }))
+
+        found_receipt, found_output = owned_cleanup.cargo_link_receipt_for_artifact(
+            cargo_artifact, source_root, "test source-built cleanup",
+        )
+        self.assertEqual(found_receipt, receipt)
+        self.assertEqual(found_output, linker_output)
+
+    def test_cargo_link_receipt_rejects_a_nested_receipt_output_outside_source_root(self):
+        source_root = Path(self.temporary.name) / "target/x86_64-unknown-linux-musl/release/build"
+        nested = source_root / "crabc-cleanup/0123456789abcdef/out"
+        nested.mkdir(parents=True)
+        cargo_artifact = source_root.parent / "cleanup"
+        cargo_artifact.write_bytes(b"fused source-built executable")
+        outside_output = Path(self.temporary.name) / "outside-cleanup"
+        outside_output.write_bytes(cargo_artifact.read_bytes())
+        receipt = nested / "cleanup.crabc-owned-rust-link.json"
+        receipt.write_text(json.dumps({
+            "output": {"path": str(outside_output), "sha256": owned_cleanup.digest(cargo_artifact)},
+        }))
+
+        with self.assertRaisesRegex(owned_cleanup.OwnedCleanupError, "outside the source-built target library root"):
+            owned_cleanup.cargo_link_receipt_for_artifact(
+                cargo_artifact, source_root, "test source-built cleanup",
+            )
 
     def test_cargo_primary_rustc_binds_source_runtime_and_provider_externs_to_fused_output(self):
         target = Path(self.temporary.name) / "target"

@@ -58,11 +58,15 @@ class OwnedRustLinkContract(unittest.TestCase):
             "liballoc-0123456789abcdef.rlib",
             "libpanic_unwind-0123456789abcdef.rlib",
             "libunwind-0123456789abcdef.rlib",
-            "libcompiler_builtins-0123456789abcdef.rlib",
             "libcrabc_unwinder-0123456789abcdef.rlib",
             "libunwinding-0123456789abcdef.rlib",
         ):
             (self.source_built / name).write_bytes(b"archive")
+        self.source_built_compiler_builtins = (
+            self.source_built / "compiler_builtins/0123456789abcdef/out/libcompiler_builtins-0123456789abcdef.rlib"
+        )
+        self.source_built_compiler_builtins.parent.mkdir(parents=True)
+        self.source_built_compiler_builtins.write_bytes(b"archive")
         (self.application / "raw-dylibs").mkdir()
         (self.application / "rust-cdylib.map").write_text(
             "{\n  global:\n    crabc_owned_cleanup_dso;\n"
@@ -93,7 +97,7 @@ class OwnedRustLinkContract(unittest.TestCase):
     def source_built_arguments(self):
         return [
             "-m64", str(self.application / "fixture.o"), "-Wl,--as-needed", "-Wl,-Bstatic",
-            str(self.source_built / "libcompiler_builtins-0123456789abcdef.rlib"),
+            str(self.source_built_compiler_builtins),
             "-Wl,-Bdynamic", "-lgcc_s", "-lc", "-L", str(self.application / "raw-dylibs"),
             "-L", str(self.source_built), "-Wl,--eh-frame-hdr", "-Wl,-z,noexecstack", "-o",
             str(self.application / "cleanup"), "-Wl,--gc-sections", "-pie", "-Wl,-z,relro,-z,now",
@@ -130,10 +134,25 @@ class OwnedRustLinkContract(unittest.TestCase):
         self.assertIsNone(parsed["source_built_unwind"])
         self.assertEqual(
             parsed["source_built_compiler_builtins"],
-            self.source_built / "libcompiler_builtins-0123456789abcdef.rlib",
+            self.source_built_compiler_builtins,
         )
         self.assertEqual(parsed["rust_library_origin"], "source-built")
         self.assertEqual(parsed["archives"], [])
+
+    def test_source_built_fat_lto_rejects_compiler_builtins_from_an_unmatched_out_dir(self):
+        wrong = self.source_built / "other_crate/0123456789abcdef/out/libcompiler_builtins-0123456789abcdef.rlib"
+        wrong.parent.mkdir(parents=True)
+        wrong.write_bytes(b"unmatched archive")
+        arguments = [*self.source_built_arguments(), str(wrong)]
+        with self.assertRaisesRegex(linker.LinkError, "direct Rust archive"):
+            linker.parse_arguments(arguments, self.application, self.stock, self.source_built)
+
+    def test_source_built_fat_lto_rejects_compiler_builtins_outside_source_root(self):
+        wrong = self.application / "libcompiler_builtins-0123456789abcdef.rlib"
+        wrong.write_bytes(b"outside archive")
+        arguments = [*self.source_built_arguments(), str(wrong)]
+        with self.assertRaisesRegex(linker.LinkError, "outside the declared Rust roots"):
+            linker.parse_arguments(arguments, self.application, self.stock, self.source_built)
 
     def test_source_built_direct_libunwind_archive_is_rejected(self):
         with self.assertRaisesRegex(linker.LinkError, "libunwind archive must not enter"):
@@ -227,6 +246,10 @@ class OwnedRustLinkContract(unittest.TestCase):
             "CARGO_MANIFEST_PATH": str(package_source / "Cargo.toml"),
             "CARGO_CRATE_NAME": "build_script_build",
             "CARGO_PKG_NAME": "compiler_builtins",
+            linker.HOST_BUILD_SOURCES_ENV: json.dumps([{
+                "manifest": str(package_source / "Cargo.toml"),
+                "source": str(package_source / "build.rs"),
+            }]),
         }
         with patch.dict(os.environ, environment):
             selected = linker.host_build_script_output(
@@ -278,15 +301,33 @@ class OwnedRustLinkContract(unittest.TestCase):
         output = package / "build_script_build-0123456789abcdef"
         receipts = Path(self.temporary.name) / "host-build-receipts"
         receipts.mkdir()
+        original_run = subprocess.run
+        observed_environment = {}
+
+        def checked_run(command, *, env, **kwargs):
+            observed_environment.update(env)
+            return original_run(command, env=env, **kwargs)
+
         with patch.dict(os.environ, {
             "CRABC_OWNED_RUST_HOST_BUILD_LINKER": str(host_linker),
             "CRABC_OWNED_RUST_HOST_BUILD_RECEIPTS": str(receipts),
-        }):
+            "LIBRARY_PATH": "/untrusted/lib",
+            "GCC_EXEC_PREFIX": "/untrusted/gcc/",
+            "COMPILER_PATH": "/untrusted/compiler",
+            "CPATH": "/untrusted/include",
+            "C_INCLUDE_PATH": "/untrusted/c-include",
+            "CPLUS_INCLUDE_PATH": "/untrusted/cxx-include",
+        }), patch.object(linker.subprocess, "run", side_effect=checked_run):
             linker.delegate_host_build_script([str(object_file), "-o", str(output)], output)
         receipt = receipts / (hashlib.sha256(str(output).encode()).hexdigest() + ".json")
-        self.assertEqual(json.loads(receipt.read_text())["output"], {
+        record = json.loads(receipt.read_text())
+        self.assertEqual(record["output"], {
             "path": str(output), "sha256": linker.sha256(output),
         })
+        self.assertEqual(record["schema"], 2)
+        self.assertTrue(record["link_inputs"])
+        for key in ("LIBRARY_PATH", "GCC_EXEC_PREFIX", "COMPILER_PATH", "CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH"):
+            self.assertNotIn(key, observed_environment)
 
     def test_source_built_std_rejects_stock_target_archives(self):
         arguments = self.source_built_arguments()
