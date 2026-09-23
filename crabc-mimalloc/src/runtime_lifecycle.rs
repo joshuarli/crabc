@@ -9872,11 +9872,13 @@ fn native_reallocate_pointer_first_local(
     allocation: LiveAllocationPointer,
     new_size: usize,
     current: LiveThreadId,
+    replacement_alignment: usize,
+    ordinary_reuse: bool,
 ) -> NativePageAllocationResult {
     let block = allocation.client();
     let current_is_initial = RUNTIME_PROCESS.initial_live_thread_identity() == Some(current);
     let old_usable = allocation.usable_size();
-    if matches!(
+    if ordinary_reuse && matches!(
         crate::alloc::reallocation_plan(Some(old_usable), new_size, true),
         crate::alloc::ReallocationPlan::Reuse
     ) {
@@ -9892,7 +9894,7 @@ fn native_reallocate_pointer_first_local(
     // normal nested allocation, but it must never inherit an outer pointer
     // lifetime or an owner-local mutable projection.
     drop(allocation);
-    let replacement = match native_allocate_aligned(new_size, NATIVE_C_MALLOC_ALIGNMENT, false) {
+    let replacement = match native_allocate_aligned(new_size, replacement_alignment, false) {
         NativePageAllocationResult::Allocated(replacement) => replacement,
         result @ (NativePageAllocationResult::Unavailable
         | NativePageAllocationResult::AllocationFailed
@@ -9923,7 +9925,7 @@ fn native_reallocate_pointer_first_local(
     unsafe {
         core::ptr::copy_nonoverlapping(block.as_ptr(), replacement.as_ptr(), copy_size);
     }
-    if new_size == 0 {
+    if ordinary_reuse && new_size == 0 {
         // Source ordinary realloc initializes byte zero of a successful
         // non-zeroed zero-size replacement before it frees the old block.
         unsafe { replacement.as_ptr().write(0) };
@@ -10018,6 +10020,8 @@ fn native_reallocate_release_unpublished_replacement(replacement: core::ptr::Non
 fn native_reallocate_pointer_first_nonlocal(
     allocation: LiveAllocationPointer,
     new_size: usize,
+    replacement_alignment: usize,
+    ordinary_zero_compat: bool,
 ) -> NativePageAllocationResult {
     let old_block = allocation.client();
     let identity = NativeReallocationSourceIdentity::capture(&allocation);
@@ -10025,7 +10029,7 @@ fn native_reallocate_pointer_first_nonlocal(
     // Preserve only scalar comparison inputs and reacquire the exact live
     // source after replacement allocation finishes its callback phase.
     drop(allocation);
-    let replacement = match native_allocate_aligned(new_size, NATIVE_C_MALLOC_ALIGNMENT, false) {
+    let replacement = match native_allocate_aligned(new_size, replacement_alignment, false) {
         NativePageAllocationResult::Allocated(replacement) => replacement,
         result @ (NativePageAllocationResult::Unavailable
         | NativePageAllocationResult::AllocationFailed
@@ -10063,7 +10067,7 @@ fn native_reallocate_pointer_first_nonlocal(
             source.copy_prefix_len(),
         );
     }
-    if new_size == 0 {
+    if ordinary_zero_compat && new_size == 0 {
         // Pinned `mi_theap_realloc_zero_ex` initializes the first byte of a
         // successful zero-size replacement for callers that observe it before
         // free. The native zero-size allocation is likewise non-null here.
@@ -10115,11 +10119,87 @@ pub unsafe fn native_reallocate(
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return NativePageAllocationResult::Retained;
     };
+    // SAFETY: forward the exact-live client contract through one operation
+    // guard. The C-facing ordinary path keeps its established alignment.
+    unsafe { native_reallocate_inner(block, new_size, NativeReallocationMode::CAbiOrdinary) }
+}
+
+/// Reallocates one native client with pinned `mi_realloc_aligned` semantics.
+///
+/// The aligned branch may reuse a still-live foreign owner's exact client when
+/// the requested alignment and ceil-half usable-size predicate hold. A
+/// replacement goes through the calling thread's current source owner and
+/// consumes the old client only after allocation and bounded copy succeed.
+///
+/// # Safety
+///
+/// A present `block` must be an exact live native client, remain inaccessible
+/// to other threads throughout this call, and not be freed or reallocated by
+/// a deferred callback. `Allocated` consumes the old client even when it
+/// returns the same address. `AllocationFailed` leaves it live and unchanged.
+/// `Retained` is terminal and does not grant access to the input client.
+#[doc(hidden)]
+pub unsafe fn native_reallocate_aligned(
+    block: Option<core::ptr::NonNull<u8>>,
+    new_size: usize,
+    alignment: usize,
+) -> NativePageAllocationResult {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return NativePageAllocationResult::Retained;
+    };
+    if !crate::size_class::alignment_is_valid(alignment) {
+        return NativePageAllocationResult::AllocationFailed;
+    }
+    // Pinned alloc-aligned.c delegates alignments through one pointer word to
+    // ordinary realloc. Larger alignments use the foreign-safe aligned reuse
+    // predicate and retain their requested alignment on replacement.
+    // SAFETY: forward the exact-live client contract through this guard.
+    unsafe { native_reallocate_inner(block, new_size, NativeReallocationMode::Aligned(alignment)) }
+}
+
+/// Selects the C ABI's 16-byte policy or pinned aligned-realloc's source
+/// alignment without accepting an invalid combination of branch flags.
+enum NativeReallocationMode {
+    CAbiOrdinary,
+    Aligned(usize),
+}
+
+/// Executes the shared pointer-first ordinary or aligned realloc transaction.
+///
+/// # Safety
+///
+/// `block`, when present, obeys [`native_reallocate`]'s exact-live client
+/// contract. An aligned mode carries a valid source power of two.
+unsafe fn native_reallocate_inner(
+    block: Option<core::ptr::NonNull<u8>>,
+    new_size: usize,
+    mode: NativeReallocationMode,
+) -> NativePageAllocationResult {
+    let (replacement_alignment, ordinary, aligned) = match mode {
+        NativeReallocationMode::CAbiOrdinary => (NATIVE_C_MALLOC_ALIGNMENT, true, false),
+        NativeReallocationMode::Aligned(alignment) => (
+            alignment,
+            alignment <= core::mem::size_of::<usize>(),
+            true,
+        ),
+    };
     if !crate::size_class::request_size_is_valid(new_size) {
         return NativePageAllocationResult::AllocationFailed;
     }
     let Some(block) = block else {
-        return native_allocate_aligned(new_size, NATIVE_C_MALLOC_ALIGNMENT, false);
+        let result = native_allocate_aligned(new_size, replacement_alignment, false);
+        return match result {
+            NativePageAllocationResult::Allocated(replacement)
+                if aligned && ordinary && new_size == 0 => {
+                // Pinned mi_theap_realloc_zero_aligned_at delegates low
+                // alignment, including null input, to the ordinary zero-size
+                // kernel. That kernel clears byte zero after allocation.
+                unsafe { replacement.as_ptr().write(0) };
+                NativePageAllocationResult::Allocated(replacement)
+            }
+            other => other,
+        };
     };
     // SAFETY: forwarded from this boundary's exact-live native-client
     // contract. The returned observation remains live through one local or
@@ -10128,13 +10208,23 @@ pub unsafe fn native_reallocate(
         Ok(allocation) => allocation,
         Err(result) => return result,
     };
+    if !ordinary && crate::aligned::realloc_can_reuse(
+        block.as_ptr().addr(), allocation.usable_size(), new_size,
+        replacement_alignment, 0,
+    ) {
+        // Pinned aligned realloc has no target-Heap condition in this branch.
+        drop(allocation);
+        return NativePageAllocationResult::Allocated(block);
+    }
     let Some(current) = current_thread_identity() else {
         drop(allocation);
         RUNTIME_PROCESS.retain_page_owner();
         return NativePageAllocationResult::Retained;
     };
     if allocation.is_associated_with(current) {
-        native_reallocate_pointer_first_local(allocation, new_size, current)
+        native_reallocate_pointer_first_local(
+            allocation, new_size, current, replacement_alignment, ordinary,
+        )
     } else {
         if let Err(result) = native_reallocate_prepare_caller_persistent_owner(current) {
             // Source dispatch has not copied, replaced, or consumed the old
@@ -10143,7 +10233,9 @@ pub unsafe fn native_reallocate(
             drop(allocation);
             return result;
         }
-        native_reallocate_pointer_first_nonlocal(allocation, new_size)
+        native_reallocate_pointer_first_nonlocal(
+            allocation, new_size, replacement_alignment, ordinary,
+        )
     }
 }
 

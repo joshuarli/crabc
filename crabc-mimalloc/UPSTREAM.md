@@ -67,6 +67,19 @@ invented third form.
 
 ## Source-to-Rust mapping
 
+The production native zero-offset aligned reallocation entry
+`runtime_lifecycle::native_reallocate_aligned` maps pinned
+`src/alloc-aligned.c:347-388` (`mi_theap_realloc_zero_aligned_at`): valid
+alignment, natural-alignment delegation, source usable-size/ceil-half reuse
+without a target-Heap check, and replacement through the current Theap before
+the old client is freed. `aligned::realloc_can_reuse` owns the address-independent
+predicate; the existing pointer-first replacement transaction owns callback
+reentry, copy, and failure preservation. The focused C oracle is
+`compat/allocator/native-aligned-realloc-x86_64.c`, paired with
+`crabc-mimalloc/tests/native_aligned_reallocate.rs`. This entry has zero offset;
+the private `single_thread::PageAllocatorEngine::reallocate_aligned_at` remains
+the separately mapped offset-aligned engine path.
+
 The native process huge-registry installation boundary maps pinned
 `src/arena.c:2167-2191` (post-reservation `mi_manage_os_memory_ex2`) and
 `src/arena.c:1794-1869` (multi-arena initialization and partial success) to
