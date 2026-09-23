@@ -604,7 +604,7 @@ def execute(root: Path, arguments: list[str]) -> None:
             raise shared.DriverError("duplicate application quote include directory")
         quote_include_dirs.append(directory)
     library = root / "usr/lib"
-    link = [shared.linker(), *(["-shared"] if mode == "shared" else ["-pie"] if mode == "pie" else []), f"--hash-style={application_hash_style}",
+    link = [shared.linker(root), *(["-shared"] if mode == "shared" else ["-pie"] if mode == "pie" else []), f"--hash-style={application_hash_style}",
             "-z", "relro", "-z", binding, "-z", "noexecstack", "-z", "text", *([] if runtime_imports else ["--no-undefined"]),
             "--allow-shlib-undefined", "--disable-new-dtags" if application_search_kind == "rpath" else "--enable-new-dtags", "-rpath", application_search_path]
     if export_dynamic:

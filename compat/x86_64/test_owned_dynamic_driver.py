@@ -6,6 +6,7 @@ import os
 import shutil
 import tempfile
 import subprocess
+import tomllib
 import sys
 import unittest
 from unittest.mock import patch
@@ -18,6 +19,9 @@ import tarfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 import build_x86_64_owned_dynamic_sysroot as producer
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+PINNED_TOOLCHAIN = tomllib.loads((REPOSITORY_ROOT / "rust-toolchain.toml").read_text())["toolchain"]["channel"]
 
 
 class InstalledDynamicDriverTests(unittest.TestCase):
@@ -33,6 +37,7 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         (self.root / "lib/ld-musl-x86_64.so.1").symlink_to("ld-crabc-x86_64.so.1")
         (self.root / "share/crabc").mkdir(parents=True, exist_ok=True)
         self.manifest = {"schema": 1, "format": driver.FORMAT, "target": driver.shared.TARGET,
+                         "toolchain": PINNED_TOOLCHAIN,
                          "files": {relative: hashlib.sha256(b"owned test payload").hexdigest()
                                    for relative in driver.REQUIRED}, "symlinks": driver.ALIASES}
         self.write_manifest()
@@ -82,8 +87,9 @@ class InstalledDynamicDriverTests(unittest.TestCase):
                                (empty, "crti.o"), (empty, "crtn.o"),
                                (empty, "crabc-dynamic-attach.o"), (empty, "empty.o")):
             self._run_native(["/usr/bin/gcc", "-c", "-fPIC", str(source), "-o", str(library / output)])
+        (root / "share/crabc/manifest.json").write_text(json.dumps({"toolchain": PINNED_TOOLCHAIN}))
         self._run_native([
-            driver.shared.linker(), "-shared", "--hash-style=sysv", "-soname", "libc.so",
+            driver.shared.linker(root), "-shared", "--hash-style=sysv", "-soname", "libc.so",
             str(library / "empty.o"), "-o", str(library / "libc.so"),
         ])
         self._run_native(["/usr/bin/ar", "rcs", str(library / "libcrabc-builtins.a"), str(library / "empty.o")])
@@ -92,11 +98,13 @@ class InstalledDynamicDriverTests(unittest.TestCase):
 
         files = {
             path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
-            for path in root.rglob("*") if path.is_file() and not path.is_symlink()
+            for path in root.rglob("*")
+            if path.is_file() and not path.is_symlink()
+            and path != root / "share/crabc/manifest.json"
         }
         (root / "share/crabc/manifest.json").write_text(json.dumps({
             "schema": 1, "format": driver.FORMAT, "target": driver.shared.TARGET,
-            "files": files, "symlinks": driver.ALIASES,
+            "toolchain": PINNED_TOOLCHAIN, "files": files, "symlinks": driver.ALIASES,
         }))
         return root
 
