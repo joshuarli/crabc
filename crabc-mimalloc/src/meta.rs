@@ -56,7 +56,7 @@ use crate::page_map::{PageMap, PageMapInitializationError};
 use crate::single_thread::{FreeError, SingleThreadAllocator, ProcessMetadataPageAllocator, CanonicalProcessMetadataPageAllocator};
 use crate::size_class;
 use crate::types::{
-    ArenaPages, LiveThreadId, MemoryId, MemoryKind, Page, Theap, ThreadLocalData,
+    ArenaPages, Heap, LiveThreadId, MemoryId, MemoryKind, Page, Theap, ThreadLocalData,
     ThreadSequence,
 };
 use crate::subproc::MainSubprocess;
@@ -167,6 +167,15 @@ pub(crate) enum MetaError {
     /// The already-validated detached local free could not preserve a source
     /// page lifecycle invariant. This is not a public invalid-free policy.
     Free(FreeError),
+}
+
+/// Failure while attaching or detaching a child subprocess's metadata Theap
+/// through the parent's detached metadata TLD.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ChildMetadataTheapError {
+    Metadata(MetaError),
+    Theap(crate::types::TheapMainStaticInitError),
+    TheapList(crate::types::ChildTheapDetachError),
 }
 
 /// Rejection from one typed allocator-owned ordinary-bitmap projection.
@@ -1121,6 +1130,44 @@ enum MetadataPageAllocator<'owner> {
 }
 
 impl MetadataPageAllocator<'_> {
+    unsafe fn initialize_child_metadata_theap(
+        &mut self,
+        parent: &'static MainSubprocess,
+        child_heap: &mut Heap,
+        child_theap: &mut Theap,
+    ) -> Result<(), crate::types::TheapMainStaticInitError> {
+        match self {
+            Self::LegacySelectedArena(engine) => unsafe {
+                engine.initialize_child_metadata_theap(parent, child_heap, child_theap)
+            },
+            Self::Process(engine) => unsafe {
+                engine.initialize_child_metadata_theap(parent, child_heap, child_theap)
+            },
+            Self::CanonicalProcess(engine) => unsafe {
+                engine.initialize_child_metadata_theap(child_heap, child_theap)
+            },
+        }
+    }
+
+    unsafe fn detach_child_metadata_theap(
+        &mut self,
+        parent: &'static MainSubprocess,
+        child_heap: &mut Heap,
+        child_theap: NonNull<Theap>,
+    ) -> Result<(), crate::types::ChildTheapDetachError> {
+        match self {
+            Self::LegacySelectedArena(engine) => unsafe {
+                engine.detach_child_metadata_theap(parent, child_heap, child_theap)
+            },
+            Self::Process(engine) => unsafe {
+                engine.detach_child_metadata_theap(parent, child_heap, child_theap)
+            },
+            Self::CanonicalProcess(engine) => unsafe {
+                engine.detach_child_metadata_theap(child_heap, child_theap)
+            },
+        }
+    }
+
     unsafe fn retire_process_quiescent(self) -> Result<(), Self> {
         match self {
             Self::Process(engine) => unsafe { engine.retire_process_metadata_quiescent() }
@@ -1610,6 +1657,79 @@ impl<'owner> MetadataEngine<'owner> {
             .map_err(MetaError::Lock)? { return Err(MetaError::BackingAlreadySelected); }
         unsafe { *slot = Some(MetadataProcessBacking { binding, page_map: map }); }
         Ok(())
+    }
+
+    /// Initializes one already allocated child metadata Theap against the
+    /// exact detached TLD owned by this parent metadata engine.
+    ///
+    /// The engine entry is held while `ExclusiveTheapBootstrap` lends its
+    /// TLD to the source `_mi_theap_init` transition. The operation cannot
+    /// escape a TLD reference or recurse into metadata allocation.
+    ///
+    /// # Safety
+    /// `child_heap` and `child_theap` must be pinned in stable storage until
+    /// both resulting list memberships are removed. `child_theap` must name
+    /// the still-live exact parent `MetaAllocation`; the caller excludes all
+    /// concurrent child Heap/Theap lifecycle operations.
+    /// An initialization error may follow TLD-list attachment and Release
+    /// publication, so retain the child owner and do not retry from the error
+    /// alone.
+    pub(crate) unsafe fn initialize_child_metadata_theap(
+        self: Pin<&'owner Self>,
+        config: MemoryConfig,
+        parent: &'static MainSubprocess,
+        child_heap: &mut Heap,
+        child_theap: &mut Theap,
+    ) -> Result<(), ChildMetadataTheapError> {
+        let mut entry = self.enter().map_err(ChildMetadataTheapError::Metadata)?;
+        entry
+            .ensure_ready(config, parent)
+            .map_err(ChildMetadataTheapError::Metadata)?;
+        // SAFETY: `allocator()` mutably borrows the existing page session
+        // stored inside the engine. It never reprojects the bootstrap from
+        // `MetadataEngine::bootstrap`; the session retains the sole pin.
+        unsafe {
+            entry
+                .allocator()
+                .initialize_child_metadata_theap(parent, child_heap, child_theap)
+        }
+        .map_err(ChildMetadataTheapError::Theap)
+    }
+
+    /// Detaches a child metadata Theap from the child Heap and actual parent
+    /// metadata TLD while the owning engine entry excludes all other metadata
+    /// projections. The linear allocation must be released separately only
+    /// after this source-ordered unlink succeeds.
+    ///
+    /// # Safety
+    /// The caller has exclusive teardown authority over the pinned child
+    /// Heap and Theap, no child clients or producers remain, and the exact
+    /// metadata allocation stays live until this operation succeeds. Any
+    /// error retains both child images and their allocation capabilities. A
+    /// `TheapList` error identifies the unlink stage, but that stage may have
+    /// mutated its list before reporting an unlock error. Keep the child owner
+    /// terminally retained; this combined operation is not retryable from the
+    /// error alone.
+    pub(crate) unsafe fn detach_child_metadata_theap(
+        self: Pin<&'owner Self>,
+        config: MemoryConfig,
+        parent: &'static MainSubprocess,
+        child_heap: &mut Heap,
+        child_theap: NonNull<Theap>,
+    ) -> Result<(), ChildMetadataTheapError> {
+        let mut entry = self.enter().map_err(ChildMetadataTheapError::Metadata)?;
+        entry
+            .ensure_ready(config, parent)
+            .map_err(ChildMetadataTheapError::Metadata)?;
+        // SAFETY: `allocator()` mutably borrows the existing page session and
+        // its single Theap/TLD projection; the engine entry stays live for
+        // both source unlink steps.
+        unsafe {
+            entry
+                .allocator()
+                .detach_child_metadata_theap(parent, child_heap, child_theap)
+        }
+        .map_err(ChildMetadataTheapError::TheapList)
     }
 
     /// Allocates zeroed metadata through the detached source theap.

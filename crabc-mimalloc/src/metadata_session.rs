@@ -6,7 +6,7 @@
 //! The session retains raw process-static authority, not a mutable reference
 //! spanning source list links. Local mutations project only their own fields.
 
-use super::{LiveThreadId, MemoryId, Page, PageQueue, Theap, TheapOwner};
+use super::{Heap, LiveThreadId, MemoryId, Page, PageQueue, Theap, TheapOwner, ThreadLocalData};
 use crate::arena::ArenaView;
 use crate::bootstrap::{TheapPageSession, theap_page_session_sealed};
 use crate::main_theap::MainStaticMetadataHeapLease;
@@ -16,6 +16,10 @@ use core::ptr::NonNull;
 
 pub(crate) struct CanonicalMetadataTheapSession {
     theap: NonNull<Theap>,
+    /// Identity of the detached parent TLD in the same pinned bootstrap.
+    /// This stays raw so the session retains no mutable/shared TLD borrow
+    /// across page operations.
+    parent_tld: NonNull<ThreadLocalData>,
     heap: MainStaticMetadataHeapLease,
 }
 
@@ -27,8 +31,52 @@ impl CanonicalMetadataTheapSession {
     /// Theap fields have no other reader/writer while projected here. The
     /// process retains the image until this authority is consumed under
     /// permanent quiescence. No whole-image mutable reference may survive.
-    pub(crate) unsafe fn new(theap: NonNull<Theap>, heap: MainStaticMetadataHeapLease) -> Self {
-        Self { theap, heap }
+    pub(crate) unsafe fn new(
+        theap: NonNull<Theap>,
+        parent_tld: NonNull<ThreadLocalData>,
+        heap: MainStaticMetadataHeapLease,
+    ) -> Self {
+        Self { theap, parent_tld, heap }
+    }
+
+    /// # Safety
+    /// The metadata engine entry exclusively owns this session and the child
+    /// Heap/Theap remain pinned until their memberships are removed.
+    /// An error may follow TLD-list attachment and Release publication, so
+    /// retain the child owner and do not retry from the error alone.
+    pub(crate) unsafe fn initialize_child_metadata_theap(
+        &mut self,
+        child_heap: &mut Heap,
+        child_theap: &mut Theap,
+    ) -> Result<(), crate::types::TheapMainStaticInitError> {
+        // SAFETY: construction captured this exact TLD from the initialized
+        // pinned bootstrap; MetadataEngine serializes every projection, and
+        // this method retains no reference after the source operation.
+        let parent_tld = unsafe { &mut *self.parent_tld.as_ptr() };
+        child_theap.initialize_child_metadata(child_heap, parent_tld)
+    }
+
+    /// # Safety
+    /// The metadata engine entry is exclusive, the child has no clients or
+    /// producers, and the exact child Theap allocation remains live. Any
+    /// error may follow a list mutation; retain the child owner and do not
+    /// retry or release based on this result alone.
+    pub(crate) unsafe fn detach_child_metadata_theap(
+        &mut self,
+        child_heap: &mut Heap,
+        child_theap: NonNull<Theap>,
+    ) -> Result<(), crate::types::ChildTheapDetachError> {
+        // SAFETY: as above, this is a short local projection guarded by the
+        // owning metadata engine entry; no session method stores the borrow.
+        let parent_tld = unsafe { &mut *self.parent_tld.as_ptr() };
+        // SAFETY: forwarded child image pinning, producer quiescence, and
+        // exact-allocation liveness obligations.
+        unsafe {
+            parent_tld.detach_one_child_theap_for_heap_destroy(
+                child_heap,
+                child_theap.as_ptr(),
+            )
+        }
     }
 }
 

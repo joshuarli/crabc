@@ -2592,6 +2592,99 @@ pub(crate) type CanonicalProcessMetadataPageAllocator<'map> = PageAllocatorEngin
     'static, 'map, crate::types::metadata_session::CanonicalMetadataTheapSession,
     crate::page_backing::ProcessMetadataPageBacking>;
 
+impl<'arena, 'map, 'bootstrap, B> PageAllocatorEngine<
+    'arena, 'map, ExclusiveTheapSession<'bootstrap>, B,
+>
+where
+    B: PageBacking<'arena>,
+{
+    /// Projects child metadata attachment through the exclusive session that
+    /// already owns the pinned detached bootstrap, without reopening its
+    /// `Pin<&mut ExclusiveTheapBootstrap>` from the outer engine.
+    ///
+    /// # Safety
+    /// The caller holds the owning `MetadataEngine` entry. Child Heap and
+    /// Theap stay pinned through both list removals, and the exact metadata
+    /// allocation remains live for the attachment.
+    pub(crate) unsafe fn initialize_child_metadata_theap(
+        &mut self,
+        parent: &'static crate::subproc::MainSubprocess,
+        child_heap: &mut crate::types::Heap,
+        child_theap: &mut crate::types::Theap,
+    ) -> Result<(), crate::types::TheapMainStaticInitError> {
+        // SAFETY: this is the one exclusive session owned by `self`; the
+        // caller supplies the separate child-image pinning obligation.
+        unsafe {
+            self.session.initialize_child_metadata_theap(
+                parent,
+                child_heap,
+                child_theap,
+            )
+        }
+    }
+
+    /// Removes child TLD membership, then Heap membership, through the same
+    /// exclusive session before the caller releases the parent allocation.
+    ///
+    /// # Safety
+    /// The metadata entry and child lifecycle are exclusively owned; the
+    /// child has no clients/producers and its exact allocation stays live.
+    pub(crate) unsafe fn detach_child_metadata_theap(
+        &mut self,
+        parent: &'static crate::subproc::MainSubprocess,
+        child_heap: &mut crate::types::Heap,
+        child_theap: NonNull<crate::types::Theap>,
+    ) -> Result<(), crate::types::ChildTheapDetachError> {
+        // SAFETY: this is the one exclusive session owned by `self`.
+        unsafe {
+            self.session.detach_child_metadata_theap(
+                parent,
+                child_heap,
+                child_theap,
+            )
+        }
+    }
+}
+
+impl<'map> PageAllocatorEngine<
+    'static,
+    'map,
+    crate::types::metadata_session::CanonicalMetadataTheapSession,
+    crate::page_backing::ProcessMetadataPageBacking,
+> {
+    /// # Safety
+    /// The owning MetadataEngine entry is held, and child Heap/Theap images
+    /// remain pinned until both source list links are removed.
+    pub(crate) unsafe fn initialize_child_metadata_theap(
+        &mut self,
+        child_heap: &mut crate::types::Heap,
+        child_theap: &mut crate::types::Theap,
+    ) -> Result<(), crate::types::TheapMainStaticInitError> {
+        // SAFETY: MetadataEngine owns this canonical session and serializes
+        // every access to its short raw parent-TLD projection.
+        unsafe {
+            self.session
+                .initialize_child_metadata_theap(child_heap, child_theap)
+        }
+    }
+
+    /// # Safety
+    /// The owning MetadataEngine entry and child teardown are exclusive; no
+    /// child client/producer remains, and its metadata allocation stays live.
+    pub(crate) unsafe fn detach_child_metadata_theap(
+        &mut self,
+        child_heap: &mut crate::types::Heap,
+        child_theap: NonNull<crate::types::Theap>,
+    ) -> Result<(), crate::types::ChildTheapDetachError> {
+        // SAFETY: MetadataEngine owns this canonical session and serializes
+        // every access to its short raw parent-TLD projection.
+        unsafe {
+            self.session
+                .detach_child_metadata_theap(child_heap, child_theap)
+        }
+    }
+}
+
 impl<'map, Session: TheapPageSession> PageAllocatorEngine<
     'static, 'map, Session, crate::page_backing::ProcessMetadataPageBacking> {
     #[cfg(test)]

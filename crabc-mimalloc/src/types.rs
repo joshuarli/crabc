@@ -2755,6 +2755,162 @@ impl ThreadLocalData {
         guard.unlock().map_err(ThreadLocalTheapListError::Lock)
     }
 
+    /// Removes one Heap-owned Theap using `mi_heap_free_theaps` ordering.
+    /// `_mi_heap_detach_theaps` first holds the Heap lock and try-locks this
+    /// TLD to unlink only the TLD edge; a later Heap-locked pass clears the
+    /// Heap links after `theap->tld` is null. Like C, it leaves the Release
+    /// `theap->heap` publication untouched through `_mi_theap_decref`.
+    /// The parent metadata-Theap remains on this TLD throughout the child
+    /// Heap's destruction.
+    ///
+    /// # Safety
+    /// The caller has exclusive teardown authority over `heap` and `theap`,
+    /// no child clients or producers remain, and the exact Theap allocation
+    /// remains live. The caller holds the parent MetadataEngine entry and
+    /// controls every writer to this detached TLD's list. The held entry owns
+    /// this list lifecycle, so normal source lock contention is not
+    /// possible here; C's retry/yield loop covers concurrent active TLD
+    /// teardown, which this bounded detached-TLD operation does not admit. A
+    /// busy try-lock is therefore an invalid-owner terminal error. Any error
+    /// retains all owner images terminally: an error
+    /// after TLD unlink may leave only the Heap edge, while an error after
+    /// Heap unlink may leave neither edge. Do not retry or release from the
+    /// error alone. The caller also guarantees that all non-null intrusive
+    /// neighbors in both lists are live, pinned members protected by the two
+    /// list locks; their raw links are read to validate and repair the lists.
+    pub(crate) unsafe fn detach_one_child_theap_for_heap_destroy(
+        &mut self,
+        heap: &mut Heap,
+        theap: *mut Theap,
+    ) -> Result<(), ChildTheapDetachError> {
+        let tld_pointer = core::ptr::from_mut(self);
+        let heap_pointer = core::ptr::from_mut(heap);
+        let heap_guard = heap
+            .theaps_lock
+            .lock()
+            .map_err(|error| ChildTheapDetachError::BeforeTldUnlink(
+                ThreadLocalTheapListError::Heap(HeapTheapListError::Lock(error)),
+            ))?;
+        let tld_guard = match self.theaps_lock.try_lock() {
+            Some(guard) => guard,
+            None => {
+                let _ = heap_guard.unlock();
+                return Err(ChildTheapDetachError::BeforeTldUnlink(
+                    ThreadLocalTheapListError::Busy,
+                ));
+            }
+        };
+        if theap.is_null() {
+            let _ = tld_guard.unlock();
+            let _ = heap_guard.unlock();
+            return Err(ChildTheapDetachError::BeforeTldUnlink(
+                ThreadLocalTheapListError::Membership,
+            ));
+        }
+
+        // SAFETY: the caller pins the exact Theap and both owning images;
+        // both source list locks serialize every inspected link.
+        let valid = unsafe {
+            let hprev = *(*theap).hprev.get();
+            let hnext = *(*theap).hnext.get();
+            core::ptr::eq((*theap).tld, tld_pointer)
+                && core::ptr::eq((*theap).heap.load(Ordering::Acquire), heap_pointer)
+                && if (*theap).tprev.is_null() {
+                    self.theaps == theap
+                } else {
+                    core::ptr::eq((*(*theap).tprev).tnext, theap)
+                }
+                && ((*theap).tnext.is_null()
+                    || core::ptr::eq((*(*theap).tnext).tprev, theap))
+                && if hprev.is_null() {
+                    heap.theaps == theap
+                } else {
+                    core::ptr::eq(*(*hprev).hnext.get(), theap)
+                }
+                && (hnext.is_null() || core::ptr::eq(*(*hnext).hprev.get(), theap))
+        };
+        if !valid {
+            let _ = tld_guard.unlock();
+            let _ = heap_guard.unlock();
+            return Err(ChildTheapDetachError::BeforeTldUnlink(
+                ThreadLocalTheapListError::Membership,
+            ));
+        }
+
+        // Match `_mi_heap_detach_theaps`: remove and clear the TLD relation
+        // while the Heap edge and Release `heap` publication are still live.
+        unsafe {
+            if !(*theap).tnext.is_null() {
+                (*(*theap).tnext).tprev = (*theap).tprev;
+            }
+            if !(*theap).tprev.is_null() {
+                (*(*theap).tprev).tnext = (*theap).tnext;
+            } else {
+                self.theaps = (*theap).tnext;
+            }
+            (*theap).tnext = null_mut();
+            (*theap).tprev = null_mut();
+            (*theap).tld = null_mut();
+        }
+        if let Err(error) = tld_guard.unlock() {
+            let _ = heap_guard.unlock();
+            return Err(ChildTheapDetachError::AfterTldUnlink(
+                ThreadLocalTheapListError::Lock(error),
+            ));
+        }
+        heap_guard
+            .unlock()
+            .map_err(|error| ChildTheapDetachError::AfterTldUnlink(
+                ThreadLocalTheapListError::Heap(HeapTheapListError::Lock(error)),
+            ))?;
+
+        // Match `mi_heap_free_theaps`' later pass, which only follows the
+        // Heap list after `_mi_heap_detach_theaps` cleared this TLD pointer.
+        let heap_guard = heap
+            .theaps_lock
+            .lock()
+            .map_err(|error| ChildTheapDetachError::BeforeHeapUnlink(
+                ThreadLocalTheapListError::Heap(HeapTheapListError::Lock(error)),
+            ))?;
+        let valid_heap_member = unsafe {
+            let hprev = *(*theap).hprev.get();
+            let hnext = *(*theap).hnext.get();
+            (*theap).tld.is_null()
+                && core::ptr::eq((*theap).heap.load(Ordering::Acquire), heap_pointer)
+                && if hprev.is_null() {
+                    heap.theaps == theap
+                } else {
+                    core::ptr::eq(*(*hprev).hnext.get(), theap)
+                }
+                && (hnext.is_null() || core::ptr::eq(*(*hnext).hprev.get(), theap))
+        };
+        if !valid_heap_member {
+            let _ = heap_guard.unlock();
+            return Err(ChildTheapDetachError::BeforeHeapUnlink(
+                ThreadLocalTheapListError::Membership,
+            ));
+        }
+        unsafe {
+            let hnext = *(*theap).hnext.get();
+            let hprev = *(*theap).hprev.get();
+            if !hnext.is_null() {
+                *(*hnext).hprev.get() = hprev;
+            }
+            if !hprev.is_null() {
+                *(*hprev).hnext.get() = hnext;
+            } else {
+                heap.theaps = hnext;
+            }
+            *(*theap).hnext.get() = null_mut();
+            *(*theap).hprev.get() = null_mut();
+        }
+        heap_guard
+            .unlock()
+            .map_err(|error| ChildTheapDetachError::AfterHeapUnlink(
+                ThreadLocalTheapListError::Heap(HeapTheapListError::Lock(error)),
+            ))
+    }
+
     /// Detaches one exact auxiliary Theap while deleting its owning
     /// first-class Heap, leaving the current default Theap on this TLD.
     ///
@@ -3015,6 +3171,20 @@ pub(crate) enum ThreadLocalTheapListError {
     Membership,
     Heap(HeapTheapListError),
     Lock(crabc_core::Errno),
+}
+
+/// A child Theap unlink failure with the source heap-destruction stage.
+///
+/// The TLD list edge is removed first while the Heap lock is held, then the
+/// Heap list edge is removed. Unlock errors can follow either mutation, so the
+/// caller retains the child Heap and exact metadata capability terminally;
+/// it must not retry or release from this result alone.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ChildTheapDetachError {
+    BeforeTldUnlink(ThreadLocalTheapListError),
+    AfterTldUnlink(ThreadLocalTheapListError),
+    BeforeHeapUnlink(ThreadLocalTheapListError),
+    AfterHeapUnlink(ThreadLocalTheapListError),
 }
 
 /// A private TLD lock was not quiescent at its explicit lifecycle boundary.
@@ -6604,10 +6774,18 @@ mod tests {
             size_of::<MainSubprocess>(),
             true,
         );
+        // Match `mi_subproc_new`: the child context image and parent-owned
+        // metadata-Theap allocation precede registry insertion.
+        let mut child_metadata_allocation = parent_metadata
+            .zalloc_for_main_subprocess(metadata_config, parent, size_of::<Theap>())
+            .unwrap();
+        let child_metadata_theap = child_metadata_allocation
+            .initialize_dynamic_theap_metadata()
+            .unwrap();
+
         // SAFETY: child is retained at this pinned exact Malloc image through
         // every list operation below, and parent is an initialized member.
         unsafe { registry.initialize_child(child, parent, child_memory) }.unwrap();
-
         let mut child_heap = std::boxed::Box::new(Heap::bootstrap_empty());
         let child_heap_memory = MemoryId::malloc(
             core::ptr::from_mut(&mut *child_heap).cast(),
@@ -6616,30 +6794,21 @@ mod tests {
         );
         child_heap.initialize_main_static(child, child_heap_memory);
 
-        // This temporary TLD has the correct detached/parent identity shape,
-        // but is not yet the parent engine's actual metadata-TLD projection.
-        // Child metadata attachment to `parent->theap_meta->tld` remains
-        // incomplete until the engine exposes a lock-scoped field projection.
-        let mut parent_detached_tld = ThreadLocalData::detached();
-        assert!(parent_detached_tld.prepare_detached_static_memid());
-        assert!(parent_detached_tld.initialize_detached_after_static_memid(parent));
-        let mut child_metadata_allocation = parent_metadata
-            .zalloc_for_main_subprocess(metadata_config, parent, size_of::<Theap>())
-            .unwrap();
-        let child_metadata_theap = child_metadata_allocation
-            .initialize_dynamic_theap_metadata()
-            .unwrap();
-        child_metadata_theap
-            .initialize_child_metadata(&mut child_heap, &mut parent_detached_tld)
+        // SAFETY: the child Heap is Box-pinned and the child Theap remains in
+        // its live linear parent-allocation capability through detachment.
+        unsafe { parent_metadata.initialize_child_metadata_theap(
+                metadata_config,
+                parent,
+                &mut child_heap,
+                child_metadata_theap,
+            ) }
             .unwrap();
 
-        let child_theap = core::ptr::from_mut(child_metadata_theap);
-        assert_eq!(parent_detached_tld.theaps, child_theap);
-        assert_eq!(child_heap.theaps, child_theap);
-        assert!(core::ptr::eq(
-            child_metadata_theap.tld,
-            core::ptr::from_mut(&mut parent_detached_tld),
-        ));
+        let child_theap = NonNull::from(&mut *child_metadata_theap);
+        // The session operation used the parent's actual bootstrap-owned TLD;
+        // only the raw identity is observed here, never a second TLD borrow.
+        assert!(!child_metadata_theap.tld.is_null());
+        assert_eq!(child_heap.theaps, child_theap.as_ptr());
         assert!(core::ptr::eq(
             child_metadata_theap.heap.load(Ordering::Acquire),
             core::ptr::from_mut(&mut *child_heap),
@@ -6653,19 +6822,27 @@ mod tests {
         unsafe { registry.unlink_child_terminal(child) }.unwrap();
         assert!(!child.is_registered_child_of(parent));
 
-        // `_mi_theap_free` first removes the heap-list edge, then the TLD-list
-        // edge. The child image allocation remains live until both list owners
-        // are clear, even though process-list membership was already removed.
-        parent_detached_tld
-            .detach_one_theap_from_heap(&mut child_heap, child_theap)
+        // `_mi_heap_free_theaps` runs `_mi_heap_detach_theaps` first, removing
+        // the TLD edge while retaining the Heap edge, then clears Heap links.
+        // Keep the image allocation live until both list owners are clear.
+        // SAFETY: this fixture has no child users, and both the Box-pinned
+        // Heap and exact Theap allocation remain live through both unlinks.
+        unsafe { parent_metadata.detach_child_metadata_theap(
+                metadata_config,
+                parent,
+                &mut child_heap,
+                child_theap,
+            ) }
             .unwrap();
         assert!(child_heap.theaps.is_null());
-        assert!(!child_metadata_theap.is_initialized());
-        assert_eq!(parent_detached_tld.theaps, child_theap);
-        parent_detached_tld
-            .detach_one_theap_from_tld(child_theap)
-            .unwrap();
-        assert!(parent_detached_tld.theaps.is_null());
+        // `mi_heap_free_theaps` clears list links but leaves `theap->heap`
+        // published through its following `_mi_theap_decref`/free.
+        assert!(child_metadata_theap.is_initialized());
+        assert!(child_metadata_theap.tld.is_null());
+        assert!(core::ptr::eq(
+            child_metadata_theap.heap.load(Ordering::Acquire),
+            core::ptr::from_mut(&mut *child_heap),
+        ));
         parent_metadata.free(&mut child_metadata_allocation).unwrap();
     }
 
