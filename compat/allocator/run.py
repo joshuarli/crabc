@@ -362,8 +362,9 @@ M2_METADATA_LIFECYCLE_TRACE_KEYS = (
     "m2.metadata.lifecycle.published",
     "m2.metadata.lifecycle.failed_replacement_preserved",
     "m2.metadata.lifecycle.replaced_released",
+    "m2.metadata.lifecycle.midrun_peer_replacements",
 )
-M2_METADATA_LIFECYCLE_TRACE_VALUES = (4, 96, 96, 96)
+M2_METADATA_LIFECYCLE_TRACE_VALUES = (4, 96, 96, 96, 18)
 M2_X86_64_METADATA_FIXTURE = ALLOCATOR_ROOT / "m2_metadata_x86_64.c"
 M2_X86_64_SOURCE_MAP_REFERENCES: Mapping[str, tuple[dict[str, str], ...]] = {
     "vm-primitives": (

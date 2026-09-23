@@ -82,7 +82,7 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
                     ]
                 ),
             },
-            "comparison": {"compared_value_count": 4, "status": "matched"},
+            "comparison": {"compared_value_count": 5, "status": "matched"},
             "fixture": RUNNER.artifact_record(RUNNER.M2_X86_64_METADATA_FIXTURE),
             "rust": {
                 "command": ["/workspace/.work/prepared-test", "meta::tests::trace"],

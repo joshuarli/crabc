@@ -19,7 +19,7 @@
       "id": "metadata",
       "native_status": "partial",
       "remaining_conditions": [
-        "Qualify non-main-subprocess metadata ownership, non-Malloc memory-ID release branches, and concurrent allocation/publication/release overlap beyond the selected main-subprocess producer-to-consumer lifecycle."
+        "Qualify non-main-subprocess metadata ownership and non-Malloc memory-ID release branches beyond the selected main-subprocess lifecycle."
       ],
       "source_map_records": [
         { "required_status": "partial", "unit_id": "core-layouts-and-configuration" },

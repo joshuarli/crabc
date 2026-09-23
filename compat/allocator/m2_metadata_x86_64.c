@@ -19,16 +19,15 @@ struct published_metadata {
 struct metadata_worker {
   mi_subproc_t* subproc;
   size_t index;
-  pthread_barrier_t* barrier;
+  pthread_barrier_t* phase;
   struct published_metadata published[24];
   int error;
 };
 static void* publish_metadata(void* argument) {
   struct metadata_worker* worker = argument;
-  pthread_barrier_wait(worker->barrier);
   const size_t sizes[] = {0, 1, 63, 1025, 4097, 131073};
   const size_t alignments[] = {8, 64, 4096, 65536};
-  for (size_t i = 0; i < 24; i++) {
+  for (size_t i = 0; i < 12; i++) {
     const size_t size = sizes[i % 6];
     const size_t alignment = alignments[(worker->index + i) % 4];
     struct published_metadata* item = &worker->published[i];
@@ -49,17 +48,59 @@ static void* publish_metadata(void* argument) {
     item->usable = mi_usable_size(item->pointer);
     memset(item->pointer, 0xa5, item->usable);
   }
+  pthread_barrier_wait(worker->phase);
+  /* Keep real peer allocations live while three peers continue allocating.
+   * This joins source _mi_meta_rezalloc/free with concurrent _mi_meta_zalloc
+   * calls, rather than postponing every release until all producers join. */
+  if (worker->index == 0) {
+    struct metadata_worker* const peers = worker - worker->index;
+    for (size_t other = 1; other < 4; other++) {
+      for (size_t i = 0; i < 6; i++) {
+        struct published_metadata* item = &peers[other].published[i];
+        mi_memid_t output_memory = item->memory;
+        if (_mi_meta_rezalloc(worker->subproc, item->pointer, SIZE_MAX, &output_memory) != NULL
+            || output_memory.memkind != MI_MEM_NONE) { worker->error = 20; return NULL; }
+        const size_t newsize = (i % 2 == 0 ? item->usable + 47 : item->usable / 2);
+        output_memory = item->memory;
+        unsigned char* replacement = _mi_meta_rezalloc(worker->subproc, item->pointer, newsize, &output_memory);
+        if (replacement == NULL || output_memory.memkind != MI_MEM_MALLOC) { worker->error = 21; return NULL; }
+        const size_t copied = (newsize < item->usable ? newsize : item->usable);
+        for (size_t k = 0; k < newsize; k++) {
+          if (replacement[k] != (k < copied ? 0xa5 : 0)) { worker->error = 22; return NULL; }
+        }
+        _mi_meta_free(worker->subproc, replacement, output_memory);
+        item->pointer = NULL; /* sole release capability was consumed above */
+      }
+    }
+  }
+  for (size_t i = 12; i < 24; i++) {
+    const size_t size = sizes[i % 6];
+    const size_t alignment = alignments[(worker->index + i) % 4];
+    struct published_metadata* item = &worker->published[i];
+    item->pointer = (i % 2 == 0
+      ? _mi_meta_zalloc(worker->subproc, size, &item->memory)
+      : _mi_meta_zalloc_aligned(worker->subproc, size, alignment, &item->memory));
+    if (item->pointer == NULL || item->memory.memkind != MI_MEM_MALLOC
+        || _mi_memid_size(item->memory) != size || !item->memory.initially_zero
+        || (i % 2 != 0 && (uintptr_t)item->pointer % alignment != 0)) {
+      worker->error = 23; return NULL;
+    }
+    const unsigned char* bytes = item->pointer;
+    for (size_t j = 0; j < size; j++) if (bytes[j] != 0) { worker->error = 24; return NULL; }
+    item->usable = mi_usable_size(item->pointer);
+    memset(item->pointer, 0xa5, item->usable);
+  }
   return NULL;
 }
 static int metadata_lifecycle(mi_subproc_t* subproc) {
-  pthread_barrier_t barrier;
-  if (pthread_barrier_init(&barrier, NULL, 4) != 0) return 12;
+  pthread_barrier_t phase;
+  if (pthread_barrier_init(&phase, NULL, 4) != 0) return 12;
   struct metadata_worker workers[4] = {0};
   pthread_t threads[4];
   for (size_t i = 0; i < 4; i++) {
     workers[i].subproc = subproc;
     workers[i].index = i;
-    workers[i].barrier = &barrier;
+    workers[i].phase = &phase;
     if (pthread_create(&threads[i], NULL, publish_metadata, &workers[i]) != 0) return 13;
   }
   for (size_t i = 0; i < 4; i++) {
@@ -67,6 +108,7 @@ static int metadata_lifecycle(mi_subproc_t* subproc) {
     if (workers[i].error != 0) return workers[i].error;
     for (size_t j = 0; j < 24; j++) {
       struct published_metadata* item = &workers[i].published[j];
+      if (item->pointer == NULL) continue;
       mi_memid_t output_memory = item->memory;
       if (_mi_meta_rezalloc(subproc, item->pointer, SIZE_MAX, &output_memory) != NULL
           || output_memory.memkind != MI_MEM_NONE) return 15;
@@ -82,12 +124,13 @@ static int metadata_lifecycle(mi_subproc_t* subproc) {
       _mi_meta_free(subproc, replacement, output_memory);
     }
   }
-  if (pthread_barrier_destroy(&barrier) != 0) return 19;
+  if (pthread_barrier_destroy(&phase) != 0) return 19;
   puts("CRABC_MI_M2_METADATA_LIFECYCLE_TRACE_BEGIN");
   puts("m2.metadata.lifecycle.workers=4");
   puts("m2.metadata.lifecycle.published=96");
   puts("m2.metadata.lifecycle.failed_replacement_preserved=96");
   puts("m2.metadata.lifecycle.replaced_released=96");
+  puts("m2.metadata.lifecycle.midrun_peer_replacements=18");
   puts("CRABC_MI_M2_METADATA_LIFECYCLE_TRACE_END");
   return 0;
 }

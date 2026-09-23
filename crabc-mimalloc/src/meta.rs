@@ -2747,15 +2747,17 @@ mod tests {
         let map = unsafe { binding.page_map().page_map_for_owned_ranges() }.unwrap();
         let barrier = Barrier::new(4);
         let completed = AtomicUsize::new(0);
+        let first_stage: std::vec::Vec<std::sync::Mutex<Option<(MetaAllocation<'static>, usize, usize)>>> =
+            (0..48).map(|_| std::sync::Mutex::new(None)).collect();
         thread::scope(|scope| {
             let mut workers = std::vec::Vec::new();
             for worker in 0..4 {
                 let barrier = &barrier;
                 let completed = &completed;
+                let first_stage = &first_stage;
                 workers.push(scope.spawn(move || {
-                    barrier.wait();
                     let mut published = std::vec::Vec::new();
-                    for iteration in 0..24 {
+                    for iteration in 0..12 {
                         let size = [0, 1, 63, 1025, 4097, 131073][iteration % 6];
                         let alignment = [8, 64, 4096, 65536][(worker + iteration) % 4];
                         let block = if iteration % 2 == 0 {
@@ -2781,35 +2783,96 @@ mod tests {
                                 .iter().all(|byte| *byte == 0));
                             core::ptr::write_bytes(block.pointer().as_ptr(), 0xa5, usable);
                         }
+                        *first_stage[worker * 12 + iteration].lock().unwrap() =
+                            Some((block, usable, iteration));
+                    }
+                    barrier.wait();
+                    if worker == 0 {
+                        // The source detached metadata lock admits allocation
+                        // and release from independent callers. Free and
+                        // replace peer-published metadata while those peers
+                        // continue the second allocation batch below.
+                        for other in 1..4 {
+                            for iteration in 0..6 {
+                                let (mut old, usable, index) = first_stage[other * 12 + iteration]
+                                    .lock().unwrap().take().unwrap();
+                                let pointer = old.pointer();
+                                let memory = old.memory_id();
+                                assert!(matches!(allocator.rezalloc(config(), Some(&mut old), usize::MAX),
+                                    Err(MetaError::AllocationUnavailable)));
+                                assert!(old.is_live());
+                                assert_eq!(old.pointer(), pointer);
+                                assert!(old.matches_memory_id(memory));
+                                let new_size = if index % 2 == 0 { usable + 47 } else { usable / 2 };
+                                let replacement = allocator.rezalloc(config(), Some(&mut old), new_size).unwrap();
+                                let bytes = unsafe {
+                                    core::slice::from_raw_parts(replacement.pointer().as_ptr(), new_size)
+                                };
+                                assert!(bytes[..usable.min(new_size)].iter().all(|byte| *byte == 0xa5));
+                                assert!(bytes[usable.min(new_size)..].iter().all(|byte| *byte == 0));
+                                assert!(!old.is_live());
+                                assert!(MetaRelease::Malloc(replacement).release().is_ok());
+                            }
+                        }
+                    }
+                    for iteration in 12..24 {
+                        let size = [0, 1, 63, 1025, 4097, 131073][iteration % 6];
+                        let alignment = [8, 64, 4096, 65536][(worker + iteration) % 4];
+                        let block = if iteration % 2 == 0 {
+                            allocator.zalloc(config(), size).unwrap()
+                        } else {
+                            allocator.zalloc_aligned(config(), size, alignment).unwrap()
+                        };
+                        if iteration % 2 != 0 {
+                            assert_eq!(block.pointer().as_ptr().addr() % alignment, 0);
+                        }
+                        assert_eq!(block.memory_id().kind(), MemoryKind::Malloc);
+                        assert_eq!(block.memory_id().size(), Some(size));
+                        assert!(block.memory_id().initially_zero());
+                        let usable = {
+                            let mut entry = allocator.enter().unwrap();
+                            unsafe { entry.allocator().usable_size(block.pointer()) }.unwrap()
+                        };
+                        unsafe {
+                            assert!(core::slice::from_raw_parts(block.pointer().as_ptr(), size)
+                                .iter().all(|byte| *byte == 0));
+                            core::ptr::write_bytes(block.pointer().as_ptr(), 0xa5, usable);
+                        }
                         published.push((block, usable, iteration));
                     }
                     completed.fetch_add(1, Ordering::Release);
                     published
                 }));
             }
-            // Join transfers the exact allocation capabilities and establishes
-            // publication of all payload writes from the allocating threads.
+            // The mid-run barrier publishes the first batch; the joined
+            // second batch transfers the remaining exact capabilities.
+            let mut remaining = std::vec::Vec::new();
             for worker in workers {
-                for (mut old, usable, iteration) in worker.join().unwrap() {
-                    let pointer = old.pointer();
-                    let memory = old.memory_id();
-                    assert!(matches!(allocator.rezalloc(config(), Some(&mut old), usize::MAX),
-                        Err(MetaError::AllocationUnavailable)));
-                    assert!(old.is_live());
-                    assert_eq!(old.pointer(), pointer);
-                    assert!(old.matches_memory_id(memory));
-                    // SAFETY: the transferred live capability keeps this page
-                    // registered while the lookup and payload reads execute.
-                    let page = unsafe { map.checked_lookup(pointer.as_ptr()) };
-                    assert!(subprocess.is_metadata_page(unsafe { page.as_ref() }));
-                    let new_size = if iteration % 2 == 0 { usable + 47 } else { usable / 2 };
-                    let replacement = allocator.rezalloc(config(), Some(&mut old), new_size).unwrap();
-                    let bytes = unsafe { core::slice::from_raw_parts(replacement.pointer().as_ptr(), new_size) };
-                    assert!(bytes[..usable.min(new_size)].iter().all(|byte| *byte == 0xa5));
-                    assert!(bytes[usable.min(new_size)..].iter().all(|byte| *byte == 0));
-                    assert!(!old.is_live());
-                    assert!(MetaRelease::Malloc(replacement).release().is_ok());
-                }
+                remaining.extend(worker.join().unwrap());
+            }
+            for slot in &first_stage {
+                let allocation = slot.lock().unwrap().take();
+                if let Some(allocation) = allocation { remaining.push(allocation); }
+            }
+            for (mut old, usable, iteration) in remaining {
+                let pointer = old.pointer();
+                let memory = old.memory_id();
+                assert!(matches!(allocator.rezalloc(config(), Some(&mut old), usize::MAX),
+                    Err(MetaError::AllocationUnavailable)));
+                assert!(old.is_live());
+                assert_eq!(old.pointer(), pointer);
+                assert!(old.matches_memory_id(memory));
+                // SAFETY: the transferred live capability keeps this page
+                // registered while the lookup and payload reads execute.
+                let page = unsafe { map.checked_lookup(pointer.as_ptr()) };
+                assert!(subprocess.is_metadata_page(unsafe { page.as_ref() }));
+                let new_size = if iteration % 2 == 0 { usable + 47 } else { usable / 2 };
+                let replacement = allocator.rezalloc(config(), Some(&mut old), new_size).unwrap();
+                let bytes = unsafe { core::slice::from_raw_parts(replacement.pointer().as_ptr(), new_size) };
+                assert!(bytes[..usable.min(new_size)].iter().all(|byte| *byte == 0xa5));
+                assert!(bytes[usable.min(new_size)..].iter().all(|byte| *byte == 0));
+                assert!(!old.is_live());
+                assert!(MetaRelease::Malloc(replacement).release().is_ok());
             }
         });
         assert_eq!(completed.load(Ordering::Acquire), 4);
@@ -2822,6 +2885,7 @@ mod tests {
         std::println!("m2.metadata.lifecycle.published=96");
         std::println!("m2.metadata.lifecycle.failed_replacement_preserved=96");
         std::println!("m2.metadata.lifecycle.replaced_released=96");
+        std::println!("m2.metadata.lifecycle.midrun_peer_replacements=18");
         std::println!("CRABC_MI_M2_METADATA_LIFECYCLE_TRACE_END");
     }
 
