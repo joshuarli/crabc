@@ -44,21 +44,13 @@ are not transferable passes for a different revision.
   measurement, with provider/semantic closure still open. These source-bound
   checkpoints do not promote current main. Complete the actual remaining
   aggregate/family admissions from `campaign-status`, not another symbol sweep.
-- **Allocator:** M1's six bounded components passed at `0daef148bd20dc2bef2ac9dc34af4f3dd0e99d7a`.
-  M2 PageMap and scalar bitmaps qualified at `62d6435c772e9ddc144de302cc54ad78cea720e9`;
-  a pinned C/Rust metadata publication and replacement lifecycle differential
-  matched on native x86 at `17960aab416c63e50aac190be9e5004fd0a267af`.
-  VM, metadata, arenas, initialization, fault injection, and no-recursion
-  qualification remain partial. A bounded parent-owned child-Theap attach/detach
-  step passed its focused native test at `b50e32571`. The process-main/child
-  subprocess identity split passed its focused native test at `563ce8abd`.
-  Parent-issued child context and metadata-Theap preparation passed its focused
-  native test at `0617722e4`; a linear parent-Heap child storage capability
-  passed its focused merged native test at `97522c679`. The parent-allocated
-  child Heap's no-page registry/Theap/list teardown and exact storage release
-  passed its focused merged native test at `e9968f2dc`. Child MetadataEngine
-  readiness and real page destruction remain open. These
-  bounded witnesses do not close the milestone.
+- **Allocator:** M1's six bounded components, M2 PageMap/scalar bitmaps, and a
+  pinned C/Rust metadata lifecycle differential passed at their recorded source
+  revisions. Parent-owned child context, metadata Theap, Heap storage,
+  no-page teardown, and a real child-owned regular arena slice passed focused
+  native tests through `ed30f681b`. Child metadata PageMap/page allocation and
+  destruction remain open; VM, arenas, initialization, fault injection, and
+  no-recursion M2 qualification remain partial. C remains the selected backend.
 - **Integration:** Accepted C stays default. Explicit owned static and dynamic
   native-shadow products and graph/purity checks exist. The private
   source-built x86 C allocator basic gate passed at `d92714775` with the
