@@ -55,8 +55,10 @@ are not transferable passes for a different revision.
   revisions. Parent-owned child context, metadata Theap, Heap storage,
   no-page teardown, and a real child-owned regular arena slice passed focused
   native tests through `ed30f681b`. The child PageMap/arena pair and locked
-  metadata entry are integrated; child metadata page allocation and
-  destruction remain open. VM, arenas, initialization, fault injection, and
+  metadata entry are integrated. A real child metadata page session now passed
+  focused arena and aligned OS-backed allocation/free, retained unmap retry,
+  and source-ordered no-page teardown at `96940060d`; full child Heap/page
+  destruction remains open. VM, arenas, initialization, fault injection, and
   no-recursion M2 qualification remain partial. C remains the selected backend.
 - **Integration:** Accepted C stays default. Explicit owned static and dynamic
   native-shadow products and graph/purity checks exist. The private
