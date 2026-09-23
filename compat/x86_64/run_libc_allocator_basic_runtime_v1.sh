@@ -23,6 +23,7 @@ ulimit -c 0
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly EXIT_MARKER=ALLOCATOR_BASIC_RUNTIME_V1_ATEXIT
+readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 
 fail() {
     printf 'ERROR: x86 libc allocator-basic-runtime-v1: %s\n' "$*" >&2
@@ -104,10 +105,11 @@ case "$(uname -m)" in
     x86_64|amd64) ;;
     *) fail "requires native x86-64" ;;
 esac
-for tool in ar awk cargo cmp grep nm objdump readelf rustup sed sort; do
+for tool in ar awk cargo cmp grep nm objdump python3 readelf rustup sed sort; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
+[ -f "$STATIC_C_ABI_EXPORTS" ] || fail "missing selected-static C ABI export roster"
 
 if command -v ld.lld >/dev/null 2>&1; then
     link_editor=ld.lld
@@ -123,8 +125,6 @@ bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 work_dir="$(mktemp -d "${TMPDIR:?x86 runner must provide repository-local TMPDIR}/crabc-x86-64-libc-allocator-basic-runtime-v1.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 crt_dir="$work_dir/crt"
-cargo_target="$work_dir/cargo-target"
-archive="$cargo_target/x86_64-unknown-linux-musl/release/libc.a"
 reference="$work_dir/pinned-musl-allocator-basic-runtime-v1-reference"
 candidate="$work_dir/crabc-allocator-basic-runtime-v1-candidate"
 probe_object="$work_dir/probe.o"
@@ -133,6 +133,7 @@ reference_stdout="$work_dir/reference.stdout"
 candidate_stdout="$work_dir/candidate.stdout"
 expected_stdout="$work_dir/expected.stdout"
 link_map="$work_dir/candidate.map"
+link_trace="$work_dir/candidate-link-trace"
 candidate_symbols="$work_dir/candidate-symbols"
 candidate_headers="$work_dir/candidate-program-headers"
 candidate_dynamic="$work_dir/candidate-dynamic"
@@ -183,12 +184,22 @@ for object in crt1 crti crtn; do
         "crt/src/x86_64_${object}.rs" -o "$crt_dir/${object}.o"
 done
 
-CARGO_TARGET_DIR="$cargo_target" cargo rustc --release --locked \
-    -p crabc-libc --lib --features x86-owned-static-runtime \
-    --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort -C lto=off \
-    -C codegen-units=256
-[ -f "$archive" ] || fail "cargo did not emit the feature-built x86 libc archive"
+# Build the candidate with source-owned core/alloc/compiler_builtins and the
+# exact non-crypt C allocator profile. `alloc` is authenticated as an available
+# source artifact, but this C backend must not place its members in libc.a.
+source_runtime_helper="$ROOT_DIR/compat/x86_64/native_static_source_runtime_closure.py"
+source_runtime_work="${work_dir#"$ROOT_DIR/.work/x86_64/"}"
+[ "$source_runtime_work" != "$work_dir" ] \
+    || fail "runner work directory escaped the repository-local native boundary"
+source_runtime_work="$source_runtime_work/source-runtime"
+if ! archive="$(python3 "$source_runtime_helper" build \
+    --work "$source_runtime_work" \
+    --features x86-owned-static-runtime-core --print-archive)"; then
+    fail "source-built allocator-basic runtime archive construction failed"
+fi
+source_runtime_receipt="$ROOT_DIR/.work/x86_64/$source_runtime_work/receipt.json"
+[ -f "$archive" ] || fail "source-runtime helper did not emit the allocator-basic archive"
+[ -f "$source_runtime_receipt" ] || fail "source-runtime helper did not emit its closure receipt"
 
 mapfile -t observability_members < <(
     archive_member_for_symbol "$archive" __crabc_x86_allocator_observability_v1
@@ -257,27 +268,32 @@ for symbol in "${expected_wrapper_symbols[@]}"; do
     assert_elf_function_binding "$wrapper_elf_symbols" "$symbol" "$binding" \
         "allocator wrapper"
 done
-# The pinned release codegen unit co-locates this observer with unrelated
-# selected C entries. Keep each extra public name explicitly accounted for;
-# their co-location does not merge their source contracts or relax the
-# separate weak allocator-wrapper and strong observer bindings below.
+# Rust's codegen-unit partition is incidental and can move other selected
+# providers beside this observer when Cargo features change. Permit only
+# those exports already owned by the checked selected-static C ABI roster;
+# this is an archive ownership check, not another feature-local public ABI.
 mapfile -t observability_exports < <(
     nm -g --defined-only --format=posix \
         "$work_dir/owners/${observability_members[0]}" |
-        awk '$2 ~ /^[T]$/ && $1 !~ /^_R/ { print $1 }' | sort -u
+        awk '$2 ~ /^[TW]$/ && $1 !~ /^_R/ { print $1 }' | sort -u
 )
-expected_observability_symbols=(
-    __crabc_x86_allocator_observability_v1
-    endservent
-    ether_line
-    malloc_usable_size
-    splice
-)
-if [ "${observability_exports[*]}" != "${expected_observability_symbols[*]}" ]; then
-    printf 'expected: %s\nactual:   %s\n' "${expected_observability_symbols[*]}" \
-        "${observability_exports[*]}" >&2
-    fail "allocator-observability codegen-unit export set drifted"
+observer_elf_symbols="$work_dir/observer-symbols"
+readelf --symbols --wide "$work_dir/owners/${observability_members[0]}" \
+    >"$observer_elf_symbols"
+if awk '$5 ~ /^(GLOBAL|WEAK)$/ && $7 != "UND" && $4 != "FUNC" {
+    found = 1
+} END { exit(found ? 0 : 1) }' "$observer_elf_symbols"; then
+    fail "allocator-observability owner exposes non-function public data"
 fi
+for symbol in "${observability_exports[@]}"; do
+    case "$symbol" in
+        __crabc_x86_allocator_observability_v1|malloc_usable_size)
+            continue
+            ;;
+    esac
+    grep -Fxq "$symbol" "$STATIC_C_ABI_EXPORTS" \
+        || fail "allocator-observability codegen unit exports ${symbol} outside the owned C ABI roster"
+done
 for symbol in mi_malloc_aligned mi_zalloc mi_realloc_aligned mi_free mi_usable_size; do
     nm -g --defined-only "$work_dir/owners/${backend_members[0]}" |
         grep -Eq "[[:space:]]T[[:space:]]${symbol}$" \
@@ -299,17 +315,35 @@ done
 # This is the closure judge: the candidate sees its CRT, probe, and one
 # feature-composed crabc archive only.  The pinned musl archive is permitted
 # solely in the separately executed reference process above.
-"$link_editor" -static --no-dynamic-linker --no-undefined \
+if ! "$link_editor" -static --no-dynamic-linker --no-undefined \
     -z relro -z now -e _start -Map="$link_map" \
+    --trace-symbol=rust_eh_personality \
     "$crt_dir/crt1.o" "$crt_dir/crti.o" "$probe_object" \
     --start-group "$archive" --end-group \
-    "$crt_dir/crtn.o" -o "$candidate"
+    "$crt_dir/crtn.o" -o "$candidate" >"$link_trace" 2>&1; then
+    cat "$link_trace" >&2
+    fail "candidate final link failed"
+fi
+python3 "$source_runtime_helper" audit-final-link \
+    --receipt "$source_runtime_receipt" --candidate "$candidate" \
+    --link-map "$link_map" --trace "$link_trace" --label allocator-basic-runtime-v1
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 readelf --program-headers --wide "$candidate" >"$candidate_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
+
+# The target std `alloc` archive contains unwind/personality references even
+# under panic=abort. This gate does not select the alloc-backed crypt leaf, so
+# no target alloc member or unwind identity may enter its C final link.
+if grep -Eq 'libc\.a\(alloc-[^)]*\.o\)' "$link_map"; then
+    fail "candidate extracted the unrelated target alloc runtime"
+fi
+if grep -Eq 'rust_eh_personality|_Unwind_[A-Za-z0-9_]*|panic_(abort|unwind)' \
+    "$link_map" "$candidate_symbols"; then
+    fail "candidate selected a target unwind or panic runtime identity"
+fi
 
 for symbol in _start __crabc_x86_allocator_runtime_v1 \
     __crabc_x86_allocator_observability_v1 __crabc_x86_static_tls_bootstrap \

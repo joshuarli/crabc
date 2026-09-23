@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Produce and audit the private source-built runtime for one native C fixture.
 
-This is deliberately tied to the selected-native pthread teardown runner.  It
-is not an installed sysroot builder: the output never leaves the runner's
-private `.work` directory and the C link remains the closure authority.
+This is deliberately tied to the selected-native pthread teardown and
+allocator-basic runners. It is not an installed sysroot builder: the output
+never leaves the runner's private `.work` directory and each C link remains
+the closure authority.
 """
 
 from __future__ import annotations
@@ -86,6 +87,33 @@ EXTERN_MODIFIER_MATRIX: dict[str, dict[str, tuple[str, ...]]] = {
         "sha_crypt": (),
     },
 }
+SOURCE_RUNTIME_PROFILES: dict[str, dict[str, object]] = {
+    "x86-owned-static-native-shadow,native-mimalloc-shadow-test-audit": {
+        "name": "native-mimalloc-shadow",
+        "builds_crabc_mimalloc": True,
+        "staticlib_runtime_names": ("core", "alloc", "compiler_builtins"),
+        "libc_externs": EXTERN_MODIFIER_MATRIX["crabc-libc"],
+    },
+    "x86-owned-static-native-shadow,native-mimalloc-shadow-process-done-exit-test-audit": {
+        "name": "native-mimalloc-shadow-process-done-exit-audit",
+        "builds_crabc_mimalloc": True,
+        "staticlib_runtime_names": ("core", "alloc", "compiler_builtins"),
+        "libc_externs": EXTERN_MODIFIER_MATRIX["crabc-libc"],
+    },
+    "x86-owned-static-runtime-core": {
+        "name": "owned-static-c-allocator-core",
+        "builds_crabc_mimalloc": False,
+        "staticlib_runtime_names": ("core", "compiler_builtins"),
+        "libc_externs": {
+            "alloc": ("noprelude", "nounused"),
+            "compiler_builtins": ("noprelude", "nounused"),
+            "core": ("noprelude", "nounused"),
+            "crabc_core": (),
+            "libmimalloc_sys": (),
+            "rand_pcg": (),
+        },
+    },
+}
 SUPPORTED_EXTERN_MODIFIERS = {(), ("priv",), ("noprelude", "nounused")}
 
 
@@ -103,6 +131,15 @@ class CargoExtern(NamedTuple):
 
 def fail(message: str) -> None:
     raise ClosureError(message)
+
+
+def source_runtime_profile(features: str) -> dict[str, object]:
+    """Select one explicit source-runtime Cargo/extern closure profile."""
+
+    profile = SOURCE_RUNTIME_PROFILES.get(features)
+    if profile is None:
+        fail(f"unsupported source-runtime feature profile: {features!r}")
+    return profile
 
 
 def digest(path: pathlib.Path) -> str:
@@ -506,17 +543,18 @@ def externs(command: Sequence[str], description: str) -> dict[str, CargoExtern]:
     return result
 
 
-def require_extern_modifier_matrix(crate: str, crate_externs: dict[str, CargoExtern]) -> None:
+def require_extern_modifier_matrix(crate: str, crate_externs: dict[str, CargoExtern],
+                                   expected: dict[str, tuple[str, ...]] | None = None) -> None:
     """Require the retained compiler modifier on every audited logical extern edge."""
 
-    expected = EXTERN_MODIFIER_MATRIX.get(crate)
-    if expected is None:
+    matrix = EXTERN_MODIFIER_MATRIX.get(crate) if expected is None else expected
+    if matrix is None:
         fail(f"Cargo {crate} rustc has no source-runtime extern modifier contract")
-    if set(crate_externs) != set(expected):
-        missing = sorted(set(expected) - set(crate_externs))
-        unexpected = sorted(set(crate_externs) - set(expected))
+    if set(crate_externs) != set(matrix):
+        missing = sorted(set(matrix) - set(crate_externs))
+        unexpected = sorted(set(crate_externs) - set(matrix))
         fail(f"Cargo {crate} rustc extern logical-name matrix differs: missing={missing!r} unexpected={unexpected!r}")
-    for name, modifiers in expected.items():
+    for name, modifiers in matrix.items():
         actual = crate_externs[name]
         if actual.modifiers != modifiers:
             fail(f"Cargo {crate} rustc {name} extern modifier sequence differs: "
@@ -524,7 +562,8 @@ def require_extern_modifier_matrix(crate: str, crate_externs: dict[str, CargoExt
 
 
 def command_record(command: Sequence[str], target: pathlib.Path, expected_runtime_sources: dict[str, pathlib.Path],
-                   emitted: dict[pathlib.Path, dict[str, object]], crate: str, source: pathlib.Path) -> dict[str, object]:
+                   emitted: dict[pathlib.Path, dict[str, object]], crate: str, source: pathlib.Path,
+                   *, extern_matrix: dict[str, tuple[str, ...]] | None = None) -> dict[str, object]:
     """Bind one target rustc command to source and Cargo-declared artifacts."""
 
     source_identity = command_source_identity(command, source, f"Cargo {crate} rustc")
@@ -533,7 +572,7 @@ def command_record(command: Sequence[str], target: pathlib.Path, expected_runtim
     if missing:
         fail(f"Cargo {crate} rustc invocation omits source-runtime flags: {missing!r}")
     crate_externs = externs(command, f"Cargo {crate} rustc")
-    require_extern_modifier_matrix(crate, crate_externs)
+    require_extern_modifier_matrix(crate, crate_externs, extern_matrix)
     selected: dict[str, dict[str, object]] = {}
     for name, expected_source in expected_runtime_sources.items():
         actual = crate_externs.get(name)
@@ -688,8 +727,16 @@ def undefined_symbols(nm: pathlib.Path, archive: pathlib.Path, output: pathlib.P
 
 
 def staticlib_closure(ar: pathlib.Path, nm: pathlib.Path, archive: pathlib.Path,
-                      source_rlibs: dict[str, pathlib.Path], work: pathlib.Path) -> dict[str, object]:
-    expected = runtime_members(ar, source_rlibs, work)
+                      source_rlibs: dict[str, pathlib.Path], work: pathlib.Path,
+                      required_runtime_names: Sequence[str]) -> dict[str, object]:
+    all_runtime_members = runtime_members(ar, source_rlibs, work)
+    known_runtime_names = {entry["runtime"] for entry in all_runtime_members.values()}
+    required = set(required_runtime_names)
+    if not required or len(required) != len(required_runtime_names) or required - known_runtime_names:
+        fail(f"source-runtime profile has invalid required member set: {required_runtime_names!r}")
+    expected = {
+        name: entry for name, entry in all_runtime_members.items() if entry["runtime"] in required
+    }
     members = archive_members(ar, archive, work_child(work, pathlib.Path("staticlib-members"), "selected staticlib members"),
                               "selected source-runtime staticlib")
     selected: list[dict[str, object]] = []
@@ -698,6 +745,9 @@ def staticlib_closure(ar: pathlib.Path, nm: pathlib.Path, archive: pathlib.Path,
             fail(f"selected source-runtime staticlib admits forbidden runtime member {name}")
         entry = expected.get(name)
         if entry is None:
+            excluded = all_runtime_members.get(name)
+            if excluded is not None:
+                fail(f"selected staticlib includes excluded source runtime {excluded['runtime']} member: {name}")
             continue
         actual = digest(path)
         if actual != entry["sha256"]:
@@ -717,6 +767,7 @@ def staticlib_closure(ar: pathlib.Path, nm: pathlib.Path, archive: pathlib.Path,
 
 
 def build(arguments: argparse.Namespace) -> pathlib.Path:
+    profile = source_runtime_profile(arguments.features)
     work_root = ROOT / ".work" / "x86_64"
     work = work_child(work_root, pathlib.Path(arguments.work), "source-runtime closure work")
     work.mkdir(mode=0o755)
@@ -783,15 +834,23 @@ def build(arguments: argparse.Namespace) -> pathlib.Path:
     }
     primary = command_record(
         invocation_for(commands, "c"), target, expected_runtime_sources, emitted, "crabc-libc", libc_source,
+        extern_matrix=profile["libc_externs"],
     )
-    allocator = command_record(
-        invocation_for(commands, "crabc_mimalloc"), target, expected_runtime_sources, emitted, "crabc-mimalloc",
-        physical(ROOT / "crabc-mimalloc" / "src" / "lib.rs", "crabc-mimalloc source"),
-    )
+    allocator = None
+    if profile["builds_crabc_mimalloc"]:
+        allocator = command_record(
+            invocation_for(commands, "crabc_mimalloc"), target, expected_runtime_sources, emitted, "crabc-mimalloc",
+            physical(ROOT / "crabc-mimalloc" / "src" / "lib.rs", "crabc-mimalloc source"),
+        )
+    elif any(identity.get("target_name") == "crabc-mimalloc" for identity in emitted.values()):
+        fail("C allocator source-runtime profile unexpectedly emitted crabc-mimalloc")
     ar, nm = required_tool(sysroot, "llvm-ar"), required_tool(sysroot, "llvm-nm")
-    closure = staticlib_closure(ar, nm, archive, rlibs, work)
+    closure = staticlib_closure(
+        ar, nm, archive, rlibs, work, profile["staticlib_runtime_names"],
+    )
     receipt = {
         "schema": 1,
+        "profile": profile["name"],
         "scope": "private-native-static-source-runtime-closure-not-product-or-dynamic-qualification",
         "target": TARGET,
         "toolchain": TOOLCHAIN,

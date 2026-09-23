@@ -2,10 +2,10 @@
 
 ## Purpose and boundary
 
-`run_libc_native_mimalloc_shadow_pthread_teardown.sh` builds a private,
-selected-native `crabc-libc` static archive and links it into a freestanding C
-pthread fixture.  It is not an installed sysroot producer, a public allocator
-selection, a dynamic-product proof, or a terminal/fork-quiescence claim.
+`native_static_source_runtime_closure.py` builds private x86 `crabc-libc`
+static archives for the selected-native pthread teardown and allocator-basic
+fixtures. These archives are not installed sysroots, public allocator
+selections, dynamic-product proofs, or terminal/fork-quiescence claims.
 
 The existing target-runtime archive is not a valid closed input for that
 fixture.  The retained `da2` diagnosis records one `alloc` object, one `core`
@@ -45,7 +45,7 @@ registry dependencies are resolved from the checked lock through that private
 vendor; Cargo runs `--locked --offline` with a private `CARGO_HOME`, target,
 and `TMPDIR`.
 
-The exact target graph is:
+The selected-native shadow target graph is:
 
 ```text
 crabc-libc + crabc-mimalloc
@@ -71,6 +71,14 @@ the selected libc graph.  The required immediate-abort mode is the supported
 `-Zunstable-options -Cpanic=immediate-abort` build-std profile; the obsolete
 `panic_immediate_abort` build-std feature is not an alternative.
 
+The allocator-basic fixture uses `x86-owned-static-runtime-core` instead. This
+profile keeps the C backend and the other owned-static leaves while omitting
+alloc-backed SHA-crypt. Its `crabc-libc` graph retains the selected
+`libmimalloc_sys` dependency, uses the same pinned source-built three-crate
+runtime set, and does not emit `crabc-mimalloc`. Although the source-built
+`alloc` artifact is authenticated, the C backend must leave all of its object
+members out of `libc.a`.
+
 `builtins/build.py` supplies the nearest pinned `rust-src` and
 `compiler_builtins` source-build mechanics.  `unwinder/owned_cleanup.py`
 supplies the nearest private-vendor, compiler-artifact, and primary-rustc
@@ -83,17 +91,20 @@ The producer records Cargo JSON artifacts, verbose diagnostics, resolved
 paths, and digests.  For `core`, `alloc`, and `compiler_builtins`, each
 compiler artifact must have the pinned rust-src root as its source, and every
 artifact path must be under the private target root.  The primary `crabc-libc`
-rustc record and the selected `crabc-mimalloc` record must bind their exact
-`--extern core=`, `--extern alloc=`, and `--extern compiler_builtins=` inputs
-to those recorded Cargo artifacts.  Any extra target-runtime extern or a
-stock-target artifact is a failure.
+rustc record and, for native shadow, the selected `crabc-mimalloc` record bind
+their exact `--extern core=`, `--extern alloc=`, and
+`--extern compiler_builtins=` inputs to those recorded Cargo artifacts. The C
+allocator profile binds its selected C backend and profile-specific externs.
+Any extra target-runtime extern or a stock-target artifact is a failure.
 
 The emitted staticlib is then unpacked and compared against the selected
 source-built runtime artifacts.  Every included Rust member is classified and
 hashed; no member may come from the toolchain target library directory or a
-stock `core`, `alloc`, or `compiler_builtins` archive.  The raw undefined
-symbol inventory is retained for diagnosis but does not by itself decide link
-reachability.
+stock `core`, `alloc`, or `compiler_builtins` archive. Native shadow requires
+members from all three source runtime crates; the C allocator profile requires
+source `core` and `compiler_builtins` members and rejects source `alloc`
+members. The raw undefined symbol inventory is retained for diagnosis but does
+not by itself decide link reachability.
 
 The existing C fixture is linked with its owned CRT objects and its unchanged
 `-nostdlib -static -Wl,--no-undefined -Wl,--gc-sections` closure.  The producer

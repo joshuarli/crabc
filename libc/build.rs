@@ -18,6 +18,7 @@ fn x86_runtime_capabilities() {
         && std::env::var("CARGO_CFG_TARGET_ENDIAN").as_deref() == Ok("little");
     let enabled = |feature| std::env::var_os(feature).is_some();
     let owned = enabled("CARGO_FEATURE_X86_OWNED_STATIC_RUNTIME")
+        || enabled("CARGO_FEATURE_X86_OWNED_STATIC_RUNTIME_CORE")
         || enabled("CARGO_FEATURE_X86_OWNED_STATIC_NATIVE_SHADOW");
     let native = enabled("CARGO_FEATURE_NATIVE_MIMALLOC_SHADOW");
     let c_backend = enabled("CARGO_FEATURE_X86_ALLOCATOR_RUNTIME");

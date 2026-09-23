@@ -7,6 +7,7 @@ import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -19,7 +20,98 @@ SPEC.loader.exec_module(CLOSURE)
 
 
 class NativeStaticSourceRuntimeClosureTests(unittest.TestCase):
-    def _command(self, *, immediate_abort: bool, record_crate: str = "crabc-libc") -> tuple[list[str], Path, dict[str, Path], dict[str, Path], Path]:
+    def test_owned_static_core_profile_has_no_crypt_or_native_shadow_externs(self) -> None:
+        profile = CLOSURE.source_runtime_profile("x86-owned-static-runtime-core")
+
+        self.assertEqual(profile["name"], "owned-static-c-allocator-core")
+        self.assertFalse(profile["builds_crabc_mimalloc"])
+        self.assertEqual(
+            profile["libc_externs"],
+            {
+                "alloc": ("noprelude", "nounused"),
+                "compiler_builtins": ("noprelude", "nounused"),
+                "core": ("noprelude", "nounused"),
+                "crabc_core": (),
+                "libmimalloc_sys": (),
+                "rand_pcg": (),
+            },
+        )
+        command, target, runtime, artifacts, source = self._command(
+            immediate_abort=True,
+            extern_matrix=profile["libc_externs"],
+        )
+        record = CLOSURE.command_record(
+            command,
+            target,
+            runtime,
+            self._emitted(artifacts),
+            "crabc-libc",
+            source,
+            extern_matrix=profile["libc_externs"],
+        )
+        self.assertEqual(set(record["all_externs"]), set(profile["libc_externs"]))
+        self.assertNotIn("base64ct", record["all_externs"])
+        self.assertNotIn("sha_crypt", record["all_externs"])
+        self.assertNotIn("crabc_mimalloc", record["all_externs"])
+        with self.assertRaisesRegex(CLOSURE.ClosureError, "unsupported source-runtime feature profile"):
+            CLOSURE.source_runtime_profile("x86-owned-static-runtime-core,x86-crypt")
+
+    def test_c_allocator_staticlib_selects_core_without_alloc_members(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as temporary:
+            work = Path(temporary)
+            archive = work / "libc.a"
+            archive.write_bytes(b"synthetic archive identity")
+            runtime_paths = {
+                "core": work / "core.o",
+                "alloc": work / "alloc.o",
+                "compiler_builtins": work / "compiler_builtins.o",
+            }
+            for name, path in runtime_paths.items():
+                path.write_bytes(name.encode("ascii"))
+            expected = {
+                path.name: {"runtime": name, "sha256": CLOSURE.digest(path)}
+                for name, path in runtime_paths.items()
+            }
+            selected = {
+                runtime_paths["core"].name: runtime_paths["core"],
+                runtime_paths["compiler_builtins"].name: runtime_paths["compiler_builtins"],
+            }
+            def no_undefined_symbols(_nm: Path, _archive: Path, output: Path) -> list[str]:
+                output.write_text("", encoding="utf-8")
+                return []
+
+            with (
+                patch.object(CLOSURE, "runtime_members", return_value=expected),
+                patch.object(CLOSURE, "archive_members", return_value=selected),
+                patch.object(CLOSURE, "undefined_symbols", side_effect=no_undefined_symbols),
+            ):
+                closure = CLOSURE.staticlib_closure(
+                    Path("llvm-ar"), Path("llvm-nm"), archive, {}, work,
+                    required_runtime_names=("core", "compiler_builtins"),
+                )
+                self.assertEqual(
+                    {member["runtime"] for member in closure["source_runtime_members"]},
+                    {"core", "compiler_builtins"},
+                )
+
+            with (
+                patch.object(CLOSURE, "runtime_members", return_value=expected),
+                patch.object(CLOSURE, "archive_members", return_value={**selected, runtime_paths["alloc"].name: runtime_paths["alloc"]}),
+                patch.object(CLOSURE, "undefined_symbols", side_effect=no_undefined_symbols),
+            ):
+                with self.assertRaisesRegex(CLOSURE.ClosureError, "excluded source runtime alloc"):
+                    CLOSURE.staticlib_closure(
+                        Path("llvm-ar"), Path("llvm-nm"), archive, {}, work,
+                        required_runtime_names=("core", "compiler_builtins"),
+                    )
+
+    def _command(
+        self,
+        *,
+        immediate_abort: bool,
+        record_crate: str = "crabc-libc",
+        extern_matrix: dict[str, tuple[str, ...]] | None = None,
+    ) -> tuple[list[str], Path, dict[str, Path], dict[str, Path], Path]:
         work = ROOT / ".work"
         work.mkdir(exist_ok=True)
         temporary = Path(tempfile.mkdtemp(dir=work))
@@ -28,8 +120,9 @@ class NativeStaticSourceRuntimeClosureTests(unittest.TestCase):
         target.mkdir()
         source = temporary / "lib.rs"
         source.write_text("#![no_std]\n", encoding="utf-8")
+        matrix = extern_matrix or CLOSURE.EXTERN_MODIFIER_MATRIX[record_crate]
         all_artifacts: dict[str, Path] = {}
-        for name in CLOSURE.EXTERN_MODIFIER_MATRIX[record_crate]:
+        for name in matrix:
             artifact = target / f"lib{name}.rlib"
             artifact.write_bytes(name.encode("ascii"))
             all_artifacts[name] = artifact
@@ -41,7 +134,7 @@ class NativeStaticSourceRuntimeClosureTests(unittest.TestCase):
         command = [
             "rustc", "--crate-name", "c", "--target", CLOSURE.TARGET, *flags, str(source),
         ]
-        for name, modifiers in CLOSURE.EXTERN_MODIFIER_MATRIX[record_crate].items():
+        for name, modifiers in matrix.items():
             prefix = "" if not modifiers else ",".join(modifiers) + ":"
             command.extend(["--extern", f"{prefix}{name}={all_artifacts[name]}"])
         return command, target, runtime, all_artifacts, source

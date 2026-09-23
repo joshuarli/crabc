@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import re
 import tomllib
 import unittest
 from pathlib import Path
@@ -13,36 +12,76 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 class X86LibcAllocatorBasicRuntimeV1Tests(unittest.TestCase):
-    def test_observability_codegen_unit_accounts_for_selected_provider_exports(
-        self,
-    ) -> None:
+    def test_allocator_basic_runtime_uses_noncrypt_owned_static_profile(self) -> None:
+        manifest = tomllib.loads(
+            (ROOT / "libc" / "Cargo.toml").read_text(encoding="utf-8")
+        )
+        features = manifest["features"]
         runner = (
             ROOT / "compat" / "x86_64" / "run_libc_allocator_basic_runtime_v1.sh"
         ).read_text(encoding="utf-8")
-        static_root = (
-            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
-        ).read_text(encoding="utf-8")
-        match = re.search(
-            r"expected_observability_symbols=\((.*?)\)", runner, re.DOTALL
-        )
+        build_script = (ROOT / "libc" / "build.rs").read_text(encoding="utf-8")
+
+        full_profile = features["x86-owned-static-runtime"]
+        basic_profile = features.get("x86-owned-static-runtime-core")
         self.assertIsNotNone(
-            match, "the runner must define a closed observer codegen-unit roster"
+            basic_profile,
+            "the allocator-basic candidate needs an owned C runtime profile without crypt",
         )
-        exports = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", match.group(1))
         self.assertEqual(
-            exports,
+            basic_profile,
             [
-                "__crabc_x86_allocator_observability_v1",
-                "endservent",
-                "ether_line",
-                "malloc_usable_size",
-                "splice",
+                feature
+                for feature in full_profile
+                if feature != "x86-crypt-allocator-composition"
             ],
-            "the owned-static release codegen unit may co-locate these providers",
+            "the narrowed source profile must retain every other owned-static leaf",
         )
-        self.assertIn("codegen unit co-locates this observer", runner)
-        for source in ("endservent", "ether_line", "splice"):
-            self.assertIn(f'#[path = "{source}.rs"]', static_root)
+        self.assertNotIn("x86-crypt", basic_profile)
+        self.assertIn("x86-crypt-allocator-composition", full_profile)
+        self.assertIn("--features x86-owned-static-runtime-core", runner)
+        self.assertIn("native_static_source_runtime_closure.py", runner)
+        self.assertIn("audit-final-link", runner)
+        self.assertIn("--trace-symbol=rust_eh_personality", runner)
+        self.assertIn("CARGO_FEATURE_X86_OWNED_STATIC_RUNTIME_CORE", build_script)
+        self.assertIn("libc\\.a\\(alloc-", runner)
+        self.assertIn("rust_eh_personality|_Unwind_", runner)
+
+    def test_observability_codegen_unit_uses_owned_export_roster_for_extras(self) -> None:
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_allocator_basic_runtime_v1.sh"
+        ).read_text(encoding="utf-8")
+        roster = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        owned_exports = {
+            line for line in roster.splitlines() if line and not line.startswith("#")
+        }
+
+        self.assertIn(
+            'readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"',
+            runner,
+        )
+        self.assertIn('for symbol in "${observability_exports[@]}"; do', runner)
+        self.assertIn('grep -Fxq "$symbol" "$STATIC_C_ABI_EXPORTS"', runner)
+        self.assertNotIn("expected_observability_symbols", runner)
+
+        for co_located_provider in (
+            "asinh",
+            "acosl",
+            "siginterrupt",
+            "tcsetpgrp",
+            "endservent",
+            "splice",
+        ):
+            self.assertIn(co_located_provider, owned_exports)
+        for feature_local_symbol in (
+            "__crabc_x86_allocator_observability_v1",
+            "malloc_usable_size",
+        ):
+            self.assertNotIn(feature_local_symbol, owned_exports)
+        self.assertIn("__crabc_x86_allocator_observability_v1", runner)
+        self.assertIn("malloc_usable_size", runner)
 
     def test_fixture_and_runner_cover_the_complete_basic_boundary(self) -> None:
         coverage = tomllib.loads(
@@ -115,13 +154,14 @@ class X86LibcAllocatorBasicRuntimeV1Tests(unittest.TestCase):
             self.assertIn(required, fixture)
 
         for required in (
-            "x86-owned-static-runtime",
+            "x86-owned-static-runtime-core",
             "crt/src/x86_64_${object}.rs",
             "__crabc_x86_allocator_observability_v1",
             "__crabc_x86_allocator_runtime_v1",
             "malloc_usable_size",
             "expected_wrapper_symbols",
-            "expected_observability_symbols",
+            "observability_exports",
+            "STATIC_C_ABI_EXPORTS",
             "pthread_atfork",
             "__funcs_on_exit",
             "candidate selected a foreign musl support object",
