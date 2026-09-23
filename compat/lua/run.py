@@ -1300,13 +1300,22 @@ def static_compiler_flags() -> list[str]:
 
 
 def static_environment(state: Path) -> dict[str, str]:
-    """Give every native build/run child a private checkout-local home and tmp."""
+    """Give every native build/run child a private checkout-local home and tmp.
+
+    Python interpreter policy is the child's own, not the caller's: the ordered
+    qualification runner starts this lane with ``PYTHONSAFEPATH=1``, which
+    would stop repository producers from importing their script-directory
+    siblings. Only the no-bytecode request survives into build children.
+    """
 
     home = state / "home"
     temporary = state / "tmp"
     home.mkdir(parents=True, exist_ok=True)
     temporary.mkdir(parents=True, exist_ok=True)
     environment = SYSROOT.seal_environment(sanitize_environment(home=home, temporary_directory=temporary))
+    for key in tuple(environment):
+        if key.startswith("PYTHON") and key != "PYTHONDONTWRITEBYTECODE":
+            environment.pop(key)
     environment["TZ"] = "UTC"
     return environment
 

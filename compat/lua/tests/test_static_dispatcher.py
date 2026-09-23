@@ -6,12 +6,14 @@ from __future__ import annotations
 import concurrent.futures
 import importlib.util
 import json
+import os
 import shutil
 import sys
 import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -93,6 +95,22 @@ class NativeStaticDispatcherTests(unittest.TestCase):
             self.assertEqual(json.loads(report_path.read_text())["passed"], True)
             self.assertEqual(latest, self.latest)
         self.assertEqual(json.loads(self.latest.read_text())["passed"], True)
+
+    def test_producer_keeps_its_own_import_path_under_a_safe_path_caller(self) -> None:
+        # The ordered qualification runner starts its Lua case with
+        # PYTHONSAFEPATH=1. Repository producers import script-directory
+        # siblings, so that caller policy must not leak into their children.
+        (self.temporary / "producer_sibling.py").write_text("MARKER = 'sibling'\n", encoding="utf-8")
+        self.builder.write_text(
+            "import producer_sibling\n" + self.builder.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        with mock.patch.dict(os.environ, {"PYTHONSAFEPATH": "1", "PYTHONPATH": str(self.temporary / "absent")}):
+            report, _report_path, latest = self.dispatch(self.passing_runner)
+        producer = report["dispatcher"]["producer"]
+        self.assertEqual(producer["status"], 0, producer["stderr"]["text"])
+        self.assertEqual(report["passed"], True)
+        self.assertEqual(latest, self.latest)
 
     def test_failed_invocation_retains_private_report_without_replacing_latest(self) -> None:
         original = b'{"passed":true,"result":"pass","sentinel":"prior"}\n'
