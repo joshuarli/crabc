@@ -9874,6 +9874,7 @@ fn native_reallocate_pointer_first_local(
     current: LiveThreadId,
     replacement_alignment: usize,
     ordinary_reuse: bool,
+    zero: bool,
 ) -> NativePageAllocationResult {
     let block = allocation.client();
     let current_is_initial = RUNTIME_PROCESS.initial_live_thread_identity() == Some(current);
@@ -9900,6 +9901,11 @@ fn native_reallocate_pointer_first_local(
         | NativePageAllocationResult::AllocationFailed
         | NativePageAllocationResult::Retained) => return result,
     };
+    if !native_reallocate_initialize_replacement(replacement, old_usable, new_size, ordinary_reuse, zero) {
+        native_reallocate_release_unpublished_replacement(replacement);
+        RUNTIME_PROCESS.retain_page_owner();
+        return NativePageAllocationResult::Retained;
+    }
 
     // Reacquire the old source only after the callback and phase-C attachment
     // identity validation. A callback that consumed or reassociated `block`
@@ -9924,11 +9930,6 @@ fn native_reallocate_pointer_first_local(
     // from the same current source owner.
     unsafe {
         core::ptr::copy_nonoverlapping(block.as_ptr(), replacement.as_ptr(), copy_size);
-    }
-    if ordinary_reuse && new_size == 0 {
-        // Source ordinary realloc initializes byte zero of a successful
-        // non-zeroed zero-size replacement before it frees the old block.
-        unsafe { replacement.as_ptr().write(0) };
     }
     drop(old);
     if current_is_initial {
@@ -9967,6 +9968,46 @@ fn native_reallocate_pointer_first_local(
             NativePageAllocationResult::Retained
         }
     }
+}
+
+/// Initializes only the replacement tail that pinned ordinary or aligned
+/// rezalloc would initialize before copying the old client prefix. An ordinary
+/// nonzeroing zero-size realloc still clears its first byte. The lookup is
+/// short and ends before any old-source reacquisition or free.
+fn native_reallocate_initialize_replacement(
+    replacement: core::ptr::NonNull<u8>,
+    old_usable: usize,
+    new_size: usize,
+    ordinary: bool,
+    zero: bool,
+) -> bool {
+    if !zero {
+        if ordinary && new_size == 0 {
+            // SAFETY: every successful source allocation has a first byte.
+            unsafe { replacement.as_ptr().write(0) };
+        }
+        return true;
+    }
+    // SAFETY: this caller just allocated `replacement` and has not exposed it
+    // to another thread or callback; its PageMap facts remain live here.
+    let replacement_facts = match unsafe { native_live_allocation_for_pointer_reallocation(replacement) } {
+        Ok(facts) => facts,
+        Err(_) => return false,
+    };
+    let new_usable = replacement_facts.usable_size();
+    drop(replacement_facts);
+    let copy_size = core::cmp::min(new_size, old_usable);
+    let range = if ordinary {
+        let plan = crate::alloc::reallocation_plan(Some(old_usable), new_size, false);
+        crate::alloc::replacement_zero_range(plan, new_usable, true)
+    } else {
+        crate::aligned::replacement_zero_range(copy_size, new_usable, true)
+    };
+    let Some(range) = range else { return false; };
+    // SAFETY: both source kernels zero within the replacement's checked
+    // client-relative usable extent. Aligned clients may have byte offsets.
+    unsafe { core::ptr::write_bytes(replacement.as_ptr().wrapping_add(range.start), 0, range.end - range.start) };
+    true
 }
 
 /// Releases a replacement that this caller just allocated for a nonlocal
@@ -10022,6 +10063,7 @@ fn native_reallocate_pointer_first_nonlocal(
     new_size: usize,
     replacement_alignment: usize,
     ordinary_zero_compat: bool,
+    zero: bool,
 ) -> NativePageAllocationResult {
     let old_block = allocation.client();
     let identity = NativeReallocationSourceIdentity::capture(&allocation);
@@ -10037,6 +10079,11 @@ fn native_reallocate_pointer_first_nonlocal(
             return result;
         }
     };
+    if !native_reallocate_initialize_replacement(replacement, identity.usable_size, new_size, ordinary_zero_compat, zero) {
+        native_reallocate_release_unpublished_replacement(replacement);
+        RUNTIME_PROCESS.retain_page_owner();
+        return NativePageAllocationResult::Retained;
+    }
 
     let source = match unsafe { native_live_allocation_for_pointer_reallocation(old_block) } {
         Ok(source) if identity.matches(&source) => {
@@ -10066,12 +10113,6 @@ fn native_reallocate_pointer_first_nonlocal(
             replacement.as_ptr(),
             source.copy_prefix_len(),
         );
-    }
-    if ordinary_zero_compat && new_size == 0 {
-        // Pinned `mi_theap_realloc_zero_ex` initializes the first byte of a
-        // successful zero-size replacement for callers that observe it before
-        // free. The native zero-size allocation is likewise non-null here.
-        unsafe { replacement.as_ptr().write(0) };
     }
 
     match native_free_pointer_first_nonlocal(source.into_live_allocation()) {
@@ -10121,7 +10162,28 @@ pub unsafe fn native_reallocate(
     };
     // SAFETY: forward the exact-live client contract through one operation
     // guard. The C-facing ordinary path keeps its established alignment.
-    unsafe { native_reallocate_inner(block, new_size, NativeReallocationMode::CAbiOrdinary) }
+    unsafe { native_reallocate_inner(block, new_size, NativeReallocationMode::CAbiOrdinary, false) }
+}
+
+/// Reallocates one native client with pinned ordinary `mi_rezalloc` zeroing.
+/// The old prefix is copied after the replacement tail has been initialized;
+/// failure leaves the old client live as in [`native_reallocate`].
+///
+/// # Safety
+///
+/// The caller obligations and result ownership are identical to
+/// [`native_reallocate`].
+#[doc(hidden)]
+pub unsafe fn native_reallocate_zeroed(
+    block: Option<core::ptr::NonNull<u8>>,
+    new_size: usize,
+) -> NativePageAllocationResult {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return NativePageAllocationResult::Retained;
+    };
+    // SAFETY: forward the exact-live native client contract.
+    unsafe { native_reallocate_inner(block, new_size, NativeReallocationMode::CAbiOrdinary, true) }
 }
 
 /// Reallocates one native client with pinned `mi_realloc_aligned` semantics.
@@ -10155,7 +10217,32 @@ pub unsafe fn native_reallocate_aligned(
     // ordinary realloc. Larger alignments use the foreign-safe aligned reuse
     // predicate and retain their requested alignment on replacement.
     // SAFETY: forward the exact-live client contract through this guard.
-    unsafe { native_reallocate_inner(block, new_size, NativeReallocationMode::Aligned(alignment)) }
+    unsafe { native_reallocate_inner(block, new_size, NativeReallocationMode::Aligned(alignment), false) }
+}
+
+/// Reallocates an aligned native client with pinned `mi_rezalloc_aligned`
+/// replacement zeroing and the same alignment/reuse decision as
+/// [`native_reallocate_aligned`].
+///
+/// # Safety
+///
+/// The caller obligations and result ownership are identical to
+/// [`native_reallocate_aligned`].
+#[doc(hidden)]
+pub unsafe fn native_reallocate_aligned_zeroed(
+    block: Option<core::ptr::NonNull<u8>>,
+    new_size: usize,
+    alignment: usize,
+) -> NativePageAllocationResult {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return NativePageAllocationResult::Retained;
+    };
+    if !crate::size_class::alignment_is_valid(alignment) {
+        return NativePageAllocationResult::AllocationFailed;
+    }
+    // SAFETY: forward the exact-live aligned client contract.
+    unsafe { native_reallocate_inner(block, new_size, NativeReallocationMode::Aligned(alignment), true) }
 }
 
 /// Selects the C ABI's 16-byte policy or pinned aligned-realloc's source
@@ -10175,6 +10262,7 @@ unsafe fn native_reallocate_inner(
     block: Option<core::ptr::NonNull<u8>>,
     new_size: usize,
     mode: NativeReallocationMode,
+    zero: bool,
 ) -> NativePageAllocationResult {
     let (replacement_alignment, ordinary, aligned) = match mode {
         NativeReallocationMode::CAbiOrdinary => (NATIVE_C_MALLOC_ALIGNMENT, true, false),
@@ -10188,10 +10276,10 @@ unsafe fn native_reallocate_inner(
         return NativePageAllocationResult::AllocationFailed;
     }
     let Some(block) = block else {
-        let result = native_allocate_aligned(new_size, replacement_alignment, false);
+        let result = native_allocate_aligned(new_size, replacement_alignment, zero);
         return match result {
             NativePageAllocationResult::Allocated(replacement)
-                if aligned && ordinary && new_size == 0 => {
+                if aligned && ordinary && new_size == 0 && !zero => {
                 // Pinned mi_theap_realloc_zero_aligned_at delegates low
                 // alignment, including null input, to the ordinary zero-size
                 // kernel. That kernel clears byte zero after allocation.
@@ -10223,7 +10311,7 @@ unsafe fn native_reallocate_inner(
     };
     if allocation.is_associated_with(current) {
         native_reallocate_pointer_first_local(
-            allocation, new_size, current, replacement_alignment, ordinary,
+            allocation, new_size, current, replacement_alignment, ordinary, zero,
         )
     } else {
         if let Err(result) = native_reallocate_prepare_caller_persistent_owner(current) {
@@ -10234,7 +10322,7 @@ unsafe fn native_reallocate_inner(
             return result;
         }
         native_reallocate_pointer_first_nonlocal(
-            allocation, new_size, replacement_alignment, ordinary,
+            allocation, new_size, replacement_alignment, ordinary, zero,
         )
     }
 }

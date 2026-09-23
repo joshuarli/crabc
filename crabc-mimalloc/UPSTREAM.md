@@ -80,6 +80,15 @@ reentry, copy, and failure preservation. The focused C oracle is
 the private `single_thread::PageAllocatorEngine::reallocate_aligned_at` remains
 the separately mapped offset-aligned engine path.
 
+The private `runtime_lifecycle::{native_reallocate_zeroed,
+native_reallocate_aligned_zeroed}` entries share that pointer-first replacement
+transaction. They map `src/alloc.c:379-417` and `src/alloc-aligned.c:347-388`:
+initialize the replacement from the source's ordinary rounded or aligned
+unrounded zero start through its usable extent, then copy the old prefix before
+freeing it. The same focused C oracle and Rust test cover current-owner growth,
+failure preservation, and ordinary zero-size replacement; foreign zeroing and
+full API qualification remain open.
+
 The native process huge-registry installation boundary maps pinned
 `src/arena.c:2167-2191` (post-reservation `mi_manage_os_memory_ex2`) and
 `src/arena.c:1794-1869` (multi-arena initialization and partial success) to
