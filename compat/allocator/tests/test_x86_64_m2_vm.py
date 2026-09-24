@@ -836,6 +836,10 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 _run_m2_x86_64_metadata_ownership_evidence=mock.Mock(return_value={}),
                 _run_m2_x86_64_initialization_teardown_evidence=mock.Mock(return_value={}),
                 _run_m2_x86_64_arena_destruction_evidence=mock.Mock(return_value={}),
+                _run_m2_x86_64_recursion_evidence=mock.Mock(return_value={}),
+                _m2_x86_64_recursion_check_record=mock.Mock(
+                    return_value={"id": "recursive-diagnostic-output-c-rust-differential"}
+                ),
                 _m2_x86_64_arena_destruction_check_record=mock.Mock(
                     return_value={"id": "arena-destruction-c-rust-differential"}
                 ),

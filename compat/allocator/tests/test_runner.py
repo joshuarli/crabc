@@ -4531,7 +4531,7 @@ class ContractTests(unittest.TestCase):
                 and component["remaining_conditions"]
                 and component["unqualified_failure_matrix"]
                 for component in summary["components"]
-                if component["id"] not in {"page-map", "bitmaps", "metadata"}
+                if component["id"] not in {"page-map", "bitmaps", "metadata", "allocator-recursion"}
             )
         )
         metadata = next(
@@ -4566,6 +4566,23 @@ class ContractTests(unittest.TestCase):
                 ),
             ],
         )
+
+    def test_x86_m2_completion_follows_each_component_record(self) -> None:
+        contract = RUNNER.read_json(RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CONTRACT)
+        # A partial component cannot claim completion without its source
+        # definitions and failure matrix.
+        claimed = json.loads(json.dumps(contract))
+        arenas = next(c for c in claimed["components"] if c["id"] == "arenas")
+        arenas["native_status"] = "complete"
+        arenas["remaining_conditions"] = []
+        with self.assertRaises(RUNNER.HarnessError):
+            RUNNER.validate_x86_64_m2_memory_substrate_contract(claimed, RUNNER.load_pin())
+        # A complete component cannot keep a remaining condition.
+        reopened = json.loads(json.dumps(contract))
+        recursion = next(c for c in reopened["components"] if c["id"] == "allocator-recursion")
+        recursion["remaining_conditions"] = ["reopened"]
+        with self.assertRaisesRegex(RUNNER.HarnessError, "invalid remaining conditions"):
+            RUNNER.validate_x86_64_m2_memory_substrate_contract(reopened, RUNNER.load_pin())
 
     def test_x86_m2_contract_rejects_missing_page_map_source_or_failure_accounting(self) -> None:
         contract = RUNNER.read_json(RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CONTRACT)
@@ -4625,7 +4642,7 @@ class ContractTests(unittest.TestCase):
                     contract, RUNNER.load_pin()
                 )
 
-    def test_x86_m2_report_fails_closed_for_the_five_unqualified_components(self) -> None:
+    def test_x86_m2_report_fails_closed_for_the_four_unqualified_components(self) -> None:
         from test_x86_64_m2_bitmaps import NativeBitmapAssemblyTests
         arguments = NativeBitmapAssemblyTests().report_arguments()
         initialization_checks = arguments.pop('_initialization_checks')
@@ -4645,14 +4662,12 @@ class ContractTests(unittest.TestCase):
                 "arenas",
                 "initialization",
                 "fault-injection",
-                "allocator-recursion",
             ],
         )
         self.assertEqual(
             RUNNER.m2_x86_64_memory_substrate_unmet_message(report).split(";", 1)[0],
             "native x86 M2 memory substrate remains partial for "
-            "vm-primitives, arenas, initialization, fault-injection, "
-            "allocator-recursion",
+            "vm-primitives, arenas, initialization, fault-injection",
         )
 
     def test_x86_m2_main_dispatches_only_to_its_native_gate(self) -> None:

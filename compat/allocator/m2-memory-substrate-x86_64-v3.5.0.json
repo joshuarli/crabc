@@ -290,23 +290,60 @@
       }
     },
     {
-      "checks": [],
-      "id": "allocator-recursion",
-      "native_status": "partial",
-      "remaining_conditions": [
-        "Qualify recursive diagnostic output: pinned `_mi_fputs`/`_mi_warning_message` reentry from a delivery callback or the default FILE primitive, which the private staged warning owner excludes. Once, process-start, thread-init/done, compiler-TLS, metadata-entry, deferred-free, and startup-output allocation recursion are covered by the initialization receipt and focused Rust rows."
-      ],
-      "source_map_records": [
-        { "required_status": "partial", "unit_id": "process-and-thread-initialization" },
-        { "required_status": "partial", "unit_id": "thread-local-heap-lifecycle" }
-      ],
-      "source_units": ["src/init.c", "src/prim/prim.c", "src/options.c"],
-      "unqualified_failure_matrix": [
+      "bounded_source_definitions": [
         {
-          "id": "recursive-diagnostic-output",
-          "required_evidence": ["source-order recursive-output owner", "native C/Rust recursive-output differential"],
-          "source_scope": "src/options.c `_mi_fputs`, `mi_vfprintf`, and `_mi_warning_message` reentry from output callbacks and the default FILE primitive"
+          "evidence_check_ids": [
+            "recursive-diagnostic-output-c-rust-differential"
+          ],
+          "id": "recursive-output-guard-and-delivery",
+          "required_definitions": [
+            "static bool mi_recurse_enter(void)",
+            "void _mi_fputs(",
+            "static void mi_vfprintf(",
+            "void _mi_warning_message("
+          ],
+          "source_anchor": {
+            "end_line": 549,
+            "member": "src/options.c",
+            "sha256": "e724ad7392273e3f15fd0a48a751f88a654b4d626808fa0b6442b1dde3203dd1",
+            "start_line": 444
+          }
         }
+      ],
+      "checks": [
+        {
+          "expected_passed_test_count": 1,
+          "id": "recursive-diagnostic-output-c-rust-differential",
+          "kind": "c-rust-recursive-output-differential",
+          "target": "diagnostic_output::tests::source_options_trace_for_pinned_c_comparison"
+        }
+      ],
+      "failure_matrix": [
+        {
+          "evidence_check_ids": [
+            "recursive-diagnostic-output-c-rust-differential"
+          ],
+          "id": "recursive-diagnostic-output",
+          "source_scope": "src/options.c `_mi_fputs`, `mi_vfprintf`, and `_mi_warning_message` reentry from output callbacks and the default FILE primitive: the options differential's invalid_verbose, show_errors, and capped recursive-callback scenarios compare the delivered messages and verbose state at init and on direct calls. Once, process-start, thread-init/done, compiler-TLS, metadata-entry, deferred-free, and startup-output allocation recursion are covered by the initialization receipt and focused Rust rows."
+        }
+      ],
+      "id": "allocator-recursion",
+      "native_status": "complete",
+      "remaining_conditions": [],
+      "source_map_records": [
+        {
+          "required_status": "partial",
+          "unit_id": "process-and-thread-initialization"
+        },
+        {
+          "required_status": "partial",
+          "unit_id": "thread-local-heap-lifecycle"
+        }
+      ],
+      "source_units": [
+        "src/init.c",
+        "src/prim/prim.c",
+        "src/options.c"
       ]
     }
   ],

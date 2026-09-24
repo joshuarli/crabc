@@ -298,8 +298,8 @@
     "unqualified_failure_matrix": [
       {
         "id": "non-main-heap-later-attachment-and-dynamic-cache-publication",
-        "source_scope": "src/heap.c `_mi_heap_theap_get_or_init` and the remaining generic/later Heap keys, exclusive-arena allocation, regular TLS, cached Theap, and DynamicTheapAttachment routes beyond the selected ordinary main Heap fixed-root caller.",
-        "required_evidence": ["typed non-main Heap/DynamicTheap storage owner", "native generic later-Heap publication matrix"]
+        "source_scope": "src/heap.c `_mi_heap_theap_get_or_init` for non-main Heaps of the main subprocess, through `DynamicTheapAttachment`: first allocation on a later thread (TLD-list head insertion, dynamic thread-local key slot, cached Theap, refcount, statistics), later cached-root switching, and thread-done release; plus the exclusive-arena Heap (`mi_heap_new_in_arena`) Theap slice attach and release. The child-subprocess route (`child_heap_new`/`ChildThreadOwner`) is already compared field for field by `allocator-heap-lifecycle` (heap_lifecycle.c against types::heap_registry::lifecycle::tests::source_ordered_empty_heap_lifecycle_trace, 96 values), and m2_metadata_arena_x86_64.c only self-checks the exclusive-arena producer.",
+        "required_evidence": ["native pinned-C/Rust differential of main-subprocess non-main Heap later attachment through DynamicTheapAttachment", "native pinned-C/Rust differential of the exclusive-arena Heap Theap slice attach and release"]
       }
     ],
     "checks": [

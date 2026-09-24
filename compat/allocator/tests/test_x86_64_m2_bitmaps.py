@@ -96,10 +96,10 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
         return RUNNER.validate_x86_64_m2_memory_substrate_contract(
             RUNNER.read_json(RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CONTRACT), RUNNER.load_pin())
 
-    def test_bitmap_fragment_is_complete_but_five_components_are_not(self):
+    def test_bitmap_fragment_is_complete_but_four_components_are_not(self):
         summary = self.summary()
         complete = [c['id'] for c in summary['components'] if c['native_status'] == 'complete']
-        self.assertEqual(complete, ['metadata', 'bitmaps', 'page-map'])
+        self.assertEqual(complete, ['metadata', 'bitmaps', 'page-map', 'allocator-recursion'])
         self.assertEqual(summary['milestone']['status'], 'partial')
         bitmap = summary['components'][2]
         self.assertEqual(len(bitmap['bounded_source_definitions']), 9)
@@ -230,6 +230,15 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
             for check in component['checks']
         ]
         checks.extend(arena_checks)
+        checks.extend(
+            RUNNER._m2_x86_64_recursion_check_record(check, {
+                'status': 'passed', 'comparison': {'status': 'matched'},
+                'rust_passed_test_count': 1, 'recursion_key_count': 54,
+                'rust_command': ['/workspace/.work/prepared-test'],
+            })
+            for component in summary['components'] if component['id'] == 'allocator-recursion'
+            for check in component['checks']
+        )
         for check in summary['components'][3]['checks']:
             row = {'component': 'page-map', 'command': ['/workspace/.work/prepared-test'],
                    'id': check['id'], 'passed_test_count': 1, 'target': check['target']}
@@ -294,7 +303,7 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
             RUNNER, '_m2_x86_64_process_arena_collect_check_records', return_value=arena_checks
         ):
             report = RUNNER.m2_x86_64_memory_substrate_report(**arguments)
-        self.assertEqual(len(report['milestone']['unmet_component_ids']), 5)
+        self.assertEqual(len(report['milestone']['unmet_component_ids']), 4)
         self.assertEqual(report['milestone']['status'], 'partial')
         bitmap = report['components'][2]
         self.assertEqual(bitmap['status'], 'complete')

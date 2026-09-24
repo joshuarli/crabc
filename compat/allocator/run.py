@@ -504,6 +504,14 @@ M2_X86_64_ARENA_CHECKS = (
         "target": "arena::owned::tests::destroy_all_retires_regular_external_and_huge_owners_with_exact_retries",
     },
 )
+M2_X86_64_RECURSION_CHECKS = (
+    {
+        "expected_passed_test_count": 1,
+        "id": "recursive-diagnostic-output-c-rust-differential",
+        "kind": "c-rust-recursive-output-differential",
+        "target": "diagnostic_output::tests::source_options_trace_for_pinned_c_comparison",
+    },
+)
 # This direct C/Rust record covers only src/init.c's detached static-preimage
 # substep: the original MI_MEMID_STATIC image, its kind-only memid
 # predecessor, then file-static mi_tld_init's detached writes. It uses only
@@ -12688,6 +12696,52 @@ def _m2_x86_64_arena_lifecycle_producer() -> Any:
     return producer
 
 
+def _m2_x86_64_recursion_producer() -> Any:
+    """Load the pinned C/Rust recursive diagnostic-output producer."""
+
+    path = ALLOCATOR_ROOT / "m2_recursion_x86_64.py"
+    spec = importlib.util.spec_from_file_location("crabc_m2_native_recursion", path)
+    if spec is None or spec.loader is None:
+        raise HarnessError("native x86 M2 recursive-output producer is absent")
+    producer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(producer)
+    return producer
+
+
+def _run_m2_x86_64_recursion_evidence(
+    *, offline: bool, test_program: Mapping[str, Any], check: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Run the recursive-output producer against the aggregate's native binary."""
+
+    return _m2_x86_64_recursion_producer().run_evidence(
+        sys.modules[__name__], offline=offline, test_program=test_program, check=check,
+    )
+
+
+def _m2_x86_64_recursion_check_record(
+    check: Mapping[str, Any], evidence: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Record the executed recursive diagnostic-output differential."""
+
+    if (
+        evidence.get("status") != "passed"
+        or evidence.get("comparison", {}).get("status") != "matched"
+        or evidence.get("rust_passed_test_count") != check["expected_passed_test_count"]
+        or type(evidence.get("recursion_key_count")) is not int
+        or evidence.get("recursion_key_count") <= 0
+    ):
+        raise HarnessError("native x86 M2 recursive-output receipt is invalid")
+    return {
+        "comparison_status": "matched",
+        "component": "allocator-recursion",
+        "command": list(evidence["rust_command"]),
+        "evidence_scope": "pinned-c-rust-options-trace-with-recursive-output-callback-scenarios",
+        "id": check["id"],
+        "passed_test_count": evidence["rust_passed_test_count"],
+        "target": check["target"],
+    }
+
+
 def _m2_x86_64_arena_destruction_producer() -> Any:
     """Load the pinned C/Rust arena destruction producer."""
 
@@ -12954,10 +13008,12 @@ def validate_x86_64_m2_memory_substrate_contract(
         elif component_id == "fault-injection":
             fragment_reference = raw_component.get("evidence_fragment")
             raw_component = _m2_x86_64_fault_component(raw_component, pin)
-        complete = component_id in {"bitmaps", "page-map", "metadata"}
-        partial_evidence_component = component_id in {
-            "vm-primitives", "initialization", "fault-injection"
-        }
+        # Completion is the component's own recorded state: a complete row
+        # must carry bounded source definitions and a failure matrix whose
+        # every row names an executed check, and no remaining condition.
+        # Partial fragment-backed components keep their branch matrix.
+        complete = raw_component.get("native_status") == "complete"
+        partial_evidence_component = not complete and fragment_reference is not None
         expected_component_keys = {
             "checks",
             "id",
@@ -12979,7 +13035,7 @@ def validate_x86_64_m2_memory_substrate_contract(
         status = raw_component.get("native_status")
         if status not in M2_X86_64_MEMORY_SUBSTRATE_COMPONENT_STATUSES or (
             status == "complete"
-        ) != complete:
+        ) != complete or (complete and not raw_component.get("checks")):
             raise HarnessError(f"native x86 M2 component {component_id} has an invalid native state")
         remaining = raw_component.get("remaining_conditions")
         if (
@@ -13020,6 +13076,9 @@ def validate_x86_64_m2_memory_substrate_contract(
         elif component_id == "page-map":
             if raw_checks != list(M2_X86_64_PAGE_MAP_CHECKS):
                 raise HarnessError("native x86 M2 PageMap check inventory changed")
+        elif component_id == "allocator-recursion":
+            if raw_checks != list(M2_X86_64_RECURSION_CHECKS):
+                raise HarnessError("native x86 M2 recursion check inventory changed")
         elif component_id == "arenas":
             if raw_checks != list(M2_X86_64_ARENA_CHECKS):
                 raise HarnessError("native x86 M2 process-arena check inventory changed")
@@ -13053,6 +13112,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                     "c-rust-process-arena-purge-differential",
                     "c-rust-arena-lifecycle-differential",
                     "c-rust-arena-destruction-differential",
+                    "c-rust-recursive-output-differential",
                     "c-rust-runtime-thp-source-environment-admission",
                     "c-rust-initialization-tld-source-matrix",
                     "c-rust-init-recursion-lifecycle",
@@ -13141,6 +13201,11 @@ def validate_x86_64_m2_memory_substrate_contract(
                     _m2_x86_64_arena_lifecycle_producer().TARGET
                 ):
                     raise HarnessError("native x86 M2 arena lifecycle evidence target is absent")
+            elif raw_check.get("kind") == "c-rust-recursive-output-differential":
+                if component_id != "allocator-recursion" or raw_check.get("target") != (
+                    _m2_x86_64_recursion_producer().TARGET
+                ):
+                    raise HarnessError("native x86 M2 recursive-output evidence target is absent")
             elif raw_check.get("kind") == "c-rust-arena-destruction-differential":
                 if component_id != "arenas" or raw_check.get("target") != (
                     _m2_x86_64_arena_destruction_producer().TARGET
@@ -14481,8 +14546,6 @@ def m2_x86_64_memory_substrate_report(
         elif component_id == "metadata":
             if checks != expected_metadata_records:
                 raise HarnessError("native x86 M2 metadata executed receipt inventory changed")
-            if not complete:
-                unmet.append(component_id)
         elif component_id == "vm-primitives":
             if not complete and checks != expected_vm_records + [
                 {
@@ -14500,16 +14563,13 @@ def m2_x86_64_memory_substrate_report(
                 )
             ]:
                 raise HarnessError("native x86 M2 VM executed receipt inventory changed")
-            unmet.append(component_id)
         elif component_id == "initialization":
             if checks != expected_initialization_records:
                 raise HarnessError("native x86 M2 initialization executed receipt inventory changed")
-            unmet.append(component_id)
         elif component_id == "fault-injection":
             if checks != expected_fault_records:
                 raise HarnessError("native x86 M2 fault-inventory executed receipt inventory changed")
-            unmet.append(component_id)
-        else:
+        if not complete:
             unmet.append(component_id)
         report_component: dict[str, Any] = {
             "executed_checks": checks,
@@ -14527,7 +14587,7 @@ def m2_x86_64_memory_substrate_report(
             report_component["failure_matrix"] = list(component["failure_matrix"])
             if "evidence_fragment" in component:
                 report_component["evidence_fragment"] = dict(component["evidence_fragment"])
-        elif component_id in {"vm-primitives", "initialization", "fault-injection"}:
+        elif "branch_matrix" in component:
             report_component["bounded_source_definitions"] = list(
                 component["bounded_source_definitions"]
             )
@@ -14708,6 +14768,17 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
             ),
         ),
     ]
+    _, recursion_check = _m2_x86_64_check_by_id(
+        summary, "recursive-diagnostic-output-c-rust-differential"
+    )
+    recursion_checks = [
+        _m2_x86_64_recursion_check_record(
+            recursion_check,
+            _run_m2_x86_64_recursion_evidence(
+                offline=offline, test_program=test_program, check=recursion_check
+            ),
+        )
+    ]
     _, arena_destruction_check = _m2_x86_64_check_by_id(
         summary, "arena-destruction-c-rust-differential"
     )
@@ -14730,6 +14801,7 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         *bitmap_checks,
         *metadata_checks,
         *arena_owned_checks,
+        *recursion_checks,
         _m2_x86_64_differential_check_record(success_component, success_check, success),
         _m2_x86_64_differential_check_record(lazy_component, lazy_check, lazy),
         _m2_x86_64_differential_check_record(cold_component, cold_check, cold),
@@ -14747,6 +14819,7 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
                     *(check["id"] for check in bitmap_checks),
                     *(check["id"] for check in metadata_checks),
                     *(check["id"] for check in arena_owned_checks),
+                    *(check["id"] for check in recursion_checks),
                 }
             ),
             gate_name="native x86 M2 focused source evidence",
