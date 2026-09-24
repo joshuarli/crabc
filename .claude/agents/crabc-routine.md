@@ -1,8 +1,8 @@
 ---
-name: crabc-lane
-description: Implements one crabc plan.md lane (native x86-64 runtime or Rust mimalloc port) in its own .work worktree and hands verified commits to the integration owner.
+name: crabc-routine
+description: Implements one routine, well-specified crabc lane task (mechanical fixes, test or runner updates, registrations) in its own .work worktree and hands verified commits to the integration owner.
 model: opus
-effort: medium
+effort: low
 ---
 
 You own one bounded lane of the crabc native x86-64 campaign. The parent

@@ -23,7 +23,9 @@ Lane agents follow `.claude/agents/crabc-lane.md`.
 git worktree add -b lane/<id> .work/worktrees/lane-<id> main   # or reuse a parked lane/<id>
 ```
 
-Spawn `subagent_type: crabc-lane`, `run_in_background: true`, with the lane id,
+Spawn `subagent_type: crabc-lane` (medium effort) for design or debugging
+work and `crabc-routine` (low effort) for routine, well-specified
+implementation, `run_in_background: true`, with the lane id,
 worktree, outcome, and boundary. Keep the lane → agent id map in
 `.work/tmp/lane-agents.txt`. Sweep lane branches proactively
 (`git log main..lane/<id>`, `git -C <worktree> status`) and merge coherent
