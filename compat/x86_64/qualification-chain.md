@@ -61,25 +61,31 @@ posix-native` (`native-execution.json` from `owned-posix-native`) and
 `owned-loader-family`).
 
 `abi-evidence` binds one current-source set: the static preparation and
-product, the materialized dynamic product, and the native ABI inventory, ELF
-facts, ratchet, declaration inventory, selection and public-data ordinary-link
-reports, plus any selection companion receipts. Every product and report must
-come from the evaluated clean revision. Each of the gate's seven retained
-evidence rows reruns its own leaf reader against that set, and the last row
-applies `native-abi-selection require-closure`. The development path is:
+product, the materialized dynamic product, the natively collected native ABI
+inventory, ELF facts, declaration inventory and public-data ordinary-link
+reports, and any selection companion receipts. Assembly then produces the
+ratchet check and selection report from exactly those inputs. Every product
+and report must come from the evaluated clean revision, and assembly runs in
+the pinned image because the ratchet and selection reports record checkout
+paths. Each of the gate's seven retained evidence rows reruns its own leaf
+reader against the published set; the last applies
+`native-abi-selection require-closure`. The development path is:
 
 ```sh
 ./scripts/dev-x86_64.sh owned-posix-static-products .work/x86_64/abi/static
-./scripts/dev-x86_64.sh materialized-dynamic-sysroot     # prints DYN
-P="--static-product .work/x86_64/abi/static/products/primary --dynamic-product $DYN/installed --static-preparation .work/x86_64/abi/static/preparation.json"
+./scripts/dev-x86_64.sh materialized-dynamic-sysroot   # its installed product is $DYN
+P="--static-product .work/x86_64/abi/static/products/primary --dynamic-product $DYN --static-preparation .work/x86_64/abi/static/preparation.json"
 ./scripts/dev-x86_64.sh native-abi-inventory collect $P --output .work/x86_64/native-abi-inventory/abi
 ./scripts/dev-x86_64.sh native-abi-elf-facts collect --base-inventory .work/x86_64/native-abi-inventory/abi/report.json $P --output .work/x86_64/abi/elf
-./scripts/dev-x86_64.sh native-abi-ratchet check --inventory-report .work/x86_64/native-abi-inventory/abi/report.json $P --output .work/x86_64/abi/ratchet
 ./scripts/dev-x86_64.sh header-declaration-inventory collect --output .work/x86_64/header-declaration-inventory/abi --workers 8
 ./scripts/dev-x86_64.sh public-data-ordinary-link collect $P --output .work/x86_64/public-data-ordinary-link/abi
-./scripts/dev-x86_64.sh native-abi-selection build-report --measurement-checkout . --elf-facts ... --output .work/x86_64/abi/selection
-./scripts/dev-x86_64.sh abi-differential-evidence assemble $P --native-abi-inventory ... --output .work/x86_64/abi-differential/NAME
-./scripts/dev-x86_64.sh qualification-manifest --publish compat.abi-differential abi-evidence .work/x86_64/abi-differential/NAME/abi-evidence.json
+./scripts/dev-x86_64.sh abi-differential-evidence assemble $P \
+  --native-abi-inventory .work/x86_64/native-abi-inventory/abi/report.json \
+  --native-abi-elf-facts .work/x86_64/abi/elf/report.json \
+  --header-declaration-inventory .work/x86_64/header-declaration-inventory/abi/report.json \
+  --public-data-ordinary-link .work/x86_64/public-data-ordinary-link/abi/report.json \
+  --output .work/x86_64/abi-differential/abi
+./scripts/dev-x86_64.sh qualification-manifest --publish compat.abi-differential abi-evidence .work/x86_64/abi-differential/abi/abi-evidence.json
 ``` `compat.resolver-network` reads
 the published `compat/reports/resolver-network/x86_64/latest.json` and
 `consumer.source-build` the Lua admission's fixed reports.

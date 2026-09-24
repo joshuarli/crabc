@@ -7590,9 +7590,11 @@ case "$command" in
         python3 -B "$ROOT_DIR/compat/x86_64/native_abi_selection.py" "$@"
         ;;
     abi-differential-evidence)
-        # Like native-abi-selection, whose reader it replays, this binds and
-        # replays retained host facts; it compiles and executes nothing.
-        python3 -B "$ROOT_DIR/compat/x86_64/abi_differential_evidence.py" "$@"
+        # The gate evaluates this set in the pinned image at /workspace, and
+        # the ratchet and selection reports it produces record checkout
+        # paths, so assembly runs there too. It compiles and executes nothing.
+        ensure_image
+        run_in_network_none_container python3 -B /workspace/compat/x86_64/abi_differential_evidence.py "$@"
         ;;
     owned-text-math-locale-stdio-family)
         ensure_image

@@ -2287,8 +2287,13 @@ def _common_checkout(root: Path) -> Path:
 
 def physical_work_path(path: Path, *, directory: bool, own: bool = False, fresh: bool = False) -> Path:
     value = Path(os.path.abspath(path))
-    base = ROOT / '.work' if own else _common_checkout(ROOT) / '.work'
-    require(value.is_relative_to(base) and value != base, f'path is outside checkout-local .work: {value}')
+    # Inputs may live in this checkout's `.work` or, for preserved sibling
+    # worktrees, the common checkout's. In the pinned container the checkout
+    # is mounted at /workspace, apart from the common checkout, so only the
+    # first form exists there.
+    bases = [ROOT / '.work'] if own else [ROOT / '.work', _common_checkout(ROOT) / '.work']
+    require(any(value.is_relative_to(base) and value != base for base in bases),
+            f'path is outside checkout-local .work: {value}')
     if fresh:
         require(not value.exists() and not value.is_symlink(), 'output must be fresh')
         require(value.parent.is_dir() and value.parent.resolve() == value.parent, 'output parent must be an existing physical directory')
@@ -2300,7 +2305,9 @@ def physical_work_path(path: Path, *, directory: bool, own: bool = False, fresh:
 
 def validate_measurement_paths(*, measurement_checkout: Path, elf_report: Path, base_inventory: Path,
                                static_product: Path, dynamic_product: Path, static_preparation: Path) -> dict[str, Path]:
-    checkout = physical_work_path(measurement_checkout, directory=True)
+    # The selecting checkout may be its own measurement checkout.
+    checkout = (ROOT if Path(os.path.abspath(measurement_checkout)) == ROOT
+                else physical_work_path(measurement_checkout, directory=True))
     require(_common_checkout(checkout) == _common_checkout(ROOT), 'measurement checkout belongs to another repository')
     require(not _git(checkout, 'status', '--porcelain', '--untracked-files=all').strip(), 'measurement checkout must be clean')
     values = {'measurement_checkout': checkout}

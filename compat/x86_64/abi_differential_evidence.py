@@ -8,8 +8,12 @@ public-data link receipt. Every one of them is replayed only against explicit
 products (and, for selection, explicit companion receipts), so a gate reader
 cannot validate one of them from its path alone.
 
-`assemble` records which products and reports form one set and writes
-`abi-evidence.json`; `validate` replays every leaf reader against it. The receipt holds
+`assemble` takes the products and the four natively collected reports,
+produces the ratchet check and selection report from them into the set
+directory, and writes `abi-evidence.json`; `validate` replays every leaf
+reader against it. Assembly and gate evaluation both run in the pinned
+image: the ratchet and selection reports record their inputs by checkout
+path, so a set built on the host would not replay at `/workspace`. The receipt holds
 only checkout-relative paths, byte hashes and the collecting source revision;
 it restates no leaf result. `qualification_gates.py` publishes it and, on
 every evaluation, calls the per-leaf functions below, which rerun the owning
@@ -50,6 +54,13 @@ REPORTS = (
     "native_abi_ratchet",
     "header_declaration_inventory",
     "native_abi_selection",
+    "public_data_ordinary_link",
+)
+# Reports collected by their own native commands; assembly produces the rest.
+COLLECTED_REPORTS = (
+    "native_abi_inventory",
+    "native_abi_elf_facts",
+    "header_declaration_inventory",
     "public_data_ordinary_link",
 )
 # Optional selection companions, keyed by their `native_abi_selection`
@@ -320,29 +331,50 @@ def validate_receipt(root: Path, path: Path) -> dict[str, Any]:
 
 
 def assemble(arguments: argparse.Namespace) -> Path:
+    import native_abi_ratchet
+    import native_abi_selection
+
     output = Path(os.path.abspath(arguments.output))
     require(output.parent == OUTPUT_PARENT or output.parent.is_relative_to(OUTPUT_PARENT),
             f"output must be below {OUTPUT_PARENT.relative_to(ROOT)}")
     require(not output.exists(), "output must be fresh")
-    companions = {}
+    companions: dict[str, Path] = {}
     for value in arguments.selection_companion:
         name, separator, path = value.partition("=")
         require(separator == "=" and name in SELECTION_COMPANIONS and name not in companions,
                 f"invalid or repeated selection companion: {value}")
-        companions[name] = Path(path)
+        companions[name] = Path(os.path.abspath(path))
+    source = current_source()
+    inputs = {name: Path(os.path.abspath(getattr(arguments, name))) for name in INPUT_KINDS}
+    reports = {name: Path(os.path.abspath(getattr(arguments, name))) for name in COLLECTED_REPORTS}
+    OUTPUT_PARENT.mkdir(parents=True, exist_ok=True)
+    output.mkdir()
+    reports["native_abi_ratchet"] = native_abi_ratchet.check(
+        reports["native_abi_inventory"], output=output / "ratchet", **inputs,
+    )
+    selection_inputs = {
+        "measurement_checkout": ROOT,
+        "elf_report": reports["native_abi_elf_facts"],
+        "base_inventory": reports["native_abi_inventory"],
+        **inputs,
+        "declaration_report": reports["header_declaration_inventory"],
+        **companions,
+    }
+    if "loader_debug_report" in companions:
+        selection_inputs["ordinary_link_report"] = reports["public_data_ordinary_link"]
+    native_abi_selection.build_report(output=output / "selection", **selection_inputs)
+    reports["native_abi_selection"] = output / "selection" / "report.json"
     record = {
         "schema": SCHEMA,
-        "source": current_source(),
-        "inputs": {name: _relative(getattr(arguments, name), name) for name in INPUT_KINDS},
-        "reports": {},
-        "selection_companions": {},
+        "source": source,
+        "inputs": {name: _relative(path, name) for name, path in inputs.items()},
+        "reports": {
+            name: {"path": _relative(reports[name], name), "sha256": _sha256(reports[name])} for name in REPORTS
+        },
+        "selection_companions": {
+            name: {"path": _relative(path, name), "sha256": _sha256(path)} for name, path in sorted(companions.items())
+        },
     }
-    for name in REPORTS:
-        path = getattr(arguments, name)
-        record["reports"][name] = {"path": _relative(path, name), "sha256": _sha256(path)}
-    for name, path in sorted(companions.items()):
-        record["selection_companions"][name] = {"path": _relative(path, name), "sha256": _sha256(path)}
-    output.mkdir(parents=True)
     receipt = output / RECEIPT_NAME
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=output, delete=False) as staged:
         json.dump(record, staged, indent=2, sort_keys=True)
@@ -357,7 +389,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
     build = commands.add_parser("assemble", help="bind and replay one current evidence set")
-    for name in (*INPUT_KINDS, *REPORTS):
+    for name in (*INPUT_KINDS, *COLLECTED_REPORTS):
         build.add_argument("--" + name.replace("_", "-"), dest=name, type=Path, required=True)
     build.add_argument("--selection-companion", action="append", default=[], metavar="KEYWORD=REPORT")
     build.add_argument("--output", type=Path, required=True)
@@ -373,7 +405,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f"{name}: {'met' if result['met'] else 'UNMET'}: {result['detail']}")
             return 0 if all(result["met"] for result in results.values()) else 1
         return 0
-    except (EvidenceError, OSError) as error:
+    except Exception as error:  # noqa: BLE001 - leaf reader errors are reported, not traced
+        if not isinstance(error, (EvidenceError, OSError)) and type(error).__name__ not in (
+            "RatchetError", "SelectionError", "InventoryError",
+        ):
+            raise
         print(f"ABI-differential evidence: {error}", file=sys.stderr)
         return 2
 
