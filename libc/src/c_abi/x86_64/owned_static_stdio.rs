@@ -614,6 +614,15 @@ pub(super) unsafe extern "C" fn __fdopen(fd: c_int, mode: *const c_char) -> *mut
             || (current & 3 == 1 && stream_flags & F_NORD == 0) {
             errno::set_errno(EINVAL); return ptr::null_mut();
         }
+        descriptor_stream(fd, flags, stream_flags, current)
+    }
+}
+
+/// Allocate and publish a descriptor stream for `fd`, whose open status
+/// flags (`F_GETFL`) are `current`, applying mode `flags`' close-on-exec and
+/// append requests. Failure leaves `fd` open for the caller.
+unsafe fn descriptor_stream(fd: c_int, flags: c_int, stream_flags: u32, current: c_int) -> *mut StandardStream {
+    unsafe {
         let stream = stdio_cabi_malloc(core::mem::size_of::<StandardStream>()).cast::<StandardStream>();
         if stream.is_null() { return stream; }
         ptr::write(stream, StandardStream::new(fd, stream_flags, BUFSIZ));
@@ -657,10 +666,13 @@ unsafe fn publish_stream(stream: *mut StandardStream) -> *mut StandardStream {
 #[no_mangle]
 pub unsafe extern "C" fn fopen(path: *const c_char, mode: *const c_char) -> *mut StandardStream {
     unsafe {
-        let Some((flags, _)) = open_mode(mode) else { errno::set_errno(EINVAL); return ptr::null_mut(); };
+        let Some((flags, stream_flags)) = open_mode(mode) else { errno::set_errno(EINVAL); return ptr::null_mut(); };
         let fd = c_status(raw_syscall::syscall4(257, -100, path as i64, flags as i64, 0o666));
         if fd < 0 { return ptr::null_mut(); }
-        let stream = __fdopen(fd, mode);
+        // The descriptor was just opened with exactly `flags`, so its access
+        // mode matches the stream mode and O_APPEND is already set for "a":
+        // fdopen's F_GETFL query and access check would add nothing.
+        let stream = descriptor_stream(fd, flags, stream_flags, flags);
         if stream.is_null() { raw_syscall::syscall1(3, fd as i64); }
         stream
     }
