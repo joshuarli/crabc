@@ -22,7 +22,7 @@ Update this section in place when the frontier changes. Recorded checkpoints
 are not transferable passes for a different revision.
 
 - **State:** `campaign-status` reports 9/26 families `foundation-verified` and
-  180 implemented, 34 selected-private, and 9 missing capabilities; all eight
+  180 implemented, 35 selected-private, and 8 missing capabilities; all eight
   ordered qualification gates are executable and fail closed on named unmet
   conditions. C mimalloc remains the selected backend; allocator M2–M11 remain
   open. Every freestanding-C runner builds `libc.a` through
@@ -31,23 +31,34 @@ are not transferable passes for a different revision.
   local path at roughly 0.04× pinned C single-thread (contended host; the
   0.25× sanity gate is not met).
 - **Resume here, in order:**
-  1. Rerun the `libc.posix-runtime` family admission on a frozen checkout of
-     merged `main`; lane `posix` is dry-running the documented admission
-     sequence and reports the unmet components.
-  2. Integrate lane handoffs continuously (`.work/tmp/lane-agents.txt` maps
-     lanes to agents; all 16 are active): `posix`, `pattern` (now the
-     codegen-shape runner rewrite), `math-time` (math capability slices),
-     `loader`, `crt-dynamic`, `dynamic-product`, `std-lto`, `m2-vm-arenas`,
-     `m2-init-fault`, `m3`, `m5-remote`, `m5-exit` (also the 4-MiB free
-     abort), `m6`, `m7`, `alloc-fork` (now native worker-attachment
-     integration), `alloc-perf` (local-path structural costs). Lanes may
-     propose `[[family.verified_slice]]` commits; rerun their command on
-     merged `main` before merging one. Run native verification in a frozen
-     worktree, never the integration checkout.
-  3. Single-source the core image identity: about ten readers and runners
-     repeat `sha256:307d75f0…`, and the loader structural-owner and locale-alias
-     readers still pin the retired `sha256:5990e55b…`, so a rebuild breaks them.
-     Remaining low-churn repository-file pins: owned `.list` digests in the
+  1. Run the `libc.posix-runtime` admission sequence
+     (`compat/x86_64/owned-posix-native-execution.md`) in a frozen checkout of
+     merged `main`; `.work/worktrees/main-verify` is prepared for this. Lane
+     `posix` stopped mid dry-run after the static step passed; its branch
+     holds one unverified fork/`pthread_kill` fix. Then run
+     `owned-pthread-family` on the same matrix for `libc.pthread-tls`.
+  2. Every lane agent stopped at the account session limit on 2026-09-24.
+     Each `lane/*` branch ends in any finished-but-unreported commits plus a
+     `WIP(lane <id>)` commit, rebased near `main`. Resume them with fresh
+     agents at the defined efforts (`crabc-lane` medium, `crabc-routine` low
+     for mechanical work), one brief per lane naming its branch head:
+     `pattern` (behavior-level rewrite of the fourteen codegen-shape
+     runners), `posix`, `crt-dynamic` (pthread-tls capability slices),
+     `math-time` (stdio engine capability slices), `loader`
+     (`loader.dlfcn-*` slices), `dynamic-product` (combined-gate leaf
+     readers), `std-lto` (std/LTO development lanes with eh-frame-hdr),
+     `alloc-fork` (allocator interposition and DSO composition), `alloc-perf`
+     (local-path structural costs; ~0.04× C, gate 0.25×), `m2-vm-arenas`
+     (reservation flake, theap arm, vm-primitives, metadata),
+     `m2-init-fault` (metadata-publication fault receiver), `m3`,
+     `m5-remote` (reclaim-on-free; x86 integration tests attaching), `m5-exit`
+     (upstream stress and soak; destroy order once m6 exposes child
+     destroy), `m6` (child entry-point branch; child destroy API;
+     `mi_heap_new`), `m7` (process-done split, VmPolicy options, error
+     call sites). Rerun a lane's cited command on merged `main` before
+     merging a `[[family.verified_slice]]` change.
+  3. Remaining low-churn repository-file pins (`compat/x86_64/core_image.py`
+     now names the core image once): owned `.list` digests in the
      dynamic sysroot builder and the mimalloc visibility, errno-alias and
      syscall-alias readers, utmpx's link-authority pin, shadow-ABI and churn
      fixtures, the native perf profile, the Lua admission test, and image-input
@@ -55,14 +66,11 @@ are not transferable passes for a different revision.
      upstream reference copies, adapted-upstream-test patch pins, and
      archive/toolchain provenance.
 - **Other open defects:** fourteen runners pin optimizer shape (raw-syscall
-  provider counts, call edges; lane `pattern`); static and dynamic products
-  install different `crt1.o` (lane `crt-dynamic`); owned `sysconf` lacks musl's
-  rlimit, `_SC_NPROCESSORS_*` and `_SC_PHYS_PAGES`/`_AVPHYS_PAGES` entries
-  (unassigned); owned glob/opendir maps one region per directory stream
-  (~15× musl's `mmap` count; unassigned); Rust page block pops clear
+  provider counts, call edges; lane `pattern`); Rust page block pops clear
   `retire_expire`, which pinned `mi_page_malloc_zero` never touches (`m3`);
-  native `free` of a live ≥4-MiB block aborts (`m5-exit`). Timing-limited
-  leaves fail under host load averages above ~150; treat those as environment.
+  most `crabc-mimalloc/tests/native_*` integration tests fail to attach on
+  x86 (`m5-remote`). Timing-limited leaves fail under host load averages
+  above ~150; treat those as environment.
 - **Housekeeping:** superseded branches are archived under
   `refs/archive/branches/`, old stashes under `refs/archive/stash/`, and
   pre-campaign evidence receipts in `.work/archive/*-receipts.tar.gz`. A fresh
