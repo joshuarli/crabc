@@ -477,6 +477,75 @@ class RosterBoundaryTests(unittest.TestCase):
         self.assertEqual(report["status"], "failed")
         self.assertIn("full native performance run is unavailable", report["failure"])
 
+    def test_full_roster_run_waits_for_the_ordered_chain_before_environment(self) -> None:
+        """A roster cannot admit a full run while any predecessor gate is open."""
+
+        with tempfile.TemporaryDirectory(dir=WORK_ROOT) as temporary:
+            args = SimpleNamespace(
+                work_dir=Path(temporary) / "attempt",
+                attempt_index=1,
+                attempt_roster=Path(temporary) / "attempt-roster.json",
+                samples=None,
+                warmup=None,
+                implementation_smoke=False,
+            )
+            with patch.object(runner, "validate_environment", side_effect=AssertionError("environment reached")) as environment:
+                _report_path, report = runner.run_attempt(args)
+        self.assertFalse(environment.called)
+        self.assertEqual(report["status"], "failed")
+        self.assertIn("capability.accounting: planned", report["failure"])
+
+    def test_smoke_roster_binds_its_completed_smoke_predecessor(self) -> None:
+        """A roster's predecessor is complete at the roster's own budget."""
+
+        with tempfile.TemporaryDirectory(dir=WORK_ROOT) as temporary:
+            directory = Path(temporary)
+            requests = []
+            for index in range(1, 4):
+                work = directory / f"attempt-{index}"
+                requests.append({
+                    "index": index,
+                    "work_dir": runner.planned_recorded_path(ROOT, work),
+                    "report": runner.planned_recorded_path(ROOT, work / "report.json"),
+                    "predecessor_report": None if index == 1 else requests[index - 2]["report"],
+                })
+            roster = {"budget": runner.evidence.SMOKE_BUDGET,
+                      "correctness_admission": runner.evidence.correctness_admission(ROOT), "attempts": requests}
+            (directory / "attempt-1").mkdir()
+            (directory / "attempt-2").mkdir()
+            prior = {"schema": runner.SCHEMA, "kind": runner.KIND, "attempt": {"index": 1}}
+            args = SimpleNamespace(attempt_roster=directory / "attempt-roster.json", attempt_index=2,
+                                   skip_syscalls=False, workload=None, implementation_smoke=True)
+            with patch.object(runner, "load_attempt_roster", return_value=(args.attempt_roster, roster)), \
+                 patch.object(runner, "recorded_identity", return_value={"path": "recorded"}):
+                for status, accepted in ((runner.evidence.SMOKE_BUDGET, True), ("complete-evidence", False), ("partial-evidence", False)):
+                    with self.subTest(status):
+                        runner.write_json(directory / "attempt-1/report.json", {**prior, "status": status})
+                        if accepted:
+                            bound = runner.bind_attempt_roster(args, ROOT, directory / "attempt-2", {})
+                            self.assertEqual(bound["predecessor"], {"path": "recorded"})
+                        else:
+                            with self.assertRaisesRegex(runner.AdapterError, "predecessor is incomplete"):
+                                runner.bind_attempt_roster(args, ROOT, directory / "attempt-2", {})
+
+    def test_roster_budget_and_complete_roster_bind_each_attempt(self) -> None:
+        admission = runner.evidence.correctness_admission(ROOT)
+        roster = {"budget": runner.evidence.SMOKE_BUDGET, "correctness_admission": admission,
+                  "attempts": [{"index": 1, "work_dir": "unused", "report": "unused", "predecessor_report": None}]}
+        path = WORK_ROOT / "attempt-roster.json"
+        base = {"attempt_roster": path, "attempt_index": 1, "skip_syscalls": False, "workload": None}
+        with patch.object(runner, "load_attempt_roster", return_value=(path, roster)), \
+             patch.object(runner, "require_full_run_admission"):
+            full = SimpleNamespace(**base, implementation_smoke=False)
+            with self.assertRaisesRegex(runner.AdapterError, "differs from the immutable implementation-smoke roster"):
+                runner.bind_attempt_roster(full, ROOT, WORK_ROOT, {})
+            subset = SimpleNamespace(**{**base, "workload": ["startup"]}, implementation_smoke=True)
+            with self.assertRaisesRegex(runner.AdapterError, "every canonical row"):
+                runner.bind_attempt_roster(subset, ROOT, WORK_ROOT, {})
+            untraced = SimpleNamespace(**{**base, "skip_syscalls": True}, implementation_smoke=True)
+            with self.assertRaisesRegex(runner.AdapterError, "every canonical row"):
+                runner.bind_attempt_roster(untraced, ROOT, WORK_ROOT, {})
+
     def test_smoke_uses_fixed_reduced_process_budget(self) -> None:
         command = ["run", "--dynamic-product", "/product", "--work-dir", "/work"]
         normal = runner.parser().parse_args(command)
@@ -515,17 +584,24 @@ class RosterBoundaryTests(unittest.TestCase):
                     "status": "unavailable", "reason": "no validated owned-dynamic-qualification receipt was supplied",
                 },
                 "correctness_admission": {
-                    "status": "complete", "required_owner": runner.COMPLETE_CORRECTNESS_OWNER,
-                    "reason": "self-attested",
+                    "status": "available", "owner": runner.evidence.CORRECTNESS_OWNER, "unmet": [],
                 },
+                "budget": runner.evidence.FULL_BUDGET,
                 "attempts": requests,
             }
             roster_path = directory / "attempt-roster.json"
             runner.write_json(roster_path, roster)
             owner = SimpleNamespace(source_digest=lambda: "c" * 64)
+            real_module = runner.evidence._x86_module
+
+            def module(checkout: Path, name: str) -> object:
+                # Replace only the source-digest owner; admission still reads
+                # the real ordered qualification chain.
+                return owner if name == "owned_dynamic_qualification" else real_module(checkout, name)
+
             with patch.object(runner, "git_revision", return_value="b" * 40), \
-                 patch.object(runner.evidence, "_x86_module", return_value=owner):
-                with self.assertRaisesRegex(runner.AdapterError, "correctness admission"):
+                 patch.object(runner.evidence, "_x86_module", side_effect=module):
+                with self.assertRaisesRegex(runner.AdapterError, "ordered qualification chain"):
                     runner.load_attempt_roster(ROOT, roster_path, product)
 
 

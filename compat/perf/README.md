@@ -86,36 +86,73 @@ CRABC_X86_64_CORE_IMAGE=crabc-core-evidence:x86_64-native-perf \
 ```
 
 `perf-c plan`, `perf-c run`, `perf-c collect`, and `perf-c check` are the
-roster, attempt, collector, and retained-evidence surfaces. A normal attempt
-uses 31 fresh paired samples after three warm-ups and a deterministic
-10,000-resample one-sided 95% bootstrap. `--implementation-smoke` is the
-only development route before correctness admission: it fixes the budget to
-one pair and no warm-ups, omits memory diagnostics, and cannot be collected or
-promoted. The current collector remains deliberately unavailable until a
-reader owns the complete x86 correctness-closed predecessor chain (the native
-POSIX aggregate/provider quartet and required final execution receipts). An
-owned-dynamic-qualification receipt may bind the supplied product, but cannot
-substitute for that predecessor.
+roster, attempt, collector, and retained-evidence surfaces. Every attempt runs
+the same complete route: one build of all 114 rows, interleaved timed pairs,
+the separate `strace` diagnostic, the live 32-MiB probe with its post-ready
+`memory.peak` self-test, and one observer/cgroup envelope per row. The budget
+is the only difference. A full attempt uses 31 fresh paired samples after three
+warm-ups and a deterministic 10,000-resample one-sided 95% bootstrap;
+`--implementation-smoke` uses one pair and no warm-up. A roster records its
+budget, and each of its three attempts must use that budget, every canonical
+row, and syscall diagnostics.
 
-The native profile now defines the full 114-row implementation roster: the
-unchanged 74 rows plus supported clock selections, 4-MiB/32-MiB live sets,
-free/refill/reuse, worker-local allocation, TCP/UDP loopback, hermetic
-hosts/DNS, and empty/sub-64/guard primitive dispositions. Every row also has
-a separately linked memory observer with its fixed main-state and plateau R/C
-checkpoints. Those definitions and observer artifacts close the old missing-row
-list; they are not a full performance result.
+`perf-c collect --attempt-roster ROSTER --work-dir NEW` replays the three
+attempts from raw evidence and writes `collector.json` with the per-workload
+scorecard: for each row and attempt, the CPU median ratio and upper bound,
+maximum-checkpoint PSS and `memory.peak` against their `0.90` limits, marked
+and whole-process syscall totals, and wall/fault/context-switch/RSS medians.
+A row passes only if all four gates pass in all three attempts; no row or
+attempt compensates for another. `perf-c check REPORT` independently replays a
+collector or a single attempt, recomputes the scorecard, and prints it with
+every release blocker. Qualification is exactly an empty blocker list.
 
-No x86 release result exists. The release blockers are the missing
-correctness-closed predecessor reader, no clean three-attempt 114-row full
-scorecard, and unresolved performance verdicts. The bounded startup/graph
-construction smokes currently retain whole-process syscall-gate failures; they
-are evidence to preserve, not exemptions. A future full scorecard still
-requires every workload to meet CPU upper-95% `<= 0.90` across 31 paired fresh
-processes, both live PSS and `memory.peak` `<= 0.90`, and both the marked-route
-and whole-process syscall totals to be at most `2R` candidate calls (or zero
-when the reference is zero), with no unexplained error, retry, fallback, or
-unclassified per-syscall difference. Three consecutive clean Docker
-invocations must all pass an immutable roster.
+Correctness admission is read from the ordered qualification chain
+(`compat/x86_64/qualification_manifest.json`): every gate before
+`performance.release` must have left `incomplete_gates`. A roster records the
+reader's result and cannot assert it. A full-budget run is rejected before any
+build or timed child until that reader admits it. Smoke rosters run and
+collect regardless, and their scorecards always carry the budget blocker. An
+owned-dynamic-qualification receipt binds the supplied product; its absence is
+also a named blocker.
+
+```bash
+IMAGE=crabc-core-evidence:x86_64-native-perf
+P=$PWD/.work/x86_64/<dynamic-product>
+W=$PWD/.work/x86_64/<fresh-roster>
+CRABC_X86_64_CORE_IMAGE=$IMAGE ./scripts/dev-x86_64.sh perf-c plan \
+  --implementation-smoke --dynamic-product "$P" --work-dir "$W"
+for i in 1 2 3; do
+  CRABC_X86_64_CORE_IMAGE=$IMAGE ./scripts/dev-x86_64.sh perf-c run \
+    --implementation-smoke --dynamic-product "$P" --work-dir "$W/attempt-$i" \
+    --attempt-roster "$W/attempt-roster.json" --attempt-index "$i"
+done
+CRABC_X86_64_CORE_IMAGE=$IMAGE ./scripts/dev-x86_64.sh perf-c collect \
+  --dynamic-product "$P" --work-dir "$W/collector" --attempt-roster "$W/attempt-roster.json"
+./scripts/dev-x86_64.sh perf-c check "$W/collector/collector.json"
+```
+
+The native profile defines the full 114-row roster: the unchanged 74 rows plus
+supported clock selections, 4-MiB/32-MiB live sets, free/refill/reuse,
+worker-local allocation, TCP/UDP loopback, hermetic hosts/DNS, and
+empty/sub-64/guard primitive dispositions. Every row also has a separately
+linked memory observer with its fixed main-state and plateau R/C checkpoints.
+
+No x86 release result exists. A full scorecard requires every workload to meet
+CPU upper-95% `<= 0.90` across 31 paired fresh processes, both live PSS and
+`memory.peak` `<= 0.90`, and both the marked-route and whole-process syscall
+totals to be at most `2R` candidate calls (or zero when the reference is
+zero), with no unexplained error, retry, fallback, or unclassified per-syscall
+difference. No native syscall-difference classification exists, so every
+per-syscall difference is currently an explicit failure. Three consecutive
+clean Docker invocations must pass one immutable roster on an uncontended host.
+
+Two measured acceptance-policy conflicts are retained as named blockers until
+the user decides them; neither hides a row nor changes a metric.
+`allocator_live_32m` must keep 32 MiB of written payload resident, while
+pinned musl's whole process is about 33 MiB in both PSS and `memory.peak`, so
+`<= 0.90` is below the payload itself. Separately, cgroup-v2 charges a fresh
+leaf in 64-page (256-KiB) per-CPU batches, so `memory.peak` is never below
+256 KiB; a row whose musl peak is one batch cannot reach `<= 0.90`.
 
 `perf-c-memory-smoke` is a separate bounded native collector test. It uses a
 fresh supplied product/work directory, seven selected rows across all six

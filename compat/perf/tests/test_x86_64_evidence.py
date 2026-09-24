@@ -584,26 +584,151 @@ class CpuDiagnosticReplayTests(unittest.TestCase):
                 evidence._verify_stable_cpuinfo_identity(ROOT, host, diagnostics, index=1)
 
 
+def _row_workload(*, cpu_upper: float, marked: tuple[int, int], whole: tuple[int, int]) -> dict[str, object]:
+    """Build one already-replayed timed row from raw-shaped call totals."""
+
+    def diagnostic(calls: int) -> dict[str, object]:
+        return {"calls": {"getpid": {"calls": calls, "errors": 0}} if calls else {}}
+
+    gate = evidence.scorecard_syscall_gate(
+        {"marked_region": diagnostic(marked[0]), "whole_process": diagnostic(whole[0])},
+        {"marked_region": diagnostic(marked[1]), "whole_process": diagnostic(whole[1])},
+        operations=10,
+    )
+    summary = {
+        key: {"min": 1, "median": 2, "p95": 3, "max": 4}
+        for key in (
+            "elapsed_wall_ns", "resources.user_cpu_ns", "resources.system_cpu_ns", "resources.max_rss_kib",
+            "resources.minor_faults", "resources.major_faults", "resources.voluntary_context_switches",
+            "resources.involuntary_context_switches",
+        )
+    }
+    return {
+        "musl": {"summary": summary},
+        "crabc": {"summary": summary},
+        "comparison": {
+            "cpu": {
+                "median_ratio": cpu_upper - 0.01, "one_sided_95_upper": cpu_upper,
+                "resamples": evidence.CPU_RESAMPLES, "seed": 1,
+                "release_gate": "pass" if cpu_upper <= 0.90 else "fail",
+            },
+            "syscall_gate": gate,
+        },
+    }
+
+
+def _row_observer(*, pss: tuple[int, int], peak: tuple[int, int]) -> dict[str, object]:
+    return {"comparison": {
+        "status": "ok",
+        "pss_max_kib": evidence._memory_metric(*pss),
+        "memory_peak_after_exit_bytes": evidence._memory_metric(*peak),
+    }}
+
+
+PASSING_ROW = {"cpu_upper": 0.85, "marked": (10, 10), "whole": (20, 20)}
+PASSING_MEMORY = {"pss": (1000, 800), "peak": (1 << 20, 900_000)}
+
+
+class ScorecardDerivationTests(unittest.TestCase):
+    def test_row_passes_only_when_all_four_metrics_pass(self) -> None:
+        row = evidence.row_scorecard(_row_workload(**PASSING_ROW), _row_observer(**PASSING_MEMORY))
+        self.assertEqual(row["gate"], "pass")
+        self.assertEqual(row["syscalls"]["whole_process"], {"reference": 20, "candidate": 20, "gate": "pass"})
+
+        failing = {
+            "cpu": (_row_workload(**{**PASSING_ROW, "cpu_upper": 0.91}), _row_observer(**PASSING_MEMORY)),
+            "pss": (_row_workload(**PASSING_ROW), _row_observer(**{**PASSING_MEMORY, "pss": (1000, 901)})),
+            "memory_peak": (_row_workload(**PASSING_ROW), _row_observer(**{**PASSING_MEMORY, "peak": (1000, 901)})),
+            "reference-zero memory": (_row_workload(**PASSING_ROW), _row_observer(**{**PASSING_MEMORY, "peak": (0, 0)})),
+            "marked syscalls": (_row_workload(**{**PASSING_ROW, "marked": (0, 1)}), _row_observer(**PASSING_MEMORY)),
+            "whole-process syscalls above 2R": (_row_workload(**{**PASSING_ROW, "whole": (20, 41)}), _row_observer(**PASSING_MEMORY)),
+            # No native classification owner exists, so an in-bound difference
+            # is still an explicit unresolved failure.
+            "unclassified whole-process difference": (
+                _row_workload(**{**PASSING_ROW, "whole": (20, 30)}), _row_observer(**PASSING_MEMORY),
+            ),
+        }
+        for label, (workload, observer) in failing.items():
+            with self.subTest(label):
+                self.assertEqual(evidence.row_scorecard(workload, observer)["gate"], "fail")
+
+    def test_one_failed_attempt_fails_the_row_without_compensation(self) -> None:
+        passing = evidence.row_scorecard(_row_workload(**PASSING_ROW), _row_observer(**PASSING_MEMORY))
+        failed = evidence.row_scorecard(
+            _row_workload(**{**PASSING_ROW, "cpu_upper": 1.2}), _row_observer(**PASSING_MEMORY),
+        )
+        scorecard = evidence.collector_scorecard([
+            {"startup": passing, "getpid": passing},
+            {"startup": passing, "getpid": failed},
+            {"startup": passing, "getpid": passing},
+        ])
+        self.assertEqual(scorecard["failing_rows"], ["getpid"])
+        self.assertEqual(scorecard["passing_rows"], 1)
+        self.assertEqual([item["gate"] for item in scorecard["rows"]["getpid"]["attempts"]], ["pass", "fail", "pass"])
+        with self.assertRaisesRegex(evidence.EvidenceError, "ordered workload roster"):
+            evidence.collector_scorecard([{"startup": passing}, {"getpid": passing}, {"startup": passing}])
+
+    def test_release_blockers_name_every_unmet_condition(self) -> None:
+        canonical = list(evidence.canonical_workload_invocations(ROOT))
+        available = {"status": "available", "owner": evidence.CORRECTNESS_OWNER, "unmet": []}
+        validated = {"status": "validated-product-prerequisite"}
+        policy = [f"acceptance policy {key}: {value}" for key, value in evidence.ACCEPTANCE_POLICY_BLOCKERS.items()]
+        self.assertEqual(evidence.release_blockers(
+            admission=available, dynamic_product=validated, budget=evidence.FULL_BUDGET, attempts=3,
+            workloads=canonical, canonical_workloads=canonical, failing_rows=[],
+        ), policy)
+        blockers = evidence.release_blockers(
+            admission={"status": "unavailable", "owner": evidence.CORRECTNESS_OWNER, "unmet": ["a: planned"]},
+            dynamic_product={"status": "unavailable"}, budget=evidence.SMOKE_BUDGET, attempts=1,
+            workloads=canonical[1:], canonical_workloads=canonical, failing_rows=["getpid"],
+        )
+        self.assertEqual(len(blockers), 6 + len(policy))
+        self.assertIn("a: planned", blockers[0])
+        self.assertIn("owned-dynamic-qualification", blockers[1])
+        self.assertIn("implementation-smoke", blockers[2])
+        self.assertIn("1 attempt(s)", blockers[3])
+        self.assertIn(canonical[0], blockers[4])
+        self.assertIn("getpid", blockers[5])
+
+
+class CorrectnessAdmissionTests(unittest.TestCase):
+    def test_every_incomplete_predecessor_gate_is_named(self) -> None:
+        admission = evidence.correctness_admission(ROOT)
+        chain = evidence._x86_module(ROOT, "generate_qualification_manifest").CHAIN
+        predecessors = chain[:chain.index(evidence.PERFORMANCE_GATE)]
+        self.assertEqual(admission["status"], "unavailable")
+        self.assertEqual(admission["owner"], evidence.CORRECTNESS_OWNER)
+        self.assertEqual([item.split(":")[0] for item in admission["unmet"]], list(predecessors))
+
+    def test_only_completed_predecessors_admit(self) -> None:
+        owner = evidence._x86_module(ROOT, "generate_qualification_manifest")
+        contract = owner.load_contract()
+        completed = copy.deepcopy(contract)
+        completed["incomplete_gates"] = [evidence.PERFORMANCE_GATE]
+        with patch.object(owner, "load_contract", return_value=completed):
+            self.assertEqual(evidence.correctness_admission(ROOT),
+                             {"status": "available", "owner": evidence.CORRECTNESS_OWNER, "unmet": []})
+        one_open = copy.deepcopy(contract)
+        one_open["incomplete_gates"] = ["capability.accounting", evidence.PERFORMANCE_GATE]
+        with patch.object(owner, "load_contract", return_value=one_open):
+            admission = evidence.correctness_admission(ROOT)
+        self.assertEqual(admission["status"], "unavailable")
+        self.assertEqual(len(admission["unmet"]), 1)
+        self.assertTrue(admission["unmet"][0].startswith("capability.accounting: "))
+
+
 class CollectorCompositionTests(unittest.TestCase):
-    def test_collector_passes_each_attempt_product_record_to_tool_replay(self) -> None:
-        """The live three-attempt loop must not pass a product Path to tools."""
+    def test_collector_replays_each_attempt_and_derives_its_release_decision(self) -> None:
+        """The live three-attempt loop derives, never accepts, scorecard and release."""
 
         with tempfile.TemporaryDirectory(dir=WORK_ROOT) as temporary:
             directory = Path(temporary)
             source_revision = "a" * 40
             source_digest = "b" * 64
             product = {"manifest": {"sha256": "c" * 64}, "driver": {"path": "/workspace/product/driver"}}
-            qualification = directory / "dynamic-qualification.json"
-            qualification.write_text("{}\n", encoding="utf-8")
-            dynamic = {
-                "status": "validated-product-prerequisite", "receipt": identity(qualification),
-                "source_sha256": source_digest,
-                "products": {name: product["manifest"]["sha256"] for name in ("installed", "second", "extracted")},
-            }
-            admission = {
-                "status": "unavailable", "required_owner": evidence.COMPLETE_CORRECTNESS_OWNER,
-                "reason": "no complete correctness-closed predecessor-chain reader is available",
-            }
+            dynamic = {"status": "unavailable", "reason": "no validated owned-dynamic-qualification receipt was supplied"}
+            admission = evidence.correctness_admission(ROOT)
+
             def recorded(path: Path) -> str:
                 return "/workspace/" + path.relative_to(ROOT).as_posix()
 
@@ -620,7 +745,8 @@ class CollectorCompositionTests(unittest.TestCase):
                 "schema": evidence.ROSTER_SCHEMA, "kind": evidence.ROSTER_KIND, "status": "planned",
                 "source_mount": evidence.SOURCE_MOUNT, "source_revision": source_revision,
                 "source_sha256": source_digest, "product": product,
-                "dynamic_product_qualification": dynamic, "correctness_admission": admission, "attempts": requests,
+                "dynamic_product_qualification": dynamic, "correctness_admission": admission,
+                "budget": evidence.SMOKE_BUDGET, "attempts": requests,
             }
             roster_path = directory / "attempt-roster.json"
             roster_path.write_text(json.dumps(roster), encoding="utf-8")
@@ -630,7 +756,7 @@ class CollectorCompositionTests(unittest.TestCase):
                 attempt_path = directory / f"attempt-{index}" / "report.json"
                 prior = None if index == 1 else identity(attempt_paths[index - 2])
                 attempt = {
-                    "schema": evidence.SCHEMA, "kind": evidence.KIND, "status": "complete-evidence",
+                    "schema": evidence.SCHEMA, "kind": evidence.KIND, "status": evidence.SMOKE_BUDGET,
                     "source_mount": evidence.SOURCE_MOUNT,
                     "attempt": {
                         "index": index, "docker_image_id": image_id, "invocation_nonce": f"nonce-{index:012d}",
@@ -638,32 +764,37 @@ class CollectorCompositionTests(unittest.TestCase):
                         "roster": {"status": "bound", "plan": identity(roster_path), "request": request, "predecessor": prior},
                     },
                     "source": {}, "product": {"before": product, "after": copy.deepcopy(product)},
-                    "tools": {}, "build": {}, "execution": {}, "measurement": {}, "release": {},
+                    "tools": {}, "build": {}, "execution": {},
+                    "measurement": {"attempt-marker": index},
+                    "release": {"qualified": False, "reason": evidence.RELEASE_QUALIFICATION_REASON},
                 }
                 attempt_path.write_text(json.dumps(attempt), encoding="utf-8")
                 attempt_paths.append(attempt_path)
             collector = {
                 "attempt_roster": identity(roster_path), "dynamic_product_qualification": dynamic,
-                "correctness_admission": admission, "attempt_count": evidence.COLLECTOR_ATTEMPTS,
+                "correctness_admission": admission, "budget": evidence.SMOKE_BUDGET,
+                "attempt_count": evidence.COLLECTOR_ATTEMPTS,
                 "source": {"anything": {}}, "source_revision": source_revision,
                 "source_sha256": source_digest, "product": product,
             }
             report = {
-                "schema": evidence.SCHEMA, "kind": evidence.KIND, "status": "complete-evidence",
+                "schema": evidence.SCHEMA, "kind": evidence.KIND, "status": evidence.SMOKE_BUDGET,
                 "source_mount": evidence.SOURCE_MOUNT, "collector": collector,
                 "attempts": [{"index": index, "report": identity(path)} for index, path in enumerate(attempt_paths, start=1)],
-                "release": {"qualified": False, "reason": evidence.RELEASE_QUALIFICATION_REASON},
-                "release_blockers": evidence.RELEASE_BLOCKERS,
+                "scorecard": {}, "release": {},
             }
-            report_path = directory / "collector.json"
-            report_path.write_text(json.dumps(report), encoding="utf-8")
             broken_roster = copy.deepcopy(roster)
             broken_roster["attempts"][1]["predecessor_report"] = None
             roster_path.write_text(json.dumps(broken_roster), encoding="utf-8")
             with self.assertRaisesRegex(evidence.EvidenceError, "predecessor"):
                 evidence._verify_collector_roster(ROOT, roster_path, collector)
             roster_path.write_text(json.dumps(roster), encoding="utf-8")
+            passing = evidence.row_scorecard(_row_workload(**PASSING_ROW), _row_observer(**PASSING_MEMORY))
+            failing = evidence.row_scorecard(
+                _row_workload(**{**PASSING_ROW, "whole": (11, 81)}), _row_observer(**PASSING_MEMORY),
+            )
             seen: list[dict[str, object]] = []
+            replayed: list[tuple[int, str, str]] = []
 
             def tools_replay(_checkout: Path, attempt: dict[str, object], product_record: object, _index: int) -> None:
                 self.assertIsInstance(product_record, dict)
@@ -671,17 +802,59 @@ class CollectorCompositionTests(unittest.TestCase):
                 self.assertIn("driver", product_record)
                 seen.append(product_record)
 
+            def measurement_replay(_checkout: Path, attempt: dict[str, object], _workloads: object, *, full: bool, budget: str) -> list[str]:
+                self.assertTrue(full)
+                replayed.append((attempt["measurement"]["attempt-marker"], budget, attempt["attempt"]["roster"]["request"]["work_dir"]))
+                return []
+
+            def scorecards(measurement: dict[str, object]) -> dict[str, object]:
+                return {"startup": passing, "getpid": failing if measurement["attempt-marker"] == 2 else passing}
+
             with patch.object(evidence, "verify_dynamic_product_identity", return_value=directory / "product"), \
-                 patch.object(evidence, "verify_dynamic_product_prerequisite"), \
                  patch.object(evidence, "verify_file_seal"), \
                  patch.object(evidence, "_verify_attempt_source"), \
                  patch.object(evidence, "_verify_attempt_tools", side_effect=tools_replay), \
                  patch.object(evidence, "_verify_attempt_build"), \
                  patch.object(evidence, "_verify_attempt_execution"), \
-                 patch.object(evidence, "validate_measurement_attempt", return_value=[]):
-                with self.assertRaisesRegex(evidence.EvidenceError, "correctness-closed predecessor reader"):
-                    evidence.validate_collector_report(ROOT, report_path, ["startup"])
-            self.assertEqual(len(seen), evidence.COLLECTOR_ATTEMPTS)
+                 patch.object(evidence, "validate_measurement_attempt", side_effect=measurement_replay), \
+                 patch.object(evidence, "attempt_scorecard", side_effect=scorecards):
+                scorecard, release = evidence.replay_collection(ROOT, report)
+                self.assertEqual(len(seen), evidence.COLLECTOR_ATTEMPTS)
+                self.assertEqual([entry[:2] for entry in replayed],
+                                 [(1, evidence.SMOKE_BUDGET), (2, evidence.SMOKE_BUDGET), (3, evidence.SMOKE_BUDGET)])
+                self.assertEqual([entry[2] for entry in replayed], [request["work_dir"] for request in requests])
+                self.assertEqual(scorecard["budget"], evidence.SMOKE_BUDGET)
+                self.assertEqual(scorecard["failing_rows"], ["getpid"])
+                self.assertFalse(release["qualified"])
+                self.assertTrue(any("implementation-smoke" in item for item in release["blockers"]))
+                self.assertTrue(any(item.startswith("correctness admission") for item in release["blockers"]))
+
+                report_path = directory / "collector.json"
+                report_path.write_text(json.dumps({**report, "scorecard": scorecard, "release": release}), encoding="utf-8")
+                checked = evidence.validate_collector_report(ROOT, report_path)
+                self.assertTrue(checked.evidence_valid)
+                self.assertFalse(checked.release_qualified)
+                self.assertEqual(list(checked.blockers), release["blockers"])
+
+                forged_release = {**report, "scorecard": scorecard, "release": {"qualified": True, "blockers": []}}
+                report_path.write_text(json.dumps(forged_release), encoding="utf-8")
+                with self.assertRaisesRegex(evidence.EvidenceError, "release decision"):
+                    evidence.validate_collector_report(ROOT, report_path)
+                forged_scorecard = copy.deepcopy(scorecard)
+                forged_scorecard["failing_rows"] = []
+                report_path.write_text(json.dumps({**report, "scorecard": forged_scorecard, "release": release}), encoding="utf-8")
+                with self.assertRaisesRegex(evidence.EvidenceError, "scorecard does not derive"):
+                    evidence.validate_collector_report(ROOT, report_path)
+                full_label = copy.deepcopy(report)
+                full_label["status"] = "complete-evidence"
+                with self.assertRaisesRegex(evidence.EvidenceError, "budget"):
+                    evidence.replay_collection(ROOT, full_label)
+                self_admitted = copy.deepcopy(report)
+                self_admitted["collector"]["correctness_admission"] = {
+                    "status": "available", "owner": evidence.CORRECTNESS_OWNER, "unmet": [],
+                }
+                with self.assertRaisesRegex(evidence.EvidenceError, "ordered qualification chain"):
+                    evidence.replay_collection(ROOT, self_admitted)
 
 
 class DynamicQualificationReplayTests(unittest.TestCase):
@@ -783,19 +956,22 @@ class SourceRosterReplayTests(unittest.TestCase):
                 before[f"source:{name}"] = identity(path)
             revision = "a" * 40
             digest = "b" * 64
+            work_dir = "/workspace/" + work.relative_to(ROOT).as_posix()
             attempt = {
                 "source": {
                     "before": before, "after": copy.deepcopy(before),
                     "source_sha256_before": digest, "source_sha256_after": digest,
                 },
-                "attempt": {
-                    "source_revision": revision,
-                    "roster": {"request": {"work_dir": "/workspace/" + work.relative_to(ROOT).as_posix()}},
-                },
+                "attempt": {"source_revision": revision},
             }
             evidence._verify_attempt_source(
-                ROOT, attempt, index=1, collector_revision=revision, collector_digest=digest,
+                ROOT, attempt, index=1, collector_revision=revision, collector_digest=digest, work_dir=work_dir,
             )
+            with self.assertRaisesRegex(evidence.EvidenceError, "generated source path"):
+                evidence._verify_attempt_source(
+                    ROOT, attempt, index=1, collector_revision=revision, collector_digest=digest,
+                    work_dir=work_dir + "-elsewhere",
+                )
             foreign = directory / "foreign.c"
             foreign.write_text("int foreign(void) { return 0; }\n", encoding="utf-8")
             forged = copy.deepcopy(attempt)
@@ -803,7 +979,7 @@ class SourceRosterReplayTests(unittest.TestCase):
             forged["source"]["after"] = copy.deepcopy(forged["source"]["before"])
             with self.assertRaisesRegex(evidence.EvidenceError, "fixed source path"):
                 evidence._verify_attempt_source(
-                    ROOT, forged, index=1, collector_revision=revision, collector_digest=digest,
+                    ROOT, forged, index=1, collector_revision=revision, collector_digest=digest, work_dir=work_dir,
                 )
 
 

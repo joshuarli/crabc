@@ -46,7 +46,23 @@ MUSL_VERSION = "1.2.6"
 CPU_RESAMPLES = 10_000
 FULL_SAMPLE_COUNT = 31
 FULL_WARMUP_COUNT = 3
+SMOKE_SAMPLE_COUNT = 1
+SMOKE_WARMUP_COUNT = 0
 COLLECTOR_ATTEMPTS = 3
+# One attempt budget is one immutable process roster.  ``full`` is the release
+# statistical protocol; ``implementation-smoke`` runs the identical 114-row
+# build, timing, syscall, live-probe, and observer/cgroup route with one paired
+# sample and no warm-up.  It proves the complete dispatch -> collector ->
+# reader path but is never a qualifying scorecard.
+FULL_BUDGET = "full"
+SMOKE_BUDGET = "implementation-smoke"
+ATTEMPT_BUDGETS = {
+    FULL_BUDGET: (FULL_SAMPLE_COUNT, FULL_WARMUP_COUNT),
+    SMOKE_BUDGET: (SMOKE_SAMPLE_COUNT, SMOKE_WARMUP_COUNT),
+}
+# The completed-attempt status records its budget.  A failed or incomplete
+# attempt is ``failed`` or ``partial-evidence`` and is never readable as either.
+ATTEMPT_STATUS_BUDGETS = {"complete-evidence": FULL_BUDGET, SMOKE_BUDGET: SMOKE_BUDGET}
 ROSTER_SCHEMA = "crabc.native-x86_64-c-performance-roster/v1"
 ROSTER_KIND = "crabc-native-x86_64-c-performance-roster"
 FIXED_MUSL_COMPILER = "/usr/local/bin/crabc-x86_64-musl-gcc"
@@ -61,30 +77,32 @@ IMAGE_TOOL_MANIFEST_FORMAT = "crabc-x86_64-performance-image-tools/v2"
 FIXED_COMPILE_FLAGS = ("-std=c11", "-O3", "-fno-builtin")
 APP_RUNPATH = "/app/lib:/usr/lib"
 PERFORMANCE_CONTAINER_POLICY = "cgroupns=private,network=none,SYS_CHROOT,SYS_ADMIN,SYS_PTRACE,seccomp=unconfined"
-COMPLETE_CORRECTNESS_OWNER = (
-    "x86-64 correctness-closed predecessor chain: native POSIX aggregate/provider quartet "
-    "and required final execution receipts"
-)
+# ``performance.release`` is the last gate of the ordered x86 qualification
+# chain.  Its correctness predecessor is every earlier gate of that chain, as
+# owned by the checked qualification manifest; this adapter only reads it.
+CORRECTNESS_OWNER = "compat/x86_64/qualification_manifest.json promotion_chain before performance.release"
+PERFORMANCE_GATE = "performance.release"
 
 IDENTITY_FIELDS = frozenset({"path", "sha256", "mode", "bytes"})
 
-# The 40-row supplemental profile and the 74-row observer map now provide the
-# formerly absent workload definitions.  They do not make a release result:
-# full collection remains fail-closed until the real correctness predecessor
-# exists, and bounded smokes retain construction facts rather than scorecard
-# verdicts.  Keep these current blockers separately named in every future
-# collector report instead of continuing to describe implemented rows as
-# absent.
-RELEASE_QUALIFICATION_REASON = "full native x86 performance qualification remains unavailable"
-RELEASE_BLOCKERS = {
-    "correctness-closed-predecessor-chain": (
-        "no reader validates the native POSIX aggregate/provider quartet and required final execution receipts"
+# An attempt report is one retained measurement, never a release result.
+RELEASE_QUALIFICATION_REASON = "one attempt is not a three-attempt admitted collection"
+
+# Acceptance-policy conflicts measured on native x86.  They do not change a
+# metric, hide a row, or subtract a baseline: each remains a named release
+# blocker until the user explicitly decides the policy.  Row verdicts are still
+# computed by the unchanged 0.90 rules.
+ACCEPTANCE_POLICY_BLOCKERS = {
+    "peak-memory-payload-lower-bound": (
+        "allocator_live_32m must keep 32 MiB of written payload resident, but pinned musl's "
+        "whole-process PSS and cgroup memory.peak are about 33 MiB, so no candidate "
+        "can be <= 0.90 of the reference; the same bound applies to any row whose mandated resident "
+        "data exceeds 90% of the musl process total"
     ),
-    "three-consecutive-full-scorecards": (
-        "no clean three-attempt 114-row 31-pair/three-warmup scorecard has been collected"
-    ),
-    "unresolved-performance-verdicts": (
-        "bounded construction and collector smokes are nonqualifying; unresolved whole-process syscall failures and release thresholds remain"
+    "memory-peak-charge-granularity": (
+        "cgroup-v2 memory.peak rises in 64-page (256-KiB) per-CPU charge batches, so a fresh leaf "
+        "records at least 256 KiB for any process; rows whose musl memory.peak is one batch "
+        "cannot reach <= 0.90"
     ),
 }
 
@@ -412,6 +430,38 @@ def _x86_module(checkout: Path, name: str) -> Any:
     if directory not in sys.path:
         sys.path.insert(0, directory)
     return importlib.import_module(name)
+
+
+def correctness_admission(checkout: Path) -> dict[str, Any]:
+    """Read whether every qualification gate before this one is complete.
+
+    The ordered chain's owner reports ``incomplete_gates``; a gate leaves that
+    list only through its own source/tool/runtime/artifact-bound execution
+    receipts.  Admission is therefore exactly "no predecessor of
+    ``performance.release`` is incomplete", and each unmet predecessor is named
+    with its declared state.  Nothing in a roster or report can assert it.
+    """
+
+    try:
+        report = _x86_module(checkout, "generate_qualification_manifest").load_contract()
+    except (OSError, RuntimeError, ValueError) as error:
+        raise EvidenceError(f"cannot read the ordered qualification chain: {error}") from error
+    chain = report.get("promotion_chain")
+    incomplete = report.get("incomplete_gates")
+    require(isinstance(chain, list) and isinstance(incomplete, list), "ordered qualification chain is malformed")
+    identifiers = [gate.get("id") if isinstance(gate, dict) else None for gate in chain]
+    require(identifiers.count(PERFORMANCE_GATE) == 1, "ordered qualification chain lacks performance.release")
+    predecessors = chain[:identifiers.index(PERFORMANCE_GATE)]
+    unmet = [
+        f"{gate['id']}: {gate.get('state')}, no qualification execution receipt"
+        for gate in predecessors
+        if gate["id"] in incomplete
+    ]
+    return {
+        "status": "unavailable" if unmet else "available",
+        "owner": CORRECTNESS_OWNER,
+        "unmet": unmet,
+    }
 
 
 def dynamic_product_identity(checkout: Path, product: Path) -> dict[str, Any]:
@@ -2052,11 +2102,24 @@ def _verify_probe_assignment(
                     f"{row.name}/{lane}: observer probe assignment differs")
 
 
-def validate_measurement_attempt(checkout: Path, report: Mapping[str, Any], expected_workloads: Sequence[str], *, full: bool) -> list[str]:
-    """Rebuild every qualifying metric from retained samples and raw records."""
+def validate_measurement_attempt(
+    checkout: Path,
+    report: Mapping[str, Any],
+    expected_workloads: Sequence[str],
+    *,
+    full: bool,
+    budget: str = FULL_BUDGET,
+) -> list[str]:
+    """Rebuild every qualifying metric from retained samples and raw records.
+
+    ``budget`` selects the declared process roster being replayed; it never
+    relaxes a metric derivation, sample order, or raw-evidence binding.
+    """
 
     reasons: list[str] = []
     try:
+        require(budget in ATTEMPT_BUDGETS, f"unknown attempt budget: {budget}")
+        sample_count, warmup_count = ATTEMPT_BUDGETS[budget]
         measurement = report.get("measurement")
         expected_measurement = {
             "selected_workloads", "samples", "warmup", "seed", "cgroup_setup", "cgroup_cleanup", "memory", "memory_observers", "workloads",
@@ -2069,8 +2132,8 @@ def validate_measurement_attempt(checkout: Path, report: Mapping[str, Any], expe
         if full:
             canonical_names = list(canonical_workload_invocations(checkout))
             require(selected == canonical_names and len(selected) == len(canonical_names), "workload subset cannot qualify")
-        require(measurement.get("samples") == FULL_SAMPLE_COUNT, "sample count is not 31")
-        require(measurement.get("warmup") == FULL_WARMUP_COUNT, "warm-up count is not 3")
+        require(measurement.get("samples") == sample_count, f"sample count is not {sample_count}")
+        require(measurement.get("warmup") == warmup_count, f"warm-up count is not {warmup_count}")
         require(type(measurement.get("seed")) is int, "measurement seed is absent")
         _verify_cgroup_lifecycle(checkout, measurement["cgroup_setup"], measurement["cgroup_cleanup"])
         cleanup = measurement["cgroup_cleanup"]
@@ -2115,7 +2178,7 @@ def validate_measurement_attempt(checkout: Path, report: Mapping[str, Any], expe
             invocation = canonical.get(name)
             require(invocation is not None and item["invocation"] == invocation, f"{name}: invocation contract differs")
             seed = measurement["seed"] + row_index
-            plan = contract.paired_sample_plan(FULL_SAMPLE_COUNT, seed)
+            plan = contract.paired_sample_plan(sample_count, seed)
             plan_records = [{"lane": lane, "sample_index": sample_index} for lane, sample_index in plan]
             plan_order = {(lane, sample_index): order for order, (lane, sample_index) in enumerate(plan)}
             for lane in ("musl", "crabc"):
@@ -2138,10 +2201,10 @@ def validate_measurement_attempt(checkout: Path, report: Mapping[str, Any], expe
                         f"{name}/{lane}: timed lane fields differ")
                 require(lane_item["iterations_per_process"] == invocation["iterations_per_process"]
                         and lane_item["operations_per_process"] == invocation["operations_per_process"]
-                        and lane_item["warmup_processes"] == FULL_WARMUP_COUNT and lane_item["sample_count"] == FULL_SAMPLE_COUNT,
+                        and lane_item["warmup_processes"] == warmup_count and lane_item["sample_count"] == sample_count,
                         f"{name}/{lane}: row operation, loop, or warm-up contract differs")
                 warmups = lane_item["warmups"]
-                require(isinstance(warmups, list) and len(warmups) == FULL_WARMUP_COUNT, f"{name}/{lane}: warmup roster differs")
+                require(isinstance(warmups, list) and len(warmups) == warmup_count, f"{name}/{lane}: warmup roster differs")
                 for warmup_index, warmup in enumerate(warmups):
                     _verify_completed_sample(
                         checkout, warmup, label=f"{name}/{lane}/warmup-{warmup_index}",
@@ -2155,7 +2218,7 @@ def validate_measurement_attempt(checkout: Path, report: Mapping[str, Any], expe
                         seen_launcher_artifacts=seen_launcher_artifacts if full else None,
                     )
                 samples = lane_item["samples"]
-                require(isinstance(samples, list) and len(samples) == FULL_SAMPLE_COUNT, f"{name}/{lane}: sample roster differs")
+                require(isinstance(samples, list) and len(samples) == sample_count, f"{name}/{lane}: sample roster differs")
                 for sample_index, sample in enumerate(samples):
                     _verify_completed_sample(
                         checkout, sample, label=f"{name}/{lane}/sample-{sample_index}", index_field="sample_index",
@@ -2244,11 +2307,138 @@ def validate_measurement_attempt(checkout: Path, report: Mapping[str, Any], expe
     return reasons
 
 
+def _lane_diagnostics(lane: Mapping[str, Any]) -> dict[str, Any]:
+    summary = lane["summary"]
+    return {
+        "wall_median_ns": summary["elapsed_wall_ns"]["median"],
+        "wall_p95_ns": summary["elapsed_wall_ns"]["p95"],
+        "minor_faults_median": summary["resources.minor_faults"]["median"],
+        "major_faults_median": summary["resources.major_faults"]["median"],
+        "voluntary_context_switches_median": summary["resources.voluntary_context_switches"]["median"],
+        "involuntary_context_switches_median": summary["resources.involuntary_context_switches"]["median"],
+        "max_rss_kib_median": summary["resources.max_rss_kib"]["median"],
+    }
+
+
+def row_scorecard(workload: Mapping[str, Any], observer: Mapping[str, Any]) -> dict[str, Any]:
+    """Join one replayed row's four release metrics and its diagnostics.
+
+    Every value is copied from an already replayed comparison; nothing is
+    re-thresholded here.  A row passes only when CPU, both memory metrics, and
+    both syscall scopes pass.  A reference-zero memory result cannot pass.
+    """
+
+    comparison = workload["comparison"]
+    cpu = comparison["cpu"]
+    syscalls = comparison["syscall_gate"]
+    memory = observer["comparison"]
+    pss = memory["pss_max_kib"]
+    peak = memory["memory_peak_after_exit_bytes"]
+    gates = {
+        "cpu": cpu["release_gate"],
+        "pss": pss["release_gate"],
+        "memory_peak": peak["release_gate"],
+        "syscalls": syscalls["status"],
+    }
+    return {
+        "gate": "pass" if all(value == "pass" for value in gates.values()) else "fail",
+        "cpu": {
+            "median_ratio": cpu["median_ratio"],
+            "one_sided_95_upper": cpu["one_sided_95_upper"],
+            "gate": gates["cpu"],
+        },
+        "pss_kib": {"reference": pss["reference"], "candidate": pss["candidate"], "gate": gates["pss"]},
+        "memory_peak_bytes": {"reference": peak["reference"], "candidate": peak["candidate"], "gate": gates["memory_peak"]},
+        "syscalls": {
+            "marked_region": {
+                "reference": syscalls["marked_region"]["total_calls"]["reference"],
+                "candidate": syscalls["marked_region"]["total_calls"]["candidate"],
+                "gate": syscalls["marked_region"]["status"],
+            },
+            "whole_process": {
+                "reference": syscalls["whole_process"]["total_calls"]["reference"],
+                "candidate": syscalls["whole_process"]["total_calls"]["candidate"],
+                "gate": syscalls["whole_process"]["status"],
+            },
+            "gate": gates["syscalls"],
+        },
+        "diagnostics": {
+            "musl": _lane_diagnostics(workload["musl"]),
+            "crabc": _lane_diagnostics(workload["crabc"]),
+        },
+    }
+
+
+def attempt_scorecard(measurement: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """Return the per-workload scorecard of one replayed attempt, in row order."""
+
+    return {
+        name: row_scorecard(measurement["workloads"][name], measurement["memory_observers"][name])
+        for name in measurement["selected_workloads"]
+    }
+
+
+def collector_scorecard(attempts: Sequence[Mapping[str, Mapping[str, Any]]]) -> dict[str, Any]:
+    """A row passes the release scorecard only if it passes in every attempt.
+
+    This is per workload: no row compensates for another and no attempt
+    compensates for a failed one.
+    """
+
+    require(attempts and all(list(item) == list(attempts[0]) for item in attempts),
+            "collector attempts do not share one ordered workload roster")
+    rows = {
+        name: {
+            "gate": "pass" if all(item[name]["gate"] == "pass" for item in attempts) else "fail",
+            "attempts": [item[name] for item in attempts],
+        }
+        for name in attempts[0]
+    }
+    return {
+        "rows": rows,
+        "passing_rows": sum(row["gate"] == "pass" for row in rows.values()),
+        "failing_rows": [name for name, row in rows.items() if row["gate"] != "pass"],
+    }
+
+
+def release_blockers(
+    *,
+    admission: Mapping[str, Any],
+    dynamic_product: Mapping[str, Any],
+    budget: str,
+    attempts: int,
+    workloads: Sequence[str],
+    canonical_workloads: Sequence[str],
+    failing_rows: Sequence[str],
+) -> list[str]:
+    """Name every unmet release condition; an empty list is the only pass."""
+
+    blockers = [f"correctness admission ({admission['owner']}): {item}" for item in admission["unmet"]]
+    if dynamic_product.get("status") != "validated-product-prerequisite":
+        blockers.append("supplied product has no validated owned-dynamic-qualification receipt")
+    if budget != FULL_BUDGET:
+        sample_count, warmup_count = ATTEMPT_BUDGETS[budget]
+        blockers.append(
+            f"attempt budget is {budget} ({sample_count} paired sample, {warmup_count} warm-ups), "
+            f"not {FULL_SAMPLE_COUNT} pairs after {FULL_WARMUP_COUNT} warm-ups"
+        )
+    if attempts != COLLECTOR_ATTEMPTS:
+        blockers.append(f"{attempts} attempt(s) replayed; release requires {COLLECTOR_ATTEMPTS} consecutive clean attempts")
+    omitted = [name for name in canonical_workloads if name not in workloads]
+    if omitted:
+        blockers.append(f"{len(omitted)} canonical rows are absent: {', '.join(omitted)}")
+    if failing_rows:
+        blockers.append(f"{len(failing_rows)} of {len(workloads)} rows fail a per-workload gate: {', '.join(failing_rows)}")
+    blockers.extend(f"acceptance policy {key}: {value}" for key, value in ACCEPTANCE_POLICY_BLOCKERS.items())
+    return blockers
+
+
 @dataclass(frozen=True)
 class CheckedReport:
     evidence_valid: bool
     release_qualified: bool
     blockers: tuple[str, ...]
+    scorecard: Mapping[str, Any] | None = None
 
 
 def _verify_cpuinfo_diagnostic(checkout: Path, record: object, label: str) -> dict[str, list[str]]:
@@ -2367,8 +2557,14 @@ def _verify_attempt_source(
     index: int,
     collector_revision: str,
     collector_digest: str,
+    work_dir: str,
 ) -> None:
-    """Require exact before/after source bytes and full-source provenance."""
+    """Require exact before/after source bytes and full-source provenance.
+
+    ``work_dir`` is the attempt's recorded fresh work root: the immutable
+    roster request for a collected attempt, or the report's own directory for
+    a single retained attempt.
+    """
 
     source = attempt["source"]
     require(isinstance(source, dict) and set(source) == {
@@ -2390,11 +2586,8 @@ def _verify_attempt_source(
         record = source["before"][f"header:{header}"]
         require(record["path"] == f"{SOURCE_MOUNT}/{relative}",
                 f"attempt {index} header path differs for {header}")
-    roster = attempt.get("attempt", {}).get("roster") if isinstance(attempt.get("attempt"), dict) else None
-    request = roster.get("request") if isinstance(roster, dict) else None
-    work_dir = request.get("work_dir") if isinstance(request, dict) else None
     require(isinstance(work_dir, str) and work_dir.startswith(SOURCE_MOUNT + "/.work/x86_64/"),
-            f"attempt {index} source has no immutable work request")
+            f"attempt {index} source has no fresh work root")
     for name in ("symbols_1", "symbols_1024", *(f"graph:{entry}" for entry in GRAPH_SOURCES)):
         record = source["before"][f"source:{name}"]
         filename = f"{name.removeprefix('graph:')}.c"
@@ -2427,12 +2620,12 @@ def _verify_collector_roster(
     roster = load_json(roster_path, "collector attempt roster")
     expected = {
         "schema", "kind", "status", "source_mount", "source_revision", "source_sha256", "product",
-        "dynamic_product_qualification", "correctness_admission", "attempts",
+        "dynamic_product_qualification", "correctness_admission", "budget", "attempts",
     }
     require(set(roster) == expected and roster["schema"] == ROSTER_SCHEMA and roster["kind"] == ROSTER_KIND
             and roster["status"] == "planned" and roster["source_mount"] == SOURCE_MOUNT,
             "collector attempt roster fields differ")
-    for field in ("source_revision", "source_sha256", "product", "dynamic_product_qualification", "correctness_admission"):
+    for field in ("source_revision", "source_sha256", "product", "dynamic_product_qualification", "correctness_admission", "budget"):
         require(roster[field] == collector[field], f"collector attempt roster {field} differs")
     attempts = roster["attempts"]
     require(isinstance(attempts, list) and len(attempts) == COLLECTOR_ATTEMPTS,
@@ -2453,48 +2646,133 @@ def _verify_collector_roster(
         planned.append(request)
     return tuple(planned)
 
-def validate_collector_report(checkout: Path, report_path: Path, expected_workloads: Sequence[str]) -> CheckedReport:
-    """Replay all retained paths and reject a partial/favourably selected trio."""
 
-    report = load_json(report_path, "native performance collector report")
-    expected = {
-        "schema", "kind", "status", "source_mount", "collector", "attempts", "release", "release_blockers",
-    }
-    require(set(report) == expected, "collector report fields drifted")
+ATTEMPT_FIELDS = frozenset({
+    "schema", "kind", "status", "source_mount", "attempt", "source", "product", "tools", "build", "execution",
+    "measurement", "release",
+})
+
+
+def _replay_attempt(
+    checkout: Path,
+    attempt: Mapping[str, Any],
+    *,
+    index: int,
+    budget: str,
+    source_revision: str,
+    source_digest: str,
+    work_dir: str,
+) -> tuple[Path, dict[str, dict[str, Any]]]:
+    """Replay one attempt at its declared budget and return its scorecard.
+
+    The complete canonical row roster is required: build, staged-root, source,
+    and observer readers are defined over that exact artifact set.
+    """
+
+    require(set(attempt) == ATTEMPT_FIELDS, f"attempt {index} fields drifted")
+    require(attempt["schema"] == SCHEMA and attempt["kind"] == KIND, f"attempt {index} identity differs")
+    require(attempt["source_mount"] == SOURCE_MOUNT and ATTEMPT_STATUS_BUDGETS.get(attempt["status"]) == budget,
+            f"attempt {index} is not a completed {budget} attempt")
+    require(attempt["release"] == {"qualified": False, "reason": RELEASE_QUALIFICATION_REASON},
+            f"attempt {index} release boundary differs")
+    _verify_attempt_source(
+        checkout, attempt, index=index,
+        collector_revision=source_revision, collector_digest=source_digest, work_dir=work_dir,
+    )
+    product_path = verify_dynamic_product_identity(checkout, SOURCE_MOUNT, attempt["product"]["before"])
+    verify_dynamic_product_identity(checkout, SOURCE_MOUNT, attempt["product"]["after"])
+    require(attempt["product"]["before"] == attempt["product"]["after"], f"attempt {index} product changed during collection")
+    # Product identity validation returns a physical path.  Tool replay
+    # additionally needs the sealed product record so it can bind the
+    # candidate driver's retained identity to ``product[\"driver\"]``.
+    _verify_attempt_tools(checkout, attempt, attempt["product"]["before"], index)
+    _verify_attempt_build(checkout, attempt, index)
+    _verify_attempt_execution(checkout, attempt, index)
+    canonical = list(canonical_workload_invocations(checkout))
+    reasons = validate_measurement_attempt(checkout, attempt, canonical, full=True, budget=budget)
+    if reasons:
+        raise EvidenceError(f"attempt {index} cannot be replayed: {reasons[0]}")
+    return product_path, attempt_scorecard(attempt["measurement"])
+
+
+def validate_attempt_report(checkout: Path, report_path: Path) -> CheckedReport:
+    """Replay one retained attempt and derive its non-qualifying scorecard.
+
+    One attempt is diagnostic evidence for the complete metric route.  It can
+    never qualify: release needs an admitted immutable three-attempt roster.
+    """
+
+    attempt = load_json(report_path, "native performance attempt report")
+    info = attempt.get("attempt")
+    require(isinstance(info, dict) and isinstance(info.get("source_revision"), str), "attempt provenance is absent")
+    source = attempt.get("source")
+    require(isinstance(source, dict), "attempt source record is absent")
+    budget = ATTEMPT_STATUS_BUDGETS.get(attempt.get("status"))
+    require(budget is not None, f"attempt status {attempt.get('status')!r} is not a completed attempt")
+    work_dir = _recorded_path(checkout, SOURCE_MOUNT, str(report_path.parent))
+    _product, scorecard = _replay_attempt(
+        checkout, attempt, index=int(info.get("index", 1)), budget=budget,
+        source_revision=info["source_revision"], source_digest=source.get("source_sha256_before"),
+        work_dir=work_dir,
+    )
+    failing = [name for name, row in scorecard.items() if row["gate"] != "pass"]
+    blockers = release_blockers(
+        admission=correctness_admission(checkout),
+        dynamic_product={"status": "unavailable"},
+        budget=budget,
+        attempts=1,
+        workloads=list(scorecard),
+        canonical_workloads=list(canonical_workload_invocations(checkout)),
+        failing_rows=failing,
+    )
+    return CheckedReport(True, False, tuple(blockers), {"budget": budget, "rows": scorecard, "failing_rows": failing})
+
+
+COLLECTOR_REPORT_FIELDS = frozenset({
+    "schema", "kind", "status", "source_mount", "collector", "attempts", "scorecard", "release",
+})
+
+
+def replay_collection(checkout: Path, report: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Replay a collector's three attempts and derive its scorecard/release.
+
+    The collector writer and the independent reader both call this; the
+    reader additionally requires the recorded values to equal the derivation.
+    Qualification is exactly an empty blocker list.
+    """
+
+    require(set(report) == COLLECTOR_REPORT_FIELDS, "collector report fields drifted")
     require(report["schema"] == SCHEMA and report["kind"] == KIND, "collector report identity differs")
     require(report["source_mount"] == SOURCE_MOUNT, "collector source mount differs")
-    require(report["status"] == "complete-evidence", "collector did not retain complete evidence")
-    require(report["release_blockers"] == RELEASE_BLOCKERS, "collector release blockers drifted")
     collector = report["collector"]
     require(isinstance(collector, dict) and set(collector) == {
-        "attempt_roster", "dynamic_product_qualification", "correctness_admission", "attempt_count",
+        "attempt_roster", "dynamic_product_qualification", "correctness_admission", "budget", "attempt_count",
         "source", "source_revision", "source_sha256", "product",
     }, "collector fields differ")
+    budget = collector["budget"]
+    require(budget in ATTEMPT_BUDGETS, "collector budget differs")
+    require(report["status"] == ("complete-evidence" if budget == FULL_BUDGET else SMOKE_BUDGET),
+            "collector status does not record its attempt budget")
     require(collector["attempt_count"] == COLLECTOR_ATTEMPTS, "collector did not require three attempts")
     roster = retained_file_identity(checkout, SOURCE_MOUNT, collector["attempt_roster"], "collector attempt roster")
-    dynamic = collector["dynamic_product_qualification"]
-    require(isinstance(dynamic, dict) and dynamic.get("status") == "validated-product-prerequisite"
-            and set(dynamic) == {"status", "receipt", "source_sha256", "products"},
-            "collector lacks a validated dynamic-product prerequisite")
-    admission = collector["correctness_admission"]
-    # No complete correctness-closed predecessor reader exists yet.  A file
-    # called "complete" or a generic owner/receipt pair is not authority to
-    # turn this adapter into a release collector.  Keep replay fail-closed
-    # until that concrete owner is wired here with its own validator.
-    correctness_unavailable = admission == {
-        "status": "unavailable",
-        "required_owner": COMPLETE_CORRECTNESS_OWNER,
-        "reason": "no complete correctness-closed predecessor-chain reader is available",
-    }
-    require(correctness_unavailable,
-            "collector correctness admission is self-attested or differs")
+    # Admission is read from the ordered chain's owner at replay time.  A
+    # recorded ``available`` cannot outlive or substitute for that reader.
+    admission = correctness_admission(checkout)
+    require(collector["correctness_admission"] == admission,
+            "collector correctness admission differs from the ordered qualification chain")
     planned_attempts = _verify_collector_roster(checkout, roster, collector)
     verify_file_seal(checkout, SOURCE_MOUNT, collector["source"], "collector source")
     require(isinstance(collector["source_revision"], str) and re.fullmatch(r"[0-9a-f]{40}", collector["source_revision"]) is not None, "collector source revision differs")
     require(isinstance(collector["source_sha256"], str) and re.fullmatch(r"[0-9a-f]{64}", collector["source_sha256"]) is not None,
             "collector source digest differs")
     product_path = verify_dynamic_product_identity(checkout, SOURCE_MOUNT, collector["product"])
-    verify_dynamic_product_prerequisite(checkout, dynamic, collector["product"], collector["source_sha256"])
+    dynamic = collector["dynamic_product_qualification"]
+    require(isinstance(dynamic, dict) and dynamic.get("status") in {"unavailable", "validated-product-prerequisite"},
+            "collector dynamic-product prerequisite differs")
+    if dynamic["status"] == "validated-product-prerequisite":
+        verify_dynamic_product_prerequisite(checkout, dynamic, collector["product"], collector["source_sha256"])
+    else:
+        require(set(dynamic) == {"status", "reason"}, "collector unavailable dynamic-product prerequisite differs")
     attempts = report["attempts"]
     require(isinstance(attempts, list) and len(attempts) == COLLECTOR_ATTEMPTS, "collector must retain exactly three attempts")
     seen_indices: set[int] = set()
@@ -2502,6 +2780,7 @@ def validate_collector_report(checkout: Path, report_path: Path, expected_worklo
     seen_fingerprints: set[tuple[str, str, str]] = set()
     seen_nonces: set[str] = set()
     image_ids: set[str] = set()
+    scorecards: list[dict[str, dict[str, Any]]] = []
     for expected_order, entry in enumerate(attempts, start=1):
         require(isinstance(entry, dict) and set(entry) == {"index", "report"}, "collector attempt entry differs")
         index = entry["index"]
@@ -2514,12 +2793,7 @@ def validate_collector_report(checkout: Path, report_path: Path, expected_worklo
         require(recorded_path not in seen_paths, "collector selected one attempt report more than once")
         seen_paths.add(recorded_path)
         attempt = load_json(path, f"collector attempt {index} report")
-        attempt_expected = {
-            "schema", "kind", "status", "source_mount", "attempt", "source", "product", "tools", "build", "execution", "measurement", "release",
-        }
-        require(set(attempt) == attempt_expected, f"attempt {index} fields drifted")
-        require(attempt["schema"] == SCHEMA and attempt["kind"] == KIND, f"attempt {index} identity differs")
-        require(attempt["source_mount"] == SOURCE_MOUNT and attempt["status"] == "complete-evidence", f"attempt {index} is incomplete")
+        require(set(attempt) == ATTEMPT_FIELDS, f"attempt {index} fields drifted")
         attempt_info = attempt["attempt"]
         require(isinstance(attempt_info, dict) and set(attempt_info) == {
             "index", "docker_image_id", "invocation_nonce", "clean_revision", "source_revision", "roster",
@@ -2546,24 +2820,13 @@ def validate_collector_report(checkout: Path, report_path: Path, expected_worklo
         require(attempt_info["invocation_nonce"] not in seen_nonces, "collector reused a favourable attempt")
         seen_nonces.add(attempt_info["invocation_nonce"])
         image_ids.add(attempt_info["docker_image_id"])
-        _verify_attempt_source(
-            checkout, attempt, index=index,
-            collector_revision=collector["source_revision"],
-            collector_digest=collector["source_sha256"],
+        attempt_product_path, scorecard = _replay_attempt(
+            checkout, attempt, index=index, budget=budget,
+            source_revision=collector["source_revision"], source_digest=collector["source_sha256"],
+            work_dir=request["work_dir"],
         )
-        attempt_product_path = verify_dynamic_product_identity(checkout, SOURCE_MOUNT, attempt["product"]["before"])
-        verify_dynamic_product_identity(checkout, SOURCE_MOUNT, attempt["product"]["after"])
-        require(attempt["product"]["before"] == attempt["product"]["after"], f"attempt {index} product changed during collection")
         require(attempt_product_path == product_path, f"attempt {index} used a different supplied product")
-        # Product identity validation returns a physical path.  Tool replay
-        # additionally needs the sealed product record so it can bind the
-        # candidate driver's retained identity to ``product[\"driver\"]``.
-        _verify_attempt_tools(checkout, attempt, attempt["product"]["before"], index)
-        _verify_attempt_build(checkout, attempt, index)
-        _verify_attempt_execution(checkout, attempt, index)
-        reasons = validate_measurement_attempt(checkout, attempt, expected_workloads, full=True)
-        if reasons:
-            raise EvidenceError(f"attempt {index} cannot qualify: {reasons[0]}")
+        scorecards.append(scorecard)
         fingerprint = (
             attempt_info["docker_image_id"],
             attempt_info["invocation_nonce"],
@@ -2573,12 +2836,27 @@ def validate_collector_report(checkout: Path, report_path: Path, expected_worklo
         seen_fingerprints.add(fingerprint)
     require(seen_indices == {1, 2, 3}, "collector omitted an attempt index")
     require(len(image_ids) == 1, "collector attempts used different Docker images")
-    release = report["release"]
-    require(isinstance(release, dict) and set(release) == {"qualified", "reason"}, "collector release fields differ")
-    require(release == {"qualified": False, "reason": RELEASE_QUALIFICATION_REASON}, "collector must retain the unresolved release boundary")
-    raise EvidenceError(
-        "collector cannot qualify while the complete correctness-closed predecessor reader is unavailable"
+    scorecard = {"budget": budget, **collector_scorecard(scorecards)}
+    blockers = release_blockers(
+        admission=admission,
+        dynamic_product=dynamic,
+        budget=budget,
+        attempts=len(scorecards),
+        workloads=list(scorecard["rows"]),
+        canonical_workloads=list(canonical_workload_invocations(checkout)),
+        failing_rows=scorecard["failing_rows"],
     )
+    return scorecard, {"qualified": not blockers, "blockers": blockers}
+
+
+def validate_collector_report(checkout: Path, report_path: Path) -> CheckedReport:
+    """Replay all retained paths and reject a partial/favourably selected trio."""
+
+    report = load_json(report_path, "native performance collector report")
+    scorecard, release = replay_collection(checkout, report)
+    require(report["scorecard"] == scorecard, "collector scorecard does not derive from its replayed attempts")
+    require(report["release"] == release, "collector release decision does not derive from its evidence")
+    return CheckedReport(True, release["qualified"], tuple(release["blockers"]), scorecard)
 
 
 def _verify_identity_tree(checkout: Path, value: object, label: str) -> None:

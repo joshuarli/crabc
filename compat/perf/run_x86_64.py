@@ -81,10 +81,6 @@ GRAPH_NEEDED = {
 GRAPH_SOURCES = evidence.GRAPH_SOURCES
 ROSTER_SCHEMA = evidence.ROSTER_SCHEMA
 ROSTER_KIND = evidence.ROSTER_KIND
-COMPLETE_CORRECTNESS_OWNER = (
-    "x86-64 correctness-closed predecessor chain: native POSIX aggregate/provider quartet "
-    "and required final execution receipts"
-)
 
 
 class AdapterError(RuntimeError):
@@ -616,11 +612,21 @@ def resolve_run_budget(args: argparse.Namespace) -> None:
 
 
 def require_full_run_admission(args: argparse.Namespace) -> None:
-    """Fail closed until a real correctness-closed predecessor reader exists."""
+    """Admit a full-budget run only through an immutable roster and the chain.
 
-    require(getattr(args, "implementation_smoke", False),
-            f"full native performance run is unavailable pending {COMPLETE_CORRECTNESS_OWNER}: "
-            "no complete correctness-closed predecessor-chain reader is available")
+    Checked before any environment, build, or timed child.  Omitting a roster
+    cannot turn the release budget into an unbound benchmark, and the ordered
+    qualification chain's reader is the only source of correctness admission.
+    """
+
+    if getattr(args, "implementation_smoke", False):
+        return
+    require(getattr(args, "attempt_roster", None) is not None,
+            "full native performance run is unavailable without an immutable --attempt-roster")
+    admission = evidence.correctness_admission(repository_root())
+    require(admission["status"] == "available",
+            f"full native performance run is unavailable pending {admission['owner']}: "
+            + "; ".join(admission["unmet"]))
 
 
 def selected_workloads(values: list[str] | None) -> tuple[aarch64_contract.Workload, ...]:
@@ -3188,10 +3194,11 @@ def load_attempt_roster(root: Path, path: Path, product: Mapping[str, Any]) -> t
     roster = evidence.load_json(path, "native performance attempt roster")
     expected = {
         "schema", "kind", "status", "source_mount", "source_revision", "source_sha256", "product",
-        "dynamic_product_qualification", "correctness_admission", "attempts",
+        "dynamic_product_qualification", "correctness_admission", "budget", "attempts",
     }
     require(set(roster) == expected and roster["schema"] == ROSTER_SCHEMA and roster["kind"] == ROSTER_KIND
-            and roster["status"] == "planned" and roster["source_mount"] == evidence.SOURCE_MOUNT,
+            and roster["status"] == "planned" and roster["source_mount"] == evidence.SOURCE_MOUNT
+            and roster["budget"] in evidence.ATTEMPT_BUDGETS,
             "native performance attempt roster fields differ")
     require(roster["source_revision"] == git_revision(root), "attempt roster targets a different source revision")
     source_sha256 = native_source_digest(root)
@@ -3214,12 +3221,10 @@ def load_attempt_roster(root: Path, path: Path, product: Mapping[str, Any]) -> t
         )
         require(dynamic == dynamic_product_prerequisite(root, receipt_path, product),
                 "attempt roster dynamic product prerequisite no longer validates")
-    admission = roster["correctness_admission"]
-    require(admission == {
-        "status": "unavailable",
-        "required_owner": COMPLETE_CORRECTNESS_OWNER,
-        "reason": "no complete correctness-closed predecessor-chain reader is available",
-    }, "attempt roster correctness admission must remain explicitly unavailable")
+    # The roster binds one source revision, so the chain reader must agree
+    # with its recorded admission.  A roster can record, never assert, it.
+    require(roster["correctness_admission"] == evidence.correctness_admission(root),
+            "attempt roster correctness admission differs from the ordered qualification chain")
     attempts = roster["attempts"]
     require(isinstance(attempts, list) and len(attempts) == evidence.COLLECTOR_ATTEMPTS,
             "attempt roster must request exactly three attempts")
@@ -3252,9 +3257,14 @@ def bind_attempt_roster(
     if getattr(args, "attempt_roster", None) is None:
         return {"status": "unbound"}
     path, roster = load_attempt_roster(root, args.attempt_roster, product)
+    budget = evidence.SMOKE_BUDGET if args.implementation_smoke else evidence.FULL_BUDGET
+    require(roster["budget"] == budget,
+            f"attempt budget {budget} differs from the immutable {roster['budget']} roster")
     admission = roster["correctness_admission"]
     require(admission["status"] == "available" or args.implementation_smoke,
-            f"full native performance run is unavailable pending {admission['required_owner']}: {admission['reason']}")
+            f"full native performance run is unavailable pending {admission['owner']}: " + "; ".join(admission["unmet"]))
+    require(not getattr(args, "skip_syscalls", False) and getattr(args, "workload", None) is None,
+            "a roster-bound attempt runs every canonical row with syscall diagnostics")
     require(1 <= args.attempt_index <= evidence.COLLECTOR_ATTEMPTS, "attempt index is outside the three-run roster")
     request = roster["attempts"][args.attempt_index - 1]
     requested_work = roster_path_to_host(root, request["work_dir"], "attempt roster work", must_exist=True, directory=True)
@@ -3264,7 +3274,7 @@ def bind_attempt_roster(
         prior_path = roster_path_to_host(root, request["predecessor_report"], "attempt roster predecessor report", must_exist=True)
         prior = evidence.load_json(prior_path, "attempt roster predecessor report")
         require(prior.get("schema") == SCHEMA and prior.get("kind") == KIND
-                and prior.get("status") == "complete-evidence"
+                and evidence.ATTEMPT_STATUS_BUDGETS.get(prior.get("status")) == roster["budget"]
                 and prior.get("attempt", {}).get("index") == args.attempt_index - 1,
                 "attempt roster predecessor is incomplete or mismatched")
         predecessor = recorded_identity(root, prior_path)
@@ -3304,11 +3314,8 @@ def plan_attempt_roster(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]
         "source_sha256": native_source_digest(root),
         "product": product,
         "dynamic_product_qualification": qualification,
-        "correctness_admission": {
-            "status": "unavailable",
-            "required_owner": COMPLETE_CORRECTNESS_OWNER,
-            "reason": "no complete correctness-closed predecessor-chain reader is available",
-        },
+        "correctness_admission": evidence.correctness_admission(root),
+        "budget": evidence.SMOKE_BUDGET if args.implementation_smoke else evidence.FULL_BUDGET,
         "attempts": attempts,
     }
     path = output / "attempt-roster.json"
@@ -3354,9 +3361,7 @@ def run_attempt(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
         selected = selected_rows(root, args.workload)
         state = BuildState(root=root, work=work, product=product, musl_cc=musl_cc, raw_root=raw_root / "build")
         make_generated_sources(state, selected)
-        sources, headers = source_roster(
-            root, state, selected, include_memory_observers=not args.implementation_smoke,
-        )
+        sources, headers = source_roster(root, state, selected, include_memory_observers=True)
         for generated in state.local_sources.values():
             normalize_retained_path(root, generated)
         source_paths = {
@@ -3410,37 +3415,25 @@ def run_attempt(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
         memory_observers: dict[str, Any]
         workloads: dict[str, Any] = {}
         try:
-            if args.implementation_smoke:
-                # A focused smoke proves the installed/extracted construction
-                # and direct runtime route.  It intentionally makes no memory
-                # or scorecard claim, so it does not attempt the diagnostic-only
-                # cgroup/ptrace machinery.
-                cgroup_setup = {"status": "not-run", "reason": "implementation smoke omits memory diagnostics"}
-                memory = {
-                    name: {"status": "not-run-implementation-smoke", "reason": "implementation smoke omits memory diagnostics"}
-                    for name in lanes
+            # Both budgets run the identical memory route.  A smoke differs
+            # only in its process roster, so it proves every collector that a
+            # full attempt uses without becoming a scorecard result.
+            try:
+                cgroup = CgroupSession.create(work)
+                cgroup_setup = {"status": "ok", **cgroup.setup}
+            except CgroupUnsupported as error:
+                cgroup_setup = {
+                    "status": "unsupported", "reason": str(error),
+                    "default_container_cgroup": CgroupSession._default_cgroup_state(),
                 }
-                memory_observers = {
-                    "status": "not-run-implementation-smoke",
-                    "reason": "implementation smoke omits memory diagnostics",
-                }
-            else:
-                try:
-                    cgroup = CgroupSession.create(work)
-                    cgroup_setup = {"status": "ok", **cgroup.setup}
-                except CgroupUnsupported as error:
-                    cgroup_setup = {
-                        "status": "unsupported", "reason": str(error),
-                        "default_container_cgroup": CgroupSession._default_cgroup_state(),
-                    }
-                memory = {
-                    name: live_memory_diagnostic(root, lane, cgroup, raw_root / "execution", args.timeout)
-                    for name, lane in lanes.items()
-                }
-                memory_observers = collect_memory_observers(
-                    root, lanes, selected, cgroup, raw_root / "execution", args.timeout,
-                    cpu, peer_cpu, allowed_affinity,
-                )
+            memory = {
+                name: live_memory_diagnostic(root, lane, cgroup, raw_root / "execution", args.timeout)
+                for name, lane in lanes.items()
+            }
+            memory_observers = collect_memory_observers(
+                root, lanes, selected, cgroup, raw_root / "execution", args.timeout,
+                cpu, peer_cpu, allowed_affinity,
+            )
             for name, lane in lanes.items():
                 # The chroot tree is retained evidence after timed children and
                 # diagnostics have finished.  Normalize it before sealing the
@@ -3510,7 +3503,6 @@ def run_attempt(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
                 "full native source provenance changed during performance attempt")
         require(report["product"]["before"] == report["product"]["after"],
                 "supplied dynamic product changed during performance attempt")
-        paired_samples_complete = all(item.get("comparison", {}).get("status") == "ok" for item in workloads.values())
         # A measured red scorecard result is still complete evidence.  Keep
         # successful clients, raw sample plans, and replayable diagnostics
         # distinct from the numerical CPU/syscall verdicts they derive; the
@@ -3524,7 +3516,10 @@ def run_attempt(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
             for item in memory_observers.values()
         )
         complete = timed_complete and all(value.get("status") == "ok" for value in memory.values()) and observer_complete
-        report["status"] = "implementation-smoke" if args.implementation_smoke and paired_samples_complete else "complete-evidence" if complete else "partial-evidence"
+        if not complete:
+            report["status"] = "partial-evidence"
+        else:
+            report["status"] = evidence.SMOKE_BUDGET if args.implementation_smoke else "complete-evidence"
     except (AdapterError, evidence.EvidenceError, OSError) as error:
         report["failure"] = str(error)
         # Preserve every command/raw file already produced.  The partial report
@@ -3536,33 +3531,94 @@ def run_attempt(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
     return report_path, persisted
 
 
-def collect(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
-    """Refuse full collection until its real correctness owner exists.
+# The collector's own derivation code is sealed into its report; replay must
+# use these same bytes, just as each attempt seals its fixture sources.
+COLLECTOR_SOURCES = (
+    "compat/perf/run.py",
+    "compat/perf/run_x86_64.py",
+    "compat/perf/x86_64-profile.toml",
+    "compat/perf/x86_64_evidence.py",
+    "compat/perf/x86_64_profile.py",
+)
 
-    A validated owned-dynamic-qualification receipt is deliberately only a
-    supplied-product prerequisite.  It cannot stand in for the correctness
-    closed runtime predecessor chain mandated by ``plan.md``.  Keeping this
-    command fail-closed prevents an attractive three-report selection from
-    becoming a benchmark or release claim while the actual owner is absent.
-    The immutable roster still records the exact future consecutive requests.
+
+def collect(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
+    """Collect one immutable three-attempt roster into a replayed scorecard.
+
+    Every attempt is replayed from raw evidence by the same reader that
+    ``check`` uses.  The per-workload scorecard and the release decision are
+    derived, never supplied: release qualifies only when the ordered chain has
+    admitted correctness, the roster is the full budget, and every row passes
+    every metric in all three attempts.  A smoke roster exercises the identical
+    path and always reports its budget as a blocker.
     """
 
     root = repository_root()
-    product_path, _musl, _cc, _cpu, _allowed_affinity, _peer_cpu = validate_environment(args, root)
-    product = record_product(root, product_path)
     require(git_clean(root), "three-run collector requires a clean source revision")
-    _roster_path, roster = load_attempt_roster(root, args.attempt_roster, product)
-    admission = roster["correctness_admission"]
-    require(admission["status"] == "available",  # no current roster may satisfy this
-            f"full native performance collection is unavailable pending {admission['required_owner']}: {admission['reason']}")
-    raise AssertionError("a future correctness-owner integration must replace this guard")
+    output = fresh_work_directory(root, args.work_dir)
+    product_path = physical_path(args.dynamic_product, "supplied dynamic product", directory=True)
+    product = record_product(root, product_path)
+    roster_path, roster = load_attempt_roster(root, args.attempt_roster, product)
+    attempts = [
+        {
+            "index": request["index"],
+            "report": recorded_identity(
+                root, roster_path_to_host(root, request["report"], f"attempt {request['index']} report", must_exist=True),
+            ),
+        }
+        for request in roster["attempts"]
+    ]
+    budget = roster["budget"]
+    report: dict[str, Any] = {
+        "schema": SCHEMA,
+        "kind": KIND,
+        "status": "complete-evidence" if budget == evidence.FULL_BUDGET else evidence.SMOKE_BUDGET,
+        "source_mount": evidence.SOURCE_MOUNT,
+        "collector": {
+            "attempt_roster": recorded_identity(root, roster_path),
+            "dynamic_product_qualification": roster["dynamic_product_qualification"],
+            "correctness_admission": roster["correctness_admission"],
+            "budget": budget,
+            "attempt_count": evidence.COLLECTOR_ATTEMPTS,
+            "source": {name: recorded_identity(root, root / name) for name in COLLECTOR_SOURCES},
+            "source_revision": roster["source_revision"],
+            "source_sha256": roster["source_sha256"],
+            "product": product,
+        },
+        "attempts": attempts,
+        "scorecard": {},
+        "release": {},
+    }
+    report["scorecard"], report["release"] = evidence.replay_collection(root, report)
+    path = output / "collector.json"
+    write_json(path, report)
+    # The persisted bytes, not the in-memory derivation, are the handoff.
+    result = evidence.validate_collector_report(root, path)
+    print_check(result)
+    return path, report
+
+
+def print_check(result: evidence.CheckedReport) -> None:
+    print(json.dumps({
+        "evidence_valid": result.evidence_valid,
+        "release_qualified": result.release_qualified,
+        "blockers": list(result.blockers),
+        "scorecard": result.scorecard,
+    }, indent=2, sort_keys=True))
 
 
 def check(args: argparse.Namespace) -> evidence.CheckedReport:
+    """Replay a retained collector report or one retained attempt report."""
+
     root = repository_root()
-    report = physical_path(args.report, "collector report")
-    result = evidence.validate_collector_report(root, report, [row.name for row in performance_rows(root)])
-    print(json.dumps({"evidence_valid": result.evidence_valid, "release_qualified": result.release_qualified, "blockers": list(result.blockers)}, sort_keys=True))
+    report = physical_path(args.report, "retained performance report")
+    fields = set(evidence.load_json(report, "retained performance report"))
+    if fields == evidence.COLLECTOR_REPORT_FIELDS:
+        result = evidence.validate_collector_report(root, report)
+    else:
+        require(fields == evidence.ATTEMPT_FIELDS, "retained performance report is neither a collector nor an attempt")
+        result = evidence.validate_attempt_report(root, report)
+    print_check(result)
     return result
 
 
@@ -3581,9 +3637,11 @@ def parser() -> argparse.ArgumentParser:
         target.add_argument("--label", default="native-c")
     plan = commands.add_parser("plan", help="seal one immutable ordered three-attempt request roster")
     common(plan, needs_work=True)
+    plan.add_argument("--implementation-smoke", action="store_true",
+                      help="plan a smoke-budget roster: the complete route with one pair and no warm-up; never qualifies")
     plan.add_argument("--dynamic-qualification", type=Path, default=None,
                       help="optional validated owned-dynamic-qualification receipt for the supplied product")
-    run = commands.add_parser("run", help="build one supplied-product attempt; smoke uses selected rows only")
+    run = commands.add_parser("run", help="build and measure one supplied-product attempt")
     common(run, needs_work=True)
     run.add_argument("--samples", type=int, default=None,
                      help="paired samples (default: 31; implementation smoke fixes this to 1)")
@@ -3594,12 +3652,13 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--attempt-roster", type=Path, default=None,
                      help="immutable plan binding this exact attempt/work directory")
     run.add_argument("--skip-syscalls", action="store_true", help="implementation-only; makes the attempt uncollectable")
-    run.add_argument("--implementation-smoke", action="store_true", help="build/runtime validation only; omits memory diagnostics and is never collectable")
+    run.add_argument("--implementation-smoke", action="store_true",
+                     help="complete metric route with one pair and no warm-up; collectable only into a nonqualifying smoke scorecard")
     run.add_argument("--same-object-input-proof", type=Path, default=None, help="proof emitted by an installed/extracted companion smoke")
-    collect_parser = commands.add_parser("collect", help="admit an immutable three-run roster when its real correctness owner exists")
+    collect_parser = commands.add_parser("collect", help="replay an immutable three-attempt roster into its per-workload scorecard")
     common(collect_parser, needs_work=True)
     collect_parser.add_argument("--attempt-roster", type=Path, required=True)
-    check_parser = commands.add_parser("check", help="host-safe replay of a retained collector report")
+    check_parser = commands.add_parser("check", help="host-safe replay of a retained collector or single-attempt report")
     check_parser.add_argument("report", type=Path)
     return result
 
