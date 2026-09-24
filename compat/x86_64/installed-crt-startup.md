@@ -120,7 +120,9 @@ Their exact commands, map, source/object/product/output identities, statuses
 and empty streams are retained. The shared static-link authority checks the
 two exported attachment bodies plus the three exact `#[inline(never)]` local
 consumer bodies from their non-demangled LLD map through the final linked
-bytes. Before that link, the finite source-object account requires the matrix
+bytes. Those three Rust v0 spellings embed the crate disambiguator produced by
+the pinned `rust-toolchain.toml` compiler; a toolchain change must update them
+together in the contract and `installed_crt_startup_evidence.py`. Before that link, the finite source-object account requires the matrix
 to define its 72-byte descriptor, the absent branch to define none, and the
 unaligned branch to retain its defined global alias one byte after the local
 73-byte backing storage. The account neither rebuilds the attachment nor

@@ -43,19 +43,19 @@ DESCRIPTOR_RUNTIME_VALUE_CASES=(
 DESCRIPTOR_RUNTIME_CONSUMER_BODIES=(
     {
         'source_function':'validate_loader_tls_runtime_v1',
-        'symbol':'_RNvNtCsdlKvXcqhVMX_24crabc_dynamic_attachment21loader_tls_runtime_v130validate_loader_tls_runtime_v1',
+        'symbol':'_RNvNtCs3Tpd2S587Z6_24crabc_dynamic_attachment21loader_tls_runtime_v130validate_loader_tls_runtime_v1',
         'source_binding':'LOCAL','source_visibility':'DEFAULT',
         'final_binding':'LOCAL','final_visibility':'DEFAULT',
     },
     {
         'source_function':'current_thread_pointer',
-        'symbol':'_RNvNtCsdlKvXcqhVMX_24crabc_dynamic_attachment21loader_tls_runtime_v122current_thread_pointer',
+        'symbol':'_RNvNtCs3Tpd2S587Z6_24crabc_dynamic_attachment21loader_tls_runtime_v122current_thread_pointer',
         'source_binding':'LOCAL','source_visibility':'DEFAULT',
         'final_binding':'LOCAL','final_visibility':'DEFAULT',
     },
     {
         'source_function':'observe_validated_loader_tls',
-        'symbol':'_RNvNtCsdlKvXcqhVMX_24crabc_dynamic_attachment21loader_tls_runtime_v128observe_validated_loader_tls',
+        'symbol':'_RNvNtCs3Tpd2S587Z6_24crabc_dynamic_attachment21loader_tls_runtime_v128observe_validated_loader_tls',
         'source_binding':'LOCAL','source_visibility':'DEFAULT',
         'final_binding':'LOCAL','final_visibility':'DEFAULT',
     },
