@@ -4524,13 +4524,10 @@ impl RuntimeProcessStorage {
         debug_assert_eq!(self.state.load(Ordering::Acquire), PROCESS_COLD);
         self.state.store(PROCESS_INITIALIZING, Ordering::Release);
 
-        // Source `mi_process_init_once` observes its environment options
-        // before `_mi_os_init` builds the process memory configuration. The
-        // runtime-published reader supplies that raw-environ observation
-        // while startup still owns a stable initial vector; the resolved
-        // image then stays beside this exact ticket-zero subprocess for its
-        // process lifetime.
-        let options = source_vm_options_from_environment_reader(facts.environment_reader());
+        // Source `mi_process_init_once` observes its environment options in
+        // `_mi_options_init` before `_mi_os_init`. The process owner performs
+        // that one observation through the runtime-published reader into the
+        // one process descriptor table, which the VM policy then reads.
         let config = MemoryConfig::detect(StartupInput::new(facts.page_size()));
         // SAFETY: the embedding runtime publishes its startup facts only
         // after initial TLS exists, and either calls this before application
@@ -4540,9 +4537,8 @@ impl RuntimeProcessStorage {
         // above.
         let owner = unsafe {
             ProcessMainInitializationStorage::global()
-                .prepare_with_vm_options_from_source_environment(
+                .prepare_from_source_environment(
                     config,
-                    options,
                     // SAFETY: `NativeProcessStartupFacts::new` required this
                     // reader and FILE provider to satisfy the diagnostic
                     // input obligations for this exact process lifetime.
@@ -4665,26 +4661,6 @@ impl RuntimeProcessStorage {
         self.state.store(PROCESS_ACTIVE, Ordering::Release);
         true
     }
-}
-
-/// Resolve the selected VM descriptors through the runtime-published raw
-/// environment reader, the x86 counterpart of pinned
-/// `src/prim/unix/prim.c:_mi_prim_getenv`'s direct `environ` read.
-///
-/// An unavailable or overlong entry remains unresolved in the permanent
-/// process policy: its current source default is usable for that option read,
-/// and only that descriptor retries through this same reader on a later
-/// `mi_option_get`-shaped policy access.
-#[cfg(all(target_arch = "x86_64", not(miri)))]
-fn source_vm_options_from_environment_reader(
-    environment_reader: crate::config::VmOptionEnvironmentReader,
-) -> VmOptions {
-    let mut options = VmOptions::uninitialized();
-    // SAFETY: `NativeProcessStartupFacts::new` required each reader call to
-    // return null or a valid environment vector for the observation, with
-    // the ordinary caller coordination of a direct C environment mutation.
-    unsafe { options.initialize_from_source_environment(environment_reader()) };
-    options
 }
 
 /// Resolve the selected VM descriptors from the same raw Unix `environ`

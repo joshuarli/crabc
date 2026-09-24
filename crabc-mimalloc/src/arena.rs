@@ -63,11 +63,11 @@ use crate::types::{
 
 #[path = "arena_selection.rs"]
 mod selection;
-pub(crate) use selection::{ArenaCandidates, ArenaReservationPlan, ArenaSearch};
+pub(crate) use selection::{ArenaCandidates, ArenaReservationPlan, ArenaSearch, arena_max_object_size};
 
 #[path = "arena_owned.rs"]
 mod owned;
-pub(crate) use owned::{ArenaDestroyError, DestroyedArenas, ArenaPageCommitError, FirstRegularStartupArenaSelection,
+pub(crate) use owned::{arena_purge_delay, ArenaDestroyError, DestroyedArenas, ArenaPageCommitError, FirstRegularStartupArenaSelection,
     ProcessArenaBacking, ProcessArenaInstallFailure, HugeArenaReserveError,
     HugeArenaCleanupError, StartupArenaReservationOutcomes};
 

@@ -52,8 +52,9 @@ use crabc_core::{Errno, Result};
 
 #[cfg(target_arch = "x86_64")]
 use crate::diagnostic_output::{HugePageWarningRoute, SourceFormattedMessage};
+use crate::diagnostic_output::OutputOwner;
 use crate::config::{
-    ARENA_SLICE_SIZE, VmOption, VmOptionEnvironmentReader, VmOptionState, VmOptions,
+    ARENA_SLICE_SIZE, SourceOption, VmOption, VmOptionEnvironmentReader, VmOptionState, VmOptions,
 };
 #[cfg(test)]
 use crate::config::VmOptionEnvironment;
@@ -532,17 +533,24 @@ unsafe fn thp_policy_prctl_raw(
 /// Process-owned state for the source VM option, hint, large-page retry, and
 /// NUMA-count policy.
 ///
-/// An explicit fixture policy receives a completed [`VmOptions`] image. The
-/// Unix process initializer may instead retain an incomplete image plus the
-/// raw source environment reader that initialized it: each unresolved
-/// descriptor returns its pinned current default for that call and retries on
-/// a later source option read. The policy itself creates neither an ambient
+/// The selected x86 process policy has no option image of its own: it reads
+/// the one process descriptor table beside the diagnostic [`OutputOwner`] at
+/// each source `mi_option_get` read point, so `mi_option_set` before first
+/// use changes every later decision exactly as in C. An explicit fixture
+/// policy (and the paused AArch64 process) instead receives a [`VmOptions`]
+/// image. That image may be incomplete when retained with the raw source
+/// environment reader that initialized it: each unresolved descriptor returns
+/// its pinned current default for that call and retries on a later source
+/// option read. The policy itself creates neither an ambient
 /// environment reader nor random state; the process initializer retains that
 /// capability beside the source `MainSubprocess`. Callers pass the already
 /// initialized [`TheapRandomImage`] when a source path requires
 /// randomization. The old fixed-default mapping APIs remain intact while that
 /// lifecycle wiring is being introduced.
 pub(crate) struct VmPolicy {
+    /// The one process descriptor table, when this is the x86 process policy.
+    /// When present, every option read goes to it and `options` is unused.
+    process_options: Option<&'static OutputOwner>,
     /// The fixed descriptor image is immutable after ordinary source startup.
     /// A rare `_mi_getenv` failure leaves individual slots lazy-uninitialized,
     /// in which case the retained process reader mutates only that slot under
@@ -867,6 +875,21 @@ impl VmPolicy {
         Ok(Self::from_options(options, Some(environment_reader)))
     }
 
+    /// The x86 process policy over the one process descriptor table.
+    ///
+    /// # Safety
+    ///
+    /// `output` must have completed [`OutputOwner::initialize_source_options`]
+    /// and be the process diagnostic owner for this policy's whole lifetime.
+    /// Its [`OutputOwner::option_get`] obligations apply to every policy
+    /// option read: a lazily retried descriptor may deliver a source warning
+    /// through the process output route, exactly as C's `mi_option_get` can.
+    pub(crate) unsafe fn from_process_options(output: &'static OutputOwner) -> Self {
+        let mut policy = Self::from_options(VmOptions::uninitialized(), None);
+        policy.process_options = Some(output);
+        policy
+    }
+
     #[inline]
     fn from_options(
         options: VmOptions,
@@ -874,6 +897,7 @@ impl VmPolicy {
     ) -> Self {
         let options_resolved = options.all_resolved();
         Self {
+            process_options: None,
             options: UnsafeCell::new(options),
             options_resolved: AtomicBool::new(options_resolved),
             options_access: AtomicBool::new(false),
@@ -1006,6 +1030,7 @@ impl VmPolicy {
     }
 
     /// Returns a copied descriptor image for source-policy diagnostics.
+    /// Only an image policy has one; the process policy reads its table.
     ///
     /// A partially initialized process image is observed under its retry gate;
     /// once every descriptor is terminal this is an immutable lock-free copy.
@@ -1071,6 +1096,7 @@ impl VmPolicy {
     /// option API is generally thread-safe.
     #[inline]
     pub(crate) fn set_option(&mut self, option: VmOption, value: i64) {
+        debug_assert!(self.process_options.is_none(), "the process table owns mi_option_set");
         let options = self.options.get_mut();
         options.set(option, value);
         if options.all_resolved() {
@@ -1085,10 +1111,32 @@ impl VmPolicy {
 
     #[inline]
     fn option_value(&self, option: VmOption) -> i64 {
+        if let Some(output) = self.process_options {
+            // SAFETY: `from_process_options` bound the installed process
+            // table for this policy's lifetime and accepted its read-point
+            // delivery obligations.
+            return unsafe { output.option_value(option.source()) };
+        }
         if self.options_resolved.load(Ordering::Acquire) {
             return self.resolved_options_snapshot().current_value(option);
         }
         self.option_value_after_unresolved_observation(option)
+    }
+
+    /// Reads a descriptor outside the [`VmOption`] image at its source read
+    /// point. The process policy reads the live table; an image policy has
+    /// no slot for it and returns the pinned release default, which is the
+    /// value every such read had before the process table existed.
+    #[inline]
+    pub(crate) fn source_option_value(&self, option: SourceOption) -> i64 {
+        if let Some(output) = self.process_options {
+            // SAFETY: as in `option_value`.
+            return unsafe { output.option_value(option) };
+        }
+        match VmOption::from_source(option) {
+            Some(option) => self.option_value(option),
+            None => option.default_value(),
+        }
     }
 
     /// Pinned `page.c:1030` reads and clamps this option only when a Theap's

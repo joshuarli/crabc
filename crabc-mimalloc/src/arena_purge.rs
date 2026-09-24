@@ -20,6 +20,13 @@ use core::sync::atomic::Ordering;
 // one blocking purge mutex per subprocess or per arena.
 pub(super) static PURGE_GUARD: AtomicGuardWord = AtomicGuardWord::new(0);
 
+/// `mi_arena_purge_delay` (`src/arena.c:2243-2252`): the delay every arena
+/// purge schedules with, from the policy's live `purge_delay` and
+/// `arena_purge_mult` descriptors at this read point.
+pub(crate) fn arena_purge_delay(policy: &crate::os::VmPolicy) -> i64 {
+    purge_delay(policy.purge_delay_milliseconds(), policy.arena_purge_multiplier())
+}
+
 fn purge_delay(delay: i64, multiplier: i64) -> i64 {
     if delay < 0 || multiplier < 0 { return -1; }
     if delay == 0 || multiplier == 0 { return 0; }
@@ -71,8 +78,7 @@ impl ProcessArenaBacking {
     fn schedule_purge(&self, view: &ArenaView<'_>, owner: &OwnedArenaAllocation,
         start: usize, count: usize) -> bool {
         let process = owner.process();
-        let policy = process.policy();
-        let delay = purge_delay(policy.purge_delay_milliseconds(), policy.arena_purge_multiplier());
+        let delay = arena_purge_delay(process.policy());
         if view.arena().memid.is_pinned() || delay < 0 || process.is_preloading() { return true; }
         if delay == 0 { return purge_claimed(view, owner, start, count).is_some(); }
         let Ok(now) = os::monotonic_milliseconds() else { return true; };
@@ -101,8 +107,7 @@ impl ProcessArenaBacking {
     /// allocations obey the source atomic free-bitmap ownership protocol.
     pub(crate) unsafe fn collect_purge(&self, process: VmProcess<'_>, config: MemoryConfig,
         force: bool, visit_all: bool, thread_sequence: usize) -> bool {
-        let policy = process.policy();
-        let delay = purge_delay(policy.purge_delay_milliseconds(), policy.arena_purge_multiplier());
+        let delay = arena_purge_delay(process.policy());
         if process.is_preloading() || delay <= 0 { return true; }
         let Ok(now) = os::monotonic_milliseconds() else { return true; };
         self.collect_purge_at(process, config, force, visit_all, thread_sequence, now, delay)

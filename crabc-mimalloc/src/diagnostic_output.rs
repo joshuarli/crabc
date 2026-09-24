@@ -38,7 +38,7 @@ use crabc_core::{Errno, thread::thread_pointer_identity};
 use core::cell::UnsafeCell;
 use core::ffi::{c_char, c_void, CStr};
 use core::fmt::{self, Write};
-use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicI64, AtomicPtr, AtomicU8, AtomicUsize, Ordering};
 
 const INITIAL_MAX_WARNING_COUNT: isize = 16;
 /// `mi_max_error_count`'s static initializer (`src/options.c:15`).
@@ -157,10 +157,41 @@ impl ProcessDiagnosticInputs {
 const _: () = assert!(core::mem::size_of::<isize>() == core::mem::size_of::<i64>());
 
 /// One `mi_option_desc_t` value/init pair (`include/mimalloc/internal.h:455-468`).
-#[derive(Clone, Copy)]
+///
+/// C reads `desc->init` and `desc->value` as plain globals from any thread
+/// (`mi_option_get`), and tolerates the benign races of concurrent lazy
+/// initialization. Relaxed atomics are the Rust spelling of those plain
+/// accesses: every reader, including [`crate::os::VmPolicy`] on allocation
+/// paths, loads the live descriptor without a lock, while every store stays
+/// serialized under [`OutputOwner`]'s descriptor lock (or the exclusive
+/// startup borrow). The init state is published with Release after its value
+/// so that a reader which observes a terminal state also observes that
+/// state's value.
 struct SourceOptionSlot {
-    value: i64,
-    init: VmOptionState,
+    value: AtomicI64,
+    init: AtomicU8,
+}
+
+const OPTION_UNINIT: u8 = 0;
+const OPTION_DEFAULTED: u8 = 1;
+const OPTION_INITIALIZED: u8 = 2;
+
+#[inline]
+const fn encode_option_state(state: VmOptionState) -> u8 {
+    match state {
+        VmOptionState::Uninitialized => OPTION_UNINIT,
+        VmOptionState::Defaulted => OPTION_DEFAULTED,
+        VmOptionState::Initialized => OPTION_INITIALIZED,
+    }
+}
+
+#[inline]
+const fn decode_option_state(state: u8) -> VmOptionState {
+    match state {
+        OPTION_DEFAULTED => VmOptionState::Defaulted,
+        OPTION_INITIALIZED => VmOptionState::Initialized,
+        _ => VmOptionState::Uninitialized,
+    }
 }
 
 /// The complete pinned `mi_options[]` image (`src/options.c:112-177`).
@@ -169,14 +200,10 @@ struct SourceOptionSlot {
 /// machinery: `mi_option_init` reports through `_mi_warning_message`, whose
 /// gate lazily reads `verbose` and `show_errors` from the same table. Keeping
 /// the table beside [`OutputOwner`]'s delivery state preserves that one
-/// source module boundary.
-///
-/// Transitional boundary: the process VM policy still resolves its
-/// [`crate::config::VmOptions`] subset from the same raw environment before
-/// this owner exists, so a VM descriptor has two images with equal startup
-/// values. The crate-private [`OutputOwner::option_set`] reaches only this
-/// table; before a public `mi_option_set` is exposed, the VM policy must read
-/// this table instead of its copy.
+/// source module boundary. It is the one process descriptor image: the x86
+/// process [`crate::os::VmPolicy`] and the engine's option reads borrow it
+/// rather than keeping a resolved copy, so `mi_option_set` before first use
+/// reaches every later source read point.
 struct ProcessSourceOptions {
     slots: [SourceOptionSlot; SOURCE_OPTION_COUNT],
     environment_reader: VmOptionEnvironmentReader,
@@ -192,28 +219,48 @@ struct SourceOptionInitWarnings {
 }
 
 impl ProcessSourceOptions {
-    const fn new(environment_reader: VmOptionEnvironmentReader) -> Self {
-        let mut slots = [SourceOptionSlot { value: 0, init: VmOptionState::Uninitialized }; SOURCE_OPTION_COUNT];
-        let mut index = 0;
-        while index < SOURCE_OPTION_COUNT {
-            slots[index].value = SourceOption::ALL[index].default_value();
-            index += 1;
+    fn new(environment_reader: VmOptionEnvironmentReader) -> Self {
+        Self {
+            slots: core::array::from_fn(|index| SourceOptionSlot {
+                value: AtomicI64::new(SourceOption::ALL[index].default_value()),
+                init: AtomicU8::new(OPTION_UNINIT),
+            }),
+            environment_reader,
         }
-        Self { slots, environment_reader }
     }
 
     #[inline]
-    const fn value(&self, option: SourceOption) -> i64 {
-        self.slots[option.index()].value
+    fn value(&self, option: SourceOption) -> i64 {
+        self.slots[option.index()].value.load(Ordering::Relaxed)
     }
 
     #[inline]
-    fn set_value(&mut self, option: SourceOption, value: i64) {
-        self.slots[option.index()].value = value;
+    fn state(&self, option: SourceOption) -> VmOptionState {
+        decode_option_state(self.slots[option.index()].init.load(Ordering::Acquire))
+    }
+
+    /// Stores only `desc->value`, as the invalid-`verbose` staging does.
+    /// The caller holds the descriptor lock or exclusive startup ownership.
+    #[inline]
+    fn set_value(&self, option: SourceOption, value: i64) {
+        self.slots[option.index()].value.store(value, Ordering::Relaxed);
+    }
+
+    /// Stores `desc->value` then `desc->init`, under the same serialization.
+    #[inline]
+    fn store(&self, option: SourceOption, value: i64, state: VmOptionState) {
+        let slot = &self.slots[option.index()];
+        slot.value.store(value, Ordering::Relaxed);
+        slot.init.store(encode_option_state(state), Ordering::Release);
     }
 
     #[inline]
-    const fn snapshot(&self) -> DiagnosticOptionSnapshot {
+    fn set_state(&self, option: SourceOption, state: VmOptionState) {
+        self.slots[option.index()].init.store(encode_option_state(state), Ordering::Release);
+    }
+
+    #[inline]
+    fn snapshot(&self) -> DiagnosticOptionSnapshot {
         DiagnosticOptionSnapshot::new(
             self.value(SourceOption::ShowErrors) as isize,
             self.value(SourceOption::Verbose) as isize,
@@ -224,9 +271,11 @@ impl ProcessSourceOptions {
 
     /// Mirrors one `mi_option_init`. An unavailable environment result leaves
     /// the slot UNINIT so a later `mi_option_get` retries it.
-    unsafe fn initialize_one(&mut self, option: SourceOption) -> SourceOptionInitWarnings {
+    ///
+    /// The caller holds the descriptor lock or exclusive startup ownership.
+    unsafe fn initialize_one(&self, option: SourceOption) -> SourceOptionInitWarnings {
         let mut warnings = SourceOptionInitWarnings::default();
-        if self.slots[option.index()].init != VmOptionState::Uninitialized {
+        if self.state(option) != VmOptionState::Uninitialized {
             return warnings;
         }
         // SAFETY: ProcessDiagnosticInputs documents this reader's source
@@ -238,10 +287,10 @@ impl ProcessSourceOptions {
         warnings.deprecated = observation.legacy;
         match observation.environment {
             VmOptionEnvironment::Unavailable => {}
-            VmOptionEnvironment::Absent => self.slots[option.index()].init = VmOptionState::Defaulted,
+            VmOptionEnvironment::Absent => self.set_state(option, VmOptionState::Defaulted),
             VmOptionEnvironment::Value(input) => match parse_source_option(option, input) {
                 Some(SourceOptionValue::Boolean(value)) => {
-                    self.slots[option.index()] = SourceOptionSlot { value, init: VmOptionState::Initialized };
+                    self.store(option, value, VmOptionState::Initialized);
                 }
                 // `mi_option_set` performs the initialized store, including
                 // its guarded min/max coupling.
@@ -251,7 +300,7 @@ impl ProcessSourceOptions {
                     // recursive verbose lookup. The caller emits only after
                     // this state is fully visible in its exclusive startup or
                     // lock-serialized retry phase.
-                    self.slots[option.index()].init = VmOptionState::Defaulted;
+                    self.set_state(option, VmOptionState::Defaulted);
                     warnings.invalid = true;
                 }
             },
@@ -261,8 +310,9 @@ impl ProcessSourceOptions {
 
     /// `mi_option_set` (`src/options.c:302-316`), including its guarded
     /// min/max coupling through `_mi_option_get_fast`'s raw value read.
-    fn set(&mut self, option: SourceOption, value: i64) {
-        self.slots[option.index()] = SourceOptionSlot { value, init: VmOptionState::Initialized };
+    /// The caller holds the descriptor lock or exclusive startup ownership.
+    fn set(&self, option: SourceOption, value: i64) {
+        self.store(option, value, VmOptionState::Initialized);
         if option == SourceOption::GuardedMin && self.value(SourceOption::GuardedMax) < value {
             self.set(SourceOption::GuardedMax, value);
         } else if option == SourceOption::GuardedMax && self.value(SourceOption::GuardedMin) > value {
@@ -271,9 +321,10 @@ impl ProcessSourceOptions {
     }
 
     /// `mi_option_set_default` (`src/options.c:318-325`).
-    fn set_default(&mut self, option: SourceOption, value: i64) {
-        if self.slots[option.index()].init != VmOptionState::Initialized {
-            self.slots[option.index()].value = value;
+    /// The caller holds the descriptor lock or exclusive startup ownership.
+    fn set_default(&self, option: SourceOption, value: i64) {
+        if self.state(option) != VmOptionState::Initialized {
+            self.set_value(option, value);
         }
     }
 }
@@ -1147,6 +1198,16 @@ impl OutputOwner {
     /// The same obligations as [`Self::warning_from_source_options`] apply,
     /// because a lazy initialization can deliver source warnings.
     pub(crate) unsafe fn option_get(&self, option: SourceOption) -> Result<i64, SourceOptionAccessError> {
+        if self.source_options_ready.load(Ordering::Acquire) == 1 {
+            // SAFETY: the Acquire observation proves the table is installed;
+            // every later access is through its atomic slots.
+            let options = unsafe { self.source_options_ref_unlocked() };
+            // `desc->init != MI_OPTION_UNINIT`: the source returns the live
+            // value with no lazy initialization and therefore no warning.
+            if options.state(option) != VmOptionState::Uninitialized {
+                return Ok(options.value(option));
+            }
+        }
         unsafe {
             self.with_source_options(|owner, pending| {
                 // SAFETY: `with_source_options` holds the descriptor lock.
@@ -1154,6 +1215,30 @@ impl OutputOwner {
                 owner.collect_source_option_init_warnings_unlocked(option, warnings, pending);
                 value
             })
+        }
+    }
+
+    /// The engine's `mi_option_get` read point for an allocator-effect
+    /// descriptor.
+    ///
+    /// This is [`Self::option_get`] for callers that, like the C engine,
+    /// have no error path at a read point: a private-lock failure during a
+    /// lazy retry returns the descriptor's current value, which is exactly
+    /// what C returns when `mi_option_init` cannot complete.
+    ///
+    /// # Safety
+    ///
+    /// See [`Self::option_get`]. The table must already be installed by
+    /// [`Self::initialize_source_options`].
+    #[inline]
+    pub(crate) unsafe fn option_value(&self, option: SourceOption) -> i64 {
+        match unsafe { self.option_get(option) } {
+            Ok(value) => value,
+            Err(_) => {
+                debug_assert_eq!(self.source_options_ready.load(Ordering::Acquire), 1);
+                // SAFETY: the caller guarantees the installed table.
+                unsafe { self.source_options_ref_unlocked() }.value(option)
+            }
         }
     }
 
@@ -1207,7 +1292,7 @@ impl OutputOwner {
         unsafe {
             self.with_source_options(|owner, _| {
                 // SAFETY: `with_source_options` holds the descriptor lock.
-                (&mut *owner.source_options.get()).assume_init_mut().set(option, value);
+                (&*owner.source_options.get()).assume_init_ref().set(option, value);
             })
         }
     }
@@ -1225,7 +1310,7 @@ impl OutputOwner {
         unsafe {
             self.with_source_options(|owner, _| {
                 // SAFETY: `with_source_options` holds the descriptor lock.
-                (&mut *owner.source_options.get()).assume_init_mut().set_default(option, value);
+                (&*owner.source_options.get()).assume_init_ref().set_default(option, value);
             })
         }
     }
@@ -1348,7 +1433,7 @@ impl OutputOwner {
         &self,
         option: SourceOption,
     ) -> (i64, SourceOptionInitWarnings) {
-        let options = unsafe { (&mut *self.source_options.get()).assume_init_mut() };
+        let options = unsafe { self.source_options_ref_unlocked() };
         let warnings = unsafe { options.initialize_one(option) };
         (options.value(option), warnings)
     }
@@ -1357,14 +1442,16 @@ impl OutputOwner {
         unsafe { self.source_options_ref_unlocked() }.snapshot()
     }
 
-    /// The installed table while the caller has exclusive startup ownership
-    /// or `source_options_lock`.
+    /// The installed table. Its slots are atomic, so a shared projection is
+    /// valid for any reader once `source_options_ready` is published (or
+    /// during exclusive startup); every store still requires the descriptor
+    /// lock or exclusive startup ownership.
     unsafe fn source_options_ref_unlocked(&self) -> &ProcessSourceOptions {
         unsafe { (&*self.source_options.get()).assume_init_ref() }
     }
 
     unsafe fn source_option_set_value_unlocked(&self, option: SourceOption, value: i64) {
-        unsafe { (&mut *self.source_options.get()).assume_init_mut() }.set_value(option, value);
+        unsafe { self.source_options_ref_unlocked() }.set_value(option, value);
     }
 
     /// The raw `mi_options[option]` value/init pair, read without lazy
@@ -1375,8 +1462,7 @@ impl OutputOwner {
         let _guard = self.source_options_lock.lock().expect("test descriptor lock");
         // SAFETY: the table is installed and the lock excludes mutation.
         let options = unsafe { (&*self.source_options.get()).assume_init_ref() };
-        let slot = options.slots[option.index()];
-        (slot.value, slot.init)
+        (options.value(option), options.state(option))
     }
 
     /// Stages the warnings of one `mi_option_init` attempt in source order.
@@ -4093,6 +4179,110 @@ mod tests {
             );
         }
         std::println!("CRABC_MI_M7_OPTIONS_TRACE_END");
+    }
+
+    /// One process descriptor table initialized from an empty environment,
+    /// leaked for the `'static` borrow the x86 process `VmPolicy` retains,
+    /// and that policy. The caller holds DIAGNOSTIC_ENVIRONMENT_TEST_LOCK.
+    fn option_effects_policy() -> (&'static OutputOwner, crate::os::VmPolicy) {
+        install_option_trace_environment(&[]);
+        let owner: &'static mut OutputOwner = std::boxed::Box::leak(std::boxed::Box::new(output_owner()));
+        // SAFETY: the caller holds the environment lock during this startup.
+        unsafe { owner.initialize_source_options(option_trace_environment_reader) };
+        let owner: &'static OutputOwner = owner;
+        // SAFETY: the table is installed, and this leaked owner outlives the
+        // policy; no output callback is registered, so a lazy retry would
+        // only reach the delayed buffer.
+        let policy = unsafe { crate::os::VmPolicy::from_process_options(owner) };
+        (owner, policy)
+    }
+
+    /// Machine-readable Rust half of the M7 option-effects C/Rust
+    /// differential (`x86_64_m7_option_effects_oracle.c` prints the same
+    /// keys). Each decision runs after `mi_option_set` on the process table
+    /// that the x86 process `VmPolicy` reads, on a fresh table per scenario
+    /// where C restores its startup image.
+    #[test]
+    fn source_option_effects_trace_for_pinned_c_comparison() {
+        use crate::os::{MemoryConfig, PageSize, StartupInput};
+        let _environment_guard = DIAGNOSTIC_ENVIRONMENT_TEST_LOCK
+            .lock()
+            .expect("diagnostic environment test lock is not poisoned");
+        let raw_page_size = crabc_core::param::auxv_value(crabc_core::param::AT_PAGESZ)
+            .expect("the Linux test process exposes AT_PAGESZ");
+        let config = MemoryConfig::detect(StartupInput::new(
+            PageSize::new(raw_page_size).expect("AT_PAGESZ is a valid page size"),
+        ));
+        let set = |owner: &OutputOwner, option: SourceOption, value: i64| {
+            // SAFETY: no output callback is registered on this owner.
+            unsafe { owner.option_set(option, value) }.expect("installed option table");
+        };
+        std::println!("CRABC_MI_M7_OPTION_EFFECTS_TRACE_BEGIN");
+        std::println!("host.page_size={}", config.page_size().bytes());
+        std::println!("host.large_page_size={}", config.large_page_size());
+        std::println!("host.overcommit={}", u8::from(config.has_overcommit()));
+        std::println!("host.transparent_huge_pages={}", u8::from(config.has_transparent_huge_pages()));
+
+        for kib in [-1, 0, 1, 64, 65, 4096, 1_048_576, 1i64 << 40] {
+            let (owner, policy) = option_effects_policy();
+            set(owner, SourceOption::ArenaMaxObjectSize, kib);
+            std::println!("arena_max_object_size.{kib}={}", crate::arena::arena_max_object_size(&policy));
+        }
+        for (delay, mult) in [(1_000, 4), (-1, 4), (10, -1), (0, 4), (10, 0), (i64::MAX, 2), (7, 3)] {
+            let (owner, policy) = option_effects_policy();
+            set(owner, SourceOption::PurgeDelay, delay);
+            set(owner, SourceOption::ArenaPurgeMult, mult);
+            std::println!("arena_purge_delay.{delay}.{mult}={}", crate::arena::arena_purge_delay(&policy));
+        }
+        for kib in [0, 1, 5, 100, -3] {
+            for thp in 0..=2 {
+                let (owner, policy) = option_effects_policy();
+                set(owner, SourceOption::MinimalPurgeSize, kib);
+                set(owner, SourceOption::AllowThp, thp);
+                std::println!("minimal_purge_size.{kib}.{thp}={}", policy.minimal_purge_size(config));
+            }
+        }
+        // A fresh policy has the source's empty node-count cache.
+        for nodes in [0, 1, 3, -1, i64::from(i32::MAX), i64::from(i32::MAX) - 1] {
+            let (owner, policy) = option_effects_policy();
+            set(owner, SourceOption::UseNumaNodes, nodes);
+            std::println!("numa_node_count.{nodes}={}", policy.numa_node_count());
+        }
+        for value in [-5, 0, 1, 10_000, 2_000_000] {
+            let (owner, policy) = option_effects_policy();
+            set(owner, SourceOption::GenericCollect, value);
+            std::println!("generic_collect.{value}={}", policy.generic_collect_frequency());
+        }
+        // The C half reserves each arena it plans; its count advances only
+        // on a successful reservation, which the plan predicts here.
+        let mut arena_count = 0usize;
+        for (reserve, eager, large, request) in [
+            (1_048_576i64, 2i64, 0i64, 1usize),
+            (0, 2, 0, 1),
+            (1, 0, 0, 1),
+            (33_000, 1, 0, 1),
+            (65_536, 2, 1, 40 << 20),
+            (65_536, 0, 1, 1),
+            (1 << 40, 0, 0, 1),
+        ] {
+            let (owner, policy) = option_effects_policy();
+            set(owner, SourceOption::ArenaReserve, reserve);
+            set(owner, SourceOption::ArenaEagerCommit, eager);
+            set(owner, SourceOption::AllowLargeOsPages, large);
+            let plan = crate::arena::ArenaReservationPlan::for_policy(config, arena_count, request, &policy);
+            match plan {
+                Some(plan) => {
+                    let committed = u8::from(plan.access == crate::os::MapAccess::Committed);
+                    std::println!(
+                        "arena_reserve.{reserve}.{eager}.{large}.{request}={arena_count},{},{committed}",
+                        plan.primary_size,
+                    );
+                    arena_count += 1;
+                }
+                None => std::println!("arena_reserve.{reserve}.{eager}.{large}.{request}={arena_count},none"),
+            }
+        }
+        std::println!("CRABC_MI_M7_OPTION_EFFECTS_TRACE_END");
     }
 
     /// Environment images for the `_mi_error_message` gate, mirrored by the

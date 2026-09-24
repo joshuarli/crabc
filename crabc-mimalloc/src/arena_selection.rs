@@ -48,6 +48,25 @@ pub(crate) struct ArenaReservationPlan {
 }
 
 impl ArenaReservationPlan {
+    /// The `mi_arena_reserve` plan from the policy's live `arena_reserve`,
+    /// `arena_eager_commit`, and `allow_large_os_pages` descriptors, read at
+    /// the source point (`src/arena.c:347,386-387`).
+    pub(crate) fn for_policy(
+        config: MemoryConfig,
+        arena_count: usize,
+        requested_size: usize,
+        policy: &VmPolicy,
+    ) -> Option<Self> {
+        Self::new(
+            config,
+            arena_count,
+            requested_size,
+            policy.arena_reserve_bytes(),
+            policy.arena_eager_commit(),
+            policy.allow_large_os_pages(),
+        )
+    }
+
     pub(crate) fn new(
         config: MemoryConfig,
         arena_count: usize,

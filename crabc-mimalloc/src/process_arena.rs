@@ -1959,16 +1959,8 @@ fn process_default_os_arena_reservation(
     if requested_size > MAX_ALLOC_SIZE {
         return Err(ProcessSharedArenaReserveError::RequestTooLarge);
     }
-    let policy = process.policy();
-    let plan = crate::arena::ArenaReservationPlan::new(
-        config,
-        0,
-        requested_size,
-        policy.arena_reserve_bytes(),
-        policy.arena_eager_commit(),
-        policy.allow_large_os_pages(),
-    )
-    .ok_or(ProcessSharedArenaReserveError::RequestTooLarge)?;
+    let plan = crate::arena::ArenaReservationPlan::for_policy(config, 0, requested_size, process.policy())
+        .ok_or(ProcessSharedArenaReserveError::RequestTooLarge)?;
     one_regular_os_arena_length(plan.primary_size)?;
     if let Some(fallback_size) = plan.fallback_size {
         one_regular_os_arena_length(fallback_size)?;

@@ -564,6 +564,19 @@ impl VmOption {
         }
     }
 
+    /// The VM-policy slot mirroring `option`, if the image retains one.
+    #[inline]
+    pub(crate) const fn from_source(option: SourceOption) -> Option<Self> {
+        let mut index = 0;
+        while index < Self::ALL.len() {
+            if Self::ALL[index].source() as u8 == option as u8 {
+                return Some(Self::ALL[index]);
+            }
+            index += 1;
+        }
+        None
+    }
+
     #[inline]
     const fn default_value(self) -> i64 {
         self.source().default_value()

@@ -88,8 +88,10 @@ enum VmPolicyStartup {
     // The only selected x86 raw-source construction joins the policy and
     // mandatory diagnostic inputs in one variant; no caller can represent a
     // VM-backed selected diagnostic owner without its process policy.
+    // Its policy is built from the process descriptor table after
+    // `_mi_options_init`, so it carries no separately resolved image.
     #[cfg(target_arch = "x86_64")]
-    ApplyProcessMemoryPolicyWithDiagnostics(VmPolicy, ProcessDiagnosticInputs, ProcessStartEntry),
+    ApplyProcessMemoryPolicyWithDiagnostics(ProcessDiagnosticInputs, ProcessStartEntry),
 }
 
 /// Which pinned `src/init.c` entry reached the one `mi_process_init` body.
@@ -332,20 +334,16 @@ impl ProcessMainInitializationStorage {
     /// [`ProcessDiagnosticInputs`] apply for this complete process lifetime,
     /// in addition to the source startup ownership requirements above.
     #[cfg(target_arch = "x86_64")]
-    pub(crate) unsafe fn initialize_with_vm_options_from_source_environment(
+    pub(crate) unsafe fn initialize_from_source_environment(
         &'static self,
         config: MemoryConfig,
-        options: VmOptions,
         diagnostics: ProcessDiagnosticInputs,
     ) -> Result<ProcessMainThread, ProcessMainInitError> {
-        let environment_reader = diagnostics.environment_reader();
-        let policy = unsafe { VmPolicy::new_with_source_environment(options, environment_reader) }
-            .map_err(ProcessMainInitError::VmPolicy)?;
         unsafe {
             self.initialize_with_components_after_claim(
                 config,
                 VmPolicyStartup::ApplyProcessMemoryPolicyWithDiagnostics(
-                    policy, diagnostics, ProcessStartEntry::RuntimeStartup,
+                    diagnostics, ProcessStartEntry::RuntimeStartup,
                 ),
                 MainStaticAttachmentStorage::global(),
                 MainSubprocess::global(),
@@ -365,15 +363,12 @@ impl ProcessMainInitializationStorage {
     /// lifetime obligations. It must retain the returned owner in final
     /// process storage before completing the linear continuation.
     #[cfg(target_arch = "x86_64")]
-    pub(crate) unsafe fn prepare_with_vm_options_from_source_environment(
-        &'static self, config: MemoryConfig, options: VmOptions,
+    pub(crate) unsafe fn prepare_from_source_environment(
+        &'static self, config: MemoryConfig,
         diagnostics: ProcessDiagnosticInputs, entry: ProcessStartEntry,
     ) -> Result<(ProcessMainThread, ProcessMainStartup), ProcessMainInitError> {
-        let environment_reader = diagnostics.environment_reader();
-        let policy = unsafe { VmPolicy::new_with_source_environment(options, environment_reader) }
-            .map_err(ProcessMainInitError::VmPolicy)?;
         unsafe { self.prepare_with_components_after_claim(
-            config, VmPolicyStartup::ApplyProcessMemoryPolicyWithDiagnostics(policy, diagnostics, entry),
+            config, VmPolicyStartup::ApplyProcessMemoryPolicyWithDiagnostics(diagnostics, entry),
             MainStaticAttachmentStorage::global(), MainSubprocess::global(),
             MetaAllocator::global(), ProcessPageMapStorage::global(), || {},
         ) }
@@ -701,13 +696,21 @@ impl ProcessMainInitializationStorage {
                     Some(policy), true, ProcessStartupDiagnostics::Unconnected,
                     ProcessStartEntry::RuntimeStartup,
                 ),
-                VmPolicyStartup::ApplyProcessMemoryPolicyWithDiagnostics(policy, inputs, entry) => {
+                VmPolicyStartup::ApplyProcessMemoryPolicyWithDiagnostics(inputs, entry) => {
                     let (environment_reader, default_stderr_output) = inputs.into_parts();
                     let output = OutputOwner::new(default_stderr_output);
                     unsafe { (*self.diagnostic_output.get()).write(output) };
                     let output = unsafe { (&mut *self.diagnostic_output.get()).assume_init_mut() };
                     unsafe { output.initialize_source_options(environment_reader) };
-                    self.diagnostic_output_ptr.store(output, Ordering::Release);
+                    let pointer: *mut OutputOwner = output;
+                    self.diagnostic_output_ptr.store(pointer, Ordering::Release);
+                    // SAFETY: the exclusive startup projection ended above;
+                    // the process-static owner is only shared from here on.
+                    let output: &'static OutputOwner = unsafe { &*pointer };
+                    // SAFETY: `_mi_options_init` just installed this process
+                    // table, and the owner lives in this process-static slot.
+                    // Every VM read point is a source `mi_option_get`.
+                    let policy = unsafe { VmPolicy::from_process_options(output) };
                     (Some(policy), true, ProcessStartupDiagnostics::Selected(output), entry)
                 }
             }

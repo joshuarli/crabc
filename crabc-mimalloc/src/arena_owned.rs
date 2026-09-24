@@ -30,6 +30,7 @@ use crate::types::{Arena, MemoryId, MemoryKind};
 
 #[path = "arena_purge.rs"]
 mod purge;
+pub(crate) use purge::arena_purge_delay;
 
 #[path = "arena_destroy.rs"]
 mod destroy;
@@ -1289,9 +1290,7 @@ impl ProcessArenaBacking {
         &self, process: VmProcess<'_>, config: MemoryConfig,
         requested_size: usize, allow_large: bool, mut random: crate::os::OsRandom<'_>,
     ) -> Option<ArenaId> {
-        let policy = process.policy();
-        let plan = ArenaReservationPlan::new(config, self.registry.count(), requested_size,
-            policy.arena_reserve_bytes(), policy.arena_eager_commit(), policy.allow_large_os_pages())?;
+        let plan = ArenaReservationPlan::for_policy(config, self.registry.count(), requested_size, process.policy())?;
         for size in [Some(plan.primary_size), plan.fallback_size].into_iter().flatten() {
             let stats = process.subprocess().vm_statistics();
             if plan.adjust_committed { stats.committed_adjust_decrease(size); }

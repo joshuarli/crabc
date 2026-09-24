@@ -44,6 +44,7 @@ class M7GateContractTests(unittest.TestCase):
         self.assertEqual(sorted(summary["runnable_evidence"]), [
             "differential:deferred-free-callback",
             "differential:diagnostic-output-owner",
+            "differential:option-effects",
             "differential:options-environment",
         ])
         # Every M7 gate still names an open condition.
@@ -201,6 +202,28 @@ class M7OptionsTraceTests(unittest.TestCase):
             gate.compare_options_traces(c_trace, rust_trace)
         with self.assertRaisesRegex(harness.HarnessError, "repeated trace key"):
             gate.parse_options_trace(self.trace().replace("api.print=7631", "api.print=1\napi.print=2"), "C")
+
+
+class M7OptionEffectsTraceTests(unittest.TestCase):
+    def trace(self, *, drop: str | None = None) -> str:
+        lines = [gate.OPTION_EFFECTS_TRACE_BEGIN]
+        lines += [f"{family}.0=1" for family in gate.OPTION_EFFECT_FAMILIES if family != drop]
+        lines.append(gate.OPTION_EFFECTS_TRACE_END)
+        return "\n".join(lines) + "\n"
+
+    def parse(self, output: str) -> dict[str, str]:
+        return gate.parse_options_trace(
+            output, "trace", gate.OPTION_EFFECTS_TRACE_BEGIN, gate.OPTION_EFFECTS_TRACE_END
+        )
+
+    def test_a_trace_missing_a_decision_family_is_rejected(self) -> None:
+        gate.require_complete_option_effects_trace(self.parse(self.trace()), "trace")
+        with self.assertRaisesRegex(harness.HarnessError, "arena_reserve"):
+            gate.require_complete_option_effects_trace(self.parse(self.trace(drop="arena_reserve")), "trace")
+
+    def test_the_options_markers_do_not_delimit_an_effects_trace(self) -> None:
+        with self.assertRaisesRegex(harness.HarnessError, "markers"):
+            gate.parse_options_trace(self.trace(), "trace")
 
 
 if __name__ == "__main__":

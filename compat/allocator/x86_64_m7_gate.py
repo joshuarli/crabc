@@ -15,10 +15,12 @@ blocker, so the contract cannot claim completion that no executable check
 supports. Runnable evidence is always executed; its pass never removes a
 blocker by itself.
 
-`--options-differential` runs the one evidence check this module owns: the
-separate pinned-C (`x86_64_m7_options_oracle.c`) and Rust
-(`diagnostic_output::tests::source_options_trace_for_pinned_c_comparison`)
-processes print the same `key=value` options trace, and every key must match.
+`--options-differential` and `--option-effects-differential` run the two
+evidence checks this module owns. Each builds a pinned-C oracle
+(`x86_64_m7_options_oracle.c`, `x86_64_m7_option_effects_oracle.c`) and runs
+one exact Rust test (`diagnostic_output::tests::source_options_trace_...` and
+`..._option_effects_trace_...`) in separate processes; both print the same
+`key=value` trace, and every key must match.
 """
 
 from __future__ import annotations
@@ -67,6 +69,16 @@ OPTIONS_SCENARIOS = (
     "guarded_numeric", "size_without_digits", "cap", "overlong",
 )
 OPTIONS_ERROR_SCENARIOS = ("hidden", "capped", "verbose")
+OPTION_EFFECTS_ORACLE = harness.ALLOCATOR_ROOT / "x86_64_m7_option_effects_oracle.c"
+OPTION_EFFECTS_RUST_TEST = "diagnostic_output::tests::source_option_effects_trace_for_pinned_c_comparison"
+OPTION_EFFECTS_TRACE_BEGIN = "CRABC_MI_M7_OPTION_EFFECTS_TRACE_BEGIN"
+OPTION_EFFECTS_TRACE_END = "CRABC_MI_M7_OPTION_EFFECTS_TRACE_END"
+# Every decision family both halves must trace; a family absent from both
+# traces would otherwise compare equal.
+OPTION_EFFECT_FAMILIES = (
+    "host", "arena_max_object_size", "arena_purge_delay", "minimal_purge_size",
+    "numa_node_count", "generic_collect", "arena_reserve",
+)
 RUST_TARGET = "x86_64-unknown-linux-musl"
 
 
@@ -335,21 +347,23 @@ def run_evidence(runnable: Mapping[str, Sequence[str]], artifacts: Path) -> dict
 # differential:options-environment
 # ---------------------------------------------------------------------------
 
-def parse_options_trace(output: str, description: str) -> dict[str, str]:
+def parse_options_trace(
+    output: str, description: str, begin: str = OPTIONS_TRACE_BEGIN, end: str = OPTIONS_TRACE_END,
+) -> dict[str, str]:
     """Parse one marked `key=value` trace whose values are opaque strings."""
 
     # libtest prints `test <name> ... ` before the captured stdout, so the
     # begin marker need not start its line; each marker ends one.
-    if output.count(OPTIONS_TRACE_BEGIN + "\n") != 1 or output.count(OPTIONS_TRACE_END + "\n") != 1:
+    if output.count(begin + "\n") != 1 or output.count(end + "\n") != 1:
         raise harness.HarnessError(f"{description} did not emit exactly one pair of trace markers")
-    start = output.index(OPTIONS_TRACE_BEGIN + "\n") + len(OPTIONS_TRACE_BEGIN) + 1
-    stop = output.index(OPTIONS_TRACE_END + "\n")
+    start = output.index(begin + "\n") + len(begin) + 1
+    stop = output.index(end + "\n")
     if stop < start or (stop > 0 and output[stop - 1] != "\n"):
         raise harness.HarnessError(f"{description} emitted misplaced trace markers")
     trace: dict[str, str] = {}
     for line in output[start:stop].splitlines():
         key, separator, value = line.partition("=")
-        if not separator or not re.fullmatch(r"[a-z0-9_.]+", key):
+        if not separator or not re.fullmatch(r"[a-z0-9_.-]+", key):
             raise harness.HarnessError(f"{description} emitted a malformed trace line: {line[:80]}")
         if key in trace:
             raise harness.HarnessError(f"{description} repeated trace key {key}")
@@ -384,6 +398,15 @@ def require_complete_options_trace(trace: Mapping[str, str], description: str) -
         raise harness.HarnessError(f"{description} lacks the options print")
 
 
+def require_complete_option_effects_trace(trace: Mapping[str, str], description: str) -> None:
+    """Reject a trace that omits a decision family."""
+
+    families = {key.partition(".")[0] for key in trace}
+    missing = [family for family in OPTION_EFFECT_FAMILIES if family not in families]
+    if missing:
+        raise harness.HarnessError(f"{description} lacks decision families {missing}")
+
+
 def compare_options_traces(c_trace: Mapping[str, str], rust_trace: Mapping[str, str]) -> None:
     missing = sorted(set(c_trace) - set(rust_trace))
     extra = sorted(set(rust_trace) - set(c_trace))
@@ -398,61 +421,64 @@ def compare_options_traces(c_trace: Mapping[str, str], rust_trace: Mapping[str, 
         )
 
 
-def c_options_trace(source: Path, temporary: Path) -> dict[str, Any]:
-    """Build and run the pinned-C probe against the release configuration."""
+def c_oracle_trace(oracle: Path, subject: str, source: Path, temporary: Path) -> dict[str, Any]:
+    """Build and run one pinned-C probe against the release configuration."""
 
-    binary = temporary / "m7-options-c"
+    binary = temporary / f"m7-{subject}-c"
     build = harness.command_record(
         [
             harness.require_tool("musl-gcc"), "-std=c11", "-fPIC", "-ftls-model=initial-exec",
             "-DMI_LIBC_MUSL=1", "-I", str(source / "include"), "-I", str(source / "src"),
             *harness.CONFIGURATION_PROFILES["release"],
-            str(OPTIONS_ORACLE), "-pthread", "-o", str(binary),
+            str(oracle), "-pthread", "-o", str(binary),
         ],
         cwd=source,
     )
-    harness.require_success(build, "M7 options C build")
+    harness.require_success(build, f"M7 {subject} C build")
     header = harness.command_record((harness.require_tool("readelf"), "-h", str(binary)), cwd=source)
-    harness.require_success(header, "M7 options C ELF identity")
+    harness.require_success(header, f"M7 {subject} C ELF identity")
     harness.parse_elf_identity(str(header["stdout"]), "x86_64")
     # An empty environment makes the load-time `_mi_options_init` observe only
-    # defaults, which the probe snapshots as its per-scenario reset image.
+    # defaults, which each probe snapshots as its per-scenario reset image.
     execution = harness.command_record((str(binary),), cwd=source, env={})
-    harness.require_success(execution, "M7 options C execution")
+    harness.require_success(execution, f"M7 {subject} C execution")
     return execution
 
 
-def rust_options_trace() -> dict[str, Any]:
-    """Run the exact Rust trace test in the launcher's Cargo environment."""
+def rust_trace(test: str, subject: str) -> dict[str, Any]:
+    """Run one exact Rust trace test in the launcher's Cargo environment."""
 
     command = [
         harness.require_tool("cargo"), "test", "--locked", "--target", RUST_TARGET,
-        "-p", "crabc-mimalloc", "--lib", "--no-default-features", OPTIONS_RUST_TEST,
+        "-p", "crabc-mimalloc", "--lib", "--no-default-features", test,
         "--", "--exact", "--nocapture", "--test-threads=1",
     ]
     execution = harness.command_record(
         command, cwd=harness.ROOT, env=dict(os.environ), timeout_seconds=EVIDENCE_TIMEOUT_SECONDS,
     )
-    harness.require_success(execution, "M7 options Rust trace")
+    harness.require_success(execution, f"M7 {subject} Rust trace")
     if harness.parse_rust_test_count(str(execution["stdout"]) + "\n" + str(execution["stderr"])) != 1:
-        raise harness.HarnessError("M7 options Rust trace did not execute exactly one test")
+        raise harness.HarnessError(f"M7 {subject} Rust trace did not execute exactly one test")
     return execution
 
 
-def run_options_differential(offline: bool) -> dict[str, Any]:
+def run_trace_differential(
+    offline: bool, *, subject: str, oracle: Path, test: str, begin: str, end: str,
+    require_complete: Any, report_name: str,
+) -> dict[str, Any]:
     harness.require_native_x86_64()
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, offline)
-    with harness.temporary_directory("crabc-mimalloc-x86_64-m7-options-") as name:
+    with harness.temporary_directory(f"crabc-mimalloc-x86_64-m7-{subject}-") as name:
         temporary = Path(name)
         source = harness.safe_extract(archive, temporary / "source", pin["archive_root"])
-        c_execution = c_options_trace(source, temporary)
-    rust_execution = rust_options_trace()
-    c_trace = parse_options_trace(str(c_execution["stdout"]), "pinned C options trace")
-    rust_trace = parse_options_trace(str(rust_execution["stdout"]), "Rust options trace")
-    require_complete_options_trace(c_trace, "pinned C options trace")
-    require_complete_options_trace(rust_trace, "Rust options trace")
-    compare_options_traces(c_trace, rust_trace)
+        c_execution = c_oracle_trace(oracle, subject, source, temporary)
+    rust_execution = rust_trace(test, subject)
+    c_trace = parse_options_trace(str(c_execution["stdout"]), f"pinned C {subject} trace", begin, end)
+    rust_trace_image = parse_options_trace(str(rust_execution["stdout"]), f"Rust {subject} trace", begin, end)
+    require_complete(c_trace, f"pinned C {subject} trace")
+    require_complete(rust_trace_image, f"Rust {subject} trace")
+    compare_options_traces(c_trace, rust_trace_image)
     report = {
         "compared_key_count": len(c_trace),
         "c_command": c_execution["command"],
@@ -461,8 +487,24 @@ def run_options_differential(offline: bool) -> dict[str, Any]:
         "trace": dict(sorted(c_trace.items())),
     }
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
-    harness.write_json(ARTIFACTS / "options-environment.json", report)
+    harness.write_json(ARTIFACTS / report_name, report)
     return report
+
+
+def run_options_differential(offline: bool) -> dict[str, Any]:
+    return run_trace_differential(
+        offline, subject="options", oracle=OPTIONS_ORACLE, test=OPTIONS_RUST_TEST,
+        begin=OPTIONS_TRACE_BEGIN, end=OPTIONS_TRACE_END,
+        require_complete=require_complete_options_trace, report_name="options-environment.json",
+    )
+
+
+def run_option_effects_differential(offline: bool) -> dict[str, Any]:
+    return run_trace_differential(
+        offline, subject="option-effects", oracle=OPTION_EFFECTS_ORACLE, test=OPTION_EFFECTS_RUST_TEST,
+        begin=OPTION_EFFECTS_TRACE_BEGIN, end=OPTION_EFFECTS_TRACE_END,
+        require_complete=require_complete_option_effects_trace, report_name="option-effects.json",
+    )
 
 
 def load_summary() -> tuple[dict[str, Any], dict[str, Any]]:
@@ -484,11 +526,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     mode.add_argument("--gate", choices=GATE_IDS, help="execute only this gate's runnable evidence")
     mode.add_argument("--options-differential", action="store_true",
         help="run the pinned-C/Rust options/environment differential")
+    mode.add_argument("--option-effects-differential", action="store_true",
+        help="run the pinned-C/Rust option-effects differential")
     parser.add_argument("--offline", action="store_true", help="require the verified archive in the local cache")
     arguments = parser.parse_args(argv)
     if arguments.options_differential:
         report = run_options_differential(arguments.offline)
         print(f"M7 options/environment differential passed: {report['compared_key_count']} keys")
+        return 0
+    if arguments.option_effects_differential:
+        report = run_option_effects_differential(arguments.offline)
+        print(f"M7 option-effects differential passed: {report['compared_key_count']} keys")
         return 0
     contract, summary = load_summary()
     if arguments.check:
