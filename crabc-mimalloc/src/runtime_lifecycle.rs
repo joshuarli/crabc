@@ -17642,6 +17642,54 @@ mod tests {
         );
     }
 
+    /// Pinned PageMap entries are plain words that each page owner writes
+    /// only for its own ranges; no allocation waits for, or fails on, another
+    /// thread's unrelated registration change. A dormant initial owner that
+    /// reactivates for an ordinary allocation must therefore succeed while a
+    /// worker's post-exit terminal release holds its short W03 boundary.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn dormant_initial_owner_allocates_while_a_terminal_page_release_holds_its_boundary() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::dormant_initial_owner_allocates_while_a_terminal_page_release_holds_its_boundary",
+            || {
+                assert!(publish_native_process_startup_facts(host_startup_facts()));
+                assert!(initialize_process());
+                assert!(native_round_trip(48), "the initial owner activates its first page");
+                assert!(
+                    prepare_native_later_thread_arena(),
+                    "the all-free initial owner becomes dormant for later workers"
+                );
+                let page_map = RUNTIME_PROCESS
+                    .page_map_for_live_native_allocation()
+                    .expect("the active process publishes its PageMap witness");
+                let (held_sender, held_receiver) = mpsc::sync_channel(0);
+                let (release_sender, release_receiver) = mpsc::sync_channel::<()>(0);
+                let releaser = thread::spawn(move || {
+                    // SAFETY: this models one claimed W03 terminal callback
+                    // that has not yet touched a PageMap entry; it releases
+                    // the untouched boundary without any page operation.
+                    let mutation = unsafe { page_map.begin_blocking_exact_post_owner_exit_mutation() }
+                        .expect("the terminal release acquires its short boundary");
+                    held_sender.send(()).expect("the allocator observes the held boundary");
+                    release_receiver.recv().expect("the allocation completes first");
+                    // SAFETY: no PageMap entry changed under this boundary.
+                    unsafe { mutation.finish_after_exact_post_owner_exit_operation() }
+                        .expect("the untouched boundary releases");
+                });
+                held_receiver.recv().expect("the terminal release holds its boundary");
+                let reactivated = native_round_trip(64);
+                release_sender.send(()).expect("the terminal release may finish");
+                releaser.join().expect("the terminal release completes");
+                assert!(
+                    reactivated,
+                    "an ordinary initial allocation does not fail on another page's terminal release"
+                );
+                assert!(native_round_trip(96));
+            },
+        );
+    }
+
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn cold_allocation_without_startup_facts_refuses_without_retaining_the_process() {
