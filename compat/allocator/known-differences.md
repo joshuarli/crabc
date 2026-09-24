@@ -171,6 +171,19 @@ non-abandoning option mode; ordinary dynamic abandonment, concurrent heap
 force-destruction, public heap APIs, and whole-process shutdown require their
 separate lifecycle owners and qualification.
 
+`m2_metadata_ownership_x86_64.c` and
+`meta::ownership_tests::emit_native_metadata_ownership_trace` compare the
+source `_mi_meta_free` no-free predicate for every memory kind, the Arena
+branch for an exclusive-arena Theap slice, a non-main subprocess whose image
+and metadata Theap are parent metadata while its own blocks live on its own
+metadata pages and arenas, and one deterministic allocation/release overlap.
+In that overlap the fixture holds `theap_meta_lock` until an arena-growing
+allocation waits on it and a third thread then releases a published Malloc
+block. The source release is a lock-free remote `mi_free` and completes
+inside that window; the Rust release reaches the metadata backing lock the
+allocation already holds and completes after it. Only facts common to both
+are compared.
+
 ### `CRABC-LIBC-SHADOW-ABI-REALLOC-NULL-ZERO-ALIGNMENT` — observed public-C ABI known red
 
 - **Backends:** `libc/src/allocator_mimalloc.rs:realloc` through the ordinary

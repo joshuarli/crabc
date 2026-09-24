@@ -354,6 +354,22 @@ static void* concurrent_worker(void* raw) {
   return NULL;
 }
 
+/* Source `_mi_meta_free` of one metadata block (`theap.c:353` for an
+   exclusive-arena Theap): its no-free predicate, then the same release
+   record as `release`. */
+static void meta_release(lifecycle_owner_t* owner, lifecycle_claim_t* item) {
+  require(item->start != NULL);
+  const lifecycle_stats_t before = stats_of(owner);
+  mi_arena_t* const arena = item->memid.mem.arena.arena;
+  const size_t index = item->memid.mem.arena.slice_index;
+  emit(mi_memid_needs_no_free(item->memid));
+  _mi_meta_free(&owner->subproc, item->start, item->memid);
+  emit(mi_bbitmap_is_setN(arena->slices_free, index, item->slices));
+  emit(mi_bitmap_is_setN(arena->slices_purge, index, item->slices));
+  emit_stats_delta(owner, before);
+  item->start = NULL;
+}
+
 /* Source `_mi_arenas_free` of one live claim. */
 static void release(lifecycle_owner_t* owner, lifecycle_claim_t* item) {
   require(item->start != NULL);
@@ -778,7 +794,9 @@ int main(void) {
          once. With a negative NUMA node the one requested-arena pass
          refuses; with a nonnegative node the second source pass repeats the
          same parent and commits. disallow_arena_alloc refuses before any
-         search, and every refusal skips the OS (the arena is requested). */
+         search, and every refusal skips the OS (the arena is requested).
+         The committed Theap is returned through `_mi_meta_free`'s Arena
+         branch, as `theap.c:353` does. */
   emit_marker(15);
   {
     configure(true, 32 * 1024, 0, false);
@@ -802,7 +820,7 @@ int main(void) {
     lifecycle_claim_t disallowed = theap_alloc(owner, exclusive, 0);
     mi_option_set(mi_option_disallow_arena_alloc, 0);
     require(disallowed.start == NULL);
-    release(owner, &second_pass);
+    meta_release(owner, &second_pass);
   }
 
   /* 16. A committed claim whose first-arena commit fails: the unchanged

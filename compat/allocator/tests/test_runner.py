@@ -4531,7 +4531,7 @@ class ContractTests(unittest.TestCase):
         native_gate.assert_called_once_with(offline=True)
         aarch_gate.assert_not_called()
 
-    def test_x86_m2_contract_is_target_local_and_qualifies_page_map_and_bitmaps(self) -> None:
+    def test_x86_m2_contract_is_target_local_and_qualifies_page_map_bitmaps_and_metadata(self) -> None:
         contract = RUNNER.read_json(RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CONTRACT)
         summary = RUNNER.validate_x86_64_m2_memory_substrate_contract(
             contract, RUNNER.load_pin()
@@ -4561,9 +4561,14 @@ class ContractTests(unittest.TestCase):
                 and component["remaining_conditions"]
                 and component["unqualified_failure_matrix"]
                 for component in summary["components"]
-                if component["id"] not in {"page-map", "bitmaps"}
+                if component["id"] not in {"page-map", "bitmaps", "metadata"}
             )
         )
+        metadata = next(
+            component for component in summary["components"] if component["id"] == "metadata"
+        )
+        self.assertEqual(metadata["native_status"], "complete")
+        self.assertEqual(metadata["remaining_conditions"], [])
 
     def test_x86_m2_metadata_contract_runs_the_publication_lifecycle_witness(self) -> None:
         contract = RUNNER.read_json(RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CONTRACT)
@@ -4583,6 +4588,11 @@ class ContractTests(unittest.TestCase):
                     "metadata-cross-thread-publication-lifecycle",
                     "c-rust-metadata-lifecycle-differential",
                     "meta::tests::process_metadata_cross_thread_publication_and_replacement_trace",
+                ),
+                (
+                    "metadata-ownership-c-rust-differential",
+                    "c-rust-metadata-ownership-differential",
+                    "meta::ownership_tests::emit_native_metadata_ownership_trace",
                 ),
             ],
         )
@@ -4610,10 +4620,10 @@ class ContractTests(unittest.TestCase):
             )
 
         missing_partial_matrix = json.loads(json.dumps(contract))
-        bitmaps = next(
-            component for component in missing_partial_matrix["components"] if component["id"] == "metadata"
+        arenas = next(
+            component for component in missing_partial_matrix["components"] if component["id"] == "arenas"
         )
-        bitmaps["unqualified_failure_matrix"] = []
+        arenas["unqualified_failure_matrix"] = []
         with self.assertRaisesRegex(RUNNER.HarnessError, "lacks an unqualified failure matrix"):
             RUNNER.validate_x86_64_m2_memory_substrate_contract(
                 missing_partial_matrix, RUNNER.load_pin()
@@ -4645,7 +4655,7 @@ class ContractTests(unittest.TestCase):
                     contract, RUNNER.load_pin()
                 )
 
-    def test_x86_m2_report_fails_closed_for_the_six_unqualified_components(self) -> None:
+    def test_x86_m2_report_fails_closed_for_the_five_unqualified_components(self) -> None:
         from test_x86_64_m2_bitmaps import NativeBitmapAssemblyTests
         arguments = NativeBitmapAssemblyTests().report_arguments()
         initialization_checks = arguments.pop('_initialization_checks')
@@ -4662,7 +4672,6 @@ class ContractTests(unittest.TestCase):
             report["milestone"]["unmet_component_ids"],
             [
                 "vm-primitives",
-                "metadata",
                 "arenas",
                 "initialization",
                 "fault-injection",
@@ -4672,7 +4681,7 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(
             RUNNER.m2_x86_64_memory_substrate_unmet_message(report).split(";", 1)[0],
             "native x86 M2 memory substrate remains partial for "
-            "vm-primitives, metadata, arenas, initialization, fault-injection, "
+            "vm-primitives, arenas, initialization, fault-injection, "
             "allocator-recursion",
         )
 

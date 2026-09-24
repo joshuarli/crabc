@@ -835,6 +835,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 ),
                 _m2_x86_64_metadata_check_records=metadata_records_producer,
                 run_m2_x86_64_metadata_lifecycle_differential=metadata_lifecycle_producer,
+                _run_m2_x86_64_metadata_ownership_evidence=mock.Mock(return_value={}),
             ),
             mock.patch.object(RUNNER, "_run_m2_x86_64_initialization_evidence", return_value={}) as initialization_producer,
             mock.patch.object(RUNNER, "_m2_x86_64_initialization_check_records", return_value=initialization_records),
@@ -867,7 +868,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
         )
         self.assertIn(arena_lifecycle_check["id"], observed["ids"])
         metadata_lifecycle_producer.assert_called_once()
-        metadata_records_producer.assert_called_once_with(summary, {})
+        metadata_records_producer.assert_called_once_with(summary, {}, {})
         runtime_thp_producer.assert_called_once_with()
         initialization_producer.assert_called_once_with(offline=True)
         fault_producer.assert_called_once_with(offline=True, test_program={}, vm_evidence={})

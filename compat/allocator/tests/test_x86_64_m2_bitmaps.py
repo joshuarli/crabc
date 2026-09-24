@@ -96,10 +96,10 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
         return RUNNER.validate_x86_64_m2_memory_substrate_contract(
             RUNNER.read_json(RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CONTRACT), RUNNER.load_pin())
 
-    def test_bitmap_fragment_is_complete_but_six_components_are_not(self):
+    def test_bitmap_fragment_is_complete_but_five_components_are_not(self):
         summary = self.summary()
         complete = [c['id'] for c in summary['components'] if c['native_status'] == 'complete']
-        self.assertEqual(complete, ['bitmaps', 'page-map'])
+        self.assertEqual(complete, ['metadata', 'bitmaps', 'page-map'])
         self.assertEqual(summary['milestone']['status'], 'partial')
         bitmap = summary['components'][2]
         self.assertEqual(len(bitmap['bounded_source_definitions']), 9)
@@ -138,14 +138,25 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
             ), self.assertRaisesRegex(RUNNER.HarnessError, 'source-map predicate is not current'):
                 self.summary()
 
+    def metadata_ownership_evidence(self):
+        return {
+            'status': 'passed', 'comparison': {'status': 'matched', 'compared_value_count': 65},
+            'rust_passed_test_count': 1, 'rust_command': ['/workspace/.work/prepared-test'],
+        }
+
     def test_metadata_differential_receipt_binds_the_selected_c_and_rust_trace(self):
         checks = RUNNER._m2_x86_64_metadata_check_records(
-            self.summary(), self.metadata_evidence()
+            self.summary(), self.metadata_evidence(), self.metadata_ownership_evidence()
         )
         self.assertEqual([check["id"] for check in checks], [
-            "metadata-cross-thread-publication-lifecycle"
+            "metadata-cross-thread-publication-lifecycle",
+            "metadata-ownership-c-rust-differential",
         ])
-        self.assertEqual(checks[0]["comparison_status"], "matched")
+        self.assertTrue(all(check["comparison_status"] == "matched" for check in checks))
+        unmatched = dict(self.metadata_ownership_evidence(), comparison={'status': 'mismatch'})
+        with self.assertRaisesRegex(RUNNER.HarnessError, 'metadata ownership receipt is invalid'):
+            RUNNER._m2_x86_64_metadata_check_records(
+                self.summary(), self.metadata_evidence(), unmatched)
 
     def test_prepared_bitmap_producer_executes_the_supplied_binary_without_building(self):
         spec = importlib.util.spec_from_file_location('bitmap_producer_test', RUNNER.ALLOCATOR_ROOT / 'm2_bitmaps_x86_64.py')
@@ -188,7 +199,9 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
                            'evidence_scope': 'focused-source-test-batch'})
         checks.extend(RUNNER._m2_x86_64_bitmap_check_records(summary, evidence))
         metadata_evidence = self.metadata_evidence()
-        checks.extend(RUNNER._m2_x86_64_metadata_check_records(summary, metadata_evidence))
+        metadata_ownership_evidence = self.metadata_ownership_evidence()
+        checks.extend(RUNNER._m2_x86_64_metadata_check_records(
+            summary, metadata_evidence, metadata_ownership_evidence))
         initialization_checks = [
             {'component': 'initialization', 'command': ['/workspace/.work/prepared-test'],
              'comparison_status': 'matched', 'evidence_scope': 'synthetic-initialization-report-assembly-fixture',
@@ -235,6 +248,7 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
             'bounded_source_evidence': {'status': 'passed', 'record_count': len(records), 'records': records},
             'focused_checks': checks, 'bitmap_evidence': evidence, 'vm_evidence': vm_evidence,
             'metadata_evidence': metadata_evidence,
+            'metadata_ownership_evidence': metadata_ownership_evidence,
             'initialization_evidence': {'synthetic': True},
             'fault_evidence': {'synthetic': True},
             '_initialization_checks': initialization_checks,
@@ -280,7 +294,7 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
             RUNNER, '_m2_x86_64_process_arena_collect_check_records', return_value=arena_checks
         ):
             report = RUNNER.m2_x86_64_memory_substrate_report(**arguments)
-        self.assertEqual(len(report['milestone']['unmet_component_ids']), 6)
+        self.assertEqual(len(report['milestone']['unmet_component_ids']), 5)
         self.assertEqual(report['milestone']['status'], 'partial')
         bitmap = report['components'][2]
         self.assertEqual(bitmap['status'], 'complete')

@@ -7408,3 +7408,247 @@ mod tests {
         assert_eq!(crate::compiler_tls::cached_theap(), cached_before);
     }
 }
+
+/// Rust half of `compat/allocator/m2_metadata_ownership_x86_64.c`: the
+/// `_mi_meta_free` no-free predicate, non-main subprocess metadata ownership,
+/// one deterministic allocation/release overlap, and `_mi_meta_free`'s Arena
+/// branch. Both sides print the
+/// same ordered `m2.metadata.ownership.N=V` fields.
+#[cfg(test)]
+mod ownership_tests {
+    extern crate std;
+
+    use super::*;
+    use crate::config::{ARENA_MIN_SIZE, KIB, VmOption, VmOptionEnvironment, VmOptions};
+    use crate::os::PageSize;
+    use crate::types::MemoryKind;
+    use std::vec::Vec;
+
+    struct Trace { values: Vec<i64> }
+
+    impl Trace {
+        fn emit(&mut self, value: i64) { self.values.push(value); }
+        fn emit_bool(&mut self, value: bool) { self.emit(i64::from(value)); }
+        fn marker(&mut self, scenario: i64) { self.emit(-1000 - scenario); }
+    }
+
+    fn config() -> MemoryConfig {
+        MemoryConfig::from_observations(PageSize::new(4096).unwrap(), 1024 * 1024, false, false)
+    }
+
+    fn all_bytes(pointer: *const u8, size: usize, value: u8) -> bool {
+        // SAFETY: each caller passes a live block of at least `size` bytes.
+        unsafe { core::slice::from_raw_parts(pointer, size) }.iter().all(|byte| *byte == value)
+    }
+
+    /// 1. Pinned `_mi_meta_free` returns without freeing for exactly these
+    /// kinds; every other kind selects a typed release owner in Rust.
+    fn no_free_predicate(trace: &mut Trace) {
+        trace.marker(1);
+        for kind in [MemoryKind::None, MemoryKind::External, MemoryKind::Static, MemoryKind::Os,
+            MemoryKind::OsHuge, MemoryKind::OsRemap, MemoryKind::Arena, MemoryKind::Malloc]
+        {
+            trace.emit_bool(kind.needs_no_free());
+        }
+    }
+
+    /// 2. A non-main subprocess: its image and metadata Theap are parent
+    /// metadata; its own metadata blocks live on its own metadata pages in its
+    /// own arenas without growing the parent's arenas.
+    fn child_ownership() -> Vec<i64> {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        crate::main_heap_page::tests::with_owner_local_fixture(true, move |attachment, mut heap_owner, pair| {
+            let (parent, registry, binding) =
+                crate::subproc::lifecycle::tests::child_fixture_inputs(attachment, pair);
+            let mut trace = Trace { values: Vec::new() };
+            trace.marker(2);
+            let metadata = attachment.parent_metadata_allocator();
+            // SAFETY: the registry holds main and this is the attached
+            // fixture thread; no other child operation exists.
+            let mut child = unsafe { crate::subproc::lifecycle::new_child(registry, attachment, &mut heap_owner) }
+                .ok()
+                .expect("the child is created");
+            // Parent arenas are counted after the parent issued the child image.
+            let main_arenas_before = parent.arena_backing().registry().count();
+            let identity = child.identity_pointer().expect("a created child projects its identity");
+            // SAFETY: the created child image stays live until destruction.
+            let child_identity = unsafe { &*identity };
+            // The parent's metadata engine resolves its own pages; the child
+            // image and metadata Theap are live blocks on those pages.
+            let parent_page_is = |pointer: *mut u8, owner: &crate::subproc::SubprocessIdentity| {
+                let mut entry = metadata.enter().unwrap();
+                let pointer = NonNull::new(pointer).unwrap();
+                // SAFETY: the live block's page stays registered while the
+                // metadata entry excludes every page transition.
+                let page = unsafe { match entry.allocator() {
+                    MetadataPageAllocator::LegacySelectedArena(engine) => engine.page_for_block(pointer),
+                    MetadataPageAllocator::Process(engine) => engine.page_for_block(pointer),
+                    MetadataPageAllocator::CanonicalProcess(engine) => engine.page_for_block(pointer),
+                }.as_ref() };
+                owner.is_metadata_page(page)
+            };
+            trace.emit_bool(parent_page_is(identity.cast(), parent));
+            trace.emit_bool(parent_page_is(identity.cast(), child_identity));
+            trace.emit_bool(parent_page_is(child_identity.test_published_metadata_theap().cast(), parent));
+            trace.emit(child_identity.arena_backing().registry().count() as i64);
+            let sizes = [1usize, 64, 1025, 131073];
+            child
+                .with_metadata_page_engine(binding, |_child, engine| {
+                    let mut blocks = Vec::new();
+                    for size in sizes {
+                        let block = engine.allocate(size, true).expect("child metadata allocates");
+                        // SAFETY: the exact live block allocated just above.
+                        let page = unsafe { &*engine.page_for_block(block) };
+                        trace.emit_bool(all_bytes(block.as_ptr(), size, 0));
+                        trace.emit_bool(child_identity.is_metadata_page(Some(page)));
+                        trace.emit_bool(parent.is_metadata_page(Some(page)));
+                        let arena = page.memid().arena_memory().map(|memory| memory.arena);
+                        trace.emit_bool(arena.is_some_and(|arena| {
+                            // SAFETY: a live page's arena outlives the page.
+                            core::ptr::eq(unsafe { (*arena).subprocess }, identity)
+                        }));
+                        trace.emit(child_identity.arena_backing().registry().count() as i64);
+                        trace.emit(parent.arena_backing().registry().count() as i64
+                            - main_arenas_before as i64);
+                        // SAFETY: the block owns `size` writable bytes.
+                        unsafe { core::ptr::write_bytes(block.as_ptr(), 0x5a, size) };
+                        blocks.push((block, size));
+                    }
+                    for (block, size) in blocks {
+                        trace.emit_bool(all_bytes(block.as_ptr(), size, 0x5a));
+                        // SAFETY: the exact live block allocated above.
+                        unsafe { engine.free(block) }.expect("child metadata frees");
+                    }
+                })
+                .expect("the child metadata engine is available");
+            trace.emit(child_identity.arena_backing().registry().count() as i64);
+            trace.emit(parent.arena_backing().registry().count() as i64 - main_arenas_before as i64);
+            // SAFETY: the child has no users, blocks, or threads left.
+            unsafe {
+                crate::subproc::lifecycle::destroy_child(child, registry, binding, &mut [], attachment, &mut heap_owner)
+            }
+            .ok()
+            .expect("the child is destroyed");
+            heap_owner.finish(attachment).ok().expect("the parent engine is quiescent");
+            attachment
+                .finish_after_user_destructors()
+                .ok()
+                .expect("the parent attachment completes after its child");
+            sender.send(trace.values).unwrap();
+        });
+        receiver.recv().expect("the child ownership fixture reports its trace")
+    }
+
+    /// 3. A deterministic allocation/release overlap on the main subprocess.
+    /// The fixture holds `theap_meta_lock` until an arena-growing allocation
+    /// waits on it, then a third thread releases a published block. Source
+    /// `_mi_meta_free` of a Malloc block is a lock-free `mi_free`, while the
+    /// Rust release reaches its backing lock inside the same window
+    /// (known-differences.md); only facts common to both are emitted.
+    fn allocation_release_overlap(trace: &mut Trace) {
+        trace.marker(3);
+        let allocator = MetaAllocator::test_static_owner();
+        let subprocess = allocator.test_default_subprocess();
+        allocator.prepare_for_main_subprocess(config(), subprocess).unwrap();
+        let mut options = VmOptions::uninitialized();
+        options.initialize_all(|_| VmOptionEnvironment::Absent);
+        options.set(VmOption::ArenaReserve, (ARENA_MIN_SIZE / KIB) as i64);
+        options.set(VmOption::ArenaEagerCommit, 0);
+        options.set(VmOption::PageCommitOnDemand, 0);
+        options.set(VmOption::PurgeDelay, -1);
+        let storage = crate::process_init::ProcessMainInitializationStorage::test_static_owner();
+        let page_map = crate::process_page_map::ProcessPageMapStorage::test_static_owner();
+        // SAFETY: these process-lifetime owners are isolated to this test.
+        let binding = unsafe {
+            storage.test_prepare_vm_process_backing_binding(config(), options, subprocess, page_map)
+        }
+        .unwrap();
+        allocator.bind_process_backing(binding).unwrap();
+        let map = unsafe { binding.page_map().page_map_for_owned_ranges() }.unwrap();
+        let arenas = || subprocess.arena_backing().registry().count() as i64;
+
+        let published = std::thread::spawn(move || {
+            let block = allocator.zalloc(config(), 64).unwrap();
+            assert!(all_bytes(block.pointer().as_ptr(), 64, 0));
+            // SAFETY: the exclusive allocation owns 64 writable bytes.
+            unsafe { core::ptr::write_bytes(block.pointer().as_ptr(), 0xa5, 64) };
+            block
+        })
+        .join()
+        .unwrap();
+        let published_pointer = published.pointer().as_ptr() as usize;
+        let arenas_before = arenas();
+        let size = 2 * ARENA_MIN_SIZE;
+
+        std::thread::scope(|scope| {
+            let held = subprocess.test_hold_metadata_theap_lock().unwrap();
+            let allocation = scope.spawn(move || allocator.zalloc(config(), size).unwrap());
+            while !subprocess.test_metadata_theap_lock_is_contended() { std::thread::yield_now(); }
+            trace.emit(1); // the allocation is waiting on theap_meta_lock
+            trace.emit(arenas() - arenas_before);
+            let release = scope.spawn(move || {
+                let intact = all_bytes(published_pointer as *const u8, 64, 0xa5);
+                assert!(MetaRelease::Malloc(published).release().is_ok());
+                intact
+            });
+            // Rust synchronization point: the release waits on the backing
+            // lock held by the in-flight allocation.
+            while !allocator.get_ref().lock.test_is_contended() { std::thread::yield_now(); }
+            trace.emit_bool(!allocation.is_finished()); // still inside the held lock
+            drop(held);
+            let block = allocation.join().unwrap();
+            let intact = release.join().unwrap();
+            trace.emit_bool(intact);
+            trace.emit_bool(block.memory_id().kind() == MemoryKind::Malloc);
+            trace.emit_bool(all_bytes(block.pointer().as_ptr(), size, 0));
+            // SAFETY: the live allocation keeps its page registered.
+            let page = unsafe { map.checked_lookup(block.pointer().as_ptr()).as_ref() };
+            trace.emit_bool(subprocess.is_metadata_page(page));
+            trace.emit_bool(block.pointer().as_ptr() as usize != published_pointer);
+            trace.emit(arenas() - arenas_before);
+            assert!(MetaRelease::Malloc(block).release().is_ok());
+        });
+
+        // 4. `_mi_meta_free`'s Arena branch. Rust has no memory-ID
+        // dispatcher: the typed exclusive-arena Theap reservation is the
+        // only owner that can return this slice.
+        trace.marker(4);
+        let process = binding.process();
+        let backing = subprocess.arena_backing();
+        // SAFETY: the isolated process backing and its fixed binding live for
+        // the test; no teardown overlaps these calls.
+        let exclusive = unsafe { backing.reserve_os_memory_for_process(process, config(),
+            ARENA_MIN_SIZE, crate::os::MapAccess::Reserved, false, true, None) }.unwrap();
+        let statistics = || process.subprocess().vm_statistics().snapshot();
+        let before = statistics();
+        let reservation = unsafe { backing.try_reserve_exclusive_theap(process, config(), subprocess,
+            exclusive, crate::types::ThreadSequence::from_previous_total_count(0), -1) }.unwrap();
+        let memory = reservation.memory_id();
+        let arena_memory = memory.arena_memory().unwrap();
+        let view = unsafe { crate::arena::ArenaView::from_ptr(arena_memory.arena) }.unwrap();
+        let index = arena_memory.slice_index as usize;
+        let count = arena_memory.slice_count as usize;
+        trace.emit_bool(memory.kind() == MemoryKind::Arena && arena_memory.arena == exclusive.as_ptr());
+        trace.emit_bool(memory.needs_no_free());
+        trace.emit(count as i64);
+        trace.emit_bool(unsafe { view.slices_free() }.unwrap().is_clear_range(index, count) == Some(true));
+        trace.emit(statistics().committed_current - before.committed_current);
+        assert!(matches!(reservation.release(), Ok(true)));
+        trace.emit_bool(unsafe { view.slices_free() }.unwrap().is_set_range(index, count) == Some(true));
+        trace.emit_bool(unsafe { view.slices_purge() }.unwrap().is_set_range(index, count) == Some(true));
+        trace.emit(statistics().committed_current - before.committed_current);
+        trace.emit(statistics().reserved_current - before.reserved_current);
+    }
+
+    #[test]
+    fn emit_native_metadata_ownership_trace() {
+        let mut trace = Trace { values: Vec::new() };
+        no_free_predicate(&mut trace);
+        trace.values.extend(child_ownership());
+        allocation_release_overlap(&mut trace);
+        trace.marker(5);
+        for (index, value) in trace.values.iter().enumerate() {
+            std::println!("m2.metadata.ownership.{index}={value}");
+        }
+    }
+}

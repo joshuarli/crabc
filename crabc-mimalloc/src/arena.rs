@@ -1670,13 +1670,6 @@ impl<'arena, 'subprocess> ExclusiveArenaTheapReservation<'arena, 'subprocess> {
         self.claim.slice_index()
     }
 
-    /// Returns the plain claim so a fixture can release it through the same
-    /// path as its other arena claims.
-    #[cfg(test)]
-    pub(crate) fn into_claim(self) -> ArenaSliceClaim<'arena> {
-        self.claim
-    }
-
     #[inline]
     pub(crate) fn slice_count(&self) -> usize {
         self.claim.slice_count()

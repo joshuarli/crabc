@@ -7,23 +7,155 @@
       }
     },
     {
+      "bounded_source_definitions": [
+        {
+          "evidence_check_ids": [
+            "metadata-cross-thread-publication-lifecycle",
+            "metadata-ownership-c-rust-differential"
+          ],
+          "id": "detached-metadata-allocation-and-replacement",
+          "required_definitions": [
+            "void* _mi_meta_zalloc(",
+            "void* _mi_meta_zalloc_aligned(",
+            "void* _mi_meta_rezalloc(",
+            "mi_lock(&subproc->theap_meta_lock)"
+          ],
+          "source_anchor": {
+            "end_line": 71,
+            "member": "src/subproc.c",
+            "sha256": "1f3d5546441452636b3c6812a9ad00b5a077c03fa7e8912f2b610bdcdc13be68",
+            "start_line": 29
+          }
+        },
+        {
+          "evidence_check_ids": [
+            "metadata-cross-thread-publication-lifecycle",
+            "metadata-ownership-c-rust-differential"
+          ],
+          "id": "metadata-free-kind-dispatch-and-page-identity",
+          "required_definitions": [
+            "void _mi_meta_free(",
+            "mi_memid_needs_no_free(memid)",
+            "_mi_arenas_free(subproc, p, _mi_memid_size(memid), memid)",
+            "bool _mi_meta_is_meta_page("
+          ],
+          "source_anchor": {
+            "end_line": 89,
+            "member": "src/subproc.c",
+            "sha256": "752d32b006edd381ab812413bc91cd1be71109f348ac2d59d31f53015a6a9918",
+            "start_line": 73
+          }
+        },
+        {
+          "evidence_check_ids": [
+            "metadata-ownership-c-rust-differential"
+          ],
+          "id": "memory-kind-no-free-predicate",
+          "required_definitions": [
+            "typedef enum mi_memkind_e",
+            "static inline bool mi_memkind_needs_no_free"
+          ],
+          "source_anchor": {
+            "end_line": 306,
+            "member": "include/mimalloc/types.h",
+            "sha256": "597b8c786d488f7cd8b21815fa2ee61f7e298c5978c4fbfa90a6f42457178d29",
+            "start_line": 288
+          }
+        },
+        {
+          "evidence_check_ids": [
+            "metadata-ownership-c-rust-differential"
+          ],
+          "id": "non-main-subprocess-metadata-ownership",
+          "required_definitions": [
+            "mi_subproc_id_t mi_subproc_new(void)",
+            "_mi_meta_zalloc(parent, sizeof(mi_subproc_t), &memid)",
+            "_mi_meta_zalloc(parent, sizeof(mi_theap_t), &theap_memid)",
+            "subproc->theap_meta = theap_meta;"
+          ],
+          "source_anchor": {
+            "end_line": 194,
+            "member": "src/subproc.c",
+            "sha256": "e3b776bf544502de2025ba1f24e0ad3f8b3392b97cc68c950c3dcefbdfe6d493",
+            "start_line": 158
+          }
+        },
+        {
+          "evidence_check_ids": [
+            "metadata-ownership-c-rust-differential"
+          ],
+          "id": "exclusive-arena-theap-metadata-release",
+          "required_definitions": [
+            "mi_theap_t* _mi_theap_alloc(",
+            "_mi_arenas_alloc(heap, size, true, true, heap->exclusive_arena",
+            "static void mi_theap_free_mem(",
+            "_mi_meta_free(subproc, theap, theap->memid)"
+          ],
+          "source_anchor": {
+            "end_line": 355,
+            "member": "src/theap.c",
+            "sha256": "4af96aa6aa496a6b1ecd119adb1d7bcf0526a85dc8e772b9b2cfd639bf2b9371",
+            "start_line": 308
+          }
+        }
+      ],
       "checks": [
         {
           "expected_passed_test_count": 1,
           "id": "metadata-cross-thread-publication-lifecycle",
           "kind": "c-rust-metadata-lifecycle-differential",
           "target": "meta::tests::process_metadata_cross_thread_publication_and_replacement_trace"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "metadata-ownership-c-rust-differential",
+          "kind": "c-rust-metadata-ownership-differential",
+          "target": "meta::ownership_tests::emit_native_metadata_ownership_trace"
+        }
+      ],
+      "failure_matrix": [
+        {
+          "evidence_check_ids": [
+            "metadata-cross-thread-publication-lifecycle"
+          ],
+          "id": "main-detached-metadata-publication-and-replacement",
+          "source_scope": "src/subproc.c:29-71 main-subprocess detached metadata allocation, aligned allocation, and replacement under theap_meta_lock, with cross-thread payload/provenance publication and failed-replacement retention"
+        },
+        {
+          "evidence_check_ids": [
+            "metadata-ownership-c-rust-differential"
+          ],
+          "id": "non-main-subprocess-metadata-ownership",
+          "source_scope": "src/subproc.c:158-194 and 84-89: a child's image and metadata Theap are parent metadata, while its own metadata blocks live on its own metadata pages in its own arenas without growing the parent's arenas"
+        },
+        {
+          "evidence_check_ids": [
+            "metadata-ownership-c-rust-differential"
+          ],
+          "id": "non-malloc-memory-id-release",
+          "source_scope": "src/subproc.c:73-81 and include/mimalloc/types.h:288-306: the no-free kinds (None/External/Static) return without freeing; the Arena kind (the src/theap.c:318-325 exclusive-arena Theap producer) returns its exact slice through _mi_arenas_free (src/theap.c:347-355). OS, huge-OS and remapped-OS kinds have no metadata producer in this profile"
+        },
+        {
+          "evidence_check_ids": [
+            "metadata-cross-thread-publication-lifecycle",
+            "metadata-ownership-c-rust-differential"
+          ],
+          "id": "deterministic-allocation-publication-release-overlap",
+          "source_scope": "src/subproc.c:29-81: one arena-growing allocation held inside theap_meta_lock while a third thread releases a published block, plus the barrier-phased cross-thread replacement/allocation batches"
         }
       ],
       "id": "metadata",
-      "native_status": "partial",
-      "remaining_conditions": [
-        "Qualify non-main-subprocess metadata ownership and non-Malloc memory-ID release branches.",
-        "Qualify deterministic concurrent allocation/publication/release overlap; the current phase barrier proves only that cross-thread replacements happen before peer allocation batches finish."
-      ],
+      "native_status": "complete",
+      "remaining_conditions": [],
       "source_map_records": [
-        { "required_status": "partial", "unit_id": "core-layouts-and-configuration" },
-        { "required_status": "partial", "unit_id": "atomic-operation-facade" }
+        {
+          "required_status": "partial",
+          "unit_id": "core-layouts-and-configuration"
+        },
+        {
+          "required_status": "partial",
+          "unit_id": "atomic-operation-facade"
+        }
       ],
       "source_units": [
         "src/subproc.c",
@@ -38,13 +170,6 @@
         "include/mimalloc/internal.h",
         "include/mimalloc/atomic.h",
         "include/mimalloc/types.h"
-      ],
-      "unqualified_failure_matrix": [
-        {
-          "id": "metadata-backing-and-publication",
-          "required_evidence": ["non-main-subprocess metadata lifecycle", "non-Malloc memory-ID release matrix", "concurrent allocation/publication/release overlap"],
-          "source_scope": "src/subproc.c:19-81 metadata allocation, detached metadata-theap locking, and typed memory-ID release; src/theap.c, src/alloc.c, src/alloc-aligned.c, src/page.c, src/arena.c, src/page-map.c, src/os.c, and src/init.c provide the selected ordinary backing, publication, and release paths"
-        }
       ]
     },
     {

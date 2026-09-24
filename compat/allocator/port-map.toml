@@ -2723,6 +2723,21 @@ performance_qualified = false
 
 [[item]]
 upstream = "src/subproc.c"
+name = "metadata-free-kinds-child-ownership-and-deterministic-overlap"
+source_region = "mimalloc v3.5.0 src/subproc.c:73-89 `_mi_meta_free` no-free/Malloc/Arena dispatch and `_mi_meta_is_meta_page`; src/subproc.c:158-194 `mi_subproc_new` parent-issued child image and metadata Theap; src/theap.c:308-355 the exclusive-arena Theap producer and its `_mi_meta_free` release; include/mimalloc/types.h:288-306 the memory-kind no-free predicate"
+rust_module = "crabc_mimalloc::meta, crabc_mimalloc::arena::owned, and crabc_mimalloc::subproc::lifecycle"
+rust_item = "MemoryKind::needs_no_free; ProcessArenaBacking::try_reserve_exclusive_theap; ExclusiveArenaTheapReservation::release; SubprocessIdentity::is_metadata_page; ChildMainHeapContextOwner::with_metadata_page_engine; MetaRelease::Malloc; and meta::ownership_tests::emit_native_metadata_ownership_trace"
+intentional_difference = "Rust has no memory-ID dispatcher: the no-free kinds form no release owner, the Arena kind is returned only by the typed exclusive-arena Theap reservation, and the OS/huge/remap kinds have no metadata producer in this profile. Source `_mi_meta_free` of a Malloc block is a lock-free remote `mi_free`; Rust serializes it with the metadata backing lock. In the deterministic overlap the C release therefore completes while the allocation holds theap_meta_lock, whereas the Rust release waits on the backing lock that allocation holds; the differential emits only facts common to both."
+tests = ["crabc-mimalloc/src/meta.rs", "compat/allocator/m2_metadata_ownership_x86_64.c", "compat/allocator/m2_metadata_ownership_x86_64.py"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/subproc.c"
 name = "same-thread-metadata-malloc-free-reentry-before-capability-mutation"
 source_region = "mimalloc v3.5.0 src/subproc.c:73-81 `_mi_meta_free`, limited to its MI_MEM_MALLOC branch; src/subproc.c:51-63 `_mi_meta_rezalloc` only for the already-mapped lock-drop-before-copy/free context"
 rust_module = "crabc_mimalloc::meta"

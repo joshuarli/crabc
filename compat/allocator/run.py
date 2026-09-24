@@ -342,6 +342,12 @@ M2_X86_64_METADATA_CHECKS = (
         "kind": "c-rust-metadata-lifecycle-differential",
         "target": "meta::tests::process_metadata_cross_thread_publication_and_replacement_trace",
     },
+    {
+        "expected_passed_test_count": 1,
+        "id": "metadata-ownership-c-rust-differential",
+        "kind": "c-rust-metadata-ownership-differential",
+        "target": "meta::ownership_tests::emit_native_metadata_ownership_trace",
+    },
 )
 M2_X86_64_METADATA_CHECK_IDS = tuple(check["id"] for check in M2_X86_64_METADATA_CHECKS)
 M2_METADATA_LIFECYCLE_TRACE_KEYS = (
@@ -12676,6 +12682,40 @@ def _m2_x86_64_arena_lifecycle_producer() -> Any:
     return producer
 
 
+def _m2_x86_64_metadata_ownership_producer() -> Any:
+    """Load the pinned C/Rust metadata ownership producer."""
+
+    path = ALLOCATOR_ROOT / "m2_metadata_ownership_x86_64.py"
+    spec = importlib.util.spec_from_file_location("crabc_m2_native_metadata_ownership", path)
+    if spec is None or spec.loader is None:
+        raise HarnessError("native x86 M2 metadata ownership producer is absent")
+    producer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(producer)
+    return producer
+
+
+def _m2_x86_64_metadata_ownership_check_record(
+    check: Mapping[str, Any], evidence: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Record the executed metadata ownership differential."""
+
+    if (
+        evidence.get("status") != "passed"
+        or evidence.get("comparison", {}).get("status") != "matched"
+        or evidence.get("rust_passed_test_count") != check["expected_passed_test_count"]
+    ):
+        raise HarnessError("native x86 M2 metadata ownership receipt is invalid")
+    return {
+        "comparison_status": "matched",
+        "component": "metadata",
+        "command": list(evidence["rust_command"]),
+        "evidence_scope": "pinned-c-rust-metadata-free-kinds-child-subprocess-ownership-and-deterministic-overlap",
+        "id": check["id"],
+        "passed_test_count": evidence["rust_passed_test_count"],
+        "target": check["target"],
+    }
+
+
 def _m2_x86_64_arena_lifecycle_check_record(
     check: Mapping[str, Any], evidence: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -12864,7 +12904,7 @@ def validate_x86_64_m2_memory_substrate_contract(
         elif component_id == "fault-injection":
             fragment_reference = raw_component.get("evidence_fragment")
             raw_component = _m2_x86_64_fault_component(raw_component, pin)
-        complete = component_id in {"bitmaps", "page-map"}
+        complete = component_id in {"bitmaps", "page-map", "metadata"}
         partial_evidence_component = component_id in {
             "vm-primitives", "initialization", "fault-injection"
         }
@@ -12952,6 +12992,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                 not in {
                     "rust-unit",
                     "c-rust-metadata-lifecycle-differential",
+                    "c-rust-metadata-ownership-differential",
                     "c-rust-page-map-success-differential",
                     "c-rust-page-map-lazy-commit-failure-differential",
                     "c-rust-page-map-cold-init-differential",
@@ -13033,6 +13074,11 @@ def validate_x86_64_m2_memory_substrate_contract(
                     _m2_x86_64_arena_lifecycle_producer().TARGET
                 ):
                     raise HarnessError("native x86 M2 arena lifecycle evidence target is absent")
+            elif raw_check.get("kind") == "c-rust-metadata-ownership-differential":
+                if component_id != "metadata" or raw_check.get("target") != (
+                    _m2_x86_64_metadata_ownership_producer().TARGET
+                ):
+                    raise HarnessError("native x86 M2 metadata ownership evidence target is absent")
             elif raw_check.get("kind") == "c-rust-metadata-lifecycle-differential":
                 rust_source = ROOT / "crabc-mimalloc/src/meta.rs"
                 fixture_text = (
@@ -13300,6 +13346,16 @@ def _run_m2_x86_64_vm_evidence(
         test_program=test_program,
         contract_fragment=M2_X86_64_VM_FRAGMENT,
         arena_owned_check=arena_owned_check,
+    )
+
+
+def _run_m2_x86_64_metadata_ownership_evidence(
+    *, offline: bool, test_program: Mapping[str, Any], check: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Run the metadata ownership producer against the aggregate's native binary."""
+
+    return _m2_x86_64_metadata_ownership_producer().run_evidence(
+        sys.modules[__name__], offline=offline, test_program=test_program, check=check,
     )
 
 
@@ -13909,9 +13965,9 @@ def _m2_x86_64_process_arena_collect_check_records(
 
 
 def _m2_x86_64_metadata_check_records(
-    summary: Mapping[str, Any], evidence: object
+    summary: Mapping[str, Any], evidence: object, ownership_evidence: Mapping[str, Any]
 ) -> list[dict[str, Any]]:
-    """Bind the source lifecycle differential to the partial metadata row."""
+    """Bind the lifecycle and ownership differentials to the metadata row."""
 
     component = next(item for item in summary["components"] if item["id"] == "metadata")
     if component["checks"] != list(M2_X86_64_METADATA_CHECKS):
@@ -13996,7 +14052,8 @@ def _m2_x86_64_metadata_check_records(
             "id": check["id"],
             "passed_test_count": check["expected_passed_test_count"],
             "target": check["target"],
-        }
+        },
+        _m2_x86_64_metadata_ownership_check_record(component["checks"][1], ownership_evidence),
     ]
 
 
@@ -14159,6 +14216,7 @@ def m2_x86_64_memory_substrate_report(
     bitmap_evidence: Mapping[str, Any] | None = None,
     vm_evidence: Mapping[str, Any] | None = None,
     metadata_evidence: Mapping[str, Any] | None = None,
+    metadata_ownership_evidence: Mapping[str, Any] | None = None,
     runtime_thp_evidence: Mapping[str, Any] | None = None,
     initialization_evidence: Mapping[str, Any] | None = None,
     fault_evidence: Mapping[str, Any] | None = None,
@@ -14171,7 +14229,9 @@ def m2_x86_64_memory_substrate_report(
     ):
         raise HarnessError("native x86 M2 source evidence did not pass")
     expected_bitmap_records = _m2_x86_64_bitmap_check_records(summary, bitmap_evidence)
-    expected_metadata_records = _m2_x86_64_metadata_check_records(summary, metadata_evidence)
+    expected_metadata_records = _m2_x86_64_metadata_check_records(
+        summary, metadata_evidence, metadata_ownership_evidence or {}
+    )
     expected_vm_records = _m2_x86_64_vm_check_records(
         summary, vm_evidence, runtime_thp_evidence
     )
@@ -14244,7 +14304,8 @@ def m2_x86_64_memory_substrate_report(
         elif component_id == "metadata":
             if checks != expected_metadata_records:
                 raise HarnessError("native x86 M2 metadata executed receipt inventory changed")
-            unmet.append(component_id)
+            if not complete:
+                unmet.append(component_id)
         elif component_id == "vm-primitives":
             if not complete and checks != expected_vm_records + [
                 {
@@ -14332,6 +14393,9 @@ def m2_x86_64_memory_substrate_report(
             "x86-64-metadata-allocation-cross-thread-publication-lifecycle": dict(
                 metadata_evidence
             ) if metadata_evidence is not None else {},
+            "x86-64-metadata-ownership-c-rust-differential": dict(
+                metadata_ownership_evidence
+            ) if metadata_ownership_evidence is not None else {},
             "x86-64-page-map-c-rust-differentials": {"status": "passed"},
             "x86-64-page-map-focused-source-test-batch": {"status": "passed"},
             "x86-64-source-contract-inventories": dict(source_contract_evidence),
@@ -14423,7 +14487,15 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         test_program=test_program,
         check=metadata_check,
     )
-    metadata_checks = _m2_x86_64_metadata_check_records(summary, metadata_evidence)
+    _, metadata_ownership_check = _m2_x86_64_check_by_id(
+        summary, "metadata-ownership-c-rust-differential"
+    )
+    metadata_ownership_evidence = _run_m2_x86_64_metadata_ownership_evidence(
+        offline=offline, test_program=test_program, check=metadata_ownership_check
+    )
+    metadata_checks = _m2_x86_64_metadata_check_records(
+        summary, metadata_evidence, metadata_ownership_evidence
+    )
     bitmap_evidence = _run_m2_x86_64_bitmap_evidence(offline=offline, test_program=test_program)
     bitmap_checks = _m2_x86_64_bitmap_check_records(summary, bitmap_evidence)
     _, arena_owned_check = _m2_x86_64_check_by_id(
@@ -14498,6 +14570,7 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         bitmap_evidence=bitmap_evidence,
         vm_evidence=vm_evidence,
         metadata_evidence=metadata_evidence,
+        metadata_ownership_evidence=metadata_ownership_evidence,
         runtime_thp_evidence=runtime_thp_evidence,
         initialization_evidence=initialization_evidence,
         fault_evidence=fault_evidence,

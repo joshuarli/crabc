@@ -3793,7 +3793,7 @@ mod tests {
     fn lifecycle_theap(
         trace: &mut LifecycleTrace, owner: LifecycleOwner, process: VmProcess<'static>,
         exclusive: ArenaId, numa_node: i32,
-    ) -> LifecycleClaim {
+    ) -> Option<crate::arena::ExclusiveArenaTheapReservation<'static, 'static>> {
         let before = lifecycle_stats(owner);
         let arenas_before = owner.backing.registry().count();
         let subprocess = process.main_subprocess().expect("fixture process is main");
@@ -3802,22 +3802,21 @@ mod tests {
             subprocess, exclusive, crate::types::ThreadSequence::from_previous_total_count(0), numa_node) };
         trace.emit_bool(result.is_ok());
         trace.emit(owner.backing.registry().count() as i64);
-        let mut slices = 0;
-        let claim = match result {
+        let reservation = match result {
             Ok(reservation) => {
                 let memory = reservation.memory_id();
                 let arena_memory = memory.arena_memory().unwrap();
                 assert_eq!(arena_memory.arena, exclusive.as_ptr());
                 let view = unsafe { ArenaView::from_ptr(arena_memory.arena) }.unwrap();
                 let slice_index = arena_memory.slice_index as usize;
-                slices = arena_memory.slice_count as usize;
+                let slices = arena_memory.slice_count as usize;
                 trace.emit(slice_index as i64);
                 trace.emit(slices as i64);
                 trace.emit_bool(memory.initially_committed());
                 trace.emit_bool(memory.initially_zero());
                 trace.emit_bool(unsafe { view.slices_committed() }.unwrap()
                     .is_set_range(slice_index, slices) == Some(true));
-                Some(reservation.into_claim())
+                Some(reservation)
             }
             Err(error) => {
                 assert_eq!(error, Errno::NOMEM);
@@ -3827,7 +3826,25 @@ mod tests {
         };
         emit_lifecycle_stats_delta(trace, owner, before);
         emit_lifecycle_arenas_from(trace, owner, arenas_before);
-        LifecycleClaim { claim, slices }
+        reservation
+    }
+
+    /// Rust receiver of the fixture's `meta_release`: `_mi_meta_free` of an
+    /// Arena memory ID. Rust has no memory-ID dispatcher; the typed
+    /// exclusive-arena Theap reservation is the only owner of that release.
+    fn lifecycle_theap_release(trace: &mut LifecycleTrace, owner: LifecycleOwner,
+        reservation: crate::arena::ExclusiveArenaTheapReservation<'static, 'static>) {
+        let before = lifecycle_stats(owner);
+        let memory = reservation.memory_id();
+        trace.emit_bool(memory.kind().needs_no_free());
+        let arena_memory = memory.arena_memory().unwrap();
+        let view = unsafe { ArenaView::from_ptr(arena_memory.arena) }.unwrap();
+        let index = arena_memory.slice_index as usize;
+        let slices = arena_memory.slice_count as usize;
+        assert!(matches!(reservation.release(), Ok(true)));
+        trace.emit_bool(unsafe { view.slices_free() }.unwrap().is_set_range(index, slices) == Some(true));
+        trace.emit_bool(unsafe { view.slices_purge() }.unwrap().is_set_range(index, slices) == Some(true));
+        emit_lifecycle_stats_delta(trace, owner, before);
     }
 
     /// The C fixture's `emit_madvise_record`: every mapping-owned advisory
@@ -4307,9 +4324,9 @@ mod tests {
             let one_pass = lifecycle_theap(&mut trace, owner, p, exclusive, -1);
             trace.emit(fault.observed() as i64);
             fault.set(fault::Plan::disabled());
-            assert!(!one_pass.is_some());
+            assert!(one_pass.is_none());
             fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
-            let mut second_pass = lifecycle_theap(&mut trace, owner, p, exclusive, 0);
+            let second_pass = lifecycle_theap(&mut trace, owner, p, exclusive, 0);
             trace.emit(fault.observed() as i64);
             fault.set(fault::Plan::disabled());
             assert!(second_pass.is_some());
@@ -4319,8 +4336,8 @@ mod tests {
             policy.finish_preloading();
             let disallowing = VmProcess::new(policy, p.subprocess());
             let disallowed = lifecycle_theap(&mut trace, owner, disallowing, exclusive, 0);
-            assert!(!disallowed.is_some());
-            lifecycle_release(&mut trace, owner, &mut second_pass);
+            assert!(disallowed.is_none());
+            lifecycle_theap_release(&mut trace, owner, second_pass.unwrap());
         }
 
         // 16. A committed claim whose first-arena commit fails reserves a
