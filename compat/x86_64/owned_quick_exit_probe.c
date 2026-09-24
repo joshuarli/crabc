@@ -1,4 +1,8 @@
-/* C11 quick-exit behavior shared by the musl oracle and every owned product. */
+/* C11 quick-exit behavior shared by the musl oracle and every owned product.
+ * The atexit-chain scenario also covers ordinary exit: musl's atexit.c keeps
+ * 32 registrations in a static block and chains further calloc'd blocks, so
+ * registration never fails below memory exhaustion, and a handler registered
+ * by a running handler runs next. at_quick_exit stays fixed at 32. */
 #include <errno.h>
 #include <pthread.h>
 #include <stdatomic.h>
@@ -49,6 +53,30 @@ static void child_handler(void) { emit("C", 1); }
 static void parent_handler(void) { emit("P", 1); }
 static void worker_handler(void) { emit("W", 1); }
 static void concurrent_handler(void) { emit("Q", 1); }
+
+extern int __cxa_atexit(void (*)(void *), void *, void *);
+
+/* One identifying byte per chained registration, newest first at exit. */
+static const char chain_names[] = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-_+=<>()";
+static void nested_chain_handler(void) { emit("!", 1); }
+static void nested_builtin_handler(void) { emit("?", 1); }
+
+static void chain_handler(void *argument)
+{
+	size_t index = (size_t)argument;
+	emit(&chain_names[index], 1);
+	if (index == 40)
+		CHECK(atexit(nested_chain_handler) == 0);
+	if (index == 5)
+		CHECK(atexit(nested_builtin_handler) == 0);
+}
+
+static void run_atexit_chain(void)
+{
+	for (size_t index = 0; index != sizeof(chain_names) - 1; ++index)
+		CHECK(__cxa_atexit(chain_handler, (void *)index, NULL) == 0);
+	exit(49);
+}
 
 static void reentrant_handler(void)
 {
@@ -188,5 +216,7 @@ int main(int argc, char **argv)
 		run_contention();
 	if (!strcmp(argv[1], "fork"))
 		run_fork();
+	if (!strcmp(argv[1], "atexit-chain"))
+		run_atexit_chain();
 	fail();
 }

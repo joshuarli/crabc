@@ -6,7 +6,7 @@ ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly PROBE="$ROOT/compat/x86_64/owned_quick_exit_probe.c"
-readonly SCENARIOS='lifo capacity reentrant worker concurrent contention fork'
+readonly SCENARIOS='lifo capacity reentrant worker concurrent contention fork atexit-chain'
 
 [ "$#" -le 1 ] || { printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2; exit 2; }
 provided_dynamic="${1:-}"
@@ -54,6 +54,9 @@ expected_output() {
         concurrent) printf QQQQ ;;
         contention) printf '%032d' 0 | tr 0 Q ;;
         fork) printf CIPI ;;
+        # Seventy chained handlers, newest first; handlers 40 and 5 each
+        # register one more, which runs next; the ELF destructor runs last.
+        atexit-chain) printf '%s' ')(><=+_-ZYXWVUTSRQPONMLKJIHGFE!DCBAzyxwvutsrqponmlkjihgfedcba98765?43210D' ;;
         *) return 2 ;;
     esac
 }
@@ -67,6 +70,7 @@ expected_status() {
         concurrent) printf 45 ;;
         contention) printf 48 ;;
         fork) printf 47 ;;
+        atexit-chain) printf 49 ;;
         *) return 2 ;;
     esac
 }
@@ -151,4 +155,4 @@ for mode in pie non-pie; do
     done
 done
 
-printf 'owned quick-exit: PASS (same C11 object, musl and owned static/static-PIE/dynamic PIE/non-PIE kernel/direct; LIFO, fixed 32-slot errno, reentrant refill, ordinary-exit/fini/stdio exclusion, worker exit_group, controlled concurrent and 32-way contended registration, and fork registry repair); evidence: %s\n' "$work"
+printf 'owned quick-exit: PASS (same C11 object, musl and owned static/static-PIE/dynamic PIE/non-PIE kernel/direct; LIFO, fixed 32-slot errno, reentrant refill, ordinary-exit/fini/stdio exclusion, chained ordinary atexit beyond 32 with nested registration, worker exit_group, controlled concurrent and 32-way contended registration, and fork registry repair); evidence: %s\n' "$work"
