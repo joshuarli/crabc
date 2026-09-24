@@ -28,13 +28,11 @@ readonly AGGREGATE_SELECTED_FUNCTIONS=(
 	rint rintf rintl
 )
 # This is the complete global/weak function closure after one freestanding
-# program takes every selected fenv-sensitive math address. The two hidden
-# Rust bit observers remain implementation-private, but retaining them here
-# makes this a true defined-global ratchet rather than a public-name subset.
+# program takes every selected fenv-sensitive math address. It is a true
+# defined-global ratchet rather than a public-name subset, so it also admits no
+# Rust-mangled symbol: fdim's two bit observers are private to their module.
 readonly AGGREGATE_CANDIDATE_FUNCTIONS=(
 	__fesetround __fpclassifyl __signbitl
-	_RNvNtNtCsht2h7vNWJAf_1c19x86_64_static_c_abi4fdim19observed_float_bits
-	_RNvNtNtCsht2h7vNWJAf_1c19x86_64_static_c_abi4fdim20observed_double_bits
 	_start crabc_x86_64_math_elementary_fenv_sensitive_aggregate_probe
 	exp10 exp10f exp10l exp2l fabsl fdim fdimf fdiml
 	feclearexcept fegetenv fegetround feraiseexcept fesetenv fetestexcept
@@ -271,6 +269,14 @@ fi
 for symbol in "${AGGREGATE_SELECTED_FUNCTIONS[@]}"; do
 	grep -Fxq "$symbol" "$aggregate_functions" ||
 		fail "aggregate candidate does not retain selected ${symbol}"
+done
+# fdim/fdimf classify NaNs through these integer observers rather than a
+# UCOMIS comparison. The source-runtime build gives each libc module its own
+# codegen unit, so they stay LOCAL; the crate disambiguator in their v0 names
+# depends on the build and is not part of the contract.
+for observer in 19observed_float_bits 20observed_double_bits; do
+	grep -Eq "[[:space:]]FUNC[[:space:]]+LOCAL[[:space:]]+(DEFAULT|HIDDEN)[[:space:]]+[0-9]+[[:space:]]_RNvNtNtCs[0-9A-Za-z_]+_1c19x86_64_static_c_abi4fdim${observer}$" \
+		"$aggregate_symbols" || fail "aggregate candidate lacks module-private fdim ${observer#??}"
 done
 for symbol in exp10 exp10f exp10l fdim fdimf fdiml rint rintf rintl \
 	nearbyint nearbyintf nearbyintl; do
