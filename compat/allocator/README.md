@@ -2010,6 +2010,23 @@ exactly as musl's libc.so does (weak `malloc`, strong others). PIE and
 non-PIE executables run through kernel and direct-loader entry and must
 reproduce the musl transcript.
 
+The libc malloc-family policy of `memory.allocator-basic` and
+`memory.allocator-observability` is checked through installed products by:
+
+```sh
+./scripts/dev-x86_64.sh owned-native-allocator-policy [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]
+```
+
+It runs three unmodified programs in all six native-shadow entry modes and
+requires musl's status and transcript: the allocator-basic runtime probe
+(`compat/x86_64/libc_allocator_basic_runtime_v1_probe.c`), the observability
+fixture (`tests/fixtures/allocator_observability_test.c`), and
+`compat/x86_64/owned_native_allocator_policy_probe.c`, which applies the
+zero-size, alignment, zeroing, overflow, realloc-failure, `realloc(p, 0)`,
+`posix_memalign` output and errno rules across small through huge blocks and
+across threads. Usable sizes are only checked against the request, since
+mallocng reports the request exactly.
+
 A separate dynamic OS-aligned singleton owner-exit route is available on native
 x86-64:
 
