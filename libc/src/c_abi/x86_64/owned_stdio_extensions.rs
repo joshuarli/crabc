@@ -20,7 +20,7 @@ pub unsafe extern "C" fn __fbufsize(stream: *mut StandardStream) -> usize { unsa
 /// The caller exclusively accesses a live FILE, including its configuration.
 #[no_mangle]
 pub unsafe extern "C" fn __flbf(stream: *mut StandardStream) -> c_int {
-    unsafe { (*stream).line_buffered as c_int }
+    unsafe { ((*stream).line_break >= 0) as c_int }
 }
 /// # Safety
 /// The caller exclusively accesses a live FILE.

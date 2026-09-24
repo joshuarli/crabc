@@ -153,7 +153,11 @@ pub struct StandardStream {
     previous_locked: *mut StandardStream,
     next: *mut StandardStream,
     previous: *mut StandardStream,
-    line_buffered: bool,
+    /// musl's `lbf`: the byte whose write flushes the buffer, or EOF when
+    /// the stream is not line buffered. Permanent stdin keeps musl's
+    /// zero-initialized value, so `__flbf` reports it as line buffered and a
+    /// write-mode `freopen` of stdin flushes at each NUL byte, as in musl.
+    line_break: c_int,
     backend: Backend,
     write_failed: bool,
     storage: [u8; BUFSIZ + UNGET],
@@ -169,12 +173,13 @@ impl StandardStream {
             lock: AtomicI32::new(FREE), holder: AtomicUsize::new(0),
             lock_count: 0, next: ptr::null_mut(), previous: ptr::null_mut(),
             next_locked: ptr::null_mut(), previous_locked: ptr::null_mut(),
-            line_buffered: flags & F_STDOUT_WRITE != 0, backend: Backend::Descriptor, write_failed: false,
+            line_break: if flags & F_STDOUT_WRITE != 0 { b'\n' as c_int } else { EOF }, backend: Backend::Descriptor, write_failed: false,
             storage: [0; BUFSIZ + UNGET] }
     }
 }
 
-static mut STDIN_STREAM: StandardStream = StandardStream::new(0, F_PERM | F_NOWR, BUFSIZ);
+static mut STDIN_STREAM: StandardStream =
+    StandardStream { line_break: 0, ..StandardStream::new(0, F_PERM | F_NOWR, BUFSIZ) };
 static mut STDOUT_STREAM: StandardStream = StandardStream::new(1, F_PERM | F_NORD | F_STDOUT_WRITE, BUFSIZ);
 static mut STDERR_STREAM: StandardStream = StandardStream::new(2, F_PERM | F_NORD, 0);
 static LIST_LOCK: AtomicI32 = AtomicI32::new(FREE);
@@ -246,9 +251,9 @@ unsafe fn initialize_buffer(stream: *mut StandardStream) {
             if matches!((*stream).backend, Backend::Descriptor)
                 && (*stream).flags & (F_NOWR | F_STDOUT_WRITE) == 0 && (*stream).capacity != 0 {
                 let mut window_size = [0u16; 4];
-                (*stream).line_buffered = raw_syscall::syscall3(16,
+                (*stream).line_break = if raw_syscall::syscall3(16,
                     (*stream).file_descriptor as i64, 0x5413,
-                    window_size.as_mut_ptr() as i64) == 0;
+                    window_size.as_mut_ptr() as i64) == 0 { b'\n' as c_int } else { EOF };
             }
         }
     }
@@ -1224,7 +1229,7 @@ unsafe fn write_backend_held(stream: *mut StandardStream, source: *const u8, len
             if (*stream).flags & F_SVB == 0 {
                 let mut window_size = [0u16; 4];
                 if raw_syscall::syscall3(16, (*stream).file_descriptor as i64,
-                    0x5413, window_size.as_mut_ptr() as i64) != 0 { (*stream).line_buffered = false; }
+                    0x5413, window_size.as_mut_ptr() as i64) != 0 { (*stream).line_break = EOF; }
             }
         }
         let pending = pending_output(stream);
@@ -1343,7 +1348,7 @@ unsafe fn write_byte_held(stream: *mut StandardStream, byte: u8) -> c_int {
     unsafe { mark_io_started(stream) };
     unsafe {
         if (*stream).write_position == (*stream).write_end
-            || ((*stream).line_buffered && byte == b'\n')
+            || c_int::from(byte) == (*stream).line_break
         {
             return if write_backend_held(stream, &byte, 1) == 1 { byte as c_int } else { EOF };
         }
@@ -1558,7 +1563,8 @@ unsafe fn fwrite_held(source: *const c_void, size: usize, count: usize, stream: 
         let available = (*stream).write_end.offset_from((*stream).write_position) as usize;
         if total > available { return write_backend_held(stream, source, total) / size; }
         let mut prefix = 0;
-        if (*stream).line_buffered {
+        // musl __fwritex scans for '\n' whenever lbf >= 0.
+        if (*stream).line_break >= 0 {
             prefix = total;
             while prefix != 0 && *source.add(prefix-1) != b'\n' { prefix -= 1; }
             if prefix != 0 {
@@ -1875,8 +1881,11 @@ pub unsafe extern "C" fn fseek(
 pub unsafe extern "C" fn rewind(stream: *mut StandardStream) {
     let _guard = unsafe { StreamGuard::acquire(stream) };
     let _ = unsafe { __fseeko(stream, 0, SEEK_SET) };
+    // musl src/stdio/rewind.c clears only the error indicator. A successful
+    // seek has already cleared end-of-file; a failed one (an unseekable
+    // stream) keeps it.
     if unsafe { is_selected_stream(stream) } {
-        unsafe { (*stream).flags &= !(F_EOF | F_ERR) };
+        unsafe { (*stream).flags &= !F_ERR };
     }
 }
 
@@ -1934,15 +1943,24 @@ pub unsafe extern "C" fn fsetpos(
 pub unsafe extern "C" fn setvbuf(stream: *mut StandardStream, buffer: *mut c_char, mode: c_int, size: usize) -> c_int {
     unsafe {
         let _guard = StreamGuard::acquire(stream);
-        (*stream).line_buffered = false;
+        (*stream).line_break = EOF;
         match mode {
             2 => (*stream).capacity = 0,
             0 | 1 => {
                 if !buffer.is_null() && size >= UNGET {
                     (*stream).buffer = buffer.cast::<u8>().add(UNGET);
                     (*stream).capacity = size - UNGET;
+                    // musl leaves its read pointers null until the first
+                    // read bases them on the configured buffer. An empty
+                    // read region must follow the new buffer too, or
+                    // ungetc's UNGET floor is measured against another
+                    // array. Buffered unread bytes stay where they are.
+                    if (*stream).read_position == (*stream).read_end {
+                        (*stream).read_position = (*stream).buffer;
+                        (*stream).read_end = (*stream).buffer;
+                    }
                 }
-                (*stream).line_buffered = mode == 1 && (*stream).capacity != 0;
+                if mode == 1 && (*stream).capacity != 0 { (*stream).line_break = b'\n' as c_int; }
             }
             _ => return -1,
         }

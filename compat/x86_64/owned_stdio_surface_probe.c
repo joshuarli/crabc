@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <wchar.h>
 #include <locale.h>
 
@@ -27,7 +28,14 @@
  *     pending output or unread input, never sets errno, and resets lbf before
  *     rejecting an unknown type;
  *   - src/stdio/__stdio_exit.c flushes the open-file list (most recent first)
- *     before stdin, stdout and stderr.
+ *     before stdin, stdout and stderr;
+ *   - src/stdio/stdin.c leaves stdin's lbf zero, so __flbf(stdin) is 1 and,
+ *     after a write-mode freopen, fwrite flushes through a newline and a NUL
+ *     byte flushes the buffer; stderr.c sets lbf to -1;
+ *   - src/stdio/rewind.c clears only the error indicator: a rewind that cannot
+ *     seek (a pipe) keeps end-of-file;
+ *   - ungetc on a fresh stream after setvbuf supplies a buffer succeeds, since
+ *     __toread bases the empty read region on the configured buffer.
  * argv[1] is private scratch for this process and is removed before exit.
  */
 extern wint_t __fgetwc_unlocked(FILE *);
@@ -52,6 +60,13 @@ extern int __isoc99_wscanf(const wchar_t *, ...);
 #define CHECK(x) do { if (!(x)) { fprintf(stderr, "surface:%d errno=%d\n", __LINE__, errno); exit(1); } } while (0)
 
 static const char *path;
+
+static long file_size(void)
+{
+    struct stat st;
+    CHECK(!stat(path, &st));
+    return (long)st.st_size;
+}
 
 static void replace(const char *bytes)
 {
@@ -120,6 +135,28 @@ static void status_values(void)
     clearerr(f);
     printf("cleared %d %d\n", feof(f), ferror(f));
     CHECK(!fclose(f));
+
+    printf("standard-lbf %d %d\n", __flbf(stdin), __flbf(stderr));
+    /* freopen keeps stdin's zero lbf: fwrite flushes through its last
+     * newline, and writing a NUL byte flushes the rest. */
+    CHECK(freopen(path, "w", stdin) == stdin);
+    CHECK(fwrite("ab\ncd", 1, 5, stdin) == 5);
+    long through_newline = file_size();
+    CHECK(fputc(0, stdin) == 0);
+    printf("stdin-writes %ld %ld\n", through_newline, file_size());
+    /* The dynamic cells run in a root without /dev: read the scratch file. */
+    CHECK(freopen(path, "r", stdin) == stdin);
+
+    int ends[2];
+    CHECK(!pipe(ends) && write(ends[1], "p", 1) == 1 && !close(ends[1]));
+    f = fdopen(ends[0], "r");
+    CHECK(f && fgetc(f) == 'p' && fgetc(f) == EOF);
+    CHECK(fputc('y', f) == EOF);
+    errno = 0;
+    rewind(f);
+    int rewind_errno = errno;
+    printf("pipe-rewind %d eof=%d err=%d\n", rewind_errno, feof(f), ferror(f));
+    CHECK(!fclose(f));
 }
 
 /* Mid-stream setvbuf keeps the active buffered bytes (src/stdio/setvbuf.c). */
@@ -158,6 +195,18 @@ static void reconfiguration(void)
     for (int c; (c = fgetc(f)) != EOF;) printf(" %c", c);
     printf(" end %d\n", feof(f));
     CHECK(!fclose(f));
+
+    /* An allocated buffer, unlike a static one, here lies above the FILE's
+     * own storage, so a stale read region fails ungetc's UNGET floor. */
+    f = fopen(path, "r");
+    char *configured = malloc(32);
+    CHECK(f && configured && !setvbuf(f, configured, _IOFBF, 32));
+    int pushed = ungetc('q', f);
+    int first = fgetc(f);
+    int second = fgetc(f);
+    printf("configured-unget %d %c %c\n", pushed, first, second);
+    CHECK(!fclose(f));
+    free(configured);
 }
 
 /* Frozen symbols without another FILE-engine row's direct call. Each call

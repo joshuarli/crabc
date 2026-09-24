@@ -499,7 +499,7 @@ class OwnedStdioFileEngineReceiptTests(unittest.TestCase):
         self.assertEqual(receipt.SCOPE, (
             "stdio.file-backends", "stdio.process-streams", "stdio.wide-stream",
             "stdio.wide-format", "stdio.file-extensions", "stdio.printf-float", "stdio.scanf",
-            "stdio.frozen-surface",
+            "stdio.frozen-surface", "stdio.engine-model",
         ))
         self.assertEqual(receipt.FROZEN_CAPABILITIES, (
             "stdio.path-stream", "stdio.stream-io", "stdio.position-buffering", "stdio.format-scan",

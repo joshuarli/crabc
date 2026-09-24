@@ -125,7 +125,7 @@ credits = []
 rows = ["stdio.fopen64-alias"]
 
 # Full-engine reader. It has no fallback: until a public reader retains these
-# eight behavior groups, and its objects reference every frozen symbol of the
+# nine behavior groups, and its objects reference every frozen symbol of the
 # four credited FILE capabilities, collection rejects the input as incomplete.
 [components.stdio-engine]
 reader = "compat/x86_64/owned_stdio_file_engine_receipt.py"
@@ -138,6 +138,7 @@ scope = [
   "stdio.printf-float",
   "stdio.scanf",
   "stdio.frozen-surface",
+  "stdio.engine-model",
 ]
 credits = [
   "stdio.path-stream",
@@ -155,6 +156,7 @@ rows = [
   "stdio.printf-float",
   "stdio.scanf",
   "stdio.frozen-surface",
+  "stdio.engine-model",
 ]
 
 [components.regex]

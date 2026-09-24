@@ -2,7 +2,7 @@
 
 `run_owned_stdio_file_engine.sh [STATIC_SYSROOT DYNAMIC_SYSROOT]` records a
 finite installed-header FILE-engine replay. It compiles one unchanged object
-for each of eight frozen probes with the selected dynamic product's
+for each of nine frozen probes with the selected dynamic product's
 headers, links that same object once with pinned musl and once in every
 product linkage, and retains raw compiler, linker, run, copied-root,
 and seal evidence. Without a supplied pair it first builds current static and
@@ -11,23 +11,33 @@ replays every row against the checkout's own source.
 
 The closed rows are `stdio.file-backends`, `stdio.process-streams`,
 `stdio.wide-stream`, `stdio.wide-format`, `stdio.file-extensions`,
-`stdio.printf-float`, `stdio.scanf`, and `stdio.frozen-surface`. They retain
+`stdio.printf-float`, `stdio.scanf`, `stdio.frozen-surface`, and
+`stdio.engine-model`. They retain
 the actual observations in `owned_stdio_backends_probe.c`,
 `owned_stdio_process_probe.c`, `owned_wide_stdio_probe.c`,
 `owned_wide_format_probe.c`, `owned_stdio_extensions_probe.c`,
-`owned_static_printf_float_probe.c`, `owned_static_scanf_probe.c`, and
-`owned_stdio_surface_probe.c`: descriptor/memory/cookie streams including
+`owned_static_printf_float_probe.c`, `owned_static_scanf_probe.c`,
+`owned_stdio_surface_probe.c`, and `owned_stdio_engine_model_probe.c`:
+descriptor/memory/cookie streams including
 ordinary-exit flushing; `popen`/`pclose`/`system` process and failure cleanup;
 wide orientation and memory streams; wide grammar; `stdio_ext` state and
 locking; float formatting and fenv across destinations; scanf grammar,
 lookahead, fenv, and `%m` allocation failure; and the remaining frozen entry
 points, exact `feof`/`ferror` values, buffered bytes kept across a mid-stream
 `setvbuf`, and musl's newest-first open-file exit flush before the standard
-streams. The rows do not add a runtime API.
+streams; stdin's zero `lbf`, `rewind` keeping end-of-file when it cannot seek,
+and `ungetc` on a fresh stream after `setvbuf` supplies a buffer. The model row
+drives byte and wide streams over every backend through seeded sequences of
+valid operations and folds each step's result, errno, position, indicators,
+`stdio_ext` buffer state, and backing-object state (descriptor offset and size,
+pipe contents, memory or cookie bytes) into one digest per scenario, so it
+compares musl's buffering and read-ahead policy as well as results. Building it
+with `-DMODEL_TRACE` prints the steps themselves to localize a differing
+digest. The rows do not add a runtime API.
 
 ## Frozen symbol surface
 
-The reader parses the undefined global and weak symbols of the eight retained
+The reader parses the undefined global and weak symbols of the nine retained
 installed-header ELF objects. Together they must reference every symbol that
 the frozen ledger `compat/crabc-rs/coverage.toml` lists for
 `stdio.path-stream`, `stdio.stream-io`, `stdio.position-buffering`, and
