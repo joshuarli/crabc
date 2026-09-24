@@ -262,13 +262,31 @@ original C return address for `RTLD_NEXT`. Names, program headers and link-map
 records borrow retained objects; `dl_iterate_phdr` drops the lock around user
 callbacks and reads the successor afterward, admitting nested loading.
 
+`dlerror` text is pinned musl's. `runtime_open` fills a private 1032-byte
+`RuntimeDiagnostic` (message kind, errno or relocation type, and up to three
+copied names) before rollback unmaps the failed suffix; `general_dlfcn`
+formats it with libc's own `strerror` table, and the RuntimeV1 loader facade
+copies the same bytes instead of publishing them as `dlerror`. The kinds follow musl 1.2.6 `ldso/dynlink.c`'s
+dlopen order: root load (`%m`, or the NOLOAD text for every NOLOAD root
+failure), dependency load with `(needed by <path>)`, constructor state after
+multithreaded fork, then the first relocation in `reloc_all`/`do_relocs`
+order (DT_JMPREL, then DT_RELA): missing symbol, runtime initial-exec TLS,
+or unsupported type. `map_elf_reporting_error` keeps `map_library`'s errno
+classes: syscall errors survive, a directory is `EISDIR`, and every rejected
+image form is `ENOEXEC`. Invalid handles print `%p` as musl does. Structural
+crabc rejections without a musl message report the root as `ENOEXEC`.
+
 Musl interprets only `RTLD_LAZY`, `RTLD_NOLOAD` and `RTLD_GLOBAL`: a mode
 without `RTLD_LAZY` binds now and unknown bits are inert. The kernel-mapped
 main image is named by `AT_EXECFN` (unless it names `/proc/`), else
 `argv[0]`, in `dladdr`, `dl_iterate_phdr` and its link map; direct loader
 entry names it by the program path. `RuntimeObject` is `repr(C)` with its
 link map first, so a handle and its `RTLD_DI_LINKMAP` result are one address
-as in musl.
+as in musl. `general_dynamic_dlfcn_contract.c` checks all of this, plus
+handle scope, `dlpi_adds`, retained close and exit-time dlopen, byte for byte
+against pinned musl in `run_general_dynamic_dlopen.sh`. Musl also lists its
+vDSO and, being libc, its loader; the contract compares only application
+objects because the owned interpreter is a separate image with no vDSO node.
 
 ## Executed evidence and remaining conditions
 

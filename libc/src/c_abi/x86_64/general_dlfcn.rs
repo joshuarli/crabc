@@ -8,8 +8,27 @@
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 
+/// Private dlopen failure record filled by the interpreter. It mirrors ldso's
+/// `x86_64_runtime_registry::RuntimeDiagnostic`: a musl message kind, a Linux
+/// errno (or relocation type), and up to three NUL-terminated copied names.
+#[repr(C)]
+struct RuntimeDiagnostic { kind: c_int, number: c_int, text: [u8; 1024] }
+impl RuntimeDiagnostic {
+    const fn empty() -> Self { Self { kind: 0, number: 0, text: [0; 1024] } }
+}
+const _: () = assert!(core::mem::size_of::<RuntimeDiagnostic>() == 1032);
+const DIAGNOSTIC_LOAD: c_int = 1;
+const DIAGNOSTIC_NEEDED: c_int = 2;
+const DIAGNOSTIC_NOT_LOADED: c_int = 3;
+const DIAGNOSTIC_EXITING: c_int = 4;
+const DIAGNOSTIC_SYMBOL: c_int = 5;
+const DIAGNOSTIC_INITIAL_EXEC: c_int = 6;
+const DIAGNOSTIC_RELOCATION_TYPE: c_int = 7;
+const DIAGNOSTIC_RELRO: c_int = 8;
+const DIAGNOSTIC_FORK: c_int = 9;
+
 extern "C" {
-    fn __crabc_x86_64_runtime_open(name: *const u8, flags: c_int, error: *mut c_int) -> *mut c_void;
+    fn __crabc_x86_64_runtime_open(name: *const u8, flags: c_int, diagnostic: *mut RuntimeDiagnostic) -> *mut c_void;
     fn __crabc_x86_64_runtime_symbol(handle: *mut c_void, name: *const u8, caller: usize, error: *mut c_int) -> *mut c_void;
     fn __crabc_x86_64_runtime_close(handle: *mut c_void) -> c_int;
     fn __crabc_x86_64_runtime_address(address: usize, output: *mut c_void) -> c_int;
@@ -22,28 +41,115 @@ static mut ERROR_TEXT: [u8; 1024] = [0; 1024];
 #[thread_local]
 static mut ERROR_PENDING: bool = false;
 
-unsafe fn diagnostic(prefix: &[u8], name: *const u8, suffix: &[u8]) {
-    let output = ptr::addr_of_mut!(ERROR_TEXT).cast::<u8>();
-    let mut count = 0;
-    for &byte in prefix {
-        if count == 1023 { break; }
-        unsafe { *output.add(count) = byte; }
-        count += 1;
+/// One formatted pinned-musl loader diagnostic. Musl allocates an exact
+/// buffer; this fixed copy truncates only beyond 1023 message bytes. The C
+/// entry points publish it as this thread's `dlerror`; the private RuntimeV1
+/// facade copies the same bytes into caller-owned wire storage.
+pub(super) struct Diagnostic { text: [u8; 1024], count: usize }
+impl Diagnostic {
+    fn new() -> Self { Self { text: [0; 1024], count: 0 } }
+    fn bytes(mut self, bytes: &[u8]) -> Self {
+        let room = 1023 - self.count;
+        let length = bytes.len().min(room);
+        self.text[self.count..self.count + length].copy_from_slice(&bytes[..length]);
+        self.count += length;
+        self
     }
-    if !name.is_null() {
-        for index in 0..512 {
-            let byte = unsafe { *name.add(index) };
-            if byte == 0 || count == 1023 { break; }
-            unsafe { *output.add(count) = byte; }
-            count += 1;
+    /// # Safety
+    /// `text` is null or a readable NUL-terminated C string.
+    unsafe fn text(mut self, text: *const u8) -> Self {
+        if text.is_null() { return self; }
+        let mut index = 0;
+        while self.count < 1023 {
+            let byte = unsafe { *text.add(index) };
+            if byte == 0 { break; }
+            self.text[self.count] = byte;
+            self.count += 1;
+            index += 1;
+        }
+        self
+    }
+    /// Musl `%m` after the loader left `error` in errno.
+    fn errno(self, error: c_int) -> Self {
+        let message = super::error_strings::error_message(error);
+        self.bytes(&message[..message.len() - 1])
+    }
+    fn decimal(self, value: c_int) -> Self {
+        let mut digits = [0u8; 12];
+        let mut index = digits.len();
+        let mut magnitude = value.unsigned_abs();
+        loop { index -= 1; digits[index] = b'0' + (magnitude % 10) as u8; magnitude /= 10; if magnitude == 0 { break; } }
+        if value < 0 { index -= 1; digits[index] = b'-'; }
+        self.bytes(&digits[index..])
+    }
+    /// Musl `%p`: lowercase hexadecimal with `0x`, and a bare `0` for null.
+    fn pointer(self, value: usize) -> Self {
+        if value == 0 { return self.bytes(b"0"); }
+        let mut digits = [0u8; 16];
+        let mut index = digits.len();
+        let mut rest = value;
+        while rest != 0 { index -= 1; digits[index] = b"0123456789abcdef"[rest & 15]; rest >>= 4; }
+        self.bytes(b"0x").bytes(&digits[index..])
+    }
+    /// The formatted message without a terminator.
+    pub(super) fn as_bytes(&self) -> &[u8] { &self.text[..self.count] }
+    /// Replace this thread's pending `dlerror` text.
+    fn publish(self) {
+        unsafe {
+            let output = ptr::addr_of_mut!(ERROR_TEXT).cast::<u8>();
+            ptr::copy_nonoverlapping(self.text.as_ptr(), output, self.count);
+            *output.add(self.count) = 0;
+            ERROR_PENDING = true;
         }
     }
-    for &byte in suffix {
-        if count == 1023 { break; }
-        unsafe { *output.add(count) = byte; }
-        count += 1;
+}
+
+/// musl `__dl_invalid_handle`: `Invalid library handle %p`.
+pub(super) fn invalid_handle(handle: *mut c_void) -> Diagnostic {
+    Diagnostic::new().bytes(b"Invalid library handle ").pointer(handle as usize)
+}
+
+/// musl `do_dlsym`: `Symbol not found: %s`.
+///
+/// # Safety
+/// `name` is a readable NUL-terminated C symbol name.
+pub(super) unsafe fn symbol_not_found(name: *const c_char) -> Diagnostic {
+    unsafe { Diagnostic::new().bytes(b"Symbol not found: ").text(name.cast()) }
+}
+
+/// Format pinned musl 1.2.6 `ldso/dynlink.c` dlopen diagnostics (MIT,
+/// 9fa28ece75d8a2191de7c5bb53bed224c5947417) from the loader's record.
+///
+/// # Safety
+/// `name` is the caller's readable dlopen pathname.
+unsafe fn open_diagnostic(name: *const u8, record: &RuntimeDiagnostic) -> Diagnostic {
+    let text = &record.text;
+    // The loader copies up to three NUL-terminated parts in order.
+    let part = |ordinal: usize| -> &[u8] {
+        let mut parts = text.split(|byte| *byte == 0);
+        parts.nth(ordinal).unwrap_or(&[])
+    };
+    let message = Diagnostic::new();
+    match record.kind {
+        DIAGNOSTIC_NEEDED => message.bytes(b"Error loading shared library ").bytes(part(0)).bytes(b": ")
+            .errno(record.number).bytes(b" (needed by ").bytes(part(1)).bytes(b")"),
+        DIAGNOSTIC_NOT_LOADED => unsafe { message.bytes(b"Library ").text(name) }.bytes(b" is not already loaded"),
+        DIAGNOSTIC_EXITING => message.bytes(b"Cannot dlopen while program is exiting."),
+        DIAGNOSTIC_SYMBOL => message.bytes(b"Error relocating ").bytes(part(0)).bytes(b": ").bytes(part(1))
+            .bytes(b": symbol not found"),
+        DIAGNOSTIC_INITIAL_EXEC => message.bytes(b"Error relocating ").bytes(part(0)).bytes(b": ").bytes(part(1))
+            .bytes(b": initial-exec TLS resolves to dynamic definition in ").bytes(part(2)),
+        DIAGNOSTIC_RELOCATION_TYPE => message.bytes(b"Error relocating ").bytes(part(0))
+            .bytes(b": unsupported relocation type ").decimal(record.number),
+        DIAGNOSTIC_RELRO => message.bytes(b"Error relocating ").bytes(part(0)).bytes(b": RELRO protection failed: ")
+            .errno(record.number),
+        DIAGNOSTIC_FORK => message.bytes(b"State of ").bytes(part(0)).bytes(b" is inconsistent due to multithreaded fork\n"),
+        // The loader leaves no other kind for a failed named open.
+        kind => {
+            debug_assert_eq!(kind, DIAGNOSTIC_LOAD);
+            unsafe { message.bytes(b"Error loading shared library ").text(name) }.bytes(b": ").errno(record.number)
+        }
     }
-    unsafe { *output.add(count) = 0; ERROR_PENDING = true; }
 }
 
 /// Musl disables deferred cancellation across one loader transaction. The
@@ -64,41 +170,33 @@ impl Drop for CancellationGuard {
     }
 }
 
+/// One loader open for the RuntimeV1 facade, formatted as `dlopen` would
+/// but never published as this thread's `dlerror`. A null `name` is the
+/// global handle and cannot fail.
+///
+/// # Safety
+/// `name` is null or a readable NUL-terminated C pathname; the caller holds a
+/// [`CancellationGuard`].
+pub(super) unsafe fn open_object(name: *const c_char, flags: c_int) -> Result<*mut c_void, Diagnostic> {
+    let mut record = RuntimeDiagnostic::empty();
+    let handle = unsafe { __crabc_x86_64_runtime_open(name.cast(), flags, &mut record) };
+    if handle.is_null() && !name.is_null() { Err(unsafe { open_diagnostic(name.cast(), &record) }) }
+    else { Ok(handle) }
+}
+
 /// # Safety
 /// `name` is null or a readable NUL-terminated C pathname.
 #[no_mangle]
 pub unsafe extern "C" fn dlopen(name: *const c_char, flags: c_int) -> *mut c_void {
     let _cancellation = unsafe { CancellationGuard::enter() };
-    let mut error = 0;
-    let handle = unsafe { __crabc_x86_64_runtime_open(name.cast(), flags, &mut error) };
-    if error != 0 {
-        unsafe { diagnostic(OPEN_FAILURE_PREFIX, name.cast(), open_failure_reason(error)); }
-    }
+    let mut record = RuntimeDiagnostic::empty();
+    let handle = unsafe { __crabc_x86_64_runtime_open(name.cast(), flags, &mut record) };
+    if handle.is_null() && !name.is_null() { unsafe { open_diagnostic(name.cast(), &record) }.publish(); }
     handle
 }
 
-/// Prefix of every runtime-open diagnostic; the requested name follows.
-pub(super) const OPEN_FAILURE_PREFIX: &[u8] = b"Error loading shared library ";
 /// Private runtime-symbol error code for a handle outside the registry.
 pub(super) const SYMBOL_INVALID_HANDLE: c_int = 10006;
-/// Complete diagnostic for an unknown loader handle.
-pub(super) const INVALID_HANDLE_DIAGNOSTIC: &[u8] = b"Invalid library handle";
-/// Prefix of a symbol-lookup diagnostic; the requested symbol name follows.
-pub(super) const SYMBOL_NOT_FOUND_PREFIX: &[u8] = b"Symbol not found: ";
-
-/// Suffix naming one private runtime-open error code, shared by `dlerror`
-/// and the copied native-facade diagnostic.
-pub(super) fn open_failure_reason(error: c_int) -> &'static [u8] {
-    match error {
-        2 => b": No such file or directory", 12 => b": Out of memory",
-        13 => b": Permission denied", 22 => b": Invalid argument", 36 => b": Filename too long",
-        10001 => b": Invalid ELF object", 10002 => b": Relocation failed",
-        10003 => b": TLS preparation failed", 10004 => b": Library is not already loaded",
-        10005 => b": Process finalization has begun",
-        10008 => b": State is inconsistent due to multithreaded fork",
-        _ => b": Loader admission failed",
-    }
-}
 
 // SysV AMD64 supplies the original C return address at [rsp]. A tail branch
 // carries it as the third argument without adding a Rust wrapper frame, so
@@ -121,8 +219,8 @@ unsafe extern "C" fn __crabc_x86_general_dlsym(handle: *mut c_void, name: *const
     let mut error = 0;
     let address = unsafe { __crabc_x86_64_runtime_symbol(handle, name.cast(), caller, &mut error) };
     if error != 0 {
-        if error == SYMBOL_INVALID_HANDLE { unsafe { diagnostic(INVALID_HANDLE_DIAGNOSTIC, ptr::null(), b""); } }
-        else { unsafe { diagnostic(SYMBOL_NOT_FOUND_PREFIX, name.cast(), b""); } }
+        if error == SYMBOL_INVALID_HANDLE { invalid_handle(handle).publish(); }
+        else { unsafe { symbol_not_found(name) }.publish(); }
     }
     address
 }
@@ -133,7 +231,7 @@ unsafe extern "C" fn __crabc_x86_general_dlsym(handle: *mut c_void, name: *const
 #[no_mangle]
 pub unsafe extern "C" fn dlclose(handle: *mut c_void) -> c_int {
     let result = unsafe { __crabc_x86_64_runtime_close(handle) };
-    if result != 0 { unsafe { diagnostic(INVALID_HANDLE_DIAGNOSTIC, ptr::null(), b""); } }
+    if result != 0 { invalid_handle(handle).publish(); }
     result
 }
 
@@ -160,26 +258,19 @@ pub unsafe extern "C" fn dladdr(address: *const c_void, output: *mut c_void) -> 
 /// link-map metadata is borrowed; applications must not mutate it.
 #[no_mangle]
 pub unsafe extern "C" fn dlinfo(handle: *mut c_void, request: c_int, output: *mut c_void) -> c_int {
-    if request != 2 {
-        // musl validates the handle before reporting an unsupported request.
-        // Use local storage here so validation never writes caller memory.
-        let mut link_map = ptr::null_mut();
-        let error = unsafe { __crabc_x86_64_runtime_information(handle, &mut link_map) };
-        if error != 0 {
-            unsafe { diagnostic(INVALID_HANDLE_DIAGNOSTIC, ptr::null(), b""); }
-            return -1;
-        }
-        let mut number = [0u8; 12];
-        let mut index = number.len();
-        let mut value = request.unsigned_abs();
-        loop { index -= 1; number[index] = b'0' + (value % 10) as u8; value /= 10; if value == 0 { break; } }
-        if request < 0 { index -= 1; number[index] = b'-'; }
-        unsafe { diagnostic(b"Unsupported request ", ptr::null(), &number[index..]); }
+    // musl validates the handle before interpreting the request. Validation
+    // uses local storage so an unsupported request never writes caller memory.
+    let mut link_map = ptr::null_mut();
+    if unsafe { __crabc_x86_64_runtime_information(handle, &mut link_map) } != 0 {
+        invalid_handle(handle).publish();
         return -1;
     }
-    let error = unsafe { __crabc_x86_64_runtime_information(handle, output.cast()) };
-    if error == 0 { 0 }
-    else { unsafe { diagnostic(INVALID_HANDLE_DIAGNOSTIC, ptr::null(), b""); } -1 }
+    if request != 2 {
+        Diagnostic::new().bytes(b"Unsupported request ").decimal(request).publish();
+        return -1;
+    }
+    unsafe { *output.cast::<*mut c_void>() = link_map; }
+    0
 }
 
 /// # Safety

@@ -70,6 +70,68 @@ pub(in super::super) unsafe fn relocate_new(objects: &[Object], indices: &[usize
     Some(pending)
 }
 
+/// The first runtime relocation musl would report, in its `reloc_all` object
+/// order and `do_relocs` table order (DT_JMPREL, then DT_RELA). Symbol lookup
+/// precedes the TPOFF and relocation-type checks, as in musl 1.2.6
+/// `ldso/dynlink.c::do_relocs` (MIT, 9fa28ece75d8a2191de7c5bb53bed224c5947417).
+pub(in super::super) enum RelocationFailure<'a> {
+    MissingSymbol { owner: usize, symbol: &'a [u8] },
+    InitialExecTls { owner: usize, symbol: &'a [u8], definer: usize },
+    UnsupportedType { owner: usize, kind: u32 },
+}
+
+/// Classify a failed `relocate_new` without writing. `None` means the failure
+/// is a crabc structural rejection with no musl diagnostic of its own.
+///
+/// # Safety
+/// Same snapshot, scope and loader-lock obligations as `relocate_new`.
+pub(in super::super) unsafe fn diagnose_new<'a>(objects: &'a [Object], indices: &[usize], first_new: usize,
+    static_tls_count: usize, lazy: bool,
+) -> Option<RelocationFailure<'a>> {
+    if first_new == 0 || first_new > objects.len() || indices.iter().any(|index| *index >= objects.len()) { return None; }
+    let scope = SymbolScope { indices, module_count: objects.iter().map(|object| object.tls_module_id).max().unwrap_or(0),
+        static_tls_count, initial: false };
+    for owner in first_new..objects.len() {
+        let object = &objects[owner];
+        let deferrable = lazy && !object.bind_now;
+        for (table, bytes) in [(object.jmprel, object.pltrelsz), (object.rela, object.relasz)] {
+            if table.is_null() { continue; }
+            for index in 0..bytes / ELF64_RELA_SIZE {
+                let info = unsafe { read_u64(table.add(index * ELF64_RELA_SIZE + 8)) };
+                let kind = info as u32;
+                let symbol = (info >> 32) as usize;
+                if kind == R_NONE { continue; }
+                // A symbol-less relocation has no musl name; report it empty.
+                let name = if symbol == 0 { &[][..] } else { unsafe { symbol_name(object, symbol) }.unwrap_or(&[]) };
+                let mut definer = None;
+                if symbol != 0 {
+                    let tls = matches!(kind, R_X86_64_DTPMOD64 | R_X86_64_DTPOFF64 | R_X86_64_TPOFF64);
+                    match unsafe { lookup_result(&scope, objects, owner, symbol, tls, kind == R_COPY) } {
+                        Some(SymbolLookup::MissingStrong) => {
+                            if deferrable && matches!(kind, R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT) { continue; }
+                            return Some(RelocationFailure::MissingSymbol { owner, symbol: name });
+                        }
+                        Some(SymbolLookup::Defined(found)) => definer = Some(found.owner),
+                        Some(SymbolLookup::UndefinedWeak) | None => {}
+                    }
+                }
+                if kind == R_X86_64_TPOFF64 {
+                    let module = definer.unwrap_or(owner);
+                    if objects[module].tls_module_id > static_tls_count {
+                        return Some(RelocationFailure::InitialExecTls { owner, symbol: name, definer: module });
+                    }
+                }
+                if !matches!(kind, R_64 | R_COPY | R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT | R_X86_64_RELATIVE
+                    | R_X86_64_DTPMOD64 | R_X86_64_DTPOFF64 | R_X86_64_TPOFF64)
+                {
+                    return Some(RelocationFailure::UnsupportedType { owner, kind });
+                }
+            }
+        }
+    }
+    None
+}
+
 #[derive(Clone, Copy)]
 struct ResolvedWrite { address: u64, value: u64 }
 

@@ -16,8 +16,8 @@
 //!
 //! - Loader callbacks call the interpreter's private runtime operations that
 //!   `general_dlfcn` also uses, under the same cancellation guard. Their
-//!   diagnostics use `general_dlfcn`'s musl-shaped spellings, but are written
-//!   into caller-owned wire storage instead of the per-thread `dlerror` slot.
+//!   diagnostics are `general_dlfcn`'s pinned-musl texts, written into
+//!   caller-owned wire storage instead of the per-thread `dlerror` slot.
 //! - Thread callbacks call the selected pthread owners directly. Handles are
 //!   the same opaque thread-pointer identities as `pthread_t`.
 //! - Memory-stream callbacks call the owned stream engine and translate its
@@ -46,8 +46,7 @@ use crabc_core::runtime::{
 
 use super::errno::{get_errno, set_errno};
 use super::fixed_graph_dlfcn::{
-    open_failure_reason, CancellationGuard, INVALID_HANDLE_DIAGNOSTIC, OPEN_FAILURE_PREFIX,
-    SYMBOL_INVALID_HANDLE, SYMBOL_NOT_FOUND_PREFIX,
+    invalid_handle, open_object, symbol_not_found, CancellationGuard, SYMBOL_INVALID_HANDLE,
 };
 use super::stdio_standard::StandardStream;
 
@@ -57,8 +56,6 @@ const EIO: c_int = 5;
 const SEEK_SET: c_int = 0;
 const SEEK_CUR: c_int = 1;
 const SEEK_END: c_int = 2;
-/// `general_dlfcn` reads at most this many requested-name bytes.
-const MAX_REQUESTED_NAME: usize = 512;
 /// musl's `RTLD_NEXT`; the facade never forms it and the table rejects it
 /// rather than resolving relative to this libc's own code address.
 const RTLD_NEXT: usize = usize::MAX;
@@ -67,7 +64,6 @@ const RTLD_NEXT: usize = usize::MAX;
 const SNAPSHOT_ATTEMPTS: usize = 8;
 
 extern "C" {
-    fn __crabc_x86_64_runtime_open(name: *const u8, flags: c_int, error: *mut c_int) -> *mut c_void;
     fn __crabc_x86_64_runtime_symbol(handle: *mut c_void, name: *const u8, caller: usize, error: *mut c_int) -> *mut c_void;
     fn __crabc_x86_64_runtime_close(handle: *mut c_void) -> c_int;
     // These declarations repeat `general_dlfcn`'s untyped spellings; the
@@ -209,21 +205,18 @@ unsafe extern "C" fn loader_open(
     }
     unsafe { *handle = ptr::null_mut() };
     let _cancellation = unsafe { CancellationGuard::enter() };
-    let mut code = 0;
     // SAFETY: a null path is the global-handle request; otherwise the facade
     // supplies a NUL-terminated `CStr`.
-    let opened = unsafe { __crabc_x86_64_runtime_open(path.cast(), flags, &mut code) };
-    if code != 0 || opened.is_null() {
-        let mut text = TextWriter::new();
-        text.push(OPEN_FAILURE_PREFIX);
-        // SAFETY: the failing request named a readable C string.
-        unsafe { text.push_c_string(path, MAX_REQUESTED_NAME) };
-        text.push(open_failure_reason(code));
-        unsafe { write_text(error, text.finish()) };
-        return -1;
+    match unsafe { open_object(path, flags) } {
+        Ok(opened) => {
+            unsafe { *handle = opened };
+            0
+        }
+        Err(diagnostic) => {
+            unsafe { write_message(error, diagnostic.as_bytes()) };
+            -1
+        }
     }
-    unsafe { *handle = opened };
-    0
 }
 
 unsafe extern "C" fn loader_symbol(
@@ -241,7 +234,7 @@ unsafe extern "C" fn loader_symbol(
     // Null and RTLD_NEXT are pseudo-handles whose meaning depends on the C
     // caller; only a handle returned by loader_open is admitted here.
     if handle.is_null() || handle as usize == RTLD_NEXT {
-        unsafe { write_message(error, INVALID_HANDLE_DIAGNOSTIC) };
+        unsafe { write_message(error, invalid_handle(handle).as_bytes()) };
         return -1;
     }
     let mut code = 0;
@@ -249,14 +242,9 @@ unsafe extern "C" fn loader_symbol(
     // handle by identity before any dereference.
     let resolved = unsafe { __crabc_x86_64_runtime_symbol(handle, name.cast(), 0, &mut code) };
     if code != 0 || resolved.is_null() {
-        let mut text = TextWriter::new();
-        if code == SYMBOL_INVALID_HANDLE {
-            text.push(INVALID_HANDLE_DIAGNOSTIC);
-        } else {
-            text.push(SYMBOL_NOT_FOUND_PREFIX);
-            unsafe { text.push_c_string(name, MAX_REQUESTED_NAME) };
-        }
-        unsafe { write_text(error, text.finish()) };
+        let diagnostic = if code == SYMBOL_INVALID_HANDLE { invalid_handle(handle) }
+            else { unsafe { symbol_not_found(name) } };
+        unsafe { write_message(error, diagnostic.as_bytes()) };
         return -1;
     }
     unsafe { *address = resolved };
@@ -267,7 +255,7 @@ unsafe extern "C" fn loader_close(handle: *mut c_void, error: *mut TextV1) -> c_
     unsafe { write_text(error, TextV1::empty()) };
     // Musl retains the object on close; the loader validates the handle.
     if unsafe { __crabc_x86_64_runtime_close(handle) } != 0 {
-        unsafe { write_message(error, INVALID_HANDLE_DIAGNOSTIC) };
+        unsafe { write_message(error, invalid_handle(handle).as_bytes()) };
         return -1;
     }
     0
@@ -418,7 +406,7 @@ unsafe extern "C" fn loader_information(
     unsafe { ptr::write(info, LoaderInformationV1::empty()) };
     let mut link_map = ptr::null_mut::<c_void>();
     if unsafe { __crabc_x86_64_runtime_information(handle, &mut link_map) } != 0 || link_map.is_null() {
-        unsafe { write_message(error, INVALID_HANDLE_DIAGNOSTIC) };
+        unsafe { write_message(error, invalid_handle(handle).as_bytes()) };
         return -1;
     }
     // SAFETY: a validated handle's link-map address, name, and dynamic

@@ -532,14 +532,55 @@ unsafe extern "C" fn runtime_fork_complete(parent_tid: i32, child: i32, callback
     }
 }
 
-const ERROR_BAD_ELF: i32 = 10001;
-const ERROR_RELOCATION: i32 = 10002;
-const ERROR_TLS: i32 = 10003;
 const ERROR_NOLOAD: i32 = 10004;
-const ERROR_SHUTDOWN: i32 = 10005;
-const ERROR_FORK_CONSTRUCTOR: i32 = 10008;
 const ERROR_HANDLE: i32 = 10006;
 const ERROR_SYMBOL: i32 = 10007;
+const ENOMEM: i32 = 12;
+const EINVAL: i32 = 22;
+
+/// Private dlopen failure record shared only with the installed libc bridge.
+/// The loader classifies the first failure in musl's dlopen order and copies
+/// up to three NUL-terminated names before rollback unmaps their storage;
+/// libc owns the pinned-musl `dlerror` text for each kind. `number` is a
+/// Linux errno, or the relocation type for `DIAGNOSTIC_RELOCATION_TYPE`.
+#[repr(C)]
+struct RuntimeDiagnostic { kind: i32, number: i32, text: [u8; DIAGNOSTIC_TEXT] }
+const DIAGNOSTIC_TEXT: usize = 1024;
+const _: () = assert!(core::mem::size_of::<RuntimeDiagnostic>() == 1032);
+/// `Error loading shared library <dlopen name>: %m`
+const DIAGNOSTIC_LOAD: i32 = 1;
+/// `Error loading shared library <needed>: %m (needed by <requester>)`
+const DIAGNOSTIC_NEEDED: i32 = 2;
+/// `Library <dlopen name> is not already loaded`
+const DIAGNOSTIC_NOT_LOADED: i32 = 3;
+/// `Cannot dlopen while program is exiting.`
+const DIAGNOSTIC_EXITING: i32 = 4;
+/// `Error relocating <object>: <symbol>: symbol not found`
+const DIAGNOSTIC_SYMBOL: i32 = 5;
+/// `Error relocating <object>: <symbol>: initial-exec TLS resolves to dynamic definition in <definer>`
+const DIAGNOSTIC_INITIAL_EXEC: i32 = 6;
+/// `Error relocating <object>: unsupported relocation type <number>`
+const DIAGNOSTIC_RELOCATION_TYPE: i32 = 7;
+/// `Error relocating <object>: RELRO protection failed: %m`
+const DIAGNOSTIC_RELRO: i32 = 8;
+/// `State of <object> is inconsistent due to multithreaded fork\n`
+const DIAGNOSTIC_FORK: i32 = 9;
+
+/// Record one failure. Every part keeps its terminator; a long earlier part
+/// is truncated rather than displacing later terminators.
+fn report(output: &mut RuntimeDiagnostic, kind: i32, number: i32, parts: &[&[u8]]) {
+    output.kind = kind;
+    output.number = number;
+    let mut used = 0;
+    for (index, part) in parts.iter().enumerate() {
+        let room = DIAGNOSTIC_TEXT - used - (parts.len() - index);
+        let length = part.len().min(room);
+        output.text[used..used + length].copy_from_slice(&part[..length]);
+        used += length;
+        output.text[used] = 0;
+        used += 1;
+    }
+}
 
 unsafe fn node_name(node: *mut RuntimeObject) -> &'static [u8] {
     let name = unsafe { (*node).name.as_ptr() };
@@ -595,7 +636,14 @@ unsafe fn load_one(
     }
     let (fd, path, length) = unsafe { open_runtime_file(parent, name) }?;
     let identity = unsafe { file_identity_from_fd(fd) };
-    let Some(identity) = identity else { unsafe { syscall1(SYS_CLOSE, fd); } return Err(ERROR_BAD_ELF); };
+    let Some(identity) = identity else {
+        // Report fstat's errno as musl load_library does; a zero identity
+        // has no musl analogue and is rejected as a non-loadable image.
+        let mut stat = [0u8; X86_64_STAT_BYTE_LEN];
+        let status = unsafe { syscall2(SYS_FSTAT, fd, stat.as_mut_ptr() as i64) };
+        unsafe { syscall1(SYS_CLOSE, fd); }
+        return Err(if is_linux_error(status) { (-status) as i32 } else { ENOEXEC });
+    };
     let existing = unsafe { find_identity(registry, new, identity) };
     if !existing.is_null() {
         unsafe { syscall1(SYS_CLOSE, fd); }
@@ -603,19 +651,19 @@ unsafe fn load_one(
         return Ok(existing);
     }
     if no_load { unsafe { syscall1(SYS_CLOSE, fd); } return Err(ERROR_NOLOAD); }
-    let mapped = unsafe { map_elf(fd, false, true) };
+    let mapped = unsafe { map_elf_reporting_error(fd, false, true, ObjectRole::Library) };
     unsafe { syscall1(SYS_CLOSE, fd); }
-    let mut object = mapped.ok_or(ERROR_BAD_ELF)?;
+    let mut object = mapped?;
     object.search_name = path;
     object.search_short_name = short_name;
     let index = match registry.count.checked_add(new.count).and_then(|index| index.checked_add(1)).map(|next| next - 1) {
         Some(index) => index,
-        None => { unsafe { syscall2(SYS_MUNMAP, object.map_span_start as i64, object.map_span_byte_len as i64); } return Err(12); }
+        None => { unsafe { syscall2(SYS_MUNMAP, object.map_span_start as i64, object.map_span_byte_len as i64); } return Err(ENOMEM); }
     };
     if object.tls_memsz != 0 {
         let Some(id) = tls_count.checked_add(1) else {
             unsafe { syscall2(SYS_MUNMAP, object.map_span_start as i64, object.map_span_byte_len as i64); }
-            return Err(12);
+            return Err(ENOMEM);
         };
         object.tls_module_id = id;
         object.tls_offset_below_tp = 0;
@@ -624,12 +672,12 @@ unsafe fn load_one(
     let node = unsafe { RuntimeObject::allocate(ObjectStorage::Runtime(object), identity, index, &path[..length], short_name) };
     let Some(node) = node else {
         unsafe { syscall2(SYS_MUNMAP, object.map_span_start as i64, object.map_span_byte_len as i64); }
-        return Err(12);
+        return Err(ENOMEM);
     };
     unsafe { (*node).needed_by = parent; }
     if unsafe { new.append(node) }.is_none() {
         drop(UnpublishedObjects { head: node, tail: node, count: 1 });
-        return Err(12);
+        return Err(ENOMEM);
     }
     Ok(node)
 }
@@ -657,10 +705,15 @@ unsafe fn preflight_runtime_callbacks(node: *mut RuntimeObject) -> Option<()> {
     unsafe { (*node).callbacks(&init[..init_count], &fini[..fini_count]) }
 }
 
-unsafe fn open_transaction(guard: &RuntimeGuard, filename: &[u8], flags: i32) -> Result<(*mut RuntimeObject, ObjectSnapshot, ObjectOrder), i32> {
+/// Admit one dlopen request. On failure `diagnostic` names the first failure
+/// musl's dlopen would report, then the unpublished suffix is rolled back.
+unsafe fn open_transaction(guard: &RuntimeGuard, filename: &[u8], flags: i32, diagnostic: &mut RuntimeDiagnostic)
+    -> Result<(*mut RuntimeObject, ObjectSnapshot, ObjectOrder), ()>
+{
     let registry = unsafe { &mut *REGISTRY.0.get() };
-    if registry.head.is_null() { return Err(ERROR_HANDLE); }
-    if registry.shutting_down { return Err(ERROR_SHUTDOWN); }
+    let load_failure = |diagnostic: &mut RuntimeDiagnostic, errno: i32| report(diagnostic, DIAGNOSTIC_LOAD, errno, &[]);
+    if registry.head.is_null() { load_failure(diagnostic, EINVAL); return Err(()); }
+    if registry.shutting_down { report(diagnostic, DIAGNOSTIC_EXITING, 0, &[]); return Err(()); }
     // Musl dlopen interprets only RTLD_LAZY, RTLD_NOLOAD and RTLD_GLOBAL. A
     // mode without RTLD_LAZY binds now; RTLD_NODELETE and unknown bits have no
     // effect because successful objects are never unloaded.
@@ -668,52 +721,88 @@ unsafe fn open_transaction(guard: &RuntimeGuard, filename: &[u8], flags: i32) ->
     let no_load = flags & 4 != 0;
     let mut new = UnpublishedObjects::new();
     let mut tls_count = registry.tls_count;
-    let root = unsafe { load_one(registry, &mut new, registry.head, filename, no_load, &mut tls_count) }?;
+    let root = match unsafe { load_one(registry, &mut new, registry.head, filename, no_load, &mut tls_count) } {
+        Ok(root) => root,
+        // Musl selects the NOLOAD text for every root failure in that mode.
+        Err(_) if no_load => { report(diagnostic, DIAGNOSTIC_NOT_LOADED, 0, &[]); return Err(()); }
+        Err(errno) => { load_failure(diagnostic, errno); return Err(()); }
+    };
     let mut node = new.head;
     while !node.is_null() {
-        let object = *unsafe { (*node).object() }.ok_or(ERROR_BAD_ELF)?;
+        let Some(object) = (unsafe { (*node).object() }).copied() else { load_failure(diagnostic, ENOEXEC); return Err(()); };
         for index in 0..object.needed_count {
             let offset = object.needed[index];
             let name = unsafe { object.strtab.add(offset) };
-            let length = unsafe { bounded_nul(name, object.strsz.checked_sub(offset).ok_or(ERROR_BAD_ELF)?) }.ok_or(ERROR_BAD_ELF)?;
+            let Some(length) = object.strsz.checked_sub(offset).and_then(|limit| unsafe { bounded_nul(name, limit) }) else {
+                load_failure(diagnostic, ENOEXEC);
+                return Err(());
+            };
             let name = unsafe { core::slice::from_raw_parts(name, length) };
-            if name.is_empty() { return Err(ERROR_BAD_ELF); }
-            let child = unsafe { load_one(registry, &mut new, node, name, false, &mut tls_count) }?;
+            let child = match unsafe { load_one(registry, &mut new, node, name, false, &mut tls_count) } {
+                Ok(child) => child,
+                Err(errno) => {
+                    report(diagnostic, DIAGNOSTIC_NEEDED, errno, &[name, unsafe { node_name(node) }]);
+                    return Err(());
+                }
+            };
             unsafe { (*node).needed[index] = child; }
         }
         unsafe { (*node).needed_count = object.needed_count; }
         node = unsafe { (*node).next };
     }
-    let snapshot = unsafe { ObjectSnapshot::collect(registry, &new) }.ok_or(12)?;
-    let scope = unsafe { breadth_first_scope(&snapshot, registry, root, true) }.ok_or(12)?;
-    let dependencies = unsafe { breadth_first_scope(&snapshot, registry, root, false) }.ok_or(12)?;
-    let constructors = unsafe { constructor_order(&snapshot, root) }.ok_or(12)?;
-    if constructors.as_slice().iter().any(|&index| unsafe {
+    let memory = |diagnostic: &mut RuntimeDiagnostic| load_failure(diagnostic, ENOMEM);
+    let Some(snapshot) = (unsafe { ObjectSnapshot::collect(registry, &new) }) else { memory(diagnostic); return Err(()); };
+    let Some(scope) = (unsafe { breadth_first_scope(&snapshot, registry, root, true) }) else { memory(diagnostic); return Err(()); };
+    let Some(dependencies) = (unsafe { breadth_first_scope(&snapshot, registry, root, false) }) else { memory(diagnostic); return Err(()); };
+    let Some(constructors) = (unsafe { constructor_order(&snapshot, root) }) else { memory(diagnostic); return Err(()); };
+    if let Some(&abandoned) = constructors.as_slice().iter().find(|&&index| unsafe {
         (*snapshot.nodes.as_slice()[index]).callback_state.load(Ordering::Acquire) == CONSTRUCTOR_ABANDONED
-    }) { return Err(ERROR_FORK_CONSTRUCTOR); }
-    let deferred = unsafe { deferred::relocate_new(snapshot.objects.as_slice(), scope.as_slice(), registry.count,
-        registry.initial_tls_count, lazy) }.ok_or(ERROR_RELOCATION)?;
+    }) {
+        report(diagnostic, DIAGNOSTIC_FORK, 0, &[unsafe { node_name(snapshot.nodes.as_slice()[abandoned]) }]);
+        return Err(());
+    }
+    let deferred = match unsafe { deferred::relocate_new(snapshot.objects.as_slice(), scope.as_slice(), registry.count,
+        registry.initial_tls_count, lazy) } {
+        Some(deferred) => deferred,
+        None => {
+            unsafe { report_relocation_failure(diagnostic, &snapshot, scope.as_slice(), registry.count,
+                registry.initial_tls_count, lazy); }
+            return Err(());
+        }
+    };
     for index in registry.count..snapshot.objects.as_slice().len() {
         let object = &snapshot.objects.as_slice()[index];
-        unsafe { preflight_runtime_callbacks(snapshot.nodes.as_slice()[index]) }.ok_or(ERROR_BAD_ELF)?;
-        unsafe { protect_segments(object) }.ok_or(ERROR_BAD_ELF)?;
-        unsafe { apply_relro(object) }.ok_or(ERROR_BAD_ELF)?;
+        if unsafe { preflight_runtime_callbacks(snapshot.nodes.as_slice()[index]) }.is_none()
+            || unsafe { protect_segments(object) }.is_none()
+        {
+            load_failure(diagnostic, ENOEXEC);
+            return Err(());
+        }
+        if unsafe { apply_relro(object) }.is_none() {
+            report(diagnostic, DIAGNOSTIC_RELRO, ENOMEM, &[unsafe { node_name(snapshot.nodes.as_slice()[index]) }]);
+            return Err(());
+        }
     }
     let tls = if tls_count != registry.tls_count {
-        Some(unsafe { x86_64_runtime_tls_view::PreparedAllThreads::prepare(guard, snapshot.objects.as_slice()) }.ok_or(ERROR_TLS)?)
+        let Some(tls) = (unsafe { x86_64_runtime_tls_view::PreparedAllThreads::prepare(guard, snapshot.objects.as_slice()) }) else {
+            memory(diagnostic);
+            return Err(());
+        };
+        Some(tls)
     } else { None };
     // Retry against the final global scope, not the temporary local dependency
     // scope used above. Promoting an already retained provider is sufficient.
-    let mut final_scope = ObjectOrder { indices: LoaderBuffer::new(scope.count, 0).ok_or(12)?, count: 0 };
+    let Some(indices) = LoaderBuffer::new(scope.count, 0) else { memory(diagnostic); return Err(()); };
+    let mut final_scope = ObjectOrder { indices, count: 0 };
     for &index in scope.as_slice() {
         if flags & 256 != 0 || unsafe { (*snapshot.nodes.as_slice()[index]).global } {
             final_scope.indices.as_mut_slice()[final_scope.count] = index;
             final_scope.count += 1;
         }
     }
-    let retry = unsafe { PreparedRetry::prepare(snapshot.objects.as_slice(), final_scope.as_slice(),
-        registry.initial_tls_count, registry.deferred.as_ref(), &deferred) }.ok_or(ERROR_RELOCATION)?;
-    let retry = unsafe { retry.make_writable(guard) }.ok_or(ERROR_RELOCATION)?;
+    let Some(retry) = (unsafe { PreparedRetry::prepare(snapshot.objects.as_slice(), final_scope.as_slice(),
+        registry.initial_tls_count, registry.deferred.as_ref(), &deferred) }) else { memory(diagnostic); return Err(()); };
+    let Some(retry) = (unsafe { retry.make_writable(guard) }) else { memory(diagnostic); return Err(()); };
     // No fallible work remains. Worker allocation/release shares this guard;
     // every TP receives its coherent view before the new scope is visible.
     if let Some(tls) = tls { unsafe { tls.publish(); } }
@@ -735,6 +824,25 @@ unsafe fn open_transaction(guard: &RuntimeGuard, filename: &[u8], flags: i32) ->
     registry.deferred = Some(unsafe { retry.commit() });
     registry.additions = registry.additions.wrapping_add(1);
     Ok((root, snapshot, constructors))
+}
+
+/// Name the relocation musl would reject first. Structural crabc rejections
+/// with no musl counterpart report the image as not loadable.
+unsafe fn report_relocation_failure(diagnostic: &mut RuntimeDiagnostic, snapshot: &ObjectSnapshot,
+    scope: &[usize], first_new: usize, static_tls_count: usize, lazy: bool,
+) {
+    use x86_64_general_relocation::deferred::RelocationFailure;
+    let objects = snapshot.objects.as_slice();
+    let name = |owner: usize| unsafe { node_name(snapshot.nodes.as_slice()[owner]) };
+    match unsafe { deferred::diagnose_new(objects, scope, first_new, static_tls_count, lazy) } {
+        Some(RelocationFailure::MissingSymbol { owner, symbol }) =>
+            report(diagnostic, DIAGNOSTIC_SYMBOL, 0, &[name(owner), symbol]),
+        Some(RelocationFailure::InitialExecTls { owner, symbol, definer }) =>
+            report(diagnostic, DIAGNOSTIC_INITIAL_EXEC, 0, &[name(owner), symbol, name(definer)]),
+        Some(RelocationFailure::UnsupportedType { owner, kind }) =>
+            report(diagnostic, DIAGNOSTIC_RELOCATION_TYPE, kind as i32, &[name(owner)]),
+        None => report(diagnostic, DIAGNOSTIC_LOAD, ENOEXEC, &[]),
+    }
 }
 
 pub(super) unsafe fn attach_worker_tls(guard: &RuntimeGuard, tp: *mut u8) -> Option<()> {
@@ -762,28 +870,33 @@ pub(super) fn runtime_function(name: &[u8]) -> Option<u64> {
     }
 }
 
-/// Private libc calls provide valid C strings, writable error storage and
+/// Private libc calls provide valid C strings, a writable diagnostic record and
 /// disable deferred cancellation over loader mutation and callback execution.
-unsafe extern "C" fn runtime_open(filename: *const u8, flags: i32, error: *mut i32) -> *mut c_void {
-    if error.is_null() { return core::ptr::null_mut(); }
-    unsafe { *error = 0; }
+/// A null result with a zero diagnostic kind cannot occur for a named file.
+unsafe extern "C" fn runtime_open(filename: *const u8, flags: i32, diagnostic: *mut RuntimeDiagnostic) -> *mut c_void {
+    if diagnostic.is_null() { return core::ptr::null_mut(); }
+    let diagnostic = unsafe { &mut *diagnostic };
+    diagnostic.kind = 0;
     if filename.is_null() {
         let _guard = RuntimeGuard::acquire();
         return unsafe { (*REGISTRY.0.get()).head.cast() };
     }
-    let Some(length) = (unsafe { bounded_nul(filename, MAX_PATH) }) else { unsafe { *error = 36; } return core::ptr::null_mut(); };
+    let Some(length) = (unsafe { bounded_nul(filename, MAX_PATH) }) else {
+        report(diagnostic, if flags & 4 != 0 { DIAGNOSTIC_NOT_LOADED } else { DIAGNOSTIC_LOAD }, 36, &[]);
+        return core::ptr::null_mut();
+    };
     let filename = unsafe { core::slice::from_raw_parts(filename, length) };
     let result = {
         let guard = RuntimeGuard::acquire();
         let _notification = super::x86_64_debugger::AddNotification::begin(&guard);
-        unsafe { open_transaction(&guard, filename, flags) }
+        unsafe { open_transaction(&guard, filename, flags, diagnostic) }
     };
     match result {
         Ok((root, snapshot, constructors)) => {
             for &index in constructors.as_slice() { unsafe { initialize_object(snapshot.nodes.as_slice()[index]); } }
             root.cast()
         }
-        Err(code) => { unsafe { *error = code; } core::ptr::null_mut() }
+        Err(()) => core::ptr::null_mut(),
     }
 }
 

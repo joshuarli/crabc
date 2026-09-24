@@ -2225,15 +2225,43 @@ unsafe fn map_elf_for_role(
     general_initial_graph: bool,
     role: ObjectRole,
 ) -> Option<Object> {
-    let file_byte_len = file_size_from_fd(fd)?;
+    map_elf_reporting_error(fd, allow_bounded_runtime_legacy_tags, general_initial_graph, role).ok()
+}
+
+const ENOEXEC: i32 = 8;
+const EISDIR: i32 = 21;
+const S_IFMT: u32 = 0o170000;
+const S_IFDIR: u32 = 0o040000;
+const X86_64_STAT_MODE_OFFSET: usize = 24;
+
+fn syscall_error(result: i64) -> Result<i64, i32> {
+    if is_linux_error(result) { Err((-result) as i32) } else { Ok(result) }
+}
+
+/// Map one ELF image and report the Linux errno musl's `map_library` leaves
+/// for `dlerror`'s `%m`: descriptor and mapping syscalls keep their errors,
+/// a directory reports the `EISDIR` its initial `read` would return, and
+/// every rejected image form reports `ENOEXEC`. This is musl 1.2.6
+/// `ldso/dynlink.c::map_library` error classification (MIT, revision
+/// 9fa28ece75d8a2191de7c5bb53bed224c5947417); the mapping itself is crabc's.
+unsafe fn map_elf_reporting_error(
+    fd: i64,
+    allow_bounded_runtime_legacy_tags: bool,
+    general_initial_graph: bool,
+    role: ObjectRole,
+) -> Result<Object, i32> {
+    let mut stat = [0u8; X86_64_STAT_BYTE_LEN];
+    syscall_error(syscall2(SYS_FSTAT, fd, stat.as_mut_ptr() as i64))?;
+    if read_u32(stat.as_ptr().add(X86_64_STAT_MODE_OFFSET)) & S_IFMT == S_IFDIR {
+        return Err(EISDIR);
+    }
+    let file_byte_len = u64::try_from(read_i64(stat.as_ptr().add(X86_64_STAT_SIZE_OFFSET)))
+        .map_err(|_| ENOEXEC)?;
     if file_byte_len < 64 {
-        return None;
+        return Err(ENOEXEC);
     }
     let header_map_len = file_byte_len.min(PAGE);
-    let first = syscall6(SYS_MMAP, 0, header_map_len as i64, PROT_READ, MAP_PRIVATE, fd, 0);
-    if is_linux_error(first) {
-        return None;
-    }
+    let first = syscall_error(syscall6(SYS_MMAP, 0, header_map_len as i64, PROT_READ, MAP_PRIVATE, fd, 0))?;
     let header_mapping = MappingLease {
         address: first,
         byte_len: header_map_len,
@@ -2243,14 +2271,14 @@ unsafe fn map_elf_for_role(
     let valid = *header == 0x7f && *header.add(1) == b'E' && *header.add(2) == b'L' && *header.add(3) == b'F'
         && *header.add(4) == 2 && *header.add(5) == 1 && (elf_type == 3 || (role == ObjectRole::Main && elf_type == 2)) && read_u16(header.add(18)) == 62
         && read_u16(header.add(54)) == 56;
-    let phoff = usize::try_from(read_u64(header.add(32))).ok()?;
+    let phoff = usize::try_from(read_u64(header.add(32))).map_err(|_| ENOEXEC)?;
     let phnum = read_u16(header.add(56)) as usize;
-    let ph_table_len = phnum.checked_mul(56)?;
-    let ph_file_end = phoff.checked_add(ph_table_len)?;
-    let phoff_u64 = u64::try_from(phoff).ok()?;
-    let ph_file_end_u64 = u64::try_from(ph_file_end).ok()?;
+    let ph_table_len = phnum.checked_mul(56).ok_or(ENOEXEC)?;
+    let ph_file_end = phoff.checked_add(ph_table_len).ok_or(ENOEXEC)?;
+    let phoff_u64 = u64::try_from(phoff).map_err(|_| ENOEXEC)?;
+    let ph_file_end_u64 = u64::try_from(ph_file_end).map_err(|_| ENOEXEC)?;
     if !valid || phnum == 0 || phnum > MAX_PHDRS || ph_file_end_u64 > file_byte_len {
-        return None;
+        return Err(ENOEXEC);
     }
     // Musl reads an in-file PHDR table independently of its first header
     // read. Map only the pages carrying this bounded table when e_phoff lies
@@ -2259,12 +2287,11 @@ unsafe fn map_elf_for_role(
         (None, header.add(phoff))
     } else {
         let page_offset = align_down(phoff_u64);
-        let map_len = ph_file_end_u64.checked_sub(page_offset)?;
-        let address = syscall6(SYS_MMAP, 0, i64::try_from(map_len).ok()?, PROT_READ,
-            MAP_PRIVATE, fd, i64::try_from(page_offset).ok()?);
-        if is_linux_error(address) { return None; }
+        let map_len = ph_file_end_u64.checked_sub(page_offset).ok_or(ENOEXEC)?;
+        let address = syscall_error(syscall6(SYS_MMAP, 0, i64::try_from(map_len).map_err(|_| ENOEXEC)?, PROT_READ,
+            MAP_PRIVATE, fd, i64::try_from(page_offset).map_err(|_| ENOEXEC)?))?;
         (Some(MappingLease { address, byte_len: map_len }),
-            (address as *const u8).add(usize::try_from(phoff_u64 - page_offset).ok()?))
+            (address as *const u8).add(usize::try_from(phoff_u64 - page_offset).map_err(|_| ENOEXEC)?))
     };
     let mut min = u64::MAX;
     let mut max = 0u64;
@@ -2272,14 +2299,14 @@ unsafe fn map_elf_for_role(
         let p = phdr.add(index * 56);
         if read_u32(p) == PT_LOAD {
             min = min.min(align_down(read_u64(p.add(16))));
-            max = max.max(align_up(read_u64(p.add(16)).checked_add(read_u64(p.add(40)))?));
+            max = max.max(align_up(read_u64(p.add(16)).checked_add(read_u64(p.add(40))).ok_or(ENOEXEC)?));
         }
     }
     if min == u64::MAX || max <= min {
-        return None;
+        return Err(ENOEXEC);
     }
-    let reserve_len = max.checked_sub(min)?;
-    let reserve = syscall6(
+    let reserve_len = max.checked_sub(min).ok_or(ENOEXEC)?;
+    let reserve = syscall_error(syscall6(
         SYS_MMAP,
         if elf_type == 2 { min as i64 } else { 0 },
         reserve_len as i64,
@@ -2287,15 +2314,12 @@ unsafe fn map_elf_for_role(
         MAP_PRIVATE | MAP_ANONYMOUS | if elf_type == 2 { MAP_FIXED_NOREPLACE } else { 0 },
         -1,
         0,
-    );
-    if is_linux_error(reserve) {
-        return None;
-    }
+    ))?;
     let reservation = MappingLease {
         address: reserve,
         byte_len: reserve_len,
     };
-    let base = (reserve as u64).checked_sub(min)?;
+    let base = (reserve as u64).checked_sub(min).ok_or(ENOEXEC)?;
     for index in 0..phnum {
         let p = phdr.add(index * 56);
         if read_u32(p) != PT_LOAD {
@@ -2305,31 +2329,29 @@ unsafe fn map_elf_for_role(
         let offset = read_u64(p.add(8));
         let filesz = read_u64(p.add(32));
         let memsz = read_u64(p.add(40));
-        let file_end = offset.checked_add(filesz)?;
+        let file_end = offset.checked_add(filesz).ok_or(ENOEXEC)?;
         if filesz > memsz || file_end > file_byte_len || vaddr % PAGE != offset % PAGE {
-            return None;
+            return Err(ENOEXEC);
         }
         let page_vaddr = align_down(vaddr);
         let page_offset = align_down(offset);
         let delta = vaddr - page_vaddr;
-        let map_len = align_up(filesz.checked_add(delta)?);
-        if map_len != 0
-            && is_linux_error(syscall6(
+        let map_len = align_up(filesz.checked_add(delta).ok_or(ENOEXEC)?);
+        if map_len != 0 {
+            syscall_error(syscall6(
                 SYS_MMAP,
-                base.checked_add(page_vaddr)? as i64,
+                base.checked_add(page_vaddr).ok_or(ENOEXEC)? as i64,
                 map_len as i64,
                 PROT_READ | PROT_WRITE,
                 MAP_PRIVATE | MAP_FIXED,
                 fd,
                 page_offset as i64,
-            ))
-        {
-            return None;
+            ))?;
         }
-        let zero_start = base.checked_add(vaddr)?.checked_add(filesz)?;
-        let zero_end = base.checked_add(vaddr)?.checked_add(memsz)?;
+        let zero_start = base.checked_add(vaddr).and_then(|v| v.checked_add(filesz)).ok_or(ENOEXEC)?;
+        let zero_end = base.checked_add(vaddr).and_then(|v| v.checked_add(memsz)).ok_or(ENOEXEC)?;
         if zero_end > zero_start {
-            core::ptr::write_bytes(zero_start as *mut u8, 0, usize::try_from(zero_end - zero_start).ok()?);
+            core::ptr::write_bytes(zero_start as *mut u8, 0, usize::try_from(zero_end - zero_start).map_err(|_| ENOEXEC)?);
         }
     }
     // The temporary header mapping cannot own retained program-header
@@ -2341,19 +2363,19 @@ unsafe fn map_elf_for_role(
             continue;
         }
         let file_offset = read_u64(p.add(8));
-        let file_end = file_offset.checked_add(read_u64(p.add(32)))?;
+        let file_end = file_offset.checked_add(read_u64(p.add(32))).ok_or(ENOEXEC)?;
         if phoff_u64 < file_offset || ph_file_end_u64 > file_end {
             continue;
         }
-        let virtual_address = read_u64(p.add(16)).checked_add(phoff_u64 - file_offset)?;
+        let virtual_address = read_u64(p.add(16)).checked_add(phoff_u64 - file_offset).ok_or(ENOEXEC)?;
         if !virtual_range_in_load(phdr, phnum, virtual_address, ph_table_len as u64) {
-            return None;
+            return Err(ENOEXEC);
         }
-        runtime_phdr = Some(runtime_address(base, virtual_address)? as *const u8);
+        runtime_phdr = Some(runtime_address(base, virtual_address).ok_or(ENOEXEC)? as *const u8);
         break;
     }
-    let runtime_phdr = runtime_phdr?;
-    let entry = base.checked_add(read_u64(header.add(24)))?;
+    let runtime_phdr = runtime_phdr.ok_or(ENOEXEC)?;
+    let entry = base.checked_add(read_u64(header.add(24))).ok_or(ENOEXEC)?;
     drop(phdr_mapping);
     drop(header_mapping);
     let mut object = parse_mapped(
@@ -2363,8 +2385,12 @@ unsafe fn map_elf_for_role(
         role,
         allow_bounded_runtime_legacy_tags,
         general_initial_graph,
-    )?;
-    if role == ObjectRole::Main && !virtual_range_in_executable_load(runtime_phdr, phnum, entry.checked_sub(base)?, 1) { return None; }
+    ).ok_or(ENOEXEC)?;
+    if role == ObjectRole::Main
+        && !virtual_range_in_executable_load(runtime_phdr, phnum, entry.checked_sub(base).ok_or(ENOEXEC)?, 1)
+    {
+        return Err(ENOEXEC);
+    }
     object.entry = entry;
     object.map_provenance = ObjectMapProvenance::Transaction;
     object.map_span_start = reserve as u64;
@@ -2372,7 +2398,7 @@ unsafe fn map_elf_for_role(
     // Successful callers now own the exact reservation and release it through
     // the graph rollback/unload boundary.  Every earlier error drops it.
     core::mem::forget(reservation);
-    Some(object)
+    Ok(object)
 }
 
 /// Assign the fixed graph's one-based GNU TLS module IDs and Variant-II

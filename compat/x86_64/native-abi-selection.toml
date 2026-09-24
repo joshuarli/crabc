@@ -1572,8 +1572,8 @@ signature_status = "source-mapped-unverified"
 
 [[private_protocols.operations]]
 name = "__crabc_x86_64_runtime_open"
-producer = {"source" = "ldso/src/x86_64_runtime_registry.rs", "function" = "runtime_open", "parameters" = ["*const u8", "i32", "*mut i32"], "result" = "*mut c_void", "abi" = "C", "unsafe" = true}
-consumer = {"source" = "libc/src/c_abi/x86_64/general_dlfcn.rs", "function" = "__crabc_x86_64_runtime_open", "parameters" = ["*const u8", "c_int", "*mut c_int"], "result" = "*mut c_void", "abi" = "C", "unsafe" = true}
+producer = {"source" = "ldso/src/x86_64_runtime_registry.rs", "function" = "runtime_open", "parameters" = ["*const u8", "i32", "*mut RuntimeDiagnostic"], "result" = "*mut c_void", "abi" = "C", "unsafe" = true}
+consumer = {"source" = "libc/src/c_abi/x86_64/general_dlfcn.rs", "function" = "__crabc_x86_64_runtime_open", "parameters" = ["*const u8", "c_int", "*mut RuntimeDiagnostic"], "result" = "*mut c_void", "abi" = "C", "unsafe" = true}
 
 [[private_protocols.operations]]
 name = "__crabc_x86_64_runtime_symbol"

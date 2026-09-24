@@ -194,6 +194,70 @@ LD_LIBRARY_PATH="$work/oracle" timeout 20 "$work/oracle/scope" >"$work/oracle-sc
 cmp "$work/scope.stdout" "$work/oracle-scope.stdout"
 printf 'general runtime scope: PASS (musl differential, caller RTLD_NEXT and promotion); evidence: %s\n' "$work"
 
+# Exact public dlfcn contract over an initial dependency plus a runtime-new
+# closure: dlerror text, handle scope, mode bits, dladdr, dlinfo link maps,
+# dl_iterate_phdr naming and exit-time dlopen. Absolute paths are reduced to
+# basenames by the consumer; everything else must match pinned musl bytes.
+contract_source="$ROOT/compat/x86_64/general_dynamic_dlfcn_contract_dso.c"
+mkdir "$work/contract" "$work/oracle/contract"
+contract_dso() {
+    local name="$1" variant="$2" dependencies="${3:-}"
+    local -a candidate_dependencies=() oracle_dependencies=()
+    local dependency
+    for dependency in $dependencies; do
+        candidate_dependencies+=(--application-dso "$work/contract/lib$dependency.so")
+        oracle_dependencies+=(-l:"lib$dependency.so")
+    done
+    "$driver" --dynamic-shared-object -D"$variant" "$contract_source" \
+        "${candidate_dependencies[@]}" -o "$work/contract/lib$name.so"
+    "$oracle_cc" -fPIC -shared -D"$variant" "$contract_source" -L"$work/oracle/contract" \
+        -Wl,--no-as-needed "${oracle_dependencies[@]}" \
+        -Wl,-z,now,-soname,"lib$name.so" -o "$work/oracle/contract/lib$name.so"
+}
+contract_dso dc_base BASE
+contract_dso dc_init INIT dc_base
+contract_dso dc_rtdep RTDEP
+contract_dso dc_rt RT "dc_rtdep dc_base"
+contract_dso dc_absent PROVIDER
+contract_dso dc_missing MISSING dc_absent
+contract_dso dc_provider PROVIDER
+contract_dso dc_unresolved UNRESOLVED dc_provider
+contract_dso dc_ie INITIAL_EXEC
+contract_dso dc_plain PLAIN
+# The missing dependency is absent and the unresolved provider lacks the
+# requested definition in both runtime roots.
+rm "$work/contract/libdc_absent.so" "$work/oracle/contract/libdc_absent.so"
+"$driver" --dynamic-shared-object -DPROVIDER -DOMIT_PROVIDED "$contract_source" -o "$work/contract/libdc_provider.so.runtime"
+mv "$work/contract/libdc_provider.so.runtime" "$work/contract/libdc_provider.so"
+"$oracle_cc" -fPIC -shared -DPROVIDER -DOMIT_PROVIDED "$contract_source" \
+    -Wl,-z,now,-soname,libdc_provider.so -o "$work/oracle/contract/libdc_provider.so"
+for root in "$work/contract" "$work/oracle/contract"; do
+    python3 -B "$ROOT/compat/x86_64/general_dynamic_failure_mutate.py" \
+        "$root/libdc_plain.so" "$root/libdc_badtype.so" relocation-kind
+    printf 'this is not an ELF object\n' >"$root/libdc_notelf.so"
+done
+"$driver" "$entry_mode" "$ROOT/compat/x86_64/general_dynamic_dlfcn_contract.c" \
+    --application-dso "$work/contract/libdc_init.so" \
+    --transitive-application-dso "$work/contract/libdc_base.so" -o "$work/dlfcn-contract"
+"$oracle_cc" "${oracle_entry_flags[@]}" "$ROOT/compat/x86_64/general_dynamic_dlfcn_contract.c" \
+    -L"$work/oracle/contract" -Wl,--no-as-needed -l:libdc_init.so -Wl,-rpath-link,"$work/oracle/contract" \
+    -o "$work/oracle/contract/dlfcn-contract"
+cp "$work"/contract/libdc_*.so "$work/execution-root/usr/lib/"
+cp "$work/dlfcn-contract" "$work/execution-root/dlfcn-contract"
+status=0
+timeout 20 chroot "$work/execution-root" /dlfcn-contract \
+    >"$work/dlfcn-contract-candidate.stdout" 2>"$work/dlfcn-contract-candidate.stderr" || status=$?
+LD_LIBRARY_PATH="$work/oracle/contract" timeout 20 "$work/oracle/contract/dlfcn-contract" \
+    >"$work/dlfcn-contract-oracle.stdout" 2>"$work/dlfcn-contract-oracle.stderr"
+if [ "$status" -ne 0 ] || ! cmp -s "$work/dlfcn-contract-oracle.stdout" "$work/dlfcn-contract-candidate.stdout"; then
+    printf 'general dlfcn contract: FAIL status=%s; evidence: %s\n' "$status" "$work" >&2
+    diff -u "$work/dlfcn-contract-oracle.stdout" "$work/dlfcn-contract-candidate.stdout" >&2 || true
+    exit 1
+fi
+grep -Fxq 'dlfcn contract: complete' "$work/dlfcn-contract-candidate.stdout"
+grep -Fxq 'destructor dlopen: null; Cannot dlopen while program is exiting.' "$work/dlfcn-contract-candidate.stdout"
+printf 'general dlfcn contract: PASS (musl differential, diagnostics, scope, modes, introspection); evidence: %s\n' "$work"
+
 if [ "$skip_search" = 0 ]; then
     bash "$ROOT/compat/x86_64/run_general_dynamic_search.sh" "$installed"
 else
