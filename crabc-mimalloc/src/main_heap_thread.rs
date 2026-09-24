@@ -565,8 +565,7 @@ impl<'main> MainHeapThreadAttachment<'main> {
     }
 
     /// Exposes the exact process metadata owner selected by this attachment
-    /// to allocator unit fixtures that exercise parent-issued capabilities.
-    #[cfg(test)]
+    /// to parent-issued capabilities such as child-subprocess creation.
     #[inline]
     pub(crate) fn parent_metadata_allocator(&self) -> core::pin::Pin<&'static MetaAllocator> {
         self.metadata
